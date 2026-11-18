@@ -9,16 +9,15 @@ import { sourceLabel } from "../lib/format.js";
 import { bytesBeforeMonthCutoff, DAY_MS, MAX_RETENTION_DAYS, storageBytes } from "./storage-data.js";
 import { StorageHistory } from "./storage-history.js";
 
-function retentionCutoff(now, days) {
+function rollingCutoff(now, days) {
   return Number.isInteger(days) && days > 0 && days <= MAX_RETENTION_DAYS
-    ? new Date(now - days * DAY_MS).toISOString().slice(0, 10)
+    ? new Date(now - days * DAY_MS).toISOString()
     : "";
 }
 
 export function StorageRetentionDialog({ mode, source, retentionDays, onClose, onSaved }) {
   const rolling = mode === "retention";
   const [openedAt] = useState(Date.now);
-  const todayMs = Date.parse(new Date(openedAt).toISOString().slice(0, 10));
   const [before, setBefore] = useState("");
   const [days, setDays] = useState(String(retentionDays ?? ""));
   const [preview, setPreview] = useState(null);
@@ -27,7 +26,8 @@ export function StorageRetentionDialog({ mode, source, retentionDays, onClose, o
   const [error, setError] = useState(null);
   const [message, setMessage] = useState(null);
   const lock = useRef(false);
-  const cutoff = rolling ? retentionCutoff(todayMs, Number(days)) : before;
+  const cutoffInstant = rolling ? rollingCutoff(openedAt, Number(days)) : "";
+  const cutoff = rolling ? cutoffInstant.slice(0, 10) : before;
 
   function resetApproval() {
     setPreview(null);
@@ -38,15 +38,19 @@ export function StorageRetentionDialog({ mode, source, retentionDays, onClose, o
   function selectDate(date) {
     if (lock.current) return;
     resetApproval();
-    const timestamp = Date.parse(date);
-    if (rolling) {
-      const window = (todayMs - timestamp) / DAY_MS;
-      if (!Number.isInteger(window) || window < 1 || window > MAX_RETENTION_DAYS) {
-        setError("Choose a date from 1 to 36,500 days ago.");
-        return;
-      }
-      setDays(String(window));
-    } else setBefore(date);
+    setBefore(date);
+  }
+
+  function changeDays(value) {
+    if (lock.current) return;
+    resetApproval();
+    setDays(value);
+  }
+
+  function stepDays(delta) {
+    const current = Number(days);
+    const start = Number.isInteger(current) ? current : 0;
+    changeDays(String(Math.min(MAX_RETENTION_DAYS, Math.max(1, start + delta))));
   }
 
   async function run(operation) {
@@ -63,7 +67,7 @@ export function StorageRetentionDialog({ mode, source, retentionDays, onClose, o
       if (days !== "" && (!cutoff || !confirmed)) return;
       void run(async () => {
         await setStorageRetention(source.sourceId, days === "" ? null : Number(days));
-        await onSaved(days === "" ? "Rolling retention disabled." : "Rolling retention saved.");
+        await onSaved(days === "" ? "Rolling retention disabled." : "Rolling retention saved. Older documents are removed in the background. Reopen the source chart or refresh measurements to see progress.");
       });
     } else if (cutoff) {
       resetApproval();
@@ -78,7 +82,7 @@ export function StorageRetentionDialog({ mode, source, retentionDays, onClose, o
     void run(async () => {
       resetApproval();
       const result = await applyStorageTrim(preview.token);
-      const status = `${result.deleted} documents removed.${result.hasMore ? " Preview the next batch to continue." : ""}${result.cleanupPending ? " Index cleanup is pending." : ""}`;
+      const status = `${result.deleted} ${result.deleted === 1 ? "document" : "documents"} removed from ${sourceLabel(source.sourceId)}.${result.hasMore ? " Preview the next batch to continue." : ""}${result.cleanupPending ? " Index cleanup is still running." : ""}`;
       if (result.hasMore) setMessage(status);
       await onSaved(status, result.hasMore);
     });
@@ -90,23 +94,27 @@ export function StorageRetentionDialog({ mode, source, retentionDays, onClose, o
       ${rolling && html`<p>Omnesis will automatically remove older documents now and as they age. Clear the window to turn this off.</p>`}
       <form onSubmit=${submit}>
         <div class="storage-dialog-fields">
-          <label>${rolling ? "Cutoff date today (UTC)" : "Remove documents before (UTC)"}
-            <input id="storage-before" type="date" required=${!rolling} max=${rolling ? retentionCutoff(todayMs, 1) : undefined}
-              value=${cutoff} disabled=${busy} onInput=${(event) => {
-                if (rolling && !event.currentTarget.value) { resetApproval(); setDays(""); }
-                else selectDate(event.currentTarget.value);
-              }} />
-          </label>
-          ${rolling && html`<label>Days to keep
-            <input id="storage-retention-days" type="number" min="1" max=${MAX_RETENTION_DAYS} step="1"
-              value=${days} placeholder="Keep all dates" disabled=${busy} onInput=${(event) => {
-                resetApproval(); setDays(event.currentTarget.value);
-              }} />
-          </label>`}
+          ${rolling ? html`
+            <label for="storage-retention-days">Days to keep</label>
+            <div class="storage-days-controls">
+              <input id="storage-retention-days" type="number" min="1" max=${MAX_RETENTION_DAYS} step="1"
+                value=${days} placeholder="Keep all dates" disabled=${busy}
+                onInput=${(event) => changeDays(event.currentTarget.value)} />
+              <button type="button" class="btn-secondary" aria-label="Decrease days"
+                disabled=${busy || Number(days) <= 1} onClick=${() => stepDays(-1)}>−</button>
+              <button type="button" class="btn-secondary" aria-label="Increase days"
+                disabled=${busy || Number(days) >= MAX_RETENTION_DAYS} onClick=${() => stepDays(1)}>+</button>
+            </div>
+          ` : html`
+            <label for="storage-before">Remove before (UTC)</label>
+            <input id="storage-before" type="date" required value=${before} disabled=${busy}
+              onInput=${(event) => selectDate(event.currentTarget.value)} />
+          `}
         </div>
-        <${StorageHistory} months=${source.months} selectedCutoff=${cutoff} onSelectCutoff=${busy ? undefined : selectDate} />
+        <${StorageHistory} months=${source.months} selectedCutoff=${cutoff}
+          cutoffInstant=${cutoffInstant} onSelectCutoff=${!rolling && !busy ? selectDate : undefined} />
         ${cutoff && html`<p><strong>${storageBytes(bytesBeforeMonthCutoff(source.months, cutoff))}</strong> estimated usage in complete months before this date. Excludes partial months and undated data. Some documents are protected.</p>`}
-        ${rolling && cutoff && html`<p>At the time you opened this dialog, a ${Number(days).toLocaleString()}-day window would keep documents from ${new Date(openedAt - Number(days) * DAY_MS).toISOString().slice(0, 16).replace("T", " ")} UTC onward. The cutoff moves continuously with time.</p>`}
+        ${rolling && cutoff && html`<p>At the time you opened this dialog, a ${Number(days).toLocaleString()}-day window would keep documents from ${cutoffInstant.slice(0, 16).replace("T", " ")} UTC onward. The cutoff moves continuously with time.</p>`}
         ${rolling ? html`
           ${days !== "" && html`<label class="storage-consent"><input id="storage-retention-confirm" type="checkbox"
             checked=${confirmed} disabled=${busy} onChange=${(event) => setConfirmed(event.currentTarget.checked)} />
@@ -130,7 +138,7 @@ export function StorageRetentionDialog({ mode, source, retentionDays, onClose, o
         `}
       </div>`}
       ${error && html`<p class="storage-alert" role="alert">${error}</p>`}
-      ${message && html`<p role="status">${message}</p>`}
+      ${message && html`<p role="status">${message}${busy ? " Updating storage charts…" : ""}</p>`}
     </div>
   <//>`;
 }

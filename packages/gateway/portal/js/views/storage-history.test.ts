@@ -6,7 +6,7 @@ import { act } from "preact/test-utils";
 import { parseHTML } from "linkedom";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 // @ts-expect-error — portal modules are plain JS.
-import { StorageHistory, storageHistoryData } from "./storage-history.js";
+import { StorageHistory, storageHistoryData, storageHistoryArea } from "./storage-history.js";
 
 const now = new Date("2024-04-18T15:30:00.000Z");
 const months = [{ month: "2024-03", bytes: 300 }, { month: "2024-01", bytes: 70 }, { month: "2024-01", bytes: 30 }];
@@ -106,5 +106,95 @@ describe("source storage history graph", () => {
     expect(host.textContent).toContain("2 KiB has no usable month");
     expect(host.textContent).toContain("1 KiB is dated after the current month");
     expect(host.querySelector("svg")).toBeNull();
+  });
+});
+
+
+describe("cutoff shading", () => {
+  test("interpolates the cumulative curve within a month at the precise rolling instant", () => {
+    const data = storageHistoryData(months, now);
+    const instant = "2024-01-16T12:00:00.000Z";
+    const area = storageHistoryArea(data, instant);
+    expect(area.time).toBe(Date.parse(instant));
+    expect(area.bytes).toBeCloseTo(50);
+    expect(area.points).toEqual([{ time: data.start, bytes: 0 }, { time: Date.parse(instant), bytes: 50 }]);
+    expect(storageHistoryArea(data, "2024-01-16").bytes).toBeLessThan(area.bytes);
+  });
+  test("keeps flat gaps flat, shades the complete curve for a later cutoff, and rejects malformed dates", () => {
+    const data = storageHistoryData(months, now);
+    expect(storageHistoryArea(data, "2024-02-15").bytes).toBe(100);
+    expect(storageHistoryArea(data, "2025-01-01")).toMatchObject({ time: data.end, bytes: 400 });
+    for (const cutoff of [null, "", "invalid", "2024-02-31", "2024-01-01", "2023-12-31", "2024-02-01T00:00:00+02:00"]) {
+      expect(storageHistoryArea(data, cutoff)).toBeNull();
+    }
+  });
+});
+
+describe("source history hover card", () => {
+  let host: HTMLElement;
+  beforeEach(() => {
+    const parsed = parseHTML("<html><body><main></main></body></html>");
+    vi.stubGlobal("document", parsed.document); vi.stubGlobal("window", parsed.window);
+    host = parsed.document.querySelector("main") as unknown as HTMLElement;
+  });
+  afterEach(() => { render(null, host); vi.unstubAllGlobals(); });
+
+  test("shows cumulative storage on hover in a read-only chart and stays inside the plot's right edge", async () => {
+    await act(async () => { render(h(StorageHistory, { months, now }), host); });
+    const plot = host.querySelector(".storage-history-plot") as HTMLElement;
+    plot.getBoundingClientRect = () => ({ left: 10, top: 20, width: 300 }) as DOMRect;
+    const point = host.querySelector('[data-history-point="2"]') as SVGElement;
+    point.getBoundingClientRect = () => ({ left: 300, top: 100, width: 20 }) as DOMRect;
+    await act(async () => { point.dispatchEvent(new window.Event("pointerenter")); });
+    const card = host.querySelector('[role="tooltip"]') as HTMLElement;
+    expect(card.textContent).toContain("400 B");
+    expect(card.textContent).toContain("Cumulative storage");
+    expect(card.textContent).toContain("300 B in this period");
+    expect(card.style.left).toBe("68px");
+    expect(point.getAttribute("aria-describedby")).toBe(card.id);
+    expect(host.querySelector('[role="button"]')).toBeNull();
+    expect(host.querySelector("svg title")).toBeNull();
+    await act(async () => { point.dispatchEvent(new window.Event("pointerleave")); });
+    expect(host.querySelector('[role="tooltip"]')).toBeNull();
+  });
+
+  test("flips above a point near the viewport bottom and permits a negative plot-relative offset", async () => {
+    await act(async () => { render(h(StorageHistory, { months, now }), host); });
+    Object.defineProperty(window, "innerHeight", { configurable: true, value: 800 });
+    const plot = host.querySelector(".storage-history-plot") as HTMLElement;
+    plot.getBoundingClientRect = () => ({ left: 0, top: 700, width: 300 }) as DOMRect;
+    const point = host.querySelector('[data-history-point="0"]') as SVGElement;
+    point.getBoundingClientRect = () => ({ left: 100, top: 760, bottom: 766, width: 6, height: 6 }) as DOMRect;
+    await act(async () => { point.dispatchEvent(new window.Event("pointerenter")); });
+    const top = parseFloat((host.querySelector('[role="tooltip"]') as HTMLElement).style.top);
+    expect(top).toBeLessThan(0);
+    expect(700 + top).toBeGreaterThanOrEqual(12);
+    expect(700 + top + 128).toBeLessThan(760);
+  });
+
+  test("read-only points support focus inspection and ignore activation keys", async () => {
+    await act(async () => { render(h(StorageHistory, { months, now }), host); });
+    const point = host.querySelector('[data-history-point="0"]') as SVGElement;
+    await act(async () => { point.dispatchEvent(new window.Event("focus")); });
+    expect(host.querySelector('[role="tooltip"]')?.textContent).toContain("100 B");
+    const event = new window.Event("keydown", { bubbles: true, cancelable: true });
+    Object.defineProperty(event, "key", { value: "Enter" });
+    await act(async () => { point.dispatchEvent(event); });
+    expect(event.defaultPrevented).toBe(false);
+    await act(async () => { point.dispatchEvent(new window.Event("blur")); });
+    expect(host.querySelector('[role="tooltip"]')).toBeNull();
+  });
+
+  test("precise cutoffInstant shades through the middle of the curve and an empty instant falls back to the chosen date", async () => {
+    const instant = "2024-01-16T12:00:00.000Z";
+    await act(async () => { render(h(StorageHistory, { months, now, selectedCutoff: "2024-01-16", cutoffInstant: instant }), host); });
+    const area = host.querySelector(".storage-history-trim-area");
+    expect(area?.getAttribute("data-cutoff")).toBe(instant);
+    expect(area?.getAttribute("fill")).toContain("--danger");
+    const preciseX = Number(host.querySelector(".storage-history-cutoff line")?.getAttribute("x1"));
+    await act(async () => { render(h(StorageHistory, { months, now, selectedCutoff: "2024-01-16", cutoffInstant: "" }), host); });
+    expect(host.querySelector(".storage-history-trim-area")?.getAttribute("data-cutoff")).toBe("2024-01-16");
+    const dayX = Number(host.querySelector(".storage-history-cutoff line")?.getAttribute("x1"));
+    expect(dayX).toBeLessThan(preciseX);
   });
 });

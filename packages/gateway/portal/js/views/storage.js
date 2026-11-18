@@ -58,17 +58,25 @@ function PressureNotice({ pressure }) {
   </div>`;
 }
 
-function SourceStorageRow({ row, retentionDays, onOpen }) {
+function SourceStorageRow({ row, retentionDays, onOpen, onExpand }) {
   const [expanded, setExpanded] = useState(false);
   const { sourceId } = row;
   const label = sourceLabel(sourceId);
   const partial = row.lexicalPartial || [row.documentBytes, row.vectorBytes, row.lexicalBytes].some((value) => value === null);
+  function toggle() {
+    setExpanded(!expanded);
+    if (!expanded && retentionDays) onExpand();
+  }
   return html`
-    <tr class="source-row-v2">
-      <td><button type="button" class="btn-tiny storage-expand" aria-expanded=${expanded}
-        aria-label=${`Storage history for ${sourceId}`} onClick=${() => setExpanded(!expanded)}>
-        <span aria-hidden="true" class="storage-chevron"></span>
-      </button></td>
+    <tr class="source-row-v2 storage-source-row" tabindex="0" aria-expanded=${expanded}
+      aria-label=${`Storage history for ${sourceId}`}
+      onClick=${(event) => { if (!event.target.closest(".row-action-menu")) toggle(); }}
+      onKeyDown=${(event) => {
+        if (event.target !== event.currentTarget || (event.key !== "Enter" && event.key !== " ")) return;
+        event.preventDefault();
+        toggle();
+      }}>
+      <td><span aria-hidden="true" class="storage-chevron"></span></td>
       <td><div class="source-cell-name-v2">
         <span class="source-icon-wrap">${sourceIcon(sourceId)}</span>
         <div class="source-cell-name-text"><span class="source-display-name">${label}</span>
@@ -98,6 +106,8 @@ export function StorageView({ onChange } = {}) {
   const [retry, setRetry] = useState(0);
   const [dialog, setDialog] = useState(null);
   const busyRef = useRef(false);
+  const lastChartRefresh = useRef(0);
+  const [measuring, setMeasuring] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -110,12 +120,31 @@ export function StorageView({ onChange } = {}) {
     return () => { active = false; };
   }, [retry]);
 
-  async function action(run) {
+  async function action(run, { preserveMessage = false } = {}) {
     if (busyRef.current) return;
     busyRef.current = true;
-    setBusy(true); setError(null); setMessage(null);
+    setBusy(true);
+    setError(null);
+    if (!preserveMessage) setMessage(null);
     try { await run(); } catch (err) { setError(err.serverMessage || err.message); }
     finally { busyRef.current = false; setBusy(false); }
+  }
+
+  async function refreshMeasurements() {
+    setMeasuring(true);
+    lastChartRefresh.current = Date.now();
+    try {
+      setSnapshot(await refreshStorage());
+    } finally {
+      setMeasuring(false);
+    }
+  }
+
+  function refreshRetentionChart() {
+    const measuredAt = Date.parse(snapshot?.logical?.measuredAt ?? "") || 0;
+    // A scan covers all sources. Reuse a recent one if several rows are opened.
+    if (Date.now() - Math.max(measuredAt, lastChartRefresh.current) < 15_000) return;
+    void action(refreshMeasurements, { preserveMessage: true });
   }
 
   async function savePolicy(event) {
@@ -143,11 +172,16 @@ export function StorageView({ onChange } = {}) {
   return html`<section class="storage-view" aria-labelledby="storage-heading">
     <header class="storage-header"><h2 id="storage-heading">Storage</h2>
       <button class="btn-secondary" disabled=${busy || !!dialog} onClick=${() => action(async () => {
-        setSnapshot(await refreshStorage()); await onChange?.();
+        await refreshMeasurements();
+        await onChange?.();
       })}>Refresh measurements</button>
     </header>
     ${error && html`<p class="storage-alert" role="alert">${error} ${!snapshot && html`<button class="btn-secondary" onClick=${() => setRetry((n) => n + 1)}>Try again</button>`}</p>`}
-    ${message && html`<p role="status">${message}</p>`}
+    ${message && html`<div class="toast storage-toast" role="status">
+      <span>${message}${measuring ? " Updating storage charts…" : ""}</span>
+      <button type="button" class="btn-tiny" aria-label="Dismiss" onClick=${() => setMessage(null)}>×</button>
+    </div>`}
+    ${measuring && !message && html`<p role="status">Updating storage charts…</p>`}
     ${!snapshot && !error && html`<p role="status">Measuring storage…</p>`}
     ${snapshot && html`
       <form class="storage-limit-form" onSubmit=${savePolicy}>
@@ -182,20 +216,27 @@ export function StorageView({ onChange } = {}) {
         ${rows.length ? html`<div class="storage-table-wrap"><table class="portal-table storage-source-table">
           <thead><tr><th aria-label="History"></th><th scope="col">Source</th><th scope="col">Estimated total</th><th scope="col">Documents</th><th scope="col">Vectors</th><th scope="col">Lexical index</th><th aria-label="Actions"></th></tr></thead>
           <tbody>${rows.map((row) => html`<${SourceStorageRow} key=${row.sourceId} row=${row}
-            retentionDays=${policies.get(row.sourceId)} onOpen=${(mode, source) => { setMessage(null); setDialog({mode, source}); }} />`)}</tbody>
+            retentionDays=${policies.get(row.sourceId)} onExpand=${refreshRetentionChart}
+            onOpen=${(mode, source) => {
+              if (busyRef.current) return;
+              setMessage(null);
+              setDialog({mode, source});
+            }} />`)}</tbody>
         </table></div>` : html`<p>${snapshot.logical ? "No source documents are stored." : "Source accounting is not available yet."}</p>`}
-        <div class="storage-links"><a href="/portal/sources">Manage sources</a><a href="/portal/settings/models">Downloaded models</a><a href="https://omnesis.dev/docs/updating#backup" target="_blank" rel="noopener noreferrer">Backup guide</a></div>
       </section>
     `}
-    ${dialog && html`<${StorageRetentionDialog} mode=${dialog.mode} source=${dialog.source}
+    ${dialog && html`<${StorageRetentionDialog} mode=${dialog.mode} source=${rows.find((row) => row.sourceId === dialog.source.sourceId) ?? dialog.source}
       retentionDays=${policies.get(dialog.source.sourceId)} onClose=${() => setDialog(null)}
       onSaved=${async (status, keepOpen) => {
-        if (!keepOpen) setDialog(null);
+        if (!keepOpen) {
+          setDialog(null);
+          setMessage(status);
+        }
         await action(async () => {
-          if (!keepOpen) setMessage(status);
-          setSnapshot(await getStorage());
+          if (dialog.mode === "trim") await refreshMeasurements();
+          else setSnapshot(await getStorage());
           await onChange?.();
-        });
+        }, { preserveMessage: true });
       }} />`}
   </section>`;
 }

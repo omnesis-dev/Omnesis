@@ -463,15 +463,18 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
           changed document invalidates the approval. Contacts are exempt; recent documents and other
           sources are not part of that approval. Originals in the connected service remain
           untouched. A one-off trim suppresses those items locally so an ordinary sync does not
-          immediately restore them.
+          immediately restore them. After confirmation, the portal reports the number removed and
+          refreshes the charts.
         </p>
         <p>
-          Choose <strong>Set rolling retention</strong> from the same source menu. Pick a cutoff
-          date or enter the number of days to keep, then confirm automatic removal. It trims stored
-          older documents in bounded background batches and keeps newly received older documents
-          out. It does not trim analytics rows or collector-owned archives. Turning it off stops
-          automatic trimming; widening it allows older documents to be imported again, subject to
-          the source's import window. See <a href="sources#storage-retention">Source retention</a>.
+          Choose <strong>Set rolling retention</strong> from the same source menu. Enter the number
+          of days to keep, review the shaded portion of the chart, and confirm automatic removal. It
+          trims stored older documents in bounded background batches and keeps newly received older
+          documents out. It does not trim analytics rows or collector-owned archives. Turning it off
+          stops automatic trimming; widening it allows older documents to be imported again, subject
+          to the source's import window. Reopen the source chart or refresh measurements to see the
+          effects of background deletion. See
+          <a href="sources#storage-retention">Source retention</a>.
         </p>
         <p>
           Deletion frees pages inside a database for reuse; it does not guarantee a smaller file on

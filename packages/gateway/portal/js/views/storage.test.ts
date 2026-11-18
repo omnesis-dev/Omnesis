@@ -87,6 +87,7 @@ test("requires preview and explicit confirmation, then consumes exactly the prev
   expect(api.applyStorageTrim).toHaveBeenCalledExactlyOnceWith("preview-token");
   expect(host.querySelector(".storage-trim-preview")).toBeNull();
   expect(host.textContent).toContain("2 documents removed");
+  expect(api.refreshStorage).toHaveBeenCalledOnce();
 });
 test("changing the cutoff invalidates a preview before it can be applied", async () => {
   api.previewStorageTrim.mockResolvedValue({ token: "old-token", documents: 2, payloadBytes: 80 });
@@ -154,10 +155,8 @@ test("unavailable accounting never claims the corpus is empty", async () => {
   expect(host.textContent).toContain("Source accounting is not available yet");
   expect(host.textContent).not.toContain("No source documents are stored");
 });
-test("offers existing file reclamation paths and explains trimming may leave quota pressure", async () => {
+test("explains that trimming may leave physical disk usage unchanged", async () => {
   await mount();
-  expect(host.querySelector('a[href="/portal/settings/models"]')).not.toBeNull();
-  expect(host.querySelector('a[href="https://omnesis.dev/docs/updating#backup"]')).not.toBeNull();
   await openAction("Trim");
   await input("#storage-before", "2021-01-01");
   expect(host.textContent).toContain("database file sizes can remain unchanged");
@@ -180,7 +179,7 @@ test("shows the live disk limit as a placeholder and hides healthy status", asyn
 
 test("expands the source history and a graph selection sets the trim cutoff", async () => {
   await mount();
-  await act(async () => { host.querySelector<HTMLButtonElement>(".storage-expand")?.click(); });
+  await act(async () => { host.querySelector<HTMLElement>(".storage-source-row")!.click(); });
   expect(host.querySelector(".storage-expanded .storage-history")).not.toBeNull();
   await openAction("Trim");
   const point = host.querySelector('[role="dialog"] [data-history-point="0"]');
@@ -193,10 +192,64 @@ test("shows the time-of-day cutoff for a rolling window", async () => {
   try {
     await mount();
     await openAction("Set rolling retention");
-    await input("#storage-before", "2026-11-17");
+    expect(host.querySelector("#storage-before")).toBeNull();
+    await input("#storage-retention-days", "2");
+    await click("−");
     expect((host.querySelector("#storage-retention-days") as HTMLInputElement).value).toBe("1");
+    expect(host.querySelector('[role="dialog"] [data-history-point][role="button"]')).toBeNull();
     expect(host.querySelector('[role="dialog"]')?.textContent).toContain("2026-11-17 18:23 UTC");
   } finally {
     clock.mockRestore();
   }
+});
+
+test("toggles from the source row while its action menu remains independent", async () => {
+  await mount();
+  const row = host.querySelector<HTMLElement>(".storage-source-row")!;
+  await act(async () => { row.click(); });
+  expect(row.getAttribute("aria-expanded")).toBe("true");
+  expect(row.querySelector(".storage-chevron")?.closest("button")).toBeNull();
+  await openAction("Trim");
+  expect(row.getAttribute("aria-expanded")).toBe("true");
+  await click("✕");
+  await act(async () => { row.click(); });
+  expect(row.getAttribute("aria-expanded")).toBe("false");
+});
+
+test("refreshes older measurements on opening a retained source and displays the new first month", async () => {
+  const retained = { ...snapshot, retention: [{ sourceId: "source-example", maxAgeDays: 7 }] };
+  api.getStorage.mockResolvedValue(retained);
+  api.refreshStorage.mockResolvedValue({
+    ...retained,
+    logical: { sources: [{ ...snapshot.logical.sources[0], months: [{ month: "2021-02", documents: 3, payloadBytes: 100 }] }] },
+  });
+  await mount();
+  const row = host.querySelector<HTMLElement>(".storage-source-row")!;
+  await act(async () => { row.click(); });
+  const point = host.querySelector('.storage-expanded [data-history-point="0"]');
+  expect(point?.getAttribute("aria-label")).toContain("Feb 2021");
+  expect(api.refreshStorage).toHaveBeenCalledOnce();
+  await act(async () => { row.click(); });
+  await act(async () => { row.click(); });
+  expect(api.refreshStorage).toHaveBeenCalledOnce();
+});
+
+test("reports the committed trim while updated accounting is still pending", async () => {
+  api.previewStorageTrim.mockResolvedValue({ token: "preview-token", documents: 1, payloadBytes: 80 });
+  api.applyStorageTrim.mockResolvedValue({ deleted: 1 });
+  let finish!: (value: typeof snapshot) => void;
+  api.refreshStorage.mockReturnValue(new Promise((resolve) => { finish = resolve; }));
+  await mount();
+  await openAction("Trim");
+  await input("#storage-before", "2021-01-01");
+  await submit(".storage-dialog form");
+  const checkbox = host.querySelector<HTMLInputElement>('[type="checkbox"]')!;
+  checkbox.checked = true;
+  await act(async () => { checkbox.dispatchEvent(new window.Event("change", { bubbles: true })); });
+  await click("Delete previewed data");
+  expect(host.textContent).toContain("1 document removed");
+  expect(host.textContent).toContain("Updating storage charts");
+  await act(async () => finish(snapshot));
+  expect(host.textContent).toContain("1 document removed");
+  expect(host.textContent).not.toContain("Updating storage charts");
 });
