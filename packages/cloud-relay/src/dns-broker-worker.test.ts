@@ -195,7 +195,7 @@ test("the protected Worker admits only approved new keys and continues serving e
   const admitted = client(owner);
   await admitted.publishCaa("https://acme-v02.api.letsencrypt.org/acme/acct/123", signal);
   const lease = await admitted.presenter().create("a".repeat(43), signal);
-  await admitted.presenter().remove(lease.id!);
+  await admitted.presenter().remove(lease.id, signal);
   expect(objects.cloudflare.records.some(({ type }) => type === "CAA")).toBe(true);
 });
 
