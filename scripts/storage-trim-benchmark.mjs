@@ -37,7 +37,7 @@ try {
     .map((row) => row.detail);
   if (
     !plan.some((line) =>
-      line.includes("SEARCH documents USING INDEX idx_documents_source_created_revision"),
+      line.includes("SEARCH documents USING COVERING INDEX idx_documents_source_created_revision"),
     ) ||
     plan.some((line) => /SCAN|TEMP B-TREE/.test(line))
   )
@@ -58,6 +58,8 @@ try {
   for (;;) {
     const pageStart = performance.now();
     const page = readStorageTrimPage(db, job);
+    if (page.rows.some((row) => Object.keys(row).sort().join(",") !== "id,source_created_at"))
+      throw new Error("The read-worker page includes non-index cursor payload");
     durations.push(performance.now() - pageStart);
     maximumPage = Math.max(maximumPage, page.rows.length);
     examined += page.rows.length;

@@ -276,8 +276,7 @@ export function startStorageTrimJob(
   })();
 }
 
-export const STORAGE_TRIM_PAGE_SQL = `SELECT id,provider_id,source_id,stream_id,external_id,content_hash,updated_at,source_updated_at,source_created_at,title,metadata,
-      length(CAST(content AS BLOB))+length(CAST(title AS BLOB))+length(CAST(metadata AS BLOB)) AS payload_bytes
+export const STORAGE_TRIM_PAGE_SQL = `SELECT id,source_created_at
       FROM documents INDEXED BY idx_documents_source_created_revision WHERE source_id = ?
        AND (source_created_at,id) > (?,?) AND (source_created_at,id) <= (?,?)
       ORDER BY source_created_at,id LIMIT ?`;

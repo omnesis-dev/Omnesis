@@ -323,7 +323,7 @@ test("writer admission suppresses old late arrivals while a job runs, but keeps 
   ).toBeDefined();
 });
 
-test("candidate pages use an indexed compound seek with no scan or temporary sort", () => {
+test("candidate pages use a covering indexed seek with no document payload or temporary sort", () => {
   const details = db
     .prepare<[string, string, string, string, string, number], { detail: string }>(
       `EXPLAIN QUERY PLAN ${STORAGE_TRIM_PAGE_SQL}`,
@@ -331,8 +331,24 @@ test("candidate pages use an indexed compound seek with no scan or temporary sor
     .all(sourceId, "2020-01-01T00:00:00.000Z", "middle", "2022-01-01T00:00:00.000Z", "upper", 101)
     .map((row) => row.detail)
     .join("\n");
-  expect(details).toContain("SEARCH documents USING INDEX idx_documents_source_created_revision");
+  expect(details).toContain(
+    "SEARCH documents USING COVERING INDEX idx_documents_source_created_revision",
+  );
   expect(details).not.toMatch(/SCAN|TEMP B-TREE/);
+});
+
+test("read worker pages contain only cursor keys even for large content and metadata", async () => {
+  add("large-entry", old, { inventedPayload: "m".repeat(100_000) });
+  db.prepare("UPDATE documents SET content=?,title=? WHERE external_id='large-entry'").run(
+    "c".repeat(1_000_000),
+    "t".repeat(100_000),
+  );
+  const job = await engine().startTrim(sourceId, before);
+  const page = readStorageTrimPage(db, readStorageTrimJob(db, job.id)!);
+  expect(page.rows).toHaveLength(1);
+  expect(Object.keys(page.rows[0]!).sort()).toEqual(["id", "source_created_at"]);
+  expect(page.rows[0]!.source_created_at).toBe(old);
+  expect(JSON.stringify(page).length).toBeLessThan(200);
 });
 
 test("a persisted manual command continues after closing and reopening the database", async () => {
