@@ -31,8 +31,11 @@ enum AutomationTouchLog {
     static let cancelledTouches = parseOrdinals(ProcessInfo.processInfo.environment["DEMO_CANCEL_TOUCHES"])
 
     private static func parseOrdinals(_ value: String?) -> Set<Int> {
-        Set((value ?? "").split(separator: ",").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
-            .filter { $0 > 0 })
+        let ordinals = (value ?? "")
+            .split(separator: ",")
+            .compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
+            .filter { $0 > 0 }
+        return Set(ordinals)
     }
     #endif
 
