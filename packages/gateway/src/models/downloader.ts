@@ -81,7 +81,10 @@ export class DownloadError extends Error {
  * with a `DownloadError` whose `code` is one of:
  *   `network`, `http_status`, `sha_mismatch`, `aborted`, `disk`.
  */
-export function startDownload(entry: GgufCatalogEntry, opts: DownloadOptions): DownloadHandle {
+export function startDownload(
+  entry: Pick<GgufCatalogEntry, "filename" | "downloadUrl" | "sizeBytes" | "sha256">,
+  opts: DownloadOptions,
+): DownloadHandle {
   const controller = new AbortController();
   const finalPath = join(opts.modelsDir, entry.filename);
   const partialPath = `${finalPath}.partial`;
