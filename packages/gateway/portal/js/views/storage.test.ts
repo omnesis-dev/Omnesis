@@ -8,7 +8,7 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest";
 
 const api = vi.hoisted(() => ({ getStorage: vi.fn(), setStoragePolicy: vi.fn(), previewStorageTrim: vi.fn(), applyStorageTrim: vi.fn(), setStorageRetention: vi.fn(), refreshStorage: vi.fn() }));
 vi.mock("../api.js", () => api);
-vi.mock("../lib/router.js", () => ({ navigate: vi.fn() }));
+
 // @ts-expect-error — portal modules are plain JS.
 import { StorageView } from "./storage.js";
 let host: HTMLElement;
@@ -29,13 +29,24 @@ afterEach(() => { render(null, host); vi.unstubAllGlobals(); });
 async function mount() { await act(async () => { render(h(StorageView, {}), host); }); await act(async () => {}); }
 async function input(selector: string, value: string) {
   const node = host.querySelector(selector) as HTMLInputElement;
-  if (node.tagName === "SELECT") Object.defineProperty(node, "value", { configurable: true, value });
-  else node.value = value;
-  await act(async () => { node.dispatchEvent(new window.Event(node.tagName === "SELECT" ? "change" : "input", { bubbles: true })); });
+  node.value = value;
+  await act(async () => { node.dispatchEvent(new window.Event("input", { bubbles: true })); });
 }
 async function click(label: string) {
   const node = [...host.querySelectorAll("button")].find((button) => button.textContent === label) as HTMLButtonElement;
   await act(async () => { node.click(); });
+}
+async function openAction(label: string) {
+  await act(async () => {
+    const trigger = host.querySelector(".row-action-trigger") as HTMLButtonElement;
+    trigger.getBoundingClientRect = () => ({ bottom: 10, top: 0, right: 10 }) as DOMRect;
+    trigger.click();
+  });
+  await act(async () => {
+    const item = [...host.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find((node) => node.textContent?.trim() === label);
+    item?.click();
+  });
+  expect(host.querySelector('[role="dialog"]')).not.toBeNull();
 }
 async function submit(selector: string) {
   await act(async () => { host.querySelector(selector)?.dispatchEvent(new window.Event("submit", { bubbles: true, cancelable: true })); });
@@ -43,8 +54,8 @@ async function submit(selector: string) {
 test("distinguishes measured physical files, logical estimates and storage protection", async () => {
   await mount();
   expect(host.textContent).toContain("Storage protection is active");
-  expect(host.textContent).toContain("exclude shared indexes");
-  expect(host.textContent).toContain("does not guarantee a smaller database file");
+  expect(host.textContent).toContain("Shared database space");
+  expect(host.textContent).not.toContain("Database allocation");
   expect(host.textContent).toContain("source-example");
   expect(host.querySelector('[role="img"]')?.getAttribute("aria-label")).toContain("Omnesis files");
 });
@@ -63,8 +74,8 @@ test("requires preview and explicit confirmation, then consumes exactly the prev
   api.applyStorageTrim.mockResolvedValue({ deleted: 2 });
   await mount();
   expect(api.applyStorageTrim).not.toHaveBeenCalled();
-  await input("#storage-source", "source-example"); await input("#storage-before", "2021-01-01");
-  await submit(".storage-trim-form");
+  await openAction("Trim"); await input("#storage-before", "2021-01-01");
+  await submit(".storage-dialog form");
   expect(api.previewStorageTrim).toHaveBeenCalledWith("source-example", "2021-01-01T00:00:00.000Z");
   const deletion = [...host.querySelectorAll("button")].find((button) => button.textContent === "Delete previewed data") as HTMLButtonElement;
   expect(deletion.disabled).toBe(true);
@@ -79,8 +90,8 @@ test("requires preview and explicit confirmation, then consumes exactly the prev
 });
 test("changing the cutoff invalidates a preview before it can be applied", async () => {
   api.previewStorageTrim.mockResolvedValue({ token: "old-token", documents: 2, payloadBytes: 80 });
-  await mount(); await input("#storage-source", "source-example"); await input("#storage-before", "2021-01-01");
-  await submit(".storage-trim-form");
+  await mount(); await openAction("Trim"); await input("#storage-before", "2021-01-01");
+  await submit(".storage-dialog form");
   await input("#storage-before", "2022-01-01");
   expect(host.querySelector(".storage-trim-preview")).toBeNull();
   expect(api.applyStorageTrim).not.toHaveBeenCalled();
@@ -93,37 +104,39 @@ test("shows failed reads and allows retry", async () => {
 });
 test("rolling retention requires a source and saves explicit days or disable", async () => {
   await mount();
-  await input("#storage-source", "source-example");
+  await openAction("Set rolling retention");
   await input("#storage-retention-days", "1095");
-  await submit(".storage-retention form");
+  await submit(".storage-dialog form");
   expect(api.setStorageRetention).not.toHaveBeenCalled();
   const confirmation = host.querySelector("#storage-retention-confirm") as HTMLInputElement;
   confirmation.checked = true;
   await act(async () => { confirmation.dispatchEvent(new window.Event("change", { bubbles: true })); });
-  await submit(".storage-retention form");
+  await submit(".storage-dialog form");
   expect(api.setStorageRetention).toHaveBeenLastCalledWith("source-example", 1095);
+  await openAction("Set rolling retention");
   await input("#storage-retention-days", "");
-  await submit(".storage-retention form");
+  await submit(".storage-dialog form");
   expect(api.setStorageRetention).toHaveBeenLastCalledWith("source-example", null);
+  await openAction("Set rolling retention");
   await input("#storage-retention-days", "0.5");
-  await submit(".storage-retention form");
+  await submit(".storage-dialog form");
   expect(api.setStorageRetention).toHaveBeenCalledTimes(2);
 });
 test("a retention source with no remaining documents can still be selected and disabled", async () => {
   api.getStorage.mockResolvedValue({ ...snapshot, logical: { sources: [], database: { tables: [] } }, retention: [{ sourceId: "empty-source", maxAgeDays: 7 }] });
   await mount();
-  await input("#storage-source", "empty-source");
+  await openAction("Set rolling retention");
   expect((host.querySelector("#storage-retention-days") as HTMLInputElement).value).toBe("7");
   await input("#storage-retention-days", "");
-  await submit(".storage-retention form");
+  await submit(".storage-dialog form");
   expect(api.setStorageRetention).toHaveBeenCalledExactlyOnceWith("empty-source", null);
 });
 test("refreshes cached accounting explicitly and labels lexical allocation and vector payload", async () => {
-  api.getStorage.mockResolvedValue({ ...snapshot, index: { measuredAt: "2020-01-01T00:00:00Z", lexicalBytes: 1024, embeddingBytes: 2048, sources: [{ sourceId: "source-example", month: "2020-01", chunkCount: 2, embeddingBytes: 2048 }] } });
+  api.getStorage.mockResolvedValue({ ...snapshot, index: { measuredAt: "2020-01-01T00:00:00Z", lexicalBytes: 1024, embeddingBytes: 2048, sources: [{ sourceId: "source-example", month: "2020-01", chunkCount: 2, textBytes: 128, embeddingBytes: 2048 }] } });
   await mount();
-  expect(host.textContent).toContain("Lexical index allocation");
-  expect(host.textContent).toContain("Vector embedding payload");
-  expect(host.textContent).toContain("Cached measurements can lag");
+  expect(host.textContent).toContain("Lexical index");
+  expect(host.textContent).toContain("Vectors");
+  expect(host.textContent).toContain("Measurements can lag");
   await click("Refresh measurements");
   expect(api.refreshStorage).toHaveBeenCalledOnce();
 });
@@ -145,5 +158,45 @@ test("offers existing file reclamation paths and explains trimming may leave quo
   await mount();
   expect(host.querySelector('a[href="/portal/settings/models"]')).not.toBeNull();
   expect(host.querySelector('a[href="https://omnesis.dev/docs/updating#backup"]')).not.toBeNull();
-  expect(host.textContent).toContain("trimming alone may leave this gateway above its physical size limit");
+  await openAction("Trim");
+  await input("#storage-before", "2021-01-01");
+  expect(host.textContent).toContain("database file sizes can remain unchanged");
+});
+
+test("shows the live disk limit as a placeholder and hides healthy status", async () => {
+  const gib = 1024 ** 3;
+  api.getStorage.mockResolvedValue({ ...snapshot, policy: { maxBytes: null },
+    pressure: { state: "normal", usageBytes: 2 * gib, policy: { maxDiskUsedPercent: 95, minFreeBytes: gib },
+      volumes: [{ id: "one", availableBytes: 10 * gib, totalBytes: 100 * gib },
+        { id: "two", availableBytes: 8 * gib, totalBytes: 100 * gib }] } });
+  await mount();
+  const limit = host.querySelector<HTMLInputElement>("#storage-limit");
+  expect(limit?.placeholder).toBe("5.000");
+  expect(limit?.value).toBe("");
+  expect(host.querySelector(".storage-health")).toBeNull();
+  await submit(".storage-limit-form");
+  expect(api.setStoragePolicy).toHaveBeenLastCalledWith({ maxBytes: null });
+});
+
+test("expands the source history and a graph selection sets the trim cutoff", async () => {
+  await mount();
+  await act(async () => { host.querySelector<HTMLButtonElement>(".storage-expand")?.click(); });
+  expect(host.querySelector(".storage-expanded .storage-history")).not.toBeNull();
+  await openAction("Trim");
+  const point = host.querySelector('[role="dialog"] [data-history-point="0"]');
+  await act(async () => { point?.dispatchEvent(new window.Event("click", { bubbles: true })); });
+  expect(host.querySelector<HTMLInputElement>("#storage-before")?.value).toBe("2020-02-01");
+});
+
+test("shows the time-of-day cutoff for a rolling window", async () => {
+  const clock = vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-11-18T18:23:00Z"));
+  try {
+    await mount();
+    await openAction("Set rolling retention");
+    await input("#storage-before", "2026-11-17");
+    expect((host.querySelector("#storage-retention-days") as HTMLInputElement).value).toBe("1");
+    expect(host.querySelector('[role="dialog"]')?.textContent).toContain("2026-11-17 18:23 UTC");
+  } finally {
+    clock.mockRestore();
+  }
 });

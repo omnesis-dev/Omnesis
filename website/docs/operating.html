@@ -429,15 +429,16 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
         <h2 id="storage">Storage</h2>
         <p>
           Open <strong>Settings → Storage</strong> in the portal to see the gateway's measured
-          files, the capacity of each disk it uses, and document payload by source and month.
-          Physical totals include database journals, search indexes, models, backups and other
-          gateway files. Source payload is an estimate of document content, titles and metadata;
-          shared indexes, analytics and database overhead are separate, so these views do not add up
-          to the same total. Measurements carry their completion time and are refreshed in the
-          background. Collector-owned caches on other machines are outside this gateway view.
+          files, the capacity of each disk it uses, and estimated usage by source. Expand a source
+          to see a monthly and cumulative breakdown of the data currently stored, grouped by its
+          source date. Source totals include document payload, stored vectors, indexed text and a
+          share of the lexical index weighted by indexed text size. Shared database overhead, vector
+          graph files and analytics are excluded from the source estimates. Measurements refresh in
+          the background. Collector caches on other machines are outside this gateway view.
         </p>
         <p>
-          Set an optional maximum gateway size in GiB. Without one, automatic disk protection still
+          Set an optional maximum gateway size in GiB. An empty field shows an estimate based on the
+          gateway's footprint and the disk with the least room to grow. Disk protection always
           applies: growth pauses when a gateway disk reaches 95% used space or has less than the
           safety reserve available (500 MiB by default). The gateway checks every disk holding its
           stores, including stores moved outside its configuration directory. Capacity is sampled,
@@ -456,20 +457,21 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
           pauses until measurement succeeds again.
         </p>
         <p>
-          <strong>Preview trim</strong> removes documents before a chosen date from one source. Each
-          approval covers at most 100 exact document revisions, with another preview needed for the
-          next batch. A changed document invalidates the approval. Contacts are exempt; recent
-          documents and other sources are not part of that approval. Originals in the connected
-          service remain untouched. A one-off trim suppresses those items locally so an ordinary
-          sync does not immediately restore them.
+          Choose <strong>Trim</strong> from a source row’s actions. Pick a date on its chart or
+          enter it directly, then preview the documents before that date. Each approval covers at
+          most 100 exact document revisions, with another preview needed for the next batch. A
+          changed document invalidates the approval. Contacts are exempt; recent documents and other
+          sources are not part of that approval. Originals in the connected service remain
+          untouched. A one-off trim suppresses those items locally so an ordinary sync does not
+          immediately restore them.
         </p>
         <p>
-          <strong>Rolling retention</strong> is a separate, explicit choice for one source: enter
-          the number of days to keep and confirm automatic removal. It trims stored older documents
-          in bounded background batches and keeps newly received older documents out. It does not
-          trim analytics rows or collector-owned archives. Turning it off stops automatic trimming;
-          widening it allows older documents to be imported again, subject to the source's import
-          window. See <a href="sources#storage-retention">Source retention</a>.
+          Choose <strong>Set rolling retention</strong> from the same source menu. Pick a cutoff
+          date or enter the number of days to keep, then confirm automatic removal. It trims stored
+          older documents in bounded background batches and keeps newly received older documents
+          out. It does not trim analytics rows or collector-owned archives. Turning it off stops
+          automatic trimming; widening it allows older documents to be imported again, subject to
+          the source's import window. See <a href="sources#storage-retention">Source retention</a>.
         </p>
         <p>
           Deletion frees pages inside a database for reuse; it does not guarantee a smaller file on
