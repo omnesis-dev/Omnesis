@@ -20,8 +20,6 @@ data class RecordedChunk(
     val startedAtMs: Long,
     val durationMs: Long,
     val file: File,
-    /** The loudest level heard during the chunk, 0–32767 as `MediaRecorder.getMaxAmplitude`. */
-    val peakAmplitude: Int,
     /** The microphone was taken from the recorder during the chunk. */
     val interrupted: Boolean,
 )
@@ -35,12 +33,31 @@ object ChunkPolicy {
     const val FILE_EXTENSION = "m4a"
     /** About a minute of audio per chunk at [BIT_RATE]. */
     const val TARGET_CHUNK_MS = 60_000L
-    /**
-     * Below this peak a chunk is treated as silence and its audio is not sent.
-     * A first estimate; it needs tuning against real recordings on devices.
-     * See #862 — planned: on-device voice activity detection instead.
+    /** Samples per voice-detector frame: 32 ms at [SAMPLE_RATE_HZ], the window Silero VAD takes. */
+    const val FRAME_SAMPLES = 512
+    /*
+     * Speech segmentation, as Silero's own `get_speech_timestamps` does it,
+     * with its defaults: a segment starts at a frame reaching
+     * [SPEECH_THRESHOLD], continues through frames down to
+     * [SPEECH_END_THRESHOLD], and ends after [MIN_SILENCE_MS] below that. A
+     * chunk holds speech when one segment lasts [MIN_SPEECH_MS]; shorter ones
+     * are knocks and clicks. A quiet voice across a table hovers around the
+     * start threshold, so the lower end threshold keeps its segment whole.
      */
-    const val SILENCE_PEAK = 500
+    const val SPEECH_THRESHOLD = 0.5f
+    const val SPEECH_END_THRESHOLD = 0.35f
+    const val MIN_SPEECH_MS = 250
+    const val MIN_SILENCE_MS = 100
+
+    /**
+     * A chunk whose last [TAIL_MS] hold speech keeps the next chunk's audio
+     * whatever that chunk scores: a sentence cut by the boundary may leave
+     * too little of itself in the next chunk to count as speech there.
+     */
+    const val TAIL_MS = 2_000L
+
+    /** Length of one detector frame, ms. */
+    const val FRAME_MS = FRAME_SAMPLES * 1000.0 / SAMPLE_RATE_HZ
 
     /**
      * File size that holds about [TARGET_CHUNK_MS] of audio at [BIT_RATE]
@@ -48,8 +65,6 @@ object ChunkPolicy {
      * chunk runs a little under a minute.
      */
     fun maxChunkBytes(): Long = BIT_RATE / 8L * TARGET_CHUNK_MS / 1000L
-
-    fun isSilent(peakAmplitude: Int): Boolean = peakAmplitude < SILENCE_PEAK
 
     fun fileName(seq: Int): String = "chunk-%05d.%s".format(seq, FILE_EXTENSION)
 
@@ -66,8 +81,8 @@ object ChunkPolicy {
  * time, the recorder stops at the limit and is restarted, losing the
  * restart's few milliseconds; if the microphone cannot be reopened, the
  * closed chunk is marked interrupted and [onMicrophoneLost] reports it. Each
- * closed file is handed to [onChunk] with its timing, its peak level (for the
- * silence gate) and whether the microphone was taken.
+ * closed file is handed to [onChunk] with its timing and whether the
+ * microphone was taken; the controller decides whether it holds speech.
  *
  * The source is chosen for a voice across a table, not one held to the
  * mouth: `UNPROCESSED` where the device supports it, else `VOICE_RECOGNITION`,
@@ -89,7 +104,6 @@ class ChunkedAudioRecorder(
     private var nextSeq = 0
     private var current: Pending? = null
     private var queued: Pending? = null
-    private var peak = 0
     private var interrupted = false
     private val handler = Handler(Looper.getMainLooper())
     private var recordingCallback: Any? = null
@@ -116,11 +130,9 @@ class ChunkedAudioRecorder(
             r.start()
             first.startedAtMs = clock()
             current = first
-            peak = 0
             interrupted = false
             recorder = r
             watchForSilencing()
-            handler.post(peakPoller)
             true
         } catch (e: Exception) {
             Log.w(TAG, "Could not start recording: ${e.message}")
@@ -181,8 +193,6 @@ class ChunkedAudioRecorder(
     /** Stop the recorder and return its current chunk, closed. */
     private fun close(): RecordedChunk? {
         val r = recorder ?: return null
-        handler.removeCallbacks(peakPoller)
-        samplePeak()
         unwatchSilencing()
         val now = clock()
         try {
@@ -217,12 +227,8 @@ class ChunkedAudioRecorder(
             startedAtMs = pending.startedAtMs,
             durationMs = (endMs - pending.startedAtMs).coerceAtLeast(0),
             file = pending.file,
-            peakAmplitude = peak,
             interrupted = interrupted,
-        ).also {
-            peak = 0
-            interrupted = false
-        }
+        ).also { interrupted = false }
 
     private fun newPending(startMs: Long): Pending {
         val seq = nextSeq++
@@ -251,18 +257,6 @@ class ChunkedAudioRecorder(
         }
     }
 
-    private val peakPoller = object : Runnable {
-        override fun run() {
-            samplePeak()
-            if (recorder != null) handler.postDelayed(this, PEAK_POLL_MS)
-        }
-    }
-
-    private fun samplePeak() {
-        val level = runCatching { recorder?.maxAmplitude ?: 0 }.getOrDefault(0)
-        if (level > peak) peak = level
-    }
-
     private fun watchForSilencing() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return
         val callback = object : AudioManager.AudioRecordingCallback() {
@@ -288,6 +282,5 @@ class ChunkedAudioRecorder(
 
     private companion object {
         const val TAG = "Omnesis:Recording"
-        const val PEAK_POLL_MS = 200L
     }
 }
