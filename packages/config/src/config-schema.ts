@@ -760,15 +760,19 @@ const indexer = z
     embedder: z
       .object({
         /**
-         * Per-slot context size in tokens. The embedding model's max
-         * context is 8192; default 2048 keeps KV-cache memory low.
-         * Raise to fit longer chunks; KV cache scales linearly.
+         * Per-slot context size in tokens, for a local GGUF embedder.
+         * Default 2048 keeps KV-cache memory low; raise it to fit longer
+         * chunks (KV cache scales linearly). It is capped at the window the
+         * model was trained on (512 tokens for the BGE, mxbai and E5
+         * models), and an input longer than the context is cut to it.
          */
         contextSize: z
           .number()
           .int()
           .positive()
-          .describe("Per-slot embedder context size in tokens. Default 2048 (model max 8192).")
+          .describe(
+            "Per-slot local embedder context size in tokens. Default 2048, capped at the model's trained window.",
+          )
           .optional(),
         /**
          * Hard ceiling per `getEmbeddingFor` call in milliseconds.
