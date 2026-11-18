@@ -5,6 +5,9 @@ export type CloudRelayManagementError =
   | "relay-service-unavailable"
   | "relay-service-mismatch"
   | "configuration-invalid"
+  | "dns-verification-required"
+  | "dns-capacity"
+  | "dns-allocation-rate"
   | "relay-unreachable"
   | "invitation-required"
   | "enrollment-refused"
@@ -91,13 +94,22 @@ export interface CloudRelayManagementStatus {
   /** Progress of connecting by sign-in. Present while a connection is under way or just ended. */
   connect?: {
     state: "idle" | "waiting" | "registering" | "linking" | "done" | "failed";
+    /** An independent DNS broker check before this gateway obtains its public name. */
+    verification?: { url: string; expiresAt: number };
     authorizeUrl?: string;
     connectUrl?: string;
     /** For display only: the relay's short address for the same connect page. */
     connectShortUrl?: string;
     code?: string;
     expiresAt?: number;
-    error?: "not-allowed" | "capacity" | "expired" | "enrollment-refused" | "account-link-failed";
+    error?:
+      | "not-allowed"
+      | "capacity"
+      | "expired"
+      | "enrollment-refused"
+      | "account-link-failed"
+      | "dns-capacity"
+      | "dns-allocation-rate";
   };
   /**
    * The certificate monitor saw a certificate for this gateway's name with a key the gateway

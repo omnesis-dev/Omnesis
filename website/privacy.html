@@ -269,6 +269,21 @@
           all of this in full.
         </p>
 
+        <p>
+          When you give a gateway a public Omnesis address, a separate DNS broker at
+          <code>dns.omnesis.app</code> checks the gateway's public identifier and public owner key.
+          Its browser security check uses Cloudflare Turnstile. Cloudflare receives browser and
+          connection information, including the IP address, to assess automated abuse; it may ask
+          you to confirm you are human. The broker stores the gateway's public key and name binding,
+          temporary verification state, and limited creation counters for abuse prevention. This
+          check does not receive your indexed documents, searches or gateway credentials. Existing
+          gateways do not repeat the browser check for ordinary certificate renewal. See
+          <a href="https://www.cloudflare.com/privacypolicy/" target="_blank" rel="noreferrer"
+            >Cloudflare's privacy policy</a
+          >
+          for its processing.
+        </p>
+
         <h2>This website</h2>
         <p>
           This website does not run analytics or set advertising cookies. You can submit an email

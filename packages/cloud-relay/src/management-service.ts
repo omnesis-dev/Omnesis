@@ -4,12 +4,12 @@ import { randomUUID, X509Certificate } from "node:crypto";
 import { readFile, access, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { createLogger, ownedProcessCleanupReceipt } from "@omnesis/core";
+import { z } from "zod";
 import {
   cleanupReceipt,
   combinedCleanupErrors,
   OwnedCleanupLifecycle,
 } from "./owned-cleanup-lifecycle.js";
-import { z } from "zod";
 import { GatewayCertificateMonitor } from "./gateway-certificate-monitor.js";
 import { gatewayRecoveryReceiptStatus } from "./gateway-recovery-status.js";
 import { probePublicMcp as defaultPublicProbe } from "./management-probe.js";
@@ -38,6 +38,9 @@ import {
 } from "./gateway-key-client.js";
 import {
   DnsBrokerNameTaken,
+  DnsBrokerAdmissionRefused,
+  DnsBrokerVerificationRequired,
+  type DnsBrokerVerification,
   dnsBrokerClient,
   dnsBrokerSelection,
   type DnsBrokerSelection,
@@ -168,6 +171,8 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
       }
     | undefined;
   private connectAbort = new AbortController();
+  private pendingGatewayId: string | undefined;
+  private connectPreparation: Promise<void> | undefined;
   private notice: CloudRelayManagementStatus["notice"];
   private forgetting: Promise<void> | undefined;
   /** Whether any answer behind the leaving under way said the gateway was unlinked. */
@@ -513,12 +518,17 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
     if (this.settings && selected !== this.settings.relayUrl) return "relay-service-mismatch";
     return undefined;
   }
-  async configure(input: CloudRelayConfigureInput): Promise<CloudRelayManagementStatus> {
+  async configure(
+    input: CloudRelayConfigureInput,
+    signal?: AbortSignal,
+    onVerification?: (verification: DnsBrokerVerification | undefined) => void,
+  ): Promise<CloudRelayManagementStatus> {
     return this.run(async () => {
       if (this.busy || this.settings?.enabled)
         throw new CloudRelayManagementFailure(409, "operation-in-progress");
       this.busy = true;
       try {
+        signal?.throwIfAborted();
         const serviceError = this.serviceError();
         if (serviceError)
           throw new CloudRelayManagementFailure(
@@ -547,18 +557,21 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
           throw new CloudRelayManagementFailure(400, "configuration-invalid");
         }
         const selection = broker;
-        let gatewayId = this.settings?.gatewayId ?? randomUUID();
+        let gatewayId = this.settings?.gatewayId ?? (this.pendingGatewayId ??= randomUUID());
         let metadata;
         for (let attempt = 1; metadata === undefined; attempt++) {
           // The name is claimed before the relay learns the id, so the relay cannot claim it first.
           if (
             selection &&
-            (await this.admitted(() => this.claimHostedName(selection, relayUrl, gatewayId))) ===
-              "taken"
+            (await this.admitted(() =>
+              this.claimHostedName(selection, relayUrl, gatewayId, signal, onVerification),
+            )) === "taken"
           ) {
-            if (this.settings || attempt === 5)
+            if (this.settings || attempt === 5) {
+              if (!this.settings) this.pendingGatewayId = undefined;
               throw new CloudRelayManagementFailure(503, "relay-unreachable");
-            gatewayId = randomUUID();
+            }
+            gatewayId = this.pendingGatewayId = randomUUID();
             continue;
           }
           try {
@@ -574,11 +587,15 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
             if (this.cleanup.observe(error)) throw error;
             this.assertAdmitting(error);
             // A new gateway's id is only a random draw, so a taken hosted name costs a redraw.
-            if (!(error instanceof HostedNameTaken) || this.settings || attempt === 5)
+            if (!(error instanceof HostedNameTaken) || this.settings || attempt === 5) {
+              if (error instanceof HostedNameTaken && !this.settings)
+                this.pendingGatewayId = undefined;
               throw new CloudRelayManagementFailure(503, "relay-unreachable");
-            gatewayId = randomUUID();
+            }
+            gatewayId = this.pendingGatewayId = randomUUID();
           }
         }
+        signal?.throwIfAborted();
         const publicOrigin = custom ?? metadata.publicOrigin;
         if (!publicOrigin) throw new CloudRelayManagementFailure(400, "hostname-required");
         // Once a public identity exists, changing its network identity requires an explicit new installation.
@@ -613,7 +630,9 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
         const previous = this.settings;
         this.settings = next;
         try {
+          signal?.throwIfAborted();
           await this.admitted(() => this.persist());
+          this.pendingGatewayId = undefined;
         } catch (error) {
           if (this.cleanup.observe(error)) throw error;
           this.settings = previous;
@@ -635,6 +654,8 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
     selection: DnsBrokerSelection,
     relayUrl: string,
     gatewayId: string,
+    caller?: AbortSignal,
+    onVerification?: (verification: DnsBrokerVerification | undefined) => void,
   ): Promise<"claimed" | "taken" | "skipped"> {
     const client = dnsBrokerClient({
       brokerUrl: selection.url,
@@ -645,19 +666,32 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
           readOrCreateGatewayOwnerKey(join(this.directory, "owner.key"), !this.settings),
         ),
       fetch: this.options.fetch,
+      ...(onVerification ? { onVerificationRequired: onVerification } : {}),
     });
-    const signal = AbortSignal.timeout(15_000);
+    const signal = caller ?? AbortSignal.timeout(15_000);
     try {
       if (!(await this.admitted(() => client.health(signal)))) {
         if (!selection.required) return "skipped";
         throw new Error("The DNS broker is unavailable");
       }
       await this.admitted(() => client.claim(signal));
+      if (!onVerification && this.connection.verification) {
+        this.connection = { state: "idle" };
+        this.revision++;
+      }
       return "claimed";
     } catch (error) {
       if (this.cleanup.observe(error)) throw error;
       this.assertAdmitting(error);
       if (error instanceof DnsBrokerNameTaken) return "taken";
+      if (error instanceof DnsBrokerVerificationRequired) {
+        this.connection = { state: "waiting", verification: error.verification };
+        this.revision++;
+        throw new CloudRelayManagementFailure(503, "dns-verification-required");
+      }
+      caller?.throwIfAborted();
+      if (error instanceof DnsBrokerAdmissionRefused)
+        throw new CloudRelayManagementFailure(503, error.code);
       throw new CloudRelayManagementFailure(503, "relay-unreachable");
     }
   }
@@ -1294,12 +1328,78 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
   }): Promise<CloudRelayManagementStatus> {
     return this.run(async () => {
       if (!input.termsAccepted) throw new CloudRelayManagementFailure(400, "ca-terms-required");
-      if (["waiting", "registering", "linking"].includes(this.connection.state))
+      if (
+        ["waiting", "registering", "linking"].includes(this.connection.state) &&
+        (this.connection.state !== "waiting" || this.connectPreparation || this.signup)
+      )
         return this.status();
+      this.connectAbort = new AbortController();
+      const controller = this.connectAbort;
+      const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(10 * 60_000)]);
+      this.connection = { state: "waiting" };
+      let verificationShown = false;
+      let exposeVerification!: () => void;
+      const verificationReady = new Promise<void>((resolve) => {
+        exposeVerification = resolve;
+      });
+      const onVerification = (verification: DnsBrokerVerification | undefined) => {
+        if (signal.aborted || !verification) return;
+        // Keep the completed check visible until an actual sign-in destination is ready.
+        this.connection = { state: "waiting", verification };
+        this.revision++;
+        verificationShown = true;
+        exposeVerification();
+      };
+      const preparing: Promise<void> = this.prepareConnect(
+        input,
+        signal,
+        onVerification,
+        controller.signal,
+      )
+        .catch((error: unknown) => {
+          if (this.connectAbort !== controller) return;
+          if (signal.aborted) {
+            if (!controller.signal.aborted) {
+              this.connection = { state: "failed", error: "expired" };
+              this.revision++;
+            }
+            return;
+          }
+          this.connection = verificationShown
+            ? {
+                state: "failed",
+                error:
+                  error instanceof CloudRelayManagementFailure &&
+                  (error.code === "dns-capacity" || error.code === "dns-allocation-rate")
+                    ? error.code
+                    : "enrollment-refused",
+              }
+            : { state: "idle" };
+          this.revision++;
+          if (!verificationShown) throw error;
+        })
+        .finally(() => {
+          if (this.connectPreparation === preparing) this.connectPreparation = undefined;
+        });
+      this.connectPreparation = preparing;
+      // Ordinary setup still returns its sign-in page. A browser check is exposed while
+      // the owned preparation keeps waiting, so HTTP requests never wait for a person.
+      await Promise.race([preparing, verificationReady]);
+      return this.status();
+    });
+  }
+  private async prepareConnect(
+    input: { termsAccepted: boolean; intent?: "create" | "existing" },
+    signal: AbortSignal,
+    onVerification: (verification: DnsBrokerVerification | undefined) => void,
+    lifetime: AbortSignal,
+  ): Promise<void> {
+    return this.run(async () => {
       this.notice = undefined;
       // A gateway named by its environment is already configured, by its operator.
       if (!this.settings || !(this.settings.enabled || this.settings.legacyEnvironment))
-        await this.admitted(() => this.configure({ termsAccepted: true }));
+        await this.admitted(() => this.configure({ termsAccepted: true }, signal, onVerification));
+      signal.throwIfAborted();
       const env = this.environment();
       const client = new GatewaySignupClient({
         relayUrl: this.settings!.relayUrl,
@@ -1307,14 +1407,14 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
         ownerKeyFile: env.OMNESIS_CLOUD_RELAY_OWNER_KEY_FILE!,
         fetch: this.options.fetch,
       });
-      this.connectAbort = new AbortController();
       let pending: GatewaySignupPending;
       try {
-        pending = await this.admitted(() => client.start(this.connectAbort.signal, input.intent));
+        pending = await this.admitted(() => client.start(signal, input.intent));
       } catch (error) {
         if (this.cleanup.observe(error)) throw error;
         throw new CloudRelayManagementFailure(503, "relay-unreachable");
       }
+      signal.throwIfAborted();
       this.signup = { client, pending };
       this.connection = {
         state: "waiting",
@@ -1325,8 +1425,7 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
         expiresAt: pending.expiresAt,
       };
       this.revision++;
-      void this.finishConnect(client, pending, this.connectAbort.signal).catch(() => {});
-      return this.status();
+      void this.finishConnect(client, pending, lifetime).catch(() => {});
     });
   }
   private async finishConnect(
@@ -1411,6 +1510,8 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
   async cancelConnect(): Promise<CloudRelayManagementStatus> {
     return this.run(async () => {
       this.connectAbort.abort();
+      const preparing = this.connectPreparation;
+      if (preparing) await this.admitted(() => preparing.catch(() => {}));
       const signup = this.signup;
       this.signup = undefined;
       if (signup && this.connection.state === "waiting")

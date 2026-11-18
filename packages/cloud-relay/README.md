@@ -708,24 +708,69 @@ token in `OMNESIS_CLOUD_RELAY_DNS_BROKER_IMPORT_TOKEN_FILE`. An import never
 replaces a name the broker already binds. The import route exists only while
 the import token is configured.
 
-On a hosted Worker, set `APPROVED_NEW_OWNERS_JSON` to a JSON array of
-`{ hostname, gatewayId, ownerPublicKey }` entries approved independently of
-the relay. An empty array permits registered gateways to renew and stops new
-name allocations. With the setting present, the Worker requires a fresh owner
-signature before reserving a challenge. Each name may hold one pending
-challenge, and repeating the same request returns that challenge. An invalid
-completion cannot consume it. Registered owners remain authorized after their
-entry is removed from the approval list.
+For public signup, the hosted Worker uses automatic independent admission:
 
-Upgrade gateways to a client that supports signed challenges before enabling
-this setting. Leave it unset during the compatibility phase. Live gateways
-cache the broker capabilities for ten minutes. After enabling the setting or
-rolling it back, restart affected gateways to refresh immediately, or wait
-for discovery to refresh before retrying a certificate operation. Existing names
-remain registered, and authorized gateways can continue using their existing
-certificate during the transition. This setting is an operator approval list.
-Automatic DNS approval during public signup requires its own independent
-admission service.
+- Set `PUBLIC_ADMISSION_ENABLED=1`, `TURNSTILE_SITE_KEY`, the
+  `TURNSTILE_SECRET_KEY` secret, and the separate `PUBLIC_ADMISSION_KEY` secret.
+  The admission key is at least 32 random bytes encoded as canonical base64url;
+  never reuse the Cloudflare DNS token. Create a **managed** Turnstile widget for
+  the broker's own hostname, without pre-clearance. The Worker verifies the
+  hostname, `gateway-enrollment` action, freshness, and an exact owner-key/name
+  binding. The relay cannot approve a name or supply that proof.
+- Initial setup opens an independent browser security check. Cloudflare normally
+  verifies the browser automatically and may require human confirmation. There
+  is no operator approval list and no Google-account requirement. Active
+  gateways renew certificates without a browser check.
+- Public challenges are short-lived authenticated tickets rather than entries
+  in a shared pending pool. Replay tracking and operation limits are per name.
+  Browser verification tickets also allocate no pending storage. Concurrent
+  successful verifications of the same name charge one allocation.
+- Solving a check does not override resource limits. Default new-allocation
+  budgets are three per network per hour, ten per network per day, three per
+  owner key per day, and 1,000 across the service per day. IPv6 uses a /64 network
+  bucket. Durable counters contain keyed address digests and expire; raw client
+  addresses are not stored. `PUBLIC_ADMISSION_LIMITS_JSON` can override
+  `networkPerHour`, `networkPerDay`, `ownerPerDay`, `totalPerDay`, and
+  `reservedRecords`.
+- Before reserving permanent records, the Worker reads the DNS provider's real
+  record usage and quota, counts the current wildcard's A/AAAA records plus CAA,
+  and accounts for admitted names whose records are not published yet. It keeps
+  at least 36 records free, or the configured lease concurrency plus one full
+  routing replacement when that needs more. Partial writes retain their
+  reservation. A missing/unavailable quota, including an account-wide quota
+  requiring a different adapter, refuses new allocations. Existing active
+  renewals remain available. Provider plan limits still need enough capacity
+  for the expected user count; a security check cannot expand them.
+- A setup reservation expires after 15 minutes if publication never starts.
+  Releasing a name frees its active record entitlement while retaining its
+  permanent owner binding. Reconnecting that released gateway needs automatic
+  admission again and may have to wait if the service is full.
+- Provider work is bounded independently of new-name allocation. TXT and
+  configuration writes have separate concurrency limits of eight and two, and
+  rates of 30 and 12 operations per minute. A name may start six TXT leases an
+  hour. Identical in-flight CAA updates share one call; unchanged CAA is cached
+  for an hour before reassertion. Changing an ACME account waits ten minutes
+  after a successful publication; failed publication retries wait at least one
+  30-second rate window. A slow name cannot hold the shared metadata lock or an
+  unrelated owner's TXT renewal.
+
+Upgrade **every active gateway client** before enabling public admission; older
+strict wire parsers do not support its capability fields and stateless tickets.
+An imported ownership entry that has never completed CAA publication through
+this broker has no active record entitlement yet; its first use requires the
+automatic browser check. Importing an identity does not silently grant capacity.
+Live gateways cache broker capabilities for ten minutes, so restart them to
+refresh immediately or wait for discovery before retrying a certificate
+operation. `PUBLIC_ADMISSION_ENABLED=0` is an explicit temporary compatibility
+mode, not a public-launch protection: it retains legacy allocation behavior.
+An unset/invalid mode or incomplete public-mode secrets fail closed. A private
+closed-registry deployment can still use `APPROVED_NEW_OWNERS_JSON` in explicit
+compatibility mode, but it is not the public signup path.
+
+Automatic admission raises the cost of abuse and protects renewal capacity; it
+cannot guarantee availability against a distributed attack or exhaustion of a
+provider's overall Worker/API request allowance. Size provider plans and edge
+controls for public traffic as well as the application limits.
 
 The CAA record names only accounts under the configured prefix (Let's Encrypt
 production by default), and the account URL can't carry another parameter. A
@@ -995,9 +1040,8 @@ receive the relay's Cloudflare token and needs no inbound Internet listener.
 `OMNESIS_ACME_DNS_PROVIDER` selects who publishes the DNS-01 digest for a hosted
 name. The default, `auto`, sends a gateway of the official relay to the
 [independent DNS broker](#independent-dns-broker) compiled into the gateway
-(`https://dns.omnesis.app`) as soon as that broker answers for the relay's
-domain, and keeps using the relay's DNS cooperation until then; gateways of
-any other relay keep the relay. The broker's address is never taken from the
+(`https://dns.omnesis.app`), without a relay fallback if that broker is unavailable;
+gateways of any other relay keep the relay. The broker's address is never taken from the
 relay. A new gateway claims its hosted name at the broker before it first asks
 the relay for its configuration, and draws a new id when the broker binds the
 name to another key. Once a gateway has used the broker it never returns to

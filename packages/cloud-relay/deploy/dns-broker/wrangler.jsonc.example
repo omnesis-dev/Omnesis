@@ -3,6 +3,8 @@
 // fill in the placeholders, then:
 //
 //   wrangler secret put CLOUDFLARE_API_TOKEN    # DNS edit on this zone only
+//   wrangler secret put PUBLIC_ADMISSION_KEY   # independent random 32-byte base64url key
+//   wrangler secret put TURNSTILE_SECRET_KEY   # managed widget for the broker's hostname
 //   wrangler secret put REGISTRY_IMPORT_TOKEN   # only for the one-time import; delete afterwards
 //   wrangler deploy
 //
@@ -16,7 +18,7 @@
   "preview_urls": false,
   "routes": [{ "pattern": "<broker hostname>", "custom_domain": true }],
   "durable_objects": {
-    "bindings": [{ "name": "DNS_BROKER", "class_name": "DnsBrokerRegistry" }],
+    "bindings": [{ "name": "DNS_BROKER", "class_name": "DnsBrokerRegistry" }]
   },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["DnsBrokerRegistry"] }],
   "vars": {
@@ -24,8 +26,11 @@
     "RELAY_DOMAIN": "relay.omnesis.app",
     "ZONE_NAME": "omnesis.app",
     "ZONE_ID": "<zone id>",
-    // Enable after upgrading gateway clients. [] allows only existing names.
-    // "APPROVED_NEW_OWNERS_JSON": "[]",
+    // Upgrade active gateway clients before enabling public admission.
+    "PUBLIC_ADMISSION_ENABLED": "1",
+    "TURNSTILE_SITE_KEY": "<managed Turnstile site key>"
+    // Optional JSON overrides for the documented new-allocation budgets.
+    // "PUBLIC_ADMISSION_LIMITS_JSON": "{\"networkPerHour\":3,\"networkPerDay\":10,\"ownerPerDay\":3,\"totalPerDay\":1000,\"reservedRecords\":36}",
   },
-  "observability": { "enabled": true },
+  "observability": { "enabled": true }
 }

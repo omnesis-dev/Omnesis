@@ -307,8 +307,9 @@
           Some builds of the apps and the gateway offer an optional Omnesis account. It lets you
           reach your gateway from outside your own network through the Omnesis relay at
           <code>relay.omnesis.app</code>, and add a device to your gateway by signing in. You do not
-          need an account to use Omnesis, and none of this section applies if you never create one.
-          You sign in with Google or with a passkey.
+          need an account to use Omnesis. This section applies when you use the account or start
+          connecting a gateway through this optional service. You sign in with Google or with a
+          passkey.
         </p>
         <ul>
           <li>
@@ -344,11 +345,22 @@
             terms.
           </li>
           <li>
+            <strong>Gateway address setup.</strong> The separate DNS broker at
+            <code>dns.omnesis.app</code> processes the gateway's public identifier and public owner
+            key before it obtains a public address. Its browser security check uses Cloudflare
+            Turnstile, which receives browser and connection information, including the IP address,
+            to assess automated abuse and may ask you to confirm you are human. The broker keeps the
+            public name and key binding, temporary verification state and limited creation counters.
+            It does not receive your indexed content or gateway credentials. Ordinary certificate
+            renewals do not repeat the browser check.
+          </li>
+          <li>
             <strong>Deleting your account.</strong> The account page has a
             <strong>Delete account</strong> option. After a fresh sign-in, it deletes the account,
             its sign-in methods and sessions, and the registration of every gateway connected to it.
             Each gateway's relay address stays reserved for that gateway, recorded only by a one-way
-            digest of its identifier, so it is never given to anyone else.
+            digest of its identifier, so it is never given to anyone else. The separate DNS broker
+            retains the public name and owner-key binding to prevent reassignment.
           </li>
         </ul>
 

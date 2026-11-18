@@ -105,7 +105,12 @@ data class CloudRelayConnect(
     val code: String? = null,
     val expiresAt: JsonElement? = null,
     val error: String? = null,
+    val verification: CloudRelayVerification? = null,
 )
+
+/** An independent security check before allocating a new gateway address. Expiry is epoch milliseconds. */
+@Serializable
+data class CloudRelayVerification(val url: String? = null, val expiresAt: JsonElement? = null)
 
 @Serializable
 data class CloudRelayIdentity(

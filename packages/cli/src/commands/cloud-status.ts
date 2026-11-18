@@ -55,6 +55,28 @@ export function requestAccessUrl(status: { signup?: unknown } | undefined): stri
   }
 }
 
+/** A printable HTTPS security-check URL; no terminal controls or arbitrary navigation. */
+export function dnsVerificationUrl(value: unknown): string | undefined {
+  if (typeof value !== "string" || value.length > 16_384) return undefined;
+  try {
+    const url = new URL(value);
+    if (
+      url.protocol !== "https:" ||
+      url.username ||
+      url.password ||
+      url.hash ||
+      url.pathname !== "/_dns/v2/enroll" ||
+      url.searchParams.getAll("ticket").length !== 1 ||
+      !url.searchParams.get("ticket") ||
+      [...url.searchParams.keys()].some((key) => key !== "ticket")
+    )
+      return undefined;
+    return url.href;
+  } catch {
+    return undefined;
+  }
+}
+
 /** One line for a person about to create an account on an invite-only relay. */
 export function inviteOnlyLine(url: string): string {
   return `Omnesis accounts are invite-only for now. Request access at ${url} (you can create your account once it's approved).`;
@@ -157,6 +179,14 @@ export function formatCloudStatus(status: CloudStatus, version?: string): string
   const signIns = trustedSignInLines(status);
   const rows: [string, string][] = [
     ["Gateway version", plain(version)],
+    ...(dnsVerificationUrl(status.connect?.verification?.url)
+      ? [
+          ["Security check", dnsVerificationUrl(status.connect?.verification?.url)!] as [
+            string,
+            string,
+          ],
+        ]
+      : []),
     ["Error codes", errors(status).join(", ") || "none"],
     ...(status.notice ? [["Notice", plain(status.notice)] as [string, string]] : []),
     ["Remote access", status.enabled ? "on" : "off"],

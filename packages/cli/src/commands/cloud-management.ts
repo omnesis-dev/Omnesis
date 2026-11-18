@@ -9,6 +9,7 @@ import { cloudRelayEnabled } from "@omnesis/core";
 import { CliError, EXIT_USER_ERROR } from "@omnesis/cli-shared";
 import {
   formatCloudStatus,
+  dnsVerificationUrl,
   inviteOnlyLine,
   requestAccessUrl,
   trustedSignInLines,
@@ -106,6 +107,7 @@ interface ConnectStatus {
   config?: { acmeTermsUrl?: string };
   connect?: {
     state: "idle" | "waiting" | "registering" | "linking" | "done" | "failed";
+    verification?: { url: string; expiresAt: number };
     connectUrl?: string;
     connectShortUrl?: string;
     code?: string;
@@ -150,9 +152,21 @@ export async function connectGateway(options: {
     body: JSON.stringify({ termsAccepted: true }),
   })) as ConnectStatus;
   let announced = false;
+  let verificationAnnounced: string | undefined;
   // The gateway learns from its relay whether accounts need approval; said once, when it knows.
   let access: string | undefined;
   while (status.connect && !["done", "failed", "idle"].includes(status.connect.state)) {
+    if (status.connect.verification) {
+      const url = dnsVerificationUrl(status.connect.verification.url);
+      if (!url)
+        throw new CliError("The gateway's security check link was refused", EXIT_USER_ERROR);
+      if (url !== verificationAnnounced) {
+        verificationAnnounced = url;
+        process.stdout.write(
+          `\nOpen ${url}\nto complete this gateway's security check. Cloudflare may ask you to confirm you're human. No approval from Omnesis is needed.\n\nWaiting for the security check…\n`,
+        );
+      }
+    }
     if (status.connect.state === "waiting" && !announced && status.connect.connectUrl) {
       announced = true;
       process.stdout.write(

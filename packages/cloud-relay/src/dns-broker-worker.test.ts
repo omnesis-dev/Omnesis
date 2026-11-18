@@ -6,12 +6,13 @@ import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, expect, test, vi } from "vitest";
-import { brokerCall, brokerOwner } from "../test/dns-broker-owner.js";
+import { brokerCall, brokerOwner, type BrokerOwner } from "../test/dns-broker-owner.js";
 import { fakeCloudflare } from "../test/fake-cloudflare.js";
 import {
   brokerChallengeAdmissionTranscript,
   brokerChallengeSchema,
   brokerRequestDigest,
+  sha256Hex,
   type BrokerOperation,
 } from "./dns-broker-contract.js";
 import { dnsBrokerClient } from "./dns-broker-client.js";
@@ -51,6 +52,7 @@ function durableObjects(overrides: Partial<DnsBrokerEnv> = {}) {
   };
   const names: string[] = [];
   const env: DnsBrokerEnv = {
+    PUBLIC_ADMISSION_ENABLED: "0",
     BROKER_ORIGIN: "https://dns.example.test",
     RELAY_DOMAIN: "relay.example.test",
     ZONE_ID: cloudflare.zoneId,
@@ -103,7 +105,7 @@ test("the alarm follows the lease journal and removes expired records", async ()
   await brokerCall(objects.handle, owner, { type: "claim" });
   expect(objects.alarm()).toBeNull();
   await brokerCall(objects.handle, owner, { type: "txt-create", value: "a".repeat(43) });
-  expect(objects.alarm()).toBe(Date.now() + 600_000);
+  expect(objects.alarm()).toBe(Date.now() + 60_000);
   vi.setSystemTime(Date.now() + 600_001);
   await objects.instance().alarm();
   expect(objects.alarm()).toBeNull();
@@ -158,8 +160,14 @@ test("the Worker's code imports no Node module", async () => {
   };
   await visit("dns-broker-worker.ts");
   expect([...seen].sort()).toEqual([
+    "dns-broker-admission-budget.ts",
     "dns-broker-contract.ts",
     "dns-broker-core.ts",
+    "dns-broker-error.ts",
+    "dns-broker-http.ts",
+    "dns-broker-public-admission.ts",
+    "dns-broker-public-operations.ts",
+    "dns-broker-tickets.ts",
     "dns-broker-worker.ts",
     "dns-broker-zone.ts",
   ]);
@@ -168,6 +176,200 @@ test("the Worker's code imports no Node module", async () => {
   // write failed on the deployed broker while Node-based tests passed.
   for (const file of seen)
     expect(await readFile(join(root, file), "utf8"), file).not.toMatch(/redirect:\s*["']error["']/);
+});
+
+test("Worker public admission requires an explicit mode and complete configuration", () => {
+  expect(() => durableObjects({ PUBLIC_ADMISSION_ENABLED: undefined })).toThrow(
+    "Choose public DNS admission",
+  );
+  expect(() => durableObjects({ PUBLIC_ADMISSION_ENABLED: "wrong" })).toThrow(
+    "Choose public DNS admission",
+  );
+  expect(() => durableObjects({ PUBLIC_ADMISSION_ENABLED: "1" })).toThrow(
+    "requires its key and Turnstile",
+  );
+});
+
+test("the public Worker strips spoofed internal client context and uses Cloudflare's address", async () => {
+  const objects = durableObjects({
+    PUBLIC_ADMISSION_ENABLED: "1",
+    PUBLIC_ADMISSION_KEY: Buffer.alloc(32, 4).toString("base64url"),
+    TURNSTILE_SITE_KEY: "fixture-site-key",
+    TURNSTILE_SECRET_KEY: "fixture-secret",
+  });
+  const owner = brokerOwner();
+  const request = owner.request({ type: "claim" });
+  const expiresAt = Date.now() + 30_000;
+  const body = {
+    ...request,
+    proof: {
+      expiresAt,
+      signature: sign(
+        null,
+        brokerChallengeAdmissionTranscript(
+          "https://dns.example.test",
+          await brokerRequestDigest(request),
+          expiresAt,
+        ),
+        owner.privateKey,
+      ).toString("base64url"),
+    },
+  };
+  const post = (headers: HeadersInit) =>
+    objects.handle(
+      new Request("https://dns.example.test/_dns/v2/challenge", {
+        method: "POST",
+        headers: { "content-type": "application/json", ...headers },
+        body: JSON.stringify(body),
+      }),
+    );
+  expect((await post({ "x-omnesis-dns-worker-client": "192.0.2.1" })).status).toBe(403);
+  expect(
+    (await post({ "x-omnesis-dns-worker-client": "192.0.2.1", "cf-connecting-ip": "192.0.2.2" }))
+      .status,
+  ).toBe(428);
+});
+
+test("failed DNS writes with retained journals arm maintenance while unauthenticated errors do not retry cleanup", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  const objects = durableObjects();
+  const owner = brokerOwner();
+  await brokerCall(objects.handle, owner, { type: "claim" });
+  expect(objects.alarm()).toBeNull();
+  objects.cloudflare.fail.add("create:TXT");
+  objects.cloudflare.fail.add("list");
+  expect(
+    (await brokerCall(objects.handle, owner, { type: "txt-create", value: "a".repeat(43) })).status,
+  ).toBe(502);
+  expect(objects.alarm()).not.toBeNull();
+  const transport = vi.fn(objects.cloudflare.fetch);
+  vi.stubGlobal("fetch", transport);
+  for (let index = 0; index < 5; index++)
+    await objects.handle(new Request("https://dns.example.test/_dns/v2/missing"));
+  expect(transport).not.toHaveBeenCalled();
+  objects.cloudflare.fail.clear();
+  vi.setSystemTime(Date.now() + 600_001);
+  await objects.instance().alarm();
+  expect([...objects.values.keys()].some((key) => key.startsWith("lease:"))).toBe(false);
+  expect(objects.alarm()).toBeNull();
+});
+
+test("public alarm cleanup cannot erase maintenance for a concurrent new allocation", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  const objects = durableObjects({
+    PUBLIC_ADMISSION_ENABLED: "1",
+    PUBLIC_ADMISSION_KEY: Buffer.alloc(32, 9).toString("base64url"),
+    TURNSTILE_SITE_KEY: "fixture-site-key",
+    TURNSTILE_SECRET_KEY: "fixture-server-secret",
+  });
+  let pause = false;
+  let entered!: () => void, resume!: () => void;
+  const cleaning = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const blocked = new Promise<void>((resolve) => {
+    resume = resolve;
+  });
+  vi.stubGlobal("fetch", async (input: string | URL | Request, init?: RequestInit) => {
+    const url = new URL(String(input));
+    if (url.hostname === "challenges.cloudflare.com") {
+      const form = new URLSearchParams(String(init?.body));
+      expect(form.get("secret")).toBe("fixture-server-secret");
+      return new Response(
+        JSON.stringify({
+          success: true,
+          action: "gateway-enrollment",
+          hostname: "dns.example.test",
+          cdata: form.get("response"),
+          challenge_ts: new Date().toISOString(),
+        }),
+      );
+    }
+    if (pause && init?.method === "DELETE") {
+      entered();
+      await blocked;
+    }
+    return objects.cloudflare.fetch(input, init);
+  });
+  const transport: typeof fetch = async (input, init) =>
+    objects.handle(
+      new Request(String(input), {
+        ...init,
+        headers: {
+          ...Object.fromEntries(new Headers(init?.headers)),
+          "cf-connecting-ip": "192.0.2.20",
+        },
+      }),
+    );
+  const client = (owner: BrokerOwner) =>
+    dnsBrokerClient({
+      brokerUrl: "https://dns.example.test",
+      relayUrl: "https://relay.example.test",
+      gatewayId: owner.gatewayId,
+      owner: async () => owner.privateKey,
+      fetch: transport,
+    });
+  const admit = async (owner: BrokerOwner) => {
+    const request = owner.request({ type: "claim" });
+    const expiresAt = Date.now() + 30_000;
+    const response = await transport("https://dns.example.test/_dns/v2/challenge", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        ...request,
+        proof: {
+          expiresAt,
+          signature: sign(
+            null,
+            brokerChallengeAdmissionTranscript(
+              "https://dns.example.test",
+              await brokerRequestDigest(request),
+              expiresAt,
+            ),
+            owner.privateKey,
+          ).toString("base64url"),
+        },
+      }),
+    });
+    expect(response.status).toBe(428);
+    const { verification } = (await response.json()) as { verification: { url: string } };
+    const ticket = new URL(verification.url).searchParams.get("ticket")!;
+    const cData = await sha256Hex(
+      JSON.stringify([
+        "omnesis-dns-owner-v1",
+        owner.hostname,
+        owner.gatewayId,
+        owner.ownerPublicKey,
+      ]),
+    );
+    const accepted = await transport("https://dns.example.test/_dns/v2/enroll/verify", {
+      method: "POST",
+      headers: { "content-type": "application/json", origin: "https://dns.example.test" },
+      body: JSON.stringify({ ticket, token: cData }),
+    });
+    expect(accepted.status).toBe(200);
+  };
+  const first = brokerOwner();
+  await admit(first);
+  await client(first).publishCaa(
+    "https://acme-v02.api.letsencrypt.org/acme/acct/123456",
+    AbortSignal.timeout(5000),
+  );
+  await client(first).presenter().create("a".repeat(43), AbortSignal.timeout(5000));
+  vi.setSystemTime(Date.now() + 600_001);
+  pause = true;
+  const alarm = objects.instance().alarm();
+  await cleaning;
+  try {
+    await admit(brokerOwner());
+  } finally {
+    pause = false;
+    resume();
+  }
+  await alarm;
+  expect(objects.alarm()).not.toBeNull();
+  expect(objects.alarm()).toBeGreaterThan(Date.now());
+  expect([...objects.values.keys()].filter((key) => key.startsWith("allocation:"))).toHaveLength(2);
 });
 
 test("the protected Worker admits only approved new keys and continues serving existing owners", async () => {
