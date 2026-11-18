@@ -4,8 +4,8 @@
 /**
  * The gateway's own tailnet device: the owner's settings, the helper program
  * that joins the tailnet, the private socket the helper forwards to, and the
- * collectors asking to join. Everything here exists only with
- * OMNESIS_TAILSCALE_EMBED_ENABLED=1.
+ * collectors asking to join. The gateway has it when its installation includes
+ * the helper program; it stays idle until the owner turns the device on.
  */
 
 import { join } from "node:path";

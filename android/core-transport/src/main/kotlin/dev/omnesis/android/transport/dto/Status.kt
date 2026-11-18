@@ -66,8 +66,8 @@ data class StatusSnapshot(
      */
     val capabilities: JsonElement? = null,
     /**
-     * `tailscaleEmbed`: present and `true` only on a gateway that runs its own Tailscale device
-     * (`OMNESIS_TAILSCALE_EMBED_ENABLED=1`). Kept raw so a value this build can't read costs
+     * `tailscaleEmbed`: present and `true` only on a gateway that has its own Tailscale device
+     * (its installation includes the helper program). Kept raw so a value this build can't read costs
      * the flag, never the whole status; read it through [tailscaleEmbed].
      */
     @SerialName("tailscaleEmbed")

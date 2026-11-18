@@ -2,14 +2,18 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * The one place an address with MCP turned off is enforced: a request
- * for an MCP client's path that reached the gateway by such an address gets
- * the gateway's ordinary 404, before authentication or any route runs. See
- * `remote-access/mcp-addresses.ts` for which requests that is.
+ * The one place the owner's choices about addresses away from home are
+ * enforced: a request for an MCP client's path that reached the gateway by an
+ * address whose MCP does not answer it, and a request Tailscale on this
+ * computer forwarded from the Internet for what the owner keeps off it, get
+ * the gateway's ordinary 404 before authentication or any route runs. See
+ * `remote-access/mcp-addresses.ts` and `remote-access/host-access.ts` for
+ * which requests those are.
  */
 
 import { createLogger } from "@omnesis/core";
 import { tailnetCallerOfEnv } from "../tailscale-embed/caller.js";
+import { FUNNEL_REQUEST_HEADER } from "../remote-access/host-access.js";
 import { arrivedThroughRelay } from "./client-ip.js";
 import type { McpAddresses } from "../remote-access/mcp-addresses.js";
 import type { MiddlewareHandler } from "hono";
@@ -26,9 +30,14 @@ export function mcpAddressGate(
       path: c.req.path,
       via: tailnetCallerOfEnv(c.env)?.via ?? null,
       relayed: arrivedThroughRelay((name) => c.req.header(name), c.env),
+      funnel: c.req.header(FUNNEL_REQUEST_HEADER) === "?1",
     });
     if (!refused) return next();
-    log.debug(`${c.req.method} ${c.req.path} not served: MCP is off on the ${refused} address`);
+    log.debug(
+      refused === "host-internet-api"
+        ? `${c.req.method} ${c.req.path} not served: kept off the Internet on this computer's Tailscale address`
+        : `${c.req.method} ${c.req.path} not served: MCP does not answer it on the ${refused} address`,
+    );
     return c.notFound();
   };
 }

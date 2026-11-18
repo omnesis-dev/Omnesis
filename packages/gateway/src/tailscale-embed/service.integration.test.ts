@@ -55,7 +55,6 @@ const peer = (overrides: Partial<NonNullable<TailnetCaller["peer"]>> = {}) => ({
 });
 
 async function boot(scenario = "connected", { cloudRelay = false } = {}): Promise<void> {
-  vi.stubEnv("OMNESIS_TAILSCALE_EMBED_ENABLED", "1");
   if (cloudRelay) vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
   dir = mkdtempSync(join(tmpdir(), "ts-int-"));
   mkdirSync(join(dir, "tailscale", "node"), { recursive: true });

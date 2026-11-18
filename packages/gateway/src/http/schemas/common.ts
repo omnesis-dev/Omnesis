@@ -6,11 +6,7 @@
  * everything here should be reused at least twice.
  */
 import { z } from "zod";
-import {
-  cloudRelayEnabled,
-  sourceContractWireRangeSchema,
-  tailscaleEmbedEnabled,
-} from "@omnesis/core";
+import { cloudRelayEnabled, sourceContractWireRangeSchema } from "@omnesis/core";
 import {
   DEVICE_KINDS,
   MULTI_DEVICE_MODES,
@@ -78,14 +74,6 @@ export function cloudRelayGated<On extends z.ZodTypeAny>(
   return optInGated(cloudRelayEnabled, on, off);
 }
 
-/** The same, for the embedded Tailscale opt-in. */
-export function tailscaleEmbedGated<On extends z.ZodTypeAny>(
-  on: On,
-  off: z.ZodTypeAny,
-): z.ZodType<z.output<On>, unknown> {
-  return optInGated(tailscaleEmbedEnabled, on, off);
-}
-
 /** Non-empty array of scopes (branded as `Scope[]`). */
 export const scopeArraySchema = z.array(scopeSchema).min(1);
 
@@ -111,7 +99,7 @@ export const deviceCapabilitySchema = z
     // Typed only with the cloud relay; otherwise an unknown key like any other.
     pairingNotifications: cloudRelayGated(z.boolean(), z.unknown()).optional(),
     // The client can show and decide Tailscale join requests.
-    tailscaleJoinNotifications: tailscaleEmbedGated(z.boolean(), z.unknown()).optional(),
+    tailscaleJoinNotifications: z.boolean().optional(),
     pushAppId: z.string().trim().min(1).max(255).optional(),
     // Lenient on purpose: a mode a newer client reports must not fail its
     // hello or pairing; `deviceTlsTrustMode` narrows it when read.

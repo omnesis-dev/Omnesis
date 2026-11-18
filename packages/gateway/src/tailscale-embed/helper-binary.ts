@@ -26,6 +26,18 @@ function executable(path: string): boolean {
 }
 
 /**
+ * Whether this installation has the helper program, which is what gives a gateway its
+ * own Tailscale device: `OMNESIS_TAILSCALE_HELPER` names one (a wrong one is reported
+ * once the owner turns the device on), or this source tree has built it.
+ */
+export function helperInstalled(
+  env: NodeJS.ProcessEnv = process.env,
+  builtIn: string = BUILT_IN_TREE,
+): boolean {
+  return Boolean(env.OMNESIS_TAILSCALE_HELPER?.trim()) || executable(builtIn);
+}
+
+/**
  * The helper program to run: `OMNESIS_TAILSCALE_HELPER` when set (the Docker
  * image sets it), otherwise the copy built into this source tree by
  * `npm run tailnet-helper:build`.

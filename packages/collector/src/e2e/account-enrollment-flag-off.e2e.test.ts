@@ -27,7 +27,6 @@ describe("sign-in enrollment with the cloud relay flag off", () => {
   let harness: E2EHarness;
   let directory: string;
   const prior = process.env.OMNESIS_CLOUD_RELAY_ENABLED;
-  const priorTailscale = process.env.OMNESIS_TAILSCALE_EMBED_ENABLED;
 
   async function cli(args: string[], flag: boolean): Promise<string> {
     return (await cliRun(args, flag)).output;
@@ -62,8 +61,6 @@ describe("sign-in enrollment with the cloud relay flag off", () => {
 
   beforeAll(async () => {
     delete process.env.OMNESIS_CLOUD_RELAY_ENABLED;
-    // The gateway's own Tailscale device is the other way in that turns remote access on.
-    delete process.env.OMNESIS_TAILSCALE_EMBED_ENABLED;
     directory = await mkdtemp(join(tmpdir(), "omnesis-enroll-flag-off-"));
     harness = new E2EHarness();
     await harness.start();
@@ -74,8 +71,6 @@ describe("sign-in enrollment with the cloud relay flag off", () => {
     if (directory) await rm(directory, { recursive: true, force: true });
     if (prior === undefined) delete process.env.OMNESIS_CLOUD_RELAY_ENABLED;
     else process.env.OMNESIS_CLOUD_RELAY_ENABLED = prior;
-    if (priorTailscale === undefined) delete process.env.OMNESIS_TAILSCALE_EMBED_ENABLED;
-    else process.env.OMNESIS_TAILSCALE_EMBED_ENABLED = priorTailscale;
   }, 30_000);
 
   test("every enrollment route is absent", async () => {
@@ -121,15 +116,18 @@ describe("sign-in enrollment with the cloud relay flag off", () => {
     expect(statuses).toEqual(routes.map(([method, path]) => `${method} ${path} 404`));
   });
 
-  test("Connectivity, on every gateway, offers neither the relay nor the gateway's own Tailscale device", async () => {
+  test("Connectivity, on every gateway, does not offer the relay", async () => {
     const response = await harness.gatewayFetch("/admin/remote-access");
     expect(response.status).toBe(200);
     const state = (await response.json()) as {
       features: Record<string, boolean>;
       mcpAddresses: Array<{ id: string }>;
     };
-    expect(state.features).toEqual({ cloudRelay: false, tailscaleEmbed: false });
-    expect(state.mcpAddresses.map((row) => row.id)).toEqual(["host", "domain"]);
+    expect(state.features.cloudRelay).toBe(false);
+    // The gateway's own Tailscale device is there when this checkout has built its helper.
+    expect(state.mcpAddresses.map((row) => row.id)).toEqual(
+      state.features.tailscaleEmbed ? ["tailnet", "host", "domain"] : ["host", "domain"],
+    );
   });
 
   /** Status and body of a request sent without the harness's credential. */

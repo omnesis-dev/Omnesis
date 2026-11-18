@@ -190,7 +190,7 @@ describe("MCP OAuth access routes", () => {
       oauth && { ...oauth, resources: oauth.resources.map((entry) => entry.resource) };
     const switched = createTestApp({
       additionalOAuthIssuerUrls: [relay],
-      mcpAddresses: { answersAt, settle: async () => {} },
+      mcpAddresses: { answersAt, settle: async () => {}, tailnetOnly: () => false },
     });
     const plain = createTestApp({ additionalOAuthIssuerUrls: [relay] });
     // Every address on: exactly the overview of a gateway without the switches.
@@ -212,7 +212,7 @@ describe("MCP OAuth access routes", () => {
       publicBaseUrl: undefined,
       loopbackBaseUrl: "https://localhost:17600",
       additionalOAuthIssuerUrls: [relay],
-      mcpAddresses: { answersAt, settle: async () => {} },
+      mcpAddresses: { answersAt, settle: async () => {}, tailnetOnly: () => false },
     });
     expect(listed(await overview(local, "https://192.0.2.10:17600"))).toMatchObject({
       resource: "https://localhost:17600/mcp",
@@ -2333,7 +2333,7 @@ describe("a metadata-document client authenticating with private_key_jwt", () =>
   });
 });
 
-test("a completion follows the stored resource only with the cloud relay opt-in", async () => {
+test("a completion follows the stored resource, whichever of the gateway's addresses completes it", async () => {
   const local = "http://127.0.0.1:17600";
   const client = await registerClient();
   app = createTestApp({ publicBaseUrl: undefined });
@@ -2376,32 +2376,23 @@ test("a completion follows the stored resource only with the cloud relay opt-in"
     app.request(
       `https://unconfigured.example.org/oauth/authorize/complete?request=${encodeURIComponent(handle)}`,
     );
-  try {
-    // Without the opt-in the completing request's own origin decides, as it always has.
-    vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "");
-    expect((await complete((await approved(0)).handle)).status).toBe(503);
-    const viaPortal = await portalJson(
-      `/portal/api/access/authorizations/${(await approved(1)).approvalId}/complete`,
-      {},
-    );
-    expect(viaPortal.response.status).toBe(503);
-    expect(viaPortal.body).toEqual({ error: "oauth-not-configured" });
-    vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
-    const followed = await complete((await approved(2)).handle);
-    expect(followed.status).toBe(303);
-    expect(new URL(followed.headers.get("location")!).searchParams.get("iss")).toBe(local);
-  } finally {
-    vi.unstubAllEnvs();
-  }
+  // The portal that approves may be open on another address than the agent's.
+  const followed = await complete((await approved(0)).handle);
+  expect(followed.status).toBe(303);
+  expect(new URL(followed.headers.get("location")!).searchParams.get("iss")).toBe(local);
+  const viaPortal = await portalJson(
+    `/portal/api/access/authorizations/${(await approved(1)).approvalId}/complete`,
+    {},
+  );
+  expect(viaPortal.response.status).toBe(200);
 });
 
 test.each([
-  ["cloud relay", "OMNESIS_CLOUD_RELAY_ENABLED", "https://opaque-relay.example.net"],
-  ["Tailscale device", "OMNESIS_TAILSCALE_EMBED_ENABLED", "https://omnesis.example-net.ts.net"],
+  ["cloud relay", "https://opaque-relay.example.net"],
+  ["Tailscale device", "https://omnesis.example-net.ts.net"],
 ])(
   "direct and %s issuers authorize and refresh independently, with issuer-bound resources and Host-independent completion",
-  async (_name, flag, relay) => {
-    vi.stubEnv(flag, "1");
+  async (_name, relay) => {
     app = createTestApp({ additionalOAuthIssuerUrls: [relay] });
     const access = new AccessService(db, directWriteGate(db));
     const client = await registerClient();

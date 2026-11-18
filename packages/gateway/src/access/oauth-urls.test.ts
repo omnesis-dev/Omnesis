@@ -8,6 +8,7 @@ import {
   resolveMetadataRequestResource,
   resolveMcpRequestResource,
   resolveOAuthMetadataPaths,
+  resolveLocalOAuthUrls,
   resolveOAuthUrls,
   resolveOAuthOverviewUrls,
   resolveOAuthResourceUrls,
@@ -119,6 +120,27 @@ describe("resolveOAuthUrls", () => {
   });
 });
 
+test("a local request signs in at its loopback origin even when the gateway has a public address", () => {
+  const configured = "https://gateway.example.com/omnesis";
+  const local = resolveOAuthUrls("https://localhost:7600/oauth/token", configured)!;
+  expect(local).toMatchObject({
+    issuer: "https://localhost:7600",
+    resource: "https://localhost:7600/mcp",
+    issuerResources: ["https://localhost:7600/mcp"],
+  });
+  expect(local.supportedResources).toEqual([
+    "https://gateway.example.com/omnesis/mcp",
+    "https://localhost:7600/mcp",
+  ]);
+  // Every other Host still gets the configured issuer, and its metadata paths are unchanged.
+  expect(resolveOAuthUrls("https://other.example.org/oauth/token", configured)?.issuer).toBe(
+    configured,
+  );
+  expect(resolveOAuthMetadataPaths(configured)?.authorizationServer).toBe(
+    "/.well-known/oauth-authorization-server/omnesis",
+  );
+});
+
 describe("local OAuth setup overview", () => {
   test("advertises the actual loopback listener without enabling remote OAuth", () => {
     const remote = "https://gateway.example.org/portal/api/access";
@@ -127,6 +149,30 @@ describe("local OAuth setup overview", () => {
       `${local}/mcp`,
     );
     expect(resolveOAuthUrls(remote)).toBeNull();
+    // With a public address the overview offers it, even to a portal open on the gateway's machine.
+    for (const portal of [remote, `${local}/admin/access`]) {
+      const configured = resolveOAuthOverviewUrls(
+        portal,
+        "https://gateway.example.com",
+        undefined,
+        local,
+      )!;
+      expect(configured.resource).toBe("https://gateway.example.com/mcp");
+      expect(configured.supportedResources).toEqual(["https://gateway.example.com/mcp"]);
+    }
+    // And when none of its addresses answers, the loopback one alone still does.
+    expect(
+      resolveLocalOAuthUrls(local, "https://gateway.example.com", [
+        "https://other.example.net/mcp",
+      ]),
+    ).toMatchObject({
+      issuer: local,
+      resource: `${local}/mcp`,
+      supportedResources: [`${local}/mcp`],
+      issuerResources: [`${local}/mcp`],
+    });
+    expect(resolveLocalOAuthUrls(undefined, "https://gateway.example.com")).toBeNull();
+    expect(resolveLocalOAuthUrls("https://external.example.org")).toBeNull();
     expect(
       resolveOAuthOverviewUrls(remote, undefined, undefined, "https://external.example.org"),
     ).toBeNull();

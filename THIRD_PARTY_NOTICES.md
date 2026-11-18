@@ -609,8 +609,9 @@ user's credential provider. Omnesis stores public credential records only.
 
 ## 12. Tailscale helper (`omnesis-tailnet`)
 
-The gateway image and source builds include `omnesis-tailnet`, a Go program the
-gateway runs only with `OMNESIS_TAILSCALE_EMBED_ENABLED=1`. It is a statically
+The gateway image includes `omnesis-tailnet`, and a source checkout builds it
+with `npm run tailnet-helper:build`. It is a Go program the gateway runs once its
+owner turns on the gateway's own Tailscale device. It is a statically
 linked binary built from `packages/tailnet-helper/` (AGPL-3.0-or-later) and the
 Go modules below, resolved through `packages/tailnet-helper/go.sum`, together
 with the Go standard library (BSD-3-Clause, The Go Authors). None of them is

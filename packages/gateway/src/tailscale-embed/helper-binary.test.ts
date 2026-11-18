@@ -5,7 +5,7 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { resolveHelperBinary } from "./helper-binary.js";
+import { helperInstalled, resolveHelperBinary } from "./helper-binary.js";
 
 let dir: string;
 let program: string;
@@ -55,5 +55,17 @@ describe("resolveHelperBinary", () => {
       reason: expect.stringContaining("npm run tailnet-helper:build"),
     });
     expect(resolveHelperBinary({}, dir)).toMatchObject({ path: null });
+  });
+});
+
+describe("helperInstalled", () => {
+  test("a gateway has its own Tailscale device when the helper is configured or built", () => {
+    expect(helperInstalled({}, program)).toBe(true);
+    expect(helperInstalled({}, join(dir, "absent"))).toBe(false);
+    // A configured program counts even when it is wrong, so the owner is told why on Turn on.
+    expect(
+      helperInstalled({ OMNESIS_TAILSCALE_HELPER: "omnesis-tailnet" }, join(dir, "absent")),
+    ).toBe(true);
+    expect(helperInstalled({ OMNESIS_TAILSCALE_HELPER: " " }, join(dir, "absent"))).toBe(false);
   });
 });

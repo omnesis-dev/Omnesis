@@ -95,6 +95,7 @@ describe("HostTailscaleService", () => {
       url: `https://${NAME}`,
       servesGateway: false,
       publicGateway: false,
+      taken: [],
     });
   });
 
@@ -314,6 +315,7 @@ describe("HostTailscaleService", () => {
         port: 8443,
         url: `https://${NAME}:8443`,
         servesGateway: false,
+        taken: [{ port: 443, target: OTHER }],
       });
       expect(await host.publish(false)).toEqual({ ok: true, url: `https://${NAME}:8443` });
       const commands = run.mock.calls.map(([, args]) => args.join(" "));
@@ -327,12 +329,20 @@ describe("HostTailscaleService", () => {
         "status --json": running,
         "serve status --json": serving({ 443: { "/": GATEWAY, "/files": OTHER } }),
       });
-      expect(await path.host.status()).toMatchObject({ port: 8443, servesGateway: false });
+      expect(await path.host.status()).toMatchObject({
+        port: 8443,
+        servesGateway: false,
+        taken: [{ port: 443, target: GATEWAY }],
+      });
       const tcp = service({
         "status --json": running,
         "serve status --json": serving({}, [], { 443: { TCPForward: "127.0.0.1:5432" } }),
       });
-      expect(await tcp.host.status()).toMatchObject({ port: 8443, servesGateway: false });
+      expect(await tcp.host.status()).toMatchObject({
+        port: 8443,
+        servesGateway: false,
+        taken: [{ port: 443, target: "127.0.0.1:5432" }],
+      });
     });
 
     test("a serve still running in a terminal holds its port", async () => {
@@ -370,6 +380,7 @@ describe("HostTailscaleService", () => {
         port: null,
         servesGateway: false,
         blocked: NO_FREE_PORT,
+        taken: [443, 8443, 10000].map((port) => ({ port, target: OTHER })),
       });
       expect(await host.publish(true)).toEqual({ ok: false, reason: NO_FREE_PORT });
       expect(run.mock.calls.every(([, args]) => !args.includes("--bg"))).toBe(true);

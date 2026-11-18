@@ -69,7 +69,6 @@ function app() {
 
 beforeEach(() => {
   vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
-  vi.stubEnv("OMNESIS_TAILSCALE_EMBED_ENABLED", "1");
 });
 afterEach(() => vi.unstubAllEnvs());
 

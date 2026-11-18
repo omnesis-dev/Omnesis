@@ -2,47 +2,56 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Which of the gateway's addresses away from home answer MCP. The owner turns
- * MCP off on an address, and from then on a request reaching the gateway by
- * that address finds no MCP endpoint and none of the OAuth routes an MCP
- * client signs in through: they answer 404, as on a gateway without them.
- * The portal, device APIs and everything else on that address are unaffected.
+ * Which of the gateway's addresses away from home answer MCP, and how far. The
+ * owner turns MCP off on an address, or keeps it to their Tailscale network,
+ * and from then on a request reaching the gateway that way finds no MCP
+ * endpoint and none of the OAuth routes an MCP client signs in through: they
+ * answer 404, as on a gateway without them. The portal, device APIs and
+ * everything else on that address are unaffected, except through Funnel on
+ * this computer, whose pages and API have their own choice (host-access.ts).
  *
- * The addresses, in the order the owner sees them:
+ * The addresses, in the order the owner sees them, with the choices each has:
  *
- * - `relay`: the Omnesis relay address (OMNESIS_CLOUD_RELAY_ENABLED=1),
- *   recognised by the request arriving through the relay tunnel, or by its
- *   Host, since the gateway terminates TLS for that name.
- * - `tailnet`: the gateway's own Tailscale device on the owner's tailnet
- *   (OMNESIS_TAILSCALE_EMBED_ENABLED=1), recognised by the request arriving
- *   from the tailnet through the helper's private socket, or by its Host.
- * - `tailscalePublic`: the same device's public address (Tailscale Funnel).
- *   Its switch is the device's own `publicAccess` setting, which already
- *   limits that address to the paths MCP clients use; this reads and writes
- *   that setting and keeps no choice of its own.
- * - `host`: Tailscale already running on this computer, by the machine's
- *   MagicDNS name, which `tailscale serve` and `tailscale funnel` pass on as
- *   the request's Host, on whichever port it serves the gateway. Every
+ * - `relay` (off, public): the Omnesis relay address
+ *   (OMNESIS_CLOUD_RELAY_ENABLED=1), recognised by the request arriving
+ *   through the relay tunnel, or by its Host, since the gateway terminates TLS
+ *   for that name.
+ * - `tailnet` (off, private, public): the gateway's own Tailscale device,
+ *   recognised by the request arriving from the tailnet through the helper's
+ *   private socket, or by its Host. Public is the device's own `publicAccess`
+ *   setting (Tailscale Funnel), which already limits that address to the paths
+ *   MCP clients use; this reads and writes that setting and keeps no copy.
+ * - `host` (off, private, public): Tailscale already running on this
+ *   computer, by the machine's MagicDNS name, which `tailscale serve` and
+ *   `tailscale funnel` pass on as the request's Host, on whichever port it
+ *   serves the gateway. A request Tailscale forwards from the Internet carries
+ *   its Funnel header, so it is this address whatever Host it names. Every
  *   gateway with a listening port has it.
- * - `domain`: the address in `gateway.publicBaseUrl`, recognised by Host,
- *   which whatever publishes it (a reverse proxy, a tunnel) must pass on.
- *   When that address is one of the ways above — the owner saved the relay's
- *   or a Tailscale name as the public address — it is that way's, under that
- *   way's switch, and has no row of its own.
+ * - `domain` (off, on): the address in `gateway.publicBaseUrl`, recognised by
+ *   Host, which whatever publishes it (a reverse proxy, a tunnel) must pass on.
+ *   The gateway cannot tell whether it is private or public. When that address
+ *   is one of the ways above — the owner saved the relay's or a Tailscale name
+ *   as the public address — it is that way's, under that way's choice, and has
+ *   no row of its own.
  *
  * Every address answers MCP until the owner turns it off: only an explicit
- * `false` in remote-access.json refuses, so a file written before these
+ * choice in remote-access.json refuses, so a file written before these
  * choices existed, or none at all, changes nothing. A Host naming a loopback
  * address always answers, so a gateway can never lock its own machine out; a
  * request through the relay or the tailnet is that address whatever Host it
  * names. Tokens are untouched: an address that answers checks a token's
  * resource exactly as before.
+ *
+ * This computer's Tailscale address is also an OAuth issuer (`hostIssuer`),
+ * as the relay's and the device's are, so agents sign in through it without
+ * it being the gateway's public address.
  */
 
-import { assertNever, cloudRelayEnabled, createLogger, tailscaleEmbedEnabled } from "@omnesis/core";
+import { assertNever, cloudRelayEnabled, createLogger } from "@omnesis/core";
 import type { CloudRelayManagement } from "@omnesis/cloud-relay";
 import type { RemoteAccessSettingsStore } from "./settings.js";
-import type { HostTailscaleService } from "./host-tailscale.js";
+import type { HostAccess, HostMcpReach } from "./host-access.js";
+import type { Refusal } from "./host-tailscale.js";
 import type { TailscaleEmbedService } from "../tailscale-embed/service.js";
 
 const log = createLogger("gateway:remote-access:mcp");
@@ -50,35 +59,57 @@ const log = createLogger("gateway:remote-access:mcp");
 /** How long this computer's looked-up MagicDNS name is used before Tailscale is asked again. */
 const HOST_NAME_TTL_MS = 60_000;
 
-export const MCP_ADDRESS_IDS = ["relay", "tailnet", "tailscalePublic", "host", "domain"] as const;
+export const MCP_ADDRESS_IDS = ["relay", "tailnet", "host", "domain"] as const;
 export type McpAddressId = (typeof MCP_ADDRESS_IDS)[number];
-/** An address whose switch the gateway keeps in remote-access.json. */
-export type OwnMcpAddressId = Exclude<McpAddressId, "tailscalePublic">;
 
-/** One row of the owner's MCP switches: everything the portal needs to show it. */
+/**
+ * Where MCP answers on an address: nowhere; on the owner's Tailscale network
+ * only; on the Internet too; or, for an address whose reach the gateway cannot
+ * see, wherever the address reaches.
+ */
+export const MCP_REACHES = ["off", "private", "public", "on"] as const;
+export type McpReach = (typeof MCP_REACHES)[number];
+
+/** The choices each address offers, in the order the owner sees them. */
+export const MCP_CHOICES: Record<McpAddressId, readonly McpReach[]> = {
+  relay: ["off", "public"],
+  tailnet: ["off", "private", "public"],
+  host: ["off", "private", "public"],
+  domain: ["off", "on"],
+};
+
+/** One row of the owner's MCP choices: everything the portal needs to show it. */
 export interface McpAddressRow {
   id: McpAddressId;
   /** The address's origin, once it is known. */
   url: string | null;
-  /** Whether MCP answers there; for `tailscalePublic`, whether the public address is wanted. */
-  enabled: boolean;
+  /** Where MCP answers there now. */
+  reach: McpReach;
+  choices: readonly McpReach[];
   /** Whether that way in is set up right now: enrolled, connected, served or configured. */
   available: boolean;
+  /**
+   * The Tailscale device's public address is wanted but not open yet: Tailscale may want
+   * the owner to allow it first, which the device's own page shows.
+   */
+  opening?: true;
 }
 
-export type McpAddressPatch = Partial<Record<McpAddressId, boolean>>;
+export type McpAddressPatch = Partial<Record<McpAddressId, McpReach>>;
 
 /** How a request reached the gateway, as far as the tailnet helper says. */
 type TailnetArrival = "tailnet" | "public" | null;
 
 /** What the gateway knows about a request that decides which address it reached. */
-interface McpRequest {
+export interface McpRequest {
   /** The request URL, whose host is the request's Host. */
   url: string;
   path: string;
   via: TailnetArrival;
   /** It came through the cloud relay's tunnel. */
   relayed: boolean;
+  /** It carries the header tailscaled sets on what it forwards from the Internet. */
+  funnel: boolean;
 }
 
 export interface McpAddressesOptions {
@@ -92,10 +123,21 @@ export interface McpAddressesOptions {
    * gateway, which takes the relay turned on and the gateway enrolled with it.
    */
   relayState?: () => Promise<RelayState>;
-  /** The gateway's own Tailscale device, when it is wired. */
-  tailscale?: Pick<TailscaleEmbedService, "tailnetOrigin" | "settings" | "updateSettings">;
+  /** The gateway's own Tailscale device, when this installation has it. */
+  tailscale?: Pick<
+    TailscaleEmbedService,
+    "tailnetOrigin" | "settings" | "updateSettings" | "state"
+  >;
   /** Tailscale already on this computer, when the gateway listens on a port it can forward to. */
-  hostTailscale?: Pick<HostTailscaleService, "status">;
+  host?: Pick<
+    HostAccess,
+    | "status"
+    | "setMcp"
+    | "mcpReach"
+    | "mcpAnswersTailnet"
+    | "mcpAnswersInternet"
+    | "apiAnswersInternet"
+  >;
   now?: () => number;
 }
 
@@ -175,34 +217,35 @@ interface HostLookup {
   /** The gateway's address there, with its port unless 443. */
   url: string | null;
   servesGateway: boolean;
+  /** Funnel is on for the gateway's port. */
+  funnel: boolean;
   at: number;
 }
 
+/** Why a request was refused, for the log line. */
+export type McpRefusal = McpAddressId | "host-internet-api";
+
 export class McpAddresses {
-  private host: HostLookup | null = null;
+  private hostLookup: HostLookup | null = null;
   private hostInFlight: Promise<HostLookup> | null = null;
   private readonly now: () => number;
 
   constructor(private readonly options: McpAddressesOptions) {
     this.now = options.now ?? Date.now;
-    // A switch already off refuses by this computer's name from the first request on.
-    if (options.hostTailscale && !(this.answers("host") && this.answers("domain")))
-      void this.lookUpHost();
+    // This computer's name is an issuer, and refused by while MCP is off there: learn it now.
+    if (options.host) void this.lookUpHost();
   }
 
-  /** The addresses this gateway offers a switch for, in the order the owner sees them. */
+  /** The addresses this gateway offers a choice for, in the order the owner sees them. */
   offered(): McpAddressId[] {
-    const tailscale = tailscaleEmbedEnabled();
     return MCP_ADDRESS_IDS.filter((id) => {
       switch (id) {
         case "relay":
           return cloudRelayEnabled();
         case "tailnet":
-          return tailscale;
-        case "tailscalePublic":
-          return tailscale && !!this.options.tailscale;
+          return !!this.options.tailscale;
         case "host":
-          return !!this.options.hostTailscale;
+          return !!this.options.host;
         case "domain":
           return true;
         default:
@@ -211,36 +254,52 @@ export class McpAddresses {
     });
   }
 
-  /** Every offered address with its switch, after asking Tailscale on this computer again. */
+  /** Every offered address with its choice, after asking Tailscale on this computer again. */
   async list(): Promise<McpAddressRow[]> {
-    const host = this.options.hostTailscale ? await this.lookUpHost() : null;
+    const host = this.options.host ? await this.lookUpHost() : null;
     const relay = await this.relayNow();
     const tailnet = originOf(this.options.tailscale?.tailnetOrigin());
-    const hostUrl = host?.url ?? null;
     const domain = this.options.publicBaseUrl()?.replace(/\/+$/u, "") || null;
     const domainIsOwn = !!domain && this.wayNamed(addressHostname(domain)) === null;
     return this.offered().map((id): McpAddressRow => {
+      const choices = MCP_CHOICES[id];
       switch (id) {
         case "relay":
           return {
             id,
             url: relay.origin,
-            enabled: this.answers(id),
+            reach: this.answers(id) ? "public" : "off",
+            choices,
             available: !!relay.origin && relay.serving,
           };
-        case "tailnet":
-          return { id, url: tailnet, enabled: this.answers(id), available: !!tailnet };
-        case "tailscalePublic":
-          return { id, url: tailnet, enabled: this.publicWanted(), available: !!tailnet };
+        case "tailnet": {
+          const opening =
+            this.publicWanted() && this.options.tailscale!.state().public.state !== "on";
+          return {
+            id,
+            url: tailnet,
+            reach: this.tailnetReach(),
+            choices,
+            available: !!tailnet,
+            ...(opening ? { opening: true as const } : {}),
+          };
+        }
         case "host":
           return {
             id,
-            url: hostUrl,
-            enabled: this.answers(id),
-            available: !!hostUrl && !!host?.servesGateway,
+            url: host?.url ?? null,
+            reach: this.options.host!.mcpReach(host?.funnel ?? false),
+            choices,
+            available: !!host?.url && host.servesGateway,
           };
         case "domain":
-          return { id, url: domain, enabled: this.answers(id), available: domainIsOwn };
+          return {
+            id,
+            url: domain,
+            reach: this.answers(id) ? "on" : "off",
+            choices,
+            available: domainIsOwn,
+          };
         default:
           return assertNever(id);
       }
@@ -250,69 +309,81 @@ export class McpAddresses {
   /**
    * The way in whose address a public address is — by default the one the
    * gateway serves in `gateway.publicBaseUrl` — when it is not the owner's own
-   * domain: the relay's, either Tailscale name, or this computer's.
+   * domain: the relay's, the Tailscale device's, or this computer's.
    */
   async publicAddressWay(
     url: string | null | undefined = this.options.publicBaseUrl(),
-  ): Promise<Exclude<OwnMcpAddressId, "domain"> | null> {
-    if (this.options.hostTailscale) await this.lookUpHost();
+  ): Promise<Exclude<McpAddressId, "domain"> | null> {
+    if (this.options.host) await this.lookUpHost();
     return this.wayNamed(addressHostname(url));
   }
 
-  /** Whether applying `patch` would turn MCP on where it is off now. Anything unreadable is not. */
+  /** Whether applying `patch` would let MCP answer somewhere it does not now. Anything unreadable is not. */
   loosens(patch: unknown): boolean {
     if (typeof patch !== "object" || patch === null) return false;
-    return this.offered().some(
-      (id) => (patch as Record<string, unknown>)[id] === true && !this.enabled(id),
-    );
-  }
-
-  /** Apply the owner's choices; every key must be one `offered()` lists. */
-  async update(patch: McpAddressPatch): Promise<void> {
-    const offered = new Set(this.offered());
-    const unknown = Object.keys(patch).filter((key) => !offered.has(key as McpAddressId));
-    if (unknown.length > 0) throw new Error(`No such address: ${unknown.join(", ")}`);
-    const { tailscalePublic, ...own } = patch;
-    if (tailscalePublic !== undefined && tailscalePublic !== this.publicWanted()) {
-      await this.options.tailscale!.updateSettings({ publicAccess: tailscalePublic });
-      log.info(`MCP on the Tailscale public address turned ${tailscalePublic ? "on" : "off"}`);
-    }
-    const changed = (Object.entries(own) as Array<[OwnMcpAddressId, boolean | undefined]>).filter(
-      (entry): entry is [OwnMcpAddressId, boolean] =>
-        entry[1] !== undefined && entry[1] !== this.answers(entry[0]),
-    );
-    if (changed.length === 0) return;
-    const choices = { ...this.options.settings.get().mcp };
-    for (const [id, on] of changed) choices[id] = on;
-    this.options.settings.update({ mcp: choices });
-    for (const [id, on] of changed)
-      log.info(`MCP on the ${id} address turned ${on ? "on" : "off"}`);
-    // This computer's address is refused by its name, so learn it before answering.
-    if (changed.some(([id, on]) => id === "host" && !on)) await this.lookUpHost();
+    return this.offered().some((id) => {
+      const wanted = (patch as Record<string, unknown>)[id];
+      return typeof wanted === "string" && rank(wanted) > rank(this.wantedReach(id));
+    });
   }
 
   /**
-   * The address whose MCP is off that this request reached the gateway by,
-   * when it asks for an MCP client's path; null when it may go on.
+   * Apply the owner's choices; every key must be one `offered()` lists, with one of its
+   * choices. Tailscale on this computer may refuse to change Funnel: the choice is kept
+   * and the refusal, naming the command, is returned.
    */
-  async refusal(request: McpRequest): Promise<OwnMcpAddressId | null> {
+  async update(patch: McpAddressPatch): Promise<Refusal | null> {
+    for (const [id, reach] of Object.entries(patch) as Array<[McpAddressId, McpReach]>) {
+      if (!this.offered().includes(id)) throw new Error(`No such address: ${id}`);
+      if (!MCP_CHOICES[id].includes(reach)) throw new Error(`The ${id} address can't be ${reach}`);
+    }
+    const { tailnet, host, ...own } = patch;
+    if (tailnet !== undefined && tailnet !== this.tailnetReach()) {
+      const publicAccess = tailnet === "public";
+      if (publicAccess !== this.publicWanted())
+        await this.options.tailscale!.updateSettings({ publicAccess });
+      this.store("tailnet", tailnet !== "off");
+      log.info(`MCP on the Tailscale device's address: ${tailnet}`);
+    }
+    for (const [id, reach] of Object.entries(own) as Array<["relay" | "domain", McpReach]>) {
+      if (this.answers(id) === (reach !== "off")) continue;
+      this.store(id, reach !== "off");
+      log.info(`MCP on the ${id} address turned ${reach === "off" ? "off" : "on"}`);
+    }
+    if (host === undefined) return null;
+    const outcome = await this.options.host!.setMcp(host as HostMcpReach);
+    log.info(`MCP on this computer's Tailscale address: ${host}`);
+    // This computer's address is refused by its name and is an issuer: learn it again now.
+    await this.lookUpHost();
+    return outcome.ok ? null : outcome;
+  }
+
+  /**
+   * Why a request is not served, or null when it may go on: an MCP client's path that
+   * reached the gateway by an address whose MCP does not answer it, or a request Tailscale
+   * on this computer forwarded from the Internet for what the owner keeps off it.
+   */
+  async refusal(request: McpRequest): Promise<McpRefusal | null> {
+    const host = this.options.host;
+    if (host && request.funnel && request.via === null && !request.relayed) {
+      if (!isMcpClientPath(request.path))
+        return host.apiAnswersInternet() ? null : "host-internet-api";
+      return host.mcpAnswersInternet() ? null : "host";
+    }
     if (!isMcpClientPath(request.path)) return null;
     await this.settle();
     return this.addressesOf(request).find((id) => !this.answers(id)) ?? null;
   }
 
   /**
-   * Bring what `refusal` and `answersAt` match against up to date. While MCP
-   * is off on this computer's address, its MagicDNS name must be known: the
-   * first caller waits for it, and once it is a minute old it is looked up
-   * again in the background.
+   * Bring what `refusal`, `answersAt`, `tailnetOnly` and `hostIssuer` match against up to
+   * date: the first caller waits for this computer's MagicDNS name, and once it is a
+   * minute old it is looked up again in the background.
    */
   async settle(): Promise<void> {
-    // The domain's switch also needs it: a public address that is this computer's
-    // name is under the host's switch, not the domain's.
-    if (!this.options.hostTailscale || (this.answers("host") && this.answers("domain"))) return;
-    if (!this.host) await this.lookUpHost();
-    else if (this.now() - this.host.at >= HOST_NAME_TTL_MS) void this.lookUpHost();
+    if (!this.options.host) return;
+    if (!this.hostLookup) await this.lookUpHost();
+    else if (this.now() - this.hostLookup.at >= HOST_NAME_TTL_MS) void this.lookUpHost();
   }
 
   /**
@@ -324,6 +395,27 @@ export class McpAddresses {
     return this.addressesOf({ url, via: null, relayed: false }).every((id) =>
       id === "tailnet" ? this.answers("tailnet") || this.publicWanted() : this.answers(id),
     );
+  }
+
+  /**
+   * Whether MCP at `url` answers only on the owner's Tailscale network: this
+   * computer's Tailscale address while Funnel is off or MCP is kept off it.
+   */
+  tailnetOnly(url: string): boolean {
+    const host = this.hostLookup;
+    if (!this.options.host || !host?.dnsName || addressHostname(url) !== host.dnsName) return false;
+    return this.options.host.mcpReach(host.funnel) !== "public";
+  }
+
+  /**
+   * This computer's Tailscale address as an OAuth issuer, while it serves the gateway and
+   * MCP answers there. The gateway's public address wins when it is on the same origin.
+   */
+  hostIssuer(): string[] {
+    const host = this.hostLookup;
+    const origin = originOf(host?.url);
+    if (!origin || !host?.servesGateway || !this.options.host?.mcpAnswersTailnet()) return [];
+    return origin === originOf(this.options.publicBaseUrl()) ? [] : [origin];
   }
 
   /** The relay's live origin and whether it serves this gateway; not serving when unknown. */
@@ -342,12 +434,41 @@ export class McpAddresses {
     }
   }
 
-  private enabled(id: McpAddressId): boolean {
-    return id === "tailscalePublic" ? this.publicWanted() : this.answers(id);
+  /** What the owner asked for on an address, as `loosens` compares it. */
+  private wantedReach(id: McpAddressId): McpReach {
+    switch (id) {
+      case "relay":
+        return this.answers(id) ? "public" : "off";
+      case "tailnet":
+        return this.tailnetReach();
+      case "host": {
+        const host = this.options.host!;
+        if (!host.mcpAnswersTailnet()) return "off";
+        return host.mcpAnswersInternet() ? "public" : "private";
+      }
+      case "domain":
+        return this.answers(id) ? "on" : "off";
+      default:
+        return assertNever(id);
+    }
   }
 
-  private answers(id: OwnMcpAddressId): boolean {
+  private tailnetReach(): McpReach {
+    if (this.publicWanted()) return "public";
+    return this.answers("tailnet") ? "private" : "off";
+  }
+
+  private answers(id: McpAddressId): boolean {
+    if (id === "host") return this.options.host?.mcpAnswersTailnet() ?? true;
     return this.options.settings.get().mcp?.[id] !== false;
+  }
+
+  /** Keep a choice: only an address turned off is written, so the default stays implicit. */
+  private store(id: "relay" | "tailnet" | "domain", on: boolean): void {
+    const choices = { ...this.options.settings.get().mcp };
+    if (on) delete choices[id];
+    else choices[id] = false;
+    this.options.settings.update({ mcp: choices });
   }
 
   private publicWanted(): boolean {
@@ -356,29 +477,35 @@ export class McpAddresses {
 
   /** Ask Tailscale on this computer for its name; concurrent askers share one look. */
   private lookUpHost(): Promise<HostLookup> {
-    const hostTailscale = this.options.hostTailscale!;
-    this.hostInFlight ??= hostTailscale
+    const host = this.options.host!;
+    this.hostInFlight ??= host
       .status()
       .then(
-        (status) =>
+        (status): Omit<HostLookup, "at"> =>
           status.state === "available"
             ? {
                 dnsName: status.dnsName.toLowerCase(),
                 url: status.url,
                 servesGateway: status.servesGateway,
+                funnel: status.funnel,
               }
-            : { dnsName: null, url: null, servesGateway: false },
+            : { dnsName: null, url: null, servesGateway: false, funnel: false },
         (error: unknown) => {
           log.warn(
             `Could not ask Tailscale on this computer for its name: ${error instanceof Error ? error.message : String(error)}`,
           );
           // Keep refusing by the name already known.
-          return { dnsName: this.host?.dnsName ?? null, url: null, servesGateway: false };
+          return {
+            dnsName: this.hostLookup?.dnsName ?? null,
+            url: null,
+            servesGateway: false,
+            funnel: false,
+          };
         },
       )
       .then((found) => {
-        this.host = { ...found, at: this.now() };
-        return this.host;
+        this.hostLookup = { ...found, at: this.now() };
+        return this.hostLookup;
       })
       .finally(() => {
         this.hostInFlight = null;
@@ -389,12 +516,12 @@ export class McpAddresses {
   /**
    * Every address a request matches, by how it arrived and by its host name.
    * A request through the public Tailscale address is that address, whose
-   * switch the helper applies before it arrives, so the tailnet name does not
+   * choice the helper applies before it arrives, so the tailnet name does not
    * make it a tailnet request.
    */
-  private addressesOf({ url, via, relayed }: Omit<McpRequest, "path">): OwnMcpAddressId[] {
-    const matched = new Set<OwnMcpAddressId>();
-    const tailscale = tailscaleEmbedEnabled();
+  private addressesOf({ url, via, relayed }: Omit<McpRequest, "path" | "funnel">): McpAddressId[] {
+    const matched = new Set<McpAddressId>();
+    const tailscale = !!this.options.tailscale;
     if (tailscale && via === "tailnet") matched.add("tailnet");
     if (cloudRelayEnabled() && relayed) matched.add("relay");
     const hostname = addressHostname(url);
@@ -407,7 +534,7 @@ export class McpAddresses {
         hostname === addressHostname(this.options.tailscale?.tailnetOrigin())
       )
         matched.add("tailnet");
-      if (this.host?.dnsName && hostname === this.host.dnsName) matched.add("host");
+      if (this.hostLookup?.dnsName && hostname === this.hostLookup.dnsName) matched.add("host");
       if (
         hostname === addressHostname(this.options.publicBaseUrl()) &&
         this.wayNamed(hostname) === null
@@ -418,16 +545,31 @@ export class McpAddresses {
   }
 
   /** The way in, other than the owner's domain, whose address names `hostname`. */
-  private wayNamed(hostname: string | null): Exclude<OwnMcpAddressId, "domain"> | null {
+  private wayNamed(hostname: string | null): Exclude<McpAddressId, "domain"> | null {
     if (!hostname) return null;
     if (cloudRelayEnabled() && hostname === addressHostname(this.options.relayOrigin?.()))
       return "relay";
     if (
-      tailscaleEmbedEnabled() &&
-      hostname === addressHostname(this.options.tailscale?.tailnetOrigin())
+      this.options.tailscale &&
+      hostname === addressHostname(this.options.tailscale.tailnetOrigin())
     )
       return "tailnet";
-    if (this.host?.dnsName && hostname === this.host.dnsName) return "host";
+    if (this.hostLookup?.dnsName && hostname === this.hostLookup.dnsName) return "host";
     return null;
+  }
+}
+
+/** How far a choice lets MCP answer, for comparing two of them. */
+function rank(reach: string): number {
+  switch (reach) {
+    case "off":
+      return 0;
+    case "private":
+      return 1;
+    case "public":
+    case "on":
+      return 2;
+    default:
+      return -1;
   }
 }

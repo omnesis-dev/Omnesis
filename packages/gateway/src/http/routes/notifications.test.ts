@@ -201,10 +201,7 @@ test("the Tailscale join header counts only with its own opt-in, alongside the r
     "X-Omnesis-Tailscale-Join-Notifications": "1",
   };
   try {
-    vi.stubEnv("OMNESIS_TAILSCALE_EMBED_ENABLED", "");
     vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "");
-    expect(await claimWith(both)).toHaveBeenCalledWith(DEVICE_ID);
-    vi.stubEnv("OMNESIS_TAILSCALE_EMBED_ENABLED", "1");
     expect(await claimWith(both)).toHaveBeenCalledWith(DEVICE_ID, {
       tailscaleJoinNotifications: true,
     });

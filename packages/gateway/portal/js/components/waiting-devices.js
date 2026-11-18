@@ -4,7 +4,7 @@
 // Every device waiting for the owner's OK, on Settings → Devices, whichever way
 // it asked: signing in through the optional cloud relay
 // (OMNESIS_CLOUD_RELAY_ENABLED=1) or joining from the owner's Tailscale network
-// through the gateway's own Tailscale device (OMNESIS_TAILSCALE_EMBED_ENABLED=1).
+// through the gateway's own Tailscale device.
 // Each kind keeps its own card and its own way of deciding; the owner finds
 // them in one list under one title.
 

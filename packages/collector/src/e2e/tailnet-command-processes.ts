@@ -54,7 +54,6 @@ export function runCliOn(
       ...e2eGatewayEnv(),
       ...machine.env(caCertFile),
       OMNESIS_CONFIG_DIR: configDir,
-      OMNESIS_TAILSCALE_EMBED_ENABLED: "1",
       OMNESIS_LOG_LEVEL: "error",
       OMNESIS_GATEWAY_URL: GATEWAY_TAILNET_ORIGIN,
       OMNESIS_TOKEN: undefined,

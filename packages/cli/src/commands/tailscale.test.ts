@@ -45,16 +45,9 @@ describe("--gateway", () => {
   });
 });
 
-describe("the command exists only with the opt-in", () => {
-  test("absent without the flag, present with it", async () => {
-    vi.stubEnv("OMNESIS_TAILSCALE_EMBED_ENABLED", "");
-    const off = (await import("../subcommands.js")).SUB_COMMANDS;
-    expect(off).not.toHaveProperty("tailscale");
-    vi.resetModules();
-    vi.stubEnv("OMNESIS_TAILSCALE_EMBED_ENABLED", "1");
-    const on = (await import("../subcommands.js")).SUB_COMMANDS;
-    expect(on).toHaveProperty("tailscale");
-    expect(Object.keys(on).filter((k) => k !== "tailscale")).toEqual(Object.keys(off));
+describe("the command", () => {
+  test("exists on every installation", async () => {
+    expect((await import("../subcommands.js")).SUB_COMMANDS).toHaveProperty("tailscale");
   });
 });
 

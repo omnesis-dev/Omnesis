@@ -74,9 +74,9 @@ const ERRORS = {
     "Google sign-in is unavailable. Remote access and QR pairing work without it.",
   "google-link-failed": "Couldn't connect with Google. Try again. Gateway access is unchanged.",
   "relay-service-unavailable":
-    "Omnesis account setup is unavailable. Ask the installation administrator to configure the relay service.",
+    "This installation has no Omnesis relay service set, so Omnesis accounts aren't available. Set OMNESIS_CLOUD_RELAY_URL for the gateway, then restart it.",
   "relay-service-mismatch":
-    "The installation service configuration does not match this gateway. Ask the installation administrator to resolve it.",
+    "OMNESIS_CLOUD_RELAY_URL names a different relay service from the one this gateway is registered with. Set it back to that service, then restart the gateway.",
   "configuration-invalid": "Check the public gateway origin and certificate settings.",
   "relay-unreachable":
     "Omnesis Relay could not be reached. Check this gateway's internet connection. It keeps trying by itself.",

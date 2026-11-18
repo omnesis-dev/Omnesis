@@ -5,6 +5,7 @@ import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { HostAccess } from "./host-access.js";
 import {
   addressHostname,
   isMcpClientPath,
@@ -22,55 +23,91 @@ const DOMAIN = "https://omnesis.example.org:8443";
 let dir: string;
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "mcp-addresses-"));
+  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
 });
 afterEach(() => {
   vi.unstubAllEnvs();
   rmSync(dir, { recursive: true, force: true });
 });
 
-function flags({ relay = true, tailscale = true } = {}) {
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", relay ? "1" : "");
-  vi.stubEnv("OMNESIS_TAILSCALE_EMBED_ENABLED", tailscale ? "1" : "");
-}
-
-function addresses(overrides: Partial<McpAddressesOptions> = {}) {
-  let publicAccess = false;
-  const tailscale = {
-    tailnetOrigin: () => TAILNET,
-    settings: { get: () => ({ publicAccess }) },
-    updateSettings: vi.fn(async (patch: { publicAccess?: boolean }) => {
-      publicAccess = patch.publicAccess ?? publicAccess;
-      return {} as never;
-    }),
+/**
+ * Tailscale on this computer as the gateway's host service sees it: a machine name, the
+ * port it serves the gateway on, and whether Funnel is on there. Publishing turns it on
+ * or off as asked unless `refuse` is set.
+ */
+function fakeHostTailscale() {
+  const state = {
+    name: "Studio.example-net.ts.net" as string | null,
+    port: 443,
+    served: true,
+    funnel: false,
+    refuse: false,
   };
-  let hostName: string | null = "Studio.example-net.ts.net";
-  let hostPort = 443;
-  const hostTailscale = {
+  const url = () =>
+    `https://${state.name!.toLowerCase()}${state.port === 443 ? "" : `:${state.port}`}`;
+  const service = {
     status: vi.fn(async () =>
-      hostName
+      state.name
         ? {
             state: "available" as const,
-            dnsName: hostName,
-            port: hostPort,
-            url: `https://${hostName.toLowerCase()}${hostPort === 443 ? "" : `:${hostPort}`}`,
-            servesGateway: true,
-            publicGateway: false,
+            dnsName: state.name,
+            port: state.port,
+            url: url(),
+            servesGateway: state.served,
+            publicGateway: state.served && state.funnel,
           }
         : {
             state: "stopped" as const,
             reason: "Tailscale is installed on this computer but not running or not signed in.",
           },
     ),
+    publish: vi.fn(async (publicly: boolean) => {
+      if (state.refuse)
+        return {
+          ok: false as const,
+          reason: "This gateway is not allowed to change Tailscale on this computer.",
+          command: "tailscale funnel --bg https+insecure://localhost:7600",
+        };
+      state.served = true;
+      state.funnel = publicly;
+      return { ok: true as const, url: url() };
+    }),
+    unpublish: vi.fn(async () => {
+      state.served = false;
+      state.funnel = false;
+      return { ok: true as const };
+    }),
   };
+  return { state, service };
+}
+
+function addresses(overrides: Partial<McpAddressesOptions> = {}) {
+  let publicAccess = false;
+  // Whether the device's public address is open yet.
+  let opened = true;
+  const tailscale = {
+    tailnetOrigin: () => TAILNET,
+    settings: { get: () => ({ publicAccess }) },
+    state: () => ({ public: { state: publicAccess && opened ? "on" : "off" } }),
+    holdOpening: (held: boolean) => {
+      opened = !held;
+    },
+    updateSettings: vi.fn(async (patch: { publicAccess?: boolean }) => {
+      publicAccess = patch.publicAccess ?? publicAccess;
+      return {} as never;
+    }),
+  };
+  const host = fakeHostTailscale();
   let clock = 1_000_000;
   const settings = new RemoteAccessSettingsStore(dir);
+  const hostAccess = new HostAccess(host.service, settings);
   const policy = new McpAddresses({
     settings,
     publicBaseUrl: () => DOMAIN,
     relayOrigin: () => RELAY,
     relayState: async () => ({ origin: RELAY, serving: true }),
     tailscale: tailscale as unknown as McpAddressesOptions["tailscale"],
-    hostTailscale,
+    host: hostAccess,
     now: () => clock,
     ...overrides,
   });
@@ -78,30 +115,27 @@ function addresses(overrides: Partial<McpAddressesOptions> = {}) {
     policy,
     settings,
     tailscale,
-    hostTailscale,
-    renameHost: (name: string | null) => {
-      hostName = name;
-    },
-    serveHostOn: (port: number) => {
-      hostPort = port;
-    },
+    host,
+    hostAccess,
     advance: (ms: number) => {
       clock += ms;
     },
   };
 }
 
-/** Each offered address and whether it is on, as the owner sees the list. */
-async function switches(policy: McpAddresses) {
-  return Object.fromEntries((await policy.list()).map((row) => [row.id, row.enabled]));
+/** Each offered address and where MCP answers there, as the owner sees the list. */
+async function reaches(policy: McpAddresses) {
+  return Object.fromEntries((await policy.list()).map((row) => [row.id, row.reach]));
 }
 
-const mcp = (url: string, via: "tailnet" | "public" | null = null, relayed = false) => ({
-  url,
-  path: new URL(url).pathname,
-  via,
-  relayed,
-});
+const request = (
+  url: string,
+  {
+    via = null,
+    relayed = false,
+    funnel = false,
+  }: { via?: "tailnet" | "public" | null; relayed?: boolean; funnel?: boolean } = {},
+) => ({ url, path: new URL(url).pathname, via, relayed, funnel });
 
 describe("which paths an MCP client uses", () => {
   test("the endpoint, OAuth discovery and OAuth routes, but not a source's sign-in callback", () => {
@@ -155,60 +189,69 @@ describe("host names", () => {
 });
 
 describe("MCP per address", () => {
-  test("every address answers until the owner turns one off, and nothing is written for it", async () => {
-    flags();
+  test("every address answers as far as it reaches until the owner chooses, and nothing is written for it", async () => {
     const { policy } = addresses();
     expect(await policy.list()).toEqual([
-      { id: "relay", url: RELAY, enabled: true, available: true },
-      { id: "tailnet", url: TAILNET, enabled: true, available: true },
-      { id: "tailscalePublic", url: TAILNET, enabled: false, available: true },
-      { id: "host", url: HOST, enabled: true, available: true },
-      { id: "domain", url: DOMAIN, enabled: true, available: true },
+      { id: "relay", url: RELAY, reach: "public", choices: ["off", "public"], available: true },
+      {
+        id: "tailnet",
+        url: TAILNET,
+        reach: "private",
+        choices: ["off", "private", "public"],
+        available: true,
+      },
+      {
+        id: "host",
+        url: HOST,
+        reach: "private",
+        choices: ["off", "private", "public"],
+        available: true,
+      },
+      { id: "domain", url: DOMAIN, reach: "on", choices: ["off", "on"], available: true },
     ]);
     for (const url of [`${RELAY}/mcp`, `${TAILNET}/mcp`, `${HOST}/mcp`, `${DOMAIN}/mcp`]) {
-      expect(await policy.refusal(mcp(url)), url).toBeNull();
+      expect(await policy.refusal(request(url)), url).toBeNull();
       expect(policy.answersAt(url), url).toBe(true);
     }
-    expect(await policy.refusal(mcp(`${TAILNET}/mcp`, "tailnet"))).toBeNull();
+    expect(await policy.refusal(request(`${TAILNET}/mcp`, { via: "tailnet" }))).toBeNull();
     expect(existsSync(join(dir, "remote-access.json"))).toBe(false);
   });
 
   test("an address that is not set up is listed as unavailable, with what is known of it", async () => {
-    flags();
-    const { policy, renameHost } = addresses({
+    const { policy, host } = addresses({
       publicBaseUrl: () => undefined,
       relayOrigin: () => undefined,
       relayState: async () => ({ origin: undefined, serving: false }),
       tailscale: {
         tailnetOrigin: () => null,
         settings: { get: () => ({ publicAccess: false }) },
+        state: () => ({ public: { state: "off" } }),
         updateSettings: vi.fn(),
       } as unknown as McpAddressesOptions["tailscale"],
     });
-    renameHost(null);
-    expect(await policy.list()).toEqual([
-      { id: "relay", url: null, enabled: true, available: false },
-      { id: "tailnet", url: null, enabled: true, available: false },
-      { id: "tailscalePublic", url: null, enabled: false, available: false },
-      { id: "host", url: null, enabled: true, available: false },
-      { id: "domain", url: null, enabled: true, available: false },
-    ]);
+    // The look the gateway starts with has finished; the next one finds Tailscale stopped.
+    await policy.settle();
+    host.state.name = null;
+    expect((await policy.list()).map(({ id, url, available }) => ({ id, url, available }))).toEqual(
+      [
+        { id: "relay", url: null, available: false },
+        { id: "tailnet", url: null, available: false },
+        { id: "host", url: null, available: false },
+        { id: "domain", url: null, available: false },
+      ],
+    );
   });
 
   test("this computer's row names the port Tailscale serves the gateway on", async () => {
-    flags();
-    const { policy, serveHostOn } = addresses();
-    serveHostOn(10000);
-    expect((await policy.list()).find((row) => row.id === "host")).toEqual({
-      id: "host",
-      url: "https://studio.example-net.ts.net:10000",
-      enabled: true,
-      available: true,
-    });
+    const { policy, host } = addresses();
+    await policy.settle();
+    host.state.port = 10000;
+    expect((await policy.list()).find((row) => row.id === "host")?.url).toBe(
+      "https://studio.example-net.ts.net:10000",
+    );
   });
 
   test("the relay row follows the relay's live state, not the origin known at start", async () => {
-    flags();
     const LIVE = "https://g-fictional-2.relay.example.net";
     let status = {
       publicOrigin: LIVE as string | undefined,
@@ -220,7 +263,7 @@ describe("MCP per address", () => {
     });
     const relayRow = async () => (await policy.list()).find((row) => row.id === "relay");
     // Saved but not enrolled: the portal shows the relay as not connected.
-    expect(await relayRow()).toEqual({ id: "relay", url: LIVE, enabled: true, available: false });
+    expect(await relayRow()).toMatchObject({ url: LIVE, available: false });
     status = { ...status, enrollment: { state: "enrolled" } };
     expect(await relayRow()).toMatchObject({ url: LIVE, available: true });
     // Turned off by the owner: enrolled, but no longer serving.
@@ -228,247 +271,228 @@ describe("MCP per address", () => {
     expect(await relayRow()).toMatchObject({ available: false });
     // Never configured.
     status = { publicOrigin: undefined, enabled: false, enrollment: { state: "unconfigured" } };
-    expect(await relayRow()).toEqual({ id: "relay", url: null, enabled: true, available: false });
+    expect(await relayRow()).toMatchObject({ url: null, available: false });
   });
 
   test("a relay whose state cannot be read is listed as unavailable", async () => {
-    flags();
     const { policy } = addresses({
       relayState: async () => {
         throw new Error("status unreadable");
       },
     });
-    expect((await policy.list())[0]).toEqual({
-      id: "relay",
-      url: RELAY,
-      enabled: true,
-      available: false,
-    });
+    expect((await policy.list())[0]).toMatchObject({ id: "relay", url: RELAY, available: false });
   });
 
-  test("offers the relay only with the relay opt-in and the gateway's own Tailscale only with its opt-in", async () => {
-    flags({ relay: false, tailscale: false });
-    expect(await switches(addresses().policy)).toEqual({ host: true, domain: true });
-    flags({ relay: true, tailscale: false });
-    expect(await switches(addresses().policy)).toEqual({ relay: true, host: true, domain: true });
-    flags({ relay: false, tailscale: true });
-    expect(await switches(addresses().policy)).toEqual({
-      tailnet: true,
-      tailscalePublic: false,
-      host: true,
-      domain: true,
-    });
-    // Without the device wired there is no public-address switch to read.
-    expect(await switches(addresses({ tailscale: undefined }).policy)).toEqual({
-      tailnet: true,
-      host: true,
-      domain: true,
-    });
-    // Without a port to forward to, Tailscale on this computer is no address.
-    expect(await switches(addresses({ hostTailscale: undefined }).policy)).toEqual({
-      tailnet: true,
-      tailscalePublic: false,
-      domain: true,
-    });
-  });
-
-  test("with neither opt-in, this computer's Tailscale and the own domain are still enforced", async () => {
-    flags({ relay: false, tailscale: false });
-    const { policy } = addresses();
-    await policy.update({ host: false, domain: false });
-    expect(await policy.refusal(mcp(`${HOST}/mcp`))).toBe("host");
-    expect(await policy.refusal(mcp(`${DOMAIN}/oauth/token`))).toBe("domain");
-    // The relay and tailnet names mean nothing here.
-    expect(await policy.refusal(mcp(`${RELAY}/mcp`, null, true))).toBeNull();
-    expect(await policy.refusal(mcp(`${TAILNET}/mcp`, "tailnet"))).toBeNull();
+  test("offers the relay with its opt-in, the Tailscale device where it exists and this computer where there is a port", async () => {
+    vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "");
+    expect(Object.keys(await reaches(addresses().policy))).toEqual(["tailnet", "host", "domain"]);
+    expect(Object.keys(await reaches(addresses({ tailscale: undefined }).policy))).toEqual([
+      "host",
+      "domain",
+    ]);
+    expect(Object.keys(await reaches(addresses({ host: undefined }).policy))).toEqual([
+      "tailnet",
+      "domain",
+    ]);
+    vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
+    expect(Object.keys(await reaches(addresses().policy))).toEqual([
+      "relay",
+      "tailnet",
+      "host",
+      "domain",
+    ]);
   });
 
   test("an address turned off refuses MCP's paths by host, whatever its case or port", async () => {
-    flags();
     const { policy } = addresses();
-    await policy.update({ domain: false });
-    expect(await policy.refusal(mcp("https://OMNESIS.example.org:8443/mcp"))).toBe("domain");
-    expect(await policy.refusal(mcp("https://omnesis.example.org/oauth/token"))).toBe("domain");
+    await policy.update({ domain: "off" });
+    expect(await policy.refusal(request("https://OMNESIS.example.org:8443/mcp"))).toBe("domain");
+    expect(await policy.refusal(request("https://omnesis.example.org/oauth/token"))).toBe("domain");
     expect(
       await policy.refusal(
-        mcp("https://omnesis.example.org/.well-known/oauth-protected-resource/mcp"),
+        request("https://omnesis.example.org/.well-known/oauth-protected-resource/mcp"),
       ),
     ).toBe("domain");
     // The rest of that address, and the other addresses, are untouched.
-    expect(await policy.refusal(mcp("https://omnesis.example.org/portal"))).toBeNull();
-    expect(await policy.refusal(mcp("https://omnesis.example.org/oauth/callback"))).toBeNull();
-    expect(await policy.refusal(mcp(`${RELAY}/mcp`))).toBeNull();
-    expect(await policy.refusal(mcp(`${TAILNET}/mcp`))).toBeNull();
-    expect(await policy.refusal(mcp(`${HOST}/mcp`))).toBeNull();
+    expect(await policy.refusal(request("https://omnesis.example.org/portal"))).toBeNull();
+    expect(await policy.refusal(request("https://omnesis.example.org/oauth/callback"))).toBeNull();
+    expect(await policy.refusal(request(`${RELAY}/mcp`))).toBeNull();
+    expect(await policy.refusal(request(`${TAILNET}/mcp`))).toBeNull();
+    expect(await policy.refusal(request(`${HOST}/mcp`))).toBeNull();
     expect(policy.answersAt(`${DOMAIN}/mcp`)).toBe(false);
     expect(policy.answersAt(`${RELAY}/mcp`)).toBe(true);
 
-    await policy.update({ domain: true, relay: false });
-    expect(await policy.refusal(mcp(`${DOMAIN}/mcp`))).toBeNull();
-    expect(await policy.refusal(mcp(`${RELAY}/oauth/authorize`))).toBe("relay");
+    await policy.update({ domain: "on", relay: "off" });
+    expect(await policy.refusal(request(`${DOMAIN}/mcp`))).toBeNull();
+    expect(await policy.refusal(request(`${RELAY}/oauth/authorize`))).toBe("relay");
   });
 
   test("a domain on an IPv6 address is matched with its brackets", async () => {
-    flags();
     const { policy } = addresses({ publicBaseUrl: () => "https://[2001:db8::7]:7600" });
-    await policy.update({ domain: false });
-    expect(await policy.refusal(mcp("https://[2001:db8::7]:7600/mcp"))).toBe("domain");
-    expect(await policy.refusal(mcp("https://[2001:DB8::7]/mcp"))).toBe("domain");
-    expect(await policy.refusal(mcp("https://[2001:db8::8]:7600/mcp"))).toBeNull();
+    await policy.update({ domain: "off" });
+    expect(await policy.refusal(request("https://[2001:db8::7]:7600/mcp"))).toBe("domain");
+    expect(await policy.refusal(request("https://[2001:DB8::7]/mcp"))).toBe("domain");
+    expect(await policy.refusal(request("https://[2001:db8::8]:7600/mcp"))).toBeNull();
   });
 
   test("loopback always answers, even when it is the configured domain", async () => {
-    flags();
     const { policy } = addresses({ publicBaseUrl: () => "https://localhost:7600" });
-    await policy.update({ domain: false, relay: false, tailnet: false, host: false });
+    await policy.update({ domain: "off", relay: "off", tailnet: "off", host: "off" });
     for (const url of [
       "https://localhost:7600/mcp",
       "https://127.0.0.1:7600/mcp",
       "https://[::1]:7600/mcp",
     ]) {
-      expect(await policy.refusal(mcp(url)), url).toBeNull();
+      expect(await policy.refusal(request(url)), url).toBeNull();
     }
-    expect(await policy.refusal(mcp("https://192.0.2.20:7600/mcp"))).toBeNull();
+    expect(await policy.refusal(request("https://192.0.2.20:7600/mcp"))).toBeNull();
   });
 
   test("a request through the relay is the relay address whatever Host it names", async () => {
-    flags();
     const { policy } = addresses();
-    await policy.update({ relay: false });
-    expect(await policy.refusal(mcp("https://localhost:7600/mcp", null, true))).toBe("relay");
-    expect(await policy.refusal(mcp(`${DOMAIN}/oauth/token`, null, true))).toBe("relay");
-    expect(await policy.refusal(mcp("https://localhost:7600/mcp"))).toBeNull();
-    flags({ relay: false });
-    expect(await policy.refusal(mcp("https://localhost:7600/mcp", null, true))).toBeNull();
+    await policy.update({ relay: "off" });
+    expect(await policy.refusal(request("https://localhost:7600/mcp", { relayed: true }))).toBe(
+      "relay",
+    );
+    expect(await policy.refusal(request(`${DOMAIN}/oauth/token`, { relayed: true }))).toBe("relay");
+    expect(await policy.refusal(request("https://localhost:7600/mcp"))).toBeNull();
+    vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "");
+    expect(
+      await policy.refusal(request("https://localhost:7600/mcp", { relayed: true })),
+    ).toBeNull();
   });
 
   test("the tailnet address is a request from the tailnet, or one naming the device; the public address is not", async () => {
-    flags();
     const { policy } = addresses();
-    await policy.update({ tailnet: false });
-    expect(await policy.refusal(mcp("https://192.0.2.9/mcp", "tailnet"))).toBe("tailnet");
-    expect(await policy.refusal(mcp(`${TAILNET}/mcp`, "tailnet"))).toBe("tailnet");
-    expect(await policy.refusal(mcp(`${TAILNET}/mcp`))).toBe("tailnet");
-    // A request through the public address is that address's, whose own switch the helper applies.
-    expect(await policy.refusal(mcp(`${TAILNET}/mcp`, "public"))).toBeNull();
-    expect(await policy.refusal(mcp(`${TAILNET}/portal`, "tailnet"))).toBeNull();
-  });
-
-  test("this computer's address is recognised by its MagicDNS name, whatever its case", async () => {
-    flags();
-    const { policy } = addresses();
-    await policy.update({ host: false });
-    expect(await policy.refusal(mcp("https://STUDIO.example-net.ts.net/mcp"))).toBe("host");
-    expect(await policy.refusal(mcp("https://studio.example-net.ts.net./oauth/register"))).toBe(
-      "host",
+    await policy.update({ tailnet: "off" });
+    expect(await policy.refusal(request("https://192.0.2.9/mcp", { via: "tailnet" }))).toBe(
+      "tailnet",
     );
-    expect(await policy.refusal(mcp(`${HOST}/portal`))).toBeNull();
-    expect(await policy.refusal(mcp(`${DOMAIN}/mcp`))).toBeNull();
-    expect(policy.answersAt(`${HOST}/mcp`)).toBe(false);
+    expect(await policy.refusal(request(`${TAILNET}/mcp`, { via: "tailnet" }))).toBe("tailnet");
+    expect(await policy.refusal(request(`${TAILNET}/mcp`))).toBe("tailnet");
+    // A request through the public address is that address's, whose own choice the helper applies.
+    expect(await policy.refusal(request(`${TAILNET}/mcp`, { via: "public" }))).toBeNull();
+    expect(await policy.refusal(request(`${TAILNET}/portal`, { via: "tailnet" }))).toBeNull();
   });
 
-  test("a switch already off refuses by this computer's name from the first request after a start", async () => {
-    flags();
-    const first = addresses();
-    await first.policy.update({ host: false });
-    // A new gateway on the same file: the first request waits for the name.
-    const { policy, hostTailscale } = addresses();
-    expect(await policy.refusal(mcp(`${HOST}/mcp`))).toBe("host");
-    expect(hostTailscale.status).toHaveBeenCalledTimes(1);
-    // Paths outside MCP never ask Tailscale.
-    await policy.refusal(mcp(`${HOST}/portal`));
-    expect(hostTailscale.status).toHaveBeenCalledTimes(1);
-  });
+  test("the Tailscale device's three choices are its MCP switch and its own public address", async () => {
+    const { policy, settings, tailscale } = addresses();
+    tailscale.holdOpening(true);
+    await policy.update({ tailnet: "public" });
+    expect((await reaches(policy)).tailnet).toBe("public");
+    expect(tailscale.updateSettings).toHaveBeenCalledWith({ publicAccess: true });
+    // The row says so while Tailscale has yet to open it; the device's page shows what it needs.
+    expect((await policy.list()).find((row) => row.id === "tailnet")?.opening).toBe(true);
+    tailscale.holdOpening(false);
+    expect((await policy.list()).find((row) => row.id === "tailnet")).not.toHaveProperty("opening");
+    expect(settings.get().mcp).toEqual({});
+    // Asking for what is already so writes nothing.
+    await policy.update({ tailnet: "public" });
+    expect(tailscale.updateSettings).toHaveBeenCalledTimes(1);
 
-  test("this computer's name is looked up again in the background once a minute old", async () => {
-    flags();
-    const { policy, hostTailscale, renameHost, advance } = addresses();
-    await policy.update({ host: false });
-    const looks = hostTailscale.status.mock.calls.length;
-    renameHost("atelier.example-net.ts.net");
-    advance(30_000);
-    expect(await policy.refusal(mcp(`${HOST}/mcp`))).toBe("host");
-    expect(hostTailscale.status).toHaveBeenCalledTimes(looks);
-    advance(30_000);
-    // The stale name still answers this request; the new one is learnt for the next.
-    expect(await policy.refusal(mcp(`${HOST}/mcp`))).toBe("host");
-    await vi.waitFor(() => expect(hostTailscale.status).toHaveBeenCalledTimes(looks + 1));
-    expect(await policy.refusal(mcp("https://atelier.example-net.ts.net/mcp"))).toBe("host");
-    expect(await policy.refusal(mcp(`${HOST}/mcp`))).toBeNull();
-  });
-
-  test("while this computer's address and the domain answer, Tailscale is never asked on a request", async () => {
-    flags();
-    const { policy, hostTailscale } = addresses();
-    await policy.update({ tailnet: false });
-    await policy.refusal(mcp(`${HOST}/mcp`));
-    await policy.settle();
-    expect(hostTailscale.status).not.toHaveBeenCalled();
-  });
-
-  test("a failed look keeps refusing by the name already known", async () => {
-    flags();
-    const { policy, hostTailscale, advance } = addresses();
-    await policy.update({ host: false });
-    hostTailscale.status.mockRejectedValueOnce(new Error("timed out"));
-    advance(60_000);
-    await policy.settle();
-    await vi.waitFor(() => expect(hostTailscale.status).toHaveBeenCalledTimes(2));
-    expect(await policy.refusal(mcp(`${HOST}/mcp`))).toBe("host");
-  });
-
-  test("discovery keeps the tailnet name while either the tailnet or the public address answers", async () => {
-    flags();
-    const { policy } = addresses();
-    await policy.update({ tailnet: false });
+    await policy.update({ tailnet: "off" });
+    expect((await reaches(policy)).tailnet).toBe("off");
+    expect(tailscale.updateSettings).toHaveBeenLastCalledWith({ publicAccess: false });
+    expect(settings.get().mcp).toEqual({ tailnet: false });
     expect(policy.answersAt(`${TAILNET}/mcp`)).toBe(false);
-    await policy.update({ tailscalePublic: true });
+
+    await policy.update({ tailnet: "private" });
+    expect((await reaches(policy)).tailnet).toBe("private");
+    expect(settings.get().mcp).toEqual({});
     expect(policy.answersAt(`${TAILNET}/mcp`)).toBe(true);
   });
 
-  test("a public address that is the relay's is the relay's, under the relay's switch alone", async () => {
-    flags();
+  test("this computer's address is recognised by its MagicDNS name, whatever its case", async () => {
+    const { policy } = addresses();
+    await policy.update({ host: "off" });
+    expect(await policy.refusal(request("https://STUDIO.example-net.ts.net/mcp"))).toBe("host");
+    expect(await policy.refusal(request("https://studio.example-net.ts.net./oauth/register"))).toBe(
+      "host",
+    );
+    expect(await policy.refusal(request(`${HOST}/portal`))).toBeNull();
+    expect(await policy.refusal(request(`${DOMAIN}/mcp`))).toBeNull();
+    expect(policy.answersAt(`${HOST}/mcp`)).toBe(false);
+  });
+
+  test("a choice already off refuses by this computer's name from the first request after a start", async () => {
+    const first = addresses();
+    await first.policy.update({ host: "off" });
+    // A new gateway on the same file: the first request waits for the name it is looking up.
+    const { policy, host } = addresses();
+    expect(await policy.refusal(request(`${HOST}/mcp`))).toBe("host");
+    expect(host.service.status).toHaveBeenCalledTimes(1);
+    // Paths outside MCP never ask Tailscale.
+    await policy.refusal(request(`${HOST}/portal`));
+    expect(host.service.status).toHaveBeenCalledTimes(1);
+  });
+
+  test("this computer's name is looked up again in the background once a minute old", async () => {
+    const { policy, host, advance } = addresses();
+    await policy.update({ host: "off" });
+    const looks = host.service.status.mock.calls.length;
+    host.state.name = "atelier.example-net.ts.net";
+    advance(30_000);
+    expect(await policy.refusal(request(`${HOST}/mcp`))).toBe("host");
+    expect(host.service.status).toHaveBeenCalledTimes(looks);
+    advance(30_000);
+    // The stale name still answers this request; the new one is learnt for the next.
+    expect(await policy.refusal(request(`${HOST}/mcp`))).toBe("host");
+    await vi.waitFor(() => expect(host.service.status).toHaveBeenCalledTimes(looks + 1));
+    expect(await policy.refusal(request("https://atelier.example-net.ts.net/mcp"))).toBe("host");
+    expect(await policy.refusal(request(`${HOST}/mcp`))).toBeNull();
+  });
+
+  test("a failed look keeps refusing by the name already known", async () => {
+    const { policy, host, advance } = addresses();
+    await policy.update({ host: "off" });
+    const looks = host.service.status.mock.calls.length;
+    host.service.status.mockRejectedValueOnce(new Error("timed out"));
+    advance(60_000);
+    await policy.settle();
+    await vi.waitFor(() => expect(host.service.status).toHaveBeenCalledTimes(looks + 1));
+    expect(await policy.refusal(request(`${HOST}/mcp`))).toBe("host");
+  });
+
+  test("discovery keeps the tailnet name while either the tailnet or the public address answers", async () => {
+    const { policy, tailscale } = addresses();
+    await policy.update({ tailnet: "off" });
+    expect(policy.answersAt(`${TAILNET}/mcp`)).toBe(false);
+    // A device made public by its own page answers there too.
+    await tailscale.updateSettings({ publicAccess: true });
+    expect(policy.answersAt(`${TAILNET}/mcp`)).toBe(true);
+    expect((await reaches(policy)).tailnet).toBe("public");
+  });
+
+  test("a public address that is the relay's is the relay's, under the relay's choice alone", async () => {
     const { policy } = addresses({ publicBaseUrl: () => RELAY });
     expect(await policy.publicAddressWay()).toBe("relay");
     expect((await policy.list()).find((row) => row.id === "domain")?.available).toBe(false);
-    await policy.update({ domain: false });
-    expect(await policy.refusal(mcp(`${RELAY}/mcp`))).toBeNull();
-    await policy.update({ relay: false });
-    expect(await policy.refusal(mcp(`${RELAY}/mcp`))).toBe("relay");
+    await policy.update({ domain: "off" });
+    expect(await policy.refusal(request(`${RELAY}/mcp`))).toBeNull();
+    await policy.update({ relay: "off" });
+    expect(await policy.refusal(request(`${RELAY}/mcp`))).toBe("relay");
   });
 
-  test("a public address that is this computer's Tailscale name has one row and one switch, the host's", async () => {
-    flags();
+  test("a public address that is this computer's Tailscale name has one row and one choice, the host's", async () => {
     const { policy } = addresses({ publicBaseUrl: () => HOST });
     expect(await policy.publicAddressWay()).toBe("host");
     const rows = (await policy.list()).filter((row) => row.available);
     expect(rows.map((row) => row.id)).not.toContain("domain");
     expect(rows.find((row) => row.id === "host")?.url).toBe(HOST);
-    // A domain switch turned off before the address was the host's no longer refuses it.
-    await policy.update({ domain: false });
-    expect(await policy.refusal(mcp(`${HOST}/mcp`))).toBeNull();
-    await policy.update({ host: false });
-    expect(await policy.refusal(mcp(`${HOST}/mcp`))).toBe("host");
-  });
-
-  test("a domain switch already off waits for this computer's name before refusing its own address", async () => {
-    flags();
-    const first = addresses({ publicBaseUrl: () => HOST });
-    await first.policy.update({ domain: false });
-    const { policy, hostTailscale } = addresses({ publicBaseUrl: () => HOST });
-    expect(await policy.refusal(mcp(`${HOST}/mcp`))).toBeNull();
-    expect(hostTailscale.status).toHaveBeenCalled();
+    // A domain choice turned off before the address was the host's no longer refuses it.
+    await policy.update({ domain: "off" });
+    expect(await policy.refusal(request(`${HOST}/mcp`))).toBeNull();
+    await policy.update({ host: "off" });
+    expect(await policy.refusal(request(`${HOST}/mcp`))).toBe("host");
   });
 
   test("a public address that is the gateway's own Tailscale device is the tailnet's", async () => {
-    flags();
     const { policy } = addresses({ publicBaseUrl: () => TAILNET });
     expect(await policy.publicAddressWay()).toBe("tailnet");
     expect((await policy.list()).find((row) => row.id === "domain")?.available).toBe(false);
   });
 
   test("the owner's own domain is nobody else's, and keeps its row", async () => {
-    flags();
     const { policy } = addresses();
     expect(await policy.publicAddressWay()).toBeNull();
     expect((await policy.list()).find((row) => row.id === "domain")).toMatchObject({
@@ -478,48 +502,177 @@ describe("MCP per address", () => {
   });
 
   test("a relay address is recognised only with the relay opt-in", async () => {
-    flags();
     const { policy, settings } = addresses();
-    await policy.update({ relay: false });
-    flags({ relay: false });
-    expect(await policy.refusal(mcp(`${RELAY}/mcp`))).toBeNull();
+    await policy.update({ relay: "off" });
+    vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "");
+    expect(await policy.refusal(request(`${RELAY}/mcp`))).toBeNull();
     // The choice is kept for when the opt-in returns.
     expect(settings.get().mcp).toEqual({ relay: false });
   });
 
-  test("the public Tailscale address is the device's own setting, read and written through it", async () => {
-    flags();
-    const { policy, settings, tailscale } = addresses();
-    await policy.update({ tailscalePublic: true });
-    expect((await switches(policy)).tailscalePublic).toBe(true);
-    expect(tailscale.updateSettings).toHaveBeenCalledWith({ publicAccess: true });
-    expect(settings.get().mcp).toBeUndefined();
-    // Asking for what is already so writes nothing.
-    await policy.update({ tailscalePublic: true });
-    expect(tailscale.updateSettings).toHaveBeenCalledTimes(1);
-  });
-
-  test("only turning an address on loosens the gateway", async () => {
-    flags();
+  test("only letting MCP answer further loosens the gateway", async () => {
     const { policy } = addresses();
-    expect(policy.loosens({ relay: false, domain: false, host: false })).toBe(false);
-    expect(policy.loosens({ domain: true, host: true })).toBe(false);
-    expect(policy.loosens({ tailscalePublic: true })).toBe(true);
-    expect(policy.loosens({ tailscalePublic: false })).toBe(false);
-    await policy.update({ domain: false, host: false });
-    expect(policy.loosens({ domain: true })).toBe(true);
-    expect(policy.loosens({ host: true })).toBe(true);
-    expect(policy.loosens({ relay: true, domain: false })).toBe(false);
-    for (const unreadable of [undefined, null, "domain", 1, { domain: "yes" }]) {
+    expect(policy.loosens({ relay: "off", domain: "off", host: "off" })).toBe(false);
+    expect(policy.loosens({ domain: "on", host: "private", tailnet: "private" })).toBe(false);
+    expect(policy.loosens({ tailnet: "public" })).toBe(true);
+    expect(policy.loosens({ host: "public" })).toBe(false);
+    await policy.update({ domain: "off", host: "private" });
+    expect(policy.loosens({ domain: "on" })).toBe(true);
+    expect(policy.loosens({ host: "public" })).toBe(true);
+    expect(policy.loosens({ host: "private" })).toBe(false);
+    expect(policy.loosens({ relay: "public", domain: "off" })).toBe(false);
+    for (const unreadable of [undefined, null, "domain", 1, { domain: true }]) {
       expect(policy.loosens(unreadable)).toBe(false);
     }
   });
 
-  test("refuses a switch for an address the gateway does not offer", async () => {
-    flags({ relay: false, tailscale: false });
-    const { policy, settings } = addresses();
-    await expect(policy.update({ relay: false })).rejects.toThrow(/relay/);
-    await expect(policy.update({ tailscalePublic: true })).rejects.toThrow(/tailscalePublic/);
+  test("refuses a choice for an address the gateway does not offer, or one it lacks", async () => {
+    vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "");
+    const { policy, settings } = addresses({ tailscale: undefined });
+    await expect(policy.update({ relay: "off" })).rejects.toThrow(/relay/);
+    await expect(policy.update({ tailnet: "public" })).rejects.toThrow(/tailnet/);
+    await expect(policy.update({ domain: "private" })).rejects.toThrow(/domain/);
     expect(settings.get().mcp).toBeUndefined();
+  });
+});
+
+describe("Tailscale on this computer and the Internet", () => {
+  const funnel = (path: string) => request(`${HOST}${path}`, { funnel: true });
+
+  test("an owner who turned Funnel on before these choices keeps everything on the Internet", async () => {
+    const { policy, host } = addresses();
+    await policy.settle();
+    host.state.funnel = true;
+    expect((await reaches(policy)).host).toBe("public");
+    expect(await policy.refusal(funnel("/mcp"))).toBeNull();
+    expect(await policy.refusal(funnel("/portal"))).toBeNull();
+    expect(await policy.refusal(funnel("/devices/pair"))).toBeNull();
+    expect(existsSync(join(dir, "remote-access.json"))).toBe(false);
+  });
+
+  test("MCP put on the Internet turns Funnel on for MCP alone and keeps the pages and API off it", async () => {
+    const { policy, host, settings } = addresses();
+    expect(await policy.update({ host: "public" })).toBeNull();
+    expect(host.service.publish).toHaveBeenCalledWith(true);
+    expect(settings.get()).toMatchObject({ mcp: { host: true }, hostApi: "private" });
+    expect((await reaches(policy)).host).toBe("public");
+    expect(await policy.refusal(funnel("/mcp"))).toBeNull();
+    expect(await policy.refusal(funnel("/oauth/token"))).toBeNull();
+    expect(await policy.refusal(funnel("/portal"))).toBe("host-internet-api");
+    expect(await policy.refusal(funnel("/devices/pair"))).toBe("host-internet-api");
+    // The owner's Tailscale network still reaches everything.
+    expect(await policy.refusal(request(`${HOST}/portal`))).toBeNull();
+    expect(await policy.refusal(request(`${HOST}/mcp`))).toBeNull();
+
+    // Kept to the Tailscale network again: Funnel is no longer needed, so it goes.
+    await policy.update({ host: "private" });
+    expect(host.service.publish).toHaveBeenLastCalledWith(false);
+    expect(host.state.funnel).toBe(false);
+    expect((await reaches(policy)).host).toBe("private");
+  });
+
+  test("MCP kept off the Internet while the pages and API are on it keeps Funnel, and refuses MCP through it", async () => {
+    const { policy, host, settings } = addresses();
+    host.state.funnel = true;
+    await policy.update({ host: "private" });
+    expect(host.service.publish).not.toHaveBeenCalled();
+    expect(settings.get()).toMatchObject({ mcp: { host: "private" }, hostApi: "public" });
+    expect(await policy.refusal(funnel("/mcp"))).toBe("host");
+    expect(await policy.refusal(funnel("/.well-known/oauth-authorization-server"))).toBe("host");
+    expect(await policy.refusal(funnel("/portal"))).toBeNull();
+    expect(await policy.refusal(request(`${HOST}/mcp`))).toBeNull();
+    expect(policy.tailnetOnly(`${HOST}/mcp`)).toBe(true);
+    // Off altogether: the Tailscale network loses MCP too.
+    await policy.update({ host: "off" });
+    expect(await policy.refusal(request(`${HOST}/mcp`))).toBe("host");
+  });
+
+  test("the Funnel header marks the request whatever Host it names, but not one through the relay or the device", async () => {
+    const { policy, hostAccess } = addresses();
+    await hostAccess.publish(false);
+    await policy.update({ host: "private" });
+    expect(await policy.refusal(request("https://localhost:7600/mcp", { funnel: true }))).toBe(
+      "host",
+    );
+    expect(
+      await policy.refusal(request(`${RELAY}/mcp`, { relayed: true, funnel: true })),
+    ).toBeNull();
+    expect(
+      await policy.refusal(request(`${TAILNET}/mcp`, { via: "tailnet", funnel: true })),
+    ).toBeNull();
+    // A gateway with no Tailscale of its computer to forward to ignores the header.
+    const { policy: portless } = addresses({ host: undefined });
+    expect(
+      await portless.refusal(request("https://localhost:7600/portal", { funnel: true })),
+    ).toBeNull();
+  });
+
+  test("a choice Tailscale refuses to apply is kept, and the refusal names the command", async () => {
+    const { policy, host, settings } = addresses();
+    host.state.refuse = true;
+    expect(await policy.update({ host: "public" })).toMatchObject({
+      ok: false,
+      command: "tailscale funnel --bg https+insecure://localhost:7600",
+    });
+    expect(settings.get().mcp).toEqual({ host: true });
+    // Nothing is public until the command runs.
+    expect((await reaches(policy)).host).toBe("private");
+  });
+
+  test("a choice made while Tailscale does not serve the gateway is kept for when it does", async () => {
+    const { policy, host, settings, hostAccess } = addresses();
+    host.state.served = false;
+    await policy.update({ host: "public" });
+    expect(host.service.publish).not.toHaveBeenCalled();
+    expect(settings.get().mcp).toEqual({ host: true });
+    // Serving it later with the pages and API kept private still opens Funnel for MCP.
+    await hostAccess.publish(false);
+    expect(host.service.publish).toHaveBeenLastCalledWith(true);
+    expect(await hostAccess.status()).toMatchObject({ publicGateway: false, publicMcp: true });
+  });
+
+  test("the pages and API go on the Internet with MCP the owner never chose following them", async () => {
+    const { host, hostAccess } = addresses();
+    host.state.served = false;
+    await hostAccess.publish(true);
+    expect(host.service.publish).toHaveBeenLastCalledWith(true);
+    expect(await hostAccess.status()).toMatchObject({ publicGateway: true, publicMcp: true });
+    await hostAccess.publish(false);
+    expect(host.service.publish).toHaveBeenLastCalledWith(false);
+    expect(await hostAccess.status()).toMatchObject({
+      funnel: false,
+      publicGateway: false,
+      publicMcp: false,
+    });
+  });
+});
+
+describe("this computer's Tailscale address as an OAuth issuer", () => {
+  test("is offered while it serves the gateway and MCP answers there", async () => {
+    const { policy, host } = addresses();
+    await policy.settle();
+    expect(policy.hostIssuer()).toEqual([HOST]);
+    await policy.update({ host: "off" });
+    expect(policy.hostIssuer()).toEqual([]);
+    await policy.update({ host: "private" });
+    host.state.served = false;
+    await policy.list();
+    expect(policy.hostIssuer()).toEqual([]);
+  });
+
+  test("gives way to a public address saved on the same origin, as an upgraded gateway has", async () => {
+    const { policy } = addresses({ publicBaseUrl: () => `${HOST}/` });
+    await policy.settle();
+    expect(policy.hostIssuer()).toEqual([]);
+  });
+
+  test("names the port Tailscale serves the gateway on", async () => {
+    const { policy, host } = addresses();
+    await policy.settle();
+    host.state.port = 8443;
+    await policy.list();
+    expect(policy.hostIssuer()).toEqual(["https://studio.example-net.ts.net:8443"]);
+    expect(policy.tailnetOnly("https://studio.example-net.ts.net:8443/mcp")).toBe(true);
+    expect(policy.tailnetOnly(`${DOMAIN}/mcp`)).toBe(false);
   });
 });

@@ -11,7 +11,7 @@
  * CLI: importing `index.ts` performs the TLS preflight and dispatches argv.
  */
 
-import { cloudRelayEnabled, tailscaleEmbedEnabled } from "@omnesis/core";
+import { cloudRelayEnabled } from "@omnesis/core";
 import type { SubCommandsDef } from "citty";
 
 export const SUB_COMMANDS: SubCommandsDef = {
@@ -19,10 +19,8 @@ export const SUB_COMMANDS: SubCommandsDef = {
   ...(cloudRelayEnabled()
     ? { cloud: () => import("./commands/cloud.js").then((m) => m.cloudCommand) }
     : {}),
-  // The gateway's own Tailscale device is opt-in the same way.
-  ...(tailscaleEmbedEnabled()
-    ? { tailscale: () => import("./commands/tailscale.js").then((m) => m.tailscaleCommand) }
-    : {}),
+  // The gateway's own Tailscale device.
+  tailscale: () => import("./commands/tailscale.js").then((m) => m.tailscaleCommand),
   // ── Read commands (any token) ────────────────────────────────────────
   search: () => import("./commands/search.js").then((m) => m.searchCommand),
   show: () => import("./commands/show.js").then((m) => m.showCommand),

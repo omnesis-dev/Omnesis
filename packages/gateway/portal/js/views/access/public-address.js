@@ -18,7 +18,7 @@
 // link, or `{ route, text }` for a link inside the portal.
 
 import { useEffect, useState } from "preact/hooks";
-import { ACCOUNT_PAGE, HOST_TAILSCALE_PAGE, OWN_ADDRESS_PAGE, RELAY_PAGE, TAILSCALE_PAGE } from "../remote-access/manage.js";
+import { ACCOUNT_PAGE, HOST_TAILSCALE_PAGE, MCP_PAGE, OWN_ADDRESS_PAGE, RELAY_PAGE, TAILSCALE_PAGE } from "../remote-access/manage.js";
 
 import { relayManagement } from "../../lib/cloud-relay-api.js";
 import { getTailscale } from "../../lib/tailscale-api.js";
@@ -34,6 +34,9 @@ const RELAY_SETTINGS = { route: RELAY_PAGE, text: "Settings, Connectivity" };
 /** Where the gateway's own Tailscale device and its public address are managed. */
 export const TAILSCALE_SETTINGS_ROUTE = TAILSCALE_PAGE;
 const TAILSCALE_SETTINGS = { route: TAILSCALE_PAGE, text: "Settings, Connectivity" };
+
+/** Where the MCP server is put on the Internet, address by address. */
+const MCP_SETTINGS = { route: MCP_PAGE, text: "Settings, MCP server" };
 
 const PRIVATE_SUFFIXES = [".local", ".internal", ".lan", ".home.arpa", ".localhost"];
 
@@ -190,8 +193,9 @@ export function tailscalePublicAddress(tailscaleEmbed, state, oauth) {
 /** Why the Tailscale device's address cannot serve an agent on the Internet, and what to do. */
 const TAILSCALE_PRIVATE = {
   off: {
+    lead: "This gateway's Tailscale device has an address.",
     headline: "This address only answers on your Tailscale network.",
-    action: ["Turn on its public address in ", TAILSCALE_SETTINGS, "."],
+    action: ["Put its MCP server on the Internet in ", MCP_SETTINGS, "."],
   },
   starting: {
     headline: "This address's public access is still opening.",
@@ -201,6 +205,13 @@ const TAILSCALE_PRIVATE = {
     headline: "Tailscale is not letting this address be public yet.",
     action: ["See what it needs in ", TAILSCALE_SETTINGS, "."],
   },
+};
+
+/** Why this computer's Tailscale address cannot serve an agent on the Internet, and what to do. */
+const HOST_PRIVATE = {
+  lead: "Tailscale on this computer has an address.",
+  headline: "This address only answers on your Tailscale network.",
+  action: ["Put its MCP server on the Internet in ", MCP_SETTINGS, "."],
 };
 
 /**
@@ -259,7 +270,7 @@ const OR_PICK_ANOTHER = ["Or pick another address from the list above."];
  * - `network` and `machine`: reachable only from the gateway's networks, or
  *   only on its own machine.
  */
-function describeAddress(resource, relay, tailscale = NO_TAILSCALE) {
+function describeAddress(resource, relay, tailscale = NO_TAILSCALE, entry = null) {
   if (relay.url !== undefined && sameAddress(resource, relay.url)) {
     const problem = RELAY_UNAVAILABLE[relay.state];
     return {
@@ -282,6 +293,10 @@ function describeAddress(resource, relay, tailscale = NO_TAILSCALE) {
   }
   if (isLoopbackAddress(resource)) {
     return { resource, kind: "machine", text: `This machine only: ${resource}` };
+  }
+  // This computer's Tailscale address while its MCP server is not on the Internet.
+  if (entry?.tailnetOnly) {
+    return { resource, kind: "tailnet", text: `Tailscale network only: ${resource}`, private: HOST_PRIVATE };
   }
   return isPrivateAddress(resource)
     ? { resource, kind: "network", text: `This network only: ${resource}` }
@@ -307,7 +322,10 @@ function describeAddress(resource, relay, tailscale = NO_TAILSCALE) {
  */
 export function addressChoices(oauth, relay = NO_RELAY, tailscale = NO_TAILSCALE) {
   const resources = [...new Set([oauth.resource, ...(oauth.resources ?? []).map((entry) => entry.resource)])];
-  const options = resources.map((resource) => describeAddress(resource, relay, tailscale));
+  const entries = oauth.resources ?? [];
+  const options = resources.map((resource) =>
+    describeAddress(resource, relay, tailscale, entries.find((entry) => sameAddress(entry.resource, resource))),
+  );
   const selectable = (relay.state !== "none" || tailscale.state !== "none") && options.length > 1;
   const preferred = selectable
     ? (options.find((option) => option.kind === "public") ??
@@ -430,7 +448,7 @@ export function hostedClientAddress(agent, resource, relay = NO_RELAY, choices =
   // The device's own address is the shortest way to a public one; with it, publishing the
   // gateway some other way goes unmentioned.
   const publish = [
-    tailnet ? [`This gateway's Tailscale device has an address. ${tailnet.headline} `, ...tailnet.action] : PUBLISH_IT_YOURSELF,
+    tailnet ? [`${tailnet.lead ?? "This gateway's Tailscale device has an address."} ${tailnet.headline} `, ...tailnet.action] : PUBLISH_IT_YOURSELF,
     ...(relay.state === "not-connected" ? [CONNECT_AN_ACCOUNT] : []),
   ];
   if (own.reachable) {
@@ -486,12 +504,12 @@ export function localClientAddress(resource, relay = NO_RELAY, choices = { optio
  */
 export function hostedClientsHint(relay = NO_RELAY, tailscale = NO_TAILSCALE) {
   if (tailscale.state === "on" && relay.state !== "ready") {
-    return ["ChatGPT and Claude apps can use this gateway's Tailscale public address."];
+    return ["ChatGPT, Claude apps and Grok bot can use this gateway's Tailscale public address."];
   }
   if (relay.state === "none") {
     if (tailscale.state === "none") {
       return [
-        "ChatGPT and Claude apps need an Internet-reachable address: publish the gateway with ",
+        "ChatGPT, Claude apps and Grok bot need an Internet-reachable address: publish the gateway with ",
         { route: HOST_TAILSCALE_PAGE, text: "Tailscale on this computer" },
         " or ",
         { route: OWN_ADDRESS_PAGE, text: "a domain of your own" },
@@ -499,19 +517,19 @@ export function hostedClientsHint(relay = NO_RELAY, tailscale = NO_TAILSCALE) {
       ];
     }
     return [
-      "ChatGPT and Claude apps need an Internet-reachable address. Turning on the public address in ",
-      TAILSCALE_SETTINGS,
-      " gives this gateway one.",
+      "ChatGPT, Claude apps and Grok bot need an Internet-reachable address. Putting the MCP server of this gateway's Tailscale device on the Internet, in ",
+      MCP_SETTINGS,
+      ", gives it one.",
     ];
   }
   if (relay.state === "not-connected") {
     return [
-      "ChatGPT and Claude apps need an Internet-reachable address. Connecting this gateway to an Omnesis account in ",
+      "ChatGPT, Claude apps and Grok bot need an Internet-reachable address. Connecting this gateway to an Omnesis account in ",
       ACCOUNT_SETTINGS,
       " gives it one.",
     ];
   }
-  const uses = "ChatGPT and Claude apps can use this gateway's Omnesis address.";
+  const uses = "ChatGPT, Claude apps and Grok bot can use this gateway's Omnesis address.";
   const unavailable = RELAY_UNAVAILABLE[relay.state];
   return unavailable ? [`${uses} ${unavailable.headline} `, ...unavailable.action] : [uses];
 }

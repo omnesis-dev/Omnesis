@@ -70,6 +70,11 @@ export type HostTailscale =
       publicGateway: boolean;
       /** Why publishing cannot run, when `port` is null. */
       blocked?: string;
+      /**
+       * The ports Funnel accepts that another app holds, with where Tailscale forwards
+       * each (`http://127.0.0.1:3000`, say), or null when it does not forward anywhere.
+       */
+      taken: Array<{ port: number; target: string | null }>;
     };
 
 /** A failed change names why, and the command to run instead when there is one. */
@@ -114,7 +119,7 @@ function addressOn(dnsName: string, port: number): string {
 
 interface ServeConfig {
   TCP?: Record<string, { HTTPS?: unknown; HTTP?: unknown; [other: string]: unknown }>;
-  Web?: Record<string, { Handlers?: Record<string, { Proxy?: unknown }> }>;
+  Web?: Record<string, { Handlers?: Record<string, { Proxy?: unknown; Path?: unknown }> }>;
   AllowFunnel?: Record<string, boolean>;
   /** Configs of `tailscale serve` runs still in the foreground, by session. */
   Foreground?: Record<string, ServeConfig>;
@@ -124,19 +129,30 @@ interface ServeConfig {
 interface ServedPorts {
   /** Ports that forward their root to this gateway and nothing else, with whether Funnel is on. */
   gateway: Map<number, boolean>;
-  /** Ports where something other than this gateway is served. */
-  others: Set<number>;
+  /** Ports where something other than this gateway is served, with where each forwards. */
+  others: Map<number, string | null>;
+}
+
+/** Where a port's own handler sends requests, as the owner would recognise it. */
+function forwardTarget(handler: { Proxy?: unknown; Path?: unknown } | undefined): string | null {
+  if (typeof handler?.Proxy === "string") return handler.Proxy;
+  if (typeof handler?.Path === "string") return handler.Path;
+  return null;
 }
 
 function servedPorts(config: ServeConfig, dnsName: string, gatewayPort: number): ServedPorts {
   const gateway = new Map<number, boolean>();
-  const others = new Set<number>();
+  const others = new Map<number, string | null>();
+  const hold = (port: number, target: string | null) => {
+    if (!others.has(port) || others.get(port) === null) others.set(port, target);
+  };
   const visit = (serve: ServeConfig, foreground: boolean) => {
     for (const [port, entry] of Object.entries(serve.TCP ?? {})) {
       // A raw TCP forward or TLS terminator owns the whole port; an HTTPS or HTTP entry
       // only says web handlers live there, judged below.
       if (Object.keys(entry ?? {}).some((key) => key !== "HTTPS" && key !== "HTTP")) {
-        others.add(Number(port));
+        const forward = (entry as { TCPForward?: unknown }).TCPForward;
+        hold(Number(port), typeof forward === "string" ? forward : null);
       }
     }
     for (const [hostPort, web] of Object.entries(serve.Web ?? {})) {
@@ -151,17 +167,18 @@ function servedPorts(config: ServeConfig, dnsName: string, gatewayPort: number):
       if (onlyGateway && !foreground) {
         gateway.set(port, gateway.get(port) === true || serve.AllowFunnel?.[hostPort] === true);
       } else if (handlers.length > 0) {
-        others.add(port);
+        const root = handlers.find(([path]) => path === "/")?.[1] ?? handlers[0]?.[1];
+        hold(port, forwardTarget(root));
       }
     }
   };
   visit(config, false);
   for (const session of Object.values(config.Foreground ?? {})) visit(session, true);
-  for (const port of others) gateway.delete(port);
+  for (const port of others.keys()) gateway.delete(port);
   return { gateway, others };
 }
 
-const NOTHING_SERVED: ServedPorts = { gateway: new Map(), others: new Set() };
+const NOTHING_SERVED: ServedPorts = { gateway: new Map(), others: new Map() };
 
 const isFunnelPort = (port: number) => (FUNNEL_PORTS as readonly number[]).includes(port);
 
@@ -230,6 +247,10 @@ export class HostTailscaleService {
       servesGateway,
       publicGateway: servesGateway && served.gateway.get(port) === true,
       ...(port === null ? { blocked: NO_FREE_PORT } : {}),
+      taken: FUNNEL_PORTS.filter((held) => served.others.has(held)).map((held) => ({
+        port: held,
+        target: served.others.get(held) ?? null,
+      })),
     };
   }
 

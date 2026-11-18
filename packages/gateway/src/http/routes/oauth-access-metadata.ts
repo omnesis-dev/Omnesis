@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import {
+  isLoopbackUrl,
   resolveMetadataRequestResource,
   resolveMcpRequestResource,
   resolveOAuthMetadataPaths,
@@ -26,6 +27,12 @@ import {
 import type { Handler, MiddlewareHandler } from "hono";
 import type { AccessService } from "../../access/service.js";
 import type { AppEnv, RouteApp } from "./types.js";
+
+const LOCAL_RESOURCE_METADATA = "/.well-known/oauth-protected-resource/mcp";
+const LOCAL_ISSUER_METADATA = new Set([
+  "/.well-known/oauth-authorization-server",
+  "/.well-known/openid-configuration",
+]);
 
 export function mountOAuthMetadataRoutes(
   app: RouteApp,
@@ -134,8 +141,18 @@ export function mountOAuthMetadataRoutes(
   };
   const serveMetadata: Handler<AppEnv> = (c, next) => {
     const paths = metadataPaths();
-    if (paths.protectedResources.has(c.req.path)) return protectedResourceMetadata(c, next);
-    if (paths.authorizationServer.has(c.req.path)) return authorizationServerMetadata(c, next);
+    // Software on the gateway's machine signs in at the loopback origin, an issuer with no path.
+    const local = isLoopbackUrl(c.req.url);
+    if (
+      paths.protectedResources.has(c.req.path) ||
+      (local && c.req.path === LOCAL_RESOURCE_METADATA)
+    )
+      return protectedResourceMetadata(c, next);
+    if (
+      paths.authorizationServer.has(c.req.path) ||
+      (local && LOCAL_ISSUER_METADATA.has(c.req.path))
+    )
+      return authorizationServerMetadata(c, next);
     return next();
   };
   for (const path of [

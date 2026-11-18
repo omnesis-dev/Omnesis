@@ -79,7 +79,6 @@ const apps = new Set<ReturnType<typeof createServer>>();
 
 beforeEach(async () => {
   vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
-  vi.stubEnv("OMNESIS_TAILSCALE_EMBED_ENABLED", "1");
   vi.stubEnv("OMNESIS_EXPERIMENTAL", "0");
   dir = mkdtempSync(join(tmpdir(), "omnesis-mcp-addresses-"));
   db = createDatabase(join(dir, "gateway.db"));
@@ -113,7 +112,12 @@ afterEach(async () => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-function gateway(extra: { cloudRelayManagement?: CloudRelayManagement } = {}) {
+function gateway(
+  extra: {
+    cloudRelayManagement?: CloudRelayManagement;
+    publicAddress?: ReturnType<typeof fixedPublicAddress>;
+  } = {},
+) {
   const app = createServer(db, join(dir, "gateway.db"), {
     configDir: dir,
     analyticsDb,
@@ -218,9 +222,12 @@ async function listedResources(send: ReturnType<typeof gateway>["send"]) {
   };
 }
 
-function enabledById(state: { mcpAddresses: Array<{ id: string; enabled: boolean }> }) {
-  return Object.fromEntries(state.mcpAddresses.map((row) => [row.id, row.enabled]));
+function reachById(state: { mcpAddresses: Array<{ id: string; reach: string }> }) {
+  return Object.fromEntries(state.mcpAddresses.map((row) => [row.id, row.reach]));
 }
+
+/** The address software on the gateway's own machine signs in through. */
+const LOCAL = "https://localhost:17631";
 
 describe("upgrading leaves every connected agent working", () => {
   for (const [label, file] of [
@@ -236,14 +243,13 @@ describe("upgrading leaves every connected agent working", () => {
       for (const origin of origins) {
         expect(await listTools(send, origin, tokens[origin]!), origin).toContain("run_sql");
       }
-      expect(enabledById(await (await adminRequest("GET")).json())).toEqual({
-        relay: true,
-        tailnet: true,
-        tailscalePublic: false,
-        host: true,
-        domain: true,
+      expect(reachById(await (await adminRequest("GET")).json())).toEqual({
+        relay: "public",
+        tailnet: "private",
+        host: "private",
+        domain: "on",
       });
-      // Discovery lists what it listed before the switches existed, in the same order.
+      // Discovery lists what it listed before the choices existed, in the same order.
       expect(await listedResources(send)).toEqual({
         resource: `${DOMAIN}/mcp`,
         resources: [`${DOMAIN}/mcp`, `${RELAY}/mcp`, `${TAILNET}/mcp`, `${HOST}/mcp`],
@@ -260,9 +266,9 @@ describe("an address the owner turned MCP off on", () => {
     const { send, adminRequest } = gateway();
     const domainToken = connectedAgent(DOMAIN);
     const relayToken = connectedAgent(RELAY);
-    const off = await adminRequest("PATCH", { mcp: { domain: false } });
+    const off = await adminRequest("PATCH", { mcp: { domain: "off" } });
     expect(off.status).toBe(200);
-    expect(enabledById(await off.json())).toMatchObject({ domain: false, relay: true });
+    expect(reachById(await off.json())).toMatchObject({ domain: "off", relay: "public" });
 
     expect((await send(`${DOMAIN}/mcp`, initialize(domainToken))).status).toBe(404);
     for (const path of [
@@ -289,11 +295,12 @@ describe("an address the owner turned MCP off on", () => {
     // The other addresses, and the gateway's own machine, are untouched.
     expect(await listTools(send, RELAY, relayToken)).toContain("run_sql");
     expect((await send(`${RELAY}/.well-known/oauth-protected-resource/mcp`)).status).toBe(200);
-    // On this machine the MCP route itself still answers (this gateway serves no MCP resource
-    // on localhost, which it says itself).
-    expect(await (await send("https://localhost:7600/mcp", initialize("x"))).json()).toEqual({
-      error: "This MCP resource URL is not configured on the gateway.",
-    });
+    // On this machine MCP still answers, and asks an unknown credential to sign in there.
+    const local = await send(`${LOCAL}/mcp`, initialize("x"));
+    expect(local.status).toBe(401);
+    expect(local.headers.get("www-authenticate")).toContain(
+      `${LOCAL}/.well-known/oauth-protected-resource/mcp`,
+    );
     // Discovery drops it, so the portal never offers it.
     expect(await listedResources(send)).toEqual({
       resource: `${RELAY}/mcp`,
@@ -301,14 +308,14 @@ describe("an address the owner turned MCP off on", () => {
     });
 
     // Turned back on, the agent's existing credential works again.
-    expect((await adminRequest("PATCH", { mcp: { domain: true } })).status).toBe(200);
+    expect((await adminRequest("PATCH", { mcp: { domain: "on" } })).status).toBe(200);
     expect(await listTools(send, DOMAIN, domainToken)).toContain("run_sql");
   });
 
   test("the tailnet address refuses MCP to requests from the tailnet", async () => {
     const { send, adminRequest } = gateway();
     const token = connectedAgent(TAILNET);
-    expect((await adminRequest("PATCH", { mcp: { tailnet: false } })).status).toBe(200);
+    expect((await adminRequest("PATCH", { mcp: { tailnet: "off" } })).status).toBe(200);
     expect((await send(`${TAILNET}/mcp`, initialize(token), true)).status).toBe(404);
     expect((await send(`${TAILNET}/health`, {}, true)).status).toBe(200);
     expect((await listedResources(send)).resources).toEqual([
@@ -321,7 +328,7 @@ describe("an address the owner turned MCP off on", () => {
   test("Tailscale on this computer refuses MCP by the machine's name", async () => {
     const { send, adminRequest } = gateway();
     const token = connectedAgent(HOST);
-    expect((await adminRequest("PATCH", { mcp: { host: false } })).status).toBe(200);
+    expect((await adminRequest("PATCH", { mcp: { host: "off" } })).status).toBe(200);
     expect((await send(`${HOST}/mcp`, initialize(token))).status).toBe(404);
     expect((await send(`${HOST}/.well-known/oauth-protected-resource/mcp`)).status).toBe(404);
     expect((await send(`${HOST}/health`)).status).toBe(200);
@@ -333,13 +340,13 @@ describe("an address the owner turned MCP off on", () => {
     // A gateway started again on the same file refuses from its first request.
     const restarted = gateway();
     expect((await restarted.send(`${HOST}/mcp`, initialize(token))).status).toBe(404);
-    expect((await restarted.adminRequest("PATCH", { mcp: { host: true } })).status).toBe(200);
+    expect((await restarted.adminRequest("PATCH", { mcp: { host: "private" } })).status).toBe(200);
     expect(await listTools(restarted.send, HOST, token)).toContain("run_sql");
   });
 
   test("a request through the relay cannot name another host to reach MCP", async () => {
     const { send, adminRequest } = gateway();
-    expect((await adminRequest("PATCH", { mcp: { relay: false } })).status).toBe(200);
+    expect((await adminRequest("PATCH", { mcp: { relay: "off" } })).status).toBe(200);
     const relayed = { "x-omnesis-cloud-relay": "1" };
     for (const url of [
       "https://localhost:7600/mcp",
@@ -370,10 +377,98 @@ describe("the relay row", () => {
         }
       ).mcpAddresses.find((entry) => entry.id === "relay");
     // The account is not linked yet: the relay is not a way in, whatever origin is known.
-    expect(await row()).toEqual({ id: "relay", url: live, enabled: true, available: false });
+    expect(await row()).toMatchObject({ id: "relay", url: live, available: false });
     relay = { enabled: true, enrollment: "enrolled" };
-    expect(await row()).toEqual({ id: "relay", url: live, enabled: true, available: true });
+    expect(await row()).toMatchObject({ id: "relay", url: live, available: true });
     relay = { enabled: false, enrollment: "enrolled" };
     expect((await row())?.available).toBe(false);
+  });
+});
+
+describe("Tailscale on this computer as a way in of its own", () => {
+  test("a public address saved by hand as this computer's Tailscale name keeps every agent working", async () => {
+    // Before the gateway knew Tailscale on its computer, the docs had owners save its name.
+    const { send, adminRequest } = gateway({ publicAddress: fixedPublicAddress(HOST) });
+    const token = connectedAgent(HOST);
+    expect(await listTools(send, HOST, token)).toContain("run_sql");
+    const state = await (await adminRequest("GET")).json();
+    expect(state.publicBaseUrl).toEqual({ configured: HOST, setByEnvironment: false, way: "host" });
+    expect(state.mcpAddresses.find((row: { id: string }) => row.id === "domain").available).toBe(
+      false,
+    );
+    // It is listed once, ahead of the other ways in, as before.
+    expect(await listedResources(send)).toEqual({
+      resource: `${HOST}/mcp`,
+      resources: [`${HOST}/mcp`, `${RELAY}/mcp`, `${TAILNET}/mcp`],
+    });
+    const metadata = await (await send(`${HOST}/.well-known/oauth-authorization-server`)).json();
+    expect(metadata.issuer).toBe(HOST);
+  });
+
+  test("without a public address its name is an issuer of its own while it serves the gateway", async () => {
+    const { send } = gateway({ publicAddress: fixedPublicAddress(undefined) });
+    // The gateway learns the name with its first look; the overview waits for it.
+    expect((await listedResources(send)).resources).toEqual([
+      `${RELAY}/mcp`,
+      `${TAILNET}/mcp`,
+      `${HOST}/mcp`,
+    ]);
+    const metadata = await (await send(`${HOST}/.well-known/oauth-authorization-server`)).json();
+    expect(metadata).toMatchObject({ issuer: HOST, token_endpoint: `${HOST}/oauth/token` });
+    const token = connectedAgent(HOST);
+    expect(await listTools(send, HOST, token)).toContain("run_sql");
+  });
+
+  test("software on the gateway's own machine signs in there, whatever public address the gateway has", async () => {
+    const { send, adminRequest } = gateway();
+    const resource = await (await send(`${LOCAL}/.well-known/oauth-protected-resource/mcp`)).json();
+    expect(resource).toMatchObject({ resource: `${LOCAL}/mcp`, authorization_servers: [LOCAL] });
+    const metadata = await (await send(`${LOCAL}/.well-known/oauth-authorization-server`)).json();
+    expect(metadata).toMatchObject({ issuer: LOCAL, token_endpoint: `${LOCAL}/oauth/token` });
+    const token = connectedAgent(LOCAL);
+    expect(await listTools(send, LOCAL, token)).toContain("run_sql");
+    // Its credential is for this machine only.
+    expect((await send(`${DOMAIN}/mcp`, initialize(token))).status).toBe(401);
+    // With MCP off on every address away from home, the portal still offers this machine's.
+    const off = await adminRequest("PATCH", {
+      mcp: { relay: "off", tailnet: "off", host: "off", domain: "off" },
+    });
+    expect(off.status).toBe(200);
+    expect(await listedResources(send)).toEqual({
+      resource: `${LOCAL}/mcp`,
+      resources: [`${LOCAL}/mcp`],
+    });
+    expect(await listTools(send, LOCAL, token)).toContain("run_sql");
+  });
+
+  test("through Funnel, only what the owner put on the Internet answers", async () => {
+    writeFileSync(
+      join(dir, "remote-access.json"),
+      JSON.stringify({
+        setupCompletedAt: null,
+        first: "tailscale",
+        mcp: { host: true },
+        hostApi: "private",
+      }),
+    );
+    const { send } = gateway();
+    const token = connectedAgent(HOST);
+    const funnel = { "tailscale-funnel-request": "?1" };
+    expect((await send(`${HOST}/portal/login`, { headers: funnel })).status).toBe(404);
+    expect((await send(`${HOST}/health`, { headers: funnel })).status).toBe(404);
+    expect(
+      (await send(`${HOST}/.well-known/oauth-protected-resource/mcp`, { headers: funnel })).status,
+    ).toBe(200);
+    const mcp = await send(`${HOST}/mcp`, {
+      ...initialize(token),
+      headers: {
+        ...initialize(token).headers,
+        accept: "application/json, text/event-stream",
+        ...funnel,
+      },
+    });
+    expect(mcp.status).toBe(200);
+    // The owner's Tailscale network reaches everything.
+    expect((await send(`${HOST}/portal/login`)).status).toBe(200);
   });
 });

@@ -39,7 +39,7 @@ packages/gateway/      HTTP server, SQLite store, indexer, scheduler, search, an
 packages/collector/    sync engine, source manager, auth subprocess
 packages/cli/          unified `omnesis` CLI — read commands hit /search, /documents, /analytics, /status, /whoami; admin commands hit /admin/*; also hosts the daemons (`gateway serve` / `collector run`) and the `service`/`update`/`uninstall` lifecycle commands (`uninstall` discovers an install from disk in `src/uninstall/`)
 packages/providers/*   one package per provider (google, apple, notion, whatsapp, …)
-packages/tailnet-helper/ the Go program a gateway runs, only with OMNESIS_TAILSCALE_EMBED_ENABLED=1, to join its owner's Tailscale network as its own device and forward tailnet and public-address requests to a private socket; the gateway side is `packages/gateway/src/tailscale-embed/`; build it with `npm run tailnet-helper:build`
+packages/tailnet-helper/ the Go program a gateway runs, once its owner turns on its own Tailscale device, to join its owner's Tailscale network as its own device and forward tailnet and public-address requests to a private socket; the gateway side is `packages/gateway/src/tailscale-embed/`; build it with `npm run tailnet-helper:build`
 packages/watch/     the Watch V2 DSL, validator, runtime and compiler — standalone by contract, imports nothing from the gateway; the gateway hosts it through `packages/gateway/src/watch/`
 packages/agent-integration/ shared off-host integration runtime for OpenClaw and Hermes — transcript ingestion, subscription delivery, and scoped management tools
 extension/             Chrome MV3 browser-capture extension — pairs as a `browser` device with a `write:web` token and pushes visited pages to the gateway-hosted `web` source; experimental Tell Omnesis notes and Find search require gateway `OMNESIS_EXPERIMENTAL=1` and use separately issued create-only and read credentials with independent capability discovery; store listing and privacy declarations under `extension/store/`, packaging in `extension/scripts/` (see docs/releasing.md)
@@ -351,10 +351,9 @@ Experimental or synthetic mode alone does not enable cloud connectivity, Google
 enrollment, or relay settings. Native apps use the same independent opt-in at
 build time so Google sign-in can be offered before pairing with a gateway.
 
-The gateway's own Tailscale device is another: `OMNESIS_TAILSCALE_EMBED_ENABLED=1`.
-Without it nothing differs from a gateway without the feature — no routes, no
-fields on `/health` or `/status`, no CLI command, no files written, and a client
-capability it defines is stored as any unknown key — and
-`packages/gateway/src/tailscale-embed-flag-off.test.ts` holds that line; extend
-it with every new surface. Neither experimental mode nor the cloud relay turns
-it on.
+The gateway's own Tailscale device needs no opt-in: a gateway has it when its
+installation includes the helper program (the Docker image does; a source tree
+builds it with `npm run tailnet-helper:build`), and it stays idle, writing
+nothing, until the owner turns it on. Without the helper the gateway has no
+device routes, no `tailscaleEmbed` on `/health` or `/status`, and offers nothing
+about it; `packages/gateway/src/tailscale-embed-absent.test.ts` holds that line.

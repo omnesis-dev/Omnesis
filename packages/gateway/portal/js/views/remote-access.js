@@ -5,8 +5,8 @@
 // away from home. Every gateway has it: the home network, Tailscale already on
 // the computer and the owner's own domain need no optional feature. With the
 // cloud relay (OMNESIS_CLOUD_RELAY_ENABLED=1) it adds the Omnesis account and
-// the relay, and with its own Tailscale device (OMNESIS_TAILSCALE_EMBED_ENABLED=1)
-// that device; `/status` advertises each as `cloudRelay` and `tailscaleEmbed`.
+// the relay, and with its own Tailscale device (an installation with its helper
+// program) that device; `/status` advertises each as `cloudRelay` and `tailscaleEmbed`.
 //
 // The page is a summary of what is on, where everything can be set up or
 // changed: each line opens its own page, and the answers for new devices and

@@ -1,27 +1,26 @@
-# Omnesis embedded Tailscale (experimental)
+# Omnesis embedded Tailscale
 
-With `OMNESIS_TAILSCALE_EMBED_ENABLED=1`, an Omnesis gateway can join its
-owner's Tailscale network as its own device, called `omnesis`, without
-Tailscale being installed on its computer. This package is the small Go
-program that does it, built on Tailscale's embeddable library (tsnet). The
-gateway starts it, talks to it over standard input and output, and stops it
-by closing its input.
+An Omnesis gateway can join its owner's Tailscale network as its own device,
+called `omnesis`, without Tailscale being installed on its computer. This
+package is the small Go program that does it, built on Tailscale's embeddable
+library (tsnet). The gateway starts it, talks to it over standard input and
+output, and stops it by closing its input.
 
-The flag is independent of `OMNESIS_EXPERIMENTAL`. Without it nothing
-changes: no settings tab, no `omnesis tailscale` command, no new fields in
-`/health` or `/status`, and the program is never started. A gateway that
-merely finds Tailscale installed on its computer keeps working as before
-either way; the two can run side by side.
+A gateway has the device when its installation includes this program: the
+Docker image does, and a source checkout builds it (see below). Without the
+program nothing changes: no settings tab, no new fields in `/health` or
+`/status`, and `omnesis tailscale` says the gateway has no device. With it,
+the device stays idle and writes nothing until the owner turns it on. A
+gateway that also finds Tailscale installed on its computer can use both side
+by side.
 
 ## Using it
 
-Set `OMNESIS_TAILSCALE_EMBED_ENABLED=1` for the gateway (and for the CLI
-where you run `omnesis tailscale` commands), then open **Settings → Tailscale**
-in the portal, or run `omnesis tailscale on`. Sign in from the link or QR code
-it shows. The gateway is then reachable from every device on your tailnet at
-`https://omnesis.<your-tailnet>.ts.net`, with a publicly trusted certificate
-when the tailnet has HTTPS certificates turned on, and with the gateway's own
-certificate otherwise.
+Open **Settings → Tailscale** in the portal, or run `omnesis tailscale on`.
+Sign in from the link or QR code it shows. The gateway is then reachable from
+every device on your tailnet at `https://omnesis.<your-tailnet>.ts.net`, with a
+publicly trusted certificate when the tailnet has HTTPS certificates turned on,
+and with the gateway's own certificate otherwise.
 
 - **Public address for cloud agents** (`omnesis tailscale public on`): opens
   only what ChatGPT and Claude's connectors need to connect and sign in —

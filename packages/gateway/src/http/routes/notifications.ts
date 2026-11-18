@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { cloudRelayEnabled, tailscaleEmbedEnabled } from "@omnesis/core";
+import { cloudRelayEnabled } from "@omnesis/core";
 import { z } from "zod";
 import { NotFoundError } from "../errors.js";
 import { scope } from "../scope.js";
@@ -27,11 +27,11 @@ export interface NotificationRoutesDeps {
 export function mountNotificationRoutes(app: RouteApp, deps: NotificationRoutesDeps): void {
   app.post("/notifications/claim", scope.pushClaim(), validateJson(emptyBody), async (c) => {
     const deviceId = c.get("auth").deviceId!;
-    // Each header belongs to its feature's opt-in and is ignored without it.
+    // The pairing header belongs to the cloud relay's opt-in and is ignored without it.
     const support: ClaimSupport = {};
     if (cloudRelayEnabled() && c.req.header("X-Omnesis-Pairing-Notifications") === "1")
       support.pairingNotifications = true;
-    if (tailscaleEmbedEnabled() && c.req.header("X-Omnesis-Tailscale-Join-Notifications") === "1")
+    if (c.req.header("X-Omnesis-Tailscale-Join-Notifications") === "1")
       support.tailscaleJoinNotifications = true;
     const claimed =
       Object.keys(support).length > 0
