@@ -43,7 +43,7 @@ jobs:
       run:
         shell: bash
     env:
-      HELPER: packages/tailnet-helper/bin/omnesis-tailnet${{ runner.os == 'Windows' && '.exe' || '' }}
+      HELPER: packages/tailnet-helper/bin/omnesis-tailnet${{ startsWith(matrix.os, 'windows') && '.exe' || '' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
