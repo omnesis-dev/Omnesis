@@ -24,6 +24,7 @@ WORKDIR /app
 COPY --from=dependencies /app/node_modules ./node_modules
 COPY --chown=node:node --from=dependencies /app/packages/relay ./packages/relay
 COPY --chown=node:node --from=dependencies /app/packages/core ./packages/core
+COPY --chown=node:node --from=dependencies /app/packages/platform ./packages/platform
 COPY --chown=node:node --from=dependencies /app/packages/config ./packages/config
 COPY --chown=node:node --from=dependencies /app/packages/source-sdk ./packages/source-sdk
 COPY --chown=node:node --from=dependencies /app/packages/types ./packages/types

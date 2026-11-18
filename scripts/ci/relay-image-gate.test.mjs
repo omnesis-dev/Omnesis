@@ -236,6 +236,53 @@ describe("F9: the image workflow", () => {
     ["push-relay", "ghcr.io/omnesis-dev/omnesis-push-relay", "packages/relay/Dockerfile"],
   ];
 
+  test.each(RELAYS)(
+    "%s runtime contains every production workspace dependency",
+    (relay, _image, dockerfile) => {
+      const root = new URL("../../", import.meta.url);
+      const lock = JSON.parse(readFileSync(new URL("package-lock.json", root), "utf8"));
+      const workspaces = new Map(
+        Object.entries(lock.packages)
+          .filter(
+            ([path, entry]) =>
+              path.startsWith("packages/") && !path.includes("/node_modules/") && entry.name,
+          )
+          .map(([path, entry]) => [
+            entry.name,
+            {
+              path,
+              manifest: JSON.parse(readFileSync(new URL(`${path}/package.json`, root), "utf8")),
+            },
+          ]),
+      );
+      const content = readFileSync(new URL(dockerfile, root), "utf8");
+      const runtime = content.split(/^FROM .* AS runtime\s*$/mu)[1];
+      expect(runtime, `${dockerfile} must declare its runtime stage`).toBeDefined();
+      const copied = new Set(
+        [...runtime.matchAll(/\/app\/(packages\/\S+)\s+\.\/\1\s*$/gmu)].map((match) => match[1]),
+      );
+      const pending = [relay === "push-relay" ? "@omnesis/relay" : "@omnesis/cloud-relay"];
+      const seen = new Set();
+      while (pending.length) {
+        const name = pending.pop();
+        if (seen.has(name)) continue;
+        seen.add(name);
+        const workspace = workspaces.get(name);
+        expect(workspace, `Unknown runtime workspace ${name}`).toBeDefined();
+        expect(copied, `${dockerfile} is missing runtime workspace ${name}`).toContain(
+          workspace.path,
+        );
+        const dependencies = {
+          ...workspace.manifest.dependencies,
+          ...workspace.manifest.optionalDependencies,
+        };
+        pending.push(
+          ...Object.keys(dependencies).filter((dependency) => workspaces.has(dependency)),
+        );
+      }
+    },
+  );
+
   test("only the main branch of this repository builds or signs", () => {
     expect(job("gate")).toContain("github.repository == 'omnesis-dev/Omnesis'");
     expect(job("gate")).toContain("github.ref == 'refs/heads/main'");

@@ -20,6 +20,7 @@ WORKDIR /app
 COPY --chown=10001:10001 --from=dependencies /app/node_modules ./node_modules
 COPY --chown=10001:10001 --from=dependencies /app/packages/cloud-relay ./packages/cloud-relay
 COPY --chown=10001:10001 --from=dependencies /app/packages/core ./packages/core
+COPY --chown=10001:10001 --from=dependencies /app/packages/platform ./packages/platform
 COPY --chown=10001:10001 --from=dependencies /app/packages/config ./packages/config
 COPY --chown=10001:10001 --from=dependencies /app/packages/source-sdk ./packages/source-sdk
 COPY --chown=10001:10001 --from=dependencies /app/packages/types ./packages/types
