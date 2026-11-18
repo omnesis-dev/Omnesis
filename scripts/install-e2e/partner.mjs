@@ -18,6 +18,14 @@
  *   1  the partner finished before it ever ran with this job (cancelled,
  *      failed, skipped): there is nobody to pair with
  *   3  the timeout passed with the partner still waiting for a runner
+ *
+ *   node scripts/install-e2e/partner.mjs seated --partners "<prefix>,<prefix>" --timeout <seconds>
+ *
+ * waits until every listed job has had a runner (it is running or has ended),
+ * or the timeout passes, and ends 0 either way. It orders the run rather than
+ * judging it: the jobs that need it run after it, so they ask for their
+ * runners only once the listed jobs have theirs. A partner that never got a
+ * runner is still the paired jobs' failure to report, so here it is a warning.
  */
 
 import { resolve } from "node:path";
@@ -59,37 +67,85 @@ async function listJobs({ api, repo, runId, attempt, token }) {
  * Poll until the partner runs, ends, or the deadline passes. A failed read
  * of the API is retried until the deadline: it says nothing about the partner.
  */
-export async function waitForPartner(
-  prefix,
+export async function waitForPartner(prefix, options) {
+  const { partners, timedOut } = await waitForPartners([prefix], options);
+  const { prefix: _, ...seen } = partners[0];
+  return timedOut ? { ...seen, timedOut } : seen;
+}
+
+/**
+ * Poll until every partner has had a runner (running or ended), or the
+ * deadline passes. Returns each partner's last state, in the given order.
+ * Logs a partner's state whenever it changes while it still has no runner.
+ */
+export async function waitForPartners(
+  prefixes,
   { list, timeoutMs, intervalMs = 30_000, now = Date.now, sleep, log = () => {} },
 ) {
   const pause = sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
   const deadline = now() + timeoutMs;
-  let last = null;
+  const last = new Map();
   for (;;) {
     let seen;
     try {
-      seen = partnerState(await list(), prefix);
+      const jobs = await list();
+      seen = prefixes.map((prefix) => ({ prefix, ...partnerState(jobs, prefix) }));
     } catch (err) {
-      seen = { state: "unknown", error: err instanceof Error ? err.message : String(err) };
+      const error = err instanceof Error ? err.message : String(err);
+      seen = prefixes.map((prefix) => ({ prefix, state: "unknown", error }));
     }
-    if (seen.state === "running" || seen.state === "ended") return seen;
-    const described = seen.state === "waiting" ? `${seen.state} (${seen.job.status})` : seen.state;
-    if (described !== last) {
-      log(`partner "${prefix}": ${described}${seen.error ? ` — ${seen.error}` : ""}`);
-      last = described;
+    const settled = seen.every((s) => s.state === "running" || s.state === "ended");
+    if (settled) return { partners: seen, timedOut: false };
+    for (const s of seen) {
+      if (s.state === "running" || s.state === "ended") continue;
+      const described = s.job ? `${s.state} (${s.job.status})` : s.state;
+      if (last.get(s.prefix) === described) continue;
+      log(`partner "${s.prefix}": ${described}${s.error ? ` — ${s.error}` : ""}`);
+      last.set(s.prefix, described);
     }
-    if (now() >= deadline) return { ...seen, timedOut: true };
+    if (now() >= deadline) return { partners: seen, timedOut: true };
     await pause(Math.min(intervalMs, Math.max(0, deadline - now())));
   }
 }
 
 const COMMANDS = {
   wait: { values: ["partner"], numbers: ["timeout", "interval"], required: ["partner", "timeout"] },
+  seated: {
+    values: ["partners"],
+    numbers: ["timeout", "interval"],
+    required: ["partners", "timeout"],
+  },
 };
 
+async function seated(flags, target) {
+  const prefixes = String(flags.partners)
+    .split(",")
+    .map((p) => p.trim())
+    .filter(Boolean);
+  if (prefixes.length === 0) throw new Error("seated: --partners names no job");
+  const started = Date.now();
+  const result = await waitForPartners(prefixes, {
+    list: () => listJobs(target),
+    timeoutMs: flags.timeout * 1000,
+    intervalMs: (flags.interval ?? 30) * 1000,
+    log: (line) => process.stdout.write(`[install-e2e] ${line}\n`),
+  });
+  const waited = Math.round((Date.now() - started) / 60_000);
+  if (!result.timedOut) {
+    process.stdout.write(`[install-e2e] every partner has had a runner (waited ${waited} min)\n`);
+    return;
+  }
+  const unseated = result.partners
+    .filter((p) => p.state !== "running" && p.state !== "ended")
+    .map((p) => `"${p.prefix}" (${p.state})`)
+    .join(", ");
+  process.stdout.write(
+    `::warning title=Paired jobs without a runner::${unseated} had no runner after ${waited} min; the jobs held behind them start now\n`,
+  );
+}
+
 async function main(argv) {
-  const { flags } = parseCommand(argv, COMMANDS);
+  const { command, flags } = parseCommand(argv, COMMANDS);
   const env = process.env;
   for (const name of ["GITHUB_TOKEN", "GITHUB_REPOSITORY", "GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT"]) {
     if (!env[name]) throw new Error(`${name} is not set`);
@@ -101,6 +157,7 @@ async function main(argv) {
     attempt: env.GITHUB_RUN_ATTEMPT,
     token: env.GITHUB_TOKEN,
   };
+  if (command === "seated") return seated(flags, target);
   const started = Date.now();
   const result = await waitForPartner(flags.partner, {
     list: () => listJobs(target),

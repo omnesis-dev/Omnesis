@@ -103,10 +103,10 @@ describe("installer coverage CI admission and verdict", () => {
   test("branch coverage dispatch cannot enter the authenticated tailnet jobs", () => {
     const install = workflow("install-e2e.yml");
     const selected = (id, event, lanes) => {
-      const condition = install.jobs[id].if;
+      const condition = String(install.jobs[id].if).replace(/^\$\{\{\s*|\s*\}\}$/g, "");
       return runInNewContext(
         condition,
-        { github: { event_name: event }, inputs: { lanes } },
+        { github: { event_name: event }, inputs: { lanes }, cancelled: () => false },
         { timeout: 1000 },
       );
     };
