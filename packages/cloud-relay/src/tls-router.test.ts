@@ -10,6 +10,7 @@ import { createServer, request } from "node:https";
 import { PassThrough } from "node:stream";
 import { afterAll, beforeAll, expect, test } from "vitest";
 import { tlsFiles, until } from "../test/support.js";
+import { addIpv6Loopback } from "../test/loopback-peers.js";
 import { createTlsRouter } from "./tls-router.js";
 import { connectOrigin } from "./network.js";
 import { certificateFingerprint } from "./gateway-binding.js";
@@ -212,8 +213,9 @@ test("data admission preserves room for a new client and returns slots on close"
   });
   await bind(router.server);
   const clients: Socket[] = [];
-  const open = async (address: string) => {
-    const socket = connect({ port: port(router.server), host: "127.0.0.1", localAddress: address });
+  let ipv6: Awaited<ReturnType<typeof addIpv6Loopback>> | undefined;
+  const open = async (host: string) => {
+    const socket = connect({ port: port(router.server), host });
     socket.on("error", () => undefined);
     socket.resume();
     clients.push(socket);
@@ -221,24 +223,36 @@ test("data admission preserves room for a new client and returns slots on close"
     return socket;
   };
   try {
+    ipv6 = await addIpv6Loopback(router.server);
     const first = await open("127.0.0.1");
-    await open("127.0.0.1");
-    await open("127.0.0.1");
+    const second = await open("127.0.0.1");
+    const third = await open("127.0.0.1");
     await until(() => router.snapshot().dataConnections === 3);
     const refused = await open("127.0.0.1");
     await until(() => refused.destroyed);
     expect(first.destroyed).toBe(false);
-    const other = await open("127.0.0.2");
+    const other = await open("::1");
     await until(() => router.snapshot().dataConnections === 4);
     first.destroy();
     await until(() => router.snapshot().dataConnections === 3);
-    const repeated = await open("127.0.0.2");
+    const repeated = await open("::1");
     await until(() => repeated.destroyed);
     expect(other.destroyed).toBe(false);
-    await open("127.0.0.3");
+    second.destroy();
+    third.destroy();
+    await until(() => router.snapshot().dataConnections === 1);
+    await open("::1");
+    await open("::1");
+    await until(() => router.snapshot().dataConnections === 3);
+    const repeatedAgain = await open("::1");
+    await until(() => repeatedAgain.destroyed);
+    // Closing every connection releases the client's bucket as well as its slots.
+    await open("127.0.0.1");
     await until(() => router.snapshot().dataConnections === 4);
+    expect(other.destroyed).toBe(false);
   } finally {
     for (const socket of clients) socket.destroy();
+    await ipv6?.close();
     await router.close();
   }
 });
