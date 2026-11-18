@@ -602,6 +602,7 @@ async function buildEmbedder(init: IndexerInit): Promise<import("../indexer/type
     embed: (texts) => observe(() => embedder.embed(texts)),
     embedQuery: (text) => observe(() => embedder.embedQuery(text)),
     dispose: () => embedder.dispose(),
+    ...(embedder.quiesce ? { quiesce: () => embedder.quiesce!() } : {}),
   };
 }
 
@@ -1701,6 +1702,11 @@ async function handleShutdown(): Promise<void> {
   if (state.lexicalTimer) clearTimeout(state.lexicalTimer);
   clearInterval(state.heartbeatInterval);
   state.indexer.stop();
+  // The indexer checks for a stop between pages, and one page is a single
+  // embed call over all of its chunks. Stop the local embedder starting more
+  // native calls, so the cycle ends once the calls already running finish.
+  // Its queued chunks fail as transient, and their documents stay pending.
+  void state.embedder?.quiesce?.();
 
   if (state.inFlightWork) {
     try {

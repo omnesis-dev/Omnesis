@@ -87,7 +87,9 @@ function sortedIds(): string[] {
 class RecordingEmbedder implements Embedder {
   readonly embedded = new Map<string, number>();
   calls = 0;
-  constructor(public after: { calls: number; action: "stop" | "hang"; target?: Indexer } | null) {}
+  constructor(
+    public after: { calls: number; action: "stop" | "hang" | "shutdown"; target?: Indexer } | null,
+  ) {}
   async embed(texts: string[]): Promise<Float32Array[]> {
     this.calls += 1;
     for (const text of texts) {
@@ -97,6 +99,9 @@ class RecordingEmbedder implements Embedder {
     if (this.after && this.calls >= this.after.calls) {
       if (this.after.action === "hang") return new Promise<Float32Array[]>(() => {});
       this.after.target?.stop();
+      // A worker shutdown also quiesces the local embedder, which fails the
+      // inputs it had not started yet.
+      if (this.after.action === "shutdown") throw new Error("embedder is shutting down");
     }
     await new Promise((r) => setTimeout(r, 1));
     return texts.map(() => {
@@ -174,6 +179,29 @@ describe("indexing scan resume", () => {
       expect(second.embedded.size).toBe(300 - indexedBefore.size);
     },
   );
+
+  test("a shutdown that fails the page in flight records no errors and leaves the page pending", async () => {
+    seed(300);
+    const first = new RecordingEmbedder(null);
+    const interrupted = indexerWith(first);
+    first.after = { calls: 4, action: "shutdown", target: interrupted };
+
+    await interrupted.indexUpdated();
+    // Without the stop check, every document of the failed page was retried
+    // alone, failed again, and was recorded (and logged) as an index error.
+    expect(indexDb.prepare("SELECT COUNT(*) AS n FROM indexing_errors").get()).toEqual({ n: 0 });
+    expect(first.calls).toBe(4);
+    const progress = readScanProgress(indexDb);
+    const indexedBefore = getAllIndexedDocumentIds(indexDb);
+    expect(indexedBefore.size).toBeLessThan(300);
+    for (const id of sortedIds()) {
+      expect(indexedBefore.has(id)).toBe(id <= progress!.afterId!);
+    }
+
+    const resumed = await indexerWith(new RecordingEmbedder(null)).indexUpdated();
+    expect(resumed.resumed).toBe(true);
+    expect(getAllIndexedDocumentIds(indexDb).size).toBe(300);
+  });
 
   test("a crash mid-page loses at most the uncommitted pages, and the restart indexes every document", async () => {
     seed(200);
