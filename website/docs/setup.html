@@ -405,11 +405,11 @@
             10000 when another app Tailscale serves already uses 443, and never replaces that app;
             with all three in use it says so and changes nothing. Some agents, such as ChatGPT,
             connect only on port 443. Published to the Internet, the address becomes the gateway's
-            public address. Unticking this way in the setup, or
-            <strong>Stop serving this gateway</strong> on its page, runs
-            <code>tailscale serve --https=&lt;port&gt; off</code>, and a public address that was
-            this one is removed. The setup does not move on while Tailscale differs from the choice.
-            A gateway in a container does not offer this way: Tailscale on the host cannot reach it
+            public address. Unticked in the setup while it still serves the gateway, and on its own
+            page, it offers <strong>Stop serving this gateway</strong>, which runs
+            <code>tailscale serve --https=&lt;port&gt; off</code> and removes a public address that
+            was this one. The setup does not move on while Tailscale differs from the choice. A
+            gateway in a container does not offer this way: Tailscale on the host cannot reach it
             there.
           </li>
           <li>

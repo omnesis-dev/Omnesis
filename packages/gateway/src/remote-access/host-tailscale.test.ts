@@ -214,6 +214,21 @@ describe("HostTailscaleService", () => {
     });
   });
 
+  test("after a partial unpublish, the command names only the ports still on", async () => {
+    const { host } = service({
+      "status --json": running,
+      "serve status --json": serving({ 443: { "/": GATEWAY }, 10000: { "/": GATEWAY } }, [443]),
+      "serve --https=443 off": "",
+      "serve --https=10000 off": Object.assign(new Error("exit 1"), {
+        stderr: "Access denied: serve config denied",
+      }),
+    });
+    expect(await host.unpublish()).toMatchObject({
+      ok: false,
+      command: "tailscale serve --https=10000 off",
+    });
+  });
+
   test("unpublishing changes nothing when Tailscale is down or will not say what it serves", async () => {
     const stopped = service({ "status --json": JSON.stringify({ BackendState: "Stopped" }) });
     expect(await stopped.host.unpublish()).toMatchObject({ ok: false });

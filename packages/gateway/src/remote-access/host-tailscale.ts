@@ -286,19 +286,23 @@ export class HostTailscaleService {
       };
     }
     const ports = [...served.gateway.keys()];
-    const command = ports.map((port) => `tailscale serve --https=${port} off`).join(" && ");
-    try {
-      for (const port of ports) {
+    for (const [index, port] of ports.entries()) {
+      try {
         await this.run(
           found.running.candidate,
           ["serve", `--https=${port}`, "off"],
           PUBLISH_TIMEOUT_MS,
         );
+      } catch (error) {
+        // Name only the ports still on: one already off would fail the command.
+        const command = ports
+          .slice(index)
+          .map((left) => `tailscale serve --https=${left} off`)
+          .join(" && ");
+        return { ok: false, reason: refusalReason(error), command };
       }
-      return { ok: true };
-    } catch (error) {
-      return { ok: false, reason: refusalReason(error), command };
     }
+    return { ok: true };
   }
 
   /** `serve` or `funnel` in the background on `port`, naming it unless it is the default 443. */

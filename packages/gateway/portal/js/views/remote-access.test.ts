@@ -24,6 +24,8 @@ const gateway = vi.hoisted(() => ({
   unpublish: null as Json | null,
   check: null as Json | null,
   failRemote: false,
+  hangHost: false,
+  failConfig: false,
   calls: [] as unknown[][],
 }));
 const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
@@ -72,6 +74,7 @@ vi.mock("../lib/remote-access-api.js", () => ({
     return clone(gateway.remote);
   }),
   getHostTailscale: vi.fn(async () => {
+    if (gateway.hangHost) return new Promise(() => {});
     gateway.calls.push(["host"]);
     return clone(gateway.host);
   }),
@@ -94,6 +97,7 @@ vi.mock("../api.js", async (importOriginal) => ({
   ...(await importOriginal<Json>()),
   patchAdminConfig: vi.fn(async (patch: Json) => {
     gateway.calls.push(["config", patch]);
+    if (gateway.failConfig) return { status: 500, ok: false, body: { error: "Couldn't write the configuration file." } };
     const configured = patch.gateway.publicBaseUrl;
     gateway.remote!.publicBaseUrl = { serving: null, configured, restartNeeded: true, way: null };
     return { status: 200, ok: true, body: {} };
@@ -195,6 +199,8 @@ beforeEach(() => {
       ],
     },
     failRemote: false,
+    hangHost: false,
+    failConfig: false,
     calls: [],
   });
 });
@@ -803,6 +809,42 @@ describe("both", () => {
     expect(text()).not.toContain("still serves this gateway");
     expect(calls("config")).toEqual([["config", { gateway: { publicBaseUrl: null } }]]);
     expect(next().disabled).toBe(false);
+  });
+
+  test("the setup waits while Tailscale on this computer is still being read", async () => {
+    gateway.hangHost = true;
+    savedSetup("connection", { host: true });
+    await mount({ cloudRelay: false, tailscaleEmbed: false });
+    expect(text()).toContain("Looking for Tailscale on this computer");
+    expect((host.querySelector(".remote-access-actions .btn-primary") as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  test("a check keeps a public address changed elsewhere meanwhile", async () => {
+    gateway.host = { ...gateway.host, servesGateway: true, publicGateway: true };
+    gateway.remote!.publicBaseUrl = { configured: HOST_URL, setByEnvironment: false, way: "host" };
+    gateway.unpublish = { ok: false, reason: "This gateway is not allowed to change Tailscale on this computer.", command: "tailscale serve --https=443 off" };
+    savedSetup("connection", { host: false });
+    await mount({ cloudRelay: false, tailscaleEmbed: false });
+    await click("Stop serving this gateway");
+    await confirmOnce("Stop serving");
+    // Another tab saves the owner's own domain before the check.
+    gateway.remote!.publicBaseUrl = { configured: "https://omnesis.example.org", setByEnvironment: false, way: null };
+    gateway.host = { ...gateway.host, servesGateway: false, publicGateway: false };
+    await click("I've run it, check it");
+    expect(calls("config")).toEqual([]);
+  });
+
+  test("a public address that could not be removed stays on screen", async () => {
+    gateway.host = { ...gateway.host, servesGateway: true, publicGateway: true };
+    gateway.remote!.publicBaseUrl = { configured: HOST_URL, setByEnvironment: false, way: "host" };
+    gateway.failConfig = true;
+    savedSetup("connection", { host: false });
+    await mount({ cloudRelay: false, tailscaleEmbed: false });
+    await click("Stop serving this gateway");
+    await confirmOnce("Stop serving");
+    expect(calls("unpublish")).toEqual([["unpublish"]]);
+    expect(calls("config")).toEqual([["config", { gateway: { publicBaseUrl: null } }]]);
+    expect(host.querySelector('.remote-access-option [role="alert"]')?.textContent).toBe("Couldn't write the configuration file.");
   });
 
   test("stopping keeps a public address that is not this computer's", async () => {

@@ -103,7 +103,7 @@ function PortNote({ host }) {
  * served, and public or not, when `wanted`; not served otherwise. The setup cannot
  * continue while it does.
  */
-export function hostPending(host, wanted, wantPublic) {
+function hostPending(host, wanted, wantPublic) {
   if (!wanted) return host?.state === "available" && host.servesGateway;
   if (host?.state !== "available") return true;
   return !host.servesGateway || wantPublic !== host.publicGateway;
@@ -116,8 +116,11 @@ export function hostPending(host, wanted, wantPublic) {
  * offers that too while it is wanted, on its own page. Each change runs the Tailscale
  * command, or names it when the gateway may not run it, with a check under it. Setting
  * it up publicly makes its address the gateway's public address, which agents sign in
- * through; stopping it removes that address again. `onState` hears what Tailscale does
- * and whether it still differs from what the owner asked for.
+ * through; stopping it removes that address again. `onState` hears what Tailscale does,
+ * whether it still differs from what the owner asked for, and a failure to change the
+ * public address, which the setup keeps on screen; it is a state setter, and on unmount
+ * the panel withdraws its verdict, so a panel shown again counts as pending until it
+ * has read Tailscale.
  */
 export function HostTailscale({ remote, setRemote, wanted = true, offerStop = false, onState }) {
   const [host, setHost] = useState(null);
@@ -135,25 +138,30 @@ export function HostTailscale({ remote, setRemote, wanted = true, offerStop = fa
   const ownAddress = !remote.publicBaseUrl?.setByEnvironment;
 
   useEffect(() => {
-    if (host) onState?.({ host, pending: hostPending(host, wanted, wantPublic) });
-  }, [host, wanted, wantPublic]);
+    if (host) onState?.({ host, pending: hostPending(host, wanted, wantPublic), error });
+  }, [host, wanted, wantPublic, error]);
+  useEffect(() => () => onState?.((last) => last && { ...last, pending: undefined, error: "" }), []);
 
   /**
-   * Once Tailscale does what the owner asked, the public address follows: a public
-   * address on this computer becomes the gateway's, and the one it served before is
-   * removed once it serves nothing. An address taken off the Internet stays: devices
-   * and agents on the tailnet still sign in through it.
+   * Once Tailscale does what the owner asked, the public address follows, judged
+   * against the settings as they are now: a public address on this computer becomes
+   * the gateway's, and the one it served before is removed once it serves nothing. An
+   * address taken off the Internet stays: devices and agents on the tailnet still sign
+   * in through it. Resolves to an error message, or "".
    */
   const settleAddress = async (found, served) => {
-    if (!ownAddress) return;
+    if (found.state !== "available") return "";
+    const now = await getRemoteAccess();
+    setRemote(now);
+    if (now.publicBaseUrl?.setByEnvironment) return "";
+    const current = now.publicBaseUrl?.configured ?? null;
     const target = found.publicGateway
       ? found.url
-      : !found.servesGateway && served && configured === served
+      : !found.servesGateway && served && current === served
         ? null
         : undefined;
-    if (target === undefined || target === configured) return;
-    const failed = await savePublicAddress(target, setRemote);
-    if (failed) setError(failed);
+    if (target === undefined || target === current) return "";
+    return savePublicAddress(target, setRemote);
   };
 
   const read = async (why = "read") => {
@@ -163,11 +171,11 @@ export function HostTailscale({ remote, setRemote, wanted = true, offerStop = fa
     try {
       const before = host;
       const found = await getHostTailscale();
-      setHost(found);
-      if (why === "read") setWantPublic(found.publicGateway === true);
-      if (why !== "check") return;
-      setRemote(await getRemoteAccess());
-      if (found.state !== "available") return;
+      if (why !== "check" || found.state !== "available" || found.blocked) {
+        setHost(found);
+        if (why === "read") setWantPublic(found.publicGateway === true);
+        return;
+      }
       const missing = !wanted
         ? found.servesGateway && "Tailscale on this computer still serves this gateway."
         : !found.servesGateway
@@ -175,9 +183,14 @@ export function HostTailscale({ remote, setRemote, wanted = true, offerStop = fa
           : wantPublic && !found.publicGateway
             ? "This gateway isn't reachable from the Internet yet."
             : !wantPublic && found.publicGateway && "This gateway is still reachable from the Internet.";
-      if (missing) return setNotYet(`${missing} Run the command above, then check again.`);
+      if (missing) {
+        setHost(found);
+        return setNotYet(`${missing} Run the command above, then check again.`);
+      }
+      // The address settles before the panel shows the result, which can close it.
+      setError(await settleAddress(found, before?.servesGateway ? before.url : null));
       setRefused(null);
-      await settleAddress(found, before?.servesGateway ? before.url : null);
+      setHost(found);
     } catch (cause) {
       setError(problem(cause, "Couldn't look for Tailscale on this computer. Try again."));
     } finally {
@@ -196,10 +209,12 @@ export function HostTailscale({ remote, setRemote, wanted = true, offerStop = fa
       const before = host;
       const result = await run();
       const found = await getHostTailscale();
+      if (result.ok) {
+        // The address settles before the panel shows the result, which can close it.
+        setError(await settleAddress(found, before?.servesGateway ? before.url : null));
+        setWantPublic(found.publicGateway === true);
+      } else setRefused(result);
       setHost(found);
-      if (!result.ok) return setRefused(result);
-      setWantPublic(found.publicGateway === true);
-      if (found.state === "available") await settleAddress(found, before?.servesGateway ? before.url : null);
     } catch (cause) {
       setError(problem(cause, fallback));
     } finally {

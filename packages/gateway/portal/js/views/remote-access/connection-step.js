@@ -167,9 +167,11 @@ export function ConnectionStep({
   const chooseHost = (checked) => onFlow({ host: checked });
   // Ticked when the owner ticked it, or, until they choose, when this computer already serves the gateway.
   const hostChosen = (flow.host ?? host?.servesGateway === true) && host?.state !== "missing";
-  // Unticked while it still serves the gateway, its panel stays to stop that.
-  const hostShown = hostChosen || (host?.state === "available" && host.servesGateway);
-  const hostPending = hostShown && hostNow?.pending === true;
+  // Unticked while it still serves the gateway, its panel stays to stop that, and to
+  // show a public address it could not remove.
+  const hostShown = hostChosen || (host?.state === "available" && host.servesGateway) || Boolean(hostNow?.error);
+  // Until its panel has read Tailscale, the setup waits.
+  const hostPending = hostShown && hostNow?.pending !== false;
   const chooseDomain = (checked) => onFlow({ domain: checked });
   const confirm = async () => {
     setConfirming("");
