@@ -119,6 +119,10 @@ async function handleEmbedQuery(id: number, text: string): Promise<void> {
 async function handleShutdown(): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
+  // A build batch is one embed call over thousands of chunks. Fail the inputs
+  // not yet started instead of finishing the batch the swap is abandoning; the
+  // calls already running still complete before disposal.
+  void embedder?.quiesce();
   await Promise.allSettled(active);
   if (embedder) {
     try {

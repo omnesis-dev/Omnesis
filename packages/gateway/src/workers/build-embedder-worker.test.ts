@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   embed: vi.fn(),
   query: vi.fn(),
   dispose: vi.fn(),
+  quiesce: vi.fn(),
   post: vi.fn(),
   close: vi.fn(),
 }));
@@ -19,6 +20,7 @@ vi.mock("../indexer/embedder.js", () => ({
     embed = mocks.embed;
     embedQuery = mocks.query;
     dispose = mocks.dispose;
+    quiesce = mocks.quiesce;
   },
 }));
 
@@ -82,6 +84,9 @@ test("shutdown drains in-flight embedding and refuses later work", async () => {
   send("embed", { id: 2, texts: ["late note"] });
   await tick();
   expect(mocks.embed).toHaveBeenCalledTimes(2);
+  // Inputs the embedder has not started fail at once instead of finishing the
+  // batch a swap is abandoning; the running ones still complete first.
+  expect(mocks.quiesce).toHaveBeenCalledOnce();
   expect(mocks.dispose).not.toHaveBeenCalled();
   request.resolve([new Float32Array([0, 1])]);
   await tick();
