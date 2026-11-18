@@ -64,7 +64,7 @@ import {
   devicePinnedJson,
   passkeyIds,
   printedConnectCode,
-  runCli,
+  REPO_ROOT,
   sha256Hex,
   approveHeld,
   confirmPasskeyHere,
@@ -75,7 +75,8 @@ import {
   type DeviceRow,
   type PasskeySession,
 } from "./account-enrollment-harness.js";
-import { gatewayBootBudgetMs } from "./gateway-env.js";
+import { e2eGatewayEnv, e2eTsxCommand, gatewayBootBudgetMs } from "./gateway-env.js";
+import { runEnrollmentTerminal } from "./enrollment-terminal-fixture.js";
 import { getDocumentCount } from "./helpers.js";
 
 const browserReady = browserSuiteAvailable("account-enrollment-devices.e2e");
@@ -116,6 +117,7 @@ describe.skipIf(!browserReady)("devices join a gateway by signing in", () => {
   let first: PasskeySession;
   /** Holds a passkey added to the same account afterwards. */
   let second: PasskeySession;
+  const terminalRuns: ReturnType<typeof runEnrollmentTerminal>[] = [];
   const priorCaFile = process.env.OMNESIS_CLOUD_RELAY_GATEWAY_CA_FILE;
   const priorEnabled = process.env.OMNESIS_CLOUD_RELAY_ENABLED;
 
@@ -255,6 +257,7 @@ describe.skipIf(!browserReady)("devices join a gateway by signing in", () => {
   afterAll(async () => {
     try {
       await closeEnrollmentFixture(world ? directory : undefined, [
+        ...terminalRuns.map((run) => () => run.kill()),
         () => browser?.close(),
         () => gateway?.close(),
         () => world?.close(),
@@ -488,19 +491,33 @@ describe.skipIf(!browserReady)("devices join a gateway by signing in", () => {
     );
   }, 120_000);
 
-  test("TM-01: the real CLI's own sign-in, made on the relay's page on this machine, is held: the CLI waits with its code and saves its credential only once the owner approves", async () => {
+  test("TM-01: the real collector CLI requires owner approval and an independently typed comparison before saving its credential", async () => {
     await gateway.setPolicy("automatic");
     const configDir = join(directory, "cli-config");
     await mkdir(configDir, { recursive: true, mode: 0o700 });
     const name = "Fictional basement CLI";
     await gateway.pace(2);
     const launches = (await launchedUrls(world)).length;
-    const run = runCli(world, ["cloud", "pair", "--kind", "collector", "--name", name], {
-      OMNESIS_CONFIG_DIR: configDir,
-      OMNESIS_CLOUD_RELAY_ENABLED: "1",
-      OMNESIS_CLOUD_RELAY_URL: world.relayOrigin,
-      OMNESIS_CLOUD_RELAY_GATEWAY_CA_FILE: world.pki.caCertFile,
-    });
+    const cli = e2eTsxCommand("packages/cli/src/index.ts");
+    const run = runEnrollmentTerminal(
+      cli.command,
+      [...cli.args, "cloud", "pair", "--kind", "collector", "--name", name],
+      {
+        cwd: REPO_ROOT,
+        env: {
+          ...e2eGatewayEnv(),
+          ...world.clientEnv(),
+          OMNESIS_LOG_LEVEL: "error",
+          OMNESIS_GATEWAY_URL: undefined,
+          OMNESIS_TOKEN: undefined,
+          OMNESIS_CONFIG_DIR: configDir,
+          OMNESIS_CLOUD_RELAY_ENABLED: "1",
+          OMNESIS_CLOUD_RELAY_URL: world.relayOrigin,
+          OMNESIS_CLOUD_RELAY_GATEWAY_CA_FILE: world.pki.caCertFile,
+        },
+      },
+    );
+    terminalRuns.push(run);
     try {
       await printedConnectCode(run);
       // The CLI's browser launch, opened on this machine, so the sign-in comes back over loopback.
@@ -517,7 +534,11 @@ describe.skipIf(!browserReady)("devices join a gateway by signing in", () => {
         "the CLI's held request",
       );
       expect(held).toMatchObject({ kind: "collector", signIn: "passkey", canTrustSignIn: false });
-      // Still running, with nothing saved: only the owner's approval lets it finish.
+      await waitFor(
+        () => run.stdout().includes("Code shown on the trusted device:"),
+        "the collector CLI to ask for the comparison code",
+      );
+      // Approval alone cannot finish desktop pairing: the requester must also compare codes.
       expect(run.closed()).toBe(false);
       expect(
         (await readdir(join(configDir, "cloud-relay")).catch(() => [] as string[])).filter((file) =>
@@ -525,9 +546,18 @@ describe.skipIf(!browserReady)("devices join a gateway by signing in", () => {
         ),
       ).toEqual([]);
       await gateway.decide(held.requestId, true);
+      expect(run.closed()).toBe(false);
+      expect(
+        (await readdir(join(configDir, "cloud-relay"))).filter((file) =>
+          file.endsWith("-device.json"),
+        ),
+      ).toEqual([]);
+      await run.write(`${held.verificationCode}\r`);
       expect(await run.exit).toBe(0);
     } catch (error) {
       throw new Error(`CLI pairing failed:\n${run.stdout()}\n${run.stderr()}`, { cause: error });
+    } finally {
+      await run.kill();
     }
     expect(run.stdout()).toContain("device credential saved");
     const bundle = JSON.parse(

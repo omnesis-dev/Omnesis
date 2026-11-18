@@ -74,3 +74,27 @@ it("delivers a real Ctrl+C and joins a target that handles it and exits zero", a
     await run.kill();
   }
 }, 40_000);
+
+it("delivers a typed comparison code through the real terminal input", async () => {
+  const run = runEnrollmentTerminal(
+    process.execPath,
+    [
+      "-e",
+      "const r=require('node:readline').createInterface({input:process.stdin,output:process.stdout});r.question('COMPARISON_READY:',answer=>{process.stdout.write('COMPARISON_RECEIVED:'+JSON.stringify(answer)+'\\n');r.close()});",
+    ],
+    { cwd: process.cwd(), env: process.env },
+  );
+  onTestFinished(() => run.kill());
+  try {
+    await vi.waitFor(() => expect(run.stdout()).toContain("COMPARISON_READY:"), {
+      timeout: 15_000,
+    });
+    expect(run.closed()).toBe(false);
+    await run.write("465 774\r");
+    expect(await run.exit).toBe(0);
+    expect(run.stdout()).toContain('COMPARISON_RECEIVED:"465 774"');
+    await expect(run.write("too late")).rejects.toThrow("terminal is closed");
+  } finally {
+    await run.kill();
+  }
+}, 30_000);
