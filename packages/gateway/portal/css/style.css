@@ -19448,6 +19448,7 @@ summary.decision-card-head {
 .settings-view > .config-tabs .config-tab { flex-shrink: 0; white-space: nowrap; }
 .remote-access-loading,
 .remote-access-muted { margin: 0; font-size: 13px; line-height: 1.55; color: var(--text-secondary); }
+.remote-access-ports { display: grid; gap: 2px; margin: 0; padding-left: 22px; font-size: 13px; line-height: 1.55; color: var(--text-secondary); overflow-wrap: anywhere; }
 .remote-access-load-error { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; padding: 10px 12px; border: 1px solid var(--danger); border-radius: var(--radius-lg); color: var(--danger); font-size: 13px; line-height: 1.5; }
 .remote-access-problem { margin: 0; padding: 2px 0 2px 12px; border-left: 2px solid var(--warning); font-size: 13px; line-height: 1.55; color: var(--text-primary); overflow-wrap: anywhere; }
 .remote-access-ok { margin: 0; font-size: 13px; line-height: 1.55; color: var(--text-primary); overflow-wrap: anywhere; }
