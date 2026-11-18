@@ -6515,9 +6515,14 @@ jobs:
       DEBUG: pw:webserver
 
   instructions-read-denial-proof:
-    name: Windows adapter workflow cancellation proof
+    name: URL-pattern disk fixture proof (${{ matrix.os }})
     if: inputs.scope == 'instructions-read-denial-proof'
-    runs-on: windows-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        os: [windows-latest, ubuntu-latest]
     timeout-minutes: 45
     env:
       TZ: UTC
@@ -6538,7 +6543,7 @@ jobs:
       - name: Verify fixed source revision
         env:
           TARGET_SHA: ${{ inputs.source_sha }}
-        run: 'test "$TARGET_SHA" = e58f002a31e53afab144a0339e43e056355a4325
+        run: 'test "$TARGET_SHA" = b7308495deb68c75f7977143b98b04257fb2b2c7
 
           test "$(git rev-parse HEAD)" = "$TARGET_SHA"
 
@@ -6551,12 +6556,11 @@ jobs:
       - name: Install dependencies
         id: dependencies
         run: node scripts/ci/npm-ci.mjs --no-audit --no-fund
-      - name: Check adapter prerequisite typecheck with shell handoff
-        shell: bash
-        run: exec node scripts/run-check.mjs typecheck packages/agent-integration
-      - name: Verify the workflow ownership smoke assertion
-        shell: bash
-        run: exec node scripts/run-check.mjs smoke -t "executes every workflow check owner directly"
+      - name: Build and verify Windows SQLite bindings
+        if: runner.os == 'Windows'
+        run: node scripts/ci/build-windows-sqlite.mjs
+      - name: Run the URL pattern repository suite
+        run: exec node scripts/run-check.mjs unit packages/gateway/src/data/repositories/UrlPatternRepository.test.ts --reporter=verbose
       - name: Require immutable candidate source
         run: git diff --exit-code
         if: ${{ always() }}
