@@ -623,7 +623,10 @@ extension GatewayRoutingProxyTests {
         defer { proxy.close() }
         let endpoint = proxy.listeningPort
         let configuration = URLSessionConfiguration.ephemeral
-        configuration.timeoutIntervalForResource = 10
+        // No resource deadline: URLSession's runs on the wall clock, and each connection here makes two real TLS
+        // handshakes and trust evaluations, which a busy runner can stretch past any short budget. A WebSocket whose
+        // budget runs out before its upgrade fails as "cancelled". The default request timeout still fails a
+        // connection that stops making progress.
         proxy.configure(configuration)
         let session = URLSession(configuration: configuration, delegate: pin, delegateQueue: nil)
         defer { session.invalidateAndCancel() }
