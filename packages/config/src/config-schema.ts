@@ -3,6 +3,7 @@
 
 import { z } from "zod";
 import { sourceTypeOf, trySourceId } from "@omnesis/types";
+import { storageRetentionPolicySchema } from "./storage-retention-config.js";
 
 /**
  * Generation number of the persisted config shape (`omnesis.json`).
@@ -1789,15 +1790,7 @@ export const gatewayStoragePolicySchema = z
       .optional()
       .describe("Capacity inventory cadence in milliseconds. Default 30000."),
     retention: z
-      .array(
-        z
-          .object({
-            sourceId: z.string().min(1).max(512),
-            sourceCreatedAt: z.number().int().nonnegative().optional(),
-            maxAgeDays: z.number().int().positive().max(36500),
-          })
-          .strict(),
-      )
+      .array(storageRetentionPolicySchema)
       .max(1000)
       .refine(
         (policies) => new Set(policies.map((policy) => policy.sourceId)).size === policies.length,

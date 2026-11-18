@@ -30,8 +30,7 @@ const policy = z
 const retention = z
   .object({ sourceId, maxAgeDays: z.number().int().min(1).max(36_500).nullable() })
   .strict();
-const preview = z.object({ sourceId, before: z.iso.datetime() }).strict();
-const execute = z.object({ token: z.uuid() }).strict();
+const trim = z.object({ sourceId, before: z.iso.datetime() }).strict();
 
 export function mountStorageRoutes(app: RouteApp, service: StorageService): void {
   app.get("/admin/storage", scope.admin(), (c) => {
@@ -51,12 +50,9 @@ export function mountStorageRoutes(app: RouteApp, service: StorageService): void
     const input = c.req.valid("json");
     return c.json(await service.setRetention(input.sourceId, input.maxAgeDays));
   });
-  app.post("/admin/storage/trim/preview", scope.admin(), validateJson(preview), async (c) => {
+  app.post("/admin/storage/trim/jobs", scope.admin(), validateJson(trim), async (c) => {
     const input = c.req.valid("json");
     c.header("Cache-Control", "no-store");
-    return c.json(await service.preview(input.sourceId, input.before));
+    return c.json(await service.startTrim(input.sourceId, input.before), 202);
   });
-  app.post("/admin/storage/trim", scope.admin(), validateJson(execute), async (c) =>
-    c.json(await service.trim(c.req.valid("json").token)),
-  );
 }

@@ -10,6 +10,8 @@ import {
   validateDocumentTemporalProjectionContracts,
 } from "@omnesis/core";
 import { SourceId, sourceTypeOf, type DocumentInput, type Scope } from "@omnesis/types";
+import { readBoundStorageRetentionPolicies } from "../../storage/retention-bindings.js";
+import { readActiveStorageTrimCutoff } from "../../storage/trim-job-authority.js";
 import { isBeforeRetentionCutoff, retentionCutoff } from "../../storage/retention-policy.js";
 import { getInitialSourceInventory } from "../../data/repositories/SourceInventoryRepository.js";
 import { isKnowledgeDocumentReadable } from "../../brain/knowledge/retrieval-fence.js";
@@ -342,16 +344,20 @@ export class DocumentService {
         const retention = liveConfig.gateway?.storage?.retention?.find(
           (policy) => policy.sourceId === d.sourceId,
         );
-        const matchesIncarnation =
-          retention?.sourceCreatedAt === undefined ||
-          retention.sourceCreatedAt === getSource(this.deps.db, SourceId(d.sourceId))?.createdAt;
         cutoffs = {
           maxAge: getSourceCutoffDate(liveConfig, d.sourceId),
-          retention: retentionCutoff(
-            matchesIncarnation && retention ? [retention] : undefined,
-            d.sourceId,
-            now,
-          ),
+          retention:
+            [
+              retentionCutoff(
+                readBoundStorageRetentionPolicies(this.deps.db, retention ? [retention] : []),
+                d.sourceId,
+                now,
+              ),
+              readActiveStorageTrimCutoff(this.deps.db, d.sourceId),
+            ]
+              .filter((value): value is string => value !== null)
+              .sort()
+              .at(-1) ?? null,
         };
         cutoffCache.set(d.sourceId, cutoffs);
       }

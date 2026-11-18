@@ -86,6 +86,8 @@ const WOUND_BACK = [
   216,
   // 217 adds the sign-in id columns and the revoked key table, which undoStickyRevocation drops.
   217,
+  // 218 installs source identity markers, policy bindings and trim jobs, dropped by windBack.
+  218,
 ];
 
 let dir: string;
@@ -296,6 +298,11 @@ function undoStickyRevocation(db: Db): void {
 }
 
 function windBack(db: Db): void {
+  db.exec("DROP TABLE storage_trim_job_cascades");
+  db.exec("DROP TABLE storage_trim_jobs");
+  db.exec("DROP TABLE storage_retention_bindings");
+  db.exec("DROP TRIGGER storage_source_incarnation_insert");
+  db.exec("DROP TABLE storage_source_incarnations");
   undoStickyRevocation(db);
   db.exec("DROP INDEX idx_documents_id_document_type");
   db.exec("DROP TABLE lab_features");

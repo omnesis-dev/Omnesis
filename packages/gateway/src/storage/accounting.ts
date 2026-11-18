@@ -8,6 +8,7 @@ export interface StorageMonthUsage {
   month: string;
   documents: number;
   payloadBytes: number;
+  trimmableDocuments?: number;
 }
 export interface StorageSourceUsage {
   sourceId: string;
@@ -36,6 +37,7 @@ export interface StorageAccountingPageRow {
   sourceId: string;
   month: string;
   payloadBytes: number;
+  trimmableDocuments?: number;
 }
 export interface StorageAccountingReads {
   storageAccountingMetadata(): Promise<StorageAccountingMetadata>;
@@ -55,7 +57,11 @@ export function storageAccountingPage(
     .prepare<[number, number], StorageAccountingPageRow>(
       `SELECT rowid, source_id AS sourceId,
       COALESCE(strftime('%Y-%m', source_created_at), 'unknown') AS month,
-      length(CAST(content AS BLOB)) + length(CAST(title AS BLOB)) + length(CAST(metadata AS BLOB)) AS payloadBytes
+      length(CAST(content AS BLOB)) + length(CAST(title AS BLOB)) + length(CAST(metadata AS BLOB)) AS payloadBytes,
+      CASE WHEN COALESCE(json_extract(metadata, '$.documentType'), '') <> 'contact'
+        AND (source_created_at = strftime('%Y-%m-%dT%H:%M:%fZ', source_created_at)
+          OR source_created_at = strftime('%Y-%m-%dT%H:%M:%SZ', source_created_at))
+        THEN 1 ELSE 0 END AS trimmableDocuments
      FROM documents WHERE rowid > ? AND rowid <= ? ORDER BY rowid LIMIT 500`,
     )
     .all(afterRowid, upperRowid);
@@ -132,9 +138,11 @@ export async function measureStorageAccounting(
         month: row.month,
         documents: 0,
         payloadBytes: 0,
+        trimmableDocuments: 0,
       };
       month.documents++;
       month.payloadBytes += row.payloadBytes;
+      month.trimmableDocuments = (month.trimmableDocuments ?? 0) + (row.trimmableDocuments ?? 0);
       source.months.set(row.month, month);
     }
     after = rows[rows.length - 1]!.rowid;

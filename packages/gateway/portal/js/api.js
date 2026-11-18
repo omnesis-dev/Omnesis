@@ -1752,7 +1752,6 @@ export const getKnowledgePendingWork = (query = {}) => request("GET", "/admin/br
 // Storage controls share portal authentication, CSRF, and error handling.
 export const getStorage = () => request("GET", "/admin/storage", { cache: "no-store" });
 export const setStoragePolicy = (policy) => request("PATCH", "/admin/storage/policy", { body: policy });
-export const previewStorageTrim = (sourceId, before) => request("POST", "/admin/storage/trim/preview", { body: { sourceId, before } });
-export const applyStorageTrim = (token) => request("POST", "/admin/storage/trim", { body: { token } });
+export const startStorageTrim = (sourceId, before) => request("POST", "/admin/storage/trim/jobs", { body: { sourceId, before } });
 export const setStorageRetention = (sourceId, maxAgeDays) => request("PATCH", "/admin/storage/retention", { body: { sourceId, maxAgeDays } });
 export const refreshStorage = () => request("POST", "/admin/storage/refresh", { body: {} });

@@ -15,6 +15,10 @@ import { existsSync, unlinkSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { SCOPE_ADMIN, SCOPE_READ, SCOPE_WRITE_ALL, type Scope } from "@omnesis/types";
 import { StoragePressureManager, resolveStoragePolicy } from "../../storage/pressure.js";
+import {
+  captureStorageRetentionBindingInputs,
+  reconcileStorageRetentionBindings,
+} from "../../storage/retention-bindings.js";
 import { createDatabase } from "../../db.js";
 import { createServer } from "../../server.js";
 import { createDevice } from "../../data/repositories/DeviceRepository.js";
@@ -68,6 +72,17 @@ function ingestBody(externalId: string) {
         sourceUpdatedAt: "2024-01-15T10:00:00Z",
       },
     ],
+  });
+}
+
+function bindRollingSource() {
+  const device = createDevice(db, { name: "Invented retention collector", kind: "collector" });
+  db.prepare(
+    `INSERT INTO sources(id,type,account_id,device_id,created_at,updated_at)
+    VALUES ('gmail','gmail','fixture',?,1,1)`,
+  ).run(device.id);
+  reconcileStorageRetentionBindings(db, {
+    policies: captureStorageRetentionBindingInputs(db, [{ sourceId: "gmail", maxAgeDays: 30 }]),
   });
 }
 
@@ -199,6 +214,7 @@ describe("shared storage capacity admission", () => {
   });
 
   test("rolling retention filters only its source and preserves contacts", async () => {
+    bindRollingSource();
     app = createServer(db, dbPath, {
       config: { gateway: { storage: { retention: [{ sourceId: "gmail", maxAgeDays: 30 }] } } },
     });
@@ -224,7 +240,7 @@ test("an incarnation-bound retention policy never filters a replacement or absen
   app = createServer(db, dbPath, {
     config: {
       gateway: {
-        storage: { retention: [{ sourceId: "gmail", sourceCreatedAt: 123, maxAgeDays: 30 }] },
+        storage: { retention: [{ sourceId: "gmail", maxAgeDays: 30 }] },
       },
     },
   });
@@ -239,6 +255,7 @@ test("an incarnation-bound retention policy never filters a replacement or absen
 test.each(["/documents", "/documents/with-cursor"])(
   "rolling retention at %s preserves unknown and offset dates",
   async (path) => {
+    bindRollingSource();
     app = createServer(db, dbPath, {
       config: { gateway: { storage: { retention: [{ sourceId: "gmail", maxAgeDays: 30 }] } } },
     });

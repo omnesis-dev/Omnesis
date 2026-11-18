@@ -10,6 +10,7 @@ import {
 } from "@omnesis/core";
 import { IndexerWorkerProxy, buildIndexerCutoffMap } from "../workers/indexer-worker-proxy.js";
 import { InsufficientStorageError } from "../http/errors.js";
+import { purgeDocumentIndexBatch } from "./document-index-purge.js";
 import { canonicalEmbedIdentity } from "./embed-identity.js";
 import {
   cleanupStaleBuildingState,
@@ -351,6 +352,28 @@ export class IndexerLifecycle {
       documentId,
       limit,
       sourceDeleted,
+    );
+  }
+
+  /** Publish one bounded group through the same ownership fence as individual deletes. */
+  async deleteDocumentsIndexBatch(
+    documentIds: readonly string[],
+    limit: number,
+    sourceDeleted: boolean,
+  ) {
+    const owner = this._indexerOwner;
+    if (owner && !this.ownerDisposalInFlight)
+      return owner.deleteDocumentsIndexBatch(documentIds, limit, sourceDeleted);
+    await this.waitForIndexerWriteTransition();
+    const replacement = this._indexerOwner;
+    if (replacement)
+      return replacement.deleteDocumentsIndexBatch(documentIds, limit, sourceDeleted);
+    return purgeDocumentIndexBatch(
+      { indexDb: this.deps.indexDb },
+      documentIds,
+      limit,
+      sourceDeleted,
+      false,
     );
   }
 

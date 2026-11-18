@@ -2679,6 +2679,8 @@ const app = createServer(db, DB_PATH, {
     storageRuntime.service = service;
   },
   refreshStorage: () => storageRuntime.refresh(),
+  refreshStorageIfStale: () => storageRuntime.refreshIfStale(),
+  getStorageAccountingStatus: () => storageRuntime.accountingStatus(),
   requestAdmission: (_c, next) => Promise.resolve(httpShutdown.guard(next)),
   // The same store the agent prompts read from, so a portal save and the next
   // prompt build cannot disagree about what the file says.
@@ -2823,6 +2825,8 @@ const app = createServer(db, DB_PATH, {
     deleteSourceIndex: (sourceId) => indexerLifecycle.deleteSourceIndex(sourceId),
     deleteDocumentIndexBatch: (id, limit, sourceDeleted) =>
       indexerLifecycle.deleteDocumentIndexBatch(id, limit, sourceDeleted),
+    deleteDocumentsIndexBatch: (ids, limit, sourceDeleted) =>
+      indexerLifecycle.deleteDocumentsIndexBatch(ids, limit, sourceDeleted),
     wake: () => {
       // Routed through the Scheduler's debounced wake primitive — see
       // `indexerWakeTask` registration below. Drops if the worker
@@ -3785,6 +3789,8 @@ const absenceSweepBundle = createAbsenceSweepTask(
       (sourceId) => indexerLifecycle.deleteSourceIndex(sourceId),
       (id, limit, sourceDeleted) =>
         indexerLifecycle.deleteDocumentIndexBatch(id, limit, sourceDeleted),
+      (ids, limit, sourceDeleted) =>
+        indexerLifecycle.deleteDocumentsIndexBatch(ids, limit, sourceDeleted),
     ),
     analyticsDb,
     cascadeCognitionFor: (documentIds) =>

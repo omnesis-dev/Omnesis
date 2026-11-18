@@ -2077,7 +2077,7 @@ test("source and document reapply journals stay pending until the in-flight owne
     await proxy.whenReady();
     await fake.holds[0]!.started;
     deleteDocumentsBySource(paths.gatewayDbPath, sourceId);
-    await expect(proxy.deleteDocumentIndexBatch(documentId, 64, true)).resolves.toMatchObject({
+    await expect(proxy.deleteDocumentsIndexBatch([documentId], 64, true)).resolves.toMatchObject({
       complete: false,
     });
     await proxy.deleteSourceIndex(sourceId);
@@ -2160,3 +2160,57 @@ test("semantic startup preserves stored graphs while pressure blocks model repla
     await new Promise<void>((resolve) => fake.server.close(() => resolve()));
   }
 });
+
+test("one bulk document request removes indexed rows and publishes its vectors without touching a sibling", async () => {
+  const sourceId = "synthetic:bulk-purge@example.com";
+  const sibling = "synthetic:bulk-kept@example.org";
+  const paths = createFixture([
+    ...Array.from({ length: 5 }, (_, index) =>
+      makeDocument(`bulk-${index}`, `Fictional archive entry ${index}`, sourceId),
+    ),
+    makeDocument("bulk-kept", "Fictional sibling entry", sibling),
+  ]);
+  const fake = await startFakeEmbedder();
+  const proxy = createProxy(paths, fake.url);
+  try {
+    await proxy.whenReady();
+    await waitForCycleRuns(proxy, 1);
+    await proxy.pauseIndexing();
+    const gateway = createDatabase(paths.gatewayDbPath);
+    let ids: string[];
+    try {
+      ids = gateway
+        .prepare<[string], { id: string }>("SELECT id FROM documents WHERE source_id = ?")
+        .all(sourceId)
+        .map((row) => row.id);
+    } finally {
+      gateway.close();
+    }
+    deleteDocumentsBySource(paths.gatewayDbPath, sourceId);
+    await expect(proxy.deleteDocumentsIndexBatch(ids, 64, true)).resolves.toMatchObject({
+      deletedChunks: 5,
+      complete: true,
+    });
+    const db = openIndexDb(paths.indexDbPath, { readonly: true });
+    const graph = UsearchReadHandle.open(paths.usearchIndexPath, EMBED_DIM);
+    try {
+      expect(
+        db.prepare("SELECT count(*) AS n FROM chunks WHERE source_id = ?").get(sourceId),
+      ).toEqual({ n: 0 });
+      expect(
+        db.prepare("SELECT count(*) AS n FROM chunks WHERE source_id = ?").get(sibling),
+      ).toEqual({ n: 1 });
+      expect(listPendingDocumentIndexPurges(db)).toEqual([]);
+      expect(db.prepare("SELECT count(*) AS n FROM pending_vector_deletes").get()).toEqual({
+        n: 0,
+      });
+      expect(graph.size()).toBe(1);
+    } finally {
+      db.close();
+      graph.close();
+    }
+  } finally {
+    await proxy.dispose();
+    await closeServer(fake.server);
+  }
+}, 60_000);

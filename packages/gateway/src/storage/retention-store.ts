@@ -11,11 +11,10 @@ import {
 } from "../data/repositories/AbsenceRepository.js";
 import { isCanonicalRetentionDate } from "./retention-policy.js";
 import type Database from "better-sqlite3";
-import type { ConfigRevisionFence } from "../config-store.js";
 
 export const STORAGE_RETENTION_BATCH_SIZE = 100;
 
-/** Exact row revisions approved by a preview, never an unbounded date predicate. */
+/** Bounded document headers resolved by the background cursor reader. */
 export interface StorageRetentionCandidate {
   id: string;
   provider_id: string;
@@ -31,85 +30,64 @@ export interface StorageRetentionCandidate {
   payload_bytes: number;
 }
 
-export interface StorageRetentionBatch {
-  sourceId: string;
-  before: string;
-  candidates: StorageRetentionCandidate[];
-  tombstone: boolean;
-  /** Rolling cleanup carries live config authority across the writer queue. */
-  authority?: ConfigRevisionFence;
-}
-
 export interface StorageRetentionDeleteResult {
   stale: boolean;
   deleted: number;
   cascade?: AbsenceCascade;
 }
 
-/**
- * The writer checks every revision before deleting anything. The transaction
- * includes the existing durable cross-store outbox, so a crash after SQLite
- * commits cannot forget index/cognition cleanup. No attachment expansion: an
- * unapproved or newer child must survive a parent's removal.
- */
-export function deleteStorageRetentionBatch(
+/** Recheck a bounded page on the writer; whole-cutoff jobs authorize current eligible revisions. */
+export function currentStorageRetentionCandidates(
   db: Database.Database,
-  batch: StorageRetentionBatch,
-): StorageRetentionDeleteResult {
-  if (batch.candidates.length > STORAGE_RETENTION_BATCH_SIZE) {
-    throw new Error("Storage retention batch exceeds its bound");
-  }
-  return db.transaction(() => {
+  sourceId: string,
+  before: string,
+  candidates: readonly StorageRetentionCandidate[],
+): StorageRetentionCandidate[] {
+  const read = db.prepare<[string], StorageRetentionCandidate & { document_type: string | null }>(
+    `SELECT id, provider_id, source_id, stream_id, external_id, content_hash,
+       updated_at, source_updated_at, source_created_at, title, metadata, 0 AS payload_bytes,
+       json_extract(metadata, '$.documentType') AS document_type FROM documents WHERE id = ?`,
+  );
+  const ids = new Set<string>();
+  const valid: StorageRetentionCandidate[] = [];
+  for (const expected of candidates) {
+    const current = read.get(expected.id);
     if (
-      batch.authority &&
-      Atomics.load(new Int32Array(batch.authority.buffer), 0) !== batch.authority.revision
-    ) {
-      return { stale: true, deleted: 0 };
-    }
-    const read = db.prepare<[string], StorageRetentionCandidate & { document_type: string | null }>(
-      `SELECT id, provider_id, source_id, stream_id, external_id, content_hash,
-              updated_at, source_updated_at, source_created_at, title, metadata,
-              json_extract(metadata, '$.documentType') AS document_type
-         FROM documents WHERE id = ?`,
-    );
-    const ids = new Set<string>();
-    for (const expected of batch.candidates) {
-      const current = read.get(expected.id);
-      if (
-        !current ||
-        ids.has(current.id) ||
-        current.source_id !== batch.sourceId ||
-        current.document_type === "contact" ||
-        !isCanonicalRetentionDate(current.source_created_at) ||
-        Date.parse(current.source_created_at) >= Date.parse(batch.before) ||
-        current.provider_id !== expected.provider_id ||
-        current.stream_id !== expected.stream_id ||
-        current.external_id !== expected.external_id ||
-        current.content_hash !== expected.content_hash ||
-        current.updated_at !== expected.updated_at ||
-        current.source_updated_at !== expected.source_updated_at ||
-        current.source_created_at !== expected.source_created_at ||
-        current.title !== expected.title ||
-        current.metadata !== expected.metadata
-      ) {
-        return { stale: true, deleted: 0 };
-      }
-      ids.add(current.id);
-    }
-    const deletedIds = deleteDocumentsByIds(db, [...ids]);
-    if (batch.tombstone) {
-      for (const row of batch.candidates) {
-        tombstoneDocuments(
-          db,
-          row.provider_id,
-          row.source_id,
-          [row.external_id],
-          new Map([[row.external_id, row.id]]),
-          row.stream_id,
-        );
-      }
-    }
-    const cascade = enqueueDocumentCascade(db, deletedIds);
-    return { stale: false, deleted: deletedIds.length, ...(cascade ? { cascade } : {}) };
-  })();
+      !current ||
+      ids.has(current.id) ||
+      current.source_id !== sourceId ||
+      current.document_type === "contact" ||
+      !isCanonicalRetentionDate(current.source_created_at) ||
+      Date.parse(current.source_created_at) >= Date.parse(before)
+    )
+      continue;
+    ids.add(current.id);
+    valid.push(current);
+  }
+  return valid;
+}
+
+/** The shared deletion primitive: exact ids, normal derived bookkeeping, tombstones and durable cascade. */
+export function removeStorageRetentionCandidates(
+  db: Database.Database,
+  candidates: readonly StorageRetentionCandidate[],
+  tombstone: boolean,
+): StorageRetentionDeleteResult {
+  const deletedIds = deleteDocumentsByIds(
+    db,
+    candidates.map((row) => row.id),
+  );
+  if (tombstone) {
+    for (const row of candidates)
+      tombstoneDocuments(
+        db,
+        row.provider_id,
+        row.source_id,
+        [row.external_id],
+        new Map([[row.external_id, row.id]]),
+        row.stream_id,
+      );
+  }
+  const cascade = enqueueDocumentCascade(db, deletedIds);
+  return { stale: false, deleted: deletedIds.length, ...(cascade ? { cascade } : {}) };
 }

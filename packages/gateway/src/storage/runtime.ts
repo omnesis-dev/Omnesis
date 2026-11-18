@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { createLogger } from "@omnesis/core";
 import { measureDiskUsage, type DiskUsageLayout } from "../disk-usage.js";
 import { StoragePressureManager, resolveStoragePolicy } from "./pressure.js";
 import { measureStorageVolumes } from "./volumes.js";
@@ -17,6 +18,8 @@ interface StorageIndexer {
   setStoragePressure(blocked: boolean, validUntil: number): void;
   storageAccounting(): Promise<IndexStorageAccounting>;
 }
+const log = createLogger("gateway:storage");
+const ACCOUNTING_FRESH_MS = 30_000;
 export interface StorageRuntimeDeps {
   layout: DiskUsageLayout;
   configStore: ConfigStore;
@@ -39,6 +42,26 @@ export class StorageRuntime {
   index: IndexStorageAccounting | null = null;
   service: StorageService | undefined;
   private accountingInFlight: Promise<void> | null = null;
+  private accountingAttemptAt = 0;
+  private accountingError: string | null = null;
+
+  accountingStatus() {
+    return {
+      refreshing: this.accountingInFlight !== null,
+      measuredAt: this.logical?.measuredAt ?? null,
+      error: this.accountingError,
+    };
+  }
+
+  /** Portal polling reads cached measurements and only schedules a coalesced stale refresh. */
+  refreshIfStale(): void {
+    if (Date.now() - this.accountingAttemptAt < ACCOUNTING_FRESH_MS) return;
+    void this.refreshAccounting().catch((error: unknown) => {
+      log.warn(
+        `Storage measurement failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    });
+  }
 
   constructor(private readonly deps: StorageRuntimeDeps) {
     this.pressure = new StoragePressureManager({
@@ -87,10 +110,11 @@ export class StorageRuntime {
       name: "storage.retention.tick",
       runner: "main",
       priority: "background",
-      periodMs: 5_000,
+      periodMs: 1_000,
       initialArgs: undefined,
       run: async () => {
-        await this.service?.sweep();
+        const result = await this.service?.sweep();
+        if (result?.hasMore) this.deps.scheduler.kickPeriodic("storage.retention.tick");
         return { kind: "done", value: undefined };
       },
     };
@@ -115,13 +139,24 @@ export class StorageRuntime {
   }
 
   private refreshAccounting(): Promise<void> {
-    this.accountingInFlight ??= (async () => {
-      this.logical = await measureStorageAccounting(this.deps.reads);
+    if (this.accountingInFlight) return this.accountingInFlight;
+    this.accountingAttemptAt = Date.now();
+    this.accountingInFlight = (async () => {
+      const logical = await measureStorageAccounting(this.deps.reads);
       const indexer = this.deps.getIndexer();
-      if (indexer) this.index = await indexer.storageAccounting();
-    })().finally(() => {
-      this.accountingInFlight = null;
-    });
+      const index = indexer ? await indexer.storageAccounting() : null;
+      this.logical = logical;
+      this.index = index;
+      this.accountingError = null;
+    })()
+      .catch((error: unknown) => {
+        this.accountingError = "Storage measurement could not be updated. Retry to measure again.";
+        throw error;
+      })
+      .finally(() => {
+        this.accountingInFlight = null;
+        this.accountingAttemptAt = Date.now();
+      });
     return this.accountingInFlight;
   }
 

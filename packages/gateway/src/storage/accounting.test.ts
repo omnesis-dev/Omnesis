@@ -50,15 +50,17 @@ test("logical byte attribution is UTF-8 precise and separated by source and cale
       documents: 2,
       payloadBytes: 2 * perDocument,
       months: [
-        { month: "2020-01", documents: 1, payloadBytes: perDocument },
-        { month: "2020-02", documents: 1, payloadBytes: perDocument },
+        { month: "2020-01", documents: 1, payloadBytes: perDocument, trimmableDocuments: 1 },
+        { month: "2020-02", documents: 1, payloadBytes: perDocument, trimmableDocuments: 1 },
       ],
     },
     {
       sourceId: "fictional-notes:second",
       documents: 1,
       payloadBytes: perDocument,
-      months: [{ month: "2020-02", documents: 1, payloadBytes: perDocument }],
+      months: [
+        { month: "2020-02", documents: 1, payloadBytes: perDocument, trimmableDocuments: 1 },
+      ],
     },
   ]);
   expect(snapshot.database.allocatedBytes).toBeGreaterThan(0);
@@ -132,4 +134,34 @@ test("deletions between pages leave a finite estimate and invalid source dates h
     storageAccountingPage: async (after, upper) => storageAccountingPage(db, after, upper),
   });
   expect(snapshot.sources).toEqual([]);
+});
+
+test("protected contacts and ambiguous dates remain measured but are not scheduled as trimmable", async () => {
+  for (const [externalId, date, metadata] of [
+    ["eligible", "2020-01-01T00:00:00.000Z", {}],
+    ["contact", "2020-01-01T00:00:00.000Z", { documentType: "contact" }],
+    ["offset", "2020-01-01T00:00:00+02:00", {}],
+  ] as const) {
+    upsertDocuments(db, [
+      {
+        providerId: ProviderId("fictional-provider"),
+        sourceId: SourceId("fictional-notes:protected"),
+        externalId,
+        title: "Invented entry",
+        content: "Fixture",
+        contentHash: externalId,
+        metadata,
+        sourceCreatedAt: date,
+        sourceUpdatedAt: date,
+      },
+    ]);
+  }
+  const snapshot = await measureStorageAccounting(reads());
+  expect(snapshot.sources[0]).toMatchObject({
+    documents: 3,
+    months: [
+      { month: "2019-12", documents: 1, trimmableDocuments: 0 },
+      { month: "2020-01", documents: 2, trimmableDocuments: 1 },
+    ],
+  });
 });

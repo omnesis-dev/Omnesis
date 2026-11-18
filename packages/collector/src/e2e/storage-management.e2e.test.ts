@@ -2,6 +2,8 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { createHash, randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import Database from "better-sqlite3";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { MultiCollectorHarness, type PairedCollector } from "./multi-collector-harness.js";
@@ -19,13 +21,7 @@ interface StorageSnapshot {
   policy: { maxBytes: number | null };
   retention: Array<{ sourceId: string; maxAgeDays: number }>;
   logical: { sources: Array<{ sourceId: string; documents: number }> } | null;
-}
-interface Preview {
-  token: string;
-  sourceId: string;
-  before: string;
-  documents: number;
-  hasMore: boolean;
+  trimJobs: Array<{ id: string; sourceId: string; before: string; state: string; deleted: number }>;
 }
 
 /** Tiny real files can exceed a one-byte quota; no disk-filling fixture is needed. */
@@ -104,10 +100,6 @@ describe("gateway storage admission and explicit retention", () => {
       db.close();
     }
   }
-  const preview = (sourceId = SOURCE, before = CUTOFF) =>
-    admin<Preview>("/admin/storage/trim/preview", { sourceId, before });
-  const trim = (token: string) =>
-    admin<{ deleted: number; hasMore: boolean }>("/admin/storage/trim", { token });
 
   test("a one-byte limit parks growth, keeps reads and settings usable, and does not advance cursors", async () => {
     await expect
@@ -176,12 +168,15 @@ describe("gateway storage admission and explicit retention", () => {
       headers: { Authorization: `Bearer ${reader.token}` },
     });
     expect(read.status).toBe(403);
-    const previewResponse = await fetch(`${harness.gatewayUrl}/admin/storage/trim/preview`, {
+    const startResponse = await fetch(`${harness.gatewayUrl}/admin/storage/trim/jobs`, {
       method: "POST",
       headers: { Authorization: `Bearer ${reader.token}`, "Content-Type": "application/json" },
       body: JSON.stringify({ sourceId: SOURCE, before: CUTOFF }),
     });
-    expect(previewResponse.status).toBe(403);
+    expect(startResponse.status).toBe(403);
+    await expect(
+      admin("/admin/storage/trim/jobs", { sourceId: SOURCE, before: "invalid" }),
+    ).rejects.toMatchObject({ status: 400 });
     const response = await fetch(`${harness.gatewayUrl}/admin/storage/policy`, {
       method: "PATCH",
       headers: { Authorization: `Bearer ${reader.token}`, "Content-Type": "application/json" },
@@ -192,46 +187,63 @@ describe("gateway storage admission and explicit retention", () => {
     expect(unauthenticated.status).toBe(401);
   });
 
-  test("preview removes exactly old source documents, preserving young data, contacts, and sibling sources", async () => {
-    const plan = await preview();
-    expect(plan).toMatchObject({ sourceId: SOURCE, before: CUTOFF, documents: 1, hasMore: false });
-    expect(stored(SOURCE)).toEqual(["contact", "old", "young"]);
-    expect(await trim(plan.token)).toMatchObject({ deleted: 1, hasMore: false });
+  test("one cutoff command preserves newer data, contacts and siblings and suppresses removed identities", async () => {
+    const job = await admin<StorageSnapshot["trimJobs"][number]>("/admin/storage/trim/jobs", {
+      sourceId: SOURCE,
+      before: CUTOFF,
+    });
+    await expect
+      .poll(
+        async () =>
+          (await admin<StorageSnapshot>("/admin/storage")).trimJobs.find(
+            (entry) => entry.id === job.id,
+          )?.state,
+        { timeout: 30_000, interval: 300 },
+      )
+      .toBe("completed");
     expect(stored(SOURCE)).toEqual(["contact", "young"]);
     expect(stored(SIBLING)).toEqual(["sibling-old"]);
-    await expect(trim(plan.token)).rejects.toMatchObject({ status: 409 });
     await push([document(SOURCE, "old", OLD, "Updated upstream content must stay suppressed")]);
     expect(stored(SOURCE)).toEqual(["contact", "young"]);
-  });
+  }, 40_000);
 
-  test("a changed document invalidates the whole approval and deletes nothing", async () => {
-    await push([document(SOURCE, "stale-a"), document(SOURCE, "stale-b")]);
-    const plan = await preview();
-    expect(plan.documents).toBe(2);
-    await push([document(SOURCE, "stale-a", OLD, "A new revision arrived after preview")]);
-    await expect(trim(plan.token)).rejects.toMatchObject({ status: 409 });
-    expect(stored(SOURCE)).toEqual(["contact", "stale-a", "stale-b", "young"]);
-    await expect(trim(plan.token)).rejects.toMatchObject({ status: 409 });
-    const fresh = await preview();
-    expect(await trim(fresh.token)).toMatchObject({ deleted: 2 });
-  });
-
-  test("one confirmation is bounded to 100 exact documents", async () => {
-    await push(
-      Array.from({ length: 101 }, (_, index) =>
-        document(SOURCE, `batch-${String(index).padStart(3, "0")}`),
-      ),
+  test("one trim request removes every older document across batches and resumes after restart", async () => {
+    const old = Array.from({ length: 253 }, (_, index) =>
+      document(SOURCE, `durable-${String(index).padStart(3, "0")}`),
     );
-    const plan = await preview();
-    expect(plan.documents).toBe(100);
-    expect(plan.hasMore).toBe(true);
-    expect(await trim(plan.token)).toMatchObject({ deleted: 100, hasMore: true });
-    const remaining = stored(SOURCE);
-    expect(remaining).toHaveLength(3);
-    expect(remaining).toEqual(expect.arrayContaining(["contact", "young"]));
-    expect(remaining.filter((id) => id.startsWith("batch-"))).toHaveLength(1);
-    expect(await trim((await preview()).token)).toMatchObject({ deleted: 1 });
-  });
+    await push(old);
+    expect(await admin<{ paused: boolean }>("/admin/background/pause", {})).toMatchObject({
+      paused: true,
+    });
+    const job = await admin<StorageSnapshot["trimJobs"][number]>("/admin/storage/trim/jobs", {
+      sourceId: SOURCE,
+      before: CUTOFF,
+    });
+    expect(job).toMatchObject({ sourceId: SOURCE, before: CUTOFF, state: "queued", deleted: 0 });
+    // No second confirmation is sent, even though the request exceeds one page.
+    await harness.restartGateway();
+    await expect
+      .poll(
+        async () => {
+          const snapshot = await admin<StorageSnapshot>("/admin/storage");
+          return snapshot.trimJobs.find((entry) => entry.id === job.id)?.state;
+        },
+        { timeout: 90_000, interval: 300 },
+      )
+      .toBe("completed");
+    const completed = (await admin<StorageSnapshot>("/admin/storage")).trimJobs.find(
+      (entry) => entry.id === job.id,
+    )!;
+    expect(completed.deleted).toBe(253);
+    expect(stored(SOURCE)).toEqual(["contact", "young"]);
+    expect(stored(SIBLING)).toEqual(["sibling-old"]);
+    await push([document(SOURCE, "durable-000", OLD, "Changed content must remain suppressed")]);
+    expect(stored(SOURCE)).toEqual(["contact", "young"]);
+    await harness.restartGateway();
+    expect((await admin<StorageSnapshot>("/admin/storage")).trimJobs).toContainEqual(
+      expect.objectContaining({ id: job.id, state: "completed", deleted: 253 }),
+    );
+  }, 150_000);
 
   test("rolling retention prunes stored old data and rejects reingestion while retaining contacts and recent data", async () => {
     await push([
@@ -240,6 +252,18 @@ describe("gateway storage admission and explicit retention", () => {
       document(ROLLING, "rolling-contact", OLD, "Invented contact", { documentType: "contact" }),
     ]);
     await admin("/admin/storage/retention", { sourceId: ROLLING, maxAgeDays: 365 }, "PATCH");
+    const config = JSON.parse(readFileSync(join(harness.gatewayConfigDir, "omnesis.json"), "utf8"));
+    expect(config.gateway.storage.retention).toEqual([{ sourceId: ROLLING, maxAgeDays: 365 }]);
+    const bindingDb = new Database(harness.getDbPath(), { readonly: true });
+    try {
+      expect(
+        bindingDb
+          .prepare("SELECT source_incarnation FROM storage_retention_bindings WHERE source_id = ?")
+          .get(ROLLING),
+      ).toMatchObject({ source_incarnation: expect.any(String) });
+    } finally {
+      bindingDb.close();
+    }
     await expect
       .poll(() => stored(ROLLING), { timeout: 30_000, interval: 300 })
       .toEqual(["rolling-contact", "rolling-young"]);

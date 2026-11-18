@@ -33,6 +33,7 @@
  *   - `wipeAndRecreateVectorIndex` — model-swap reopen.
  */
 
+import { DOCUMENT_PURGE_BATCH_SIZE, purgeDocumentIndexBatch } from "./document-index-purge.js";
 import type Database from "better-sqlite3";
 type Db = Database.Database;
 import {
@@ -149,6 +150,11 @@ export function workerCoordinatedIndexWriteGate(
     limit: number,
     sourceDeleted: boolean,
   ) => Promise<DocumentIndexDeleteBatchResult> | undefined,
+  deleteDocumentsBatchViaWorker?: (
+    documentIds: readonly string[],
+    limit: number,
+    sourceDeleted: boolean,
+  ) => Promise<DocumentIndexDeleteBatchResult> | undefined,
 ): IndexWriteGate {
   const direct = directIndexWriteGate(db);
   return {
@@ -156,15 +162,24 @@ export function workerCoordinatedIndexWriteGate(
     async deleteChunksByDocuments(documentIds) {
       let deleted = 0;
       let pending = false;
-      for (const documentId of new Set(documentIds)) {
-        const viaWorker = deleteDocumentBatchViaWorker?.(documentId, 64, true);
-        if (!viaWorker) {
-          deleted += await direct.deleteChunksByDocument(documentId);
+      const ids = [...new Set(documentIds)];
+      for (let offset = 0; offset < ids.length; offset += DOCUMENT_PURGE_BATCH_SIZE) {
+        const batch = ids.slice(offset, offset + DOCUMENT_PURGE_BATCH_SIZE);
+        if (deleteDocumentsBatchViaWorker) {
+          const result = await (deleteDocumentsBatchViaWorker(batch, 64, true) ??
+            purgeDocumentIndexBatch({ indexDb: db }, batch, 64, true, false));
+          deleted += result.deletedChunks;
+          pending ||= !result.complete;
           continue;
         }
-        const result = await viaWorker;
-        deleted += result.deletedChunks;
-        pending ||= !result.complete;
+        for (const documentId of batch) {
+          const viaWorker = deleteDocumentBatchViaWorker?.(documentId, 64, true);
+          const result = viaWorker
+            ? await viaWorker
+            : purgeDocumentIndexBatch({ indexDb: db }, [documentId], 64, true, false);
+          deleted += result.deletedChunks;
+          pending ||= !result.complete;
+        }
       }
       if (pending) throw new IndexCleanupPendingError();
       return deleted;

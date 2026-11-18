@@ -104,7 +104,7 @@ export function storageHistoryArea(data, cutoff) {
  * Shared by source details and retention dialogs; selection only updates the cutoff.
  * SVG handlers use native lowercase event names across browser and DOM adapters.
  */
-export function StorageHistory({ months = [], selectedCutoff = null, cutoffInstant = null, onSelectCutoff, now = new Date(), label = "Storage by source date" } = {}) {
+export function StorageHistory({ months = [], selectedCutoff = null, cutoffInstant = null, onSelectCutoff, scheduledCutoff = null, now = new Date(), label = "Storage by source date" } = {}) {
   const plot = useRef(null);
   const tooltipId = useId();
   const [hovered, setHovered] = useState(null);
@@ -120,7 +120,13 @@ export function StorageHistory({ months = [], selectedCutoff = null, cutoffInsta
     startX: x(new Date(`${bucket.startMonth}-01T00:00:00.000Z`).getTime()),
     y: y(bucket.cumulativeBytes),
   }));
-  const area = storageHistoryArea(data, cutoffInstant || selectedCutoff);
+  const cutoff = cutoffInstant || selectedCutoff || scheduledCutoff;
+  const scheduled = !cutoffInstant && !selectedCutoff && !!scheduledCutoff;
+  const shade = scheduled ? "var(--storage-scheduled, #f97316)" : "var(--danger, #f85149)";
+  const pendingMonths = scheduled ? months.filter((month) => MONTH.test(month.month) && month.month <= cutoff.slice(0, 7)) : [];
+  const hasTrimmableHistory = !scheduled || pendingMonths.some((month) =>
+    month.trimmableDocuments === undefined || month.trimmableDocuments > 0);
+  const area = hasTrimmableHistory ? storageHistoryArea(data, cutoff) : null;
   const selected = (point) => !cutoffInstant && point.cutoff === selectedCutoff;
   const chosen = points.findIndex((point) => point.cutoff === selectedCutoff);
   const tabPoint = chosen < 0 ? points.length - 1 : chosen;
@@ -160,15 +166,15 @@ export function StorageHistory({ months = [], selectedCutoff = null, cutoffInsta
   }
 
   return html`<figure class="storage-history" aria-label=${label}>
-    <div class="storage-history-legend"><span class="storage-history-line-key">Cumulative storage</span><span class="storage-history-bar-key">${data.coarsened ? "Storage per period" : "Monthly storage"}</span>${area && html`<span class="storage-history-trim-key">Selected history</span>`}</div>
+    <div class="storage-history-legend"><span class="storage-history-line-key">Cumulative storage</span><span class="storage-history-bar-key">${data.coarsened ? "Storage per period" : "Monthly storage"}</span>${area && html`<span class=${scheduled ? "storage-history-scheduled-key" : "storage-history-trim-key"}>${scheduled ? "Scheduled for trimming" : "Selected history"}</span>`}</div>
     ${data.totalBytes > 0 ? html`<div class="storage-history-plot" ref=${plot} onpointerleave=${() => setHovered(null)}>
       <div class="storage-history-canvas" style="overflow-x:auto;max-width:100%" onscroll=${() => { setHovered(null); setFocused(null); }}>
       <svg class="storage-history-svg" viewBox="0 0 760 232" width="100%" height="232" style="display:block;min-width:560px" aria-label=${label} role="group">
         ${[0, 0.5, 1].map((fraction) => html`<g key=${fraction}><line x1=${left} x2=${right} y1=${y(data.totalBytes * fraction)} y2=${y(data.totalBytes * fraction)} stroke="var(--border)" stroke-dasharray="3 4" /><text x=${left - 10} y=${y(data.totalBytes * fraction) + 4} text-anchor="end" fill="var(--text-secondary)" font-size="11">${bytes(data.totalBytes * fraction)}</text></g>`)}
         ${points.map((point) => html`<rect key=${`bar:${point.startMonth}`} class="storage-history-bar" x=${point.startX + 1} y=${y(point.bytes)} width=${Math.max(1, point.x - point.startX - 2)} height=${bottom - y(point.bytes)} fill="var(--accent)" opacity="0.2" pointer-events="none" />`)}
-        ${area && html`<path class="storage-history-trim-area" d=${`M ${left} ${bottom} ${area.points.map((point) => `L ${x(point.time)} ${y(point.bytes)}`).join(" ")} L ${x(area.time)} ${bottom} Z`} fill="var(--danger, #f85149)" opacity="0.2" pointer-events="none" data-cutoff=${cutoffInstant || selectedCutoff} />`}
+        ${area && html`<path class=${`storage-history-trim-area${scheduled ? " storage-history-scheduled-area" : ""}`} d=${`M ${left} ${bottom} ${area.points.map((point) => `L ${x(point.time)} ${y(point.bytes)}`).join(" ")} L ${x(area.time)} ${bottom} Z`} fill=${shade} opacity=${scheduled ? "0.3" : "0.2"} pointer-events="none" data-cutoff=${cutoff} />`}
         <path class="storage-history-line" d=${`M ${left} ${bottom} ${points.map((point) => `L ${point.x} ${point.y}`).join(" ")}`} fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linejoin="round" pointer-events="none" />
-        ${area && html`<g class="storage-history-cutoff" pointer-events="none"><line x1=${x(area.time)} x2=${x(area.time)} y1=${y(area.bytes)} y2=${bottom} stroke="var(--danger, #f85149)" stroke-dasharray="4 4" /><circle cx=${x(area.time)} cy=${y(area.bytes)} r="4" fill="var(--danger, #f85149)" /></g>`}
+        ${area && html`<g class="storage-history-cutoff" pointer-events="none"><line x1=${x(area.time)} x2=${x(area.time)} y1=${y(area.bytes)} y2=${bottom} stroke=${shade} stroke-dasharray="4 4" /><circle cx=${x(area.time)} cy=${y(area.bytes)} r="4" fill=${shade} /></g>`}
         <g class="storage-history-points">${points.map((point, index) => html`<g key=${point.startMonth} data-history-point=${index} class=${`storage-history-point${selected(point) ? " is-selected" : ""}`} role=${onSelectCutoff ? "button" : "img"} tabindex=${index === tabPoint ? 0 : -1} aria-label=${description(point)} aria-describedby=${active?.index === index ? tooltipId : undefined} aria-pressed=${onSelectCutoff ? selected(point) : null} onclick=${onSelectCutoff ? () => onSelectCutoff(point.cutoff) : null} onkeydown=${(event) => keyboard(event, index)} onpointerenter=${(event) => show(event, index, setHovered)} onpointerleave=${() => setHovered(null)} onfocus=${(event) => show(event, index, setFocused)} onblur=${() => setFocused(null)}>
           <circle cx=${point.x} cy=${point.y} r=${Math.min(11, (right - left) / points.length / 2)} fill="transparent" />
           <circle class="storage-history-point-dot" cx=${point.x} cy=${point.y} r=${selected(point) ? "5" : "3"} fill=${selected(point) ? "var(--text-primary)" : "var(--accent)"} stroke="var(--bg-primary)" stroke-width="1.5" />
@@ -180,7 +186,7 @@ export function StorageHistory({ months = [], selectedCutoff = null, cutoffInsta
         <span class="storage-history-hover-period">${activePoint.label}</span><strong>${bytes(activePoint.cumulativeBytes)}</strong><span>Cumulative storage</span><small>${bytes(activePoint.bytes)} in this period</small>
       </div>`}
     </div>` : html`<p class="storage-history-empty">No dated storage to plot.</p>`}
-    <figcaption class="storage-history-caption">${onSelectCutoff ? "Choose a point, or focus the graph and use arrow keys, then Enter, to set a cutoff. " : ""}${data.coarsened ? "Long histories are grouped into periods. " : ""}Current storage grouped by source date. Amounts estimate the selected history; database file sizes can remain unchanged.${selectedCutoff && html`<span class="storage-history-selection"> Cutoff: ${selectedCutoff}.</span>`}</figcaption>
+    <figcaption class="storage-history-caption">${onSelectCutoff ? "Choose a point, or focus the graph and use arrow keys, then Enter, to set a cutoff. " : ""}${data.coarsened ? "Long histories are grouped into periods. " : ""}Current storage grouped by source date. Protected documents are kept. Amounts estimate the selected history; database file sizes can remain unchanged.${selectedCutoff && html`<span class="storage-history-selection"> Cutoff: ${selectedCutoff}.</span>`}</figcaption>
     ${data.undatedBytes > 0 && html`<p class="storage-history-unplaced">${bytes(data.undatedBytes)} has no usable month and is outside this timeline.</p>`}
     ${data.futureBytes > 0 && html`<p class="storage-history-unplaced">${bytes(data.futureBytes)} is dated after the current month and is outside this timeline.</p>`}
   </figure>`;

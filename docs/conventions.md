@@ -43,10 +43,13 @@ runs on read workers and never delays capacity probes. Physical footprint,
 SQLite page allocation and logical source payload are separate measurements;
 never add them together or promise a logical deletion shrinks a database file.
 
-Capacity limits only pause growth. Deletion requires a confirmed, expiring,
-single-use preview of exact document revisions, or an explicit per-source
-rolling-retention policy. The writer revalidates every approved revision before
-any deletion and commits a durable derived-store cleanup obligation with it.
+Capacity limits only pause growth. Deletion requires an explicit source-and-cutoff trim request or a per-source
+rolling-retention policy. Both feed the same bounded background deletion engine.
+Durable jobs store one cursor per intent, not one queued task per document. The
+writer revalidates source incarnation and document revisions before deletion and
+commits cursor progress and a durable derived-store cleanup obligation with it.
+Configuration stores user choices; source incarnations, policy bindings and job
+progress belong in the database.
 Rolling batches also carry a shared config-revision fence to the writer, so
 a raw config edit can revoke work still waiting in its queue. Index cleanup
 uses the owning worker's bounded document-purge protocol; an

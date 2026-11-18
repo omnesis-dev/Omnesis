@@ -364,3 +364,29 @@ describe("withFreshIndexWriteGate", () => {
     after.close();
   });
 });
+
+test("bulk worker purge splits at one hundred IDs and never falls back while the owner replies incomplete", async () => {
+  const db = createIndexDatabase(":memory:");
+  try {
+    const single = vi.fn(() => {
+      throw new Error("Individual purge must not run");
+    });
+    const bulk = vi.fn(async (ids: readonly string[]) => ({
+      deletedChunks: ids.length,
+      complete: true,
+      readyForSourceDelete: false,
+    }));
+    const gate = workerCoordinatedIndexWriteGate(db, () => undefined, single, bulk);
+    const ids = Array.from({ length: 205 }, (_, index) => `document-${index}`);
+    expect(await gate.deleteChunksByDocuments([...ids, ids[0]!])).toBe(205);
+    expect(bulk.mock.calls.map(([group]) => group.length)).toEqual([100, 100, 5]);
+    expect(bulk).toHaveBeenNthCalledWith(1, ids.slice(0, 100), 64, true);
+    bulk.mockResolvedValueOnce({ deletedChunks: 0, complete: false, readyForSourceDelete: false });
+    await expect(gate.deleteChunksByDocuments(["awaiting-cycle"])).rejects.toBeInstanceOf(
+      IndexCleanupPendingError,
+    );
+    expect(single).not.toHaveBeenCalled();
+  } finally {
+    db.close();
+  }
+});

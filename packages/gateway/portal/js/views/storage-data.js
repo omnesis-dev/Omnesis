@@ -30,13 +30,18 @@ export function storageSources(snapshot) {
     return sources.get(id);
   }
   function bucket(row, month) {
-    if (!row.months.has(month)) row.months.set(month, { month, documentBytes: 0, vectorBytes: 0, textBytes: 0 });
+    if (!row.months.has(month)) row.months.set(month, { month, documentBytes: 0, vectorBytes: 0, textBytes: 0, trimmableDocuments: snapshot.logical ? 0 : undefined });
     return row.months.get(month);
   }
   for (const row of snapshot.logical?.sources ?? []) {
     const target = source(row.sourceId);
     target.documentBytes = row.payloadBytes;
-    for (const month of row.months ?? []) bucket(target, month.month).documentBytes += month.payloadBytes;
+    for (const month of row.months ?? []) {
+      const cohort = bucket(target, month.month);
+      cohort.documentBytes += month.payloadBytes;
+      cohort.trimmableDocuments = Number.isFinite(month.trimmableDocuments) && cohort.trimmableDocuments !== undefined
+        ? cohort.trimmableDocuments + month.trimmableDocuments : undefined;
+    }
   }
   let indexedText = 0;
   for (const row of snapshot.index?.sources ?? []) {
@@ -45,8 +50,9 @@ export function storageSources(snapshot) {
     month.textBytes += row.textBytes;
     indexedText += row.textBytes;
   }
-  // A source can still have a policy when it has no measured documents.
+  // Keep policy and job progress visible even after all measured documents are gone.
   for (const policy of snapshot.retention ?? []) source(policy.sourceId);
+  for (const job of snapshot.trimJobs ?? []) source(job.sourceId);
   const allocation = snapshot.index?.lexicalBytes;
   const lexicalKnown = Number.isFinite(allocation) && (indexedText > 0 || allocation === 0);
   const rows = [...sources.values()].map((row) => {
@@ -56,7 +62,8 @@ export function storageSources(snapshot) {
       const lexicalBytes = month.textBytes + indexShare;
       vector += month.vectorBytes;
       lexical += lexicalBytes;
-      return { month: month.month, bytes: month.documentBytes + month.vectorBytes + lexicalBytes };
+      return { month: month.month, bytes: month.documentBytes + month.vectorBytes + lexicalBytes,
+        ...(month.trimmableDocuments === undefined ? {} : {trimmableDocuments: month.trimmableDocuments}) };
     });
     return {
       sourceId: row.sourceId,
@@ -72,8 +79,34 @@ export function storageSources(snapshot) {
 }
 
 export function bytesBeforeMonthCutoff(months, cutoff) {
-  // A partial month has no day-level breakdown. A later preview gives the
-  // exact eligible documents for the bounded trim batch.
+  // A partial month has no day-level breakdown; this is an estimate only.
   return months.reduce((total, {month, bytes}) =>
     /^\d{4}-(0[1-9]|1[0-2])$/.test(month) && month < cutoff.slice(0, 7) ? total + bytes : total, 0);
+}
+
+/** Union of outstanding trim intents and the moving rolling window. */
+export function scheduledStorageCutoff(sourceId, retentionDays, jobs = [], now = Date.now()) {
+  const cutoffs = jobs.filter((job) => job.sourceId === sourceId && ["queued", "running"].includes(job.state))
+    .map((job) => Date.parse(job.before)).filter(Number.isFinite);
+  if (Number.isInteger(retentionDays) && retentionDays > 0 && retentionDays <= MAX_RETENTION_DAYS)
+    cutoffs.push(now - retentionDays * DAY_MS);
+  let latest = null;
+  for (const cutoff of cutoffs) latest = latest === null ? cutoff : Math.max(latest, cutoff);
+  return latest === null ? null : new Date(latest).toISOString();
+}
+
+export function storageTrimStatus(job) {
+  const count = Number.isFinite(job.deleted) ? job.deleted.toLocaleString() : "0";
+  if (job.state === "completed") return `${job.cleanupPending ? "Documents trimmed" : "Trim completed"} · ${count} documents removed${job.cleanupPending ? " · Search cleanup continuing" : ""}`;
+  if (job.state === "cancelled") return `Trim cancelled · ${count} documents removed`;
+  if (job.state === "failed") return `Trim stopped · ${count} documents removed${job.error ? ` · ${job.error}` : ""}`;
+  return `${job.state === "queued" ? "Trim queued" : "Trimming"} · ${count} documents removed`;
+}
+
+/** Keep outstanding work visible without turning a source row into a history log. */
+export function visibleStorageTrimJobs(jobs) {
+  const active = jobs.filter((job) => ["queued", "running"].includes(job.state));
+  const terminal = jobs.filter((job) => !["queued", "running"].includes(job.state))
+    .sort((left, right) => (right.updatedAt ?? right.createdAt ?? 0) - (left.updatedAt ?? left.createdAt ?? 0))[0];
+  return terminal ? [...active, terminal] : active;
 }

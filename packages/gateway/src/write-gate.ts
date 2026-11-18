@@ -2,10 +2,22 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import {
-  deleteStorageRetentionBatch,
-  type StorageRetentionBatch,
-  type StorageRetentionDeleteResult,
-} from "./storage/retention-store.js";
+  reconcileStorageRetentionBindings,
+  bindStorageRetentionPolicy,
+  type ReconcileStorageRetentionBindingsInput,
+  type BindStorageRetentionPolicyInput,
+  type StorageRetentionBindingResult,
+} from "./storage/retention-bindings.js";
+import {
+  startStorageTrimJob,
+  applyStorageTrimPage,
+  failStorageTrimJob,
+  type StartStorageTrimJob,
+  type StoredStorageTrimJob,
+  type ApplyStorageTrimPage,
+  type AppliedStorageTrimPage,
+  type FailStorageTrimJob,
+} from "./storage/trim-job-store.js";
 import { initializeLabFlags, setLabFlag, type LabFeatureId, type LabFlags } from "./lab/store.js";
 
 import {
@@ -791,7 +803,15 @@ export interface WriteGate extends KnowledgeWriteGate {
     tombstone?: boolean,
   ): Promise<string[]>;
   /** Exact revision-checked, bounded storage removal with durable cleanup. */
-  deleteStorageRetentionBatch(batch: StorageRetentionBatch): Promise<StorageRetentionDeleteResult>;
+  reconcileStorageRetentionBindings(
+    input: ReconcileStorageRetentionBindingsInput,
+  ): Promise<StorageRetentionBindingResult>;
+  bindStorageRetentionPolicy(
+    input: BindStorageRetentionPolicyInput,
+  ): Promise<StorageRetentionBindingResult>;
+  startStorageTrimJob(input: StartStorageTrimJob): Promise<StoredStorageTrimJob | null>;
+  applyStorageTrimPage(input: ApplyStorageTrimPage): Promise<AppliedStorageTrimPage>;
+  failStorageTrimJob(input: FailStorageTrimJob): Promise<StoredStorageTrimJob | null>;
   /** Bounded, exact document delete used by activity retention. */
   deleteDocumentForRetention(
     providerId: string,
@@ -2450,7 +2470,12 @@ export function writeGateFromCall(call: WriterCallFn): WriteGate {
       ]),
     deleteDocumentForUser: (providerId, sourceId, externalId, streamId, tombstone) =>
       call("db.deleteDocumentForUser", [providerId, sourceId, externalId, streamId, tombstone]),
-    deleteStorageRetentionBatch: (batch) => call("db.deleteStorageRetentionBatch", [batch]),
+    reconcileStorageRetentionBindings: (input) =>
+      call("storage.reconcileRetentionBindings", [input]),
+    bindStorageRetentionPolicy: (input) => call("storage.bindRetentionPolicy", [input]),
+    startStorageTrimJob: (input) => call("storage.startTrimJob", [input]),
+    applyStorageTrimPage: (input) => call("storage.applyTrimPage", [input]),
+    failStorageTrimJob: (input) => call("storage.failTrimJob", [input]),
     deleteDocumentForRetention: (providerId, sourceId, externalId) =>
       call("db.deleteDocumentForRetention", [providerId, sourceId, externalId]),
     completeDocumentRetention: (providerId, sourceId, externalId) =>
@@ -3032,7 +3057,12 @@ export function directWriteGate(db: Db): WriteGate {
         streamId ?? "",
         tombstone ?? true,
       ),
-    deleteStorageRetentionBatch: async (batch) => deleteStorageRetentionBatch(db, batch),
+    reconcileStorageRetentionBindings: async (input) =>
+      reconcileStorageRetentionBindings(db, input),
+    bindStorageRetentionPolicy: async (input) => bindStorageRetentionPolicy(db, input),
+    startStorageTrimJob: async (input) => startStorageTrimJob(db, input),
+    applyStorageTrimPage: async (input) => applyStorageTrimPage(db, input),
+    failStorageTrimJob: async (input) => failStorageTrimJob(db, input),
     deleteDocumentForRetention: async (providerId, sourceId, externalId) =>
       deleteDocumentForRetention(db, providerId, sourceId, externalId),
     completeDocumentRetention: async (providerId, sourceId, externalId) =>

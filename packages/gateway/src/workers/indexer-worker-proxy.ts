@@ -522,8 +522,20 @@ export class IndexerWorkerProxy implements Embedder {
     return req.promise;
   }
 
-  async deleteDocumentIndexBatch(
-    documentId: string,
+  async deleteDocumentIndexBatch(documentId: string, limit: number, sourceDeleted: boolean) {
+    return this.requestDocumentIndexBatch(documentId, limit, sourceDeleted);
+  }
+
+  async deleteDocumentsIndexBatch(
+    documentIds: readonly string[],
+    limit: number,
+    sourceDeleted: boolean,
+  ) {
+    return this.requestDocumentIndexBatch(documentIds, limit, sourceDeleted);
+  }
+
+  private async requestDocumentIndexBatch(
+    documentId: string | readonly string[],
     limit: number,
     sourceDeleted: boolean,
   ): Promise<{ deletedChunks: number; complete: boolean; readyForSourceDelete: boolean }> {

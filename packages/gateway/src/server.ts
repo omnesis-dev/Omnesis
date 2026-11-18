@@ -421,6 +421,11 @@ export function createServer(
         limit: number,
         sourceDeleted: boolean,
       ) => Promise<import("./indexer/db.js").DocumentIndexDeleteBatchResult> | undefined;
+      deleteDocumentsIndexBatch?: (
+        ids: readonly string[],
+        limit: number,
+        sourceDeleted: boolean,
+      ) => Promise<import("./indexer/db.js").DocumentIndexDeleteBatchResult> | undefined;
       /** Latest docs/sec indexing throughput, or null when unknown. */
       getIndexRate?: () => number | null;
     };
@@ -612,6 +617,12 @@ export function createServer(
     getStorageLogical?: () => StorageAccounting | null;
     getStorageIndex?: () => import("./storage/index-accounting.js").IndexStorageAccounting | null;
     onStorageService?: (service: StorageService) => void;
+    refreshStorageIfStale?: () => void;
+    getStorageAccountingStatus?: () => {
+      refreshing: boolean;
+      measuredAt: string | null;
+      error: string | null;
+    };
     refreshStorage?: () => Promise<void>;
     /**
      * Called after a model-provider credential file is written or
@@ -859,6 +870,8 @@ export function createServer(
         (sourceId) => opts?.indexerControl?.deleteSourceIndex?.(sourceId),
         (id, limit, sourceDeleted) =>
           opts?.indexerControl?.deleteDocumentIndexBatch?.(id, limit, sourceDeleted),
+        (ids, limit, sourceDeleted) =>
+          opts?.indexerControl?.deleteDocumentsIndexBatch?.(ids, limit, sourceDeleted),
       )
     : undefined;
 
@@ -1445,11 +1458,14 @@ export function createServer(
       logical: opts.getStorageLogical ?? (() => null),
       index: opts.getStorageIndex ?? (() => null),
       refresh: opts.refreshStorage ?? (() => Promise.resolve()),
+      refreshIfStale: opts.refreshStorageIfStale,
+      accountingStatus: opts.getStorageAccountingStatus,
       configStore: opts.configStore,
       retention,
       sourceWriteEpochFence,
       sourceExists: (sourceId) => getSource(db, SourceId(sourceId)) !== null,
-      sourceCreatedAt: (sourceId) => getSource(db, SourceId(sourceId))?.createdAt ?? null,
+      db,
+      writeGate: w,
     });
     mountStorageRoutes(app, storage);
     opts.onStorageService?.(storage);

@@ -19,9 +19,12 @@
  */
 
 import { assertNever } from "@omnesis/core";
-import { readIndexStorageAccounting } from "../storage/index-accounting.js";
-import type { IndexStorageAccounting } from "../storage/index-accounting.js";
 import Database from "better-sqlite3";
+import {
+  DOCUMENT_PURGE_BATCH_SIZE,
+  purgeDocumentIndexBatch,
+} from "../indexer/document-index-purge.js";
+import { readIndexStorageAccounting } from "../storage/index-accounting.js";
 type Db = Database.Database;
 import { existsSync } from "node:fs";
 import { parentPort } from "node:worker_threads";
@@ -67,6 +70,7 @@ import { computeRatePerSec, type IndexRateSample } from "./indexer-rate.js";
 import { shouldRunIndexCycle } from "./indexer-disk-guard.js";
 import { applyPendingPurges } from "./pending-source-purges.js";
 import { resolveIndexerCutoffMaxAge } from "./protocol.js";
+import type { IndexStorageAccounting } from "../storage/index-accounting.js";
 import type {
   IndexerCutoffMap,
   IndexerInit,
@@ -165,7 +169,7 @@ const RATE_HISTORY_MAX_SAMPLES = 200;
 const PENDING_VECTOR_DELETE_BATCH = 512;
 /** How often a graph in memory checks it still has headroom. */
 const GRAPH_GUARD_INTERVAL_MS = 15_000;
-const PENDING_DOCUMENT_PURGE_BATCH = 1;
+const PENDING_DOCUMENT_PURGE_BATCH = DOCUMENT_PURGE_BATCH_SIZE;
 const rateHistory: IndexRateSample[] = [];
 /** Latest user-activity signal from the gateway; see the `pressure` message. */
 let userActive = false;
@@ -181,7 +185,7 @@ type DeferredSourceDelete = {
 };
 type DeferredDocumentDelete = {
   id: number;
-  documentId: string;
+  documentId: string | readonly string[];
   limit: number;
   sourceDeleted: boolean;
 };
@@ -434,28 +438,14 @@ function drainPendingDocumentPurges(): string | null {
     sourceDeletedOnly: true,
   });
   if (pending.length === 0) return null;
-  const completed: string[] = [];
   try {
-    for (const item of pending) {
-      const result = deleteChunksByDocumentBatch(
-        state.indexDb,
-        item.documentId,
-        64,
-        item.sourceDeleted,
-        { usearch: state.usearchHandle },
-      );
-      if (item.sourceDeleted && result.complete) completed.push(item.documentId);
-    }
-    if (completed.length === 0) return null;
-    const preparedVectorDeletes = preparePendingVectorDeletes(
-      state.indexDb,
-      state.usearchHandle,
-      PENDING_VECTOR_DELETE_BATCH,
+    purgeDocumentIndexBatch(
+      state,
+      pending.map((item) => item.documentId),
+      64,
+      true,
+      false,
     );
-    state.usearchHandle?.save();
-    refreshIndexStats(state.indexDb);
-    completePendingVectorDeletes(state.indexDb, preparedVectorDeletes);
-    completeDocumentIndexPurges(state.indexDb, completed);
     return null;
   } catch (err) {
     const message = `re-applying document-index retention deletion failed: ${
@@ -1533,7 +1523,7 @@ function handleDeleteSourceIndex(id: number, sourceId: string): void {
 
 function handleDeleteDocumentIndexBatch(
   id: number,
-  documentId: string,
+  documentId: string | readonly string[],
   limit: number,
   sourceDeleted: boolean,
 ): void {
@@ -1543,47 +1533,17 @@ function handleDeleteDocumentIndexBatch(
     return;
   }
   try {
-    enqueueDocumentIndexPurge(resources.indexDb, documentId, sourceDeleted);
-    const result = deleteChunksByDocumentBatch(
-      resources.indexDb,
-      documentId,
+    const result = purgeDocumentIndexBatch(
+      resources,
+      typeof documentId === "string" ? [documentId] : documentId,
       limit,
       sourceDeleted,
-      {
-        usearch: resources.usearchHandle,
-      },
+      !!state?.inFlightWork,
     );
-    // A job that read this document before the message arrived can write it
-    // back afterwards. Keep the durable purge pending and make retention retry
-    // rather than unlinking the transcript on a premature "complete".
-    if (state?.inFlightWork) {
-      post({
-        type: "deleteDocumentIndexBatchResult",
-        id,
-        ...result,
-        complete: false,
-      });
-      return;
-    }
-    if (sourceDeleted && result.complete) {
-      const preparedVectorDeletes = preparePendingVectorDeletes(
-        resources.indexDb,
-        resources.usearchHandle,
-        PENDING_VECTOR_DELETE_BATCH,
-      );
-      resources.usearchHandle?.save();
-      refreshIndexStats(resources.indexDb);
-      completePendingVectorDeletes(resources.indexDb, preparedVectorDeletes);
-      completeDocumentIndexPurges(resources.indexDb, [documentId]);
-    }
     post({ type: "deleteDocumentIndexBatchResult", id, ...result });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    log(
-      "error",
-      "indexer-worker",
-      `document-index batch deletion for ${documentId} failed: ${message}`,
-    );
+    log("error", "indexer-worker", `document-index batch deletion failed: ${message}`);
     post({ type: "deleteDocumentIndexBatchError", id, error: message });
   }
 }

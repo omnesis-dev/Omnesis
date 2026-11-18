@@ -102,3 +102,26 @@ test("a refresh publishes safety independently of a failed logical scan", async 
   expect(f.runtime.pressure.snapshot().state).toBe("blocked");
   expect(f.indexer.setStoragePressure.mock.lastCall?.[0]).toBe(true);
 });
+
+test("portal reads coalesce stale measurement work and retain the last complete inventory", async () => {
+  const f = await fixture();
+  await f.runtime.refresh();
+  const previous = f.runtime.logical;
+  expect(previous).not.toBeNull();
+  const calls = f.accounting.mock.calls.length;
+  f.runtime.refreshIfStale();
+  f.runtime.refreshIfStale();
+  expect(f.accounting).toHaveBeenCalledTimes(calls);
+  f.accounting.mockRejectedValueOnce(new Error("read worker unavailable"));
+  await expect(f.runtime.refresh()).rejects.toThrow("read worker unavailable");
+  expect(f.runtime.logical).toBe(previous);
+  expect(f.runtime.accountingStatus()).toMatchObject({
+    refreshing: false,
+    error: expect.any(String),
+  });
+  // Polling must not hammer a failed read worker; an explicit retry can recover.
+  f.runtime.refreshIfStale();
+  expect(f.accounting).toHaveBeenCalledTimes(calls + 1);
+  await f.runtime.refresh();
+  expect(f.runtime.accountingStatus().error).toBeNull();
+});

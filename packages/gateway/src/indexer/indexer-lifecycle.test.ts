@@ -133,6 +133,11 @@ class FakeProxy {
     complete: true,
     readyForSourceDelete: false,
   }));
+  deleteDocumentsIndexBatch = vi.fn(async () => ({
+    deletedChunks: 0,
+    complete: true,
+    readyForSourceDelete: false,
+  }));
   createBackgroundJobs = vi.fn(() => []);
   updateCutoffs = vi.fn();
   setStoragePressure = vi.fn();
@@ -808,6 +813,10 @@ describe("IndexerLifecycle", () => {
     proxy.deleteSourceIndex.mockResolvedValueOnce(3);
     await expect(lifecycle.deleteSourceIndex("synthetic:maya@example.com")).resolves.toBe(3);
     expect(proxy.deleteSourceIndex).toHaveBeenCalledWith("synthetic:maya@example.com");
+    await expect(
+      lifecycle.deleteDocumentsIndexBatch(["one", "two"], 64, true),
+    ).resolves.toMatchObject({ complete: true });
+    expect(proxy.deleteDocumentsIndexBatch).toHaveBeenCalledWith(["one", "two"], 64, true);
 
     // A shutdown in this startup window must dispose the owner. Releasing the
     // held ready promise afterwards cannot republish the dead proxy.

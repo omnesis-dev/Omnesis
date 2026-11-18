@@ -182,7 +182,7 @@ export type MainToIndexer =
   | {
       type: "deleteDocumentIndexBatch";
       id: number;
-      documentId: string;
+      documentId: string | readonly string[];
       limit: number;
       sourceDeleted: boolean;
     }

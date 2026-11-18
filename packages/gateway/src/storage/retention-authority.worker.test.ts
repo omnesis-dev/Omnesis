@@ -5,23 +5,41 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "vitest";
-import { ProviderId, SourceId } from "@omnesis/types";
+import { AccountId, ProviderId, SourceId, SourceType } from "@omnesis/types";
+import { createSource } from "../data/repositories/SourceRepository.js";
+import { createDevice } from "../data/repositories/DeviceRepository.js";
 import { ConfigStore } from "../config-store.js";
 import { createDatabase, openReadOnlyDatabase, upsertDocuments } from "../db.js";
 import { Scheduler } from "../scheduler/scheduler.js";
 import { WriterTaskRunner } from "../scheduler/runners/writer.js";
 import { writeGateFromScheduler } from "../scheduler/write-ops.js";
 import { SourceWriteEpochFence } from "../source-write-epoch-fence.js";
+import {
+  bindStorageRetentionPolicy,
+  readBoundStorageRetentionPolicies,
+  readStorageSourceIncarnation,
+} from "./retention-bindings.js";
 import { StorageRetentionService } from "./retention.js";
 
 const WORKER_URL = new URL("../workers/writer-worker.ts", import.meta.url);
 const LOADER_URL = new URL("../workers/register-tsx.mjs", import.meta.url).href;
 
-test("raw config revocation cancels rolling cleanup queued for the real writer; one-off approval stays independent", async () => {
+test("raw config revocation cancels rolling cleanup queued for the real writer; manual commands stay independent", async () => {
   const dir = mkdtempSync(join(tmpdir(), "omnesis-retention-authority-"));
   const dbPath = join(dir, "gateway.db");
   const sourceId = "fictional-notes:archive";
   const seed = createDatabase(dbPath);
+  const device = createDevice(seed, { name: "Fictional collector", kind: "collector" });
+  createSource(seed, {
+    type: SourceType("fictional-notes"),
+    accountId: AccountId("archive"),
+    deviceId: device.id,
+  });
+  bindStorageRetentionPolicy(seed, {
+    sourceId,
+    maxAgeDays: 365,
+    sourceIncarnation: readStorageSourceIncarnation(seed, sourceId)!,
+  });
   upsertDocuments(seed, [
     {
       providerId: ProviderId("fictional-provider"),
@@ -66,29 +84,32 @@ test("raw config revocation cancels rolling cleanup queued for the real writer; 
       sourceWriteEpochFence: new SourceWriteEpochFence(),
       captureAuthority: () => configStore.captureRevisionFence(),
       writeGate: {
-        deleteStorageRetentionBatch: (batch) => {
-          const pending = writer.deleteStorageRetentionBatch(batch);
+        ...writer,
+        applyStorageTrimPage: (batch) => {
+          const pending = writer.applyStorageTrimPage(batch);
           markQueued();
           return pending;
         },
       },
       finishCascade: async () => {},
     });
-    const cleanup = service.sweep(() => configStore.get().gateway?.storage?.retention ?? []);
+    const cleanup = service.sweep(() =>
+      readBoundStorageRetentionPolicies(db, configStore.get().gateway?.storage?.retention ?? []),
+    );
     // Register rejection before unblocking worker execution.
-    const rejected = expect(cleanup).rejects.toMatchObject({ code: "RETENTION_PREVIEW_CHANGED" });
+    const stopped = expect(cleanup).resolves.toMatchObject({ deleted: 0 });
     await queued;
     expect((await configStore.patch({ gateway: { storage: { retention: [] } } })).ok).toBe(true);
     scheduler.resumeBackground();
-    await rejected;
+    await stopped;
     expect(
       db.prepare<[], { count: number }>("SELECT COUNT(*) AS count FROM documents").get()!.count,
     ).toBe(1);
     expect(db.prepare("SELECT 1 FROM snapshot_absence_cascade_outbox").get()).toBeUndefined();
 
-    const preview = await service.preview(sourceId, "2025-01-01T00:00:00.000Z");
+    await service.startTrim(sourceId, "2025-01-01T00:00:00.000Z");
     await configStore.patch({ indexer: { cycleInterval: "10m" } });
-    expect(await service.execute(preview.token)).toEqual({ deleted: 1, hasMore: false });
+    expect(await service.sweep([])).toEqual({ deleted: 1, hasMore: false });
     expect(
       db.prepare<[], { count: number }>("SELECT COUNT(*) AS count FROM documents").get()!.count,
     ).toBe(0);

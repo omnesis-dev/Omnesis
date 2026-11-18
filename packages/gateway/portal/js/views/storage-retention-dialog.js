@@ -3,7 +3,7 @@
 
 import { html } from "htm/preact";
 import { useRef, useState } from "preact/hooks";
-import { applyStorageTrim, previewStorageTrim, setStorageRetention } from "../api.js";
+import { startStorageTrim, setStorageRetention } from "../api.js";
 import { Modal } from "../components/modal.js";
 import { sourceLabel } from "../lib/format.js";
 import { bytesBeforeMonthCutoff, DAY_MS, MAX_RETENTION_DAYS, storageBytes } from "./storage-data.js";
@@ -20,17 +20,14 @@ export function StorageRetentionDialog({ mode, source, retentionDays, onClose, o
   const [openedAt] = useState(Date.now);
   const [before, setBefore] = useState("");
   const [days, setDays] = useState(String(retentionDays ?? ""));
-  const [preview, setPreview] = useState(null);
   const [confirmed, setConfirmed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
-  const [message, setMessage] = useState(null);
   const lock = useRef(false);
   const cutoffInstant = rolling ? rollingCutoff(openedAt, Number(days)) : "";
   const cutoff = rolling ? cutoffInstant.slice(0, 10) : before;
 
   function resetApproval() {
-    setPreview(null);
     setConfirmed(false);
     setError(null);
   }
@@ -56,7 +53,7 @@ export function StorageRetentionDialog({ mode, source, retentionDays, onClose, o
   async function run(operation) {
     if (lock.current) return;
     lock.current = true;
-    setBusy(true); setError(null); setMessage(null);
+    setBusy(true); setError(null);
     try { await operation(); } catch (err) { setError(err.serverMessage || err.message); }
     finally { lock.current = false; setBusy(false); }
   }
@@ -67,25 +64,14 @@ export function StorageRetentionDialog({ mode, source, retentionDays, onClose, o
       if (days !== "" && (!cutoff || !confirmed)) return;
       void run(async () => {
         await setStorageRetention(source.sourceId, days === "" ? null : Number(days));
-        await onSaved(days === "" ? "Rolling retention disabled." : "Rolling retention saved. Older documents are removed in the background. Reopen the source chart or refresh measurements to see progress.");
+        await onSaved(days === "" ? "Rolling retention disabled." : "Rolling retention saved. Older documents will be removed automatically. Orange shows the scheduled history in the source chart.");
       });
-    } else if (cutoff) {
-      resetApproval();
+    } else if (cutoff && confirmed) {
       void run(async () => {
-        setPreview(await previewStorageTrim(source.sourceId, new Date(`${cutoff}T00:00:00Z`).toISOString()));
+        const job = await startStorageTrim(source.sourceId, new Date(`${cutoff}T00:00:00Z`).toISOString());
+        await onSaved("Trim scheduled. All eligible documents before this date will be removed in the background.", job);
       });
     }
-  }
-
-  function trim() {
-    if (!preview?.token || !preview.documents || !confirmed) return;
-    void run(async () => {
-      resetApproval();
-      const result = await applyStorageTrim(preview.token);
-      const status = `${result.deleted} ${result.deleted === 1 ? "document" : "documents"} removed from ${sourceLabel(source.sourceId)}.${result.hasMore ? " Preview the next batch to continue." : ""}${result.cleanupPending ? " Index cleanup is still running." : ""}`;
-      if (result.hasMore) setMessage(status);
-      await onSaved(status, result.hasMore);
-    });
   }
 
   return html`<${Modal} open size="lg" title=${rolling ? "Set rolling retention" : "Trim stored history"}
@@ -112,7 +98,7 @@ export function StorageRetentionDialog({ mode, source, retentionDays, onClose, o
           `}
         </div>
         <${StorageHistory} months=${source.months} selectedCutoff=${cutoff}
-          cutoffInstant=${cutoffInstant} onSelectCutoff=${!rolling && !busy ? selectDate : undefined} />
+          cutoffInstant=${cutoffInstant}  />
         ${cutoff && html`<p><strong>${storageBytes(bytesBeforeMonthCutoff(source.months, cutoff))}</strong> estimated usage in complete months before this date. Excludes partial months and undated data. Some documents are protected.</p>`}
         ${rolling && cutoff && html`<p>At the time you opened this dialog, a ${Number(days).toLocaleString()}-day window would keep documents from ${cutoffInstant.slice(0, 16).replace("T", " ")} UTC onward. The cutoff moves continuously with time.</p>`}
         ${rolling ? html`
@@ -121,24 +107,15 @@ export function StorageRetentionDialog({ mode, source, retentionDays, onClose, o
             Automatically remove documents older than this window from Omnesis.
           </label>`}
           <button class="btn-primary" disabled=${busy || (days !== "" && (!cutoff || !confirmed))}>Save rolling retention</button>
-        ` : html`<button class="btn-secondary" disabled=${busy || !cutoff}>Preview trim</button>`}
-      </form>
-      ${preview && html`<div class="storage-trim-preview">
-        <h4>Confirm this batch</h4>
-        <p>${preview.documents
-          ? `${preview.documents} documents · ${storageBytes(preview.payloadBytes)} of document payload.`
-          : "No eligible documents before this date."}</p>
-        ${preview.hasMore && html`<p>More older documents remain. Each batch needs its own preview and confirmation.</p>`}
-        ${preview.documents > 0 && html`
+        ` : html`
           <label class="storage-consent"><input type="checkbox" checked=${confirmed} disabled=${busy}
             onChange=${(event) => setConfirmed(event.currentTarget.checked)} />
-            Remove these documents from Omnesis. Originals stay in the connected source.
+            Remove all eligible documents before this date from Omnesis. Originals stay in the connected source.
           </label>
-          <button type="button" class="btn-primary danger" disabled=${busy || !confirmed || !preview.token} onClick=${trim}>Delete previewed data</button>
+          <button class="btn-primary danger" disabled=${busy || !cutoff || !confirmed}>${busy ? "Scheduling…" : "Trim"}</button>
         `}
-      </div>`}
+      </form>
       ${error && html`<p class="storage-alert" role="alert">${error}</p>`}
-      ${message && html`<p role="status">${message}${busy ? " Updating storage charts…" : ""}</p>`}
     </div>
   <//>`;
 }

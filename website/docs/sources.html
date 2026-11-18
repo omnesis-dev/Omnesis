@@ -1827,15 +1827,17 @@
         <p>
           <strong>Settings → Storage</strong> compares document payload by source and month and
           offers two ways to remove older documents from Omnesis. Neither changes the originals in
-          your connected service. Contact documents are exempt from age-based trimming.
+          your connected service. Contact documents and documents with ambiguous dates are exempt
+          from age-based trimming. Orange shading under the cumulative source chart shows data
+          scheduled for removal.
         </p>
         <ul>
           <li>
-            <strong>One-off trim:</strong> choose a source and cutoff date, review the bounded
-            preview, then confirm. Each approval removes at most 100 exact document revisions; when
-            more remain, preview another batch. A changed document requires a new approval. Removed
-            items are suppressed locally so a later sync does not immediately restore them. Other
-            sources and newer documents are outside the approved selection.
+            <strong>One-off trim:</strong> choose a source and cutoff date, then confirm once.
+            Omnesis saves the request and removes all eligible older documents in background
+            batches, resuming after a gateway restart. The source row shows progress and completion.
+            Removed items are suppressed locally so a later sync does not immediately restore them.
+            Other sources and newer documents are outside the approved selection.
           </li>
           <li>
             <strong>Rolling retention:</strong> choose how many days to keep for one source and
