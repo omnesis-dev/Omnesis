@@ -6516,14 +6516,9 @@ jobs:
       DEBUG: pw:webserver
 
   instructions-read-denial-proof:
-    name: URL-pattern disk fixture proof (${{ matrix.os }})
+    name: Telegram and URL-pattern SQLite dependency verification
     if: inputs.scope == 'instructions-read-denial-proof'
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      max-parallel: 1
-      matrix:
-        os: [windows-latest, ubuntu-latest]
+    runs-on: windows-latest
     timeout-minutes: 45
     env:
       TZ: UTC
@@ -6544,7 +6539,7 @@ jobs:
       - name: Verify fixed source revision
         env:
           TARGET_SHA: ${{ inputs.source_sha }}
-        run: 'test "$TARGET_SHA" = b7308495deb68c75f7977143b98b04257fb2b2c7
+        run: 'test "$TARGET_SHA" = 303cdc85b129cdc42fee463104718beb976d6435
 
           test "$(git rev-parse HEAD)" = "$TARGET_SHA"
 
@@ -6558,10 +6553,9 @@ jobs:
         id: dependencies
         run: node scripts/ci/npm-ci.mjs --no-audit --no-fund
       - name: Build and verify Windows SQLite bindings
-        if: runner.os == 'Windows'
         run: node scripts/ci/build-windows-sqlite.mjs
-      - name: Run the URL pattern repository suite
-        run: exec node scripts/run-check.mjs unit packages/gateway/src/data/repositories/UrlPatternRepository.test.ts --reporter=verbose
+      - name: Run Telegram and URL pattern repository tests
+        run: exec node scripts/run-check.mjs unit packages/providers/telegram packages/gateway/src/data/repositories/UrlPatternRepository.test.ts --reporter=verbose
       - name: Require immutable candidate source
         run: git diff --exit-code
         if: ${{ always() }}
