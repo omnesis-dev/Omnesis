@@ -10,6 +10,8 @@ const native = vi.hoisted(() => ({ createContext: vi.fn() }));
 vi.mock("../llama-instance.js", () => ({
   getLlamaInstance: async () => ({
     loadModel: async () => ({
+      trainContextSize: 2048,
+      tokenize: (text: string) => text.split(" ").map((_, i) => i),
       createEmbeddingContext: native.createContext,
       dispose: async () => {},
     }),
@@ -40,6 +42,7 @@ function fixture(concurrency: number) {
   native.createContext.mockImplementation(async () => {
     const index = slot++;
     return {
+      calculateInputLength: (text: string) => (text ? text.split(" ").length : 0) + 2,
       getEmbeddingFor: (text: string) => {
         calls.push({ slot: index, input: text });
         input(text).started.resolve();
