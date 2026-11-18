@@ -72,6 +72,7 @@ import type {
   MergeCandidateVisibility,
   TokenClassificationCandidate,
 } from "../merge-candidates.js";
+import type { MergeRuleGroupsOptions, MergeRuleGroupsPage } from "../domain/merge/rule-groups.js";
 import type { LinkExtractionDocRow } from "../domain/LinkExtraction-cpu.js";
 import type { ExtractedLinkBatchEntry } from "../domain/LinkExtraction.js";
 import type { DateExtractionDocRow } from "../enrichment/dates/extractor.js";
@@ -219,6 +220,12 @@ export interface IoGate extends ReadPort<typeof IO_READS>, KnowledgeSelectionRea
   mergeCandidateVisibility(opts: {
     status: "pending" | "accepted" | "denied";
   }): Promise<MergeCandidateVisibility[]>;
+  /**
+   * One page of the People → Rules page for GET /people/merge-rule-groups.
+   * Grouping resolves the winner of every active rule, so the read grows with
+   * the rule table. Read-only.
+   */
+  mergeRuleGroups(opts: MergeRuleGroupsOptions): Promise<MergeRuleGroupsPage>;
   /**
    * Legacy `content LIKE '%q%'` document search (GET /documents/search) — an
    * unindexed leading-wildcard full-table scan. Low-traffic legacy path.
@@ -576,6 +583,7 @@ const COMPUTE_OP_DEFS: readonly IoOpDef[] = [
   { name: "io.messageCounts", priority: "user", latencyBudgetMs: HEAVY_BUDGET_MS },
   { name: "io.enrichedMergeCandidates", priority: "user", latencyBudgetMs: HEAVY_BUDGET_MS },
   { name: "io.mergeCandidateVisibility", priority: "user", latencyBudgetMs: HEAVY_BUDGET_MS },
+  { name: "io.mergeRuleGroups", priority: "user", latencyBudgetMs: HEAVY_BUDGET_MS },
   { name: "io.likeSearchDocuments", priority: "user", latencyBudgetMs: HEAVY_BUDGET_MS },
   // User by default for search and the interactive agent; background runs
   // enqueue it under their own priority.
@@ -730,6 +738,7 @@ export function ioGateFromScheduler(scheduler: Scheduler): IoGate {
     messageCounts: (query) => call("io.messageCounts", [query]),
     enrichedMergeCandidates: (opts) => call("io.enrichedMergeCandidates", [opts]),
     mergeCandidateVisibility: (opts) => call("io.mergeCandidateVisibility", [opts]),
+    mergeRuleGroups: (opts) => call("io.mergeRuleGroups", [opts]),
     likeSearchDocuments: (args) => call("io.likeSearchDocuments", [args]),
     temporalStoreWindow: (request) => call("io.temporalStoreWindow", [request]),
     knowledgeDocumentsReadable: (refs) => call("io.knowledgeDocumentsReadable", [[...refs]]),

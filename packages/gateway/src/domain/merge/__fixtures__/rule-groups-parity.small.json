@@ -1,0 +1,728 @@
+{
+ "{\"limit\":1}": [
+  {
+   "keys": [
+    "p-maya"
+   ],
+   "hasMore": true,
+   "last": {
+    "latest": "2026-01-11T00:00:00.000Z",
+    "key": "p-maya"
+   }
+  },
+  {
+   "keys": [
+    "p-david"
+   ],
+   "hasMore": false,
+   "last": {
+    "latest": "2026-01-06T00:00:00.000Z",
+    "key": "p-david"
+   }
+  }
+ ],
+ "{\"limit\":3}": [
+  {
+   "keys": [
+    "p-maya",
+    "p-david"
+   ],
+   "hasMore": false,
+   "last": {
+    "latest": "2026-01-06T00:00:00.000Z",
+    "key": "p-david"
+   }
+  }
+ ],
+ "{\"limit\":50}": [
+  {
+   "items": [
+    {
+     "key": "p-maya",
+     "person": {
+      "id": "p-maya",
+      "canonicalName": "Maya reeves",
+      "interactionScoreRecent": 0,
+      "aliases": [
+       {
+        "aliasType": "email",
+        "alias": "maya@example.com"
+       },
+       {
+        "aliasType": "name",
+        "alias": "Maya reeves"
+       }
+      ],
+      "sourceIds": [
+       "slack-fixture",
+       "gmail-fixture"
+      ]
+     },
+     "name": "Maya reeves",
+     "canonicalEmail": "maya@example.com",
+     "sourceIds": [
+      "slack-fixture",
+      "gmail-fixture"
+     ],
+     "kinds": [
+      "user"
+     ],
+     "ruleIds": [
+      "r-maya-work",
+      "r-maya-phone"
+     ],
+     "groupIds": [
+      "g-maya"
+     ],
+     "latest": "2026-01-11T00:00:00.000Z",
+     "sources": [
+      {
+       "ruleId": "r-maya-work",
+       "groupId": "g-maya",
+       "alias": "m.reeves@northstar.example",
+       "aliasType": "email",
+       "name": "M. Reeves",
+       "personId": "p-maya-work",
+       "sourceIds": [
+        "slack-fixture"
+       ],
+       "when": "2026-01-11T00:00:00.000Z",
+       "reason": "Same person"
+      },
+      {
+       "ruleId": "r-maya-phone",
+       "groupId": "g-maya",
+       "alias": "+15550100101",
+       "aliasType": "phone",
+       "name": "Maya",
+       "personId": "p-maya-phone",
+       "sourceIds": [],
+       "when": "2026-01-11T00:00:00.000Z",
+       "reason": "Same person"
+      }
+     ]
+    },
+    {
+     "key": "p-david",
+     "person": {
+      "id": "p-david",
+      "canonicalName": "David lin",
+      "interactionScoreRecent": 0,
+      "aliases": [
+       {
+        "aliasType": "email",
+        "alias": "david@example.com"
+       }
+      ],
+      "sourceIds": [
+       "gmail-fixture"
+      ]
+     },
+     "name": "David lin",
+     "canonicalEmail": "david@example.com",
+     "sourceIds": [
+      "gmail-fixture"
+     ],
+     "kinds": [
+      "system"
+     ],
+     "ruleIds": [
+      "r-david"
+     ],
+     "groupIds": [],
+     "latest": "2026-01-06T00:00:00.000Z",
+     "sources": [
+      {
+       "ruleId": "r-david",
+       "groupId": null,
+       "alias": "d.lin@northstar.example",
+       "aliasType": "email",
+       "name": "D. Lin",
+       "personId": "p-david-alt",
+       "sourceIds": [],
+       "when": "2026-01-06T00:00:00.000Z",
+       "reason": null
+      }
+     ]
+    }
+   ],
+   "hasMore": false,
+   "last": {
+    "latest": "2026-01-06T00:00:00.000Z",
+    "key": "p-david"
+   }
+  }
+ ],
+ "{\"kind\":\"user\",\"limit\":1}": [
+  {
+   "keys": [
+    "p-maya"
+   ],
+   "hasMore": false,
+   "last": {
+    "latest": "2026-01-11T00:00:00.000Z",
+    "key": "p-maya"
+   }
+  }
+ ],
+ "{\"kind\":\"user\",\"limit\":3}": [
+  {
+   "keys": [
+    "p-maya"
+   ],
+   "hasMore": false,
+   "last": {
+    "latest": "2026-01-11T00:00:00.000Z",
+    "key": "p-maya"
+   }
+  }
+ ],
+ "{\"kind\":\"user\",\"limit\":50}": [
+  {
+   "items": [
+    {
+     "key": "p-maya",
+     "person": {
+      "id": "p-maya",
+      "canonicalName": "Maya reeves",
+      "interactionScoreRecent": 0,
+      "aliases": [
+       {
+        "aliasType": "email",
+        "alias": "maya@example.com"
+       },
+       {
+        "aliasType": "name",
+        "alias": "Maya reeves"
+       }
+      ],
+      "sourceIds": [
+       "slack-fixture",
+       "gmail-fixture"
+      ]
+     },
+     "name": "Maya reeves",
+     "canonicalEmail": "maya@example.com",
+     "sourceIds": [
+      "slack-fixture",
+      "gmail-fixture"
+     ],
+     "kinds": [
+      "user"
+     ],
+     "ruleIds": [
+      "r-maya-work",
+      "r-maya-phone"
+     ],
+     "groupIds": [
+      "g-maya"
+     ],
+     "latest": "2026-01-11T00:00:00.000Z",
+     "sources": [
+      {
+       "ruleId": "r-maya-work",
+       "groupId": "g-maya",
+       "alias": "m.reeves@northstar.example",
+       "aliasType": "email",
+       "name": "M. Reeves",
+       "personId": "p-maya-work",
+       "sourceIds": [
+        "slack-fixture"
+       ],
+       "when": "2026-01-11T00:00:00.000Z",
+       "reason": "Same person"
+      },
+      {
+       "ruleId": "r-maya-phone",
+       "groupId": "g-maya",
+       "alias": "+15550100101",
+       "aliasType": "phone",
+       "name": "Maya",
+       "personId": "p-maya-phone",
+       "sourceIds": [],
+       "when": "2026-01-11T00:00:00.000Z",
+       "reason": "Same person"
+      }
+     ]
+    }
+   ],
+   "hasMore": false,
+   "last": {
+    "latest": "2026-01-11T00:00:00.000Z",
+    "key": "p-maya"
+   }
+  }
+ ],
+ "{\"kind\":\"system\",\"limit\":1}": [
+  {
+   "keys": [
+    "p-david"
+   ],
+   "hasMore": false,
+   "last": {
+    "latest": "2026-01-06T00:00:00.000Z",
+    "key": "p-david"
+   }
+  }
+ ],
+ "{\"kind\":\"system\",\"limit\":3}": [
+  {
+   "keys": [
+    "p-david"
+   ],
+   "hasMore": false,
+   "last": {
+    "latest": "2026-01-06T00:00:00.000Z",
+    "key": "p-david"
+   }
+  }
+ ],
+ "{\"kind\":\"system\",\"limit\":50}": [
+  {
+   "items": [
+    {
+     "key": "p-david",
+     "person": {
+      "id": "p-david",
+      "canonicalName": "David lin",
+      "interactionScoreRecent": 0,
+      "aliases": [
+       {
+        "aliasType": "email",
+        "alias": "david@example.com"
+       }
+      ],
+      "sourceIds": [
+       "gmail-fixture"
+      ]
+     },
+     "name": "David lin",
+     "canonicalEmail": "david@example.com",
+     "sourceIds": [
+      "gmail-fixture"
+     ],
+     "kinds": [
+      "system"
+     ],
+     "ruleIds": [
+      "r-david"
+     ],
+     "groupIds": [],
+     "latest": "2026-01-06T00:00:00.000Z",
+     "sources": [
+      {
+       "ruleId": "r-david",
+       "groupId": null,
+       "alias": "d.lin@northstar.example",
+       "aliasType": "email",
+       "name": "D. Lin",
+       "personId": "p-david-alt",
+       "sourceIds": [],
+       "when": "2026-01-06T00:00:00.000Z",
+       "reason": null
+      }
+     ]
+    }
+   ],
+   "hasMore": false,
+   "last": {
+    "latest": "2026-01-06T00:00:00.000Z",
+    "key": "p-david"
+   }
+  }
+ ],
+ "{\"q\":\"reeves\",\"limit\":1}": [
+  {
+   "keys": [
+    "p-maya"
+   ],
+   "hasMore": false,
+   "last": {
+    "latest": "2026-01-11T00:00:00.000Z",
+    "key": "p-maya"
+   }
+  }
+ ],
+ "{\"q\":\"reeves\",\"limit\":3}": [
+  {
+   "keys": [
+    "p-maya"
+   ],
+   "hasMore": false,
+   "last": {
+    "latest": "2026-01-11T00:00:00.000Z",
+    "key": "p-maya"
+   }
+  }
+ ],
+ "{\"q\":\"reeves\",\"limit\":50}": [
+  {
+   "items": [
+    {
+     "key": "p-maya",
+     "person": {
+      "id": "p-maya",
+      "canonicalName": "Maya reeves",
+      "interactionScoreRecent": 0,
+      "aliases": [
+       {
+        "aliasType": "email",
+        "alias": "maya@example.com"
+       },
+       {
+        "aliasType": "name",
+        "alias": "Maya reeves"
+       }
+      ],
+      "sourceIds": [
+       "slack-fixture",
+       "gmail-fixture"
+      ]
+     },
+     "name": "Maya reeves",
+     "canonicalEmail": "maya@example.com",
+     "sourceIds": [
+      "slack-fixture",
+      "gmail-fixture"
+     ],
+     "kinds": [
+      "user"
+     ],
+     "ruleIds": [
+      "r-maya-work",
+      "r-maya-phone"
+     ],
+     "groupIds": [
+      "g-maya"
+     ],
+     "latest": "2026-01-11T00:00:00.000Z",
+     "sources": [
+      {
+       "ruleId": "r-maya-work",
+       "groupId": "g-maya",
+       "alias": "m.reeves@northstar.example",
+       "aliasType": "email",
+       "name": "M. Reeves",
+       "personId": "p-maya-work",
+       "sourceIds": [
+        "slack-fixture"
+       ],
+       "when": "2026-01-11T00:00:00.000Z",
+       "reason": "Same person"
+      },
+      {
+       "ruleId": "r-maya-phone",
+       "groupId": "g-maya",
+       "alias": "+15550100101",
+       "aliasType": "phone",
+       "name": "Maya",
+       "personId": "p-maya-phone",
+       "sourceIds": [],
+       "when": "2026-01-11T00:00:00.000Z",
+       "reason": "Same person"
+      }
+     ]
+    }
+   ],
+   "hasMore": false,
+   "last": {
+    "latest": "2026-01-11T00:00:00.000Z",
+    "key": "p-maya"
+   }
+  }
+ ],
+ "{\"q\":\"NORTHSTAR\",\"limit\":1}": [
+  {
+   "keys": [
+    "p-maya"
+   ],
+   "hasMore": true,
+   "last": {
+    "latest": "2026-01-11T00:00:00.000Z",
+    "key": "p-maya"
+   }
+  },
+  {
+   "keys": [
+    "p-david"
+   ],
+   "hasMore": false,
+   "last": {
+    "latest": "2026-01-06T00:00:00.000Z",
+    "key": "p-david"
+   }
+  }
+ ],
+ "{\"q\":\"NORTHSTAR\",\"limit\":3}": [
+  {
+   "keys": [
+    "p-maya",
+    "p-david"
+   ],
+   "hasMore": false,
+   "last": {
+    "latest": "2026-01-06T00:00:00.000Z",
+    "key": "p-david"
+   }
+  }
+ ],
+ "{\"q\":\"NORTHSTAR\",\"limit\":50}": [
+  {
+   "items": [
+    {
+     "key": "p-maya",
+     "person": {
+      "id": "p-maya",
+      "canonicalName": "Maya reeves",
+      "interactionScoreRecent": 0,
+      "aliases": [
+       {
+        "aliasType": "email",
+        "alias": "maya@example.com"
+       },
+       {
+        "aliasType": "name",
+        "alias": "Maya reeves"
+       }
+      ],
+      "sourceIds": [
+       "slack-fixture",
+       "gmail-fixture"
+      ]
+     },
+     "name": "Maya reeves",
+     "canonicalEmail": "maya@example.com",
+     "sourceIds": [
+      "slack-fixture",
+      "gmail-fixture"
+     ],
+     "kinds": [
+      "user"
+     ],
+     "ruleIds": [
+      "r-maya-work",
+      "r-maya-phone"
+     ],
+     "groupIds": [
+      "g-maya"
+     ],
+     "latest": "2026-01-11T00:00:00.000Z",
+     "sources": [
+      {
+       "ruleId": "r-maya-work",
+       "groupId": "g-maya",
+       "alias": "m.reeves@northstar.example",
+       "aliasType": "email",
+       "name": "M. Reeves",
+       "personId": "p-maya-work",
+       "sourceIds": [
+        "slack-fixture"
+       ],
+       "when": "2026-01-11T00:00:00.000Z",
+       "reason": "Same person"
+      },
+      {
+       "ruleId": "r-maya-phone",
+       "groupId": "g-maya",
+       "alias": "+15550100101",
+       "aliasType": "phone",
+       "name": "Maya",
+       "personId": "p-maya-phone",
+       "sourceIds": [],
+       "when": "2026-01-11T00:00:00.000Z",
+       "reason": "Same person"
+      }
+     ]
+    },
+    {
+     "key": "p-david",
+     "person": {
+      "id": "p-david",
+      "canonicalName": "David lin",
+      "interactionScoreRecent": 0,
+      "aliases": [
+       {
+        "aliasType": "email",
+        "alias": "david@example.com"
+       }
+      ],
+      "sourceIds": [
+       "gmail-fixture"
+      ]
+     },
+     "name": "David lin",
+     "canonicalEmail": "david@example.com",
+     "sourceIds": [
+      "gmail-fixture"
+     ],
+     "kinds": [
+      "system"
+     ],
+     "ruleIds": [
+      "r-david"
+     ],
+     "groupIds": [],
+     "latest": "2026-01-06T00:00:00.000Z",
+     "sources": [
+      {
+       "ruleId": "r-david",
+       "groupId": null,
+       "alias": "d.lin@northstar.example",
+       "aliasType": "email",
+       "name": "D. Lin",
+       "personId": "p-david-alt",
+       "sourceIds": [],
+       "when": "2026-01-06T00:00:00.000Z",
+       "reason": null
+      }
+     ]
+    }
+   ],
+   "hasMore": false,
+   "last": {
+    "latest": "2026-01-06T00:00:00.000Z",
+    "key": "p-david"
+   }
+  }
+ ],
+ "{\"q\":\"mendez\",\"kind\":\"user\",\"limit\":1}": [
+  {
+   "keys": [],
+   "hasMore": false,
+   "last": null
+  }
+ ],
+ "{\"q\":\"mendez\",\"kind\":\"user\",\"limit\":3}": [
+  {
+   "keys": [],
+   "hasMore": false,
+   "last": null
+  }
+ ],
+ "{\"q\":\"mendez\",\"kind\":\"user\",\"limit\":50}": [
+  {
+   "items": [],
+   "hasMore": false
+  }
+ ],
+ "{\"q\":\"jamie r.\",\"limit\":1}": [
+  {
+   "keys": [],
+   "hasMore": false,
+   "last": null
+  }
+ ],
+ "{\"q\":\"jamie r.\",\"limit\":3}": [
+  {
+   "keys": [],
+   "hasMore": false,
+   "last": null
+  }
+ ],
+ "{\"q\":\"jamie r.\",\"limit\":50}": [
+  {
+   "items": [],
+   "hasMore": false
+  }
+ ],
+ "{\"q\":\"%\",\"limit\":1}": [
+  {
+   "keys": [],
+   "hasMore": false,
+   "last": null
+  }
+ ],
+ "{\"q\":\"%\",\"limit\":3}": [
+  {
+   "keys": [],
+   "hasMore": false,
+   "last": null
+  }
+ ],
+ "{\"q\":\"%\",\"limit\":50}": [
+  {
+   "items": [],
+   "hasMore": false
+  }
+ ],
+ "{\"q\":\"_alt\",\"limit\":1}": [
+  {
+   "keys": [],
+   "hasMore": false,
+   "last": null
+  }
+ ],
+ "{\"q\":\"_alt\",\"limit\":3}": [
+  {
+   "keys": [],
+   "hasMore": false,
+   "last": null
+  }
+ ],
+ "{\"q\":\"_alt\",\"limit\":50}": [
+  {
+   "items": [],
+   "hasMore": false
+  }
+ ],
+ "{\"q\":\"\\\\\",\"limit\":1}": [
+  {
+   "keys": [],
+   "hasMore": false,
+   "last": null
+  }
+ ],
+ "{\"q\":\"\\\\\",\"limit\":3}": [
+  {
+   "keys": [],
+   "hasMore": false,
+   "last": null
+  }
+ ],
+ "{\"q\":\"\\\\\",\"limit\":50}": [
+  {
+   "items": [],
+   "hasMore": false
+  }
+ ],
+ "{\"q\":\"ghost\",\"limit\":1}": [
+  {
+   "keys": [],
+   "hasMore": false,
+   "last": null
+  }
+ ],
+ "{\"q\":\"ghost\",\"limit\":3}": [
+  {
+   "keys": [],
+   "hasMore": false,
+   "last": null
+  }
+ ],
+ "{\"q\":\"ghost\",\"limit\":50}": [
+  {
+   "items": [],
+   "hasMore": false
+  }
+ ],
+ "{\"q\":\"no such identity\",\"limit\":1}": [
+  {
+   "keys": [],
+   "hasMore": false,
+   "last": null
+  }
+ ],
+ "{\"q\":\"no such identity\",\"limit\":3}": [
+  {
+   "keys": [],
+   "hasMore": false,
+   "last": null
+  }
+ ],
+ "{\"q\":\"no such identity\",\"limit\":50}": [
+  {
+   "items": [],
+   "hasMore": false
+  }
+ ]
+}

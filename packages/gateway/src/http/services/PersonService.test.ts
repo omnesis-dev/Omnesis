@@ -394,7 +394,7 @@ describe("PersonService.listMergeRuleGroups", () => {
     return id;
   }
 
-  test("pages whole canonical-winner groups before enriching every rule in the group", () => {
+  test("pages whole canonical-winner groups before enriching every rule in the group", async () => {
     tmpDir = mkdtempSync(join(tmpdir(), "omnesis-personservice-rule-groups-"));
     db = createDatabase(join(tmpDir, "test.db"));
     const service = new PersonService(db, {} as WriteGate);
@@ -431,7 +431,7 @@ describe("PersonService.listMergeRuleGroups", () => {
       secondGroupRule.id,
     );
 
-    const first = service.listMergeRuleGroups({ limit: 1 });
+    const first = await service.listMergeRuleGroups({ limit: 1 });
     expect(first.hasMore).toBe(true);
     expect(first.items).toHaveLength(1);
     expect(first.items[0]).toMatchObject({
@@ -442,7 +442,7 @@ describe("PersonService.listMergeRuleGroups", () => {
     });
     expect(first.items[0]!.sources).toHaveLength(2);
 
-    const second = service.listMergeRuleGroups({ limit: 1, before: first.last! });
+    const second = await service.listMergeRuleGroups({ limit: 1, before: first.last! });
     expect(second.hasMore).toBe(false);
     expect(second.items).toHaveLength(1);
     expect(second.items[0]).toMatchObject({
@@ -450,6 +450,30 @@ describe("PersonService.listMergeRuleGroups", () => {
       ruleIds: [secondGroupRule.id],
       groupIds: ["group_david"],
     });
+  });
+});
+
+describe("PersonService.listMergeRuleGroups with a read worker", () => {
+  test("reads the page on the io gate and never on its own handle", async () => {
+    const page = { items: [], hasMore: false };
+    const mergeRuleGroups = vi.fn(async () => page);
+    const db = new Proxy({} as Database.Database, {
+      get() {
+        throw new Error("the rule groups must not read on the main handle");
+      },
+    });
+    const service = new PersonService(
+      db,
+      {} as WriteGate,
+      {},
+      {
+        browsePeople: vi.fn(),
+        mergeRuleGroups,
+      },
+    );
+    const options = { limit: 25, q: "maya", kind: "user" as const };
+    await expect(service.listMergeRuleGroups(options)).resolves.toBe(page);
+    expect(mergeRuleGroups).toHaveBeenCalledWith(options);
   });
 });
 
