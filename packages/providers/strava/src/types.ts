@@ -3,6 +3,7 @@
 
 import { makeCursorValidator } from "@omnesis/source-sdk";
 import type { SyncCursor } from "@omnesis/source-sdk";
+import type { StravaId } from "./ids.js";
 import type { StravaClient } from "./client.js";
 
 // ── Provider Context ────────────────────────────────────────────────
@@ -11,7 +12,7 @@ export interface StravaContext {
   client: StravaClient;
   accountId: string;
   dataCutoff?: string;
-  athleteId: number;
+  athleteId: StravaId;
   /** Display name of the authenticated athlete (e.g. "James Bond"), if available. */
   athleteName?: string;
   /** Config dir the account's tokens live under — undefined means the default. */
@@ -31,7 +32,7 @@ export interface StravaTokens {
   refresh_token: string;
   /** Unix seconds. Strava returns absolute expiry, not relative. */
   expires_at: number;
-  athlete_id: number;
+  athlete_id: StravaId;
   athlete_firstname?: string;
   athlete_lastname?: string;
 }
@@ -220,8 +221,8 @@ export const validateStravaActivitiesCursor = makeCursorValidator(isStravaActivi
  * See: https://developers.strava.com/docs/reference/#api-models-SummaryActivity
  */
 export interface StravaSummaryActivity {
-  id: number;
-  athlete: { id: number };
+  id: StravaId;
+  athlete: { id: StravaId };
   name: string;
   distance: number;
   moving_time: number;
@@ -262,7 +263,7 @@ export interface StravaSummaryActivity {
   max_heartrate?: number;
   elev_high?: number;
   elev_low?: number;
-  upload_id?: number | null;
+  upload_id?: StravaId | null;
   external_id?: string | null;
   pr_count?: number;
   suffer_score?: number | null;
@@ -327,9 +328,9 @@ export interface StravaSplit {
 }
 
 export interface StravaBestEffort {
-  id: number;
-  activity: { id: number };
-  athlete?: { id: number };
+  id: StravaId;
+  activity: { id: StravaId };
+  athlete?: { id: StravaId };
   name: string;
   distance: number;
   elapsed_time: number;
@@ -344,9 +345,9 @@ export interface StravaBestEffort {
 }
 
 export interface StravaLap {
-  id: number;
-  activity: { id: number };
-  athlete?: { id: number };
+  id: StravaId;
+  activity: { id: StravaId };
+  athlete?: { id: StravaId };
   name: string;
   distance: number;
   elapsed_time: number;
@@ -370,9 +371,9 @@ export interface StravaLap {
 }
 
 export interface StravaSegmentEffort {
-  id: number;
-  activity: { id: number };
-  athlete?: { id: number };
+  id: StravaId;
+  activity: { id: StravaId };
+  athlete?: { id: StravaId };
   name: string;
   elapsed_time: number;
   moving_time: number;
@@ -395,7 +396,7 @@ export interface StravaSegmentEffort {
 }
 
 export interface StravaDetailedSegment {
-  id: number;
+  id: StravaId;
   name: string;
   activity_type: string;
   distance: number;
@@ -440,12 +441,12 @@ export interface StravaHighlightedKudoser {
 // ── Comments & kudos ────────────────────────────────────────────────
 
 export interface StravaComment {
-  id: number;
-  activity_id: number;
+  id: StravaId;
+  activity_id: StravaId;
   text: string;
   created_at: string;
   athlete?: {
-    id?: number;
+    id?: StravaId;
     firstname?: string;
     lastname?: string;
   };
@@ -454,7 +455,7 @@ export interface StravaComment {
 
 /** Used by `/kudos` — Strava typically returns only firstname/lastname. */
 export interface StravaSummaryAthlete {
-  id?: number;
+  id?: StravaId;
   firstname?: string;
   lastname?: string;
   username?: string;
@@ -520,7 +521,7 @@ export interface StravaStream {
 // ── Athlete-level ──────────────────────────────────────────────────
 
 export interface StravaDetailedAthlete {
-  id: number;
+  id: StravaId;
   username?: string | null;
   firstname?: string | null;
   lastname?: string | null;

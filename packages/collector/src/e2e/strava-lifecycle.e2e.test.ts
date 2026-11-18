@@ -14,9 +14,9 @@ import { StravaActivitiesSource } from "@omnesis/provider-strava/src/activities.
 import { activityToDocument } from "@omnesis/provider-strava/src/normalizer.js";
 import { StravaRateLimitTracker } from "@omnesis/provider-strava/src/quota.js";
 import { activitySchemas, allSchemas } from "@omnesis/provider-strava/src/schemas.js";
+import { StravaClient } from "@omnesis/provider-strava/src/client.js";
 import { SyncEngine } from "../sync-engine.js";
 import { MultiCollectorHarness } from "./multi-collector-harness.js";
-import type { ListActivitiesParams, StravaClient } from "@omnesis/provider-strava/src/client.js";
 import type {
   StravaActivitiesCursor,
   StravaSummaryActivity,
@@ -299,15 +299,19 @@ describe("real Strava snapshot lifecycle across both storage planes", () => {
   }, 60_000);
 });
 
-describe("Strava walks against the analytics store's own renderings", () => {
+describe.each([
+  { account: 43, ids: [501, 502] },
+  { account: "9223372036854775807", ids: ["9007199254740992", "9007199254740993"] },
+])("Strava walks and upgrades for account $account", ({ account, ids: [firstId, secondId] }) => {
   // Each walk compares every activity it lists with the row the store hands
   // back: numbers as DuckDB returns them, the start as its TIMESTAMPTZ
   // rendering, a flag the listing left out as null. A difference misread there
   // would send the whole history back through enrichment, or the social tier,
   // on every daily rewalk.
-  const walkSourceId = SourceId("strava-activities:43");
-  const walkProviderId = ProviderId("strava:43");
-  const walkAthleteId = 43;
+  const walkSourceId = SourceId(`strava-activities:${account}`);
+  const walkProviderId = ProviderId(`strava:${account}`);
+  const walkAthleteId = account;
+  let includeStringIds = false;
   let harness: MultiCollectorHarness;
   let gateway: HttpGatewayClient;
   let engine: SyncEngine;
@@ -321,7 +325,7 @@ describe("Strava walks against the analytics store's own renderings", () => {
   const daysAgo = (days: number) =>
     new Date((Math.floor(Date.now() / 86_400_000) - days) * 86_400_000 + 43_200_000).toISOString();
   const listed = (
-    id: number,
+    id: number | string,
     start: string,
     overrides: Partial<StravaSummaryActivity>,
   ): StravaSummaryActivity => ({
@@ -344,14 +348,14 @@ describe("Strava walks against the analytics store's own renderings", () => {
   });
   let upstream: StravaSummaryActivity[] = [
     // Fractional numbers, a `Z` start without milliseconds and no `manual`.
-    listed(501, daysAgo(3).replace(".000Z", "Z"), {
+    listed(firstId!, daysAgo(3).replace(".000Z", "Z"), {
       distance: 5012.7,
       total_elevation_gain: 48.3,
       average_speed: 2.784,
       kudos_count: 3,
       comment_count: 1,
     }),
-    listed(502, daysAgo(2), {
+    listed(secondId!, daysAgo(2), {
       manual: false,
       kudos_count: 0,
       comment_count: 0,
@@ -401,10 +405,12 @@ describe("Strava walks against the analytics store's own renderings", () => {
     expect(page!.cursor.phase).toBe("incremental");
     expect(page!.cursor[stamp]).not.toBe(due);
     // It walked both activities, so it compared both with the store.
-    expect(lastListing.map((activity) => activity.id).sort()).toEqual([501, 502]);
+    expect(lastListing.map((activity) => activity.id).sort()).toEqual(
+      upstream.map((item) => item.id).sort(),
+    );
     return page!;
   };
-  const stored = async (id: number) => {
+  const stored = async (id: number | string) => {
     const result = await harness.json<{ columns: string[]; rows: unknown[][] }>("/analytics/sql", {
       method: "POST",
       body: JSON.stringify({
@@ -416,7 +422,19 @@ describe("Strava walks against the analytics store's own renderings", () => {
   };
 
   beforeAll(async () => {
-    harness = new MultiCollectorHarness();
+    harness = new MultiCollectorHarness({
+      extraGatewayEnv: { OMNESIS_SYNTHETIC: "1" },
+      gatewayConfig: {
+        gateway: {
+          snapshotAbsence: {
+            minObservations: 3,
+            minAge: "10ms",
+            deletionGrace: "1ms",
+            maxMarksPerSnapshot: 200,
+          },
+        },
+      },
+    });
     await harness.start();
     const collector = await harness.addCollector({
       name: "walk-fixture",
@@ -426,43 +444,77 @@ describe("Strava walks against the analytics store's own renderings", () => {
     expect(
       (
         await gateway.bulkUpsertSources([
-          { type: SourceType("strava-activities"), accountId: AccountId("43"), enabled: true },
+          {
+            type: SourceType("strava-activities"),
+            accountId: AccountId(String(account)),
+            enabled: true,
+          },
         ])
       ).errors,
     ).toEqual([]);
     const started = (activity: StravaSummaryActivity) => Date.parse(activity.start_date) / 1000;
-    const client = {
-      // Budget to spare: one that has heard nothing allows every page.
-      quota: new StravaRateLimitTracker(),
-      listActivities: ({ before, after, page }: ListActivitiesParams) => {
-        lastListing =
-          (page ?? 1) > 1
-            ? []
-            : upstream.filter(
-                (activity) =>
-                  (before === undefined || started(activity) < before) &&
-                  (after === undefined || started(activity) > after),
-              );
-        return Promise.resolve(lastListing);
+    // Only the HTTP transport is substituted; JSON parsing and every source
+    // phase use production code. Emit numeric JSON tokens as Strava does.
+    const json = (body: unknown): Response => {
+      const text = JSON.stringify(body, (_key, value: unknown) => {
+        if (includeStringIds && value && typeof value === "object" && "id" in value) {
+          const object = value as Record<string, unknown>;
+          return { ...object, id_str: String(object.id) };
+        }
+        return value;
+      }).replace(/"(id|activity_id)":"([0-9]+)"/g, '"$1":$2');
+      return new Response(text, { headers: { "Content-Type": "application/json" } });
+    };
+    const client = new StravaClient({
+      tokens: {
+        access_token: "fixture",
+        refresh_token: "fixture",
+        expires_at: 4_000_000_000,
+        athlete_id: account,
       },
-      getActivity: (id: number) =>
-        Promise.resolve({
-          ...upstream.find((activity) => activity.id === id)!,
-          description: "Easy aerobic run",
-          calories: 321,
-        }),
-      listActivityComments: () => {
-        commentCalls += 1;
-        return Promise.resolve([]);
+      credentials: { client_id: "fixture", client_secret: "fixture" },
+      fetchFn: async (url) => {
+        const request = new URL(url);
+        const path = request.pathname.replace("/api/v3", "");
+        if (path === "/athlete/activities") {
+          const before = Number(request.searchParams.get("before") ?? Infinity);
+          const after = Number(request.searchParams.get("after") ?? 0);
+          lastListing =
+            Number(request.searchParams.get("page") ?? 1) > 1
+              ? []
+              : upstream.filter((item) => started(item) < before && started(item) > after);
+          return json(lastListing);
+        }
+        const id = /\/activities\/([0-9]+)/.exec(path)?.[1];
+        if (id) {
+          if (path.endsWith("/comments")) {
+            commentCalls += 1;
+            return json([
+              {
+                id,
+                activity_id: id,
+                text: "Steady pace",
+                created_at: "2026-01-01T13:00:00Z",
+                athlete: { id: account },
+              },
+            ]);
+          }
+          if (path.endsWith("/kudos")) return json([{ id: account, firstname: "Jamie" }]);
+          if (path.endsWith("/zones")) return json([]);
+          if (path.endsWith("/streams")) return json({});
+          return json({
+            ...upstream.find((item) => String(item.id) === id)!,
+            description: "Easy aerobic run",
+            calories: 321,
+            splits_metric: [{ split: 1, distance: 1000, moving_time: 360, elapsed_time: 365 }],
+          });
+        }
+        if (path === "/athlete")
+          return json({ id: account, firstname: "Maya", lastname: "Reeves" });
+        if (path === "/athlete/zones" || path.endsWith("/stats")) return json({});
+        throw new Error(`Unexpected fixture URL ${url}`);
       },
-      listActivityKudos: () => Promise.resolve([]),
-      getActivityZones: () => Promise.resolve([]),
-      getActivityStreams: () => Promise.resolve({}),
-      getAthleteDetail: () =>
-        Promise.resolve({ id: walkAthleteId, firstname: "Maya", lastname: "Reeves" }),
-      getAthleteZones: () => Promise.resolve({}),
-      getAthleteStats: () => Promise.resolve({}),
-    } as unknown as StravaClient;
+    });
     // Scoped as the collector scopes a source's analytics.
     const implementation = new StravaActivitiesSource(
       client,
@@ -506,7 +558,56 @@ describe("Strava walks against the analytics store's own renderings", () => {
     await harness?.destroy();
   }, 20_000);
 
-  test("unchanged upstream: the rewalk and the edit sweep write nothing", async () => {
+  test("upgrade preserves saved cursor, enriched rows and document identity when id_str appears", async () => {
+    const beforeCursor = (await gateway.getSyncState(walkSourceId))!.cursor;
+    const beforeRows = await gateway.queryAnalytics(
+      `SELECT * FROM strava_activities WHERE athlete_id = ${account} ORDER BY id`,
+      undefined,
+      walkSourceId,
+    );
+    const beforeDocs = (await gateway.listDocuments({ limit: 100 })).documents.filter(
+      (doc) => doc.sourceId === walkSourceId,
+    );
+    expect(beforeDocs).toHaveLength(2);
+    expect(beforeRows.rows.map((row) => String(row.id))).toEqual([firstId, secondId].map(String));
+    for (const row of beforeRows.rows) {
+      expect(String(row.athlete_id)).toBe(String(account));
+      expect(row.detail_fetched_at).toBeTruthy();
+      expect(row.social_fetched_at).toBeTruthy();
+    }
+    for (const table of [
+      "strava_activity_splits",
+      "strava_activity_comments",
+      "strava_activity_kudos",
+    ]) {
+      const result = await gateway.queryAnalytics(
+        `SELECT activity_id, source_athlete_id FROM ${table} WHERE source_athlete_id = ${account} ORDER BY activity_id`,
+        undefined,
+        walkSourceId,
+      );
+      expect(result.rows.map((row) => String(row.activity_id))).toEqual(
+        [firstId, secondId].map(String),
+      );
+      expect(result.rows.every((row) => String(row.source_athlete_id) === String(account))).toBe(
+        true,
+      );
+    }
+    includeStringIds = true;
+    await harness.restartGateway();
+    expect((await gateway.getSyncState(walkSourceId))!.cursor).toEqual(beforeCursor);
+    expect(
+      await gateway.queryAnalytics(
+        `SELECT * FROM strava_activities WHERE athlete_id = ${account} ORDER BY id`,
+        undefined,
+        walkSourceId,
+      ),
+    ).toEqual(beforeRows);
+    const afterDocs = (await gateway.listDocuments({ limit: 100 })).documents.filter(
+      (doc) => doc.sourceId === walkSourceId,
+    );
+    expect(afterDocs.map((doc) => [doc.id, doc.content]).sort()).toEqual(
+      beforeDocs.map((doc) => [doc.id, doc.content]).sort(),
+    );
     expect(commentCalls).toBe(2);
     for (const stamp of ["lastSnapshotAt", "lastEditSweepAt"] as const) {
       const page = await walk(stamp);
@@ -518,28 +619,86 @@ describe("Strava walks against the analytics store's own renderings", () => {
 
   test("a kudo sends its activity back to the social tier once, and the next sweep writes nothing", async () => {
     upstream = upstream.map((activity) =>
-      activity.id === 501 ? { ...activity, kudos_count: 4 } : activity,
+      activity.id === firstId ? { ...activity, kudos_count: 4 } : activity,
     );
 
     const recounted = await walk("lastEditSweepAt");
     const rows = rowsFor(recounted, "strava_activities");
-    expect(rows.map((row) => [Number(row.id), row.kudos_count, row.social_fetched_at])).toEqual([
-      [501, 4, null],
+    expect(rows.map((row) => [row.id, row.kudos_count, row.social_fetched_at])).toEqual([
+      [firstId, 4, null],
     ]);
     expect(rows[0]!.detail_fetched_at).toBeTruthy();
     expect(recounted.documents ?? []).toEqual([]);
-    expect(await stored(501)).toEqual({ kudos: 4, socialFetchedAt: null });
+    expect(await stored(firstId!)).toEqual({ kudos: 4, socialFetchedAt: null });
 
     pages.length = 0;
     await settle();
     expect(commentCalls).toBe(3);
     const rendered = pages.flatMap((page) => page.documents ?? []);
-    expect(rendered.map((doc) => doc.externalId)).toEqual(["501"]);
+    expect(rendered.map((doc) => doc.externalId)).toEqual([String(firstId)]);
     expect(rendered[0]!.content).toContain("4 kudos");
-    expect((await stored(501)).socialFetchedAt).toBeTruthy();
+    expect((await stored(firstId!)).socialFetchedAt).toBeTruthy();
 
     const next = await walk("lastEditSweepAt");
     expect(rowsFor(next, "strava_activities")).toEqual([]);
     expect(next.documents ?? []).toEqual([]);
+  }, 60_000);
+
+  test("keeps old documents while a new activity syncs and enriches after upgrade", async () => {
+    const oldDocs = (await gateway.listDocuments({ limit: 100 })).documents.filter(
+      (doc) => doc.sourceId === walkSourceId,
+    );
+    const newId = typeof account === "number" ? 503 : "9007199254740995";
+    upstream.push(listed(newId, daysAgo(1), { kudos_count: 0, comment_count: 0 }));
+    pages.length = 0;
+    await settle();
+    await settle();
+    const documents = (await gateway.listDocuments({ limit: 100 })).documents.filter(
+      (doc) => doc.sourceId === walkSourceId,
+    );
+    expect(documents).toHaveLength(3);
+    for (const old of oldDocs) {
+      expect(documents.find((doc) => doc.id === old.id)?.content).toBe(old.content);
+    }
+    const result = await gateway.queryAnalytics(
+      `SELECT id, detail_fetched_at, social_fetched_at FROM strava_activities WHERE athlete_id = ${account} ORDER BY id`,
+      undefined,
+      walkSourceId,
+    );
+    expect(result.rows.map((row) => String(row.id))).toEqual(
+      [firstId, secondId, newId].map(String),
+    );
+    expect(result.rows.every((row) => row.detail_fetched_at && row.social_fetched_at)).toBe(true);
+    expect(
+      pages
+        .flatMap((page) => page.documents ?? [])
+        .every((doc) => doc.externalId === String(newId)),
+    ).toBe(true);
+  }, 60_000);
+
+  test("snapshot deletion keeps the adjacent activity and its children", async () => {
+    upstream = upstream.filter((item) => item.id !== secondId);
+    for (let cycle = 0; cycle < 3; cycle++) await walk("lastSnapshotAt");
+    for (let cycle = 0; cycle < 2; cycle++) {
+      await harness.json("/admin/background/run/absence.sweep", { method: "POST" });
+    }
+    const held = upstream.map((item) => String(item.id)).sort();
+    const documents = (await gateway.listDocuments({ limit: 100 })).documents.filter(
+      (doc) => doc.sourceId === walkSourceId,
+    );
+    expect(documents.map((doc) => doc.metadata.sourceUrl?.split("/").at(-1)).sort()).toEqual(held);
+    for (const [table, column] of [
+      ["strava_activities", "id"],
+      ["strava_activity_splits", "activity_id"],
+      ["strava_activity_comments", "activity_id"],
+      ["strava_activity_kudos", "activity_id"],
+    ]) {
+      const result = await gateway.queryAnalytics(
+        `SELECT ${column} AS id FROM ${table} ORDER BY ${column}`,
+        undefined,
+        walkSourceId,
+      );
+      expect(result.rows.map((row) => String(row.id)).sort(), table).toEqual(held);
+    }
   }, 60_000);
 });

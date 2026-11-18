@@ -39,6 +39,7 @@ import {
 import { gearFromCatalogue } from "./gear.js";
 import { ENRICHMENT_SAFETY_PCT } from "./quota.js";
 import { gearIdList, ownedBy } from "./sql.js";
+import type { StravaId } from "./ids.js";
 import type { SourceAnalyticsAccess, StructuredSyncResult, TableWrite } from "@omnesis/source-sdk";
 import type { StravaClient } from "./client.js";
 import type { StravaActivitiesCursor } from "./types.js";
@@ -63,7 +64,7 @@ export function shouldRefreshAthlete(cur: StravaActivitiesCursor): boolean {
 interface Deps {
   analytics: SourceAnalyticsAccess;
   client: StravaClient;
-  athleteId: number;
+  athleteId: StravaId;
   // No `sourceId`: it existed only to attribute ingested rows, and the host
   // now stamps that itself, so a source cannot label rows as another's.
 }

@@ -1378,7 +1378,9 @@
                   allows a new app 1,000 reads a day, so the source is added with a 30-minute sync
                   interval, and for an account with many activities a first sync or a resync can
                   take several days to fetch every activity's details, while new activities keep
-                  being listed.
+                  being listed. Strava activity and athlete IDs retain their full 64-bit precision.
+                  When upgrading, update the collector hosting Strava as well as the gateway;
+                  existing accounts and sync progress are kept without reconnecting or resyncing.
                 </td>
               </tr>
               <tr>

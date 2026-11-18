@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { stravaId, type StravaId } from "./ids.js";
+
 /**
  * The owner predicate and the activity- and gear-id lists the phases splice
  * into their reads of the analytics store. The read handle takes SQL and
@@ -18,9 +20,8 @@
  * token and written under the sibling's athlete, which the gateway refuses;
  * the refused page then replays on every retry, and the source stops.
  */
-export function ownedBy(athleteId: number): string {
-  if (!Number.isSafeInteger(athleteId)) throw new Error(`Invalid Strava athlete id ${athleteId}`);
-  return `athlete_id = ${athleteId}`;
+export function ownedBy(athleteId: StravaId): string {
+  return `athlete_id = ${stravaId(athleteId)}`;
 }
 
 /**
@@ -32,8 +33,13 @@ export function ownedBy(athleteId: number): string {
  */
 export function activityIdList(ids: readonly unknown[]): string {
   return ids
-    .map(Number)
-    .filter((id) => Number.isSafeInteger(id))
+    .flatMap((id) => {
+      try {
+        return [stravaId(id)];
+      } catch {
+        return [];
+      }
+    })
     .join(", ");
 }
 

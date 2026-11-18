@@ -15,6 +15,7 @@
 
 import { createLogger } from "@omnesis/core";
 import { gearIdList, ownedBy } from "./sql.js";
+import type { StravaId } from "./ids.js";
 import type { SourceAnalyticsAccess } from "@omnesis/source-sdk";
 import type { ResolvedGear } from "./normalizer.js";
 
@@ -54,7 +55,7 @@ export function gearDisplayName(gear: ResolvedGear | undefined): string | undefi
  */
 export async function storedGear(
   analytics: SourceAnalyticsAccess,
-  athleteId: number,
+  athleteId: StravaId,
   gearIds: readonly unknown[],
 ): Promise<Map<string, ResolvedGear>> {
   const byId = new Map<string, ResolvedGear>();
