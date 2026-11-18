@@ -636,15 +636,25 @@ export class BrainObs {
   }
 
   /**
-   * Latest successful interpretation run, retaining its actual shared-batch
-   * identity. Explicit completion phases take precedence; legacy transcripts
-   * use cohort membership to distinguish organization from interpretation.
+   * Successful interpretation runs of this source, newest first, retaining
+   * their actual shared-batch identity. An organization cohort's completion
+   * of the source is a different phase and is not counted. Explicit
+   * completion phases take precedence; legacy transcripts use cohort
+   * membership to distinguish organization from interpretation.
    */
-  async interpretationForSource(docId: string): Promise<RunDto> {
+  async interpretationsForSource(docId: string): Promise<RunDto[]> {
+    const matches: RunDto[] = [];
     for (const run of await this.runsForSource(docId)) {
-      if (interpretedSource(await this.executedTools(run.id), docId)) return run;
+      if (interpretedSource(await this.executedTools(run.id), docId)) matches.push(run);
     }
-    throw new Error(`no successful maintenance interpretation for source ${docId}`);
+    return matches;
+  }
+
+  /** Latest successful interpretation run; see `interpretationsForSource`. */
+  async interpretationForSource(docId: string): Promise<RunDto> {
+    const [latest] = await this.interpretationsForSource(docId);
+    if (!latest) throw new Error(`no successful maintenance interpretation for source ${docId}`);
+    return latest;
   }
 
   /** The `<diff>` block a data run's prompt carried, if any. */

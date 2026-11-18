@@ -121,7 +121,10 @@ reconcile existing owners when the same source is offered again.
 
 Use `obs.runsForSource(documentId)` to find actual runs with a successful
 `knowledge_discovery_complete` call. A batch can process several sources, and a
-source can participate in several batches. `obs.runForDoc` remains restricted to
+source can participate in several batches. That includes the organization cohort
+that a later organization pass forms from freshly interpreted sources, so a test that
+counts how often a source was interpreted uses `obs.interpretationsForSource`
+instead. `obs.runForDoc` remains restricted to
 legacy datum runs. Assertions on datum dedupe keys, datum spend, created/updated
 flavours and prompt diffs need explicit migration to maintenance outcomes, coverage,
 input versions and canonical owner state.
