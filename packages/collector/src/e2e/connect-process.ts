@@ -12,14 +12,14 @@
  * retained descendant before their shared fixture inputs may be removed.
  */
 
-import type { ChildProcess } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
+import { delimiter, join } from "node:path";
 import { ownedProcessCleanupReceipt, spawnWindowsJob } from "@omnesis/core";
 import { spawnE2ESubprocess, e2eApplicationStatus, e2eProcessOutput } from "./e2e-owned-process.js";
-import { delimiter, join } from "node:path";
 
 import { e2eTsxCommand } from "./gateway-env.js";
 import { killSubprocessGroup, registerSubprocessGroup } from "./subprocess-reaper.js";
+import type { ChildProcess } from "node:child_process";
 
 export interface SpawnedConnect {
   child: ChildProcess;
@@ -75,10 +75,14 @@ export function spawnCliProcess(
 ): SpawnedCli {
   const command = e2eTsxCommand(join(options.repositoryRoot, "packages/cli/src/index.ts"));
   const inheritedPath = options.env?.PATH ?? process.env.PATH ?? "";
+  // An inherited FORCE_COLOR (Nx sets it) beside NO_COLOR below makes Node
+  // warn on the child's stderr, which would land in the captured output.
+  const { FORCE_COLOR: _forceColor, ...inherited } =
+    options.inheritEnv === false ? {} : process.env;
   const childOptions = {
     cwd: options.repositoryRoot,
     env: {
-      ...(options.inheritEnv === false ? {} : process.env),
+      ...inherited,
       ...options.env,
       PATH: [
         ...(options.fakeBin ? [options.fakeBin] : []),
