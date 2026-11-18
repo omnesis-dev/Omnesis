@@ -110,7 +110,7 @@
     },
     "simple-git": "^4.0.2",
     "@mtcute/node": {
-      "better-sqlite3": "^13.0.3"
+      "better-sqlite3": "^13.1.1"
     }
   },
   "devDependencies": {
