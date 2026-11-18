@@ -14,7 +14,8 @@
  * --best-effort, so an install or update whose helper cannot be built still
  * completes, without the device, and says why; the next update tries again.
  * OMNESIS_TAILNET_HELPER_BUILD=0 skips it, for builds that package the
- * TypeScript alone.
+ * TypeScript alone. OMNESIS_TAILNET_HELPER_GO=pinned builds with the pinned
+ * toolchain even where Go is installed.
  */
 
 import { spawnSync } from "node:child_process";
@@ -66,7 +67,7 @@ try {
   );
   const cacheDir = join(helperDir, ".go");
   const go =
-    installedGo(required) ??
+    (process.env.OMNESIS_TAILNET_HELPER_GO === "pinned" ? null : installedGo(required)) ??
     (await pinnedGo({
       cacheDir,
       toolchain,

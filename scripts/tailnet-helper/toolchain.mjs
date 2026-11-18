@@ -157,7 +157,13 @@ export async function pinnedGo({
         `${file} does not match its published SHA-256 (got ${digest}); nothing was unpacked`,
       );
     // GNU tar and bsdtar both detect the compression; Windows' own tar also reads a .zip.
-    const unpacked = spawnSync("tar", ["-xf", downloaded, "-C", work], { stdio: "inherit" });
+    // On Windows it is named by path: a GNU tar earlier on PATH, such as Git's, reads
+    // `C:\...` as a remote host.
+    const tar =
+      process.platform === "win32"
+        ? join(process.env.SystemRoot ?? "C:\\Windows", "System32", "tar.exe")
+        : "tar";
+    const unpacked = spawnSync(tar, ["-xf", downloaded, "-C", work], { stdio: "inherit" });
     if (unpacked.error || unpacked.status !== 0) throw new Error(`could not unpack ${file}`);
     writeFileSync(join(work, "go", ".complete"), `${digest}\n`);
     // Another build may have finished the same toolchain meanwhile, and may be using it.

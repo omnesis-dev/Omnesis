@@ -4,9 +4,9 @@ name: Tailscale helper build
 # downloading the pinned Go toolchain where Go is not installed
 # (scripts/tailnet-helper/). This builds it that way on each platform a source
 # install runs on (and Windows x64, whose manual setup runs
-# `npm run tailnet-helper:build`), with Go hidden from PATH as on a machine that
-# never had it, then again from the cache the first build left, as an update
-# finds it.
+# `npm run tailnet-helper:build`), passing over any Go the runner has, as on a
+# machine that never had it, then again from the cache the first build left, as
+# an update finds it.
 # Secret-free, on GitHub-hosted runners only.
 on:
   pull_request:
@@ -51,17 +51,13 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
-      - name: Build with Go hidden, as on a machine without it
+      - name: Build with the pinned toolchain, as on a machine without Go
+        env:
+          # Whatever Go the runner has is passed over, so the toolchain is downloaded.
+          OMNESIS_TAILNET_HELPER_GO: pinned
         run: |
           set -euo pipefail
-          # Every PATH entry that holds a `go` is dropped, so the pinned toolchain is used.
-          path=""
-          IFS=: read -ra entries <<<"$PATH"
-          for entry in "${entries[@]}"; do
-            [ -x "$entry/go" ] || [ -x "$entry/go.exe" ] || path="${path:+$path:}$entry"
-          done
-          PATH="$path" bash -c '! command -v go >/dev/null' || { echo "::error::go is still on PATH"; exit 1; }
-          PATH="$path" node scripts/tailnet-helper/build.mjs
+          node scripts/tailnet-helper/build.mjs
           ls packages/tailnet-helper/.go/toolchains/go*/bin/
       - name: The helper runs and carries the product version
         run: |
@@ -72,6 +68,8 @@ jobs:
           [ "$have" = "$want" ] || { echo "::error::the helper says $have, the product is $want"; exit 1; }
           if command -v file >/dev/null; then file "$HELPER"; fi
       - name: An update rebuilds from the toolchain and caches the first build left
+        env:
+          OMNESIS_TAILNET_HELPER_GO: pinned
         run: |
           set -euo pipefail
           start=$(date +%s)

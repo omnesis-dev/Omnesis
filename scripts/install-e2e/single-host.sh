@@ -9,7 +9,7 @@
 #
 # 1. The candidate (this checkout) becomes release vN in a fixture remote and
 #    is installed fresh with its own install.sh, gateway and collector both,
-#    on a PATH without Go: its build downloads the pinned Go toolchain and
+#    where Go does not work: its build downloads the pinned Go toolchain and
 #    builds the gateway's Tailscale helper, so the gateway offers its own
 #    Tailscale device.
 # 2. An invented Obsidian vault is added and synced, so there is data to keep.
@@ -31,14 +31,13 @@ E2E_WORK="${E2E_WORK:?set E2E_WORK}"
 
 [ -n "${CI:-}" ] || die "single-host.sh installs into \$HOME and registers services; it runs on CI machines only"
 
-# A machine that never had Go: every PATH entry that holds one is dropped.
-NO_GO_PATH=""
-IFS=: read -ra PATH_ENTRIES <<<"$PATH"
-for entry in "${PATH_ENTRIES[@]}"; do
-  [ -x "$entry/go" ] || NO_GO_PATH="${NO_GO_PATH:+$NO_GO_PATH:}$entry"
-done
-export PATH="$NO_GO_PATH"
-! command -v go >/dev/null || die "go is still on PATH"
+# A machine without a usable Go: a `go` first on PATH that always fails, so the source
+# build downloads the pinned toolchain.
+NO_GO="$E2E_WORK/no-go"
+mkdir -p "$NO_GO"
+printf '#!/bin/sh\nexit 127\n' >"$NO_GO/go"
+chmod +x "$NO_GO/go"
+export PATH="$NO_GO:$PATH"
 
 GATEWAY_URL="https://localhost:7600"
 FIXTURE_DIR="$E2E_WORK/fixture"
