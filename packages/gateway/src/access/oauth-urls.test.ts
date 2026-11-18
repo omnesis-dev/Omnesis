@@ -4,6 +4,7 @@
 import { describe, expect, test } from "vitest";
 
 import {
+  isLoopbackUrl,
   narrowOAuthOverviewUrls,
   resolveMetadataRequestResource,
   resolveMcpRequestResource,
@@ -155,6 +156,18 @@ test("a request from the gateway's own machine signs in at its loopback origin e
   );
   expect(listed?.issuer).toBe("https://localhost:7600");
   expect(listed?.issuerResources).toContain("https://127.0.0.1:7600/mcp");
+  // With no listed resources, only the public address's origin is configured.
+  expect(
+    resolveOAuthUrls("https://localhost:7600/oauth/token", configured, undefined, [], {
+      local: true,
+    })?.issuer,
+  ).toBe("https://localhost:7600");
+  // A listed resource that is not an address leaves no issuer to sign in through.
+  expect(
+    resolveOAuthUrls("https://localhost:7600/oauth/token", configured, ["not a URL"], [], {
+      local: true,
+    }),
+  ).toBeNull();
 });
 
 describe("local OAuth setup overview", () => {
@@ -263,6 +276,8 @@ test("loopback IPv6 fallback and invalid metadata configuration stay bounded", (
   expect(resolveOAuthUrls("https://[::1]:7600/mcp")?.issuer).toBe("https://[::1]:7600");
   expect(resolveOAuthMetadataPaths("http://insecure.example")).toBeNull();
   expect(resolveOAuthOverviewUrls("https://external.example")).toBeNull();
+  expect(isLoopbackUrl("https://[::1]:7600/mcp")).toBe(true);
+  expect(isLoopbackUrl("not a URL")).toBe(false);
 });
 
 test("malformed or unknown MCP metadata cannot select an audience, while exact configured metadata does", () => {

@@ -54,6 +54,7 @@ export function resolveOAuthUrls(
     additionalIssuers.some((value) => !isSafePublicBaseUrl(value))
   )
     return null;
+  if (configuredResources?.some((value) => !isSafeMcpResourceUrl(value))) return null;
   const primary = configuredBaseUrl ? canonicalIssuer(configuredBaseUrl) : undefined;
   const extras = [...new Set(additionalIssuers.map(canonicalIssuer))];
   const configured = [...new Set([...(primary ? [primary] : []), ...extras])];
@@ -84,7 +85,6 @@ export function resolveOAuthUrls(
     ...extras.map((base) => `${base}/mcp`),
   ]);
   for (const candidate of configuredResources ?? []) {
-    if (!isSafeMcpResourceUrl(candidate)) return null;
     supportedResources.add(normalizeResource(candidate));
   }
   supportedResources.add(resource);
@@ -284,9 +284,7 @@ function normalizeResource(value: string): string {
 /** The origins the configuration names: the public address's and every listed resource's. */
 function configuredOrigins(primary: string, resources: readonly string[] | undefined): Set<string> {
   const origins = new Set([new URL(primary).origin]);
-  for (const resource of resources ?? []) {
-    if (URL.canParse(resource)) origins.add(new URL(resource).origin);
-  }
+  for (const resource of resources ?? []) origins.add(new URL(resource).origin);
   return origins;
 }
 
