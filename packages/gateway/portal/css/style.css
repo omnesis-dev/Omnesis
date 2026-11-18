@@ -3175,9 +3175,7 @@ a:hover { text-decoration: underline; }
   font-style: normal;
 }
 
-/* Indexer "warming up" / "failed" banner on the Search view. Styled to
-   match the search-error banner's tone language (warming = amber,
-   failed = red). */
+/* Indexer status banner on the Search view. */
 .indexer-warming-card {
   margin: 16px 0;
   padding: 14px 16px;
@@ -3193,6 +3191,13 @@ a:hover { text-decoration: underline; }
   background: rgba(248, 81, 73, 0.08);
   border-color: rgba(248, 81, 73, 0.35);
   border-left: 3px solid var(--danger);
+}
+.indexer-warming-card.indexer-warming-info {
+  background: var(--bg-secondary);
+  border-color: var(--border);
+}
+.indexer-warming-info a {
+  text-decoration: underline;
 }
 .indexer-warming-header {
   display: flex;

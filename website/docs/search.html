@@ -281,9 +281,10 @@
         <p>
           The semantic lane needs an embedder assigned (see
           <a href="operating#models">Operating → Models</a>) and chunks that have already been
-          embedded. Documents are indexed for keyword search even without an embedding model. Until
-          both hold, keyword matching alone carries queries, and meaning-aware ranking joins in for
-          each document as its vectors land. There is nothing to switch on; the pipeline uses
+          embedded. Documents are indexed for keyword search even without an embedding model. The
+          portal's keyword-only search notice links to the embedding model settings. Keyword
+          matching carries queries while embeddings are unavailable, and meaning-aware ranking joins
+          in for each document as its vectors land. There is nothing to switch on; the pipeline uses
           whatever signals exist at query time. When embeddings become available after keyword-only
           indexing, vectors are rebuilt for the retained corpus while keyword results remain
           available. Search responses report the active embedding model as assignments change,
