@@ -119,6 +119,20 @@ final class MobileJourneyUITests: XCTestCase {
         )
     }
 
+    /// The same journey when the system takes the tap on the Search row away,
+    /// as its gesture gate sometimes does on a simulator: the row does not act
+    /// and the menu stays open. The journey notices and taps the row again.
+    func testSearchSurvivesACancelledRowTap() throws {
+        // Touch 1 opens the menu and touch 2 is the first tap on the row.
+        app.launchEnvironment["DEMO_CANCEL_TOUCHES"] = "2"
+        try launchPaired()
+        search(for: Self.documentTitle)
+        XCTAssertTrue(
+            searchResult(titled: Self.documentTitle).waitForExistence(timeout: 30),
+            "searching for \"\(Self.documentTitle)\" did not list the document"
+        )
+    }
+
     /// Search → tap a result → the document opens with its content.
     func testOpeningASearchResultShowsTheDocument() throws {
         try launchPaired()
@@ -220,34 +234,37 @@ final class MobileJourneyUITests: XCTestCase {
     }
 
     /// Taps the composer until it holds the keyboard focus that typing needs.
-    /// The system can claim a touch for one of its own gestures, cancelling it
-    /// before the field sees the tap, so a tap that left the field without
-    /// focus is made again.
     private func focus(_ composer: XCUIElement) {
-        for _ in 0 ..< 3 {
+        retap(until: composer, has: "hasKeyboardFocus == true", or: "the Ask composer never took the keyboard focus") {
             tap(composer, "the Ask composer")
-            if reaches(composer, keyboardFocus: true) { return }
         }
-        XCTFail("the Ask composer never took the keyboard focus")
     }
 
     /// Taps Send until the composer gives up the keyboard focus, which the
-    /// Send action does first, before any request. A touch the system
-    /// cancelled leaves the question in the still-focused composer; that is
-    /// the only case in which Send is tapped again, so a question is never
-    /// sent twice.
+    /// Send action does first, before any request. A cancelled tap leaves the
+    /// question in the still-focused composer; that is the only case in which
+    /// Send is tapped again, so a question is never sent twice.
     private func send(from composer: XCUIElement) {
-        for _ in 0 ..< 3 {
+        retap(until: composer, has: "hasKeyboardFocus == false", or: "tapping Send never sent the question") {
             tap(app.buttons["agentSendButton"], "the Send button")
-            if reaches(composer, keyboardFocus: false) { return }
         }
-        XCTFail("tapping Send never sent the question")
     }
 
-    private func reaches(_ element: XCUIElement, keyboardFocus: Bool) -> Bool {
-        let focus = NSPredicate(format: "hasKeyboardFocus == %@", NSNumber(value: keyboardFocus))
-        let reached = XCTNSPredicateExpectation(predicate: focus, object: element)
-        return XCTWaiter.wait(for: [reached], timeout: 10) == .completed
+    /// Makes a tap until `element` shows its effect, at most three times.
+    ///
+    /// The simulator's system gesture gate now and then claims a synthesized
+    /// touch for one of the system's own gestures and cancels it: the control
+    /// under it may show its pressed state, but its action never runs. So a
+    /// step that taps checks the one thing its action changes first, and taps
+    /// again only when that has not happened, which a tap that did act can
+    /// never cause.
+    private func retap(until element: XCUIElement, has effect: String, or failure: String, _ makeTap: () -> Void) {
+        for _ in 0 ..< 3 {
+            makeTap()
+            let acted = XCTNSPredicateExpectation(predicate: NSPredicate(format: effect), object: element)
+            if XCTWaiter.wait(for: [acted], timeout: 10) == .completed { return }
+        }
+        XCTFail(failure)
     }
 
     private func launchPaired(pairedUrl: URL? = nil) throws {
@@ -285,33 +302,35 @@ final class MobileJourneyUITests: XCTestCase {
     /// whose centre is the empty space between the gear and Ask, and exposes no
     /// child for the gear. 34 points in is the gear's centre in that frame, and
     /// half the button's width clamps it to the centre when the frame is the gear.
+    /// Settings arriving is the tap's effect, so a cancelled tap is made again.
     private func openSettings() {
         let settings = app.buttons["menu.settings"]
         openMenu(until: settings)
-        let frame = settings.frame
-        settings.coordinate(withNormalizedOffset: .zero)
-            .withOffset(CGVector(dx: min(frame.width / 2, 34), dy: frame.height / 2))
-            .tap()
+        retap(until: app.navigationBars["Settings"], has: "exists == true", or: "tapping the gear never opened Settings") {
+            let frame = settings.frame
+            settings.coordinate(withNormalizedOffset: .zero)
+                .withOffset(CGVector(dx: min(frame.width / 2, 34), dy: frame.height / 2))
+                .tap()
+        }
     }
 
     /// Taps the menu button until `row` is usable. A drawer row stays in the
-    /// tree, disabled, while the drawer is closed, so its existence says nothing,
-    /// and a tap on the menu button can go unanswered over a just-resumed
-    /// conversation.
+    /// tree, disabled, while the drawer is closed, so its existence says nothing.
     private func openMenu(until row: XCUIElement) {
-        let arrived = NSPredicate(format: "exists == true AND enabled == true")
-        for _ in 0 ..< 3 {
+        retap(until: row, has: "exists == true AND enabled == true", or: "the menu did not open") {
             tap(app.buttons["menu.toggle"], "the menu button")
-            let opened = XCTNSPredicateExpectation(predicate: arrived, object: row)
-            if XCTWaiter.wait(for: [opened], timeout: 15) == .completed { break }
         }
-        XCTAssertTrue(row.isEnabled, "the menu did not open")
     }
 
+    /// Opens Search from the drawer and runs `query`. Choosing a row closes
+    /// the drawer, which disables every row in it, so a row still enabled after
+    /// the tap means the tap was cancelled and is made again.
     private func search(for query: String) {
         let row = app.buttons["menu.search"]
         openMenu(until: row)
-        row.tap()
+        retap(until: row, has: "enabled == false", or: "tapping Search never left the menu") {
+            row.tap()
+        }
         let field = app.textFields["search.field"]
         tap(field, "the search field")
         field.typeText(query + "\n")
