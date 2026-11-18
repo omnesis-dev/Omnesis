@@ -17,7 +17,10 @@ const workflow = parse(readFileSync(join(root, ".github/workflows/install-e2e.ym
  * written as (comparisons of two context values with literals).
  */
 function runsFor(job, event, lanes = "all") {
+  // An unwrapped condition, or a ${{ }} one evaluated in a run nobody cancelled.
   const expression = job.if
+    .replace(/^\$\{\{\s*|\s*\}\}$/gu, "")
+    .replaceAll("cancelled()", "false")
     .replaceAll("github.event_name", "event")
     .replaceAll("inputs.lanes", "lanes");
   expect(expression).toMatch(/^[\w\s=!&|()'.-]+$/u);
