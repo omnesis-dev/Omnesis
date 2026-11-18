@@ -97,7 +97,8 @@ public enum CloudRelayPresentation {
                 title: status.connect?.verification == nil ? "Sign in to your Omnesis account" : "Verify this gateway setup",
                 lede: status.connect?.verification == nil
                     ? "Continue in the sign-in page to finish connecting. This screen updates by itself."
-                    : "Open the security check before signing in. It usually completes automatically and may ask you to confirm you are human."
+                    : "Open the security check before signing in. It usually completes automatically "
+                    + "and may ask you to confirm you are human."
             )
         case .registering:
             Hero(
