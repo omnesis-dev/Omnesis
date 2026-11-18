@@ -163,6 +163,16 @@ that ended without ever running fails the job at once. Scheduled runs and a
 dispatch of every lane share a concurrency group, so two full runs never
 overlap.
 
+The account's macOS runners are few and shared by every workflow, and GitHub
+hands them out roughly in queue order. The collectors are queued after the
+fixture job, a minute behind the run's other Mac lanes, which have no partner
+and lose nothing by waiting. So in a full run every other Mac job (with the
+Linux legs of the same matrices) first waits for the `tailnet-seated` job,
+which ends once each collector has had a runner, and only then asks for a
+runner itself. That job orders the run and never judges it: a collector that
+gets no runner within the four hours still fails its pair, and the held jobs
+then start anyway.
+
 On the Mac, the Tailscale action points the system resolver at MagicDNS
 (`100.100.100.100`) whenever the tailnet has MagicDNS on. The standalone
 `tailscaled` forwards public names from there to the resolvers it last read

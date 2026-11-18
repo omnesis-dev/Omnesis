@@ -47,6 +47,10 @@ import type {
   MergeCandidateClusterCursor,
   MergeCandidateVisibility,
 } from "../../merge-candidates.js";
+import type {
+  MergeRuleGroupsOptions,
+  MergeRuleGroupsPage,
+} from "../../domain/merge/rule-groups.js";
 import type { LikeSearchArgs, LikeSearchRow } from "../../search/like-search.js";
 import type { SqliteQueryRead, SqliteQueryRequest } from "../../sqlite-catalog.js";
 import type {
@@ -91,6 +95,8 @@ export interface IComputeScheduler {
   mergeCandidateVisibility(opts: {
     status: "pending" | "accepted" | "denied";
   }): Promise<MergeCandidateVisibility[]>;
+  /** One page of the People → Rules page off the main thread (GET /people/merge-rule-groups). */
+  mergeRuleGroups(opts: MergeRuleGroupsOptions): Promise<MergeRuleGroupsPage>;
   /** Legacy LIKE document search off the main thread (GET /documents/search). */
   likeSearchDocuments(args: LikeSearchArgs): Promise<LikeSearchRow[]>;
   /** The operator's SQL off the main thread (POST /sql). */

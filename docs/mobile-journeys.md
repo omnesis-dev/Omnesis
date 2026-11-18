@@ -13,9 +13,9 @@ something on screen.
 | Journey          | What the test does                                                                                                                                                                                                                                                                                                                                                                            |
 | ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Pairing          | Starts unpaired, taps _Pair with your gateway_, gets past the camera (no camera on a simulator; the Android test declines the permission), pastes the QR payload the gateway minted, checks the confirmation names the gateway, confirms. It passes when phone setup shows _Connection verified_ and the gateway lists the new device, then skips setup and lands on the Ask screen.          |
-| Search           | Opens the menu, picks Search, types `Acme Q3 Planning` and waits for that document in the results.                                                                                                                                                                                                                                                                                            |
+| Search           | Opens the menu, picks Search, types `Acme Q3 Planning` and waits for that document in the results. On iOS a second run cancels the first tap on the Search row and passes only if the journey notices and taps it again.                                                                                                                                                                      |
 | Open a document  | The search above, then a tap on the result; passes when the document's text (`Draft the migration plan by Friday`) is on screen.                                                                                                                                                                                                                                                              |
-| Ask the agent    | Types `Where was I on September 2?` on the Ask screen and sends it; passes when the answer names `Studio Northstar`.                                                                                                                                                                                                                                                                          |
+| Ask the agent    | Deletes the gateway's conversations so the app opens on an empty Ask screen, types `Where was I on September 2?` and sends it; passes when the answer names `Studio Northstar`. On iOS a second run cancels the first tap on Send, the way the system can take a touch away, and passes only if the journey notices and sends again.                                                          |
 | Lose the network | Opens Settings and takes the network away, then brings it back. Android toggles airplane mode, so the system's network callback fires; a simulator shares its host's network, so iOS stops a local forwarder between app and gateway and returns to the app instead. Passes when the row reads as a temporary state without asking to pair again, then reads _Connected_ on the same pairing. |
 
 The gateway serves the `e2e-minimal` universe (`evals/universes/e2e-minimal/`,
@@ -108,10 +108,21 @@ After a failure, `/tmp/omnesis-mobile-journeys/artifacts/` holds a screen
 recording of the whole run, the failure screenshots (inside the `.xcresult`
 bundle and exported to `failure-attachments/` on iOS; `failure-screenshots/`
 on Android, with the Compose semantics tree in `logcat.txt` under the
-`OmnesisJourney` tag), the test reports and the gateway's logs. On iOS,
-`app-touch.log` adds where each tap landed, the views it hit, the state every
-gesture recogniser on it reached, and which menu actions ran: the journeys
-launch the app with `DEMO_TOUCH_LOG=1`, which only a DEBUG build reads.
+`OmnesisJourney` tag), the test reports and the gateway's logs, with any stall
+profiles the gateway kept in `gateway-logs/stall-profiles/` (see
+`docs/stall-investigation.md`). On iOS, `app-touch.log` adds where each tap
+landed, the views it hit, the state every gesture recogniser on it reached,
+and which menu actions ran: the journeys launch the app with
+`DEMO_TOUCH_LOG=1`, which only a DEBUG build reads.
+
+A touch that ends `cancelled` with `_UISystemGestureGateGestureRecognizer`
+recognised was taken by the system for one of its own gestures: the control
+under it may show its pressed state, but its action never runs. It happens now
+and then on a simulator, so each iOS journey step that taps the menu button, a
+menu row, the Settings gear, the composer or Send checks the one thing that
+tap's action changes, and taps again when it did not change. `DEMO_CANCEL_TOUCHES=2`
+(touch ordinals, counting from 1) makes a DEBUG build cancel those touches the
+same way, to prove that a step does.
 
 ## In CI
 

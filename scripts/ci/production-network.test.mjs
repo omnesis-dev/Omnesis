@@ -130,6 +130,7 @@ const EXEMPT = {
     "tailnet-plan": "decides whether to run only",
     "tailnet-preflight": "checks credentials only",
     "tailnet-fixture": "builds fixtures only",
+    "tailnet-seated": "reads this run's jobs only",
     "tailnet-gateway": "Tailscale takes over the runner's DNS",
     "tailnet-collector": "Tailscale takes over the runner's DNS",
   },
