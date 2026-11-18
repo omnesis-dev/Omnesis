@@ -157,7 +157,7 @@ class RecordingViewModel @Inject constructor(
         val current = _state.value
         // A recording the owner starts takes the place of an ambient episode.
         if (current.starting || (current.recording != null && !current.recording.ambient)) return
-        // See #863 — planned: starting while the gateway is unreachable.
+        // While the gateway is out of reach this is its last answer (RecordingAvailabilityMemory).
         if (current.availability != RecordingAvailability.Availability.AVAILABLE) return
         RecordingForegroundService.start(context, current.title.trim().ifEmpty { null }, current.startInput)
         _state.update { it.copy(title = "", starting = true) }
