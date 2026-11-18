@@ -659,7 +659,7 @@ export function AccessView({
                 ? html`This can be a private network address. ${hostedHint.map((part) => typeof part === "string"
                     ? part
                     : html`<a href=${part.route} onClick=${(event) => { event.preventDefault(); navigate(part.route); }}>${part.text}</a>`)}`
-                : "This can be a private network address; ChatGPT and Claude apps need an Internet-reachable address."}
+                : "This can be a private network address; ChatGPT, Claude apps and Grok bot need an Internet-reachable address."}
             </span>
           </div>`
         : null}

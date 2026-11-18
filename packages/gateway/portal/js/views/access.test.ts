@@ -1717,7 +1717,7 @@ describe("AccessView", () => {
     const warned = [...host.querySelectorAll("button[data-agent]")]
       .filter((card) => card.querySelector(".access-agent-warning"))
       .map((card) => card.getAttribute("data-agent"));
-    expect(warned).toEqual(["chatgpt", "claude-apps"]);
+    expect(warned).toEqual(["chatgpt", "claude-apps", "grok-bot"]);
     expect(host.querySelector("button[data-agent='chatgpt'] .access-agent-warning")?.getAttribute("aria-label")).toBe(
       "Cannot connect to this gateway",
     );

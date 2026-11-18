@@ -4,10 +4,12 @@
 import { describe, expect, test } from "vitest";
 
 import {
+  isLoopbackUrl,
   narrowOAuthOverviewUrls,
   resolveMetadataRequestResource,
   resolveMcpRequestResource,
   resolveOAuthMetadataPaths,
+  resolveLocalOAuthUrls,
   resolveOAuthUrls,
   resolveOAuthOverviewUrls,
   resolveOAuthResourceUrls,
@@ -119,6 +121,55 @@ describe("resolveOAuthUrls", () => {
   });
 });
 
+test("a request from the gateway's own machine signs in at its loopback origin even with a public address", () => {
+  const configured = "https://gateway.example.com/omnesis";
+  // A loopback Host alone proves nothing: a proxy or Tailscale passes on what the client sent.
+  expect(resolveOAuthUrls("https://localhost:7600/oauth/token", configured)?.issuer).toBe(
+    configured,
+  );
+  const local = resolveOAuthUrls("https://localhost:7600/oauth/token", configured, [], [], {
+    local: true,
+  })!;
+  expect(local).toMatchObject({
+    issuer: "https://localhost:7600",
+    resource: "https://localhost:7600/mcp",
+    issuerResources: ["https://localhost:7600/mcp"],
+  });
+  expect(local.supportedResources).toEqual([
+    "https://gateway.example.com/omnesis/mcp",
+    "https://localhost:7600/mcp",
+  ]);
+  // Every other Host still gets the configured issuer, and its metadata paths are unchanged.
+  expect(resolveOAuthUrls("https://other.example.org/oauth/token", configured)?.issuer).toBe(
+    configured,
+  );
+  expect(resolveOAuthMetadataPaths(configured)?.authorizationServer).toBe(
+    "/.well-known/oauth-authorization-server/omnesis",
+  );
+  // A loopback address the configuration lists signs in through the issuer configured for it.
+  const listed = resolveOAuthUrls(
+    "https://127.0.0.1:7600/oauth/token",
+    "https://localhost:7600",
+    ["https://127.0.0.1:7600/mcp"],
+    [],
+    { local: true },
+  );
+  expect(listed?.issuer).toBe("https://localhost:7600");
+  expect(listed?.issuerResources).toContain("https://127.0.0.1:7600/mcp");
+  // With no listed resources, only the public address's origin is configured.
+  expect(
+    resolveOAuthUrls("https://localhost:7600/oauth/token", configured, undefined, [], {
+      local: true,
+    })?.issuer,
+  ).toBe("https://localhost:7600");
+  // A listed resource that is not an address leaves no issuer to sign in through.
+  expect(
+    resolveOAuthUrls("https://localhost:7600/oauth/token", configured, ["not a URL"], [], {
+      local: true,
+    }),
+  ).toBeNull();
+});
+
 describe("local OAuth setup overview", () => {
   test("advertises the actual loopback listener without enabling remote OAuth", () => {
     const remote = "https://gateway.example.org/portal/api/access";
@@ -127,6 +178,30 @@ describe("local OAuth setup overview", () => {
       `${local}/mcp`,
     );
     expect(resolveOAuthUrls(remote)).toBeNull();
+    // With a public address the overview offers it, even to a portal open on the gateway's machine.
+    for (const portal of [remote, `${local}/admin/access`]) {
+      const configured = resolveOAuthOverviewUrls(
+        portal,
+        "https://gateway.example.com",
+        undefined,
+        local,
+      )!;
+      expect(configured.resource).toBe("https://gateway.example.com/mcp");
+      expect(configured.supportedResources).toEqual(["https://gateway.example.com/mcp"]);
+    }
+    // And when none of its addresses answers, the loopback one alone still does.
+    expect(
+      resolveLocalOAuthUrls(local, "https://gateway.example.com", [
+        "https://other.example.net/mcp",
+      ]),
+    ).toMatchObject({
+      issuer: local,
+      resource: `${local}/mcp`,
+      supportedResources: [`${local}/mcp`],
+      issuerResources: [`${local}/mcp`],
+    });
+    expect(resolveLocalOAuthUrls(undefined, "https://gateway.example.com")).toBeNull();
+    expect(resolveLocalOAuthUrls("https://external.example.org")).toBeNull();
     expect(
       resolveOAuthOverviewUrls(remote, undefined, undefined, "https://external.example.org"),
     ).toBeNull();
@@ -201,6 +276,8 @@ test("loopback IPv6 fallback and invalid metadata configuration stay bounded", (
   expect(resolveOAuthUrls("https://[::1]:7600/mcp")?.issuer).toBe("https://[::1]:7600");
   expect(resolveOAuthMetadataPaths("http://insecure.example")).toBeNull();
   expect(resolveOAuthOverviewUrls("https://external.example")).toBeNull();
+  expect(isLoopbackUrl("https://[::1]:7600/mcp")).toBe(true);
+  expect(isLoopbackUrl("not a URL")).toBe(false);
 });
 
 test("malformed or unknown MCP metadata cannot select an audience, while exact configured metadata does", () => {

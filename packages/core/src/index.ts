@@ -1463,7 +1463,6 @@ export {
   createWindowsPrivateFile,
   readWindowsRegularFilePrefix,
 } from "./windows-private-file.js";
-export { tailscaleEmbedEnabled } from "./tailscale-embed-enabled.js";
 export {
   DEFAULT_TAILSCALE_DEVICE_NAME,
   isTailscaleNodeIdentity,

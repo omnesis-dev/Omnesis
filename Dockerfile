@@ -95,8 +95,8 @@ RUN --mount=type=bind,from=workspace-install,source=/app/node_modules,target=/op
 RUN node --input-type=module -e 'import { stageWorkspaceDependencies } from "./scripts/runtime/stage-runtime.mjs"; stageWorkspaceDependencies("/opt/workspace-dependencies")'
 
 # ── Tailscale helper ──────────────────────────────────────────────────────────
-# The Go program the gateway runs, only with OMNESIS_TAILSCALE_EMBED_ENABLED=1,
-# to join its owner's Tailscale network as its own device. Built on the build
+# The Go program the gateway runs, once its owner turns the device on, to join
+# their Tailscale network as its own device. Built on the build
 # machine and cross-compiled for the image's architecture, so a multi-arch
 # build never runs Go under emulation. Statically linked: nothing in the
 # runtime image has to match it.
@@ -161,7 +161,7 @@ ENV HOME=/home/omnesis \
 FROM runtime-base AS gateway-runtime
 COPY --from=runtime-build /opt/omnesis-runtime/packages ./packages
 COPY --from=runtime-build --chmod=0555 /app/scripts/seeded-state ./scripts/seeded-state
-# Inert unless the gateway runs with OMNESIS_TAILSCALE_EMBED_ENABLED=1.
+# Idle until the owner turns on the gateway's own Tailscale device.
 COPY --from=tailnet-helper --chmod=0555 /out/omnesis-tailnet /usr/local/bin/omnesis-tailnet
 ENV OMNESIS_TAILSCALE_HELPER=/usr/local/bin/omnesis-tailnet
 EXPOSE 7600

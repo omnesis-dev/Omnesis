@@ -3,8 +3,8 @@
 
 /**
  * The HTTP shapes of the gateway's own Tailscale device, shared by the gateway
- * that answers and the CLI that reads them. Present only with
- * OMNESIS_TAILSCALE_EMBED_ENABLED=1.
+ * that answers and the CLI that reads them. Present on a gateway whose
+ * installation includes the helper program.
  */
 
 import { z } from "zod";

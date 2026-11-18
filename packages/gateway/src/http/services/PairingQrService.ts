@@ -16,7 +16,6 @@ import {
   pairingReachRank,
   relayPairingAddressOption,
   swapHost,
-  tailscaleEmbedEnabled,
   type HostNetwork,
   type NetworkIdentity,
   type PairingAddressOption,
@@ -262,7 +261,7 @@ export class PairingQrService {
 
   /** The gateway's own tailnet address for this request, its origin canonical, or null. */
   private tailnetAddress(): TailnetPairingAddress | null {
-    if (!tailscaleEmbedEnabled() || !this.options.tailnetAddress) return null;
+    if (!this.options.tailnetAddress) return null;
     const address = this.options.tailnetAddress();
     if (!address) return null;
     try {

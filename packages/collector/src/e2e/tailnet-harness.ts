@@ -35,12 +35,12 @@ import { createServer, type AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import { ownedProcessCleanupReceipt } from "@omnesis/core";
 import { createTestPki, type TestPki } from "./fixture-pki.js";
 import { e2eGatewayEnv, e2eTsxCommand, gatewayBootBudgetMs } from "./gateway-env.js";
 import { killSubprocessGroup, registerSubprocessGroup } from "./subprocess-reaper.js";
 import { tailnetMachineEnv, tailnetFixtureEnv } from "./tailnet-machine-env.js";
 import type { PortableTestTailnet } from "./portable-tailnet-harness.js";
-import { ownedProcessCleanupReceipt } from "@omnesis/core";
 import { spawnE2ESubprocess } from "./e2e-owned-process.js";
 import { stopTailnetCommands, tailnetCleanupError } from "./tailnet-command-processes.js";
 import { TAILNET_DOMAIN } from "./tailnet-fixture-addresses.js";
@@ -470,7 +470,6 @@ export class TailnetGateway {
         env: tailnetFixtureEnv({
           ...e2eGatewayEnv(),
           ...this.extraEnv,
-          OMNESIS_TAILSCALE_EMBED_ENABLED: "1",
           OMNESIS_TAILSCALE_HELPER: this.tailnet.tools.helper,
           OMNESIS_TAILSCALE_EMBED_TEST_CONTROL_URL: this.tailnet.controlUrl,
           OMNESIS_TLS_CERT: this.certFile,

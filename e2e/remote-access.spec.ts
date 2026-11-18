@@ -168,9 +168,9 @@ async function remoteGateway(page: Page, flags: { cloudRelay: boolean; tailscale
       });
     if (method === "PATCH") {
       if (body.first) state.remote.first = body.first;
-      for (const [id, enabled] of Object.entries((body.mcp ?? {}) as Record<string, boolean>))
+      for (const [id, reach] of Object.entries((body.mcp ?? {}) as Record<string, string>))
         state.remote.mcpAddresses = state.remote.mcpAddresses.map((row: Json) =>
-          row.id === id ? { ...row, enabled } : row,
+          row.id === id ? { ...row, reach } : row,
         );
       if (body.setupCompleted !== undefined)
         state.remote.setupCompletedAt = body.setupCompleted ? "2028-01-01T00:00:00Z" : null;
@@ -235,6 +235,10 @@ test("without the relay or Tailscale, Connectivity still offers this computer's 
   page.on("request", (request) => {
     if (/\/admin\/(cloud-relay|tailscale)/.test(request.url())) requested.push(request.url());
   });
+  // A gateway without the relay, and installed without the Tailscale helper program.
+  await page.route("**/status", (route) =>
+    amend(route, (body) => ({ ...body, cloudRelay: false, tailscaleEmbed: false })),
+  );
   await signIn(page);
   // The tab's earlier address leads to it.
   await page.goto("/portal/settings/remote-access");
@@ -360,9 +364,12 @@ test("my own setup: Tailscale on this computer refused with its command, and my 
     "tailscale serve --bg https+insecure://localhost:7600",
   );
   // A public address needs nothing set on the gateway first.
-  await page.getByText("Also reachable from the Internet (Tailscale Funnel)").click();
+  const internet = page.getByText(
+    "Also reachable from the Internet, for the portal and devices without Tailscale (Tailscale Funnel)",
+  );
+  await internet.click();
   await expect(button(page, "Set it up for me")).toBeEnabled();
-  await page.getByText("Also reachable from the Internet (Tailscale Funnel)").click();
+  await internet.click();
 
   await page.locator("#remote-access-way-domain").check();
   await page.locator("#remote-access-own-url").fill("https://omnesis.example.org");
@@ -387,18 +394,24 @@ test("my own setup: Tailscale on this computer refused with its command, and my 
   expect(overflow).toBeLessThanOrEqual(0);
 });
 
-test("the MCP server: the setup's last step and its own page turn each address on or off", async ({
+test("the MCP server: the setup's last step and its own page set how far each address answers", async ({
   page,
 }) => {
   const gateway = await remoteGateway(page, { cloudRelay: false, tailscaleEmbed: true });
   gateway.state.host = { ...gateway.state.host, servesGateway: true };
   gateway.state.remote.mcpAddresses = [
-    { id: "host", url: "https://studio.example-net.ts.net", enabled: true, available: true },
+    {
+      id: "host",
+      url: "https://studio.example-net.ts.net",
+      reach: "private",
+      choices: ["off", "private", "public"],
+      available: true,
+    },
   ];
   await signIn(page);
   await page.goto("/portal/settings/connectivity");
   await expect(page.locator(".remote-access-summary")).toContainText(
-    "On Tailscale on this computer.",
+    "On Tailscale on this computer (your Tailscale network only).",
   );
   await button(page, "Run the setup again").click();
   await expect(page.locator(".access-wizard-steps button")).toHaveText([
@@ -408,17 +421,18 @@ test("the MCP server: the setup's last step and its own page turn each address o
   await button(page, "Continue").click();
   await expect(heading(page)).toHaveText("Where may agents reach your MCP server?");
   await expect(page.getByText("https://studio.example-net.ts.net/mcp")).toBeVisible();
-  await page.getByRole("checkbox", { name: /^Tailscale on this computer/ }).uncheck();
+  const choice = (reach: string) =>
+    page.locator(`input[name="remote-access-mcp-host"][value="${reach}"]`);
+  await expect(choice("private")).toBeChecked();
+  await choice("off").check();
   await expect
     .poll(() => gateway.calls.filter(([, path]) => path === "/admin/remote-access"))
-    .toEqual([["remote", "/admin/remote-access", { mcp: { host: false } }]]);
+    .toEqual([["remote", "/admin/remote-access", { mcp: { host: "off" } }]]);
   await button(page, "Finish").click();
   await expect(page.locator(".remote-access-summary")).toContainText(
     "Off on every address away from home.",
   );
   await page.goto("/portal/settings/mcp");
   await expect(page.locator(".config-tab.active")).toHaveText("Connectivity");
-  await expect(
-    page.getByRole("checkbox", { name: /^Tailscale on this computer/ }),
-  ).not.toBeChecked();
+  await expect(choice("off")).toBeChecked();
 });

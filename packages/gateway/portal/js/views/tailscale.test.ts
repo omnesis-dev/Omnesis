@@ -126,7 +126,7 @@ describe("TailscaleView", () => {
     await show(off());
     expect(pill()).toBe("Off");
     expect(text()).toContain("nothing is installed on this computer");
-    expect(host.querySelector(".tailscale-switch")).toBeNull();
+    expect(host.querySelector("#tailscale-public-title")).toBeNull();
     expect(host.querySelector('input[name="tailscale-join-policy"]')).toBeNull();
     api.setTailscaleEnabled.mockResolvedValue(off({ enabled: true, helper: { state: "starting" }, connection: "starting" }));
     await click("Turn on");
@@ -236,15 +236,15 @@ describe("TailscaleView", () => {
     expect(host.querySelector(".tailscale-details pre")?.textContent).toBe("acme: rate limited");
   });
 
-  test("the public switch saves publicAccess and each public state reads plainly", async () => {
+  test("the public address is chosen on the MCP server page, and each of its states reads plainly", async () => {
     await show(connected());
-    const toggle = host.querySelector(".tailscale-switch") as HTMLButtonElement;
-    expect(toggle.getAttribute("aria-checked")).toBe("false");
-    api.updateTailscaleSettings.mockResolvedValue(connected({ public: { wanted: true, state: "starting" } }));
-    await act(async () => toggle.click());
-    await act(async () => {});
-    expect(api.updateTailscaleSettings).toHaveBeenCalledWith({ publicAccess: true }, expect.anything());
-    expect(toggle.getAttribute("aria-checked")).toBe("true");
+    expect(text()).toContain("Off: this device answers on your Tailscale network only.");
+    expect(link("MCP server page").getAttribute("href")).toBe("/portal/settings/mcp");
+    expect(host.querySelector('[role="switch"]')).toBeNull();
+
+    render(null, host);
+    await show(connected({ public: { wanted: true, state: "starting" } }));
+    expect(text()).toContain("On: ChatGPT and Claude's cloud connectors can reach your MCP server");
     expect(text()).toContain("Opening…");
 
     render(null, host);
@@ -273,7 +273,7 @@ describe("TailscaleView", () => {
 
   test("the public address and joining devices wait for the connection", async () => {
     await show(off({ enabled: true, helper: { state: "running" }, connection: "needs-sign-in", public: { wanted: true, state: "off" } }));
-    expect(host.querySelector(".tailscale-switch")).toBeNull();
+    expect(host.querySelector("#tailscale-public-title")).toBeNull();
     expect(host.querySelector('input[name="tailscale-join-policy"]')).toBeNull();
     expect(host.querySelector(".tailscale-panel .tailscale-device #tailscale-device-name")).not.toBeNull();
     expect(host.querySelector("details")).toBeNull();

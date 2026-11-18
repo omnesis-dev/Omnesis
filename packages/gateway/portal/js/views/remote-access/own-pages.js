@@ -35,7 +35,7 @@ export function HostTailscaleView() {
     title="Tailscale on this computer"
     blurb="Serve this gateway from the Tailscale app already on this computer, on your Tailscale network or publicly."
   >
-    ${(remote, setRemote) => html`<${HostTailscale} remote=${remote} setRemote=${setRemote} />`}
+    ${(remote, setRemote) => html`<${HostTailscale} remote=${remote} setRemote=${setRemote} offerStop />`}
   <//>`;
 }
 
@@ -52,7 +52,7 @@ export function OwnAddressView() {
 export function McpView() {
   return html`<${Page}
     title="MCP server"
-    blurb="Agents like ChatGPT, Claude or Codex connect to an MCP address. Choose the addresses away from home that offer it."
+    blurb="Agents like ChatGPT, Claude or Codex connect to an MCP address. Choose how far each address away from home offers it."
   >
     ${(remote, setRemote) => html`<${McpChoice} remote=${remote} setRemote=${setRemote} />`}
   <//>`;

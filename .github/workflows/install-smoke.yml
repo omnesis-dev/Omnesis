@@ -46,7 +46,11 @@ jobs:
       - name: Install dependencies
         run: scripts/ci/npm-ci.sh
 
+      # The npm packages carry the TypeScript; the Tailscale helper is built by a
+      # source checkout's own `npm run build`.
       - name: Build packages
+        env:
+          OMNESIS_TAILNET_HELPER_BUILD: "0"
         run: npm run build
 
       # Verdaccio serves as a local npm registry so we test the real publish →

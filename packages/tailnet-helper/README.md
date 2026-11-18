@@ -1,27 +1,26 @@
-# Omnesis embedded Tailscale (experimental)
+# Omnesis embedded Tailscale
 
-With `OMNESIS_TAILSCALE_EMBED_ENABLED=1`, an Omnesis gateway can join its
-owner's Tailscale network as its own device, called `omnesis`, without
-Tailscale being installed on its computer. This package is the small Go
-program that does it, built on Tailscale's embeddable library (tsnet). The
-gateway starts it, talks to it over standard input and output, and stops it
-by closing its input.
+An Omnesis gateway can join its owner's Tailscale network as its own device,
+called `omnesis`, without Tailscale being installed on its computer. This
+package is the small Go program that does it, built on Tailscale's embeddable
+library (tsnet). The gateway starts it, talks to it over standard input and
+output, and stops it by closing its input.
 
-The flag is independent of `OMNESIS_EXPERIMENTAL`. Without it nothing
-changes: no settings tab, no `omnesis tailscale` command, no new fields in
-`/health` or `/status`, and the program is never started. A gateway that
-merely finds Tailscale installed on its computer keeps working as before
-either way; the two can run side by side.
+A gateway has the device when its installation includes this program: the
+Docker image does, and a source checkout builds it (see below). Without the
+program nothing changes: no settings tab, no new fields in `/health` or
+`/status`, and `omnesis tailscale` says the gateway has no device. With it,
+the device stays idle and writes nothing until the owner turns it on. A
+gateway that also finds Tailscale installed on its computer can use both side
+by side.
 
 ## Using it
 
-Set `OMNESIS_TAILSCALE_EMBED_ENABLED=1` for the gateway (and for the CLI
-where you run `omnesis tailscale` commands), then open **Settings → Tailscale**
-in the portal, or run `omnesis tailscale on`. Sign in from the link or QR code
-it shows. The gateway is then reachable from every device on your tailnet at
-`https://omnesis.<your-tailnet>.ts.net`, with a publicly trusted certificate
-when the tailnet has HTTPS certificates turned on, and with the gateway's own
-certificate otherwise.
+Open **Settings → Tailscale** in the portal, or run `omnesis tailscale on`.
+Sign in from the link or QR code it shows. The gateway is then reachable from
+every device on your tailnet at `https://omnesis.<your-tailnet>.ts.net`, with a
+publicly trusted certificate when the tailnet has HTTPS certificates turned on,
+and with the gateway's own certificate otherwise.
 
 - **Public address for cloud agents** (`omnesis tailscale public on`): opens
   only what ChatGPT and Claude's connectors need to connect and sign in —
@@ -42,9 +41,14 @@ ask|automatic|off`, default `ask`): on a collector's machine that runs
 - **Docker**: the gateway image carries the program and sets
   `OMNESIS_TAILSCALE_HELPER`. The device's identity is kept under the config
   volume (`<config>/tailscale/`), so updates keep it signed in.
-- **From source**: build the program with `npm run tailnet-helper:build`
-  (needs the Go version in `go.mod`), or point `OMNESIS_TAILSCALE_HELPER` at a
-  copy.
+- **From source**: a source install's `npm run build` builds the program, on
+  install and on every update, with the Go installed on the machine when it is
+  at least the version in `go.mod`, or else with that version of Go, which it
+  downloads from go.dev, checks against the SHA-256 recorded in
+  `scripts/tailnet-helper/go-toolchain.json`, and keeps under `.go/` here with
+  the build's caches. A failure there warns and leaves the rest of the build
+  alone; `npm run tailnet-helper:build` builds the program by itself. Or point
+  `OMNESIS_TAILSCALE_HELPER` at a copy.
 
 ## How it works
 

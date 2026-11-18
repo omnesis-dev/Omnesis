@@ -9,6 +9,7 @@ import { HTTPException } from "hono/http-exception";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { SCOPE_ADMIN } from "@omnesis/types";
 import { AddressChecks } from "../../remote-access/address-check.js";
+import { HostAccess } from "../../remote-access/host-access.js";
 import { McpAddresses } from "../../remote-access/mcp-addresses.js";
 import { fixedPublicAddress, type PublicAddressSource } from "../../public-address.js";
 import { RemoteAccessSettingsStore } from "../../remote-access/settings.js";
@@ -34,6 +35,7 @@ function app({
   stepUp = false,
   configured = null as string | null,
   hostRunning = false,
+  device = false,
   publicAddress = fixedPublicAddress(configured ?? undefined) as PublicAddressSource,
 } = {}) {
   const host = {
@@ -42,6 +44,7 @@ function app({
         ? {
             state: "available",
             dnsName: "studio.example-net.ts.net",
+            version: "1.104.6",
             url: "https://studio.example-net.ts.net",
             servesGateway: true,
             publicGateway: false,
@@ -52,6 +55,7 @@ function app({
           },
     ),
     publish: vi.fn(async () => ({ ok: true, url: "https://studio.example-net.ts.net" })),
+    unpublish: vi.fn(async () => ({ ok: true })),
   } as unknown as HostTailscaleService;
   const checks = new AddressChecks({
     resolve: async () => "203.0.113.7",
@@ -89,11 +93,13 @@ function app({
   const tailscale = {
     tailnetOrigin: () => "https://omnesis-gw.example-net.ts.net",
     settings: { get: () => ({ publicAccess }) },
+    state: () => ({ public: { state: publicAccess ? "on" : "off" } }),
     updateSettings: vi.fn(async (patch: { publicAccess?: boolean }) => {
       publicAccess = patch.publicAccess ?? publicAccess;
       return {} as never;
     }),
   };
+  const hostAccess = new HostAccess(host, settings);
   mountRemoteAccessRoutes(router, {
     settings,
     checks,
@@ -105,11 +111,18 @@ function app({
         origin: "https://gw-fictional.relay.example.net",
         serving: true,
       }),
-      tailscale: tailscale as unknown as ConstructorParameters<typeof McpAddresses>[0]["tailscale"],
-      hostTailscale: host,
+      ...(device
+        ? {
+            tailscale: tailscale as unknown as ConstructorParameters<
+              typeof McpAddresses
+            >[0]["tailscale"],
+          }
+        : {}),
+      host: hostAccess,
     }),
-    hostTailscale: host,
+    hostAccess,
     publicAddress,
+    tailscaleEmbed: device,
   });
   const send = (
     method: string,
@@ -187,18 +200,30 @@ describe("remote access routes", () => {
         {
           id: "relay",
           url: "https://gw-fictional.relay.example.net",
-          enabled: true,
+          reach: "public",
+          choices: ["off", "public"],
           available: true,
         },
-        { id: "host", url: null, enabled: true, available: false },
-        { id: "domain", url: "https://omnesis.example.org", enabled: true, available: true },
+        {
+          id: "host",
+          url: null,
+          reach: "private",
+          choices: ["off", "private", "public"],
+          available: false,
+        },
+        {
+          id: "domain",
+          url: "https://omnesis.example.org",
+          reach: "on",
+          choices: ["off", "on"],
+          available: true,
+        },
       ],
     });
   });
 
   test("the setup records its order and when it was finished, and refuses an empty or unknown change", async () => {
-    vi.stubEnv("OMNESIS_TAILSCALE_EMBED_ENABLED", "1");
-    const { send } = app();
+    const { send } = app({ device: true });
     const changed = await (
       await send("PATCH", "/admin/remote-access", { first: "relay", setupCompleted: true })
     ).json();
@@ -268,9 +293,8 @@ describe("remote access routes", () => {
   });
 
   test("Tailscale on the host is read freely, and publishing it asks for a step-up where required", async () => {
-    vi.stubEnv("OMNESIS_TAILSCALE_EMBED_ENABLED", "1");
     vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
-    const { send, host } = app({ stepUp: true });
+    const { send, host } = app({ stepUp: true, device: true });
     expect((await send("GET", "/admin/remote-access/host-tailscale")).status).toBe(200);
     const refused = await send(
       "POST",
@@ -280,7 +304,7 @@ describe("remote access routes", () => {
     );
     expect(refused.status).toBe(428);
     expect(host.publish).not.toHaveBeenCalled();
-    const { send: plain, host: plainHost } = app();
+    const { send: plain, host: plainHost, settings } = app();
     expect(
       await (
         await plain("POST", "/admin/remote-access/host-tailscale/publish", { public: false })
@@ -290,14 +314,29 @@ describe("remote access routes", () => {
       url: "https://studio.example-net.ts.net",
     });
     expect(plainHost.publish).toHaveBeenCalledWith(false);
+    // The pages and device API stay off the Internet, as asked.
+    expect(settings.get().hostApi).toBe("private");
     expect(
       (await plain("POST", "/admin/remote-access/host-tailscale/publish", { public: "yes" }))
         .status,
     ).toBe(400);
   });
 
+  test("unpublishing Tailscale on the host only closes the gateway, so it never asks for a step-up", async () => {
+    vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
+    const { send, host } = app({ stepUp: true });
+    const res = await send(
+      "POST",
+      "/admin/remote-access/host-tailscale/unpublish",
+      {},
+      { "x-omnesis-cloud-relay": "1" },
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true });
+    expect(host.unpublish).toHaveBeenCalledTimes(1);
+  });
+
   test("a saved public address that is this computer's Tailscale name is said to be the host's", async () => {
-    vi.stubEnv("OMNESIS_TAILSCALE_EMBED_ENABLED", "1");
     const { send } = app({ configured: "https://studio.example-net.ts.net", hostRunning: true });
     const state = (await (await send("GET", "/admin/remote-access")).json()) as {
       publicBaseUrl: { way: string | null };
@@ -305,71 +344,79 @@ describe("remote access routes", () => {
     expect(state.publicBaseUrl.way).toBe("host");
   });
 
-  test("lists every address with its switch, on until the owner turns it off", async () => {
-    vi.stubEnv("OMNESIS_TAILSCALE_EMBED_ENABLED", "1");
+  test("lists every address with where MCP answers, as far as it reaches until the owner chooses", async () => {
     vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
     const { send, settings, tailscale } = app({
       configured: "https://omnesis.example.org",
       hostRunning: true,
+      device: true,
     });
-    const rows = (body: { mcpAddresses: Array<{ id: string; enabled: boolean }> }) =>
-      Object.fromEntries(body.mcpAddresses.map((row) => [row.id, row.enabled]));
+    const rows = (body: { mcpAddresses: Array<{ id: string; reach: string }> }) =>
+      Object.fromEntries(body.mcpAddresses.map((row) => [row.id, row.reach]));
     const before = await (await send("GET", "/admin/remote-access")).json();
-    expect(before.mcpAddresses).toEqual([
-      {
-        id: "relay",
-        url: "https://gw-fictional.relay.example.net",
-        enabled: true,
-        available: true,
-      },
-      {
-        id: "tailnet",
-        url: "https://omnesis-gw.example-net.ts.net",
-        enabled: true,
-        available: true,
-      },
-      {
-        id: "tailscalePublic",
-        url: "https://omnesis-gw.example-net.ts.net",
-        enabled: false,
-        available: true,
-      },
-      { id: "host", url: "https://studio.example-net.ts.net", enabled: true, available: true },
-      { id: "domain", url: "https://omnesis.example.org", enabled: true, available: true },
-    ]);
+    expect(before.features).toEqual({ cloudRelay: true, tailscaleEmbed: true });
+    expect(rows(before)).toEqual({
+      relay: "public",
+      tailnet: "private",
+      host: "private",
+      domain: "on",
+    });
     expect(before).not.toHaveProperty("mcp");
     const off = await send("PATCH", "/admin/remote-access", {
-      mcp: { relay: false, domain: false, host: false },
+      mcp: { relay: "off", domain: "off", host: "off" },
     });
     expect(off.status).toBe(200);
     const state = await off.json();
-    expect(rows(state)).toEqual({
-      relay: false,
-      tailnet: true,
-      tailscalePublic: false,
-      host: false,
-      domain: false,
-    });
+    expect(rows(state)).toEqual({ relay: "off", tailnet: "private", host: "off", domain: "off" });
     // The guided setup's own choices are untouched.
     expect(state).toMatchObject({ first: "tailscale", setupCompletedAt: null });
+    expect(state).not.toHaveProperty("mcpRefusal");
     expect(settings.get().mcp).toEqual({ relay: false, domain: false, host: false });
-    // The public Tailscale address goes through the Tailscale device's own setting.
-    const pub = await send("PATCH", "/admin/remote-access", { mcp: { tailscalePublic: true } });
-    expect(rows(await pub.json()).tailscalePublic).toBe(true);
+    // The device's public address goes through the Tailscale device's own setting.
+    const pub = await send("PATCH", "/admin/remote-access", { mcp: { tailnet: "public" } });
+    expect(rows(await pub.json()).tailnet).toBe("public");
     expect(tailscale.updateSettings).toHaveBeenCalledWith({ publicAccess: true });
     expect(settings.get().mcp).toEqual({ relay: false, domain: false, host: false });
   });
 
-  test("refuses an empty, unknown or malformed switch, and one for an address this gateway lacks", async () => {
+  test("MCP put on the Internet through this computer turns Funnel on, and a refusal names the command", async () => {
+    const { send, host, settings } = app({ hostRunning: true });
+    vi.mocked(host.publish).mockResolvedValueOnce({
+      ok: false,
+      reason: "This gateway is not allowed to change Tailscale on this computer.",
+      command: "tailscale funnel --bg https+insecure://localhost:7600",
+    });
+    const refused = await (
+      await send("PATCH", "/admin/remote-access", { mcp: { host: "public" } })
+    ).json();
+    expect(host.publish).toHaveBeenCalledWith(true);
+    expect(refused.mcpRefusal).toEqual({
+      ok: false,
+      reason: "This gateway is not allowed to change Tailscale on this computer.",
+      command: "tailscale funnel --bg https+insecure://localhost:7600",
+    });
+    // The choice is kept, so the command makes it so; until then MCP is not on the Internet.
+    expect(settings.get()).toMatchObject({ mcp: { host: "public" }, hostApi: "private" });
+    expect(refused.mcpAddresses.find((row: { id: string }) => row.id === "host").reach).toBe(
+      "private",
+    );
+    const res = await send("PATCH", "/admin/remote-access", { mcp: { host: "public" } });
+    expect(res.status).toBe(200);
+    expect(await res.json()).not.toHaveProperty("mcpRefusal");
+  });
+
+  test("refuses an empty, unknown or malformed choice, and one for an address this gateway lacks", async () => {
     vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
     const { send, settings } = app();
     for (const mcp of [
       {},
-      { carrier: false },
-      { funnel: false },
-      { domain: "off" },
-      { tailnet: false },
-      { tailscalePublic: true },
+      { carrier: "off" },
+      { funnel: "off" },
+      { domain: false },
+      { domain: "private" },
+      { relay: "private" },
+      { tailnet: "off" },
+      { tailscalePublic: "public" },
     ]) {
       expect(
         (await send("PATCH", "/admin/remote-access", { mcp })).status,
@@ -379,23 +426,22 @@ describe("remote access routes", () => {
     expect(settings.get().mcp).toBeUndefined();
   });
 
-  test("turning an address on asks for a step-up where required; turning one off never does", async () => {
-    vi.stubEnv("OMNESIS_TAILSCALE_EMBED_ENABLED", "1");
+  test("letting MCP answer further asks for a step-up where required; narrowing it never does", async () => {
     vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
-    const { send, settings, tailscale } = app({ stepUp: true });
+    const { send, settings, tailscale } = app({ stepUp: true, device: true });
     const viaRelay = { "x-omnesis-cloud-relay": "1" };
     const patch = (mcp: object) => send("PATCH", "/admin/remote-access", { mcp }, viaRelay);
-    expect((await patch({ domain: false, relay: false, host: false })).status).toBe(200);
-    // Already on: nothing loosens.
-    expect((await patch({ tailnet: true })).status).toBe(200);
-    expect((await patch({ domain: true })).status).toBe(428);
-    expect((await patch({ host: true })).status).toBe(428);
-    expect((await patch({ relay: true, tailnet: false })).status).toBe(428);
-    expect((await patch({ tailscalePublic: true })).status).toBe(428);
+    expect((await patch({ domain: "off", relay: "off", host: "off" })).status).toBe(200);
+    // Already so: nothing loosens.
+    expect((await patch({ tailnet: "private" })).status).toBe(200);
+    expect((await patch({ domain: "on" })).status).toBe(428);
+    expect((await patch({ host: "private" })).status).toBe(428);
+    expect((await patch({ relay: "public", tailnet: "off" })).status).toBe(428);
+    expect((await patch({ tailnet: "public" })).status).toBe(428);
     expect(tailscale.updateSettings).not.toHaveBeenCalled();
     expect(settings.get().mcp).toEqual({ domain: false, relay: false, host: false });
-    // Turning the public Tailscale address off is stricter, so it never asks.
-    expect((await patch({ tailscalePublic: false })).status).toBe(200);
+    // Keeping the device to the Tailscale network is stricter, so it never asks.
+    expect((await patch({ tailnet: "off" })).status).toBe(200);
     // The guided setup's other choices still never ask.
     expect((await send("PATCH", "/admin/remote-access", { first: "relay" }, viaRelay)).status).toBe(
       200,

@@ -572,10 +572,11 @@
         <p>
           Any client that speaks Streamable HTTP MCP and completes OAuth can connect to
           <code>/mcp</code>; clients that cannot do both are not supported. The client discovers the
-          gateway's OAuth metadata, signs in, and stores and refreshes its own tokens. Sign-in needs
-          <code>gateway.publicBaseUrl</code> set, as described below; only a client on the gateway's
-          own machine that connects over a loopback address can sign in without it. Where each
-          client runs decides which address it can use:
+          gateway's OAuth metadata, signs in, and stores and refreshes its own tokens. It signs in
+          at an address the gateway knows as its own: <code>gateway.publicBaseUrl</code>, the
+          address of Tailscale on the gateway's computer while it serves the gateway, or, for a
+          client on the gateway's own machine, a loopback address. Where each client runs decides
+          which address it can use:
         </p>
         <table>
           <thead>
@@ -618,6 +619,12 @@
               <td><a href="#chatgpt">ChatGPT</a></td>
             </tr>
             <tr>
+              <td>Grok bot</td>
+              <td>xAI's servers</td>
+              <td>a public HTTPS address</td>
+              <td><a href="#grok-bot">Grok bot</a></td>
+            </tr>
+            <tr>
               <td>Antigravity CLI</td>
               <td>your machine</td>
               <td>a configured HTTPS address its machine can reach</td>
@@ -637,31 +644,33 @@
           <code>gateway.publicBaseUrl</code> (or the <code>OMNESIS_PUBLIC_BASE_URL</code>
           environment variable) is the gateway's HTTPS address for MCP sign-in: the OAuth issuer
           every client remembers, so pick it once and keep it. A saved address takes effect at once,
-          with no restart; when the environment variable is set, it wins over the setting. Until it
-          is set,
-          <strong>Connect an agent</strong> offers a loopback address for agents running on the
-          gateway’s own machine; hosted clients and clients on other machines need a configured
-          address. This address can be private for local clients. A client on your machine, such as
-          Claude Code, Codex, OpenClaw or Hermes, can use this address or one listed in
+          with no restart; when the environment variable is set, it wins over the setting. This
+          address can be private for local clients. A client on your machine, such as Claude Code,
+          Codex, OpenClaw or Hermes, can use this address or one listed in
           <code>gateway.mcpResourceUrls</code>, as long as its machine can reach it.
         </p>
         <p>
+          Tailscale on the gateway's computer needs no setting: while it serves the gateway, its
+          MagicDNS name, with its port, is a sign-in address of its own, as listed in
+          <strong>Connect an agent</strong>. A client on the gateway's own machine can always sign
+          in at a loopback address such as <code>https://localhost:7600/mcp</code>, whatever else is
+          set; when no other address answers MCP, <strong>Connect an agent</strong> offers that one.
+        </p>
+        <p>
           Hosted connectors run on their provider's servers, so they can reach your gateway only at
-          an Internet-reachable HTTPS address, and that address must be
-          <code>gateway.publicBaseUrl</code> or one of the listed extras. A name that resolves only
-          inside your tailnet or your home network cannot serve them, and the request may fail
-          before the gateway sees it. <a href="#tailscale-funnel">Tailscale Funnel</a> publishes the
-          gateway's tailnet name without a domain of your own; a domain you own goes through
+          an Internet-reachable HTTPS address, and that address must be one of the addresses above.
+          A name that resolves only inside your tailnet or your home network cannot serve them, and
+          the request may fail before the gateway sees it.
+          <a href="#tailscale-funnel">Tailscale Funnel</a> publishes the gateway's tailnet name
+          without a domain of your own; a domain you own goes through
           <a href="setup#public-domain">From the Internet</a>.
         </p>
         <p>
           To accept sign-ins at more than one address, list each extra address as an exact
           <code>/mcp</code> URL in <code>gateway.mcpResourceUrls</code>, each on its own origin. The
           addresses share connections, but a token issued for one address is not valid at another.
-          Once <code>gateway.publicBaseUrl</code> is set, loopback is no longer accepted implicitly;
-          list it in <code>gateway.mcpResourceUrls</code> if a local client uses it. Keeping an old
-          address listed lets clients refresh while they move to the new one, though some clients
-          ask you to sign in again.
+          Keeping an old address listed lets clients refresh while they move to the new one, though
+          some clients ask you to sign in again.
         </p>
         <p>
           A reverse proxy in front of the gateway must forward the root-level
@@ -682,12 +691,16 @@
 
         <h3 id="mcp-per-address">MCP on each address</h3>
         <p>
-          The MCP server answers at every address the gateway has. To keep agents from reaching it
-          at one of them, turn that address off in
-          <strong>Settings → Connectivity → MCP server</strong>. An address turned off answers the
-          MCP endpoint and the OAuth routes an MCP client signs in through with <code>404</code>, as
-          a gateway without them would, and its discovery documents stop listing it; the portal and
-          your devices' own connections at that address are unaffected. Agents on the gateway's
+          The MCP server answers at every address the gateway has, as far as that address reaches.
+          <strong>Settings → Connectivity → MCP server</strong> sets it address by address. A
+          Tailscale address, of the gateway's own device or of Tailscale on its computer, has three
+          choices: off, <strong>Your Tailscale network</strong>, or
+          <strong>Your Tailscale network and the Internet</strong>, which publishes the MCP server
+          alone through Tailscale Funnel while the portal and your devices' connections stay on your
+          tailnet. Your own domain is on or off. An address where MCP does not answer returns
+          <code>404</code> for the MCP endpoint and the OAuth routes an MCP client signs in through,
+          as a gateway without them would, and its discovery documents stop listing it; the portal
+          and your devices' own connections at that address are unaffected. Agents on the gateway's
           machine and on your home network always reach the MCP server.
         </p>
 
@@ -703,12 +716,14 @@
           dialling port 7600 as before. Publish on 443: ChatGPT connects only on that port.
         </p>
         <p>
-          The portal can do this for you: in <strong>Settings → Connectivity</strong>, open
-          <strong>Tailscale on this computer</strong>, tick
-          <strong>Also reachable from the Internet</strong> and press
-          <strong>Set it up for me</strong>. The gateway runs the command in step 2 and saves the
-          public address of step 3; if it may not change Tailscale, it shows the command to run
-          yourself. The steps below do the same by hand.
+          The portal can do this for you. In <strong>Settings → Connectivity</strong>, open
+          <strong>Tailscale on this computer</strong> and press <strong>Set it up for me</strong>,
+          then choose <strong>Your Tailscale network and the Internet</strong> for it under
+          <strong>MCP server</strong>: the gateway runs <code>tailscale funnel</code> and answers
+          only MCP through it. Tick <strong>Also reachable from the Internet</strong> on the first
+          page to publish the portal and your devices' connections too. If the gateway may not
+          change Tailscale, it shows the command to run yourself. The steps below publish the whole
+          gateway by hand.
         </p>
         <ol>
           <li>
@@ -728,9 +743,10 @@
             Internet client.
           </li>
           <li>
-            Set the public address, without a port. The gateway uses it at once: the portal's
+            The gateway finds the address itself: the portal's
             <strong>Connect an agent</strong> dialog then shows
-            <code>https://studio.tail-example.ts.net/mcp</code>.
+            <code>https://studio.tail-example.ts.net/mcp</code>. A gateway in a container cannot see
+            Tailscale on its host, so there set the public address, without a port.
           </li>
           <li>
             From a device outside the tailnet, such as a phone on mobile data, open
@@ -748,7 +764,7 @@
               <span class="t-prompt">❯</span>
               <span class="t-cmd">tailscale funnel --bg https+insecure://localhost:7600</span>
             </p>
-            <p class="t-dim"># step 3</p>
+            <p class="t-dim"># step 3, in a container only</p>
             <p>
               <span class="t-prompt">❯</span>
               <span class="t-cmd"
@@ -763,15 +779,20 @@
           sends. Keep port 7600 closed to the Internet.
         </p>
         <p>
-          Funnel publishes the whole gateway, not only <code>/mcp</code>. A connector needs the
-          discovery documents under <code>/.well-known/</code>, the sign-in endpoints under
-          <code>/oauth/</code>, and the approval page, which loads the portal's styles and scripts;
-          the portal's login page and the pairing endpoint become reachable from the Internet too.
-          Every route that returns your data still requires a device token, a portal session or an
-          approved OAuth token. Portal login and pairing are rate-limited per client address, and a
-          pairing code is single-use and expires in ten minutes. A connector's sign-in grants
-          nothing until you <a href="#approving-a-connection">approve it</a> in a signed-in portal
-          or a paired phone; the approval page alone shows only a code.
+          Funnel set up by hand publishes the whole gateway, not only <code>/mcp</code>, until you
+          untick <strong>Also reachable from the Internet</strong> on the portal's page for
+          Tailscale on this computer. From then on the gateway answers <code>404</code> to any
+          request Tailscale forwards from the Internet other than the MCP server and what an agent
+          signs in through; this needs Tailscale 1.104 or later, which marks those requests. A
+          connector needs the discovery documents under <code>/.well-known/</code>, the sign-in
+          endpoints under <code>/oauth/</code>, and the approval page, which loads the portal's
+          styles and scripts; while the whole gateway is published, the portal's login page and the
+          pairing endpoint are reachable from the Internet too. Every route that returns your data
+          still requires a device token, a portal session or an approved OAuth token. Portal login
+          and pairing are rate-limited per client address, and a pairing code is single-use and
+          expires in ten minutes. A connector's sign-in grants nothing until you
+          <a href="#approving-a-connection">approve it</a> in a signed-in portal or a paired phone;
+          the approval page alone shows only a code.
         </p>
         <p>
           The public address is also where the Notion, Outlook and Strava sources send their sign-in

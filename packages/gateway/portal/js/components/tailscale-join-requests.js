@@ -3,9 +3,8 @@
 
 // Collectors on the owner's Tailscale network that asked to join this gateway
 // and wait for a yes, shown on Settings → Devices with every other device
-// waiting for the owner's OK. Rendered only when the gateway runs with
-// OMNESIS_TAILSCALE_EMBED_ENABLED=1, which `/status` advertises as
-// `tailscaleEmbed: true`.
+// waiting for the owner's OK. Rendered only when the gateway has its own
+// Tailscale device, which `/status` advertises as `tailscaleEmbed: true`.
 
 import { html } from "htm/preact";
 import { useEffect, useRef, useState } from "preact/hooks";

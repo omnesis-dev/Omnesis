@@ -228,6 +228,15 @@
             Omnesis, though it may already have installed Node 24. On a machine with swap to spare,
             <code>OMNESIS_BUILD_MEMORY_MB=4096</code> builds anyway.
           </li>
+          <li>
+            <strong>About 1.5 GB of disk</strong> in the source checkout for the gateway's Tailscale
+            helper, the small program that gives the gateway its own Tailscale device. The build
+            uses Go when Go 1.27.4 or newer is installed; otherwise it downloads that version from
+            <code>go.dev</code>, checks it against its published checksum and keeps it inside the
+            checkout, with the helper's build caches, so updates reuse it. If the helper cannot be
+            built, the install still completes without the Tailscale device, and the next update
+            tries again.
+          </li>
         </ul>
         <div class="callout">
           <p>
@@ -1583,9 +1592,15 @@ Share /Users/maya/Documents/Vault with the collector, read-only? [Y/n]</pre>
 npm ci
 node scripts/ci/build-windows-sqlite.mjs
 node scripts/ci/build-windows-usearch.mjs
+npm run tailnet-helper:build
 $env:PATH = "$env:ProgramFiles\Git\usr\bin;$env:PATH"</pre>
           </div>
         </div>
+        <p>
+          <code>npm run tailnet-helper:build</code> builds the helper that gives the gateway its own
+          Tailscale device, with Go 1.27.4 or newer when it is installed, or else that version,
+          downloaded from <code>go.dev</code> and checked against its published checksum.
+        </p>
         <p>
           Windows has no automatic Omnesis OS-keyring backend. Set
           <code>OMNESIS_SECRET_STORE=passphrase</code> and supply a strong passphrase through

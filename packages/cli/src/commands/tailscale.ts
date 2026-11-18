@@ -4,8 +4,7 @@
 /**
  * `omnesis tailscale`: the gateway's own Tailscale device. The owner's
  * commands talk to the CLI's gateway; `join` runs on a collector's machine
- * and joins it to the gateway through that machine's Tailscale. The command
- * exists only with OMNESIS_TAILSCALE_EMBED_ENABLED=1.
+ * and joins it to the gateway through that machine's Tailscale.
  */
 
 import { hostname as osHostname } from "node:os";
@@ -17,7 +16,6 @@ import {
   ensureGatewayTrust,
   readPackageVersion,
   tailscaleAdminStateSchema,
-  tailscaleEmbedEnabled,
   tailscaleJoinPolicySchema,
   tailscaleJoinRequestSchema,
   writeSecretTextFileSync,
@@ -37,12 +35,21 @@ import {
 import { readLocalTailnet, requestJoin, type JoinTransport } from "../tailscale-join.js";
 import { getOrCreateInstallId, recordRedeemedCollector, redeemSuggestedName } from "./devices.js";
 
-function requireFlag(): void {
-  if (!tailscaleEmbedEnabled())
-    throw new CliError(
-      "Tailscale commands require OMNESIS_TAILSCALE_EMBED_ENABLED=1",
-      EXIT_USER_ERROR,
-    );
+/**
+ * The gateway's answer on one of its Tailscale device's routes. A gateway whose
+ * installation lacks the helper program has no such routes.
+ */
+async function tailscaleJson<T>(path: string, init: RequestInit = {}): Promise<T> {
+  try {
+    return await gatewayJson<T>(path, init);
+  } catch (error) {
+    if (error instanceof CliError && /^Gateway 404 /u.test(error.message))
+      throw new CliError(
+        "This gateway has no Tailscale device of its own: its installation does not include the Tailscale helper program.",
+        EXIT_USER_ERROR,
+      );
+    throw error;
+  }
 }
 
 /** The gateway's answer to GET /admin/tailscale. */
@@ -131,16 +138,16 @@ export function describeState(state: TailscaleState): string[] {
 }
 
 const asState = (body: unknown): TailscaleState => tailscaleAdminStateSchema.parse(body);
-const getState = async () => asState(await gatewayJson<unknown>("/admin/tailscale"));
+const getState = async () => asState(await tailscaleJson<unknown>("/admin/tailscale"));
 const post = (path: string, body?: unknown) =>
-  gatewayJson<unknown>(path, {
+  tailscaleJson<unknown>(path, {
     method: "POST",
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
 const postForState = async (path: string, body?: unknown) => asState(await post(path, body));
 const patch = async (body: unknown) =>
   asState(
-    await gatewayJson<unknown>("/admin/tailscale/settings", {
+    await tailscaleJson<unknown>("/admin/tailscale/settings", {
       method: "PATCH",
       body: JSON.stringify(body),
     }),
@@ -199,7 +206,6 @@ const statusCommand = defineCommand({
   meta: { name: "status", description: "Show the gateway's Tailscale device" },
   args: jsonArg,
   async run({ args }) {
-    requireFlag();
     print(await getState(), args.json === true);
   },
 });
@@ -211,7 +217,6 @@ const onCommand = defineCommand({
     "no-wait": { type: "boolean", description: "Return without waiting for the sign-in" },
   },
   async run({ args }) {
-    requireFlag();
     let state = await postForState("/admin/tailscale/enable", { enabled: true });
     if (!args["no-wait"] && !args.json) state = await waitForConnection(state);
     print(state, args.json === true);
@@ -225,7 +230,6 @@ const offCommand = defineCommand({
   },
   args: jsonArg,
   async run({ args }) {
-    requireFlag();
     print(await postForState("/admin/tailscale/enable", { enabled: false }), args.json === true);
   },
 });
@@ -234,7 +238,6 @@ const signInCommand = defineCommand({
   meta: { name: "sign-in", description: "Get a fresh Tailscale sign-in link" },
   args: jsonArg,
   async run({ args }) {
-    requireFlag();
     const state = await postForState("/admin/tailscale/sign-in");
     print(args.json ? state : await waitForConnection(state), args.json === true);
   },
@@ -244,7 +247,6 @@ const signOutCommand = defineCommand({
   meta: { name: "sign-out", description: "Sign the gateway's device out of Tailscale" },
   args: jsonArg,
   async run({ args }) {
-    requireFlag();
     print(await postForState("/admin/tailscale/sign-out"), args.json === true);
   },
 });
@@ -259,7 +261,6 @@ const publicCommand = defineCommand({
   meta: { name: "public", description: "Open or close the public address cloud agents use" },
   args: { state: { type: "positional", required: true, description: "on | off" }, ...jsonArg },
   async run({ args }) {
-    requireFlag();
     const wanted = onOff(args.state, "Usage: omnesis tailscale public on|off");
     print(await patch({ publicAccess: wanted }), args.json === true);
   },
@@ -275,7 +276,6 @@ const joiningCommand = defineCommand({
     ...jsonArg,
   },
   async run({ args }) {
-    requireFlag();
     const policy = tailscaleJoinPolicySchema.safeParse(String(args.policy));
     if (!policy.success)
       throw new CliError("Usage: omnesis tailscale joining ask|automatic|off", EXIT_USER_ERROR);
@@ -290,7 +290,6 @@ const nameCommand = defineCommand({
     ...jsonArg,
   },
   async run({ args }) {
-    requireFlag();
     print(await patch({ deviceName: String(args.name) }), args.json === true);
   },
 });
@@ -299,10 +298,9 @@ const requestsCommand = defineCommand({
   meta: { name: "requests", description: "List collectors waiting to join through Tailscale" },
   args: jsonArg,
   async run({ args }) {
-    requireFlag();
     const { requests } = z
       .object({ requests: z.array(tailscaleJoinRequestSchema) })
-      .parse(await gatewayJson<unknown>("/admin/tailscale/join-requests"));
+      .parse(await tailscaleJson<unknown>("/admin/tailscale/join-requests"));
     if (args.json) {
       console.log(JSON.stringify(requests, null, 2));
       return;
@@ -329,7 +327,6 @@ function decisionCommand(approve: boolean) {
       },
     },
     async run({ args }) {
-      requireFlag();
       await post(`/admin/tailscale/join-requests/${encodeURIComponent(String(args.id))}/decision`, {
         approve,
       });
@@ -410,7 +407,6 @@ const joinCommand = defineCommand({
     yes: { type: "boolean", description: "Join without asking for confirmation" },
   },
   async run({ args }) {
-    requireFlag();
     let origin: string;
     if (typeof args.gateway === "string" && args.gateway.trim()) {
       origin = gatewayOrigin(args.gateway.trim());

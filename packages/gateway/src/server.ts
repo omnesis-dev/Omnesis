@@ -24,9 +24,11 @@ import {
   type DeviceId,
   type DeviceRecord,
 } from "@omnesis/types";
+import { resolveRequestOAuthUrls } from "./http/oauth-request.js";
 import { mountTailscaleRoutes } from "./http/routes/tailscale.js";
 import { mountRemoteAccessRoutes } from "./http/routes/remote-access.js";
 import { AddressChecks } from "./remote-access/address-check.js";
+import { HostAccess } from "./remote-access/host-access.js";
 import { HostTailscaleService } from "./remote-access/host-tailscale.js";
 import { RemoteAccessSettingsStore } from "./remote-access/settings.js";
 import { McpAddresses, relayStateFrom } from "./remote-access/mcp-addresses.js";
@@ -180,7 +182,7 @@ import { mountLegacyMcpCutoverRoute } from "./http/routes/legacy-mcp-cutover.js"
 import { AccessService } from "./access/service.js";
 import { resolveDeviceAnswerScope } from "./access/device-answer-scope.js";
 import { pendingCertificateOrigins } from "./access/certificate-pending.js";
-import { resolveMcpRequestResource, resolveOAuthUrls } from "./access/oauth-urls.js";
+import { resolveMcpRequestResource } from "./access/oauth-urls.js";
 import { mountSubscriptionRoutes } from "./http/routes/subscriptions.js";
 import { mountNotificationRoutes } from "./http/routes/notifications.js";
 import { mountMobilePermissionHealthRoute } from "./http/routes/mobile-permission-health.js";
@@ -697,7 +699,7 @@ export function createServer(
     }) => void;
     /** A device joined with nobody approving it; see `PairingServiceDeps`. */
     onDeviceJoined?: import("./http/services/PairingService.js").PairingServiceDeps["onDeviceJoined"];
-    /** The gateway's own tailnet device; present only with OMNESIS_TAILSCALE_EMBED_ENABLED=1. */
+    /** The gateway's own tailnet device; present when the installation has its helper program. */
     tailscaleEmbed?: import("./tailscale-embed/service.js").TailscaleEmbedService;
     /** The Omnesis relay origin the gateway is enrolled under; only with the relay opt-in. */
     relayPublicOrigin?: () => string | undefined;
@@ -741,6 +743,11 @@ export function createServer(
     : undefined;
   // Tailscale already on this computer forwards to the port the gateway listens on.
   const hostTailscale = opts?.port ? new HostTailscaleService(opts.port) : undefined;
+  // What it lets the Internet reach through Funnel, under the owner's choices.
+  const hostAccess =
+    hostTailscale && remoteAccessSettings
+      ? new HostAccess(hostTailscale, remoteAccessSettings)
+      : undefined;
   // Which addresses away from home answer MCP; enforced wherever the owner's choices are kept.
   const mcpAddresses = remoteAccessSettings
     ? new McpAddresses({
@@ -751,9 +758,19 @@ export function createServer(
           ? { relayState: relayStateFrom(opts.cloudRelayManagement) }
           : {}),
         ...(opts?.tailscaleEmbed ? { tailscale: opts.tailscaleEmbed } : {}),
-        ...(hostTailscale ? { hostTailscale } : {}),
+        ...(hostAccess ? { host: hostAccess } : {}),
       })
     : undefined;
+  // Agents sign in through every way in's own address: the relay's and the Tailscale device's
+  // from the caller, this computer's Tailscale address while it serves the gateway.
+  const oauthIssuers: import("./access/oauth-urls.js").OAuthIssuerSource | undefined = mcpAddresses
+    ? () => [
+        ...(typeof opts?.additionalOAuthIssuerUrls === "function"
+          ? opts.additionalOAuthIssuerUrls()
+          : (opts?.additionalOAuthIssuerUrls ?? [])),
+        ...mcpAddresses.hostIssuer(),
+      ]
+    : opts?.additionalOAuthIssuerUrls;
   app.use("*", async (c, next) => {
     let release: (() => void) | undefined;
     if (opts?.cloudRelayExposure?.()) {
@@ -1097,11 +1114,11 @@ export function createServer(
     const authHeader = c.req.header("Authorization");
     if (authHeader?.startsWith("Bearer ")) {
       const rawToken = authHeader.slice(7);
-      const oauthUrls = resolveOAuthUrls(
-        c.req.url,
+      const oauthUrls = resolveRequestOAuthUrls(
+        c,
         opts?.publicAddress?.baseUrl(),
         opts?.publicAddress?.mcpResourceUrls(),
-        opts?.additionalOAuthIssuerUrls,
+        oauthIssuers,
       );
       const principal =
         c.req.path === "/mcp" && oauthUrls
@@ -1505,6 +1522,7 @@ export function createServer(
 
   // Status block 1: /health, /config, /admin/config*, /status
   mountStatusRoutes(app, {
+    tailscaleEmbed: !!opts?.tailscaleEmbed,
     getLabStatus: () => labService.flags(),
     db,
     dbPath,
@@ -1589,7 +1607,7 @@ export function createServer(
   mountOAuthAccessRoutes(app, accessService, {
     publicAddress: opts?.publicAddress,
     ...(opts?.port ? { loopbackBaseUrl: `https://localhost:${opts.port}` } : {}),
-    additionalOAuthIssuerUrls: opts?.additionalOAuthIssuerUrls,
+    additionalOAuthIssuerUrls: oauthIssuers,
     authorizationNotifier: opts?.accessAuthorizationNotifier,
     // A request arrived or was decided: wake the expiry sweep and the portals.
     onAuthorizationPending: () => {
@@ -1823,9 +1841,10 @@ export function createServer(
     mountRemoteAccessRoutes(app, {
       settings: remoteAccessSettings,
       checks: new AddressChecks(),
-      ...(hostTailscale ? { hostTailscale } : {}),
+      ...(hostAccess ? { hostAccess } : {}),
       publicAddress: opts?.publicAddress,
       mcpAddresses,
+      tailscaleEmbed: !!opts?.tailscaleEmbed,
     });
   }
   const localSpkiFingerprint = () =>
@@ -1975,7 +1994,7 @@ export function createServer(
       );
     },
     publicAddress: opts?.publicAddress,
-    additionalOAuthIssuerUrls: opts?.additionalOAuthIssuerUrls,
+    additionalOAuthIssuerUrls: oauthIssuers,
     recordMcpToolInvocation: (input) => accessService.recordMcpToolInvocation(input),
     recordDirectAuditEvent: async (input) => {
       await w.appendDirectAuditEvent(input);

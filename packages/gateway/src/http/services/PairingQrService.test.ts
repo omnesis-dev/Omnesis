@@ -1226,23 +1226,14 @@ describe("the gateway's own tailnet device", () => {
       unknown
     >;
 
-  it("is never read without its opt-in", async () => {
-    vi.stubEnv("OMNESIS_TAILSCALE_EMBED_ENABLED", "");
-    const read = vi.fn(() => ({ origin: tailnetOrigin, trusted: true }));
-    const service = qr(fingerprint, [], "android", {
-      identities: lanOnly,
-      listenPort: 7600,
-      tailnetAddress: read,
-    });
+  it("is never offered on a gateway without the device", async () => {
+    const service = qr(fingerprint, [], "android", { identities: lanOnly, listenPort: 7600 });
     const listed = (await service.pairingAddresses(input)).addresses.map((a) => a.gatewayUrl);
     expect(listed).not.toContain(tailnetOrigin);
     expect(encoded(service, "https://192.168.1.20:7600")).not.toHaveProperty("tailnet");
-    expect(read).not.toHaveBeenCalled();
   });
 
-  describe("with the opt-in", () => {
-    beforeEach(() => vi.stubEnv("OMNESIS_TAILSCALE_EMBED_ENABLED", "1"));
-
+  describe("with the device", () => {
     it("offers a trusted tailnet name first, under system trust, marked as on the tailnet", async () => {
       const service = withTailnet({ origin: `${tailnetOrigin}/`, trusted: true });
       const result = await service.pairingAddresses(input);

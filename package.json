@@ -48,7 +48,7 @@
     "typecheck:fast": "node scripts/typecheck-fast.mjs",
     "typecheck:watch": "tsc --build --watch",
     "typecheck:tests": "node scripts/run-check.mjs types-tests",
-    "build": "node scripts/build-projects.mjs",
+    "build": "node scripts/build-projects.mjs && node scripts/tailnet-helper/build.mjs --best-effort",
     "tailnet-helper:build": "node scripts/tailnet-helper/build.mjs",
     "release": "node scripts/release/conductor.mjs",
     "release:stage": "node scripts/release/stage-packages.mjs",

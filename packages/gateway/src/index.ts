@@ -31,7 +31,6 @@ import {
   ensurePrivateDirSync,
   experimentalEnabled,
   cloudRelayEnabled,
-  tailscaleEmbedEnabled,
   loadManifest,
   installParentShutdownHandler,
   primeSecretFileKeyCache,
@@ -134,6 +133,7 @@ import { lookupToken, listDeviceIdsWithActiveScope } from "./data/repositories/T
 import { PairingNotifier } from "./push/pairing-notifier.js";
 import { TailscaleJoinNotifier } from "./tailscale-embed/notifier.js";
 import { PortalSignals } from "./portal-signals/hub.js";
+import { helperInstalled } from "./tailscale-embed/helper-binary.js";
 import { TailscaleEmbedService } from "./tailscale-embed/service.js";
 import { CertificateIncidentNotifier } from "./push/certificate-incident-notifier.js";
 import { WsEventHandler } from "./http/services/WsEventHandler.js";
@@ -841,8 +841,9 @@ const pairingNotifier = new PairingNotifier(
   () => listDevices(db),
   () => listDeviceIdsWithActiveScope(db, SCOPE_ADMIN),
 );
-// The gateway's own tailnet device, only with OMNESIS_TAILSCALE_EMBED_ENABLED=1.
-// It starts once the HTTP server is listening (`attach` below).
+// The gateway's own tailnet device, on an installation that has its helper program.
+// It stays idle until the owner turns it on, then starts once the HTTP server is
+// listening (`attach` below).
 // Tells the owner's open portals at once when something waits for them.
 const portalSignals = new PortalSignals();
 const tailscaleJoinNotifier = new TailscaleJoinNotifier(
@@ -850,7 +851,7 @@ const tailscaleJoinNotifier = new TailscaleJoinNotifier(
   () => listDevices(db),
   () => listDeviceIdsWithActiveScope(db, SCOPE_ADMIN),
 );
-const tailscaleEmbed = tailscaleEmbedEnabled()
+const tailscaleEmbed = helperInstalled()
   ? new TailscaleEmbedService({
       configDir,
       servedMaterial: () => tlsLifecycle.servedMaterial(),

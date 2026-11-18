@@ -8,7 +8,7 @@
 // - devices: sign-in requests through the optional cloud relay
 //   (OMNESIS_CLOUD_RELAY_ENABLED=1, read once the gateway says sign-in pairing
 //   is configured) and Tailscale join requests through the gateway's own
-//   Tailscale device (OMNESIS_TAILSCALE_EMBED_ENABLED=1);
+//   Tailscale device, when the gateway has one;
 // - access: MCP clients asking to connect;
 // - answers: Answer releases held for the owner's review;
 // - watches: requests for a standing watch, only where watches are on.

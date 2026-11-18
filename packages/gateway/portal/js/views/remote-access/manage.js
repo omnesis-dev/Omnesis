@@ -26,6 +26,18 @@ export function ManageButton({ href, label, onManage = navigate, disabled = fals
   </button>`;
 }
 
+/** A link to another portal page, opened without reloading the portal. */
+export function PageLink({ href, children }) {
+  return html`<a
+    href=${href}
+    onClick=${(event) => {
+      event.preventDefault();
+      navigate(href);
+    }}
+    >${children}</a
+  >`;
+}
+
 /**
  * An address of this gateway, as a link that opens the portal there in a new
  * tab: the way to check it works, or to bookmark it.

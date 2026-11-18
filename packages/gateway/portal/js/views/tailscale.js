@@ -2,14 +2,16 @@
 // Copyright (c) 2026 Adrien Conrath
 
 // Settings → Tailscale: the gateway's own device on the owner's Tailscale
-// network. Only rendered when the gateway runs with
-// OMNESIS_TAILSCALE_EMBED_ENABLED=1, which `/status` advertises as
+// network. Only rendered when the gateway has the device (its installation
+// includes the helper program), which `/status` advertises as
 // `tailscaleEmbed: true`.
 //
 // The page is written for an owner who is not a networking expert. A pill
 // says what state the device is in and one panel says what to do about it,
 // with the device's name, signing out and turning off at its foot. Below it
-// come the public address for cloud agents and what happens when one of the
+// come the public address for cloud agents (chosen on the MCP server page with
+// every other address, and shown here with what Tailscale needs to open it)
+// and what happens when one of the
 // owner's own devices asks to join; a request that waits for the owner is
 // decided on Settings → Devices, with every other device waiting for an OK.
 
@@ -26,6 +28,7 @@ import {
   updateTailscaleSettings,
 } from "../lib/tailscale-api.js";
 import { useTailscaleAdmin } from "../lib/use-tailscale-admin.js";
+import { MCP_PAGE, PageLink } from "./remote-access/manage.js";
 
 /** The one state the device is in, from the gateway's report. */
 export function tailscalePhase(state) {
@@ -338,16 +341,12 @@ function PublicState({ state }) {
   }
 }
 
-function PublicSection({ state, busy, run }) {
-  const [pending, setPending] = useState(null);
-  const wanted = pending ?? state.public.wanted;
-  const disabled = Boolean(busy) && busy !== "refresh";
-  const toggle = async () => {
-    const next = !state.public.wanted;
-    setPending(next);
-    await run("public", (signal) => updateTailscaleSettings({ publicAccess: next }, signal));
-    setPending(null);
-  };
+/**
+ * The device's public address, which carries the MCP server alone. Where MCP answers is
+ * chosen on the MCP server page, with every other address; this shows what Tailscale
+ * needs to open it, and the address once it is open.
+ */
+function PublicSection({ state }) {
   return html`<section class="tailscale-section" aria-labelledby="tailscale-public-title">
     <div class="tailscale-section-head">
       <div>
@@ -355,22 +354,13 @@ function PublicSection({ state, busy, run }) {
           Public address for cloud agents
         </h3>
         <p class="tailscale-section-text">
-          ChatGPT and Claude's cloud connectors call your gateway from the Internet. Turning this on
-          opens only what they need to connect and sign in; everything else stays private to your
-          Tailscale network.
+          ${state.public.wanted
+            ? "On: ChatGPT and Claude's cloud connectors can reach your MCP server from the Internet. Only what they need to connect and sign in is public; everything else stays on your Tailscale network."
+            : "Off: this device answers on your Tailscale network only. ChatGPT and Claude's cloud connectors call your gateway from the Internet, so they need it on."}
+          ${" "}Choose where your MCP server answers on the${" "}
+          <${PageLink} href=${MCP_PAGE}>MCP server page<//>.
         </p>
       </div>
-      <button
-        type="button"
-        role="switch"
-        class="tailscale-switch"
-        aria-checked=${wanted ? "true" : "false"}
-        aria-labelledby="tailscale-public-title"
-        disabled=${disabled}
-        onClick=${toggle}
-      >
-        <span></span>
-      </button>
     </div>
     <${PublicState} state=${state} />
   </section>`;
@@ -541,7 +531,7 @@ export function TailscaleView() {
         </div>
         <${DeviceSettings} state=${state} phase=${phase} busy=${busy} run=${run} />
       </div>
-      ${connected && html`<${PublicSection} state=${state} busy=${busy} run=${run} />`}
+      ${connected && html`<${PublicSection} state=${state} />`}
       `}
   </section>`;
 }

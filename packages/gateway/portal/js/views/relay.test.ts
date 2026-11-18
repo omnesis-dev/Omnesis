@@ -199,7 +199,7 @@ test("the relay page says why the relay service is unavailable when the gateway 
   state.status = { ...base(), serviceConfigured: false, serviceError: "relay-service-unavailable" };
   await show("relay");
   expect(headline()).toBe(["The", "Omnesis relay isn't available"].join(" "));
-  expect(text()).toContain("Ask the installation administrator to configure the relay service.");
+  expect(text()).toContain("Set OMNESIS_CLOUD_RELAY_URL for the gateway, then restart it.");
   expect(text()).not.toContain("This installation is not set up for Omnesis accounts.");
 });
 
@@ -409,7 +409,7 @@ test("unavailable installations explain the situation, offer nothing to press an
   await show();
   state.status.serviceError = "relay-service-mismatch";
   await show();
-  expect(text()).toContain("installation service configuration does not match");
+  expect(text()).toContain("names a different relay service from the one this gateway is registered with");
   expect(host.querySelectorAll('[role="alert"]')).toHaveLength(0);
 });
 

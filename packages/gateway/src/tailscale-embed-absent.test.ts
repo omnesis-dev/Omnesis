@@ -2,9 +2,11 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Without OMNESIS_TAILSCALE_EMBED_ENABLED=1 the gateway must answer exactly as
- * it did before the embedded Tailscale device existed, experimental mode
- * included. Each check runs both ways, so an absence means something.
+ * A gateway whose installation lacks the Tailscale helper program has no
+ * Tailscale device of its own and answers exactly as it did before the device
+ * existed, experimental mode included; one with the program has the device,
+ * idle until the owner turns it on. Each check runs both ways, so an absence
+ * means something.
  */
 import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -23,12 +25,8 @@ let db: ReturnType<typeof createDatabase>;
 let admin: string;
 let path: string;
 
-function flag(on: boolean): void {
-  vi.stubEnv("OMNESIS_TAILSCALE_EMBED_ENABLED", on ? "1" : "");
-}
-
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), "omnesis-ts-flag-off-"));
+  dir = mkdtempSync(join(tmpdir(), "omnesis-ts-absent-"));
   path = join(dir, "gateway.sqlite");
   db = createDatabase(path);
   const device = createDevice(db, { name: "Fictional admin CLI", kind: "cli" });
@@ -53,24 +51,26 @@ function service(): TailscaleEmbedService {
 }
 
 for (const experimental of ["", "1"]) {
-  test(`/health and /status name the embedded Tailscale device only with the opt-in (experimental=${experimental || "off"})`, async () => {
+  test(`/health and /status name the Tailscale device only on a gateway that has one (experimental=${experimental || "off"})`, async () => {
     vi.stubEnv("OMNESIS_EXPERIMENTAL", experimental);
-    const app = createServer(db, path, {});
+    const without = createServer(db, path, {});
+    const withDevice = createServer(db, path, { tailscaleEmbed: service() });
     for (const route of ["/health", "/status"]) {
-      flag(false);
-      const off = (await (await app.request(route, { headers: authorized() })).json()) as object;
+      const off = (await (
+        await without.request(route, { headers: authorized() })
+      ).json()) as object;
       expect(off, route).not.toHaveProperty("tailscaleEmbed");
-      flag(true);
-      const on = (await (await app.request(route, { headers: authorized() })).json()) as object;
+      const on = (await (
+        await withDevice.request(route, { headers: authorized() })
+      ).json()) as object;
       expect(on, route).toMatchObject({ tailscaleEmbed: true });
-      // The opt-in adds its one key and moves no other.
+      // The device adds its one key and moves no other.
       expect(Object.keys(on).filter((key) => key !== "tailscaleEmbed")).toEqual(Object.keys(off));
     }
   });
 }
 
-test("no route exists without the opt-in, even when a service is wired", async () => {
-  flag(false);
+test("no device route exists on a gateway without the device", async () => {
   const app = createServer(db, path, {});
   const probes: Array<[string, string]> = [
     ["GET", "/admin/tailscale"],
@@ -92,31 +92,18 @@ test("no route exists without the opt-in, even when a service is wired", async (
     });
     expect(res.status, `${method} ${route}`).toBe(control.status);
   }
-  // A service handed to a gateway without the opt-in mounts nothing either.
-  const wired = createServer(db, path, { tailscaleEmbed: service() });
-  expect((await wired.request("/admin/tailscale", { headers: authorized() })).status).toBe(
-    control.status,
-  );
-  flag(true);
   const on = createServer(db, path, { tailscaleEmbed: service() });
   expect((await on.request("/admin/tailscale", { headers: authorized() })).status).toBe(200);
 });
 
-test("without the opt-in the Tailscale join capability is any unknown key: kept as sent", () => {
-  flag(false);
-  for (const value of [true, "yes", { nested: 1 }]) {
-    const input = { platform: "ios", tailscaleJoinNotifications: value, someFutureKey: 1 };
-    expect(deviceCapabilitySchema.parse(input)).toEqual(input);
-  }
-  flag(true);
+test("the Tailscale join capability is a boolean", () => {
   expect(deviceCapabilitySchema.parse({ tailscaleJoinNotifications: true })).toMatchObject({
     tailscaleJoinNotifications: true,
   });
   expect(() => deviceCapabilitySchema.parse({ tailscaleJoinNotifications: "yes" })).toThrow();
 });
 
-test("pairing a phone that says it shows Tailscale join requests stores what it sent, as before", async () => {
-  flag(false);
+test("pairing a phone that says it shows Tailscale join requests stores what it sent", async () => {
   const app = createServer(db, path, {});
   const minted = await app.request("/admin/devices/pair", {
     method: "POST",
@@ -140,8 +127,7 @@ test("pairing a phone that says it shows Tailscale join requests stores what it 
   });
 });
 
-test("nothing is written to the config directory until the owner uses the feature", () => {
-  flag(true);
+test("nothing is written to the config directory until the owner uses the device", () => {
   const embedded = service();
   embedded.state();
   expect(readdirSync(dir)).not.toContain("tailscale");

@@ -298,7 +298,7 @@ function App() {
   const [labAvailable, setLabAvailable] = useState(false);
   const [lab, setLab] = useState({ brain: false, tasks: false, watches: false });
   const [cloudRelay, setCloudRelay] = useState(false);
-  // Whether the gateway runs its own Tailscale device (OMNESIS_TAILSCALE_EMBED_ENABLED=1).
+  // Whether the gateway has its own Tailscale device: its installation includes the helper program.
   const [tailscaleEmbed, setTailscaleEmbed] = useState(false);
 
   // Whether the gateway runs in developer mode (OMNESIS_DEV_MODE=1). Separate

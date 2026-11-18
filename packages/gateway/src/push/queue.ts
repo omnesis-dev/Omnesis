@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { createHash, randomUUID } from "node:crypto";
-import { cloudRelayEnabled, tailscaleEmbedEnabled } from "@omnesis/core";
+import { cloudRelayEnabled } from "@omnesis/core";
 import {
   claimedNotificationSchema,
   notificationMessageSchema,
@@ -746,14 +746,12 @@ export function claimNotification(
         input.now,
         input.supportsPairingNotifications === true,
       );
-    // Tailscale join requests exist only with the embedded Tailscale opt-in.
-    if (tailscaleEmbedEnabled())
-      suppressUnsupportedTailscaleJoinReminders(
-        db,
-        input.deviceId,
-        input.now,
-        input.supportsTailscaleJoinNotifications === true,
-      );
+    suppressUnsupportedTailscaleJoinReminders(
+      db,
+      input.deviceId,
+      input.now,
+      input.supportsTailscaleJoinNotifications === true,
+    );
     const candidate = db
       .prepare<[string, number, number, number, number], { delivery_id: string }>(
         CLAIM_CANDIDATE_SQL,

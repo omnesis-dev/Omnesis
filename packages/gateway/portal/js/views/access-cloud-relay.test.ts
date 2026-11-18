@@ -168,7 +168,7 @@ describe("Access page with the cloud relay", () => {
       api.getAccessOverview.mockResolvedValue(overview(LOCAL, { loopbackOnly: true }, []));
       await mount();
       expect(host.querySelector(".access-oauth-blocker")?.textContent?.replace(/\s+/gu, " ")).toContain(
-        "Settings, Connectivity. This can be a private network address. ChatGPT and Claude apps need an Internet-reachable address: publish the gateway with Tailscale on this computer or a domain of your own.",
+        "Settings, Connectivity. This can be a private network address. ChatGPT, Claude apps and Grok bot need an Internet-reachable address: publish the gateway with Tailscale on this computer or a domain of your own.",
       );
       expect(host.querySelector(".access-connect-dialog")?.textContent).toContain(
         "This localhost address works only for agents running on the gateway’s machine. Hosted clients cannot reach it.",
@@ -181,7 +181,7 @@ describe("Access page with the cloud relay", () => {
       expect(relayApi.relayManagement).not.toHaveBeenCalled();
       expect(addressSelect()).toBeNull();
       expect(shownAddress()).toBe(TAILNET);
-      expect(warned()).toEqual(["chatgpt", "claude-apps"]);
+      expect(warned()).toEqual(["chatgpt", "claude-apps", "grok-bot"]);
       await select("claude-apps");
       expect(noticeParagraphs()).toEqual([
         "This address is private. Claude connects from Anthropic's servers, so it cannot reach this gateway until you publish it.",
@@ -243,7 +243,7 @@ describe("Access page with the cloud relay", () => {
       api.getAccessOverview.mockResolvedValue(overview(TAILNET, {}, []));
       await mount({ cloudRelay: true });
       expect(addressSelect()).toBeNull();
-      expect(warned()).toEqual(["chatgpt", "claude-apps"]);
+      expect(warned()).toEqual(["chatgpt", "claude-apps", "grok-bot"]);
       await select("claude-apps");
       expect(noticeParagraphs()).toEqual([
         "This address is private. Claude connects from Anthropic's servers, so it cannot reach this gateway until you publish it.",
@@ -336,7 +336,7 @@ describe("Access page with the cloud relay", () => {
       api.getAccessOverview.mockResolvedValue(overview(LOCAL, { loopbackOnly: true }));
       await mount({ cloudRelay: true });
       expect(host.querySelector(".access-oauth-blocker")?.textContent?.replace(/\s+/gu, " ")).toContain(
-        "Settings, Connectivity. This can be a private network address. ChatGPT and Claude apps can use this gateway's Omnesis address.",
+        "Settings, Connectivity. This can be a private network address. ChatGPT, Claude apps and Grok bot can use this gateway's Omnesis address.",
       );
       expect(addressOptions()).toEqual([
         `${LOCAL}`,
@@ -349,7 +349,7 @@ describe("Access page with the cloud relay", () => {
         "Claude connects from Anthropic's servers, and this address is reachable from the Internet.",
       ]);
       await pick(LOCAL);
-      expect(warned()).toEqual(["chatgpt", "claude-apps"]);
+      expect(warned()).toEqual(["chatgpt", "claude-apps", "grok-bot"]);
       expect(noticeParagraphs()).toEqual([
         "This address is private. Claude connects from Anthropic's servers, so it cannot reach this gateway until you publish it.",
         "Pick another address from the list above.",
@@ -372,7 +372,7 @@ describe("Access page with the cloud relay", () => {
         `${RELAY}`,
       ]);
       expect(shownAddress()).toBe(TAILNET);
-      expect(warned()).toEqual(["chatgpt", "claude-apps"]);
+      expect(warned()).toEqual(["chatgpt", "claude-apps", "grok-bot"]);
       for (const [id, , needs] of HOSTED) {
         const steps = await select(id);
         expect(noticeParagraphs()).toEqual([

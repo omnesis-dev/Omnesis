@@ -2,8 +2,8 @@
 // Copyright (c) 2026 Adrien Conrath
 
 // The gateway's own Tailscale device, as the owner manages it from Settings →
-// Tailscale. Every route exists only when the gateway runs with
-// OMNESIS_TAILSCALE_EMBED_ENABLED=1, which `/status` advertises as
+// Tailscale. Every route exists only when the gateway has the device (its
+// installation includes the helper program), which `/status` advertises as
 // `tailscaleEmbed: true`; the portal calls none of them otherwise.
 
 import { adminJsonRequest } from "./admin-request.js";
