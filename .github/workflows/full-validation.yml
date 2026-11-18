@@ -6515,7 +6515,7 @@ jobs:
       DEBUG: pw:webserver
 
   instructions-read-denial-proof:
-    name: Windows worker and portal fixture proof
+    name: Windows adapter workflow cancellation proof
     if: inputs.scope == 'instructions-read-denial-proof'
     runs-on: windows-latest
     timeout-minutes: 45
@@ -6538,7 +6538,7 @@ jobs:
       - name: Verify fixed source revision
         env:
           TARGET_SHA: ${{ inputs.source_sha }}
-        run: 'test "$TARGET_SHA" = 2b7f61eb4fc992f127619cb72d10ade4265bd932
+        run: 'test "$TARGET_SHA" = e58f002a31e53afab144a0339e43e056355a4325
 
           test "$(git rev-parse HEAD)" = "$TARGET_SHA"
 
@@ -6551,11 +6551,12 @@ jobs:
       - name: Install dependencies
         id: dependencies
         run: node scripts/ci/npm-ci.mjs --no-audit --no-fund
-      - name: Build and verify Windows SQLite bindings
-        run: node scripts/ci/build-windows-sqlite.mjs
-      - name: Validate worker setup and Windows workflow policy
-        run: node scripts/run-check.mjs unit packages/gateway/src/brain/rhythm/collision-sweep-reads.worker.test.ts scripts/ci/windows-checks.test.mjs --reporter=verbose
+      - name: Check adapter prerequisite typecheck with shell handoff
         shell: bash
+        run: exec node scripts/run-check.mjs typecheck packages/agent-integration
+      - name: Verify the workflow ownership smoke assertion
+        shell: bash
+        run: exec node scripts/run-check.mjs smoke -t "executes every workflow check owner directly"
       - name: Require immutable candidate source
         run: git diff --exit-code
         if: ${{ always() }}
