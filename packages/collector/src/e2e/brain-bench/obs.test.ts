@@ -49,7 +49,31 @@ describe("BrainObs runs", () => {
       "cohort",
       "interpretation",
     ]);
+    expect((await obs.interpretationsForSource("document")).map((run) => run.id)).toEqual([
+      "interpretation",
+    ]);
     expect((await obs.interpretationForSource("document")).id).toBe("interpretation");
+  });
+  test("lists every interpretation of a source, newest first", async () => {
+    const obs = new BrainObs({} as SyntheticE2EHarness);
+    vi.spyOn(obs, "runs").mockResolvedValue({
+      items: [{ id: "second" }, { id: "first" }],
+    } as Awaited<ReturnType<BrainObs["runs"]>>);
+    vi.spyOn(obs, "executedTools").mockResolvedValue([
+      {
+        tool: "knowledge_discovery_complete",
+        args: { id: "source:document", phases: ["interpretation"] },
+        result: { kind: "structured", data: {} },
+      },
+    ]);
+    expect((await obs.interpretationsForSource("document")).map((run) => run.id)).toEqual([
+      "second",
+      "first",
+    ]);
+    expect((await obs.interpretationForSource("document")).id).toBe("second");
+    await expect(obs.interpretationForSource("other")).rejects.toThrow(
+      "no successful maintenance interpretation for source other",
+    );
   });
   test.each([{ phases: [] }, { phases: ["organization"] }])(
     "explicit non-interpretation phases %j do not select a standalone review",

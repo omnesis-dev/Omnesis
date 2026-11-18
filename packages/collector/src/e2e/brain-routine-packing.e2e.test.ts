@@ -139,6 +139,16 @@ const runOf = (batchId: string) =>
       FROM knowledge_batches b JOIN cognition_runs r ON r.id=b.run_id WHERE b.id=?`,
     )
     .get(batchId)!;
+/** The run of a completed organization cohort the source belongs to. */
+const cohortRunOf = (docId: string): string | undefined =>
+  bench.sql
+    .prepare<[string], { runId: string }>(
+      `SELECT b.run_id AS runId FROM knowledge_organization_members m
+      JOIN knowledge_organization_cohorts c ON c.id=m.cohort_id
+      JOIN knowledge_batches b ON b.id=c.batch_id
+      WHERE m.source_id=? AND c.status='completed'`,
+    )
+    .get(docId)?.runId;
 
 /** Push routine changes, then move past their routine delay so they plan together. */
 async function pushDue(docs: readonly BenchDoc[]): Promise<string[]> {
@@ -180,7 +190,7 @@ it("interprets unrelated routine changes in one run", async () => {
   const batch = await sharedBatch(ids);
   expect(batchSize(batch)).toBe(ids.length);
   await allCompleted(ids);
-  const runs = await Promise.all(ids.map((id) => bench.obs.runsForSource(id)));
+  const runs = await Promise.all(ids.map((id) => bench.obs.interpretationsForSource(id)));
   for (const found of runs) expect(found.map((run) => run.id)).toEqual([runOf(batch).id]);
 }, 300_000);
 
@@ -208,8 +218,27 @@ it("holds a routine batch while the decision model is unreachable, then runs it 
   const batch = latestWork(ids[0]!)!.batchId!;
   await bench.clock.set(runOf(batch).nextAttemptAt + 10);
   await allCompleted(ids);
-  for (const id of ids)
-    expect((await bench.obs.runsForSource(id)).map((run) => run.id)).toEqual([runOf(batch).id]);
+  const interpretation = runOf(batch).id;
+  // Once interpreted, the two sources are fresh organization backlog: an
+  // organization pass groups them into a cohort whose own run completes each
+  // source's organization phase. Whether that pass comes before the count
+  // depends on scheduling, so the test drives it past its pacing and waits for
+  // it. The cohort is a later phase, not a second interpretation.
+  await bench.clock.advance(MINUTE + 10);
+  const organization = await waitFor("the held sources' organization cohort", () => {
+    const runIds = new Set(ids.map((id) => cohortRunOf(id)));
+    const [runId] = runIds;
+    return runIds.size === 1 && runId ? runId : null;
+  });
+  for (const id of ids) {
+    expect((await bench.obs.interpretationsForSource(id)).map((run) => run.id)).toEqual([
+      interpretation,
+    ]);
+    expect((await bench.obs.runsForSource(id)).map((run) => run.id)).toEqual([
+      organization,
+      interpretation,
+    ]);
+  }
 }, 300_000);
 
 it("retries a source a failed pack left unfinished alone", async () => {
