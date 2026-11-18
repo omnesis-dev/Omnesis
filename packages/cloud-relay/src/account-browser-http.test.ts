@@ -723,5 +723,11 @@ test("verified gateway owners can link while public sign-in is at its limit", as
     body: "{}",
   });
   expect(unverified.status).toBe(401);
+  const launch = await fetch(f.url + "/_relay/v3/account-browser/begin", {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: "",
+  });
+  expect(launch.status).toBe(429);
   await expect(f.start()).resolves.toBeDefined();
 });

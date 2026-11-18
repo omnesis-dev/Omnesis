@@ -30,7 +30,7 @@ export class GatewaySignupHttp {
     private readonly options: {
       signup: GatewaySignup;
       admission: LoginAdmission;
-      ownerAdmission?: LoginAdmission;
+      ownerAdmission: LoginAdmission;
       authenticateOwner(req: IncomingMessage): Promise<AccountBrowserOwner>;
     },
   ) {}
@@ -96,9 +96,7 @@ export class GatewaySignupHttp {
       throw new RelayError(415, "JSON gateway signup request required");
     try {
       const owner = action === "link" ? await this.options.authenticateOwner(req) : undefined;
-      const admission = owner
-        ? (this.options.ownerAdmission ?? this.options.admission)
-        : this.options.admission;
+      const admission = owner ? this.options.ownerAdmission : this.options.admission;
       // Waiting on an operation already started is not a new sign-in attempt.
       return await admission[action === "poll" || action === "cancel" ? "poll" : "run"](
         async () => {

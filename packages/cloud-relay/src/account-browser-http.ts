@@ -31,6 +31,7 @@ export class AccountBrowserHttp {
     private readonly options: {
       broker: AccountBrowserBroker;
       admission: LoginAdmission;
+      ownerAdmission: LoginAdmission;
       authenticateOwner(
         req: IncomingMessage,
       ): Promise<AccountBrowserOwner & { sessionExpiresAt: number }>;
@@ -91,7 +92,7 @@ export class AccountBrowserHttp {
       throw new RelayError(415, "JSON account browser request required");
     try {
       const owner = await this.options.authenticateOwner(req);
-      return await this.options.admission.run(async () => {
+      return await this.options.ownerAdmission.run(async () => {
         const body = await jsonBody(req);
         let result: unknown;
         if (url.pathname === ACCOUNT_BROWSER_PATH + "/start")

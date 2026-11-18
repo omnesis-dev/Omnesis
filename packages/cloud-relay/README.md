@@ -718,7 +718,10 @@ completion cannot consume it. Registered owners remain authorized after their
 entry is removed from the approval list.
 
 Upgrade gateways to a client that supports signed challenges before enabling
-this setting. Leave it unset during the compatibility phase. Existing names
+this setting. Leave it unset during the compatibility phase. Live gateways
+cache the broker capabilities for ten minutes. After enabling the setting or
+rolling it back, restart affected gateways to refresh immediately, or wait
+for discovery to refresh before retrying a certificate operation. Existing names
 remain registered, and authorized gateways can continue using their existing
 certificate during the transition. This setting is an operator approval list.
 Automatic DNS approval during public signup requires its own independent
