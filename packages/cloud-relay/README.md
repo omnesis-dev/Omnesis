@@ -767,6 +767,12 @@ An unset/invalid mode or incomplete public-mode secrets fail closed. A private
 closed-registry deployment can still use `APPROVED_NEW_OWNERS_JSON` in explicit
 compatibility mode, but it is not the public signup path.
 
+To roll back public admission, keep the **same updated Worker bundle** and set
+`PUBLIC_ADMISSION_ENABLED=0` temporarily. Do not restore an older bundle after
+public-mode writes: older strict store readers reject the new
+`caaPublishedAt` publication metadata. Preserve the registry and secrets; do not
+erase owner bindings to work around a rollout failure.
+
 Automatic admission raises the cost of abuse and protects renewal capacity; it
 cannot guarantee availability against a distributed attack or exhaustion of a
 provider's overall Worker/API request allowance. Size provider plans and edge
