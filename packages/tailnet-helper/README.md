@@ -41,9 +41,14 @@ ask|automatic|off`, default `ask`): on a collector's machine that runs
 - **Docker**: the gateway image carries the program and sets
   `OMNESIS_TAILSCALE_HELPER`. The device's identity is kept under the config
   volume (`<config>/tailscale/`), so updates keep it signed in.
-- **From source**: build the program with `npm run tailnet-helper:build`
-  (needs the Go version in `go.mod`), or point `OMNESIS_TAILSCALE_HELPER` at a
-  copy.
+- **From source**: a source install's `npm run build` builds the program, on
+  install and on every update, with the Go installed on the machine when it is
+  at least the version in `go.mod`, or else with that version of Go, which it
+  downloads from go.dev, checks against the SHA-256 recorded in
+  `scripts/tailnet-helper/go-toolchain.json`, and keeps under `.go/` here with
+  the build's caches. A failure there warns and leaves the rest of the build
+  alone; `npm run tailnet-helper:build` builds the program by itself. Or point
+  `OMNESIS_TAILSCALE_HELPER` at a copy.
 
 ## How it works
 

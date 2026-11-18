@@ -8,12 +8,16 @@
 #   E2E_WORK=<scratch dir> scripts/install-e2e/single-host.sh
 #
 # 1. The candidate (this checkout) becomes release vN in a fixture remote and
-#    is installed fresh with its own install.sh, gateway and collector both.
+#    is installed fresh with its own install.sh, gateway and collector both,
+#    on a PATH without Go: its build downloads the pinned Go toolchain and
+#    builds the gateway's Tailscale helper, so the gateway offers its own
+#    Tailscale device.
 # 2. An invented Obsidian vault is added and synced, so there is data to keep.
 # 3. vN+1 (the same code, the next version) is published; re-running install.sh
 #    hands off to `omnesis update`, which must land it: both daemons restarted,
 #    same collector device, same documents, the known search hit, no pre-update
-#    backup by default, and no new doctor failures.
+#    backup by default, no new doctor failures, and the Tailscale helper rebuilt
+#    at the new version.
 # 4. vN+2, whose gateway exits during boot, is published; `omnesis update` must
 #    fail, roll back to vN+1, and leave both daemons serving it.
 #
@@ -27,6 +31,15 @@ E2E_WORK="${E2E_WORK:?set E2E_WORK}"
 
 [ -n "${CI:-}" ] || die "single-host.sh installs into \$HOME and registers services; it runs on CI machines only"
 
+# A machine that never had Go: every PATH entry that holds one is dropped.
+NO_GO_PATH=""
+IFS=: read -ra PATH_ENTRIES <<<"$PATH"
+for entry in "${PATH_ENTRIES[@]}"; do
+  [ -x "$entry/go" ] || NO_GO_PATH="${NO_GO_PATH:+$NO_GO_PATH:}$entry"
+done
+export PATH="$NO_GO_PATH"
+! command -v go >/dev/null || die "go is still on PATH"
+
 GATEWAY_URL="https://localhost:7600"
 FIXTURE_DIR="$E2E_WORK/fixture"
 REMOTE="$FIXTURE_DIR/omnesis.git"
@@ -34,6 +47,16 @@ SOURCE_DIR="$HOME/omnesis"
 
 installer() {
   OMNESIS_REPO_URL="file://$REMOTE" redacted sh "$E2E_ROOT/scripts/install.sh" "$@"
+}
+
+# The source build made the Tailscale helper at `version`, and the gateway offers its own
+# Tailscale device.
+expect_tailscale_helper() {
+  local version="$1" helper="$SOURCE_DIR/packages/tailnet-helper/bin/omnesis-tailnet"
+  [ -x "$helper" ] || die "the build left no Tailscale helper at $helper"
+  [ "$("$helper" -version)" = "$version" ] || die "the Tailscale helper is not v$version"
+  node -e 'fetch(process.argv[1]).then((r) => r.json()).then((h) => process.exit(h.tailscaleEmbed === true ? 0 : 1), () => process.exit(1))' \
+    "$GATEWAY_URL/health" || die "the gateway does not offer its own Tailscale device"
 }
 
 # The gateway's self-signed certificate is what the probe verifies against.
@@ -62,6 +85,7 @@ group "Install v$V_N (gateway + collector, supervised)"
 installer "$@" || die "the fresh install failed"
 use_gateway_ca
 probe health --url "$GATEWAY_URL" --expect-version "$V_N" --timeout 120 >/dev/null
+expect_tailscale_helper "$V_N"
 endgroup
 
 group "Seed an invented vault"
@@ -78,6 +102,7 @@ V_N1="$(fixture next-version --remote "$REMOTE")"
 fixture release --remote "$REMOTE" --version "$V_N1" >"$E2E_WORK/release-n1.json"
 installer --no-prompt || die "re-running install.sh did not update to v$V_N1"
 probe health --url "$GATEWAY_URL" --expect-version "$V_N1" --timeout 180 >/dev/null
+expect_tailscale_helper "$V_N1"
 wait_collector_live "$GATEWAY_URL" "$COLLECTOR"
 redacted "$OMNESIS" sources sync "$SOURCE_ID" --wait --timeout 300 || die "the vault did not sync after the update"
 snapshot_with_hit updated "$GATEWAY_URL"
@@ -101,6 +126,7 @@ if grep -q "npm run build\` failed" "$E2E_WORK/broken-update.log"; then
   die "v$V_N2 failed to build, so the boot-failure rollback was not exercised"
 fi
 probe health --url "$GATEWAY_URL" --expect-version "$V_N1" --timeout 180 >/dev/null
+expect_tailscale_helper "$V_N1"
 N1_COMMIT="$(json_get "$E2E_WORK/release-n1.json" 'j.commit')"
 [ "$(git -C "$SOURCE_DIR" rev-parse HEAD)" = "$N1_COMMIT" ] || die "the checkout is not back on v$V_N1"
 [ "$(json_get "$CONFIG_DIR/update-state.json" 'j.phase')" = complete ] || die "update state is not complete after the rollback"

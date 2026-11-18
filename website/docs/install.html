@@ -228,6 +228,15 @@
             Omnesis, though it may already have installed Node 24. On a machine with swap to spare,
             <code>OMNESIS_BUILD_MEMORY_MB=4096</code> builds anyway.
           </li>
+          <li>
+            <strong>About 1.5 GB of disk</strong> in the source checkout for the gateway's Tailscale
+            helper, the small program that gives the gateway its own Tailscale device. The build
+            uses Go when Go 1.27.4 or newer is installed; otherwise it downloads that version from
+            <code>go.dev</code>, checks it against its published checksum and keeps it inside the
+            checkout, with the helper's build caches, so updates reuse it. If the helper cannot be
+            built, the install still completes without the Tailscale device, and the next update
+            tries again.
+          </li>
         </ul>
         <div class="callout">
           <p>

@@ -399,14 +399,15 @@
             <strong>This gateway's own Tailscale device</strong> joins your tailnet as a device of
             its own, named <code>omnesis</code>, with no Tailscale app on the gateway machine. It
             needs the gateway's Tailscale helper program, which the Docker image includes and a
-            source checkout builds with <code>npm run tailnet-helper:build</code>; a gateway without
-            it does not offer this way. It is off until you turn it on in
-            <strong>Settings → Tailscale</strong> and sign in from the link or QR code shown there.
-            The portal, your devices' connections and the MCP server then answer at
-            <code>https://omnesis.&lt;tailnet&gt;.ts.net</code> on your tailnet only. Its public
-            address, through Tailscale Funnel, carries the MCP server alone, and is chosen under
-            <strong>MCP server</strong>. Collectors on machines in your tailnet can ask to join it
-            without a pairing code; you choose whether each one waits for your approval.
+            source install builds when it installs or updates (see
+            <a href="install#requirements">requirements</a>); a gateway without it does not offer
+            this way. It is off until you turn it on in <strong>Settings → Tailscale</strong> and
+            sign in from the link or QR code shown there. The portal, your devices' connections and
+            the MCP server then answer at <code>https://omnesis.&lt;tailnet&gt;.ts.net</code> on
+            your tailnet only. Its public address, through Tailscale Funnel, carries the MCP server
+            alone, and is chosen under <strong>MCP server</strong>. Collectors on machines in your
+            tailnet can ask to join it without a pairing code; you choose whether each one waits for
+            your approval.
           </li>
           <li>
             <strong>Tailscale on this computer</strong> serves the gateway through the Tailscale app

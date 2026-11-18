@@ -352,8 +352,10 @@ enrollment, or relay settings. Native apps use the same independent opt-in at
 build time so Google sign-in can be offered before pairing with a gateway.
 
 The gateway's own Tailscale device needs no opt-in: a gateway has it when its
-installation includes the helper program (the Docker image does; a source tree
-builds it with `npm run tailnet-helper:build`), and it stays idle, writing
+installation includes the helper program (the Docker image does; a source
+checkout's `npm run build` builds it, downloading the pinned Go toolchain in
+`scripts/tailnet-helper/go-toolchain.json` where Go is missing, and a failure
+there never fails the build), and it stays idle, writing
 nothing, until the owner turns it on. Without the helper the gateway has no
 device routes, no `tailscaleEmbed` on `/health` or `/status`, and offers nothing
 about it; `packages/gateway/src/tailscale-embed-absent.test.ts` holds that line.

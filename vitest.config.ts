@@ -37,6 +37,7 @@ export default defineConfig({
       "extension/scripts/**/*.test.mjs",
       "packages/**/*.test.ts",
       "packages/tailnet-helper/*.test.mjs",
+      "scripts/tailnet-helper/**/*.test.mjs",
       "skills/**/*.test.ts",
       "scripts/demo-host/**/*.test.ts",
       "scripts/release/**/*.test.mjs",

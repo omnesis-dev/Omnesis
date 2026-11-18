@@ -39,8 +39,7 @@ export function helperInstalled(
 
 /**
  * The helper program to run: `OMNESIS_TAILSCALE_HELPER` when set (the Docker
- * image sets it), otherwise the copy built into this source tree by
- * `npm run tailnet-helper:build`.
+ * image sets it), otherwise the copy this source tree's build made.
  */
 export function resolveHelperBinary(
   env: NodeJS.ProcessEnv = process.env,
@@ -61,6 +60,6 @@ export function resolveHelperBinary(
   return {
     path: null,
     reason:
-      "This gateway was installed without its Tailscale helper program. The Docker image includes it; in a source checkout, build it with `npm run tailnet-helper:build`. Or set OMNESIS_TAILSCALE_HELPER to the program's absolute path.",
+      "This gateway was installed without its Tailscale helper program. The Docker image includes it, and a source install builds it when it installs or updates; to build it now, run `npm run tailnet-helper:build` in the source checkout. Or set OMNESIS_TAILSCALE_HELPER to the program's absolute path.",
   };
 }

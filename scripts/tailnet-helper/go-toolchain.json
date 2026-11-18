@@ -1,0 +1,46 @@
+{
+  "_comment": "The Go toolchain the Tailscale helper is built with where Go is not installed: the official archive for each platform from go.dev/dl, with the SHA-256 go.dev publishes for it. The version is the one packages/tailnet-helper/go.mod names; scripts/tailnet-helper/toolchain.test.mjs holds the two together.",
+  "version": "1.27.4",
+  "archives": {
+    "darwin-amd64": {
+      "sha256": "2b799377704ef12db39bd254995d5c348c9cc8d86562ca817724390e56c38f43",
+      "size": 71756705
+    },
+    "darwin-arm64": {
+      "sha256": "91a44a2b8a716600ad94a4f143e156116620db8828086a6e3602291be9bd0bb4",
+      "size": 68231011
+    },
+    "linux-386": {
+      "sha256": "6ecb45737d2315acb0dbbc97ea8e13e7c19d4c796abe8d68907c40bce6f50bf7",
+      "size": 68841410
+    },
+    "linux-amd64": {
+      "sha256": "7226736c2339719cda28fbf3a54d71aa63bcefe376e98cef00034268dab24840",
+      "size": 70680823
+    },
+    "linux-arm64": {
+      "sha256": "3392582988a273a87ab5043ee1b2c9c17a2c3c00580bf9326c47a2e0aaaeac92",
+      "size": 67129258
+    },
+    "linux-armv6l": {
+      "sha256": "e50964c41c6e187375387939e2f380de7250eba44e2259dfeb75c540d9d585c3",
+      "size": 69090392
+    },
+    "linux-loong64": {
+      "sha256": "e484849e103aa464e4f8dd0ab7fe174a7948c50b6156aaf24d39b25841e276dd",
+      "size": 68651874
+    },
+    "linux-ppc64le": {
+      "sha256": "f508314644fa6f466d1935f8a34f01e7980092a4730bfb9d7fa3ffde81910d20",
+      "size": 67921538
+    },
+    "linux-riscv64": {
+      "sha256": "19e9c376178180588954a896baca95f8baa03b69216f18316af4ee2c251cc623",
+      "size": 68702908
+    },
+    "linux-s390x": {
+      "sha256": "4e56b1b9f26c649c1f3dc61fd16443d0154bd0860e59a8032b4cb05ac42f283e",
+      "size": 69719152
+    }
+  }
+}
