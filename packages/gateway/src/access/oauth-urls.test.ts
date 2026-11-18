@@ -120,9 +120,15 @@ describe("resolveOAuthUrls", () => {
   });
 });
 
-test("a local request signs in at its loopback origin even when the gateway has a public address", () => {
+test("a request from the gateway's own machine signs in at its loopback origin even with a public address", () => {
   const configured = "https://gateway.example.com/omnesis";
-  const local = resolveOAuthUrls("https://localhost:7600/oauth/token", configured)!;
+  // A loopback Host alone proves nothing: a proxy or Tailscale passes on what the client sent.
+  expect(resolveOAuthUrls("https://localhost:7600/oauth/token", configured)?.issuer).toBe(
+    configured,
+  );
+  const local = resolveOAuthUrls("https://localhost:7600/oauth/token", configured, [], [], {
+    local: true,
+  })!;
   expect(local).toMatchObject({
     issuer: "https://localhost:7600",
     resource: "https://localhost:7600/mcp",

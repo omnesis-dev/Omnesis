@@ -75,8 +75,8 @@ export function PortCaveat({ url }) {
 function ChoiceNote({ row, reach }) {
   if (reach === "public" && row.id === "host")
     return html`<small>
-      Only the MCP server goes on the Internet. The portal and your devices' connections stay on your Tailscale
-      network unless you make them public on the page for Tailscale on this computer.
+      This puts the MCP server on the Internet through Tailscale Funnel. The portal and your devices' connections have
+      their own choice, on the page for Tailscale on this computer.
     </small>`;
   if (reach === "public" && row.id === "tailnet")
     return html`<small>
@@ -179,7 +179,7 @@ export function McpStep({ flow, steps, headingRef, error, onStep, onNext, onCanc
     flow=${flow}
     steps=${steps}
     heading="Where may agents reach your MCP server?"
-    blurb="Agents like ChatGPT, Claude or Codex connect to an MCP address. Choose the addresses away from home that offer it."
+    blurb="Agents like ChatGPT, Claude or Codex connect to an MCP address. Choose how far each address away from home offers it."
     headingRef=${headingRef}
     error=${error}
     onStep=${onStep}

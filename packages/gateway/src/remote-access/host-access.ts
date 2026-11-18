@@ -21,6 +21,10 @@
  * A changed choice is kept even when Tailscale refuses the command that applies
  * it: the refusal names the command, and once the owner runs it the gateway
  * already answers as they chose.
+ *
+ * Keeping anything off the Internet while Funnel is on rests on that header, so a
+ * choice that needs it is refused on a Tailscale older than the version known to
+ * set it (`FUNNEL_HEADER_VERSION`), with what to do.
  */
 
 import { createLogger } from "@omnesis/core";
@@ -52,6 +56,19 @@ export type HostAccessStatus =
 
 /** The request header tailscaled sets on what it forwards from the Internet. */
 export const FUNNEL_REQUEST_HEADER = "tailscale-funnel-request";
+
+/** The oldest Tailscale this gateway knows to mark Funnel requests with that header. */
+export const FUNNEL_HEADER_VERSION = [1, 104] as const;
+
+export const TAILSCALE_TOO_OLD = `Tailscale on this computer is too old to keep part of this gateway off the Internet while Funnel is on. Update Tailscale to ${FUNNEL_HEADER_VERSION.join(".")} or later, then try again.`;
+
+/** Whether a Tailscale version, such as `1.104.6`, marks Funnel requests. Unknown is not. */
+export function marksFunnelRequests(version: string | null): boolean {
+  const [major, minor] = (version ?? "").split(".").map(Number);
+  if (!Number.isInteger(major) || !Number.isInteger(minor)) return false;
+  const [wantMajor, wantMinor] = FUNNEL_HEADER_VERSION;
+  return major! > wantMajor || (major === wantMajor && minor! >= wantMinor);
+}
 
 export class HostAccess {
   constructor(
@@ -98,8 +115,15 @@ export class HostAccess {
    * left unset follows them; MCP they put on the Internet keeps Funnel on either way.
    */
   async publish(api: boolean): Promise<PublishOutcome> {
+    const funnel = api || this.settings.get().mcp?.host === "public";
+    // Funnel on with the pages, or MCP, kept off it: only the header tells them apart.
+    if (funnel && (!api || !this.mcpAnswersInternet())) {
+      const now = await this.host.status();
+      if (now.state === "available" && !marksFunnelRequests(now.version))
+        return { ok: false, reason: TAILSCALE_TOO_OLD };
+    }
     this.settings.update({ hostApi: api ? "public" : "private" });
-    const outcome = await this.host.publish(api || this.settings.get().mcp?.host === true);
+    const outcome = await this.host.publish(funnel);
     if (outcome.ok) log.info(`Tailscale on this computer serves the gateway at ${outcome.url}`);
     return outcome;
   }
@@ -118,7 +142,7 @@ export class HostAccess {
     const now = await this.host.status();
     const mcp = {
       ...this.settings.get().mcp,
-      host: reach === "off" ? false : reach === "private" ? ("private" as const) : true,
+      host: reach === "off" ? false : reach,
     };
     if (now.state !== "available" || !now.servesGateway) {
       this.settings.update({ mcp });
@@ -126,13 +150,15 @@ export class HostAccess {
     }
     const funnel = now.publicGateway;
     const api = funnel && this.apiAnswersInternet();
+    const wanted = api || reach === "public";
+    if (wanted && (!api || reach !== "public") && !marksFunnelRequests(now.version))
+      return { ok: false, reason: TAILSCALE_TOO_OLD };
     this.settings.update({
       mcp,
       ...(this.settings.get().hostApi === undefined
         ? { hostApi: api ? ("public" as const) : ("private" as const) }
         : {}),
     });
-    const wanted = api || reach === "public";
     if (wanted === funnel) return { ok: true };
     const outcome = await this.host.publish(wanted);
     if (!outcome.ok) return outcome;

@@ -668,7 +668,7 @@ describe("this computer's Tailscale address", () => {
   const HOST = "https://studio.example-net.ts.net:10000/mcp";
   test("kept to the Tailscale network, it is named so and hosted agents are sent to the MCP page", () => {
     const choices = addressChoices(
-      { resource: OWN, resources: [{ resource: OWN }, { resource: HOST, tailnetOnly: true }] },
+      { resource: OWN, resources: [{ resource: OWN }, { resource: HOST, tailscaleHost: "private" }] },
       { state: "none" },
       // The gateway's own Tailscale device is on, so the dialog offers a choice.
       { state: "off", url: "https://omnesis-elsewhere.example-net.ts.net/mcp" },
@@ -687,7 +687,7 @@ describe("this computer's Tailscale address", () => {
     ]);
     expect(routes(notice)).toEqual(["/portal/settings/mcp"]);
     // Shown alone, as on a gateway without the relay or the device, it says the same.
-    const alone = addressChoices({ resource: HOST, resources: [{ resource: HOST, tailnetOnly: true }] });
+    const alone = addressChoices({ resource: HOST, resources: [{ resource: HOST, tailscaleHost: "private" }] });
     expect(paragraphs(hostedClientAddress(CLAUDE, HOST, NO_RELAY_FOR_TEST, alone))[0]).toBe(
       "This address only answers on your Tailscale network. Claude connects from Anthropic's servers, so it cannot reach this gateway there.",
     );
@@ -695,8 +695,13 @@ describe("this computer's Tailscale address", () => {
     expect(localClientAddress(HOST, NO_RELAY_FOR_TEST, choices)).toBeNull();
   });
 
-  test("on the Internet, it is a public address like any other", () => {
-    const choices = addressChoices({ resource: HOST, resources: [{ resource: HOST }, { resource: LOCAL }] });
-    expect(choices.options[0]).toMatchObject({ kind: "public", text: `Your public address: ${HOST}` });
+  test("on the Internet, it is public, and hosted agents are told so without advice to publish it", () => {
+    const choices = addressChoices({ resource: HOST, resources: [{ resource: HOST, tailscaleHost: "public" }] });
+    expect(choices.options[0]).toMatchObject({ kind: "public", text: `Tailscale on this computer, public: ${HOST}` });
+    const notice = hostedClientAddress(CLAUDE, HOST, NO_RELAY_FOR_TEST, choices);
+    expect(notice.usable).toBe(true);
+    expect(paragraphs(notice)).toEqual([
+      "Claude connects from Anthropic's servers, and this address is reachable from the Internet.",
+    ]);
   });
 });

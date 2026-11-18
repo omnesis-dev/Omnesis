@@ -12,6 +12,7 @@ import {
 const cli = { file: "tailscale", bundledApp: false };
 const running = JSON.stringify({
   BackendState: "Running",
+  Version: "1.104.6-t0123456789-g0123456789",
   Self: { DNSName: "Studio.Example-Net.ts.net." },
 });
 const NAME = "studio.example-net.ts.net";
@@ -91,6 +92,7 @@ describe("HostTailscaleService", () => {
     expect(await host.status()).toEqual({
       state: "available",
       dnsName: NAME,
+      version: "1.104.6",
       port: 443,
       url: `https://${NAME}`,
       servesGateway: false,

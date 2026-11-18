@@ -190,7 +190,7 @@ describe("MCP OAuth access routes", () => {
       oauth && { ...oauth, resources: oauth.resources.map((entry) => entry.resource) };
     const switched = createTestApp({
       additionalOAuthIssuerUrls: [relay],
-      mcpAddresses: { answersAt, settle: async () => {}, tailnetOnly: () => false },
+      mcpAddresses: { answersAt, settle: async () => {}, hostReach: () => null },
     });
     const plain = createTestApp({ additionalOAuthIssuerUrls: [relay] });
     // Every address on: exactly the overview of a gateway without the switches.
@@ -212,7 +212,7 @@ describe("MCP OAuth access routes", () => {
       publicBaseUrl: undefined,
       loopbackBaseUrl: "https://localhost:17600",
       additionalOAuthIssuerUrls: [relay],
-      mcpAddresses: { answersAt, settle: async () => {}, tailnetOnly: () => false },
+      mcpAddresses: { answersAt, settle: async () => {}, hostReach: () => null },
     });
     expect(listed(await overview(local, "https://192.0.2.10:17600"))).toMatchObject({
       resource: "https://localhost:17600/mcp",

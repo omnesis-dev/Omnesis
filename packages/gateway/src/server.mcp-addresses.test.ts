@@ -53,6 +53,7 @@ vi.mock("./remote-access/host-tailscale.js", async (importOriginal) => {
       return {
         state: "available" as const,
         dnsName: "studio.example-net.ts.net",
+        version: "1.104.6",
         port: 443,
         url: "https://studio.example-net.ts.net",
         servesGateway: true,
@@ -146,8 +147,18 @@ function gateway(
     recordTailnetCaller(incoming, { via: "tailnet", client: "192.0.2.9:41000" });
     return { incoming };
   };
-  const send = (url: string, init: RequestInit = {}, tailnet = false) =>
-    app.fetch(new Request(url, init), tailnet ? fromTailnet() : undefined);
+  /** A request as software on the gateway's own machine sends it, over loopback. */
+  const fromThisMachine = (): { incoming: IncomingMessage } => ({
+    incoming: {
+      headers: {},
+      socket: { remoteAddress: "127.0.0.1", remotePort: 50000 },
+    } as unknown as IncomingMessage,
+  });
+  const send = (url: string, init: RequestInit = {}, from: boolean | "local" = false) =>
+    app.fetch(
+      new Request(url, init),
+      from === "local" ? fromThisMachine() : from ? fromTailnet() : undefined,
+    );
   const adminRequest = (method: string, body?: unknown) =>
     send("https://localhost:7600/admin/remote-access", {
       method,
@@ -184,7 +195,11 @@ async function listTools(
   const transport = new StreamableHTTPClientTransport(new URL(`${origin}/mcp`), {
     authProvider: { token: async () => token },
     fetch: async (input, init) =>
-      send(String(input instanceof Request ? input.url : input), init, origin === TAILNET),
+      send(
+        String(input instanceof Request ? input.url : input),
+        init,
+        origin === TAILNET ? true : origin === LOCAL ? "local" : false,
+      ),
   });
   const client = new Client(
     { name: "mcp-address-test", version: "1.0.0" },
@@ -296,7 +311,7 @@ describe("an address the owner turned MCP off on", () => {
     expect(await listTools(send, RELAY, relayToken)).toContain("run_sql");
     expect((await send(`${RELAY}/.well-known/oauth-protected-resource/mcp`)).status).toBe(200);
     // On this machine MCP still answers, and asks an unknown credential to sign in there.
-    const local = await send(`${LOCAL}/mcp`, initialize("x"));
+    const local = await send(`${LOCAL}/mcp`, initialize("x"), "local");
     expect(local.status).toBe(401);
     expect(local.headers.get("www-authenticate")).toContain(
       `${LOCAL}/.well-known/oauth-protected-resource/mcp`,
@@ -413,6 +428,17 @@ describe("Tailscale on this computer as a way in of its own", () => {
       `${TAILNET}/mcp`,
       `${HOST}/mcp`,
     ]);
+    // The portal hears that it answers on the owner's Tailscale network only.
+    const overview = (await (
+      await send("https://localhost:7600/admin/access", {
+        headers: { authorization: `Bearer ${admin}` },
+      })
+    ).json()) as { oauth: { resources: Array<{ resource: string; tailscaleHost?: string }> } };
+    expect(
+      overview.oauth.resources.find((entry) => entry.resource === `${HOST}/mcp`),
+    ).toMatchObject({
+      tailscaleHost: "private",
+    });
     const metadata = await (await send(`${HOST}/.well-known/oauth-authorization-server`)).json();
     expect(metadata).toMatchObject({ issuer: HOST, token_endpoint: `${HOST}/oauth/token` });
     const token = connectedAgent(HOST);
@@ -421,10 +447,21 @@ describe("Tailscale on this computer as a way in of its own", () => {
 
   test("software on the gateway's own machine signs in there, whatever public address the gateway has", async () => {
     const { send, adminRequest } = gateway();
-    const resource = await (await send(`${LOCAL}/.well-known/oauth-protected-resource/mcp`)).json();
+    const resource = await (
+      await send(`${LOCAL}/.well-known/oauth-protected-resource/mcp`, {}, "local")
+    ).json();
     expect(resource).toMatchObject({ resource: `${LOCAL}/mcp`, authorization_servers: [LOCAL] });
-    const metadata = await (await send(`${LOCAL}/.well-known/oauth-authorization-server`)).json();
+    const metadata = await (
+      await send(`${LOCAL}/.well-known/oauth-authorization-server`, {}, "local")
+    ).json();
     expect(metadata).toMatchObject({ issuer: LOCAL, token_endpoint: `${LOCAL}/oauth/token` });
+    // A request that only names localhost, through Funnel or from another machine, does not.
+    for (const headers of [{ "tailscale-funnel-request": "?1" }, {}]) {
+      const named = await (
+        await send(`${LOCAL}/.well-known/oauth-authorization-server`, { headers })
+      ).json();
+      expect(named.issuer).toBe(DOMAIN);
+    }
     const token = connectedAgent(LOCAL);
     expect(await listTools(send, LOCAL, token)).toContain("run_sql");
     // Its credential is for this machine only.
@@ -447,7 +484,7 @@ describe("Tailscale on this computer as a way in of its own", () => {
       JSON.stringify({
         setupCompletedAt: null,
         first: "tailscale",
-        mcp: { host: true },
+        mcp: { host: "public" },
         hostApi: "private",
       }),
     );
@@ -468,6 +505,9 @@ describe("Tailscale on this computer as a way in of its own", () => {
       },
     });
     expect(mcp.status).toBe(200);
+    // An agent's sign-in page loads its styles and scripts through Funnel too.
+    for (const path of ["/portal/css/style.css", "/portal/js/oauth-consent-controller.js"])
+      expect((await send(`${HOST}${path}`, { headers: funnel })).status, path).toBe(200);
     // The owner's Tailscale network reaches everything.
     expect((await send(`${HOST}/portal/login`)).status).toBe(200);
   });

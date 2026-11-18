@@ -28,14 +28,18 @@ export interface OAuthMetadataPaths {
 }
 
 /**
- * Select an explicitly configured issuer, or the loopback origin a local request names, and
- * keep each issuer's authorization resources separate. Any other request Host is never an issuer.
+ * Select an explicitly configured issuer, or the loopback origin a request names, and keep
+ * each issuer's authorization resources separate. Any other request Host is never an issuer.
+ * A loopback Host is an issuer when nothing is configured, or when the caller knows the
+ * request came from the gateway's own machine (`local`): a Host alone cannot say so, since a
+ * proxy or Tailscale passes on whatever Host the client sent.
  */
 export function resolveOAuthUrls(
   requestUrl: string,
   configuredBaseUrl?: string,
   configuredResources?: readonly string[],
   issuerSource: OAuthIssuerSource = [],
+  { local = false }: { local?: boolean } = {},
 ): OAuthEndpointUrls | null {
   const additionalIssuers = typeof issuerSource === "function" ? issuerSource() : issuerSource;
   let requested: URL;
@@ -56,9 +60,10 @@ export function resolveOAuthUrls(
   // Distinct issuer prefixes on the same origin cannot be selected safely after proxy path rewriting.
   if (new Set(configured.map((value) => new URL(value).origin)).size !== configured.length)
     return null;
-  // A request to a loopback address comes from software on the gateway's own machine,
-  // which signs in there whatever public address the gateway also has.
-  const loopback = isLoopbackHostname(requested.hostname) ? requested.origin : undefined;
+  // Software on the gateway's own machine signs in at the loopback address it dialled,
+  // whatever public address the gateway also has.
+  const loopback =
+    isLoopbackHostname(requested.hostname) && (!primary || local) ? requested.origin : undefined;
   const issuer =
     extras.find((value) => new URL(value).host === requested.host) ??
     loopback ??
@@ -104,7 +109,8 @@ export function resolveOAuthResourceUrls(
   resources?: readonly string[],
   additionalIssuers?: OAuthIssuerSource,
 ): OAuthEndpointUrls | null {
-  const urls = resolveOAuthUrls(resource, base, resources, additionalIssuers);
+  // A stored loopback resource was authorized for a request from the gateway's own machine.
+  const urls = resolveOAuthUrls(resource, base, resources, additionalIssuers, { local: true });
   return urls?.issuerResources.includes(resource) ? urls : null;
 }
 
@@ -154,6 +160,7 @@ export function resolveLocalOAuthUrls(
     configuredBaseUrl,
     configuredResources,
     additionalIssuers,
+    { local: true },
   );
   if (!local) return null;
   return { ...local, supportedResources: [local.resource], issuerResources: [local.resource] };

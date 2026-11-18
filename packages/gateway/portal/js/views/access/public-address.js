@@ -266,7 +266,8 @@ const OR_PICK_ANOTHER = ["Or pick another address from the list above."];
  * - `tailscale`: the Tailscale device's address while its public address is on.
  * - `tailnet`: the Tailscale device's address, reachable only on the owner's
  *   Tailscale network for now, with `private` saying why and what to do.
- * - `public`: an address the owner published themselves.
+ * - `public`: an address the owner published themselves, or this computer's
+ *   Tailscale address while its MCP server is on the Internet (`published`).
  * - `network` and `machine`: reachable only from the gateway's networks, or
  *   only on its own machine.
  */
@@ -294,9 +295,12 @@ function describeAddress(resource, relay, tailscale = NO_TAILSCALE, entry = null
   if (isLoopbackAddress(resource)) {
     return { resource, kind: "machine", text: `This machine only: ${resource}` };
   }
-  // This computer's Tailscale address while its MCP server is not on the Internet.
-  if (entry?.tailnetOnly) {
+  // This computer's Tailscale address: kept to the owner's Tailscale network, or published.
+  if (entry?.tailscaleHost === "private") {
     return { resource, kind: "tailnet", text: `Tailscale network only: ${resource}`, private: HOST_PRIVATE };
+  }
+  if (entry?.tailscaleHost === "public") {
+    return { resource, kind: "public", published: true, text: `Tailscale on this computer, public: ${resource}` };
   }
   return isPrivateAddress(resource)
     ? { resource, kind: "network", text: `This network only: ${resource}` }
@@ -434,7 +438,8 @@ export function hostedClientAddress(agent, resource, relay = NO_RELAY, choices =
     };
   }
   const own = ownAddress(agent, resource);
-  if ((selected.kind === "relay" || selected.kind === "tailscale") && own.reachable) {
+  // An address the gateway itself knows to be on the Internet needs no advice about publishing.
+  if ((selected.kind === "relay" || selected.kind === "tailscale" || selected.published) && own.reachable) {
     return {
       usable: true,
       notice: {

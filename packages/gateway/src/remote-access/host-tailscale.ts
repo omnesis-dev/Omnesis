@@ -57,6 +57,8 @@ export type HostTailscale =
       state: "available";
       /** The machine's MagicDNS name, without the trailing dot. */
       dnsName: string;
+      /** The Tailscale version running there, such as `1.104.6`, when it says. */
+      version: string | null;
       /**
        * The port the gateway is served on, or the one publishing would use; null when
        * other apps hold every port Funnel accepts and the gateway is not served yet.
@@ -235,13 +237,14 @@ export class HostTailscaleService {
         ? { state: "stopped", reason: NOT_RUNNING }
         : { state: "missing", reason: NOT_INSTALLED };
     }
-    const { dnsName } = found.running;
+    const { dnsName, version } = found.running;
     const served = (await this.served(found.running)) ?? NOTHING_SERVED;
     const port = choosePort(served, false);
     const servesGateway = port !== null && served.gateway.has(port);
     return {
       state: "available",
       dnsName,
+      version,
       port,
       url: addressOn(dnsName, port ?? 443),
       servesGateway,
@@ -358,7 +361,7 @@ export class HostTailscaleService {
    */
   private async findRunning(): Promise<{
     installed: boolean;
-    running: { candidate: TailscaleCliCandidate; dnsName: string } | null;
+    running: { candidate: TailscaleCliCandidate; dnsName: string; version: string | null } | null;
   }> {
     let installed = false;
     for (const candidate of this.candidates) {
@@ -366,12 +369,12 @@ export class HostTailscaleService {
         const output = await this.run(candidate, ["status", "--json"], STATUS_TIMEOUT_MS);
         installed = true;
         if (!tailscaleIsRunningStatus(output)) continue;
-        const dnsName = String(
-          (JSON.parse(output) as { Self?: { DNSName?: unknown } }).Self?.DNSName ?? "",
-        )
+        const status = JSON.parse(output) as { Self?: { DNSName?: unknown }; Version?: unknown };
+        const dnsName = String(status.Self?.DNSName ?? "")
           .replace(/\.$/, "")
           .toLowerCase();
-        if (dnsName) return { installed, running: { candidate, dnsName } };
+        const version = typeof status.Version === "string" ? status.Version.split("-")[0]! : null;
+        if (dnsName) return { installed, running: { candidate, dnsName, version } };
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") installed = true;
       }

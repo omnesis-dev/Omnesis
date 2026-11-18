@@ -37,10 +37,11 @@ const mcpAddressChoicesSchema = z
     tailnet: z.boolean().optional(),
     /**
      * Tailscale already on this computer, by the machine's MagicDNS name: false for
-     * nowhere, "private" for the owner's Tailscale network only, true for the Internet
-     * too. Unset, MCP answers wherever the address does (see host-access.ts).
+     * nowhere, "private" for the owner's Tailscale network only, "public" for the
+     * Internet too. Unset, or `true` as an earlier version wrote for "on", MCP answers
+     * wherever the address does (see host-access.ts).
      */
-    host: z.union([z.boolean(), z.literal("private")]).optional(),
+    host: z.union([z.boolean(), z.enum(["private", "public"])]).optional(),
     /** The address in `gateway.publicBaseUrl`. */
     domain: z.boolean().optional(),
   })

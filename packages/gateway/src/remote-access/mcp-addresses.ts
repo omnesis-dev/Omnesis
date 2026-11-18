@@ -48,6 +48,7 @@
  */
 
 import { assertNever, cloudRelayEnabled, createLogger } from "@omnesis/core";
+import { publicPathAllowed } from "../tailscale-embed/caller.js";
 import type { CloudRelayManagement } from "@omnesis/cloud-relay";
 import type { RemoteAccessSettingsStore } from "./settings.js";
 import type { HostAccess, HostMcpReach } from "./host-access.js";
@@ -365,10 +366,15 @@ export class McpAddresses {
    */
   async refusal(request: McpRequest): Promise<McpRefusal | null> {
     const host = this.options.host;
+    // The Funnel header can only narrow what a request reaches: a request that claims it
+    // falsely is still checked against the address it names below.
     if (host && request.funnel && request.via === null && !request.relayed) {
-      if (!isMcpClientPath(request.path))
-        return host.apiAnswersInternet() ? null : "host-internet-api";
-      return host.mcpAnswersInternet() ? null : "host";
+      if (!isMcpClientPath(request.path)) {
+        // An agent's sign-in page loads the portal's styles and scripts.
+        const signIn = host.mcpAnswersInternet() && publicPathAllowed(request.path);
+        return host.apiAnswersInternet() || signIn ? null : "host-internet-api";
+      }
+      if (!host.mcpAnswersInternet()) return "host";
     }
     if (!isMcpClientPath(request.path)) return null;
     await this.settle();
@@ -376,7 +382,7 @@ export class McpAddresses {
   }
 
   /**
-   * Bring what `refusal`, `answersAt`, `tailnetOnly` and `hostIssuer` match against up to
+   * Bring what `refusal`, `answersAt`, `hostReach` and `hostIssuer` match against up to
    * date: the first caller waits for this computer's MagicDNS name, and once it is a
    * minute old it is looked up again in the background.
    */
@@ -398,13 +404,13 @@ export class McpAddresses {
   }
 
   /**
-   * Whether MCP at `url` answers only on the owner's Tailscale network: this
-   * computer's Tailscale address while Funnel is off or MCP is kept off it.
+   * How far MCP at `url` answers when it is this computer's Tailscale address: on the
+   * owner's Tailscale network only, or on the Internet too. Null for any other address.
    */
-  tailnetOnly(url: string): boolean {
+  hostReach(url: string): "private" | "public" | null {
     const host = this.hostLookup;
-    if (!this.options.host || !host?.dnsName || addressHostname(url) !== host.dnsName) return false;
-    return this.options.host.mcpReach(host.funnel) !== "public";
+    if (!this.options.host || !host?.dnsName || addressHostname(url) !== host.dnsName) return null;
+    return this.options.host.mcpReach(host.funnel) === "public" ? "public" : "private";
   }
 
   /**
@@ -434,18 +440,16 @@ export class McpAddresses {
     }
   }
 
-  /** What the owner asked for on an address, as `loosens` compares it. */
+  /** Where MCP answers on an address now, as `loosens` compares it. */
   private wantedReach(id: McpAddressId): McpReach {
     switch (id) {
       case "relay":
         return this.answers(id) ? "public" : "off";
       case "tailnet":
         return this.tailnetReach();
-      case "host": {
-        const host = this.options.host!;
-        if (!host.mcpAnswersTailnet()) return "off";
-        return host.mcpAnswersInternet() ? "public" : "private";
-      }
+      case "host":
+        // What answers now: MCP is on the Internet only while Funnel is on.
+        return this.options.host!.mcpReach(this.hostLookup?.funnel ?? false);
       case "domain":
         return this.answers(id) ? "on" : "off";
       default:
@@ -494,12 +498,13 @@ export class McpAddresses {
           log.warn(
             `Could not ask Tailscale on this computer for its name: ${error instanceof Error ? error.message : String(error)}`,
           );
-          // Keep refusing by the name already known.
+          // Keep what was last known, so a passing failure neither lets MCP through by this
+          // name nor takes the address away from agents signed in through it.
           return {
             dnsName: this.hostLookup?.dnsName ?? null,
-            url: null,
-            servesGateway: false,
-            funnel: false,
+            url: this.hostLookup?.url ?? null,
+            servesGateway: this.hostLookup?.servesGateway ?? false,
+            funnel: this.hostLookup?.funnel ?? false,
           };
         },
       )

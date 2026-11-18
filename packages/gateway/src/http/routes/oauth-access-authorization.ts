@@ -4,6 +4,7 @@
 import { randomBytes } from "node:crypto";
 import { createLogger } from "@omnesis/core";
 import { buildPage, clampLimit, scopeSatisfies, SCOPE_ADMIN, tryDeviceId } from "@omnesis/types";
+import { resolveRequestOAuthUrls } from "../oauth-request.js";
 
 import {
   createServedByGatewayCheck,
@@ -15,7 +16,6 @@ import {
   narrowOAuthOverviewUrls,
   resolveLocalOAuthUrls,
   resolveOAuthOverviewUrls,
-  resolveOAuthUrls,
   resolveOAuthResourceUrls,
 } from "../../access/oauth-urls.js";
 import { ClientMetadataDocumentResolver } from "../../access/client-metadata-document.js";
@@ -113,7 +113,7 @@ export function mountOAuthAuthorizationRoutes(
      * Which addresses away from home answer MCP. The access overview lists only those,
      * so a client is never pointed at an address that answers 404.
      */
-    mcpAddresses?: Pick<McpAddresses, "answersAt" | "settle" | "tailnetOnly">;
+    mcpAddresses?: Pick<McpAddresses, "answersAt" | "settle" | "hostReach">;
     /**
      * The origins whose publicly trusted certificate is still being issued,
      * so the portal can say to wait rather than to set up another one.
@@ -159,8 +159,8 @@ export function mountOAuthAuthorizationRoutes(
 
   app.get("/oauth/authorize", noStore, scope.public(), async (c) => {
     if (authorizationLimiter.consume(clientIp(c))) return oauthRateLimitError(c);
-    const urls = resolveOAuthUrls(
-      c.req.url,
+    const urls = resolveRequestOAuthUrls(
+      c,
       options.publicAddress?.baseUrl(),
       options.publicAddress?.mcpResourceUrls(),
       options.additionalOAuthIssuerUrls,
@@ -438,8 +438,11 @@ export function mountOAuthAuthorizationRoutes(
               direct: served.get(resource)?.direct ?? false,
               publiclyTrusted: served.get(resource)?.publiclyTrusted ?? false,
               ...(pending.has(new URL(resource).origin) ? { certificatePending: true } : {}),
-              // This computer's Tailscale address while MCP there is not on the Internet.
-              ...(options.mcpAddresses?.tailnetOnly(resource) ? { tailnetOnly: true } : {}),
+              // This computer's Tailscale address, with whether MCP there is on the Internet.
+              ...(() => {
+                const reach = options.mcpAddresses?.hostReach(resource);
+                return reach ? { tailscaleHost: reach } : {};
+              })(),
             })),
             tlsFingerprintSha256: fingerprint() ?? null,
             certificate: options.agentCertificateTrust?.() ?? null,

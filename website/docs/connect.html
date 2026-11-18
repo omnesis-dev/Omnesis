@@ -779,15 +779,18 @@
           sends. Keep port 7600 closed to the Internet.
         </p>
         <p>
-          Funnel set up by hand publishes the whole gateway, not only <code>/mcp</code>; the
-          portal's MCP choice keeps everything else off it, answering <code>404</code> to any other
-          request Tailscale forwards from the Internet. A connector needs the discovery documents
-          under <code>/.well-known/</code>, the sign-in endpoints under <code>/oauth/</code>, and
-          the approval page, which loads the portal's styles and scripts; the portal's login page
-          and the pairing endpoint become reachable from the Internet too. Every route that returns
-          your data still requires a device token, a portal session or an approved OAuth token.
-          Portal login and pairing are rate-limited per client address, and a pairing code is
-          single-use and expires in ten minutes. A connector's sign-in grants nothing until you
+          Funnel set up by hand publishes the whole gateway, not only <code>/mcp</code>, until you
+          untick <strong>Also reachable from the Internet</strong> on the portal's page for
+          Tailscale on this computer. From then on the gateway answers <code>404</code> to any
+          request Tailscale forwards from the Internet other than the MCP server and what an agent
+          signs in through; this needs Tailscale 1.104 or later, which marks those requests. A
+          connector needs the discovery documents under <code>/.well-known/</code>, the sign-in
+          endpoints under <code>/oauth/</code>, and the approval page, which loads the portal's
+          styles and scripts; while the whole gateway is published, the portal's login page and the
+          pairing endpoint are reachable from the Internet too. Every route that returns your data
+          still requires a device token, a portal session or an approved OAuth token. Portal login
+          and pairing are rate-limited per client address, and a pairing code is single-use and
+          expires in ten minutes. A connector's sign-in grants nothing until you
           <a href="#approving-a-connection">approve it</a> in a signed-in portal or a paired phone;
           the approval page alone shows only a code.
         </p>

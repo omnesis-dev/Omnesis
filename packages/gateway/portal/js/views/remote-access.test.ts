@@ -1055,7 +1055,7 @@ describe("the MCP server", () => {
     expect(text()).toContain("Agents on this computer and on your home network can always connect.");
     await toggle('input[name="remote-access-mcp-host"][value="public"]', true);
     expect(calls("remote")).toEqual([["remote", { mcp: { host: "public" } }]]);
-    expect(text()).toContain("Only the MCP server goes on the Internet.");
+    expect(text()).toContain("This puts the MCP server on the Internet through");
     await toggle('input[name="remote-access-mcp-host"][value="off"]', true);
     expect(calls("remote").at(-1)).toEqual(["remote", { mcp: { host: "off" } }]);
     await click("Finish");

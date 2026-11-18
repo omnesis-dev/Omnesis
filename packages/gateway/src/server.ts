@@ -24,6 +24,7 @@ import {
   type DeviceId,
   type DeviceRecord,
 } from "@omnesis/types";
+import { resolveRequestOAuthUrls } from "./http/oauth-request.js";
 import { mountTailscaleRoutes } from "./http/routes/tailscale.js";
 import { mountRemoteAccessRoutes } from "./http/routes/remote-access.js";
 import { AddressChecks } from "./remote-access/address-check.js";
@@ -181,7 +182,7 @@ import { mountLegacyMcpCutoverRoute } from "./http/routes/legacy-mcp-cutover.js"
 import { AccessService } from "./access/service.js";
 import { resolveDeviceAnswerScope } from "./access/device-answer-scope.js";
 import { pendingCertificateOrigins } from "./access/certificate-pending.js";
-import { resolveMcpRequestResource, resolveOAuthUrls } from "./access/oauth-urls.js";
+import { resolveMcpRequestResource } from "./access/oauth-urls.js";
 import { mountSubscriptionRoutes } from "./http/routes/subscriptions.js";
 import { mountNotificationRoutes } from "./http/routes/notifications.js";
 import { mountMobilePermissionHealthRoute } from "./http/routes/mobile-permission-health.js";
@@ -1113,8 +1114,8 @@ export function createServer(
     const authHeader = c.req.header("Authorization");
     if (authHeader?.startsWith("Bearer ")) {
       const rawToken = authHeader.slice(7);
-      const oauthUrls = resolveOAuthUrls(
-        c.req.url,
+      const oauthUrls = resolveRequestOAuthUrls(
+        c,
         opts?.publicAddress?.baseUrl(),
         opts?.publicAddress?.mcpResourceUrls(),
         oauthIssuers,

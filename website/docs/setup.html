@@ -420,8 +420,9 @@
             changes nothing. Some agents, such as ChatGPT, connect only on port 443.
             <strong>Also reachable from the Internet</strong> publishes the portal and your devices'
             connections through Funnel; the MCP server has its own choice, under
-            <strong>MCP server</strong>. The address is one agents sign in through on its own, so it
-            is never saved as <code>gateway.publicBaseUrl</code>. Unticked in the setup while it
+            <strong>MCP server</strong>. Publishing one without the other needs Tailscale 1.104 or
+            later on the gateway machine. The address is one agents sign in through on its own, so
+            it is never saved as <code>gateway.publicBaseUrl</code>. Unticked in the setup while it
             still serves the gateway, and on its own page, it offers
             <strong>Stop serving this gateway</strong>, which runs
             <code>tailscale serve --https=&lt;port&gt; off</code> and removes

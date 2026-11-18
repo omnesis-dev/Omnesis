@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { HostAccess } from "./host-access.js";
+import { HostAccess, marksFunnelRequests, TAILSCALE_TOO_OLD } from "./host-access.js";
 import {
   addressHostname,
   isMcpClientPath,
@@ -42,6 +42,7 @@ function fakeHostTailscale() {
     served: true,
     funnel: false,
     refuse: false,
+    version: "1.104.6" as string | null,
   };
   const url = () =>
     `https://${state.name!.toLowerCase()}${state.port === 443 ? "" : `:${state.port}`}`;
@@ -51,6 +52,7 @@ function fakeHostTailscale() {
         ? {
             state: "available" as const,
             dnsName: state.name,
+            version: state.version,
             port: state.port,
             url: url(),
             servesGateway: state.served,
@@ -515,7 +517,8 @@ describe("MCP per address", () => {
     expect(policy.loosens({ relay: "off", domain: "off", host: "off" })).toBe(false);
     expect(policy.loosens({ domain: "on", host: "private", tailnet: "private" })).toBe(false);
     expect(policy.loosens({ tailnet: "public" })).toBe(true);
-    expect(policy.loosens({ host: "public" })).toBe(false);
+    // Funnel is off, so MCP answers on the tailnet only: the Internet is further.
+    expect(policy.loosens({ host: "public" })).toBe(true);
     await policy.update({ domain: "off", host: "private" });
     expect(policy.loosens({ domain: "on" })).toBe(true);
     expect(policy.loosens({ host: "public" })).toBe(true);
@@ -554,7 +557,7 @@ describe("Tailscale on this computer and the Internet", () => {
     const { policy, host, settings } = addresses();
     expect(await policy.update({ host: "public" })).toBeNull();
     expect(host.service.publish).toHaveBeenCalledWith(true);
-    expect(settings.get()).toMatchObject({ mcp: { host: true }, hostApi: "private" });
+    expect(settings.get()).toMatchObject({ mcp: { host: "public" }, hostApi: "private" });
     expect((await reaches(policy)).host).toBe("public");
     expect(await policy.refusal(funnel("/mcp"))).toBeNull();
     expect(await policy.refusal(funnel("/oauth/token"))).toBeNull();
@@ -581,7 +584,7 @@ describe("Tailscale on this computer and the Internet", () => {
     expect(await policy.refusal(funnel("/.well-known/oauth-authorization-server"))).toBe("host");
     expect(await policy.refusal(funnel("/portal"))).toBeNull();
     expect(await policy.refusal(request(`${HOST}/mcp`))).toBeNull();
-    expect(policy.tailnetOnly(`${HOST}/mcp`)).toBe(true);
+    expect(policy.hostReach(`${HOST}/mcp`)).toBe("private");
     // Off altogether: the Tailscale network loses MCP too.
     await policy.update({ host: "off" });
     expect(await policy.refusal(request(`${HOST}/mcp`))).toBe("host");
@@ -614,7 +617,7 @@ describe("Tailscale on this computer and the Internet", () => {
       ok: false,
       command: "tailscale funnel --bg https+insecure://localhost:7600",
     });
-    expect(settings.get().mcp).toEqual({ host: true });
+    expect(settings.get().mcp).toEqual({ host: "public" });
     // Nothing is public until the command runs.
     expect((await reaches(policy)).host).toBe("private");
   });
@@ -624,7 +627,7 @@ describe("Tailscale on this computer and the Internet", () => {
     host.state.served = false;
     await policy.update({ host: "public" });
     expect(host.service.publish).not.toHaveBeenCalled();
-    expect(settings.get().mcp).toEqual({ host: true });
+    expect(settings.get().mcp).toEqual({ host: "public" });
     // Serving it later with the pages and API kept private still opens Funnel for MCP.
     await hostAccess.publish(false);
     expect(host.service.publish).toHaveBeenLastCalledWith(true);
@@ -644,6 +647,86 @@ describe("Tailscale on this computer and the Internet", () => {
       publicGateway: false,
       publicMcp: false,
     });
+  });
+});
+
+describe("Tailscale on this computer: what the Funnel header may and may not do", () => {
+  const funnel = (url: string) => request(url, { funnel: true });
+
+  test("with only MCP on the Internet, an agent's sign-in page still loads its styles and scripts", async () => {
+    const { policy } = addresses();
+    await policy.update({ host: "public" });
+    for (const path of [
+      "/oauth/consent",
+      "/portal/css/style.css",
+      "/portal/js/oauth-consent-controller.js",
+    ])
+      expect(await policy.refusal(funnel(`${HOST}${path}`)), path).toBeNull();
+    expect(await policy.refusal(funnel(`${HOST}/portal/`))).toBe("host-internet-api");
+    expect(await policy.refusal(funnel(`${HOST}/devices/pair`))).toBe("host-internet-api");
+    // With MCP kept off the Internet, they are refused like the rest.
+    await policy.update({ host: "private" });
+    await policy.settle();
+    expect(await policy.refusal(funnel(`${HOST}/portal/css/style.css`))).toBe("host-internet-api");
+  });
+
+  test("a request that claims the header is still held to the address it names", async () => {
+    const { policy } = addresses();
+    await policy.update({ domain: "off" });
+    expect(await policy.refusal(funnel(`${DOMAIN}/mcp`))).toBe("domain");
+    expect(await policy.refusal(funnel(`${DOMAIN}/oauth/token`))).toBe("domain");
+  });
+
+  test("putting MCP on the Internet loosens the gateway whenever it is not there now", async () => {
+    const { policy, host } = addresses();
+    await policy.settle();
+    // Nothing chosen and Funnel off: MCP answers on the tailnet only, so Internet is further.
+    expect(policy.loosens({ host: "public" })).toBe(true);
+    host.state.funnel = true;
+    await policy.list();
+    expect(policy.loosens({ host: "public" })).toBe(false);
+  });
+
+  test("an earlier version's `true` is no choice: MCP follows the address", async () => {
+    writeFileSync(
+      join(dir, "remote-access.json"),
+      JSON.stringify({ setupCompletedAt: null, first: "tailscale", mcp: { host: true } }),
+    );
+    const { host, hostAccess } = addresses();
+    host.state.funnel = true;
+    await hostAccess.publish(false);
+    expect(host.service.publish).toHaveBeenLastCalledWith(false);
+  });
+
+  test("keeping anything off the Internet while Funnel is on needs a Tailscale that marks Funnel requests", async () => {
+    const { policy, host, hostAccess, settings } = addresses();
+    host.state.version = "1.96.2";
+    expect(await policy.update({ host: "public" })).toEqual({
+      ok: false,
+      reason: TAILSCALE_TOO_OLD,
+    });
+    expect(host.service.publish).not.toHaveBeenCalled();
+    expect(settings.get().mcp).toBeUndefined();
+    // Everything on the Internet, or nothing, needs no header.
+    expect(await hostAccess.publish(true)).toMatchObject({ ok: true });
+    expect(await hostAccess.publish(false)).toMatchObject({ ok: true });
+    host.state.version = null;
+    expect(await policy.update({ host: "public" })).toMatchObject({ reason: TAILSCALE_TOO_OLD });
+    expect(marksFunnelRequests("1.104.0")).toBe(true);
+    expect(marksFunnelRequests("2.0.1")).toBe(true);
+    expect(marksFunnelRequests("1.103.9")).toBe(false);
+    expect(marksFunnelRequests("unknown")).toBe(false);
+  });
+
+  test("a failed look keeps this computer's address as an issuer", async () => {
+    const { policy, host, advance } = addresses();
+    await policy.settle();
+    expect(policy.hostIssuer()).toEqual([HOST]);
+    host.service.status.mockRejectedValueOnce(new Error("timed out"));
+    advance(60_000);
+    await policy.settle();
+    await vi.waitFor(() => expect(host.service.status).toHaveBeenCalledTimes(2));
+    expect(policy.hostIssuer()).toEqual([HOST]);
   });
 });
 
@@ -672,7 +755,10 @@ describe("this computer's Tailscale address as an OAuth issuer", () => {
     host.state.port = 8443;
     await policy.list();
     expect(policy.hostIssuer()).toEqual(["https://studio.example-net.ts.net:8443"]);
-    expect(policy.tailnetOnly("https://studio.example-net.ts.net:8443/mcp")).toBe(true);
-    expect(policy.tailnetOnly(`${DOMAIN}/mcp`)).toBe(false);
+    expect(policy.hostReach("https://studio.example-net.ts.net:8443/mcp")).toBe("private");
+    expect(policy.hostReach(`${DOMAIN}/mcp`)).toBeNull();
+    host.state.funnel = true;
+    await policy.list();
+    expect(policy.hostReach("https://studio.example-net.ts.net:8443/mcp")).toBe("public");
   });
 });

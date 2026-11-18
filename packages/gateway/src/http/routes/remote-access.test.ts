@@ -44,6 +44,7 @@ function app({
         ? {
             state: "available",
             dnsName: "studio.example-net.ts.net",
+            version: "1.104.6",
             url: "https://studio.example-net.ts.net",
             servesGateway: true,
             publicGateway: false,
@@ -395,7 +396,7 @@ describe("remote access routes", () => {
       command: "tailscale funnel --bg https+insecure://localhost:7600",
     });
     // The choice is kept, so the command makes it so; until then MCP is not on the Internet.
-    expect(settings.get()).toMatchObject({ mcp: { host: true }, hostApi: "private" });
+    expect(settings.get()).toMatchObject({ mcp: { host: "public" }, hostApi: "private" });
     expect(refused.mcpAddresses.find((row: { id: string }) => row.id === "host").reach).toBe(
       "private",
     );

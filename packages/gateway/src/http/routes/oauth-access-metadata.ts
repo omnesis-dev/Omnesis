@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { resolveRequestOAuthUrls } from "../oauth-request.js";
 import {
   isLoopbackUrl,
   resolveMetadataRequestResource,
   resolveMcpRequestResource,
   resolveOAuthMetadataPaths,
-  resolveOAuthUrls,
 } from "../../access/oauth-urls.js";
 import { SUPPORTED_CLIENT_ASSERTION_ALGORITHMS } from "../../access/client-assertion.js";
 import { OAUTH_OFFLINE_ACCESS_SCOPE } from "../../access/oauth-scopes.js";
@@ -49,8 +49,8 @@ export function mountOAuthMetadataRoutes(
     return next();
   };
   const protectedResourceMetadata: Handler<AppEnv> = (c) => {
-    const urls = resolveOAuthUrls(
-      c.req.url,
+    const urls = resolveRequestOAuthUrls(
+      c,
       options.publicAddress?.baseUrl(),
       options.publicAddress?.mcpResourceUrls(),
       options.additionalOAuthIssuerUrls,
@@ -70,8 +70,8 @@ export function mountOAuthMetadataRoutes(
     });
   };
   const authorizationServerMetadata: Handler<AppEnv> = (c) => {
-    const urls = resolveOAuthUrls(
-      c.req.url,
+    const urls = resolveRequestOAuthUrls(
+      c,
       options.publicAddress?.baseUrl(),
       options.publicAddress?.mcpResourceUrls(),
       options.additionalOAuthIssuerUrls,

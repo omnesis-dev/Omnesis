@@ -38,7 +38,7 @@ export function mountOAuthAccessProtocolRoutes(
     /** See `mountOAuthAuthorizationRoutes`. */
     agentCertificateTrust?: () => AgentCertificateTrust;
     /** See `mountOAuthAuthorizationRoutes`. */
-    mcpAddresses?: Pick<McpAddresses, "answersAt" | "settle" | "tailnetOnly">;
+    mcpAddresses?: Pick<McpAddresses, "answersAt" | "settle" | "hostReach">;
     pendingCertificateOrigins?: () => Promise<ReadonlySet<string>>;
   } = {},
 ): void {
