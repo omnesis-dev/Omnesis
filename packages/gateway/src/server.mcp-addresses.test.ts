@@ -58,6 +58,7 @@ vi.mock("./remote-access/host-tailscale.js", async (importOriginal) => {
         url: "https://studio.example-net.ts.net",
         servesGateway: true,
         publicGateway: false,
+        taken: [],
       };
     }
   }
@@ -456,7 +457,8 @@ describe("Tailscale on this computer as a way in of its own", () => {
     ).json();
     expect(metadata).toMatchObject({ issuer: LOCAL, token_endpoint: `${LOCAL}/oauth/token` });
     // A request that only names localhost, through Funnel or from another machine, does not.
-    for (const headers of [{ "tailscale-funnel-request": "?1" }, {}]) {
+    const asNamed: Array<Record<string, string>> = [{ "tailscale-funnel-request": "?1" }, {}];
+    for (const headers of asNamed) {
       const named = await (
         await send(`${LOCAL}/.well-known/oauth-authorization-server`, { headers })
       ).json();

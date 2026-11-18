@@ -320,7 +320,7 @@ function describeAddress(resource, relay, tailscale = NO_TAILSCALE, entry = null
  *   Tailscale device's public address; else the one the gateway leads with.
  * - `tailscale` is the Tailscale device's address as given, for the notices.
  *
- * @param {{ resource: string, resources?: Array<{ resource: string }> }} oauth
+ * @param {{ resource: string, resources?: Array<{ resource: string, tailscaleHost?: "private" | "public" }> }} oauth
  * @param {{ state: string, url?: string }} [relay] from `relayPublicAddress`
  * @param {{ state: string, url?: string }} [tailscale] from `tailscalePublicAddress`
  */

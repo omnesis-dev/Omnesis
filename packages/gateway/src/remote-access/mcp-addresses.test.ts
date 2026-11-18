@@ -57,6 +57,7 @@ function fakeHostTailscale() {
             url: url(),
             servesGateway: state.served,
             publicGateway: state.served && state.funnel,
+            taken: [],
           }
         : {
             state: "stopped" as const,

@@ -43,7 +43,11 @@ interface Setup {
   commands: Array<{ value: string }>;
   addressNotice?: Notice;
 }
-type Oauth = { resource: string; loopbackOnly?: boolean; resources?: Array<{ resource: string }> };
+type Oauth = {
+  resource: string;
+  loopbackOnly?: boolean;
+  resources?: Array<{ resource: string; tailscaleHost?: "private" | "public" }>;
+};
 type Agent = { needsPublicAddress: string; standardPortOnly?: string };
 
 const relayPublicAddress = untypedRelayPublicAddress as (
