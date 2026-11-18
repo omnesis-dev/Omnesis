@@ -105,7 +105,15 @@ ARG TARGETOS
 ARG TARGETARCH
 WORKDIR /src
 COPY packages/tailnet-helper/go.mod packages/tailnet-helper/go.sum ./
-RUN go mod download
+# The module proxy occasionally drops a download mid-stream. Modules already
+# fetched stay in the cache, so each further attempt fetches only what is
+# missing; a failure that persists still fails the build.
+RUN for attempt in 1 2 3; do \
+      go mod download && exit 0; \
+      echo "go mod download failed (attempt $attempt of 3)" >&2; \
+      [ "$attempt" -lt 3 ] && sleep 5; \
+    done; \
+    exit 1
 COPY packages/tailnet-helper/ ./
 # The helper carries the gateway's product version.
 COPY packages/gateway/package.json /src-gateway/package.json
