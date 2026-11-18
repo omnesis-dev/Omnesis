@@ -145,6 +145,16 @@ test("a request from the gateway's own machine signs in at its loopback origin e
   expect(resolveOAuthMetadataPaths(configured)?.authorizationServer).toBe(
     "/.well-known/oauth-authorization-server/omnesis",
   );
+  // A loopback address the configuration lists signs in through the issuer configured for it.
+  const listed = resolveOAuthUrls(
+    "https://127.0.0.1:7600/oauth/token",
+    "https://localhost:7600",
+    ["https://127.0.0.1:7600/mcp"],
+    [],
+    { local: true },
+  );
+  expect(listed?.issuer).toBe("https://localhost:7600");
+  expect(listed?.issuerResources).toContain("https://127.0.0.1:7600/mcp");
 });
 
 describe("local OAuth setup overview", () => {

@@ -61,9 +61,13 @@ export function resolveOAuthUrls(
   if (new Set(configured.map((value) => new URL(value).origin)).size !== configured.length)
     return null;
   // Software on the gateway's own machine signs in at the loopback address it dialled,
-  // whatever public address the gateway also has.
+  // whatever public address the gateway also has, unless the configuration names that
+  // address itself: then it signs in through the issuer configured for it.
   const loopback =
-    isLoopbackHostname(requested.hostname) && (!primary || local) ? requested.origin : undefined;
+    isLoopbackHostname(requested.hostname) &&
+    (!primary || (local && !configuredOrigins(primary, configuredResources).has(requested.origin)))
+      ? requested.origin
+      : undefined;
   const issuer =
     extras.find((value) => new URL(value).host === requested.host) ??
     loopback ??
@@ -275,6 +279,15 @@ export function protectedResourceMetadataUrl(resource: string): string {
 function normalizeResource(value: string): string {
   const parsed = new URL(value);
   return `${parsed.origin}${parsed.pathname}`;
+}
+
+/** The origins the configuration names: the public address's and every listed resource's. */
+function configuredOrigins(primary: string, resources: readonly string[] | undefined): Set<string> {
+  const origins = new Set([new URL(primary).origin]);
+  for (const resource of resources ?? []) {
+    if (URL.canParse(resource)) origins.add(new URL(resource).origin);
+  }
+  return origins;
 }
 
 /** Whether an address names this machine's loopback interface. */
