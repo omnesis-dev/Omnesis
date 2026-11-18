@@ -187,7 +187,8 @@ jobs:
 
       - name: Build OpenClaw adapter prerequisites
         if: ${{ matrix.lane == 'adapters' }}
-        run: node scripts/run-check.mjs typecheck packages/agent-integration
+        shell: bash
+        run: exec node scripts/run-check.mjs typecheck packages/agent-integration
 
       - name: Full Windows adapter tests
         if: ${{ matrix.lane == 'adapters' }}
