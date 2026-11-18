@@ -421,6 +421,24 @@ describe("extractMessage", () => {
       extractMessage({ ...base, media: { kind: "photo", fileId: "f1", isViewOnce: false } })?.media,
     ).toEqual({ kind: "photo", fileId: "f1" });
   });
+
+  it("keeps self-destructing and view-once messages when the operator opted in", () => {
+    const keep = { keepSelfDestructing: true };
+    const base = messageIn(JAMIE_CHAT, 1, T0, "Disappearing", { senderId: JAMIE.id });
+    expect(extractMessage({ ...base, ttlPeriod: 86_400 }, keep)).toMatchObject({
+      msgId: 1,
+      text: "Disappearing",
+      expiresAt: T0 + 86_400,
+    });
+    const viewOnce = extractMessage(
+      { ...base, text: "", media: { kind: "photo", fileId: "f1", isViewOnce: true } },
+      keep,
+    );
+    expect(viewOnce?.media).toEqual({ kind: "photo", fileId: "f1" });
+    expect(viewOnce).not.toHaveProperty("expiresAt");
+    // Noise stays noise.
+    expect(extractMessage({ ...base, text: "", service: "screenshot_taken" }, keep)).toBeNull();
+  });
 });
 
 describe("telegramLinks", () => {

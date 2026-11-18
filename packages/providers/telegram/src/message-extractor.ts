@@ -4,12 +4,14 @@
 /**
  * `TgMessage` → `StoredMessage`: what of a Telegram message the archive keeps.
  *
- * Three kinds of message are never stored (`docs/telegram-source.md` D11):
- * anything under a self-destruct timer (`ttlPeriod`), view-once media, and
- * service messages that say nothing about the conversation (a screenshot
- * notice, a theme change, a gift). Telegram's terms forbid keeping
- * self-destructing content past its life, so those are dropped before they
- * reach the disk at all, not filtered at render time.
+ * Service messages that say nothing about the conversation (a screenshot
+ * notice, a theme change, a gift) are never stored. By default neither is
+ * anything under a self-destruct timer (`ttlPeriod`) nor view-once media
+ * (`docs/telegram-source.md` D11): they are dropped before they reach the
+ * disk at all, not filtered at render time. An operator who opts in with
+ * `keepSelfDestructing` keeps both; a timed message then carries the moment
+ * its timer removes it from Telegram, and the archive keeps it past that
+ * moment (`TelegramArchive.deleteOne`).
  *
  * Media is kept as a descriptor only: its kind, name, size and duration for
  * the placeholder, and the file id a later phase downloads with. No bytes.
@@ -51,10 +53,16 @@ export function servicePhrase(service: string): string {
   return SERVICE_PHRASES[service] ?? service.replace(/_/gu, " ");
 }
 
+export interface ExtractOptions {
+  /** Keep messages under a self-destruct timer and view-once media. */
+  keepSelfDestructing?: boolean;
+}
+
 /** What the archive keeps of `msg`, or `null` when it keeps nothing. */
-export function extractMessage(msg: TgMessage): StoredMessage | null {
-  if (msg.ttlPeriod) return null;
-  if (msg.media?.isViewOnce) return null;
+export function extractMessage(msg: TgMessage, options: ExtractOptions = {}): StoredMessage | null {
+  const keep = options.keepSelfDestructing === true;
+  if (msg.ttlPeriod && !keep) return null;
+  if (msg.media?.isViewOnce && !keep) return null;
   if (msg.service !== undefined && !(msg.service in SERVICE_PHRASES)) return null;
   const media = msg.media ? describeMedia(msg.media) : undefined;
   if (!msg.text && !media && msg.service === undefined) return null;
@@ -74,6 +82,7 @@ export function extractMessage(msg: TgMessage): StoredMessage | null {
     ...(msg.groupedId ? { groupedId: msg.groupedId } : {}),
     ...(msg.service !== undefined ? { service: msg.service } : {}),
     ...(media ? { media } : {}),
+    ...(msg.ttlPeriod ? { expiresAt: msg.date + msg.ttlPeriod } : {}),
   };
 }
 
