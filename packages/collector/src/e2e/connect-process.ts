@@ -91,6 +91,7 @@ export function spawnCliProcess(
       ].join(delimiter),
       ...(options.cliConfigDir !== undefined ? { OMNESIS_CONFIG_DIR: options.cliConfigDir } : {}),
       NO_COLOR: "1",
+      FORCE_COLOR: undefined,
     },
     detached: process.platform !== "win32",
   };

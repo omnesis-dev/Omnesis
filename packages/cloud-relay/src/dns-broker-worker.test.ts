@@ -1,12 +1,20 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { sign } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, expect, test, vi } from "vitest";
 import { brokerCall, brokerOwner } from "../test/dns-broker-owner.js";
 import { fakeCloudflare } from "../test/fake-cloudflare.js";
+import {
+  brokerChallengeAdmissionTranscript,
+  brokerChallengeSchema,
+  brokerRequestDigest,
+  type BrokerOperation,
+} from "./dns-broker-contract.js";
+import { dnsBrokerClient } from "./dns-broker-client.js";
 import worker, {
   DnsBrokerRegistry,
   type DnsBrokerEnv,
@@ -160,4 +168,85 @@ test("the Worker's code imports no Node module", async () => {
   // write failed on the deployed broker while Node-based tests passed.
   for (const file of seen)
     expect(await readFile(join(root, file), "utf8"), file).not.toMatch(/redirect:\s*["']error["']/);
+});
+
+test("the protected Worker admits only approved new keys and continues serving existing owners", async () => {
+  const owner = brokerOwner();
+  const other = brokerOwner();
+  const { hostname, gatewayId, ownerPublicKey } = owner;
+  const objects = durableObjects({
+    APPROVED_NEW_OWNERS_JSON: JSON.stringify([{ hostname, gatewayId, ownerPublicKey }]),
+  });
+  const client = (identity: typeof owner) =>
+    dnsBrokerClient({
+      brokerUrl: objects.env.BROKER_ORIGIN,
+      relayUrl: "https://" + objects.env.RELAY_DOMAIN,
+      gatewayId: identity.gatewayId,
+      owner: async () => identity.privateKey,
+      fetch: async (input, init) => objects.handle(new Request(input, init)),
+    });
+  const signal = new AbortController().signal;
+  await expect(brokerCall(objects.handle, owner, { type: "claim" })).resolves.toMatchObject({
+    status: 401,
+  });
+  await expect(client(other).claim(signal)).rejects.toThrow("refused");
+  expect([...objects.values.keys()]).toEqual([]);
+  await client(owner).claim(signal);
+  const admitted = client(owner);
+  await admitted.publishCaa("https://acme-v02.api.letsencrypt.org/acme/acct/123", signal);
+  const lease = await admitted.presenter().create("a".repeat(43), signal);
+  await admitted.presenter().remove(lease.id, signal);
+  expect(objects.cloudflare.records.some(({ type }) => type === "CAA")).toBe(true);
+});
+
+test("protected requests reuse their reservation and a name cannot reserve twice", async () => {
+  const owner = brokerOwner();
+  const otherKey = brokerOwner(undefined, owner.gatewayId);
+  const { hostname, gatewayId, ownerPublicKey } = owner;
+  const objects = durableObjects({
+    APPROVED_NEW_OWNERS_JSON: JSON.stringify([{ hostname, gatewayId, ownerPublicKey }]),
+  });
+  const post = (route: string, body: unknown) =>
+    objects.handle(
+      new Request(objects.env.BROKER_ORIGIN + "/_dns/v2/" + route, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+    );
+  const challenge = async (identity: typeof owner, operation: BrokerOperation) => {
+    const request = identity.request(operation);
+    const expiresAt = Date.now() + 30_000;
+    const digest = await brokerRequestDigest(request);
+    const proof = {
+      expiresAt,
+      signature: sign(
+        null,
+        brokerChallengeAdmissionTranscript(objects.env.BROKER_ORIGIN, digest, expiresAt),
+        identity.privateKey,
+      ).toString("base64url"),
+    };
+    return post("challenge", { ...request, proof });
+  };
+  const claim = brokerChallengeSchema.parse(
+    await (await challenge(owner, { type: "claim" })).json(),
+  );
+  expect(await (await challenge(owner, { type: "claim" })).json()).toEqual(claim);
+  expect(
+    (
+      await post("complete", {
+        challengeId: claim.challengeId,
+        ownerSignature: otherKey.sign(claim),
+      })
+    ).status,
+  ).toBe(401);
+  expect(
+    (await post("complete", { challengeId: claim.challengeId, ownerSignature: owner.sign(claim) }))
+      .status,
+  ).toBe(200);
+  expect((await challenge(otherKey, { type: "claim" })).status).toBe(409);
+
+  const pending = await challenge(owner, { type: "txt-create", value: "a".repeat(43) });
+  expect(pending.status).toBe(200);
+  expect((await challenge(owner, { type: "txt-create", value: "b".repeat(43) })).status).toBe(429);
 });

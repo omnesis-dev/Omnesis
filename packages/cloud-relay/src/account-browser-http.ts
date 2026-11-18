@@ -31,6 +31,7 @@ export class AccountBrowserHttp {
     private readonly options: {
       broker: AccountBrowserBroker;
       admission: LoginAdmission;
+      ownerAdmission: LoginAdmission;
       authenticateOwner(
         req: IncomingMessage,
       ): Promise<AccountBrowserOwner & { sessionExpiresAt: number }>;
@@ -89,10 +90,10 @@ export class AccountBrowserHttp {
       throw new RelayError(400, "Account browser operation does not accept query parameters");
     if (req.headers["content-type"]?.split(";")[0]?.trim().toLowerCase() !== "application/json")
       throw new RelayError(415, "JSON account browser request required");
-    return this.options.admission
-      .run(async () => {
-        const owner = await this.options.authenticateOwner(req),
-          body = await jsonBody(req);
+    try {
+      const owner = await this.options.authenticateOwner(req);
+      return await this.options.ownerAdmission.run(async () => {
+        const body = await jsonBody(req);
         let result: unknown;
         if (url.pathname === ACCOUNT_BROWSER_PATH + "/start")
           result = this.options.broker.start(owner, body);
@@ -112,11 +113,11 @@ export class AccountBrowserHttp {
         res.writeHead(200, { "content-type": "application/json" });
         res.end(JSON.stringify(result));
         return true;
-      }, req)
-      .catch((error: unknown) => {
-        req.resume();
-        throw error;
-      });
+      }, req);
+    } catch (error) {
+      req.resume();
+      throw error;
+    }
   }
 }
 

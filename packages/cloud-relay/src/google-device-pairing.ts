@@ -35,7 +35,6 @@ export async function pairGoogleDevice(
       value: { gatewayUrl: string; verificationCode: string },
       signal: AbortSignal,
     ): Promise<boolean>;
-    awaitApproval?(value: { gatewayUrl: string; verificationCode: string }): void;
     selectGateway?(choices: readonly GatewayChoice[], signal: AbortSignal): Promise<string>;
     signal?: AbortSignal;
   },

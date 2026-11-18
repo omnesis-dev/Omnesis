@@ -8,7 +8,6 @@ import { join } from "node:path";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import * as desktop from "./account-desktop-client.js";
 import * as network from "./network.js";
-import * as publicCertificate from "./public-certificate.js";
 import { pairAccountDevice } from "./account-device-pairing.js";
 import { gatewayBindingSchema, certificateFingerprint } from "./gateway-binding.js";
 import { tlsSpkiFingerprint } from "./pinned-key.js";
@@ -38,7 +37,7 @@ afterEach(async () => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
 });
-function setup() {
+function setup(kind: "cli" | "collector" = "cli") {
   vi.useFakeTimers({ toFake: ["Date"], now: vectors.clock * 1000 });
   const identity = {
     status: "approved" as const,
@@ -125,7 +124,7 @@ function setup() {
       expect(approved).toBe(true);
       return {
         token: "stable-device-credential",
-        device: { id: randomUUID(), kind: "cli" },
+        device: { id: randomUUID(), kind },
         scopes: ["read:all"],
       };
     } else if (path === "/devices/direct-candidates") return { version: 1, candidates: [] };
@@ -141,11 +140,9 @@ function setup() {
   const selectGateway = vi.fn(async () => candidate.gatewayId),
     confirm = vi.fn(async () => true),
     wait = vi.fn(async () => {}),
-    publiclyLogged = vi.fn(async () => true),
     deviceKeyFile = join(directory, "device.json.key");
   return {
     requests,
-    publiclyLogged,
     deviceKeyFile,
     approveImmediately() {
       immediate = true;
@@ -161,13 +158,13 @@ function setup() {
       pairAccountDevice(
         {
           relayUrl: "https://relay.example.test",
-          kind: "cli",
+          kind,
           name: "Fictional terminal",
           deviceKeyFile,
           confirm,
           selectGateway,
         },
-        { authorize, fetch: transport, gatewayJson, wait, publiclyLogged },
+        { authorize, fetch: transport, gatewayJson, wait },
       ),
   };
 }
@@ -175,11 +172,9 @@ test("account sign-in takes a single gateway without asking and preserves truste
   const f = setup();
   const result = await f.run();
   expect(f.selectGateway).not.toHaveBeenCalled();
-  // This caller gives no way to wait for approval, so a held request falls back to the comparison.
   expect(f.confirm).toHaveBeenCalledOnce();
-  expect(f.requests[0]).not.toHaveProperty("requireApproval");
+  expect(f.requests[0]).toMatchObject({ requireApproval: true });
   expect(f.requests[0]).not.toHaveProperty("proof");
-  expect(f.publiclyLogged).toHaveBeenCalledWith(candidate, expect.any(AbortSignal));
   if (process.platform !== "win32") {
     expect((await stat(f.deviceKeyFile)).mode & 0o777).toBe(0o600);
   }
@@ -253,9 +248,6 @@ test("empty directories, unlisted choices, denied comparison and missing approva
 test("installed account pairing defaults use the native browser client and pinned transport", async () => {
   const f = setup();
   vi.spyOn(desktop, "authorizeAccountDesktop").mockImplementation(f.authorize);
-  const logged = vi
-    .spyOn(publicCertificate, "certificateIsPubliclyLogged")
-    .mockImplementation(f.publiclyLogged);
 
   vi.stubGlobal("fetch", f.transport);
   const result = await pairAccountDevice(
@@ -270,7 +262,6 @@ test("installed account pairing defaults use the native browser client and pinne
     { gatewayJson: f.gatewayJson, wait: async () => {} },
   );
   expect(result.token).toBe("stable-device-credential");
-  expect(logged).toHaveBeenCalledOnce();
   vi.spyOn(network, "connectOrigin").mockRejectedValue(new Error("Synthetic TLS peer unavailable"));
   await expect(
     pairAccountDevice({
@@ -284,7 +275,7 @@ test("installed account pairing defaults use the native browser client and pinne
   ).rejects.toThrow("Synthetic TLS peer unavailable");
 });
 
-test("a gateway that admits the signed-in device at once skips the code comparison and forwards the sign-in proof", async () => {
+test("an approved reply still requires code comparison and forwards the sign-in proof", async () => {
   const f = setup();
   const proof = {
     type: "google" as const,
@@ -313,11 +304,10 @@ test("a gateway that admits the signed-in device at once skips the code comparis
       fetch: f.transport,
       gatewayJson: f.gatewayJson,
       wait: async () => {},
-      publiclyLogged: f.publiclyLogged,
     },
   );
   expect(result.token).toBe("stable-device-credential");
-  expect(f.confirm).not.toHaveBeenCalled();
+  expect(f.confirm).toHaveBeenCalledOnce();
   expect(f.requests[0]).toMatchObject({ proof });
   expect(f.gatewayJson.mock.calls.map(([, path]) => path)).toEqual([
     "/devices/account/challenge",
@@ -327,111 +317,25 @@ test("a gateway that admits the signed-in device at once skips the code comparis
   ]);
 });
 
-test("a held request to a publicly logged gateway shows the code once and joins by itself once approved", async () => {
-  const f = setup();
-  const awaitApproval = vi.fn();
-  const options = {
-    relayUrl: "https://relay.example.test",
-    kind: "cli" as const,
-    name: "Fictional terminal",
-    deviceKeyFile: f.deviceKeyFile,
-    confirm: f.confirm,
-    selectGateway: f.selectGateway,
-    awaitApproval,
-  };
-  const dependencies = {
-    authorize: f.authorize,
-    fetch: f.transport,
-    gatewayJson: f.gatewayJson,
-    wait: async () => {},
-    publiclyLogged: f.publiclyLogged,
-  };
-  const result = await pairAccountDevice(options, dependencies);
-  expect(result.token).toBe("stable-device-credential");
-  expect(f.confirm).not.toHaveBeenCalled();
-  expect(awaitApproval).toHaveBeenCalledExactlyOnceWith({
-    gatewayUrl: candidate.publicOrigin,
-    verificationCode: expect.stringMatching(/^[0-9]{3} [0-9]{3}$/),
-  });
-  expect(f.gatewayJson.mock.calls.map(([, path]) => path)).toEqual([
-    "/devices/account/challenge",
-    "/devices/account/request",
-    "/devices/account/poll",
-    "/devices/pair",
-    "/devices/direct-candidates",
-  ]);
+test.each(["cli", "collector"] as const)(
+  "first contact for %s requires approval and independently confirmed codes before redemption",
+  async (kind) => {
+    const confirmed = setup(kind);
+    const joined = await confirmed.run();
+    expect(joined.kind).toBe(kind);
+    expect(confirmed.requests[0]).toMatchObject({ requireApproval: true });
+    expect(confirmed.confirm).toHaveBeenCalledOnce();
 
-  // The owner refuses on the phone: the wait ends without a credential.
-  const denied = setup();
-  const original = denied.gatewayJson.getMockImplementation()!;
-  denied.gatewayJson.mockImplementation(async (binding, path, ...rest) => {
-    const reply = await original(binding, path, ...rest);
-    return path === "/devices/account/poll"
-      ? { ...(reply as object), status: "denied", pairingCode: undefined }
-      : reply;
-  });
-  await expect(
-    pairAccountDevice(
-      { ...options, deviceKeyFile: denied.deviceKeyFile, confirm: denied.confirm },
-      { ...dependencies, authorize: denied.authorize, gatewayJson: denied.gatewayJson },
-    ),
-  ).rejects.toThrow("denied the pairing request");
-  expect(denied.confirm).not.toHaveBeenCalled();
-  expect(denied.gatewayJson.mock.calls.map(([, path]) => path)).not.toContain("/devices/pair");
-
-  // Admitted at once: there is nothing to wait for, so nothing is announced.
-  const immediate = setup();
-  immediate.approveImmediately();
-  awaitApproval.mockClear();
-  await pairAccountDevice(
-    { ...options, deviceKeyFile: immediate.deviceKeyFile, confirm: immediate.confirm },
-    { ...dependencies, authorize: immediate.authorize, gatewayJson: immediate.gatewayJson },
-  );
-  expect(awaitApproval).not.toHaveBeenCalled();
-  expect(immediate.confirm).not.toHaveBeenCalled();
-});
-
-test("a certificate that is not publicly logged keeps the typed comparison even when the terminal could wait", async () => {
-  const f = setup();
-  f.publiclyLogged.mockResolvedValue(false);
-  const awaitApproval = vi.fn();
-  await pairAccountDevice(
-    {
-      relayUrl: "https://relay.example.test",
-      kind: "cli",
-      name: "Fictional terminal",
-      deviceKeyFile: f.deviceKeyFile,
-      confirm: f.confirm,
-      selectGateway: f.selectGateway,
-      awaitApproval,
-    },
-    {
-      authorize: f.authorize,
-      fetch: f.transport,
-      gatewayJson: f.gatewayJson,
-      wait: async () => {},
-      publiclyLogged: f.publiclyLogged,
-    },
-  );
-  expect(f.requests[0]).toMatchObject({ requireApproval: true });
-  expect(f.confirm).toHaveBeenCalledOnce();
-  expect(awaitApproval).not.toHaveBeenCalled();
-});
-
-test("a certificate that is not publicly logged asks the gateway to hold the request for comparison", async () => {
-  const f = setup();
-  f.publiclyLogged.mockResolvedValue(false);
-  await f.run();
-  expect(f.requests[0]).toMatchObject({ requireApproval: true });
-  expect(f.confirm).toHaveBeenCalledOnce();
-  // A gateway that answers "approved" anyway may be a substitute, so the comparison still runs.
-  const substitute = setup();
-  substitute.publiclyLogged.mockResolvedValue(false);
-  substitute.approveImmediately();
-  substitute.confirm.mockResolvedValue(false);
-  await expect(substitute.run()).rejects.toThrow("cancelled");
-  expect(substitute.gatewayJson.mock.calls.map(([, path]) => path)).not.toContain("/devices/pair");
-});
+    // Even an approved response cannot replace the requesting person's comparison.
+    const cancelled = setup(kind);
+    cancelled.approveImmediately();
+    cancelled.confirm.mockResolvedValue(false);
+    await expect(cancelled.run()).rejects.toThrow("cancelled");
+    expect(cancelled.requests[0]).toMatchObject({ requireApproval: true });
+    expect(cancelled.confirm).toHaveBeenCalledOnce();
+    expect(cancelled.gatewayJson.mock.calls.map(([, path]) => path)).not.toContain("/devices/pair");
+  },
+);
 
 test("the device key file is created once, private, and reused; an unreadable one stops pairing", async () => {
   const first = setup();

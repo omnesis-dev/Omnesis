@@ -34,6 +34,7 @@ afterEach(async () => {
 async function fixture(
   google = false,
   recoveryPolicy?: Parameters<typeof createCloudRelay>[0]["recoveryPolicy"],
+  loginLimits?: Parameters<typeof createCloudRelay>[0]["loginLimits"],
 ) {
   const accounts = new RelayAccounts(":memory:"),
     sessions = new RelaySessions(randomBytes(32));
@@ -69,6 +70,7 @@ async function fixture(
     controlOrigin: origin,
     accountSignIn: { enrollmentAuthority: authority },
     recoveryPolicy,
+    loginLimits,
     ...(google
       ? {
           webLogin: {
@@ -703,4 +705,29 @@ test("F43: a link scanner fetching a gateway sign-in link, before or after the p
     );
     expect(await session.json()).toMatchObject({ pending: { purpose: "device-enrollment" } });
   }
+});
+
+test("verified gateway owners can link while public sign-in is at its limit", async () => {
+  const f = await fixture(false, undefined, { maxConcurrent: 1, maxPerMinute: 1 });
+  const signIn = () =>
+    fetch(f.url + "/_relay/v3/desktop/start", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+  expect((await signIn()).status).toBe(400);
+  expect((await signIn()).status).toBe(429);
+  const unverified = await fetch(f.url + "/_relay/v3/account-browser/start", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: "{}",
+  });
+  expect(unverified.status).toBe(401);
+  const launch = await fetch(f.url + "/_relay/v3/account-browser/begin", {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: "",
+  });
+  expect(launch.status).toBe(429);
+  await expect(f.start()).resolves.toBeDefined();
 });

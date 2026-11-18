@@ -282,7 +282,7 @@ describe.skipIf(!browserReady)(
       expect((await joinedRow(joined.deviceId))?.enrollment).toMatchObject({ method: "approved" });
     }, 180_000);
 
-    test("over SSH the real CLI says approval is needed, prints the comparison code, waits, and joins once approved", async () => {
+    test("over SSH the real CLI requires owner approval and a typed comparison code before joining", async () => {
       const configDir = join(directory, "ssh-cli");
       await mkdir(configDir, { recursive: true, mode: 0o700 });
       await gateway.pace(2);
@@ -324,18 +324,19 @@ describe.skipIf(!browserReady)(
         await signInForDevice(owner, printed);
         const held = await heldRequest(name);
         const shown = await waitFor(
-          () => /Check that it shows this code: ([0-9]{3} [0-9]{3})/.exec(run.stdout())?.[1],
+          () => /Compare ([0-9]{3} [0-9]{3}) on the gateway/.exec(run.stdout())?.[1],
           "the CLI to print its comparison code",
         );
         expect(shown).toBe(held.verificationCode);
         await waitFor(
-          () => run.stdout().includes("Waiting for approval…"),
-          "the CLI to say it waits",
+          () => run.stdout().includes("Code shown on the trusted device:"),
+          "the CLI to ask for the comparison code",
         );
-        // Nothing is typed: the CLI is still running, and the approval alone lets it finish.
+        // Owner approval cannot replace the independent comparison on this terminal.
         expect(run.closed()).toBe(false);
-        expect(run.stdout()).not.toContain("Code shown on the trusted device");
         await gateway.decide(held.requestId, true);
+        expect(run.closed()).toBe(false);
+        await run.write(`${held.verificationCode}\r`);
         expect(await run.exit).toBe(0);
       } catch (error) {
         throw new Error(`CLI pairing over a terminal failed:\n${run.stdout()}`, { cause: error });

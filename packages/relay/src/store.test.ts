@@ -139,7 +139,7 @@ describe("RelayStore challenge and credential semantics", () => {
       createdAt,
       expiresAt,
     });
-    expect(store.tryCreateChallenge(input("one", 0, 10), 1)).toBe(true);
+    expect(store.reserveChallenge(input("one", 0, 10), 1, 0)).toEqual({ status: "created" });
     expect(
       store.verifyChallengeAndCreateCredential({
         challengeId: "one",
@@ -148,8 +148,8 @@ describe("RelayStore challenge and credential semantics", () => {
         now: 1,
       }),
     ).toEqual(target);
-    expect(store.tryCreateChallenge(input("two", 1, 11), 1)).toBe(false);
-    expect(store.tryCreateChallenge(input("three", 10, 20), 1)).toBe(true);
+    expect(store.reserveChallenge(input("two", 1, 11), 1, 0)).toEqual({ status: "capacity" });
+    expect(store.reserveChallenge(input("three", 10, 20), 1, 0)).toEqual({ status: "created" });
     expect(store.db.prepare("SELECT id FROM relay_challenges").all()).toEqual([{ id: "three" }]);
     store.close();
   });
@@ -168,10 +168,74 @@ describe("RelayStore challenge and credential semantics", () => {
       createdAt: 0,
       expiresAt: 100,
     });
-    expect(first.tryCreateChallenge(challenge("first"), 1)).toBe(true);
-    expect(second.tryCreateChallenge(challenge("second"), 1)).toBe(false);
+    expect(first.reserveChallenge(challenge("first"), 1, 30)).toEqual({ status: "created" });
+    expect(second.reserveChallenge(challenge("second"), 1, 30)).toEqual({
+      status: "pending",
+      challengeId: "first",
+    });
+    expect(
+      second.reserveChallenge(
+        { ...challenge("other"), target: { ...target, token: "other" } },
+        1,
+        30,
+      ),
+    ).toEqual({ status: "capacity" });
     first.close();
     second.close();
+  });
+
+  it("persists failed target cooldown across reopen and keeps app/environment boundaries separate", () => {
+    const dir = mkdtempSync(join(tmpdir(), "omnesis-relay-cooldown-"));
+    dirs.push(dir);
+    if (process.platform === "win32") ensurePrivateDirSync(dir);
+    const path = join(dir, "relay.db");
+    const input = {
+      id: "first",
+      target,
+      nonceHash: digestSecret("nonce"),
+      createdAt: 100,
+      expiresAt: 1_000,
+    };
+    const first = new RelayStore(path);
+    expect(first.reserveChallenge(input, 10, 30)).toEqual({ status: "created" });
+    first.failChallenge(input.id, 101);
+    first.close();
+    const reopened = new RelayStore(path);
+    expect(reopened.reserveChallenge({ ...input, id: "second", createdAt: 129 }, 10, 30)).toEqual({
+      status: "cooldown",
+      retryAfterMs: 1,
+    });
+    expect(
+      reopened.verifyChallengeAndCreateCredential({
+        challengeId: input.id,
+        nonceHash: input.nonceHash,
+        credentialHash: digestSecret("credential"),
+        now: 129,
+      }),
+    ).toBeNull();
+    expect(
+      reopened.reserveChallenge(
+        {
+          ...input,
+          id: "other-app",
+          target: { ...target, appId: "example.other" },
+          createdAt: 129,
+        },
+        10,
+        30,
+      ),
+    ).toEqual({ status: "created" });
+    expect(
+      reopened.reserveChallenge(
+        { ...input, id: "sandbox", target: { ...target, environment: "sandbox" }, createdAt: 129 },
+        10,
+        30,
+      ),
+    ).toEqual({ status: "created" });
+    expect(reopened.reserveChallenge({ ...input, id: "second", createdAt: 130 }, 10, 30)).toEqual({
+      status: "created",
+    });
+    reopened.close();
   });
 
   it("reports only aggregate active credentials and unanswered challenges", () => {

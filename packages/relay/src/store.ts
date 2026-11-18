@@ -16,6 +16,7 @@ export const RELAY_RATE_WINDOW_DAY_MS = 24 * 60 * 60_000;
 
 interface ChallengeRow {
   id: string;
+  created_at: number;
   platform: string;
   token: string;
   app_id: string;
@@ -107,7 +108,7 @@ export class RelayStore {
       );
   }
 
-  tryCreateChallenge(
+  reserveChallenge(
     input: {
       id: string;
       target: RelayTarget;
@@ -116,15 +117,37 @@ export class RelayStore {
       expiresAt: number;
     },
     maxPending: number,
-  ): boolean {
+    cooldownMs: number,
+  ):
+    | { status: "created" }
+    | { status: "pending"; challengeId: string }
+    | { status: "cooldown"; retryAfterMs: number }
+    | { status: "capacity" } {
     const create = this.db.transaction(() => {
       this.db.prepare("DELETE FROM relay_challenges WHERE expires_at <= ?").run(input.createdAt);
+      const recent = this.db
+        .prepare(
+          `SELECT id, created_at, consumed_at FROM relay_challenges
+             WHERE platform = ? AND token = ? AND app_id = ? AND environment IS ?
+             ORDER BY created_at DESC LIMIT 1`,
+        )
+        .get(
+          input.target.platform,
+          input.target.token,
+          input.target.appId,
+          input.target.platform === "ios" ? input.target.environment : null,
+        ) as Pick<ChallengeRow, "id" | "created_at" | "consumed_at"> | undefined;
+      if (recent?.consumed_at === null) {
+        return { status: "pending" as const, challengeId: recent.id };
+      }
+      const retryAfterMs = recent ? recent.created_at + cooldownMs - input.createdAt : 0;
+      if (retryAfterMs > 0) return { status: "cooldown" as const, retryAfterMs };
       const { count } = this.db.prepare("SELECT COUNT(*) AS count FROM relay_challenges").get() as {
         count: number;
       };
-      if (count >= maxPending) return false;
+      if (count >= maxPending) return { status: "capacity" as const };
       this.createChallenge(input);
-      return true;
+      return { status: "created" as const };
     });
     return create.immediate();
   }
@@ -148,6 +171,14 @@ export class RelayStore {
 
   deleteChallenge(id: string): void {
     this.db.prepare("DELETE FROM relay_challenges WHERE id = ?").run(id);
+  }
+
+  failChallenge(id: string, now: number): void {
+    // Retain the target's short cooldown without allowing a failed dispatch to
+    // be verified or counted as an unanswered carrier challenge.
+    this.db
+      .prepare("UPDATE relay_challenges SET consumed_at = ? WHERE id = ? AND consumed_at IS NULL")
+      .run(now, id);
   }
 
   challengePlatform(id: string): RelayPlatform | null {
@@ -342,6 +373,8 @@ export class RelayStore {
       );
       CREATE INDEX IF NOT EXISTS relay_challenges_expiry
         ON relay_challenges(expires_at);
+      CREATE INDEX IF NOT EXISTS relay_challenges_target_time
+        ON relay_challenges(platform, token, app_id, environment, created_at DESC);
 
       CREATE TABLE IF NOT EXISTS relay_credentials (
         credential_hash BLOB PRIMARY KEY,

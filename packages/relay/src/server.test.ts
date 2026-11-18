@@ -103,6 +103,19 @@ async function credentialForIos(set: ReturnType<typeof harness>): Promise<string
   });
   expect(enrol.status).toBe(202);
   const { challengeId } = (await enrol.json()) as { challengeId: string };
+  const retry = await set.app.request("/v1/enrol", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      platform: "ios",
+      token: "ab".repeat(32),
+      bundleId: "dev.omnesis.ios",
+      environment: "production",
+    }),
+  });
+  expect(retry.status).toBe(202);
+  expect(await retry.json()).toEqual({ challengeId });
+  expect(set.ios.challenges).toHaveLength(1);
   const verify = await set.app.request("/v1/enrol/verify", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -113,6 +126,34 @@ async function credentialForIos(set: ReturnType<typeof harness>): Promise<string
 }
 
 describe("relay HTTP protocol", () => {
+  it("keeps enrolment retries compatible and returns Retry-After during target cooldown", async () => {
+    const set = harness();
+    const credential = await credentialForIos(set);
+    const request = {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        platform: "ios",
+        token: "ab".repeat(32),
+        bundleId: "dev.omnesis.ios",
+        environment: "production",
+      }),
+    };
+    const cooldown = await set.app.request("/v1/enrol", request);
+    expect(cooldown.status).toBe(429);
+    expect(cooldown.headers.get("retry-after")).toBe("30");
+    expect(await cooldown.json()).toMatchObject({ error: "rate_limited", retryAfterSeconds: 30 });
+    expect(set.ios.challenges).toHaveLength(1);
+    expect(
+      (
+        await set.app.request("/v1/wake", {
+          method: "POST",
+          headers: { authorization: `Bearer ${credential}` },
+        })
+      ).status,
+    ).toBe(202);
+  });
+
   it("requires one valid Cloudflare source on production APIs but not local health", async () => {
     const set = harness();
     const strict = createRelayApp(set.service);

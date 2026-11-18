@@ -14,6 +14,8 @@ import {
   accountBoundCaaValue,
   accountUriSchema,
   brokerChallengeSchema,
+  brokerChallengeInputSchema,
+  brokerChallengeAdmissionTranscript,
   brokerCompletionSchema,
   brokerRequestDigest,
   brokerRequestSchema,
@@ -23,6 +25,8 @@ import {
   relayDomainSchema,
   sha256Hex,
   verifyOwnerSignature,
+  verifyBrokerSignature,
+  type RegistryEntry,
   type BrokerChallenge,
   type BrokerHealth,
   type BrokerRequest,
@@ -61,6 +65,8 @@ export interface DnsBrokerOptions {
   maxChallenges?: number;
   maxLeases?: number;
   maxNames?: number;
+  /** Operator-approved identities for new names. An empty list closes new allocations. */
+  approvedNewOwners?: readonly RegistryEntry[];
 }
 
 const entrySchema = z
@@ -182,6 +188,9 @@ export class DnsBroker {
     return {
       protocol: DNS_BROKER_PROTOCOL,
       relayDomain: this.relayDomain,
+      ...(this.options.approvedNewOwners !== undefined
+        ? { ownerProofRequired: true as const }
+        : {}),
       caa: { issuer: this.issuer, accountUriPrefix: this.accountUriPrefix },
     };
   }
@@ -234,19 +243,42 @@ export class DnsBroker {
   }
 
   async challenge(input: unknown): Promise<BrokerChallenge> {
-    const request = brokerRequestSchema.parse(input);
+    const { proof, ...request } = brokerChallengeInputSchema.parse(input);
     // Only a gateway's own derived name under the relay domain is ever brokered.
     if (!(await this.derived(request.hostname, request.gatewayId)))
       throw new BrokerError(403, "name-not-derived");
     const requestDigest = await brokerRequestDigest(request);
+    const protectedAdmission = this.options.approvedNewOwners !== undefined;
+    if (protectedAdmission) {
+      const now = this.now();
+      if (
+        !proof ||
+        proof.expiresAt <= now ||
+        proof.expiresAt > now + 60_000 ||
+        !(await verifyBrokerSignature(
+          request.ownerPublicKey,
+          brokerChallengeAdmissionTranscript(this.origin, requestDigest, proof.expiresAt),
+          proof.signature,
+        ))
+      ) {
+        throw new BrokerError(401, "owner-proof-required");
+      }
+    }
     return this.serialize(async () => {
       const now = this.now();
+      if (protectedAdmission) await this.assertAdmission(request);
       let pending = 0;
       for (const [key, value] of await this.options.store.list("challenge:")) {
         const row = pendingSchema.safeParse(value);
         if (!row.success || row.data.challenge.expiresAt <= now)
           await this.options.store.delete(key);
-        else pending++;
+        else {
+          if (protectedAdmission && row.data.request.hostname === request.hostname) {
+            if (row.data.challenge.requestDigest === requestDigest) return row.data.challenge;
+            throw new BrokerError(429, "name-challenge-pending");
+          }
+          pending++;
+        }
       }
       if (pending >= this.limits.maxChallenges) throw new BrokerError(429, "challenge-capacity");
       const nonce = crypto.getRandomValues(new Uint8Array(32));
@@ -269,14 +301,36 @@ export class DnsBroker {
       const key = `challenge:${value.challengeId}`;
       const row = pendingSchema.safeParse(await this.options.store.get(key));
       if (!row.success) throw new BrokerError(401, "challenge-unknown");
-      // One use, whatever the outcome.
-      await this.options.store.delete(key);
+      const protectedAdmission = this.options.approvedNewOwners !== undefined;
+      if (!protectedAdmission) await this.options.store.delete(key);
       const { request, challenge } = row.data;
       if (challenge.expiresAt <= this.now()) throw new BrokerError(401, "challenge-unknown");
       if (!(await verifyOwnerSignature(request.ownerPublicKey, challenge, value.ownerSignature)))
         throw new BrokerError(401, "signature-refused");
+      if (protectedAdmission) {
+        await this.options.store.delete(key);
+        await this.assertAdmission(request);
+      }
       return this.perform(request);
     });
+  }
+
+  private async assertAdmission(request: BrokerRequest): Promise<void> {
+    const entry = await this.entry(request.hostname);
+    const sameOwner = (owner: Pick<RegistryEntry, "gatewayId" | "ownerPublicKey">) =>
+      owner.gatewayId === request.gatewayId && owner.ownerPublicKey === request.ownerPublicKey;
+    if (entry) {
+      if (!sameOwner(entry)) throw new BrokerError(409, "name-taken");
+      return;
+    }
+    if (
+      request.operation.type !== "claim" ||
+      !this.options.approvedNewOwners?.some(
+        (owner) => owner.hostname === request.hostname && sameOwner(owner),
+      )
+    ) {
+      throw new BrokerError(403, "name-admission-required");
+    }
   }
 
   private async entry(hostname: string): Promise<Entry | undefined> {

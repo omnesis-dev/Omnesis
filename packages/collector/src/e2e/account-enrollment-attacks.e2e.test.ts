@@ -11,8 +11,8 @@
  * - proposing a different valid certificate for the gateway's name makes the
  *   real gateway refuse the device's signature, and the device saves nothing;
  * - a captured request cannot be replayed into a second join;
- * - first contact needs a publicly trusted, logged certificate: a leaf without
- *   the embedded SCT extension makes the device ask for the comparison;
+ * - desktop first contact always requests approval and an independent code comparison,
+ *   including with a publicly trusted, logged certificate;
  * - a certificate for the gateway's name with a key the gateway doesn't hold
  *   holds every new device until the owner acknowledges it on the gateway
  *   itself; no request through the relay lifts the hold, and a restart keeps it.
@@ -133,6 +133,7 @@ describe.skipIf(!browserReady)("a relay cannot enroll devices on its own", () =>
     gateway: EnrollmentGateway;
     name: string;
     keyFile: string;
+    kind?: "cli" | "collector";
     gatewayJson?: Transport;
     fetch?: typeof fetch;
   }) {
@@ -147,7 +148,7 @@ describe.skipIf(!browserReady)("a relay cannot enroll devices on its own", () =>
     const launchUrl = new Promise<string>((resolve) => (launched = resolve));
     const result = pairAccountDevice(
       {
-        kind: "cli",
+        kind: options.kind ?? "cli",
         name: options.name,
         relayUrl: world.relayOrigin,
         deviceKeyFile: options.keyFile,
@@ -234,34 +235,39 @@ describe.skipIf(!browserReady)("a relay cannot enroll devices on its own", () =>
     }
   }, 60_000);
 
-  test("first contact: with a logged leaf from a trusted authority the device asks for no approval of its own; TM-01: its relay-page sign-in is held anyway", async () => {
-    const { requests, transport } = recordingTransport();
-    const name = "Fictional logged-path CLI";
-    const pairing = await pairBySignIn({
-      gateway: logged,
-      name,
-      keyFile: join(directory, "logged", "device.key"),
-      gatewayJson: transport,
-    });
-    const held = await waitFor(
-      async () => (await logged.pendingRequests()).find((request) => request.name === name),
-      "the held request",
-    );
-    expect(requests).toHaveLength(1);
-    expect(requests[0]!.body.requireApproval).toBeUndefined();
-    await waitFor(() => requests[0]!.reply !== undefined, "the device to read the reply");
-    expect(requests[0]!.reply).toMatchObject({ status: "pending" });
-    expect(held).toMatchObject({ signIn: "passkey", canTrustSignIn: false });
-    await waitFor(() => pairing.comparisons.length === 1, "the comparison code");
-    expect(pairing.comparisons[0]).toBe(held.verificationCode);
-    await logged.decide(held.requestId, true);
-    const joined = await pairing.result;
-    expect(
-      (await logged.devices()).find((device) => device.id === joined.deviceId)?.enrollment,
-    ).toMatchObject({
-      method: "approved",
-    });
-  }, 180_000);
+  test.each(["cli", "collector"] as const)(
+    "first contact: %s requires approval and independent comparison even with a logged leaf",
+    async (kind) => {
+      const { requests, transport } = recordingTransport();
+      const name = `Fictional logged-path ${kind}`;
+      const pairing = await pairBySignIn({
+        gateway: logged,
+        name,
+        keyFile: join(directory, "logged", `${kind}.key`),
+        kind,
+        gatewayJson: transport,
+      });
+      const held = await waitFor(
+        async () => (await logged.pendingRequests()).find((request) => request.name === name),
+        "the held request",
+      );
+      expect(requests).toHaveLength(1);
+      expect(requests[0]!.body.requireApproval).toBe(true);
+      await waitFor(() => requests[0]!.reply !== undefined, "the device to read the reply");
+      expect(requests[0]!.reply).toMatchObject({ status: "pending" });
+      expect(held).toMatchObject({ signIn: "passkey", canTrustSignIn: false });
+      await waitFor(() => pairing.comparisons.length === 1, "the comparison code");
+      expect(pairing.comparisons[0]).toBe(held.verificationCode);
+      await logged.decide(held.requestId, true);
+      const joined = await pairing.result;
+      expect(
+        (await logged.devices()).find((device) => device.id === joined.deviceId)?.enrollment,
+      ).toMatchObject({
+        method: "approved",
+      });
+    },
+    180_000,
+  );
 
   test("first contact: a leaf without the embedded SCT extension makes the device require approval, so it is held", async () => {
     const { requests, transport } = recordingTransport();

@@ -8,6 +8,7 @@ import { clientHelloHostname, MAX_CLIENT_HELLO_BYTES } from "./client-hello.js";
 import { connectionClientAddress } from "./proxy-protocol.js";
 import { clientBucket } from "./client-bucket.js";
 import { DEFAULT_TUNNEL_LIMITS } from "./tunnels.js";
+import { hasStreamCapacity } from "./stream-admission.js";
 
 export interface TlsRouterOptions {
   metrics?: CloudRelayMetrics;
@@ -42,15 +43,15 @@ export function createTlsRouter(options: TlsRouterOptions): {
   const clients = new Map<string, number>();
   const server = createServer((socket) => {
     socket.on("error", () => socket.destroy());
-    if (sockets.size >= maxConnections) {
-      metrics.data("capacity");
-      socket.destroy();
-      return;
-    }
     const address = connectionClientAddress(socket);
     // An accepted socket always has a peer; one already gone shares the "undefined" bucket.
     const client = clientBucket(String(address));
     const held = clients.get(client) ?? 0;
+    if (!hasStreamCapacity(maxConnections, sockets.size, held)) {
+      metrics.data("capacity");
+      socket.destroy();
+      return;
+    }
     if (held >= maxConnectionsPerClient) {
       metrics.data("client_capacity");
       socket.destroy();

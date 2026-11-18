@@ -17,6 +17,7 @@ import { DEFAULT_INSTALLATION_RELAY_URL, OFFICIAL_DNS_BROKER_URL } from "./insta
 import { hostedGatewayHostname } from "./hosted-name.js";
 import {
   brokerChallengeSchema,
+  brokerChallengeAdmissionTranscript,
   brokerHealthSchema,
   brokerRequestDigest,
   brokerResultSchemas,
@@ -110,10 +111,25 @@ export function dnsBrokerClient(options: {
       }
       return readBoundedJson(response);
     };
-    const challenge = brokerChallengeSchema.parse(await post("/_dns/v2/challenge", request));
+    const requestDigest = await brokerRequestDigest(request);
+    const health = await client.health(signal);
+    const expiresAt = Date.now() + 30_000;
+    const proof = health?.ownerProofRequired
+      ? {
+          expiresAt,
+          signature: sign(
+            null,
+            brokerChallengeAdmissionTranscript(broker.origin, requestDigest, expiresAt),
+            owner,
+          ).toString("base64url"),
+        }
+      : undefined;
+    const challenge = brokerChallengeSchema.parse(
+      await post("/_dns/v2/challenge", { ...request, ...(proof ? { proof } : {}) }),
+    );
     if (
       challenge.brokerOrigin !== broker.origin ||
-      challenge.requestDigest !== (await brokerRequestDigest(request)) ||
+      challenge.requestDigest !== requestDigest ||
       !challengeIsFresh(challenge.expiresAt)
     )
       throw new Error("The DNS broker challenge does not match this operation");
@@ -124,7 +140,7 @@ export function dnsBrokerClient(options: {
       }),
     );
   };
-  return {
+  const client: DnsBrokerClient = {
     hostname,
     async health(caller) {
       if (known && known.until > Date.now()) return known.value;
@@ -165,6 +181,7 @@ export function dnsBrokerClient(options: {
       await call({ type: "release" }, signal);
     },
   };
+  return client;
 }
 
 const markerSchema = z

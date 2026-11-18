@@ -269,17 +269,6 @@ test("pair-device writes its verified device credential privately and only after
   expect(pair).toHaveBeenCalledWith(
     expect.objectContaining({ kind: "collector", name: "Fictional collector", confirm }),
   );
-  const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
-  pair.mock.calls[0]![0].awaitApproval!({
-    gatewayUrl: "https://gateway.example.test",
-    verificationCode: "465 774",
-  });
-  expect(stderr).toHaveBeenCalledExactlyOnceWith(
-    "Gateway: https://gateway.example.test\n" +
-      "Approve this collector on your phone or another paired device, under Devices → Pairing requests. Check that it shows this code: 465 774\n" +
-      "Waiting for approval…\n",
-  );
-  stderr.mockRestore();
   expect(JSON.parse(await readFile(deviceFile, "utf8"))).toEqual(result);
   if (process.platform !== "win32") {
     expect((await stat(deviceFile)).mode & 0o777).toBe(0o600);

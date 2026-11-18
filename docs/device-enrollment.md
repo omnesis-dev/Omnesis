@@ -82,14 +82,15 @@ A device sets `requireApproval` when it cannot tell, without the relay, that the
 gateway is the owner's, so a person's comparison takes the place of that check.
 The iOS and Android apps set it for every gateway except one whose key they already
 pin and whose certificate passes the public checks (see "Which gateway a new device
-trusts"); the CLI and collector set it when the certificate fails those checks.
+trusts"). The CLI and collector always set it and require the code from an
+independently trusted gateway terminal or paired device before redeeming approval.
 
 ### Which gateway a new device trusts
 
 The relay lists the gateways a sign-in can join and proposes each one's certificate.
 A hacked relay can list a gateway of its own as "your gateway": under any name with a
-valid, logged certificate, including a name of its own under the relay's domain
-(anyone with an owner key can claim a fresh `g-…` name at the DNS broker). That
+valid, logged certificate, including a different hostname outside the relay’s
+domain. That
 gateway would approve the device, and the device would then send its data there. It
 cannot reach the owner's gateway: the device's signature names the stand-in's key.
 But nothing in a Google or passkey sign-in names the owner's gateway, and a valid
@@ -108,7 +109,8 @@ The owner's own gateway then holds the request whatever its policy, notifies the
 owner's admin devices, and lists it with the same code. A stand-in can say it
 approved, but the owner never saw the code on a device of theirs, so they do not
 confirm it. This costs a new phone one approval and one confirmation on first
-setup.
+setup. CLI and collector pairing always uses that independent comparison; a
+publicly logged certificate never removes it.
 
 ### What the gateway checks
 
@@ -527,13 +529,14 @@ make. A failed attempt cannot be retried without the owner starting over.
 
 ### Where it is shown
 
-| Flow                                                             | New device                                              | Why the code matters                                                                 |
-| ---------------------------------------------------------------- | ------------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| App, CLI or collector signs in (`/devices/account`, device key)  | Computes it; shows it while held                        | The signature already binds the gateway key; the code covers an unlogged certificate |
-| CLI over SSH or a typed connect code                             | Prints it and waits; types it if the cert is not logged | Same, and nothing was proved about the machine                                       |
-| Google pairing without a device key (`/devices/google`)          | Computes it; the CLI always asks for it to be typed     | The code is the only check on the proposed certificate                               |
-| Portal signs in itself (device key, or the account page handoff) | Computes it after its own challenge and request         | Tells requests apart                                                                 |
-| Portal returning from a sign-in redirect (no device key)         | Computes it from `poll`; there is no challenge          | Tells requests apart                                                                 |
+| Flow                                                             | New device                                                 | Why the code matters                                                          |
+| ---------------------------------------------------------------- | ---------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| App signs in (`/devices/account`, device key)                    | Computes it; compares it for an unrecognised gateway key   | Independently identifies the owner's gateway, beyond the proposed certificate |
+| CLI or collector signs in (`/devices/account`, device key)       | Always asks for the code from a trusted device or terminal | A logged certificate does not establish which gateway belongs to the owner    |
+| CLI over SSH or a typed connect code                             | Always asks for the code from a trusted device or terminal | Same verification is required when sign-in finishes on another machine        |
+| Google pairing without a device key (`/devices/google`)          | Computes it; the CLI always asks for it to be typed        | The code is the only check on the proposed certificate                        |
+| Portal signs in itself (device key, or the account page handoff) | Computes it after its own challenge and request            | Tells requests apart                                                          |
+| Portal returning from a sign-in redirect (no device key)         | Computes it from `poll`; there is no challenge             | Tells requests apart                                                          |
 
 In the last flow the gateway starts the request itself when the browser returns,
 so there is no challenge and the nonce is simply drawn. Nothing is lost: a
@@ -899,10 +902,9 @@ machine's name, and continues to the normal sign-in page. A code can be typed on
 any machine, so an operation reached through it never returns `signInProof` and
 never redirects to a loopback: the device always waits for approval on the
 owner's phone or another paired device, which the CLI, the relay page and its
-completion page say. Over SSH the CLI prints the six-digit comparison code to check on the
-approving device, then waits and continues once the request is approved; nothing
-is typed. If the gateway certificate is not publicly logged, the CLI instead asks
-for the code shown on the approving device before it waits.
+completion page say. The CLI asks for the six-digit code shown on the approving
+device or trusted gateway terminal, including over SSH and with a publicly logged
+certificate. Only a matching comparison and gateway approval let it redeem a credential.
 
 ## Connecting a gateway
 
@@ -1135,8 +1137,8 @@ does not see it (it watches the owner's gateway's name) and `ask` does not apply
 (the owner's gateway never sees the request). The apps therefore join by
 themselves only a gateway whose key they already pin, and otherwise wait for a
 person to compare the code on a device they already use (see "Which gateway a new
-device trusts"). The CLI and collector do not yet: they still continue by
-themselves once a gateway with a publicly logged certificate reports an approval.
+device trusts"). The CLI and collector always request approval and require a code
+comparison through an independently trusted device or gateway terminal before continuing.
 
 Operators who want a person to approve every device switch to `ask`, in the
 Omnesis account settings of the portal or the iOS and Android apps, or with
