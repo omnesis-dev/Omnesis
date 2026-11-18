@@ -53,6 +53,9 @@ junit = "4.13.2"
 robolectric = "4.14.1"
 roborazzi = "1.40.1"
 turbine = "1.2.0"
+# Silero VAD for recorded conversations (:feature-recording). The desktop artifact
+# runs the same model in JVM tests.
+onnxruntime = "1.31.1"
 # instrumented (androidTest)
 androidxTestRunner = "1.6.2"
 androidxTestRules = "1.6.1"
@@ -137,6 +140,8 @@ roborazzi = { module = "io.github.takahirom.roborazzi:roborazzi", version.ref = 
 roborazzi-compose = { module = "io.github.takahirom.roborazzi:roborazzi-compose", version.ref = "roborazzi" }
 roborazzi-junit-rule = { module = "io.github.takahirom.roborazzi:roborazzi-junit-rule", version.ref = "roborazzi" }
 turbine = { module = "app.cash.turbine:turbine", version.ref = "turbine" }
+onnxruntime-android = { module = "com.microsoft.onnxruntime:onnxruntime-android", version.ref = "onnxruntime" }
+onnxruntime-jvm = { module = "com.microsoft.onnxruntime:onnxruntime", version.ref = "onnxruntime" }
 # instrumented (androidTest)
 androidx-test-runner = { module = "androidx.test:runner", version.ref = "androidxTestRunner" }
 androidx-test-rules = { module = "androidx.test:rules", version.ref = "androidxTestRules" }
