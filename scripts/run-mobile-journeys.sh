@@ -26,7 +26,7 @@
 # every attempt fails the run. The screen is recorded for the whole run.
 # Everything worth reading after a failure lands in OMNESIS_JOURNEY_ARTIFACTS:
 # the recording, per-failure screenshots, test reports / the xcresult bundle,
-# the iOS app's touch log, and the gateway's logs.
+# the iOS app's touch log, and the gateway's logs and stall profiles.
 #
 # Overrides:
 #   OMNESIS_CONFIG_DIR               gateway state   (default: /tmp/omnesis-mobile-journeys/gateway)
@@ -105,6 +105,12 @@ cleanup() {
   "$ROOT/scripts/synth-gateway.sh" stop >/dev/null 2>&1 || true
   mkdir -p "$ARTIFACTS/gateway-logs"
   cp "$OMNESIS_CONFIG_DIR"/logs/*.log "$ARTIFACTS/gateway-logs/" 2>/dev/null || true
+  # The flight recorder's summaries of what held the gateway's event loop; the
+  # gateway log names each one it saved (docs/stall-investigation.md).
+  if compgen -G "$OMNESIS_CONFIG_DIR/diagnostics/stalls/profile-*.json" >/dev/null; then
+    mkdir -p "$ARTIFACTS/gateway-logs/stall-profiles"
+    cp "$OMNESIS_CONFIG_DIR"/diagnostics/stalls/profile-*.json "$ARTIFACTS/gateway-logs/stall-profiles/" 2>/dev/null || true
+  fi
   exit "$status"
 }
 trap cleanup EXIT
