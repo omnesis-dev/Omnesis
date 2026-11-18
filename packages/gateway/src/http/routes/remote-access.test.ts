@@ -52,6 +52,7 @@ function app({
           },
     ),
     publish: vi.fn(async () => ({ ok: true, url: "https://studio.example-net.ts.net" })),
+    unpublish: vi.fn(async () => ({ ok: true })),
   } as unknown as HostTailscaleService;
   const checks = new AddressChecks({
     resolve: async () => "203.0.113.7",
@@ -294,6 +295,20 @@ describe("remote access routes", () => {
       (await plain("POST", "/admin/remote-access/host-tailscale/publish", { public: "yes" }))
         .status,
     ).toBe(400);
+  });
+
+  test("unpublishing Tailscale on the host only closes the gateway, so it never asks for a step-up", async () => {
+    vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
+    const { send, host } = app({ stepUp: true });
+    const res = await send(
+      "POST",
+      "/admin/remote-access/host-tailscale/unpublish",
+      {},
+      { "x-omnesis-cloud-relay": "1" },
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true });
+    expect(host.unpublish).toHaveBeenCalledTimes(1);
   });
 
   test("a saved public address that is this computer's Tailscale name is said to be the host's", async () => {

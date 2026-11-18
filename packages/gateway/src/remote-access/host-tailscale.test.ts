@@ -168,6 +168,66 @@ describe("HostTailscaleService", () => {
     ]);
   });
 
+  test("unpublishing turns off only the ports that serve this gateway alone", async () => {
+    // The gateway on 10000 through Funnel; 443 and 8443 belong to other apps.
+    const { host, run } = service({
+      "status --json": running,
+      "serve status --json": serving(
+        {
+          443: { "/": gatewayTarget(7601) },
+          8443: { "/": "http://127.0.0.1:3000" },
+          10000: { "/": GATEWAY },
+        },
+        [443, 10000],
+      ),
+      "serve --https=10000 off": "",
+    });
+    expect(await host.unpublish()).toEqual({ ok: true });
+    expect(run.mock.calls.map(([, args]) => args.join(" "))).toEqual([
+      "status --json",
+      "serve status --json",
+      "serve --https=10000 off",
+    ]);
+  });
+
+  test("unpublishing a gateway nothing serves runs nothing", async () => {
+    const { host, run } = service({
+      "status --json": running,
+      "serve status --json": serving({ 443: { "/": "http://127.0.0.1:3000" } }),
+    });
+    expect(await host.unpublish()).toEqual({ ok: true });
+    expect(run).toHaveBeenCalledTimes(2);
+  });
+
+  test("an unpublish Tailscale refuses names the command to run instead", async () => {
+    const { host } = service({
+      "status --json": running,
+      "serve status --json": serving({ 443: { "/": GATEWAY } }, [443]),
+      "serve --https=443 off": Object.assign(new Error("exit 1"), {
+        stderr: "Access denied: serve config denied",
+      }),
+    });
+    expect(await host.unpublish()).toEqual({
+      ok: false,
+      reason: expect.stringContaining("not allowed to change Tailscale"),
+      command: "tailscale serve --https=443 off",
+    });
+  });
+
+  test("unpublishing changes nothing when Tailscale is down or will not say what it serves", async () => {
+    const stopped = service({ "status --json": JSON.stringify({ BackendState: "Stopped" }) });
+    expect(await stopped.host.unpublish()).toMatchObject({ ok: false });
+    const unreadable = service({
+      "status --json": running,
+      "serve status --json": new Error("exit 1"),
+    });
+    expect(await unreadable.host.unpublish()).toEqual({
+      ok: false,
+      reason: expect.stringContaining("changed nothing"),
+    });
+    expect(unreadable.run).toHaveBeenCalledTimes(2);
+  });
+
   test("Funnel's enable link, printed on stdout, is recognised", async () => {
     const { host } = service({
       "status --json": running,

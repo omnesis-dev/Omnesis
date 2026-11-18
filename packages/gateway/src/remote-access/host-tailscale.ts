@@ -72,9 +72,10 @@ export type HostTailscale =
       blocked?: string;
     };
 
-/** A failed publish names why, and the command to run instead when there is one. */
-export type PublishOutcome =
-  { ok: true; url: string } | { ok: false; reason: string; command?: string };
+/** A failed change names why, and the command to run instead when there is one. */
+export type Refusal = { ok: false; reason: string; command?: string };
+export type PublishOutcome = { ok: true; url: string } | Refusal;
+export type UnpublishOutcome = { ok: true } | Refusal;
 
 export type RunCli = (
   candidate: TailscaleCliCandidate,
@@ -179,6 +180,22 @@ function choosePort(served: ServedPorts, publicly: boolean): number | null {
   return serving[0]?.[0] ?? FUNNEL_PORTS.find((port) => !served.others.has(port)) ?? null;
 }
 
+/** Why Tailscale refused a change, from what its command printed. */
+function refusalReason(error: unknown): string {
+  // Tailscale prints the link that enables Funnel on stdout, its refusals on stderr.
+  const failed = error as { stdout?: string; stderr?: string };
+  const output = `${failed.stdout ?? ""}${failed.stderr ?? ""}${error instanceof Error ? error.message : ""}`;
+  if (/access denied|permission|operator|not permitted/i.test(output))
+    return "This gateway is not allowed to change Tailscale on this computer. Run the command below as root or as the computer's Tailscale operator.";
+  if (
+    /funnel.*not (enabled|allowed)|enable funnel|nodeAttrs|https:\/\/login\.tailscale\.com/i.test(
+      output,
+    )
+  )
+    return "Your tailnet does not allow Funnel or HTTPS certificates yet. Run the command below once: it prints the link that turns them on.";
+  return "Tailscale did not accept the change. Run the command below to see why.";
+}
+
 export class HostTailscaleService {
   constructor(
     private readonly port: number,
@@ -248,17 +265,39 @@ export class HostTailscaleService {
       await this.run(found.running.candidate, this.publishArgs(publicly, port), PUBLISH_TIMEOUT_MS);
       return { ok: true, url: addressOn(found.running.dnsName, port) };
     } catch (error) {
-      // Tailscale prints the link that enables Funnel on stdout, its refusals on stderr.
-      const failed = error as { stdout?: string; stderr?: string };
-      const output = `${failed.stdout ?? ""}${failed.stderr ?? ""}${error instanceof Error ? error.message : ""}`;
-      const reason = /access denied|permission|operator|not permitted/i.test(output)
-        ? "This gateway is not allowed to change Tailscale on this computer. Run the command below as root or as the computer's Tailscale operator."
-        : /funnel.*not (enabled|allowed)|enable funnel|nodeAttrs|https:\/\/login\.tailscale\.com/i.test(
-              output,
-            )
-          ? "Your tailnet does not allow Funnel or HTTPS certificates yet. Run the command below once: it prints the link that turns them on."
-          : "Tailscale did not accept the change. Run the command below to see why.";
-      return { ok: false, reason, command: commandOn(port) };
+      return { ok: false, reason: refusalReason(error), command: commandOn(port) };
+    }
+  }
+
+  /**
+   * Stop forwarding the machine's name to this gateway: every port that serves this
+   * gateway alone is turned off, with its Funnel. A port that also serves anything else
+   * is another app's and stays as it is.
+   */
+  async unpublish(): Promise<UnpublishOutcome> {
+    const found = await this.findRunning();
+    if (!found.running) return { ok: false, reason: found.installed ? NOT_RUNNING : NOT_INSTALLED };
+    const served = await this.served(found.running);
+    if (!served) {
+      return {
+        ok: false,
+        reason:
+          "Omnesis couldn't read what Tailscale on this computer serves, so it changed nothing. Run tailscale serve status to see it.",
+      };
+    }
+    const ports = [...served.gateway.keys()];
+    const command = ports.map((port) => `tailscale serve --https=${port} off`).join(" && ");
+    try {
+      for (const port of ports) {
+        await this.run(
+          found.running.candidate,
+          ["serve", `--https=${port}`, "off"],
+          PUBLISH_TIMEOUT_MS,
+        );
+      }
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, reason: refusalReason(error), command };
     }
   }
 

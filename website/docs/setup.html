@@ -400,13 +400,17 @@
             already on the gateway machine, on your tailnet or, with Funnel, to the Internet. The
             gateway runs the <code>tailscale serve</code> or <code>tailscale funnel</code> command
             for you; where it may not change Tailscale (on Linux that takes root or the machine's
-            Tailscale operator), it shows the command to run, and
-            <strong>I have already done it, check it</strong> confirms the result. It publishes on
-            the machine's name at port 443, or at 8443 or 10000 when another app Tailscale serves
-            already uses 443, and never replaces that app; with all three in use it says so and
-            changes nothing. Published to the Internet, the address becomes the gateway's public
-            address. A gateway in a container does not offer this way: Tailscale on the host cannot
-            reach it there.
+            Tailscale operator), it shows the command to run, with a button that checks the result
+            once you have run it. It publishes on the machine's name at port 443, or at 8443 or
+            10000 when another app Tailscale serves already uses 443, and never replaces that app;
+            with all three in use it says so and changes nothing. Some agents, such as ChatGPT,
+            connect only on port 443. Published to the Internet, the address becomes the gateway's
+            public address. Unticking this way in the setup, or
+            <strong>Stop serving this gateway</strong> on its page, runs
+            <code>tailscale serve --https=&lt;port&gt; off</code>, and a public address that was
+            this one is removed. The setup does not move on while Tailscale differs from the choice.
+            A gateway in a container does not offer this way: Tailscale on the host cannot reach it
+            there.
           </li>
           <li>
             <strong>Your own domain or reverse proxy</strong> takes an https address you publish

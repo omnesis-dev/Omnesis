@@ -21,6 +21,7 @@ const gateway = vi.hoisted(() => ({
   remote: null as Json | null,
   host: null as Json | null,
   publish: null as Json | null,
+  unpublish: null as Json | null,
   check: null as Json | null,
   failRemote: false,
   calls: [] as unknown[][],
@@ -79,6 +80,11 @@ vi.mock("../lib/remote-access-api.js", () => ({
     if (gateway.publish!.ok) gateway.host = { ...gateway.host, servesGateway: true, publicGateway: isPublic };
     return clone(gateway.publish);
   }),
+  unpublishHostTailscale: vi.fn(async () => {
+    gateway.calls.push(["unpublish"]);
+    if (gateway.unpublish!.ok) gateway.host = { ...gateway.host, servesGateway: false, publicGateway: false };
+    return clone(gateway.unpublish);
+  }),
   checkPublicAddress: vi.fn(async (url: string) => {
     gateway.calls.push(["check", url]);
     return clone(gateway.check);
@@ -98,6 +104,8 @@ vi.mock("../lib/router.js", () => router);
 
 // @ts-expect-error — portal modules are plain JS.
 import { RemoteAccessView } from "./remote-access.js";
+// @ts-expect-error — portal modules are plain JS.
+import { HostTailscaleView } from "./remote-access/own-pages.js";
 
 function relayNone(): Json {
   return {
@@ -177,6 +185,7 @@ beforeEach(() => {
     },
     host: { state: "available", dnsName: "studio.example-net.ts.net", port: 443, url: "https://studio.example-net.ts.net", servesGateway: false, publicGateway: false },
     publish: { ok: true, url: "https://studio.example-net.ts.net" },
+    unpublish: { ok: true },
     check: {
       url: "https://omnesis.example.org", ok: true,
       steps: [
@@ -233,6 +242,17 @@ const way = (key: string) => host.querySelector(`#remote-access-way-${key}`) as 
 /** Whether a box or radio is checked: linkedom keeps Preact's `checked` as an attribute until a test sets the property. */
 const isChecked = (input: Element | null | undefined) =>
   input ? (Object.hasOwn(input, "checked") ? (input as HTMLInputElement).checked : input.hasAttribute("checked")) : undefined;
+/**
+ * Confirm a dialog without bubbling: linkedom calls an ancestor's listener with the
+ * clicked element as `this`, so Preact would run the button's handler once per
+ * ancestor that also handles clicks, as the dialog's backdrop does.
+ */
+async function confirmOnce(label: string) {
+  const target = button(label);
+  expect(target, `button "${label}"`).toBeTruthy();
+  await act(async () => void target!.dispatchEvent(new (window as any).Event("click", { bubbles: false })));
+  await settle();
+}
 async function confirmModal() {
   await act(async () => (host.querySelector(".confirm-modal .btn-primary") as HTMLButtonElement).click());
   await settle();
@@ -712,26 +732,89 @@ describe("both", () => {
     expect(isChecked(host.querySelector(".remote-access-check input"))).toBe(true);
   });
 
-  test("a check says what it found when nothing changed", async () => {
+  test("a refused change offers its check under the command, which says what it found and clears once done", async () => {
+    gateway.publish = { ok: false, reason: "This gateway is not allowed to change Tailscale on this computer.", command: "tailscale funnel --bg https+insecure://localhost:7600" };
     savedSetup("connection", { host: true });
     await mount(FLAGS.tailscale);
-    await click("I have already done it, check it");
-    expect(calls("host").length).toBeGreaterThanOrEqual(2);
-    expect(host.querySelector('.remote-access-option [role="status"].remote-access-muted')?.textContent).toBe(
-      "Tailscale on this computer isn't serving this gateway yet. Set it up, or run the command, then check again.",
-    );
+    // Nothing to check before a command is shown.
+    expect(button("I've run it, check it")).toBeUndefined();
+    await toggle(".remote-access-check input", true);
+    await click("Set it up for me");
+    const command = () => host.querySelector(".remote-access-command");
+    expect(command()?.querySelector(".copy-block-code")?.textContent).toBe("tailscale funnel --bg https+insecure://localhost:7600");
+    expect(command()?.textContent).toContain("I've run it, check it");
+    await click("I've run it, check it");
+    expect(text()).toContain("Tailscale on this computer isn't serving this gateway yet. Run the command above, then check again.");
     // Served on the tailnet but not public, while the owner wants it public.
     gateway.host = { ...gateway.host, servesGateway: true, publicGateway: false };
-    await click("I have already done it, check it");
-    expect(text()).toContain(`Serving this gateway at ${HOST_URL}, to your Tailscale devices only.`);
-    await toggle(".remote-access-check input", true);
-    await click("I have already done it, check it");
-    expect(text()).toContain("This gateway isn't reachable from the Internet yet. Set it up, or run the command, then check again.");
-    // Something new found says nothing more.
+    await click("I've run it, check it");
+    expect(text()).toContain("This gateway isn't reachable from the Internet yet. Run the command above, then check again.");
+    // Done: the refusal and its command go, and the address becomes the public address.
     gateway.host = { ...gateway.host, servesGateway: true, publicGateway: true };
-    await click("I have already done it, check it");
-    expect(text()).not.toContain("yet. Set it up, or run the command");
+    await click("I've run it, check it");
+    expect(command()).toBeNull();
+    expect(text()).not.toContain("Run the command above");
     expect(text()).toContain(`Serving this gateway at ${HOST_URL}, on your Tailscale network and to the Internet.`);
+    expect(calls("config")).toEqual([["config", { gateway: { publicBaseUrl: HOST_URL } }]]);
+    expect(button(`Use ${HOST_URL} as this gateway's public address`)).toBeUndefined();
+  });
+
+  test("the setup goes on only once Tailscale on this computer does what its box says", async () => {
+    savedSetup("connection", { host: true });
+    await mount({ cloudRelay: false, tailscaleEmbed: false });
+    const next = () => host.querySelector(".remote-access-actions .btn-primary") as HTMLButtonElement;
+    // Ticked but not set up: Finish waits.
+    expect(next().disabled).toBe(true);
+    expect(text()).toContain("Set up Tailscale on this computer, or untick it, to continue.");
+    // Ticking the box for the Internet without applying it waits too.
+    await click("Set it up for me");
+    expect(next().disabled).toBe(false);
+    await toggle(".remote-access-check input", true);
+    expect(next().disabled).toBe(true);
+    await click("Set it up for me");
+    expect(next().disabled).toBe(false);
+    expect(text()).not.toContain("to continue.");
+  });
+
+  test("unticking Tailscale on this computer while it serves the gateway stops it, and the address with it", async () => {
+    gateway.host = { ...gateway.host, servesGateway: true, publicGateway: true };
+    gateway.remote!.publicBaseUrl = { configured: HOST_URL, setByEnvironment: false, way: "host" };
+    gateway.unpublish = { ok: false, reason: "This gateway is not allowed to change Tailscale on this computer.", command: "tailscale serve --https=443 off" };
+    savedSetup("connection");
+    await mount({ cloudRelay: false, tailscaleEmbed: false });
+    const next = () => host.querySelector(".remote-access-actions .btn-primary") as HTMLButtonElement;
+    expect(isChecked(way("host"))).toBe(true);
+    expect(next().disabled).toBe(false);
+    await toggle("#remote-access-way-host", false);
+    expect(text()).toContain(`Tailscale on this computer still serves this gateway at ${HOST_URL}, on your Tailscale network and to the Internet.`);
+    expect(next().disabled).toBe(true);
+    expect(text()).toContain("Stop serving this gateway from Tailscale on this computer, or tick it again, to continue.");
+    await click("Stop serving this gateway");
+    expect(host.querySelector(".confirm-modal")?.textContent).toContain("it is no longer this gateway's public address");
+    await confirmOnce("Stop serving");
+    expect(calls("unpublish")).toEqual([["unpublish"]]);
+    expect(host.querySelector(".copy-block-code")?.textContent).toBe("tailscale serve --https=443 off");
+    expect(calls("config")).toEqual([]);
+    // The owner runs it, and the check finds it done: the address goes too.
+    gateway.host = { ...gateway.host, servesGateway: false, publicGateway: false };
+    await click("I've run it, check it");
+    // Unticked and served nowhere, its panel goes.
+    expect(host.querySelector(".remote-access-command")).toBeNull();
+    expect(text()).not.toContain("still serves this gateway");
+    expect(calls("config")).toEqual([["config", { gateway: { publicBaseUrl: null } }]]);
+    expect(next().disabled).toBe(false);
+  });
+
+  test("stopping keeps a public address that is not this computer's", async () => {
+    gateway.host = { ...gateway.host, servesGateway: true, publicGateway: false };
+    gateway.remote!.publicBaseUrl = { configured: "https://omnesis.example.org", setByEnvironment: false, way: null };
+    savedSetup("connection", { host: false });
+    await mount({ cloudRelay: false, tailscaleEmbed: false });
+    await click("Stop serving this gateway");
+    await confirmOnce("Stop serving");
+    expect(calls("unpublish")).toEqual([["unpublish"]]);
+    expect(calls("config")).toEqual([]);
+    expect(text()).not.toContain("still serves this gateway");
   });
 
   test("Tailscale on this computer: a check re-reads, and a stopped daemon gives the reason", async () => {
@@ -764,15 +847,25 @@ describe("both", () => {
     expect(button("Use this address")).toBeUndefined();
   });
 
-  test("another app on 443 moves the gateway to its own port, and none free offers nothing to run", async () => {
+  test("other apps on 443 move the gateway to its own port, and none free offers nothing to run", async () => {
     gateway.host = { ...gateway.host, port: 8443, url: `${HOST_URL}:8443` };
     savedSetup("connection", { host: true });
     await mount(FLAGS.both);
-    expect(text()).toContain(`Another app already uses ${HOST_URL}, so this gateway uses port 8443: ${HOST_URL}:8443.`);
+    expect(text()).toContain(
+      `Another app already uses ${HOST_URL} on port 443, so this gateway uses port 8443. Some agents, such as ChatGPT, connect only on port 443, so ${HOST_URL}:8443/mcp may not work with them.`,
+    );
     expect(button("Set it up for me")).toBeTruthy();
+    gateway.host = { ...gateway.host, port: 10000, url: `${HOST_URL}:10000` };
+    await remount(FLAGS.both);
+    expect(text()).toContain(`Another app already uses ${HOST_URL} on ports 443 and 8443, so this gateway uses port 10000.`);
+    // Once served there, only the agents' caveat stays.
+    gateway.host = { ...gateway.host, servesGateway: true };
+    await remount(FLAGS.both);
+    expect(text()).not.toContain("Another app already uses");
+    expect(text()).toContain(`so ${HOST_URL}:10000/mcp may not work with them.`);
     const blocked = "Tailscale on this computer already serves other apps on 443, 8443 and 10000, the ports it can publish. Free one of them, then check again.";
-    gateway.host = { ...gateway.host, port: null, url: HOST_URL, blocked };
-    await click("I have already done it, check it");
+    gateway.host = { ...gateway.host, servesGateway: false, port: null, url: HOST_URL, blocked };
+    await remount(FLAGS.both);
     expect(text()).toContain(blocked);
     expect(text()).not.toContain("Another app already uses");
     expect(button("Set it up for me")).toBeUndefined();
@@ -901,10 +994,39 @@ describe("the MCP server", () => {
     expect(detail("MCP server")).toBe("Off on every address away from home.");
   });
 
+  test("an address on a port other than 443 says some agents may not reach it", async () => {
+    gateway.host = { ...gateway.host, port: 10000, url: `${HOST_URL}:10000`, servesGateway: true };
+    gateway.remote!.mcpAddresses = [mcpRow("host", { url: `${HOST_URL}:10000` })];
+    await mount(FLAGS.tailscale);
+    await startSetup();
+    await click("Continue");
+    expect(text()).toContain(`${HOST_URL}:10000/mcp`);
+    expect(text()).toContain(`Some agents, such as ChatGPT, connect only on port 443, so ${HOST_URL}:10000/mcp may not work with them.`);
+  });
+
   test("without an address away from home, says agents at home still connect", async () => {
     await mount(FLAGS.tailscale);
     expect(detail("MCP server")).toBe("On this computer and your home network only, until an address away from home is set up.");
     await startSetup();
     expect(steps()).toEqual(["1Remote connection"]);
+  });
+});
+
+describe("Tailscale on this computer's own page", () => {
+  test("stops serving the gateway, after a confirmation, and can set it up again", async () => {
+    gateway.host = { ...gateway.host, servesGateway: true, publicGateway: true };
+    gateway.remote!.publicBaseUrl = { configured: HOST_URL, setByEnvironment: false, way: "host" };
+    await act(async () => render(h(HostTailscaleView, {}), host));
+    await settle();
+    expect(text()).toContain(`Serving this gateway at ${HOST_URL}, on your Tailscale network and to the Internet.`);
+    await click("Stop serving this gateway");
+    await click("Cancel");
+    expect(calls("unpublish")).toEqual([]);
+    await click("Stop serving this gateway");
+    await confirmOnce("Stop serving");
+    expect(calls("unpublish")).toEqual([["unpublish"]]);
+    expect(calls("config")).toEqual([["config", { gateway: { publicBaseUrl: null } }]]);
+    expect(button("Stop serving this gateway")).toBeUndefined();
+    expect(button("Set it up for me")).toBeTruthy();
   });
 });

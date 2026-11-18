@@ -22,7 +22,8 @@
  *   that setting and keeps no choice of its own.
  * - `host`: Tailscale already running on this computer, by the machine's
  *   MagicDNS name, which `tailscale serve` and `tailscale funnel` pass on as
- *   the request's Host. Every gateway with a listening port has it.
+ *   the request's Host, on whichever port it serves the gateway. Every
+ *   gateway with a listening port has it.
  * - `domain`: the address in `gateway.publicBaseUrl`, recognised by Host,
  *   which whatever publishes it (a reverse proxy, a tunnel) must pass on.
  *   When that address is one of the ways above — the owner saved the relay's
@@ -171,6 +172,8 @@ export function relayStateFrom(
 /** What Tailscale on this computer last said about it. */
 interface HostLookup {
   dnsName: string | null;
+  /** The gateway's address there, with its port unless 443. */
+  url: string | null;
   servesGateway: boolean;
   at: number;
 }
@@ -213,7 +216,7 @@ export class McpAddresses {
     const host = this.options.hostTailscale ? await this.lookUpHost() : null;
     const relay = await this.relayNow();
     const tailnet = originOf(this.options.tailscale?.tailnetOrigin());
-    const hostUrl = host?.dnsName ? `https://${host.dnsName}` : null;
+    const hostUrl = host?.url ?? null;
     const domain = this.options.publicBaseUrl()?.replace(/\/+$/u, "") || null;
     const domainIsOwn = !!domain && this.wayNamed(addressHostname(domain)) === null;
     return this.offered().map((id): McpAddressRow => {
@@ -359,14 +362,18 @@ export class McpAddresses {
       .then(
         (status) =>
           status.state === "available"
-            ? { dnsName: status.dnsName.toLowerCase(), servesGateway: status.servesGateway }
-            : { dnsName: null, servesGateway: false },
+            ? {
+                dnsName: status.dnsName.toLowerCase(),
+                url: status.url,
+                servesGateway: status.servesGateway,
+              }
+            : { dnsName: null, url: null, servesGateway: false },
         (error: unknown) => {
           log.warn(
             `Could not ask Tailscale on this computer for its name: ${error instanceof Error ? error.message : String(error)}`,
           );
           // Keep refusing by the name already known.
-          return { dnsName: this.host?.dnsName ?? null, servesGateway: false };
+          return { dnsName: this.host?.dnsName ?? null, url: null, servesGateway: false };
         },
       )
       .then((found) => {

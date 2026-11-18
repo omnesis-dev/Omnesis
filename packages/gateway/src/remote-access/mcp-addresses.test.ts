@@ -44,14 +44,15 @@ function addresses(overrides: Partial<McpAddressesOptions> = {}) {
     }),
   };
   let hostName: string | null = "Studio.example-net.ts.net";
+  let hostPort = 443;
   const hostTailscale = {
     status: vi.fn(async () =>
       hostName
         ? {
             state: "available" as const,
             dnsName: hostName,
-            port: 443,
-            url: `https://${hostName}`,
+            port: hostPort,
+            url: `https://${hostName.toLowerCase()}${hostPort === 443 ? "" : `:${hostPort}`}`,
             servesGateway: true,
             publicGateway: false,
           }
@@ -80,6 +81,9 @@ function addresses(overrides: Partial<McpAddressesOptions> = {}) {
     hostTailscale,
     renameHost: (name: string | null) => {
       hostName = name;
+    },
+    serveHostOn: (port: number) => {
+      hostPort = port;
     },
     advance: (ms: number) => {
       clock += ms;
@@ -189,6 +193,18 @@ describe("MCP per address", () => {
       { id: "host", url: null, enabled: true, available: false },
       { id: "domain", url: null, enabled: true, available: false },
     ]);
+  });
+
+  test("this computer's row names the port Tailscale serves the gateway on", async () => {
+    flags();
+    const { policy, serveHostOn } = addresses();
+    serveHostOn(10000);
+    expect((await policy.list()).find((row) => row.id === "host")).toEqual({
+      id: "host",
+      url: "https://studio.example-net.ts.net:10000",
+      enabled: true,
+      available: true,
+    });
   });
 
   test("the relay row follows the relay's live state, not the origin known at start", async () => {

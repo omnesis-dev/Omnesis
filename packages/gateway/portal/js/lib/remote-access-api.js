@@ -42,3 +42,10 @@ export const getHostTailscale = (signal) => remoteAccessRequest("GET", "/host-ta
  */
 export const publishHostTailscale = (isPublic, signal) =>
   remoteAccessRequest("POST", "/host-tailscale/publish", { body: { public: isPublic }, signal });
+
+/**
+ * Stops Tailscale on this computer serving the gateway, on the tailnet and the Internet:
+ * `{ ok: true }`, or `{ ok: false, reason, command }` naming the command the owner runs.
+ */
+export const unpublishHostTailscale = (signal) =>
+  remoteAccessRequest("POST", "/host-tailscale/unpublish", { body: {}, signal });

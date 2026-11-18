@@ -33,6 +33,21 @@ export function mcpRows(remote) {
 /** The MCP endpoint at an address's origin. */
 const endpoint = (url) => (url ? `${url.replace(/\/$/u, "")}/mcp` : null);
 
+/** Whether an address names a port, which agents that connect only on 443 cannot use. */
+const hasPort = (url) => {
+  try {
+    return new URL(url).port !== "";
+  } catch {
+    return false;
+  }
+};
+
+/** Said wherever an address on a port other than 443 offers MCP. */
+export function PortCaveat({ url }) {
+  return html`Some agents, such as ChatGPT, connect only on port 443, so <code>${endpoint(url)}</code> may not
+    work with them.`;
+}
+
 /** One tick per address away from home, changed in place. */
 export function McpChoice({ remote, setRemote }) {
   const [saving, setSaving] = useState("");
@@ -66,6 +81,7 @@ export function McpChoice({ remote, setRemote }) {
         <span class="remote-access-option-text">
           <strong>${MCP_ADDRESS_LABELS[row.id] ?? row.id}</strong>
           ${endpoint(row.url) && html`<small><code>${endpoint(row.url)}</code></small>`}
+          ${hasPort(row.url) && html`<small><${PortCaveat} url=${row.url} /></small>`}
         </span>
       </label>`;
     })}

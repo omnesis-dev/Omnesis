@@ -35,7 +35,7 @@ export function HostTailscaleView() {
     title="Tailscale on this computer"
     blurb="Serve this gateway from the Tailscale app already on this computer, on your Tailscale network or publicly."
   >
-    ${(remote, setRemote) => html`<${HostTailscale} remote=${remote} setRemote=${setRemote} />`}
+    ${(remote, setRemote) => html`<${HostTailscale} remote=${remote} setRemote=${setRemote} offerStop />`}
   <//>`;
 }
 

@@ -176,4 +176,8 @@ export function mountRemoteAccessRoutes(app: RouteApp, options: RemoteAccessRout
     validateJson(publishBody),
     async (c) => c.json(await host.publish(c.req.valid("json").public)),
   );
+  // Unpublishing only closes the gateway to others, so it never asks for a step-up.
+  app.post("/admin/remote-access/host-tailscale/unpublish", scope.admin(), bounded, async (c) =>
+    c.json(await host.unpublish()),
+  );
 }
