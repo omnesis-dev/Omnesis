@@ -19,10 +19,17 @@ class RecordingControllerTest {
     private val root: File = Files.createTempDirectory("recordings").toFile()
     private var now = 1_772_442_000_000L // 2026-03-02T09:00:00Z
     private var queued = 0
+    /** What the speech check answers per chunk file name; files it does not name hold speech, not at their end. */
+    private val verdicts = mutableMapOf<String, ChunkSpeech>()
+    private val scanned = mutableListOf<String>()
     private val controller = RecordingController(
         outbox = outbox,
         files = RecordingFiles(root),
         onWorkQueued = { queued++ },
+        speechCheck = { file ->
+            scanned += file.name
+            verdicts[file.name] ?: ChunkSpeech(SpeechVerdict.Speech, speechAtEnd = false)
+        },
         clock = { now },
         zone = { ZoneId.of("Europe/Rome") },
         locale = { Locale.UK },
@@ -41,14 +48,15 @@ class RecordingControllerTest {
         assertEquals(1, queued)
     }
 
-    @Test fun filesChunksAndDropsTheAudioOfSilentOnes() = runTest {
+    @Test fun filesChunksAndDropsTheAudioOfOnesWithoutSpeech() = runTest {
         val active = controller.begin(null)!!
         val loud = chunkFile("chunk-00000.m4a")
         val quiet = chunkFile("chunk-00001.m4a")
         val empty = File(root, "chunk-00002.m4a").apply { createNewFile() }
-        controller.chunkClosed(active.sessionId, RecordedChunk(0, now, 60_000, loud, peakAmplitude = 9_000, interrupted = false))
-        controller.chunkClosed(active.sessionId, RecordedChunk(1, now + 60_000, 60_000, quiet, peakAmplitude = 120, interrupted = true))
-        controller.chunkClosed(active.sessionId, RecordedChunk(2, now + 120_000, 900, empty, peakAmplitude = 9_000, interrupted = false))
+        verdicts["chunk-00001.m4a"] = ChunkSpeech(SpeechVerdict.NoSpeech, speechAtEnd = false)
+        controller.chunkClosed(active.sessionId, RecordedChunk(0, now, 60_000, loud, interrupted = false))
+        controller.chunkClosed(active.sessionId, RecordedChunk(1, now + 60_000, 60_000, quiet, interrupted = true))
+        controller.chunkClosed(active.sessionId, RecordedChunk(2, now + 120_000, 900, empty, interrupted = false))
         controller.flush()
 
         val chunks = outbox.pendingChunks(active.sessionId)
@@ -63,7 +71,56 @@ class RecordingControllerTest {
         assertTrue(chunks[2].silent)
         assertEquals(0, chunks[2].durationMs)
         assertFalse(empty.exists())
+        // An empty file is never decoded.
+        assertEquals(listOf("chunk-00000.m4a", "chunk-00001.m4a"), scanned)
         assertEquals(3, (controller.state.value as RecordingState.Active).chunks)
+    }
+
+    @Test fun keepsTheChunkAfterOneThatEndedInSpeech() = runTest {
+        val active = controller.begin(null)!!
+        val files = (0..3).map { chunkFile(ChunkPolicy.fileName(it)) }
+        verdicts[files[0].name] = ChunkSpeech(SpeechVerdict.Speech, speechAtEnd = true)
+        // The end of the sentence: too short to count as speech on its own.
+        verdicts[files[1].name] = ChunkSpeech(SpeechVerdict.NoSpeech, speechAtEnd = false)
+        verdicts[files[2].name] = ChunkSpeech(SpeechVerdict.NoSpeech, speechAtEnd = false)
+        files.forEachIndexed { seq, file ->
+            if (seq < 3) controller.chunkClosed(active.sessionId, RecordedChunk(seq, now + seq * 60_000L, 60_000, file, interrupted = false))
+        }
+        controller.flush()
+
+        val chunks = outbox.pendingChunks(active.sessionId)
+        assertFalse(chunks[0].silent)
+        assertFalse(chunks[1].silent) // kept: it follows a chunk that ended in speech
+        assertEquals(files[1], chunks[1].file)
+        assertTrue(chunks[2].silent) // its predecessor ended quietly
+        assertFalse(files[2].exists())
+    }
+
+    @Test fun anEndInSpeechCarriesOnlyToTheNextChunkOfTheSameSession() = runTest {
+        val first = controller.begin(null)!!
+        val a = chunkFile("a.m4a")
+        verdicts["a.m4a"] = ChunkSpeech(SpeechVerdict.Speech, speechAtEnd = true)
+        controller.chunkClosed(first.sessionId, RecordedChunk(0, now, 60_000, a, interrupted = false))
+        controller.flush()
+        // A chunk numbered further on is not the continuation.
+        val skipped = chunkFile("b.m4a")
+        verdicts["b.m4a"] = ChunkSpeech(SpeechVerdict.NoSpeech, speechAtEnd = false)
+        controller.chunkClosed(first.sessionId, RecordedChunk(2, now + 120_000, 60_000, skipped, interrupted = false))
+        controller.flush()
+        assertTrue(outbox.pendingChunks(first.sessionId).single { it.seq == 2 }.silent)
+    }
+
+    @Test fun keepsTheAudioOfAChunkTheDetectorCouldNotJudge() = runTest {
+        val active = controller.begin(null)!!
+        val unread = chunkFile("chunk-00000.m4a")
+        verdicts["chunk-00000.m4a"] = ChunkSpeech(SpeechVerdict.Unknown, speechAtEnd = true)
+        controller.chunkClosed(active.sessionId, RecordedChunk(0, now, 60_000, unread, interrupted = false))
+        controller.flush()
+
+        val chunk = outbox.pendingChunks(active.sessionId).single()
+        assertFalse(chunk.silent)
+        assertEquals(unread, chunk.file)
+        assertTrue(unread.exists())
     }
 
     @Test fun aLostMicrophoneShowsAsPaused() = runTest {
@@ -94,7 +151,7 @@ class RecordingControllerTest {
         now += 120_000
         var closed = false
         // Reported back to back from the main thread, as the service does on Stop.
-        controller.chunkClosed(active.sessionId, RecordedChunk(1, now - 60_000, 60_000, chunkFile("chunk-00001.m4a"), 9_000, false))
+        controller.chunkClosed(active.sessionId, RecordedChunk(1, now - 60_000, 60_000, chunkFile("chunk-00001.m4a"), false))
         controller.stopped(active.sessionId, 2) { closed = true }
         controller.flush()
 
@@ -187,9 +244,7 @@ class RecordingControllerTest {
         assertFalse(File(root, "orphan").exists())
     }
 
-    @Test fun theSilenceGateAndChunkSize() {
-        assertTrue(ChunkPolicy.isSilent(0))
-        assertFalse(ChunkPolicy.isSilent(ChunkPolicy.SILENCE_PEAK))
+    @Test fun chunkSizeAndNames() {
         assertEquals(240_000L, ChunkPolicy.maxChunkBytes())
         assertEquals("chunk-00007.m4a", ChunkPolicy.fileName(7))
         assertEquals(7, ChunkPolicy.seqOf("chunk-00007.m4a"))

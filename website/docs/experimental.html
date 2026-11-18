@@ -617,9 +617,10 @@
           elapsed time and offers pause and stop; it keeps recording with the screen off and stops
           on its own after four hours. The app stores the audio in short chunks on the phone and
           uploads each one in the background, on Wi-Fi only if you choose. A chunk the gateway has
-          not acknowledged is retried, so a dropped connection or a restarted app loses nothing.
-          Stretches of silence are not uploaded, and a phone call that takes the microphone is
-          marked in the transcript.
+          not acknowledged is retried, so a dropped connection or a restarted app loses nothing. The
+          phone checks each chunk for speech with an on-device voice detector and uploads a chunk
+          without speech without its audio; a chunk it cannot check is uploaded whole. A phone call
+          that takes the microphone is marked in the transcript.
         </p>
         <p>
           The gateway transcribes each chunk with the assigned transcriber as it arrives, behind

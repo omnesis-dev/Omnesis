@@ -9,11 +9,13 @@ import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
+import dev.omnesis.android.feature.recording.ChunkSpeechScanner
 import dev.omnesis.android.feature.recording.RecordingController
 import dev.omnesis.android.feature.recording.RecordingFiles
 import dev.omnesis.android.feature.recording.RecordingOutbox
 import dev.omnesis.android.feature.recording.RecordingSettings
 import dev.omnesis.android.feature.recording.RecordingUploadScheduler
+import dev.omnesis.android.feature.recording.SileroSpeechDetector
 import dev.omnesis.android.feature.recording.SqliteRecordingOutbox
 import java.io.File
 import javax.inject.Singleton
@@ -43,10 +45,13 @@ object RecordingModule {
         outbox: RecordingOutbox,
         files: RecordingFiles,
         settings: RecordingSettings,
-    ): RecordingController =
-        RecordingController(
+    ): RecordingController {
+        val detector = SileroSpeechDetector { context.assets.open(SileroSpeechDetector.MODEL_ASSET).use { it.readBytes() } }
+        return RecordingController(
             outbox = outbox,
             files = files,
             onWorkQueued = { RecordingUploadScheduler.enqueue(context, settings.wifiOnly) },
+            speechCheck = ChunkSpeechScanner(detector)::scan,
         )
+    }
 }

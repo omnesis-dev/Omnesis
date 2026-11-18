@@ -46,7 +46,7 @@ sealed interface RecordingState {
 
 /**
  * The one owner of a recording's bookkeeping: opens the session in the
- * outbox, files each closed chunk (dropping the audio of a silent one), and
+ * outbox, files each closed chunk (dropping the audio of one without speech), and
  * closes the session when recording stops. The foreground service drives the
  * microphone and reports to it; the screen and the notification read [state].
  *
@@ -62,6 +62,8 @@ class RecordingController(
     private val outbox: RecordingOutbox,
     private val files: RecordingFiles,
     private val onWorkQueued: () -> Unit,
+    /** Whether a closed chunk's audio holds speech; only [SpeechVerdict.NoSpeech] drops the audio. */
+    private val speechCheck: suspend (File) -> ChunkSpeech,
     private val clock: () -> Long = System::currentTimeMillis,
     private val zone: () -> ZoneId = ZoneId::systemDefault,
     private val locale: () -> Locale = Locale::getDefault,
@@ -71,6 +73,14 @@ class RecordingController(
     val state: StateFlow<RecordingState> = _state.asStateFlow()
 
     private val queue = Channel<suspend () -> Unit>(Channel.UNLIMITED)
+
+    private data class ChunkRef(val sessionId: String, val seq: Int)
+
+    /**
+     * The last chunk filed whose end held speech. Only the queue touches it.
+     * Kept in memory: after a process kill the next chunk is judged alone.
+     */
+    private var speechEndedAt: ChunkRef? = null
 
     init {
         scope.launch {
@@ -240,10 +250,18 @@ class RecordingController(
         }
     }
 
-    /** File one closed chunk. A silent or empty chunk keeps its timing but not its audio. */
+    /**
+     * File one closed chunk. A chunk with no speech, or an empty one, keeps its
+     * timing but not its audio; a chunk the detector could not judge keeps it,
+     * and so does the chunk right after one whose end held speech.
+     */
     private suspend fun fileChunk(sessionId: String, chunk: RecordedChunk) {
         val empty = withContext(Dispatchers.IO) { !chunk.file.exists() || chunk.file.length() == 0L }
-        val silent = empty || chunk.durationMs == 0L || ChunkPolicy.isSilent(chunk.peakAmplitude)
+        val speech = if (empty || chunk.durationMs == 0L) null else speechCheck(chunk.file)
+        // The previous chunk ended in speech: its sentence may finish here, too briefly to count.
+        val continues = speechEndedAt == ChunkRef(sessionId, chunk.seq - 1)
+        val silent = speech == null || (speech.verdict == SpeechVerdict.NoSpeech && !continues)
+        speechEndedAt = if (speech?.speechAtEnd == true) ChunkRef(sessionId, chunk.seq) else null
         if (silent) withContext(Dispatchers.IO) { chunk.file.delete() }
         outbox.addChunk(
             OutboxChunk(
