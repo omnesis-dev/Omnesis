@@ -64,6 +64,7 @@ export class AccountServices {
       sessions: RelaySessions;
       google?: IdentityProvider;
       admission: LoginAdmission;
+      ownerAdmission: LoginAdmission;
       gatewayAccounts(google: string): string[];
       gatewayBinding(owner: string): GatewayBinding | undefined;
       currentOwner(owner: string): AccountBrowserOwner | undefined;
@@ -216,6 +217,7 @@ export class AccountServices {
         throw new RelayError(401, "Account changed; sign in again");
     };
     const codes = new ConnectCodes();
+    const { ownerAdmission } = options;
     if (options.configuration.enrollmentAuthority) {
       const linkedAccount = (owner: string) => {
         const link = accounts.gatewayAccount(owner);
@@ -262,7 +264,7 @@ export class AccountServices {
       });
       this.browserHttp = new AccountBrowserHttp({
         broker: this.browser,
-        admission: options.admission,
+        admission: ownerAdmission,
         authenticateOwner: options.authenticateOwner,
       });
       this.signup = new GatewaySignup({
@@ -287,6 +289,7 @@ export class AccountServices {
       this.signupHttp = new GatewaySignupHttp({
         signup: this.signup,
         admission: options.admission,
+        ownerAdmission,
         authenticateOwner: options.authenticateOwner,
       });
     }

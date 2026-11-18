@@ -35,6 +35,7 @@ describe("relay configuration", () => {
         maxTrackedSources: 10_000,
         maxPendingChallenges: 1_000,
         challengeTtlMs: 120_000,
+        challengeCooldownMs: 30_000,
       },
       apns: { keyPath: "/run/secrets/apns-key", appIds: ["dev.omnesis.ios"] },
       fcm: {
@@ -65,6 +66,7 @@ describe("relay configuration", () => {
       "OMNESIS_RELAY_MAX_TRACKED_SOURCES",
       "OMNESIS_RELAY_MAX_PENDING_CHALLENGES",
       "OMNESIS_RELAY_CHALLENGE_TTL_MS",
+      "OMNESIS_RELAY_CHALLENGE_COOLDOWN_MS",
     ]) {
       expect(() => loadRelayConfig({ ...required, [key]: "0" })).toThrow();
     }

@@ -24,6 +24,8 @@
     "RELAY_DOMAIN": "relay.omnesis.app",
     "ZONE_NAME": "omnesis.app",
     "ZONE_ID": "<zone id>",
+    // Enable after upgrading gateway clients. [] allows only existing names.
+    // "APPROVED_NEW_OWNERS_JSON": "[]",
   },
   "observability": { "enabled": true },
 }

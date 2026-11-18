@@ -7,6 +7,7 @@ import { type Duplex } from "node:stream";
 import { createWebSocketStream, WebSocket } from "ws";
 import { CloudRelayMetrics } from "./metrics.js";
 import { clientBucket } from "./client-bucket.js";
+import { hasStreamCapacity } from "./stream-admission.js";
 
 export class RelayError extends Error {
   /** `code`, when set, is the one word the response body carries for the client to act on. */
@@ -49,7 +50,7 @@ export const DEFAULT_TUNNEL_LIMITS: TunnelLimits = {
 
 interface Pending {
   owner: Tunnel;
-  client: string | undefined;
+  client: string;
   timer: ReturnType<typeof setTimeout>;
   resolve: (stream: Duplex) => void;
   reject: (error: Error) => void;
@@ -162,23 +163,26 @@ export class TunnelBroker {
       this.metrics.stream("aborted");
       throw new RelayError(499, "Client disconnected");
     }
+    const address = normalizeAddress(client);
+    // Missing peer metadata shares one bucket; it must not bypass source fairness.
+    const bucket = clientBucket(address ?? "unknown");
+    const held = tunnel.clients.get(bucket) ?? 0;
     if (
       this.activeStreams + this.pending.size >= this.limits.maxStreams ||
-      tunnel.streams.size + tunnel.pending.size >= this.limits.maxStreamsPerGateway
+      !hasStreamCapacity(
+        this.limits.maxStreamsPerGateway,
+        tunnel.streams.size + tunnel.pending.size,
+        held,
+      )
     ) {
       this.metrics.stream("capacity");
       throw new RelayError(429, "Stream capacity reached");
     }
-    const address = normalizeAddress(client);
-    const bucket = address === undefined ? undefined : clientBucket(address);
-    if (
-      bucket !== undefined &&
-      (tunnel.clients.get(bucket) ?? 0) >= this.limits.maxStreamsPerClientPerGateway
-    ) {
+    if (held >= this.limits.maxStreamsPerClientPerGateway) {
       this.metrics.stream("client_capacity");
       throw new RelayError(429, "Stream capacity reached for this client");
     }
-    if (bucket !== undefined) tunnel.clients.set(bucket, (tunnel.clients.get(bucket) ?? 0) + 1);
+    tunnel.clients.set(bucket, held + 1);
     const ticket = randomBytes(32).toString("hex");
     return new Promise<Duplex>((resolve, reject) => {
       const abort = (): void => {
@@ -302,8 +306,7 @@ export class TunnelBroker {
 }
 
 /** Returns a client's reservation on a gateway. */
-function release(tunnel: Tunnel, bucket: string | undefined): void {
-  if (bucket === undefined) return;
+function release(tunnel: Tunnel, bucket: string): void {
   const held = tunnel.clients.get(bucket)! - 1;
   if (held > 0) tunnel.clients.set(bucket, held);
   else tunnel.clients.delete(bucket);

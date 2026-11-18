@@ -107,6 +107,27 @@ export const brokerRequestSchema = z
   .strict();
 export type BrokerRequest = z.infer<typeof brokerRequestSchema>;
 
+export const brokerChallengeProofSchema = z
+  .object({
+    expiresAt: z.number().int().positive(),
+    signature: z.string().regex(/^[A-Za-z0-9_-]{86}$/),
+  })
+  .strict();
+
+export const brokerChallengeInputSchema = brokerRequestSchema.extend({
+  proof: brokerChallengeProofSchema.optional(),
+});
+
+export function brokerChallengeAdmissionTranscript(
+  origin: string,
+  requestDigest: string,
+  expiresAt: number,
+): Uint8Array<ArrayBuffer> {
+  return new TextEncoder().encode(
+    JSON.stringify(["omnesis-dns-broker-admission-v1", origin, requestDigest, expiresAt]),
+  );
+}
+
 export const brokerChallengeSchema = z
   .object({
     protocol: z.literal(DNS_BROKER_PROTOCOL),
@@ -141,6 +162,7 @@ export const brokerHealthSchema = z
   .object({
     protocol: z.literal(DNS_BROKER_PROTOCOL),
     relayDomain: relayDomainSchema,
+    ownerProofRequired: z.literal(true).optional(),
     caa: z.object({ issuer: domainSchema, accountUriPrefix: accountUriSchema }).strict(),
   })
   .strict();
@@ -206,6 +228,14 @@ export async function verifyOwnerSignature(
   challenge: BrokerChallenge,
   signature: string,
 ): Promise<boolean> {
+  return verifyBrokerSignature(ownerPublicKey, brokerTranscript(challenge), signature);
+}
+
+export async function verifyBrokerSignature(
+  ownerPublicKey: string,
+  transcript: Uint8Array<ArrayBuffer>,
+  signature: string,
+): Promise<boolean> {
   try {
     const key = await crypto.subtle.importKey(
       "spki",
@@ -218,7 +248,7 @@ export async function verifyOwnerSignature(
       { name: "Ed25519" },
       key,
       fromBase64url(signature),
-      brokerTranscript(challenge),
+      transcript,
     );
   } catch {
     return false;

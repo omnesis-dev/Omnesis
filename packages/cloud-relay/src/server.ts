@@ -115,6 +115,7 @@ export function createCloudRelay(options: CloudRelayOptions): {
   const metrics = options.metrics ?? new CloudRelayMetrics();
   const cdn = options.cdn;
   const loginAdmission = LoginAdmission.fromLimits(options.loginLimits);
+  const ownerAdmission = LoginAdmission.fromLimits(options.loginLimits);
   const gatewayAdmission = LoginAdmission.fromLimits(
     withLoginDefaults(options.gatewayLoginLimits, DEFAULT_GATEWAY_LOGIN_LIMITS),
   );
@@ -201,6 +202,7 @@ export function createCloudRelay(options: CloudRelayOptions): {
         sessions: options.sessions,
         google: options.webLogin?.identity,
         admission: loginAdmission,
+        ownerAdmission,
         gatewayAccounts,
         gatewayBinding,
         currentOwner: accountOwner,
@@ -781,9 +783,14 @@ export function createCloudRelay(options: CloudRelayOptions): {
   return {
     server,
     dataServer: router.server,
-    metrics: () =>
-      metrics.render({
-        ...loginAdmission.snapshot(),
+    metrics: () => {
+      const login = loginAdmission.snapshot();
+      const owner = accountServices ? ownerAdmission.snapshot() : undefined;
+      return metrics.render({
+        activeLogins: login.activeLogins + (owner?.activeLogins ?? 0),
+        loginAttempts: login.loginAttempts + (owner?.loginAttempts ?? 0),
+        maxConcurrentLogins: login.maxConcurrentLogins + (owner?.maxConcurrentLogins ?? 0),
+        maxLoginsPerMinute: login.maxLoginsPerMinute + (owner?.maxLoginsPerMinute ?? 0),
         ...broker.snapshot(),
         ...router.snapshot(),
         ...options.accounts.snapshot(),
@@ -791,7 +798,8 @@ export function createCloudRelay(options: CloudRelayOptions): {
         ...(options.acmeDns?.snapshot() ?? { dnsLeases: 0, dnsQueued: 0 }),
         recoveryExpiresAt: options.recoveryPolicy?.expiresAt ?? 0,
         recoveryEpoch: options.recoveryPolicy?.epoch ?? 0,
-      }),
+      });
+    },
     async close() {
       for (const front of fronts) front.close();
       cdn?.proxies.close?.();

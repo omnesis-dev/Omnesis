@@ -204,6 +204,45 @@ test("bounds idle peers, rejects plaintext and oversize inputs, and drains socke
   }
 });
 
+test("data admission preserves room for a new client and returns slots on close", async () => {
+  const router = createTlsRouter({
+    accountForHostname: () => undefined,
+    open: async () => new PassThrough(),
+    maxConnections: 4,
+  });
+  await bind(router.server);
+  const clients: Socket[] = [];
+  const open = async (address: string) => {
+    const socket = connect({ port: port(router.server), host: "127.0.0.1", localAddress: address });
+    socket.on("error", () => undefined);
+    socket.resume();
+    clients.push(socket);
+    await once(socket, "connect");
+    return socket;
+  };
+  try {
+    const first = await open("127.0.0.1");
+    await open("127.0.0.1");
+    await open("127.0.0.1");
+    await until(() => router.snapshot().dataConnections === 3);
+    const refused = await open("127.0.0.1");
+    await until(() => refused.destroyed);
+    expect(first.destroyed).toBe(false);
+    const other = await open("127.0.0.2");
+    await until(() => router.snapshot().dataConnections === 4);
+    first.destroy();
+    await until(() => router.snapshot().dataConnections === 3);
+    const repeated = await open("127.0.0.2");
+    await until(() => repeated.destroyed);
+    expect(other.destroyed).toBe(false);
+    await open("127.0.0.3");
+    await until(() => router.snapshot().dataConnections === 4);
+  } finally {
+    for (const socket of clients) socket.destroy();
+    await router.close();
+  }
+});
+
 test("unknown SNI and failed destinations never receive application bytes", async () => {
   for (const unknown of [true, false]) {
     const router = createTlsRouter({

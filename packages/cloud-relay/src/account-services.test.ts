@@ -31,6 +31,7 @@ test("fresh provider login migrates only independently available gateway associa
       sessions,
       configuration: {},
       admission: new LoginAdmission(),
+      ownerAdmission: new LoginAdmission(),
       google: {
         verify: async () => ({
           issuer: "https://accounts.google.com",
@@ -181,6 +182,7 @@ test("legacy account admission skips revoked, spent and untrusted registrations 
       sessions,
       configuration: {},
       admission: new LoginAdmission(),
+      ownerAdmission: new LoginAdmission(),
       google: { verify: async () => identity },
       gatewayAccounts: () => [],
       gatewayBinding: () => undefined,

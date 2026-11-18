@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, expect, test, vi } from "vitest";
 import { brokerCall, brokerOwner } from "../test/dns-broker-owner.js";
 import { fakeCloudflare } from "../test/fake-cloudflare.js";
+import { dnsBrokerClient } from "./dns-broker-client.js";
 import worker, {
   DnsBrokerRegistry,
   type DnsBrokerEnv,
@@ -160,4 +161,33 @@ test("the Worker's code imports no Node module", async () => {
   // write failed on the deployed broker while Node-based tests passed.
   for (const file of seen)
     expect(await readFile(join(root, file), "utf8"), file).not.toMatch(/redirect:\s*["']error["']/);
+});
+
+test("the protected Worker admits only approved new keys and continues serving existing owners", async () => {
+  const owner = brokerOwner();
+  const other = brokerOwner();
+  const { hostname, gatewayId, ownerPublicKey } = owner;
+  const objects = durableObjects({
+    APPROVED_NEW_OWNERS_JSON: JSON.stringify([{ hostname, gatewayId, ownerPublicKey }]),
+  });
+  const client = (identity: typeof owner) =>
+    dnsBrokerClient({
+      brokerUrl: objects.env.BROKER_ORIGIN,
+      relayUrl: "https://" + objects.env.RELAY_DOMAIN,
+      gatewayId: identity.gatewayId,
+      owner: async () => identity.privateKey,
+      fetch: async (input, init) => objects.handle(new Request(input, init)),
+    });
+  const signal = new AbortController().signal;
+  await expect(brokerCall(objects.handle, owner, { type: "claim" })).resolves.toMatchObject({
+    status: 401,
+  });
+  await expect(client(other).claim(signal)).rejects.toThrow("refused");
+  expect([...objects.values.keys()]).toEqual([]);
+  await client(owner).claim(signal);
+  const admitted = client(owner);
+  await admitted.publishCaa("https://acme-v02.api.letsencrypt.org/acme/acct/123", signal);
+  const lease = await admitted.presenter().create("a".repeat(43), signal);
+  await admitted.presenter().remove(lease.id!);
+  expect(objects.cloudflare.records.some(({ type }) => type === "CAA")).toBe(true);
 });

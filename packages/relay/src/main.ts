@@ -55,6 +55,7 @@ function main(): void {
       maxTrackedSources: config.abuse.maxTrackedSources,
     }),
     challengeTtlMs: config.abuse.challengeTtlMs,
+    challengeCooldownMs: config.abuse.challengeCooldownMs,
     maxPendingChallenges: config.abuse.maxPendingChallenges,
   });
   const app = createRelayApp(service);

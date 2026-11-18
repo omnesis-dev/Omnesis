@@ -139,7 +139,9 @@ was made on a relay page, so the request waits for approval on the gateway. A li
 phished to someone else ends on their own machine. A
 connect code typed on another device never yields a proof, so the CLI says that
 signing in elsewhere needs approval on the owner's phone or another paired
-device; over SSH it prints the comparison code and waits for that approval.
+device. Every CLI or collector pairing also asks for the comparison code from an
+independently trusted gateway terminal or paired device before redeeming approval,
+including over SSH and with a publicly logged certificate.
 
 ### Deleting an account
 
@@ -260,7 +262,9 @@ web client secrets.
 - **Android presenters:** set `OMNESIS_CLOUD_RELAY_GOOGLE_ANDROID_CLIENT_ID` on
   relay and gateway to the trusted Android OAuth client IDs. Hybrid Google tokens
   can name the web client as audience and the Android client as authorized party;
-  those are checked separately from gateway certificate attestation.
+  those are checked separately from gateway certificate attestation. Production
+  gateways accept only the Android release signing identity; debug-build OAuth
+  presenters and passkey origins are not trusted.
 - **iOS:** configure `OMNESIS_GOOGLE_CLIENT_ID`, `OMNESIS_GOOGLE_CALLBACK_SCHEME`
   and `OMNESIS_CLOUD_RELAY_URL` in ignored `ios/Local.xcconfig`. Register the
   correct bundle identifier with Google.
@@ -330,7 +334,12 @@ The data listener bounds what one client address (again an IPv6 /64) can hold:
 | `OMNESIS_CLOUD_RELAY_STREAM_IDLE_TIMEOUT_MS`             | 600000  | a routed connection with no bytes either way for this long is closed      |
 
 A connection over a limit is closed before it reaches a gateway. So one client
-cannot fill a gateway's streams or the relay's, though a few can, and a front layer
+cannot fill a gateway's streams or the relay's. The last quarter of the relay's
+data connections and each gateway's streams is reserved for client address buckets
+that currently hold no slot (IPv6 addresses share a /64). Existing clients cannot
+consume that reserve; existing connections are never evicted to admit another.
+This improves access when a few clients occupy many slots, but does not authenticate
+a source or prevent a sufficiently distributed denial of service. A front layer
 should keep its own per-address connection limits as well. The idle timeout is far
 longer than anything a gateway leaves quiet: it pings device WebSockets and sends
 server-sent event keep-alives every 15 to 30 seconds. The relay's own tunnel and
@@ -698,6 +707,22 @@ dns-broker-import-registry` sends it to `OMNESIS_ACME_DNS_BROKER_URL` with the
 token in `OMNESIS_CLOUD_RELAY_DNS_BROKER_IMPORT_TOKEN_FILE`. An import never
 replaces a name the broker already binds. The import route exists only while
 the import token is configured.
+
+On a hosted Worker, set `APPROVED_NEW_OWNERS_JSON` to a JSON array of
+`{ hostname, gatewayId, ownerPublicKey }` entries approved independently of
+the relay. An empty array permits registered gateways to renew and stops new
+name allocations. With the setting present, the Worker requires a fresh owner
+signature before reserving a challenge. Each name may hold one pending
+challenge, and repeating the same request returns that challenge. An invalid
+completion cannot consume it. Registered owners remain authorized after their
+entry is removed from the approval list.
+
+Upgrade gateways to a client that supports signed challenges before enabling
+this setting. Leave it unset during the compatibility phase. Existing names
+remain registered, and authorized gateways can continue using their existing
+certificate during the transition. This setting is an operator approval list.
+Automatic DNS approval during public signup requires its own independent
+admission service.
 
 The CAA record names only accounts under the configured prefix (Let's Encrypt
 production by default), and the account URL can't carry another parameter. A

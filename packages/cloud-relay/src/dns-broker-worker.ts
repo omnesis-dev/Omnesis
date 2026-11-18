@@ -9,6 +9,7 @@
  * The Workers runtime types are declared here as narrowly as the broker uses them, so the
  * package needs no Workers type dependency.
  */
+import { registryImportSchema } from "./dns-broker-contract.js";
 import { DnsBroker } from "./dns-broker-core.js";
 import { cloudflareBrokerZone } from "./dns-broker-zone.js";
 
@@ -39,6 +40,8 @@ export interface DnsBrokerEnv {
   CLOUDFLARE_API_TOKEN: string;
   /** Secret, set only for the one-time registry import and deleted afterwards. */
   REGISTRY_IMPORT_TOKEN?: string;
+  /** JSON registry entries approved for new names. Omit during gateway-client migration. */
+  APPROVED_NEW_OWNERS_JSON?: string;
   CAA_ACCOUNT_URI_PREFIX?: string;
 }
 
@@ -52,6 +55,11 @@ export class DnsBrokerRegistry {
     const storage = state.storage;
     this.broker = new DnsBroker({
       origin: env.BROKER_ORIGIN,
+      approvedNewOwners:
+        env.APPROVED_NEW_OWNERS_JSON === undefined
+          ? undefined
+          : registryImportSchema.parse({ entries: JSON.parse(env.APPROVED_NEW_OWNERS_JSON) })
+              .entries,
       relayDomain: env.RELAY_DOMAIN,
       importToken: env.REGISTRY_IMPORT_TOKEN || undefined,
       caa: env.CAA_ACCOUNT_URI_PREFIX ? { accountUriPrefix: env.CAA_ACCOUNT_URI_PREFIX } : {},

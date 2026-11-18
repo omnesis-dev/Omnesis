@@ -30,6 +30,7 @@ export class GatewaySignupHttp {
     private readonly options: {
       signup: GatewaySignup;
       admission: LoginAdmission;
+      ownerAdmission?: LoginAdmission;
       authenticateOwner(req: IncomingMessage): Promise<AccountBrowserOwner>;
     },
   ) {}
@@ -93,27 +94,32 @@ export class GatewaySignupHttp {
       throw new RelayError(403, "Use your gateway to connect");
     if (req.headers["content-type"]?.split(";")[0]?.trim().toLowerCase() !== "application/json")
       throw new RelayError(415, "JSON gateway signup request required");
-    // Waiting on an operation already started is not a new sign-in attempt.
-    return this.options.admission[action === "poll" || action === "cancel" ? "poll" : "run"](
-      async () => {
-        const owner = action === "link" ? await this.options.authenticateOwner(req) : undefined;
-        const body = await readJsonBody(req, 8192);
-        let value: unknown;
-        if (action === "start") value = this.options.signup.start(body);
-        else if (action === "poll") value = this.options.signup.poll(body);
-        else if (owner) value = await this.options.signup.link(owner, body);
-        else {
-          this.options.signup.cancel(body);
-          value = { ok: true };
-        }
-        res.writeHead(200, { "content-type": "application/json" });
-        res.end(JSON.stringify(value));
-        return true;
-      },
-      req,
-    ).catch((error: unknown) => {
+    try {
+      const owner = action === "link" ? await this.options.authenticateOwner(req) : undefined;
+      const admission = owner
+        ? (this.options.ownerAdmission ?? this.options.admission)
+        : this.options.admission;
+      // Waiting on an operation already started is not a new sign-in attempt.
+      return await admission[action === "poll" || action === "cancel" ? "poll" : "run"](
+        async () => {
+          const body = await readJsonBody(req, 8192);
+          let value: unknown;
+          if (action === "start") value = this.options.signup.start(body);
+          else if (action === "poll") value = this.options.signup.poll(body);
+          else if (owner) value = await this.options.signup.link(owner, body);
+          else {
+            this.options.signup.cancel(body);
+            value = { ok: true };
+          }
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(JSON.stringify(value));
+          return true;
+        },
+        req,
+      );
+    } catch (error) {
       req.resume();
       throw error;
-    });
+    }
   }
 }

@@ -22,11 +22,8 @@ const DEVICE_ENROLLMENT_WEB_CLIENT_ID =
   "69746762909-e65hukbm0nqrntk71qc0prslr9eg6gik.apps.googleusercontent.com";
 const ANDROID_RELEASE_CLIENT_ID =
   "69746762909-3lnneuvft93ud5ssdppe19tc7fol4aku.apps.googleusercontent.com";
-/**
- * Android OAuth client bound to the operator's debug signing certificate (Android test build).
- * Google only issues tokens presented by this client to apps signed with that certificate.
- */
-const ANDROID_TEST_BUILD_CLIENT_ID =
+/** Older relay advertisements may still list this retired debug-build client. It grants no trust. */
+const RETIRED_ANDROID_TEST_CLIENT_ID =
   "69746762909-sb5de515284geor9ui6vg7hsl4qsrg53.apps.googleusercontent.com";
 const IOS_CLIENT_ID = "69746762909-071jh21ngi85ne01k4oe5krfng2frmhr.apps.googleusercontent.com";
 
@@ -39,8 +36,6 @@ const IOS_CLIENT_ID = "69746762909-071jh21ngi85ne01k4oe5krfng2frmhr.apps.googleu
 export const OFFICIAL_ANDROID_PASSKEY_ORIGINS: readonly string[] = Object.freeze([
   // Release signing certificate (4C:F7:DE:3A:…:4B:C0:68:2A).
   "android:apk-key-hash:TPfeOsd2u2Uq8rCtF9DeGgc1m50jt6fPpDJYcUvAaCo",
-  // Debug signing certificate of the operator's test builds (B6:ED:B3:25:…:AD:C6:31:8D).
-  "android:apk-key-hash:tu2zJRkAnffU4Y8wu3WfFT1Y72mOZGcuFiKleK3GMY0",
 ]);
 
 /**
@@ -59,10 +54,10 @@ export const OFFICIAL_GOOGLE_BROWSER_TRUST: GoogleBrowserTrust = Object.freeze({
     "69746762909-qc4prr14sagtienhn36lhmp7rthno16a.apps.googleusercontent.com",
     ANDROID_RELEASE_CLIENT_ID,
   ]),
-  deviceAuthorizedParties: Object.freeze([ANDROID_RELEASE_CLIENT_ID, ANDROID_TEST_BUILD_CLIENT_ID]),
+  deviceAuthorizedParties: Object.freeze([ANDROID_RELEASE_CLIENT_ID]),
   nativeClients: Object.freeze({
     ios: Object.freeze([IOS_CLIENT_ID]),
-    android: Object.freeze([ANDROID_RELEASE_CLIENT_ID, ANDROID_TEST_BUILD_CLIENT_ID]),
+    android: Object.freeze([ANDROID_RELEASE_CLIENT_ID]),
   }),
 });
 const clientId = z
@@ -129,7 +124,18 @@ export function trustedGoogleBrowserConfiguration(
   trust: GoogleBrowserTrust,
 ): GoogleBrowserConfig {
   try {
-    const config = googleBrowserConfigSchema.parse(input);
+    const advertised = googleBrowserConfigSchema.parse(input);
+    // Updating a relay's old configuration must not be necessary for release apps to sign in.
+    // Ignore only the retired client; every other advertised client still has to be trusted.
+    const config = {
+      ...advertised,
+      deviceClientIds: advertised.deviceClientIds.filter(
+        (id) => id !== RETIRED_ANDROID_TEST_CLIENT_ID || trust.deviceClientIds.includes(id),
+      ),
+      deviceAuthorizedParties: advertised.deviceAuthorizedParties.filter(
+        (id) => id !== RETIRED_ANDROID_TEST_CLIENT_ID || trust.deviceAuthorizedParties.includes(id),
+      ),
+    };
     if (
       (config.ownerLinkClientId !== undefined &&
         config.ownerLinkClientId !== trust.ownerLinkClientId) ||
