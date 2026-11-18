@@ -3,8 +3,10 @@ name: Tailscale helper build
 # A source install's `npm run build` builds the gateway's Tailscale helper,
 # downloading the pinned Go toolchain where Go is not installed
 # (scripts/tailnet-helper/). This builds it that way on each platform a source
-# install runs on, with Go hidden from PATH as on a machine that never had it,
-# then again from the cache the first build left, as an update finds it.
+# install runs on (and Windows x64, whose manual setup runs
+# `npm run tailnet-helper:build`), with Go hidden from PATH as on a machine that
+# never had it, then again from the cache the first build left, as an update
+# finds it.
 # Secret-free, on GitHub-hosted runners only.
 on:
   pull_request:
@@ -34,9 +36,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-15, macos-15-intel]
+        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-15, macos-15-intel, windows-2025]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    env:
+      HELPER: packages/tailnet-helper/bin/omnesis-tailnet${{ runner.os == 'Windows' && '.exe' || '' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -51,19 +58,19 @@ jobs:
           path=""
           IFS=: read -ra entries <<<"$PATH"
           for entry in "${entries[@]}"; do
-            [ -x "$entry/go" ] || path="${path:+$path:}$entry"
+            [ -x "$entry/go" ] || [ -x "$entry/go.exe" ] || path="${path:+$path:}$entry"
           done
           PATH="$path" bash -c '! command -v go >/dev/null' || { echo "::error::go is still on PATH"; exit 1; }
           PATH="$path" node scripts/tailnet-helper/build.mjs
-          test -x packages/tailnet-helper/.go/toolchains/go*/bin/go
+          ls packages/tailnet-helper/.go/toolchains/go*/bin/
       - name: The helper runs and carries the product version
         run: |
           set -euo pipefail
           want="$(node -p 'require("./packages/gateway/package.json").version')"
-          have="$(packages/tailnet-helper/bin/omnesis-tailnet -version)"
+          have="$("$HELPER" -version | tr -d '\r')"
           echo "helper reports $have"
           [ "$have" = "$want" ] || { echo "::error::the helper says $have, the product is $want"; exit 1; }
-          file packages/tailnet-helper/bin/omnesis-tailnet
+          if command -v file >/dev/null; then file "$HELPER"; fi
       - name: An update rebuilds from the toolchain and caches the first build left
         run: |
           set -euo pipefail
@@ -73,9 +80,9 @@ jobs:
       - name: The source install's build step builds it, and a failure never fails the build
         run: |
           set -euo pipefail
-          rm -f packages/tailnet-helper/bin/omnesis-tailnet
+          rm -f "$HELPER"
           node scripts/tailnet-helper/build.mjs --best-effort
-          test -x packages/tailnet-helper/bin/omnesis-tailnet
+          test -f "$HELPER"
           # A go.mod no toolchain can satisfy: the best-effort build warns and exits 0.
           cp packages/tailnet-helper/go.mod "$RUNNER_TEMP/go.mod"
           sed -i.bak 's/^go .*/go 9.0.0/' packages/tailnet-helper/go.mod

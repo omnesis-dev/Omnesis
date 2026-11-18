@@ -42,11 +42,19 @@ const GO_ARCH = {
   ppc64: "ppc64le",
 };
 
+/** Go's names for the operating systems a source install runs on. */
+const GO_OS = { linux: "linux", darwin: "darwin", win32: "windows" };
+
 /** The archive key (`linux-amd64`) for a Node platform and architecture, or null. */
 export function goArchiveKey(platform = process.platform, arch = process.arch) {
-  if (platform !== "linux" && platform !== "darwin") return null;
+  const goOs = GO_OS[platform];
   const goArch = GO_ARCH[arch];
-  return goArch ? `${platform}-${goArch}` : null;
+  return goOs && goArch ? `${goOs}-${goArch}` : null;
+}
+
+/** The file go.dev publishes for an archive key: a .zip for Windows, a .tar.gz elsewhere. */
+export function goArchiveFile(version, key) {
+  return `go${version}.${key}.${key.startsWith("windows-") ? "zip" : "tar.gz"}`;
 }
 
 /** `[major, minor, patch]` from `1.27.4` or `go version go1.27.4 linux/amd64`, or null. */
@@ -126,14 +134,14 @@ export async function pinnedGo({
 }) {
   const name = `go${toolchain.version}`;
   const home = join(cacheDir, "toolchains", name);
-  const go = join(home, "bin", "go");
+  const go = join(home, "bin", key?.startsWith("windows-") ? "go.exe" : "go");
   if (existsSync(join(home, ".complete"))) return go;
   const archive = key ? toolchain.archives[key] : undefined;
   if (!archive)
     throw new Error(
       `no Go ${toolchain.version} download is known for this platform (${key ?? `${process.platform}/${process.arch}`}); install Go ${toolchain.version} or newer`,
     );
-  const file = `${name}.${key}.tar.gz`;
+  const file = goArchiveFile(toolchain.version, key);
   const work = join(cacheDir, "toolchains", `.${name}-${process.pid}`);
   rmSync(work, { recursive: true, force: true });
   mkdirSync(work, { recursive: true });
@@ -148,7 +156,8 @@ export async function pinnedGo({
       throw new Error(
         `${file} does not match its published SHA-256 (got ${digest}); nothing was unpacked`,
       );
-    const unpacked = spawnSync("tar", ["-xzf", downloaded, "-C", work], { stdio: "inherit" });
+    // GNU tar and bsdtar both detect the compression; Windows' own tar also reads a .zip.
+    const unpacked = spawnSync("tar", ["-xf", downloaded, "-C", work], { stdio: "inherit" });
     if (unpacked.error || unpacked.status !== 0) throw new Error(`could not unpack ${file}`);
     writeFileSync(join(work, "go", ".complete"), `${digest}\n`);
     // Another build may have finished the same toolchain meanwhile, and may be using it.

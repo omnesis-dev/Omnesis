@@ -18,6 +18,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import {
   atLeast,
+  goArchiveFile,
   goArchiveKey,
   goEnv,
   installedGo,
@@ -43,8 +44,15 @@ describe("the pinned toolchain", () => {
     expect(pinned.version).toBe(requiredGoVersion(goMod));
   });
 
-  test("names an archive with a SHA-256 for every Linux and macOS machine Omnesis installs on", () => {
-    for (const key of ["linux-amd64", "linux-arm64", "darwin-amd64", "darwin-arm64"])
+  test("names an archive with a SHA-256 for every Linux, macOS and Windows machine Omnesis runs on", () => {
+    for (const key of [
+      "linux-amd64",
+      "linux-arm64",
+      "darwin-amd64",
+      "darwin-arm64",
+      "windows-amd64",
+      "windows-arm64",
+    ])
       expect(pinned.archives[key], key).toBeDefined();
     for (const [key, archive] of Object.entries(pinned.archives)) {
       expect(archive.sha256, key).toMatch(/^[0-9a-f]{64}$/u);
@@ -60,10 +68,14 @@ describe("platforms and versions", () => {
     expect(goArchiveKey("linux", "arm")).toBe("linux-armv6l");
     expect(goArchiveKey("darwin", "arm64")).toBe("darwin-arm64");
     expect(goArchiveKey("darwin", "x64")).toBe("darwin-amd64");
-    expect(goArchiveKey("win32", "x64")).toBeNull();
+    expect(goArchiveKey("win32", "x64")).toBe("windows-amd64");
+    expect(goArchiveKey("win32", "arm64")).toBe("windows-arm64");
+    expect(goArchiveKey("freebsd", "x64")).toBeNull();
+    expect(goArchiveFile("1.27.4", "windows-amd64")).toBe("go1.27.4.windows-amd64.zip");
+    expect(goArchiveFile("1.27.4", "darwin-arm64")).toBe("go1.27.4.darwin-arm64.tar.gz");
     expect(goArchiveKey("linux", "mips")).toBeNull();
     // Every key the mapping produces for Linux and macOS has an archive.
-    for (const platform of ["linux", "darwin"])
+    for (const platform of ["linux", "darwin", "win32"])
       for (const arch of ["x64", "arm64"])
         expect(pinned.archives[goArchiveKey(platform, arch)]).toBeDefined();
   });
