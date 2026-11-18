@@ -12,14 +12,14 @@
  * retained descendant before their shared fixture inputs may be removed.
  */
 
-import type { ChildProcess } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
+import { delimiter, join } from "node:path";
 import { ownedProcessCleanupReceipt, spawnWindowsJob } from "@omnesis/core";
 import { spawnE2ESubprocess, e2eApplicationStatus, e2eProcessOutput } from "./e2e-owned-process.js";
-import { delimiter, join } from "node:path";
 
 import { e2eTsxCommand } from "./gateway-env.js";
 import { killSubprocessGroup, registerSubprocessGroup } from "./subprocess-reaper.js";
+import type { ChildProcess } from "node:child_process";
 
 export interface SpawnedConnect {
   child: ChildProcess;
@@ -87,6 +87,7 @@ export function spawnCliProcess(
       ].join(delimiter),
       ...(options.cliConfigDir !== undefined ? { OMNESIS_CONFIG_DIR: options.cliConfigDir } : {}),
       NO_COLOR: "1",
+      FORCE_COLOR: undefined,
     },
     detached: process.platform !== "win32",
   };
