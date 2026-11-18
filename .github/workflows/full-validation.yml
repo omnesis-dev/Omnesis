@@ -6807,7 +6807,7 @@ jobs:
       OMNESIS_UNIT_WORKERS: "2"
       OMNESIS_E2E_WORKERS: "1"
     runs-on: windows-latest
-    timeout-minutes: ${{ matrix.lane == 'focused' && 40 || matrix.lane == 'adapters' && 60 || matrix.lane == 'unit' && 210 || 180 }}
+    timeout-minutes: 55
     strategy:
       fail-fast: false
       max-parallel: 4
@@ -6874,11 +6874,15 @@ jobs:
         if: ${{ matrix.lane == 'e2e' }}
         env:
           SHARD: ${{ matrix.shard }}
-          OMNESIS_WINDOWS_E2E_FILES: ${{ github.event_name == 'workflow_dispatch' && inputs.lane == 'e2e' && inputs.e2e_files || '' }}
+          OMNESIS_WINDOWS_E2E_FILES: '["packages/collector/src/e2e/brain-routine-packing.e2e.test.ts", "packages/collector/src/e2e/brain-verifier-cancellation.e2e.test.ts", "packages/collector/src/e2e/codex-agent.e2e.test.ts", "packages/collector/src/e2e/brain-codex.e2e.test.ts"]'
         run: |
           $checkArgs = @('scripts/ci/windows-checks.mjs', 'e2e', '--list')
           if ($env:SHARD) { $checkArgs += "--shard=$env:SHARD" }
-          node @checkArgs
+          $task = node @checkArgs | ConvertFrom-Json -NoEnumerate
+          if ($LASTEXITCODE -ne 0 -or $task[0].Count -ne 6) {
+            throw "Expected exactly four selected test files"
+          }
+          Write-Host "Validated four-file selection"
 
       - name: Build and prove Windows SQLite recovery bindings
         id: native_sqlite
@@ -6988,10 +6992,11 @@ jobs:
           NODE
 
       - name: Full Windows E2E shard with the real reference embedder
+        timeout-minutes: 18
         if: ${{ matrix.lane == 'e2e' }}
         env:
           SHARD: ${{ matrix.shard }}
-          OMNESIS_WINDOWS_E2E_FILES: ${{ github.event_name == 'workflow_dispatch' && inputs.lane == 'e2e' && inputs.e2e_files || '' }}
+          OMNESIS_WINDOWS_E2E_FILES: '["packages/collector/src/e2e/brain-routine-packing.e2e.test.ts", "packages/collector/src/e2e/brain-verifier-cancellation.e2e.test.ts", "packages/collector/src/e2e/codex-agent.e2e.test.ts", "packages/collector/src/e2e/brain-codex.e2e.test.ts"]'
           OMNESIS_TEST_EMBEDDER_CACHE: ${{ runner.temp }}/omnesis-test-embedder
           OMNESIS_TAILNET_TOOLS_DIR: ${{ runner.temp }}/omnesis-tailnet-tools
           GOMAXPROCS: "2"
@@ -7002,6 +7007,12 @@ jobs:
           $nativeStatus = $LASTEXITCODE
           Write-Host "AUDIT_PWSH_NATIVE_STATUS=$nativeStatus"
           exit $nativeStatus
+
+      - name: Inspect restart-durability failure separately
+        if: ${{ !cancelled() && steps.native_sqlite.outcome == 'success' && steps.native_vector.outcome == 'success' }}
+        timeout-minutes: 15
+        shell: bash
+        run: exec node scripts/run-check.mjs e2e packages/collector/src/e2e/restart-durability.e2e.test.ts --reporter=verbose
 
       - name: Full Windows portal tests
         if: ${{ matrix.lane == 'portal' }}
