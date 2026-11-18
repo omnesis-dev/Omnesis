@@ -64,9 +64,9 @@ function fakeModel(trainContextSize: number) {
   const model = {
     trainContextSize,
     tokenize: (text: string) => text.split(" ").map((_, i) => i + 10),
-    createEmbeddingContext: async (opts: { contextSize: number; batchSize?: number }) => {
+    createEmbeddingContext: (opts: { contextSize: number; batchSize?: number }) => {
       created.push(opts);
-      return {
+      return Promise.resolve({
         calculateInputLength: (text: string) => (text ? text.split(" ").length : 0) + 2,
         getEmbeddingFor: async (input: string | number[]) => {
           inputs.push(input);
@@ -74,7 +74,7 @@ function fakeModel(trainContextSize: number) {
           return { vector: [0.1, 0.2] };
         },
         dispose: vi.fn(async () => {}),
-      };
+      });
     },
     dispose: vi.fn(async () => {}),
   };
@@ -91,7 +91,7 @@ function fakeModel(trainContextSize: number) {
 
 const llama = vi.hoisted(() => ({ model: null as unknown }));
 vi.mock("../llama-instance.js", () => ({
-  getLlamaInstance: async () => ({ loadModel: async () => llama.model }),
+  getLlamaInstance: () => Promise.resolve({ loadModel: () => Promise.resolve(llama.model) }),
 }));
 
 describe("LlamaCppEmbedder context window", () => {
