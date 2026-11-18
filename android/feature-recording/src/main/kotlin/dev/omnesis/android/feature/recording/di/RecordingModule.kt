@@ -9,6 +9,7 @@ import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
+import dev.omnesis.android.feature.recording.RecordingAvailabilityMemory
 import dev.omnesis.android.feature.recording.RecordingController
 import dev.omnesis.android.feature.recording.RecordingFiles
 import dev.omnesis.android.feature.recording.RecordingOutbox
@@ -35,6 +36,13 @@ object RecordingModule {
     @Singleton
     fun provideRecordingSettings(@ApplicationContext context: Context): RecordingSettings =
         RecordingSettings(context.getSharedPreferences(RecordingSettings.PREFS_NAME, Context.MODE_PRIVATE))
+
+    @Provides
+    @Singleton
+    fun provideRecordingAvailabilityMemory(@ApplicationContext context: Context): RecordingAvailabilityMemory =
+        RecordingAvailabilityMemory(
+            context.getSharedPreferences(RecordingAvailabilityMemory.PREFS_NAME, Context.MODE_PRIVATE),
+        )
 
     @Provides
     @Singleton

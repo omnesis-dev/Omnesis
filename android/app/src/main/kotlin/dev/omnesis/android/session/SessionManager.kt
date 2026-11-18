@@ -53,7 +53,9 @@ import dev.omnesis.android.transport.dto.NoteAgentStatusDto
 import dev.omnesis.android.transport.dto.DictationStatusDto
 import dev.omnesis.android.transport.dto.WatchCaptureStatusDto
 import dev.omnesis.android.transport.dto.PushPlan
+import dev.omnesis.android.transport.dto.StatusSnapshot
 import dev.omnesis.android.transport.http.GatewayHttp
+import dev.omnesis.android.feature.recording.RecordingAvailabilityMemory
 import dev.omnesis.android.feature.recording.ui.RecordingAvailability
 import dev.omnesis.android.transport.client.RecordingsClient
 import dev.omnesis.android.transport.ws.DeviceSocket
@@ -227,6 +229,7 @@ class SessionManager @Inject constructor(
     private val phoneSetupRecord: PhoneSetupRecord,
     // A provider, because the steps that start first syncs ask this manager for the session scope.
     private val phoneSetupSteps: Provider<Set<@JvmSuppressWildcards PhoneSetupStep>>,
+    private val recordingAvailabilityMemory: RecordingAvailabilityMemory,
 ) : SessionScopeProvider, RelayConsentActions {
     sealed interface AppState {
         data object Unpaired : AppState
@@ -593,7 +596,6 @@ class SessionManager @Inject constructor(
         _experimentalEnabled.value = false
         _labAvailable.value = false
         _lab.value = dev.omnesis.android.transport.dto.LabFlags()
-        _recordingAvailability.value = RecordingAvailability.Availability.UNAVAILABLE
         _developerEnabled.value = false
         tailscaleJoinNotified = false
         _tailscaleEmbed.value = false
@@ -615,9 +617,16 @@ class SessionManager @Inject constructor(
             relayEnroller.clearAll()
             sourceCatalog.clear()
             agentCoordinator.teardown()
+            recordingAvailabilityMemory.forget()
+            _recordingAvailability.value = RecordingAvailability.Availability.UNAVAILABLE
             _state.value = AppState.Unpaired
             return
         }
+        // Unlike the gates cleared above, recordings start from this pairing's last
+        // answer: a conversation can be recorded while the gateway is out of reach, and
+        // the outbox holds it until the gateway is back. The status probe corrects it.
+        // Set once per branch, so the tile and the shortcut never see a passing UNAVAILABLE.
+        _recordingAvailability.value = recordingAvailabilityMemory.lastKnown(pairing.recordingKey())
         settleLocalState(pairing, atLaunch)
         val upgrade = { onSystemTrustVerified(pairing) }
         val routes = PairedGatewayRoutes(pairing, pairingService, { paired, route -> GatewayDirectCandidateDiscovery.fetch(paired, route) }, ::acceptDirectCandidates)
@@ -963,10 +972,8 @@ class SessionManager @Inject constructor(
         _experimentalEnabled.value = status.experimental
         _labAvailable.value = status.labAvailable
         _lab.value = status.effectiveLabFlags
-        _recordingAvailability.value = when {
-            !status.experimental || !status.recordings -> RecordingAvailability.Availability.UNAVAILABLE
-            status.dictation?.enabled == false -> RecordingAvailability.Availability.TRANSCRIPTION_OFF
-            else -> RecordingAvailability.Availability.AVAILABLE
+        _recordingAvailability.value = recordingAvailability(status).also {
+            recordingAvailabilityMemory.remember(current.pairing.recordingKey(), it)
         }
         _developerEnabled.value = status.developer
         _tailscaleEmbed.value = status.tailscaleEmbed || tailscaleJoinNotified
@@ -1217,4 +1224,18 @@ class SessionManager @Inject constructor(
             scope.launch(Dispatchers.Main) { if (session === current) rebuild() }
         }
     }
+}
+
+/**
+ * Which pairing a remembered recordings answer belongs to. The token-row id changes with
+ * every pairing, even to the same gateway; an older pairing without one falls back to the
+ * gateway and device it names.
+ */
+internal fun Pairing.recordingKey(): String = pairingGeneration ?: "$url\u001f${deviceId.orEmpty()}"
+
+/** Recordings need experimental mode and the `recordings` capability, and transcription left on. */
+internal fun recordingAvailability(status: StatusSnapshot): RecordingAvailability.Availability = when {
+    !status.experimental || !status.recordings -> RecordingAvailability.Availability.UNAVAILABLE
+    status.dictation?.enabled == false -> RecordingAvailability.Availability.TRANSCRIPTION_OFF
+    else -> RecordingAvailability.Availability.AVAILABLE
 }

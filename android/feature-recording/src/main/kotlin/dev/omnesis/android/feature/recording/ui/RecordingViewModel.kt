@@ -129,7 +129,7 @@ class RecordingViewModel @Inject constructor(
     private fun start() {
         val current = _state.value
         if (current.starting || current.recording != null) return
-        // See #863 — planned: starting while the gateway is unreachable.
+        // While the gateway is out of reach this is its last answer (RecordingAvailabilityMemory).
         if (current.availability != RecordingAvailability.Availability.AVAILABLE) return
         RecordingForegroundService.start(context, current.title.trim().ifEmpty { null })
         _state.update { it.copy(title = "", starting = true) }
