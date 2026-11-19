@@ -449,17 +449,15 @@ fun HomeScaffold(
     }
 
     // The devices waiting for approval are read while the app is in front, every half minute,
-    // and at once when a pairing or Tailscale join notification arrives: sign-in requests in a
-    // build with cloud connectivity, Tailscale joins while the gateway advertises them. With
-    // neither, the loop never starts; a phone that is not an administrator never asks.
+    // and at once when a pairing or Tailscale join notification arrives: sign-in requests, and
+    // Tailscale joins while the gateway advertises them. A phone that is not an administrator
+    // never asks.
     val tailscaleEmbed by vm.tailscaleEmbed.collectAsStateWithLifecycle()
-    if (PairingPendingRequests.polls(tailscaleEmbed = tailscaleEmbed)) {
-        LaunchedEffect(lifecycleOwner, pairingPendingNudge, tailscaleEmbed) {
-            lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
-                while (true) {
-                    vm.refreshPairingPending()
-                    delay(PairingPendingRequests.POLL_MILLIS)
-                }
+    LaunchedEffect(lifecycleOwner, pairingPendingNudge, tailscaleEmbed) {
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            while (true) {
+                vm.refreshPairingPending()
+                delay(PairingPendingRequests.POLL_MILLIS)
             }
         }
     }

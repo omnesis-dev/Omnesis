@@ -53,6 +53,7 @@ data class DeviceCapabilities(
      * composition root knows the pairing.
      */
     val tls: TlsCapability? = null,
+    /** This app routes the pairing notifications of devices that sign in with the Omnesis account. */
     val pairingNotifications: Boolean = false,
     /**
      * This app routes the Tailscale notifications, `tailscale-join` and `tailscale-joined`.
@@ -89,8 +90,6 @@ data class DeviceCapabilities(
             contracts: Collection<HostedSourceContract>,
             version: String? = null,
             pushAppId: String? = null,
-            /** Off unless the build enables cloud connectivity. */
-            pairingNotifications: Boolean = false,
         ): DeviceCapabilities {
             require(contracts.all { it.sourceType.isNotBlank() }) { "source types must not be blank" }
             require(contracts.map { it.sourceType }.distinct().size == contracts.size) {
@@ -99,7 +98,7 @@ data class DeviceCapabilities(
             val ordered = contracts.sortedBy(HostedSourceContract::sourceType)
             return DeviceCapabilities(
                 platform = "android",
-                pairingNotifications = pairingNotifications,
+                pairingNotifications = true,
                 tailscaleJoinNotifications = true,
                 version = version,
                 pushAppId = pushAppId,

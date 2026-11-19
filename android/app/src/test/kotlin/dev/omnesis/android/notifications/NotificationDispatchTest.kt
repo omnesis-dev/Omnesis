@@ -15,58 +15,41 @@ import org.junit.Test
 class NotificationDispatchTest {
     @Test
     fun pairing_reminders_open_pairing_requests_without_an_enrollment_code_or_authorization() {
-        assertTrue(knownNotificationKind("device-pairing", cloudEnabled = true))
-        assertEquals(ClaimedPushAction("device-pairing", NotificationTarget.PairingRequests()), notificationAction(notification("device-pairing", "pairing", """{"kind":"device-pairing"}"""), cloudEnabled = true))
+        assertTrue(knownNotificationKind("device-pairing"))
+        assertEquals(ClaimedPushAction("device-pairing", NotificationTarget.PairingRequests()), notificationAction(notification("device-pairing", "pairing", """{"kind":"device-pairing"}""")))
         // A notification for one request opens the list with that request first.
         val id = "00000000-0000-4000-8000-000000000951"
         assertEquals(
             ClaimedPushAction("device-pairing", NotificationTarget.PairingRequests(id)),
-            notificationAction(notification("device-pairing", "pairing", """{"kind":"device-pairing","requestId":"$id"}"""), cloudEnabled = true),
+            notificationAction(notification("device-pairing", "pairing", """{"kind":"device-pairing","requestId":"$id"}""")),
         )
         assertEquals(
             ClaimedPushAction("device-pairing", NotificationTarget.PairingRequests(null)),
-            notificationAction(notification("device-pairing", "pairing", """{"kind":"device-pairing","requestId":"../devices"}"""), cloudEnabled = true),
+            notificationAction(notification("device-pairing", "pairing", """{"kind":"device-pairing","requestId":"../devices"}""")),
         )
-        assertNull(notificationAction(notification("device-pairing", "untrusted-request"), cloudEnabled = true))
-        assertTrue(knownNotificationKind("device-joined", cloudEnabled = true))
-        assertEquals(ClaimedPushAction("device-joined", NotificationTarget.Devices(null)), notificationAction(notification("device-joined", "any"), cloudEnabled = true))
-        assertEquals(ClaimedPushAction("device-joined", NotificationTarget.Devices("device-a")), notificationAction(notification("device-joined", "any", """{"kind":"device-joined","deviceId":"device-a"}"""), cloudEnabled = true))
+        assertNull(notificationAction(notification("device-pairing", "untrusted-request")))
+        assertTrue(knownNotificationKind("device-joined"))
+        assertEquals(ClaimedPushAction("device-joined", NotificationTarget.Devices(null)), notificationAction(notification("device-joined", "any")))
+        assertEquals(ClaimedPushAction("device-joined", NotificationTarget.Devices("device-a")), notificationAction(notification("device-joined", "any", """{"kind":"device-joined","deviceId":"device-a"}""")))
     }
 
     @Test
-    fun tailscale_join_opens_the_waiting_requests_with_and_without_cloud_connectivity() {
-        for (cloud in listOf(false, true)) {
-            assertTrue(knownNotificationKind("tailscale-join", cloudEnabled = cloud))
-            val expected = ClaimedPushAction("tailscale-join", NotificationTarget.TailscaleJoinRequests)
-            assertEquals(expected, notificationAction(notification("tailscale-join", "tailscale-join", """{"kind":"tailscale-join"}"""), cloudEnabled = cloud))
-            assertEquals(expected, notificationAction(notification("tailscale-join", "tailscale-join"), cloudEnabled = cloud))
-            // A route that names another kind is not this notification's.
-            assertNull(notificationAction(notification("tailscale-join", "tailscale-join", """{"kind":"device-joined"}"""), cloudEnabled = cloud))
-        }
+    fun tailscale_join_opens_the_waiting_requests() {
+        assertTrue(knownNotificationKind("tailscale-join"))
+        val expected = ClaimedPushAction("tailscale-join", NotificationTarget.TailscaleJoinRequests)
+        assertEquals(expected, notificationAction(notification("tailscale-join", "tailscale-join", """{"kind":"tailscale-join"}""")))
+        assertEquals(expected, notificationAction(notification("tailscale-join", "tailscale-join")))
+        // A route that names another kind is not this notification's.
+        assertNull(notificationAction(notification("tailscale-join", "tailscale-join", """{"kind":"device-joined"}""")))
     }
 
     @Test
-    fun a_device_that_joined_through_tailscale_opens_devices_with_and_without_cloud_connectivity() {
-        for (cloud in listOf(false, true)) {
-            assertTrue(knownNotificationKind("tailscale-joined", cloudEnabled = cloud))
-            assertEquals(
-                ClaimedPushAction("tailscale-joined", NotificationTarget.Devices(null)),
-                notificationAction(notification("tailscale-joined", "devices", """{"kind":"tailscale-joined"}"""), cloudEnabled = cloud),
-            )
-        }
-    }
-
-    @Test
-    fun device_joined_stays_a_cloud_relay_kind() {
-        assertFalse(knownNotificationKind("device-joined", cloudEnabled = false))
-        assertNull(notificationAction(notification("device-joined", "devices", """{"kind":"device-joined"}"""), cloudEnabled = false))
-    }
-
-    @Test
-    fun a_pairing_request_stays_a_cloud_relay_kind() {
-        assertFalse(knownNotificationKind("device-pairing", cloudEnabled = false))
-        assertNull(notificationAction(notification("device-pairing", "pairing", """{"kind":"device-pairing"}"""), cloudEnabled = false))
-        assertTrue(knownNotificationKind("device-pairing", cloudEnabled = true))
+    fun a_device_that_joined_through_tailscale_opens_devices() {
+        assertTrue(knownNotificationKind("tailscale-joined"))
+        assertEquals(
+            ClaimedPushAction("tailscale-joined", NotificationTarget.Devices(null)),
+            notificationAction(notification("tailscale-joined", "devices", """{"kind":"tailscale-joined"}""")),
+        )
     }
 
     @Test

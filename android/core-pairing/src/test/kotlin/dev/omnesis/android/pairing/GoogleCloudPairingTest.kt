@@ -37,7 +37,7 @@ class GoogleCloudPairingTest {
         assertFalse(flow.compared)
         assertThrows(CloudPairingException::class.java) { flow.pairingPayload(testNow) }
         flow.confirmComparison()
-        val payload = PairingPayload.decode(flow.pairingPayload(testNow), cloudRelay = true) as PairingPayload.V4
+        val payload = PairingPayload.decode(flow.pairingPayload(testNow)) as PairingPayload.V4
         assertEquals(flow.spkiFingerprint, (payload.tls as PairingPayload.V4Tls.PinnedKeyStrict).spkiFingerprint)
         assertEquals("SYNTHETIC-CODE", payload.pairingCode)
         assertThrows(CloudPairingException::class.java) { flow.pairingPayload(testNow + 100_000) }

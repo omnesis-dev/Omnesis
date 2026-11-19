@@ -123,7 +123,6 @@ class DirectDiscoveryFailureTest {
 
     private fun service(store: SecureStore, server: MockWebServer, fetch: suspend () -> List<DirectGatewayCandidate>) = PairingService(
         store,
-        cloudRelay = true,
         keyClientFactory = { _, _ -> OkHttpClient.Builder().addInterceptor { chain ->
             chain.proceed(chain.request().newBuilder().url(server.url(chain.request().url.encodedPath)).build())
         }.build() },

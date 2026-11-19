@@ -3,13 +3,9 @@
 
 package dev.omnesis.android.ui.pairing
 
-import dev.omnesis.android.BuildConfig
-import dev.omnesis.android.R
-
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.BackHandler
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -21,7 +17,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -54,7 +49,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -84,9 +78,13 @@ fun PairingScreen(
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
-    BackHandler(enabled = state.mode == PairingViewModel.Mode.Google && (state.googlePhase == PairingViewModel.GooglePhase.Pairing || state.account?.phase == AccountPairingPhase.Pairing)) { }
-    // Direct pairing opened from the account entry goes back to it.
-    BackHandler(enabled = state.account != null && state.mode != PairingViewModel.Mode.Google && !state.isPairing) { vm.showGoogle() }
+    val signingIn = state.account?.phase?.let { it != AccountPairingPhase.Idle && it != AccountPairingPhase.Failed } == true
+    BackHandler(enabled = state.mode == PairingViewModel.Mode.Account && state.account?.phase == AccountPairingPhase.Pairing) { }
+    // A sign-in under way goes back to its choices, as the top bar's Cancel does.
+    BackHandler(enabled = state.mode == PairingViewModel.Mode.Account && signingIn && state.account?.phase != AccountPairingPhase.Pairing) { vm.cancelAccountSignIn() }
+    // Direct pairing and the sign-in choices both go back to the account entry.
+    BackHandler(enabled = state.account != null && !state.isPairing &&
+        (state.mode != PairingViewModel.Mode.Account || state.choosingSignIn && !signingIn)) { vm.showAccount() }
     // The Tailscale state goes back to where the code was scanned.
     BackHandler(enabled = state.tailnetUnreachable != null && !state.isPairing) { vm.dismissTailnetUnreachable() }
     PairingContent(
@@ -95,11 +93,12 @@ fun PairingScreen(
             val account = state.account
             when {
                 state.tailnetUnreachable != null -> vm.dismissTailnetUnreachable()
-                account == null -> if (state.mode == PairingViewModel.Mode.Google) vm.showScanner() else onBack()
-                // With an Omnesis account, the entry is the first step: direct pairing returns to it,
-                // and a sign-in under way returns to its choices.
-                state.mode != PairingViewModel.Mode.Google -> vm.showGoogle()
+                account == null -> onBack()
+                // With an Omnesis account, the entry is the first step: direct pairing and the
+                // sign-in choices return to it, and a sign-in under way returns to its choices.
+                state.mode != PairingViewModel.Mode.Account -> vm.showAccount()
                 account.phase != AccountPairingPhase.Idle && account.phase != AccountPairingPhase.Failed -> vm.cancelAccountSignIn()
+                state.choosingSignIn -> vm.showAccount()
                 else -> onBack()
             }
         },
@@ -113,12 +112,11 @@ fun PairingScreen(
         onPair = vm::pair,
         onCancelPending = vm::cancelPending,
         onConfirmPending = vm::confirmPending,
-        onShowGoogle = vm::showGoogle,
+        onShowSignInChoices = vm::showSignInChoices,
         onGoogleSignIn = { vm.startGoogle(context) },
         onPasskeySignIn = { vm.startPasskey(context) },
         onChooseGateway = vm::chooseAccountGateway,
-
-        onGooglePair = vm::finishGooglePairing,
+        onAccountPair = vm::finishAccountPairing,
         onOpenTailscale = { openTailscale(context) },
         onRetryTailnet = vm::retryTailnetPairing,
     )
@@ -139,38 +137,29 @@ fun PairingContent(
     onPair: () -> Unit,
     onCancelPending: () -> Unit = {},
     onConfirmPending: () -> Unit = {},
-    onShowGoogle: () -> Unit = {},
+    onShowSignInChoices: () -> Unit = {},
     onGoogleSignIn: () -> Unit = {},
-    onGooglePair: () -> Unit = {},
+    onAccountPair: () -> Unit = {},
     onPasskeySignIn: () -> Unit = {},
     onChooseGateway: (String) -> Unit = {},
     onOpenTailscale: () -> Unit = {},
     onRetryTailnet: () -> Unit = {},
-    /** The title shares its bar with a sign-in action, so it stays on one line. Off, it lays out as before. */
-    cloudFeatures: Boolean = BuildConfig.CLOUD_RELAY_ENABLED,
 ) {
     val c = OmTheme.colors
     Scaffold(
         topBar = {
             TopAppBar(
                 title = {
-                    if (cloudFeatures) Text("Pair with your gateway", style = MaterialTheme.typography.titleMedium, color = c.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    else Text("Pair with your gateway", style = MaterialTheme.typography.titleMedium, color = c.textPrimary)
+                    Text("Pair with your gateway", style = MaterialTheme.typography.titleMedium, color = c.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 },
                 navigationIcon = {
-                    TextButton(onClick = onBack, enabled = state.googlePhase != PairingViewModel.GooglePhase.Pairing && state.account?.phase != AccountPairingPhase.Pairing &&
+                    TextButton(onClick = onBack, enabled = state.account?.phase != AccountPairingPhase.Pairing &&
                         !(state.tailnetUnreachable != null && state.isPairing)) {
-                        // Direct pairing opened from the account entry goes back to it.
-                        Text(if (state.account != null && state.mode != PairingViewModel.Mode.Google) "Back" else "Cancel", color = c.accent)
-                    }
-                },
-                actions = {
-                    if (state.googleAvailable && state.account == null && state.mode != PairingViewModel.Mode.Google) {
-                        TextButton(onClick = onShowGoogle) {
-                            Image(painterResource(R.drawable.google_sign_in_mark), contentDescription = null, modifier = Modifier.size(20.dp))
-                            Spacer(Modifier.width(8.dp))
-                            Text("Google", color = c.accent)
-                        }
+                        val account = state.account
+                        // Direct pairing and the sign-in choices go back to the account entry.
+                        val back = account != null && (state.mode != PairingViewModel.Mode.Account ||
+                            state.choosingSignIn && (account.phase == AccountPairingPhase.Idle || account.phase == AccountPairingPhase.Failed))
+                        Text(if (back) "Back" else "Cancel", color = c.accent)
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = c.bgPrimary),
@@ -209,10 +198,11 @@ fun PairingContent(
                     onPair = onPair,
                     onPairFromPayload = onQrCode,
                 )
-                PairingViewModel.Mode.Google -> {
-                    val account = state.account
-                    if (account != null) AccountCloudPairingPane(account, state.googleAvailable, state.passkeyAvailable, onGoogleSignIn, onPasskeySignIn, onChooseGateway, onGooglePair, onShowScanner, onShowManual, onCancel = onBack)
-                    else GoogleCloudPairingPane(state, onGoogleSignIn, onGooglePair)
+                PairingViewModel.Mode.Account -> state.account?.let { account ->
+                    AccountCloudPairingPane(
+                        account, state.googleAvailable, state.passkeyAvailable, onGoogleSignIn, onPasskeySignIn, onChooseGateway, onAccountPair,
+                        onShowScanner, onShowManual, onCancel = onBack, choosingSignIn = state.choosingSignIn, onSignIn = onShowSignInChoices,
+                    )
                 }
             }
         }
@@ -644,15 +634,14 @@ fun PairingConfirmationSheet(
     onCancel: () -> Unit,
     onConfirm: () -> Unit,
     modifier: Modifier = Modifier,
-    /** A full key digest and its explanation need the scrolling layout. */
-    cloudFeatures: Boolean = BuildConfig.CLOUD_RELAY_ENABLED,
 ) {
     val c = OmTheme.colors
     Column(
         modifier = modifier
             .fillMaxWidth()
             .background(c.bgPrimary)
-            .then(if (cloudFeatures) Modifier.verticalScroll(rememberScrollState()) else Modifier)
+            // A full key digest and its explanation need the scrolling layout.
+            .verticalScroll(rememberScrollState())
             .padding(OmSpacing.lg),
         verticalArrangement = Arrangement.spacedBy(OmSpacing.lg),
     ) {
@@ -716,7 +705,6 @@ fun PairingConfirmationSheet(
                     style = MaterialTheme.typography.labelMedium.copy(fontFamily = FontFamily.Monospace),
                     fontWeight = FontWeight.Normal,
                     color = c.textPrimary,
-                    maxLines = if (cloudFeatures) Int.MAX_VALUE else 4,
                 )
                 if (trustKind == PairingViewModel.TrustKind.PinnedKey) {
                     Spacer(Modifier.height(OmSpacing.xs))
@@ -740,7 +728,7 @@ fun PairingConfirmationSheet(
             }
         }
 
-        Spacer(if (cloudFeatures) Modifier.height(OmSpacing.sm) else Modifier.weight(1f))
+        Spacer(Modifier.height(OmSpacing.sm))
 
         Row(horizontalArrangement = Arrangement.spacedBy(OmSpacing.md)) {
             Button(

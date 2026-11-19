@@ -37,7 +37,7 @@ class PairingServiceDefaultTransportTest {
                 }
                 server.enqueue(MockResponse().setBody(reply))
                 if (mode == PairingTlsMode.PINNED_KEY_STRICT) server.enqueue(MockResponse().setBody("""{"version":1,"candidates":[]}"""))
-                val service = PairingService(InMemoryStore(), cloudRelay = true)
+                val service = PairingService(InMemoryStore())
                 val pairing = service.pair(payload)
                 assertEquals(mode, pairing.tlsMode)
                 assertEquals("device-token", pairing.token)
@@ -66,7 +66,7 @@ class PairingServiceDefaultTransportTest {
                 val certPin = hash(held.certificate.encoded)
                 val keyPin = hash(held.certificate.publicKey.encoded)
                 for (tls in listOf("""{"mode":"pinned-leaf-strict","fingerprint":"$certPin"}""", """{"mode":"pinned-key-strict","spkiFingerprint":"$keyPin"}""")) {
-                    val service = PairingService(InMemoryStore(), cloudRelay = true)
+                    val service = PairingService(InMemoryStore())
                     assertNotNull(runCatching { service.pair("""{"v":4,"gatewayUrl":"$origin","pairingCode":"PRIVATE-CODE","tls":$tls}""") }.exceptionOrNull())
                     assertNull(service.current())
                 }
@@ -78,11 +78,11 @@ class PairingServiceDefaultTransportTest {
     @Test fun `unconfigured system trust and incorrect strict pins cannot send pairing credentials`() = runBlocking {
         server().use { server ->
             val origin = server.url("/").toString().trimEnd('/')
-            val manual = PairingService(InMemoryStore(), cloudRelay = true)
+            val manual = PairingService(InMemoryStore())
             assertNotNull(runCatching { manual.pairManually(origin, "PRIVATE-CODE") }.exceptionOrNull())
             assertNull(manual.current())
             for (tls in listOf("""{"mode":"system"}""", """{"mode":"pinned-leaf-strict","fingerprint":"${"00".repeat(32)}"}""", """{"mode":"pinned-key-strict","spkiFingerprint":"${"00".repeat(32)}"}""")) {
-                val service = PairingService(InMemoryStore(), cloudRelay = true)
+                val service = PairingService(InMemoryStore())
                 assertNotNull(runCatching { service.pair("""{"v":4,"gatewayUrl":"$origin","pairingCode":"PRIVATE-CODE","tls":$tls}""") }.exceptionOrNull())
                 assertNull(service.current())
             }

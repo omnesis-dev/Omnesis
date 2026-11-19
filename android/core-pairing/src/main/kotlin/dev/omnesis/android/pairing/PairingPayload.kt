@@ -54,8 +54,7 @@ sealed interface PairingPayload {
     data class V1(val url: String, val token: String, val accountId: String, val name: String) : PairingPayload
 
     companion object {
-        /** [cloudRelay] is off unless the build enables cloud connectivity; off, the strict trust modes are unknown. */
-        fun decode(raw: String, cloudRelay: Boolean = false): PairingPayload {
+        fun decode(raw: String): PairingPayload {
             val obj = runCatching { OmnesisJson.parseToJsonElement(raw).jsonObject }
                 .getOrElse { throw PairingPayloadException("invalid pairing payload: not JSON") }
 
@@ -73,7 +72,6 @@ sealed interface PairingPayload {
                     val tls = runCatching { obj["tls"]?.jsonObject }.getOrNull()
                         ?: throw PairingPayloadException("missing field 'tls'")
                     val mode = tls["mode"]?.jsonPrimitive?.contentOrNull
-                    if (!cloudRelay && mode != "system" && mode != "pinned-leaf") throw PairingPayloadException("invalid TLS trust mode")
                     when (mode) {
                         "system" -> {
                             requireHttpsOrigin(gatewayUrl)
