@@ -3,8 +3,6 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { SourceId } from "@omnesis/types";
 import { createDatabase } from "../../db.js";
@@ -12,6 +10,8 @@ import { setSyncState, getSourceMeta } from "./SyncStateRepository.js";
 import { setSourceFamilyMeta } from "./SourceFamilyMetaRepository.js";
 import { markSourceCleanupDone } from "./SourceRepository.js";
 import { deleteAllBySource } from "./DocumentRepository.js";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 let path: string;
 let db: ReturnType<typeof createDatabase>;

@@ -17,6 +17,7 @@
 import { spawn } from "node:child_process";
 import { createServer, type AddressInfo } from "node:net";
 import { request as httpsRequest } from "node:https";
+import type { ClientRequest } from "node:http";
 import { existsSync, readdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -24,7 +25,6 @@ import { ensureInstallRootKey, markStorageEncryptionRequired } from "@omnesis/co
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { e2eGatewayEnv, e2eTsxCommand, gatewayBootBudgetMs } from "./gateway-env.js";
 import { killSubprocessGroup, registerSubprocessGroup } from "./subprocess-reaper.js";
-import type { ClientRequest } from "node:http";
 
 const REPO_ROOT = join(import.meta.dirname, "../../../..");
 const BOOT_BUDGET = gatewayBootBudgetMs();

@@ -3,8 +3,6 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { createDatabase } from "../../db.js";
 import { directReadPort } from "../../scheduler/read-port.js";
@@ -17,6 +15,8 @@ import {
   type StatusCacheSnapshot,
 } from "./status-cache-reads.js";
 import type { AnalyticsDb } from "../../analytics-db.js";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 const paths: string[] = [];
 const handles: Array<{ open: boolean; close(): void }> = [];

@@ -3,8 +3,6 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createDatabase } from "../../db.js";
 import { AnalyticsDb } from "../../analytics-db.js";
@@ -14,6 +12,8 @@ import { replaceDocumentTemporalProjections } from "../temporal-projections/docu
 import { TemporalQueryInputError, TemporalQueryService } from "./temporal-query-service.js";
 import type { AnalyticsTableSchema } from "@omnesis/source-sdk";
 import type { DocumentInput } from "@omnesis/types";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 function cleanup(path: string): void {
   for (const suffix of ["", "-wal", "-shm", "-journal"]) {

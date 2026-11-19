@@ -11,8 +11,6 @@
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 
 import { createDatabase } from "../../db.js";
@@ -26,6 +24,8 @@ import {
 } from "./storage.js";
 import type { Db } from "../../data/types.js";
 import type { DocumentInput } from "@omnesis/types";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 function testDbPath(): string {
   return fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);

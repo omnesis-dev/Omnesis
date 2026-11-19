@@ -3,8 +3,6 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID, createHash } from "node:crypto";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { z } from "zod";
 import { HttpChatBackend } from "@omnesis/agent";
@@ -63,6 +61,8 @@ import {
 } from "./runner.js";
 import type { ChatBackend, ToolHandle, TurnInput } from "@omnesis/agent";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 const T0 = Date.parse("2026-03-10T08:00:00Z");
 const log = createLogger("test").child("note-agent");

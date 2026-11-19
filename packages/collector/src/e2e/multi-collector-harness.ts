@@ -24,19 +24,20 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createServer, type AddressInfo } from "node:net";
+import type { ChildProcess } from "node:child_process";
 import { GatewayWsClient } from "@omnesis/gateway-client";
 import {
   ownedProcessCleanupReceipt,
   parseSecretStoreBackend,
   readSecretTextFile,
 } from "@omnesis/core";
+import { execE2EBufferedCommand } from "./e2e-buffered-command.js";
 import {
   createRecordingUpdater,
   registerSelfUpdateCommand,
   type RecordingUpdater,
 } from "../self-update.js";
 import { createCommandDispatch } from "../ws-command-dispatch.js";
-import { execE2EBufferedCommand } from "./e2e-buffered-command.js";
 import { e2eGatewayEnv, e2eTsxCommand, gatewayBootBudgetMs } from "./gateway-env.js";
 import { killSubprocessGroup, registerSubprocessGroup } from "./subprocess-reaper.js";
 import {
@@ -46,7 +47,6 @@ import {
   e2eProcessOutput,
   requestE2EProcessShutdown,
 } from "./e2e-owned-process.js";
-import type { ChildProcess } from "node:child_process";
 import type {
   WsCommandType,
   WsRequestPayload,

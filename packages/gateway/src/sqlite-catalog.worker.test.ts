@@ -11,8 +11,6 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { createDatabase } from "./db.js";
 import { Scheduler } from "./scheduler/scheduler.js";
@@ -20,6 +18,8 @@ import { IoTaskRunner } from "./scheduler/runners/io.js";
 import { ioGateFromScheduler, type IoGate } from "./scheduler/io-ops.js";
 import { SQLITE_CATALOG_TABLES, computeSqliteTableStats } from "./sqlite-catalog.js";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 const WORKER_URL = new URL("./workers/io-worker.ts", import.meta.url);
 const LOADER_URL = new URL("./workers/register-tsx.mjs", import.meta.url).href;

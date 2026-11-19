@@ -5,8 +5,6 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { rmSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import { Worker } from "node:worker_threads";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -17,6 +15,8 @@ import {
   type WalCheckpointPolicy,
 } from "./wal-checkpoint.js";
 import { openWriteConn } from "./writer-connection.js";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 const POLICY: WalCheckpointPolicy = {
   pendingFrames: 100,

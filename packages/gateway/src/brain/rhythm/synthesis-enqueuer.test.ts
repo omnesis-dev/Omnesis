@@ -9,8 +9,6 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import { createLogger } from "@omnesis/core";
 import { createDatabase } from "../../db.js";
@@ -22,6 +20,8 @@ import {
 } from "../storage/engine-state.js";
 import { runSynthesisEnqueuePass } from "./synthesis-enqueuer.js";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 type Db = Database.Database;
 

@@ -3,8 +3,6 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { ProviderId, SourceId, type DocumentInput } from "@omnesis/types";
 import {
@@ -20,6 +18,8 @@ import {
 } from "../data/repositories/AbsenceRepository.js";
 import { finishDocumentCascade } from "./document-cascade.js";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 const PROVIDER = ProviderId("notes-synth");
 const SOURCE = SourceId("notes-synth:local");

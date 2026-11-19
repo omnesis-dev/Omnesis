@@ -22,9 +22,9 @@ import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { closeEnrollmentFixture } from "./enrollment-fixture-cleanup.js";
 import { authorizeAccountDesktop, pairAccountDevice } from "@omnesis/cloud-relay";
 import { localAcmeAuthority } from "../../../cloud-relay/test/acme-authority.js";
-import { closeEnrollmentFixture } from "./enrollment-fixture-cleanup.js";
 import {
   CREATE_ACCOUNT_HEADING,
   EnrollmentGateway,

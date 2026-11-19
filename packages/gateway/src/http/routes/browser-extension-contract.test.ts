@@ -19,8 +19,6 @@
 
 import { readFileSync, existsSync, rmSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import webSource from "@omnesis/provider-web";
 import {
@@ -38,6 +36,8 @@ import { createDatabase } from "../../db.js";
 import { resetOwnedWebDomains } from "../../owned-web-domains.js";
 import { createServer } from "../../server.js";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 type Db = Database.Database;
 

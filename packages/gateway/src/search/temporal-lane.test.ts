@@ -2,8 +2,6 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { randomUUID } from "node:crypto";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createIndexDatabase, EMBEDDING_DIM, upsertChunks } from "../indexer/db.js";
 import {
@@ -15,6 +13,8 @@ import {
 import { closeTempDb } from "./test-utils.js";
 import type Database from "better-sqlite3";
 import type { VectorReadSource } from "../indexer/usearch-index.js";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 /** A unit vector along one axis, so similarity picks out the chunks on that axis. */
 function axis(i: number): Float32Array {

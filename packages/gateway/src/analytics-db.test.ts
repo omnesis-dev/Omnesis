@@ -3,8 +3,6 @@
 
 import { createHash } from "node:crypto";
 import { unlinkSync, existsSync } from "node:fs";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 import { DuckDBInstance } from "@duckdb/node-api";
 import Database from "better-sqlite3";
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
@@ -12,6 +10,8 @@ import { ANALYTICS_STREAM_COLUMN } from "@omnesis/source-sdk";
 import { AnalyticsDb } from "./analytics-db.js";
 import { ANALYTICS_INTERNAL_TABLES } from "./analytics/internal.js";
 import type { AnalyticsTableSchema, ColumnType } from "@omnesis/source-sdk";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 const TEST_DB = fixtureJoin(fixtureTmpdir(), `omnesis-test-analytics-${crypto.randomUUID()}.db`);
 

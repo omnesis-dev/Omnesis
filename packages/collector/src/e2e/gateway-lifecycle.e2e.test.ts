@@ -14,6 +14,7 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import type { ChildProcess } from "node:child_process";
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import { GATEWAY_LOCK_FILE, ownedProcessCleanupReceipt } from "@omnesis/core";
 import { MultiCollectorHarness, getFreePort } from "./multi-collector-harness.js";
@@ -25,7 +26,6 @@ import {
   e2eProcessExit,
   e2eApplicationPid,
 } from "./e2e-owned-process.js";
-import type { ChildProcess } from "node:child_process";
 
 const REPO_ROOT = join(import.meta.dirname, "../../../..");
 let retainGatewayFixture = false;

@@ -3,8 +3,6 @@
 
 import { randomUUID } from "node:crypto";
 import { unlinkSync } from "node:fs";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import Database from "better-sqlite3";
 import { runSchemaSetup } from "../data/schema.js";
@@ -15,6 +13,8 @@ import {
   type BootstrapBacklog,
   type BootstrapSettingsView,
 } from "./bootstrap-status.js";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 const DEFAULTS: BootstrapSettingsView = {
   enabled: true,

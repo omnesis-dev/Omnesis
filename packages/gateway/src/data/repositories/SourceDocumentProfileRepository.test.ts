@@ -3,8 +3,6 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import Database from "better-sqlite3";
 import {
@@ -14,6 +12,8 @@ import {
   upsertSourceDocumentProfiles,
 } from "./SourceDocumentProfileRepository.js";
 import type { SourceDocumentProfileEntry } from "./SourceDocumentProfileRepository.js";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 let db: Database.Database;
 

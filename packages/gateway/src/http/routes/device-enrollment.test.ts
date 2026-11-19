@@ -3,8 +3,6 @@
 
 import { createPublicKey, generateKeyPairSync, randomUUID, type KeyObject } from "node:crypto";
 import { rmSync } from "node:fs";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { signDeviceTranscript, tokenRotationTranscript } from "@omnesis/cloud-relay";
 import { defaultScopesForDeviceKind } from "@omnesis/types";
@@ -17,6 +15,8 @@ import {
 import { createToken, lookupToken } from "../../data/repositories/TokenRepository.js";
 import { createServer } from "../../server.js";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 const SPKI = "a".repeat(64);
 

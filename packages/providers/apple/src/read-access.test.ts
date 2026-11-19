@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { setAppleFixtureReadable } from "./testing/apple-read-denial.test.fixture.js";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { setAppleFixtureReadable } from "./testing/apple-read-denial.test.fixture.js";
 import { appleFileReadAccess, probeAppleStoresReadAccess } from "./read-access.js";
 import { contactsDbFile } from "./paths.js";
 import { makeAppleDbFixture, type AppleDbFixture } from "./testing/apple-db-fixtures.js";

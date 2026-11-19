@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { ownedProcessCleanupReceipt } from "@omnesis/core";
+
 /**
  * E2E test harness: starts a real gateway subprocess + collector in-process
  * with injected mock providers. Tests communicate via direct harness method
@@ -15,7 +17,8 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync } from "nod
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createServer, type AddressInfo } from "node:net";
-import { ownedProcessCleanupReceipt, parseSourceKey, websocketAuthProtocol } from "@omnesis/core";
+import type { ChildProcess } from "node:child_process";
+import { parseSourceKey, websocketAuthProtocol } from "@omnesis/core";
 import { SourceId } from "@omnesis/types";
 import { GatewayWsClient, HttpGatewayClient } from "@omnesis/gateway-client";
 import { SyncEngine } from "../sync-engine.js";
@@ -36,7 +39,6 @@ import {
   createMockDescriptor,
   type MockSourceOptions,
 } from "./mock-source.js";
-import type { ChildProcess } from "node:child_process";
 import type { SourceDescriptor } from "@omnesis/source-sdk";
 import type { CollectorInternalConfig } from "../internal-config.js";
 

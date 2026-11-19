@@ -18,9 +18,9 @@ import { createDatabase } from "@omnesis/gateway/src/db.js";
 import { createDevice } from "@omnesis/gateway/src/data/repositories/DeviceRepository.js";
 import { createToken } from "@omnesis/gateway/src/data/repositories/TokenRepository.js";
 import { LATEST_SCHEMA_VERSION } from "@omnesis/gateway/src/data/schema-version.js";
+import type { StartupSnapshot } from "@omnesis/gateway/src/startup/manager.js";
 import { e2eGatewayEnv, e2eTsxCommand, gatewayBootBudgetMs } from "./gateway-env.js";
 import { killSubprocessGroup, registerSubprocessGroup } from "./subprocess-reaper.js";
-import type { StartupSnapshot } from "@omnesis/gateway/src/startup/manager.js";
 
 const ROOT = join(import.meta.dirname, "../../../..");
 const BOOT_BUDGET = gatewayBootBudgetMs();

@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { setAppleFixtureReadable } from "../testing/apple-read-denial.test.fixture.js";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import Database from "better-sqlite3";
 import { describe, expect, test, beforeEach, afterEach, vi } from "vitest";
-import { setAppleFixtureReadable } from "../testing/apple-read-denial.test.fixture.js";
 import { SingleFileAppleDb } from "./single-file-db.js";
 import { classifyOpenError, fullDiskAccessDenial, type Db } from "./internal.js";
 import type { Logger } from "@omnesis/core";

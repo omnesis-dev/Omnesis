@@ -2,8 +2,6 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { existsSync, unlinkSync } from "node:fs";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createLogger } from "@omnesis/core";
@@ -14,6 +12,8 @@ import {
 } from "../enrichment/temporal-annotations/storage.js";
 import { createTemporalProjectionRelinker } from "./projection-relink.js";
 import type { AnalyticsTableSchema } from "@omnesis/source-sdk";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 const accountA = "calendar:maya@example.com";
 const accountB = "calendar:maya.reeves@example.org";

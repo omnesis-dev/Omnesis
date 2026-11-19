@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { ownedProcessCleanupReceipt } from "@omnesis/core";
+
 /**
  * E2E harness for the synthetic-providers framework.
  *
@@ -20,8 +22,8 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync } from "nod
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createServer, type AddressInfo } from "node:net";
+import type { ChildProcess } from "node:child_process";
 import { createHash, generateKeyPairSync, randomBytes } from "node:crypto";
-import { ownedProcessCleanupReceipt } from "@omnesis/core";
 import {
   type SourceOrProviderDefinition,
   type SourceDescriptor,
@@ -86,7 +88,6 @@ import {
   reindexMissing,
   type GatewayEndpoint,
 } from "./gateway-request.js";
-import type { ChildProcess } from "node:child_process";
 
 async function getFreePort(): Promise<number> {
   return new Promise((resolve, reject) => {

@@ -3,8 +3,6 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { makeCommand, PROTOCOL_VERSION, type WsResponse } from "@omnesis/core";
 import {
@@ -30,6 +28,8 @@ import { DeviceWsServer } from "../../ws.js";
 import { createSubscription } from "../../subscriptions/store-mutations.js";
 import { PairingService, type PairingServiceDeps } from "./PairingService.js";
 import type { CreateSubscriptionMutation } from "../../subscriptions/store-types.js";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 const openClawCapabilities: DeviceCapability = {
   suggestedName: "fictional-openclaw",

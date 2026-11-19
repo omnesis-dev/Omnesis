@@ -9,8 +9,8 @@ import { fileURLToPath } from "node:url";
 import { expect, test, vi } from "vitest";
 import { AccountId, ProviderType, SourceType } from "@omnesis/types";
 import { makeCommand, ownedProcessCleanupReceipt } from "@omnesis/core";
-import { createSourceWsHandlers } from "./source-ws-handlers.js";
 import type { GatewayClient, SourceDescriptor } from "@omnesis/source-sdk";
+import { createSourceWsHandlers } from "./source-ws-handlers.js";
 
 const fixture = vi.hoisted(() => ({ entry: "" }));
 vi.mock("@omnesis/core", async (importOriginal) => {

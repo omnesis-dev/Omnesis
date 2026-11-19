@@ -15,6 +15,7 @@ import {
   ownedProcessCleanupReceipt,
   type OwnedChildProcess,
 } from "@omnesis/core";
+import type { Readable } from "node:stream";
 import {
   encodeHelperCommand,
   HELPER_PROTOCOL_VERSION,
@@ -22,7 +23,6 @@ import {
   type HelperCommand,
   type HelperStatus,
 } from "./protocol.js";
-import type { Readable } from "node:stream";
 
 const log = createLogger("gateway:tailscale").child("helper");
 

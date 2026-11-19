@@ -67,8 +67,8 @@ import {
   systemdEscapeArg,
   systemdUnitPath,
 } from "../service-paths.js";
-import { ownedProcessCleanupReceipt } from "../owned-process-cleanup.js";
 import { collectWindowsPermissionData } from "./windows-permissions.js";
+import { ownedProcessCleanupReceipt } from "../owned-process-cleanup.js";
 import type {
   SecurityData,
   SecurityDiskEncryptionStatus,

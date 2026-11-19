@@ -16,8 +16,6 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID, createHash } from "node:crypto";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import { createLogger } from "@omnesis/core";
 import { ProviderId, SourceId, type DocumentInput } from "@omnesis/types";
@@ -37,6 +35,8 @@ import { buildCognitionOwnTools, type CognitionToolDeps } from "./tools.js";
 import type Database from "better-sqlite3";
 import type { EntailCapability, ToolResult } from "@omnesis/core";
 import type { SearchPort, ToolHandle } from "@omnesis/agent";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 type Db = Database.Database;
 

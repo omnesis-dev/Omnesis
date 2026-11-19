@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import type { EventEmitter } from "node:events";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import * as scans from "./security-worker.js";
-import type { EventEmitter } from "node:events";
 import type { SecurityData } from "./types.js";
 
 const fixtures = vi.hoisted(() => ({

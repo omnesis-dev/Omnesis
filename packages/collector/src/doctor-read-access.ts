@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import type { SourceInstance, SourceReadAccessResult } from "@omnesis/source-sdk";
 import { ownedProcessCleanupReceipt } from "@omnesis/core";
 import { CollectorOwnedWork } from "./owned-work.js";
-import type { SourceInstance, SourceReadAccessResult } from "@omnesis/source-sdk";
 
 export interface DoctorReadAccessSource {
   sourceId: string;

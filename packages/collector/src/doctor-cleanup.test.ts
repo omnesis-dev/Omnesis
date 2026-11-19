@@ -4,9 +4,9 @@
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
-import { cleanupMarker, closeFixture, type ProbeOwner } from "../test/doctor-cleanup-fixtures.js";
-import { CollectorDoctor, type CollectorDoctorDeps } from "./doctor.js";
 import type { SecurityData, SystemInfoResult } from "@omnesis/core/doctor";
+import { CollectorDoctor, type CollectorDoctorDeps } from "./doctor.js";
+import { cleanupMarker, closeFixture, type ProbeOwner } from "../test/doctor-cleanup-fixtures.js";
 
 afterEach(() => vi.useRealTimers());
 const SYSTEM: SystemInfoResult = {

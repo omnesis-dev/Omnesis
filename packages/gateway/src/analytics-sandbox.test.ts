@@ -9,11 +9,11 @@
 // engine or the parser gate, never by a keyword list.
 import { unlinkSync, existsSync, rmSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 import { DuckDBConnection, DuckDBPreparedStatement } from "@duckdb/node-api";
 import { describe, test, expect, beforeEach, afterEach, vi } from "vitest";
 import { AnalyticsDb } from "./analytics-db.js";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 let db: AnalyticsDb;
 let path: string;

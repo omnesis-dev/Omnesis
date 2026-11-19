@@ -9,8 +9,6 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createDatabase } from "../../db.js";
 import {
@@ -26,6 +24,8 @@ import {
 } from "./morning-brief-items.js";
 import { createObservation, getObservation, transitionObservation } from "./observations.js";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 const T0 = Date.parse("2026-07-02T07:00:00.000Z");
 const DAY1 = "2026-07-02";

@@ -14,8 +14,6 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { DeviceId, SourceId } from "@omnesis/types";
@@ -33,6 +31,8 @@ import { writeGateFromScheduler, WriteOps } from "./write-ops.js";
 import { writerHandlers, writerYieldableHandlers } from "./writer-handlers.js";
 import type { SourceModeTransitionPrepareError } from "../data/repositories/SourceModeTransitionRepository.js";
 import type { PrivacyReviewRecord } from "@omnesis/types/privacy";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 const WORKER_URL = new URL("../workers/writer-worker.ts", import.meta.url);
 const LOADER_URL = new URL("../workers/register-tsx.mjs", import.meta.url).href;

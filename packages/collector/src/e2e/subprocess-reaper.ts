@@ -25,8 +25,8 @@ import {
   ownedProcessCleanupReceipt,
 } from "@omnesis/core";
 import { waitForWindowsTreeExit } from "./windows-tree-drain.js";
-import { getOwnedE2EProcess, type OwnedE2EProcess } from "./e2e-owned-process.js";
 import type { ChildProcess } from "node:child_process";
+import { getOwnedE2EProcess, type OwnedE2EProcess } from "./e2e-owned-process.js";
 
 /** Process-group leader PIDs of detached children still expected to be alive. */
 const liveGroups = new Set<number>();

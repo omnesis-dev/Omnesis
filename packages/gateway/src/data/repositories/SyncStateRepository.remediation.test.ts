@@ -9,8 +9,6 @@
 
 import { randomUUID } from "node:crypto";
 import { unlinkSync, existsSync } from "node:fs";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import { SourceId, parseSourceId } from "@omnesis/types";
 import { createDatabase } from "../../db.js";
@@ -25,6 +23,8 @@ import {
 } from "./SyncStateRepository.js";
 import { createDevice } from "./DeviceRepository.js";
 import { addSourceMember, createSource } from "./SourceRepository.js";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 let dbPath: string;
 let db: ReturnType<typeof createDatabase>;

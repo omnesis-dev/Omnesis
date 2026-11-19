@@ -8,8 +8,6 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 import { AccountId, SourceType, type DeviceId, type SourceId } from "@omnesis/types";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createDatabase } from "../../db.js";
@@ -28,6 +26,8 @@ import {
 } from "./AnalyticsReplicaClaimRepository.js";
 import { recordDeletionClaims } from "./ReplicaDeletionClaimRepository.js";
 import type { Db } from "../types.js";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 const TYPE = SourceType("apple-health");
 const TABLE = "hk_samples";

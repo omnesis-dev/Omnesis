@@ -3,8 +3,6 @@
 
 import { randomUUID } from "node:crypto";
 import { rmSync } from "node:fs";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { computeContentHash } from "@omnesis/core";
 import { createDatabase } from "../db.js";
@@ -19,6 +17,8 @@ import { hiddenSourceIdsToExclude } from "./hidden-sources.js";
 import { enrichAgentSearch, type AgentSearchProvenanceOptions } from "./agent-provenance.js";
 import type { SearchResultItem } from "./types.js";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 const NOW = "2026-01-01T10:00:00.000Z";
 const BODY =

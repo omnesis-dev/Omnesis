@@ -8,8 +8,6 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, expect, test } from "vitest";
 import { SCOPE_ADMIN, SCOPE_READ, SCOPE_WRITE_ALL, Scope } from "@omnesis/types";
 import { createDatabase } from "../../db.js";
@@ -25,6 +23,8 @@ import {
 } from "../../brain/note-agent/storage.js";
 import type { OmnesisNotesRuntime } from "../../sources/omnesis-notes/index.js";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 let db: Database.Database;
 let dbPath: string;

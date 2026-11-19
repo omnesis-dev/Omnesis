@@ -15,8 +15,6 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { makeCommand, PROTOCOL_VERSION, type AgentEvent } from "@omnesis/core";
@@ -46,6 +44,8 @@ import { captureActivity, nameStall } from "./stall-test-utils.js";
 import { withActivity } from "./main-activity.js";
 import type { ActivitySample } from "./stall-protocol.js";
 import type { PeriodicTask } from "../scheduler/types.js";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 beforeAll(() => setActivityMarker(withActivity));
 afterAll(() => setActivityMarker(null));

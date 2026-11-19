@@ -14,6 +14,9 @@
  * gateway forwards them to subscribers (SSE on the admin client side).
  */
 
+import type { ChildProcess } from "node:child_process";
+import { spawnAuthProcess, type AuthProcess } from "./auth-process.js";
+import { authSubprocessEnvironment } from "./auth-subprocess-env.js";
 import {
   collectorHostname,
   createLogger,
@@ -31,8 +34,6 @@ import {
   resolveSubprocessEntry,
 } from "@omnesis/core";
 import { serializeDescriptor } from "@omnesis/source-sdk";
-import { authSubprocessEnvironment } from "./auth-subprocess-env.js";
-import { spawnAuthProcess, type AuthProcess } from "./auth-process.js";
 import {
   parseAuthSubprocessEvent,
   type AuthSubprocessEvent,
@@ -40,7 +41,6 @@ import {
 } from "./auth-subprocess-protocol.js";
 import { createCommandDispatch, type TypedCommandHandler } from "./ws-command-dispatch.js";
 import { CollectorOwnedWork, collectorCleanupReceipt } from "./owned-work.js";
-import type { ChildProcess } from "node:child_process";
 import type {
   AuthErrorCode,
   WsCommand,

@@ -10,8 +10,6 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 import { describe, expect, test, beforeEach, afterEach } from "vitest";
 
 import { SCOPE_WRITE_ALL, SCOPE_READ, SCOPE_ADMIN, type Scope } from "@omnesis/types";
@@ -26,6 +24,8 @@ import { createToken } from "../../data/repositories/TokenRepository.js";
 import { createDevice } from "../../data/repositories/DeviceRepository.js";
 import { AudioDecodeError, TranscribeService } from "../../transcribe/index.js";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 type Db = Database.Database;
 

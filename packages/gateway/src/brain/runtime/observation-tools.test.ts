@@ -11,8 +11,6 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { createLogger } from "@omnesis/core";
 import { ProviderId, SourceId, type DocumentInput } from "@omnesis/types";
@@ -34,6 +32,8 @@ import type { ObservationScoringInput } from "../observations/noting.js";
 import type { SearchPort, ToolHandle } from "@omnesis/agent";
 import type { ToolResult } from "@omnesis/core";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 type Db = Database.Database;
 

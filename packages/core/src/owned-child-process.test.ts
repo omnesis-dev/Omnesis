@@ -3,9 +3,9 @@
 
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
+import type { ChildProcess, spawn } from "node:child_process";
 import { afterEach, expect, test, vi } from "vitest";
 import { spawnOwnedChildProcess } from "./owned-child-process.js";
-import type { ChildProcess, spawn } from "node:child_process";
 import type { WindowsJobProcess } from "./windows-job.js";
 
 afterEach(() => vi.useRealTimers());

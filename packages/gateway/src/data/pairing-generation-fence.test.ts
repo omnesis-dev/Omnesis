@@ -3,8 +3,6 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { SCOPE_ADMIN } from "@omnesis/types";
 import { createDatabase } from "../db.js";
@@ -14,6 +12,8 @@ import {
   STALE_PAIRING_WRITE_ERROR,
   withPairingGenerationFence,
 } from "./pairing-generation-fence.js";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 let dbPath: string;
 let db: ReturnType<typeof createDatabase>;

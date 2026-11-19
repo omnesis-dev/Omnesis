@@ -6,13 +6,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { ownedProcessCleanupReceipt } from "@omnesis/core";
-import { markedFileError } from "../test/private-operation-fixture.js";
 import { GatewaySignupClient } from "./gateway-signup-client.js";
 import * as credentials from "./google-credentials.js";
 import * as releases from "./gateway-release.js";
 import * as privateInputs from "./private-inputs.js";
 import * as gatewayKeys from "./gateway-key-client.js";
 import { DNS_BROKER_PROTOCOL } from "./dns-broker-contract.js";
+import { markedFileError } from "../test/private-operation-fixture.js";
 import {
   GatewayCloudRelayManagement,
   type CloudRelayManagerOptions,

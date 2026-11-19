@@ -3,8 +3,6 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import { createDatabase } from "../../db.js";
 import { upsertDocuments } from "../../data/repositories/DocumentRepository.js";
@@ -27,6 +25,8 @@ import type {
   TemporalQueryInput,
   TemporalQueryResult,
 } from "@omnesis/core";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 const NOW = Date.parse("2026-07-02T06:00:00.000Z");
 const HOUR = 3_600_000;

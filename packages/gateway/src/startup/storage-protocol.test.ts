@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import type { EventEmitter } from "node:events";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { initializeGatewayDatabase, initializeGatewayIndex } from "./storage.js";
-import type { EventEmitter } from "node:events";
 
 interface WorkerFixture extends EventEmitter {
   terminate: ReturnType<typeof vi.fn>;

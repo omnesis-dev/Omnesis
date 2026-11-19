@@ -3,8 +3,6 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createLogger, type DecisionCapability, type DecisionRequest } from "@omnesis/core";
 import { createDatabase } from "../../db.js";
@@ -16,6 +14,8 @@ import type { DecisionPayloadCapture } from "../decision-payload.js";
 import type { InterestExample, OwnerInterest } from "../interest/lookup.js";
 import type { CognitionDecisionRecord } from "../storage/decisions.js";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 const log = createLogger("test").child("task-propose");
 const capture: DecisionPayloadCapture = {

@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { setAppleFixtureReadable } from "../testing/apple-read-denial.test.fixture.js";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import Database from "better-sqlite3";
 import { describe, test, expect, beforeEach, afterEach, vi } from "vitest";
-import { setAppleFixtureReadable } from "../testing/apple-read-denial.test.fixture.js";
 import { RemindersDbHelper } from "./reminders-db.js";
 
 function seedStore(path: string, titles: string[]): void {

@@ -19,8 +19,6 @@
 
 import { randomUUID } from "node:crypto";
 import { rmSync } from "node:fs";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { createDatabase } from "../../db.js";
@@ -32,6 +30,8 @@ import {
   KNOWLEDGE_CASCADE_NEXT_ROW_SQL,
   nextKnowledgeCascadeItem,
 } from "./storage-invalidation.js";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 /** The pick this change replaced, kept here as the order it must reproduce. */
 const SORTED_PICK = `SELECT f.*,j.kind,j.target_kind AS root_kind,j.target_id AS root_id

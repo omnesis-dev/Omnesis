@@ -9,8 +9,6 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 import { vi, afterEach, beforeEach, describe, expect, test } from "vitest";
 import { SCOPE_ADMIN, SCOPE_READ, ProviderId, SourceId, type Scope } from "@omnesis/types";
 import { setLabFlag } from "../../lab/store.js";
@@ -23,6 +21,8 @@ import { proposeTaskChange } from "../storage/tasks.js";
 import { createMutableClock } from "../virtual-clock.js";
 import type { StatusCache } from "../../http/services/StatusCache.js";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 const NOW = Date.parse("2026-03-10T12:00:00");
 const TODAY = "2026-03-10";

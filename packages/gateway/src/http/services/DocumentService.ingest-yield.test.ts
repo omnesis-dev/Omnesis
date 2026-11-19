@@ -15,8 +15,6 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import {
   ProviderId,
@@ -38,6 +36,8 @@ import { DocumentService } from "./DocumentService.js";
 import { EventService } from "./EventService.js";
 import type { SourceDataRemovalService } from "./SourceDataRemovalService.js";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 type Db = Database.Database;
 

@@ -2,14 +2,14 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { randomUUID } from "node:crypto";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 import { describe, test, expect, afterAll } from "vitest";
 import Database from "better-sqlite3";
 import { createIndexDatabase, EMBEDDING_DIM, upsertChunks } from "../indexer/db.js";
 import { canonicalRowKey, type BoundRowResolver } from "../analytics/bound-documents.js";
 import { SearchPipeline } from "./pipeline.js";
 import { closeTempDb } from "./test-utils.js";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 const openDbs: Database.Database[] = [];
 afterAll(() => openDbs.forEach(closeTempDb));

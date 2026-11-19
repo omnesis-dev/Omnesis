@@ -2,13 +2,13 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { randomUUID } from "node:crypto";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 import { describe, test, expect, afterEach } from "vitest";
 import { createIndexDatabase, setIndexedDocument } from "../indexer/db.js";
 import { dedupeByContentHash } from "./dedupe.js";
 import { closeTempDb } from "./test-utils.js";
 import type { SearchResultItem } from "./types.js";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 function makeResult(documentId: string, score: number): SearchResultItem {
   return {

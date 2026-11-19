@@ -27,9 +27,9 @@ import {
   emitFinal as writeFinalEvent,
   keyringUnavailableNotice,
 } from "./auth-subprocess-emit.js";
+import type { AuthSubprocessEvent } from "./auth-subprocess-protocol.js";
 import { createStdinReceiver } from "./auth-subprocess-stdin.js";
 import { AuthSubprocessExit } from "./auth-subprocess-exit.js";
-import type { AuthSubprocessEvent } from "./auth-subprocess-protocol.js";
 import type { AuthSession, ConnectionState } from "@omnesis/source-sdk";
 
 const stdout = process.stdout;

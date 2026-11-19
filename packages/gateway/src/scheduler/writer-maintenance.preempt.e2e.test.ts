@@ -28,12 +28,12 @@ import { createDatabase, openReadOnlyDatabase } from "../db.js";
 import { runWithPriority } from "../priority.js";
 import { setActiveAlgoVersion } from "../near-dupes/meta.js";
 import { BUCKET_DELETE_FOR_DOC_SQL } from "../near-dupes/NearDupWriterOps.js";
-import { sqlitePerformanceDatabasePath } from "../../test/sqlite-performance-temp.js";
 import { Scheduler } from "./scheduler.js";
 import { WriterTaskRunner } from "./runners/writer.js";
 import { IoTaskRunner } from "./runners/io.js";
 import { writeGateFromScheduler } from "./write-ops.js";
 import { ioGateFromScheduler, type IoGate } from "./io-ops.js";
+import { sqlitePerformanceDatabasePath } from "../../test/sqlite-performance-temp.js";
 import { catalogRefreshTask } from "./tasks/backfill-tasks.js";
 import { sweepCollapsedCandidates } from "./tasks/backfill-helpers.js";
 import {

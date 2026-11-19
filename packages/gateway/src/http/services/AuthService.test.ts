@@ -3,8 +3,6 @@
 
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { SCOPE_READ, type DeviceId, type Scope, type TokenId } from "@omnesis/types";
 import { createDatabase } from "../../db.js";
@@ -13,6 +11,8 @@ import { createSession, createToken } from "../../data/repositories/TokenReposit
 import { AuthService } from "./AuthService.js";
 import type { WriteGate } from "../../write-gate.js";
 import type { StatusCache } from "./StatusCache.js";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 let dbPath: string;
 let db: ReturnType<typeof createDatabase>;

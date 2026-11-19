@@ -1,20 +1,20 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import type { ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
-import { writeFileSync, mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
-import { tmpdir } from "node:os";
 import {
   spawnOwnedChildProcess,
   ownedProcessCleanupReceipt,
   type OwnedChildProcess,
 } from "@omnesis/core";
+import { writeFileSync, mkdtempSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { tmpdir } from "node:os";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { helperEnvironment, HelperSupervisor, type SupervisorSnapshot } from "./supervisor.js";
-import type { ChildProcess } from "node:child_process";
 
 const FAKE = fileURLToPath(new URL("./testing/fake-helper.mjs", import.meta.url));
 const launch = {

@@ -6,10 +6,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
 import { ownedProcessCleanupReceipt } from "@omnesis/core";
-import { OptionalServiceCleanup } from "../optional-service-cleanup.js";
-import { OwnedProcessShutdownFence } from "../owned-process-shutdown-fence.js";
 import { TailscaleEmbedService } from "./service.js";
 import { HelperSupervisor } from "./supervisor.js";
+import { OptionalServiceCleanup } from "../optional-service-cleanup.js";
+import { OwnedProcessShutdownFence } from "../owned-process-shutdown-fence.js";
 
 const socket = vi.hoisted(() => ({ open: vi.fn(), readKey: vi.fn(async () => "invented-key") }));
 vi.mock("./socket-server.js", async (importOriginal) => ({

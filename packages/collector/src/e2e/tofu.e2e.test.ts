@@ -4,13 +4,13 @@
 import { mkdtempSync, readFileSync, existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import type { ChildProcess } from "node:child_process";
 import { createServer, type AddressInfo } from "node:net";
 import { describe, test, expect, beforeAll, afterAll } from "vitest";
 import { fetchPeerCert, ensureGatewayTrust, ownedProcessCleanupReceipt } from "@omnesis/core";
 import { e2eGatewayEnv, e2eTsxCommand, gatewayBootBudgetMs } from "./gateway-env.js";
 import { killSubprocessGroup, registerSubprocessGroup } from "./subprocess-reaper.js";
 import { spawnE2ESubprocess } from "./e2e-owned-process.js";
-import type { ChildProcess } from "node:child_process";
 
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
 

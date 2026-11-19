@@ -2,8 +2,6 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { randomUUID } from "node:crypto";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { hostTimeZone } from "@omnesis/core";
 import { createIndexDatabase, EMBEDDING_DIM, upsertChunks } from "../indexer/db.js";
@@ -13,6 +11,8 @@ import type Database from "better-sqlite3";
 import type { TemporalItem, TemporalQueryInput } from "@omnesis/core";
 import type { VectorReadSource } from "../indexer/usearch-index.js";
 import type { SearchConfig } from "./search-config.js";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 // Wednesday 7 October 2026, morning in London.
 const NOW = new Date("2026-10-07T09:00:00Z");

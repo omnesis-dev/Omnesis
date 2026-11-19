@@ -2,8 +2,8 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { rm } from "node:fs/promises";
-import { ownedProcessCleanupReceipt } from "@omnesis/core";
 import type { Server } from "node:net";
+import { ownedProcessCleanupReceipt } from "@omnesis/core";
 
 /** Attempt every owner before removing shared inputs; any failure retains them. */
 export async function closeEnrollmentFixture(

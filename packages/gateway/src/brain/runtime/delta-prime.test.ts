@@ -10,8 +10,6 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import { ProviderId, SourceId } from "@omnesis/types";
 import { createDatabase, upsertDocuments } from "../../db.js";
@@ -28,6 +26,8 @@ import {
 } from "./delta-prime.js";
 import type Database from "better-sqlite3";
 import type { OpenLoopState } from "../storage/types.js";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 type Db = Database.Database;
 

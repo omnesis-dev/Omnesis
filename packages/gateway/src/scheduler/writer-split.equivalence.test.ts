@@ -15,8 +15,6 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, test } from "vitest";
 import { createDatabase } from "../db.js";
@@ -28,6 +26,8 @@ import {
   sweepCollapsedMergeCandidates,
 } from "../merge-candidates.js";
 import { pilotEmail, seedPilotCorpus, type PilotCorpus } from "./__fixtures__/pilot-corpus.js";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 type Db = Database.Database;
 

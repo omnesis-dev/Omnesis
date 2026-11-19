@@ -3,8 +3,6 @@
 
 import { randomUUID } from "node:crypto";
 import { rmSync } from "node:fs";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createLogger } from "@omnesis/core";
 import { createDatabase } from "../../db.js";
@@ -13,6 +11,8 @@ import { createPersonAnnotation, getPersonAnnotation } from "../storage/person-a
 import { buildAnnotationTools, type AnnotationToolDeps } from "./tools.js";
 import type { CheckRecord } from "../record-check/check.js";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 let db: Database.Database;
 let path: string;

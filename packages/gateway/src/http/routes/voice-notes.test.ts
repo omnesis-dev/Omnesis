@@ -10,8 +10,6 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import { SCOPE_ADMIN, SCOPE_READ, type Scope } from "@omnesis/types";
@@ -28,6 +26,8 @@ import type { OmnesisConfig } from "@omnesis/config";
 import type { ResolvedAssignment } from "@omnesis/core";
 import type { OmnesisNotesRuntime } from "../../sources/omnesis-notes/index.js";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 let db: Database.Database;
 let dbPath: string;

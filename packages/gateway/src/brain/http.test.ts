@@ -10,8 +10,6 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 import { describe, expect, test, beforeEach, afterEach } from "vitest";
 import { SCOPE_ADMIN, SCOPE_READ, type Scope } from "@omnesis/types";
 import { createDatabase } from "../db.js";
@@ -31,6 +29,8 @@ import {
 import type { StatusCache } from "../http/services/StatusCache.js";
 import type { BriefsFeatureStatus } from "./feature-gate.js";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 type Db = Database.Database;
 
