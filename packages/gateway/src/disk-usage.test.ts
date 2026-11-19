@@ -2,11 +2,24 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { linkSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { lstat, readdir, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { DiskUsageMonitor, measureDiskUsage, type DiskUsageLayout } from "./disk-usage.js";
 import type { DiskUsageSnapshot } from "@omnesis/core/doctor";
+
+// Keep real filesystem traversal, but inject syscall failures without relying
+// on platform-specific permission or invalid-path behavior.
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return {
+    ...actual,
+    lstat: vi.fn(actual.lstat),
+    readdir: vi.fn(actual.readdir),
+    realpath: vi.fn(actual.realpath),
+  };
+});
 
 let root: string;
 let configDir: string;
@@ -60,14 +73,61 @@ afterEach(() => {
 });
 
 describe("measureDiskUsage", () => {
-  test("strict quota measurement propagates unreadable store paths", async () => {
-    const plain = join(root, "not-a-directory");
-    file(plain, 1);
-    const invalid = layout({ dbPath: join(plain, "omnesis.db") });
-    await expect(
-      measureDiskUsage(invalid, () => new Date(), { strict: true }),
-    ).rejects.toMatchObject({ code: "ENOTDIR" });
-    await expect(measureDiskUsage(invalid)).resolves.toBeDefined();
+  test("strict inventories reject a store path resolution failure", async () => {
+    const path = join(configDir, "omnesis.db");
+    file(path, 10);
+    const native = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+    const error = Object.assign(new Error("Invented path resolution failure"), { code: "EACCES" });
+    vi.mocked(realpath).mockImplementation((candidate, options) =>
+      candidate === path ? Promise.reject(error) : native.realpath(candidate, options),
+    );
+    try {
+      await expect(measureDiskUsage(layout(), () => new Date(), { strict: true })).rejects.toBe(
+        error,
+      );
+      expect(await measureDiskUsage(layout())).toMatchObject({ totalBytes: 0, stores: [] });
+    } finally {
+      vi.mocked(realpath).mockImplementation(native.realpath);
+    }
+    expect(bytesOf(await measureDiskUsage(layout()))).toEqual({ documents: 10 });
+  });
+
+  test.each(["EACCES", "EIO", "ENOTDIR"])(
+    "strict quota measurement propagates a store stat failure (%s)",
+    async (code) => {
+      file(join(configDir, "omnesis.db"), 10);
+      const error = Object.assign(new Error("Invented filesystem failure"), { code });
+      vi.mocked(lstat).mockRejectedValueOnce(error);
+      await expect(measureDiskUsage(layout(), () => new Date(), { strict: true })).rejects.toBe(
+        error,
+      );
+      vi.mocked(lstat).mockRejectedValueOnce(error);
+      const partial = await measureDiskUsage(layout());
+      expect(partial).toMatchObject({ totalBytes: 0, stores: [] });
+      expect(bytesOf(await measureDiskUsage(layout()))).toEqual({ documents: 10 });
+    },
+  );
+
+  test("strict inventories reject directory read failures while ordinary inventories remain best effort", async () => {
+    file(join(configDir, "omnesis.db"), 10);
+    const error = Object.assign(new Error("Invented directory read failure"), { code: "EACCES" });
+    vi.mocked(readdir).mockRejectedValueOnce(error);
+    await expect(measureDiskUsage(layout(), () => new Date(), { strict: true })).rejects.toBe(
+      error,
+    );
+    vi.mocked(readdir).mockRejectedValueOnce(error);
+    expect(bytesOf(await measureDiskUsage(layout()))).toEqual({ documents: 10 });
+  });
+
+  test("strict inventories tolerate a store disappearing after its path resolved", async () => {
+    file(join(configDir, "omnesis.db"), 10);
+    vi.mocked(lstat).mockRejectedValueOnce(
+      Object.assign(new Error("Invented vanished file"), { code: "ENOENT" }),
+    );
+    expect(await measureDiskUsage(layout(), () => new Date(), { strict: true })).toMatchObject({
+      totalBytes: 0,
+      stores: [],
+    });
   });
 
   test("strict quota measurement still tolerates stores absent on a fresh install", async () => {

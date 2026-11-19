@@ -59,6 +59,22 @@ describe("disk usage with large filesystem identities", () => {
     };
     const result = await measureDiskUsage(layout);
     expect(result.totalBytes).toBe(160);
-    expect(result.stores).toEqual([{ id: "documents", label: "Main database", bytes: 160 }]);
+    // Converting these distinct native IDs to Number would merge the WAL
+    // into the database, while the actual hard link must still count once.
+    expect(Number(first + 1n)).toBe(Number(first));
+    expect(result.stores).toEqual([
+      {
+        id: "documents",
+        label: "Main database",
+        bytes: 160,
+        components: [
+          { id: "database", label: "Database file", bytes: 100 },
+          { id: "write-log", label: "Write log", bytes: 60 },
+        ],
+      },
+    ]);
+    expect(result.stores[0]!.components!.reduce((sum, component) => sum + component.bytes, 0)).toBe(
+      result.stores[0]!.bytes,
+    );
   });
 });
