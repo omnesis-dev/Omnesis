@@ -88,6 +88,7 @@ import dev.omnesis.android.transport.PushHealth
 import dev.omnesis.android.transport.ws.DeviceSocket
 import dev.omnesis.android.transport.ws.DeviceSocket.ConnectionState
 import dev.omnesis.android.transport.ws.GatewayConnectionStatus
+import dev.omnesis.android.feature.omi.ui.OmiSettingsSection
 import dev.omnesis.android.ui.common.NotificationHealthBanner
 import dev.omnesis.android.ui.common.NotificationSetupBanner
 import dev.omnesis.android.ui.common.NotificationSetupIssue
@@ -245,6 +246,8 @@ fun SettingsScreen(
             },
             // All health specifics live in :feature-health; the app just mounts the section.
             watchSection = { WatchSettingsSection() },
+            // The Omi pendant lives in :feature-omi; the app mounts its section.
+            wearableSection = { OmiSettingsSection() },
             healthSection = { HealthSettingsSection() },
             // Distribution-specific sources are supplied only by the artifact that ships them.
             distributionSection = { DistributionSettingsSection() },
@@ -307,6 +310,7 @@ fun SettingsContent(
     phoneSection: @Composable () -> Unit = {},
     /** A paired Wear OS watch, drawn under Voice because its recordings follow the same gateway dictation. */
     watchSection: @Composable () -> Unit = {},
+    wearableSection: @Composable () -> Unit = {},
     healthSection: @Composable () -> Unit = {},
     distributionSection: @Composable () -> Unit = {},
     appUsageSection: @Composable () -> Unit = {},
@@ -428,6 +432,7 @@ fun SettingsContent(
             }
 
             watchSection()
+            wearableSection()
             phoneSection()
             healthSection()
             distributionSection()
