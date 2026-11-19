@@ -3,6 +3,8 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { ProviderId, SourceId } from "@omnesis/types";
 import { createDatabase, upsertDocuments } from "../db.js";
@@ -69,7 +71,7 @@ describe("claim-time addressed entry resolution", () => {
   let db: Db;
 
   beforeEach(() => {
-    path = `/tmp/omnesis-test-${randomUUID()}.db`;
+    path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
     db = createDatabase(path);
   });
   afterEach(() => {

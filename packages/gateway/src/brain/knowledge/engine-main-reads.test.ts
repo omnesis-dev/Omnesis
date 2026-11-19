@@ -14,6 +14,8 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { createLogger, type DecisionCapability } from "@omnesis/core";
 import { createDatabase } from "../../db.js";
@@ -34,7 +36,7 @@ let dbPath: string;
 let handles: Database.Database[];
 
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-test-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
   handles = [];
 });
 afterEach(() => {

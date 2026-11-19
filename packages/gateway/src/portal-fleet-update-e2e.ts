@@ -3,9 +3,7 @@
 
 /** Hermetic recording seam for the spawned gateway fleet-update E2E. */
 
-import { spawn } from "node:child_process";
-import { readFileSync } from "node:fs";
-import { isAbsolute, join } from "node:path";
+import { join } from "node:path";
 import { atomicWriteFileSync } from "@omnesis/core";
 import { readPortalFleetUpdateOperation } from "@omnesis/core/portal-fleet-update";
 import { isStableReleaseVersion, type ReleaseCheckSnapshot } from "@omnesis/core/release-check";
@@ -44,9 +42,6 @@ export function portalFleetUpdateE2EFixture(input: {
     return null;
   }
   if (!isStableReleaseVersion(input.gatewayVersion)) return null;
-  const cliEntry = input.env.OMNESIS_E2E_PORTAL_FLEET_UPDATE_CLI_ENTRY;
-  const gatewayPort = input.env.OMNESIS_GATEWAY_PORT;
-  if (!cliEntry || !isAbsolute(cliEntry) || !gatewayPort) return null;
   const currentVersion = priorStableVersion(input.gatewayVersion);
   if (!currentVersion) return null;
 
@@ -69,35 +64,8 @@ export function portalFleetUpdateE2EFixture(input: {
         `${JSON.stringify({ operation }, null, 2)}\n`,
         { ensureDir: true, mode: 0o600 },
       );
-      const token = readFileSync(join(spec.configDir, "token"), "utf8").trim();
-      await new Promise<void>((resolve, reject) => {
-        const child = spawn(
-          process.execPath,
-          [
-            ...process.execArgv,
-            cliEntry,
-            "_portal-fleet-update-run",
-            `--operation-id=${spec.operationId}`,
-            `--config-dir=${spec.configDir}`,
-          ],
-          {
-            detached: true,
-            stdio: "ignore",
-            env: {
-              ...process.env,
-              OMNESIS_CONFIG_DIR: spec.configDir,
-              OMNESIS_GATEWAY_URL: `https://localhost:${gatewayPort}`,
-              OMNESIS_TOKEN: token,
-              NODE_TLS_REJECT_UNAUTHORIZED: "0",
-            },
-          },
-        );
-        child.once("error", reject);
-        child.once("spawn", () => {
-          child.unref();
-          resolve();
-        });
-      });
+      // The E2E controller owns the independent updater. A descendant of the
+      // gateway is part of its Windows teardown tree even when detached.
     },
   };
   return { release, launcher };

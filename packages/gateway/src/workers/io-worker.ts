@@ -296,6 +296,7 @@ function handleCall(id: number, op: string, args: unknown[], enqueueMs: number):
 async function handleShutdown(): Promise<void> {
   if (!state) {
     post({ type: "shutdownComplete" });
+    parentPort!.close();
     return;
   }
   if (state.shuttingDown) return;
@@ -319,6 +320,7 @@ async function handleShutdown(): Promise<void> {
   }
 
   post({ type: "shutdownComplete" });
+  parentPort!.close();
 }
 
 parentPort.on("message", (msg: MainToIo) => {

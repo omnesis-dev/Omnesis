@@ -10,6 +10,8 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { createDatabase } from "../../db.js";
 import { Scheduler } from "../../scheduler/scheduler.js";
@@ -247,7 +249,7 @@ function seed(): KnowledgeDocumentRef[] {
 }
 
 beforeEach(async () => {
-  dbPath = `/tmp/omnesis-test-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
   db = createDatabase(dbPath) as unknown as Database.Database;
   scheduler = new Scheduler({ enablePreemption: false });
   scheduler.registerRunner(

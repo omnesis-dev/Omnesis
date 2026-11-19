@@ -10,6 +10,8 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { computeContentHash } from "@omnesis/core";
@@ -92,9 +94,9 @@ function addDocument(
 }
 
 beforeEach(() => {
-  const path = `/tmp/omnesis-test-${randomUUID()}.db`;
+  const path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
   gateway = createDatabase(path);
-  index = createIndexDatabase(`/tmp/omnesis-test-${randomUUID()}.db`);
+  index = createIndexDatabase(fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`));
   for (const id of ["rota", "rota-copy"])
     addDocument(id, SOURCE, id, "Telescope rota", BODY, { documentType: "file" });
   const cited = gateway

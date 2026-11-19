@@ -1286,9 +1286,38 @@ function hasStructuredPersonHandle(
     if (al.aliasType !== "email") continue;
     const ld = emailLocalDomain(al.alias);
     if (!ld) continue;
+    // A generated address (a share link's, a ticket's, a bot's) carries digits
+    // between its parts; a personal handle does not.
+    if (/\d/.test(ld.local)) continue;
     if (ld.local.split(/[._-]+/).filter((t) => t.length >= 2).length >= 2) return true;
   }
   return false;
+}
+
+/** The email domains a side's addresses are at. */
+function emailDomains(aliases: ReadonlyArray<{ aliasType: string; alias: string }>): Set<string> {
+  const domains = new Set<string>();
+  for (const al of aliases) {
+    if (al.aliasType !== "email") continue;
+    const ld = emailLocalDomain(al.alias);
+    if (ld) domains.add(ld.domain);
+  }
+  return domains;
+}
+
+/**
+ * Two records known only by different addresses at the same domain: two
+ * mailboxes of one organisation, which name tokens in the addresses cannot
+ * tell apart from two of its people.
+ */
+function isAddressOnlyPairAtOneDomain(
+  aliasesA: ReadonlyArray<{ aliasType: string; alias: string }>,
+  aliasesB: ReadonlyArray<{ aliasType: string; alias: string }>,
+): boolean {
+  if (aliasesA.some((al) => al.aliasType === "name")) return false;
+  if (aliasesB.some((al) => al.aliasType === "name")) return false;
+  const domainsB = emailDomains(aliasesB);
+  return [...emailDomains(aliasesA)].some((d) => domainsB.has(d));
 }
 
 /**
@@ -1325,6 +1354,7 @@ export function isHighConfidenceMerge(opts: {
   if (
     personish &&
     distinctive &&
+    !isAddressOnlyPairAtOneDomain(opts.aliasesA, opts.aliasesB) &&
     !isOrgNamedAfterDomain(opts.aliasesA) &&
     !isOrgNamedAfterDomain(opts.aliasesB)
   ) {

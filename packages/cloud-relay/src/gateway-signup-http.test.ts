@@ -138,7 +138,16 @@ async function fixture(
     expect(op.response.status).toBe(200);
     const started = await op.response.json(),
       target = new URL(started.authorizeUrl);
-    const launch = await fetch(url + target.pathname + target.search, { redirect: "manual" });
+    // Opening the link only shows a Continue button; the press binds this browser (F43).
+    const opened = await fetch(url + target.pathname + target.search, { redirect: "manual" });
+    expect(opened.status).toBe(200);
+    expect(await opened.text()).toContain(">Continue</button>");
+    const launch = await fetch(url + target.pathname, {
+      method: "POST",
+      redirect: "manual",
+      headers: { origin, "content-type": "application/x-www-form-urlencoded" },
+      body: target.searchParams.toString(),
+    });
     expect(launch.status).toBe(303);
     expect(launch.headers.get("location")).toBe(
       `/_relay/account?signup=${op.unsigned.operationId}`,
@@ -672,6 +681,46 @@ test("a Google failure returns to the operation instead of losing it", async () 
   expect(await f.session(op)).toMatchObject({ pending: { needsProof: true } });
 });
 
+test("a Google press the browser doesn't label same-origin returns to the sign-up page, and the next press signs in", async () => {
+  const f = await fixture({ policy: "open" });
+  // The gateway's portal opened the sign-up in a new tab; there the page's Google button reached
+  // the relay without "same-origin" (Safari sent "cross-site" or "none"), which was a blank 403.
+  const op = await f.launched("create");
+  for (const site of ["cross-site", "none"]) {
+    const pressed = await fetch(`${f.url}/_relay/web/start${op.query}`, {
+      headers: { cookie: op.cookie, "sec-fetch-site": site },
+      redirect: "manual",
+    });
+    expect(pressed.status, site).toBe(303);
+    expect(pressed.headers.get("location"), site).toBe(
+      `/_relay/account?failed=again&signup=${op.id}`,
+    );
+    expect(pressed.headers.getSetCookie(), site).toEqual([]);
+  }
+  // The page it lands on still serves the same sign-up, waiting for a sign-in.
+  const page = await fetch(`${f.url}/_relay/account?failed=again&signup=${op.id}`, {
+    headers: { cookie: op.cookie },
+  });
+  expect(page.status).toBe(200);
+  expect(await f.session(op)).toMatchObject({
+    pending: { purpose: "gateway-signup", needsProof: true },
+  });
+  // Pressed there, Google signs in to this sign-up.
+  const again = await fetch(`${f.url}/_relay/web/start${op.query}`, {
+    headers: { cookie: op.cookie, "sec-fetch-site": "same-origin" },
+    redirect: "manual",
+  });
+  expect(again.status).toBe(303);
+  const authorization = new URL(again.headers.get("location")!),
+    state = again.headers.getSetCookie()[0]!.split(";")[0]!;
+  const callback = await fetch(
+    `${f.url}/_relay/web/callback?state=${authorization.searchParams.get("state")}&code=fictional-code`,
+    { headers: { cookie: `${op.cookie}; ${state}` }, redirect: "manual" },
+  );
+  expect(callback.headers.get("location")).toBe(`${origin}/_relay/account${op.query}`);
+  expect(await f.session(op)).toMatchObject({ pending: { needsProof: false } });
+});
+
 test("an existing account signs in with a passkey, subject to the policy", async () => {
   const listed = await fixture({ policy: "allowlist", allowlistFile: await allowlist({}) });
   const account = listed.identities.signInFederated("google", "a".repeat(64));
@@ -819,7 +868,7 @@ test("a typed code launches the operation, and the same page shows it", async ()
   expect(await session.json()).toMatchObject({ pending: { code: started.code } });
 });
 
-test("an ignored sign-in link does not strand the request: the code and the link still open it", async () => {
+test("the browser that opened a request may open it again by the link or the code; no other may", async () => {
   const f = await fixture({ policy: "open" });
   const op = await f.launched();
   const claim = (cookie: string) =>
@@ -830,27 +879,76 @@ test("an ignored sign-in link does not strand the request: the code and the link
     });
   const first = await claim(op.cookie);
   expect(first.status).toBe(200);
-  expect((await claim(op.cookie)).status).toBe(200);
+  // The same browser keeps its binding: nothing new is set, so nothing is dropped.
+  expect(first.headers.getSetCookie()).toEqual([]);
   const target = new URL(op.started.authorizeUrl);
   const again = await fetch(f.url + target.pathname + target.search, {
     headers: { cookie: op.cookie },
     redirect: "manual",
   });
   expect(again.status).toBe(303);
-  const cookie = again.headers.getSetCookie()[0]!.split(";")[0]!;
-  // The same cookie name each time, so reopening does not fill the browser's allowance.
-  expect(cookie.split("=")[0]).toBe(op.cookie.split("=")[0]);
-  expect(await f.session({ ...op, cookie })).toMatchObject({
-    pending: { code: op.started.code },
+  expect(again.headers.get("location")).toBe(`/_relay/account${op.query}`);
+  expect(again.headers.getSetCookie()).toEqual([]);
+  expect(await f.session(op)).toMatchObject({ pending: { code: op.started.code } });
+  // Another browser, by code or by link, is told so and takes nothing over.
+  expect((await claim("")).status).toBe(409);
+  const opened = await fetch(f.url + target.pathname + target.search, { redirect: "manual" });
+  expect(opened.status).toBe(409);
+  expect(await opened.text()).toContain("This sign-in was opened in another browser");
+  const pressed = await fetch(f.url + target.pathname, {
+    method: "POST",
+    redirect: "manual",
+    headers: { origin, "content-type": "application/x-www-form-urlencoded" },
+    body: target.searchParams.toString(),
   });
-  for (const stale of [op.cookie, first.headers.getSetCookie()[0]!.split(";")[0]!])
-    expect(
-      (
-        await fetch(`${f.url}/_relay/account/api/session${op.query}`, {
-          headers: { cookie: stale },
-        })
-      ).status,
-    ).toBe(403);
+  expect(pressed.status).toBe(409);
+  expect(pressed.headers.getSetCookie()).toEqual([]);
+  expect(await f.session(op)).toMatchObject({ pending: { code: op.started.code } });
+});
+
+test("F43: a link scanner fetching the sign-up link neither breaks the person's sign-in nor gets one", async () => {
+  const f = await fixture({ policy: "open" });
+  const op = await f.start();
+  const started = await op.response.json(),
+    target = new URL(started.authorizeUrl),
+    link = f.url + target.pathname + target.search;
+  const scan = () => fetch(link, { headers: { "user-agent": "Mozilla/5.0 scanner" } });
+  const press = (cookie = "", from = origin) =>
+    fetch(f.url + target.pathname, {
+      method: "POST",
+      redirect: "manual",
+      headers: { origin: from, cookie, "content-type": "application/x-www-form-urlencoded" },
+      body: target.searchParams.toString(),
+    });
+  // A scanner before the person opens it changes nothing and gets no binding.
+  const early = await scan();
+  expect(early.status).toBe(200);
+  expect(early.headers.getSetCookie()).toEqual([]);
+  // Another site can't press Continue for the browser.
+  expect((await press("", "https://elsewhere.example")).status).toBe(403);
+  const pressed = await press();
+  expect(pressed.status).toBe(303);
+  const cookie = pressed.headers.getSetCookie()[0]!.split(";")[0]!;
+  const query = `?signup=${op.unsigned.operationId}`;
+  // The scanner fetches the same link a moment later, as on 14 and 15 Nov.
+  const late = await scan();
+  expect(late.status).toBe(409);
+  expect(late.headers.getSetCookie()).toEqual([]);
+  // The person's browser still owns the sign-up and can start Google with it.
+  expect(
+    await (
+      await fetch(`${f.url}/_relay/account/api/session${query}`, { headers: { cookie } })
+    ).json(),
+  ).toMatchObject({ pending: { code: started.code } });
+  const google = await fetch(`${f.url}/_relay/web/start${query}`, {
+    method: "POST",
+    headers: { origin, cookie },
+    redirect: "manual",
+  });
+  expect(google.status).toBe(303);
+  expect(google.headers.get("location")).not.toContain("/_relay/account");
+  // The scanner has no binding to continue with.
+  expect((await fetch(`${f.url}/_relay/account/api/session${query}`)).status).toBe(403);
 });
 
 test("capacity is refused at the start and at approval", async () => {
@@ -979,7 +1077,7 @@ test("the gateway boundary refuses browsers, query strings and malformed request
   expect((await f.post("poll", {})).status).toBe(400);
   expect((await f.post("cancel", {})).status).toBe(400);
   expect((await f.post("unknown", {})).status).toBe(404);
-  expect((await f.post("begin", {})).status).toBe(405);
+  expect((await f.post("begin", {})).status).toBe(403);
   expect((await f.post("complete", {})).status).toBe(405);
   expect((await fetch(`${f.url}/_relay/v3/signup/complete?extra=1`)).status).toBe(400);
   expect((await fetch(`${f.url}/_relay/v3/signup/begin`)).status).toBe(400);

@@ -204,6 +204,9 @@ export async function removeConnectedAccount(
       ]);
       controller.signal.throwIfAborted();
       const creds = await loadAppCredentials(configDir);
+      // Reading a protected credential can outlive the logout budget. Never
+      // start another operation with a cancellation it could already have missed.
+      controller.signal.throwIfAborted();
       auth = deps.factory.auth(creds, deps.device ?? telegramDeviceInfo());
       await auth.logOutSession(record.session, { signal: controller.signal });
       log.info(`Ended the Telegram session of account ${accountId}`);

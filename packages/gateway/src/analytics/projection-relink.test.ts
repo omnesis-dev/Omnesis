@@ -2,6 +2,8 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createLogger } from "@omnesis/core";
@@ -133,7 +135,7 @@ async function projectionIds(): Promise<Map<string, string>> {
 }
 
 beforeEach(async () => {
-  path = `/tmp/omnesis-test-relink-${crypto.randomUUID()}.db`;
+  path = fixtureJoin(fixtureTmpdir(), `omnesis-test-relink-${crypto.randomUUID()}.db`);
   analytics = new AnalyticsDb(path);
   await analytics.open();
   sqlite = new Database(":memory:");

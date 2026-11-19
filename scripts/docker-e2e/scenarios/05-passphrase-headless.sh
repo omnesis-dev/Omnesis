@@ -19,7 +19,7 @@ stop_gateway
 
 export OMNESIS_KEYRING_PASSPHRASE="wrong passphrase entirely"
 boot_gateway
-expect_boot_refusal "cannot be read"
+expect_boot_refusal "PassphraseMismatchError"
 
 export OMNESIS_KEYRING_PASSPHRASE="drill passphrase for the container"
 boot_gateway

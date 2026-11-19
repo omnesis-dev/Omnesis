@@ -7,6 +7,8 @@
  */
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { SCOPE_ADMIN, SCOPE_READ, SCOPE_WRITE_ALL, type Scope } from "@omnesis/types";
 import { createDatabase } from "../../db.js";
@@ -82,8 +84,8 @@ function seedPending(from: string, type: string, targetExt: string): void {
 }
 
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-edges-route-test-${randomUUID()}.db`;
-  indexDbPath = `/tmp/omnesis-edges-route-index-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-edges-route-test-${randomUUID()}.db`);
+  indexDbPath = fixtureJoin(fixtureTmpdir(), `omnesis-edges-route-index-${randomUUID()}.db`);
   db = createDatabase(dbPath);
   indexDb = createIndexDatabase(indexDbPath);
   const dev = createDevice(db, { name: `test-${randomUUID()}`, kind: "cli" });

@@ -15,6 +15,8 @@ import Database from "better-sqlite3";
 type Db = Database.Database;
 import { browseByRecency, shouldBrowse } from "./browse.js";
 import type { SearchFilters } from "./types.js";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 let db: Db;
 let dbPath: string;
@@ -22,7 +24,7 @@ let rowid = 0;
 
 // Minimal index DB: just the `chunks` columns browseByRecency reads.
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-browse-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-browse-${randomUUID()}.db`);
   db = new Database(dbPath);
   db.pragma("journal_mode = WAL");
   db.exec(`

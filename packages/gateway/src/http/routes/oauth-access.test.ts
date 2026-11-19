@@ -21,6 +21,7 @@ import { HttpError, errorResponse } from "../errors.js";
 import { commitPrivacyPolicy } from "../../privacy/policy-history.js";
 import { AccessAuthorizationNotifier } from "../../access/authorization-notifier.js";
 import { PushBroadcaster } from "../../push/broadcast.js";
+import { fixedPublicAddress } from "../../public-address.js";
 import { mountOAuthAccessRoutes } from "./oauth-access.js";
 import type { OAuthClientMetadataDocument } from "../../access/types.js";
 import type { Db } from "../../data/types.js";
@@ -66,7 +67,21 @@ beforeEach(() => {
   app = createTestApp();
 });
 
-function createTestApp(options: Parameters<typeof mountOAuthAccessRoutes>[2] = {}): Hono<AppEnv> {
+/** The route options, with the public address given as plain values (`ORIGIN` unless named). */
+type TestAppOptions = Omit<
+  NonNullable<Parameters<typeof mountOAuthAccessRoutes>[2]>,
+  "publicAddress"
+> & {
+  publicBaseUrl?: string;
+  mcpResourceUrls?: readonly string[];
+};
+
+function createTestApp(options: TestAppOptions = {}): Hono<AppEnv> {
+  const { publicBaseUrl, mcpResourceUrls, ...routeOptions } = options;
+  const publicAddress = fixedPublicAddress(
+    "publicBaseUrl" in options ? publicBaseUrl : ORIGIN,
+    mcpResourceUrls,
+  );
   const testApp = new Hono<AppEnv>();
   testApp.onError((error, c) => {
     if (error instanceof HttpError) return errorResponse(c, error);
@@ -93,8 +108,8 @@ function createTestApp(options: Parameters<typeof mountOAuthAccessRoutes>[2] = {
     await next();
   });
   mountOAuthAccessRoutes(testApp, new AccessService(db, directWriteGate(db)), {
-    publicBaseUrl: ORIGIN,
-    ...options,
+    publicAddress,
+    ...routeOptions,
   });
   return testApp;
 }
@@ -157,6 +172,58 @@ describe("MCP OAuth access routes", () => {
     expect((await localDiscovery.json()).issuer).toBe("https://localhost:17600");
   });
 
+  test("lists only the addresses that answer MCP, so the portal never offers one turned off", async () => {
+    const relay = "https://gw-fictional.relay.example.net";
+    let relayOn = true;
+    let domainOn = true;
+    const answersAt = (url: string) =>
+      new URL(url).origin === relay ? relayOn : new URL(url).origin === ORIGIN ? domainOn : true;
+    const overview = async (testApp: Hono<AppEnv>, at = ORIGIN) =>
+      (
+        (await (
+          await testApp.request(`${at}/admin/access`, { headers: { "X-Test-Portal": "yes" } })
+        ).json()) as {
+          oauth: { resource: string; loopbackOnly?: true; resources: Array<{ resource: string }> };
+        }
+      ).oauth;
+    const listed = (oauth: Awaited<ReturnType<typeof overview>>) =>
+      oauth && { ...oauth, resources: oauth.resources.map((entry) => entry.resource) };
+    const switched = createTestApp({
+      additionalOAuthIssuerUrls: [relay],
+      mcpAddresses: { answersAt, settle: async () => {}, hostReach: () => null },
+    });
+    const plain = createTestApp({ additionalOAuthIssuerUrls: [relay] });
+    // Every address on: exactly the overview of a gateway without the switches.
+    expect(await overview(switched)).toEqual(await overview(plain));
+    expect(listed(await overview(switched))).toMatchObject({
+      resource: RESOURCE,
+      resources: [RESOURCE, `${relay}/mcp`],
+    });
+    domainOn = false;
+    expect(listed(await overview(switched))).toMatchObject({
+      resource: `${relay}/mcp`,
+      resources: [`${relay}/mcp`],
+    });
+    relayOn = false;
+    // Nothing public answers on a gateway with its own domain: no address to offer.
+    expect(await overview(switched)).toBeNull();
+    // Without a domain the gateway's own machine is what is left.
+    const local = createTestApp({
+      publicBaseUrl: undefined,
+      loopbackBaseUrl: "https://localhost:17600",
+      additionalOAuthIssuerUrls: [relay],
+      mcpAddresses: { answersAt, settle: async () => {}, hostReach: () => null },
+    });
+    expect(listed(await overview(local, "https://192.0.2.10:17600"))).toMatchObject({
+      resource: "https://localhost:17600/mcp",
+      loopbackOnly: true,
+      resources: ["https://localhost:17600/mcp"],
+    });
+    // Tokens and discovery on the relay itself are not the overview's business.
+    const metadata = await switched.request(`${relay}/.well-known/oauth-protected-resource/mcp`);
+    expect(metadata.status).toBe(200);
+  });
+
   test("tells the portal which MCP resources present the gateway's own certificate", async () => {
     const fingerprint = "ab".repeat(32);
     const presented: Record<string, { fingerprint: string; publiclyTrusted: boolean } | null> = {
@@ -216,6 +283,27 @@ describe("MCP OAuth access routes", () => {
         servedByGateway: true,
         direct: true,
         publiclyTrusted: true,
+      },
+    ]);
+
+    // An address whose trusted certificate is still being issued says so, by origin.
+    const arriving = createTestApp({
+      mcpResourceUrls: ["https://tailnet.example.net/mcp"],
+      tlsFingerprintSha256: () => fingerprint,
+      probeCertificate: async () => null,
+      pendingCertificateOrigins: async () => new Set(["https://tailnet.example.net"]),
+    });
+    const arrivingOverview = await arriving.request(`${ORIGIN}/admin/access`, {
+      headers: { "X-Test-Portal": "yes" },
+    });
+    expect((await arrivingOverview.json()).oauth.resources).toEqual([
+      { resource: RESOURCE, servedByGateway: false, direct: false, publiclyTrusted: false },
+      {
+        resource: "https://tailnet.example.net/mcp",
+        servedByGateway: false,
+        direct: false,
+        publiclyTrusted: false,
+        certificatePending: true,
       },
     ]);
 
@@ -347,7 +435,7 @@ describe("MCP OAuth access routes", () => {
     const prefixedBase = `${ORIGIN}/omnesis`;
     const prefixedApp = new Hono<AppEnv>();
     mountOAuthAccessRoutes(prefixedApp, new AccessService(db, directWriteGate(db)), {
-      publicBaseUrl: prefixedBase,
+      publicAddress: fixedPublicAddress(prefixedBase),
     });
 
     const protectedResource = await prefixedApp.request(
@@ -370,6 +458,41 @@ describe("MCP OAuth access routes", () => {
       registration_endpoint: `${prefixedBase}/oauth/register`,
       revocation_endpoint: `${prefixedBase}/oauth/revoke`,
     });
+  });
+
+  test("discovery follows a public address saved while the gateway runs", async () => {
+    let address: string | undefined;
+    const liveApp = new Hono<AppEnv>();
+    mountOAuthAccessRoutes(liveApp, new AccessService(db, directWriteGate(db)), {
+      publicAddress: {
+        baseUrl: () => address,
+        mcpResourceUrls: () => (address ? [`${address}/mcp`] : []),
+        setByEnvironment: () => false,
+      },
+    });
+    const get = (path: string) => liveApp.request(`${ORIGIN}${path}`);
+
+    // No public address: remote discovery says OAuth needs one.
+    expect((await get("/.well-known/oauth-authorization-server")).status).toBe(503);
+
+    address = ORIGIN;
+    const server = await get("/.well-known/oauth-authorization-server");
+    expect(server.status).toBe(200);
+    expect((await server.json()).issuer).toBe(ORIGIN);
+    expect((await (await get("/.well-known/oauth-protected-resource/mcp")).json()).resource).toBe(
+      RESOURCE,
+    );
+
+    // Moved under a path: its discovery documents move with it, at once.
+    address = `${ORIGIN}/omnesis`;
+    const prefixed = await get("/.well-known/oauth-authorization-server/omnesis");
+    expect(prefixed.status).toBe(200);
+    expect((await prefixed.json()).issuer).toBe(address);
+    const openId = await get("/omnesis/.well-known/openid-configuration");
+    expect(openId.status).toBe(200);
+    expect((await openId.json()).issuer).toBe(address);
+    expect((await get("/.well-known/oauth-protected-resource/omnesis/mcp")).status).toBe(200);
+    expect((await get("/.well-known/oauth-protected-resource/mcp")).status).toBe(404);
   });
 
   test("publishes exact metadata for every configured MCP resource", async () => {
@@ -2210,7 +2333,7 @@ describe("a metadata-document client authenticating with private_key_jwt", () =>
   });
 });
 
-test("a completion follows the stored resource only with the cloud relay opt-in", async () => {
+test("a completion follows the stored resource, whichever of the gateway's addresses completes it", async () => {
   const local = "http://127.0.0.1:17600";
   const client = await registerClient();
   app = createTestApp({ publicBaseUrl: undefined });
@@ -2253,146 +2376,147 @@ test("a completion follows the stored resource only with the cloud relay opt-in"
     app.request(
       `https://unconfigured.example.org/oauth/authorize/complete?request=${encodeURIComponent(handle)}`,
     );
-  try {
-    // Without the opt-in the completing request's own origin decides, as it always has.
-    vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "");
-    expect((await complete((await approved(0)).handle)).status).toBe(503);
-    const viaPortal = await portalJson(
-      `/portal/api/access/authorizations/${(await approved(1)).approvalId}/complete`,
-      {},
-    );
-    expect(viaPortal.response.status).toBe(503);
-    expect(viaPortal.body).toEqual({ error: "oauth-not-configured" });
-    vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
-    const followed = await complete((await approved(2)).handle);
-    expect(followed.status).toBe(303);
-    expect(new URL(followed.headers.get("location")!).searchParams.get("iss")).toBe(local);
-  } finally {
-    vi.unstubAllEnvs();
-  }
+  // The portal that approves may be open on another address than the agent's.
+  const followed = await complete((await approved(0)).handle);
+  expect(followed.status).toBe(303);
+  expect(new URL(followed.headers.get("location")!).searchParams.get("iss")).toBe(local);
+  const viaPortal = await portalJson(
+    `/portal/api/access/authorizations/${(await approved(1)).approvalId}/complete`,
+    {},
+  );
+  expect(viaPortal.response.status).toBe(200);
 });
 
-test("direct and relay issuers authorize and refresh independently, with issuer-bound resources and Host-independent completion", async () => {
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
-  const relay = "https://opaque-relay.example.net";
-  app = createTestApp({ additionalOAuthIssuerUrls: [relay] });
-  const access = new AccessService(db, directWriteGate(db));
-  const client = await registerClient();
-  for (const [index, origin] of [ORIGIN, relay].entries()) {
-    const other = origin === ORIGIN ? relay : ORIGIN;
-    const metadata = await app.request(`${origin}/.well-known/oauth-authorization-server`);
-    expect(await metadata.json()).toMatchObject({
-      issuer: origin,
-      token_endpoint: `${origin}/oauth/token`,
-    });
-    const protectedMetadata = await app.request(
-      `${origin}/.well-known/oauth-protected-resource/mcp`,
-    );
-    expect(await protectedMetadata.json()).toMatchObject({
-      resource: `${origin}/mcp`,
-      authorization_servers: [origin],
-    });
-    const authorize = new URL(`${origin}/oauth/authorize`);
-    authorize.search = new URLSearchParams({
-      response_type: "code",
-      client_id: client.client_id,
-      redirect_uri: REDIRECT,
-      state: `mixed-${index}`,
-      code_challenge: createHash("sha256").update(VERIFIER).digest("base64url"),
-      code_challenge_method: "S256",
-      resource: `${origin}/mcp`,
-      scope: "omnesis:access",
-    }).toString();
-    const countBefore = db.prepare("SELECT count(*) AS n FROM oauth_authorization_requests").get();
-    const cross = new URL(authorize);
-    cross.searchParams.set("resource", `${other}/mcp`);
-    const refused = await app.request(cross);
-    expect(new URL(refused.headers.get("location")!).searchParams.get("error")).toBe(
-      "invalid_target",
-    );
-    expect(db.prepare("SELECT count(*) AS n FROM oauth_authorization_requests").get()).toEqual(
-      countBefore,
-    );
-    const started = await app.request(authorize);
-    expect(started.status).toBe(303);
-    const handle = new URL(started.headers.get("location")!, origin).searchParams.get("request")!;
-    const pending = access.getAuthorizationByBrowserHandle(handle)!;
-    const lookup = await portalJson("/portal/api/access/authorizations/lookup", {
-      code: pending.userCode,
-    });
-    const approvalId = (lookup.body as { request: { approvalId: string } }).request.approvalId;
+test.each([
+  ["cloud relay", "https://opaque-relay.example.net"],
+  ["Tailscale device", "https://omnesis.example-net.ts.net"],
+])(
+  "direct and %s issuers authorize and refresh independently, with issuer-bound resources and Host-independent completion",
+  async (_name, relay) => {
+    app = createTestApp({ additionalOAuthIssuerUrls: [relay] });
+    const access = new AccessService(db, directWriteGate(db));
+    const client = await registerClient();
+    for (const [index, origin] of [ORIGIN, relay].entries()) {
+      const other = origin === ORIGIN ? relay : ORIGIN;
+      const metadata = await app.request(`${origin}/.well-known/oauth-authorization-server`);
+      expect(await metadata.json()).toMatchObject({
+        issuer: origin,
+        token_endpoint: `${origin}/oauth/token`,
+      });
+      const protectedMetadata = await app.request(
+        `${origin}/.well-known/oauth-protected-resource/mcp`,
+      );
+      expect(await protectedMetadata.json()).toMatchObject({
+        resource: `${origin}/mcp`,
+        authorization_servers: [origin],
+      });
+      const authorize = new URL(`${origin}/oauth/authorize`);
+      authorize.search = new URLSearchParams({
+        response_type: "code",
+        client_id: client.client_id,
+        redirect_uri: REDIRECT,
+        state: `mixed-${index}`,
+        code_challenge: createHash("sha256").update(VERIFIER).digest("base64url"),
+        code_challenge_method: "S256",
+        resource: `${origin}/mcp`,
+        scope: "omnesis:access",
+      }).toString();
+      const countBefore = db
+        .prepare("SELECT count(*) AS n FROM oauth_authorization_requests")
+        .get();
+      const cross = new URL(authorize);
+      cross.searchParams.set("resource", `${other}/mcp`);
+      const refused = await app.request(cross);
+      expect(new URL(refused.headers.get("location")!).searchParams.get("error")).toBe(
+        "invalid_target",
+      );
+      expect(db.prepare("SELECT count(*) AS n FROM oauth_authorization_requests").get()).toEqual(
+        countBefore,
+      );
+      const started = await app.request(authorize);
+      expect(started.status).toBe(303);
+      const handle = new URL(started.headers.get("location")!, origin).searchParams.get("request")!;
+      const pending = access.getAuthorizationByBrowserHandle(handle)!;
+      const lookup = await portalJson("/portal/api/access/authorizations/lookup", {
+        code: pending.userCode,
+      });
+      const approvalId = (lookup.body as { request: { approvalId: string } }).request.approvalId;
+      expect(
+        (
+          await portalJson(`/portal/api/access/authorizations/${approvalId}/decision`, {
+            decision: "approve",
+            selection: {
+              kind: "new-principal",
+              principalName: `Mixed issuer ${index}`,
+              grantName: "Selected direct access",
+              rules: DIRECT_RULES,
+              credentialLabel: "Synthetic mixed MCP",
+              expiresAt: null,
+            },
+          })
+        ).response.status,
+      ).toBe(200);
+      const callback =
+        index === 0
+          ? new URL(
+              (
+                await app.request(
+                  `https://unconfigured.example.org/oauth/authorize/complete?request=${encodeURIComponent(handle)}`,
+                )
+              ).headers.get("location")!,
+            )
+          : new URL(
+              (await portalJson(`/portal/api/access/authorizations/${approvalId}/complete`, {}))
+                .body.redirectTo as string,
+            );
+      expect(callback.origin + callback.pathname).toBe(REDIRECT);
+      expect(callback.searchParams.get("iss")).toBe(origin);
+      const fields = {
+        grant_type: "authorization_code",
+        code: callback.searchParams.get("code")!,
+        client_id: client.client_id,
+        redirect_uri: REDIRECT,
+        code_verifier: VERIFIER,
+        resource: `${origin}/mcp`,
+      };
+      const post = (target: string, body: Record<string, string>) =>
+        app.request(`${target}/oauth/token`, {
+          method: "POST",
+          headers: { "content-type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams(body),
+        });
+      const crossToken = await post(other, fields);
+      expect(crossToken.status).toBe(400);
+      expect(await crossToken.json()).toMatchObject({ error: "invalid_target" });
+      const tokens = (await (await post(origin, fields)).json()) as {
+        access_token: string;
+        refresh_token: string;
+      };
+      expect(tokens.access_token).toMatch(/^omn_oat_/);
+      expect(access.lookupAccessToken(tokens.access_token, `${other}/mcp`)).toBeNull();
+      const refresh = {
+        grant_type: "refresh_token",
+        client_id: client.client_id,
+        refresh_token: tokens.refresh_token,
+      };
+      expect((await post(other, refresh)).status).toBe(400);
+      const network = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("relay offline"));
+      try {
+        expect((await post(origin, refresh)).status).toBe(200);
+        expect(network).not.toHaveBeenCalled();
+      } finally {
+        network.mockRestore();
+      }
+    }
     expect(
       (
-        await portalJson(`/portal/api/access/authorizations/${approvalId}/decision`, {
-          decision: "approve",
-          selection: {
-            kind: "new-principal",
-            principalName: `Mixed issuer ${index}`,
-            grantName: "Selected direct access",
-            rules: DIRECT_RULES,
-            credentialLabel: "Synthetic mixed MCP",
-            expiresAt: null,
-          },
-        })
-      ).response.status,
-    ).toBe(200);
-    const callback =
-      index === 0
-        ? new URL(
-            (
-              await app.request(
-                `https://unconfigured.example.org/oauth/authorize/complete?request=${encodeURIComponent(handle)}`,
-              )
-            ).headers.get("location")!,
-          )
-        : new URL(
-            (await portalJson(`/portal/api/access/authorizations/${approvalId}/complete`, {})).body
-              .redirectTo as string,
-          );
-    expect(callback.origin + callback.pathname).toBe(REDIRECT);
-    expect(callback.searchParams.get("iss")).toBe(origin);
-    const fields = {
-      grant_type: "authorization_code",
-      code: callback.searchParams.get("code")!,
-      client_id: client.client_id,
-      redirect_uri: REDIRECT,
-      code_verifier: VERIFIER,
-      resource: `${origin}/mcp`,
-    };
-    const post = (target: string, body: Record<string, string>) =>
-      app.request(`${target}/oauth/token`, {
-        method: "POST",
-        headers: { "content-type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams(body),
-      });
-    const crossToken = await post(other, fields);
-    expect(crossToken.status).toBe(400);
-    expect(await crossToken.json()).toMatchObject({ error: "invalid_target" });
-    const tokens = (await (await post(origin, fields)).json()) as {
-      access_token: string;
-      refresh_token: string;
-    };
-    expect(tokens.access_token).toMatch(/^omn_oat_/);
-    expect(access.lookupAccessToken(tokens.access_token, `${other}/mcp`)).toBeNull();
-    const refresh = {
-      grant_type: "refresh_token",
-      client_id: client.client_id,
-      refresh_token: tokens.refresh_token,
-    };
-    expect((await post(other, refresh)).status).toBe(400);
-    const network = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("relay offline"));
-    try {
-      expect((await post(origin, refresh)).status).toBe(200);
-      expect(network).not.toHaveBeenCalled();
-    } finally {
-      network.mockRestore();
-    }
-  }
-  expect(
-    (await app.request("https://unconfigured.example.org/.well-known/oauth-protected-resource/mcp"))
-      .status,
-  ).toBe(404);
-});
+        await app.request(
+          "https://unconfigured.example.org/.well-known/oauth-protected-resource/mcp",
+        )
+      ).status,
+    ).toBe(404);
+  },
+);
 
 test("management-configured cloud issuer becomes available without restarting the direct OAuth service", async () => {
   let issuers: readonly string[] = [];

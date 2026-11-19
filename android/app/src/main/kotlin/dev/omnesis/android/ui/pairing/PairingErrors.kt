@@ -22,6 +22,42 @@ internal const val PAIRING_CERTIFICATE_MESSAGE =
 
 internal const val PAIRING_FAILED_MESSAGE = "Pairing didn't finish. Try again."
 
+internal const val PAIRING_TAILNET_MESSAGE =
+    "This gateway's address is on your Tailscale network, and this phone isn't connected to it."
+
+/** What a failed pairing shows: a sentence, or the state that offers to open Tailscale. */
+internal sealed interface PairingFailure {
+    data class Message(val text: String) : PairingFailure
+
+    /**
+     * The QR code marked its gateway URL as an address on the owner's Tailscale network, and
+     * this phone could not reach it there.
+     */
+    data object TailnetUnreachable : PairingFailure
+}
+
+/**
+ * [pairingErrorMessage], except that an unreachable gateway whose pairing code marked its
+ * address as a [tailnet] one is [PairingFailure.TailnetUnreachable]. Without the marker the
+ * result is always the sentence.
+ */
+internal fun pairingFailure(error: Throwable, gatewayHost: String?, tailnet: Boolean): PairingFailure =
+    if (tailnet && classify(error) == PairingErrorKind.Unreachable) PairingFailure.TailnetUnreachable
+    else PairingFailure.Message(pairingErrorMessage(error, gatewayHost))
+
+private enum class PairingErrorKind { SpentCode, Certificate, Unreachable, Other }
+
+private fun classify(error: Throwable): PairingErrorKind {
+    val chain = generateSequence(error) { current -> current.cause?.takeIf { it !== current } }.toList()
+    return when {
+        error is GatewayException.ServerError && isSpentPairingCode(error) -> PairingErrorKind.SpentCode
+        chain.any { it is SSLHandshakeException || it is SSLPeerUnverifiedException || it is CertificateException } ->
+            PairingErrorKind.Certificate
+        chain.any { it.isUnreachable() } -> PairingErrorKind.Unreachable
+        else -> PairingErrorKind.Other
+    }
+}
+
 /**
  * What the pairing screen says when a pairing attempt fails, in plain words:
  * a spent or expired code, a certificate that doesn't check out, a gateway
@@ -29,15 +65,12 @@ internal const val PAIRING_FAILED_MESSAGE = "Pairing didn't finish. Try again."
  * message when it gave one. Transport and exception names never reach the
  * screen.
  */
-internal fun pairingErrorMessage(error: Throwable, gatewayHost: String?): String {
-    val chain = generateSequence(error) { current -> current.cause?.takeIf { it !== current } }.toList()
-    return when {
-        error is GatewayException.ServerError && isSpentPairingCode(error) -> PAIRING_CODE_USED_MESSAGE
-        chain.any { it is SSLHandshakeException || it is SSLPeerUnverifiedException || it is CertificateException } ->
-            PAIRING_CERTIFICATE_MESSAGE
-        chain.any { it.isUnreachable() } -> unreachableMessage(gatewayHost)
-        else -> readableDetail(error)?.let { "Pairing didn't finish: ${it.trimEnd('.')}." } ?: PAIRING_FAILED_MESSAGE
-    }
+internal fun pairingErrorMessage(error: Throwable, gatewayHost: String?): String = when (classify(error)) {
+    PairingErrorKind.SpentCode -> PAIRING_CODE_USED_MESSAGE
+    PairingErrorKind.Certificate -> PAIRING_CERTIFICATE_MESSAGE
+    PairingErrorKind.Unreachable -> unreachableMessage(gatewayHost)
+    PairingErrorKind.Other ->
+        readableDetail(error)?.let { "Pairing didn't finish: ${it.trimEnd('.')}." } ?: PAIRING_FAILED_MESSAGE
 }
 
 private fun isSpentPairingCode(error: GatewayException.ServerError): Boolean {

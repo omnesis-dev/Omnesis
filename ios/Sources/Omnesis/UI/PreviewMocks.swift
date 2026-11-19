@@ -539,6 +539,9 @@ enum PreviewMocks {
 
     // MARK: - Sources
 
+    /// What a gateway that resyncs in modes lists for a source it can read again.
+    static let resyncModesBoth = SourceResyncMode.allCases.map(\.rawValue)
+
     static let sourceGmail = SourceRecord(
         id: "gmail:user@example.com",
         type: "gmail",
@@ -547,7 +550,8 @@ enum PreviewMocks {
         config: [:],
         enabled: true,
         createdAt: 0,
-        updatedAt: 0
+        updatedAt: 0,
+        resyncModes: resyncModesBoth
     )
     static let sourceAppleNotes = SourceRecord(
         id: "apple-notes:user@example.com",
@@ -557,7 +561,8 @@ enum PreviewMocks {
         config: [:],
         enabled: true,
         createdAt: 0,
-        updatedAt: 0
+        updatedAt: 0,
+        resyncModes: resyncModesBoth
     )
     static let sourceAppleHealth = SourceRecord(
         id: "apple-health:user@example.com",
@@ -569,7 +574,8 @@ enum PreviewMocks {
         createdAt: 0,
         updatedAt: 0,
         members: ["dev_iphone", "dev_ipad"],
-        multiDeviceMode: "replicated"
+        multiDeviceMode: "replicated",
+        resyncModes: resyncModesBoth
     )
     static let sourceWhatsApp = SourceRecord(
         id: "whatsapp-messages:+15550100000",
@@ -579,7 +585,8 @@ enum PreviewMocks {
         config: [:],
         enabled: true,
         createdAt: 0,
-        updatedAt: 0
+        updatedAt: 0,
+        resyncModes: resyncModesBoth
     )
     static let sourceStrava = SourceRecord(
         id: "strava-activities:1234567",
@@ -589,7 +596,8 @@ enum PreviewMocks {
         config: [:],
         enabled: false,
         createdAt: 0,
-        updatedAt: 0
+        updatedAt: 0,
+        resyncModes: resyncModesBoth
     )
     /// A bank-aggregator source in the forward-looking `auth-expiring` state
     /// — still syncing, but its authorization expires soon. Fictional
@@ -602,7 +610,8 @@ enum PreviewMocks {
         config: [:],
         enabled: true,
         createdAt: 0,
-        updatedAt: 0
+        updatedAt: 0,
+        resyncModes: resyncModesBoth
     )
     /// A task source whose local database is maintained by a desktop app that
     /// isn't currently running, so it syncs successfully over frozen data.
@@ -615,7 +624,8 @@ enum PreviewMocks {
         config: [:],
         enabled: true,
         createdAt: 0,
-        updatedAt: 0
+        updatedAt: 0,
+        resyncModes: resyncModesBoth
     )
     /// A notes vault two Macs both index: one reaches only part of it, the
     /// other cannot read a folder and keeps notes its sibling deleted.
@@ -630,7 +640,8 @@ enum PreviewMocks {
         createdAt: 0,
         updatedAt: 0,
         members: ["dev_studio_mac", "dev_travel_macbook"],
-        multiDeviceMode: "replicated"
+        multiDeviceMode: "replicated",
+        resyncModes: resyncModesBoth
     )
     static let sources: [SourceRecord] = [
         sourceGmail, sourceAppleNotes, sourceAppleHealth,
@@ -3221,6 +3232,36 @@ enum PreviewMocks {
         ),
     ]
 
+    /// Source-link variants for citation actions: web, native, absent and invalid.
+    static let citationSourceLinks: AgentTrailAnnotations = {
+        let refs = [
+            AgentDocRef(
+                documentId: "source-link-web", sourceType: "google-drive", sourceId: "google-drive:demo",
+                documentType: "document", title: "Observatory project plan", ts: 1_783_069_800_000,
+                url: "https://docs.example.org/document/observatory-plan"
+            ),
+            AgentDocRef(
+                documentId: "source-link-native", sourceType: "apple-notes", sourceId: "apple-notes:demo",
+                documentType: "note", title: "Workshop ideas", ts: 1_783_070_400_000,
+                appUrl: "mobilenotes://showNote?identifier=fictional-workshop-note"
+            ),
+            AgentDocRef(
+                documentId: "source-link-absent", sourceType: "session-transcripts", sourceId: "session-transcripts:demo",
+                documentType: "conversation", title: "Design discussion", ts: 1_783_071_000_000
+            ),
+            AgentDocRef(
+                documentId: "source-link-invalid", sourceType: "web", sourceId: "web",
+                documentType: "webpage", title: "Archived reference without a valid link", ts: 1_783_071_600_000,
+                url: "https:"
+            ),
+        ]
+        var annotations = AgentTrailAnnotations()
+        for ref in refs {
+            annotations.byDoc[ref.documentId] = AgentDocAnnotations(ref: ref, note: nil, quotes: [])
+        }
+        return annotations
+    }()
+
     /// A transcript cites a structured change request while a browser capture
     /// remains as a second representation. Exercises the `same-resource`
     /// related row with deliberately long titles at a narrow snapshot width.
@@ -3238,6 +3279,22 @@ enum PreviewMocks {
                 documentType: "conversation",
                 mimeType: nil
             ),
+            attachments: [
+                AgentTrailEvent(
+                    eventId: "evt-observatory-attachment",
+                    at: "2026-07-03T09:10:00Z",
+                    kind: "document",
+                    doc: AgentTrailEventDoc(
+                        documentId: "doc-observatory-attachment",
+                        title: "Observatory workshop agenda and reference materials.pdf",
+                        sourceId: "google-drive:demo",
+                        sourceUrl: "https://docs.example.org/file/observatory-workshop",
+                        appUrl: nil,
+                        documentType: "attachment",
+                        mimeType: "application/pdf"
+                    )
+                ),
+            ],
             related: [
                 AgentTrailEventRelated(
                     documentId: "doc-change-request-42",

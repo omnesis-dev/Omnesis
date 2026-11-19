@@ -3,23 +3,7 @@
 
 import { Hono, type MiddlewareHandler } from "hono";
 import { HTTPException } from "hono/http-exception";
-
-import { strictRoute } from "./http/scope.js";
-import { httpActivityName, withActivity } from "./observability/main-activity.js";
-type Db = Database.Database;
-import { join } from "node:path";
-import {
-  missingHostedWriteScopes,
-  SourceId,
-  type DeviceId,
-  type DeviceRecord,
-} from "@omnesis/types";
-import {
-  createLogger,
-  parseDuration,
-  type HostNetwork,
-  type WsRequestPayload,
-} from "@omnesis/core";
+import { matchedRoutes } from "hono/route";
 import {
   DEFAULT_PUSH_RELAY_URL,
   DEFAULT_SYNC_LEASE_TTL,
@@ -27,16 +11,45 @@ import {
   pickSourceSettings,
   type OmnesisConfig,
 } from "@omnesis/config";
-import { matchedRoutes } from "hono/route";
+import {
+  createLogger,
+  parseDuration,
+  ownedProcessCleanupReceipt,
+  type HostNetwork,
+  type WsRequestPayload,
+} from "@omnesis/core";
+import {
+  missingHostedWriteScopes,
+  SourceId,
+  type DeviceId,
+  type DeviceRecord,
+} from "@omnesis/types";
+import { resolveRequestOAuthUrls } from "./http/oauth-request.js";
+import { mountTailscaleRoutes } from "./http/routes/tailscale.js";
+import { mountRemoteAccessRoutes } from "./http/routes/remote-access.js";
+import { AddressChecks } from "./remote-access/address-check.js";
+import { HostAccess } from "./remote-access/host-access.js";
+import { HostTailscaleService } from "./remote-access/host-tailscale.js";
+import { RemoteAccessSettingsStore } from "./remote-access/settings.js";
+import { McpAddresses, relayStateFrom } from "./remote-access/mcp-addresses.js";
+import { mcpAddressGate } from "./http/mcp-address-gate.js";
+import { mountPortalSignalRoutes } from "./http/routes/portal-signals.js";
+import { PortalSignals } from "./portal-signals/hub.js";
+import { markRelayRequestExposure } from "./http/client-ip.js";
+
+import { labFeatureEnabled } from "./lab/store.js";
+import { LabService } from "./lab/service.js";
+import { mountLabRoutes } from "./http/routes/lab.js";
+
+import { strictRoute } from "./http/scope.js";
+import { httpActivityName, withActivity } from "./observability/main-activity.js";
+type Db = Database.Database;
+import { join } from "node:path";
+import { isTokenActive, lookupToken, lookupSession } from "./data/repositories/TokenRepository.js";
 import { finishDocumentCascade } from "./absence/document-cascade.js";
 import { StorageRetentionService } from "./storage/retention.js";
 import { StorageService } from "./storage/service.js";
 import { mountStorageRoutes } from "./http/routes/storage.js";
-import { mountLabRoutes } from "./http/routes/lab.js";
-import { LabService } from "./lab/service.js";
-import { labFeatureEnabled } from "./lab/store.js";
-import { markRelayRequestExposure } from "./http/client-ip.js";
-import { lookupToken, lookupSession } from "./data/repositories/TokenRepository.js";
 import { getDevice, isRevokedDeviceKey } from "./data/repositories/DeviceRepository.js";
 import {
   CLIENT_VERSION_PARAM,
@@ -115,11 +128,13 @@ import { DeviceService } from "./http/services/DeviceService.js";
 import { PushRegistrationService } from "./http/services/PushRegistrationService.js";
 import { mountStatusRoutes, mountDbSizeRoute } from "./http/routes/status.js";
 import { mountPortalRoutes } from "./http/routes/portal.js";
+import { mountPortalHandoffRoutes } from "./http/routes/portal-handoff.js";
 import { devicePathObservation } from "./http/device-path-observation.js";
 import { mountAdminRoutes } from "./http/routes/admin.js";
 import { mountDirectCandidateRoutes } from "./http/routes/direct-candidates.js";
 import { mountDeviceEnrollmentRoutes } from "./http/routes/device-enrollment.js";
 import { mountCloudPairingRoutes } from "./http/routes/cloud-pairing.js";
+import { mountStepUp } from "./http/step-up.js";
 import { mountBackupRoutes } from "./http/routes/backup.js";
 import { mountExportRoutes } from "./http/routes/export.js";
 import { mountModelCredentialsRoutes } from "./http/routes/model-credentials.js";
@@ -170,7 +185,8 @@ import { mountOAuthAccessRoutes } from "./http/routes/oauth-access.js";
 import { mountLegacyMcpCutoverRoute } from "./http/routes/legacy-mcp-cutover.js";
 import { AccessService } from "./access/service.js";
 import { resolveDeviceAnswerScope } from "./access/device-answer-scope.js";
-import { resolveMcpRequestResource, resolveOAuthUrls } from "./access/oauth-urls.js";
+import { pendingCertificateOrigins } from "./access/certificate-pending.js";
+import { resolveMcpRequestResource } from "./access/oauth-urls.js";
 import { mountSubscriptionRoutes } from "./http/routes/subscriptions.js";
 import { mountNotificationRoutes } from "./http/routes/notifications.js";
 import { mountMobilePermissionHealthRoute } from "./http/routes/mobile-permission-health.js";
@@ -369,6 +385,8 @@ export function createServer(
     wsServer?: DeviceWsServer;
     /** Shared fleet-doctor coordinator. Production passes the WS lifecycle singleton. */
     deviceDoctorService?: DeviceDoctorService;
+    /** Transfers doctor cleanup ownership to the enclosing process shutdown fence. */
+    onDoctorCleanupOwner?: (owner: Pick<DoctorService, "cleanupFailure" | "close">) => void;
     /**
      * Each connected collector's source descriptors. Production passes the
      * instance the WS lifecycle prefetches into; without one, the routes fill
@@ -594,6 +612,12 @@ export function createServer(
     /** Asks the expired-access sweep to re-read when it should next wake. */
     accessCleanupWake?: () => void;
     /**
+     * Tells open portals at once when something waiting for the owner changes.
+     * The gateway entry point shares it with producers it wires itself; a
+     * server made without one keeps its own.
+     */
+    portalSignals?: PortalSignals;
+    /**
      * Optional in-process event bus override. Defaults to the singleton
      * exported from events.ts; tests can pass a fresh bus to avoid
      * cross-test leakage.
@@ -684,26 +708,34 @@ export function createServer(
      */
     hostNetwork?: () => HostNetwork | null;
     /**
-     * Externally-reachable HTTPS base URL of this gateway (no trailing
-     * slash). Forwarded to a collector's `auth.begin` so a source's
-     * `authFlow` can build `${publicBaseUrl}/oauth/callback`. Populated by
-     * `index.ts` from `runtime-settings.ts`; unset keeps the local-only
-     * `localhost:3003` callback fallback.
+     * The gateway's public address and the MCP resources it implies, read on
+     * every use: MCP OAuth derives its issuer from it, and a collector's
+     * `auth.begin` gets it so a source's `authFlow` can build
+     * `${publicBaseUrl}/oauth/callback`. Unset keeps loopback-only MCP OAuth
+     * and the local-only `localhost:3003` callback fallback.
      */
-    publicBaseUrl?: string;
+    publicAddress?: import("./public-address.js").PublicAddressSource;
     cloudRelayExposure?: () => boolean;
     cloudIdentitySource?: () =>
       import("./http/services/CloudPairingConfiguration.js").CloudPairingIdentity | undefined;
     cloudPairingPublicOrigin?: () => string | undefined;
-    onCloudPairingRequest?: (request: { requestId: string; expiresAt: number }) => void;
+    /** A device waits for approval. `name` and `kind` are its own, untrusted description. */
+    onCloudPairingRequest?: (request: {
+      requestId: string;
+      expiresAt: number;
+      name: string;
+      kind: string;
+    }) => void;
     /** A device joined with nobody approving it; see `PairingServiceDeps`. */
     onDeviceJoined?: import("./http/services/PairingService.js").PairingServiceDeps["onDeviceJoined"];
+    /** The gateway's own tailnet device; present when the installation has its helper program. */
+    tailscaleEmbed?: import("./tailscale-embed/service.js").TailscaleEmbedService;
+    /** The Omnesis relay origin the gateway is enrolled under; only with the relay opt-in. */
+    relayPublicOrigin?: () => string | undefined;
     cloudIdentity?: {
       identity: import("@omnesis/cloud-relay").IdentityProvider;
       ownerAccountId: string;
     };
-    /** Exact externally reachable MCP protected-resource URLs. */
-    mcpResourceUrls?: readonly string[];
     additionalOAuthIssuerUrls?: import("./access/oauth-urls.js").OAuthIssuerSource;
     /**
      * Gateway listen port. Advertises the local MCP setup address and scopes the portal session
@@ -732,6 +764,42 @@ export function createServer(
   },
 ) {
   const app = strictRoute(new Hono<AppEnv>());
+  const portalSignals = opts?.portalSignals ?? new PortalSignals();
+  // The connectivity choices that belong to no single way in. Every gateway has them: the owner's
+  // own domain and Tailscale already on the computer need neither optional feature.
+  const remoteAccessSettings = opts?.configDir
+    ? new RemoteAccessSettingsStore(opts.configDir)
+    : undefined;
+  // Tailscale already on this computer forwards to the port the gateway listens on.
+  const hostTailscale = opts?.port ? new HostTailscaleService(opts.port) : undefined;
+  // What it lets the Internet reach through Funnel, under the owner's choices.
+  const hostAccess =
+    hostTailscale && remoteAccessSettings
+      ? new HostAccess(hostTailscale, remoteAccessSettings)
+      : undefined;
+  // Which addresses away from home answer MCP; enforced wherever the owner's choices are kept.
+  const mcpAddresses = remoteAccessSettings
+    ? new McpAddresses({
+        settings: remoteAccessSettings,
+        publicBaseUrl: () => opts?.publicAddress?.baseUrl(),
+        ...(opts?.relayPublicOrigin ? { relayOrigin: opts.relayPublicOrigin } : {}),
+        ...(opts?.cloudRelayManagement
+          ? { relayState: relayStateFrom(opts.cloudRelayManagement) }
+          : {}),
+        ...(opts?.tailscaleEmbed ? { tailscale: opts.tailscaleEmbed } : {}),
+        ...(hostAccess ? { host: hostAccess } : {}),
+      })
+    : undefined;
+  // Agents sign in through every way in's own address: the relay's and the Tailscale device's
+  // from the caller, this computer's Tailscale address while it serves the gateway.
+  const oauthIssuers: import("./access/oauth-urls.js").OAuthIssuerSource | undefined = mcpAddresses
+    ? () => [
+        ...(typeof opts?.additionalOAuthIssuerUrls === "function"
+          ? opts.additionalOAuthIssuerUrls()
+          : (opts?.additionalOAuthIssuerUrls ?? [])),
+        ...mcpAddresses.hostIssuer(),
+      ]
+    : opts?.additionalOAuthIssuerUrls;
   app.use("*", async (c, next) => {
     let release: (() => void) | undefined;
     if (opts?.cloudRelayExposure?.()) {
@@ -758,6 +826,8 @@ export function createServer(
     "*",
     corsMiddleware(() => opts?.configStore?.get().gateway?.cors),
   );
+  // An address the owner turned MCP off on serves none of MCP's paths.
+  if (mcpAddresses) app.use("*", mcpAddressGate(mcpAddresses));
 
   // Centralized error mapping. Every route handler can either:
   //
@@ -1080,11 +1150,11 @@ export function createServer(
     const authHeader = c.req.header("Authorization");
     if (authHeader?.startsWith("Bearer ")) {
       const rawToken = authHeader.slice(7);
-      const oauthUrls = resolveOAuthUrls(
-        c.req.url,
-        opts?.publicBaseUrl,
-        opts?.mcpResourceUrls,
-        opts?.additionalOAuthIssuerUrls,
+      const oauthUrls = resolveRequestOAuthUrls(
+        c,
+        opts?.publicAddress?.baseUrl(),
+        opts?.publicAddress?.mcpResourceUrls(),
+        oauthIssuers,
       );
       const principal =
         c.req.path === "/mcp" && oauthUrls
@@ -1253,6 +1323,14 @@ export function createServer(
     await runWithPriority(priority, () => next());
   });
 
+  // A passkey on the gateway's own page before an administrative action that loosens it, for
+  // requests through the relay and devices that joined on their own. Before any guarded route.
+  mountStepUp(app, {
+    enrollment: () => opts?.cloudRelayManagement?.accountPairingIdentity?.()?.enrollment,
+    enrollmentMethod: (deviceId) =>
+      getDevice(db, deviceId as DeviceId)?.enrollment?.method ?? undefined,
+  });
+
   // ── Closure helpers shared across route modules ─────────────────────
 
   function notifySourceChange<K extends "source.added" | "source.removed" | "source.updated">(
@@ -1410,6 +1488,37 @@ export function createServer(
     wsServer: opts?.wsServer,
     onDeviceJoined: opts?.onDeviceJoined,
   });
+  // A collector on the owner's tailnet joins as the Tailscale device it proved to be.
+  opts?.tailscaleEmbed?.useAdmission({
+    revokedAt: (identity) => pairingService.provenCollectorRevokedAt(identity),
+    admit: async (input) => {
+      let result: Awaited<ReturnType<typeof pairingService.admitProvenCollector>>;
+      try {
+        result = await pairingService.admitProvenCollector(input);
+      } catch (err) {
+        log.warn(
+          `Tailscale join could not be admitted: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        return {
+          outcome: "failed",
+          error: "The gateway could not admit this collector. Try again.",
+        };
+      }
+      if (result.outcome === "invalid" || result.outcome === "conflict")
+        return { outcome: "failed", error: result.error };
+      if (result.outcome !== "paired-device" || result.device.kind !== "collector")
+        return { outcome: "failed", error: "The gateway could not admit this collector." };
+      return {
+        outcome: "paired-device",
+        credentials: {
+          device: { id: result.device.id, name: result.device.name, kind: "collector" },
+          tokenId: result.tokenId,
+          token: result.token,
+          scopes: result.scopes,
+        },
+      };
+    },
+  });
 
   const authService = new AuthService({
     db,
@@ -1486,6 +1595,7 @@ export function createServer(
 
   // Status block 1: /health, /config, /admin/config*, /status
   mountStatusRoutes(app, {
+    tailscaleEmbed: !!opts?.tailscaleEmbed,
     getLabStatus: () => labService.flags(),
     db,
     dbPath,
@@ -1569,16 +1679,29 @@ export function createServer(
   // `/portal/*` catch-all. Otherwise a real client reaches the HTML shell instead
   // of the JSON approval endpoints even though the route-level tests pass.
   mountOAuthAccessRoutes(app, accessService, {
-    publicBaseUrl: opts?.publicBaseUrl,
+    publicAddress: opts?.publicAddress,
     ...(opts?.port ? { loopbackBaseUrl: `https://localhost:${opts.port}` } : {}),
-    mcpResourceUrls: opts?.mcpResourceUrls,
-    additionalOAuthIssuerUrls: opts?.additionalOAuthIssuerUrls,
+    additionalOAuthIssuerUrls: oauthIssuers,
     authorizationNotifier: opts?.accessAuthorizationNotifier,
-    onAuthorizationPending: opts?.accessCleanupWake,
+    // A request arrived or was decided: wake the expiry sweep and the portals.
+    onAuthorizationPending: () => {
+      opts?.accessCleanupWake?.();
+      portalSignals.publish("access");
+    },
     onDeviceLevelChanged: () => statusCache.bump(),
     tlsFingerprintSha256: opts?.tlsFingerprintSha256,
     listenPort: opts?.port,
     agentCertificateTrust: opts?.agentCertificateTrust,
+    ...(mcpAddresses ? { mcpAddresses } : {}),
+    ...(opts?.tailscaleEmbed || opts?.cloudRelayManagement
+      ? {
+          pendingCertificateOrigins: () =>
+            pendingCertificateOrigins({
+              ...(opts.tailscaleEmbed ? { tailscale: opts.tailscaleEmbed } : {}),
+              ...(opts.cloudRelayManagement ? { relay: opts.cloudRelayManagement } : {}),
+            }),
+        }
+      : {}),
   });
   mountLegacyMcpCutoverRoute(app, {
     getDevice: (deviceId) => getDevice(db, deviceId),
@@ -1586,6 +1709,25 @@ export function createServer(
   });
 
   // Portal block (redirect, source-meta, login/logout/session, SPA static)
+  // Ahead of the portal's own routes, whose `/portal/*` fallback serves the page.
+  mountPortalSignalRoutes(app, portalSignals, {
+    // A stream lives only as long as what opened it: a portal session that is
+    // still current, or a token that is still active.
+    stillAuthorized: (c) => {
+      const auth = c.get("auth");
+      if (auth.authMethod === "portal-session") {
+        const sessionId = getSessionCookie(c.req.header("Cookie"), cookieName);
+        return (
+          sessionId !== null &&
+          sessionId !== undefined &&
+          lookupSession(db, sessionId).info !== null
+        );
+      }
+      if (auth.authMethod === "bearer" && auth.tokenId && auth.deviceId)
+        return isTokenActive(db, auth.tokenId, auth.deviceId);
+      return false;
+    },
+  });
   mountPortalRoutes(app, {
     db,
     portalRoot: join(import.meta.dirname, "..", "portal"),
@@ -1593,6 +1735,15 @@ export function createServer(
     sourceService,
     sessionTtlMs: opts?.timings?.sessionTtlMs,
     sessionCookieName: cookieName,
+  });
+  // Opening the gateway's own address already signed in (cloud relay only).
+  mountPortalHandoffRoutes(app, {
+    db,
+    writeGate: w,
+    gatewayOrigin: () =>
+      opts?.cloudRelayManagement?.accountPairingIdentity?.()?.enrollment.gatewayPasskey?.()?.origin,
+    sessionCookieName: cookieName,
+    sessionTtlMs: opts?.timings?.sessionTtlMs,
   });
 
   // /db-size — registered between portal and admin in the original.
@@ -1671,6 +1822,7 @@ export function createServer(
         }
       : {}),
   });
+  opts?.onDoctorCleanupOwner?.(doctorService);
   const deviceDoctorService =
     opts?.deviceDoctorService ??
     new DeviceDoctorService({
@@ -1713,7 +1865,7 @@ export function createServer(
     scheduler: opts?.scheduler,
     backgroundJobs: opts?.backgroundJobs,
     pairingTtlMs: opts?.timings?.pairingTtlMs,
-    publicBaseUrl: opts?.publicBaseUrl,
+    publicBaseUrl: () => opts?.publicAddress?.baseUrl(),
     resolveCollectorDeviceId,
     resolveCollectorDeviceIdForType,
     resolveCollectorDeviceIdForReauth,
@@ -1725,8 +1877,25 @@ export function createServer(
     tlsLifecycle: opts?.tlsLifecycle,
     cloudRelayManagement: opts?.cloudRelayManagement,
     systemTrustPairingOrigins:
-      opts?.systemTrustPairingOrigins ?? (opts?.publicBaseUrl ? [opts.publicBaseUrl] : []),
+      opts?.systemTrustPairingOrigins ??
+      (() => {
+        const address = opts?.publicAddress?.baseUrl();
+        return address ? [address] : [];
+      }),
     publiclyTrustedPairingHosts: opts?.publiclyTrustedPairingHosts,
+    ...(remoteAccessSettings
+      ? { pairingPrefersRelay: () => remoteAccessSettings.get().first === "relay" }
+      : {}),
+    ...(opts?.tailscaleEmbed
+      ? {
+          tailnetPairingAddress: () => {
+            const origin = opts.tailscaleEmbed!.tailnetOrigin();
+            return origin
+              ? { origin, trusted: opts.tailscaleEmbed!.tailnetCertificateTrusted() }
+              : null;
+          },
+        }
+      : {}),
     advertisedPairingHost: opts?.advertisedPairingHost,
     certificateRenewsAt: opts?.certificateRenewsAt,
     pairingHostNames: opts?.pairingHostNames,
@@ -1741,6 +1910,17 @@ export function createServer(
     watermarkService,
   });
   mountDirectCandidateRoutes(app, { configDir: opts?.configDir, port: opts?.port });
+  mountTailscaleRoutes(app, opts?.tailscaleEmbed);
+  if (remoteAccessSettings && mcpAddresses) {
+    mountRemoteAccessRoutes(app, {
+      settings: remoteAccessSettings,
+      checks: new AddressChecks(),
+      ...(hostAccess ? { hostAccess } : {}),
+      publicAddress: opts?.publicAddress,
+      mcpAddresses,
+      tailscaleEmbed: !!opts?.tailscaleEmbed,
+    });
+  }
   const localSpkiFingerprint = () =>
     typeof opts?.tlsSpkiFingerprintSha256 === "function"
       ? opts.tlsSpkiFingerprintSha256()
@@ -1753,6 +1933,14 @@ export function createServer(
         (fingerprint): fingerprint is string => !!fingerprint,
       ),
   });
+  // A sign-in request decided by its owner, on the Devices page or with a passkey:
+  // open portals re-read what waits. Registered ahead of the routes it follows.
+  for (const decided of ["/admin/cloud-pairing/decision", "/devices/:flow/approval"]) {
+    app.use(decided, async (c, next) => {
+      await next();
+      if (c.req.method === "POST" && c.res.ok) portalSignals.publish("devices");
+    });
+  }
   mountCloudPairingRoutes(
     app,
     w,
@@ -1761,7 +1949,7 @@ export function createServer(
       return (typeof fingerprint === "function" ? fingerprint() : fingerprint) ?? "";
     },
     opts?.cloudIdentity,
-    opts?.publicBaseUrl,
+    () => opts?.publicAddress?.baseUrl(),
     opts?.cloudIdentitySource,
     opts?.cloudPairingPublicOrigin,
     opts?.cloudRelayManagement?.managedGoogleBrowser?.bind(opts.cloudRelayManagement),
@@ -1772,7 +1960,10 @@ export function createServer(
           broker: opts.cloudRelayManagement!.managedAccountBrowser?.(),
         })
       : undefined,
-    opts?.onCloudPairingRequest,
+    (request) => {
+      opts?.onCloudPairingRequest?.(request);
+      portalSignals.publish("devices");
+    },
     opts?.cloudTlsSpkiFingerprintSha256,
     // A device the owner revoked waits for a person when its key signs in again.
     (devicePublicKey) => isRevokedDeviceKey(db, devicePublicKey),
@@ -1876,16 +2067,15 @@ export function createServer(
         device.capabilities.agentIntegration !== undefined
       );
     },
-    publicBaseUrl: opts?.publicBaseUrl,
-    mcpResourceUrls: opts?.mcpResourceUrls,
-    additionalOAuthIssuerUrls: opts?.additionalOAuthIssuerUrls,
+    publicAddress: opts?.publicAddress,
+    additionalOAuthIssuerUrls: oauthIssuers,
     recordMcpToolInvocation: (input) => accessService.recordMcpToolInvocation(input),
     recordDirectAuditEvent: async (input) => {
       await w.appendDirectAuditEvent(input);
     },
   });
   opts?.onMcpHttpRuntime?.(mcpHttpRuntime);
-  mountPrivacyRoutes(app, agentDeps);
+  mountPrivacyRoutes(app, agentDeps, () => portalSignals.publish("answers"));
   // OMNESIS.md. Defaulted from `configDir` the same way the privacy policy
   // store is below, so a server built with a config directory serves it
   // without the composition root having to pass the store twice.
@@ -1904,6 +2094,7 @@ export function createServer(
           reviewWatchExistence: createWatchExistenceReviewer(
             agentDeps.privacyReviewer ?? new PrivacyReviewer({ resolveBackend: () => null }),
           ),
+          onApprovalsChanged: () => portalSignals.publish("watches"),
         })
       : undefined);
   if (subscriptionService) opts?.onSubscriptionService?.(subscriptionService);
@@ -1926,8 +2117,15 @@ export function createServer(
       : {}),
   });
   mountNotificationRoutes(app, {
-    claim: (deviceId, supportsPairingNotifications = false) =>
-      w.claimNotification({ deviceId, now: Date.now(), supportsPairingNotifications }),
+    claim: (deviceId, support = {}) =>
+      w.claimNotification({
+        deviceId,
+        now: Date.now(),
+        supportsPairingNotifications: support.pairingNotifications === true,
+        ...(support.tailscaleJoinNotifications === true
+          ? { supportsTailscaleJoinNotifications: true }
+          : {}),
+      }),
     confirm: (deviceId, deliveryId) =>
       w.confirmNotification({ deviceId, deliveryId, now: Date.now() }),
   });
@@ -2110,7 +2308,7 @@ export function createServer(
 
   // /admin/brain/* — the operator inspection surface the `omnesis
   // briefs` CLI drives (same live feature gate: 404 unless active).
-  mountBrainAdminRoutes(app, {
+  const brainAdmin = mountBrainAdminRoutes(app, {
     db,
     writeGate: w,
     getStatus: opts?.getBriefsStatus,
@@ -2144,7 +2342,7 @@ export function createServer(
   });
 
   // /sql, /analytics/*, /sqlite/*, /analytics/activity/:table.
-  mountAnalyticsRoutes(app, {
+  const analyticsRoutes = mountAnalyticsRoutes(app, {
     db,
     analyticsService,
     sourceService,
@@ -2171,5 +2369,29 @@ export function createServer(
     );
   }
 
-  return app;
+  let closePromise: Promise<void> | undefined;
+  return Object.assign(app, {
+    close: () =>
+      (closePromise ??= (async () => {
+        const results = await Promise.allSettled([
+          Promise.resolve().then(() => brainAdmin.close()),
+          Promise.resolve().then(() => analyticsRoutes.close()),
+          ...(opts?.onDoctorCleanupOwner
+            ? []
+            : [Promise.resolve().then(() => doctorService.close())]),
+        ]);
+        const failures = results.flatMap((result) =>
+          result.status === "rejected" ? [result.reason] : [],
+        );
+        if (failures.length) {
+          const marked = failures.find((error) => ownedProcessCleanupReceipt(error) !== undefined);
+          const error = new AggregateError(failures, "Gateway route cleanup failed", {
+            cause: marked ?? failures[0],
+          });
+          const receipt = ownedProcessCleanupReceipt(marked);
+          if (receipt) Object.assign(error, { cleanupFailure: receipt.failure });
+          throw error;
+        }
+      })()),
+  });
 }

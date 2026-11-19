@@ -30,6 +30,8 @@ import {
   primeSecretFileKeyCache,
   readPackageVersion,
   runningSourceCommit,
+  ownedProcessCleanupReceipt,
+  installParentShutdownHandler,
   SOURCE_CONTRACT_WIRE_RANGE,
   type AudioTranscribeFn,
   type OcrFn,
@@ -76,10 +78,16 @@ const COLLECTOR_STARTED_AT = Date.now();
 import { detectDocumentIngestionContext } from "./phone-region.js";
 import { toSyncStatusPayload } from "./sync-status-payload.js";
 import { startEventLoopWatchdog } from "./event-loop-watchdog.js";
+import { CollectorOwnedProcessShutdown } from "./owned-process-shutdown.js";
 import type { ConfigStatusResult } from "@omnesis/core/doctor";
 import type { TriggerSyncResult } from "./sync-dispatcher.js";
 
 const log = createLogger("collector");
+const ownedShutdown = new CollectorOwnedProcessShutdown(
+  () =>
+    log.error("Collector process cleanup could not be confirmed; retaining the process for review"),
+  (code) => process.exit(code),
+);
 applyPrivateUmask();
 
 const DEFAULT_GATEWAY_URL = "https://localhost:7600";
@@ -625,7 +633,7 @@ async function haltForRepair(input: {
   // asynchronous on POSIX, and `process.exit` does not flush them. The line
   // above is the whole recovery path, so wait for it to leave the process.
   await new Promise<void>((resolve) => process.stderr.write("", () => resolve()));
-  process.exit(0);
+  return ownedShutdown.finish(0);
 }
 
 /**
@@ -638,10 +646,11 @@ export async function main() {
   // dies other than a clean exit: launchd itself may not.
   void startRelaunchGuard();
   // Before the rest of startup, so a stall anywhere in it is bounded too.
-  startEventLoopWatchdog();
+  startEventLoopWatchdog({ exitHold: ownedShutdown.exitHold });
   const configDir = process.env.OMNESIS_CONFIG_DIR ?? DEFAULT_CONFIG_DIR;
   const sourceCommit = runningSourceCommit(configDir, import.meta.url, COLLECTOR_STARTED_AT);
   await primeSecretFileKeyCache({ configDir }).catch((err) => {
+    if (ownedShutdown.observeFailure(err)) throw err;
     log.warn(
       `Could not prime secret-file root key cache: ${err instanceof Error ? err.message : String(err)}`,
     );
@@ -650,10 +659,11 @@ export async function main() {
   // the first sync; a collector that cannot honour armed encryption refuses
   // to start rather than opening a store plaintext.
   await prepareCollectorStorageEncryption(configDir).catch(async (err) => {
+    ownedShutdown.observeFailure(err);
     log.error(`Cannot start: ${err instanceof Error ? err.message : String(err)}`);
     // The line above is the whole remedy; let it leave the stderr pipe.
     await new Promise<void>((resolve) => process.stderr.write("", () => resolve()));
-    process.exit(1);
+    return ownedShutdown.finish(1);
   });
 
   const { url: requestedGatewayUrl, fingerprint } = await resolveGatewayUrl();
@@ -674,8 +684,9 @@ export async function main() {
       log.warn("OMNESIS_INSECURE_TLS is set — TLS certificate verification disabled");
     }
   } catch (err) {
+    ownedShutdown.observeFailure(err);
     log.error(`TLS trust failed: ${toErrorMessage(err)}`);
-    process.exit(1);
+    return ownedShutdown.finish(1);
   }
 
   const gatewayUrl = await waitForGateway(requestedGatewayUrl, configDir, discoveredFingerprint);
@@ -698,8 +709,9 @@ export async function main() {
   try {
     resolved = await resolveCollectorToken(gatewayUrl, configDir);
   } catch (err) {
+    ownedShutdown.observeFailure(err);
     log.error(toErrorMessage(err));
-    process.exit(1);
+    return ownedShutdown.finish(1);
   }
   // `halt` exits the process; returning it also narrows `resolved` below.
   if (resolved.outcome === "needs-pairing") return halt();
@@ -907,6 +919,7 @@ export async function main() {
     sourceManager: manager,
     gateway,
     emitEvent: (type, payload) => wsClient.emitEvent(type, payload),
+    onOwnershipChanged: () => ownedShutdown.ownershipChanged(),
     onSourcesChanged: () => {
       void engine.refreshAllSourceMeta();
       // Same per-source metadata pushes the sources.snapshot handler fires:
@@ -924,6 +937,7 @@ export async function main() {
       });
     },
   });
+  ownedShutdown.attach(sourceHandlers);
 
   // Commands this collector answers itself, registered through the same typed
   // table the source/auth handlers use: a handler whose answer disagrees with
@@ -952,7 +966,9 @@ export async function main() {
     },
     getProcessVitals: () => doctorVitals.snapshot(),
     emitResult: (payload) => wsClient.emitEvent("device.doctor.result", payload),
+    onOwnershipChanged: () => ownedShutdown.ownershipChanged(),
   });
+  ownedShutdown.attach(collectorDoctor);
 
   engineCommands.register("device.doctor", ({ runId }) => collectorDoctor.start(runId));
 
@@ -1099,7 +1115,7 @@ export async function main() {
             // stderr is a pipe under a service manager and `process.exit` does
             // not flush it, so the hand-over's log line would be lost without this.
             await new Promise<void>((resolve) => process.stderr.write("", () => resolve()));
-            process.exit(1);
+            return ownedShutdown.finish(1);
           })();
         },
       });
@@ -1154,7 +1170,7 @@ export async function main() {
           await new Promise<void>((resolve) => process.stderr.write("", () => resolve()));
           // Non-zero so the service manager restarts us: every client below
           // holds the credential that has just been replaced.
-          process.exit(1);
+          return ownedShutdown.finish(1);
         }
         await halt();
       } finally {
@@ -1183,6 +1199,8 @@ export async function main() {
   const shutdown = async (): Promise<void> => {
     if (shuttingDown) return;
     shuttingDown = true;
+    const ownedCleanup = ownedShutdown.close();
+    void ownedCleanup.catch(() => {});
     log.info("Shutting down collector...");
     try {
       const { inflight, timedOut } = await engine.stopSyncLoopAndDrain(SHUTDOWN_DRAIN_MS);
@@ -1201,18 +1219,17 @@ export async function main() {
     } catch (err) {
       log.error(`wsClient.disconnect threw: ${toErrorMessage(err)}`);
     }
-    // Kill any in-flight auth subprocesses (`tsx`
-    // children spawned by `auth.begin`) before exiting. Without
-    // this, a SIGINT during an OAuth dance leaks orphan processes
-    // that survive the parent and keep `:3000-3003` (callback
-    // server) bound, blocking the next launch.
+    // Diagnostic probes, source commands, imports and auth cleanup each close
+    // independently; every accepted operation must join before process exit.
     try {
-      await sourceHandlers.shutdown();
+      await ownedCleanup;
     } catch (err) {
-      log.error(`sourceHandlers.shutdown threw: ${toErrorMessage(err)}`);
+      ownedShutdown.observeFailure(err);
+      log.error(`Collector cleanup failed: ${toErrorMessage(err)}`);
     }
+    if (ownedProcessCleanupReceipt(ownedShutdown.cleanupFailure())) return ownedShutdown.finish(0);
     log.info("Collector stopped");
-    process.exit(0);
+    return ownedShutdown.finish(0);
   };
 
   process.on("SIGINT", () => {
@@ -1221,6 +1238,7 @@ export async function main() {
   process.on("SIGTERM", () => {
     void shutdown();
   });
+  installParentShutdownHandler(() => void shutdown());
 }
 
 // Errors nobody caught. An unhandled rejection is reported and the collector
@@ -1232,6 +1250,11 @@ export async function main() {
 // and its truth table live in `process-failure-policy.ts`.
 
 process.on("unhandledRejection", (reason) => {
+  if (ownedShutdown.observeFailure(reason)) {
+    log.error("Unhandled diagnostic cleanup uncertainty; retaining the collector for review");
+    void ownedShutdown.finish(1);
+    return;
+  }
   if (processFailureVerdict("unhandledRejection", reason) === "suppress") {
     log.warn(`Suppressing benign Baileys auth-state ENOENT race: ${toErrorMessage(reason)}`);
     return;
@@ -1239,12 +1262,17 @@ process.on("unhandledRejection", (reason) => {
   log.error(`Unhandled rejection (continuing): ${toErrorMessage(reason)}`);
 });
 process.on("uncaughtException", (err) => {
+  if (ownedShutdown.observeFailure(err)) {
+    log.error("Uncaught diagnostic cleanup uncertainty; retaining the collector for review");
+    void ownedShutdown.finish(1);
+    return;
+  }
   if (processFailureVerdict("uncaughtException", err) === "suppress") {
     log.warn(`Suppressing benign Baileys auth-state ENOENT race: ${toErrorMessage(err)}`);
     return;
   }
   log.error(`Uncaught exception: ${toErrorMessage(err)}`);
-  process.exit(1);
+  void ownedShutdown.finish(1);
 });
 
 // Only launch the daemon when run as the entrypoint (`tsx src/main.ts`),
@@ -1255,7 +1283,8 @@ const isEntrypoint = process.argv[1]
   : false;
 if (isEntrypoint) {
   main().catch((err) => {
+    ownedShutdown.observeFailure(err);
     log.error(`Fatal error: ${toErrorMessage(err)}`);
-    process.exit(1);
+    return ownedShutdown.finish(1);
   });
 }

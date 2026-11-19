@@ -11,6 +11,8 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { SCOPE_ADMIN, SCOPE_READ, ProviderId, SourceId, type Scope } from "@omnesis/types";
 import { createDatabase, upsertDocuments } from "../db.js";
@@ -67,7 +69,7 @@ function observe(
 }
 
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-test-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
   db = createDatabase(dbPath);
   ADMIN = mint([SCOPE_ADMIN, SCOPE_READ]);
   READ = mint([SCOPE_READ]);

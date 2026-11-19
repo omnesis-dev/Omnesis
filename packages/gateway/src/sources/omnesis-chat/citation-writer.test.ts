@@ -17,9 +17,11 @@ import {
   upsertConversationCitations,
   type ConversationRecordCitationInput,
 } from "./citation-writer.js";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 function testDbPath(): string {
-  return `/tmp/omnesis-citation-writer-test-${randomUUID()}.db`;
+  return fixtureJoin(fixtureTmpdir(), `omnesis-citation-writer-test-${randomUUID()}.db`);
 }
 function cleanupDb(path: string): void {
   for (const suffix of ["", "-wal", "-shm", "-journal"]) {

@@ -2,10 +2,11 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { execFile } from "node:child_process";
+import { createRequire } from "node:module";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -59,6 +60,7 @@ describe("a command that needs the gateway's admin token, where there is none", 
   describe("omnesis status", () => {
     const execFileAsync = promisify(execFile);
     const entry = fileURLToPath(new URL("../index.ts", import.meta.url));
+    const loader = pathToFileURL(createRequire(import.meta.url).resolve("tsx")).href;
 
     async function status(): Promise<{ code: number; stderr: string }> {
       const env: NodeJS.ProcessEnv = {
@@ -68,7 +70,11 @@ describe("a command that needs the gateway's admin token, where there is none", 
       };
       delete env.OMNESIS_TOKEN;
       try {
-        const { stderr } = await execFileAsync("npx", ["tsx", entry, "status"], { env });
+        const { stderr } = await execFileAsync(
+          process.execPath,
+          ["--import", loader, entry, "status"],
+          { env },
+        );
         return { code: 0, stderr };
       } catch (err) {
         const e = err as { code?: number; stderr?: string };

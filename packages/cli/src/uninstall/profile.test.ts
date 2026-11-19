@@ -80,11 +80,27 @@ describe("removeInstallerPathLines", () => {
 });
 
 test("every profile the installer may have picked is a candidate, whatever SHELL is now", () => {
-  expect(profileCandidates("/home/maya")).toEqual([
-    "/home/maya/.zshrc",
-    "/home/maya/.bashrc",
-    "/home/maya/.bash_profile",
-    "/home/maya/.profile",
-    "/home/maya/.config/fish/config.fish",
-  ]);
+  const fixture =
+    process.platform === "win32"
+      ? {
+          home: "C:\\Users\\fixture-home",
+          profiles: [
+            "C:\\Users\\fixture-home\\.zshrc",
+            "C:\\Users\\fixture-home\\.bashrc",
+            "C:\\Users\\fixture-home\\.bash_profile",
+            "C:\\Users\\fixture-home\\.profile",
+            "C:\\Users\\fixture-home\\.config\\fish\\config.fish",
+          ],
+        }
+      : {
+          home: "/home/maya",
+          profiles: [
+            "/home/maya/.zshrc",
+            "/home/maya/.bashrc",
+            "/home/maya/.bash_profile",
+            "/home/maya/.profile",
+            "/home/maya/.config/fish/config.fish",
+          ],
+        };
+  expect(profileCandidates(fixture.home)).toEqual(fixture.profiles);
 });

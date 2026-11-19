@@ -92,7 +92,7 @@ import { createTranscriptionVocabularyState } from "../transcribe/vocabulary/reb
 import { installTranscriptionVocabulary } from "../transcribe/vocabulary/storage.js";
 import { createNoteAgentTables } from "../brain/note-agent/storage.js";
 import { createNoteHandoffTables } from "../brain/note-agent/handoffs.js";
-import { addStorageAuthority } from "./migration-218-storage-authority.js";
+import { addStorageAuthority } from "./migration-219-storage-authority.js";
 import { migrateV152AccessGrants } from "./migration-152-access-grants.js";
 import { migrateV153AccessPolicyFamilies } from "./migration-153-access-policy-families.js";
 import { markLinkStatsDirty } from "./DirtyMarks.js";
@@ -165,6 +165,7 @@ import { addAnnotationRecheckQueuedAt } from "./migration-213-annotation-recheck
 import { addDeviceEnrollment } from "./migration-214-device-enrollment.js";
 import { indexDocumentsByIdAndType } from "./migration-216-documents-id-type-index.js";
 import { addStickyDeviceRevocation } from "./migration-217-sticky-revocation.js";
+import { indexPersonNameAliases } from "./migration-218-person-name-alias-index.js";
 import { LATEST_SCHEMA_VERSION } from "./schema-version.js";
 import type { Db } from "./types.js";
 
@@ -5010,6 +5011,11 @@ export const MIGRATIONS: readonly Migration[] = [
   },
   {
     version: 218,
+    description: "index name aliases by their lowercased text so a name lookup seeks",
+    up: indexPersonNameAliases,
+  },
+  {
+    version: 219,
     description: "persist source-bound storage policy authority and resumable trim jobs",
     up: addStorageAuthority,
   },
@@ -5296,6 +5302,15 @@ export function runDowngradeCompatCheck(db: Db, opts?: { log?: Logger }): void {
   );
 }
 
+/** Content-free progress for startup observers. Committed means the version stamp is durable. */
+export interface MigrationProgress {
+  phase: "planned" | "started" | "committed" | "failed";
+  current: number;
+  total: number;
+  completed: number;
+  version?: number;
+}
+
 /**
  * Run any unapplied migrations. Idempotent: repeated calls after the
  * head version is reached are no-ops.
@@ -5306,7 +5321,11 @@ export function runDowngradeCompatCheck(db: Db, opts?: { log?: Logger }): void {
  */
 export function runMigrations(
   db: Db,
-  opts?: { log?: Logger; migrations?: readonly Migration[] },
+  opts?: {
+    log?: Logger;
+    migrations?: readonly Migration[];
+    onProgress?: (progress: MigrationProgress) => void;
+  },
 ): void {
   const logger = opts?.log ?? log;
   const list = opts?.migrations ?? MIGRATIONS;
@@ -5317,6 +5336,26 @@ export function runMigrations(
   // Sort by version so an out-of-order MIGRATIONS list still applies
   // sensibly (defensive: the constant is supposed to be ordered).
   const eligible = list.filter((m) => m.version > current).sort((a, b) => a.version - b.version);
+
+  let completed = 0;
+  const notify = (phase: MigrationProgress["phase"], version?: number): void => {
+    try {
+      opts?.onProgress?.({
+        phase,
+        current:
+          phase === "planned"
+            ? 0
+            : Math.min(completed + (phase === "committed" ? 0 : 1), eligible.length),
+        total: eligible.length,
+        completed,
+        ...(version === undefined ? {} : { version }),
+      });
+    } catch {
+      // An observer cannot turn an applied migration into a reported rollback.
+      logger.warn("Migration progress observer failed");
+    }
+  };
+  notify("planned");
 
   if (eligible.length === 0) {
     if (current < LATEST_SCHEMA_VERSION) {
@@ -5333,6 +5372,7 @@ export function runMigrations(
 
   for (const m of eligible) {
     if (m.version <= current) continue;
+    notify("started", m.version);
     logger.info(`running migration ${m.version}: ${m.description}`);
     const startMs = Date.now();
     if (m.ownTransaction) {
@@ -5349,6 +5389,8 @@ export function runMigrations(
           "INSERT INTO schema_migrations (version, description, run_at, duration_ms) VALUES (?, ?, ?, ?)",
         ).run(m.version, m.description, Date.now(), Date.now() - startMs);
         db.exec("COMMIT");
+        completed += 1;
+        notify("committed", m.version);
         logger.info(`migration ${m.version} applied in ${Date.now() - startMs}ms`);
       } catch (err) {
         try {
@@ -5356,6 +5398,7 @@ export function runMigrations(
         } catch {
           /* no transaction active — the body already rolled back */
         }
+        notify("failed", m.version);
         throw new Error(
           `migration ${m.version} (${m.description}) failed: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`,
           { cause: err },
@@ -5363,14 +5406,16 @@ export function runMigrations(
       }
       continue;
     }
-    db.exec("BEGIN");
     try {
+      db.exec("BEGIN");
       m.up(db);
       db.exec(`PRAGMA user_version = ${m.version}`);
       db.prepare(
         "INSERT INTO schema_migrations (version, description, run_at, duration_ms) VALUES (?, ?, ?, ?)",
       ).run(m.version, m.description, Date.now(), Date.now() - startMs);
       db.exec("COMMIT");
+      completed += 1;
+      notify("committed", m.version);
       logger.info(`migration ${m.version} applied in ${Date.now() - startMs}ms`);
     } catch (err) {
       // Try to roll back if a transaction is still active; if SQLite
@@ -5384,6 +5429,7 @@ export function runMigrations(
           `migration ${m.version}: rollback skipped (${rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr)})`,
         );
       }
+      notify("failed", m.version);
       throw new Error(
         `migration ${m.version} (${m.description}) failed: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`,
         { cause: err },

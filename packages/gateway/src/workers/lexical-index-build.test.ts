@@ -58,6 +58,7 @@ describe("lexical index build", () => {
 
   test("builds off-thread onto shared memory, ranking like an in-process build", async () => {
     const build = startLexicalIndexBuild({
+      source: "active",
       indexDbPath: dbPath,
       cacheSizeBytes: 8 * 1024 * 1024,
       backgroundWorkerNice: 0,
@@ -81,6 +82,7 @@ describe("lexical index build", () => {
 
   test("a missing database fails the build instead of hanging", async () => {
     const build = startLexicalIndexBuild({
+      source: "active",
       indexDbPath: join(dir, "missing.db"),
       cacheSizeBytes: 8 * 1024 * 1024,
       backgroundWorkerNice: 0,

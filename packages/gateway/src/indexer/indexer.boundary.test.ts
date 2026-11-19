@@ -15,6 +15,8 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import {
   createIndexDatabase,
@@ -111,7 +113,9 @@ describe("reindexMissing batch-loop bound", () => {
   let embedder: MockEmbedder;
 
   beforeEach(() => {
-    db = createIndexDatabase(`/tmp/omnesis-indexer-boundary-${randomUUID()}.db`);
+    db = createIndexDatabase(
+      fixtureJoin(fixtureTmpdir(), `omnesis-indexer-boundary-${randomUUID()}.db`),
+    );
     source = new MockSource();
     embedder = new MockEmbedder();
   });

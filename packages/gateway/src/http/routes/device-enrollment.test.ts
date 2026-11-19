@@ -3,6 +3,8 @@
 
 import { createPublicKey, generateKeyPairSync, randomUUID, type KeyObject } from "node:crypto";
 import { rmSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { signDeviceTranscript, tokenRotationTranscript } from "@omnesis/cloud-relay";
 import { defaultScopesForDeviceKind } from "@omnesis/types";
@@ -41,7 +43,7 @@ function boot(): void {
 
 beforeEach(() => {
   vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
-  dbPath = `/tmp/omnesis-device-enrollment-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-device-enrollment-${randomUUID()}.db`);
   db = createDatabase(dbPath);
   const admin = createDevice(db, { name: "Admin phone", kind: "ios" });
   adminToken = createToken(db, admin.id, defaultScopesForDeviceKind("ios")).token;

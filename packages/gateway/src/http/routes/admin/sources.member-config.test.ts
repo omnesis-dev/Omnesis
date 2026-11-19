@@ -3,6 +3,8 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { AccountId, SCOPE_ADMIN, SCOPE_READ, SourceType } from "@omnesis/types";
 import { createDatabase } from "../../../db.js";
@@ -35,7 +37,7 @@ function cleanupDb(path: string): void {
 }
 
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-member-config-http-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-member-config-http-${randomUUID()}.db`);
   db = createDatabase(dbPath);
   const cli = createDevice(db, { name: "Fictional CLI", kind: "cli" });
   adminToken = createToken(db, cli.id, [SCOPE_ADMIN, SCOPE_READ]).token;

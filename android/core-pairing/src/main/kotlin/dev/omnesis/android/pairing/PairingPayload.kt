@@ -4,6 +4,8 @@
 package dev.omnesis.android.pairing
 
 import dev.omnesis.android.transport.dto.OmnesisJson
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonObject
@@ -19,8 +21,14 @@ class PairingPayloadException(message: String) : Exception(message)
  * V1 (legacy pre-issued token). Same validation —
  * required fields, HTTPS transport, and a 64-char lowercase-hex
  * fingerprint for V3.
+ *
+ * Keys a version does not define are ignored, so a newer gateway can add one without
+ * breaking an older app. [tailnet] is such a key on V2–V4: the gateway marks a
+ * `gatewayUrl` that is its own address on the owner's Tailscale network.
  */
 sealed interface PairingPayload {
+    /** The gateway URL is the gateway's own address on the owner's Tailscale network. */
+    val tailnet: Boolean get() = false
 
     sealed interface V4Tls {
         data object System : V4Tls
@@ -29,10 +37,20 @@ sealed interface PairingPayload {
         data class PinnedKeyStrict(val spkiFingerprint: String) : V4Tls
     }
 
-    data class V4(val gatewayUrl: String, val pairingCode: String, val tls: V4Tls) : PairingPayload
+    data class V4(
+        val gatewayUrl: String,
+        val pairingCode: String,
+        val tls: V4Tls,
+        override val tailnet: Boolean = false,
+    ) : PairingPayload
 
-    data class V3(val gatewayUrl: String, val pairingCode: String, val fingerprint: String) : PairingPayload
-    data class V2(val gatewayUrl: String, val pairingCode: String) : PairingPayload
+    data class V3(
+        val gatewayUrl: String,
+        val pairingCode: String,
+        val fingerprint: String,
+        override val tailnet: Boolean = false,
+    ) : PairingPayload
+    data class V2(val gatewayUrl: String, val pairingCode: String, override val tailnet: Boolean = false) : PairingPayload
     data class V1(val url: String, val token: String, val accountId: String, val name: String) : PairingPayload
 
     companion object {
@@ -42,6 +60,8 @@ sealed interface PairingPayload {
                 .getOrElse { throw PairingPayloadException("invalid pairing payload: not JSON") }
 
             fun str(key: String): String = obj[key]?.jsonPrimitive?.contentOrNull.orEmpty()
+            // Only a JSON `true` marks the address; anything else, or nothing, is an ordinary pairing.
+            val tailnet = (obj["tailnet"] as? JsonPrimitive)?.takeUnless { it.isString }?.booleanOrNull == true
 
             return when (val v = obj["v"]?.jsonPrimitive?.intOrNull) {
                 4 -> {
@@ -57,20 +77,20 @@ sealed interface PairingPayload {
                     when (mode) {
                         "system" -> {
                             requireHttpsOrigin(gatewayUrl)
-                            V4(gatewayUrl, pairingCode, V4Tls.System)
+                            V4(gatewayUrl, pairingCode, V4Tls.System, tailnet)
                         }
                         "pinned-key-strict" -> {
                             val spki = tls["spkiFingerprint"]?.jsonPrimitive?.contentOrNull.orEmpty()
                             requireNonEmpty(spki, "tls.spkiFingerprint")
                             requireValidFingerprint(spki)
-                            V4(gatewayUrl, pairingCode, V4Tls.PinnedKeyStrict(spki))
+                            V4(gatewayUrl, pairingCode, V4Tls.PinnedKeyStrict(spki), tailnet)
                         }
                         "pinned-leaf", "pinned-leaf-strict" -> {
                             val fingerprint = tls["fingerprint"]?.jsonPrimitive?.contentOrNull.orEmpty()
                             requireNonEmpty(fingerprint, "tls.fingerprint")
                             requireValidFingerprint(fingerprint)
                             V4(gatewayUrl, pairingCode, if (tls["mode"]?.jsonPrimitive?.contentOrNull == "pinned-leaf-strict")
-                                V4Tls.PinnedLeafStrict(fingerprint) else V4Tls.PinnedLeaf(fingerprint))
+                                V4Tls.PinnedLeafStrict(fingerprint) else V4Tls.PinnedLeaf(fingerprint), tailnet)
                         }
                         else -> throw PairingPayloadException("invalid TLS trust mode")
                     }
@@ -85,7 +105,7 @@ sealed interface PairingPayload {
                     requireNonEmpty(fingerprint, "fingerprint")
                     requireHttpsUrl(gatewayUrl)
                     requireValidFingerprint(fingerprint)
-                    V3(gatewayUrl, pairingCode, fingerprint)
+                    V3(gatewayUrl, pairingCode, fingerprint, tailnet)
                 }
 
                 2 -> {
@@ -94,7 +114,7 @@ sealed interface PairingPayload {
                     requireNonEmpty(gatewayUrl, "gatewayUrl")
                     requireNonEmpty(pairingCode, "pairingCode")
                     requireHttpsUrl(gatewayUrl)
-                    V2(gatewayUrl, pairingCode)
+                    V2(gatewayUrl, pairingCode, tailnet)
                 }
 
                 1 -> {

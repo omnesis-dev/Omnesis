@@ -15,9 +15,13 @@ import { html } from "htm/preact";
 import { replaceRoute } from "../lib/router.js";
 import { lazy } from "../lib/lazy.js";
 import { WarningTriangle } from "../components/model-health.js";
+import { AttentionIcon } from "../components/attention-icon.js";
+import { settingsTabAttention } from "../lib/attention.js";
 import { TabBar } from "../components/tab-bar.js";
 import {
   settingsTabs,
+  settingsTabAvailable,
+  settingsTabParent,
   DEFAULT_SETTINGS_TAB,
   SETTINGS_TAB_KEYS,
   EXPERIMENTAL_SETTINGS_TABS,
@@ -32,6 +36,11 @@ const AccessView = lazy(() => import("./access.js").then((m) => m.AccessView));
 const PoliciesView = lazy(() => import("./policies.js").then((m) => m.PoliciesView));
 const DevicesView = lazy(() => import("./devices.js").then((m) => m.DevicesView));
 const RelayView = lazy(() => import("./relay.js").then((m) => m.RelayView));
+const TailscaleView = lazy(() => import("./tailscale.js").then((m) => m.TailscaleView));
+const HostTailscaleView = lazy(() => import("./remote-access/own-pages.js").then((m) => m.HostTailscaleView));
+const OwnAddressView = lazy(() => import("./remote-access/own-pages.js").then((m) => m.OwnAddressView));
+const McpView = lazy(() => import("./remote-access/own-pages.js").then((m) => m.McpView));
+const RemoteAccessView = lazy(() => import("./remote-access.js").then((m) => m.RemoteAccessView));
 const SweepsView = lazy(() => import("./sweeps.js").then((m) => m.SweepsView));
 
 const SUN_ICON = html`<svg aria-hidden="true" viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="3.25"/><path d="M8 1v1.5M8 13.5V15M1 8h1.5M13.5 8H15M3.05 3.05l1.05 1.05M11.9 11.9l1.05 1.05M3.05 12.95l1.05-1.05M11.9 4.1l1.05-1.05"/></svg>`;
@@ -57,6 +66,9 @@ export function SettingsView({
   lab = { brain: experimental },
   labAvailable = false,
   cloudRelay = false,
+  tailscaleEmbed = false,
+  // What waits for the owner's decision (`useAttention`), marked on the Devices and Access tabs.
+  attention = null,
   theme = "dark",
   onThemeToggle,
   onLogout,
@@ -67,10 +79,13 @@ export function SettingsView({
   // lands where it points.
   const requested = SETTINGS_TAB_KEYS.includes(tab) ? tab : DEFAULT_SETTINGS_TAB;
   // A link into a disabled feature lands on the default tab.
-  const activeTab =
-    (!experimental && EXPERIMENTAL_SETTINGS_TABS.includes(requested)) || (requested === "sweeps" && !lab.brain) || (requested === "lab" && !labAvailable) || (requested === "account" && !cloudRelay)
+  const page =
+    (!experimental && EXPERIMENTAL_SETTINGS_TABS.includes(requested)) || (requested === "sweeps" && !lab.brain) || (requested === "lab" && !labAvailable) || !settingsTabAvailable(requested, { cloudRelay, tailscaleEmbed })
       ? DEFAULT_SETTINGS_TAB
       : requested;
+  // A detail page (the Omnesis account, the Tailscale device) shows its parent tab as current.
+  const parent = settingsTabParent(page);
+  const activeTab = parent ?? page;
 
   // Mirror the chosen tab into the path so a refresh lands in the same place.
   // `replaceRoute` (replaceState + re-parse) keeps tab toggles out of the back
@@ -79,14 +94,16 @@ export function SettingsView({
   //
   // Re-selecting the tab already on screen is a no-op UNLESS that tab has a
   // page open below it, in which case clicking it walks back up to the tab's
-  // own list rather than sitting inert. Three tabs open pages: Models labels
-  // both the capability grid and every capability's detail, Policies both the
-  // list and one policy's editor, and Access both the inventory and each of an
-  // access level's editor, a new level, an authorization review, and the
-  // connect dialog.
+  // own list rather than sitting inert. Four tabs open pages: Connectivity
+  // labels its summary and the pages behind it (the Omnesis account and
+  // relay, either Tailscale, the owner's own domain, the MCP server), Models both the capability grid and every capability's
+  // detail, Policies both the list and one policy's editor, and Access both the
+  // inventory and each of an access level's editor, a new level, an
+  // authorization review, and the connect dialog.
   const switchTab = (next) => {
     const pageOpen = Boolean(
-      modelsSection
+      parent
+        || modelsSection
         || policyId
         || accessLevelId
         || accessNewLevel
@@ -98,7 +115,7 @@ export function SettingsView({
   };
 
   return html`
-    <div class=${cloudRelay ? "settings-view relay-on" : "settings-view"}>
+    <div class="settings-view">
       <div class="settings-header">
         <div>
           <h1 class="settings-title">Settings</h1>
@@ -129,17 +146,30 @@ export function SettingsView({
         style="margin-bottom:16px;"
         active=${activeTab}
         onSelect=${switchTab}
-        tabs=${settingsTabs({ experimental, brain: lab.brain, labAvailable, cloudRelay }).map((item) => item.key === "models" && modelHealth?.warnings?.length
-          ? { ...item, label: html`Models <${WarningTriangle} label="Models need attention" />` }
-          : item.key === "storage" && storagePressure && storagePressure.state !== "normal"
-          ? { ...item, label: html`Storage <${WarningTriangle} label="Storage needs attention" />` } : item)}
+        tabs=${settingsTabs({ experimental, brain: lab.brain, labAvailable, cloudRelay, tailscaleEmbed }).map((item) => {
+          if (item.key === "models" && modelHealth?.warnings?.length) {
+            return { ...item, label: html`${item.label} <${WarningTriangle} label="Models need attention" />` };
+          }
+          if (item.key === "storage" && storagePressure && storagePressure.state !== "normal") {
+            return { ...item, label: html`${item.label} <${WarningTriangle} label="Storage needs attention" />` };
+          }
+          const waiting = settingsTabAttention(item.key, attention);
+          return waiting ? { ...item, label: html`${item.label} <${AttentionIcon} label=${waiting} />` } : item;
+        })}
       />
       ${activeTab === "lab" && html`<${LabView} onChange=${onLabChange} />`}
       ${activeTab === "config" && html`<${ConfigView} />`}
       ${activeTab === "storage" && html`<${StorageView} onChange=${onStorageRefresh} />`}
       ${activeTab === "omnesis-md" && html`<${OmnesisMdView} />`}
       ${activeTab === "models" && html`<${ModelsView} section=${modelsSection ?? null} onModelsRefresh=${onModelsRefresh} />`}
-      ${activeTab === "account" && html`<${RelayView} />`}
+      ${parent && html`<button type="button" class="doc-back access-page-back remote-access-back" onClick=${() => switchTab(parent)}>← Connectivity</button>`}
+      ${page === "account" && html`<${RelayView} part="account" />`}
+      ${page === "relay" && html`<${RelayView} part="relay" />`}
+      ${page === "host-tailscale" && html`<${HostTailscaleView} />`}
+      ${page === "own-address" && html`<${OwnAddressView} />`}
+      ${page === "mcp" && html`<${McpView} />`}
+      ${page === "tailscale" && html`<${TailscaleView} />`}
+      ${page === "connectivity" && html`<${RemoteAccessView} cloudRelay=${cloudRelay} tailscaleEmbed=${tailscaleEmbed} />`}
       ${activeTab === "sweeps" && html`<${SweepsView} />`}
       ${activeTab === "access" && html`<${AccessView}
         authorizationId=${accessAuthorizationId ?? null}
@@ -148,9 +178,10 @@ export function SettingsView({
         connectOpen=${accessConnect ?? false}
         completeInPortal=${completeAccessInPortal ?? false}
         cloudRelay=${cloudRelay}
+        tailscaleEmbed=${tailscaleEmbed}
       />`}
       ${activeTab === "policies" && html`<${PoliciesView} policyId=${policyId ?? null} />`}
-      ${activeTab === "devices" && html`<${DevicesView} pairKindRequest=${pair ?? null} focusDeviceId=${device ?? null} cloudRelay=${cloudRelay} />`}
+      ${activeTab === "devices" && html`<${DevicesView} pairKindRequest=${pair ?? null} focusDeviceId=${device ?? null} cloudRelay=${cloudRelay} tailscaleEmbed=${tailscaleEmbed} />`}
     </div>
   `;
 }

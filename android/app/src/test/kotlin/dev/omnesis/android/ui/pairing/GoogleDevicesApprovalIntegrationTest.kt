@@ -45,17 +45,21 @@ class GoogleDevicesApprovalIntegrationTest {
     @Test fun admin_device_opens_and_dismisses_requests_and_retirement_removes_the_admin_affordance() {
         runBlocking { graph.sessionManager().pairFromQr("""{"v":4,"gatewayUrl":"${gateway.url.trimEnd('/')}","pairingCode":"ABCD-EFGH","tls":{"mode":"pinned-leaf-strict","fingerprint":"${gateway.fingerprint}"}}""") }
         val vm = DevicesViewModel(graph.sessionManager(), dev.omnesis.android.access.PairingPendingRequests())
-        compose.setContent { OmnesisTheme { DevicesScreen(onBack = {}, cloudFeatures = true, vm = vm) } }
+        // The mock gateway does not advertise Tailscale joins, so they are never asked for.
+        val joins = dev.omnesis.android.ui.devices.TailscaleJoinRequestsViewModel { dev.omnesis.android.ui.devices.tailscaleJoinClient(graph.sessionManager()) }
+        compose.setContent { OmnesisTheme { DevicesScreen(onBack = {}, cloudFeatures = true, vm = vm, tailscaleJoins = joins) } }
         compose.onNodeWithContentDescription("Pairing requests").performClick()
-        compose.onNodeWithText("Pairing requests").assertExists()
+        compose.onNodeWithText("Waiting for your OK").assertExists()
         compose.onNodeWithText("Done").performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick) { it() }
         compose.mainClock.advanceTimeByFrame(); compose.waitForIdle()
-        compose.waitUntil(timeoutMillis = 5000) { compose.onAllNodesWithText("Pairing requests").fetchSemanticsNodes().isEmpty() }
+        compose.waitUntil(timeoutMillis = 5000) { compose.onAllNodesWithText("Waiting for your OK").fetchSemanticsNodes().isEmpty() }
         compose.onNodeWithContentDescription("Pairing requests").performClick()
-        compose.onNodeWithText("Pairing requests").assertExists()
+        compose.onNodeWithText("Waiting for your OK").assertExists()
         compose.runOnIdle { graph.sessionManager().beginRepair(); vm.load() }
         compose.mainClock.advanceTimeByFrame(); compose.waitForIdle()
         compose.onNodeWithContentDescription("Pairing requests").assertDoesNotExist()
-        compose.waitUntil(timeoutMillis = 5000) { compose.onAllNodesWithText("Pairing requests").fetchSemanticsNodes().isEmpty() }
+        assertEquals(false, joins.state.value.available)
+        assertTrue(gateway.requests.none { it.startsWith("GET /admin/tailscale/") })
+        compose.waitUntil(timeoutMillis = 5000) { compose.onAllNodesWithText("Waiting for your OK").fetchSemanticsNodes().isEmpty() }
     }
 }

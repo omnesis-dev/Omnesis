@@ -48,6 +48,8 @@ export const bundles = {
       "near-dup*.e2e.test.ts",
       "temporal-*.e2e.test.ts",
       "embed*.e2e.test.ts",
+      "lexical-*.e2e.test.ts",
+      "*-keyword-*.e2e.test.ts",
     ],
   },
   "agent-brain-watch": {
@@ -125,6 +127,11 @@ export const bundles = {
       "restart-durability.e2e.test.ts",
     ],
   },
+  // The gateway's own Tailscale device on a private test tailnet; needs Go.
+  "tailscale-embed": {
+    kind: "e2e",
+    tests: ["tailscale-embed*.e2e.test.ts"],
+  },
   "gateway-core": {
     kind: "e2e",
     tests: [
@@ -132,6 +139,7 @@ export const bundles = {
       "advanced.e2e.test.ts",
       "analytics-row-key.e2e.test.ts",
       "cli.e2e.test.ts",
+      "collector-parent-shutdown.e2e.test.ts",
       "sources-add-cli.e2e.test.ts",
       "declared-edges.e2e.test.ts",
       "fleet-update.e2e.test.ts",
@@ -140,6 +148,8 @@ export const bundles = {
       "websocket.e2e.test.ts",
       "phone-region.e2e.test.ts",
       "scheduler-heartbeat.e2e.test.ts",
+      "gateway-startup.e2e.test.ts",
+      "gateway-lifecycle.e2e.test.ts",
       "packages/gateway/**/*.e2e.test.ts",
       "packages/cli/**/*.e2e.test.ts",
     ],
@@ -236,10 +246,34 @@ function isNativeWire(path) {
   );
 }
 
+/** The gateway's own Tailscale device: its helper, gateway module, routes, CLI and tests. */
+function isTailscaleEmbed(path) {
+  return (
+    path.startsWith("packages/tailnet-helper/") ||
+    path.startsWith("packages/gateway/src/tailscale-embed") ||
+    path === "packages/gateway/src/http/routes/tailscale.ts" ||
+    path === "packages/core/src/tailscale-embed-wire.ts" ||
+    /^packages\/cli\/src\/(?:commands\/)?tailscale/.test(path) ||
+    /^packages\/collector\/src\/e2e\/(?:tailnet-harness\.ts|fixture-pki\.ts|tailscale-embed)/.test(
+      path,
+    ) ||
+    path.startsWith("scripts/tailnet-test/") ||
+    path.startsWith("scripts/tailnet-helper/")
+  );
+}
+
 const areas = [
   { test: (p) => p.startsWith("packages/cloud-relay/"), bundles: ["security-notifications"] },
+  { test: isTailscaleEmbed, bundles: ["tailscale-embed"] },
   {
-    test: (p) => /packages\/(?:core|types|config|source-sdk|gateway-client)\/src\//.test(p),
+    // The test PKI and the account-enrollment harness serve the relay's suites too.
+    test: (p) =>
+      /^packages\/collector\/src\/e2e\/(?:fixture-pki|account-enrollment-harness)\.ts$/.test(p),
+    bundles: ["security-notifications"],
+  },
+  {
+    test: (p) =>
+      /packages\/(?:core|platform|types|config|source-sdk|gateway-client)\/src\//.test(p),
     bundles: ["gateway-core"],
   },
   { test: (p) => p.startsWith("ios/"), bundles: ["ios-logic"] },
@@ -273,6 +307,7 @@ const areas = [
   {
     test: (p) =>
       p.startsWith("packages/") &&
+      !isTailscaleEmbed(p) &&
       /(?:search|embed|indexer|search-index|ranking|people|identity|graph|link|temporal|near-dup)/.test(
         p,
       ),

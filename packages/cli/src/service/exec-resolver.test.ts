@@ -1,9 +1,19 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { join, resolve } from "node:path";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 import { CliError } from "@omnesis/cli-shared";
-import { resolveServiceExec, serviceBinaryName, type ExecResolveDeps } from "./exec-resolver.js";
+import {
+  defaultExecResolveDeps,
+  resolveServiceExec,
+  serviceBinaryName,
+  type ExecResolveDeps,
+} from "./exec-resolver.js";
 
 function deps(overrides: Partial<ExecResolveDeps> = {}): ExecResolveDeps {
   return {
@@ -12,7 +22,7 @@ function deps(overrides: Partial<ExecResolveDeps> = {}): ExecResolveDeps {
     execPath: "/opt/node/bin/node",
     which: () => Promise.resolve(null),
     realpath: (p) => p,
-    exists: () => false,
+    sourceLoader: () => null,
     ...overrides,
   };
 }
@@ -34,12 +44,12 @@ describe("resolveServiceExec", () => {
         which: () => Promise.resolve("/path/omnesis"),
       }),
     );
-    expect(exec).toEqual(["/custom/omnesis", "gateway", "serve"]);
+    expect(exec).toEqual([resolve("/custom/omnesis"), "gateway", "serve"]);
   });
 
   it("resolves a relative --exec against the cwd", async () => {
     const exec = await resolveServiceExec("gateway", "bin/omnesis", deps());
-    expect(exec[0]).toBe(`${process.cwd()}/bin/omnesis`);
+    expect(exec[0]).toBe(resolve("bin/omnesis"));
   });
 
   it("$OMNESIS_SERVICE_EXEC wins over which", async () => {
@@ -51,7 +61,7 @@ describe("resolveServiceExec", () => {
         which: () => Promise.resolve("/path/omnesis"),
       }),
     );
-    expect(exec).toEqual(["/env/omnesis", "collector", "run"]);
+    expect(exec).toEqual([resolve("/env/omnesis"), "collector", "run"]);
   });
 
   it("falls back to which omnesis for gateway/collector", async () => {
@@ -93,11 +103,13 @@ describe("resolveServiceExec", () => {
       undefined,
       deps({
         argv1: "/repo/packages/cli/src/index.ts",
-        exists: (p) => p === "/repo/node_modules/.bin/tsx",
+        sourceLoader: () => "/repo/node_modules/tsx/dist/loader.mjs",
       }),
     );
     expect(exec).toEqual([
-      "/repo/node_modules/.bin/tsx",
+      "/opt/node/bin/node",
+      "--import",
+      pathToFileURL("/repo/node_modules/tsx/dist/loader.mjs").href,
       "/repo/packages/cli/src/index.ts",
       "collector",
       "run",
@@ -111,11 +123,47 @@ describe("resolveServiceExec", () => {
       deps({
         argv1: "/link/index.ts",
         realpath: () => "/repo/packages/cli/src/index.ts",
-        exists: (p) => p === "/repo/node_modules/.bin/tsx",
+        sourceLoader: () => "/repo/node_modules/tsx/dist/loader.mjs",
       }),
     );
-    expect(exec[0]).toBe("/repo/node_modules/.bin/tsx");
-    expect(exec[1]).toBe("/repo/packages/cli/src/index.ts");
+    expect(exec[0]).toBe("/opt/node/bin/node");
+    expect(exec[2]).toBe(pathToFileURL("/repo/node_modules/tsx/dist/loader.mjs").href);
+    expect(exec[3]).toBe("/repo/packages/cli/src/index.ts");
+  });
+
+  it("runs source through Node with the checkout's own loader from a path containing spaces", async () => {
+    const root = mkdtempSync(join(tmpdir(), "source runner # "));
+    try {
+      const loaderDir = join(root, "node_modules", "tsx");
+      mkdirSync(loaderDir, { recursive: true });
+      writeFileSync(
+        join(loaderDir, "package.json"),
+        JSON.stringify({ name: "tsx", exports: "./loader.mjs" }),
+      );
+      writeFileSync(
+        join(loaderDir, "loader.mjs"),
+        "globalThis.sourceLoaderMarker = 'target loader';",
+      );
+      const entry = join(root, "entry.ts");
+      writeFileSync(
+        entry,
+        "process.stdout.write(globalThis.sourceLoaderMarker + ':' + process.argv.slice(2).join(' '));",
+      );
+      const actual = defaultExecResolveDeps();
+      const [command, ...args] = await resolveServiceExec("collector", undefined, {
+        ...actual,
+        argv1: entry,
+        which: async () => null,
+      });
+      expect(command).toBe(process.execPath);
+      expect(args[1]).toContain("%20");
+      expect(args[1]).toContain("%23");
+      expect(execFileSync(command!, args, { encoding: "utf8" })).toBe(
+        "target loader:collector run",
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("errors when a .ts entry has no tsx runner above it", async () => {

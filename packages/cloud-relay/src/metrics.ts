@@ -82,6 +82,7 @@ export type StreamEvent =
   | "closed"
   | "offline"
   | "capacity"
+  | "client_capacity"
   | "aborted"
   | "timeout"
   | "gateway_disconnected"
@@ -89,7 +90,9 @@ export type StreamEvent =
 export type DataEvent =
   | "accepted"
   | "capacity"
+  | "client_capacity"
   | "hello_timeout"
+  | "idle_timeout"
   | "unknown_gateway"
   | "invalid_hello"
   | "connect_failed"

@@ -20,6 +20,8 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, test } from "vitest";
 import { createDatabase } from "../db.js";
@@ -167,7 +169,7 @@ describe("rewritten keyset cursors", () => {
 
 describe("rewritten keyset pages end to end", () => {
   function corpus(): Db {
-    const path = `/tmp/omnesis-test-${randomUUID()}.db`;
+    const path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
     const db = createDatabase(path) as unknown as Db;
     opened.push({ db, path });
     seedPilotCorpus(db, { docs: 2_000 });

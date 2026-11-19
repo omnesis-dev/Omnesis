@@ -3,6 +3,8 @@
 
 import { randomUUID, createHash } from "node:crypto";
 import { rmSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { createLogger, type EntailCapability } from "@omnesis/core";
 import { createDatabase } from "../db.js";
@@ -30,7 +32,7 @@ let path: string;
 beforeEach(() => {
   vi.stubEnv("OMNESIS_EXPERIMENTAL", "0");
   vi.stubEnv("OMNESIS_SYNTHETIC", "0");
-  path = `/tmp/omnesis-test-${randomUUID()}.db`;
+  path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
   db = createDatabase(path);
   db.prepare(
     `INSERT INTO documents (id, provider_id, source_id, external_id, title, content, content_hash,

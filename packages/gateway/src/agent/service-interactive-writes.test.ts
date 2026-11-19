@@ -682,14 +682,27 @@ describe("task creation conversation reference", () => {
         truncated: false,
       };
     });
+    let resolveTurn!: () => void;
+    let rejectTurn!: (error: unknown) => void;
+    const turnFinished = new Promise<void>((resolve, reject) => {
+      resolveTurn = resolve;
+      rejectTurn = reject;
+    });
     const backend: ChatBackend = {
       name: "scripted",
       model: "scripted",
       async *runTurn(input) {
-        const ids = { sessionId: input.sessionId, messageId: input.messageId };
-        yield { type: "agent.message.start", payload: { ...ids, role: "assistant" } };
-        await input.tools.find((tool) => tool.name === "task_create")!.invoke({}, ids as never);
-        yield { type: "agent.message.end", payload: { ...ids, stopReason: "end_turn" } };
+        try {
+          const ids = { sessionId: input.sessionId, messageId: input.messageId };
+          yield { type: "agent.message.start", payload: { ...ids, role: "assistant" } };
+          await input.tools.find((tool) => tool.name === "task_create")!.invoke({}, ids as never);
+          yield { type: "agent.message.end", payload: { ...ids, stopReason: "end_turn" } };
+        } catch (error) {
+          rejectTurn(error);
+          throw error;
+        } finally {
+          resolveTurn();
+        }
       },
     };
     const service = new AgentService({
@@ -714,7 +727,8 @@ describe("task creation conversation reference", () => {
     try {
       const { sessionId } = await service.createSession("device:owner");
       service.sendMessage("device:owner", sessionId, "Remind me to polish the telescope");
-      await vi.waitFor(() => expect(reference).toBe("doc_current_chat"));
+      await turnFinished;
+      expect(reference).toBe("doc_current_chat");
       expect(ensure).toHaveBeenCalledWith(sessionId);
     } finally {
       await service.dispose();

@@ -933,6 +933,47 @@ describe("InferenceRegistry.loadConfig", () => {
       probeSpy.mockRestore();
     }
   });
+
+  it("keeps a probe's verdict when the config reloads while the probe is in flight", async () => {
+    // Every config write reloads the registry, and one can arrive while a
+    // backend's first probe still waits for its answer (a source registering
+    // at boot mirrors its settings into the config). The reload keeps the
+    // unchanged backend, so the verdict must land on the backend the registry
+    // still serves, not leave it `probing` for the life of the process.
+    const reg = makeRegistry();
+    const probeSpy = vi.spyOn(reg, "probeBackends");
+    let answer!: () => void;
+    const answered = new Promise<void>((resolve) => {
+      answer = resolve;
+    });
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => {
+      await answered;
+      return new Response(JSON.stringify({ data: [{ id: "the-model" }] }), { status: 200 });
+    };
+    const config: OmnesisConfig = {
+      inference: {
+        backends: { scripted: { type: "http", url: "http://localhost:18081" } },
+        assignments: { "background-agent": "scripted/the-model" },
+      },
+    };
+
+    try {
+      reg.loadConfig(config);
+      expect(reg.getOverview().backends["scripted"].status).toBe("probing");
+      reg.loadConfig({ ...config, sources: {} });
+      expect(probeSpy).toHaveBeenCalledTimes(1);
+
+      answer();
+      await Promise.all(probeSpy.mock.results.map((r) => r.value));
+
+      expect(reg.getOverview().backends["scripted"].status).toBe("ok");
+      expect(reg.resolve("background-agent")).toMatchObject({ kind: "http", available: true });
+    } finally {
+      globalThis.fetch = originalFetch;
+      probeSpy.mockRestore();
+    }
+  });
 });
 
 // ── getOverview ──────────────────────────────────────────────────────

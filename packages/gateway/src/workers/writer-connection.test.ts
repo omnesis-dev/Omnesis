@@ -3,6 +3,8 @@
 
 import { randomBytes, randomUUID } from "node:crypto";
 import { rmSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -14,7 +16,7 @@ const opened: Database.Database[] = [];
 let path = "";
 
 function seed(): void {
-  path = `/tmp/omnesis-test-${randomUUID()}.db`;
+  path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
   const db = new Database(path);
   db.exec("PRAGMA journal_mode = WAL");
   db.exec("CREATE TABLE counters (key TEXT PRIMARY KEY, value INTEGER NOT NULL)");
@@ -81,7 +83,7 @@ describe("openWriteConn", () => {
     ["plaintext", undefined],
     ["encrypted", randomBytes(32)],
   ])("configures a %s WAL handle for checkpoints made between ops", (_label, key) => {
-    path = `/tmp/omnesis-test-${randomUUID()}.db`;
+    path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
     if (key) {
       const seedDb = openEncryptedSqlite(path, { key });
       seedDb.exec("PRAGMA journal_mode = WAL");

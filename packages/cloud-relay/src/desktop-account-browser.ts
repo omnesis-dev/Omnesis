@@ -11,6 +11,7 @@ import {
   type ProofEvidence,
 } from "./operation-proof.js";
 import { RelayError } from "./tunnels.js";
+import { LaunchTaken, launchCookie, type LaunchView } from "./browser-launch.js";
 import type { AccountBrowserAccount } from "./account-browser-broker.js";
 import type { RelaySessions } from "./identity.js";
 
@@ -60,7 +61,7 @@ interface Operation {
  * is on the machine where the sign-in finished: the browser hands it a secret over 127.0.0.1.
  */
 export class DesktopAccountBrowser implements AccountOperationBroker {
-  private readonly origin: string;
+  readonly origin: string;
   private readonly operations = new Map<string, Operation>();
   private closed = false;
   constructor(
@@ -115,34 +116,39 @@ export class DesktopAccountBrowser implements AccountOperationBroker {
       expiresAt,
     };
   }
+  /** What opening the link shows. Read only: a link scanner's fetch must change nothing (F43). */
+  peekLaunch(id: string, ticket: string, cookieHeader: string): LaunchView {
+    const operation = this.ticketed(id, ticket);
+    if (this.holds(id, operation, cookieHeader))
+      return { state: "here", location: this.location(id) };
+    // Once a browser holds it, every other one is told so, whatever stage it reached.
+    return operation.phase === "created" ? { state: "open" } : { state: "taken" };
+  }
+  /** The Continue press on the link's page. */
   launch(id: string, ticket: string, cookieHeader: string) {
-    const operation = this.current(id);
-    if (
-      !this.launchable(operation) ||
-      !opaque.safeParse(ticket).success ||
-      !timingSafeEqual(digest(ticket), operation.launchHash)
-    )
-      throw new RelayError(403, "Desktop browser launch refused");
-    return this.bind(id, operation, cookieHeader);
+    return this.bind(id, this.ticketed(id, ticket), cookieHeader);
   }
   private claim(id: string, cookieHeader: string) {
     const operation = this.current(id);
-    if (!this.launchable(operation)) throw new RelayError(403, "Desktop browser launch refused");
     const result = this.bind(id, operation, cookieHeader);
-    // Never cleared: a later launch from the link does not prove the code was not used elsewhere.
+    // Never cleared: a link opened in the same browser does not prove the code was not typed elsewhere.
     operation.viaCode = true;
     return result;
   }
-  /**
-   * The link or the code may be opened again until somebody signs in: a closed tab or a second
-   * device must not strand the request. Each launch binds a new browser and drops the previous one.
-   */
-  private launchable(operation: Operation): boolean {
-    return (
-      operation.phase === "created" || (operation.phase === "launched" && operation.proof.needed())
-    );
+  private ticketed(id: string, ticket: string): Operation {
+    const operation = this.current(id);
+    if (!opaque.safeParse(ticket).success || !timingSafeEqual(digest(ticket), operation.launchHash))
+      throw new RelayError(403, "Desktop browser launch refused");
+    return operation;
   }
+  /**
+   * The first browser to open the link or enter the code keeps the sign-in, and only it may open
+   * either again. Another browser is refused rather than taking it over: the link is a bearer secret,
+   * and link scanners and anyone it was forwarded to would otherwise own the sign-in (F43).
+   */
   private bind(id: string, operation: Operation, cookieHeader: string) {
+    if (this.holds(id, operation, cookieHeader)) return { location: this.location(id) };
+    if (operation.phase !== "created") throw new LaunchTaken();
     if (
       cookieHeader.split(";").filter((part) => part.trim().startsWith("__Host-omnesis-desktop-"))
         .length >= 8
@@ -151,7 +157,19 @@ export class DesktopAccountBrowser implements AccountOperationBroker {
     const browser = secret();
     operation.browserHash = digest(browser);
     operation.phase = "launched";
-    return { cookie: this.cookie(id, browser), location: `/_relay/account?desktop=${id}` };
+    return { cookie: this.cookie(id, browser), location: this.location(id) };
+  }
+  private holds(id: string, operation: Operation, cookieHeader: string): boolean {
+    const value = launchCookie(cookieHeader, this.cookieName(id));
+    return (
+      value !== undefined &&
+      opaque.safeParse(value).success &&
+      operation.browserHash !== undefined &&
+      timingSafeEqual(digest(value), operation.browserHash)
+    );
+  }
+  private location(id: string): string {
+    return `/_relay/account?desktop=${id}`;
   }
   describe(id: string, cookieHeader: string) {
     const operation = this.browser(id, cookieHeader);

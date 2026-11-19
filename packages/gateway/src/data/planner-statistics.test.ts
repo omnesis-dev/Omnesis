@@ -16,6 +16,8 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import Database from "better-sqlite3";
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
 import { createDatabase, upsertWithCursor } from "../db.js";
@@ -93,7 +95,7 @@ function cleanupDb(path: string): void {
 }
 
 function seeded(docs = 2_000): { db: Db; path: string } {
-  const path = `/tmp/omnesis-test-${randomUUID()}.db`;
+  const path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
   paths.push(path);
   const db = createDatabase(path) as unknown as Db;
   setActiveAlgoVersion(db as never, PILOT_ALGO);
@@ -499,7 +501,7 @@ describe("hot writer query plans on an analyzed corpus", () => {
 
   test("statistics alone send the unpinned bucket delete to the doc index", () => {
     const unpinned = BUCKET_DELETE_FOR_DOC_SQL.replace(" INDEXED BY idx_near_dup_lsh_doc", "");
-    const unanalyzedPath = `/tmp/omnesis-test-${randomUUID()}.db`;
+    const unanalyzedPath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
     paths.push(unanalyzedPath);
     const unanalyzed = createDatabase(unanalyzedPath) as unknown as Db;
     try {

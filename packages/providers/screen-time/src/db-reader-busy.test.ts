@@ -24,6 +24,16 @@ vi.mock("node:fs", async (importOriginal) => {
     },
   };
 });
+vi.mock("@omnesis/platform/windows-private-file", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@omnesis/platform/windows-private-file")>();
+  return {
+    ...actual,
+    copyWindowsPrivateFileSync: (source: string, target: string) => {
+      actual.copyWindowsPrivateFileSync(source, target);
+      hooks.afterCopy();
+    },
+  };
+});
 
 const roots: string[] = [];
 afterEach(() => {

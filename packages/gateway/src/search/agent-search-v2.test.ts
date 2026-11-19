@@ -2,6 +2,8 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { computeContentHash, type SearchProvenance } from "@omnesis/core";
 import { createDatabase } from "../db.js";
@@ -32,8 +34,8 @@ let gateway: Database.Database;
 let index: Database.Database;
 
 beforeEach(() => {
-  gateway = createDatabase(`/tmp/omnesis-test-${randomUUID()}.db`);
-  index = createIndexDatabase(`/tmp/omnesis-test-${randomUUID()}.db`);
+  gateway = createDatabase(fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`));
+  index = createIndexDatabase(fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`));
   gateway
     .prepare(
       "INSERT INTO devices (id,name,kind,paired_at) VALUES (?,'Example desktop','collector',1)",

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { AccountId, SourceType } from "@omnesis/types";
 import { beginSyncAttempt, createDatabase, getWipeEpoch } from "../../db.js";
@@ -360,8 +362,14 @@ describe("SourceModeTransitionCoordinator", () => {
   });
 
   test("restart recovers after DuckDB commits but before SQLite finalizes without duplicates", async () => {
-    const sqlitePath = `/tmp/omnesis-transition-recovery-${crypto.randomUUID()}.sqlite`;
-    const analyticsPath = `/tmp/omnesis-transition-recovery-${crypto.randomUUID()}.duckdb`;
+    const sqlitePath = fixtureJoin(
+      fixtureTmpdir(),
+      `omnesis-transition-recovery-${crypto.randomUUID()}.sqlite`,
+    );
+    const analyticsPath = fixtureJoin(
+      fixtureTmpdir(),
+      `omnesis-transition-recovery-${crypto.randomUUID()}.duckdb`,
+    );
     let db = createDatabase(sqlitePath);
     let analytics = new AnalyticsDb(analyticsPath);
     let first: SourceModeTransitionCoordinator | null = null;

@@ -9,6 +9,8 @@
 
 import { randomUUID } from "node:crypto";
 import { unlinkSync, existsSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import { SourceId, parseSourceId } from "@omnesis/types";
 import { createDatabase } from "../../db.js";
@@ -35,7 +37,7 @@ const REMEDY = {
 };
 
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-syncstate-remediation-test-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-syncstate-remediation-test-${randomUUID()}.db`);
   db = createDatabase(dbPath);
 });
 

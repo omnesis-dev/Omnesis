@@ -10,7 +10,6 @@ import { authorizeAccountDesktop } from "./account-desktop-client.js";
 import { readOrCreateDeviceKey } from "./device-key-file.js";
 import { selectAccountGateway } from "./gateway-choice-client.js";
 import { relayOrigin } from "./network.js";
-import type { certificateIsPubliclyLogged } from "./public-certificate.js";
 import type { GatewayChoice } from "./gateway-directory.js";
 
 /** Browser sign-in only requests enrollment. Trusted gateway approval and code comparison issue the data credential. */
@@ -27,7 +26,6 @@ export async function pairAccountDevice(
     fetch?: typeof fetch;
     gatewayJson?: typeof pinnedGatewayJson;
     wait?: (signal: AbortSignal) => Promise<void>;
-    publiclyLogged?: typeof certificateIsPubliclyLogged;
   } = {},
 ) {
   const relay = relayOrigin(options.relayUrl);
@@ -35,7 +33,6 @@ export async function pairAccountDevice(
     gatewayJson: dependencies.gatewayJson,
     wait: dependencies.wait,
     deviceKey: await readOrCreateDeviceKey(options.deviceKeyFile),
-    publiclyLogged: dependencies.publiclyLogged,
     discover: async (request, signal) => {
       const discovery = await (dependencies.authorize ?? authorizeAccountDesktop)(
         {

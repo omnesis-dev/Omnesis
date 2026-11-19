@@ -4,6 +4,8 @@
 import { html } from "htm/preact";
 import { navigate } from "../lib/router.js";
 
+const EMBEDDING_SETTINGS_PATH = "/portal/settings/models/embedder";
+
 /**
  * Rendered in the Search view while the indexer worker is still loading
  * its embedding model (typically ~15s after gateway start). Search still
@@ -15,7 +17,7 @@ import { navigate } from "../lib/router.js";
  *   spawning       → worker thread hasn't reported ready yet
  *   loading-model  → model is actively loading from disk
  *   failed         → init threw (e.g. DB open error); shows the reason
- *   disabled       → OMNESIS_INDEXER_ENABLED=false or model missing
+ *   disabled       → keyword-only mode, model missing, or indexing turned off
  *
  * `status: "ready"` hides the card.
  */
@@ -25,7 +27,7 @@ export function IndexerWarmingCard({ readiness }) {
 
   let title;
   let body;
-  let tone = "warming"; // "warming" | "error"
+  let tone = "warming";
 
   if (ix.status === "spawning" || ix.status === "loading-model") {
     const pct = typeof ix.progress === "number" ? Math.round(ix.progress * 100) : null;
@@ -66,18 +68,35 @@ export function IndexerWarmingCard({ readiness }) {
       </p>
     `;
   } else if (ix.status === "disabled") {
-    tone = "error";
-    title = "Indexer disabled";
-    const missingModel = typeof ix.reason === "string" && /model not found/i.test(ix.reason);
-    body = html`
-      <p>Indexing and vector search are unavailable.</p>
-      <pre class="indexer-warming-reason">${ix.reason}</pre>
-      ${missingModel && html`
-        <p class="indexer-warming-note">
-          Open the <a href="/portal/settings/models" onClick=${(e) => { e.preventDefault(); navigate("/portal/settings/models"); }}><strong>Models</strong> tab</a> to install an embedding model — the indexer will pick it up automatically.
+    const reason = typeof ix.reason === "string" ? ix.reason : "";
+    const missingModel = /model not found/i.test(reason);
+    if (ix.keywordIndexingActive || missingModel) {
+      const diagnostic = reason.replace(/; keyword indexing active$/, "");
+      tone = "info";
+      title = ix.keywordIndexingActive ? "Keyword-only search" : "Embedding model missing";
+      body = html`
+        <p>
+          <a href=${EMBEDDING_SETTINGS_PATH} onClick=${(event) => {
+            if (event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+            event.preventDefault();
+            navigate(EMBEDDING_SETTINGS_PATH);
+          }}>Set up an embedding model</a> to search by meaning as well as by keyword.
         </p>
-      `}
-    `;
+        ${diagnostic && diagnostic !== "Embedder assignment disabled" && html`
+          <details>
+            <summary class="indexer-warming-note">Technical details</summary>
+            <pre class="indexer-warming-reason">${diagnostic}</pre>
+          </details>
+        `}
+      `;
+    } else {
+      tone = "error";
+      title = "Indexer disabled";
+      body = html`
+        <p>Indexing and vector search are unavailable.</p>
+        <pre class="indexer-warming-reason">${ix.reason}</pre>
+      `;
+    }
   } else {
     return null;
   }
@@ -85,7 +104,9 @@ export function IndexerWarmingCard({ readiness }) {
   return html`
     <div class=${`indexer-warming-card indexer-warming-${tone}`}>
       <div class="indexer-warming-header">
-        <span class="indexer-warming-pill">${tone === "error" ? "INDEXER ERROR" : "WARMING UP"}</span>
+        ${tone !== "info" && html`
+          <span class="indexer-warming-pill">${tone === "error" ? "INDEXER ERROR" : "WARMING UP"}</span>
+        `}
         <span class="indexer-warming-title">${title}</span>
       </div>
       <div class="indexer-warming-body">${body}</div>

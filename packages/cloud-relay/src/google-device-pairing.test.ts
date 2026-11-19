@@ -535,7 +535,9 @@ test("legacy Google discovery takes a single listed gateway without asking and r
   f.dependencies.fetch.mockImplementation(async (url, init) =>
     new URL(String(url)).pathname.endsWith("/gateways")
       ? Response.json({
-          gateways: [{ gatewayId: candidate.gatewayId, publicOrigin: candidate.publicOrigin }],
+          gateways: [
+            { gatewayId: candidate.gatewayId, publicOrigin: candidate.publicOrigin, online: true },
+          ],
         })
       : original(url, init),
   );

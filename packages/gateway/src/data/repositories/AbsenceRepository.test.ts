@@ -9,6 +9,8 @@
 
 import { randomUUID } from "node:crypto";
 import { unlinkSync, existsSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import { SourceType, type DocumentInput } from "@omnesis/types";
 import {
@@ -59,7 +61,7 @@ const POLICY: SnapshotAbsencePolicy = {
 const DAY = 24 * 60 * 60_000;
 
 function testDbPath(): string {
-  return `/tmp/omnesis-test-${randomUUID()}.db`;
+  return fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
 }
 
 function cleanupDb(path: string): void {

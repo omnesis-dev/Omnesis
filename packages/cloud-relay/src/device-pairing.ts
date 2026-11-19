@@ -33,7 +33,6 @@ import {
   signDeviceTranscript,
   type SignInProof,
 } from "./device-enrollment.js";
-import { certificateIsPubliclyLogged } from "./public-certificate.js";
 import type { DeviceKey } from "./device-key-file.js";
 
 const statusSchema = z.object({
@@ -69,8 +68,6 @@ export interface CloudDevicePairingOptions {
     value: { gatewayUrl: string; verificationCode: string },
     signal: AbortSignal,
   ): Promise<boolean>;
-  /** Called once when a held request only needs approval elsewhere; pairing then waits by itself. */
-  awaitApproval?(value: { gatewayUrl: string; verificationCode: string }): void;
   signal?: AbortSignal;
 }
 export interface CloudPairingRequest {
@@ -102,7 +99,6 @@ export async function pairCloudDevice(
     gatewayJson?: typeof pinnedGatewayJson;
     wait?: (signal: AbortSignal) => Promise<void>;
     deviceKey?: DeviceKey;
-    publiclyLogged?: typeof certificateIsPubliclyLogged;
   },
 ): Promise<CloudDevicePairing> {
   const value = {
@@ -160,16 +156,8 @@ export async function pairCloudDevice(
     return result;
   };
   const evidence = deviceKey
-    ? await enrollmentEvidence(
-        value,
-        deviceKey,
-        candidate,
-        discovery,
-        challenge,
-        signal,
-        dependencies,
-      )
-    : { challenge };
+    ? enrollmentEvidence(value, deviceKey, candidate, discovery, challenge)
+    : { challenge, requireApproval: true };
   let status = check(
     await json(
       candidate,
@@ -178,17 +166,10 @@ export async function pairCloudDevice(
       signal,
     ),
   );
-  // A signed request to a publicly logged certificate cannot have reached a substitute gateway,
-  // so it needs no typed comparison: once approved it continues, and while held it only waits
-  // for the approval. Any other gateway could be a substitute, so the person compares codes here.
-  const admitted = "deviceKey" in evidence && !("requireApproval" in evidence);
+  // Discovery and certificate issuance do not establish which gateway belongs to the owner.
+  // Every desktop pairing verifies the code through an independently trusted device or terminal.
   const shown = { gatewayUrl, verificationCode: status.verificationCode };
-  if (admitted && status.status === "pending" && options.awaitApproval)
-    options.awaitApproval(shown);
-  else if (
-    !(admitted && status.status === "approved") &&
-    !(await compareBeforeExpiry(options.confirm, shown, status.expiresAt, signal))
-  )
+  if (!(await compareBeforeExpiry(options.confirm, shown, status.expiresAt, signal)))
     throw new Error("Gateway comparison was cancelled");
   signal.throwIfAborted();
   status = check(status);
@@ -238,14 +219,12 @@ export async function pairCloudDevice(
 }
 
 /** Signs for the key this device was shown, so a substituted certificate makes the real gateway refuse. */
-async function enrollmentEvidence(
+function enrollmentEvidence(
   value: Omit<CloudPairingRequest, "enrollmentNonce">,
   deviceKey: DeviceKey,
   candidate: GatewayBinding,
   discovery: { proof?: SignInProof },
   challenge: string,
-  signal: AbortSignal,
-  dependencies: { publiclyLogged?: typeof certificateIsPubliclyLogged },
 ) {
   const signature = signDeviceTranscript(
     deviceKey.privateKey,
@@ -258,15 +237,10 @@ async function enrollmentEvidence(
       devicePublicKey: deviceKey.publicKey,
     }),
   );
-  const logged = await (dependencies.publiclyLogged ?? certificateIsPubliclyLogged)(
-    candidate,
-    signal,
-  );
   return {
     deviceKey: { publicKey: deviceKey.publicKey, challenge, signature },
     ...(discovery.proof ? { proof: discovery.proof } : {}),
-    // Without a publicly logged certificate, a person comparing codes takes the place of that check.
-    ...(logged ? {} : { requireApproval: true }),
+    requireApproval: true,
   };
 }
 

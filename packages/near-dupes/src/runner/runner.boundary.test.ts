@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { randomUUID } from "node:crypto";
-import { unlinkSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import Database from "better-sqlite3";
 import { CorpusReader } from "../corpus/reader.js";
@@ -82,24 +83,17 @@ function seedCorpus(
 }
 
 describe("NearDupeRunner record gate boundary (exact < recordThreshold)", () => {
+  let directory: string;
   let corpusPath: string;
   let dupesPath: string;
 
   beforeEach(() => {
-    corpusPath = `/tmp/omnesis-runner-boundary-corpus-${randomUUID()}.db`;
-    dupesPath = `/tmp/omnesis-runner-boundary-dupes-${randomUUID()}.db`;
+    directory = mkdtempSync(join(tmpdir(), "omnesis-near-dupes-runner-"));
+    corpusPath = join(directory, "corpus.db");
+    dupesPath = join(directory, "dupes.db");
   });
-
   afterEach(() => {
-    for (const p of [corpusPath, dupesPath]) {
-      for (const s of ["", "-wal", "-shm"]) {
-        try {
-          unlinkSync(p + s);
-        } catch {
-          // ignore
-        }
-      }
-    }
+    rmSync(directory, { recursive: true, force: true });
   });
 
   it("records a pair whose verified Jaccard EQUALS recordThreshold (kept on `<`, dropped on `<=`)", () => {

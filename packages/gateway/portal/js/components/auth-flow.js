@@ -19,6 +19,7 @@
 import { html } from "htm/preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import QRCode from "qrcode";
+import { SetupMarkdown } from "./setup-markdown.js";
 import {
   answerAuthChallenge,
   cancelAuthFlow,
@@ -665,7 +666,7 @@ export function ChallengeStep({ flowId, challenge, status, collectorName, onCanc
     <div class="add-source-form">
       <div class="add-source-auth-card">
         <div class="add-source-auth-label">${challenge.title}</div>
-        ${challenge.instructions && html`<p class="add-source-qr-note">${challenge.instructions}</p>`}
+        ${challenge.instructions && html`<${SetupMarkdown} className="add-source-qr-note" text=${challenge.instructions} />`}
 
         ${challenge.kind === "redirect" && html`
           ${challenge.via === "loopback" && !isBrowserProbablyOnCollectorHost() && html`
@@ -735,7 +736,7 @@ export function ChallengeStep({ flowId, challenge, status, collectorName, onCanc
                       onInput=${(e) => setValues({ ...values, [f.name]: e.target.value })}
                     />
                   `}
-              ${f.help && html`<span class="form-hint">${f.help}</span>`}
+              ${f.help && html`<${SetupMarkdown} className="form-hint" text=${f.help} />`}
             </div>
           `)}
           <button class="btn-primary" disabled=${busy} onClick=${() => send(values)}>continue</button>

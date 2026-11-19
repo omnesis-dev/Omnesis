@@ -74,17 +74,21 @@ const HAS_SCHEME_RE = /^[a-z][a-z0-9+.-]*:/i;
  * the presence of a real deep-link.
  */
 export function isOpenableExternalUrl(value) {
-  return typeof value === "string"
-    && value.length > 0
-    && HAS_SCHEME_RE.test(value)
-    && !BLOCKED_SCHEMES_RE.test(value);
+  if (typeof value !== "string" || !HAS_SCHEME_RE.test(value)
+    || BLOCKED_SCHEMES_RE.test(value) || /[\u0000-\u0020\u007f]/.test(value)) return false;
+  try {
+    const url = new URL(value);
+    return Boolean(url.host || url.pathname || url.search);
+  } catch {
+    return false;
+  }
 }
 
 /**
  * Resolve the URL a "open this document" click should navigate to.
  * Any indexed document (one with a `documentId`) opens in the in-app
- * doc viewer at `/portal/doc/:id` — that page is the single entry point
- * to the original source, via its "Open in source" button. The only
+ * doc viewer at `/portal/doc/:id`. Separate "Open in source" actions link
+ * directly to the original. The only
  * time we hand back an external URL is for a reference that is NOT an
  * indexed document (no `documentId`) but does point at an openable
  * target — i.e. an unresolved external link with no in-app page to show.
@@ -117,6 +121,7 @@ export function isExternalDocHref(doc) {
 // on the account (browser-history, …) get account-specific icons while
 // single-icon sources (Gmail, Notes, …) keep the old behaviour.
 let _metaCache = null;
+let _metaGeneration = 0;
 
 // The portal CSP permits only same-origin and data: images. Older
 // sync_state rows may still contain hosted URLs from before the gateway
@@ -143,11 +148,13 @@ export function setSourceMeta(entries) {
       if (!isPortalSafeIcon(safe[id].icon)) delete safe[id].icon;
     }
   }
+  _metaGeneration++;
   _metaCache = safe;
 }
 
 /** Prefetch source metadata from gateway. Call once on app startup. */
 export async function loadSourceMeta() {
+  const generation = ++_metaGeneration;
   // `/portal/source-meta.json` is the sync_state-backed map: it only carries
   // an entry for sources that have already synced at least once. A
   // freshly-added source (just walked through "+Add Source") has no row
@@ -167,8 +174,10 @@ export async function loadSourceMeta() {
   // right icon immediately via the descriptor lookup, and once it syncs
   // the more-specific sync_state entry takes over (relevant for sources
   // whose icon varies per account, e.g. browser-history chrome vs safari).
-  const synced = await fetchSyncedMeta();
-  const fromDescriptors = await fetchDescriptorMeta();
+  const [synced, fromDescriptors] = await Promise.all([fetchSyncedMeta(), fetchDescriptorMeta()]);
+  // A source change can refresh metadata while the shell's first request is
+  // still in flight. Only the newest request may publish its snapshot.
+  if (generation !== _metaGeneration) return;
   // Per-key merge so synced entries (icon/label per account) layer over
   // descriptor entries (unitName, plus type-level icon/label) WITHOUT
   // dropping fields the synced row doesn't carry. A naive spread of

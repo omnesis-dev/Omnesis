@@ -110,6 +110,7 @@ fun DevicesScreen(
     /** Everything sign-in enrollment adds to this screen; off, it matches a build without cloud connectivity. */
     cloudFeatures: Boolean = BuildConfig.CLOUD_RELAY_ENABLED,
     vm: DevicesViewModel = hiltViewModel(),
+    tailscaleJoins: TailscaleJoinRequestsViewModel = hiltViewModel(),
 ) {
     BackHandler(onBack = onBack)
     val devices by vm.devices.collectAsStateWithLifecycle()
@@ -119,6 +120,12 @@ fun DevicesScreen(
     var showApprovals by remember { mutableStateOf(false) }
     val approvalClient = vm.pairingApprovalClient(cloudFeatures)
     val thisDeviceId by vm.thisDeviceId.collectAsStateWithLifecycle()
+    // Tailscale joins are read only while the gateway advertises them to an administrator's
+    // phone; otherwise the read asks nothing and the entry is the sign-in one, as before.
+    val joins by tailscaleJoins.state.collectAsStateWithLifecycle()
+    val tailscaleEmbed by vm.tailscaleEmbed.collectAsStateWithLifecycle()
+    LaunchedEffect(tailscaleJoins, tailscaleEmbed) { tailscaleJoins.refresh() }
+    val tailscaleServed = joins.available == true
 
     DevicesContent(
         devices = devices,
@@ -127,25 +134,31 @@ fun DevicesScreen(
         notice = notice,
         onBack = onBack,
         onRetry = vm::load,
-        onRefresh = vm::load,
+        onRefresh = { vm.load(); tailscaleJoins.refresh() },
         onExpand = vm::loadTokens,
         onRevokeToken = vm::revokeToken,
         onRevokeDevice = vm::revokeDevice,
         onForgetDevice = vm::forgetDevice,
         onRepairDevice = vm::openRepair,
         onPair = vm::openPair,
-        onPairingRequests = approvalClient?.let { { showApprovals = true } },
+        onPairingRequests = if (deviceApprovalsOffered(approvalClient, joins.available)) {
+            { showApprovals = true }
+        } else {
+            null
+        },
         onDismissNotice = vm::dismissNotice,
         onOpenSettings = onOpenSettings,
         focusedDeviceId = focusedDeviceId,
         cloudFeatures = cloudFeatures,
     )
 
-    if (showApprovals && approvalClient != null) {
-        GatewayPairingApprovalSheet(
+    if (showApprovals && (approvalClient != null || tailscaleServed)) {
+        DeviceApprovalsSheet(
             client = approvalClient,
             onOpenSettings = onOpenSettings,
             onRequests = vm::pairingRequestsListed,
+            tailscale = tailscaleJoins.takeIf { tailscaleServed },
+            onTailscaleRequests = vm::tailscaleRequestsListed,
             onDismiss = { showApprovals = false },
         )
     }

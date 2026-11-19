@@ -14,6 +14,7 @@ import {
   readRunContext,
   sourceInterpretations,
   waitFor,
+  urgencyOnlyDecisionPolicy,
 } from "./brain-bench/index.js";
 import { startOpenAiServer, userPromptOf } from "./brain-bench/openai-server.js";
 import type { SourceInterpretation } from "./brain-bench/source-interpretations.js";
@@ -87,6 +88,9 @@ test("two complete disjoint document reads survive serialized real-writer commit
     },
   });
   bench = await BrainBench.start({
+    // Work without an urgency verdict waits at routine priority; these
+    // changes are judged soon so they are processed within the test.
+    decision: { policy: urgencyOnlyDecisionPolicy() },
     experimental: true,
     syncSources: false,
     extraInference: {

@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { join } from "node:path";
 import { describe, expect, test, vi } from "vitest";
 import { expandSpecTokens, type SerializedProviderCredentialsSpec } from "@omnesis/core";
 import {
+  browserInvocation,
   credentialsDestinationLines,
   resolveWizardOrigin,
   runCredentialsWizard,
@@ -138,61 +140,127 @@ describe("credentialsDestinationLines", () => {
   });
 
   test("under docker: the absolute path, on this machine, and that it is not encrypted", async () => {
-    const lines = await credentialsDestinationLines({
-      fileKey: "example",
-      perAccount: false,
-      sameHost: true,
-      host: dockerHost(false),
-    });
+    const lines = await credentialsDestinationLines(
+      {
+        fileKey: "example",
+        perAccount: false,
+        sameHost: true,
+        host: dockerHost(false),
+      },
+      "linux",
+    );
     expect(lines).toEqual([
-      "They'll be saved on this machine to /home/maya/.config/omnesis/example-credentials.json (mode 0600).",
+      `They'll be saved on this machine to ${join("/home/maya/.config/omnesis", "example-credentials.json")} (mode 0600).`,
       "Not encrypted at rest: this install has no keyring armed. Run `omnesis secure` to encrypt it, with every other secret file.",
     ]);
   });
 
   test("with the keyring armed, it says so", async () => {
-    const lines = await credentialsDestinationLines({
-      fileKey: "example",
-      perAccount: false,
-      sameHost: true,
-      host: dockerHost(true),
-    });
+    const lines = await credentialsDestinationLines(
+      {
+        fileKey: "example",
+        perAccount: false,
+        sameHost: true,
+        host: dockerHost(true),
+      },
+      "linux",
+    );
     expect(lines[1]).toBe("Encrypted at rest with this install's keyring.");
   });
 
   test("a collector on this machine: this CLI's own config directory, in full", async () => {
-    const lines = await credentialsDestinationLines({
-      fileKey: "example",
-      perAccount: false,
-      sameHost: true,
-      host: nativeHost(true),
-    });
+    const lines = await credentialsDestinationLines(
+      {
+        fileKey: "example",
+        perAccount: false,
+        sameHost: true,
+        host: nativeHost(true),
+      },
+      "linux",
+    );
     expect(lines).toEqual([
-      "They'll be saved to /srv/omnesis/example-credentials.json (mode 0600).",
+      `They'll be saved to ${join("/srv/omnesis", "example-credentials.json")} (mode 0600).`,
       "Encrypted at rest with this install's keyring.",
     ]);
   });
 
   test("a collector elsewhere is described no more precisely than this CLI can see", async () => {
-    const lines = await credentialsDestinationLines({
-      fileKey: "example",
-      perAccount: false,
-      sameHost: false,
-      host: nativeHost(false),
-    });
+    const lines = await credentialsDestinationLines(
+      {
+        fileKey: "example",
+        perAccount: false,
+        sameHost: false,
+        host: nativeHost(false),
+      },
+      "linux",
+    );
     expect(lines).toEqual(["They'll be saved to the collector's config dir (mode 0600)."]);
   });
 
+  test.each([
+    { perAccount: false, sameHost: true },
+    { perAccount: true, sameHost: true },
+    { perAccount: false, sameHost: false },
+  ])(
+    "Windows describes the destination without claiming POSIX permissions: %o",
+    async (context) => {
+      const lines = await credentialsDestinationLines(
+        {
+          fileKey: "example",
+          ...context,
+          host: nativeHost(true),
+        },
+        "win32",
+      );
+      const expected = context.perAccount
+        ? "They'll be stored under the account they turn out to belong to, once verified."
+        : context.sameHost
+          ? `They'll be saved to ${join("/srv/omnesis", "example-credentials.json")}.`
+          : "They'll be saved to the collector's config dir.";
+      expect(lines).toEqual(
+        context.sameHost
+          ? [expected, "Encrypted at rest with this install's keyring."]
+          : [expected],
+      );
+    },
+  );
+
   test("a per-account credential is stored under its account, and still says whether it is encrypted", async () => {
-    const lines = await credentialsDestinationLines({
-      fileKey: "example",
-      perAccount: true,
-      sameHost: true,
-      host: nativeHost(false),
-    });
+    const lines = await credentialsDestinationLines(
+      {
+        fileKey: "example",
+        perAccount: true,
+        sameHost: true,
+        host: nativeHost(false),
+      },
+      "linux",
+    );
     expect(lines[0]).toBe(
       "They'll be stored under the account they turn out to belong to, once verified (mode 0600).",
     );
     expect(lines[1]).toContain("Not encrypted at rest");
+  });
+});
+
+describe("browser launch", () => {
+  test("keeps Linux and macOS URLs in one argument", () => {
+    const url = "https://example.com/setup?first=1&second=two";
+    expect(browserInvocation(url, "linux")).toEqual({ command: "xdg-open", args: [url] });
+    expect(browserInvocation(url, "darwin")).toEqual({ command: "open", args: [url] });
+  });
+
+  test("passes Windows URLs as a literal rather than command syntax", () => {
+    const url = "https://example.com/setup?name=O'Reilly&value=%PATH%&next=$(Get-Process)";
+    const invocation = browserInvocation(url, "win32");
+    expect(invocation.command).toBe("powershell.exe");
+    expect(invocation.args.slice(0, -1)).toEqual([
+      "-NoProfile",
+      "-NonInteractive",
+      "-EncodedCommand",
+    ]);
+    const script = Buffer.from(invocation.args.at(-1)!, "base64").toString("utf16le");
+    expect(script).toBe(
+      "Start-Process -FilePath 'https://example.com/setup?name=O''Reilly&value=%PATH%&next=$(Get-Process)'",
+    );
   });
 });

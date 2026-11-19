@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { createPublicKey } from "node:crypto";
+import { isJoinedPrivateFileError } from "./private-file-errors.js";
 import { readPrivateJson } from "./google-credentials.js";
 import {
   gatewayKeyAccount,
@@ -53,8 +54,7 @@ export async function readGatewayRecoveryReceipt(
       options.recoveryReceiptFile ?? `${options.sessionFile}.recovery.json`,
     );
   } catch (error) {
-    if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT")
-      return undefined;
+    if (isJoinedPrivateFileError(error, "ENOENT")) return undefined;
     throw error;
   }
   const receipt = recoveryReceiptSchema.parse(input);

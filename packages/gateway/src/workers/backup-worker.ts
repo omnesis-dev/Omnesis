@@ -23,7 +23,7 @@ import { dirname, join } from "node:path";
 import { parentPort, workerData } from "node:worker_threads";
 import Database from "better-sqlite3";
 type Db = Database.Database;
-import { copyPrivate } from "@omnesis/core";
+import { copyPrivate, ensurePrivateDirSync } from "@omnesis/core";
 
 import { openEncryptedSqlite } from "../sqlite-encryption.js";
 import type { BackupWorkerInput, BackupWorkerMessage } from "./backup-protocol.js";
@@ -74,6 +74,13 @@ function vacuumInto(sourcePath: string, destPath: string, keyHex?: string): void
 const input = workerData as BackupWorkerInput;
 
 try {
+  if (process.platform === "win32") {
+    const directories = new Set([
+      ...input.vacuums.map((job) => dirname(job.destPath)),
+      ...input.copies.map((copy) => dirname(copy.to)),
+    ]);
+    for (const directory of directories) ensurePrivateDirSync(directory);
+  }
   for (const job of input.vacuums) {
     post({ type: "begin", file: job.name });
     const start = Date.now();

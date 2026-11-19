@@ -17,7 +17,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
 import { createLogger } from "@omnesis/core";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { createDatabase, upsertDocuments } from "../db.js";
 import { DocumentChunker } from "./chunker.js";
 import { createIndexDatabase, EMBEDDING_DIM, getAllIndexedDocumentIds } from "./db.js";
@@ -173,95 +173,125 @@ function reset(): void {
   indexDb.exec("DELETE FROM chunks; DELETE FROM indexed_documents; DELETE FROM watermark;");
 }
 
+/**
+ * Unit cases prove pacing against the declared embedding cost, independently of
+ * host timer floors and scheduling. SQLite, page reads and pressure remain real.
+ * The opt-in benchmark below keeps its wall clock and native timers.
+ */
+function pacedTest(name: string, body: () => Promise<void>): void {
+  test(name, async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
+    try {
+      const result = Promise.resolve().then(body);
+      const drive = vi.runAllTimersAsync();
+      try {
+        await Promise.all([result, drive]);
+      } finally {
+        // A rejected body must not restore the clock while its driver is active.
+        // Promise.all already propagates driver errors; this only joins it.
+        await drive.catch(() => {});
+      }
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+}
+
 describe("indexing scan throughput", () => {
   const FIXED: Pace = { pageSize: 10, sleepMs: 20, dbWriteBatchSize: 1, catchUp: false };
   const CATCH_UP: Pace = { ...FIXED, catchUp: true };
 
-  test("catch-up drains a mostly indexed backlog at least twice as fast as the fixed pace", async () => {
-    const pending = await backlog(900, 0.75, 1);
-    const fixed = await scan(FIXED, 1);
-    expect(fixed.indexed).toBe(pending);
-    expect(fixed.pages.every((n) => n === 10)).toBe(true);
+  pacedTest(
+    "catch-up drains a mostly indexed backlog at least twice as fast as the fixed pace",
+    async () => {
+      const pending = await backlog(900, 0.75, 1);
+      const fixed = await scan(FIXED, 1);
+      expect(fixed.indexed).toBe(pending);
+      expect(fixed.pages.every((n) => n === 10)).toBe(true);
 
-    indexDb.exec("DELETE FROM watermark");
-    const todo = gatewayReader
-      .prepare<[], { id: string }>("SELECT id FROM documents WHERE external_id LIKE 'todo%'")
-      .all()
-      .map((r) => r.id);
-    const del = indexDb.prepare("DELETE FROM indexed_documents WHERE document_id = ?");
-    const delChunks = indexDb.prepare("DELETE FROM chunks WHERE document_id = ?");
-    for (const id of todo) {
-      delChunks.run(id);
-      del.run(id);
-    }
-    const adaptive = await scan(CATCH_UP, 1);
-    expect(adaptive.indexed).toBe(pending);
-    expect(Math.max(...adaptive.pages)).toBeGreaterThan(10);
-    expect(adaptive.ms).toBeLessThan(fixed.ms / 2);
-    log.info(
-      `bench (unit): fixed ${Math.round(fixed.ms)}ms over ${fixed.pages.length} pages, catch-up ${Math.round(adaptive.ms)}ms over ${adaptive.pages.length} pages`,
-    );
-  });
+      indexDb.exec("DELETE FROM watermark");
+      const todo = gatewayReader
+        .prepare<[], { id: string }>("SELECT id FROM documents WHERE external_id LIKE 'todo%'")
+        .all()
+        .map((r) => r.id);
+      const del = indexDb.prepare("DELETE FROM indexed_documents WHERE document_id = ?");
+      const delChunks = indexDb.prepare("DELETE FROM chunks WHERE document_id = ?");
+      for (const id of todo) {
+        delChunks.run(id);
+        del.run(id);
+      }
+      const adaptive = await scan(CATCH_UP, 1);
+      expect(adaptive.indexed).toBe(pending);
+      expect(Math.max(...adaptive.pages)).toBeGreaterThan(10);
+      expect(adaptive.ms).toBeLessThan(fixed.ms / 2);
+      log.info(
+        `pacing (controlled unit): fixed ${Math.round(fixed.ms)}ms over ${fixed.pages.length} pages, catch-up ${Math.round(adaptive.ms)}ms over ${adaptive.pages.length} pages`,
+      );
+    },
+  );
 
-  test("a user request in flight holds the scan to the configured page size", async () => {
+  pacedTest("a user request in flight holds the scan to the configured page size", async () => {
     const pending = await backlog(300, 0.5, 1);
     const held = await scan(CATCH_UP, 1, () => ({ userActive: true, walPendingFrames: 0 }));
     expect(held.indexed).toBe(pending);
     expect(held.pages.every((n) => n === 10)).toBe(true);
   });
 
-  test("a backed-up index WAL drops the page to the configured size until it clears", async () => {
-    const pending = await backlog(600, 0.8, 1);
-    let calls = 0;
-    const held = await scan({ ...CATCH_UP, sleepMs: 1 }, 1, () => {
-      calls += 1;
-      return { userActive: false, walPendingFrames: calls >= 6 && calls < 10 ? 50_000 : 0 };
-    });
-    expect(held.indexed).toBe(pending);
-    // Pages 1-5 grow; settles 6-9 see the WAL over its limit, so pages 7-10
-    // are back at the configured size; growth resumes after.
-    expect(held.pages[5]).toBeGreaterThan(10);
-    expect(held.pages.slice(6, 10)).toEqual([10, 10, 10, 10]);
-    expect(Math.max(...held.pages.slice(10))).toBeGreaterThan(10);
-  });
-
-  test("the missing-document pass grows its batches while catching up and holds them under pressure", async () => {
-    seed(400, "gap", 1);
-    const batches = (userActive: boolean) => {
-      const sizes: number[] = [];
-      const inner = new DirectDocumentSource(gatewayReader);
-      const source = new Proxy(inner, {
-        get(target, prop, receiver) {
-          if (prop === "getByIds") {
-            return (ids: string[]) => {
-              sizes.push(ids.length);
-              return target.getByIds(ids);
-            };
-          }
-          return Reflect.get(target, prop, receiver) as unknown;
-        },
+  pacedTest(
+    "a backed-up index WAL drops the page to the configured size until it clears",
+    async () => {
+      // Keep an eleventh page even when the first six pages consume their full limits.
+      const pending = await backlog(800, 0.8, 1);
+      let calls = 0;
+      const held = await scan({ ...CATCH_UP, sleepMs: 1 }, 1, () => {
+        calls += 1;
+        return { userActive: false, walPendingFrames: calls >= 6 && calls < 10 ? 50_000 : 0 };
       });
-      const indexer = new Indexer(indexDb, source, new DocumentChunker(), new SlotEmbedder(0), {
-        pageSize: 10,
-        betweenPageSleepMs: 1,
-        dbWriteBatchSize: 1,
-        catchUp: { enabled: true, maxPageSize: 1000, minSleepMs: 0 },
-        getPressure: () => ({ userActive, walPendingFrames: 0 }),
-      });
-      return { indexer, sizes };
-    };
-    const held = batches(true);
-    await held.indexer.reindexMissing();
-    expect(getAllIndexedDocumentIds(indexDb).size).toBe(400);
-    expect(held.sizes.every((n) => n <= 10)).toBe(true);
+      expect(held.indexed).toBe(pending);
+      expect(held.pages.slice(0, 11)).toEqual([10, 20, 40, 80, 160, 320, 10, 10, 10, 10, 20]);
+    },
+  );
 
-    reset();
-    const free = batches(false);
-    await free.indexer.reindexMissing();
-    expect(getAllIndexedDocumentIds(indexDb).size).toBe(400);
-    expect(Math.max(...free.sizes)).toBeGreaterThan(10);
-    expect(free.sizes.length).toBeLessThan(held.sizes.length);
-  });
+  pacedTest(
+    "the missing-document pass grows its batches while catching up and holds them under pressure",
+    async () => {
+      seed(400, "gap", 1);
+      const batches = (userActive: boolean) => {
+        const sizes: number[] = [];
+        const inner = new DirectDocumentSource(gatewayReader);
+        const source = new Proxy(inner, {
+          get(target, prop, receiver) {
+            if (prop === "getByIds") {
+              return (ids: string[]) => {
+                sizes.push(ids.length);
+                return target.getByIds(ids);
+              };
+            }
+            return Reflect.get(target, prop, receiver) as unknown;
+          },
+        });
+        const indexer = new Indexer(indexDb, source, new DocumentChunker(), new SlotEmbedder(0), {
+          pageSize: 10,
+          betweenPageSleepMs: 1,
+          dbWriteBatchSize: 1,
+          catchUp: { enabled: true, maxPageSize: 1000, minSleepMs: 0 },
+          getPressure: () => ({ userActive, walPendingFrames: 0 }),
+        });
+        return { indexer, sizes };
+      };
+      const held = batches(true);
+      await held.indexer.reindexMissing();
+      expect(getAllIndexedDocumentIds(indexDb).size).toBe(400);
+      expect(held.sizes.every((n) => n <= 10)).toBe(true);
+
+      reset();
+      const free = batches(false);
+      await free.indexer.reindexMissing();
+      expect(getAllIndexedDocumentIds(indexDb).size).toBe(400);
+      expect(Math.max(...free.sizes)).toBeGreaterThan(10);
+      expect(free.sizes.length).toBeLessThan(held.sizes.length);
+    },
+  );
 
   const bench = process.env.OMNESIS_INDEXER_BENCH === "1" ? test : test.skip;
 

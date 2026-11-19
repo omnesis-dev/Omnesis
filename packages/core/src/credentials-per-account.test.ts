@@ -5,6 +5,7 @@ import { existsSync, mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
+import { inspectWindowsPrivatePathSync } from "./windows-private-file.js";
 import {
   clearProviderAccountCredentials,
   hasProviderAccountCredentials,
@@ -217,7 +218,11 @@ describe("credential file permissions", () => {
     await writeProviderAccountCredentials(FILE_KEY, ACCOUNT_A, { api_key: "k" }, cfg);
 
     const path = providerAccountCredentialsPath(FILE_KEY, ACCOUNT_A, cfg);
-    expect(statSync(path).mode & 0o777).toBe(0o600);
-    expect(statSync(dirname(path)).mode & 0o777).toBe(0o700);
+    if (process.platform === "win32")
+      expect(inspectWindowsPrivatePathSync(path, "file").private).toBe(true);
+    else expect(statSync(path).mode & 0o777).toBe(0o600);
+    if (process.platform === "win32")
+      expect(inspectWindowsPrivatePathSync(dirname(path), "directory").private).toBe(true);
+    else expect(statSync(dirname(path)).mode & 0o777).toBe(0o700);
   });
 });

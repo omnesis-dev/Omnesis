@@ -2,15 +2,15 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /** Portable check entrypoint; shared-host admission is an optional local adapter. */
-import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { availableParallelism, homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseCLI } from "vitest/node";
-import { waitForChild } from "./lib/check-process.mjs";
+import { runCheckCommand } from "./lib/check-process.mjs";
 import { progressArgs, progressEnvironment } from "./lib/check-progress.mjs";
 import { assertTreeFingerprint } from "./nx/tree-state.mjs";
+import { resolveNpmInvocation } from "../packages/core/src/node-command.ts";
 
 export function schedulerCommand(env = process.env) {
   if (env.OMNESIS_TEST_SCHEDULER === "0") return null;
@@ -30,6 +30,16 @@ export function schedulerCommand(env = process.env) {
   return config.command;
 }
 
+/**
+ * Memory one unit file worker is budgeted. Measured on a 3-CPU, 7 GiB hosted
+ * macOS runner: two workers and the Vitest main process peaked at 2.3 GiB of
+ * resident memory together, with no swap-outs, while the machine reported
+ * about 4 GiB available before the run. 1.5 GiB keeps roughly a third of
+ * headroom over that peak and lets such a runner use two workers instead of
+ * one, which halves the lane.
+ */
+const UNIT_WORKER_BYTES = 1.5 * 1024 ** 3;
+
 export function unitWorkers(
   env = process.env,
   cpuCount = availableParallelism(),
@@ -41,7 +51,7 @@ export function unitWorkers(
       throw new Error("OMNESIS_UNIT_WORKERS must be an integer from 1 to 8");
     return count;
   }
-  return Math.max(1, Math.min(4, cpuCount, Math.floor(available / (2 * 1024 ** 3))));
+  return Math.max(1, Math.min(4, cpuCount, Math.floor(available / UNIT_WORKER_BYTES)));
 }
 
 export function lintEnv(env = process.env) {
@@ -70,10 +80,13 @@ export function testProcessEnv(env = process.env) {
   return child;
 }
 
-function run(command, args, env) {
-  return waitForChild(
-    spawn(command, args, { stdio: "inherit", env, detached: process.platform !== "win32" }),
-  );
+async function run(command, args, env) {
+  if (command === "npm") {
+    const invocation = await resolveNpmInvocation(args, { env });
+    command = invocation.command;
+    args = invocation.args;
+  }
+  return runCheckCommand(command, args, { env });
 }
 
 export function focusedUnit(args) {
@@ -202,7 +215,13 @@ export async function main(argv = process.argv.slice(2)) {
         );
       if (code === 0) code = await run("npm", ["run", "test:unit:raw"], env);
     } else if (kind === "unit" || kind === "smoke") {
-      const workers = focused ? Math.min(2, unitWorkers()) : unitWorkers();
+      const cpus = availableParallelism();
+      const available = process.availableMemory();
+      const automatic = unitWorkers(process.env, cpus, available);
+      const workers = focused ? Math.min(2, automatic) : automatic;
+      process.stderr.write(
+        `[check] ${kind} file workers: ${workers} (${cpus} CPUs, ${(available / 1024 ** 3).toFixed(1)} GiB available)\n`,
+      );
       const { filter, options } = parseCLI(["vitest", "run", ...args]);
       const requested = options.maxWorkers;
       if (
@@ -213,10 +232,19 @@ export async function main(argv = process.argv.slice(2)) {
       ) {
         throw new Error(`Unit --maxWorkers must be between 1 and ${workers} for this invocation`);
       }
-      // The scripts project includes release staging tests against workspace
-      // dist output. Build inside the admitted job, before Vitest can start.
+      // Broad units and release staging tests require workspace dist output.
+      // Build inside the admitted job, before Vitest can start.
       code = 0;
-      if (kind === "unit" && filter.some((path) => resolve(path) === resolve("scripts"))) {
+      const compiledInputs = [
+        "scripts",
+        "scripts/release",
+        "scripts/release/stage-packages.test.mjs",
+        "scripts/release/stage-runtime.test.mjs",
+      ].map((path) => resolve(path));
+      if (
+        kind === "unit" &&
+        (filter.length === 0 || filter.some((path) => compiledInputs.includes(resolve(path))))
+      ) {
         code = await run(process.execPath, [nodeModule("typescript/bin/tsc"), "--build"], env);
       }
       const selection =
@@ -237,7 +265,12 @@ export async function main(argv = process.argv.slice(2)) {
           ],
           { ...env, OMNESIS_LOG_LEVEL: env.OMNESIS_LOG_LEVEL ?? "warn" },
         );
-    } else if (kind === "types-tests") code = await run("npm", ["run", "typecheck:tests:raw"], env);
+    } else if (kind === "types-tests")
+      code = await run(
+        process.execPath,
+        [join(import.meta.dirname, "typecheck-tests.mjs"), ...args],
+        env,
+      );
     else if (kind === "deadcode")
       code = await run(process.execPath, [nodeModule("knip/bin/knip.js"), ...args], env);
     else if (kind === "e2e")

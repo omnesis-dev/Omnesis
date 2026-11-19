@@ -47,7 +47,9 @@ function resetSessionExpired() {
  * custom error-message extraction) that opt out of the consolidated
  * helper.
  */
-export async function apiFetch(input, init = {}) {
+export async function apiFetch(input, options = {}) {
+  // `stepUpAnnounced`: the button already said it asks for the passkey, so no extra sheet before it.
+  const { stepUpAnnounced = false, ...init } = options;
   const method = String(init.method || "GET").toUpperCase();
   const unsafe = !["GET", "HEAD", "OPTIONS"].includes(method);
   const headers = { "Content-Type": "application/json", ...(init.headers || {}) };
@@ -61,7 +63,78 @@ export async function apiFetch(input, init = {}) {
   };
   const res = await fetch(input, merged);
   if (res.status === 401) fireSessionExpired();
+  if ((res.status === 428 || res.status === 403) && unsafe && isSameOriginInput(input))
+    return stepUpAndRetry(input, init, res, headers, stepUpAnnounced);
   return res;
+}
+
+// What a person reads when a step-up can't go ahead. Never the gateway's own wording.
+const STEP_UP_REFUSED =
+  "That passkey can't approve changes here. Use the passkey you set up for this gateway.";
+const SECURITY_LOCK =
+  "Security lock is on. This change can only be made on the computer running Omnesis right now.";
+const STEP_UP_UNAVAILABLE_HERE =
+  "Passkeys can't be used on this gateway right now. Make this change on the computer running Omnesis.";
+const STEP_UP_CANCELLED = "Nothing changed.";
+
+/** A step-up error a page shows as it is (`stepUp`), whatever error codes it otherwise maps. */
+function stepUpError(GatewayPasskeyError, message) {
+  return Object.assign(new GatewayPasskeyError(message), { stepUp: true });
+}
+
+/**
+ * Some administrative actions need the owner's passkey on this gateway's page first (a
+ * "step-up", see packages/gateway/src/http/step-up.ts). The gateway says so with 428
+ * `STEP_UP_REQUIRED`; this runs the passkey prompt for that one request and sends it again,
+ * once. While no step-up can start it answers 403 `STEP_UP_UNAVAILABLE`, which becomes an error
+ * a person can act on. Any other answer goes back to the caller unchanged.
+ *
+ * Unless the button already said so (`announced`), a small sheet says why the passkey prompt is coming
+ * before the browser asks. The sheet only explains: the step-up itself stays bound to this one
+ * request, as the gateway issues it.
+ */
+async function stepUpAndRetry(input, init, res, headers, announced = false) {
+  if (Object.keys(headers).some((name) => name.toLowerCase() === "x-omnesis-step-up")) return res;
+  let refusal;
+  try {
+    refusal = await res.clone().json();
+  } catch {
+    return res;
+  }
+  if (refusal?.code === "STEP_UP_UNAVAILABLE") {
+    const { GatewayPasskeyError } = await import("./lib/gateway-passkey.js");
+    throw stepUpError(
+      GatewayPasskeyError,
+      refusal.detail?.reason === "security-lock" ? SECURITY_LOCK : STEP_UP_UNAVAILABLE_HERE,
+    );
+  }
+  if (res.status !== 428 || refusal?.code !== "STEP_UP_REQUIRED") return res;
+  const { stepUp, STEP_UP_HEADER, GatewayPasskeyError } = await import("./lib/gateway-passkey.js");
+  if (!announced) {
+    const { confirmStepUp } = await import("./lib/step-up-sheet.js");
+    if (!(await confirmStepUp({ signal: init.signal })))
+      throw stepUpError(GatewayPasskeyError, STEP_UP_CANCELLED);
+  }
+  let stepUpId;
+  try {
+    stepUpId = await stepUp(refusal.detail, {
+      post: async (path, body, signal) => {
+        const response = await apiFetch(path, {
+          method: "POST",
+          body: JSON.stringify(body),
+          ...(signal ? { signal } : {}),
+        });
+        if (path === "/admin/step-up" && response.status === 403)
+          throw stepUpError(GatewayPasskeyError, STEP_UP_REFUSED);
+        return response;
+      },
+      ...(init.signal ? { signal: init.signal } : {}),
+    });
+  } catch (error) {
+    if (error instanceof GatewayPasskeyError) error.stepUp = true;
+    throw error;
+  }
+  return apiFetch(input, { ...init, headers: { ...(init.headers || {}), [STEP_UP_HEADER]: stepUpId } });
 }
 
 function isSameOriginInput(input) {
@@ -952,6 +1025,10 @@ export const revokeTokenById = (id) =>
 export const getAccessOverview = () =>
   request("GET", "/admin/access", { cache: "no-store" });
 
+/** Only the agent access requests waiting for the owner, light enough to read from every page. */
+export const getPendingAccessRequests = () =>
+  request("GET", "/portal/api/access/pending", { cache: "no-store" });
+
 /**
  * Resolve the short code shown by an MCP client's authorization window: the
  * pending request, and the gateway's `connection` proposal for it — a default
@@ -1117,19 +1194,22 @@ export const getSourceWatermark = (sourceId) =>
   request("GET", "/admin/watermarks", { query: { sourceId } });
 
 /**
- * Wipe a source's data and sync it again from scratch. Without `deviceId`
- * every document of the source goes; with one, only what that device holds —
- * its documents, analytics rows and cursor on a partitioned source, just its
- * cursor on a replicated one (siblings are untouched either way). Answers
- * `{ ok, scope: "source" | "stream" | "cursor", deviceIds }` — `scope` is what
- * was wiped, `deviceIds` the devices the sync command reached (empty when
- * none is online; the sync then waits for one). A refusal's `code` is
- * DEVICE_NOT_MEMBER or RESYNC_NOT_PER_DEVICE (a per-device resync on a
- * source whose mode has no per-device cursor).
+ * Resync a source. `mode` is "in-place" — nothing is deleted, the source is
+ * read again and each item updates the record it already has — or
+ * "from-scratch", which deletes what the source ingested first. With
+ * `deviceId`, only that device is resynced: its own stream on a partitioned
+ * source, its cursor on a replicated one (always in place — its records are
+ * shared; siblings are untouched either way). Answers
+ * `{ ok, mode, scope: "source" | "stream" | "cursor", deviceIds, … }` —
+ * `mode` is what was applied, `scope` the slice it applied to, `deviceIds`
+ * the devices the sync command reached (empty when none is online; the sync
+ * then waits for one). A refusal's `code` is DEVICE_NOT_MEMBER,
+ * RESYNC_NOT_PER_DEVICE (a per-device resync on a source whose mode has no
+ * per-device cursor) or RESYNC_PUSH_ONLY.
  */
-export const resyncSource = (sourceId, deviceId) =>
+export const resyncSource = (sourceId, { deviceId, mode }) =>
   request("POST", `/admin/sources/${encodeURIComponent(sourceId)}/resync`, {
-    body: deviceId ? { deviceId } : {},
+    body: deviceId ? { deviceId, mode } : { mode },
   });
 
 export const removeAdminSource = (sourceId) =>

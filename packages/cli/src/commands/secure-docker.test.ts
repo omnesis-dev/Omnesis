@@ -13,11 +13,13 @@
 import { spawn } from "node:child_process";
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -27,6 +29,8 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import {
   acquireGatewayLock,
   clearSecretFileKeyCacheForTests,
+  createPrivateScratch,
+  inspectWindowsPrivatePaths,
   inspectInstallRootKey,
   isEncryptedSecretFile,
   readSecretTextFile,
@@ -37,6 +41,8 @@ import {
   dockerSecureBackend,
   dockerSecureContext,
   planDockerPassphrase,
+  prepareDockerPassphrase,
+  writeGeneratedPassphrase,
   SECURE_RESTART_REQUEST_FILE,
 } from "./secure-docker.js";
 
@@ -93,7 +99,7 @@ services:
 
 /** A Docker install's config directory, as the installer leaves it. */
 function dockerProject(compose: string): string {
-  const dir = mkdtempSync(join(tmpdir(), "omnesis-secure-docker-"));
+  const dir = createPrivateScratch("secure-docker").path;
   dirs.push(dir);
   writeFileSync(join(dir, "install-method"), "docker\n");
   writeFileSync(join(dir, "docker-compose.yml"), compose);
@@ -144,6 +150,33 @@ const stepIds = (steps: Array<{ id: string }>) => steps.map((s) => s.id);
 const step = (steps: Array<{ id: string; status: string; detail: string }>, id: string) =>
   steps.find((s) => s.id === id);
 
+describe("generated Docker passphrase creation", () => {
+  test("preserves an existing passphrase and does not change the environment on failure", async () => {
+    const dir = dockerProject(GATEWAY_AND_COLLECTOR);
+    const file = join(dir, "keyring.pass");
+    writeFileSync(file, "invented existing passphrase", { mode: 0o600 });
+    const env = { OMNESIS_SECRET_STORE: "file" };
+
+    await expect(prepareDockerPassphrase({ kind: "generate", file }, env)).rejects.toThrow();
+
+    expect(readFileSync(file, "utf8")).toBe("invented existing passphrase");
+    expect(env).toEqual({ OMNESIS_SECRET_STORE: "file" });
+  });
+
+  test("never replaces a linked passphrase or writes through it", async () => {
+    const dir = dockerProject(GATEWAY_AND_COLLECTOR);
+    const target = join(dir, "existing-secret");
+    const file = join(dir, "keyring.pass");
+    writeFileSync(target, "invented link target", { mode: 0o600 });
+    symlinkSync(target, file, "file");
+
+    await expect(writeGeneratedPassphrase(file)).rejects.toThrow();
+
+    expect(readFileSync(target, "utf8")).toBe("invented link target");
+    expect(lstatSync(file).isSymbolicLink()).toBe(true);
+  });
+});
+
 describe("secure under Docker: the launcher restarts the containers", () => {
   test("generates the passphrase file, records it, seals everything, and asks for the restart", async () => {
     const configDir = gatewayHost();
@@ -165,7 +198,14 @@ describe("secure under Docker: the launcher restarts the containers", () => {
       "restart",
     ]);
     const passFile = join(configDir, "keyring.pass");
-    expect(statSync(passFile).mode & 0o777).toBe(0o600);
+    if (process.platform === "win32") {
+      const [status] = await inspectWindowsPrivatePaths([{ path: passFile, kind: "file" }], {
+        protect: true,
+      });
+      expect(status?.private).toBe(true);
+    } else {
+      expect(statSync(passFile).mode & 0o777).toBe(0o600);
+    }
     // The installer's format: 32 random bytes, base64url.
     expect(readFileSync(passFile, "utf8")).toMatch(/^[A-Za-z0-9_-]{43}$/u);
     const envFile = readFileSync(join(configDir, ".env"), "utf8");

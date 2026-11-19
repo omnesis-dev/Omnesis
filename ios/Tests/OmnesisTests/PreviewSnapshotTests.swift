@@ -76,10 +76,37 @@ final class PreviewSnapshotTests: XCTestCase {
         ] {
             snapshot(NavigationStack { PreviewMocks.accountPairingPanel(phase) }, name: "account-pairing-\(name)")
         }
-        snapshot(NavigationStack { PreviewMocks.accountPairingPanel(.comparing, approved: true) }, name: "account-pairing-approved")
         snapshot(
-            NavigationStack { PreviewMocks.accountPairingPanel(.comparing, approved: true) }.dynamicTypeSize(.accessibility2),
+            NavigationStack { PreviewMocks.accountPairingPanel(.comparing, approved: true, continues: false) },
+            name: "account-pairing-approved"
+        )
+        snapshot(
+            NavigationStack { PreviewMocks.accountPairingPanel(.joining, approvedHeld: true) },
+            name: "account-pairing-approved-joining"
+        )
+        for (approvalPage, name) in [(false, "account-pairing-waiting-for-ok"), (true, "account-pairing-waiting-face-id")] {
+            snapshot(
+                ScrollView { PreviewMocks.accountPairingWaiting(approvalPage: approvalPage).padding() }.background(Theme.bgPrimary),
+                name: name
+            )
+        }
+        snapshot(
+            NavigationStack { PreviewMocks.accountPairingPanel(.comparing, approvalPage: true) },
+            name: "account-pairing-approval-page"
+        )
+        snapshot(
+            NavigationStack { PreviewMocks.accountPairingPanel(.comparing, approvalPage: true) }.dynamicTypeSize(.accessibility2),
+            name: "account-pairing-approval-page-large"
+        )
+        snapshot(
+            NavigationStack {
+                PreviewMocks.accountPairingPanel(.comparing, approved: true, continues: false)
+            }.dynamicTypeSize(.accessibility2),
             name: "account-pairing-approved-large"
+        )
+        snapshot(
+            NavigationStack { PreviewMocks.accountPairingPanel(.choosing) }.dynamicTypeSize(.accessibility2),
+            name: "account-pairing-choosing-large"
         )
     }
 
@@ -179,6 +206,12 @@ final class PreviewSnapshotTests: XCTestCase {
             size: tall
         )
         snapshot(screen(PreviewMocks.cloudRelayWaiting), name: "omnesis-account-waiting")
+        snapshot(screen(PreviewMocks.cloudRelayVerification), name: "omnesis-account-security-check")
+        snapshot(
+            screen(PreviewMocks.cloudRelayVerification).dynamicTypeSize(.accessibility2),
+            name: "omnesis-account-security-check-large",
+            size: tall
+        )
         snapshot(screen(PreviewMocks.cloudRelayRegistering), name: "omnesis-account-registering")
         snapshot(screen(PreviewMocks.cloudRelayFailed), name: "omnesis-account-failed")
         snapshot(screen(PreviewMocks.cloudRelayConnected), name: "omnesis-account-connected", size: tall)
@@ -267,6 +300,21 @@ final class PreviewSnapshotTests: XCTestCase {
             name: "pairing-requests-several-large",
             size: CGSize(width: 393, height: 1700)
         )
+        let revoked = await loaded(PreviewMocks.pairingRequestRevoked)
+        snapshot(GatewayPairingApprovalView(client: nil, model: revoked), name: "pairing-requests-removed-before")
+        let stepUp = await loaded(PreviewMocks.pairingRequestsNeedingStepUp)
+        if let request = stepUp.requests.first {
+            await stepUp.confirmAndApprove(request, client: PreviewMocks.pairingRequestsNeedingStepUp)
+        }
+        snapshot(
+            GatewayPairingApprovalView(client: PreviewMocks.pairingRequestsNeedingStepUp, model: stepUp),
+            name: "pairing-requests-confirm-its-you"
+        )
+        let denied = await loaded(PreviewMocks.pairingRequestsWithTrust)
+        if let request = denied.requests.first {
+            await denied.decide(request, approve: false, client: PreviewMocks.pairingRequestsWithTrust)
+        }
+        snapshot(GatewayPairingApprovalView(client: PreviewMocks.PreviewPairingPolicy(), model: denied), name: "pairing-requests-denied")
         let presented = await loaded(PreviewMocks.pairingRequestsWithTrust)
         snapshotPresented(
             Theme.bgPrimary.ignoresSafeArea().sheet(isPresented: .constant(true)) {
@@ -281,6 +329,118 @@ final class PreviewSnapshotTests: XCTestCase {
             },
             name: "pairing-requests-empty-in-sheet"
         )
+    }
+
+    /// The pairing state for a Tailscale gateway address this phone cannot reach: on its own,
+    /// retrying, after a retry failed differently, at a large text size, and as the sheet it is.
+    func testTailnetPairingUnreachable() {
+        func state(isPairing: Bool = false, retryError: String? = nil) -> TailnetPairingUnreachableView {
+            TailnetPairingUnreachableView(
+                host: PreviewMocks.tailnetGatewayHost,
+                isPairing: isPairing,
+                retryError: retryError,
+                onOpenTailscale: {},
+                onTryAgain: {},
+                onCancel: {}
+            )
+        }
+        snapshot(state(), name: "tailnet-pairing-unreachable")
+        snapshot(state(isPairing: true), name: "tailnet-pairing-retrying")
+        snapshot(state(retryError: PairingErrorMessage.usedOrExpiredCode), name: "tailnet-pairing-retry-failed")
+        snapshot(state().dynamicTypeSize(.accessibility2), name: "tailnet-pairing-unreachable-large")
+        snapshotPresented(
+            Theme.bgPrimary.ignoresSafeArea().sheet(isPresented: .constant(true)) { state() },
+            name: "tailnet-pairing-in-sheet"
+        )
+    }
+
+    /// Waiting for your OK with devices that asked through Tailscale: beside one that signed in,
+    /// on their own, none of either kind, a Tailscale request gone by its decision, an
+    /// unreachable gateway, a request that ran out, a large text size, and as the sheet
+    /// Devices opens.
+    func testWaitingForYourOKWithTailscaleRequests() async {
+        func joins(_ client: PreviewMocks.PreviewTailscaleJoinRequests) async -> TailscaleJoinRequestsModel {
+            let model = TailscaleJoinRequestsModel()
+            await model.refresh(client: client)
+            return model
+        }
+        func signedIn(_ client: PreviewMocks.PreviewPairingRequests) async -> GatewayPairingApprovalModel {
+            let model = GatewayPairingApprovalModel()
+            await model.refresh(client: client)
+            return model
+        }
+        func sheet(_ tailscale: TailscaleJoinRequestsModel, cloud: GatewayPairingApprovalModel? = nil) -> GatewayPairingApprovalView {
+            GatewayPairingApprovalView(client: nil, model: cloud, tailscaleModel: tailscale)
+        }
+        let two = PreviewMocks.tailscaleJoinRequestsTwo
+        await snapshot(sheet(joins(two), cloud: signedIn(PreviewMocks.pairingRequestsWithTrust)), name: "waiting-for-ok-both-kinds")
+        await snapshot(
+            sheet(joins(two), cloud: signedIn(PreviewMocks.pairingRequestsWithTrust)),
+            name: "waiting-for-ok-both-kinds-full",
+            size: CGSize(width: 393, height: 1500)
+        )
+        await snapshot(sheet(joins(two)), name: "waiting-for-ok-tailscale-only")
+        let noJoins = PreviewMocks.PreviewTailscaleJoinRequests(rows: [])
+        await snapshot(
+            sheet(joins(noJoins), cloud: signedIn(PreviewMocks.PreviewPairingRequests(rows: []))),
+            name: "waiting-for-ok-both-kinds-none"
+        )
+
+        let rows = PreviewMocks.tailscaleJoinRows
+        let gone = await joins(PreviewMocks.PreviewTailscaleJoinRequests(rows: rows))
+        await gone.decide(rows[0], approve: true, client: PreviewMocks.PreviewTailscaleJoinRequests(rows: [rows[1]], decisionGone: true))
+        snapshot(sheet(gone), name: "waiting-for-ok-tailscale-request-gone")
+
+        let unavailable = PreviewMocks.PreviewTailscaleJoinRequests(rows: [], unavailable: true)
+        await snapshot(sheet(joins(unavailable)), name: "waiting-for-ok-tailscale-unavailable")
+        await snapshot(
+            sheet(joins(PreviewMocks.PreviewTailscaleJoinRequests(rows: [PreviewMocks.tailscaleJoinExpired]))),
+            name: "waiting-for-ok-tailscale-expired"
+        )
+        await snapshot(
+            sheet(joins(two)).dynamicTypeSize(.accessibility2),
+            name: "waiting-for-ok-tailscale-large",
+            size: CGSize(width: 393, height: 1700)
+        )
+        let presented = await joins(two)
+        let presentedCloud = await signedIn(PreviewMocks.pairingRequestsWithTrust)
+        snapshotPresented(
+            Theme.bgPrimary.ignoresSafeArea().sheet(isPresented: .constant(true)) { sheet(presented, cloud: presentedCloud) },
+            name: "waiting-for-ok-both-kinds-in-sheet"
+        )
+    }
+
+    /// The Devices entry to Waiting for your OK is there for whichever kind this phone reviews,
+    /// and with neither the screen's toolbar is exactly as it is without the entry at all.
+    func testWaitingForYourOKEntryFollowsTheKinds() throws {
+        func toolbar(_ kinds: DeviceApprovalKinds?) -> some View {
+            NavigationStack {
+                Theme.bgPrimary.ignoresSafeArea()
+                    .navigationTitle("Devices")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            if let kinds {
+                                GatewayPairingRequestsButton(kinds: kinds, client: nil, tailscale: nil)
+                            }
+                        }
+                    }
+            }
+        }
+        let bar = CGSize(width: 393, height: 140)
+        snapshot(toolbar(nil), name: "waiting-for-ok-entry-absent", size: bar)
+        snapshot(toolbar(DeviceApprovalKinds.neither), name: "waiting-for-ok-entry-flags-off", size: bar)
+        snapshot(
+            toolbar(DeviceApprovalKinds(cloudRelayEnabled: true, tailscaleEmbed: true, scopes: ["read"])),
+            name: "waiting-for-ok-entry-not-admin",
+            size: bar
+        )
+        snapshot(toolbar(DeviceApprovalKinds(cloud: false, tailscale: true)), name: "waiting-for-ok-entry-tailscale", size: bar)
+        snapshot(toolbar(DeviceApprovalKinds(cloud: true, tailscale: false)), name: "waiting-for-ok-entry-cloud", size: bar)
+        try assertSameImage("waiting-for-ok-entry-absent", "waiting-for-ok-entry-flags-off")
+        try assertSameImage("waiting-for-ok-entry-absent", "waiting-for-ok-entry-not-admin")
+        try assertDifferentImage("waiting-for-ok-entry-absent", "waiting-for-ok-entry-tailscale")
+        try assertSameImage("waiting-for-ok-entry-tailscale", "waiting-for-ok-entry-cloud")
     }
 
     /// The two sign-in buttons are the same rounded rectangle at the same height, stretched
@@ -3704,6 +3864,28 @@ final class PreviewSnapshotTests: XCTestCase {
         )
     }
 
+    /// The Resync sheet on each selection, with and without the Brain line
+    /// under From scratch, then presented the way the source detail opens it.
+    func testSourceResyncChoice() {
+        func sheet(_ initial: SourceResyncMode, brainNote: Bool = false) -> some View {
+            SourceResyncSheet(
+                sourceName: humanName(for: PreviewMocks.sourceGmail.type),
+                modes: SourceResyncMode.allCases,
+                brainNote: brainNote,
+                initialMode: initial,
+                onConfirm: { _ in }
+            )
+        }
+        let size = CGSize(width: 393, height: 480)
+        snapshot(sheet(.inPlace), name: "50h-source-resync-in-place", size: size)
+        snapshot(sheet(.fromScratch), name: "50i-source-resync-from-scratch", size: size)
+        snapshot(sheet(.fromScratch, brainNote: true), name: "50j-source-resync-from-scratch-brain", size: size)
+        snapshotPresented(
+            Color.clear.sheet(isPresented: .constant(true)) { sheet(.inPlace) },
+            name: "50k-source-resync-presented"
+        )
+    }
+
     // MARK: - Settings
 
     func testSettingsConnected() async throws {
@@ -6498,6 +6680,24 @@ final class PreviewSnapshotTests: XCTestCase {
         )
     }
 
+    func testCitationSourceActions() {
+        let store = AppStore.preview()
+        let view = ZStack {
+            Theme.bgPrimary.ignoresSafeArea()
+            CitationsDrawer(
+                trailAnnotations: PreviewMocks.citationSourceLinks,
+                isOpen: .constant(true)
+            )
+        }
+        .environment(store)
+        snapshot(view.preferredColorScheme(.dark), name: "citation-source-actions-dark")
+        snapshot(view.preferredColorScheme(.light), name: "citation-source-actions-light")
+        snapshot(
+            view.preferredColorScheme(.dark).dynamicTypeSize(.accessibility3),
+            name: "citation-source-actions-large-text"
+        )
+    }
+
     /// Drawer open on the unified Timeline. Voucher-journey fixture
     /// exercises every annotation shape (event-level note + doc quote
     /// + doc note + doc note-only) across Gmail and WhatsApp spine
@@ -6656,6 +6856,7 @@ final class PreviewSnapshotTests: XCTestCase {
         snapshot(view, name: "105-trail-timeline-long")
     }
 
+    /// Narrow titles and a file attachment keep their source actions inline.
     func testTrailTimelineViewUrlRepresentations() {
         let store = AppStore.preview()
         let view = ScrollView {

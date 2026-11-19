@@ -14,13 +14,14 @@ import { Session } from "node:inspector";
 import { parentPort, workerData } from "node:worker_threads";
 import {
   formatPausedStack,
+  claimWatchdogExit,
   StallJudge,
   WATCHDOG_ARMED,
   type PausedFrame,
   type WatchdogWorkerData,
 } from "./event-loop-watchdog-shared.js";
 
-const { heartbeat, stallLimitMs, checkIntervalMs, captureTimeoutMs } =
+const { heartbeat, exitHold, stallLimitMs, checkIntervalMs, captureTimeoutMs } =
   workerData as WatchdogWorkerData;
 
 /** A check this late means the process itself was not running. */
@@ -92,6 +93,9 @@ const judge = new StallJudge(stallLimitMs, SUSPENDED_GAP_MS, Atomics.load(heartb
 const check = setInterval(() => {
   const stalledMs = judge.check(Atomics.load(heartbeat, 0), nowMs());
   if (stalledMs === null) return;
+  // Claim atomically before pausing the main thread. A producer that already
+  // published ownership must survive even when its observation timer expires.
+  if (!claimWatchdogExit(exitHold)) return;
   clearInterval(check);
   captureAndDie(stalledMs);
 }, checkIntervalMs);

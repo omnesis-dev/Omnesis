@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { z } from "zod";
 import {
   CodexGenerationSupervisor,
+  CodexGenerationCleanupError,
   type CodexRuntimeGeneration,
   reassertCodexGenerationAuth,
+  disposeCodexGeneration,
 } from "./codex-generation-supervisor.js";
 import type {
   CodexAppServerRuntime,
@@ -32,6 +34,121 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
 }
 
 describe("CodexGenerationSupervisor", () => {
+  it.each(["dispose", "cleanup"] as const)(
+    "refuses a granted use callback when %s happens before its continuation",
+    async (reason) => {
+      const selected = generation(),
+        supervisor = new CodexGenerationSupervisor(selected),
+        callback = vi.fn(() => Promise.resolve());
+      const pending = supervisor.use(callback);
+      const failure = new CodexGenerationCleanupError(
+        new Error("Invented native drain uncertainty"),
+      );
+      const disposal =
+        reason === "dispose"
+          ? supervisor.dispose()
+          : Promise.resolve(supervisor.holdCleanup(failure));
+      if (reason === "dispose") await expect(pending).rejects.toThrow("disposed");
+      else await expect(pending).rejects.toBe(failure);
+      await disposal;
+      expect(callback).not.toHaveBeenCalled();
+      expect(supervisor.activeUses).toBe(0);
+    },
+  );
+
+  it("refuses a replacement after supervisor disposal during an exclusive operation", async () => {
+    const selected = generation(),
+      next = generation(),
+      supervisor = new CodexGenerationSupervisor(selected),
+      entered = deferred(),
+      release = deferred();
+    const switching = supervisor.exclusive(async (_old, replace) => {
+      entered.resolve();
+      await release.promise;
+      replace(next);
+    });
+    await entered.promise;
+    await supervisor.dispose();
+    release.resolve();
+    await expect(switching).rejects.toThrow("disposed");
+    expect(supervisor.current).toBe(selected);
+    await disposeCodexGeneration(next);
+  });
+
+  it("rejects waiting turns and switches when cleanup fails during a drain", async () => {
+    const selected = generation();
+    selected.runtime.dispose = () => Promise.reject(new Error("Synthetic unjoined process"));
+    const supervisor = new CodexGenerationSupervisor(selected);
+    const activeGate = deferred();
+    const entered = deferred();
+    const active = supervisor.use(async () => {
+      entered.resolve();
+      await activeGate.promise;
+    });
+    await entered.promise;
+    let switched = false;
+    const switching = supervisor.exclusive(() => {
+      switched = true;
+      return Promise.resolve();
+    });
+    const waiting = supervisor.use(() => Promise.reject(new Error("must not admit")));
+    const waitingRejected = expect(waiting).rejects.toHaveProperty(
+      "name",
+      "CodexGenerationCleanupError",
+    );
+    const switchRejected = expect(switching).rejects.toHaveProperty(
+      "name",
+      "CodexGenerationCleanupError",
+    );
+    await expect(supervisor.retire(selected)).rejects.toHaveProperty(
+      "name",
+      "CodexGenerationCleanupError",
+    );
+    await waitingRejected;
+    await switchRejected;
+    expect(supervisor.activeUses).toBe(1);
+    activeGate.resolve();
+    await active;
+    expect(switched).toBe(false);
+  });
+
+  it("waits for every generation member and retains failed retirement without retrying it", async () => {
+    const selected = generation();
+    const sibling = deferred();
+    const failure = new Error("Synthetic child remains unjoined");
+    let attempts = 0;
+    selected.runtime.dispose = () => {
+      attempts += 1;
+      return Promise.reject(failure);
+    };
+    selected.interactivePool = { dispose: () => sibling.promise } as CodexRuntimePool;
+    const supervisor = new CodexGenerationSupervisor(selected);
+    const retirement = supervisor.retire(selected);
+    let finished = false;
+    void retirement.then(
+      () => {
+        finished = true;
+      },
+      () => {
+        finished = true;
+      },
+    );
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(finished).toBe(false);
+    sibling.resolve();
+    await expect(retirement).rejects.toMatchObject({ cause: failure });
+    const blocked = supervisor.cleanupError;
+    await expect(supervisor.use(() => Promise.reject(new Error("must not run")))).rejects.toBe(
+      blocked,
+    );
+    await expect(
+      supervisor.exclusive(() => Promise.reject(new Error("must not replace"))),
+    ).rejects.toBe(blocked);
+    await expect(disposeCodexGeneration(selected)).rejects.toBe(blocked);
+    await expect(supervisor.dispose()).rejects.toBe(blocked);
+    expect(attempts).toBe(1);
+  });
+
   it("serializes generation switches and keeps admission closed across queued switches", async () => {
     const firstGeneration = generation();
     const secondGeneration = generation();
@@ -140,6 +257,51 @@ async function consume(events: AsyncIterable<AgentEvent>): Promise<void> {
 }
 
 describe("Codex nested execution admission", () => {
+  it.each(["dispose", "cleanup"] as const)(
+    "does not allocate a lazy child pool after its granted lease encounters %s",
+    async (reason) => {
+      const selected = generation(),
+        supervisor = new CodexGenerationSupervisor(selected);
+      const factory = vi.fn(() => {
+        throw new Error("Lazy child pool must not be allocated after admission closes");
+      });
+      selected.nestedPool = factory;
+      selected.runtime.runTurn = async function* (opts) {
+        yield* [];
+        await opts.input.tools[0].invoke(
+          {},
+          { sessionId: "invented-session", messageId: "invented-message" },
+        );
+      };
+      const options = turnOptions();
+      options.input.tools = [
+        {
+          name: "child",
+          description: "Controlled child lifecycle",
+          schema: z.object({}),
+          summarize: () => "child",
+          invoke: async () => {
+            const child = consume(supervisor.runner("interactive").runTurn(turnOptions()));
+            const failure = new CodexGenerationCleanupError(
+              new Error("Invented native child join failure"),
+            );
+            const disposal =
+              reason === "dispose"
+                ? supervisor.dispose()
+                : Promise.resolve(supervisor.holdCleanup(failure));
+            if (reason === "dispose") await expect(child).rejects.toThrow("disposed");
+            else await expect(child).rejects.toBe(failure);
+            await disposal;
+            return { kind: "error", code: "invented", message: "done" };
+          },
+        },
+      ];
+      await consume(supervisor.runner("background").runTurn(options));
+      expect(factory).not.toHaveBeenCalled();
+      expect(supervisor.activeUses).toBe(0);
+    },
+  );
+
   it("allows a parent's child through a pending generation drain while keeping unrelated arrivals queued", async () => {
     const selected = generation();
     const entered = deferred();

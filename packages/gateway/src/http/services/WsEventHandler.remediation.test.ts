@@ -9,6 +9,8 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import { SCOPE_WRITE_ALL, SourceId, parseSourceId } from "@omnesis/types";
@@ -35,7 +37,7 @@ let db: ReturnType<typeof createDatabase>;
 let conn: DeviceConnection;
 
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-ws-remediation-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-ws-remediation-${randomUUID()}.db`);
   db = createDatabase(dbPath);
   const device = createDevice(db, { name: "Maya-Laptop", kind: "collector" });
   conn = { deviceId: device.id, scopes: [SCOPE_WRITE_ALL] };

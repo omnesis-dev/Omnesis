@@ -3,6 +3,8 @@
 
 import { randomBytes, randomUUID } from "node:crypto";
 import { existsSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { closeDrainingWal, createDatabase, openReadOnlyDatabase } from "./db.js";
 
@@ -15,7 +17,7 @@ afterEach(() => {
 
 describe("closeDrainingWal", () => {
   it("reports the backlog, drains it into the database and leaves no WAL", () => {
-    path = `/tmp/omnesis-test-${randomUUID()}.db`;
+    path = join(tmpdir(), `omnesis-test-${randomUUID()}.db`);
     const db = createDatabase(path, { encryptionKey: key });
     db.exec("PRAGMA wal_autocheckpoint = 0");
     db.exec("CREATE TABLE synth_notes (id INTEGER PRIMARY KEY, body BLOB NOT NULL)");
@@ -40,7 +42,7 @@ describe("closeDrainingWal", () => {
   });
 
   it("says nothing when the WAL holds nothing to copy", () => {
-    path = `/tmp/omnesis-test-${randomUUID()}.db`;
+    path = join(tmpdir(), `omnesis-test-${randomUUID()}.db`);
     const db = createDatabase(path, { encryptionKey: key });
     db.pragma("wal_checkpoint(TRUNCATE)");
     const heard: number[] = [];

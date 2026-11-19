@@ -9,19 +9,29 @@
  * ingest, one bounded slice held the writer for tens of seconds. The pick is
  * now two index seeks. These tests hold the new pick to the old one's order,
  * row for row, and assert the plans that make it cheap.
+ *
+ * A slice's hold is the cost of a step times the steps it takes. Both factors
+ * are asserted here without a stopwatch: every statement a step runs reaches
+ * the backlog through an index, so a step costs the same against a backlog of
+ * any size, and the writer handler's time slice stops a large step budget at
+ * the first step after its clock says the slice is spent.
  */
 
 import { randomUUID } from "node:crypto";
 import { rmSync } from "node:fs";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
+import Database from "better-sqlite3";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { createDatabase } from "../../db.js";
+import { PreemptBuffer, PreemptToken } from "../../scheduler/preempt.js";
+import { writerYieldableHandlers } from "../../scheduler/writer-handlers.js";
 import {
   advanceKnowledgeCascade,
   KNOWLEDGE_CASCADE_NEXT_JOB_SQL,
   KNOWLEDGE_CASCADE_NEXT_ROW_SQL,
   nextKnowledgeCascadeItem,
 } from "./storage-invalidation.js";
-import type Database from "better-sqlite3";
 
 /** The pick this change replaced, kept here as the order it must reproduce. */
 const SORTED_PICK = `SELECT f.*,j.kind,j.target_kind AS root_kind,j.target_id AS root_id
@@ -35,7 +45,7 @@ let path: string;
 let db: Database.Database;
 
 beforeEach(() => {
-  path = `/tmp/omnesis-test-${randomUUID()}.db`;
+  path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
   db = createDatabase(path);
 });
 
@@ -118,6 +128,40 @@ function pendingRows(): number {
     .get()!.n;
 }
 
+/** One invalidation job per invented source, the shape a large ingest leaves. */
+function plantIngestBacklog(jobs: number): void {
+  const insertJob = db.prepare(
+    "INSERT INTO knowledge_cascade_jobs(kind,target_kind,target_id,revision,created_at) VALUES('invalidate','source',?,?,?)",
+  );
+  const insertRow = db.prepare(
+    "INSERT INTO knowledge_cascade_frontier(job_id,target_kind,target_id) VALUES(?,'source',?)",
+  );
+  db.transaction(() => {
+    for (let i = 0; i < jobs; i++) {
+      const id = `drive-file-${i}`;
+      insertRow.run(insertJob.run(id, `rev-${i}`, NOW).lastInsertRowid, id);
+    }
+  })();
+}
+
+/**
+ * Every statement `run` executes, with its parameters bound, captured on a
+ * second connection to the same file.
+ */
+function statementsRunBy(run: (conn: Database.Database) => void): string[] {
+  const statements = new Set<string>();
+  const conn = new Database(path, {
+    verbose: (sql) => statements.add(String(sql).replace(/\s+/g, " ").trim()),
+  });
+  try {
+    conn.pragma("foreign_keys = ON");
+    run(conn);
+  } finally {
+    conn.close();
+  }
+  return [...statements];
+}
+
 describe("knowledge cascade order", () => {
   test("every step picks the row the sorted join picked, with and without a job filter", () => {
     const jobs = plantMixedBacklog();
@@ -161,18 +205,7 @@ describe("knowledge cascade order", () => {
   });
 
   test("both picks are index seeks against an analyzed ingest backlog", () => {
-    const insertJob = db.prepare(
-      "INSERT INTO knowledge_cascade_jobs(kind,target_kind,target_id,revision,created_at) VALUES('invalidate','source',?,?,?)",
-    );
-    const insertRow = db.prepare(
-      "INSERT INTO knowledge_cascade_frontier(job_id,target_kind,target_id) VALUES(?,'source',?)",
-    );
-    db.transaction(() => {
-      for (let i = 0; i < 5000; i++) {
-        const id = `drive-file-${i}`;
-        insertRow.run(insertJob.run(id, `rev-${i}`, NOW).lastInsertRowid, id);
-      }
-    })();
+    plantIngestBacklog(5000);
     plantJob("purge", "source", "drive-file-gone");
     db.exec("ANALYZE");
     const jobPlan = plan(KNOWLEDGE_CASCADE_NEXT_JOB_SQL, "invalidate");
@@ -186,5 +219,53 @@ describe("knowledge cascade order", () => {
       expect(detail).not.toMatch(/TEMP B-TREE/);
     }
     expect(plan(SORTED_PICK, null, null).join("\n")).toMatch(/TEMP B-TREE FOR ORDER BY/);
+  });
+
+  test.each([
+    ["without planner statistics", false],
+    ["with planner statistics", true],
+  ])("every statement a step runs reaches the backlog through an index, %s", (_, analyze) => {
+    plantMixedBacklog();
+    plantIngestBacklog(5000);
+    if (analyze) db.exec("ANALYZE");
+    const statements = statementsRunBy((conn) => advanceKnowledgeCascade(conn, 1000, NOW));
+    const backlog = statements.filter((sql) => /knowledge_cascade_(jobs|frontier)\b/.test(sql));
+    for (const sql of backlog) {
+      for (const detail of plan(sql)) {
+        expect(detail, sql).not.toMatch(/TEMP B-TREE/);
+        // The one scan is the closing "is anything left" probe, which stops at
+        // the first row it reads.
+        if (/^SCAN/.test(detail)) expect(sql, detail).toMatch(/^SELECT 1 FROM \w+ LIMIT 1$/);
+      }
+    }
+    // The run took every kind of step, so the audit saw each one's statements:
+    // a row picked, a dependent discovered and a finished job removed.
+    expect(backlog.some((sql) => /^SELECT .* FROM knowledge_cascade_frontier f\b/.test(sql))).toBe(
+      true,
+    );
+    expect(
+      backlog.some((sql) => sql.startsWith("UPDATE knowledge_cascade_frontier SET after_node_id")),
+    ).toBe(true);
+    expect(backlog.some((sql) => sql.startsWith("DELETE FROM knowledge_cascade_jobs"))).toBe(true);
+  });
+
+  test("the writer handler's time slice stops a large budget at the first step after it is spent", () => {
+    for (let i = 0; i < 1500; i++) plantJob("invalidate", "source", `note-${i}`);
+    const advance = writerYieldableHandlers["knowledge.advanceCascade"];
+    const token = () => new PreemptToken(new PreemptBuffer().share());
+    const clock = vi.spyOn(performance, "now");
+    try {
+      // A clock that never moves: nothing stops the slice before its budget.
+      clock.mockReturnValue(0);
+      expect(advance(db, token(), 1000, NOW).pending).toBe(true);
+      expect(pendingRows()).toBe(500);
+      // A clock that passes any slice's end once the seventh step is done.
+      const before = pendingRows();
+      clock.mockImplementation(() => (before - pendingRows() >= 7 ? Number.MAX_SAFE_INTEGER : 0));
+      expect(advance(db, token(), 1000, NOW).pending).toBe(true);
+      expect(before - pendingRows()).toBe(7);
+    } finally {
+      clock.mockRestore();
+    }
   });
 });

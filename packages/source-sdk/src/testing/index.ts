@@ -58,3 +58,9 @@ export {
   writesFor,
   emittedRows,
 } from "./page-writes.js";
+
+export {
+  canDenyFixtureReads,
+  setFixtureMode,
+  setFixtureDirectoryWritable,
+} from "./file-permissions.js";

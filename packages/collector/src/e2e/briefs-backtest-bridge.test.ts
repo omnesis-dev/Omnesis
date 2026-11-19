@@ -10,6 +10,8 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { planReplay, readSnapshotDocuments, runBridge } from "./briefs-backtest-bridge.js";
@@ -48,7 +50,7 @@ function seedSnapshot(
 }
 
 beforeEach(() => {
-  path = `/tmp/omnesis-test-${randomUUID()}.db`;
+  path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
 });
 afterEach(() => {
   for (const suffix of ["", "-wal", "-shm"]) {

@@ -103,7 +103,7 @@ function storedRow(
 class MockAnalytics implements SourceAnalyticsAccess {
   public queries: string[] = [];
   constructor(
-    private stored: Map<number, Record<string, unknown>>,
+    private stored: Map<number | string, Record<string, unknown>>,
     private gear: Record<string, unknown>[] = [],
   ) {}
   query(sql: string): Promise<{ columns: string[]; rows: Record<string, unknown>[] }> {
@@ -120,7 +120,7 @@ class MockAnalytics implements SourceAnalyticsAccess {
 
 function makeSourceWithGateway(
   pages: StravaSummaryActivity[][],
-  stored: Map<number, Record<string, unknown>>,
+  stored: Map<number | string, Record<string, unknown>>,
   gear: Record<string, unknown>[] = [],
 ): { source: StravaActivitiesSource; mock: MockClient; gateway: MockAnalytics } {
   const mock = new MockClient(pages);

@@ -7,9 +7,9 @@
  * module-scope `GATEWAY_URL` read (and any other import-time env reads) pick
  * up `OMNESIS_GATEWAY_URL` / `OMNESIS_TOKEN` from the file.
  */
-import { loadDotEnv } from "@omnesis/config";
+import { loadBootstrapDotEnv } from "@omnesis/config/dotenv-bootstrap";
 
-loadDotEnv();
+loadBootstrapDotEnv();
 if (typeof process.umask === "function") process.umask(0o077);
 
 if (

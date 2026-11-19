@@ -11,6 +11,8 @@
 
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test, vi, type Mock } from "vitest";
 import {
   createLogger,
@@ -162,7 +164,7 @@ describe("recheckObservations", () => {
     recheckObservations(d, { runId: RUN, day: DAY, ...(signal ? { signal } : {}) });
 
   beforeEach(() => {
-    path = `/tmp/omnesis-test-${randomUUID()}.db`;
+    path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
     db = createDatabase(path);
     recordSpend = vi.fn(async () => {});
     upsertDocuments(db, [
@@ -691,7 +693,7 @@ describe("recheck helpers", () => {
   let db: Db;
 
   beforeEach(() => {
-    path = `/tmp/omnesis-test-${randomUUID()}.db`;
+    path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
     db = createDatabase(path);
   });
   afterEach(() => {

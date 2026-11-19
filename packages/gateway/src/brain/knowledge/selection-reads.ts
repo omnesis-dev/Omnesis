@@ -22,6 +22,7 @@ import {
 } from "./review-selection.js";
 import {
   hasKnowledgeWorkFromExcludedSources,
+  hasRewrittenHistoryChangeWork,
   listKnowledgePlanningWork,
   listStaleKnowledgeWork,
 } from "./work.js";
@@ -89,6 +90,8 @@ export interface KnowledgeSelectionReads extends ReadPort<typeof KNOWLEDGE_ENGIN
   knowledgeStaleWork(limit: number): Promise<string[]>;
   /** Whether pending source work belongs to a source excluded from the Brain. */
   knowledgeHasExcludedWork(excludedSources: readonly string[]): Promise<boolean>;
+  /** Whether pending reactive work reads unread history; see `hasRewrittenHistoryChangeWork`. */
+  knowledgeHasRewrittenHistoryWork(now: number, recentWindowMs: number): Promise<boolean>;
   /** The planner's graph read for a planning pass; see `readKnowledgeArcs`. */
   knowledgeArcs(inputs: readonly string[], bound: number): Promise<KnowledgeArcRead>;
   /** Documents admission may read next; see `listKnowledgeDiscoveryBacklog`. */
@@ -123,6 +126,8 @@ export function directKnowledgeSelectionReads(db: Database.Database): KnowledgeS
     knowledgeStaleWork: (limit) => Promise.resolve(listStaleKnowledgeWork(db, limit)),
     knowledgeHasExcludedWork: (excludedSources) =>
       Promise.resolve(hasKnowledgeWorkFromExcludedSources(db, excludedSources)),
+    knowledgeHasRewrittenHistoryWork: (now, recentWindowMs) =>
+      Promise.resolve(hasRewrittenHistoryChangeWork(db, now, recentWindowMs)),
     knowledgeArcs: (inputs, bound) => Promise.resolve(readKnowledgeArcs(db, inputs, bound)),
     knowledgeDiscoveryBacklog: (options) =>
       Promise.resolve(listKnowledgeDiscoveryBacklog(db, options)),

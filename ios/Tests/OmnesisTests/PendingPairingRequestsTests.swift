@@ -5,7 +5,8 @@
 import XCTest
 
 /// The home banner for devices that signed in and wait for approval: what it says, when it
-/// shows, who asks the gateway, and how a notification tap opens Pairing requests once.
+/// shows, who asks the gateway, and how a notification tap opens Waiting for your OK once.
+/// `DeviceApprovalsTests` covers the devices that ask through Tailscale.
 @MainActor
 final class PendingPairingRequestsTests: XCTestCase {
     private let now: Double = 1_800_000_000_000
@@ -33,26 +34,37 @@ final class PendingPairingRequestsTests: XCTestCase {
     }
 
     func testTheWordsMatchTheOtherApps() {
-        XCTAssertEqual(
-            PairingRequestBannerOffer(count: 1).text,
-            "A device is waiting for your approval to pair to this gateway."
-        )
-        XCTAssertEqual(
-            PairingRequestBannerOffer(count: 3).text,
-            "3 devices are waiting for your approval to pair to this gateway."
-        )
+        XCTAssertEqual(PairingRequestBannerOffer(count: 1).text, "A new device is waiting for your OK.")
+        XCTAssertEqual(PairingRequestBannerOffer(count: 3).text, "3 new devices are waiting for your OK.")
         XCTAssertEqual(PairingRequestBannerOffer.actionTitle, "Review")
-        XCTAssertEqual(
-            PairingApprovalPresentation.explanation,
-            "A device signed in to your Omnesis account and is waiting for your approval to pair to this gateway. "
-                + "Approve if the code below matches the code shown on the device."
-        )
-        XCTAssertEqual(PairingApprovalPresentation.approve, "Approve")
-        XCTAssertEqual(PairingApprovalPresentation.deny, "Deny")
-        XCTAssertEqual(PairingApprovalPresentation.title, "Pairing requests")
-        for text in [PairingRequestBannerOffer(count: 2).text, PairingApprovalPresentation.explanation] {
+        XCTAssertEqual(PairingApprovalPresentation.headline("Maya's MacBook"), "Maya's MacBook wants to connect")
+        XCTAssertEqual(PairingApprovalPresentation.question(name: "Maya's MacBook"), "Does Maya's MacBook show this code?")
+        XCTAssertEqual(PairingApprovalPresentation.remember(signIn: "google"), "Remember this Google account")
+        XCTAssertEqual(PairingApprovalPresentation.remember(signIn: "passkey"), "Remember this passkey")
+        XCTAssertEqual(PairingApprovalPresentation.approve, "Yes, approve")
+        XCTAssertEqual(PairingApprovalPresentation.deny, "No, deny")
+        XCTAssertEqual(PairingApprovalPresentation.title, "Waiting for your OK")
+        let screens = [
+            PairingRequestBannerOffer(count: 2).text, PairingApprovalPresentation.waitingDevice, PairingApprovalPresentation.title,
+            PairingApprovalPresentation.empty, PairingApprovalPresentation.revoked, PairingApprovalPresentation.rememberDetail,
+            PairingWaitingPresentation.fromAnotherDevice, PairingWaitingPresentation.withFaceID, PairingWaitingPresentation.compare,
+        ] + PairingWaitingPresentation.places
+        for text in screens {
             XCTAssertFalse(text.contains("—"), text)
+            // The review's vocabulary: no mechanism words on these screens.
+            for word in ["trusted device", "held", "relay", "pairing request", "other device"] {
+                XCTAssertFalse(text.lowercased().contains(word), "\(word) in \(text)")
+            }
         }
+    }
+
+    /// The waiting screen counts down in minutes and seconds, and says so when time is up.
+    func testTheWaitingScreenCountsDown() {
+        XCTAssertEqual(PairingWaitingPresentation.expiry(remaining: 272.9), "Expires in 4:32")
+        XCTAssertEqual(PairingWaitingPresentation.expiry(remaining: 61), "Expires in 1:01")
+        XCTAssertEqual(PairingWaitingPresentation.expiry(remaining: 9), "Expires in 0:09")
+        XCTAssertEqual(PairingWaitingPresentation.expiry(remaining: 0.4), "Expired. Cancel and sign in again.")
+        XCTAssertEqual(PairingWaitingPresentation.expiry(remaining: -30), "Expired. Cancel and sign in again.")
     }
 
     /// Leaving the account is "unlink" on the button, the confirmation and while it runs.
@@ -92,50 +104,53 @@ final class PendingPairingRequestsTests: XCTestCase {
     }
 
     func testOnlyAnAdministratorInACloudBuildAsks() {
-        XCTAssertTrue(PendingPairingRequests.eligible(cloudRelayEnabled: true, scopes: ["read", "admin"]))
-        XCTAssertFalse(PendingPairingRequests.eligible(cloudRelayEnabled: true, scopes: ["read"]))
-        XCTAssertFalse(PendingPairingRequests.eligible(cloudRelayEnabled: true, scopes: nil))
-        XCTAssertFalse(PendingPairingRequests.eligible(cloudRelayEnabled: false, scopes: ["read", "admin"]))
+        func cloud(_ enabled: Bool, _ scopes: [String]?) -> Bool {
+            DeviceApprovalKinds(cloudRelayEnabled: enabled, tailscaleEmbed: false, scopes: scopes).cloud
+        }
+        XCTAssertTrue(cloud(true, ["read", "admin"]))
+        XCTAssertFalse(cloud(true, ["read"]))
+        XCTAssertFalse(cloud(true, nil))
+        XCTAssertFalse(cloud(false, ["read", "admin"]))
     }
 
     /// The banner disappears when none are pending, when a read fails and when there is no gateway to ask.
     func testAReadReplacesTheListAndAFailureEmptiesIt() async {
         let pending = PendingPairingRequests()
-        await pending.refresh(client: Client(rows: [request(1), request(2)]))
+        await pending.refresh(cloud: Client(rows: [request(1), request(2)]), tailscale: nil)
         XCTAssertEqual(pending.requests.count, 2)
-        await pending.refresh(client: Client(rows: []))
+        await pending.refresh(cloud: Client(rows: []), tailscale: nil)
         XCTAssertEqual(pending.requests, [])
-        await pending.refresh(client: Client(rows: [request(1)]))
-        await pending.refresh(client: Client(rows: [], fails: true))
+        await pending.refresh(cloud: Client(rows: [request(1)]), tailscale: nil)
+        await pending.refresh(cloud: Client(rows: [], fails: true), tailscale: nil)
         XCTAssertEqual(pending.requests, [])
-        await pending.refresh(client: Client(rows: [request(1)]))
-        await pending.refresh(client: nil)
+        await pending.refresh(cloud: Client(rows: [request(1)]), tailscale: nil)
+        await pending.refresh(cloud: nil, tailscale: nil)
         XCTAssertEqual(pending.requests, [])
-        await pending.refresh(client: Client(rows: [request(1)]))
+        await pending.refresh(cloud: Client(rows: [request(1)]), tailscale: nil)
         pending.clear()
         XCTAssertEqual(pending.requests, [])
     }
 
-    /// A tap opens Pairing requests once; Devices appearing again later does not reopen it.
+    /// A tap opens Waiting for your OK once; Devices appearing again later does not reopen it.
     func testARequestToOpenIsUsedOnce() {
         let pending = PendingPairingRequests()
-        XCTAssertFalse(pending.consumeOpen())
+        XCTAssertNil(pending.consumeOpen())
         pending.requestOpen()
-        XCTAssertTrue(pending.consumeOpen())
-        XCTAssertFalse(pending.consumeOpen())
+        XCTAssertEqual(pending.consumeOpen(), PairingRequestsOpen(tailscale: false))
+        XCTAssertNil(pending.consumeOpen())
         pending.requestOpen()
         pending.clear()
-        XCTAssertFalse(pending.consumeOpen(), "An unpaired phone forgets a request it never showed")
+        XCTAssertNil(pending.consumeOpen(), "An unpaired phone forgets a request it never showed")
         let before = pending.refreshRequests
         pending.requestRefresh()
         XCTAssertNotEqual(pending.refreshRequests, before)
     }
 
-    /// A pairing request notification, tapped, asks for the Pairing requests list.
+    /// A pairing request notification, tapped, asks for Waiting for your OK.
     func testThePairingNotificationRoutesToPairingRequests() {
         let payload: [AnyHashable: Any] = ["omnesis": ["kind": "device-pairing", "targetId": "pairing"]]
-        XCTAssertEqual(PushTarget.fromUserInfo(payload, cloudRelayEnabled: true), .pairingRequests)
-        XCTAssertTrue(PushTarget.pairingRequests.opensDevices)
+        XCTAssertEqual(PushTarget.fromUserInfo(payload, cloudRelayEnabled: true), .pairingRequests(requestId: nil))
+        XCTAssertTrue(PushTarget.pairingRequests().opensDevices)
         XCTAssertNil(PushTarget.fromUserInfo(payload, cloudRelayEnabled: false))
     }
 }

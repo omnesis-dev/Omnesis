@@ -6,6 +6,8 @@ import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, afterEach, expect, test, vi } from "vitest";
+import { markedFileError } from "../test/private-operation-fixture.js";
+import * as privateCredentials from "./google-credentials.js";
 import { AcmeDnsChallenges, type DnsChallengeLease } from "./acme-dns.js";
 
 let directory: string;
@@ -45,7 +47,9 @@ test("only exact gateway TXT leases are durable, bounded, owner scoped and idemp
     await expect(service.create(owner, hostname, "invalid")).rejects.toThrow();
     const lease = await service.create(owner, hostname, value);
     expect(lease).toEqual({ id: expect.any(String), expiresAt: expect.any(Number) });
-    expect((await stat(f.options.file)).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") {
+      expect((await stat(f.options.file)).mode & 0o777).toBe(0o600);
+    }
     expect(JSON.parse(await readFile(f.options.file, "utf8"))).toEqual([
       expect.objectContaining({ ...lease, accountId: owner, hostname, value }),
     ]);
@@ -215,3 +219,26 @@ test("forgetting a gateway ends its leases and nobody else's", async () => {
     await service.close();
   }
 });
+
+test.each(["own", "cause"] as const)(
+  "marked lease-journal absence cannot create provider state or publish an empty-derived journal (%s)",
+  async (placement) => {
+    const f = fixture(),
+      failure = markedFileError("ENOENT", placement);
+    vi.spyOn(privateCredentials, "readPrivateJson").mockRejectedValueOnce(failure);
+    const publish = vi.spyOn(privateCredentials, "savePrivateJson").mockResolvedValue(undefined);
+    let service: AcmeDnsChallenges | undefined;
+    try {
+      await expect(
+        (async () => {
+          service = await AcmeDnsChallenges.open(f.options);
+          await service.create(owner, hostname, value);
+        })(),
+      ).rejects.toBe(failure);
+      expect(f.create).not.toHaveBeenCalled();
+      expect(publish).not.toHaveBeenCalled();
+    } finally {
+      await service?.close();
+    }
+  },
+);

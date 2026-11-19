@@ -236,6 +236,12 @@ describe("people list pagination routes", () => {
     ).toBe(400);
   });
 
+  test("refuses a merge-rule group kind it does not know before reading", async () => {
+    listMergeRuleGroups.mockClear();
+    expect((await app.request("/people/merge-rule-groups?kind=automatic")).status).toBe(400);
+    expect(listMergeRuleGroups).not.toHaveBeenCalled();
+  });
+
   test("keyset-pages a person's touching merge rules and binds the cursor to resolution", async () => {
     const first = (await (
       await app.request("/people/person_a/merge-rules?limit=2&resolve=1")

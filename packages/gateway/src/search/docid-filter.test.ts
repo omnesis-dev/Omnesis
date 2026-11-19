@@ -13,12 +13,14 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import Database from "better-sqlite3";
 type Db = Database.Database;
 import { INLINE_DOCID_LIMIT, withDocIdRestriction } from "./docid-filter.js";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 let db: Db;
 let dbPath: string;
 
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-docid-filter-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-docid-filter-${randomUUID()}.db`);
   db = new Database(dbPath);
   db.exec("CREATE TABLE c (document_id TEXT)");
 });

@@ -102,6 +102,22 @@ struct JourneyGateway {
         }
     }
 
+    /// Deletes every agent conversation, so the app opens on the empty Ask
+    /// screen instead of resuming one an earlier journey or attempt left on
+    /// this gateway, whose transcript could already hold the answer a journey
+    /// is waiting for.
+    func deleteAllConversations() throws {
+        for _ in 0 ..< 10 {
+            let page = try request("GET", "/agent/conversations", body: nil)
+            let ids = (page["conversations"] as? [[String: Any]] ?? []).compactMap { $0["id"] as? String }
+            if ids.isEmpty { return }
+            for id in ids {
+                _ = try request("DELETE", "/agent/conversations/\(id)", body: nil)
+            }
+        }
+        throw JourneyGatewayError.unexpectedResponse("/agent/conversations")
+    }
+
     private func post(_ path: String, body: [String: String]) throws -> [String: Any] {
         try request("POST", path, body: body)
     }

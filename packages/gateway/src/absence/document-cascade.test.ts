@@ -3,6 +3,8 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { ProviderId, SourceId, type DocumentInput } from "@omnesis/types";
 import {
@@ -41,7 +43,7 @@ describe("sync tombstone cascade outbox", () => {
   let path: string;
 
   beforeEach(() => {
-    path = `/tmp/omnesis-test-${randomUUID()}.db`;
+    path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
     db = createDatabase(path);
   });
 

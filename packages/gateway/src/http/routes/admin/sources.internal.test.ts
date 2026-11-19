@@ -9,6 +9,8 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { SCOPE_ADMIN, SCOPE_READ, SCOPE_WRITE_ALL } from "@omnesis/types";
 import { createDatabase } from "../../../db.js";
@@ -53,7 +55,7 @@ function req(path: string, init: RequestInit = {}): Promise<Response> {
 }
 
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-test-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
   db = createDatabase(dbPath);
   token = mintToken([SCOPE_ADMIN, SCOPE_READ, SCOPE_WRITE_ALL]);
   notesRuntime = undefined;

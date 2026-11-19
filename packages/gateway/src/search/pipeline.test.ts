@@ -2,6 +2,8 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { randomUUID } from "node:crypto";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, test, expect, afterAll, beforeAll } from "vitest";
 import Database from "better-sqlite3";
 import {
@@ -72,7 +74,7 @@ afterAll(() => {
 
 /** Minimal gateway DB with people + document_people tables for person-filter tests. */
 function createGatewayTestDb() {
-  const db = new Database(`/tmp/omnesis-gw-test-${randomUUID()}.db`);
+  const db = new Database(join(tmpdir(), `omnesis-gw-test-${randomUUID()}.db`));
   db.pragma("journal_mode = WAL");
   db.exec(`
     CREATE TABLE IF NOT EXISTS people (
@@ -103,7 +105,7 @@ function createGatewayTestDb() {
 
 // Create a test index DB with known documents
 function createTestDb() {
-  const dbPath = `/tmp/omnesis-search-test-${randomUUID()}.db`;
+  const dbPath = join(tmpdir(), `omnesis-search-test-${randomUUID()}.db`);
   const db = createIndexDatabase(dbPath);
 
   // Insert test chunks (no real embeddings — BM25-only tests)
@@ -817,6 +819,160 @@ describe("SearchPipeline (embedder attached, query embedding fails)", () => {
 });
 
 describe("SearchPipeline typed index previews", () => {
+  test("snapshot refresh is reserved for generation changes and its failure cannot undo committed publication", async () => {
+    const { db } = createTestDb();
+    let refreshes = 0;
+    let committed = false;
+    const pipeline = new SearchPipeline({
+      indexDb: db,
+      refreshIndexSnapshot: async () => {
+        refreshes++;
+        throw new Error("scripted snapshot refresh failure");
+      },
+    });
+    try {
+      await pipeline.publishEmbeddingTransition(() => {});
+      expect(refreshes).toBe(0);
+      await pipeline.publishEmbeddingTransition(
+        () => {
+          committed = true;
+        },
+        { refreshSnapshot: true },
+      );
+      expect(committed).toBe(true);
+      expect(refreshes).toBe(1);
+      await expect(
+        pipeline.publishEmbeddingTransition(
+          () => {
+            throw new Error("scripted publication failure");
+          },
+          { refreshSnapshot: true },
+        ),
+      ).rejects.toThrow("scripted publication failure");
+      expect(refreshes).toBe(1);
+      expect((await pipeline.search({ text: "budget" })).stages?.bm25?.status).toBe("ran");
+    } finally {
+      closeTempDb(db);
+    }
+  });
+
+  test("background query capabilities drain before retirement and cannot invoke a retained old model afterward", async () => {
+    const { db } = createTestDb();
+    const started = Promise.withResolvers<void>();
+    const finish = Promise.withResolvers<Float32Array>();
+    const vector = new Float32Array(EMBEDDING_DIM);
+    let calls = 0;
+    const pipeline = new SearchPipeline({
+      indexDb: db,
+      embedder: {
+        async embed() {
+          return [vector];
+        },
+        async embedQuery() {
+          calls++;
+          started.resolve();
+          return finish.promise;
+        },
+        async dispose() {},
+      },
+    });
+    try {
+      const capability = pipeline.queryEmbedder()!;
+      const inFlight = capability.embedQuery("invented background query");
+      await started.promise;
+      let retired = false;
+      const publication = pipeline.publishEmbeddingTransition(() => {
+        retired = true;
+        pipeline.setEmbedder(undefined);
+      });
+      const stale = expect(capability.embedQuery("later background query")).rejects.toThrow(
+        "generation changed",
+      );
+      await Promise.resolve();
+      expect(retired).toBe(false);
+      finish.resolve(vector);
+      await Promise.all([inFlight, publication, stale]);
+      expect(retired).toBe(true);
+      expect(calls).toBe(1);
+    } finally {
+      finish.resolve(vector);
+      closeTempDb(db);
+    }
+  });
+
+  test("a generation publication waits for an embedded query and its candidates before replacing the model", async () => {
+    const { db } = createTestDb();
+    const started = Promise.withResolvers<void>();
+    const finish = Promise.withResolvers<Float32Array>();
+    const vector = new Float32Array(EMBEDDING_DIM).fill(0.01);
+    let generation = 1;
+    let snapshotRefreshes = 0;
+    const candidateGenerations: number[] = [];
+    const pipeline = new SearchPipeline({
+      indexDb: db,
+      refreshIndexSnapshot: async () => {
+        expect(generation).toBe(2);
+        expect(candidateGenerations).toEqual([1]);
+        snapshotRefreshes++;
+      },
+      embeddingModelId: "fixture-old-model",
+      embedder: {
+        async embed() {
+          return [vector];
+        },
+        async embedQuery() {
+          started.resolve();
+          return finish.promise;
+        },
+      },
+      usearchRead: {
+        search: () => [],
+        maybeRefresh: () => {
+          candidateGenerations.push(generation);
+        },
+        reopen: () => {},
+        close: () => {},
+        size: () => 0,
+      } as unknown as import("../indexer/usearch-index.js").UsearchReadHandle,
+    });
+    try {
+      const oldSearch = pipeline.search({ text: "budget", limit: 5 });
+      await started.promise;
+      const publication = pipeline.publishEmbeddingTransition(
+        () => {
+          expect(candidateGenerations).toEqual([1]);
+          generation = 2;
+          pipeline.setEmbedder(
+            {
+              async embed() {
+                return [vector];
+              },
+              async embedQuery() {
+                return vector;
+              },
+            },
+            "fixture-new-model",
+          );
+        },
+        { refreshSnapshot: true },
+      );
+      const nextSearch = pipeline.search({ text: "budget", limit: 5 });
+      await Promise.resolve();
+      expect(generation).toBe(1);
+      finish.resolve(vector);
+      const [before, , after] = await Promise.all([oldSearch, publication, nextSearch]);
+      expect(before.stages?.vector?.status).toBe("ran");
+      expect(after.stages?.vector?.status).toBe("ran");
+      expect(candidateGenerations).toEqual([1, 2]);
+      expect(snapshotRefreshes).toBe(1);
+      expect(before.models?.embedding).toBe("fixture-old-model");
+      expect(after.models?.embedding).toBe("fixture-new-model");
+    } finally {
+      finish.resolve(vector);
+      closeTempDb(db);
+    }
+  });
+
   test("last-token preview keeps configured semantic retrieval alongside prefix keyword matches", async () => {
     const { db } = createTestDb();
     let calls = 0;
@@ -936,7 +1092,7 @@ describe("SearchPipeline (embedder attached — stage reporting)", () => {
     }
   });
 
-  test("queryEmbedder is the attached search embedder, and none once cleared", () => {
+  test("queryEmbedder calls the attached model and refuses a retained capability once cleared", async () => {
     const { db } = createTestDb();
     const pipeline = new SearchPipeline({ indexDb: db });
     expect(pipeline.queryEmbedder()).toBeUndefined();
@@ -949,9 +1105,13 @@ describe("SearchPipeline (embedder attached — stage reporting)", () => {
       },
     };
     pipeline.setEmbedder(embedder, "scripted-embedding");
-    expect(pipeline.queryEmbedder()).toBe(embedder);
+    const capability = pipeline.queryEmbedder()!;
+    expect(await capability.embedQuery("invented query")).toEqual(new Float32Array(EMBEDDING_DIM));
+    expect(pipeline.isQueryEmbedder(embedder)).toBe(true);
     pipeline.setEmbedder(undefined);
     expect(pipeline.queryEmbedder()).toBeUndefined();
+    expect(pipeline.isQueryEmbedder(embedder)).toBe(false);
+    await expect(capability.embedQuery("invented query")).rejects.toThrow("generation changed");
     closeTempDb(db);
   });
 
@@ -996,7 +1156,7 @@ describe("SearchPipeline (embedder attached — stage reporting)", () => {
 
 describe("SearchPipeline (content-hash dedupe)", () => {
   test("byte-identical documents collapse to one result, distinct content survives", async () => {
-    const dbPath = `/tmp/omnesis-search-dedupe-${randomUUID()}.db`;
+    const dbPath = join(tmpdir(), `omnesis-search-dedupe-${randomUUID()}.db`);
     const db = createIndexDatabase(dbPath);
     const dummyEmbedding = new Float32Array(EMBEDDING_DIM).fill(0);
 
@@ -1071,7 +1231,7 @@ describe("SearchPipeline (content-hash dedupe)", () => {
 
 describe("SearchPipeline (relevance boost)", () => {
   test("relevance score affects ranking", async () => {
-    const dbPath = `/tmp/omnesis-search-rel-${randomUUID()}.db`;
+    const dbPath = join(tmpdir(), `omnesis-search-rel-${randomUUID()}.db`);
     const db = createIndexDatabase(dbPath);
     const dummyEmbedding = new Float32Array(EMBEDDING_DIM).fill(0);
 
@@ -1125,7 +1285,7 @@ describe("SearchPipeline (relevance boost)", () => {
   });
 
   test("null relevance score is neutral (no penalty)", async () => {
-    const dbPath = `/tmp/omnesis-search-rel2-${randomUUID()}.db`;
+    const dbPath = join(tmpdir(), `omnesis-search-rel2-${randomUUID()}.db`);
     const db = createIndexDatabase(dbPath);
     const dummyEmbedding = new Float32Array(EMBEDDING_DIM).fill(0);
 
@@ -1166,7 +1326,7 @@ describe("SearchPipeline (HTTP endpoint)", () => {
     const { createToken } = await import("../data/repositories/TokenRepository.js");
     const { createDevice } = await import("../data/repositories/DeviceRepository.js");
     const { SCOPE_READ } = await import("@omnesis/core");
-    const gwDbPath = `/tmp/omnesis-search-gw-${randomUUID()}.db`;
+    const gwDbPath = join(tmpdir(), `omnesis-search-gw-${randomUUID()}.db`);
     const gwDb = createDatabase(gwDbPath);
     const dev = createDevice(gwDb, { name: "search-test", kind: "cli" });
     const { token: testToken } = createToken(gwDb, dev.id, [SCOPE_READ]);
@@ -1210,7 +1370,7 @@ describe("SearchPipeline (HTTP endpoint)", () => {
     const { createToken } = await import("../data/repositories/TokenRepository.js");
     const { createDevice } = await import("../data/repositories/DeviceRepository.js");
     const { SCOPE_READ } = await import("@omnesis/core");
-    const gwDbPath = `/tmp/omnesis-search-gw2-${randomUUID()}.db`;
+    const gwDbPath = join(tmpdir(), `omnesis-search-gw2-${randomUUID()}.db`);
     const gwDb = createDatabase(gwDbPath);
     const dev2 = createDevice(gwDb, { name: "search-test-2", kind: "cli" });
     const { token: testToken2 } = createToken(gwDb, dev2.id, [SCOPE_READ]);
@@ -1244,7 +1404,7 @@ describe("SearchPipeline (HTTP endpoint)", () => {
 
     const { createServer } = await import("../server.js");
     const { createDatabase } = await import("../db.js");
-    const gwDbPath = `/tmp/omnesis-search-gw3-${randomUUID()}.db`;
+    const gwDbPath = join(tmpdir(), `omnesis-search-gw3-${randomUUID()}.db`);
     const gwDb = createDatabase(gwDbPath);
     const sourceRuntimes: TestSourceRuntime[] = [];
 
@@ -1311,7 +1471,7 @@ describe("SearchPipeline debug block", () => {
 
 describe("SearchPipeline (metadata hydration)", () => {
   test("hydrates mimeType + appUrl from documents.metadata onto results", async () => {
-    const dbPath = `/tmp/omnesis-search-mime-${randomUUID()}.db`;
+    const dbPath = join(tmpdir(), `omnesis-search-mime-${randomUUID()}.db`);
     const db = createIndexDatabase(dbPath);
     const dummyEmbedding = new Float32Array(EMBEDDING_DIM).fill(0);
 
@@ -1332,7 +1492,7 @@ describe("SearchPipeline (metadata hydration)", () => {
       },
     ]);
 
-    const gatewayDb = new Database(`/tmp/omnesis-gw-mime-${randomUUID()}.db`);
+    const gatewayDb = new Database(join(tmpdir(), `omnesis-gw-mime-${randomUUID()}.db`));
     gatewayDb.exec(
       `CREATE TABLE documents (id TEXT PRIMARY KEY, source_id TEXT NOT NULL, metadata TEXT)`,
     );
@@ -1359,7 +1519,7 @@ describe("SearchPipeline (metadata hydration)", () => {
   });
 
   test("returns the document's own sourceUrl, not the chunk's canonical form", async () => {
-    const db = createIndexDatabase(`/tmp/omnesis-search-url-${randomUUID()}.db`);
+    const db = createIndexDatabase(join(tmpdir(), `omnesis-search-url-${randomUUID()}.db`));
     // The chunk row holds the canonical link used for matching, which
     // Gmail does not open; the result must carry the published original.
     upsertChunks(db, [
@@ -1376,7 +1536,7 @@ describe("SearchPipeline (metadata hydration)", () => {
         sourceUrl: "https://mail.google.com/mail/#message/18c30b6251bb7dc2",
       },
     ]);
-    const gatewayDb = new Database(`/tmp/omnesis-gw-url-${randomUUID()}.db`);
+    const gatewayDb = new Database(join(tmpdir(), `omnesis-gw-url-${randomUUID()}.db`));
     gatewayDb.exec(
       `CREATE TABLE documents (id TEXT PRIMARY KEY, source_id TEXT NOT NULL, metadata TEXT)`,
     );
@@ -1403,7 +1563,7 @@ describe("SearchPipeline (metadata hydration)", () => {
   });
 
   test("drops a chunk's link when the document no longer publishes one", async () => {
-    const db = createIndexDatabase(`/tmp/omnesis-search-url2-${randomUUID()}.db`);
+    const db = createIndexDatabase(join(tmpdir(), `omnesis-search-url2-${randomUUID()}.db`));
     upsertChunks(db, [
       {
         id: "url-chunk-2",
@@ -1418,7 +1578,7 @@ describe("SearchPipeline (metadata hydration)", () => {
         sourceUrl: "fictional-app://notes/2",
       },
     ]);
-    const gatewayDb = new Database(`/tmp/omnesis-gw-url2-${randomUUID()}.db`);
+    const gatewayDb = new Database(join(tmpdir(), `omnesis-gw-url2-${randomUUID()}.db`));
     gatewayDb.exec(
       `CREATE TABLE documents (id TEXT PRIMARY KEY, source_id TEXT NOT NULL, metadata TEXT)`,
     );
@@ -1439,7 +1599,7 @@ describe("SearchPipeline (metadata hydration)", () => {
   });
 
   test("leaves mimeType undefined when metadata has no mimeType", async () => {
-    const dbPath = `/tmp/omnesis-search-mime2-${randomUUID()}.db`;
+    const dbPath = join(tmpdir(), `omnesis-search-mime2-${randomUUID()}.db`);
     const db = createIndexDatabase(dbPath);
     const dummyEmbedding = new Float32Array(EMBEDDING_DIM).fill(0);
 
@@ -1457,7 +1617,7 @@ describe("SearchPipeline (metadata hydration)", () => {
       },
     ]);
 
-    const gatewayDb = new Database(`/tmp/omnesis-gw-mime2-${randomUUID()}.db`);
+    const gatewayDb = new Database(join(tmpdir(), `omnesis-gw-mime2-${randomUUID()}.db`));
     gatewayDb.exec(
       `CREATE TABLE documents (id TEXT PRIMARY KEY, source_id TEXT NOT NULL, metadata TEXT)`,
     );
@@ -1484,7 +1644,7 @@ describe("SearchPipeline (metadata hydration)", () => {
 
 /** A corpus where one source type floods the matches for a query. */
 function createFloodCorpus() {
-  const dbPath = `/tmp/omnesis-flood-test-${randomUUID()}.db`;
+  const dbPath = join(tmpdir(), `omnesis-flood-test-${randomUUID()}.db`);
   const db = createIndexDatabase(dbPath);
   const emb = new Float32Array(EMBEDDING_DIM).fill(0);
   const mk = (id: string, sourceId: string) => ({
@@ -1574,7 +1734,7 @@ describe("SearchPipeline — default Tier-1 levers engaged", () => {
 
 describe("SearchPipeline — cognitive projection (F3)", () => {
   function projectionDb() {
-    const db = createIndexDatabase(`/tmp/omnesis-proj-test-${randomUUID()}.db`);
+    const db = createIndexDatabase(join(tmpdir(), `omnesis-proj-test-${randomUUID()}.db`));
     const emb = new Float32Array(EMBEDDING_DIM).fill(0);
     upsertChunks(db, [
       {

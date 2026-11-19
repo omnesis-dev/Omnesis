@@ -3,6 +3,8 @@
 
 import { randomUUID } from "node:crypto";
 import { rmSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { finishDocumentCascade } from "../absence/document-cascade.js";
 import { createIndexDatabase, EMBEDDING_DIM, upsertChunks } from "./db.js";
@@ -72,7 +74,7 @@ test("document cascades use the direct fallback only when no worker owns the sto
 });
 
 function tmpPath(): string {
-  return `/tmp/omnesis-index-gate-${randomUUID()}.db`;
+  return fixtureJoin(fixtureTmpdir(), `omnesis-index-gate-${randomUUID()}.db`);
 }
 
 function dummyChunk(id: string, documentId: string, sourceId = "test:1") {

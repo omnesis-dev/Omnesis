@@ -132,8 +132,8 @@ it("associates the actual coalesced work and distinguishes proposed policy sched
     subjectKind: "source" as const,
     reason: "change" as const,
     inputRevision: "v1",
-    tier: "soon" as const,
-    dueAt: 110,
+    tier: "routine" as const,
+    dueAt: 610,
     urgencyDecision: { id: "decision", anchorAt: 10 },
   };
   const actual: KnowledgeWork = {
@@ -161,9 +161,9 @@ it("associates the actual coalesced work and distinguishes proposed policy sched
     policy,
     status: "scheduled",
     anchorAt: 10,
-    proposed: { tier: "soon", dueAt: 110 },
+    proposed: { tier: "routine", dueAt: 610 },
     applied: { tier: "immediate", dueAt: 5 },
-    fallbackSoon: true,
+    awaitingVerdict: true,
     explicitOverride: false,
   });
   expect(() => associateKnowledgeUrgency(db, { ...input, inputRevision: "other" }, actual)).toThrow(

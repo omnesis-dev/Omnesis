@@ -7,6 +7,7 @@ import { Resolver } from "node:dns/promises";
 import * as acme from "acme-client";
 import { z } from "zod";
 import { relayOrigin } from "./network.js";
+import { caaBinding, lookupCaa, type CaaLookup } from "./acme-caa.js";
 
 interface Scope {
   origin: string;
@@ -62,6 +63,9 @@ export async function issueAcmeCertificate(options: {
   presenter: AcmeDnsPresenter;
   signal: AbortSignal;
   lookup?: typeof dnsContains;
+  /** With the ACME account's URL, before any order: e.g. publish the name's account-bound CAA. */
+  beforeOrder?: (accountUri: string, signal: AbortSignal) => Promise<void>;
+  caaLookup?: CaaLookup;
 }): Promise<string> {
   const directory = new URL(options.directoryUrl);
   const origin = relayOrigin(directory.origin).origin;
@@ -94,6 +98,12 @@ export async function issueAcmeCertificate(options: {
       throw new Error("ACME status polling limit exceeded");
     };
     await client.createAccount({ termsOfServiceAgreed: true });
+    const accountUri = client.getAccountUrl();
+    await options.beforeOrder?.(accountUri, signal);
+    // A name whose CAA binds issuance to another ACME account is someone else's to issue for.
+    const issue = await (options.caaLookup ?? lookupCaa)(hostname, signal);
+    if (issue && caaBinding(issue, accountUri) === "other-account")
+      throw new Error("The name's CAA record binds issuance to another ACME account");
     const [, csr] = await acme.crypto.createCsr(
       { commonName: hostname, altNames: [hostname] },
       options.tlsKey,

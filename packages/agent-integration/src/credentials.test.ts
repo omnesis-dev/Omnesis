@@ -1,10 +1,21 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, statSync, writeFileSync as writeNativeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
+import { privateWindowsFiles } from "./windows-files.js";
+
+// Credential fixtures must satisfy the same native confidentiality boundary as
+// real files; POSIX fixtures retain their explicit mode-change coverage.
+const writeFileSync: typeof writeNativeFileSync = (path, data, options) => {
+  if (process.platform === "win32") {
+    if (typeof path !== "string" || typeof data !== "string")
+      throw new Error("Credential fixture requires a string path and JSON");
+    privateWindowsFiles().writeWindowsPrivateFileAtomicSync(path, Buffer.from(data));
+  } else writeNativeFileSync(path, data, options);
+};
 
 import {
   integrationCredentialsSchema,
@@ -84,7 +95,7 @@ describe("integration credentials", () => {
       expect(loadIntegrationCredentials(runtimePath).oauth.tokens.access_token).toBe(
         "principal_access_refreshed",
       );
-      expect(statSync(runtimePath).mode & 0o777).toBe(0o600);
+      if (process.platform !== "win32") expect(statSync(runtimePath).mode & 0o777).toBe(0o600);
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }
@@ -118,7 +129,7 @@ describe("integration credentials", () => {
           tokens: {},
         },
       });
-      expect(statSync(runtimePath).mode & 0o777).toBe(0o600);
+      if (process.platform !== "win32") expect(statSync(runtimePath).mode & 0o777).toBe(0o600);
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }
@@ -156,7 +167,7 @@ describe("integration credentials", () => {
       expect(saved.tls).toEqual({ mode: "system" });
       expect(saved.oauth.tokens.refresh_token).toBe("principal_refresh_rotated");
       expect(next).toEqual(saved);
-      expect(statSync(runtimePath).mode & 0o777).toBe(0o600);
+      if (process.platform !== "win32") expect(statSync(runtimePath).mode & 0o777).toBe(0o600);
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }

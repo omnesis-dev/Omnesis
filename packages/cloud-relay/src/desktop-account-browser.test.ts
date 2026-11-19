@@ -52,7 +52,7 @@ async function fixture(maxPending?: number) {
       });
     const url = new URL(pending.authorizeUrl),
       launched = broker.launch(pending.operationId, url.searchParams.get("ticket")!, ""),
-      cookie = launched.cookie.split(";")[0]!;
+      cookie = launched.cookie!.split(";")[0]!;
     return { ...pending, verifier, nonce, launched, cookie };
   };
   /** The fresh sign-in `confirm` insists on, as the account page would record it. */
@@ -239,56 +239,59 @@ test("a typed code launches in place of the launch URL, and shows the same code 
   expect(typed.code).toMatch(/^[A-Z2-7]{4}-[A-Z2-7]{4}$/);
   const claimed = codes.claim(typed.code.toLowerCase(), "");
   expect(claimed.location).toBe(`/_relay/account?desktop=${typed.operationId}`);
-  expect(broker.describe(typed.operationId, claimed.cookie.split(";")[0]!)).toMatchObject({
-    code: typed.code,
-  });
+  const typedCookie = claimed.cookie!.split(";")[0]!;
+  expect(broker.describe(typed.operationId, typedCookie)).toMatchObject({ code: typed.code });
   const ticket = new URL(typed.authorizeUrl).searchParams.get("ticket")!;
-  // Nobody has signed in, so the link and the code both still open it, each for a new browser.
-  const linked = broker.launch(typed.operationId, ticket, "").cookie.split(";")[0]!;
-  expect(() => broker.describe(typed.operationId, claimed.cookie.split(";")[0]!)).toThrow(
-    "mismatch",
-  );
-  expect(broker.describe(typed.operationId, linked)).toMatchObject({ code: typed.code });
-  expect(codes.claim(typed.code, "").location).toBe(claimed.location);
+  // The browser that typed the code keeps it: the link opens it only there (F43).
+  expect(() => broker.launch(typed.operationId, ticket, "")).toThrow("opened in another browser");
+  expect(broker.launch(typed.operationId, ticket, typedCookie)).toEqual({
+    location: claimed.location,
+  });
+  expect(codes.claim(typed.code, typedCookie).location).toBe(claimed.location);
   const direct = start();
-  broker.launch(direct.operationId, new URL(direct.authorizeUrl).searchParams.get("ticket")!, "");
-  expect(codes.claim(direct.code, "").location).toBe(
+  const directCookie = broker
+    .launch(direct.operationId, new URL(direct.authorizeUrl).searchParams.get("ticket")!, "")
+    .cookie!.split(";")[0]!;
+  expect(() => codes.claim(direct.code, "")).toThrow("opened in another browser");
+  expect(codes.claim(direct.code, directCookie).location).toBe(
     `/_relay/account?desktop=${direct.operationId}`,
   );
   broker.cancel(direct.operationId, direct.ticket);
   expect(() => codes.claim(direct.code, "")).toThrow("unavailable");
 });
 
-test("the link and the code reopen a request until somebody signs in, and a code launch keeps the proof home", async () => {
+test("only the first browser reopens a request, and a code launch keeps the proof home", async () => {
   const f = await fixture(),
     op = f.start(49153),
     ticket = new URL(op.authorizeUrl).searchParams.get("ticket")!;
+  const taken = "opened in another browser";
   expect(f.broker.describe(op.operationId, op.cookie)).toMatchObject({ approvalRequired: false });
-  // The link again: the first tab is dropped, and the listener is still where the browser goes.
-  const second = f.broker.launch(op.operationId, ticket, op.cookie).cookie.split(";")[0]!;
-  expect(second).not.toBe(op.cookie);
-  expect(() => f.broker.describe(op.operationId, op.cookie)).toThrow("mismatch");
-  expect(() => f.signIn(op)).toThrow("mismatch");
-  expect(f.broker.describe(op.operationId, second)).toMatchObject({ approvalRequired: false });
-  // The code after the link, then the link once more: the code's caution is never undone.
-  const typed = f.codes.claim(op.code, second).cookie.split(";")[0]!;
-  expect(() => f.broker.describe(op.operationId, second)).toThrow("mismatch");
-  expect(f.broker.describe(op.operationId, typed)).toMatchObject({ approvalRequired: true });
-  const cookie = f.broker.launch(op.operationId, ticket, typed).cookie.split(";")[0]!;
-  expect(f.broker.describe(op.operationId, cookie)).toMatchObject({ approvalRequired: true });
-  expect(f.codes.claim(op.code, "").cookie.split(";")[0]).not.toBe(cookie);
-  const last = { operationId: op.operationId, cookie: "" };
-  last.cookie = f.broker.launch(op.operationId, ticket, "").cookie.split(";")[0]!;
+  // The link again in the same browser keeps its binding; elsewhere it is refused.
+  expect(f.broker.launch(op.operationId, ticket, op.cookie).cookie).toBeUndefined();
+  expect(f.broker.peekLaunch(op.operationId, ticket, "")).toEqual({ state: "taken" });
+  expect(f.broker.peekLaunch(op.operationId, ticket, op.cookie)).toEqual({
+    state: "here",
+    location: `/_relay/account?desktop=${op.operationId}`,
+  });
+  expect(() => f.broker.launch(op.operationId, ticket, "")).toThrow(taken);
+  expect(() => f.codes.claim(op.code, "")).toThrow(taken);
+  expect(f.broker.describe(op.operationId, op.cookie)).toMatchObject({ approvalRequired: false });
+  // The code typed in the same browser: its caution is never undone.
+  expect(f.codes.claim(op.code, op.cookie).cookie).toBeUndefined();
+  expect(f.broker.describe(op.operationId, op.cookie)).toMatchObject({ approvalRequired: true });
+  expect(f.broker.launch(op.operationId, ticket, op.cookie).cookie).toBeUndefined();
+  expect(f.broker.describe(op.operationId, op.cookie)).toMatchObject({ approvalRequired: true });
+  const last = { operationId: op.operationId, cookie: op.cookie };
 
   f.signIn(last);
   // A sign-in is on the request now: neither capability hands it to another browser.
-  expect(() => f.broker.launch(op.operationId, ticket, "")).toThrow("refused");
-  expect(() => f.codes.claim(op.code, "")).toThrow("refused");
+  expect(() => f.broker.launch(op.operationId, ticket, "")).toThrow(taken);
+  expect(() => f.codes.claim(op.code, "")).toThrow(taken);
   expect(f.broker.confirm(op.operationId, last.cookie, f.actor).location).toBe(
     origin + "/_relay/v3/desktop/complete",
   );
-  expect(() => f.broker.launch(op.operationId, ticket, "")).toThrow("refused");
-  expect(() => f.codes.claim(op.code, "")).toThrow("refused");
+  expect(() => f.broker.launch(op.operationId, ticket, "")).toThrow(taken);
+  expect(() => f.codes.claim(op.code, "")).toThrow(taken);
   const redeemed = await f.broker.redeem({
     operationId: op.operationId,
     ticket: op.ticket,
@@ -360,7 +363,7 @@ test("a desktop sign-in completed elsewhere, by link or by code, only ever relea
       challenge: createHash("sha256").update(verifier).digest("base64url"),
       loopbackPort: 49154,
     });
-  const cookie = codes.claim(typed.code, "").cookie.split(";")[0]!;
+  const cookie = codes.claim(typed.code, "").cookie!.split(";")[0]!;
   expect(broker.describe(typed.operationId, cookie)).toMatchObject({ approvalRequired: true });
   broker.recordProof(typed.operationId, cookie, {
     type: "google",

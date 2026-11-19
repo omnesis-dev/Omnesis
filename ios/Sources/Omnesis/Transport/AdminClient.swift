@@ -687,9 +687,9 @@ public final class AdminClient: Sendable {
     }
 
     /// Delete all ingested documents (and analytics rows) for a source.
-    /// The first step of the mobile clients' two-step Resync — followed by
-    /// `syncSource(...)` to re-fetch from scratch. The portal and CLI resync
-    /// in one request through `POST /admin/sources/:id/resync` instead.
+    /// The first step of a resync from scratch on a gateway that predates
+    /// resync modes — followed by `syncSource(...)` to fetch everything
+    /// again. Newer gateways resync through `resyncSource(...)` instead.
     @discardableResult
     public func deleteAllForSource(sourceId: String) async throws -> DeleteAllResponse {
         let (data, _) = try await dispatch(
@@ -735,7 +735,7 @@ public final class AdminClient: Sendable {
         case 401:
             throw GatewayClient.Error.unauthorized
         case 403:
-            throw GatewayClient.Error.forbidden
+            throw StepUpRefusal.forbidden(data)
         case 404:
             throw GatewayClient.Error.notFound
         default:

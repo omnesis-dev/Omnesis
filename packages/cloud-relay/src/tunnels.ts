@@ -6,11 +6,15 @@ import { isIP } from "node:net";
 import { type Duplex } from "node:stream";
 import { createWebSocketStream, WebSocket } from "ws";
 import { CloudRelayMetrics } from "./metrics.js";
+import { clientBucket } from "./client-bucket.js";
+import { hasStreamCapacity } from "./stream-admission.js";
 
 export class RelayError extends Error {
+  /** `code`, when set, is the one word the response body carries for the client to act on. */
   constructor(
     readonly status: number,
     message: string,
+    readonly code?: string,
   ) {
     super(message);
   }
@@ -20,20 +24,33 @@ export interface TunnelLimits {
   maxGateways: number;
   maxStreams: number;
   maxStreamsPerGateway: number;
+  /** Data connections one client address (an IPv6 /64) may hold on the data listener. */
+  maxStreamsPerClient: number;
+  /** Streams one client address (an IPv6 /64) may hold to one gateway. */
+  maxStreamsPerClientPerGateway: number;
   connectTimeoutMs: number;
   heartbeatMs: number;
+  /** A routed connection with no bytes either way for this long is closed. */
+  idleTimeoutMs: number;
 }
 
 export const DEFAULT_TUNNEL_LIMITS: TunnelLimits = {
   maxGateways: 100,
   maxStreams: 256,
   maxStreamsPerGateway: 16,
+  // An eighth of the relay's, and half of one gateway's, so one client never holds them all.
+  // A browser opens up to six connections to one name.
+  maxStreamsPerClient: 32,
+  maxStreamsPerClientPerGateway: 8,
   connectTimeoutMs: 10_000,
   heartbeatMs: 30_000,
+  // Gateways ping device WebSockets and send SSE keep-alives every 15 to 30 seconds.
+  idleTimeoutMs: 600_000,
 };
 
 interface Pending {
   owner: Tunnel;
+  client: string;
   timer: ReturnType<typeof setTimeout>;
   resolve: (stream: Duplex) => void;
   reject: (error: Error) => void;
@@ -43,6 +60,8 @@ interface Tunnel {
   socket: WebSocket;
   streams: Set<Duplex>;
   pending: Set<string>;
+  /** Streams and pending reservations by client bucket. */
+  clients: Map<string, number>;
   expiry: ReturnType<typeof setTimeout>;
   heartbeat: ReturnType<typeof setInterval>;
   revoke(): void;
@@ -77,6 +96,7 @@ export class TunnelBroker {
       socket,
       streams: new Set(),
       pending: new Set(),
+      clients: new Map(),
       expiry: setTimeout(
         () => {
           this.metrics.tunnel("session_expired");
@@ -143,13 +163,26 @@ export class TunnelBroker {
       this.metrics.stream("aborted");
       throw new RelayError(499, "Client disconnected");
     }
+    const address = normalizeAddress(client);
+    // Missing peer metadata shares one bucket; it must not bypass source fairness.
+    const bucket = clientBucket(address ?? "unknown");
+    const held = tunnel.clients.get(bucket) ?? 0;
     if (
       this.activeStreams + this.pending.size >= this.limits.maxStreams ||
-      tunnel.streams.size + tunnel.pending.size >= this.limits.maxStreamsPerGateway
+      !hasStreamCapacity(
+        this.limits.maxStreamsPerGateway,
+        tunnel.streams.size + tunnel.pending.size,
+        held,
+      )
     ) {
       this.metrics.stream("capacity");
       throw new RelayError(429, "Stream capacity reached");
     }
+    if (held >= this.limits.maxStreamsPerClientPerGateway) {
+      this.metrics.stream("client_capacity");
+      throw new RelayError(429, "Stream capacity reached for this client");
+    }
+    tunnel.clients.set(bucket, held + 1);
     const ticket = randomBytes(32).toString("hex");
     return new Promise<Duplex>((resolve, reject) => {
       const abort = (): void => {
@@ -159,6 +192,7 @@ export class TunnelBroker {
       const clean = (): void => signal.removeEventListener("abort", abort);
       this.pending.set(ticket, {
         owner: tunnel,
+        client: bucket,
         timer: setTimeout(() => {
           this.metrics.stream("timeout");
           this.fail(ticket, new RelayError(504, "Gateway connection timed out"));
@@ -174,7 +208,6 @@ export class TunnelBroker {
       });
       tunnel.pending.add(ticket);
       signal.addEventListener("abort", abort, { once: true });
-      const address = normalizeAddress(client);
       tunnel.socket.send(
         JSON.stringify({
           type: "open",
@@ -216,6 +249,7 @@ export class TunnelBroker {
     const keepAlive = setInterval(() => socket.ping(), this.limits.heartbeatMs);
     stream.once("close", () => {
       clearInterval(keepAlive);
+      release(pending.owner, pending.client);
       pending.owner.streams.delete(stream);
       this.activeStreams--;
       this.metrics.stream("closed");
@@ -228,6 +262,7 @@ export class TunnelBroker {
     if (!pending) return;
     this.pending.delete(ticket);
     pending.owner.pending.delete(ticket);
+    release(pending.owner, pending.client);
     clearTimeout(pending.timer);
     pending.reject(error);
   }
@@ -250,6 +285,11 @@ export class TunnelBroker {
     };
   }
 
+  /** Whether this gateway holds a live tunnel right now: a hint for people choosing a gateway. */
+  online(account: string): boolean {
+    return this.gateways.get(account)?.socket.readyState === WebSocket.OPEN;
+  }
+
   closeAccount(account: string): void {
     const tunnel = this.gateways.get(account);
     if (!tunnel) return;
@@ -263,6 +303,13 @@ export class TunnelBroker {
       tunnel.socket.terminate();
     }
   }
+}
+
+/** Returns a client's reservation on a gateway. */
+function release(tunnel: Tunnel, bucket: string): void {
+  const held = tunnel.clients.get(bucket)! - 1;
+  if (held > 0) tunnel.clients.set(bucket, held);
+  else tunnel.clients.delete(bucket);
 }
 
 /** An IP address in its plain form, or undefined for anything else. */

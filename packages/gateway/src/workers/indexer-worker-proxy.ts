@@ -17,6 +17,7 @@ import { Worker } from "node:worker_threads";
 import { assertNever, createLogger, resolveWorkerEntry } from "@omnesis/core";
 import { UNLIMITED_MAX_AGE } from "@omnesis/config";
 import { ambientAnswerProfiler, type AnswerProfiler } from "../privacy/answer-profile.js";
+import { shutdownWorker } from "./shutdown-worker.js";
 import { PendingRequest } from "./pending-request.js";
 import type { IndexStorageAccounting } from "../storage/index-accounting.js";
 import type { BackgroundJob, JobObservation, JobState } from "../background-jobs/types.js";
@@ -87,6 +88,7 @@ export interface IndexerWorkerOptions {
   indexerPageSize: number;
   indexerBetweenPageSleepMs: number;
   indexerCatchUp: IndexerCatchUpSettings;
+  lexicalRebuild: { batchSize: number; pauseMs: number };
   /**
    * Whether a user request is in flight on the gateway. Polled on the main
    * thread; a change is posted to the worker, whose scan returns to its
@@ -128,6 +130,8 @@ export interface IndexerWorkerOptions {
   usearchBackfillPageSize?: number;
   /** Optional cold-rebuild checkpoint interval, ms; primarily for crash-resume tests. */
   usearchCheckpointIntervalMs?: number;
+  /** Holds the cold rebuild between pages while non-zero; for tests (see `IndexerInit`). */
+  usearchBackfillHold?: SharedArrayBuffer;
   /** The gateway's memory budget; the worker keeps the HNSW graph within it. */
   memoryBudget?: MemoryBudget;
   heartbeatIntervalMs?: number;
@@ -189,11 +193,16 @@ const REINDEX_MISSING_TIMEOUT_MS = 15 * 60_000;
  */
 const DELETE_SOURCE_INDEX_TIMEOUT_MS = 60_000;
 // A final HNSW save rewrites the whole ~GB graph (usearch has no incremental
-// save), so it can exceed the 5s dispose ack. Bound generously: a legitimate
+// save), so it can exceed a brief shutdown interval. Bound generously: a legitimate
 // save finishes in a few seconds; the timeout only fires on a genuine hang, in
 // which case the gateway proceeds and the next boot rebuilds (fail-safe). Kept
 // well under the gateway's 30s SHUTDOWN_TIMEOUT_MS so dispose + encrypt still fit.
 const FLUSH_SAVE_TIMEOUT_MS = 20_000;
+/**
+ * A keyword-index switch is one short transaction, but it waits for the
+ * worker's in-flight job, which may be a long indexing cycle.
+ */
+const LEXICAL_SWITCH_TIMEOUT_MS = 10 * 60_000;
 
 export class IndexerWorkerProxy implements Embedder {
   private worker: Worker;
@@ -223,11 +232,10 @@ export class IndexerWorkerProxy implements Embedder {
   private pendingAccounting = new Map<number, PendingRequest<IndexStorageAccounting>>();
   private pendingPause = new Map<number, PendingRequest<void>>();
   private pendingFlushSave = new Map<number, PendingRequest<boolean>>();
+  private pendingLexicalSwitch = new Map<number, PendingRequest<boolean>>();
   private lastHeartbeat = 0;
   private heartbeatCheck: ReturnType<typeof setInterval> | null = null;
   private shutdownPromise: Promise<void> | null = null;
-  private workerExit: Promise<void>;
-  private resolveWorkerExit!: () => void;
   private workerExited = false;
   private workerJobs: Map<IndexerWorkerJobId, WorkerJobState> = new Map();
   /**
@@ -250,9 +258,6 @@ export class IndexerWorkerProxy implements Embedder {
     this.ready = new Promise<void>((resolve, reject) => {
       this.resolveReady = resolve;
       this.rejectReady = reject;
-    });
-    this.workerExit = new Promise<void>((resolve) => {
-      this.resolveWorkerExit = resolve;
     });
 
     // Source mode runs the .ts entry under tsx (preloading register-tsx.mjs
@@ -279,7 +284,6 @@ export class IndexerWorkerProxy implements Embedder {
           new Error(`indexer worker exited before becoming ready (exit code ${code})`),
         );
       }
-      this.resolveWorkerExit();
     });
 
     const init: IndexerInit = {
@@ -300,6 +304,7 @@ export class IndexerWorkerProxy implements Embedder {
       indexerPageSize: opts.indexerPageSize,
       indexerBetweenPageSleepMs: opts.indexerBetweenPageSleepMs,
       indexerCatchUp: opts.indexerCatchUp,
+      lexicalRebuild: opts.lexicalRebuild,
       reindexMissingAtBoot: opts.reindexMissingAtBoot,
       chunkerChunkSize: opts.chunkerChunkSize,
       chunkerOverlap: opts.chunkerOverlap,
@@ -317,6 +322,7 @@ export class IndexerWorkerProxy implements Embedder {
       usearchIndexPath: opts.usearchIndexPath,
       usearchBackfillPageSize: opts.usearchBackfillPageSize,
       usearchCheckpointIntervalMs: opts.usearchCheckpointIntervalMs,
+      ...(opts.usearchBackfillHold ? { usearchBackfillHold: opts.usearchBackfillHold } : {}),
       ...(opts.memoryBudget ? { memoryBudget: opts.memoryBudget } : {}),
       heartbeatIntervalMs: opts.heartbeatIntervalMs ?? 30_000,
       ...(opts.gatewayDbKeyHex ? { gatewayDbKeyHex: opts.gatewayDbKeyHex } : {}),
@@ -382,6 +388,13 @@ export class IndexerWorkerProxy implements Embedder {
 
   /** Called on every graph state the worker reports. */
   onVectorIndexChange?: (graph: SemanticSearchStatus) => void;
+
+  /**
+   * Called when the worker reports a keyword-index build of `version` that has
+   * copied every chunk and waits for {@link switchLexicalIndex}. Repeats while
+   * it waits.
+   */
+  onLexicalBackfilled?: (version: number) => void;
 
   /** Boot-phase progress from the worker. null before first report. */
   get bootProgress(): {
@@ -603,6 +616,23 @@ export class IndexerWorkerProxy implements Embedder {
   }
 
   /**
+   * Make the backfilled keyword-index build of `version` the active index.
+   * Resolves false when the build was superseded meanwhile.
+   */
+  async switchLexicalIndex(version: number): Promise<boolean> {
+    const id = this.nextId++;
+    const req = new PendingRequest<boolean>(LEXICAL_SWITCH_TIMEOUT_MS, () => {
+      const p = this.pendingLexicalSwitch.get(id);
+      if (p && this.pendingLexicalSwitch.delete(id)) {
+        p.fail(new Error(`keyword-index switch timed out after ${LEXICAL_SWITCH_TIMEOUT_MS}ms`));
+      }
+    });
+    this.pendingLexicalSwitch.set(id, req);
+    this.post({ type: "lexicalSwitch", id, version });
+    return req.promise;
+  }
+
+  /**
    * Un-pause indexing after {@link pauseIndexing}. Fire-and-forget:
    * used when a newer swap abandons the in-flight build, so the still-active
    * generation's worker resumes ingesting rather than being left quiesced.
@@ -611,7 +641,7 @@ export class IndexerWorkerProxy implements Embedder {
     this.post({ type: "resumeIndexing" });
   }
 
-  async dispose(): Promise<void> {
+  dispose(): Promise<void> {
     if (this.shutdownPromise) return this.shutdownPromise;
     if (!this.readySettled) {
       this.readySettled = true;
@@ -620,24 +650,12 @@ export class IndexerWorkerProxy implements Embedder {
     this.shutdownPromise = (async () => {
       if (this.heartbeatCheck) clearInterval(this.heartbeatCheck);
       if (this.pressureCheck) clearInterval(this.pressureCheck);
-      try {
-        if (!this.workerExited) this.post({ type: "shutdown" });
-      } catch {
-        // An already-exited worker is handled by workerExit below.
-      }
-
-      // Fallback: if the worker doesn't ack shutdown within 5s, terminate it
-      // ourselves so gateway shutdown isn't blocked by a wedged embedder.
-      const fallback = setTimeout(() => {
-        log.warn("indexer worker shutdown timed out — terminating");
-        void this.worker.terminate().catch(() => {});
-      }, 5_000);
-      fallback.unref?.();
-
-      // A shutdownComplete message only means the worker posted its ack. Wait
-      // for the actual exit so callers may safely encrypt/remove sidecars.
-      await this.workerExit;
-      clearTimeout(fallback);
+      await shutdownWorker(
+        this.worker,
+        () => this.post({ type: "shutdown" }),
+        () => log.warn("indexer worker shutdown waiting for native cleanup"),
+        { waitForNativeDrain: true },
+      );
 
       // Reject any still-pending requests only after the worker can no longer
       // post a successful result for them.
@@ -665,6 +683,10 @@ export class IndexerWorkerProxy implements Embedder {
         p.fail(new Error("indexer worker shut down"));
       }
       this.pendingFlushSave.clear();
+      for (const [, p] of this.pendingLexicalSwitch) {
+        p.fail(new Error("indexer worker shut down"));
+      }
+      this.pendingLexicalSwitch.clear();
     })();
     return this.shutdownPromise;
   }
@@ -832,6 +854,18 @@ export class IndexerWorkerProxy implements Embedder {
       case "bootProgress":
         this._bootProgress = { stage: msg.stage, progress: msg.progress };
         break;
+      case "lexicalBackfilled":
+        this.onLexicalBackfilled?.(msg.version);
+        break;
+      case "lexicalSwitchResult": {
+        const pending = this.pendingLexicalSwitch.get(msg.id);
+        if (pending) {
+          this.pendingLexicalSwitch.delete(msg.id);
+          if (msg.error) pending.fail(new Error(msg.error));
+          else pending.settle(msg.switched);
+        }
+        break;
+      }
       case "vectorIndex": {
         const { type: _type, ...graph } = msg;
         this._vectorIndex = graph;
@@ -842,7 +876,7 @@ export class IndexerWorkerProxy implements Embedder {
         this.handleJobUpdate(msg);
         break;
       case "shutdownComplete":
-        void this.worker.terminate().catch(() => {});
+        // shutdownWorker joins the actual exit after native cleanup.
         break;
       default:
         assertNever(msg);

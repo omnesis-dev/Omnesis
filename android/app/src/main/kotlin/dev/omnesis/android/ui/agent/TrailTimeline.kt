@@ -25,6 +25,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.AttachFile
 import androidx.compose.material.icons.outlined.AutoAwesome
+import androidx.compose.material.icons.automirrored.outlined.OpenInNew
 import androidx.compose.material.icons.outlined.Link
 import androidx.compose.material.icons.outlined.Storage
 import androidx.compose.material3.HorizontalDivider
@@ -33,6 +34,15 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -59,6 +69,9 @@ import androidx.compose.ui.unit.sp
 import dev.omnesis.android.designsystem.components.FileTypeIcon
 import dev.omnesis.android.designsystem.components.MiddleEllipsisText
 import dev.omnesis.android.designsystem.theme.OmTheme
+import dev.omnesis.android.ui.document.canOpenLink
+import dev.omnesis.android.ui.document.openFirstLink
+import dev.omnesis.android.ui.document.openableDocUrls
 import dev.omnesis.android.sources.SourceCatalog
 import dev.omnesis.android.transport.dto.AgentTrailEvent
 import dev.omnesis.android.transport.dto.AgentTrailEventDoc
@@ -609,6 +622,70 @@ private fun TrailRow(
 
 private val FILE_LIKE_DOC_TYPES = setOf("file", "attachment")
 private val CONVERSATION_DOC_TYPES = setOf("conversation")
+/** The title opens the indexed document; its separate action opens an available source link. */
+@Composable
+internal fun TrailCitationTitle(
+    doc: AgentTrailEventDoc,
+    isAttachment: Boolean,
+    onOpenDocument: (String) -> Unit,
+    canOpenLink: ((String) -> Boolean)? = null,
+    onOpenLinks: ((List<String>) -> Unit)? = null,
+) {
+    val context = LocalContext.current
+    var resumes by remember { mutableIntStateOf(0) }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { resumes++ }
+    val openUrls = remember(doc.appUrl, doc.sourceUrl, resumes, canOpenLink, context) {
+        openableDocUrls(doc.appUrl, doc.sourceUrl, canOpenLink ?: context::canOpenLink)
+    }
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(
+            Modifier.weight(1f, fill = openUrls.isEmpty()).semantics { contentDescription = doc.title.ifEmpty { "(untitled)" } }.clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClickLabel = "View document in Omnesis",
+                onClick = { onOpenDocument(doc.documentId) },
+            ),
+            verticalAlignment = Alignment.Top,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            if (isAttachment) {
+                Icon(
+                    Icons.Outlined.AttachFile, contentDescription = null,
+                    tint = OmTheme.colors.textMuted,
+                    modifier = Modifier.size(11.dp).padding(top = 2.dp),
+                )
+            }
+            if (isAttachment || doc.documentType in FILE_LIKE_DOC_TYPES) {
+                FileTypeIcon(
+                    mimeType = doc.mimeType, filename = doc.title, size = 12.dp,
+                    modifier = Modifier.padding(top = 1.dp).alpha(0.7f),
+                )
+            }
+            MiddleEllipsisText(
+                text = doc.title.ifEmpty { "(untitled)" },
+                style = MaterialTheme.typography.bodySmall.copy(
+                    fontSize = if (isAttachment) 12.sp else 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                ),
+                color = OmTheme.colors.textPrimary,
+                modifier = Modifier.weight(1f, fill = openUrls.isEmpty()),
+            )
+        }
+        if (openUrls.isNotEmpty()) {
+            Box(
+                Modifier.size(28.dp).clickable(
+                    role = Role.Button,
+                    onClickLabel = "Open in source",
+                    onClick = { if (onOpenLinks != null) onOpenLinks(openUrls) else context.openFirstLink(openUrls) },
+                ),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(Icons.AutoMirrored.Outlined.OpenInNew, contentDescription = "Open in source", tint = OmTheme.colors.textMuted, modifier = Modifier.size(14.dp))
+            }
+        }
+    }
+}
+
 @Composable
 private fun TrailEventBody(
     event: AgentTrailEvent,
@@ -628,8 +705,6 @@ private fun TrailEventBody(
         return
     }
 
-    val isFileLike = doc.documentType in FILE_LIKE_DOC_TYPES
-    val showFileIcon = isAttachment || isFileLike
     val isConversation = doc.documentType in CONVERSATION_DOC_TYPES
     val buckets = TrailTimelineFormat.groupPeopleByBucket(event.people).filter { it.first != "mentions" }
     val visibleRelated = event.related.filter {
@@ -637,42 +712,7 @@ private fun TrailEventBody(
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        // Title row
-        Row(
-            Modifier.clickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = null,
-                onClick = { onOpenDocument(doc.documentId) },
-            ),
-            verticalAlignment = Alignment.Top,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            if (isAttachment) {
-                Icon(
-                    Icons.Outlined.AttachFile,
-                    contentDescription = null,
-                    tint = OmTheme.colors.textMuted,
-                    modifier = Modifier.size(11.dp).padding(top = 2.dp),
-                )
-            }
-            if (showFileIcon) {
-                FileTypeIcon(
-                    mimeType = doc.mimeType,
-                    filename = doc.title,
-                    size = 12.dp,
-                    modifier = Modifier.padding(top = 1.dp).alpha(0.7f),
-                )
-            }
-            MiddleEllipsisText(
-                text = doc.title.ifEmpty { "(untitled)" },
-                style = MaterialTheme.typography.bodySmall.copy(
-                    fontSize = if (isAttachment) 12.sp else 13.sp,
-                    fontWeight = FontWeight.SemiBold,
-                ),
-                color = OmTheme.colors.textPrimary,
-                modifier = Modifier.weight(1f),
-            )
-        }
+        TrailCitationTitle(doc = doc, isAttachment = isAttachment, onOpenDocument = onOpenDocument)
 
         // Metadata (top-level) or people-only (attachment) line
         if (!isAttachment) {

@@ -3,6 +3,8 @@
 
 import { randomUUID } from "node:crypto";
 import { rmSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { defaultScopesForDeviceKind, SCOPE_ADMIN } from "@omnesis/types";
 import { createDatabase } from "../../db.js";
@@ -34,7 +36,7 @@ let path: string;
 beforeEach(() => {
   // Enrollment records are read back only with the cloud relay opt-in.
   vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
-  path = `/tmp/omnesis-enrollment-${randomUUID()}.db`;
+  path = fixtureJoin(fixtureTmpdir(), `omnesis-enrollment-${randomUUID()}.db`);
   db = createDatabase(path);
 });
 

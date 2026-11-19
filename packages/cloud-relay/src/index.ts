@@ -13,6 +13,8 @@ export { startGatewayCloudTunnel, readRelaySession } from "./gateway-integration
 export {
   GooglePairingRequests,
   googlePairingRequestSchema,
+  gatewayPasskeyOptionsSchema,
+  passkeyApprovalSchema,
   googlePairingNonce,
 } from "./google-pairing.js";
 export {
@@ -94,6 +96,7 @@ export type {
 } from "./management.js";
 
 export { CloudRelayManagementFailure } from "./management.js";
+export { PasskeyNotOnAccount } from "./gateway-account-link.js";
 
 export { GatewayCloudRelayManagement } from "./management-service.js";
 export type { CloudRelayManagerOptions } from "./management-service.js";

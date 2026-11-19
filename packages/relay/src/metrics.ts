@@ -21,6 +21,7 @@ export type AbuseRejectionReason =
   | "carrier_failure_penalty"
   | "global_circuit"
   | "challenge_capacity"
+  | "target_cooldown"
   | "missing_source";
 
 export interface RelayMetricStoreSnapshot {

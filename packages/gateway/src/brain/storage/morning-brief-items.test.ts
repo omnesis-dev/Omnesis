@@ -9,6 +9,8 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createDatabase } from "../../db.js";
 import {
@@ -46,7 +48,7 @@ describe("morning brief items", () => {
   }
 
   beforeEach(() => {
-    path = `/tmp/omnesis-test-${randomUUID()}.db`;
+    path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
     db = createDatabase(path);
     for (const id of ["obs_1", "obs_2", "obs_3", "obs_4"]) note(id);
   });

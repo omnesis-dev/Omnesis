@@ -5,6 +5,7 @@ import { mkdtempSync, readdirSync, rmSync, statSync, readFileSync } from "node:f
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
+import { inspectWindowsPrivatePathSync } from "./windows-private-file.js";
 import {
   MissingCredentialsError,
   isMissingCredentialsError,
@@ -77,8 +78,9 @@ describe("credentials file IO", () => {
   test("write produces a 0600 file (atomic, owner-only)", async () => {
     await writeProviderCredentials("google", { client_id: "a", client_secret: "b" }, dir);
     const path = providerCredentialsPath("google", dir);
-    const mode = statSync(path).mode & 0o777;
-    expect(mode).toBe(0o600);
+    if (process.platform === "win32")
+      expect(inspectWindowsPrivatePathSync(path, "file").private).toBe(true);
+    else expect(statSync(path).mode & 0o777).toBe(0o600);
   });
 
   test("write does not leave a scratch file behind on success", async () => {

@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import "./synth-env.js";
-import { expect, test } from "vitest";
+import { expect, onTestFinished, test } from "vitest";
 import { z } from "zod";
 import { proposeKnowledgeCandidate } from "../../../gateway/src/brain/knowledge/discovery.js";
 import { readKnowledgeSourceRevision } from "../../../gateway/src/brain/knowledge/source-revision.js";
@@ -23,6 +23,16 @@ const pageId = "wiki-observatory-kit";
 test.each([1, 8])(
   "candidate decision work survives restart, defers and publishes with maxSeeds=%i",
   async (maxSeeds) => {
+    const callerClockMode = process.env.OMNESIS_BRIEFS_VIRTUAL_CLOCK;
+    const callerClockInitial = process.env.OMNESIS_BRIEFS_VIRTUAL_CLOCK_INITIAL_MS;
+    // Register before setup: even a refused gateway start must restore the caller.
+    onTestFinished(() => {
+      if (callerClockInitial === undefined)
+        delete process.env.OMNESIS_BRIEFS_VIRTUAL_CLOCK_INITIAL_MS;
+      else process.env.OMNESIS_BRIEFS_VIRTUAL_CLOCK_INITIAL_MS = callerClockInitial;
+    });
+    const inheritedClockInitial = "not-an-owned-bench-instant";
+    process.env.OMNESIS_BRIEFS_VIRTUAL_CLOCK_INITIAL_MS = inheritedClockInitial;
     let publish = false;
     let retryAt = 0;
     let evidenceVersions: Record<string, string> = {};
@@ -114,6 +124,14 @@ test.each([1, 8])(
       },
     });
     try {
+      expect(process.env.OMNESIS_BRIEFS_VIRTUAL_CLOCK).toBe(callerClockMode);
+      expect(process.env.OMNESIS_BRIEFS_VIRTUAL_CLOCK_INITIAL_MS).toBe(inheritedClockInitial);
+      if (maxSeeds === 1) {
+        const initialClock = await bench.clock.now();
+        expect(initialClock.virtual).toBe(true);
+        await bench.restartGateway();
+        expect(await bench.clock.now()).toEqual(initialClock);
+      }
       await bench.drainUntilQuiet();
       const documents = [
         email({
@@ -159,16 +177,47 @@ test.each([1, 8])(
         );
       });
       await bench.restartGateway();
-      await bench.clock.advance(2_000);
-      await expect
-        .poll(
-          () =>
-            bench.sql
-              .prepare("SELECT status FROM knowledge_candidates WHERE id=?")
-              .get(candidateId),
-          { timeout: 60_000 },
-        )
-        .toEqual({ status: "deferred" });
+      const afterRestartNow = await bench.clock.advance(2_000);
+      expect(afterRestartNow).toBe(now + 2_000);
+      expect(process.env.OMNESIS_BRIEFS_VIRTUAL_CLOCK).toBe(callerClockMode);
+      expect(process.env.OMNESIS_BRIEFS_VIRTUAL_CLOCK_INITIAL_MS).toBe(inheritedClockInitial);
+      try {
+        await expect
+          .poll(
+            () =>
+              bench.sql
+                .prepare("SELECT status FROM knowledge_candidates WHERE id=?")
+                .get(candidateId),
+            { timeout: 60_000 },
+          )
+          .toEqual({ status: "deferred" });
+      } catch (error) {
+        let diagnostics: unknown;
+        try {
+          diagnostics = {
+            clock: afterRestartNow,
+            work: bench.sql
+              .prepare(
+                "SELECT subject_id,reason,status,due_at,last_error FROM knowledge_work ORDER BY due_at LIMIT 20",
+              )
+              .all(),
+            runs: bench.sql
+              .prepare(
+                "SELECT kind,status,attempts,last_error FROM cognition_runs ORDER BY enqueued_at DESC LIMIT 10",
+              )
+              .all(),
+            calls: bench.puppetCalls.slice(-20).map(({ kind, emitted }) => ({
+              kind,
+              emitted: emitted.kind === "tool" ? emitted.name : emitted.kind,
+            })),
+          };
+        } catch {
+          diagnostics = "Local fixture diagnostics unavailable";
+        }
+        throw new Error(`Candidate did not defer after restart: ${JSON.stringify(diagnostics)}`, {
+          cause: error,
+        });
+      }
       await bench.drainUntilQuiet({ includeUpcoming: false });
       const admissions = () =>
         bench.sql

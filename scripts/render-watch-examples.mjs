@@ -719,4 +719,4 @@ async function main() {
   console.log(`==> rendered ${EXAMPLES.length} watch examples into ${TARGET}`);
 }
 
-if (process.argv[1] && import.meta.url === `file://${process.argv[1]}`) await main();
+if (import.meta.main) await main();

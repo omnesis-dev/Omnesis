@@ -4,19 +4,27 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import {
+  approvalDeviceTranscript,
+  deviceSignatureSchema,
+  devicePublicKeySchema,
   deviceKeyEvidenceSchema,
   enrollmentNonce,
   enrollmentOpaque,
+  enrollmentProofSchema,
   enrollmentSignatureTranscript,
+  gatewayPasskeyApprovalBinding,
+  gatewayPasskeyChallenge,
+  gatewayPasskeySignInProofSchema,
   pairingComparisonCode,
-  signInProofSchema,
   verifyDeviceSignature,
+  type GatewayPasskeySignInProof,
   type SignInProof,
 } from "./device-enrollment.js";
 import { accountId, type IdentityProvider } from "./identity.js";
 import { RelayError } from "./tunnels.js";
 import { EnrollmentChallenges } from "./enrollment-challenges.js";
-import type { TrustedSignInSource, VerifiedSignIn } from "./gateway-sign-in-proof.js";
+import type { VerifiedSignIn } from "./gateway-sign-in-proof.js";
+import type { GatewayPasskeyCeremony } from "./gateway-account-link.js";
 
 export const googlePairingRequestSchema = z
   .object({
@@ -28,7 +36,7 @@ export const googlePairingRequestSchema = z
     /** The gateway challenge this request answers, when it carries no device key to name it. */
     challenge: enrollmentOpaque.optional(),
     deviceKey: deviceKeyEvidenceSchema.optional(),
-    proof: signInProofSchema.optional(),
+    proof: enrollmentProofSchema.optional(),
     requireApproval: z.boolean().optional(),
   })
   .strict()
@@ -55,10 +63,84 @@ export interface GatewayEnrollment {
     nonce: string,
     credentialPublicKey?: string,
   ): Promise<VerifiedSignIn | undefined>;
-  /** Whether approving may pin this sign-in. False whenever that can't be checked. */
+  /** Whether approving may also confirm this sign-in. False whenever that can't be checked. */
   canTrust(signIn: VerifiedSignIn): Promise<boolean>;
-  trustSignIn(signIn: VerifiedSignIn, source: TrustedSignInSource): Promise<void>;
+  /** Confirms the sign-in of a request a person approved. */
+  trustSignIn(signIn: VerifiedSignIn): Promise<void>;
+  /**
+   * What the approval card suggests about remembering a sign-in, from this gateway's own record
+   * only. `firstConfirmation`: nothing is confirmed here yet and this is the sign-in the gateway
+   * was linked with. `otherGoogleAccount`: a Google account other than the one the gateway was
+   * linked with. Display only: confirming still goes through `canTrust` and `trustSignIn`.
+   */
+  rememberHint?(signIn: VerifiedSignIn): {
+    firstConfirmation: boolean;
+    otherGoogleAccount: boolean;
+  };
+  /**
+   * A passkey assertion made on the gateway's own page for `device-enrollment`, over the request's
+   * own gateway challenge and its enrollment nonce. Undefined when it does not verify.
+   */
+  verifyGatewayPasskey?(
+    proof: GatewayPasskeySignInProof,
+    challenge: string,
+    nonce: string,
+  ): Promise<VerifiedSignIn | undefined>;
+  /**
+   * Where a page runs a passkey ceremony on this gateway: the relay's host as RP ID and the
+   * gateway's own origin. Undefined when the gateway has no origin of its own to vouch for.
+   */
+  gatewayPasskey?(): { rpId: string; origin: string } | undefined;
+  /** An `approve-request` ceremony for `binding`, or undefined without an origin of its own. */
+  approvalCeremony?(binding: string): GatewayPasskeyCeremony | undefined;
+  /** Whether a passkey the owner confirmed here signed that ceremony. Spends its challenge. */
+  verifyApproval?(proof: unknown, binding: string): Promise<boolean>;
+  /**
+   * Whether a held request can be approved with a passkey on the gateway's page right now: a
+   * passkey is confirmed here, the gateway has an origin of its own, and no incident holds it.
+   */
+  passkeyApproval?(): boolean;
+  /** Whether the linked account has a passkey this gateway knows (pinned or confirmed here). */
+  accountPasskey?(): boolean;
+  /** The passkey ids a device may sign in with on the gateway's page, as a prompt hint only. */
+  signInPasskeys?(): string[];
+  /**
+   * Whether an administrative action that loosens this gateway must first be confirmed with a
+   * passkey (a "step-up"): true once the owner confirmed a passkey here.
+   */
+  stepUpRequired?(): boolean;
+  /**
+   * A `step-up` ceremony for `binding` (`gatewayPasskeyStepUpBinding`), or undefined without an
+   * origin of its own, which includes the time a certificate incident holds the gateway.
+   */
+  stepUpCeremony?(binding: string): GatewayPasskeyCeremony | undefined;
+  /** Whether a passkey the owner confirmed here signed that ceremony. Spends its challenge. */
+  verifyStepUp?(proof: unknown, binding: string): Promise<boolean>;
+  /** Whether a certificate incident holds the gateway, so no step-up can start until it is lifted. */
+  securityLock?(): boolean;
 }
+
+/** A person approving a held request with a passkey on the gateway's own page. */
+export const passkeyApprovalSchema = z
+  .object({
+    requestId: z.string().uuid(),
+    proof: gatewayPasskeySignInProofSchema,
+    trustSignIn: z.boolean().optional(),
+    /** The requesting browser's own signature, required for a portal's request. */
+    deviceSignature: deviceSignatureSchema.optional(),
+  })
+  .strict();
+
+/** What a device sends to start a passkey sign-in on the gateway's own page. */
+export const gatewayPasskeyOptionsSchema = z
+  .object({
+    requestId: z.string().uuid(),
+    kind: z.enum(["ios", "android", "collector", "cli", "portal"]),
+    name: z.string().trim().min(1).max(80),
+    secret: z.string().regex(/^[a-f0-9]{64}$/),
+    devicePublicKey: devicePublicKeySchema,
+  })
+  .strict();
 const digest = (value: string): Buffer => createHash("sha256").update(value).digest();
 
 /** A stolen routing ID token cannot be replayed without the client's private random secret. */
@@ -129,7 +211,13 @@ export class GooglePairingRequests {
         expiresAt: number;
         enrollment?: PairingEnrollment;
       }): Promise<{ pairingCode: string; expiresAt: number }>;
-      onPending?(request: { requestId: string; expiresAt: number }): void | Promise<void>;
+      /** `kind` and `name` are what the device says about itself: untrusted, for display only. */
+      onPending?(request: {
+        requestId: string;
+        expiresAt: number;
+        kind: GooglePairingRequest["kind"];
+        name: string;
+      }): void | Promise<void>;
       /**
        * Whether the owner revoked a device that signed in with this key. Such a request never
        * joins automatically; a person approves it again.
@@ -167,6 +255,119 @@ export class GooglePairingRequests {
    */
   issueChallenge(): { challenge: string; expiresAt: number } {
     return this.challenges.issue();
+  }
+
+  /**
+   * Starts a passkey sign-in on the gateway's own page for a request the device is about to send:
+   * the request's one-use challenge, with the WebAuthn challenge bound to its enrollment nonce.
+   * The device signs for the same challenge and sends the assertion with its request.
+   */
+  passkeyCeremony(input: unknown): GatewayPasskeyCeremony {
+    const value = gatewayPasskeyOptionsSchema.parse(input);
+    const where = this.gatewayPasskey();
+    if (!where) throw new RelayError(404, "Passkey sign-in on this gateway is unavailable");
+    const binding = enrollmentNonce(value);
+    const issued = this.challenges.issue();
+    const allowCredentials = this.options.enrollment?.signInPasskeys?.() ?? [];
+    return {
+      purpose: "device-enrollment",
+      ...where,
+      challenge: issued.challenge,
+      binding,
+      webauthnChallenge: gatewayPasskeyChallenge(
+        "device-enrollment",
+        where.origin,
+        issued.challenge,
+        binding,
+      ),
+      expiresAt: issued.expiresAt,
+      ...(allowCredentials.length > 0 ? { allowCredentials } : {}),
+    };
+  }
+
+  /** A held request as the approval page shows it: what it is, its code and how long it waits. */
+  approvalView(requestId: string) {
+    const row = this.waiting(requestId);
+    return {
+      requestId: row.requestId,
+      kind: row.kind,
+      name: row.name,
+      verificationCode: row.verificationCode,
+      createdAt: row.createdAt,
+      expiresAt: row.expiresAt,
+      ...(row.signIn ? { signIn: row.signIn.type } : {}),
+      ...(row.revokedDevice ? { revokedDevice: true as const } : {}),
+      // A portal's request is approved only in the browser that made it.
+      deviceKeyRequired: row.kind === "portal",
+      passkeyApproval: this.passkeyApproval(),
+    };
+  }
+
+  /** Starts approving a held request with a passkey on the gateway's own page. */
+  approvalCeremony(requestId: string): GatewayPasskeyCeremony {
+    const ceremony = this.options.enrollment?.approvalCeremony?.(
+      this.approvalBinding(this.waiting(requestId)),
+    );
+    if (!ceremony) throw new RelayError(404, "Passkey approval on this gateway is unavailable");
+    return ceremony;
+  }
+
+  /**
+   * Approves a held request on a passkey the owner confirmed on this gateway, signed on its own
+   * page for exactly this request, device key and code. A portal's request also needs the
+   * requesting browser's own signature.
+   */
+  async approveWithPasskey(input: unknown): Promise<void> {
+    const value = passkeyApprovalSchema.parse(input);
+    const row = this.waiting(value.requestId);
+    if (
+      row.kind === "portal" &&
+      !(
+        row.devicePublicKey &&
+        value.deviceSignature &&
+        verifyDeviceSignature(
+          row.devicePublicKey,
+          approvalDeviceTranscript({ requestId: row.requestId, challenge: value.proof.challenge }),
+          value.deviceSignature,
+        )
+      )
+    )
+      throw new RelayError(403, "Approve this request in the browser that asked to join");
+    if (!(await this.options.enrollment?.verifyApproval?.(value.proof, this.approvalBinding(row))))
+      throw new RelayError(403, "Passkey approval refused");
+    await this.decide(row.requestId, true, {
+      ...(value.trustSignIn === undefined ? {} : { trustSignIn: value.trustSignIn }),
+    });
+  }
+
+  private waiting(requestId: string): Pending {
+    this.prune();
+    const row = this.requests.get(requestId);
+    if (!row || row.state !== "pending") throw new RelayError(404, "Pairing request not found");
+    return row;
+  }
+
+  private approvalBinding(row: Pending): string {
+    return gatewayPasskeyApprovalBinding({
+      requestId: row.requestId,
+      ...(row.devicePublicKey ? { devicePublicKey: row.devicePublicKey } : {}),
+      verificationCode: row.verificationCode,
+    });
+  }
+
+  /** Whether a held request can be approved with a passkey on the gateway's page right now. */
+  passkeyApproval(): boolean {
+    return this.options.enrollment?.passkeyApproval?.() ?? false;
+  }
+
+  /** Whether the linked account has a passkey this gateway knows. */
+  accountPasskey(): boolean {
+    return this.options.enrollment?.accountPasskey?.() ?? false;
+  }
+
+  /** The origin and RP ID a page uses for a passkey sign-in on this gateway, when it has one. */
+  gatewayPasskey(): { rpId: string; origin: string } | undefined {
+    return this.options.enrollment?.gatewayPasskey?.();
   }
 
   /** A request a device sends. Its code nonce is the one the answered challenge committed to. */
@@ -207,6 +408,13 @@ export class GooglePairingRequests {
     this.held.delete(value.requestId);
     const identityToken = value.identityToken ?? held?.identityToken;
     const proof = value.proof ?? held?.proof;
+    // A passkey assertion made on the gateway's page answers this request's own challenge.
+    const gatewayPasskey = proof?.type === "gateway-passkey" ? proof : undefined;
+    if (
+      gatewayPasskey &&
+      (!devicePublicKey || gatewayPasskey.challenge !== value.deviceKey!.challenge)
+    )
+      throw new RelayError(403, "A gateway passkey sign-in answers its own request's challenge");
     const fingerprint = this.options.gatewayFingerprint();
     const request: Pending = {
       requestId: value.requestId,
@@ -231,9 +439,19 @@ export class GooglePairingRequests {
       const nonce = devicePublicKey
         ? enrollmentNonce({ ...value, devicePublicKey })
         : googlePairingNonce(value);
-      if (devicePublicKey && proof)
+      if (gatewayPasskey) {
+        request.signIn = await this.options.enrollment!.verifyGatewayPasskey?.(
+          gatewayPasskey,
+          gatewayPasskey.challenge,
+          nonce,
+        );
+        // It was made on this gateway's own page with a key the gateway chose, so nothing else
+        // can stand in for it: a passkey assertion that does not verify is refused outright.
+        if (!request.signIn) throw new RelayError(401, "Sign-in could not be verified");
+      } else if (devicePublicKey && proof)
+        // Not a gateway passkey here, so a relay-page or app sign-in.
         request.signIn = await this.options.enrollment!.verifyProof(
-          proof,
+          proof as SignInProof,
           nonce,
           held?.credentialPublicKey,
         );
@@ -255,7 +473,9 @@ export class GooglePairingRequests {
         await this.approve(request);
         return this.poll(value.requestId, value.secret);
       }
-      await this.admit(identityToken, nonce);
+      // A verified assertion on the gateway's own page, against a key the account lists, says at
+      // least as much as the relay's attestation; anything else needs the relay's word.
+      if (!gatewayPasskey) await this.admit(identityToken, nonce);
       if (request.signIn)
         request.trustable = await this.options
           .enrollment!.canTrust(request.signIn)
@@ -272,7 +492,12 @@ export class GooglePairingRequests {
       // Notification delivery never grants access or invalidates an admitted request.
       try {
         void Promise.resolve(
-          this.options.onPending?.({ requestId: request.requestId, expiresAt: request.expiresAt }),
+          this.options.onPending?.({
+            requestId: request.requestId,
+            expiresAt: request.expiresAt,
+            kind: request.kind,
+            name: request.name,
+          }),
         ).catch(() => undefined);
       } catch {
         /* Approval remains available through the trusted device list. */
@@ -369,31 +594,57 @@ export class GooglePairingRequests {
     };
   }
 
+  /**
+   * Held requests as an approving device shows them. `signInEmail` is the address Google verified
+   * in the token this gateway checked, never one the relay or the device named.
+   * `rememberByDefault` and `otherGoogleAccount` only suggest how to show the choice to remember
+   * the sign-in; they decide nothing.
+   */
   list(): Array<{
     requestId: string;
     kind: GooglePairingRequest["kind"];
     name: string;
     status: string;
     verificationCode: string;
+    createdAt: number;
     expiresAt: number;
     signIn?: "google" | "passkey";
+    signInEmail?: string;
     canTrustSignIn: boolean;
+    rememberByDefault?: true;
+    otherGoogleAccount?: true;
     revokedDevice?: true;
   }> {
     this.prune();
     return [...this.requests.values()]
       .filter((row) => row.state !== "verifying")
-      .map((row) => ({
-        requestId: row.requestId,
-        kind: row.kind,
-        name: row.name,
-        status: row.state,
-        verificationCode: row.verificationCode,
-        expiresAt: row.expiresAt,
-        ...(row.signIn ? { signIn: row.signIn.type } : {}),
-        canTrustSignIn: row.trustable === true,
-        ...(row.revokedDevice ? { revokedDevice: true as const } : {}),
-      }));
+      .map((row) => {
+        const signIn = row.signIn;
+        const hint = signIn && this.options.enrollment?.rememberHint?.(signIn);
+        // Remembering is suggested only on the first confirmation, never for a device the owner
+        // removed, and for a Google account only when the owner can see which one it is.
+        const suggested =
+          row.trustable === true &&
+          !row.revokedDevice &&
+          hint?.firstConfirmation === true &&
+          !hint.otherGoogleAccount &&
+          (signIn!.type !== "google" || signIn!.email !== undefined);
+        return {
+          requestId: row.requestId,
+          kind: row.kind,
+          name: row.name,
+          status: row.state,
+          verificationCode: row.verificationCode,
+          createdAt: row.createdAt,
+          expiresAt: row.expiresAt,
+          ...(signIn ? { signIn: signIn.type } : {}),
+          ...(signIn?.email ? { signInEmail: signIn.email } : {}),
+          canTrustSignIn: row.trustable === true,
+          ...(suggested ? { rememberByDefault: true as const } : {}),
+          ...(hint?.otherGoogleAccount ? { otherGoogleAccount: true as const } : {}),
+          ...(row.revokedDevice ? { revokedDevice: true as const } : {}),
+        };
+      });
   }
 
   async decide(
@@ -417,12 +668,10 @@ export class GooglePairingRequests {
     }
     row.approvedByPerson = true;
     row.decision = this.approve(row).then(async () => {
+      // Where the sign-in was made comes from the proof the gateway checked, never from the
+      // kind of device the request says it is.
       if (choices.trustSignIn && row.signIn && row.trustable)
-        // A sign-in made in a native app committed to a nonce the device computed itself.
-        await this.options.enrollment!.trustSignIn(
-          row.signIn,
-          row.kind === "ios" || row.kind === "android" ? "native-app" : "approval",
-        );
+        await this.options.enrollment!.trustSignIn(row.signIn);
     });
     return row.decision;
   }

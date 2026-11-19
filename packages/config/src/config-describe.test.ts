@@ -311,6 +311,8 @@ const EXPECTED_INVENTORY = [
   "/indexer/embedder/contextSize [number]",
   "/indexer/embedder/maxInputChars [number]",
   "/indexer/embedder/timeoutMs [number]",
+  "/indexer/lexicalRebuild/batchSize [number]",
+  "/indexer/lexicalRebuild/pause [duration]",
   "/indexer/pageSize [number]",
   "/indexer/reconcileInterval [duration]",
   "/indexer/reindexMissingAtBoot [boolean]",

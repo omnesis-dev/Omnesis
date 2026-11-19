@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { scriptedOpenClaw } from "../test-fixtures/openclaw.js";
 import { openClawCapabilityConsentSupport } from "./openclaw-capability-consent.js";
 import type { spawnSync } from "node:child_process";
 
@@ -14,25 +15,16 @@ afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
-/**
- * A fake `openclaw` on an isolated PATH that records its arguments and answers
- * `plugins install --help` with `helpBody` and `exitCode`.
- */
-function fakeOpenClaw(
-  helpBody: string,
-  exitCode = 0,
-): { env: NodeJS.ProcessEnv; argsFile: string } {
+/** A real scripted CLI with invented help output and captured literal argv. */
+function fakeOpenClaw(helpBody: string, exitCode = 0) {
   const root = mkdtempSync(join(tmpdir(), "omnesis-openclaw-consent-"));
   roots.push(root);
-  const argsFile = join(root, "args");
-  const helpFile = join(root, "help.txt");
-  writeFileSync(helpFile, helpBody);
-  writeFileSync(
-    join(root, "openclaw"),
-    `#!/bin/sh\nprintf '%s\\n' "$@" > "${argsFile}"\ncat "${helpFile}"\nexit ${exitCode}\n`,
-    { mode: 0o755 },
-  );
-  return { env: { PATH: `${root}:/usr/bin:/bin` }, argsFile };
+  return scriptedOpenClaw(root, helpBody, exitCode);
+}
+
+function support(helpBody: string, exitCode = 0) {
+  const fake = fakeOpenClaw(helpBody, exitCode);
+  return openClawCapabilityConsentSupport(fake.env, fake.run);
 }
 
 const CONSENT_RELEASE_HELP = `Usage: openclaw plugins install [options] <path-or-spec-or-plugin>
@@ -75,7 +67,7 @@ function scripted(result: {
 describe("openClawCapabilityConsentSupport", () => {
   it("is supported when the installed OpenClaw lists the flag on plugins install", () => {
     const fake = fakeOpenClaw(CONSENT_RELEASE_HELP);
-    expect(openClawCapabilityConsentSupport(fake.env)).toBe("supported");
+    expect(openClawCapabilityConsentSupport(fake.env, fake.run)).toBe("supported");
     expect(readFileSync(fake.argsFile, "utf8").trim().split("\n")).toEqual([
       "plugins",
       "install",
@@ -84,9 +76,7 @@ describe("openClawCapabilityConsentSupport", () => {
   });
 
   it("is unsupported for a release that predates the consent gate", () => {
-    expect(openClawCapabilityConsentSupport(fakeOpenClaw(PRE_CONSENT_RELEASE_HELP).env)).toBe(
-      "unsupported",
-    );
+    expect(support(PRE_CONSENT_RELEASE_HELP)).toBe("unsupported");
   });
 
   it.each([
@@ -95,7 +85,7 @@ describe("openClawCapabilityConsentSupport", () => {
     "  --no-accept-capabilities              Refuse declared capabilities",
   ])("does not mistake a neighbouring token for the option: %s", (line) => {
     const help = `${PRE_CONSENT_RELEASE_HELP}${line}\n`;
-    expect(openClawCapabilityConsentSupport(fakeOpenClaw(help).env)).toBe("unsupported");
+    expect(support(help)).toBe("unsupported");
   });
 
   it("finds the option when a forced color setting colors the help", () => {
@@ -115,9 +105,7 @@ describe("openClawCapabilityConsentSupport", () => {
   });
 
   it("is unknown when the help run fails, even if it printed the flag", () => {
-    expect(openClawCapabilityConsentSupport(fakeOpenClaw(CONSENT_RELEASE_HELP, 1).env)).toBe(
-      "unknown",
-    );
+    expect(support(CONSENT_RELEASE_HELP, 1)).toBe("unknown");
   });
 
   it("is unknown when the help run times out", () => {

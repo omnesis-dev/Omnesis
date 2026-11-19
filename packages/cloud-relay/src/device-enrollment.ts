@@ -267,6 +267,17 @@ export function enrollmentSignatureTranscript(input: {
   );
 }
 
+/**
+ * What the device that asked to join signs when it approves its own held request with the owner's
+ * passkey: only the browser holding the request's device key can approve that request this way, so
+ * a link to approve someone else's request is useless in it.
+ */
+export function approvalDeviceTranscript(input: { requestId: string; challenge: string }): Buffer {
+  return Buffer.from(
+    JSON.stringify(["omnesis-gateway-approval-device-v1", input.requestId, input.challenge]),
+  );
+}
+
 export function tokenRotationTranscript(input: {
   deviceId: string;
   gatewaySpkiFingerprint: string;
@@ -428,3 +439,15 @@ export const deviceKeyEvidenceSchema = z
   })
   .strict();
 export type DeviceKeyEvidence = z.infer<typeof deviceKeyEvidenceSchema>;
+
+/**
+ * What a device's request to join may carry: a sign-in made on the relay's account page or in an
+ * app, or a passkey assertion made on the gateway's own page.
+ */
+export const enrollmentProofSchema = z.discriminatedUnion("type", [
+  googleSignInProofSchema,
+  passkeySignInProofSchema,
+  passkeyRegistrationProofSchema,
+  gatewayPasskeySignInProofSchema,
+]);
+export type EnrollmentProof = z.infer<typeof enrollmentProofSchema>;

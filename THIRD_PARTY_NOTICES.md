@@ -64,6 +64,19 @@ notice. The data license is available at
 
 ---
 
+## SQLite Windows shared-memory recovery backport
+
+`patches/better-sqlite3-multiple-ciphers+13.0.3.patch` adapts SQLite's
+[Windows shared-memory recovery fix](https://sqlite.org/src/info/7c103a0b7d)
+to the encrypted binding's SQLite 3.53.4 amalgamation. The plain binding's
+SQLite 3.54.1 already includes the fix. The change resets the
+shared-memory header if an existing mapping prevents truncation while SQLite
+holds the exclusive initialization lock. This SQLite code remains in the
+[public domain](https://sqlite.org/copyright.html); it is not relicensed under
+Omnesis's AGPL. The dependency distributions retain their upstream notices.
+
+---
+
 ## Models.dev catalog snapshot
 
 `packages/gateway/models-dev/api.json` is a committed snapshot of the
@@ -446,6 +459,14 @@ The experimental Telegram provider adds the MTProto client `@mtcute/*`
 all MIT, plus `@types/events` (MIT) as a declared runtime dependency of
 `@mtcute/core`.
 
+Multilingual keyword search adds `snowball-stemmers` (ISC, Copyright Oleg
+Mazko), the JavaScript build of the Snowball stemming algorithms, used for
+Russian and Arabic, and `opencc-js` (MIT, Copyright The nk2028 Project), which
+converts Traditional Chinese characters to Simplified. The conversion
+dictionaries `opencc-js` ships are built from `opencc-data` and licensed under
+Apache-2.0; the package carries that notice in its `THIRD_PARTY_LICENSES.md`
+and the license text in `LICENSES/Apache-2.0.txt`.
+
 Notes on the non-normalized rows: the two `Apache 2.0` entries (`usearch`,
 `qrcode-terminal`) are Apache-2.0; the three bare `BSD` entries (`duck`,
 `parse-cache-control`, `url-template`) declare only "BSD" without a variant. The
@@ -469,6 +490,19 @@ npm ls --omit=dev --all --json > /tmp/prod-tree.json   # or parse package-lock.j
 makes its `RE2` constructor free the native memory it would otherwise leave on
 the module's fixed heap. Apache-2.0 §4(b) requires modified files to carry a
 notice of the change; the patch adds one.
+
+**`usearch@2.26.5`** (Apache-2.0): `patches/usearch+2.26.5.patch` adds
+Unicode Windows paths, delete-shared memory maps, 64-bit mapped file lengths,
+deterministic native reset, and atomic publication while readers retain an old
+map. The JavaScript wrapper checks the Windows binding capability. Windows
+source builds run `node scripts/ci/build-windows-usearch.mjs` after dependency
+installation to compile and prove the modified binding; other platforms keep
+their existing native binaries. Modified files retain their upstream notices
+and identify these changes.
+The patch also modifies the bundled NumKong ARM64 capability header to include
+`windows.h` before architecture-dependent SDK headers, and scopes MSVC x86
+capability detection to x86 targets. NumKong is Apache-2.0;
+its original copyright and license notices remain in the distribution.
 
 ### Copyleft and weak-copyleft dependencies (individual callout)
 
@@ -572,6 +606,48 @@ the MIT License, copyright (c) 2020 Matthew Miller. The dependency and its
 transitive dependencies are resolved through npm; their upstream license files
 remain in the installed packages. Authenticator private keys remain with the
 user's credential provider. Omnesis stores public credential records only.
+
+## 12. Tailscale helper (`omnesis-tailnet`)
+
+The gateway image includes `omnesis-tailnet`, and a source install's build
+builds it (`npm run build`, or `npm run tailnet-helper:build` alone), with the Go
+toolchain installed on the machine or the official Go release it downloads from
+go.dev and checks against its published SHA-256 (BSD-3-Clause, The Go Authors;
+used to build, not shipped). It is a Go program the gateway runs once its
+owner turns on the gateway's own Tailscale device. It is a statically
+linked binary built from `packages/tailnet-helper/` (AGPL-3.0-or-later) and the
+Go modules below, resolved through `packages/tailnet-helper/go.sum`, together
+with the Go standard library (BSD-3-Clause, The Go Authors). None of them is
+vendored or relicensed under Omnesis's AGPL header; each module's license file
+travels with its source in the Go module cache.
+
+| Module                                                                                         | License      |
+| ---------------------------------------------------------------------------------------------- | ------------ |
+| `tailscale.com` (tsnet and its client libraries)                                               | BSD-3-Clause |
+| `github.com/tailscale/go-winio` (Windows named-pipe transport)                                 | MIT          |
+| `github.com/tailscale/wireguard-go`                                                            | MIT          |
+| `github.com/tailscale/hujson`, `github.com/tailscale/peercred`                                 | BSD-3-Clause |
+| `github.com/tailscale/web-client-prebuilt`                                                     | BSD-3-Clause |
+| `gvisor.dev/gvisor`                                                                            | Apache-2.0   |
+| `golang.org/x/crypto`, `net`, `oauth2`, `sync`, `sys`, `term`, `text`, `time`, `exp`           | BSD-3-Clause |
+| `filippo.io/edwards25519`, `github.com/hdevalence/ed25519consensus`                            | BSD-3-Clause |
+| `github.com/go-json-experiment/json`, `github.com/klauspost/compress`, `go4.org/netipx`        | BSD-3-Clause |
+| `github.com/creachadair/msync`, `github.com/godbus/dbus/v5`, `github.com/huin/goupnp`          | BSD-2-Clause |
+| `github.com/fxamacker/cbor/v2`, `github.com/gaissmai/bart`, `github.com/x448/float16`          | MIT          |
+| `github.com/jsimonetti/rtnetlink`, `github.com/mdlayher/netlink`, `github.com/mdlayher/socket` | MIT          |
+| `github.com/mitchellh/go-ps`                                                                   | MIT          |
+| `github.com/coder/websocket`                                                                   | ISC          |
+| `github.com/golang/groupcache`, `github.com/google/btree`, `go4.org/mem`                       | Apache-2.0   |
+| `github.com/pires/go-proxyproto`, `github.com/safchain/ethtool`                                | Apache-2.0   |
+
+`go version -m omnesis-tailnet` lists the exact module versions in a given
+binary.
+
+The local network test tools under `scripts/tailnet-test/control/` also build
+the pinned Tailscale SDK test coordinator and official CLI. Their dependencies
+are resolved separately in that directory's `go.mod` and `go.sum`; upstream
+sources and license notices remain in the Go module cache. These test tools are
+not included in the published Omnesis packages.
 
 ---
 

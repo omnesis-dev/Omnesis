@@ -698,6 +698,29 @@ const indexer = z
       .strict()
       .optional(),
     /**
+     * Pace of a keyword-index rebuild, which runs in the background when a
+     * release changes how text is cut into words. The indexer copies chunks
+     * into the new index in batches, pausing between them and pausing longer
+     * while a user request is in flight; search keeps using the old index
+     * until the new one is complete.
+     */
+    lexicalRebuild: z
+      .object({
+        batchSize: z
+          .number()
+          .int()
+          .positive()
+          .describe("Chunks copied into the new keyword index per batch. Default 1000.")
+          .optional(),
+        pause: duration
+          .describe(
+            "Pause between batches of a keyword-index rebuild. Default 50ms; at least 1s while a user request is in flight.",
+          )
+          .optional(),
+      })
+      .strict()
+      .optional(),
+    /**
      * Document chunker tunables. The chunker splits long content into
      * embedding-sized windows; these knobs balance recall vs. embedding
      * cost. Defaults match `DocumentChunker`'s built-in fallbacks
@@ -738,15 +761,19 @@ const indexer = z
     embedder: z
       .object({
         /**
-         * Per-slot context size in tokens. The embedding model's max
-         * context is 8192; default 2048 keeps KV-cache memory low.
-         * Raise to fit longer chunks; KV cache scales linearly.
+         * Per-slot context size in tokens, for a local GGUF embedder.
+         * Default 2048 keeps KV-cache memory low; raise it to fit longer
+         * chunks (KV cache scales linearly). It is capped at the window the
+         * model was trained on (512 tokens for the BGE, mxbai and E5
+         * models), and an input longer than the context is cut to it.
          */
         contextSize: z
           .number()
           .int()
           .positive()
-          .describe("Per-slot embedder context size in tokens. Default 2048 (model max 8192).")
+          .describe(
+            "Per-slot local embedder context size in tokens. Default 2048, capped at the model's trained window.",
+          )
           .optional(),
         /**
          * Hard ceiling per `getEmbeddingFor` call in milliseconds.
@@ -2146,7 +2173,7 @@ const gateway = z
         message: "publicBaseUrl must not have a trailing slash",
       })
       .describe(
-        "Externally-reachable HTTPS base URL for MCP OAuth and provider callbacks. Required for remote MCP access; no trailing slash.",
+        "Externally-reachable HTTPS base URL for MCP OAuth and provider callbacks. Required for remote MCP access; no trailing slash. Takes effect without a restart; OMNESIS_PUBLIC_BASE_URL, when set, wins over it.",
       )
       .optional(),
     /**
@@ -2182,7 +2209,9 @@ const gateway = z
           .url(),
       )
       .max(16)
-      .describe("Additional trusted external URLs for the gateway's MCP protected resource.")
+      .describe(
+        "Additional trusted external URLs for the gateway's MCP protected resource. Takes effect without a restart.",
+      )
       .optional(),
   })
   .strict()

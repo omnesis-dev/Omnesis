@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { join } from "node:path";
+import { posix } from "node:path";
 import { homedir } from "node:os";
 import { homebrewCliPaths } from "./host-cli.js";
 
@@ -30,7 +30,7 @@ export function tailscaleCliCandidates(
     });
     if (homeDir) {
       candidates.push({
-        file: join(homeDir, "Applications/Tailscale.app/Contents/MacOS/Tailscale"),
+        file: posix.join(homeDir, "Applications/Tailscale.app/Contents/MacOS/Tailscale"),
         bundledApp: true,
       });
     }

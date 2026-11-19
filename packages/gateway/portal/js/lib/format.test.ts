@@ -39,6 +39,10 @@ describe("isOpenableExternalUrl", () => {
     expect(isOpenableExternalUrl("javascript:alert(1)")).toBe(false);
     expect(isOpenableExternalUrl("data:text/html,hi")).toBe(false);
     expect(isOpenableExternalUrl("about:blank")).toBe(false);
+    expect(isOpenableExternalUrl("https://")).toBe(false);
+    expect(isOpenableExternalUrl("https://exa mple.org")).toBe(false);
+    expect(isOpenableExternalUrl("https://example.org/\npath")).toBe(false);
+    expect(isOpenableExternalUrl("things:")).toBe(false);
   });
 });
 

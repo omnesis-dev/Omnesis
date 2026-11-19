@@ -25,13 +25,16 @@ export function installAccountUI() {
     },
     "gateway-signup": {
       title: "Sign in to your Omnesis account",
-      signIn: "Sign in to connect this gateway to your account.",
+      signIn: "Sign in to connect this gateway to your Omnesis account.",
+      // Once signed in, the page is the one step left.
+      readyTitle: "Connect this gateway to your Omnesis account",
       ready: "This adds the gateway to your Omnesis account so your devices can find it.",
       action: "Connect this gateway",
     },
     "owner-link": {
       title: "Sign in to your Omnesis account",
       signIn: "Sign in with the Omnesis account you want to connect this gateway to.",
+      readyTitle: "Connect this gateway to your Omnesis account",
       ready: "This adds the gateway to your Omnesis account so your devices can find it.",
       action: "Connect this gateway",
     },
@@ -44,17 +47,35 @@ export function installAccountUI() {
       automatic: true,
     },
   };
+  // The one sign-in a gateway's page already chose, such as its "Continue with Google" button.
+  const methodCopy = {
+    google: {
+      title: "Continue with Google",
+      signIn: "Sign in to this gateway with the Google account you use for Omnesis.",
+      action: "Continue with Google",
+    },
+    passkey: {
+      title: "Continue with your passkey",
+      signIn: "Sign in to this gateway with the passkey you use for Omnesis.",
+      action: "Continue with passkey",
+    },
+  };
   // Shown instead of the sign-in copy when the person chose to create an account.
   const createCopy = {
     title: "Create your Omnesis account",
     lines: [
-      "An Omnesis account lets you reach your gateway from anywhere and pair your phone or laptop by signing in.",
+      "An Omnesis account helps your devices find this gateway from anywhere. Only your gateway decides who gets in.",
       "Your data stays on your gateway. The account only knows which gateways are yours and how you sign in.",
       "Creating the account also connects this gateway to it.",
     ],
   };
   const noAccount = "There's no Omnesis account for this sign-in.";
   const signInFailed = "Sign-in did not complete. Please try again.";
+  const signInRefused = "That didn't sign you in. Try again, or use another sign-in method.";
+  // No account has this passkey any more, such as after the account was deleted.
+  const unknownPasskey = "That passkey is for an Omnesis account that no longer exists.";
+  // Back from a Google start the browser didn't vouch for, so nothing happened yet.
+  const googleAgain = "To continue with Google, press the Google button again.";
   // Everything deleting the account does, said before the person confirms it.
   const deletionLines = [
     "All your gateways are disconnected from this account and can no longer be reached from outside your home network.",
@@ -62,6 +83,12 @@ export function installAccountUI() {
     "Devices you already paired keep working on your home network.",
     "Your sign-in methods and everything this service stores about your account are deleted.",
     "This can't be undone. You can create a new account later from a gateway.",
+  ];
+  // What unlinking one gateway does, said before the person confirms it.
+  const unlinkLines = [
+    "Nothing on the gateway is deleted. Its data stays where it is.",
+    "It can no longer be reached from outside your home network, and new devices can no longer join it by signing in. Devices you already paired keep working on your home network.",
+    "To use it from outside your home network again, connect it again from its settings.",
   ];
   const handoffKey = "omnesis.portal-handoff";
   const day = new Intl.DateTimeFormat(undefined, { dateStyle: "medium" });
@@ -77,7 +104,15 @@ export function installAccountUI() {
     continued = false,
     // The "more options" menu of the account view on screen, if that is the view.
     more,
+    // Every menu on screen: the account's and each gateway's. At most one is open.
+    menus = [],
     notice = "",
+    // The section the message belongs to: the gateways, or the sign-in methods.
+    noticeAt = "methods",
+    // The gateways section on screen, where a message about a gateway is shown.
+    gatewaysSection,
+    // Counts actions, so a background refresh can tell one started while it was reading.
+    generation = 0,
     failure = signInFailed,
     // What this page's own sign-in hands to a gateway's portal, so the portal asks for no second one.
     handoff;
@@ -104,16 +139,31 @@ export function installAccountUI() {
       });
       if (response.status === 401 && path !== "session") {
         // Signed out, a refusal is about the sign-in itself, not about a lapsed confirmation.
-        const signedIn = current.authenticated;
+        const signedIn = current.authenticated,
+          reason =
+            response.headers.get("content-type") === "application/json"
+              ? (await response.json()).error
+              : undefined;
         await ui.refresh();
         const error = new Error("Sign in again to manage sign-in methods");
-        error.name = signedIn ? "AccountSignInRequired" : "SignInRefused";
+        error.name =
+          reason === "unknown-passkey" || reason === "deleted-passkey"
+            ? "UnknownPasskey"
+            : signedIn
+              ? "AccountSignInRequired"
+              : "SignInRefused";
+        // Only a passkey whose account the service deleted is gone for good; any other may still
+        // belong to a live account, so the password manager keeps it.
+        error.forget = reason === "deleted-passkey";
         throw error;
       }
-      if (!response.ok)
-        throw new Error(
+      if (!response.ok) {
+        const error = new Error(
           "This request could not be completed. Sign in again or try another sign-in method.",
         );
+        error.status = response.status;
+        throw error;
+      }
       return response.json();
     },
     decode(value) {
@@ -135,6 +185,8 @@ export function installAccountUI() {
     button(text, action, secondary = false, parent = root) {
       const element = ui.node("button", text);
       element.type = "button";
+      // Drawn during an action, it waits for the action like the rest of the page.
+      element.disabled = busy;
       if (secondary) element.className = "secondary";
       element.addEventListener("click", () => ui.run(action));
       parent.append(element);
@@ -153,6 +205,8 @@ export function installAccountUI() {
     async run(action) {
       if (busy) return;
       busy = true;
+      // A refresh started before this action must not draw over what the action shows.
+      generation++;
       alert.textContent = "";
       ui.say("");
       failure = signInFailed;
@@ -164,10 +218,12 @@ export function installAccountUI() {
           error?.name === "AccountSignInRequired"
             ? "Sign in again to manage sign-in methods. Use the same Omnesis account, then retry your change."
             : error?.name === "SignInRefused"
-              ? "That didn't sign you in. The passkey may belong to an Omnesis account that no longer exists. Try another sign-in, or create an account from your gateway's settings."
-              : error?.name === "NotAllowedError" || error?.name === "AbortError"
-                ? "No passkey was used. The request may have been cancelled, timed out, or no matching passkey was available. Try again, or sign in with Google to add a passkey."
-                : failure;
+              ? signInRefused
+              : error?.name === "UnknownPasskey"
+                ? `${unknownPasskey} ${current.googleAvailable ? "Choose another passkey, or continue with Google." : "Choose another passkey."}`
+                : error?.name === "NotAllowedError" || error?.name === "AbortError"
+                  ? "No passkey was used. The request may have been cancelled, timed out, or no matching passkey was available. Try again, or sign in with Google to add a passkey."
+                  : failure;
       } finally {
         busy = false;
         for (const element of root.querySelectorAll("button"))
@@ -177,9 +233,11 @@ export function installAccountUI() {
     date(value) {
       return day.format(new Date(value));
     },
-    say(text) {
+    say(text, at = "methods") {
       notice = text;
+      noticeAt = at;
       status.textContent = text;
+      if (at === "gateways" && gatewaysSection?.isConnected) gatewaysSection.append(status);
     },
     /** Names the platform family only, so several passkeys can be told apart. */
     label() {
@@ -241,12 +299,30 @@ export function installAccountUI() {
         if (!result.response.userHandle) throw new Error("Discoverable passkey required");
         credential.response.userHandle = ui.encode(result.response.userHandle);
       }
-      const done = await ui.api(
-        `passkeys/${step}/complete`,
-        { ceremonyId: ceremony.ceremonyId, credential },
-        endorse,
-      );
+      let done;
+      try {
+        done = await ui.api(
+          `passkeys/${step}/complete`,
+          { ceremonyId: ceremony.ceremonyId, credential },
+          endorse,
+        );
+      } catch (error) {
+        // The browser offered a passkey nothing will accept again, so it may stop offering it.
+        if (error.forget) await ui.forgetPasskey(result.id);
+        throw error;
+      }
       return { id: result.id, endorse: done.endorse };
+    },
+    /** Best effort: lets the browser's password manager drop a passkey nothing accepts now. */
+    async forgetPasskey(credentialId) {
+      try {
+        await window.PublicKeyCredential.signalUnknownCredential?.({
+          rpId: window.location.hostname,
+          credentialId,
+        });
+      } catch {
+        // The passkey stays in the password manager, where it can be deleted by hand.
+      }
     },
     async signIn(createAccount = false) {
       await ui.passkey(createAccount, createAccount);
@@ -449,21 +525,28 @@ export function installAccountUI() {
       endorsing = undefined;
       // Best effort: the passkey was never stored, so its leftovers are only tidied up.
       await ui.api("passkeys/register/cancel", {}, id).catch(() => {});
-      try {
-        if (credential)
-          await window.PublicKeyCredential.signalUnknownCredential?.({
-            rpId: window.location.hostname,
-            credentialId: credential,
-          });
-      } catch {
-        // The browser keeps an unused passkey; it can be deleted from its password manager.
-      }
+      if (credential) await ui.forgetPasskey(credential);
       notice = "No passkey was added.";
       ui.render();
     },
     async confirm() {
       const intent = confirming;
       await ui.passkey(false);
+      if (intent.kind === "unlink") {
+        await ui.refresh();
+        // Only the account the panel was opened on unlinks, and right away, as the panel said.
+        const other = current.accountId !== intent.accountId,
+          gone = !current.gateways.some((gateway) => gateway.gatewayId === intent.gatewayId);
+        if (!other && !gone) return ui.unlinkGateway(intent);
+        confirming = undefined;
+        ui.render();
+        return ui.say(
+          other
+            ? "You confirmed with a different Omnesis account. Nothing was unlinked."
+            : "That gateway is no longer in your account.",
+          "gateways",
+        );
+      }
       confirming = undefined;
       await ui.refresh();
       if (intent.kind === "delete") {
@@ -492,19 +575,47 @@ export function installAccountUI() {
       }
       confirming = undefined;
       ui.forget();
-      for (const passkey of passkeys) {
-        try {
-          // Best effort: lets the browser's password manager drop a passkey nothing accepts now.
-          await window.PublicKeyCredential.signalUnknownCredential?.({
-            rpId: window.location.hostname,
-            credentialId: passkey.id,
-          });
-        } catch {
-          // The passkey stays in the password manager, where it can be deleted by hand.
-        }
-      }
+      for (const passkey of passkeys) await ui.forgetPasskey(passkey.id);
       await ui.refresh();
       ui.say("Your Omnesis account was deleted.");
+    },
+    /** Opens the in-page step before unlinking: what it does, and a confirmation if needed. */
+    askUnlink(gateway) {
+      ui.ask({
+        kind: "unlink",
+        accountId: current.accountId,
+        gatewayId: gateway.gatewayId,
+        name: gateway.displayName ?? "Gateway",
+      });
+      root.querySelector(".unlink h3")?.focus();
+    },
+    async unlinkGateway(intent = confirming) {
+      failure = "The gateway could not be unlinked. Please try again.";
+      // As the page last saw it, which a return to the tab may have changed since the question.
+      const online = current.gateways.some(
+        (gateway) => gateway.gatewayId === intent.gatewayId && gateway.online,
+      );
+      try {
+        await ui.api("gateways/unlink", {
+          accountId: intent.accountId,
+          gatewayId: intent.gatewayId,
+        });
+      } catch (error) {
+        // The confirmation lapsed while the panel was open, so the panel asks for it again.
+        if (error.name === "AccountSignInRequired") return;
+        if (error.status !== 404) throw error;
+        confirming = undefined;
+        await ui.refresh();
+        return ui.say("That gateway is no longer in your account.", "gateways");
+      }
+      confirming = undefined;
+      await ui.refresh();
+      ui.say(
+        online
+          ? `“${intent.name}” was unlinked from your account.`
+          : `“${intent.name}” was unlinked from your account. It shows as not connected the next time it comes online.`,
+        "gateways",
+      );
     },
     google(link, then, endorse) {
       const url = new URL("/_relay/web/start", window.location.origin);
@@ -536,22 +647,36 @@ export function installAccountUI() {
         throw new Error("Invalid account handoff");
       window.location.assign(url.href);
     },
-    signInChoices(session) {
-      ui.button("Sign in with Passkey", () => ui.enter(false));
-      if (session.googleAvailable)
-        ui.googleButton("Sign in with Google", () => ui.enter(true), true);
+    /** `only` is the one sign-in the gateway's page already chose, when it chose one. */
+    signInChoices(session, only) {
+      if (only !== "google")
+        ui.button(only ? methodCopy.passkey.action : "Sign in with Passkey", () => ui.enter(false));
+      if (session.googleAvailable && only !== "passkey")
+        ui.googleButton(
+          only ? methodCopy.google.action : "Sign in with Google",
+          () => ui.enter(true),
+          !only,
+        );
     },
     /** An account is created only from here, by the sign-in the person picks on this view. */
-    createChoices(session) {
-      if (session.googleAvailable) ui.googleButton("Create with Google", () => ui.google(false));
-      if (session.canCreateAccount)
-        ui.button("Create with a passkey", () => ui.signIn(true), session.googleAvailable);
+    createChoices(session, only) {
+      const google = session.googleAvailable && only !== "passkey";
+      if (google) ui.googleButton("Create with Google", () => ui.google(false));
+      if (session.canCreateAccount && only !== "google")
+        ui.button("Create with a passkey", () => ui.signIn(true), google);
       const note = ui.node(
         "p",
         "If this Google account already has an Omnesis account, you'll be signed in to it instead.",
       );
       note.className = "note";
-      if (session.googleAvailable) root.append(note);
+      if (google) root.append(note);
+    },
+    /** The sign-in a gateway's page chose, if this page can offer it. */
+    method(session) {
+      const { method } = session.pending;
+      return method === "passkey" || (method === "google" && session.googleAvailable)
+        ? method
+        : undefined;
     },
     async setIntent(intent) {
       await ui.api("intent", { intent });
@@ -607,8 +732,20 @@ export function installAccountUI() {
       const { pending } = session,
         copy = pendingCopy[pending.purpose],
         signedIn = session.authenticated && !pending.needsProof,
-        creating = pending.intent === "create" && !signedIn && !pending.denied;
-      root.append(ui.node("h1", creating ? createCopy.title : copy.title));
+        creating = pending.intent === "create" && !signedIn && !pending.denied,
+        only = signedIn || pending.denied ? undefined : ui.method(session),
+        // Signing in with the one sign-in the gateway's page chose is the whole step.
+        sole = !creating && only && methodCopy[only];
+      root.append(
+        ui.node(
+          "h1",
+          creating
+            ? createCopy.title
+            : sole
+              ? sole.title
+              : (signedIn && copy.readyTitle) || copy.title,
+        ),
+      );
       const name = ui.node("p", pending.deviceName ?? pending.gatewayName ?? pending.hostname);
       name.className = "pending-host";
       root.append(name);
@@ -626,13 +763,13 @@ export function installAccountUI() {
       }
       if (creating) {
         root.append(...createCopy.lines.map((line) => ui.node("p", line)));
-        ui.createChoices(session);
+        ui.createChoices(session, only);
         ui.button("I already have an account", () => ui.setIntent("existing"), true);
         return;
       }
       if (!signedIn) {
-        root.append(ui.node("p", copy.signIn));
-        ui.signInChoices(session);
+        root.append(ui.node("p", sole ? sole.signIn : copy.signIn));
+        ui.signInChoices(session, only);
         if (pending.intent)
           ui.button("Create an account instead", () => ui.setIntent("create"), true);
         return;
@@ -656,7 +793,10 @@ export function installAccountUI() {
       return { origin, href: new URL("/portal/", origin).href };
     },
     async refresh() {
-      current = await ui.api("session");
+      ui.show(await ui.api("session"));
+    },
+    show(session) {
+      current = session;
       // A handoff is kept only for the sign-in that was made for it.
       if (handoff && !(current.authenticated && current.handoff?.ready)) ui.forget();
       ui.render();
@@ -665,6 +805,7 @@ export function installAccountUI() {
       const session = current;
       root.replaceChildren();
       more = undefined;
+      menus = [];
       if (
         openPortal &&
         session.authenticated &&
@@ -732,6 +873,58 @@ export function installAccountUI() {
       ui.button("Cancel", () => ui.ask(undefined), true, panel);
       parent.append(panel);
     },
+    /** Under the gateway being unlinked: what unlinking does, then the one step that does it. */
+    unlinkPanel(session, parent) {
+      const panel = document.createElement("div"),
+        title = ui.node("h3", `Unlink “${confirming.name}” from your account?`),
+        hasPasskey = session.credentials.passkeys.length > 0;
+      panel.className = "confirm unlink";
+      title.tabIndex = -1;
+      panel.append(title, ...unlinkLines.map((line) => ui.node("p", line)));
+      if (session.credentialsRequireSignIn) {
+        panel.append(
+          ui.node(
+            "p",
+            hasPasskey
+              ? "Unlinking needs a fresh confirmation, so that someone else using this browser can't unlink your gateways. Confirming with your passkey unlinks it right away."
+              : "Unlinking needs a fresh confirmation, so that someone else using this browser can't unlink your gateways.",
+          ),
+        );
+        if (hasPasskey) ui.button("Confirm with passkey", ui.confirm, false, panel);
+        if (
+          session.googleAvailable &&
+          session.credentials.federated.some((credential) => credential.provider === "google")
+        )
+          ui.googleButton(
+            "Confirm with Google",
+            () => ui.google(false, "unlink-gateway"),
+            hasPasskey,
+            panel,
+          );
+      } else
+        ui.button("Unlink gateway", () => ui.unlinkGateway(), false, panel).classList.add("danger");
+      ui.button(
+        "Cancel",
+        () => {
+          const { gatewayId } = confirming;
+          ui.ask(undefined);
+          // Back on the menu the question came from.
+          [...root.querySelectorAll(".gateway-item")]
+            .find((row) => row.dataset.gatewayId === gatewayId)
+            ?.querySelector(".more-button")
+            .focus();
+        },
+        true,
+        panel,
+      );
+      parent.append(panel);
+    },
+    /** Whether the relay holds a live connection to the gateway: a dot and the word, never colour alone. */
+    presence(online) {
+      const element = ui.node("span", online ? "Online" : "Offline");
+      element.className = online ? "presence online" : "presence";
+      return element;
+    },
     /**
      * Takes the place of the account view: says what deleting does, asks for a fresh confirmation
      * if needed, then for one last press.
@@ -788,24 +981,27 @@ export function installAccountUI() {
       title.tabIndex = -1;
       title.focus();
     },
-    /** Opens or closes the "more options" menu; closing can hand the focus back to its button. */
-    toggleMenu(open, focus) {
-      more.list.hidden = !open;
-      more.trigger.setAttribute("aria-expanded", String(open));
-      if (open) more.list.firstChild.focus();
-      else if (focus) more.trigger.focus();
+    /** Opens or closes a menu, closing any other; closing can hand the focus back to its button. */
+    toggleMenu(menu, open, focus) {
+      if (open) for (const other of menus) if (other !== menu) ui.toggleMenu(other, false);
+      menu.list.hidden = !open;
+      menu.trigger.setAttribute("aria-expanded", String(open));
+      if (open) menu.list.firstChild.focus();
+      else if (focus) menu.trigger.focus();
     },
-    /** The two things done to the account as a whole, kept out of the way behind one button. */
-    menu(session) {
+    /**
+     * A "more" button and the menu it opens, drawn by the stylesheet as three dots. `items` are
+     * `[text, action, className]`; choosing one closes the menu first.
+     */
+    dropdown(label, items, className) {
       const wrapper = document.createElement("div"),
         trigger = document.createElement("button"),
         list = document.createElement("div");
-      wrapper.className = "more";
+      wrapper.className = className;
       trigger.type = "button";
       trigger.className = "more-button";
-      trigger.setAttribute("aria-label", "More options");
+      trigger.setAttribute("aria-label", label);
       trigger.setAttribute("aria-haspopup", "menu");
-      // Three dots, drawn by the stylesheet.
       trigger.append(
         document.createElement("span"),
         document.createElement("span"),
@@ -813,44 +1009,60 @@ export function installAccountUI() {
       );
       list.className = "more-list";
       list.setAttribute("role", "menu");
-      list.setAttribute("aria-label", "More options");
+      list.setAttribute("aria-label", label);
       wrapper.append(trigger, list);
-      more = { wrapper, trigger, list };
-      ui.toggleMenu(false);
+      const menu = { wrapper, trigger, list };
+      menus.push(menu);
+      ui.toggleMenu(menu, false);
       // Not an action: opening the menu leaves any message on the page alone.
-      trigger.addEventListener("click", () => ui.toggleMenu(list.hidden));
+      trigger.addEventListener("click", () => ui.toggleMenu(menu, list.hidden));
       wrapper.addEventListener("keydown", (event) => {
         if (list.hidden) return;
-        if (event.key === "Escape") ui.toggleMenu(false, true);
-        else if (event.key === "Tab") ui.toggleMenu(false);
+        if (event.key === "Escape") ui.toggleMenu(menu, false, true);
+        else if (event.key === "Tab") ui.toggleMenu(menu, false);
         else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
           event.preventDefault();
-          const items = [...list.children],
-            step = event.key === "ArrowDown" ? 1 : items.length - 1;
-          items[(items.indexOf(event.target) + step) % items.length].focus();
+          const entries = [...list.children],
+            step = event.key === "ArrowDown" ? 1 : entries.length - 1;
+          entries[(entries.indexOf(event.target) + step) % entries.length].focus();
         }
       });
-      const item = (text, action) => {
+      for (const [text, action, itemClass] of items) {
         const element = ui.button(
           text,
           () => {
-            ui.toggleMenu(false);
+            ui.toggleMenu(menu, false);
             return action();
           },
           false,
           list,
         );
         element.setAttribute("role", "menuitem");
-        return element;
-      };
-      item("Sign out", async () => {
-        await ui.api("logout", {});
-        await ui.refresh();
-      });
-      item("Delete account", () =>
-        ui.ask({ kind: "delete", accountId: session.accountId }),
-      ).className = "danger";
-      root.append(wrapper);
+        if (itemClass) element.className = itemClass;
+      }
+      return menu;
+    },
+    /** The two things done to the account as a whole, kept out of the way behind one button. */
+    menu(session) {
+      more = ui.dropdown(
+        "More options",
+        [
+          [
+            "Sign out",
+            async () => {
+              await ui.api("logout", {});
+              await ui.refresh();
+            },
+          ],
+          [
+            "Delete account",
+            () => ui.ask({ kind: "delete", accountId: session.accountId }),
+            "danger",
+          ],
+        ],
+        "more",
+      );
+      root.append(more.wrapper);
     },
     /**
      * The rest of adding a passkey: the new passkey signs for the sign-ins the account already
@@ -919,30 +1131,54 @@ export function installAccountUI() {
         return element;
       };
       const owned = section("Your gateways");
+      gatewaysSection = owned;
       if (session.gateways.length === 0)
         owned.append(
           ui.node(
             "p",
-            "No gateways are connected to your Omnesis account yet. Connect one from its settings.",
+            "No gateways are connected to your Omnesis account. Connect one from its settings.",
           ),
         );
       const gateways = document.createElement("div");
       gateways.className = "list";
+      // A gateway unlinked meanwhile, such as from another browser, takes its panel with it.
+      if (
+        confirming?.kind === "unlink" &&
+        !session.gateways.some((gateway) => gateway.gatewayId === confirming.gatewayId)
+      )
+        confirming = undefined;
       for (const gateway of session.gateways) {
         const { origin, href } = ui.portal(gateway);
+        const name = gateway.displayName ?? "Gateway";
+        const item = document.createElement("div");
+        item.className = "gateway-item";
         const link = document.createElement("a");
         link.href = href;
         link.className = "gateway";
         link.title = origin.hostname;
-        link.append(ui.row(gateway.displayName ?? "Gateway", origin.hostname, false));
+        const text = ui.row(name, origin.hostname, false);
+        text.append(ui.presence(gateway.online));
+        link.append(text);
         if (handoff)
           link.addEventListener("click", (event) => {
             event.preventDefault();
             ui.run(() => ui.open(gateway));
           });
-        gateways.append(link);
+        item.append(
+          link,
+          ui.dropdown(
+            `More actions for “${name}”`,
+            [["Unlink from account", () => ui.askUnlink(gateway)]],
+            "row-more",
+          ).wrapper,
+        );
+        item.dataset.gatewayId = gateway.gatewayId;
+        gateways.append(item);
+        if (confirming?.kind === "unlink" && confirming.gatewayId === gateway.gatewayId)
+          ui.unlinkPanel(session, gateways);
       }
       if (session.gateways.length > 0) owned.append(gateways);
+      if (noticeAt === "gateways") owned.append(status);
       const signIn = section("Sign-in methods"),
         hasGoogle = session.credentials.federated.some(
           (credential) => credential.provider === "google",
@@ -996,9 +1232,10 @@ export function installAccountUI() {
         }
         methods.append(row);
       }
-      signIn.append(methods, status);
+      signIn.append(methods);
+      if (noticeAt !== "gateways") signIn.append(status);
       if (endorsing) ui.endorsement(session, signIn);
-      else if (confirming) ui.confirmation(session, signIn);
+      else if (confirming && confirming.kind !== "unlink") ui.confirmation(session, signIn);
       else {
         // Quiet on purpose: adding a sign-in method is occasional, not what the page is for.
         const actions = document.createElement("div");
@@ -1018,14 +1255,16 @@ export function installAccountUI() {
   };
   document.addEventListener("click", (event) => {
     // A press anywhere else closes the menu, and a press on nothing gives its button the focus back.
-    if (more && !more.list.hidden && !more.wrapper.contains(event.target))
-      ui.toggleMenu(false, !event.target.closest("a,button"));
+    for (const menu of menus)
+      if (!menu.list.hidden && !menu.wrapper.contains(event.target))
+        ui.toggleMenu(menu, false, !event.target.closest("a,button"));
   });
   ui.run(async () => {
     ui.restore();
     await ui.refresh();
     if (query.get("failed") === "google")
       alert.textContent = "Google sign-in did not complete. Try again or use a passkey.";
+    if (query.get("failed") === "again") ui.say(googleAgain);
     if (query.get("failed") === "invitation")
       alert.textContent =
         "We couldn't check your invitation right now. Try again in a few minutes.";
@@ -1065,6 +1304,28 @@ export function installAccountUI() {
       ui.say("Confirmed. You can remove it now.");
     if (thens.length === 1 && thens[0] === "delete-account")
       ui.say("Confirmed. You can delete your account now.");
+    if (thens.length === 1 && thens[0] === "unlink-gateway")
+      ui.say("Confirmed. You can unlink it now.", "gateways");
+  });
+  document.addEventListener("visibilitychange", () => {
+    // Back on the tab, whether each gateway is online is read again; nothing polls in between.
+    if (
+      document.visibilityState !== "visible" ||
+      busy ||
+      operationKey ||
+      openPortal ||
+      !current?.authenticated ||
+      current.pending
+    )
+      return;
+    const seen = generation;
+    ui.api("session")
+      .then((session) => {
+        if (!busy && generation === seen) ui.show(session);
+      })
+      .catch(() => {
+        // The next action reports a problem; a background refresh says nothing.
+      });
   });
 }
 
@@ -1088,6 +1349,10 @@ export function installConnectUI() {
       });
       if (response.status === 429)
         throw new Error("Too many tries. Wait a minute, then try again.");
+      if (response.status === 409)
+        throw new Error(
+          "This code was already used in another browser. Finish there, or start again on your machine.",
+        );
       if (!response.ok)
         throw new Error("That code didn't work. Check it, or start again on your machine.");
       const { location } = await response.json();

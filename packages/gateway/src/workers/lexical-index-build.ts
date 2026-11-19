@@ -13,7 +13,7 @@
  */
 
 import { Worker } from "node:worker_threads";
-import type { LexicalIndexData } from "../search/lexical-index-data.js";
+import type { LexicalIndexData, LexicalIndexSource } from "../search/lexical-index-data.js";
 
 /** Everything the build thread needs, handed over as `workerData`. */
 export interface LexicalIndexBuildInit {
@@ -25,6 +25,8 @@ export interface LexicalIndexBuildInit {
   cacheSizeBytes: number;
   /** OS nice for the building thread (resolved on the main thread). */
   backgroundWorkerNice: number;
+  /** Which full-text index to read. */
+  source: LexicalIndexSource;
 }
 
 export type LexicalIndexBuildToMain =

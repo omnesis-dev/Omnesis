@@ -11,6 +11,8 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { createDatabase } from "./db.js";
 import { Scheduler } from "./scheduler/scheduler.js";
@@ -28,7 +30,7 @@ let scheduler: Scheduler;
 let io: IoGate;
 
 beforeEach(async () => {
-  dbPath = `/tmp/omnesis-test-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
   db = createDatabase(dbPath) as unknown as Database.Database;
   const insert = db.prepare(
     `INSERT INTO people (id, canonical_name, source, first_seen, last_seen, created_at, updated_at)

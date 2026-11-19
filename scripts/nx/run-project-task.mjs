@@ -2,14 +2,12 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { spawn } from "node:child_process";
 import { join } from "node:path";
-import { waitForChild } from "../lib/check-process.mjs";
+import { runCheckCommand, checkFailureMessage } from "../lib/check-process.mjs";
 import { assertTreeFingerprint } from "./tree-state.mjs";
 
 function run(command, args) {
-  const child = spawn(command, args, { stdio: "inherit", env: process.env });
-  return waitForChild(child);
+  return runCheckCommand(command, args, { env: process.env, detached: false });
 }
 
 export async function main([kind, projectRoot]) {
@@ -62,11 +60,11 @@ function* walk(root) {
   }
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (import.meta.main) {
   main(process.argv.slice(2))
     .then((code) => (process.exitCode = code))
     .catch((error) => {
-      process.stderr.write(`${error.message}\n`);
+      process.stderr.write(`${checkFailureMessage(error)}\n`);
       process.exitCode = 1;
     });
 }

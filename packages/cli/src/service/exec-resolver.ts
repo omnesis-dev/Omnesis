@@ -14,13 +14,14 @@
  *   4. compiled installs: when the CLI itself is running as a `.js`
  *      entry, exec `[node, <that entry>]` directly
  *   5. source checkouts: when the CLI is running as a `.ts` entry, exec
- *      `[<checkout>/node_modules/.bin/tsx, <that entry>]` — the same command
- *      line the `~/.local/bin/omnesis` wrapper runs, so a checkout whose
- *      wrapper directory is off PATH still registers a working unit
+ *      `[node, --import, <checkout tsx loader URL>, <that entry>]`, so the
+ *      checkout runs without depending on a platform-specific shell shim
  */
 
-import { existsSync, realpathSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { realpathSync } from "node:fs";
+import { createRequire } from "node:module";
+import { pathToFileURL } from "node:url";
+import { resolve } from "node:path";
 import { CliError, EXIT_USER_ERROR } from "@omnesis/cli-shared";
 import { COMPONENT_ARGV, type ServiceComponent } from "./types.js";
 import { defaultExecRunner, type ExecRunner } from "./supervisor.js";
@@ -34,8 +35,8 @@ export interface ExecResolveDeps {
   /** Locate a binary on PATH; null when not found. */
   which: (name: string) => Promise<string | null>;
   realpath: (path: string) => string;
-  /** Whether a path exists on disk. */
-  exists: (path: string) => boolean;
+  /** The source checkout's tsx loader; null when it is not installed. */
+  sourceLoader: (entry: string) => string | null;
 }
 
 export function defaultExecResolveDeps(exec: ExecRunner = defaultExecRunner): ExecResolveDeps {
@@ -44,30 +45,19 @@ export function defaultExecResolveDeps(exec: ExecRunner = defaultExecRunner): Ex
     argv1: process.argv[1],
     execPath: process.execPath,
     which: async (name) => {
-      const res = await exec("which", [name]);
-      const found = res.stdout.trim();
+      const res = await exec(process.platform === "win32" ? "where.exe" : "which", [name]);
+      const found = res.stdout.trim().split(/\r?\n/)[0];
       return res.code === 0 && found ? found : null;
     },
     realpath: (path) => realpathSync(path),
-    exists: (path) => existsSync(path),
+    sourceLoader: (entry) => {
+      try {
+        return createRequire(pathToFileURL(entry)).resolve("tsx");
+      } catch {
+        return null;
+      }
+    },
   };
-}
-
-/**
- * The TypeScript runner a source checkout uses to run the CLI. Walks up from
- * the entry file to the workspace root that owns the installed `tsx` binary,
- * so a checkout at any depth resolves. Null when there is no such runner —
- * a `.ts` entry executed by something other than a workspace install.
- */
-function findSourceRunner(entry: string, exists: (path: string) => boolean): string | null {
-  let dir = dirname(entry);
-  for (;;) {
-    const runner = join(dir, "node_modules", ".bin", "tsx");
-    if (exists(runner)) return runner;
-    const parent = dirname(dir);
-    if (parent === dir) return null;
-    dir = parent;
-  }
 }
 
 /** Binary name a component resolves through PATH. */
@@ -100,8 +90,8 @@ export async function resolveServiceExec(
 
   if (deps.argv1 !== undefined && deps.argv1.endsWith(".ts")) {
     const entry = deps.realpath(deps.argv1);
-    const runner = findSourceRunner(entry, deps.exists);
-    if (runner) return [runner, entry, ...suffix];
+    const loader = deps.sourceLoader(entry);
+    if (loader) return [deps.execPath, "--import", pathToFileURL(loader).href, entry, ...suffix];
   }
 
   throw new CliError(

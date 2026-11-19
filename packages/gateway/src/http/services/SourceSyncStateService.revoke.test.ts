@@ -3,6 +3,8 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { AccountId, SourceType } from "@omnesis/types";
 import { createDatabase, getSyncState, setSyncError } from "../../db.js";
@@ -19,7 +21,7 @@ describe("SourceSyncStateService attempt revocation", () => {
   let gate: WriteGate;
 
   beforeEach(() => {
-    sqlitePath = `/tmp/omnesis-test-${randomUUID()}.db`;
+    sqlitePath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
     sqlite = createDatabase(sqlitePath);
     gate = directWriteGate(sqlite);
   });

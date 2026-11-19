@@ -23,6 +23,8 @@ export interface LocalFileState {
   size: number;
   inode: number;
   device: number;
+  /** Exact Windows volume/file identity; absent in legacy and POSIX state. */
+  fileIdentity?: string;
   stableId: string;
   /** Partition stamped on the last emitted document; absent on installed legacy state. */
   partitionKey?: string;
@@ -73,4 +75,6 @@ export interface LocalFileEntry {
   size: number;
   inode: number;
   device: number;
+  /** Exact Windows volume/file identity; absent in legacy and POSIX state. */
+  fileIdentity?: string;
 }

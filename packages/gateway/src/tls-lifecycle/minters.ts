@@ -17,6 +17,8 @@ import { promisify } from "node:util";
 
 import {
   assertNever,
+  ensurePrivateDirs,
+  execWindowsJob,
   mkcertCliCandidates,
   TAILSCALE_STATUS_TIMEOUT_MS,
   tailscaleCliCandidates,
@@ -26,6 +28,8 @@ import {
   type TlsOwnership,
 } from "@omnesis/core";
 import { generateSelfSigned } from "../tls.js";
+import { tlsIssuerCleanupFailure } from "./issuer-cleanup.js";
+import { readTlsPrivateKey } from "./persistence.js";
 import type { TlsMinter, TlsPem } from "./service.js";
 
 const execFileAsync = promisify(execFile);
@@ -50,16 +54,29 @@ async function runBinary(
   args: string[],
   signal: AbortSignal,
   env?: NodeJS.ProcessEnv,
+  timeoutMs?: number,
 ): Promise<string> {
   try {
-    const result = await execFileAsync(file, args, { signal, encoding: "utf8", env });
+    const result =
+      process.platform === "win32"
+        ? await execWindowsJob(file, args, {
+            signal,
+            env,
+            ...(timeoutMs === undefined ? {} : { timeout: timeoutMs }),
+          })
+        : await execFileAsync(file, args, { signal, encoding: "utf8", env });
     return result.stdout;
   } catch (err) {
+    const cleanup = tlsIssuerCleanupFailure(err);
+    if (cleanup) throw cleanup;
     const detail = err as NodeJS.ErrnoException & { stderr?: string };
     if (detail.code === "ENOENT") {
       throw new Error(`\`${file}\` is not installed or not on the gateway's PATH`, { cause: err });
     }
-    if (signal.aborted && (signal.reason as Error | undefined)?.name === "TimeoutError") {
+    if (
+      detail.code === "ETIMEDOUT" ||
+      (signal.aborted && (signal.reason as Error | undefined)?.name === "TimeoutError")
+    ) {
       throw new Error(`\`${file} ${args[0] ?? ""}\` did not answer in time`, { cause: err });
     }
     const stderr = detail.stderr?.trim();
@@ -78,13 +95,22 @@ async function mintWithBinary(
   env?: NodeJS.ProcessEnv,
 ): Promise<TlsPem> {
   const dir = mkdtempSync(join(tmpdir(), "omnesis-tls-renew-"));
+  let cleanupConfirmed = true;
   try {
+    if (process.platform === "win32") await ensurePrivateDirs([dir]);
     const certPath = join(dir, "cert.pem");
     const keyPath = join(dir, "key.pem");
     await run(file, argsFor(certPath, keyPath), signal, env);
-    return { cert: readFileSync(certPath, "utf8"), key: readFileSync(keyPath, "utf8") };
+    return { cert: readFileSync(certPath, "utf8"), key: await readTlsPrivateKey(keyPath, dir) };
+  } catch (error) {
+    const cleanup = tlsIssuerCleanupFailure(error, dir);
+    if (cleanup) {
+      cleanupConfirmed = false;
+      throw cleanup;
+    }
+    throw error;
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    if (cleanupConfirmed) rmSync(dir, { recursive: true, force: true });
   }
 }
 
@@ -94,6 +120,7 @@ interface TailscaleCliFailure {
 }
 
 function isMissingBinary(err: unknown): boolean {
+  if (tlsIssuerCleanupFailure(err)) return false;
   const code = (e: unknown) => (e as NodeJS.ErrnoException | undefined)?.code;
   return code(err) === "ENOENT" || code((err as Error | undefined)?.cause) === "ENOENT";
 }
@@ -156,8 +183,10 @@ async function mintWithMkcert(
 
 export function createHostMinter(deps: HostMinterDeps = {}): TlsMinter {
   const run = deps.run ?? runBinary;
-  const selfSigned = deps.selfSigned ?? generateSelfSigned;
+  const selfSigned = deps.selfSigned ?? ((signal: AbortSignal) => generateSelfSigned({ signal }));
   const statusTimeoutMs = deps.tailscaleStatusTimeoutMs ?? TAILSCALE_STATUS_TIMEOUT_MS;
+  const runStatus: NonNullable<HostMinterDeps["run"]> =
+    deps.run ?? ((file, args, signal, env) => runBinary(file, args, signal, env, statusTimeoutMs));
   return {
     async mint(ownership: Exclude<TlsOwnership, "external">, names, signal): Promise<TlsPem> {
       // Names come off a certificate on disk and land in an issuer's argv;
@@ -178,7 +207,7 @@ export function createHostMinter(deps: HostMinterDeps = {}): TlsMinter {
           for (const candidate of deps.tailscaleCandidates ?? tailscaleCliCandidates()) {
             try {
               // A hung candidate must not spend the whole renewal's time.
-              const status = await run(
+              const status = await runStatus(
                 candidate.file,
                 ["status", "--json"],
                 AbortSignal.any([signal, AbortSignal.timeout(statusTimeoutMs)]),
@@ -197,6 +226,8 @@ export function createHostMinter(deps: HostMinterDeps = {}): TlsMinter {
               selected = candidate;
               break;
             } catch (err) {
+              const cleanup = tlsIssuerCleanupFailure(err);
+              if (cleanup) throw cleanup;
               failures.push({ file: candidate.file, error: err });
             }
           }

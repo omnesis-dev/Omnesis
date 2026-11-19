@@ -5,6 +5,8 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { rmSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import { Worker } from "node:worker_threads";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -38,7 +40,7 @@ function writer(
   journalMode: "WAL" | "TRUNCATE" = "WAL",
   encryptionKey?: Buffer,
 ): Database.Database {
-  path = `/tmp/omnesis-test-${randomUUID()}.db`;
+  path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
   key = encryptionKey;
   const seed = key ? (openEncryptedSqlite(path, { key }) as Database.Database) : new Database(path);
   seed.exec("CREATE TABLE notes (id INTEGER PRIMARY KEY, body BLOB NOT NULL)");
@@ -406,7 +408,7 @@ describe("WalCheckpointer", () => {
       const calls: string[] = [];
       let busyTimeout = POLICY.busyTimeoutMs;
       const db = {
-        name: `/tmp/omnesis-test-${randomUUID()}.db`,
+        name: fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`),
         prepare: (sql: string) => ({
           get: (): Row => {
             const mode = /\((\w+)\)/.exec(sql)![1]!;

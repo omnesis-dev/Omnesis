@@ -11,6 +11,7 @@
  * receiver and reads the protocol lines it puts on the wire.
  */
 
+import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 import {
   AUTH_CHALLENGE_KINDS,
@@ -253,14 +254,14 @@ describe("what a provider is told about its own run", () => {
   test("a first connection gets the provider's directory, not an account's", () => {
     const { session } = build();
     expect(session.reason).toBe("connect");
-    expect(session.host.stateDir).toBe("/config/example");
+    expect(session.host.stateDir).toBe(join("/config", "example"));
   });
 
   test("a renewal gets the account's own directory and says which account", () => {
     const { session } = build({ reauthAccountId: "maya@example.org" });
     expect(session.reason).toBe("reauthenticate");
     expect(session.accountId).toBe("maya@example.org");
-    expect(session.host.stateDir).toBe("/config/example/maya@example.org");
+    expect(session.host.stateDir).toBe(join("/config", "example", "maya@example.org"));
   });
 
   test("the gateway's origin is withheld when there is no flow to route a callback to", () => {

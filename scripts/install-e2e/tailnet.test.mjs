@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -84,5 +84,132 @@ describe("tailnet collector DNS", () => {
       at("Run the printed --collector line"),
     );
     expect(script.lastIndexOf("ts_check_internet")).toBeLessThan(at('sh "$INSTALL_SH"'));
+  });
+});
+
+// A stand-in `tailscale` CLI for ts_wait_peer. The scenario names how the
+// peer looks from this node, and `appearAfter` how many pings it takes for
+// the peer to enter the network map. `ping` follows the real CLI: by default
+// it stops on a direct path only, and fails with "direct connection not
+// established" when its last pong came through a DERP relay.
+const fakeBin = join(work, "bin");
+mkdirSync(fakeBin);
+writeFileSync(
+  join(fakeBin, "tailscale"),
+  `#!/usr/bin/env bash
+set -u
+pings="$(cat "$FAKE_TS/pings" 2>/dev/null || echo 0)"
+present() { [ "$FAKE_TS_SCENARIO" != absent ] && [ "$pings" -ge "\${FAKE_TS_APPEAR_AFTER:-0}" ]; }
+case "$1" in
+  status)
+    if present; then
+      online=true; addr=""; relay=fra
+      [ "$FAKE_TS_SCENARIO" = offline ] && online=false
+      [ "$FAKE_TS_SCENARIO" = direct ] && addr="203.0.113.7:41641"
+      printf '{"MagicDNSSuffix":"example-tailnet.ts.net","Peer":{"nodekey:1":{"HostName":"other","DNSName":"other.example-tailnet.ts.net.","Online":true,"CurAddr":"","Relay":"fra"},"nodekey:2":{"HostName":"gw","DNSName":"%s.example-tailnet.ts.net.","Online":%s,"CurAddr":"%s","Relay":"%s"}}}\\n' "$FAKE_TS_PEER" "$online" "$addr" "$relay"
+    else
+      printf '{"MagicDNSSuffix":"example-tailnet.ts.net","Peer":{"nodekey:1":{"HostName":"other","DNSName":"other.example-tailnet.ts.net.","Online":true}}}\\n'
+    fi
+    ;;
+  ping)
+    echo $((pings + 1)) >"$FAKE_TS/pings"
+    until_direct=true
+    for a in "$@"; do [ "$a" = --until-direct=false ] && until_direct=false; done
+    host="\${!#}"
+    if ! present; then
+      echo "error looking up IP of \\"$host\\": lookup $host: no such host" >&2
+      exit 1
+    fi
+    case "$FAKE_TS_SCENARIO" in
+      offline)
+        echo "ping \\"192.0.2.2\\" timed out"
+        echo "no reply" >&2
+        exit 1
+        ;;
+      direct)
+        echo "pong from $host (192.0.2.2) via 203.0.113.7:41641 in 3ms"
+        ;;
+      *)
+        echo "pong from $host (192.0.2.2) via DERP(fra) in 31ms"
+        if [ "$until_direct" = true ]; then
+          echo "direct connection not established" >&2
+          exit 1
+        fi
+        ;;
+    esac
+    ;;
+  *) exit 2 ;;
+esac
+`,
+);
+chmodSync(join(fakeBin, "tailscale"), 0o755);
+
+const PEER = "omnesis-ci-gw-t1-1234-1";
+
+function waitPeer(scenario, { seconds = 30, appearAfter = 0 } = {}) {
+  const state = mkdtempSync(join(work, "ts-"));
+  const r = spawnSync(
+    "bash",
+    [
+      "-c",
+      `set -euo pipefail; . "$1/lib.sh"; . "$1/tailnet.sh"; ts_wait_peer "${PEER}" ${seconds}`,
+      "sh",
+      here,
+    ],
+    {
+      encoding: "utf8",
+      timeout: 20_000,
+      env: {
+        ...process.env,
+        PATH: `${fakeBin}:${process.env.PATH}`,
+        E2E_WORK: work,
+        E2E_TS_POLL_SECONDS: "0",
+        FAKE_TS: state,
+        FAKE_TS_SCENARIO: scenario,
+        FAKE_TS_PEER: PEER,
+        FAKE_TS_APPEAR_AFTER: String(appearAfter),
+      },
+    },
+  );
+  return { ...r, pings: Number(readFileSync(join(state, "pings"), "utf8")) };
+}
+
+describe("ts_wait_peer", () => {
+  it("accepts a peer reachable only through a DERP relay", () => {
+    const r = waitPeer("relayed");
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout).toContain(`peer ${PEER} answers on the tailnet (relayed through DERP)`);
+    expect(r.pings).toBe(1);
+  });
+
+  it("keeps pinging until a late peer enters the network map", () => {
+    const r = waitPeer("relayed", { appearAfter: 3 });
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.pings).toBe(4);
+  });
+
+  it("names a direct path", () => {
+    const r = waitPeer("direct");
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout).toContain(`peer ${PEER} answers on the tailnet (direct)`);
+  });
+
+  it("says the peer never entered the network map, without addresses", () => {
+    const r = waitPeer("absent", { seconds: 0 });
+    expect(r.status).toBe(1);
+    expect(r.stdout + r.stderr).toContain(`peer ${PEER} is not in the local network map`);
+    expect(r.stderr).toContain(`::error::peer ${PEER} never answered tailscale ping`);
+    expect(r.stdout + r.stderr).toContain("no such host");
+  });
+
+  it("describes a peer in the network map that never answered, without addresses", () => {
+    const r = waitPeer("offline", { seconds: 0 });
+    expect(r.status).toBe(1);
+    const out = r.stdout + r.stderr;
+    expect(out).toContain(
+      `peer ${PEER} is in the local network map: offline, no direct path, DERP home fra`,
+    );
+    expect(out).toContain("last ping: no reply");
+    expect(out).not.toMatch(/192\.0\.2|203\.0\.113|example-tailnet/);
   });
 });

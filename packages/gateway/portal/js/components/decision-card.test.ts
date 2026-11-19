@@ -348,6 +348,7 @@ describe("request and answer", () => {
 describe("urgency scheduling", () => {
   it("labels the applied schedule as an attempt snapshot and distinguishes the proposal", () => {
     expect(flat(DecisionScheduling({ scheduling: { status: "scheduled", applied: { tier: "soon", dueAt: 1_700_000_000_000 }, fallbackSoon: true } }))).toContain("without a usable urgency verdict");
+    expect(flat(DecisionScheduling({ scheduling: { status: "scheduled", applied: { tier: "routine", dueAt: 1_700_000_000_000 }, awaitingVerdict: true } }))).toContain("Routine, without a usable urgency verdict; judged again when the decision model answers");
     expect(flat(DecisionScheduling({ scheduling: { status: "unscheduled" } }))).toContain("No schedule applied at this attempt");
     const scheduling = { status: "scheduled", policy: { immediateThreshold: 0.8, soonThreshold: 0.3, soonDelayMs: 60_000, routineDelayMs: 300_000 }, proposed: { tier: "routine", dueAt: 200 }, applied: { tier: "soon", dueAt: 100 } };
     const rendered = flat(DecisionScheduling({ scheduling }));

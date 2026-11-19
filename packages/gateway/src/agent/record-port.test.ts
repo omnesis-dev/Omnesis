@@ -16,6 +16,8 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import { RecordPortError } from "@omnesis/agent";
 import { recordReference, REDACTED_VALUE } from "@omnesis/core";
@@ -32,7 +34,7 @@ import type { ActivitySample } from "../observability/stall-protocol.js";
 
 type Db = Database.Database;
 
-const ANALYTICS_DB = `/tmp/omnesis-test-record-port-${randomUUID()}.db`;
+const ANALYTICS_DB = fixtureJoin(fixtureTmpdir(), `omnesis-test-record-port-${randomUUID()}.db`);
 
 // A fictional structured source with a 1:1 doc↔row binding + a sensitive
 // column. Invented data only (privacy rule).
@@ -117,7 +119,7 @@ beforeEach(async () => {
   await analytics.open();
   await analytics.ensureTable(txnSchema, "demo:acct1");
   await analytics.ensureTable(profileSchema, "demo:acct1");
-  sqlitePath = `/tmp/omnesis-test-record-port-sqlite-${randomUUID()}.db`;
+  sqlitePath = fixtureJoin(fixtureTmpdir(), `omnesis-test-record-port-sqlite-${randomUUID()}.db`);
   db = createDatabase(sqlitePath);
 });
 

@@ -4,12 +4,13 @@
 import { mkdtempSync, readFileSync, existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { spawn, type ChildProcess } from "node:child_process";
 import { createServer, type AddressInfo } from "node:net";
 import { describe, test, expect, beforeAll, afterAll } from "vitest";
-import { fetchPeerCert, ensureGatewayTrust } from "@omnesis/core";
+import { fetchPeerCert, ensureGatewayTrust, ownedProcessCleanupReceipt } from "@omnesis/core";
 import { e2eGatewayEnv, e2eTsxCommand, gatewayBootBudgetMs } from "./gateway-env.js";
 import { killSubprocessGroup, registerSubprocessGroup } from "./subprocess-reaper.js";
+import { spawnE2ESubprocess } from "./e2e-owned-process.js";
+import type { ChildProcess } from "node:child_process";
 
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
 
@@ -30,6 +31,7 @@ let gatewayPort: number;
 let gatewayUrl: string;
 let gatewayConfigDir: string;
 let collectorConfigDir: string;
+let retainInputs = false;
 
 beforeAll(async () => {
   gatewayPort = await getFreePort();
@@ -48,19 +50,23 @@ beforeAll(async () => {
     OMNESIS_PARENT_PID: String(process.pid),
   };
 
-  const gatewayCommand = e2eTsxCommand("packages/gateway/src/index.ts");
-  gatewayProcess = spawn(gatewayCommand.command, gatewayCommand.args, {
-    env,
-    cwd: join(import.meta.dirname, "../../../.."),
-    stdio: ["ignore", "ignore", "ignore"],
-    detached: true,
-  });
-  // Reap this detached group if the runner dies before afterAll runs —
-  // otherwise the gateway orphans and holds ~1.5 GB indefinitely.
-  registerSubprocessGroup(gatewayProcess);
-
   const startTime = Date.now();
   const timeout = gatewayBootBudgetMs();
+  const gatewayCommand = e2eTsxCommand("packages/gateway/src/index.ts");
+  try {
+    gatewayProcess = spawnE2ESubprocess(gatewayCommand.command, gatewayCommand.args, {
+      env,
+      cwd: join(import.meta.dirname, "../../../.."),
+      stdio: ["ignore", "ignore", "ignore", "ipc"],
+      detached: true,
+    });
+    // Admission and health share the same boot budget; the native owner is ready first.
+    await registerSubprocessGroup(gatewayProcess);
+  } catch (error) {
+    retainInputs = ownedProcessCleanupReceipt(error) !== undefined;
+    throw error;
+  }
+
   while (Date.now() - startTime < timeout) {
     try {
       const res = await fetch(`${gatewayUrl}/health`);
@@ -71,14 +77,17 @@ beforeAll(async () => {
     await new Promise((r) => setTimeout(r, 200));
   }
   throw new Error(`Gateway did not start within ${timeout}ms`);
-}, 30_000);
+  // Let the health loop report its own shared deadline instead of the hook cutting it short.
+}, gatewayBootBudgetMs() + 5_000);
 
 afterAll(async () => {
   if (gatewayProcess) {
     await killSubprocessGroup(gatewayProcess);
   }
-  rmSync(gatewayConfigDir, { recursive: true, force: true });
-  rmSync(collectorConfigDir, { recursive: true, force: true });
+  if (!retainInputs) {
+    rmSync(gatewayConfigDir, { recursive: true, force: true });
+    rmSync(collectorConfigDir, { recursive: true, force: true });
+  }
 }, 15_000);
 
 describe("TOFU E2E", () => {

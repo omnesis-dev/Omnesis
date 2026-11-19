@@ -31,50 +31,60 @@ afterEach(async () => {
 });
 
 describe("Strava provider context", () => {
-  test("persists refreshed tokens in the collector config directory", async () => {
-    const configDir = await makeConfigDir();
-    await saveTokens(
-      {
-        access_token: "expired-access",
-        refresh_token: "old-refresh",
-        expires_at: 1,
-        athlete_id: 4242,
-      },
-      configDir,
-    );
+  test.each([4242, "9223372036854775807"])(
+    "preserves stored account %s and refreshes its existing tokens",
+    async (athleteId) => {
+      const configDir = await makeConfigDir();
+      await saveTokens(
+        {
+          access_token: "expired-access",
+          refresh_token: "old-refresh",
+          expires_at: 1,
+          athlete_id: athleteId,
+        },
+        configDir,
+      );
 
-    vi.stubGlobal(
-      "fetch",
-      vi.fn((url: string) => {
-        if (url === "https://www.strava.com/oauth/token") {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn((url: string) => {
+          if (url === "https://www.strava.com/oauth/token") {
+            return Promise.resolve(
+              new Response(
+                JSON.stringify({
+                  access_token: "fresh-access",
+                  refresh_token: "fresh-refresh",
+                  expires_at: Math.floor(Date.now() / 1000) + 7200,
+                  expires_in: 7200,
+                  token_type: "Bearer",
+                }),
+              ),
+            );
+          }
           return Promise.resolve(
-            new Response(
-              JSON.stringify({
-                access_token: "fresh-access",
-                refresh_token: "fresh-refresh",
-                expires_at: Math.floor(Date.now() / 1000) + 7200,
-                expires_in: 7200,
-                token_type: "Bearer",
-              }),
-            ),
+            new Response(JSON.stringify({ id: Number(athleteId), id_str: String(athleteId) })),
           );
-        }
-        return Promise.resolve(new Response(JSON.stringify({ id: 4242 })));
-      }),
-    );
+        }),
+      );
 
-    const context = await definition.createContext!({
-      accountId: "4242",
-      providerId: ProviderId("strava:4242"),
-      host: fakeProviderHost({ configDir }),
-    });
-    await context.client.getAthleteDetail();
+      const context = await definition.createContext!({
+        accountId: String(athleteId),
+        providerId: ProviderId(`strava:${athleteId}`),
+        host: fakeProviderHost({ configDir }),
+      });
+      expect(context.athleteId).toBe(athleteId);
+      expect((await context.client.getAthleteDetail()).id).toBe(athleteId);
 
-    const saved = JSON.parse(
-      await readFile(join(configDir, "strava", "4242", "tokens.json"), "utf-8"),
-    ) as { access_token: string; refresh_token: string };
-    expect(saved).toMatchObject({ access_token: "fresh-access", refresh_token: "fresh-refresh" });
-  });
+      const saved = JSON.parse(
+        await readFile(join(configDir, "strava", String(athleteId), "tokens.json"), "utf-8"),
+      ) as { access_token: string; refresh_token: string };
+      expect(saved).toMatchObject({
+        access_token: "fresh-access",
+        refresh_token: "fresh-refresh",
+        athlete_id: athleteId,
+      });
+    },
+  );
 });
 
 describe("Strava activities descriptor", () => {

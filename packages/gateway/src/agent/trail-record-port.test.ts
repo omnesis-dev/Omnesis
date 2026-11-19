@@ -18,6 +18,8 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import { analyticsRowKey } from "@omnesis/core";
 import { ProviderId, SourceId } from "@omnesis/types";
@@ -32,7 +34,7 @@ import type { TrailEvent } from "@omnesis/core";
 
 type Db = Database.Database;
 
-const ANALYTICS_DB = `/tmp/omnesis-test-trail-record-${randomUUID()}.db`;
+const ANALYTICS_DB = fixtureJoin(fixtureTmpdir(), `omnesis-test-trail-record-${randomUUID()}.db`);
 
 // A fictional structured source with a 1:1 doc↔row binding + a sensitive
 // column and a declared semantic time.
@@ -114,7 +116,7 @@ beforeEach(async () => {
   await analytics.open();
   await analytics.ensureTable(activitySchema, "demo:acct1");
   await analytics.ensureTable(profileSchema, "demo:acct1");
-  sqlitePath = `/tmp/omnesis-test-trail-record-sqlite-${randomUUID()}.db`;
+  sqlitePath = fixtureJoin(fixtureTmpdir(), `omnesis-test-trail-record-sqlite-${randomUUID()}.db`);
   db = createDatabase(sqlitePath);
 });
 

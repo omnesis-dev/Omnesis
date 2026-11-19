@@ -12,11 +12,17 @@ import dev.omnesis.android.transport.http.postJson
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 
-/** Device-scoped notification lease client. Notification text only crosses the paired channel. */
+/**
+ * Device-scoped notification lease client. Notification text only crosses the paired channel.
+ *
+ * Every claim says this app routes Tailscale join notifications; the pairing ones only when
+ * [pairingNotifications] (a build with cloud connectivity).
+ */
 class NotificationsClient(private val http: GatewayHttp, private val pairingNotifications: Boolean = false) {
     suspend fun claim(): ClaimedNotificationDelivery? {
         val request = http.newRequest(http.urlFor("notifications/claim"))
             .apply { if (pairingNotifications) header("X-Omnesis-Pairing-Notifications", "1") }
+            .header("X-Omnesis-Tailscale-Join-Notifications", "1")
             .post("{}".toRequestBody(JSON_MEDIA))
             .build()
         val body = http.execute(request)

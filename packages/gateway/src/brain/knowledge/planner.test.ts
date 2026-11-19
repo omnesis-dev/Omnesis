@@ -6,6 +6,7 @@ import {
   boundKnowledgeReview,
   expandMaintenanceFrontier,
   MaintenancePlanLimitError,
+  packMaintenanceGroups,
   planMaintenanceGroups,
   scheduleKnowledgeChange,
   type MaintenanceSeed,
@@ -146,6 +147,49 @@ describe("maintenance coordination", () => {
   });
 });
 
+describe("packing unrelated groups", () => {
+  const groups = (seeds: MaintenanceSeed[]) => planMaintenanceGroups(seeds, [], new Set(), limits);
+
+  it("packs packable groups in order within the seed and node bounds", () => {
+    const planned = groups([
+      seed("a", ["source:a"], { dueAt: 1 }),
+      seed("b", ["source:b"], { dueAt: 2 }),
+      seed("urgent", ["source:urgent"], { dueAt: 3, tier: "immediate" }),
+      seed("c", ["source:c"], { dueAt: 4 }),
+      seed("d", ["source:d"], { dueAt: 5 }),
+    ]);
+    const packed = packMaintenanceGroups(planned, (group) => group.tier === "routine", {
+      maxSeeds: 2,
+      maxNodes: 10,
+    });
+    expect(packed.map((group) => group.seeds.map((s) => s.id))).toEqual([
+      ["a", "b"],
+      ["urgent"],
+      ["c", "d"],
+    ]);
+    expect(packed[0]).toMatchObject({
+      nodes: ["source:a", "source:b"],
+      dueAt: 1,
+      tier: "routine",
+    });
+    expect(packed[1]).toBe(planned[2]);
+    // The node bound closes a pack as the seed bound does.
+    expect(
+      packMaintenanceGroups(planned, (group) => group.tier === "routine", {
+        maxSeeds: 10,
+        maxNodes: 3,
+      }).map((group) => group.seeds.length),
+    ).toEqual([3, 1, 1]);
+  });
+
+  it("leaves everything as planned when nothing is packable", () => {
+    const planned = groups([seed("a", ["source:a"]), seed("b", ["source:b"])]);
+    expect(packMaintenanceGroups(planned, () => false, { maxSeeds: 64, maxNodes: 256 })).toEqual(
+      planned,
+    );
+  });
+});
+
 describe("bounded maintenance scheduling", () => {
   const policy = {
     immediateThreshold: 0.8,
@@ -153,12 +197,15 @@ describe("bounded maintenance scheduling", () => {
     soonDelayMs: 100,
     routineDelayMs: 600,
   };
-  it("routes model scores and fails conservatively when no decision is available", () => {
+  it("routes model scores and never promotes work over judged work without a verdict", () => {
     expect(scheduleKnowledgeChange(0.9, 10, policy)).toEqual({ tier: "immediate", dueAt: 10 });
     expect(scheduleKnowledgeChange(0.5, 10, policy)).toEqual({ tier: "soon", dueAt: 110 });
     expect(scheduleKnowledgeChange(0.1, 10, policy)).toEqual({ tier: "routine", dueAt: 610 });
-    expect(scheduleKnowledgeChange(null, 10, policy)).toEqual({ tier: "soon", dueAt: 110 });
-    expect(scheduleKnowledgeChange(Number.NaN, 10, policy)).toEqual({ tier: "soon", dueAt: 110 });
+    expect(scheduleKnowledgeChange(null, 10, policy)).toEqual({ tier: "routine", dueAt: 610 });
+    expect(scheduleKnowledgeChange(Number.NaN, 10, policy)).toEqual({
+      tier: "routine",
+      dueAt: 610,
+    });
     expect(scheduleKnowledgeChange(0.1, 10, policy, true)).toEqual({
       tier: "immediate",
       dueAt: 10,

@@ -107,7 +107,8 @@ export function relayDiagnostics(status, { phase, version, now = new Date() } = 
         `Unexpected certificate: name ${plain(incident.hostname)}, public key ${plain(incident.spkiFingerprint)}, certificate ${plain(incident.certificateFingerprint)}, issuer ${plain(incident.issuer)}, serial ${plain(incident.serial)}, valid ${iso(incident.validFrom)} to ${iso(incident.validTo)}, seen ${iso(incident.observedAt)}, log entry ${plain(incident.providerEntryId)}`,
     ),
     `Account: ${account?.linked || status.google?.linked ? "linked" : account?.pendingUnlink ? "unlinked here, account not updated yet" : "not linked"}`,
-    `New devices: ${plain(status.deviceEnrollment?.policy, "not reported")}, ${status.deviceEnrollment?.trustedSignIns?.length ?? 0} trusted sign-ins`,
+    // Only a sign-in confirmed on this gateway joins a device on its own; the others are on record.
+    `New devices: ${plain(status.deviceEnrollment?.policy, "not reported")}, ${status.deviceEnrollment?.confirmedSignIns?.length ?? 0} confirmed sign-ins, ${status.deviceEnrollment?.trustedSignIns?.length ?? 0} on record`,
     ...(status.incidentHold
       ? [
           `Incident hold: since ${iso(status.incidentHold.since)}, ${Array.isArray(status.incidentHold.certificates) ? status.incidentHold.certificates.length : 0} certificates`,

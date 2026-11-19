@@ -3,6 +3,8 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { describe, test, expect, beforeEach, afterEach, vi } from "vitest";
 import { renderConversationDay } from "@omnesis/core";
 import { ProviderId, SourceId } from "@omnesis/types";
@@ -206,7 +208,7 @@ let embedder: MockEmbedder;
 let indexer: Indexer;
 
 beforeEach(() => {
-  db = createIndexDatabase(`/tmp/omnesis-indexer-test-${randomUUID()}.db`);
+  db = createIndexDatabase(fixtureJoin(fixtureTmpdir(), `omnesis-indexer-test-${randomUUID()}.db`));
   source = new MockSource();
   embedder = new MockEmbedder();
   indexer = new Indexer(db, source, new DocumentChunker(), embedder);
@@ -1268,7 +1270,7 @@ describe("Indexer", () => {
     }
 
     function gwDbPath() {
-      return `/tmp/omnesis-recanon-test-${randomUUID()}.db`;
+      return fixtureJoin(fixtureTmpdir(), `omnesis-recanon-test-${randomUUID()}.db`);
     }
 
     function makeGwDoc(overrides: Partial<DocumentInput> = {}): DocumentInput {

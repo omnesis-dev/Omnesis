@@ -112,23 +112,24 @@ const mkcertLeaf = issuedBy(root);
 const ownLeaf = selfSigned();
 
 describe("mkcertRootCandidates", () => {
+  const home = join(scratch, "home");
+  const caRoot = join(scratch, "authority");
+  const dataRoot = join(scratch, "data");
   test("puts $CAROOT before mkcert's default directory", () => {
-    expect(mkcertRootCandidates({ CAROOT: "/srv/ca" }, "linux", "/home/maya")).toEqual([
-      "/srv/ca/rootCA.pem",
-      "/home/maya/.local/share/mkcert/rootCA.pem",
+    expect(mkcertRootCandidates({ CAROOT: caRoot }, "linux", home)).toEqual([
+      join(caRoot, "rootCA.pem"),
+      join(home, ".local", "share", "mkcert", "rootCA.pem"),
     ]);
   });
 
   test("follows mkcert's per-platform defaults", () => {
-    expect(mkcertRootCandidates({ XDG_DATA_HOME: "/data" }, "linux", "/home/maya")).toEqual([
-      "/data/mkcert/rootCA.pem",
+    expect(mkcertRootCandidates({ XDG_DATA_HOME: dataRoot }, "linux", home)).toEqual([
+      join(dataRoot, "mkcert", "rootCA.pem"),
     ]);
-    const darwin = mkcertRootCandidates({}, "darwin", "/Users/maya");
+    const darwin = mkcertRootCandidates({}, "darwin", home);
     expect(darwin).toHaveLength(1);
-    expect(darwin[0]).toMatch(
-      /^\/Users\/maya\/Library\/application support\/mkcert\/rootCA\.pem$/iu,
-    );
-    expect(mkcertRootCandidates({}, "win32", "/home/maya")).toEqual([]);
+    expect(darwin[0]).toBe(join(home, "Library", "Application Support", "mkcert", "rootCA.pem"));
+    expect(mkcertRootCandidates({}, "win32", home)).toEqual([]);
   });
 });
 

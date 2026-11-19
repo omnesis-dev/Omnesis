@@ -49,6 +49,7 @@ import {
   updateAccessLevel,
 } from "../api.js";
 import { navigate, replaceRoute } from "../lib/router.js";
+import { usePortalSignal } from "../lib/portal-signals.js";
 import { useVisiblePoll } from "../lib/use-visible-poll.js";
 import { ConfirmModal } from "../components/confirm-modal.js";
 import { AccessList, accessListIsEmpty, levelEditorPath } from "./access/access-list.js";
@@ -66,7 +67,9 @@ import {
   hostedClientsHint,
   leadsWithLocalAddress,
   relayPublicAddress,
+  tailscalePublicAddress,
   useRelayStatus,
+  useTailscaleState,
 } from "./access/public-address.js";
 import {
   accessLevels,
@@ -92,12 +95,12 @@ const EMPTY_OVERVIEW = { principals: [], levels: [], oauth: null };
 const ACCESS_ROUTE = "/portal/settings/access";
 const NEW_LEVEL_ROUTE = "/portal/settings/access/levels/new";
 const UNLOADABLE_APPROVAL_MESSAGE = "This approval could not be loaded. Reload the page.";
+// How often the open inventory page re-reads the overview for what no signal
+// covers, such as when a connection was last used.
+const INVENTORY_REFRESH_MS = 60_000;
+/** How often the page looks again while an address is still getting its trusted certificate. */
+const CERTIFICATE_PENDING_REFRESH_MS = 10_000;
 
-// How often the inventory page re-reads the overview. The pending strip is
-// the page's clock: a request arrives, or is decided on a phone, while the
-// page is open, and the strip must follow without a reload. Half a minute
-// matches the strip's own countdown and is a fraction of a request's life.
-const OVERVIEW_REFRESH_MS = 30_000;
 
 export function AccessView({
   authorizationId = null,
@@ -108,6 +111,9 @@ export function AccessView({
   // Whether the gateway advertises the optional cloud relay. Only then does the
   // page read the relay's status, for the public address it gives the gateway.
   cloudRelay = false,
+  // Whether the gateway advertises its own Tailscale device. Only then does
+  // the page read the device's state, for the address it gives the gateway.
+  tailscaleEmbed = false,
   completeAuthorization = async (approvalId) => {
     const result = await completeAccessAuthorization(approvalId);
     globalThis.location.assign(result.redirectTo);
@@ -120,6 +126,8 @@ export function AccessView({
   const [connectLocal, setConnectLocal] = useState(false);
   const relayStatus = useRelayStatus(cloudRelay, connectOpen || connectLocal);
   const relay = relayPublicAddress(cloudRelay, relayStatus, overview.oauth);
+  const tailscaleState = useTailscaleState(tailscaleEmbed, connectOpen || connectLocal);
+  const tailscale = tailscalePublicAddress(tailscaleEmbed, tailscaleState, overview.oauth);
   // The pending request under review, with the gateway's `connection`
   // proposal for it. The gateway sends a proposal with every pending request;
   // a lookup without one cannot be reviewed and the page says so.
@@ -219,11 +227,23 @@ export function AccessView({
 
   useEffect(() => { refresh(); }, []);
   // Only the inventory page follows the gateway; a detail page holds a review
-  // built from what it loaded, and its own reloads are the conflict path.
+  // built from what it loaded, and its own reloads are the conflict path. A
+  // request arriving, or decided on a phone, is signalled, and the pending
+  // strip follows it at once; the slow read keeps the rest of the inventory —
+  // which no signal covers — current while the page is open.
+  usePortalSignal("access", () => { void refresh({ background: true }); }, { enabled: !detail });
   useVisiblePoll(
     () => { void refresh({ background: true }); },
-    OVERVIEW_REFRESH_MS,
+    INVENTORY_REFRESH_MS,
     { enabled: !detail },
+  );
+  // An address whose trusted certificate is on its way is looked at again
+  // often, so the agents it blocks open up as soon as the certificate lands.
+  const certificateArriving = overview.oauth?.resources?.some((entry) => entry.certificatePending === true) ?? false;
+  useVisiblePoll(
+    () => { void refresh({ background: true }); },
+    CERTIFICATE_PENDING_REFRESH_MS,
+    { enabled: !detail && certificateArriving },
   );
   useEffect(() => {
     let cancelled = false;
@@ -606,8 +626,8 @@ export function AccessView({
     if (connectOpen) replaceRoute(ACCESS_ROUTE);
   };
   const openConnect = () => setConnectLocal(true);
-  const configHref = "/portal/settings/config";
-  const hostedHint = hostedClientsHint(relay);
+  const connectivityHref = "/portal/settings/connectivity";
+  const hostedHint = hostedClientsHint(relay, tailscale);
 
   return html`
     <div class="access-view">
@@ -633,13 +653,13 @@ export function AccessView({
         ? html`<div class="access-oauth-blocker" role="status">
             <strong>Local agents can connect.</strong>
             <span>Use Connect an agent for clients running on the gateway’s machine.
-              To connect from another machine, set <code>gateway.publicBaseUrl</code> on the${" "}
-              <a href=${configHref} onClick=${(event) => { event.preventDefault(); navigate(configHref); }}>Config tab</a>.${" "}
+              To connect from another machine, give the gateway an address in${" "}
+              <a href=${connectivityHref} onClick=${(event) => { event.preventDefault(); navigate(connectivityHref); }}>Settings, Connectivity</a>.${" "}
               ${hostedHint
                 ? html`This can be a private network address. ${hostedHint.map((part) => typeof part === "string"
                     ? part
                     : html`<a href=${part.route} onClick=${(event) => { event.preventDefault(); navigate(part.route); }}>${part.text}</a>`)}`
-                : "This can be a private network address; ChatGPT and Claude apps need an Internet-reachable address."}
+                : "This can be a private network address; ChatGPT, Claude apps and Grok bot need an Internet-reachable address."}
             </span>
           </div>`
         : null}
@@ -651,11 +671,11 @@ export function AccessView({
             <span>
               Agents on the gateway’s machine can sign in over a loopback address.
               Connecting from another machine needs a configured Gateway public URL.
-              Set <code>gateway.publicBaseUrl</code> on the${" "}
+              Give the gateway an address in${" "}
               <a
-                href=${configHref}
-                onClick=${(event) => { event.preventDefault(); navigate(configHref); }}
-              >Config tab</a>, then reload this page.
+                href=${connectivityHref}
+                onClick=${(event) => { event.preventDefault(); navigate(connectivityHref); }}
+              >Settings, Connectivity</a>, then reload this page.
             </span>
           </div>`}
 
@@ -685,7 +705,7 @@ export function AccessView({
             }}
           />`}
 
-      ${connectVisible && html`<${ConnectAgentDialog} oauth=${overview.oauth} relay=${relay} onClose=${closeConnect} />`}
+      ${connectVisible && html`<${ConnectAgentDialog} oauth=${overview.oauth} relay=${relay} tailscale=${tailscale} onClose=${closeConnect} />`}
 
       ${movingEntry && html`<${MoveConnectionDialog}
         key=${movingEntry.grant.id}

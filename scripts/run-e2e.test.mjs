@@ -16,6 +16,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import {
+  WindowsProcessTree,
+  killWindowsProcessTree,
+} from "../packages/core/src/windows-process-tree.ts";
+import {
   acquireE2EHostLock,
   buildE2EPhases,
   childGroupIsAlive,
@@ -26,6 +30,26 @@ import {
   selectE2EWorkers,
   waitForChild,
 } from "./run-e2e.mjs";
+
+test("raw Node check-runner imports do not require a TypeScript resolver", () => {
+  const helper = new URL("./lib/check-process.mjs", import.meta.url).href;
+  const result = spawnSync(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      `const adapter = await import(${JSON.stringify(helper)}); if (typeof adapter.waitForChild !== "function") throw new Error("missing runner");`,
+    ],
+    {
+      encoding: "utf8",
+      env: { ...process.env, NODE_OPTIONS: "" },
+      timeout: 10_000,
+    },
+  );
+  expect(result.error).toBeUndefined();
+  expect(result.stderr).not.toContain("ERR_MODULE_NOT_FOUND");
+  expect(result.status).toBe(0);
+});
 
 const GIB = 1024 ** 3;
 
@@ -335,70 +359,81 @@ describe("memory-aware E2E worker selection", () => {
     expect(forwarded).toEqual(["SIGTERM", "SIGKILL"]);
   });
 
-  test.skipIf(process.platform === "win32")(
-    "cancellation drains detached descendants even when an inner supervisor outlives its grace",
-    async () => {
-      const helper = new URL("./lib/check-process.mjs", import.meta.url).href;
-      const inner = `
+  test("cancellation drains detached descendants even when an inner supervisor outlives its grace", async () => {
+    const helper = new URL("./lib/check-process.mjs", import.meta.url).href;
+    const inner = `
       import { spawn } from 'node:child_process';
       import { waitForChild } from ${JSON.stringify(helper)};
       const child = spawn(process.execPath, ['-e', 'process.on("SIGTERM", () => {}); console.log(process.pid); setInterval(() => {}, 1000)'], { detached: true, stdio: 'inherit' });
       try { await waitForChild(child, { termGraceMs: 1000 }); } catch {}
     `;
-      const supervisor = spawn(process.execPath, ["--input-type=module", "-e", inner], {
-        detached: true,
-        stdio: ["ignore", "pipe", "ignore"],
+    const supervisor = spawn(process.execPath, ["--input-type=module", "-e", inner], {
+      detached: true,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    const signals = new EventEmitter();
+    const waiting = waitForChild(supervisor, {
+      signalEmitter: signals,
+      termGraceMs: 20,
+      killGraceMs: 10,
+    });
+    // Attach the rejection handler before the child can exit.
+    const outcome = waiting.catch((error) => error);
+    let descendant;
+    try {
+      descendant = await new Promise((resolve, reject) => {
+        supervisor.stdout.once("data", (data) => resolve(Number(data.toString().trim())));
+        supervisor.once("error", reject);
       });
-      const signals = new EventEmitter();
-      const waiting = waitForChild(supervisor, {
-        signalEmitter: signals,
-        termGraceMs: 20,
-        killGraceMs: 10,
-      });
-      // Attach the rejection handler before the child can exit.
-      const outcome = waiting.catch((error) => error);
-      let descendant;
-      try {
-        descendant = await new Promise((resolve, reject) => {
-          supervisor.stdout.once("data", (data) => resolve(Number(data.toString().trim())));
-          supervisor.once("error", reject);
-        });
-        signals.emit("SIGTERM");
-        expect(await outcome).toMatchObject({ message: "Check terminated after SIGTERM" });
-        expect(childGroupIsAlive({ spawnfile: process.execPath, pid: descendant })).toBe(false);
-      } finally {
-        for (const pid of [descendant, supervisor.pid]) {
-          if (pid)
-            try {
-              process.kill(-pid, "SIGKILL");
-            } catch {
-              /* Already drained. */
-            }
-        }
+      signals.emit("SIGTERM");
+      expect(await outcome).toMatchObject({ message: "Check terminated after SIGTERM" });
+      expect(childGroupIsAlive({ spawnfile: process.execPath, pid: descendant })).toBe(false);
+    } finally {
+      for (const pid of [descendant, supervisor.pid]) {
+        if (pid)
+          try {
+            if (process.platform === "win32") await killWindowsProcessTree(pid);
+            else process.kill(-pid, "SIGKILL");
+          } catch {
+            /* Already drained. */
+          }
       }
-    },
-  );
+    }
+  });
 
-  test.skipIf(process.platform === "win32")(
-    "drains an actual orphaned descendant before releasing ownership",
-    async () => {
-      const child = spawn(
-        process.execPath,
-        [
-          "-e",
-          `
+  test("drains an actual orphaned descendant before releasing ownership", async () => {
+    const child = spawn(
+      process.execPath,
+      [
+        "-e",
+        `
       const { spawn } = require('node:child_process');
       const descendant = spawn(process.execPath, ['-e', 'process.on("SIGTERM", () => {}); process.send("ready"); setInterval(() => {}, 1000)'], { stdio: ['ignore', 'ignore', 'ignore', 'ipc'] });
-      descendant.once('message', () => process.exit(0));
+      descendant.once('message', () => process.send('descendant-ready'));
+      process.on('message', (message) => { if (message === 'release') process.exit(0); });
     `,
-        ],
-        { detached: true, stdio: "ignore" },
-      );
-      const code = await waitForChild(child, { termGraceMs: 20, killGraceMs: 10 });
-      expect(code).toBe(0);
-      expect(childGroupIsAlive(child)).toBe(false);
-    },
-  );
+      ],
+      { detached: true, stdio: ["ignore", "ignore", "ignore", "ipc"] },
+    );
+    // Establish ownership before deliberately exiting the root. A numeric
+    // Windows PPID alone cannot prove ownership after an unobserved root dies.
+    await new Promise((resolve, reject) => {
+      child.once("message", resolve);
+      child.once("error", reject);
+    });
+    const windowsTree =
+      process.platform === "win32"
+        ? new WindowsProcessTree(child.pid, {
+            rootIsAlive: () => child.exitCode === null && child.signalCode === null,
+          })
+        : null;
+    if (windowsTree) await windowsTree.refresh();
+    const waiting = waitForChild(child, { termGraceMs: 20, killGraceMs: 10, windowsTree });
+    child.send("release");
+    const code = await waiting;
+    expect(code).toBe(0);
+    expect(childGroupIsAlive(child)).toBe(false);
+  });
 
   test("retains ownership after Vitest exits until its descendants stop", async () => {
     const child = new EventEmitter();
@@ -445,6 +480,44 @@ describe("memory-aware E2E worker selection", () => {
     expect(signals.listenerCount("SIGTERM")).toBe(1);
     child.emit("exit", null, "SIGKILL");
     await expect(result).rejects.toThrow(/terminated after SIGTERM/);
+  });
+
+  test("retains Windows ownership while a process snapshot is unavailable", async () => {
+    const child = new EventEmitter();
+    const signals = new EventEmitter();
+    let snapshotsAvailable = false;
+    let alive = true;
+    let settled = false;
+    const windowsTree = {
+      get alive() {
+        return alive;
+      },
+      refresh() {
+        return snapshotsAvailable
+          ? Promise.resolve()
+          : Promise.reject(new Error("synthetic process query unavailable"));
+      },
+      kill() {
+        alive = false;
+        return Promise.resolve();
+      },
+    };
+    const result = waitForChild(child, {
+      signalEmitter: signals,
+      windowsTree,
+      termGraceMs: 1,
+      killGraceMs: 1,
+    });
+    result.then(() => {
+      settled = true;
+    });
+    child.emit("exit", 0, null);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(settled).toBe(false);
+    expect(signals.listenerCount("SIGTERM")).toBe(1);
+    snapshotsAvailable = true;
+    expect(await result).toBe(0);
+    expect(alive).toBe(false);
   });
 
   test("keeps informational stdout machine-readable", () => {

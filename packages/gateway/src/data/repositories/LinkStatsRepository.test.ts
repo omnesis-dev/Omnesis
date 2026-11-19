@@ -12,12 +12,14 @@ import {
   reconcileLinkStatsCounters,
   getLinkStats,
 } from "./LinkStatsRepository.js";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 let dbPath: string;
 let db: Db;
 
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-link-stats-test-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-link-stats-test-${randomUUID()}.db`);
   db = createDatabase(dbPath);
   // Seed a minimal documents row so FK constraints on document_links are satisfied.
   db.prepare(

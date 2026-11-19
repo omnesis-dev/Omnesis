@@ -10,6 +10,8 @@
 
 import { randomUUID } from "node:crypto";
 import { rmSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { AnalyticsDb } from "../analytics-db.js";
 import { createDatabase } from "../db.js";
@@ -23,10 +25,13 @@ let sqlitePath: string;
 let analyticsPath: string;
 
 beforeEach(async () => {
-  analyticsPath = `/tmp/omnesis-test-trail-gc-analytics-${randomUUID()}.db`;
+  analyticsPath = fixtureJoin(
+    fixtureTmpdir(),
+    `omnesis-test-trail-gc-analytics-${randomUUID()}.db`,
+  );
   analytics = new AnalyticsDb(analyticsPath);
   await analytics.open();
-  sqlitePath = `/tmp/omnesis-test-trail-gc-${randomUUID()}.db`;
+  sqlitePath = fixtureJoin(fixtureTmpdir(), `omnesis-test-trail-gc-${randomUUID()}.db`);
   db = createDatabase(sqlitePath);
 });
 

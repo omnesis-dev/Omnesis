@@ -3,6 +3,7 @@
 
 import { createLogger } from "@omnesis/core";
 import { analyticsDeleteKey, SnapshotEnumeration } from "@omnesis/source-sdk";
+import { stravaId, type StravaId } from "./ids.js";
 import { activitySchemas } from "./schemas.js";
 import { activityToDocument, activityToRecord } from "./normalizer.js";
 import {
@@ -62,7 +63,7 @@ export class StravaActivitiesSource {
     private providerId: ProviderId,
     private dataCutoff?: string,
     private athleteName?: string,
-    private athleteId?: number,
+    private athleteId?: StravaId,
     private analytics?: SourceAnalyticsAccess,
   ) {}
 
@@ -679,7 +680,7 @@ export class StravaActivitiesSource {
        * What the store holds of the page's activities, by id, passed by the
        * phases that can be handed an activity they have already ingested.
        */
-      stored?: Map<number, Record<string, unknown>>;
+      stored?: Map<string, Record<string, unknown>>;
       /** The catalogued gear the page's activities name, by gear id. */
       gear?: Map<string, ResolvedGear>;
       /** Activities whose social marks a later page still writes. */
@@ -690,11 +691,11 @@ export class StravaActivitiesSource {
     documents: DocumentInput[];
     newestUnix: number | undefined;
     /** The listing's counters for each stored activity whose counters alone moved. */
-    recounted: Map<number, Record<string, unknown>>;
+    recounted: Map<string, Record<string, unknown>>;
   } {
     const records: Record<string, unknown>[] = [];
     const documents: DocumentInput[] = [];
-    const recounted = new Map<number, Record<string, unknown>>();
+    const recounted = new Map<string, Record<string, unknown>>();
     let newestUnix: number | undefined;
 
     for (const a of activities) {
@@ -725,7 +726,7 @@ export class StravaActivitiesSource {
       // four stamps left null, which is the signal `enrich-pending` looks for
       // and which `activityToRecord` writes by default. Counters that moved
       // are no edit, and go back to the social tier alone (`recountedRows`).
-      const prior = opts.stored?.get(a.id);
+      const prior = opts.stored?.get(String(a.id));
       // Left to the next walk while its social mark is pending. The mark
       // re-reads the row and stamps it as it then stands, so a recount or an
       // edit written in between would be marked done with the social tier
@@ -738,7 +739,7 @@ export class StravaActivitiesSource {
       if (prior !== undefined && opts.unmarked?.includes(String(a.id))) continue;
       if (prior !== undefined && !summaryEdited(prior, record)) {
         const counters = movedCounters(prior, record);
-        if (counters) recounted.set(a.id, counters);
+        if (counters) recounted.set(String(a.id), counters);
         continue;
       }
 
@@ -813,14 +814,14 @@ export class StravaActivitiesSource {
    */
   private async storedSummaries(
     activities: StravaSummaryActivity[],
-  ): Promise<Map<number, Record<string, unknown>>> {
-    const map = new Map<number, Record<string, unknown>>();
+  ): Promise<Map<string, Record<string, unknown>>> {
+    const map = new Map<string, Record<string, unknown>>();
     if (!this.analytics || activities.length === 0) return map;
     const ids = activityIdList(activities.map((a) => a.id));
     if (!ids) return map;
     const sql = `SELECT ${COMPARED_COLUMNS.join(", ")} FROM strava_activities WHERE id IN (${ids})`;
     const { rows } = await this.analytics.query(sql);
-    for (const row of rows) map.set(Number(row.id), row);
+    for (const row of rows) map.set(String(stravaId(row.id)), row);
     return map;
   }
 
@@ -837,7 +838,7 @@ export class StravaActivitiesSource {
    * holds what the listing says, so the next walk finds nothing moved.
    */
   private async recountedRows(
-    recounted: Map<number, Record<string, unknown>>,
+    recounted: Map<string, Record<string, unknown>>,
   ): Promise<Record<string, unknown>[]> {
     const ids = activityIdList([...recounted.keys()]);
     if (!ids || !this.analytics) return [];
@@ -846,7 +847,7 @@ export class StravaActivitiesSource {
     );
     return rows.map((row) => ({
       ...row,
-      ...recounted.get(Number(row.id)),
+      ...recounted.get(String(stravaId(row.id))),
       social_fetched_at: null,
     }));
   }

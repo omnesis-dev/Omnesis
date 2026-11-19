@@ -3,7 +3,7 @@
 
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { hostname as osHostname } from "node:os";
+import { homedir, hostname as osHostname } from "node:os";
 import { basename, dirname, join as pathJoin, resolve as pathResolve } from "node:path";
 import { defineCommand } from "citty";
 import {
@@ -2024,9 +2024,9 @@ function hasAdminTokenFile(): boolean {
  * Resolve a user-supplied file path: expand a leading `~/` (the shell only
  * expands an unquoted tilde) and absolutize relative paths.
  */
-function expandHomePath(p: string): string {
-  if (p === "~" || p.startsWith("~/")) {
-    return pathJoin(process.env.HOME ?? "~", p.slice(2));
+export function expandHomePath(p: string): string {
+  if (p === "~" || p.startsWith("~/") || (process.platform === "win32" && p.startsWith("~\\"))) {
+    return pathJoin(homedir(), p.slice(2));
   }
   return pathResolve(p);
 }

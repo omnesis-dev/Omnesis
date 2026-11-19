@@ -7,9 +7,11 @@
  * admin guard is pinned here beside the shapes the CLI reads.
  */
 
-import { existsSync, unlinkSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { SCOPE_ADMIN, SCOPE_READ } from "@omnesis/types";
 import { createDatabase } from "../../../db.js";
 import { createServer } from "../../../server.js";
@@ -21,6 +23,7 @@ import type Database from "better-sqlite3";
 
 let db: Database.Database;
 let dbPath: string;
+let fixtureDir: string;
 let app: ReturnType<typeof createServer>;
 let calls: string[];
 
@@ -56,7 +59,7 @@ const tlsLifecycle: TlsLifecyclePort = {
   snapshot: () => snapshot,
   activateFromDisk: () => {
     calls.push("reload");
-    return null;
+    return Promise.resolve(null);
   },
   renew: async (_signal, opts) => {
     calls.push(`renew force=${opts?.force === true}`);
@@ -72,17 +75,18 @@ function token(scopes: readonly import("@omnesis/types").Scope[]): string {
 }
 
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-tls-route-test-${randomUUID()}.db`;
+  fixtureDir = mkdtempSync(join(tmpdir(), "omnesis-tls-route-"));
+  dbPath = join(fixtureDir, "gateway.db");
   db = createDatabase(dbPath);
   app = createServer(db, dbPath, { tlsLifecycle });
   calls = [];
 });
 
-afterEach(() => {
+afterEach(async () => {
+  vi.restoreAllMocks();
+  await app.close();
   db.close();
-  for (const suffix of ["", "-wal", "-shm", "-journal"]) {
-    if (existsSync(dbPath + suffix)) unlinkSync(dbPath + suffix);
-  }
+  rmSync(fixtureDir, { recursive: true, force: true });
 });
 
 describe("/admin/tls", () => {
@@ -119,6 +123,29 @@ describe("/admin/tls", () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual(snapshot);
     expect(calls).toEqual(["reload"]);
+  });
+
+  test("reload waits for the lifecycle mutation before returning its snapshot", async () => {
+    let release!: () => void;
+    const held = new Promise<null>((resolve) => {
+      release = () => resolve(null);
+    });
+    const reload = vi.spyOn(tlsLifecycle, "activateFromDisk").mockReturnValue(held);
+    let completed = false;
+    const response = Promise.resolve(
+      app.request("/admin/tls/reload", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token([SCOPE_ADMIN])}` },
+      }),
+    ).then((res) => {
+      completed = true;
+      return res;
+    });
+    await vi.waitFor(() => expect(reload).toHaveBeenCalledOnce());
+    expect(completed).toBe(false);
+    release();
+    expect((await response).status).toBe(200);
+    expect(await (await response).json()).toEqual(snapshot);
   });
 
   test("POST renew passes force through and answers with the attempt's outcome", async () => {

@@ -35,13 +35,14 @@ import { createAccessTables } from "../access/store.js";
 import { createAnswerPrivacyTables, createDirectAuditTables } from "../privacy/store.js";
 import { createSubscriptionTables } from "../subscriptions/store-schema.js";
 import { createTranscriptionVocabularyTables } from "../transcribe/vocabulary/storage.js";
-import { addStorageAuthority } from "./migration-218-storage-authority.js";
+import { addStorageAuthority } from "./migration-219-storage-authority.js";
 import { REVOKED_DEVICE_KEYS_TABLE } from "./migration-217-sticky-revocation.js";
 import { DEVICE_ENROLLMENT_PUBLIC_KEY_INDEX } from "./migration-214-device-enrollment.js";
 import { createSourceInventoryTables } from "./repositories/SourceInventoryRepository.js";
 import { addSourceSyncIssues } from "./migration-179-source-sync-issues.js";
 import { indexDocumentsBySourceExternalId } from "./migration-187-documents-source-external-index.js";
 import { indexDocumentsByIdAndType } from "./migration-216-documents-id-type-index.js";
+import { indexPersonNameAliases } from "./migration-218-person-name-alias-index.js";
 import { indexDocumentsBySourceCreatedRevision } from "./migration-208-documents-source-created-revision-index.js";
 import { addPendingSourcePages } from "./migration-178-pending-source-pages.js";
 import { addSourceWireContracts } from "./migration-177-source-wire-contract.js";
@@ -1332,6 +1333,8 @@ function runSchemaSetupInTxn(db: Db): void {
     "CREATE INDEX IF NOT EXISTS idx_person_aliases_lookup ON person_aliases(alias_type, alias)",
   );
   db.exec("CREATE INDEX IF NOT EXISTS idx_person_aliases_person ON person_aliases(person_id)");
+  // Name aliases by their lowercased text, for case-insensitive name lookups (see the migration).
+  indexPersonNameAliases(db);
 
   // Every source that vouches for an alias, not only the first to see it.
   // `person_aliases.source_id` records the first asserter and cannot record a

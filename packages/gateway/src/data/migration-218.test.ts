@@ -2,52 +2,61 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import Database from "better-sqlite3";
-import { expect, it } from "vitest";
-import {
-  bindStorageRetentionPolicy,
-  readBoundStorageRetentionPolicies,
-  readStorageSourceIncarnation,
-} from "../storage/retention-bindings.js";
-import { MIGRATIONS, runMigrations } from "./migrations.js";
-import { addStorageAuthority } from "./migration-218-storage-authority.js";
+import { afterEach, beforeEach, expect, test } from "vitest";
 
-it("migration218 preserves existing sources, binds their identity once, and preserves durable trim progress", () => {
-  const db = new Database(":memory:");
-  try {
-    db.exec(`CREATE TABLE sources(id TEXT PRIMARY KEY, created_at INTEGER NOT NULL);
-      CREATE TABLE removed_sources(id TEXT PRIMARY KEY);
-      CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, description TEXT, run_at INTEGER, duration_ms INTEGER);
-      CREATE TABLE snapshot_absence_cascade_outbox(id INTEGER PRIMARY KEY);
-      INSERT INTO sources VALUES ('fictional-notes:one', 123);
-      PRAGMA user_version = 217`);
-    expect(MIGRATIONS.find((migration) => migration.version === 218)?.up).toBe(addStorageAuthority);
-    runMigrations(db);
-    expect(db.pragma("user_version", { simple: true })).toBe(218);
-    const sourceIncarnation = readStorageSourceIncarnation(db, "fictional-notes:one")!;
-    const policy = { sourceId: "fictional-notes:one", maxAgeDays: 365, sourceIncarnation };
-    expect(bindStorageRetentionPolicy(db, policy).stale).toBe(false);
-    const bound = readBoundStorageRetentionPolicies(db, [policy]);
-    db.prepare(
-      `INSERT INTO storage_trim_jobs(id,kind,source_id,source_incarnation,before_date,state,
-      cursor_date,cursor_id,upper_date,upper_id,revision,deleted,examined,skipped,created_at,updated_at)
-      VALUES ('fictional-job','manual',?,?,'2031-01-01T00:00:00.000Z','running',
-      '2020-01-02T00:00:00.000Z','doc-second','2020-01-03T00:00:00.000Z','doc-last',1,3,5,2,1,2)`,
-    ).run(policy.sourceId, sourceIncarnation);
-    addStorageAuthority(db);
-    runMigrations(db);
-    expect(readStorageSourceIncarnation(db, policy.sourceId)).toBe(sourceIncarnation);
-    expect(readBoundStorageRetentionPolicies(db, [policy])).toEqual(bound);
-    expect(
-      db
-        .prepare(
-          "SELECT state,cursor_id,deleted,examined,skipped FROM storage_trim_jobs WHERE id='fictional-job'",
-        )
-        .get(),
-    ).toEqual({ state: "running", cursor_id: "doc-second", deleted: 3, examined: 5, skipped: 2 });
-    expect(db.prepare("SELECT created_at FROM sources WHERE id=?").get(policy.sourceId)).toEqual({
-      created_at: 123,
-    });
-  } finally {
-    db.close();
-  }
+import {
+  PERSON_NAME_ALIAS_INDEX,
+  indexPersonNameAliases,
+} from "./migration-218-person-name-alias-index.js";
+import { MIGRATIONS } from "./migrations.js";
+import type { Db } from "./types.js";
+
+let db: Db;
+
+beforeEach(() => {
+  db = new Database(":memory:") as unknown as Db;
+  db.exec(`CREATE TABLE person_aliases (
+    id TEXT PRIMARY KEY,
+    person_id TEXT NOT NULL,
+    alias TEXT NOT NULL,
+    alias_type TEXT NOT NULL,
+    UNIQUE(alias_type, alias, person_id)
+  )`);
+  const insert = db.prepare(
+    "INSERT INTO person_aliases (id, person_id, alias, alias_type) VALUES (?, ?, ?, ?)",
+  );
+  insert.run("a1", "p1", "Maya reeves", "name");
+  insert.run("a2", "p2", "MAYA REEVES", "name");
+  insert.run("a3", "p3", "maya reeves", "email");
+});
+
+afterEach(() => db.close());
+
+test("indexes name aliases by their lowercased text on an existing table, idempotently", () => {
+  indexPersonNameAliases(db);
+  indexPersonNameAliases(db);
+
+  // Without statistics the planner prefers the covering `(alias_type, alias)`
+  // index and walks every name, so readers name this one.
+  const sql = `SELECT person_id FROM person_aliases INDEXED BY ${PERSON_NAME_ALIAS_INDEX}
+     WHERE alias_type = 'name' AND LOWER(alias) = ? ORDER BY person_id`;
+  expect(
+    db
+      .prepare<[string], { detail: string }>(`EXPLAIN QUERY PLAN ${sql}`)
+      .all("maya reeves")
+      .map((row) => row.detail),
+  ).toEqual([
+    `SEARCH person_aliases USING INDEX ${PERSON_NAME_ALIAS_INDEX} (<expr>=?)`,
+    "USE TEMP B-TREE FOR ORDER BY",
+  ]);
+  // Names only, whatever their case; the email with the same text is not one.
+  expect(db.prepare<[string], { person_id: string }>(sql).all("maya reeves")).toEqual([
+    { person_id: "p1" },
+    { person_id: "p2" },
+  ]);
+});
+
+test("is registered as migration 218", () => {
+  const step = MIGRATIONS.find((m) => m.version === 218);
+  expect(step?.up).toBe(indexPersonNameAliases);
 });

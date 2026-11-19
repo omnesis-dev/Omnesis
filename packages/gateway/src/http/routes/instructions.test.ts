@@ -62,7 +62,7 @@ async function req(init: RequestInit = {}, token = ADMIN_TOKEN): Promise<Respons
 }
 
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-instructions-http-${randomUUID()}.db`;
+  dbPath = join(tmpdir(), `omnesis-instructions-http-${randomUUID()}.db`);
   db = createDatabase(dbPath);
   configDir = mkdtempSync(join(tmpdir(), "omnesis-instructions-http-"));
   file = join(configDir, OPERATOR_INSTRUCTIONS_FILENAME);
@@ -71,7 +71,8 @@ beforeEach(() => {
   app = createServer(db, dbPath, { writeGate: directWriteGate(db), configDir });
 });
 
-afterEach(() => {
+afterEach(async () => {
+  await app.close();
   db.close();
   for (const suffix of ["", "-wal", "-shm", "-journal"]) {
     if (existsSync(dbPath + suffix)) unlinkSync(dbPath + suffix);
@@ -183,6 +184,26 @@ describe("PUT /admin/instructions", () => {
     });
     expect(res.status).toBe(200);
     expect(readFileSync(file, "utf8")).toBe("replacement");
+  });
+
+  test("parallel saves map the queued stale version rejection to HTTP409", async () => {
+    await req({ method: "PUT", body: JSON.stringify({ content: "original" }) });
+    const older = new Date(Date.now() - 5000);
+    utimesSync(file, older, older);
+    const { updatedAt } = await (await req()).json();
+    const responses = await Promise.all(
+      ["first tab", "second tab"].map((content) =>
+        req({
+          method: "PUT",
+          body: JSON.stringify({ content, expectedUpdatedAt: updatedAt }),
+        }),
+      ),
+    );
+    expect(responses.map((response) => response.status).sort()).toEqual([200, 409]);
+    const saved = await responses.find((response) => response.status === 200)!.json();
+    expect(saved.content).toBe(readFileSync(file, "utf8"));
+    expect(["first tab", "second tab"]).toContain(saved.content);
+    expect(saved.updatedAt).not.toBe(updatedAt);
   });
 
   test("requires admin scope", async () => {

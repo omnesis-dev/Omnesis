@@ -14,6 +14,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import { execWindowsJob } from "@omnesis/core";
 import { defaultScopesForDeviceKind } from "@omnesis/types";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { REPO_ROOT } from "./account-enrollment-harness.js";
@@ -42,7 +43,8 @@ describe("sign-in enrollment with the cloud relay flag off", () => {
     };
     delete env.OMNESIS_CLOUD_RELAY_ENABLED;
     if (flag) env.OMNESIS_CLOUD_RELAY_ENABLED = "1";
-    const result = await execFileAsync(command.command, [...command.args, ...args], {
+    const execute = process.platform === "win32" ? execWindowsJob : execFileAsync;
+    const result = await execute(command.command, [...command.args, ...args], {
       cwd: REPO_ROOT,
       env,
       timeout: 30_000,
@@ -77,11 +79,16 @@ describe("sign-in enrollment with the cloud relay flag off", () => {
       ["POST", "/devices/account/request", {}],
       ["POST", "/devices/account/poll", {}],
       ["GET", "/devices/account/config"],
+      ["POST", "/devices/account/passkey/options", {}],
+      ["GET", "/devices/account/approval/00000000-0000-4000-8000-000000000001"],
+      ["POST", "/devices/account/approval/options", {}],
+      ["POST", "/devices/account/approval", {}],
       ["POST", "/devices/token/challenge", {}],
       ["POST", "/devices/token/rotate", {}],
       ["GET", "/admin/cloud-relay"],
       ["POST", "/admin/cloud-relay/connect", { termsAccepted: true }],
       ["POST", "/admin/cloud-relay/connect/cancel", {}],
+      ["POST", "/admin/cloud-relay/account/refresh", {}],
       ["PUT", "/admin/cloud-relay/enrollment", { policy: "automatic" }],
       ["DELETE", "/admin/cloud-relay/trusted-sign-ins/fictional"],
       ["POST", "/admin/cloud-relay/incidents/ack", {}],
@@ -91,6 +98,10 @@ describe("sign-in enrollment with the cloud relay flag off", () => {
       ["POST", "/admin/cloud-relay/passkeys/confirm", { proof: {} }],
       ["GET", "/admin/cloud-pairing/requests"],
       ["POST", "/admin/cloud-pairing/decision", {}],
+      ["POST", "/admin/step-up/options", {}],
+      ["POST", "/admin/step-up", {}],
+      ["POST", "/portal/api/handoff", {}],
+      ["POST", "/portal/api/handoff/redeem", { code: "a".repeat(43) }],
     ];
     const statuses = await Promise.all(
       routes.map(async ([method, path, body]) => {
@@ -103,6 +114,20 @@ describe("sign-in enrollment with the cloud relay flag off", () => {
       }),
     );
     expect(statuses).toEqual(routes.map(([method, path]) => `${method} ${path} 404`));
+  });
+
+  test("Connectivity, on every gateway, does not offer the relay", async () => {
+    const response = await harness.gatewayFetch("/admin/remote-access");
+    expect(response.status).toBe(200);
+    const state = (await response.json()) as {
+      features: Record<string, boolean>;
+      mcpAddresses: Array<{ id: string }>;
+    };
+    expect(state.features.cloudRelay).toBe(false);
+    // The gateway's own Tailscale device is there when this checkout has built its helper.
+    expect(state.mcpAddresses.map((row) => row.id)).toEqual(
+      state.features.tailscaleEmbed ? ["tailnet", "host", "domain"] : ["host", "domain"],
+    );
   });
 
   /** Status and body of a request sent without the harness's credential. */
@@ -211,8 +236,34 @@ describe("sign-in enrollment with the cloud relay flag off", () => {
     const app = await (await fetch(`${harness.gatewayUrl}/portal/js/app.js`)).text();
     const mounts = app.match(/<\$\{CloudPairingLogin\}/g) ?? [];
     expect(mounts).toHaveLength(1);
-    expect(app).toContain("${cloudRelay && html`<${CloudPairingLogin} />`}");
+    expect(app).toContain(
+      "${cloudRelay && html`<${CloudPairingLogin} onReady=${() => setAccountSignIn(true)} />`}",
+    );
     expect(app).toContain("cloudRelay=${session.cloudRelay === true}");
+    // The token form folds away behind a link only beside account sign-in, so without the flag
+    // the login page is the form it always was.
+    expect(app).toContain("const collapsed = cloudRelay && accountSignIn && !showForm;");
+    // A sign-in handed over from another address is redeemed only behind the same answer.
+    expect(app).toContain("if (handoff && !session.authenticated && session.cloudRelay === true)");
+  });
+
+  test("no administrative action asks for a passkey step-up, even marked as relayed, and a step-up header changes nothing", async () => {
+    const relayed = { "x-omnesis-cloud-relay": "1" };
+    const pairing = await harness.gatewayFetch("/admin/devices/pair", {
+      method: "POST",
+      headers: relayed,
+      body: JSON.stringify({ kind: "cli", name: "Fictional relayed-mark CLI" }),
+    });
+    expect(pairing.status).toBe(200);
+    expect(await pairing.json()).toMatchObject({ pairingCode: expect.any(String) });
+    const devices = await harness.gatewayJson<{ items: Array<{ id: string }> }>("/admin/devices");
+    const token = await harness.gatewayFetch("/admin/tokens", {
+      method: "POST",
+      headers: { ...relayed, "x-omnesis-step-up": "fictional" },
+      body: JSON.stringify({ deviceId: devices.items[0]!.id, scopes: ["read"] }),
+    });
+    expect(token.status).toBe(200);
+    expect(JSON.stringify(await token.json())).not.toMatch(/step.?up/i);
   });
 
   test("the pairing QR refuses the strict trust modes as values it does not know", async () => {
@@ -315,8 +366,8 @@ describe("sign-in enrollment with the cloud relay flag off", () => {
     expect(await cli(["--help"], true)).toMatch(/^\s+cloud\b/m);
   });
 
-  test("`omnesis cloud` is an unknown command, and its help lists no enrollment commands", async () => {
-    for (const args of [
+  test.each(
+    [
       ["cloud"],
       ["cloud", "pair"],
       ["cloud", "connect"],
@@ -326,11 +377,14 @@ describe("sign-in enrollment with the cloud relay flag off", () => {
       ["cloud", "incidents", "list"],
       ["cloud", "incidents", "ack"],
       ["cloud", "remove-sign-in", "fictional"],
-    ]) {
-      const run = await cliRun(args, false);
-      expect(run.code, args.join(" ")).not.toBe(0);
-      expect(run.output, args.join(" ")).toMatch(/unknown command/i);
-    }
+    ].map((args) => ({ args })),
+  )("disabled CLI invocation $args is an unknown command", async ({ args }) => {
+    const run = await cliRun(args, false);
+    expect(run.code, args.join(" ")).not.toBe(0);
+    expect(run.output, args.join(" ")).toMatch(/unknown command/i);
+  });
+
+  test("disabled cloud help lists no enrollment commands, while the flag reveals them", async () => {
     // Without the command, its help falls back to the top-level usage.
     const cloudCommands = [
       "Connect this gateway to your Omnesis account with one sign-in",

@@ -12,6 +12,8 @@
 
 import { unlinkSync, existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { describe, test, expect, beforeEach, afterEach, vi } from "vitest";
 import { SCOPE_ADMIN, SCOPE_READ } from "@omnesis/types";
 import { createDatabase } from "../../../db.js";
@@ -37,7 +39,7 @@ function mintToken(scopes: readonly import("@omnesis/types").Scope[]): string {
 }
 
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-doctor-route-test-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-doctor-route-test-${randomUUID()}.db`);
   db = createDatabase(dbPath);
   app = createServer(db, dbPath);
 });

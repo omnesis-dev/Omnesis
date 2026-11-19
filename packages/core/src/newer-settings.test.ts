@@ -5,6 +5,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { inspectWindowsPrivatePathSync } from "./windows-private-file.js";
 import { newerSettingsPath, restoreNewerSettings, saveNewerSettings } from "./newer-settings.js";
 
 let dir: string;
@@ -24,7 +25,11 @@ afterEach(() => {
 const writeJson = (path: string, value: unknown): void =>
   writeFileSync(path, JSON.stringify(value), { mode: 0o644 });
 const readJson = (path: string): unknown => JSON.parse(readFileSync(path, "utf8"));
-const mode = (path: string): number => statSync(path).mode & 0o777;
+function expectOwnerOnly(path: string): void {
+  if (process.platform === "win32")
+    expect(inspectWindowsPrivatePathSync(path, "file").private).toBe(true);
+  else expect(statSync(path).mode & 0o777).toBe(0o600);
+}
 
 describe("saveNewerSettings", () => {
   test("saves the config beside it, owner-only, stamped with the newest release", () => {
@@ -34,7 +39,7 @@ describe("saveNewerSettings", () => {
     expect(saveNewerSettings(configPath, ["v0.7.0", "0.6.0", "origin/main"])).toBe(true);
 
     expect(readJson(copyPath)).toEqual({ release: "0.7.0", config });
-    expect(mode(copyPath)).toBe(0o600);
+    expectOwnerOnly(copyPath);
   });
 
   test("folds in a copy not yet restored: its settings the config lacks, and its newer stamp", () => {
@@ -106,7 +111,7 @@ describe("restoreNewerSettings", () => {
       inference: { allowRemoteInference: true, transcriptionVocabulary: { enabled: false } },
       indexer: { cycleInterval: "15m" },
     });
-    expect(mode(configPath)).toBe(0o600);
+    expectOwnerOnly(configPath);
     expect(existsSync(copyPath)).toBe(false);
   });
 
@@ -172,7 +177,7 @@ describe("restoreNewerSettings", () => {
         futureSection: { enabled: true },
       },
     });
-    expect(mode(copyPath)).toBe(0o600);
+    expectOwnerOnly(copyPath);
   });
 
   test("drops what this release does not know once it is at least as new as the copy", () => {

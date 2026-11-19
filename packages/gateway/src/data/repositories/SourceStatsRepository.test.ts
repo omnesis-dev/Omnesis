@@ -4,6 +4,8 @@
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { createDatabase } from "../../db.js";
@@ -60,7 +62,7 @@ describe("computeSourceStatsRow reads a source in chunks", () => {
   let dbPath: string;
 
   beforeEach(() => {
-    dbPath = `/tmp/omnesis-test-${randomUUID()}.db`;
+    dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
     db = createDatabase(dbPath);
     const docs: DocumentInput[] = [];
     for (let n = 0; n < 230; n++) docs.push(inventedDoc(n % 3 === 0 ? "synth-b" : "synth-a", n));

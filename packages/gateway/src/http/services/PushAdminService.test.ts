@@ -1,9 +1,19 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { inspectWindowsPrivatePathSync } from "@omnesis/core";
 
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { DeviceId } from "@omnesis/types";
@@ -307,7 +317,7 @@ describe("PushAdminService", () => {
     await expect(service(db).reportDeliveryHealth(cli.id, "healthy")).rejects.toThrow(/phone-only/);
   });
 
-  test("imports only the platform credential extension with private permissions", () => {
+  test("imports only the platform credential extension with private permissions", async () => {
     const db = createDatabase(":memory:");
     databases.push(db);
     const dir = mkdtempSync(join(tmpdir(), "omnesis-push-admin-"));
@@ -315,18 +325,73 @@ describe("PushAdminService", () => {
     const source = join(dir, "AuthKey_FICTIONAL.p8");
     writeFileSync(source, "fictional-key", { mode: 0o644 });
 
-    const destination = service(db, join(dir, "config")).importCredential({
+    const destination = await service(db, join(dir, "config")).importCredential({
       platform: "ios",
       sourcePath: source,
     });
     expect(existsSync(destination)).toBe(true);
     expect(readFileSync(destination, "utf8")).toBe("fictional-key");
-    expect(statSync(destination).mode & 0o777).toBe(0o600);
-    expect(() =>
+    if (process.platform === "win32")
+      expect(inspectWindowsPrivatePathSync(destination, "file").private).toBe(true);
+    else expect(statSync(destination).mode & 0o777).toBe(0o600);
+    await expect(
       service(db, join(dir, "config")).importCredential({
         platform: "android",
         sourcePath: source,
       }),
-    ).toThrow(/\.json/);
+    ).rejects.toThrow(/\.json/);
+    const same = await service(db, join(dir, "config")).importCredential({
+      platform: "ios",
+      sourcePath: destination,
+    });
+    expect(same).toBe(destination);
+    expect(readFileSync(destination, "utf8")).toBe("fictional-key");
+    if (process.platform === "win32")
+      expect(inspectWindowsPrivatePathSync(destination, "file").private).toBe(true);
+    else expect(statSync(destination).mode & 0o777).toBe(0o600);
+  });
+});
+
+describe("private credential import publication", () => {
+  test("a failed source read preserves the existing credential and leaves no scratch", async () => {
+    const db = createDatabase(":memory:");
+    databases.push(db);
+    const dir = mkdtempSync(join(tmpdir(), "omnesis-push-import-failure-"));
+    dirs.push(dir);
+    const source = join(dir, "AuthKey_FICTIONAL.p8");
+    writeFileSync(source, "previous complete credential");
+    const admin = service(db, join(dir, "config"));
+    const destination = await admin.importCredential({ platform: "ios", sourcePath: source });
+    rmSync(source);
+    mkdirSync(source);
+    await expect(admin.importCredential({ platform: "ios", sourcePath: source })).rejects.toThrow();
+    expect(readFileSync(destination, "utf8")).toBe("previous complete credential");
+    expect(readdirSync(join(dir, "config", "apns"))).toEqual(["AuthKey_FICTIONAL.p8"]);
+  });
+
+  test("concurrent imports publish complete private credentials without shared scratch names", async () => {
+    const db = createDatabase(":memory:");
+    databases.push(db);
+    const dir = mkdtempSync(join(tmpdir(), "omnesis-push-import-race-"));
+    dirs.push(dir);
+    const inputs = ["A", "B"].map((letter) => {
+      const directory = join(dir, letter);
+      mkdirSync(directory);
+      const sourcePath = join(directory, "AuthKey_FICTIONAL.p8");
+      writeFileSync(sourcePath, letter.repeat(128 * 1024));
+      return { platform: "ios" as const, sourcePath };
+    });
+    const admin = service(db, join(dir, "config"));
+    const [destination, second] = await Promise.all(
+      inputs.map((input) => admin.importCredential(input)),
+    );
+    expect(second).toBe(destination);
+    expect(["A".repeat(128 * 1024), "B".repeat(128 * 1024)]).toContain(
+      readFileSync(destination, "utf8"),
+    );
+    expect(readdirSync(join(dir, "config", "apns"))).toEqual(["AuthKey_FICTIONAL.p8"]);
+    if (process.platform === "win32")
+      expect(inspectWindowsPrivatePathSync(destination, "file").private).toBe(true);
+    else expect(statSync(destination).mode & 0o777).toBe(0o600);
   });
 });

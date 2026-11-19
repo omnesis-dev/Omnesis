@@ -2,6 +2,8 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import SqliteDatabase from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import {
@@ -396,7 +398,7 @@ describe("replica deletion claims", () => {
     // The gateway writes the ledger from its writer worker and reads it from
     // the main thread: two connections to one file. A reader that asked while
     // the ledger was empty must still see the writer's later rows.
-    const path = `/tmp/omnesis-test-${randomUUID()}.db`;
+    const path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
     const writer = new SqliteDatabase(path) as unknown as Db;
     const reader = new SqliteDatabase(path, { readonly: true }) as unknown as Db;
     try {

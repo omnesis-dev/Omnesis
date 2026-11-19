@@ -24,8 +24,8 @@ function normalize(lines) {
 /**
  * Every file each patch touches, as a repository-relative `node_modules/...`
  * path, with the SHA-256 of the patched copy under `root`. Throws when the
- * copy under `root` does not read as each hunk's result, or still reads as its
- * original, so a comparison never runs against an unpatched reference.
+ * copy under `root` does not read as each hunk's result, or retains a hunk's
+ * removed original content, so a comparison never uses an unpatched reference.
  *
  * @param {string} root the repository root holding `patches/` and `node_modules/`
  * @returns {{ patch: string, path: string, sha256: string }[]}
@@ -50,7 +50,10 @@ export function patchedFiles(root) {
         const lines = hunk.split("\n").filter((line) => /^[ +-]/u.test(line));
         const side = (sign) =>
           normalize(lines.filter((l) => l[0] === " " || l[0] === sign).map((l) => l.slice(1)));
-        if (!text.includes(side("+")) || text.includes(side("-"))) {
+        // An addition retains its old context by design. Only a hunk that
+        // removes lines can prove it is unapplied by retaining its old side.
+        const removesLines = lines.some((line) => line[0] === "-");
+        if (!text.includes(side("+")) || (removesLines && text.includes(side("-")))) {
           throw new Error(`${path} is not patched by ${patch}`);
         }
       }

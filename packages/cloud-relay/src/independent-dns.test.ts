@@ -7,6 +7,7 @@ import { mkdtemp, readFile, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import * as core from "@omnesis/core";
 import { tlsFiles, listen } from "../test/support.js";
 import { AcmeDnsChallenges } from "./acme-dns.js";
 import { prepareGatewayOwner, prepareGatewayRecoveryRequest } from "./gateway-key-client.js";
@@ -29,11 +30,15 @@ import type { IndependentDnsRequest, IndependentDnsChallenge } from "./independe
 
 let directory: string;
 beforeEach(async () => {
+  core.clearSecretFileKeyCacheForTests();
   directory = await mkdtemp(join(tmpdir(), "omnesis-independent-dns-"));
+  if (process.platform === "win32") await core.ensurePrivateDirs([directory]);
 });
 afterEach(async () => {
   vi.restoreAllMocks();
   vi.useRealTimers();
+  vi.unstubAllEnvs();
+  core.clearSecretFileKeyCacheForTests();
   await rm(directory, { recursive: true, force: true });
 });
 async function fixture(
@@ -525,7 +530,7 @@ test("independent mode requires an operator broker URL and refuses a local DNS-p
         },
         { configDir: directory, activate: async () => {} },
       ),
-    ).rejects.toThrow("requires the independent DNS provider");
+    ).rejects.toThrow("requires the independent or broker DNS provider");
   } finally {
     vi.unstubAllEnvs();
   }
@@ -600,13 +605,27 @@ test("gateway client refuses swapped broker recipient, operation digest, expiry,
       ),
     ).rejects.toThrow("do not match");
     await writeFile(f.gateway.privateKeyFile, "x".repeat(65_537));
-    await expect(
-      independentDnsPresenter({ brokerUrl: url, gateway: f.gateway }).create(
-        "a".repeat(43),
-        alive(),
-      ),
-    ).rejects.toThrow("too large");
+    const oversized = independentDnsPresenter({ brokerUrl: url, gateway: f.gateway }).create(
+      "a".repeat(43),
+      alive(),
+    );
+    if (process.platform === "win32")
+      await expect(oversized).rejects.toMatchObject({ code: "EPRIVATE" });
+    else await expect(oversized).rejects.toThrow("too large");
     await writeFile(f.gateway.privateKeyFile, tls);
+    const certificate = await readFile(f.gateway.certificateFile);
+    try {
+      await writeFile(f.gateway.certificateFile, "x".repeat(65_537));
+      await expect(
+        independentDnsPresenter({ brokerUrl: url, gateway: f.gateway }).create(
+          "a".repeat(43),
+          alive(),
+        ),
+      ).rejects.toThrow("Gateway DNS signing material is too large");
+      expect(f.provider.create).not.toHaveBeenCalled();
+    } finally {
+      await writeFile(f.gateway.certificateFile, certificate);
+    }
     const aborted = new AbortController();
     const cancel = vi.fn<typeof fetch>(async (url, init) => {
       const reply = await fetch(url, init);
@@ -775,6 +794,28 @@ test("broker factory serves real verified TLS and treats an empty JSON body as m
       request.end();
     });
     expect(response).toEqual({ status: 400, body: "" });
+  } finally {
+    await f.close();
+  }
+});
+
+test("independent DNS signs with a config-scoped encrypted direct TLS key", async () => {
+  const f = await fixture();
+  vi.stubEnv("OMNESIS_SECRET_STORE", "file");
+  try {
+    const { url } = await f.http();
+    await core.ensureInstallRootKey({ backend: "file", configDir: directory });
+    await core.primeSecretFileKeyCache({ backend: "file", configDir: directory });
+    const key = await readFile(f.gateway.privateKeyFile, "utf8");
+    await core.writeSecretTextFile(f.gateway.privateKeyFile, key, { configDir: directory });
+    const presenter = independentDnsPresenter({
+      brokerUrl: url,
+      gateway: { ...f.gateway, configDir: directory },
+    });
+    const lease = await presenter.create("e".repeat(43), alive());
+    expect(f.records.size).toBe(1);
+    await presenter.remove(lease.id, alive());
+    expect(f.records.size).toBe(0);
   } finally {
     await f.close();
   }

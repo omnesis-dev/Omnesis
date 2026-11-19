@@ -3,6 +3,8 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import {
@@ -34,7 +36,7 @@ let ownerDeviceId: DeviceId;
 let otherDeviceId: DeviceId;
 
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-ws-ownership-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-ws-ownership-${randomUUID()}.db`);
   db = createDatabase(dbPath);
   ownerDeviceId = createDevice(db, { name: "owner-collector", kind: "collector" }).id;
   otherDeviceId = createDevice(db, { name: "other-collector", kind: "collector" }).id;

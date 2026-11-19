@@ -14,6 +14,8 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { DeviceId, SourceId } from "@omnesis/types";
@@ -36,7 +38,7 @@ const WORKER_URL = new URL("../workers/writer-worker.ts", import.meta.url);
 const LOADER_URL = new URL("../workers/register-tsx.mjs", import.meta.url).href;
 
 function testDbPath(): string {
-  return `/tmp/omnesis-test-${randomUUID()}.db`;
+  return fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
 }
 
 function cleanupDb(path: string): void {

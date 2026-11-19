@@ -11,9 +11,11 @@ import { createDatabase } from "../../db.js";
 import { directWriteGate } from "../../write-gate.js";
 import { WEB_SOURCE_ID } from "../../web-dataset.js";
 import { seedWebSourceMeta } from "./source-meta.js";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 function testDbPath(): string {
-  return `/tmp/omnesis-web-meta-test-${randomUUID()}.db`;
+  return fixtureJoin(fixtureTmpdir(), `omnesis-web-meta-test-${randomUUID()}.db`);
 }
 function cleanupDb(path: string): void {
   for (const suffix of ["", "-wal", "-shm", "-journal"]) {

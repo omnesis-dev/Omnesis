@@ -6,14 +6,17 @@ import Network
 
 /// A TCP forwarder in front of a live gateway, so a test can take the gateway
 /// off the network and bring it back while the real TLS and WebSocket stack
-/// runs: stopping it refuses connections and severs the open ones, and muting
-/// leaves connections open with nothing behind them, like a dead route.
+/// runs: stopping it refuses connections and severs the open ones, muting
+/// leaves connections open with nothing behind them, like a dead route, and
+/// holding delays the gateway's replies, like a slow network or a busy gateway.
 final class LoopbackForwarder: @unchecked Sendable {
     private final class Link: @unchecked Sendable {
         let inbound: NWConnection
         let outbound: NWConnection
         private let lock = NSLock()
         private var muted = false
+        /// The gateway's bytes waiting to be released, in order; nil while they pass.
+        private var heldReplies: [Data]?
 
         init(inbound: NWConnection, outbound: NWConnection) {
             self.inbound = inbound
@@ -26,6 +29,31 @@ final class LoopbackForwarder: @unchecked Sendable {
 
         func mute() {
             lock.withLock { muted = true }
+        }
+
+        func holdReplies() {
+            lock.withLock { heldReplies = heldReplies ?? [] }
+        }
+
+        /// Keeps `data` back if replies are held, and says whether it did.
+        func hold(_ data: Data) -> Bool {
+            lock.withLock {
+                guard heldReplies != nil else { return false }
+                heldReplies?.append(data)
+                return true
+            }
+        }
+
+        var heldReplyBytes: Int {
+            lock.withLock { heldReplies?.reduce(0) { $0 + $1.count } ?? 0 }
+        }
+
+        /// Stops holding and returns what was held, oldest first.
+        func releaseReplies() -> [Data] {
+            lock.withLock {
+                defer { heldReplies = nil }
+                return heldReplies ?? []
+            }
         }
 
         func close() {
@@ -83,6 +111,33 @@ final class LoopbackForwarder: @unchecked Sendable {
         }
     }
 
+    /// Delays everything the gateway sends on the open connections until
+    /// `releaseReplies()`. Connections accepted later are not held.
+    func holdRepliesOnExistingConnections() {
+        queue.sync {
+            for link in lock.withLock({ links }) {
+                link.holdReplies()
+            }
+        }
+    }
+
+    /// How many of the gateway's bytes are being held.
+    var heldReplyBytes: Int {
+        lock.withLock { links }.reduce(0) { $0 + $1.heldReplyBytes }
+    }
+
+    /// Delivers the held bytes in order, then lets replies pass again. It runs on
+    /// the forwarding queue, so nothing the gateway sends later overtakes them.
+    func releaseReplies() {
+        queue.sync {
+            for link in lock.withLock({ links }) {
+                for data in link.releaseReplies() {
+                    link.inbound.send(content: data, completion: .contentProcessed { _ in })
+                }
+            }
+        }
+    }
+
     private func bind(port: UInt16?) async throws -> UInt16 {
         let parameters = NWParameters.tcp
         parameters.allowLocalEndpointReuse = true
@@ -118,19 +173,19 @@ final class LoopbackForwarder: @unchecked Sendable {
         }
         inbound.start(queue: queue)
         outbound.start(queue: queue)
-        pump(from: inbound, to: outbound, link: link)
-        pump(from: outbound, to: inbound, link: link)
+        pump(from: inbound, to: outbound, link: link, carriesReplies: false)
+        pump(from: outbound, to: inbound, link: link, carriesReplies: true)
     }
 
-    private func pump(from source: NWConnection, to destination: NWConnection, link: Link) {
+    private func pump(from source: NWConnection, to destination: NWConnection, link: Link, carriesReplies: Bool) {
         source.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] data, _, isComplete, error in
-            if let data, !data.isEmpty, !link.isMuted {
+            if let data, !data.isEmpty, !link.isMuted, !(carriesReplies && link.hold(data)) {
                 destination.send(content: data, completion: .contentProcessed { _ in })
             }
             if isComplete || error != nil {
                 link.close()
             } else {
-                self?.pump(from: source, to: destination, link: link)
+                self?.pump(from: source, to: destination, link: link, carriesReplies: carriesReplies)
             }
         }
     }

@@ -18,6 +18,8 @@
 
 import { unlinkSync, existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import { SCOPE_READ, SCOPE_WRITE_ALL, writeScope, SourceType } from "@omnesis/types";
 import { createDatabase } from "../../../db.js";
@@ -74,7 +76,7 @@ function post(token: string, entries: unknown): Promise<Response> {
 }
 
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-doc-profiles-test-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-doc-profiles-test-${randomUUID()}.db`);
   db = createDatabase(dbPath);
   app = createServer(db);
 });

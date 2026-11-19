@@ -18,6 +18,7 @@
  */
 
 import { computeEtaSeconds } from "../workers/indexer-rate.js";
+import { lexicalIndexStatus, type LexicalIndexStatus } from "./lexical-index-store.js";
 import {
   getIndexStatsBySource,
   getIndexDateRangeBySource,
@@ -93,6 +94,8 @@ export interface IndexStatsPayload {
    */
   scan?: ScanProgressView | null;
   indexVersions?: ReturnType<typeof getIndexGenerationStatus>;
+  /** The keyword index's lexical version and any rebuild to a new one. */
+  lexicalIndex?: LexicalIndexStatus;
   semanticSearch?: SemanticSearchStatus;
   bySource?: Record<string, IndexSourceStats>;
 }
@@ -120,6 +123,7 @@ export function computeIndexStats(deps: IndexStatsDeps): IndexStatsPayload {
             totalChunks: getChunkCount(indexDb),
           }
         : {}),
+      ...(indexDb ? { lexicalIndex: lexicalIndexStatus(indexDb) } : {}),
     };
   }
   if (!indexDb) {
@@ -150,6 +154,7 @@ export function computeIndexStats(deps: IndexStatsDeps): IndexStatsPayload {
       totalGatewayDocs: 0,
       watermark: getWatermark(indexDb, "last_updated_at"),
       indexVersions: getIndexGenerationStatus(indexDb),
+      lexicalIndex: lexicalIndexStatus(indexDb),
       ...(semanticSearch ? { semanticSearch } : {}),
       bySource: {},
     };
@@ -262,6 +267,7 @@ export function computeIndexStats(deps: IndexStatsDeps): IndexStatsPayload {
     etaSeconds,
     scan,
     indexVersions: getIndexGenerationStatus(indexDb),
+    lexicalIndex: lexicalIndexStatus(indexDb),
     ...(semanticSearch ? { semanticSearch } : {}),
     bySource: sources,
   };

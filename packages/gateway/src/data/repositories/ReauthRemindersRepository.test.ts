@@ -3,6 +3,8 @@
 
 import { randomUUID } from "node:crypto";
 import { unlinkSync, existsSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import { createDatabase } from "../../db.js";
 import { isReminderDue, resolveReauthBackoffConfig } from "../../push/reauth-reminder-policy.js";
@@ -17,7 +19,7 @@ let dbPath: string;
 let db: ReturnType<typeof createDatabase>;
 
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-reauth-test-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-reauth-test-${randomUUID()}.db`);
   db = createDatabase(dbPath);
 });
 

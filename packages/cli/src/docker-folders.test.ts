@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import {
@@ -38,7 +38,16 @@ describe("resolveOperatorPath", () => {
     expect(resolveOperatorPath("  ~/Notes ", env)).toBe("/Users/maya/Notes");
     expect(resolveOperatorPath("../Notes", env)).toBe("/Users/maya/Notes");
     expect(resolveOperatorPath("/srv/notes", env)).toBe("/srv/notes");
+    expect(resolveOperatorPath("~/Notes\\literal", env)).toBe("/Users/maya/Notes\\literal");
+    expect(resolveOperatorPath("../Notes\\literal", env)).toBe("/Users/maya/Notes\\literal");
   });
+});
+
+test("resolves native operator paths without a Docker host override", () => {
+  expect(resolveOperatorPath("~/Notes", {})).toBe(join(homedir(), "Notes"));
+  expect(resolveOperatorPath("~/Notes", { OMNESIS_HOST_HOME: "relative" })).toBe(
+    join(homedir(), "Notes"),
+  );
 });
 
 describe("dockerFolders", () => {

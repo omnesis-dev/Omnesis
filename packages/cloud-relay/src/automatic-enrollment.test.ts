@@ -54,10 +54,21 @@ beforeAll(async () => {
 
 const googleToken = (
   nonce: string,
-  options: { subject?: string; audience?: string; issuedAt?: number; key?: CryptoKey } = {},
+  options: {
+    subject?: string;
+    audience?: string;
+    issuedAt?: number;
+    key?: CryptoKey;
+    email?: { address: string; verified: boolean };
+  } = {},
 ) => {
   const iat = options.issuedAt ?? Math.floor(Date.now() / 1000);
-  return new SignJWT({ nonce })
+  return new SignJWT({
+    nonce,
+    ...(options.email
+      ? { email: options.email.address, email_verified: options.email.verified }
+      : {}),
+  })
     .setProtectedHeader({ alg: "RS256", kid: "1" })
     .setIssuer("https://accounts.google.com")
     .setAudience(options.audience ?? AUDIENCE)
@@ -95,6 +106,7 @@ function setup(
     /** The relay's passkey list for the account; undefined means it can't be read. */
     relayPasskeys?: Array<{ id: string; publicKey: string }>;
     revokedDeviceKey?: (devicePublicKey: string) => boolean | Promise<boolean>;
+    rememberHint?: GatewayEnrollment["rememberHint"];
   } = {},
 ) {
   const pins: TrustedSignIn[] = options.pins ?? [
@@ -127,9 +139,10 @@ function setup(
             listed.publicKey === signIn.pin.publicKey,
         ) ??
           false)),
-    trustSignIn: async (signIn, source) => {
-      pins.push({ ...signIn.pin, source });
+    trustSignIn: async (signIn) => {
+      pins.push({ ...signIn.pin, source: "approval" });
     },
+    ...(options.rememberHint ? { rememberHint: options.rememberHint } : {}),
   };
   const createPairing = vi.fn(async (request: { expiresAt: number }) => ({
     pairingCode: "fictional-pairing-code",
@@ -180,12 +193,19 @@ const body = (request: ReturnType<typeof makeRequest>) => {
   const { devicePublicKey: _omit, ...value } = request.value;
   return value;
 };
-async function googleProof(nonce: string, subject?: string): Promise<SignInProof> {
+async function googleProof(
+  nonce: string,
+  subject?: string,
+  email?: { address: string; verified: boolean },
+): Promise<SignInProof> {
   const salt = randomBytes(32).toString("base64url");
   return {
     type: "google",
     salt,
-    idToken: await googleToken(googleProofNonce(salt, nonce), subject ? { subject } : {}),
+    idToken: await googleToken(googleProofNonce(salt, nonce), {
+      ...(subject ? { subject } : {}),
+      ...(email ? { email } : {}),
+    }),
   };
 }
 
@@ -517,10 +537,71 @@ describe("falling back to a person", () => {
     expect(result.status).toBe("pending");
     expect(requests.list()[0]).toMatchObject({ signIn: "google", canTrustSignIn: true });
     await requests.decide(request.value.requestId, true, { trustSignIn: true });
-    // An iPhone's sign-in happened in the app, which computed its own nonce.
-    expect(pins).toMatchObject([{ type: "google", id: SIGN_IN_DIGEST, source: "native-app" }]);
+    // The gateway decides what to confirm from the proof it checked, not from the request's kind.
+    expect(pins).toMatchObject([{ type: "google", id: SIGN_IN_DIGEST }]);
     expect(createPairing.mock.calls[0]![0]).toMatchObject({ enrollment: { method: "approved" } });
     expect(requests.poll(request.value.requestId, request.value.secret).status).toBe("approved");
+  });
+
+  test("a held request shows the Google address the gateway verified, and suggests remembering only the first, linked sign-in", async () => {
+    const hint = vi.fn<NonNullable<GatewayEnrollment["rememberHint"]>>(() => ({
+      firstConfirmation: true,
+      otherGoogleAccount: false,
+    }));
+    const hold = async (
+      email?: { address: string; verified: boolean },
+      extra: Parameters<typeof setup>[0] = {},
+    ) => {
+      const { requests } = setup({ pins: [], attest, rememberHint: hint, ...extra });
+      const device = makeDevice(),
+        request = makeRequest(device.publicKey);
+      const before = Date.now();
+      await requests.start({
+        ...body(request),
+        identityToken: "attestation",
+        deviceKey: evidence(device, request, requests.issueChallenge().challenge),
+        proof: await googleProof(request.nonce, undefined, email),
+      });
+      const [listed] = requests.list();
+      expect(listed!.createdAt).toBeGreaterThanOrEqual(before);
+      return listed;
+    };
+    const address = { address: " Maya.Reeves@Example.com ", verified: true };
+    expect(await hold(address)).toMatchObject({
+      signIn: "google",
+      signInEmail: "maya.reeves@example.com",
+      canTrustSignIn: true,
+      rememberByDefault: true,
+    });
+    expect(hint).toHaveBeenLastCalledWith(
+      expect.objectContaining({ type: "google", id: SIGN_IN_DIGEST }),
+    );
+    // An address Google didn't verify is not shown, and without it nothing is pre-ticked.
+    const unverified = await hold({ ...address, verified: false });
+    expect(unverified).not.toHaveProperty("signInEmail");
+    expect(unverified).not.toHaveProperty("rememberByDefault");
+    expect(await hold()).not.toHaveProperty("rememberByDefault");
+    // Not the first confirmation: shown, not suggested.
+    hint.mockReturnValue({ firstConfirmation: false, otherGoogleAccount: false });
+    expect(await hold(address)).not.toHaveProperty("rememberByDefault");
+    // A Google account other than the one the gateway was linked with is said, never suggested.
+    hint.mockReturnValue({ firstConfirmation: true, otherGoogleAccount: true });
+    const other = await hold(address);
+    expect(other).toMatchObject({ otherGoogleAccount: true });
+    expect(other).not.toHaveProperty("rememberByDefault");
+    // A device the owner removed is never suggested either.
+    hint.mockReturnValue({ firstConfirmation: true, otherGoogleAccount: false });
+    expect(await hold(address, { revokedDeviceKey: () => true })).toMatchObject({
+      revokedDevice: true,
+    });
+    expect(await hold(address, { revokedDeviceKey: () => true })).not.toHaveProperty(
+      "rememberByDefault",
+    );
+    // A gateway without the hint suggests nothing.
+    const plain = await hold(address, { rememberHint: undefined });
+    expect(plain).toMatchObject({ signInEmail: "maya.reeves@example.com" });
+    expect(plain).not.toHaveProperty("rememberByDefault");
+    expect(plain).not.toHaveProperty("otherGoogleAccount");
   });
 
   test("approving without ticking trust pins nothing", async () => {
@@ -865,7 +946,6 @@ describe("passkey proofs", () => {
       const listed = await held(key, [{ id, publicKey: key.publicKey }]);
       expect(listed.requests.list()[0]).toMatchObject({ canTrustSignIn: true });
       await listed.requests.decide(listed.request.value.requestId, true, { trustSignIn: true });
-      // A collector's sign-in happened on a relay page.
       expect(listed.pins).toEqual([
         {
           type: "passkey",

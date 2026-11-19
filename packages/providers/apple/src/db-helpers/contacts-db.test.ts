@@ -8,13 +8,13 @@
  * failure to raise at all.
  */
 
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import Database from "better-sqlite3";
 import { describe, expect, test, beforeEach, afterEach } from "vitest";
+import { setAppleFixtureReadable } from "../testing/apple-read-denial.test.fixture.js";
 import { CONTACTS_DB_FILENAME } from "../paths.js";
-import { canDenyReads } from "../testing/apple-db-fixtures.js";
 import { ContactsDbHelper } from "./contacts-db.js";
 
 function seedAddressBook(dir: string): string {
@@ -89,9 +89,9 @@ describe("ContactsDbHelper — the reason nothing could be read", () => {
     }
   });
 
-  test.skipIf(!canDenyReads)("a denied address book is the failure the source raises", () => {
+  test("a denied address book is the failure the source raises", () => {
     const path = seedAddressBook(join(sourcesDir, "DDDD-4444"));
-    chmodSync(path, 0o000);
+    setAppleFixtureReadable(path, false);
 
     const helper = new ContactsDbHelper(dir);
     try {
@@ -104,17 +104,17 @@ describe("ContactsDbHelper — the reason nothing could be read", () => {
         summary: expect.stringMatching(/full disk access is required/i),
       });
     } finally {
-      chmodSync(path, 0o644);
+      setAppleFixtureReadable(path, true);
       helper.close();
     }
   });
 
   // A denial is the one an operator can act on, so it wins over a store that
   // merely has not downloaded yet.
-  test.skipIf(!canDenyReads)("a denial outranks an address book that is merely missing", () => {
+  test("a denial outranks an address book that is merely missing", () => {
     mkdirSync(join(sourcesDir, "AAAA-0000"), { recursive: true });
     const path = seedAddressBook(join(sourcesDir, "EEEE-5555"));
-    chmodSync(path, 0o000);
+    setAppleFixtureReadable(path, false);
 
     const helper = new ContactsDbHelper(dir);
     try {
@@ -122,16 +122,16 @@ describe("ContactsDbHelper — the reason nothing could be read", () => {
       expect(helper.getLastOpenFailure()?.kind).toBe("denied");
       expect(helper.getLastOpenFailure()?.message).toContain("EEEE-5555");
     } finally {
-      chmodSync(path, 0o644);
+      setAppleFixtureReadable(path, true);
       helper.close();
     }
   });
 
   // The provider opens every Apple database in one pass, so a directory this
   // process cannot even list must not end that pass.
-  test.skipIf(!canDenyReads)("a directory that cannot be listed is recorded, not thrown", () => {
+  test("a directory that cannot be listed is recorded, not thrown", () => {
     seedAddressBook(join(sourcesDir, "FFFF-6666"));
-    chmodSync(sourcesDir, 0o000);
+    setAppleFixtureReadable(sourcesDir, false);
 
     const helper = new ContactsDbHelper(dir);
     try {
@@ -141,7 +141,7 @@ describe("ContactsDbHelper — the reason nothing could be read", () => {
         remediation: { summary: expect.stringMatching(/full disk access is required/i) },
       });
     } finally {
-      chmodSync(sourcesDir, 0o755);
+      setAppleFixtureReadable(sourcesDir, true);
       helper.close();
     }
   });

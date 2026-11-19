@@ -2,6 +2,8 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createIndexDatabase, EMBEDDING_DIM, upsertChunks } from "../indexer/db.js";
 import {
@@ -127,7 +129,9 @@ function widen(db: Database.Database): void {
 describe("temporalLaneCandidates", () => {
   let db: Database.Database;
   beforeEach(() => {
-    db = createIndexDatabase(`/tmp/omnesis-temporal-lane-${randomUUID()}.db`);
+    db = createIndexDatabase(
+      fixtureJoin(fixtureTmpdir(), `omnesis-temporal-lane-${randomUUID()}.db`),
+    );
     insert(db, [
       // Inside the week by document time.
       {

@@ -46,7 +46,7 @@ describe("the sessions-directory setting", () => {
   });
 
   test("a home-relative path is accepted, and the source is handed it resolved", () => {
-    vi.stubEnv("HOME", dir);
+    vi.stubEnv("OMNESIS_HOST_HOME", dir);
     mkdirSync(join(dir, ".claude/projects"), { recursive: true });
     expect(issues("~/.claude/projects")).toEqual([]);
 

@@ -4,6 +4,7 @@
 import {
   appendFileSync,
   chmodSync,
+  copyFileSync,
   writeFileSync,
   existsSync,
   readFileSync,
@@ -18,6 +19,7 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
+import { inspectWindowsPrivatePathSync, type AgentEvent, type ToolResult } from "@omnesis/core";
 import { searchModelContextResult } from "./test-fixtures/search-model-context.js";
 
 import {
@@ -26,6 +28,8 @@ import {
   MANAGED_CODEX_PACKAGE,
   MANAGED_CODEX_PACKAGE_VERSION,
   convertToolsToCodexDynamicTools,
+  buildCodexEnv,
+  assertSupportedCodexRuntime,
   isSupportedCodexCliVersion,
   parseCodexCliVersion,
   parseCodexContextInputTokens,
@@ -36,7 +40,6 @@ import {
 import { renderTranscriptUserInput } from "./transcript-user-input.js";
 import { setActivityMarker } from "./activity.js";
 import type { ChatMessage, ToolHandle, TurnInput } from "./backend.js";
-import type { AgentEvent, ToolResult } from "@omnesis/core";
 
 const fakeCodexPath = fileURLToPath(
   new URL("./test-fixtures/fake-codex-app-server.mjs", import.meta.url),
@@ -193,6 +196,280 @@ describe("fake Codex log framing", () => {
   });
 });
 
+describe("Codex JavaScript executable portability", () => {
+  it("retains a deferred undefined streaming join failure across probes, turns and disposal", async () => {
+    const { EventEmitter } = await import("node:events"),
+      { PassThrough } = await import("node:stream");
+    const core = await import("@omnesis/core"),
+      privateState = await import("./codex-private-state.js");
+    const dir = mkdtempSync(join(tmpdir(), "omnesis-codex-undefined-join-"));
+    let refuseJoin!: (error: unknown) => void;
+    const jobClosed = new Promise<void>((_resolve, reject) => {
+      refuseJoin = reject;
+    });
+    const child = Object.assign(new EventEmitter(), {
+      pid: 12345,
+      stdin: new PassThrough(),
+      stdout: new PassThrough(),
+      stderr: new PassThrough(),
+      exitCode: null as number | null,
+      signalCode: null,
+      jobReady: Promise.resolve(),
+      jobClosed,
+      kill: vi.fn(() => true),
+    });
+    child.stdin.on("data", (bytes: Buffer) => {
+      for (const line of bytes.toString().trim().split("\n")) {
+        const request = JSON.parse(line);
+        if (request.id !== undefined)
+          child.stdout.write(
+            JSON.stringify({
+              id: request.id,
+              result: request.method === "model/list" ? { data: [] } : {},
+            }) + "\n",
+          );
+      }
+    });
+    const spawn = vi
+      .spyOn(core, "spawnWindowsJob")
+      .mockReturnValue(child as unknown as ReturnType<typeof core.spawnWindowsJob>);
+    const execute = vi
+      .spyOn(core, "execWindowsJob")
+      .mockResolvedValue({ stdout: `codex-cli ${MANAGED_CODEX_PACKAGE_VERSION}`, stderr: "" });
+    vi.spyOn(core, "atomicWriteFile").mockResolvedValue();
+    vi.spyOn(privateState, "prepareCodexPrivateState").mockResolvedValue();
+    const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+    const runtime = new CodexAppServerRuntime({
+      commandInfo: { source: "override", command: process.execPath },
+      codexHome: dir,
+    });
+    Object.defineProperty(process, "platform", { ...platform, value: "win32" });
+    try {
+      await expect(runtime.listModels()).resolves.toEqual([]);
+      child.exitCode = 0;
+      child.emit("exit", 0, null);
+      child.emit("close", 0, null);
+      refuseJoin(undefined);
+      await vi.waitFor(async () => {
+        await expect(runtime.resolveCommandInfo()).rejects.toThrow(/cleanup/u);
+      });
+      await expect(runtime.probeRuntime()).rejects.toThrow(/cleanup/u);
+      await expect(runtime.listModels()).rejects.toThrow(/cleanup/u);
+      const events = await collect(
+        runtime.runTurn({
+          input: baseInput(),
+          model: "invented-model",
+          toolTimeoutMs: 1000,
+          maxToolIterations: 1,
+        }),
+      );
+      expect(events).toContainEqual(expect.objectContaining({ type: "agent.error" }));
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "agent.message.end",
+          payload: expect.objectContaining({ stopReason: "error" }),
+        }),
+      );
+      const disposal = runtime.dispose();
+      await expect(disposal).rejects.toMatchObject({ cleanupFailure: expect.any(Error) });
+      expect(runtime.dispose()).toBe(disposal);
+      await expect(runtime.dispose()).rejects.toThrow(/cleanup/u);
+      expect(spawn).toHaveBeenCalledOnce();
+      expect(execute).toHaveBeenCalledOnce();
+    } finally {
+      refuseJoin(undefined);
+      await runtime.dispose().catch(() => {});
+      Object.defineProperty(process, "platform", platform);
+      vi.restoreAllMocks();
+      child.stdin.destroy();
+      child.stdout.destroy();
+      child.stderr.destroy();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("retains an explicit unjoined compatibility probe and refuses subsequent probes or disposal success", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "omnesis-codex-probe-unjoined-"));
+    const core = await import("@omnesis/core");
+    const failure = Object.assign(new Error("invented version failure"), {
+      code: "EACCES",
+      cleanupFailure: new Error("invented missing join"),
+    });
+    const execute = vi.spyOn(core, "execWindowsJob").mockRejectedValue(failure);
+    const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+    const runtime = new CodexAppServerRuntime({
+      commandInfo: { source: "override", command: process.execPath },
+      codexHome: dir,
+    });
+    Object.defineProperty(process, "platform", { ...platform, value: "win32" });
+    try {
+      await expect(assertSupportedCodexRuntime({ command: process.execPath })).rejects.toBe(
+        failure,
+      );
+      await expect(runtime.probeRuntime()).rejects.toBe(failure);
+      await expect(runtime.probeRuntime()).rejects.toMatchObject({ cleanupFailure: failure });
+      await expect(runtime.resolveCommandInfo()).rejects.toThrow(/cleanup/u);
+      await expect(runtime.listModels()).rejects.toThrow(/cleanup/u);
+      const disposal = runtime.dispose();
+      await expect(disposal).rejects.toMatchObject({ cleanupFailure: failure });
+      expect(runtime.dispose()).toBe(disposal);
+      expect(execute).toHaveBeenCalledTimes(2);
+    } finally {
+      Object.defineProperty(process, "platform", platform);
+      vi.restoreAllMocks();
+      await runtime.dispose().catch(() => {});
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it.runIf(process.platform === "win32").each(["starting", "ready"] as const)(
+    "retains cleanup uncertainty across repeated disposal and blocks runtime reuse (%s)",
+    async (phase) => {
+      const dir = mkdtempSync(join(tmpdir(), "omnesis-codex-unjoined-"));
+      const command = join(dir, "owned-crash-wrapper.mjs");
+      const trigger = join(dir, "crash-helper");
+      const started = join(dir, "wrapper-started");
+      const crashed = join(dir, "helper-crash-requested");
+      writeFileSync(
+        command,
+        `
+import {spawn} from 'node:child_process';
+import {existsSync,writeFileSync} from 'node:fs';
+if(process.argv.includes('--version') || ${JSON.stringify(phase === "ready")}) {
+  const child=spawn(process.execPath,[${JSON.stringify(fakeCodexPath)},...process.argv.slice(2)],{stdio:'inherit'});
+  child.once('exit',code=>process.exit(code??1));
+} else process.stdin.resume();
+if(!process.argv.includes('--version')) writeFileSync(${JSON.stringify(started)},'ready');
+if(!process.argv.includes('--version')) setInterval(()=>{
+  if(existsSync(${JSON.stringify(trigger)})) {
+    writeFileSync(${JSON.stringify(crashed)},'requested');
+    process.kill(process.ppid,'SIGKILL');
+  }
+},10);
+`,
+      );
+      const runtime = new CodexAppServerRuntime({
+        command,
+        codexHome: join(dir, "home"),
+        env: process.env,
+      });
+      try {
+        const models = runtime.listModels();
+        void models.catch(() => {});
+        if (phase === "ready") await models;
+        else await vi.waitFor(() => expect(existsSync(started)).toBe(true), { timeout: 30_000 });
+        const disposal = phase === "starting" ? runtime.dispose() : undefined;
+        void disposal?.catch(() => {});
+        writeFileSync(trigger, "invented owned helper crash");
+        await vi.waitFor(() => expect(existsSync(crashed)).toBe(true), { timeout: 10_000 });
+        const closed = disposal ?? runtime.dispose();
+        await expect(closed).rejects.toThrow(/completion|cleanup|connection/u);
+        expect(runtime.dispose()).toBe(closed);
+        if (phase === "starting") await expect(models).rejects.toThrow();
+        await expect(runtime.listModels()).rejects.toThrow(/cleanup/u);
+        await expect(runtime.resolveCommandInfo()).rejects.toThrow(/cleanup/u);
+        await expect(runtime.probeRuntime()).rejects.toThrow(/cleanup/u);
+      } finally {
+        await runtime.dispose().catch(() => {});
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+    60_000,
+  );
+
+  it.each(process.platform === "win32" ? [false, true] : [false])(
+    "disposes the app-server behind a JavaScript wrapper (wrapperExits=%s)",
+    async (wrapperExits) => {
+      const dir = mkdtempSync(join(tmpdir(), "omnesis-codex-wrapper-"));
+      const command = join(dir, "codex wrapper.mjs");
+      const logPath = join(dir, "events.jsonl");
+      const wrapperPidPath = join(dir, "wrapper.pid");
+      writeFileSync(
+        command,
+        `#!/usr/bin/env node
+import { spawn } from 'node:child_process';
+import { writeFileSync } from 'node:fs';
+if (!process.argv.includes('--version')) writeFileSync(${JSON.stringify(wrapperPidPath)}, String(process.pid));
+const child = spawn(process.execPath, [${JSON.stringify(fakeCodexPath)}, ...process.argv.slice(2)], { detached: ${wrapperExits}, stdio: 'inherit' });
+process.on('SIGTERM', () => child.kill('SIGTERM'));
+child.on('exit', (code) => process.exit(code ?? 1));
+if (${wrapperExits} && !process.argv.includes('--version')) child.once('spawn', () => { child.unref(); process.exit(0); });
+`,
+        { mode: 0o700 },
+      );
+      const runtime = new CodexAppServerRuntime({
+        command,
+        codexHome: join(dir, "home"),
+        env: { ...process.env, OMNESIS_FAKE_CODEX_LOG: logPath },
+      });
+      let childPid: number | undefined;
+      try {
+        await runtime.listModels();
+        childPid = firstPayload<{ pid: number }>(readLog(logPath), "startup").pid;
+        if (wrapperExits) {
+          const wrapperPid = Number(readFileSync(wrapperPidPath, "utf8"));
+          await vi.waitFor(() => expect(() => process.kill(wrapperPid, 0)).toThrow());
+        }
+        await runtime.dispose();
+        expect(() => process.kill(childPid!, 0)).toThrow();
+      } finally {
+        await runtime.dispose();
+        if (childPid !== undefined) {
+          try {
+            process.kill(childPid, "SIGKILL");
+          } catch {
+            /* already exited */
+          }
+        }
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it("probes and starts a JavaScript app-server entry without a shell wrapper", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "omnesis-codex-js-"));
+    const command = join(dir, "codex entry & $().mjs");
+    copyFileSync(fakeCodexPath, command);
+    chmodSync(command, 0o700);
+    const runtime = new CodexAppServerRuntime({
+      command,
+      codexHome: join(dir, "home"),
+      workspaceDir: join(dir, "workspace"),
+      env: process.env,
+    });
+    try {
+      await expect(runtime.probeRuntime()).resolves.toMatchObject({ command, version: "0.142.4" });
+      await expect(runtime.listModels()).resolves.toEqual(
+        expect.arrayContaining([expect.objectContaining({ model: "gpt-example-frontier" })]),
+      );
+    } finally {
+      await runtime.dispose();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves case-insensitive Windows host variables while excluding credentials", () => {
+    expect(
+      buildCodexEnv(
+        {
+          Path: "synthetic path",
+          SYSTEMROOT: "synthetic root",
+          Temp: "synthetic temp",
+          OPENAI_API_KEY: "must-not-leak",
+          codex_home: "wrong home",
+        },
+        "private home",
+        "win32",
+      ),
+    ).toEqual({
+      CODEX_HOME: "private home",
+      PATH: "synthetic path",
+      SystemRoot: "synthetic root",
+      TEMP: "synthetic temp",
+    });
+  });
+});
+
 describe("parseCodexUsage", () => {
   it("reports the whole turn from the thread total, not the final request", () => {
     expect(
@@ -283,49 +560,52 @@ describe("CodexAppServerBackend", () => {
     }
   });
 
-  it("handles every app-server message under the host's activity mark", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "omnesis-codex-activity-"));
-    const backend = makeBackend({
-      codexHome: join(dir, "home"),
-      workspaceDir: join(dir, "workspace"),
-      logPath: join(dir, "fake-codex.jsonl"),
-      scenario: "unicode-tool",
-    });
-    const marked: string[] = [];
-    const open: string[] = [];
-    let toolRanUnder: string[] | null = null;
-    setActivityMarker((name, fn) => {
-      marked.push(name);
-      open.push(name);
+  it.each(["unicode-tool", "early-events"])(
+    "handles every app-server message under the host's activity mark (%s)",
+    async (scenario) => {
+      const dir = mkdtempSync(join(tmpdir(), "omnesis-codex-activity-"));
+      const backend = makeBackend({
+        codexHome: join(dir, "home"),
+        workspaceDir: join(dir, "workspace"),
+        logPath: join(dir, "fake-codex.jsonl"),
+        scenario,
+      });
+      const marked: string[] = [];
+      const open: string[] = [];
+      let toolRanUnder: string[] | null = null;
+      setActivityMarker((name, fn) => {
+        marked.push(name);
+        open.push(name);
+        try {
+          return fn();
+        } finally {
+          open.pop();
+        }
+      });
       try {
-        return fn();
+        await collect(
+          backend.runTurn(
+            baseInput({
+              tools: [
+                fakeToolHandle("search_documents", () => {
+                  toolRanUnder = [...open];
+                  return { kind: "structured", resultType: "synthetic.result", data: {} };
+                }),
+              ],
+            }),
+          ),
+        );
+        expect(marked.length).toBeGreaterThan(0);
+        expect(new Set(marked)).toEqual(new Set(["agent.codex.message"]));
+        // The model's tool call reaches the tool from the message that asked for it.
+        expect(toolRanUnder).toEqual(["agent.codex.message"]);
       } finally {
-        open.pop();
+        setActivityMarker(null);
+        await backend.dispose();
+        rmSync(dir, { recursive: true, force: true });
       }
-    });
-    try {
-      await collect(
-        backend.runTurn(
-          baseInput({
-            tools: [
-              fakeToolHandle("search_documents", () => {
-                toolRanUnder = [...open];
-                return { kind: "structured", resultType: "synthetic.result", data: {} };
-              }),
-            ],
-          }),
-        ),
-      );
-      expect(marked.length).toBeGreaterThan(0);
-      expect(new Set(marked)).toEqual(new Set(["agent.codex.message"]));
-      // The model's tool call reaches the tool from the message that asked for it.
-      expect(toolRanUnder).toEqual(["agent.codex.message"]);
-    } finally {
-      setActivityMarker(null);
-      await backend.dispose();
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
+    },
+  );
 
   // POSIX execute bits do not represent Windows process permissions.
   it.skipIf(process.platform === "win32").each(["probe", "app-server"])(
@@ -481,6 +761,19 @@ describe("CodexAppServerBackend", () => {
           return { kind: "structured", resultType: "mutation", data: "done" };
         },
       };
+      // A loaded runner can hold the event loop for longer than the idle
+      // timeout, and when it resumes Node runs due timers before it reads the
+      // app-server's pipe again. Hold it once, as the turn starts, so the
+      // idle watchdog is already due if the tool call has not been admitted.
+      let held = false;
+      setActivityMarker((_name, fn) => {
+        const result = fn();
+        if (!held && readLog(logPath).some((entry) => entry.event === "turn_start")) {
+          held = true;
+          setImmediate(() => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 150));
+        }
+        return result;
+      });
       const abort = new AbortController();
       let disposal: Promise<void> | undefined;
       const turn = collect(backend.runTurn(baseInput({ tools: [tool] }), abort.signal)).finally(
@@ -498,6 +791,7 @@ describe("CodexAppServerBackend", () => {
         finish();
         const events = await turn;
         await disposal;
+        expect(held).toBe(true);
         expect(mutationFinished).toBe(true);
         const end = events.find((event) => event.type === "agent.message.end");
         if (ending === "timeout") {
@@ -508,6 +802,7 @@ describe("CodexAppServerBackend", () => {
         } else expect(end?.payload.stopReason).toBe("canceled");
         expect(readLog(logPath).filter((event) => event.event === "turn_start")).toHaveLength(1);
       } finally {
+        setActivityMarker(null);
         finish();
         await turn;
         await disposal;
@@ -527,9 +822,14 @@ describe("CodexAppServerBackend", () => {
           (event) => event.type === "agent.message.end",
         )?.payload.stopReason,
       ).toBe("end_turn");
-      const pid = firstPayload<{ pid: number }>(readLog(logPath), "startup").pid;
+      const { pid, ownerPid } = firstPayload<{ pid: number; ownerPid: number }>(
+        readLog(logPath),
+        "startup",
+      );
       process.kill(pid, "SIGTERM");
-      await vi.waitFor(() => expect(() => process.kill(pid, 0)).toThrow());
+      // An exited target is still owned while its Windows job host drains.
+      // Queue replacements only after the actual client process lifetime ends.
+      await vi.waitFor(() => expect(() => process.kill(ownerPid, 0)).toThrow());
       const turns = await Promise.all([
         collect(backend.runTurn(baseInput())),
         collect(backend.runTurn(baseInput())),
@@ -659,7 +959,7 @@ describe("CodexAppServerBackend", () => {
       packageName: MANAGED_CODEX_PACKAGE,
       packageVersion: MANAGED_CODEX_PACKAGE_VERSION,
     });
-    expect(managed.command).toContain("@openai/codex");
+    expect(managed.command.replaceAll("\\", "/")).toContain("@openai/codex");
   });
 
   it("initializes the installed managed runtime and lists models without an inference turn", async () => {
@@ -862,9 +1162,17 @@ describe("CodexAppServerBackend", () => {
       expect(configToml).toContain("shell_tool = false");
       expect(configToml).toContain("multi_agent = false");
       expect(configToml).toContain("network_access = false");
-      expect(statSync(codexHome).mode & 0o777).toBe(0o700);
-      expect(statSync(workspaceDir).mode & 0o777).toBe(0o700);
-      expect(statSync(join(codexHome, "config.toml")).mode & 0o777).toBe(0o600);
+      if (process.platform === "win32") {
+        for (const path of [codexHome, workspaceDir])
+          expect(inspectWindowsPrivatePathSync(path, "directory").private).toBe(true);
+        expect(inspectWindowsPrivatePathSync(join(codexHome, "config.toml"), "file").private).toBe(
+          true,
+        );
+      } else {
+        expect(statSync(codexHome).mode & 0o777).toBe(0o700);
+        expect(statSync(workspaceDir).mode & 0o777).toBe(0o700);
+        expect(statSync(join(codexHome, "config.toml")).mode & 0o777).toBe(0o600);
+      }
 
       const logs = readLog(logPath);
       const startup = firstPayload<{

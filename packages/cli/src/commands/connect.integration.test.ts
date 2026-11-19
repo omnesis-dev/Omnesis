@@ -60,7 +60,7 @@ subjectAltName = DNS:localhost, IP:127.0.0.1
     ],
     { stdio: ["ignore", "ignore", "pipe"] },
   );
-  const certPem = readFileSync(certPath, "utf8");
+  const certPem = new X509Certificate(readFileSync(certPath, "utf8")).toString();
   return {
     certPem,
     keyPem: readFileSync(keyPath, "utf8"),

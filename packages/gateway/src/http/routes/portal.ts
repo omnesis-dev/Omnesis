@@ -128,11 +128,11 @@ export function buildPortalCsp(scriptHashes: string[]): string {
  * Chrome blocks it under the strict (no 'unsafe-inline') CSP; external
  * scripts (`<script src=…>`) are already covered by 'self'. The hash must
  * match the element's text content EXACTLY (whitespace included), so the
- * inner capture is preserved verbatim. The importmap is required — its
- * absence breaks bare-specifier resolution and blanks the portal — so we
- * fail loudly if it's missing.
+ * inner capture follows HTML newline normalization (CRLF and CR become LF).
+ * The importmap is required: its absence breaks bare-specifier resolution
+ * and blanks the portal, so we fail loudly if it is missing.
  */
-function inlineScriptHashes(html: string): string[] {
+export function inlineScriptHashes(html: string): string[] {
   if (!/<script\s+type=["']importmap["']/i.test(html)) {
     throw new Error(
       'portal index.html missing <script type="importmap"> element — CSP cannot be built',
@@ -143,7 +143,9 @@ function inlineScriptHashes(html: string): string[] {
   let match: RegExpExecArray | null;
   while ((match = re.exec(html)) !== null) {
     if (/\bsrc\s*=/i.test(match[1])) continue; // external script — covered by 'self'
-    const hash = createHash("sha256").update(match[2], "utf8").digest("base64");
+    const hash = createHash("sha256")
+      .update(match[2].replace(/\r\n?/g, "\n"), "utf8")
+      .digest("base64");
     hashes.push(`'sha256-${hash}'`);
   }
   return hashes;

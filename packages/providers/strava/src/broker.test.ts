@@ -224,3 +224,55 @@ describe("Strava with a brokered grant", () => {
     expect(athlete[0]!.authorization).toBe("Bearer brokered-token");
   });
 });
+
+test("broker identity uses id_str and refuses adjacent or imprecise athlete IDs", async () => {
+  const id = "9007199254740993";
+  const configDir = await brokeredConfigDir();
+  await writeBrokerBinding(
+    "strava",
+    id,
+    { broker: "nango", connections: { default: REF } },
+    configDir,
+  );
+  let athlete = { id: Number(id), id_str: id };
+  stubNetwork({ raw: { athlete } });
+  const context = await definition.createContext!({
+    accountId: id,
+    providerId: ProviderId(`strava:${id}`),
+    host: fakeProviderHost({ configDir }),
+  });
+  expect(context.athleteId).toBe(id);
+  await expect(context.client.listActivities()).resolves.toEqual([]);
+  const credentials = new BrokeredCredentials(
+    { broker: "nango", connections: { default: REF } },
+    BROKER,
+  );
+  await expect(definition.broker!.resolveAccount(credentials, {})).resolves.toMatchObject({
+    accountId: id,
+  });
+  athlete = { id: Number(id), id_str: "9007199254740992" };
+  stubNetwork({ raw: { athlete } });
+  const changed = await definition.createContext!({
+    accountId: id,
+    providerId: ProviderId(`strava:${id}`),
+    host: fakeProviderHost({ configDir }),
+  });
+  await expect(changed.client.listActivities()).rejects.toThrow(/another athlete/);
+  stubNetwork({ raw: { athlete: { id: Number(id) } } });
+  const imprecise = await definition.createContext!({
+    accountId: id,
+    providerId: ProviderId(`strava:${id}`),
+    host: fakeProviderHost({ configDir }),
+  });
+  await expect(imprecise.client.listActivities()).rejects.toThrow(/another athlete/);
+});
+
+test.each([null, {}, undefined])(
+  "broker refresh without an athlete ID (%j) keeps an existing connection usable",
+  async (athlete) => {
+    const configDir = await brokeredConfigDir();
+    stubNetwork({ raw: { athlete } });
+    const context = await brokeredContext(configDir);
+    await expect(context.client.listActivities()).resolves.toEqual([]);
+  },
+);

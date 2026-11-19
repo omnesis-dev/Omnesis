@@ -151,7 +151,9 @@ test("approved public-key bundle looks for home once before listening, saves ref
       ...paired,
       directCandidates: fresh,
     });
-    expect((await stat(f.file)).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") {
+      expect((await stat(f.file)).mode & 0o777).toBe(0o600);
+    }
     expect(createRelayClientProxy).toHaveBeenCalledWith(
       expect.objectContaining({
         directCandidates: fresh,

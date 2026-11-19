@@ -17,10 +17,11 @@
  * time. Writing a new one deletes the oldest beyond `keep`.
  */
 
-import { mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { readdirSync, rmSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { Session } from "node:inspector";
 import { join } from "node:path";
+import { atomicWriteFileSync, ensurePrivateDirSync } from "@omnesis/core/private-files";
 
 import type { CpuProfile, ProfileSummaryBody } from "./profile-summary.js";
 import type { StallEvent } from "./stall-protocol.js";
@@ -114,11 +115,12 @@ export async function captureMainThreadProfile(
 
 /** Write `summary` into the ring under `dir`, keeping the newest `keep`. Returns its path. */
 export function writeProfileSummary(dir: string, summary: ProfileSummary, keep: number): string {
-  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  ensurePrivateDirSync(dir);
   const file = join(dir, `${summary.id}.json`);
-  const tmp = `${file}.tmp`;
-  writeFileSync(tmp, `${JSON.stringify(summary, null, 2)}\n`, { mode: 0o600 });
-  renameSync(tmp, file);
+  atomicWriteFileSync(file, `${JSON.stringify(summary, null, 2)}\n`, {
+    mode: 0o600,
+    ensureDir: true,
+  });
   const files = readdirSync(dir)
     .filter((f) => FILE_PATTERN.test(f))
     .sort();

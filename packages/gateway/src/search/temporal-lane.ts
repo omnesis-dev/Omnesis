@@ -42,8 +42,10 @@
  * document ids are resolved upstream from `omnesis.db`.
  */
 
+import { activeLexicalRules } from "../indexer/lexical-index-store.js";
 import {
-  filterCommonTokens,
+  cutQuery,
+  withReadSnapshot,
   joinRankedCandidates,
   toFts5Query,
   type LexicalRanker,
@@ -146,11 +148,12 @@ export function temporalLaneCandidates(
 
   const bm25: SearchCandidate[] = [];
   const vector: SearchCandidate[] = [];
-  const terms = lexicalQuery(db, lane.text, options);
-  if (terms) {
-    const ranked = bm25InWindow(db, window, terms, MAX_HEAD_CHUNKS);
-    bm25.push(...documents((k) => ranked.slice(0, k)));
-  }
+  // The cut and the match must see the same active index.
+  const lexical = withReadSnapshot(db, () => {
+    const terms = lexicalQuery(db, lane.text, options);
+    return terms ? bm25InWindow(db, window, terms, MAX_HEAD_CHUNKS) : null;
+  });
+  if (lexical) bm25.push(...documents((k) => lexical.slice(0, k)));
   report.bm25Candidates = bm25.length;
 
   if (lane.vector) {
@@ -283,7 +286,11 @@ function rankedDocuments(
   }
 }
 
-/** The FTS5 query for the lane's words after the common-token filter, or "" when none is left. */
+/**
+ * The FTS5 query for the lane's words, cut by the active index's lexical
+ * version and without its common words, or "" when none is left. Called inside
+ * the snapshot the match runs in, so the cut and the index agree.
+ */
 function lexicalQuery(
   db: Db,
   text: string,
@@ -293,13 +300,15 @@ function lexicalQuery(
   // leaves an unbalanced quote), so the lane ranks the words, never phrases.
   const words = text.replace(/"/g, " ");
   if (words.trim() === "") return "";
-  const filtered =
-    options.commonTokenThreshold > 0
-      ? filterCommonTokens(db, words, options.commonTokenThreshold, {
-          stats: options.ranker?.stats?.(db) ?? undefined,
-        }).filtered
-      : words;
-  return toFts5Query(filtered);
+  const rules = activeLexicalRules(db);
+  if (!rules) return "";
+  // The ranker's statistics count the same terms only when it was built by the active version.
+  const stats =
+    options.ranker?.rules.version === rules.version ? options.ranker.stats?.(db) : undefined;
+  const { query } = cutQuery(db, rules, words, options.commonTokenThreshold, {
+    stats: stats ?? undefined,
+  });
+  return toFts5Query(query);
 }
 
 /**

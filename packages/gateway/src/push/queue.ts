@@ -14,6 +14,7 @@ import {
 } from "@omnesis/core/push";
 import { DeviceId } from "@omnesis/types";
 import { suppressUnsupportedPairingReminders } from "./pairing-delivery.js";
+import { suppressUnsupportedTailscaleJoinReminders } from "./tailscale-join-delivery.js";
 import type { Db } from "../data/types.js";
 
 export const DEFAULT_NOTIFICATION_LEASE_MS = 30_000;
@@ -122,6 +123,8 @@ export interface ClaimNotificationInput {
   leaseMs?: number;
   /** Negotiated on this claim, rather than inferred from a possibly older hello. */
   supportsPairingNotifications?: boolean;
+  /** Negotiated on this claim, like pairing notifications. */
+  supportsTailscaleJoinNotifications?: boolean;
 }
 
 export interface ConfirmNotificationInput {
@@ -743,6 +746,12 @@ export function claimNotification(
         input.now,
         input.supportsPairingNotifications === true,
       );
+    suppressUnsupportedTailscaleJoinReminders(
+      db,
+      input.deviceId,
+      input.now,
+      input.supportsTailscaleJoinNotifications === true,
+    );
     const candidate = db
       .prepare<[string, number, number, number, number], { delivery_id: string }>(
         CLAIM_CANDIDATE_SQL,

@@ -904,66 +904,72 @@ describe("legacy analytics account ownership", () => {
     ]);
   });
 
-  test.each(["claim", "drop"] as const)(
-    "the operator settles the rows nothing attributes by %s, in bounded batches",
-    async (action) => {
+  describe("bounded legacy-row settlement", () => {
+    beforeEach(async () => {
+      // Build more than one settlement batch before timing the operator's action.
       await seedSharedEvents(
         Array.from({ length: 1100 }, (_, i) => event(`legacy-${String(i).padStart(4, "0")}`)),
       );
-      await db.ingestPage({
-        tableName: events.tableName,
-        sourceId: "fixture-source:first",
-        records: [event("mine")],
-      });
-      await db.ingestPage({
-        tableName: events.tableName,
-        sourceId: "fixture-source:second",
-        records: [event("theirs")],
-      });
-      expect(await projections()).toBe(1102);
-      expect(await db.settleLegacyRows("fixture-source:first", action)).toEqual([
-        { tableName: events.tableName, rows: 1100, remaining: 0 },
-      ]);
-      const counts = (
-        await db.executeQuery(
-          "SELECT account, COUNT(*) FROM ownership_events GROUP BY account ORDER BY account",
-        )
-      ).rows;
-      expect(counts).toEqual(
-        action === "claim"
-          ? [
-              ["first", 1101],
-              ["second", 1],
-            ]
-          : [
-              ["first", 1],
-              ["second", 1],
-            ],
-      );
-      expect(await projections()).toBe(action === "claim" ? 1102 : 2);
-      expect(await pendingFlag()).toBe(false);
-      expect(await db.unattributedLegacyRows("fixture-source:first")).toEqual([]);
-      expect(await db.settleLegacyRows("fixture-source:first", action)).toEqual([]);
-      if (action === "claim") {
-        // The claimed rows' projections now belong to the claimant, which can
-        // retract them like any row of its own.
-        expect(
-          (
-            await db.executeQuery(
-              "SELECT COUNT(*) FROM _temporal_projections WHERE table_name = 'ownership_events' AND source_id = 'fixture-source:first'",
-            )
-          ).rows,
-        ).toEqual([[1101]]);
+    }, 60_000);
+
+    test.each(["claim", "drop"] as const)(
+      "the operator settles the rows nothing attributes by %s, in bounded batches",
+      async (action) => {
         await db.ingestPage({
           tableName: events.tableName,
           sourceId: "fixture-source:first",
-          records: [],
-          deletedIds: ["legacy-0000"],
+          records: [event("mine")],
         });
-        expect(await projections()).toBe(1101);
-      }
-    },
-  );
+        await db.ingestPage({
+          tableName: events.tableName,
+          sourceId: "fixture-source:second",
+          records: [event("theirs")],
+        });
+        expect(await projections()).toBe(1102);
+        expect(await db.settleLegacyRows("fixture-source:first", action)).toEqual([
+          { tableName: events.tableName, rows: 1100, remaining: 0 },
+        ]);
+        const counts = (
+          await db.executeQuery(
+            "SELECT account, COUNT(*) FROM ownership_events GROUP BY account ORDER BY account",
+          )
+        ).rows;
+        expect(counts).toEqual(
+          action === "claim"
+            ? [
+                ["first", 1101],
+                ["second", 1],
+              ]
+            : [
+                ["first", 1],
+                ["second", 1],
+              ],
+        );
+        expect(await projections()).toBe(action === "claim" ? 1102 : 2);
+        expect(await pendingFlag()).toBe(false);
+        expect(await db.unattributedLegacyRows("fixture-source:first")).toEqual([]);
+        expect(await db.settleLegacyRows("fixture-source:first", action)).toEqual([]);
+        if (action === "claim") {
+          // The claimed rows' projections now belong to the claimant, which can
+          // retract them like any row of its own.
+          expect(
+            (
+              await db.executeQuery(
+                "SELECT COUNT(*) FROM _temporal_projections WHERE table_name = 'ownership_events' AND source_id = 'fixture-source:first'",
+              )
+            ).rows,
+          ).toEqual([[1101]]);
+          await db.ingestPage({
+            tableName: events.tableName,
+            sourceId: "fixture-source:first",
+            records: [],
+            deletedIds: ["legacy-0000"],
+          });
+          expect(await projections()).toBe(1101);
+        }
+      },
+    );
+  });
 
   test("a claim re-homes a projection without duplicating one the claimant already holds", async () => {
     await seedSharedEvents([event("shared")]);

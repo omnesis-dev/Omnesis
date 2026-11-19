@@ -10,6 +10,8 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import { SCOPE_ADMIN, SCOPE_READ, type Scope } from "@omnesis/types";
@@ -80,7 +82,7 @@ function noteText(id: string): string | undefined {
 beforeEach(() => {
   priorExperimental = process.env.OMNESIS_EXPERIMENTAL;
   delete process.env.OMNESIS_EXPERIMENTAL;
-  dbPath = `/tmp/omnesis-test-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
   db = createDatabase(dbPath);
   ADMIN_TOKEN = mintToken([SCOPE_ADMIN, SCOPE_READ]);
   resolved = { role: "transcriber", kind: "replay" };

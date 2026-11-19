@@ -8,6 +8,7 @@ import {
   type BrokeredCredentials,
 } from "@omnesis/core";
 import { SyncError, type SyncRemediation } from "@omnesis/types";
+import { parseStravaJson } from "./ids.js";
 import { STREAM_KEYS } from "./types.js";
 import { loadClientCredentials, saveTokens } from "./provider.js";
 import { DEFAULT_SAFETY_PCT, ENRICHMENT_SAFETY_PCT, StravaRateLimitTracker } from "./quota.js";
@@ -544,7 +545,7 @@ export class StravaClient {
       this.quota.observe(res.headers);
 
       if (res.ok) {
-        return (await res.json()) as T;
+        return parseStravaJson<T>(await res.text());
       }
 
       if (res.status === 401) {

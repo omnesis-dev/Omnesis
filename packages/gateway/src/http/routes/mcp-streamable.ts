@@ -10,6 +10,7 @@ import {
 import { createLogger, readPackageVersion } from "@omnesis/core";
 import { tryDeviceId, type DeviceId } from "@omnesis/types";
 import { bodyLimit } from "hono/body-limit";
+import { resolveRequestOAuthUrls } from "../oauth-request.js";
 
 import { registerNotesMcpTool, NOTES_MCP_INSTRUCTIONS } from "../../mcp/notes-server.js";
 import { notesRateLimiter } from "../../rate-limit.js";
@@ -21,7 +22,6 @@ import {
 import {
   protectedResourceMetadataUrl,
   resolveMcpRequestResource,
-  resolveOAuthUrls,
 } from "../../access/oauth-urls.js";
 import {
   createCorpusAuthorization,
@@ -80,8 +80,8 @@ export interface McpStreamableRoutesDeps {
   /** Stable object whose Answer service is replaced during live model swaps. */
   answerDeps?: { answerService?: AnswerService; disabledReason?: string };
   isAgentIntegrationDevice?: (deviceId: DeviceId) => boolean;
-  publicBaseUrl?: string;
-  mcpResourceUrls?: readonly string[];
+  /** The gateway's public address, read on every request so a saved one applies at once. */
+  publicAddress?: import("../../public-address.js").PublicAddressSource;
   additionalOAuthIssuerUrls?: import("../../access/oauth-urls.js").OAuthIssuerSource;
   /** Required final authorization and attribution fence for every corpus result. */
   recordMcpToolInvocation: (input: McpToolInvocationAuditInput) => Promise<void>;
@@ -119,8 +119,8 @@ export function mountMcpStreamableRoutes(
     if (auth?.authMethod !== "principal-oauth") {
       return oauthChallenge(
         c,
-        deps.publicBaseUrl,
-        deps.mcpResourceUrls,
+        deps.publicAddress?.baseUrl(),
+        deps.publicAddress?.mcpResourceUrls(),
         c.req.header("Authorization") !== undefined,
         deps.additionalOAuthIssuerUrls,
       );
@@ -752,8 +752,8 @@ function oauthChallenge(
   rejectedToken = false,
   additionalOAuthIssuerUrls?: import("../../access/oauth-urls.js").OAuthIssuerSource,
 ) {
-  const urls = resolveOAuthUrls(
-    c.req.url,
+  const urls = resolveRequestOAuthUrls(
+    c,
     publicBaseUrl,
     mcpResourceUrls,
     additionalOAuthIssuerUrls,

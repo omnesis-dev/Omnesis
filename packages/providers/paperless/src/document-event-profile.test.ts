@@ -89,7 +89,7 @@ describe("paperless-documents descriptor", () => {
     for (const path of written) expect(declared.has(path), path).toBe(true);
   });
 
-  test("carries a complete icon, a unit noun and the experimental gate", () => {
+  test("carries a complete icon, a unit noun and stable availability", () => {
     expect(definition.icon).toEqual(
       expect.objectContaining({
         sfSymbol: expect.any(String),
@@ -99,7 +99,7 @@ describe("paperless-documents descriptor", () => {
       }),
     );
     expect(definition.unitName).toBe("documents");
-    expect(definition.experimental).toBe(true);
+    expect(definition.experimental).toBeFalsy();
   });
 
   test("declares the host generation and capability it needs, and an older host refuses it", () => {

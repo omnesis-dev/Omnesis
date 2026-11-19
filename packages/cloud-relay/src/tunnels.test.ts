@@ -87,6 +87,62 @@ test("bounds per-gateway and global pending reservations separately", async () =
   await Promise.all([rejectedA, rejectedB]);
 });
 
+test("F16: each client's share of a gateway is reserved per /64 and returned when a stream ends", async () => {
+  const broker = new TunnelBroker({ ...DEFAULT_TUNNEL_LIMITS, maxStreamsPerClientPerGateway: 1 });
+  const control = new Control();
+  broker.attach("a", control.socket, 3600);
+  const first = new AbortController();
+  const pending = broker.open("a", first.signal, "2001:db8:1:2::1");
+  const failed = expect(pending).rejects.toThrow("disconnected");
+  expect(() => broker.open("a", new AbortController().signal, "2001:db8:1:2::ff")).toThrow(
+    "this client",
+  );
+  // Another client, and a caller with no address, are not counted against it.
+  const other = broker.open("a", new AbortController().signal, "203.0.113.9");
+  const unnamed = broker.open("a", new AbortController().signal);
+  first.abort();
+  await failed;
+  const again = broker.open("a", new AbortController().signal, "2001:db8:1:2::2");
+  broker.close();
+  await Promise.all([other, unnamed, again].map((work) => work.catch(() => {})));
+});
+
+test("gateway fairness reserves new-client capacity without closing existing channels", async () => {
+  const broker = new TunnelBroker({ ...DEFAULT_TUNNEL_LIMITS, maxStreamsPerGateway: 4 });
+  const control = new Control();
+  broker.attach("account", control.socket, 3600);
+  const tasks: Promise<unknown>[] = [];
+  const reserve = (address?: string) => {
+    const abort = new AbortController();
+    tasks.push(broker.open("account", abort.signal, address).catch(() => undefined));
+    return abort;
+  };
+  const first = reserve("2001:db8:1:2::1");
+  reserve("2001:db8:1:2::2");
+  reserve();
+  expect(() => broker.open("account", new AbortController().signal, "2001:db8:1:2::3")).toThrow(
+    "capacity",
+  );
+  // Absent peer metadata is one existing client, not a new source for every request.
+  expect(() => broker.open("account", new AbortController().signal)).toThrow("capacity");
+  reserve("192.0.2.7");
+  expect(broker.snapshot().pendingStreams).toBe(4);
+  expect(() => broker.open("account", new AbortController().signal, "192.0.2.8")).toThrow(
+    "capacity",
+  );
+  expect(control.terminate).not.toHaveBeenCalled();
+  first.abort();
+  expect(broker.snapshot().pendingStreams).toBe(3);
+  // Remaining reservations still account for their sources after an abort.
+  expect(() => broker.open("account", new AbortController().signal, "2001:db8:1:2::4")).toThrow(
+    "capacity",
+  );
+  reserve("192.0.2.8");
+  broker.close();
+  await Promise.all(tasks);
+  expect(broker.snapshot().pendingStreams).toBe(0);
+});
+
 test("heartbeats require pong, contain socket errors, and end expired sessions", async () => {
   const broker = new TunnelBroker({ ...DEFAULT_TUNNEL_LIMITS, heartbeatMs: 100 });
   const control = new Control();
@@ -205,4 +261,27 @@ test("a claimed channel is pinged while it is open, so an idle stream is not cut
   expect(data.ping).toHaveBeenCalledTimes(2);
   broker.close();
   expect(vi.getTimerCount()).toBe(0);
+});
+
+test("a gateway is online only while its tunnel is open, and closing its account takes it offline at once", () => {
+  const broker = new TunnelBroker();
+  const control = new Control();
+  expect(broker.online("account")).toBe(false);
+  broker.attach("account", control.socket, 3600);
+  expect(broker.online("account")).toBe(true);
+  expect(broker.online("other")).toBe(false);
+  // A tunnel that is closing carries nothing, so it doesn't count.
+  control.readyState = WebSocket.CLOSING;
+  expect(broker.online("account")).toBe(false);
+  control.readyState = WebSocket.OPEN;
+  broker.closeAccount("account");
+  expect(control.terminate).toHaveBeenCalled();
+  expect(broker.online("account")).toBe(false);
+  // Back again, it is online again.
+  const again = new Control();
+  broker.attach("account", again.socket, 3600);
+  expect(broker.online("account")).toBe(true);
+  again.emit("close");
+  expect(broker.online("account")).toBe(false);
+  broker.close();
 });

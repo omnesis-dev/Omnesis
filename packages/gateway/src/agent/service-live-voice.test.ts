@@ -446,11 +446,15 @@ describe("configured agent voice lease", () => {
       mode: "queue",
     });
     release.resolve();
-    // The queue reads idle while it saves the next batch as running; wait for that turn too.
-    await vi.waitFor(() => {
-      expect(f.inputs).toHaveLength(2);
-      expect(f.service.conversationControls(created.sessionId).busy).toBe(false);
-    });
+    // Observe both durable turns, including their final control-state writes.
+    // Real filesystem persistence can exceed waitFor's one-second default.
+    await vi.waitFor(
+      () => {
+        expect(f.inputs).toHaveLength(2);
+        expect(f.service.conversationControls(created.sessionId).busy).toBe(false);
+      },
+      { timeout: 5_000 },
+    );
     expect(write).toHaveBeenCalledOnce();
   });
   it("admits an unchanged voice write once and releases the controls lock before it completes", async () => {
@@ -616,6 +620,7 @@ describe("configured agent voice lease", () => {
     await vi.waitFor(() => expect(f.spend).toHaveBeenCalledOnce());
     let callbacks: LiveProviderCallbacks | undefined;
     const sent: LiveProviderCommand[] = [];
+    const commentary = deferred();
     const provider: LiveProvider = {
       create: async (_input, hooks) => {
         callbacks = hooks;
@@ -624,6 +629,7 @@ describe("configured agent voice lease", () => {
           sdp: "fixture-sdp-answer",
           send: (command) => {
             sent.push(command);
+            if (command.type === "session.commentary.append") commentary.resolve();
           },
           close: async () => ({ usageConfirmed: true, seconds: 3 }),
         };
@@ -664,9 +670,7 @@ describe("configured agent voice lease", () => {
       offset_ms: 100,
       delegation: { id: "fixture-delegation", target: "client" },
     });
-    await vi.waitFor(() =>
-      expect(sent.some((command) => command.type === "session.commentary.append")).toBe(true),
-    );
+    await commentary.promise;
     expect(
       sent
         .flatMap((command) =>

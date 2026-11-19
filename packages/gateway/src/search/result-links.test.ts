@@ -9,6 +9,8 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { computeContentHash } from "@omnesis/core";
@@ -38,8 +40,8 @@ let index: Database.Database;
 let worker: Database.Database;
 
 beforeEach(() => {
-  gateway = createDatabase(`/tmp/omnesis-test-${randomUUID()}.db`);
-  index = createIndexDatabase(`/tmp/omnesis-test-${randomUUID()}.db`);
+  gateway = createDatabase(fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`));
+  index = createIndexDatabase(fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`));
   gateway
     .prepare(
       "INSERT INTO devices (id,name,kind,paired_at) VALUES ('device-1','Example desktop','collector',1)",

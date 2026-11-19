@@ -109,6 +109,8 @@ export interface TranscribeCapability {
       signal?: AbortSignal;
     },
   ): Promise<TranscriptionResult>;
+  /** Native owners report pending or terminal process cleanup without exposing model input. */
+  cleanupFailure?(): unknown;
   dispose(): Promise<void>;
 }
 

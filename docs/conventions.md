@@ -14,6 +14,23 @@ The doc has three layers:
 
 ## Layer 1 — Architectural patterns
 
+### Gateway startup keeps one listener and explicit ownership
+
+`packages/gateway/src/index.ts` is the small HTTPS bootstrap; `runtime.ts` assembles
+normal services only after the startup listener is open. `startup/manager.ts`
+tracks fixed, sanitized phases without reading stores. The listener changes its
+HTTP dispatcher and attaches WebSocket handling without rebinding the port or
+proxying requests, so peer identity, TLS and session semantics stay intact.
+Startup status is not API readiness: ordinary requests receive 503 until the
+normal application is ready, and the startup page reloads the original URL.
+
+Blocking database/schema and graph preparation belongs to startup workers, which
+must exit before ordinary readers/writers open those resources. Migration progress
+reports committed operations, never inferred percentages or uncommitted work.
+Independent scheduler pools start in bounded pairs after the writer; failed or
+cancelled initialization awaits siblings before disposing their resources.
+Keep the people-repair chain sequential and model new dependencies explicitly.
+
 ### Nx selects logical work; host dispatchers admit physical work
 
 Nx is the repository authority for workspace dependencies, affected projects,
@@ -181,6 +198,11 @@ Files that follow this shape: `packages/gateway/src/analytics-db.ts`, `packages/
 ### Subpath exports / multi-package boundary
 
 `@omnesis/core` is bisected two ways. First, `exports` subpaths (`/protocol`, `/config`, `/sources`, …) let a consumer import a narrow slice. Second, `@omnesis/types`, `@omnesis/config`, and `@omnesis/source-sdk` are physically separate workspace packages, so providers don't pull the gateway-only surface, and the HTTP/WS client lives in `@omnesis/gateway-client`. Re-export shims in `@omnesis/core` still preserve the old import paths for back-compat.
+
+Stall and diagnostic workers use `@omnesis/core/private-files` for canonical
+private atomic writes and directory protection. Its transitive module graph
+contains only Node built-ins and the platform filesystem bootstrap; importing
+the broad Core barrel into these workers is prohibited by the worker graph test.
 
 **New code should import from the narrowest package**, not `@omnesis/core`: branded IDs / document model / device + pagination from `@omnesis/types`; the zod config schema + `OmnesisConfig` + `*Settings` from `@omnesis/config`; `defineSource` / `Source` / `Provider` / `GatewayClient` + the source-descriptor surface from `@omnesis/source-sdk`; `HttpGatewayClient` / `GatewayWsClient` from `@omnesis/gateway-client`. Reserve `@omnesis/core` for genuinely cross-cutting helpers (`createLogger`, `computeContentHash`, the WS-envelope protocol, TOFU). When you add a type or helper, place it in the _smallest_ package that satisfies its consumers — don't default to `@omnesis/core`.
 
@@ -445,6 +467,21 @@ without holding it across model work.
 - Realtime backend: `packages/gateway/src/realtime/backend.ts`
 - Media boundary: `packages/gateway/src/realtime/service.ts`, `packages/gateway/src/realtime/route.ts`
 - Native handoff: `ios/Sources/Omnesis/Coordinators/RealtimeConversationHandoff.swift`
+
+### Something waiting for the owner is signalled, then re-read
+
+When the owner must decide something (a device asking to join, an agent asking
+for access, an answer or a watch held for approval), the producer publishes its
+topic on `PortalSignals` (`packages/gateway/src/portal-signals/hub.ts`) once the
+change is final: when an item arrives and when it is decided. Open portals hear
+it on `GET /portal/api/signals` and re-read that topic through its ordinary
+authenticated route; the signal carries no data, so it cannot leak or go stale.
+Expiry is not signalled: each list carries its items' expiry and the portal
+re-reads when the earliest passes. One browser holds one stream for all its
+tabs (`packages/gateway/portal/js/lib/portal-signals.js`), since the gateway
+speaks HTTP/1.1, and `use-attention.js` keeps the one answer every mark and strip
+reads. A new kind of waiting item adds a topic and its publish calls rather than
+a poll of its own.
 
 ### A credential gate answers from the credential, a sync failure from the failure
 
@@ -1185,6 +1222,16 @@ Two consequences worth stating, because they are where this gets violated:
 
 - Examples: `ios/Sources/Omnesis/UI/MainMenuDrawer.swift` and `android/app/src/main/kotlin/dev/omnesis/android/ui/home/MainMenuDrawer.kt` (the queued-notes warning), `packages/gateway/src/brain/feature-gate.ts` (`BriefsFeatureStatus`)
 
+### Source setup prose shares the conversation renderer
+
+Provider credential steps, authentication instructions and source-setting help
+render through `packages/gateway/portal/js/components/setup-markdown.js`.
+It uses the shared sanitized Markdown and copy controls from agent conversations.
+Put substantial exact values the operator pastes elsewhere in backticks; keep
+simple words and example names such as localhost or Omnesis in plain text. HTTP(S) URLs,
+including code spans, are clickable in setup prose; other code values stay text.
+Keep input labels short and put explanations in the source-owned `help` field.
+
 ### Portal tables share one vocabulary
 
 Every tabular listing in the portal is built from the same primitives rather than a class family of its own: `.portal-table` inside `.portal-table-wrap`, with `.portal-table-name` for the row's subject — styled identically whether it opens a route or a dialog, so the two never read as different kinds of thing — `.portal-table-sub` for the identifiers and pills belonging to that name, `.portal-table-num` for right-aligned tabular figures, `.portal-table-actions-col` for the collapsing trailing column, and `.portal-pill` with `-muted` / `-accent` / `-warning` for a one-word label on a row.
@@ -1240,7 +1287,120 @@ The same code runs two ways: as TypeScript source under tsx (dev, source install
 - Any spawn of a sibling worker thread or subprocess goes through `resolveWorkerEntry` / `resolveSubprocessEntry` from `@omnesis/core` — they pick the `.ts`-under-tsx entry in dev and the emitted `.js` sibling when compiled. A hardcoded `new URL("./worker.ts", import.meta.url)` is a regression.
 - Module-relative asset paths (the gateway's `portal/`, package.json reads) must resolve from both `src/` and `dist/` — both sit one level below the package root, so `..`-anchored paths are safe.
 
+The standalone agent integration bundles generated `@omnesis/platform` Windows
+filesystem helpers under `dist/private-platform`. Release staging and source
+archive creation copy the canonical compiled implementation; they do not add a
+workspace runtime dependency or duplicate the native implementation. Its source
+loader resolves only existing relative TypeScript siblings in that builtin-only
+graph. The published archive uses ordinary JavaScript paths.
+
 - Helpers: `packages/core/src/worker-entry.ts`
+
+JavaScript CLI entry points use `nodeCommandInvocation` before `spawn` or
+`execFile`: Windows does not execute their shebang, so it invokes the current
+Node executable with the entry path as one argument. `resolveNpmInvocation`
+resolves npm's JavaScript CLI beside Node or a PATH installation without
+executing a Windows batch shim. Pass argument arrays throughout; do not enable
+a shell to make a CLI entry executable.
+
+An owned Windows wrapper can exit while native descendants retain its pipes.
+Long-lived CLI streams use `spawnWindowsJob`: the kernel assigns the target to a
+kill-on-close job during creation, and its retained helper stays alive until all
+members exit. Configuration precedes raw stdin, and `jobReady` distinguishes
+native creation errors from target exit codes. Bounded probes use `execWindowsJob`
+so timeouts, cancellation and output limits stop the entire job and await closure.
+`runWindowsJob` adds buffered output and a publication gate before target start.
+Finite build and check commands explicitly use `completion: "root"`: after capturing the
+root's status, the owner terminates remaining Job members and joins their exit
+and output. Streamed commands retain the default tree lifetime.
+POSIX paths preserve their native process behavior. A check lane with explicit
+cleanup uncertainty retains its own PID for review and refuses another command;
+an ordinary joined failure can still report its exit status.
+
+Long-lived child protocols use `spawnOwnedChildProcess` from `@omnesis/core`
+when the actor owns a single executable and must join it before replacement.
+It exposes independent readiness and physical closure promises, retaining the
+whole Windows Job even after the root exits. The actor owns protocol framing,
+input grace and restart admission; stdout EOF is never a closure receipt.
+Collector authentication and the embedded Tailscale supervisor use this owner.
+
+Synchronous Job calls and native-cache bootstrapping require a fresh parent-only
+completion receipt after native cleanup. A helper exit code alone cannot prove
+that its children joined. Preserve an own `cleanupFailure` property through
+wrappers even when its value is `undefined`; that presence means cleanup remains
+unconfirmed. Self-contained filesystem workers have no child tree and use their
+separate process-lifetime contract.
+
+Use `ownedProcessCleanupReceipt` from `@omnesis/platform/owned-process-cleanup`
+(re-exported by `@omnesis/core`) to recognize an explicit cleanup marker through
+an error's cause chain. The platform subpath keeps this check available during
+configuration bootstrap without a dependency on the Core barrel. Check ownership uncertainty before
+treating `ENOENT` as absence or `EEXIST` as a concurrent publisher's success:
+those filesystem results do not prove that the helper joined. Preserve the cause
+when reporting an unreadable private file, and stop before starting a fallback,
+retry, or legacy cleanup while the prior operation remains unjoined.
+
+Worker threads that invoke native helpers retain their operation and natural
+exit proofs through observation timeouts. A thread's termination does not prove
+that its native child joined. Security-audit timeouts remain failed observations
+even when the retained work later completes; service shutdown joins that work
+before releasing its ownership fence.
+
+Services close admission before joining accepted work. Disposal must retain
+in-flight probes and lifecycle operations as well as active turns; a status read
+that launches a helper is owned work. Recheck admission after an awaited lookup
+before launching another command. A pending cleanup receipt may clear when its
+retained proof settles; terminal uncertainty keeps the process and lease for
+review.
+
+Updater and continuation launches create `beginUpdateLockChildJoin` against the
+actual held lock before starting a child. Its private persisted marker survives
+ownership adoption and process exit. Clear that exact scope only after the owned
+child and its helpers have joined. A missing receipt, helper death or expired
+heartbeat cannot clear it. Pending markers prevent lock retirement and defer
+hand-back/release; the waiting holder cannot advance its apply steps. Adopted
+children can work, and a nested parent can resume after its own child joins when
+the remaining markers belong to its verified return ancestors. Existing process
+and apply-group liveness checks still apply.
+
+`terminateChildProcess` remains available for an already-running Windows root;
+its `taskkill` tree request requires that root to remain alive and provides no
+crash containment. New owned executable launches use kernel jobs instead.
+
+- CLI invocation: `packages/core/src/node-command.ts`
+- Kernel ownership and binary streams: `packages/core/src/windows-job.ts`
+- Bounded probes: `packages/core/src/windows-job-exec.ts`
+- Existing-child shutdown: `packages/core/src/child-termination.ts`
+
+Private Windows key files use `createWindowsPrivateFile` and
+`readWindowsPrivateFile`: creation applies a protected DACL before writing secret
+bytes, and reads validate the owner, every allow ACE, reparse status and bounded
+size on the same open handle. Only the current user, SYSTEM and Administrators
+may receive access. POSIX mode bits do not describe Windows ACL confidentiality.
+
+- Private Windows key files: `packages/core/src/windows-private-file.ts`
+
+Permission fixtures use `@omnesis/source-sdk/testing` on owned temporary paths.
+`setFixtureMode` stages read/list denial; `setFixtureDirectoryWritable` stages
+child creation/publication denial while retaining reads. Restore access in
+`finally`. Windows directory `chmod` does not establish these denials, and a
+read-denial capability does not justify skipping a write-publication test.
+
+Spawned gateways accept graceful shutdown through an inherited Node parent IPC
+channel, using the same coordinator as SIGINT/SIGTERM. Standalone processes add
+no listener. This avoids Windows' forceful signal emulation without exposing a
+network control endpoint. Harnesses invoke the TypeScript loader in the spawned
+Node process so its PID, parent channel and gateway ownership refer to one process.
+
+Check runners and harnesses retain Windows subtree ownership with
+`WindowsProcessTree`: observe the original live child, capture creation identities,
+refresh while it runs, and retain observed descendants after reparenting. Forced
+cleanup opens a native process handle, verifies its creation time, and terminates
+through that same handle. Unknown identities never authorize a kill, and an
+unavailable process snapshot does not release a check lane.
+
+- Parent control: `packages/core/src/parent-shutdown.ts`
+- Birth-aware ownership: `packages/core/src/windows-process-tree.ts`
 - Pipeline: `scripts/release/` + `docs/releasing.md`
 
 ### A suite's dependency object is checked against its type
@@ -1258,7 +1418,7 @@ Two halves make it visible, and **neither works alone**:
    it would otherwise emit the suites into `dist`, which is what gets published
    — so an annotation in a test file is read by nothing, `satisfies` included.
    Each covered package carries a `tsconfig.tests.json` beside its own, and
-   `npm run typecheck:tests` runs **every** one it finds (one CI step), so
+   `npm run typecheck:tests` discovers and runs **every** one through `scripts/typecheck-tests.mjs` (one CI step), so
    adding the file is the whole of joining. The `include` is every suite and
    the `exclude` is the ones that do not pass yet, so a **new** suite is
    covered from the day it is written. Take a file off that list when you clean
@@ -1354,7 +1514,9 @@ When you set out to write code that matches one of the patterns above, open the 
 | HTTPS + TOFU pinning               | `packages/gateway/src/tls.ts`                                                                                         |
 | Secret-store abstraction           | `packages/core/src/secret-store.ts`, `packages/core/src/secret-file.ts`                                               |
 | Host update serialization          | `packages/core/src/update-lock.ts` + `packages/cli/src/update/source-launcher.ts`                                     |
+| Updater child completion           | `packages/core/src/update-lock-child-join.ts`                                                                         |
 | Transient-buffer                   | `packages/providers/whatsapp/src/message-store.ts`                                                                    |
+| Canonical local path boundaries    | `packages/source-sdk/src/node-path-boundary.ts`                                                                       |
 | Local coding-agent transcripts     | `packages/source-sdk/src/local-agent-sessions.ts` + `packages/providers/pi/src/index.ts`                              |
 | Per-source write epochs            | `packages/collector/src/source-sync-runner.ts` + `packages/gateway/src/data/repositories/DocumentRepository.ts`       |
 | Routes only call services          | `packages/gateway/src/http/routes/admin/devices.ts` + `packages/gateway/src/http/services/`                           |
@@ -1377,6 +1539,12 @@ When you set out to write code that matches one of the patterns above, open the 
 
 ---
 
+Update-lock owner publication holds a filesystem claim before the first owner write.
+An explicit native cleanup uncertainty retains that claim and the directory generation,
+propagates the original error, and stops heartbeat retries. Further claims in the same
+process refuse with the retained error; other processes still observe the physical claim.
+An ordinary joined write error releases its claim and preserves ordinary retry behavior.
+
 ## Layer 3 — Enforcement
 
 A pattern only survives if review or the toolchain catches its violations. Several of the conventions above are machine-checked (types, ESLint, knip, the parity and privacy guards, CI); the rest are review-enforced. The table below splits them.
@@ -1397,6 +1565,7 @@ Also enforced:
 - **Snapshot-contract guard** — `packages/source-sdk/src/snapshot-contract.test.ts` walks every file under `packages/providers/` and `packages/source-sdk/` for an actual `presentExternalIds` / `presentIds` emission and fails unless the file is registered in `snapshot-emitters.json` with a sentence saying how completeness is guaranteed. It cannot judge whether the discipline is correct — no static check can — but it guarantees no snapshot emission exists that nobody has thought about, and hands the reviewer the claim to check. The semantic half is `SnapshotEnumeration` and the spawned-gateway sweep in `packages/collector/src/e2e/snapshot-absence.e2e.test.ts`.
 - **Privacy guard** — `scripts/pii-scan.mjs` scans staged diffs, commit messages, and the full tracked tree (`npm run privacy:scan`) for real-looking emails, phone numbers, private/tailnet IPs, common secret shapes, and full-name candidates in high-risk fixture/test paths. Existing reviewed fixture values live in `privacy/pii-allowlist.json`; identity entries are path-scoped so a value reviewed in one fixture cannot bless the same value elsewhere. New values must be invented and added deliberately in the same PR. CI runs the full-tree scan as the first gate of every run.
 - **CI** — `.github/workflows/full-validation.yml` uses GitHub-hosted runners. Every push to `main` runs all Linux lanes and keeps its own commit-keyed run; newer pushes do not replace it. Full sweeps include macOS at 01:17 and 13:17 UTC. Manual dispatch defaults to `lanes=all`; `lanes=linux` runs only Linux and is used by Dependabot after its merges. A newer push to a pull request cancels that pull request's older run. On a pull request, a `scope` job (`scripts/nx/ci-scope.mjs`) runs only the lanes the change affects: the Node lanes follow the Nx affected plan of its merge commit (the affected projects' unit suites and typechecks, format and lint of the changed files, and the E2E files of the selected behavioral bundles, re-sharded), the Android lane runs when that plan selects an Android bundle, and the native, install, Docker, harness and security lanes follow path rules for what each covers. A shared input (lockfile, manifests, root configs, workflows, `packages/core`, the check runners and planner), an unsupported path or a planner failure runs every Linux lane, and a change most projects depend on runs the whole-repository unit suite and typechecks. The macOS lanes (`MACOS_LANES` in the planner: the macOS Node lane, the Swift linters, iOS, the Android screenshot goldens, the Mac installer scenarios) run on a pull request only for the paths they cover, never for a shared input or a planner failure that still knows the changed files, because GitHub lends the repository only a few macOS runners at a time — except that iOS also runs when the plan selects an iOS bundle for a gateway wire path the app decodes. The verdict accepts a skipped lane only when its scope switch is explicitly false. It calls the reusable lane workflows (`ci.yml` for Node, plus the native, install, Docker, harness and security lanes) at one exact revision, gates every Node job behind the privacy scan, and ends in one `verdict` job. Pull-request runs use the plain `pull_request` trigger — read-only token, no secrets. The README badge reads `ci-status.yml`: the newest completed full sweep must pass, along with the newest completed Linux-only run if it is newer; cancelled and skipped runs are ignored. A red `main` stops merging until it is fixed forward or reverted. Release validation requires a scheduled or all-lanes manual run to pass at the exact tagged commit; Linux-only success cannot authorize a release.
+- **Windows runtime CI** — `.github/workflows/windows.yml` runs focused portability units and real gateway/collector smoke tests on every pull request. A daily 04:43 UTC sweep runs every source and test typecheck, the complete runtime unit and adapter suites, two spawned-gateway E2E shards with the real reference embedder, and the full portal suite on GitHub-hosted Windows runners. Manual dispatch defaults to the full sweep and can select a failing lane for diagnosis. Only installer and install-shell suites are excluded, with explicit reasons in `scripts/ci/windows-checks.mjs`; a shell-based runtime fixture must be ported rather than excluded.
 - **Pre-commit / commit-msg / pre-push hooks** — Lefthook (`lefthook.yml`) runs a license-header check, eslint, prettier, and the PII scan pre-commit; strips AI co-author trailers and scans the message on commit-msg; and runs the bounded format and privacy checks on pre-push. Whole-program typecheck, lint, tests, and dead-code analysis stay in the explicit final-validation and CI lanes so a push does not repeat queue-backed work after the required validation has passed.
 
 Known state, not a guard:
@@ -1450,3 +1619,13 @@ and background producers must all respect the matching feature flag. Task automa
 requires both Brain and Tasks. Preserve cleanup and evidence invalidation when a feature
 is disabled. The canonical names, descriptions and original SVGs live in
 `packages/gateway/src/lab/catalog.ts` and are served to every client by `/admin/lab`.
+
+### Test jobs cannot resolve production service names
+
+Every CI test job invokes `scripts/ci/production-network.sh isolate` before tests
+and `verify` even after a test fails. Windows uses a loopback DNS proxy for native
+and direct resolvers, records protected questions, and blocks and audits attempts
+to bypass it with external DNS. The isolation step proves a blocked bypass before
+recording its baseline. The proxy remains available through runner post-job
+reporting and belongs to the disposable hosted VM, rather than to one test command.
+These scripts are CI infrastructure; they are not application setup commands.

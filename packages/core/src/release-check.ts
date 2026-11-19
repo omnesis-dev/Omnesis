@@ -10,7 +10,7 @@
  */
 
 import { existsSync, readFileSync, realpathSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, sep } from "node:path";
 
 export type InstallMethod =
   | { method: "npm-global" }
@@ -55,7 +55,7 @@ export function detectInstallMethod(argv1Path: string, fs: DetectFs = nodeDetect
     return { method: "unknown" };
   }
 
-  if (NPM_GLOBAL_PATTERN.test(real.replaceAll("\\", "/"))) {
+  if (NPM_GLOBAL_PATTERN.test(sep === "\\" ? real.replaceAll("\\", "/") : real)) {
     return { method: "npm-global" };
   }
 

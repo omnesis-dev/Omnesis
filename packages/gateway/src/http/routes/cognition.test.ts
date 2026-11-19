@@ -12,6 +12,8 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { describe, expect, test, beforeEach, afterEach } from "vitest";
 import { SCOPE_ADMIN, SCOPE_READ, type Scope } from "@omnesis/types";
 import { createDatabase } from "../../db.js";
@@ -49,7 +51,7 @@ function get(path: string, token = ADMIN_TOKEN) {
 }
 
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-cognition-http-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-cognition-http-${randomUUID()}.db`);
   db = createDatabase(dbPath);
   ADMIN_TOKEN = mintToken([SCOPE_ADMIN]);
   READ_TOKEN = mintToken([SCOPE_READ]);

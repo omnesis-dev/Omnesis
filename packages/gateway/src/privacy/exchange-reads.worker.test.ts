@@ -11,6 +11,8 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createDatabase } from "../db.js";
 import { Scheduler } from "../scheduler/scheduler.js";
@@ -267,7 +269,7 @@ describe.each(["empty", "seeded"])("the %s exchange history on the io worker", (
   let direct: PrivacyExchangeReads;
 
   beforeAll(async () => {
-    dbPath = `/tmp/omnesis-test-${randomUUID()}.db`;
+    dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
     db = createDatabase(dbPath) as unknown as Database.Database;
     if (fixture === "seeded") seed(db);
     direct = directPrivacyExchangeReads(db);

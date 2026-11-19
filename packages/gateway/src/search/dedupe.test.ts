@@ -2,6 +2,8 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { describe, test, expect, afterEach } from "vitest";
 import { createIndexDatabase, setIndexedDocument } from "../indexer/db.js";
 import { dedupeByContentHash } from "./dedupe.js";
@@ -24,7 +26,9 @@ describe("dedupeByContentHash", () => {
   const dbs: Array<ReturnType<typeof createIndexDatabase>> = [];
 
   function newDb() {
-    const db = createIndexDatabase(`/tmp/omnesis-dedupe-test-${randomUUID()}.db`);
+    const db = createIndexDatabase(
+      fixtureJoin(fixtureTmpdir(), `omnesis-dedupe-test-${randomUUID()}.db`),
+    );
     dbs.push(db);
     return db;
   }

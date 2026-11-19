@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { writeFileSync, existsSync, mkdtempSync, readFileSync, rmSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, it, expect } from "vitest";
 import { openSqliteSnapshot } from "./sqlite-snapshot.js";
@@ -78,7 +78,7 @@ describe("openSqliteSnapshot", () => {
 
     const snap = openSqliteSnapshot(src, "snap-test-");
     try {
-      expect(snap.path.endsWith("/knowledgeC.db")).toBe(true);
+      expect(basename(snap.path)).toBe("knowledgeC.db");
     } finally {
       snap.cleanup();
       rmSync(dir, { recursive: true, force: true });

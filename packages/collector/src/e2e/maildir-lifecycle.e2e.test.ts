@@ -13,11 +13,11 @@
  */
 
 import {
-  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
   renameSync,
+  readdirSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -35,6 +35,7 @@ import {
   storeThunderbirdMessage,
 } from "@omnesis/provider-maildir/testing";
 import { SourceType } from "@omnesis/types";
+import { canDenyFixtureReads, setFixtureMode } from "@omnesis/source-sdk/testing";
 import { extractDescriptors } from "../source-descriptors.js";
 import { SourceManager } from "../source-manager.js";
 import { createSourceWsHandlers } from "../source-ws-handlers.js";
@@ -58,7 +59,6 @@ const CAPABILITIES = {
     extractDescriptors(maildirDefinition).map((d) => [d.id, d.memberScopedParamNames ?? []]),
   ),
 };
-const isRoot = process.getuid?.() === 0;
 
 const SELF = { name: "Maya Reeves", address: "maya.reeves@example.com" };
 const JAMIE = { name: "Jamie Lopez", address: "jamie.lopez@example.org" };
@@ -308,9 +308,19 @@ describe("real Maildir source through a real collector", () => {
   };
   const stopCollector = async (c: Collector) => {
     c.ws.disconnect();
-    await c.engine.stopSyncLoopAndDrain();
-    for (const registered of c.engine.getSourcesById(sourceId))
-      await registered.instance.dispose?.();
+    const drain = await c.engine.stopSyncLoopAndDrain();
+    if (drain.timedOut)
+      throw new Error("Maildir collector sync drain was not confirmed; retain its fixture files");
+    const disposed = await Promise.allSettled(
+      c.engine
+        .registeredSources()
+        .map(({ source }) => Promise.resolve().then(() => source.instance.dispose?.())),
+    );
+    const failures = disposed.flatMap((result) =>
+      result.status === "rejected" ? [result.reason] : [],
+    );
+    if (failures.length)
+      throw new AggregateError(failures, "Maildir collector fixture cleanup failed");
   };
 
   beforeAll(async () => {
@@ -368,16 +378,36 @@ describe("real Maildir source through a real collector", () => {
   }, 120_000);
 
   afterAll(async () => {
-    if (collector) await stopCollector(collector);
-    await harness?.destroy();
+    const failures: unknown[] = [];
+    let collectorJoined = !collector;
+    if (collector) {
+      try {
+        await stopCollector(collector);
+        collectorJoined = true;
+      } catch (error) {
+        failures.push(error);
+      }
+    }
+    try {
+      await harness?.destroy();
+    } catch (error) {
+      failures.push(error);
+    }
     if (scratch) {
       try {
-        chmodSync(work(), 0o755);
-      } catch {
-        // Already restored.
+        if (existsSync(work())) setFixtureMode(work(), 0o755);
+      } catch (error) {
+        failures.push(error);
       }
-      rmSync(scratch, { recursive: true, force: true });
+      if (collectorJoined) {
+        try {
+          rmSync(scratch, { recursive: true, force: true });
+        } catch (error) {
+          failures.push(error);
+        }
+      }
     }
+    if (failures.length) throw new AggregateError(failures, "Maildir fixture cleanup failed");
   }, 30_000);
 
   test("a folder that is not a Maildir is refused when the source is added", async () => {
@@ -503,12 +533,15 @@ describe("real Maildir source through a real collector", () => {
     ]);
   }, 60_000);
 
-  test.skipIf(isRoot)(
+  test.skipIf(!canDenyFixtureReads)(
     "an unreadable folder withholds deletions until it reads again",
     async () => {
       expect(sourceId, "the source was added by an earlier step").toBeTruthy();
-      chmodSync(work(), 0o000);
+      setFixtureMode(work(), 0o000);
       try {
+        expect(() => readdirSync(work())).toThrowError(
+          expect.objectContaining({ code: expect.stringMatching(/^(?:EACCES|EPERM)$/u) }),
+        );
         // The only other copy goes: without the Work folder the source cannot
         // tell whether the message is still there, so it must not be deleted.
         rmSync(join(allMail(), "cur", maildirFileName("1772524800.6.host", "cur", "S")));
@@ -516,7 +549,7 @@ describe("real Maildir source through a real collector", () => {
         await runAbsenceSweep();
         expect(titles()).toContain("Quarterly planning notes");
       } finally {
-        chmodSync(work(), 0o755);
+        setFixtureMode(work(), 0o755);
       }
       await syncAndWait();
       await runAbsenceSweep();

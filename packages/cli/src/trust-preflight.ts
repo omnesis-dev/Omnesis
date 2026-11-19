@@ -58,6 +58,8 @@ const SUBCOMMAND_TRUST_EXEMPT = new Set([
   "devices discover",
   // The long form of `pair`, with the same target-of-its-own story.
   "devices redeem",
+  // Finds the gateway on this machine's tailnet and trusts that one.
+  "tailscale join",
   // Provisioning mints on this host and only reaches the gateway best-effort
   // afterwards, applying the saved copy itself without the preflight's probe;
   // `trust` replaces the very copy the preflight would apply.

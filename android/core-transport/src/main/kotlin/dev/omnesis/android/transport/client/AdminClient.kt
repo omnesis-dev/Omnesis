@@ -9,9 +9,20 @@ import dev.omnesis.android.transport.dto.CloudRelayStatus
 import dev.omnesis.android.transport.dto.DeviceEnrollmentPolicyBody
 import dev.omnesis.android.transport.dto.GatewayPairingApproving
 import dev.omnesis.android.transport.dto.GatewayPairingApprovalRequest
-import dev.omnesis.android.transport.dto.GatewayPairingApprovalRequests
+import dev.omnesis.android.transport.dto.GatewayPairingApprovals
 import dev.omnesis.android.transport.dto.GatewayPairingApprovalDecision
+import dev.omnesis.android.transport.dto.GatewayAccountPairingConfig
+import dev.omnesis.android.transport.dto.GatewayPairingApprovalCeremonyRequest
+import dev.omnesis.android.transport.dto.GatewayPairingPasskeyApproval
+import dev.omnesis.android.transport.dto.GatewayPasskeyCeremony
+import dev.omnesis.android.transport.dto.GatewayPasskeyLocation
+import dev.omnesis.android.transport.dto.TailscaleJoinApproving
+import dev.omnesis.android.transport.dto.TailscaleJoinDecisionBody
+import dev.omnesis.android.transport.dto.TailscaleJoinDecisionResult
+import dev.omnesis.android.transport.dto.TailscaleJoinRequest
+import dev.omnesis.android.transport.dto.TailscaleJoinRequests
 import dev.omnesis.android.transport.PermissionHealthSnapshot
+import dev.omnesis.android.transport.ResyncStep
 import dev.omnesis.android.transport.SourceMultiDeviceMode
 import dev.omnesis.android.transport.SourceModeTransitionNotConfirmed
 import dev.omnesis.android.transport.GatewayException
@@ -90,7 +101,9 @@ import dev.omnesis.android.transport.dto.PushPlan
 import dev.omnesis.android.transport.dto.RelayPushConsentBody
 import dev.omnesis.android.transport.dto.RelayPushRegistrationBody
 import dev.omnesis.android.transport.dto.InternalSource
+import dev.omnesis.android.transport.dto.ResyncMode
 import dev.omnesis.android.transport.dto.SourceMemberBody
+import dev.omnesis.android.transport.dto.SourceResyncBody
 import dev.omnesis.android.transport.dto.SourceMembershipResponse
 import dev.omnesis.android.transport.dto.SourceMetaEntry
 import dev.omnesis.android.transport.dto.SourceInventory
@@ -114,6 +127,7 @@ import dev.omnesis.android.transport.http.post
 import dev.omnesis.android.transport.http.postEmpty
 import dev.omnesis.android.transport.http.postEmptySegments
 import dev.omnesis.android.transport.http.postJson
+import dev.omnesis.android.transport.http.postJsonDiscarding
 import dev.omnesis.android.transport.http.postJsonSegments
 import dev.omnesis.android.transport.http.postJsonSegmentsDiscarding
 import dev.omnesis.android.transport.http.putJson
@@ -131,14 +145,51 @@ import okhttp3.HttpUrl
  * Admin surface (sources, descriptors, sync status, devices) plus the mutating source
  * actions. Mirrors the iOS `AdminClient` routes/shapes exactly.
  */
-class AdminClient(private val http: GatewayHttp) : GatewayPairingApproving, CloudRelayManaging {
-    override suspend fun pairingApprovalRequests(): List<GatewayPairingApprovalRequest> =
-        http.getJson<GatewayPairingApprovalRequests>("admin/cloud-pairing/requests").items
+class AdminClient(private val http: GatewayHttp) : GatewayPairingApproving, CloudRelayManaging, TailscaleJoinApproving {
+    override suspend fun tailscaleJoinRequests(): List<TailscaleJoinRequest> =
+        http.getPrivateJson<TailscaleJoinRequests>(listOf("admin", "tailscale", "join-requests")).requests
+
+    override suspend fun decideTailscaleJoin(id: String, approve: Boolean): String =
+        http.postJsonSegments<TailscaleJoinDecisionBody, TailscaleJoinDecisionResult>(
+            listOf("admin", "tailscale", "join-requests", id, "decision"),
+            TailscaleJoinDecisionBody(approve),
+        ).status
+
+    override suspend fun pairingApprovalRequests(): List<GatewayPairingApprovalRequest> = pairingApprovals().items
+
+    override suspend fun pairingApprovals(): GatewayPairingApprovals = http.getJson("admin/cloud-pairing/requests")
 
     override suspend fun decidePairingApproval(requestId: String, approve: Boolean, trustSignIn: Boolean) {
         http.postJson<GatewayPairingApprovalDecision, OkResponse>(
             "admin/cloud-pairing/decision",
             GatewayPairingApprovalDecision(requestId, approve, trustSignIn.takeIf { it }),
+        )
+    }
+
+    /**
+     * A gateway without the feature or without an origin of its own offers no ceremony; neither is
+     * an error. Nor is one with no confirmed passkey (a Google-only owner) or a security lock on:
+     * its page would only refuse, so the plain approval stays the way (defect 6.1).
+     */
+    override suspend fun pairingPasskeyLocation(): GatewayPasskeyLocation? =
+        try {
+            http.getJson<GatewayAccountPairingConfig>("devices/account/config").takeIf { it.passkeyApproval }?.gatewayPasskey
+        } catch (_: GatewayException.NotFound) {
+            null
+        }
+
+    override fun approvalPage(requestId: String): String? {
+        if (!UUID_PATTERN.matches(requestId) || http.baseUrl.scheme != "https") return null
+        return http.baseUrl.newBuilder().encodedPath("/portal/approve").query(null).fragment(requestId).build().toString()
+    }
+
+    override suspend fun pairingApprovalCeremony(requestId: String): GatewayPasskeyCeremony =
+        http.postJson("devices/account/approval/options", GatewayPairingApprovalCeremonyRequest(requestId))
+
+    override suspend fun approvePairingWithPasskey(requestId: String, proof: JsonObject, trustSignIn: Boolean) {
+        http.postJson<GatewayPairingPasskeyApproval, OkResponse>(
+            "devices/account/approval",
+            GatewayPairingPasskeyApproval(requestId, proof, trustSignIn.takeIf { it }),
         )
     }
 
@@ -936,8 +987,28 @@ class AdminClient(private val http: GatewayHttp) : GatewayPairingApproving, Clou
     }
 
     /**
+     * `POST /admin/sources/:id/resync` — read the whole source again in [mode]: in place
+     * deletes nothing, from scratch deletes what the source indexed first. Only a gateway whose
+     * source listing carries `resyncModes` reads the mode; an older one ignores it and deletes.
+     */
+    suspend fun resyncSource(sourceId: String, mode: ResyncMode) =
+        http.postJsonDiscarding("admin/sources/$sourceId/resync", SourceResyncBody(mode.wire))
+
+    /** Send the requests of one resync, in order, stopping at the first that fails. */
+    suspend fun runResync(sourceId: String, steps: List<ResyncStep>) {
+        steps.forEach { step ->
+            when (step) {
+                is ResyncStep.Resync -> resyncSource(sourceId, step.mode)
+                ResyncStep.DeleteAll -> deleteAllForSource(sourceId)
+                ResyncStep.Sync -> syncSource(sourceId)
+            }
+        }
+    }
+
+    /**
      * `POST /documents/delete-all/source/:id` — delete all ingested documents (and analytics
-     * rows) for a source. Phase one of the Resync flow, followed by [syncSource].
+     * rows) for a source. The first step of a resync from scratch on a gateway that predates
+     * resync modes, followed by [syncSource]; newer gateways resync through [resyncSource].
      */
     suspend fun deleteAllForSource(sourceId: String): DeleteAllResponse =
         http.postEmpty("documents/delete-all/source/$sourceId")
@@ -945,6 +1016,7 @@ class AdminClient(private val http: GatewayHttp) : GatewayPairingApproving, Clou
     private companion object {
         val ROLE_SLUG = Regex("[a-z][a-z0-9-]*")
         val PROVIDER_SLUG = Regex("[a-z0-9][a-z0-9-]*")
+        val UUID_PATTERN = Regex("^[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$")
         /** Pretty-printer for the free-form debug payload (display only, never re-sent). */
         val DEBUG_PRETTY = Json(OmnesisJson) { prettyPrint = true }
 

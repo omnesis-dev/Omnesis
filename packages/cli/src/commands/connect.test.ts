@@ -10,10 +10,11 @@ import {
   readFileSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { homedir, tmpdir } from "node:os";
+import { basename, dirname, join, resolve } from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash, X509Certificate } from "node:crypto";
 import { createServer } from "node:http";
@@ -58,9 +59,31 @@ function registeredClientName(): string | undefined {
 
 vi.mock("node:child_process", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:child_process")>();
+  const paths = await import("node:path");
   return {
     ...actual,
-    spawnSync: vi.fn(() => ({ status: 0, stdout: "", stderr: "" })),
+    // Harness replies are scripted; native security helpers keep their real process boundary.
+    spawnSync: new Proxy(
+      vi.fn(() => ({ status: 0, stdout: "", stderr: "" })),
+      {
+        apply(target, receiver, args: unknown[]) {
+          const command = String(args[0]);
+          const { basename, sep } = paths;
+          const name = basename(command).replace(/\.(?:exe|cmd)$/iu, "");
+          const argv = Array.isArray(args[1]) ? args[1] : [];
+          const script = typeof argv[0] === "string" ? argv[0] : "";
+          const components = script.split(sep);
+          const packageIndex = components.lastIndexOf("node_modules");
+          const nodeHarness =
+            command === process.execPath &&
+            packageIndex >= 0 &&
+            ["openclaw", "hermes"].includes(components[packageIndex + 1] ?? "");
+          return ["openclaw", "hermes"].includes(name) || nodeHarness
+            ? Reflect.apply(target, receiver, args)
+            : Reflect.apply(actual.spawnSync, actual, args);
+        },
+      },
+    ),
   };
 });
 // Whether the installed OpenClaw takes `--accept-capabilities` is probed by
@@ -123,7 +146,12 @@ vi.mock("../harness-restart.js", async (importOriginal) => ({
   spawnHarnessCommand: harnessCommands.run,
 }));
 
-import { ensureGatewayTrust, fetchPeerCert, verifiesUnderSystemTrust } from "@omnesis/core";
+import {
+  ensureGatewayTrust,
+  fetchPeerCert,
+  verifiesUnderSystemTrust,
+  inspectWindowsPrivatePaths,
+} from "@omnesis/core";
 import {
   loadIntegrationCredentials,
   loadPendingAuthorization,
@@ -265,6 +293,38 @@ function readableTree(root: string): string {
   return visit(root);
 }
 
+function harnessExecutableName(command: string): string {
+  const name = basename(command);
+  return process.platform === "win32" ? name.replace(/\.exe$/iu, "") : name;
+}
+
+function hermesVenvPath(home: string): string {
+  return join(
+    home,
+    "hermes-agent",
+    "venv",
+    process.platform === "win32" ? "Scripts" : "bin",
+    process.platform === "win32" ? "hermes.exe" : "hermes",
+  );
+}
+
+function installHermesFixture(home: string): string {
+  const executable = hermesVenvPath(home);
+  mkdirSync(dirname(executable), { recursive: true });
+  if (process.platform === "win32") symlinkSync(process.execPath, executable, "file");
+  else writeFileSync(executable, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  return executable;
+}
+
+async function expectPrivateFile(path: string): Promise<void> {
+  if (process.platform === "win32") {
+    const [status] = await inspectWindowsPrivatePaths([{ path, kind: "file" }], { protect: true });
+    expect(status?.private).toBe(true);
+  } else {
+    expect(statSync(path).mode & 0o777).toBe(0o600);
+  }
+}
+
 /** What each harness's skill report says when the Omnesis skill is ready. */
 const READY_SKILL_REPORT = {
   openclaw: '{"eligible":["omnesis"],"disabled":[],"blocked":[],"missingRequirements":[]}',
@@ -277,7 +337,9 @@ beforeEach(() => {
     code: 0,
     stdout:
       mode === "capture"
-        ? READY_SKILL_REPORT[spec.command.endsWith("hermes") ? "hermes" : "openclaw"]
+        ? READY_SKILL_REPORT[
+            harnessExecutableName(spec.command) === "hermes" ? "hermes" : "openclaw"
+          ]
         : "",
   }));
   integrationMocks.requestJson.mockImplementation(async () => ({
@@ -608,6 +670,22 @@ describe("legacy Hermes config migration", () => {
   });
 });
 
+describe("subprocess fixture boundary", () => {
+  it("delegates non-harness programs without consuming a scripted harness reply", () => {
+    (spawnSync as Mock).mockReturnValueOnce({ status: 37, stdout: "scripted harness", stderr: "" });
+    const args = ["literal space", "&|%PATH%!", "snow-雪"];
+    const actual = spawnSync(
+      process.execPath,
+      ["-e", "process.stdout.write(JSON.stringify(process.argv.slice(1)))", "--", ...args],
+      { encoding: "utf8" },
+    );
+    expect(actual.status).toBe(0);
+    expect(JSON.parse(actual.stdout)).toEqual(args);
+    expect(spawnSync).not.toHaveBeenCalled();
+    expect(spawnSync("openclaw", ["--fixture-only"])).toMatchObject({ status: 37 });
+  });
+});
+
 describe("harness paths", () => {
   it("recognizes exactly the supported harnesses", () => {
     expect(isHarness("openclaw")).toBe(true);
@@ -616,15 +694,29 @@ describe("harness paths", () => {
   });
 
   it("places the skill in each harness's discovered skills root", () => {
-    expect(skillFilePath("openclaw", "/h/.openclaw")).toBe("/h/.openclaw/skills/omnesis/SKILL.md");
-    expect(skillFilePath("hermes", "/h/.hermes")).toBe(
-      "/h/.hermes/skills/productivity/omnesis/SKILL.md",
+    const home = process.platform === "win32" ? String.raw`C:\Fictional\Home` : "/h";
+    expect(skillFilePath("openclaw", join(home, ".openclaw"))).toBe(
+      join(home, ".openclaw", "skills", "omnesis", "SKILL.md"),
+    );
+    expect(skillFilePath("hermes", join(home, ".hermes"))).toBe(
+      join(home, ".hermes", "skills", "productivity", "omnesis", "SKILL.md"),
     );
   });
 
   it("honors an explicit --dir override over defaults", () => {
-    expect(harnessHome("openclaw", "/custom")).toBe("/custom");
-    expect(harnessHome("hermes", "/custom")).toBe("/custom");
+    const override = join(tmpdir(), "fictional-custom-harness");
+    expect(harnessHome("openclaw", override)).toBe(override);
+    expect(harnessHome("hermes", override)).toBe(override);
+  });
+
+  it("expands native tilde separators in an explicit harness directory", () => {
+    expect(harnessHome("openclaw", "~/fictional-harness")).toBe(
+      join(homedir(), "fictional-harness"),
+    );
+    const backslashPath = "~\\fictional-harness";
+    expect(harnessHome("hermes", backslashPath)).toBe(
+      process.platform === "win32" ? join(homedir(), "fictional-harness") : backslashPath,
+    );
   });
 
   it("resolves OpenClaw profiles and explicit config paths", () => {
@@ -1305,7 +1397,7 @@ describe("OpenClaw source artifact", () => {
 
   it.each(["absent", "stale"] as const)(
     "builds and packs current source with ambient dist %s",
-    (distState) => {
+    async (distState) => {
       const fixture = mkdtempSync(join(process.cwd(), ".openclaw-artifact-fixture-"));
       tempHomes.push(fixture);
       const sourceRoot = join(process.cwd(), "packages", "agent-integration");
@@ -1331,26 +1423,27 @@ describe("OpenClaw source artifact", () => {
         );
       }
 
-      const artifact = prepareOpenClawInstallArchive({
+      const artifact = await prepareOpenClawInstallArchive({
         packageRoot: fixture,
         entry: join(fixture, "src", "index.ts"),
       });
       try {
+        // GNU tar treats an absolute Windows drive prefix as a remote host.
+        const archiveName = basename(artifact.archivePath);
+        const archiveOptions = { cwd: dirname(artifact.archivePath), encoding: "utf8" as const };
         const compiled = execFileSync(
           "tar",
-          ["-xOf", artifact.archivePath, "package/dist/openclaw.js"],
-          { encoding: "utf8" },
+          ["-xOf", archiveName, "package/dist/openclaw.js"],
+          archiveOptions,
         );
         expect(compiled).toContain("readSessionTranscriptEvents");
         expect(compiled).not.toContain("ambient stale artifact");
         const manifest = JSON.parse(
-          execFileSync("tar", ["-xOf", artifact.archivePath, "package/package.json"], {
-            encoding: "utf8",
-          }),
+          execFileSync("tar", ["-xOf", archiveName, "package/package.json"], archiveOptions),
         ) as { main: string; devDependencies?: unknown };
         expect(manifest.main).toBe("./dist/index.js");
         expect(manifest.devDependencies).toBeUndefined();
-        const packed = execFileSync("tar", ["-tf", artifact.archivePath], { encoding: "utf8" });
+        const packed = execFileSync("tar", ["-tf", archiveName], archiveOptions);
         expect(packed).toContain("package/openclaw.plugin.json");
         // The three runtime assets ship; the adapter's own test suite sits in
         // that same directory and has no business on an operator's machine.
@@ -1860,8 +1953,9 @@ describe("connect credential wiring", () => {
     expect(existsSync(join(home, "omnesis", "connect-recovery.json"))).toBe(false);
   });
 
+  // Three complete connection attempts exercise the real private-file helpers.
   it("resumes denied and expired OAuth without re-pairing or leaking credentials", async () => {
-    const home = mkdtempSync(join(tmpdir(), "omnesis-hermes-oauth-denied-"));
+    const home = mkdtempSync(join(tmpdir(), "omnesis-hermes-oauth-denied space's-"));
     tempHomes.push(home);
     writeFileSync(join(home, "config.yaml"), "display:\n  background_process_notifications: all\n");
     integrationMocks.authorizeOAuth.mockImplementationOnce(async (provider: unknown) => {
@@ -1927,7 +2021,7 @@ describe("connect credential wiring", () => {
     });
     expect(exitCode).toBe(EXIT_AUTH);
     expect(stderr).toEqual([
-      `OAuth approval expired. Run \`omnesis connect hermes --dir ${home}\` to request a new approval.\n`,
+      `OAuth approval expired. Run \`omnesis connect hermes --dir ${process.platform === "win32" ? `'${home.replaceAll("'", "''")}'` : `'${home.replaceAll("'", "'\\''")}'`}\` to request a new approval.\n`,
     ]);
     expect(loadPendingAuthorization(credentialsPath)).toBeNull();
     expect(loadIntegrationCredentials(credentialsPath).managementToken).toBe(
@@ -1940,7 +2034,7 @@ describe("connect credential wiring", () => {
     expect(redeemAgentIntegrationPairingCode).toHaveBeenCalledTimes(1);
     expect(readFileSync(join(home, ".env"), "utf8")).not.toContain("OMNESIS_TOKEN");
     expect(existsSync(join(home, "omnesis", "connect-recovery.json"))).toBe(false);
-  });
+  }, 60_000);
 
   it("installs against a gateway without Watches, and says so in the skill", async () => {
     const home = mkdtempSync(join(tmpdir(), "omnesis-no-watches-"));
@@ -2273,7 +2367,7 @@ describe("connect credential wiring", () => {
       configPath,
       `${configPath}.bak-omnesis`,
     ]) {
-      expect(statSync(path).mode & 0o777).toBe(0o600);
+      await expectPrivateFile(path);
       // The atomic writer stages each payload under a name private to
       // that write, so match on the shared `.tmp` suffix rather than on
       // any one name.
@@ -2301,7 +2395,7 @@ describe("connect credential wiring", () => {
 
     const journalPath = join(home, "omnesis", "connect-redemption.json");
     expect(existsSync(journalPath)).toBe(true);
-    expect(statSync(journalPath).mode & 0o777).toBe(0o600);
+    await expectPrivateFile(journalPath);
     const journal = JSON.parse(readFileSync(journalPath, "utf8")) as {
       pairingCode: string;
       idempotencyKey: string;
@@ -2648,7 +2742,7 @@ describe("connect credential wiring", () => {
     expect(`${env}\n${skill}`).not.toContain("integration.json");
     expect(`${env}\n${skill}`).not.toContain("management.json");
     expect(readableTree(home)).toContain(PAIRING.credentials.management.token);
-    expect(statSync(join(home, ".env")).mode & 0o777).toBe(0o600);
+    await expectPrivateFile(join(home, ".env"));
     expect(existsSync(join(home, "plugins", "omnesis-integration", "adapter.py"))).toBe(true);
     expect(existsSync(legacyPlugin)).toBe(false);
     expect(
@@ -2694,7 +2788,7 @@ describe("connect credential wiring", () => {
 
     const recoveryPath = join(home, "omnesis", "connect-recovery.json");
     expect(existsSync(recoveryPath)).toBe(true);
-    expect(statSync(recoveryPath).mode & 0o777).toBe(0o600);
+    await expectPrivateFile(recoveryPath);
     expect(readFileSync(recoveryPath, "utf8")).not.toContain(PAIRING.credentials.delivery.token);
     expect(readFileSync(join(home, "omnesis", "integration.json"), "utf8")).toContain(
       PAIRING.credentials.ingestion.token,
@@ -2807,9 +2901,7 @@ describe("connect credential wiring", () => {
     const home = mkdtempSync(join(tmpdir(), "omnesis-hermes-local-bin-"));
     tempHomes.push(home);
     writeFileSync(join(home, "config.yaml"), "display:\n  background_process_notifications: all\n");
-    const localHermes = join(home, "hermes-agent", "venv", "bin", "hermes");
-    mkdirSync(dirname(localHermes), { recursive: true });
-    writeFileSync(localHermes, "#!/bin/sh\n", { mode: 0o700 });
+    const localHermes = installHermesFixture(home);
     vi.spyOn(console, "log").mockImplementation(() => {});
 
     await run({
@@ -3376,9 +3468,7 @@ describe("connect loads the plugin it installed", () => {
       );
     }
     if (hermesVenv) {
-      const venv = join(home, "hermes-agent", "venv", "bin");
-      mkdirSync(venv, { recursive: true });
-      writeFileSync(join(venv, "hermes"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+      installHermesFixture(home);
     }
     seedRefreshableInstall(home, harness);
     return home;
@@ -3422,7 +3512,7 @@ describe("connect loads the plugin it installed", () => {
     await run({ harness: "hermes", dir: home, refresh: true, yes: true });
 
     const [restart] = streamed();
-    expect(restart?.command).toBe(join(home, "hermes-agent", "venv", "bin", "hermes"));
+    expect(restart?.command).toBe(hermesVenvPath(home));
     expect(restart?.env).toMatchObject({ HERMES_HOME: home });
     expect(captured()[0]?.args).toEqual(["skills", "list", "--source", "local"]);
     expect(output()).toContain("Hermes reports the omnesis skill ready.");

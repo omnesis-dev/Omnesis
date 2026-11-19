@@ -16,6 +16,7 @@
  * for the operator to deal with.
  */
 
+import { isExactFileIdentity } from "./identity.js";
 import type { SourceStateSpec } from "@omnesis/source-sdk";
 import type { LocalFileState, LocalFilesSyncCursor } from "./types.js";
 
@@ -35,6 +36,7 @@ function isFileState(value: unknown): value is LocalFileState {
     typeof value.inode === "number" &&
     typeof value.device === "number" &&
     typeof value.stableId === "string" &&
+    (value.fileIdentity === undefined || isExactFileIdentity(value.fileIdentity)) &&
     (value.partitionKey === undefined || typeof value.partitionKey === "string")
   );
 }

@@ -13,6 +13,7 @@ import type { CloudRelayManagementStatus } from "@omnesis/cloud-relay";
 export type CloudStatus = Partial<Omit<CloudRelayManagementStatus, "deviceEnrollment">> & {
   deviceEnrollment?: {
     policy?: string;
+    confirmationNeeded?: boolean;
     trustedSignIns?: { type?: string; id?: string; addedAt?: number; source?: string }[];
     /** Absent from a gateway that predates confirming sign-ins on its own page. */
     confirmedSignIns?: { type?: string; id?: string; at?: number; via?: string }[];
@@ -49,6 +50,28 @@ export function requestAccessUrl(status: { signup?: unknown } | undefined): stri
       /^[\x21-\x7e]+$/.test(url.href)
       ? url.href
       : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** A printable HTTPS security-check URL; no terminal controls or arbitrary navigation. */
+export function dnsVerificationUrl(value: unknown): string | undefined {
+  if (typeof value !== "string" || value.length > 16_384) return undefined;
+  try {
+    const url = new URL(value);
+    if (
+      url.protocol !== "https:" ||
+      url.username ||
+      url.password ||
+      url.hash ||
+      url.pathname !== "/_dns/v2/enroll" ||
+      url.searchParams.getAll("ticket").length !== 1 ||
+      !url.searchParams.get("ticket") ||
+      [...url.searchParams.keys()].some((key) => key !== "ticket")
+    )
+      return undefined;
+    return url.href;
   } catch {
     return undefined;
   }
@@ -156,6 +179,14 @@ export function formatCloudStatus(status: CloudStatus, version?: string): string
   const signIns = trustedSignInLines(status);
   const rows: [string, string][] = [
     ["Gateway version", plain(version)],
+    ...(dnsVerificationUrl(status.connect?.verification?.url)
+      ? [
+          ["Security check", dnsVerificationUrl(status.connect?.verification?.url)!] as [
+            string,
+            string,
+          ],
+        ]
+      : []),
     ["Error codes", errors(status).join(", ") || "none"],
     ...(status.notice ? [["Notice", plain(status.notice)] as [string, string]] : []),
     ["Remote access", status.enabled ? "on" : "off"],
@@ -208,7 +239,9 @@ export function formatCloudStatus(status: CloudStatus, version?: string): string
       status.deviceEnrollment?.policy === "ask"
         ? "ask first"
         : status.deviceEnrollment?.policy === "automatic"
-          ? "join automatically"
+          ? status.deviceEnrollment.confirmationNeeded
+            ? "join automatically once a sign-in is confirmed here; until then each waits for approval"
+            : "join automatically with a sign-in confirmed here"
           : "not reported",
     ],
     ["Trusted sign-ins", String(signIns.length)],

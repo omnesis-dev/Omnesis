@@ -5,6 +5,7 @@ import { readFile } from "node:fs/promises";
 import { expect, test } from "vitest";
 import {
   OFFICIAL_GOOGLE_BROWSER_TRUST,
+  OFFICIAL_ANDROID_PASSKEY_ORIGINS,
   googleBrowserTrust,
   trustedGoogleBrowserConfiguration,
 } from "./google-browser-trust.js";
@@ -44,16 +45,12 @@ test("the official google clients are compiled in and trusted without any config
       official("071jh21ngi85ne01k4oe5krfng2frmhr"),
       official("qc4prr14sagtienhn36lhmp7rthno16a"),
       official("3lnneuvft93ud5ssdppe19tc7fol4aku"),
-      official("sb5de515284geor9ui6vg7hsl4qsrg53"),
     ],
-    // Only the iOS app and the Android release and test builds count as native. The two clients
+    // Only the iOS app and Android release build count as native. The two clients
     // of unknown type, and the web clients, never do.
     nativeClients: {
       ios: [official("071jh21ngi85ne01k4oe5krfng2frmhr")],
-      android: [
-        official("3lnneuvft93ud5ssdppe19tc7fol4aku"),
-        official("sb5de515284geor9ui6vg7hsl4qsrg53"),
-      ],
+      android: [official("3lnneuvft93ud5ssdppe19tc7fol4aku")],
     },
   });
   expect(trust.deviceClientIds).not.toContain(trust.ownerLinkClientId);
@@ -193,6 +190,34 @@ test("discovery can only narrow independently trusted purposes, audiences and pr
         deviceAuthorizedParties: [],
       },
       official,
+    ),
+  ).toThrow("trusted deployment audiences");
+});
+
+test("production trust refuses debug OAuth presenters and debug Android passkey origins", () => {
+  const trust = googleBrowserTrust();
+  const debugPresenter = official("sb5de515284geor9ui6vg7hsl4qsrg53");
+  expect(trust.deviceAuthorizedParties).not.toContain(debugPresenter);
+  expect(trust.nativeClients?.android).not.toContain(debugPresenter);
+  expect(OFFICIAL_ANDROID_PASSKEY_ORIGINS).toEqual([
+    "android:apk-key-hash:TPfeOsd2u2Uq8rCtF9DeGgc1m50jt6fPpDJYcUvAaCo",
+  ]);
+  const configuration = trustedGoogleBrowserConfiguration(
+    {
+      protocol: config.protocol,
+      deviceEnrollmentClientId: trust.deviceEnrollmentClientId,
+      deviceClientIds: [...trust.deviceClientIds, debugPresenter],
+      deviceAuthorizedParties: [...trust.deviceAuthorizedParties, debugPresenter],
+    },
+    trust,
+  );
+  expect(configuration.deviceClientIds).toEqual(trust.deviceClientIds);
+  expect(configuration.deviceAuthorizedParties).toEqual(trust.deviceAuthorizedParties);
+  // The compatibility exception cannot admit an unrelated client.
+  expect(() =>
+    trustedGoogleBrowserConfiguration(
+      { ...configuration, deviceAuthorizedParties: [debugPresenter, "unknown-presenter"] },
+      trust,
     ),
   ).toThrow("trusted deployment audiences");
 });

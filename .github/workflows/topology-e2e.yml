@@ -35,6 +35,9 @@ jobs:
         run: |
           [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
           test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+      - name: Keep this job off production Omnesis services
+        id: production-network
+        run: $GITHUB_WORKSPACE/scripts/ci/production-network.sh isolate
       # Fixture versioning resolves development dependencies, including OpenClaw.
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -54,3 +57,7 @@ jobs:
           docker rm -f omnesis-topo-gateway omnesis-topo-collector omnesis-topo-git >/dev/null 2>&1 || true
           docker network rm omnesis-topo >/dev/null 2>&1 || true
           rm -rf /tmp/omnesis-topology-fixtures
+
+      - name: Check nothing tried to reach production Omnesis services
+        if: ${{ always() && steps.production-network.outcome == 'success' }}
+        run: $GITHUB_WORKSPACE/scripts/ci/production-network.sh verify

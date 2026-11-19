@@ -35,6 +35,8 @@ import {
   type PersonBrowseCursor,
   type PersonSortBy,
 } from "../data/repositories/PersonRepository.js";
+import { getPersonDocuments } from "../data/repositories/DocumentPeopleRepository.js";
+import { listMergeRuleGroups, type MergeRuleGroupsOptions } from "../domain/merge/rule-groups.js";
 import { assemblePersonLookup } from "../domain/person-lookup.js";
 import { countMessagesByPerson, type MessageCountsQuery } from "../domain/message-counts.js";
 import { likeSearchDocuments } from "../search/like-search.js";
@@ -130,6 +132,7 @@ import {
 } from "../brain/knowledge/review-selection.js";
 import {
   hasKnowledgeWorkFromExcludedSources,
+  hasRewrittenHistoryChangeWork,
   listStaleKnowledgeWork,
 } from "../brain/knowledge/work.js";
 import { readKnowledgeArcs } from "../brain/knowledge/engine-graph.js";
@@ -207,6 +210,8 @@ export const ioHandlers = {
   "io.knowledgeStaleWork": (db: Db, limit: number) => listStaleKnowledgeWork(db, limit),
   "io.knowledgeHasExcludedWork": (db: Db, excludedSources: string[]) =>
     hasKnowledgeWorkFromExcludedSources(db, excludedSources),
+  "io.knowledgeHasRewrittenHistoryWork": (db: Db, now: number, recentWindowMs: number) =>
+    hasRewrittenHistoryChangeWork(db, now, recentWindowMs),
   "io.knowledgeArcs": (db: Db, inputs: string[], bound: number) =>
     readKnowledgeArcs(db, inputs, bound),
   "io.knowledgeDiscoveryBacklog": (db: Db, options: KnowledgeDiscoveryBacklogOptions) =>
@@ -245,6 +250,14 @@ export const ioHandlers = {
     options: { sortBy?: PersonSortBy; after?: PersonBrowseCursor },
   ) => searchPeople(db, query, limit, options),
 
+  // A page of a person's documents (GET /people/:id/documents). On the main
+  // thread, a person on millions of documents froze the gateway for minutes.
+  "io.personDocuments": (
+    db: Db,
+    personId: string,
+    options: { role?: string; limit?: number; offset?: number },
+  ) => getPersonDocuments(db, personId, options),
+
   // Person lookup (agent `lookup_people`). The same heavy `searchPeople` join
   // as browse, plus up to ~limit per-candidate follow-ups; on the main thread
   // it froze every request on nearly every agent turn. `experimental` is passed
@@ -276,6 +289,11 @@ export const ioHandlers = {
   // serializable output.
   "io.mergeCandidateVisibility": (db: Db, opts: { status: "pending" | "accepted" | "denied" }) =>
     explainMergeCandidateVisibility(db, opts),
+
+  // The People → Rules page (GET /people/merge-rule-groups). Grouping resolves
+  // the winner of every active rule and enriching a page reads its people's
+  // documents, so the read grows with the store and stays off the main thread.
+  "io.mergeRuleGroups": (db: Db, opts: MergeRuleGroupsOptions) => listMergeRuleGroups(db, opts),
 
   // Legacy LIKE search (GET /documents/search) — a leading-wildcard
   // `content LIKE '%q%'` full-table scan. Low-traffic legacy path, moved off

@@ -3,6 +3,7 @@
 
 import { mkdtempSync, existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import { defineSource } from "@omnesis/source-sdk";
 import { ProviderId, SourceType, ProviderType } from "@omnesis/types";
@@ -488,7 +489,7 @@ describe("SourceManager", () => {
   beforeEach(() => {
     engine = createMockEngine();
     gateway = createMockGateway();
-    tmpDir = mkdtempSync("/tmp/source-manager-test-");
+    tmpDir = mkdtempSync(join(tmpdir(), "source-manager-test-"));
     configPath = join(tmpDir, "collector.json");
     cleanupCalls = [];
     cleanupContextCalls = [];

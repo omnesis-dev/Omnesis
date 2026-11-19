@@ -5,6 +5,7 @@ import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync, statSync 
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
+import { inspectWindowsPrivatePathSync } from "./windows-private-file.js";
 import { openReadonlySqliteSnapshot } from "./sqlite-snapshot.js";
 
 const roots: string[] = [];
@@ -25,8 +26,12 @@ it("recovers before readonly reopen and owns idempotent close/cleanup", () => {
   const snapshot = openReadonlySqliteSnapshot(source, (path, options) => {
     expect(path).not.toBe(source);
     expect(options.fileMustExist).toBe(true);
-    expect(statSync(path).mode & 0o777).toBe(0o600);
-    expect(statSync(dirname(path)).mode & 0o777).toBe(0o700);
+    if (process.platform === "win32")
+      expect(inspectWindowsPrivatePathSync(path, "file").private).toBe(true);
+    else expect(statSync(path).mode & 0o777).toBe(0o600);
+    if (process.platform === "win32")
+      expect(inspectWindowsPrivatePathSync(dirname(path), "directory").private).toBe(true);
+    else expect(statSync(dirname(path)).mode & 0o777).toBe(0o700);
     const mode = options.readonly ? "readonly" : "recover";
     order.push("open:" + mode);
     return {

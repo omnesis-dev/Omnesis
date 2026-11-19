@@ -11,6 +11,7 @@ import {
   hostedClientsHint as untypedHostedClientsHint,
   leadsWithLocalAddress,
   relayPublicAddress as untypedRelayPublicAddress,
+  tailscalePublicAddress as untypedTailscalePublicAddress,
   // @ts-expect-error — portal modules are plain JS.
 } from "./public-address.js";
 // @ts-expect-error — portal modules are plain JS.
@@ -42,7 +43,11 @@ interface Setup {
   commands: Array<{ value: string }>;
   addressNotice?: Notice;
 }
-type Oauth = { resource: string; loopbackOnly?: boolean; resources?: Array<{ resource: string }> };
+type Oauth = {
+  resource: string;
+  loopbackOnly?: boolean;
+  resources?: Array<{ resource: string; tailscaleHost?: "private" | "public" }>;
+};
 type Agent = { needsPublicAddress: string; standardPortOnly?: string };
 
 const relayPublicAddress = untypedRelayPublicAddress as (
@@ -50,7 +55,12 @@ const relayPublicAddress = untypedRelayPublicAddress as (
   status: Record<string, unknown> | null,
   oauth: Oauth | null,
 ) => Relay;
-const addressChoices = untypedAddressChoices as (oauth: Oauth, relay?: Relay) => Choices;
+const tailscalePublicAddress = untypedTailscalePublicAddress as (
+  tailscaleEmbed: boolean,
+  state: Record<string, unknown> | null,
+  oauth: Oauth | null,
+) => Relay;
+const addressChoices = untypedAddressChoices as (oauth: Oauth, relay?: Relay, tailscale?: Relay) => Choices;
 const hostedClientAddress = untypedHostedClientAddress as (
   agent: Agent,
   resource: string,
@@ -62,8 +72,13 @@ const localClientAddress = untypedLocalClientAddress as (
   relay?: Relay,
   choices?: Choices,
 ) => Notice | null;
-const hostedClientsHint = untypedHostedClientsHint as (relay?: Relay) => Part[] | null;
+const hostedClientsHint = untypedHostedClientsHint as (relay?: Relay, tailscale?: Relay) => Part[] | null;
 const agentSetups = untypedAgentSetups as (oauth: Oauth, options?: { relay?: Relay }) => Setup[];
+const agentSetupsWithTailscale = untypedAgentSetups as (
+  oauth: Oauth,
+  options?: { relay?: Relay; tailscale?: Relay },
+) => Setup[];
+const NO_RELAY_FOR_TEST: Relay = { state: "none" };
 
 const RELAY = "https://g-fictional.relay.example.test/mcp";
 const TAILNET = "https://100.64.0.7:7600/mcp";
@@ -108,7 +123,10 @@ function hosted(agent: Agent, resource: string, relay: Relay, lead = resource, o
   return hostedClientAddress(agent, resource, relay, addressChoices(oauth(lead, others), relay));
 }
 
-const FUNNEL_PARAGRAPH = "Publish the gateway with Tailscale Funnel or use a domain of your own.";
+const FUNNEL_PARAGRAPH = "Publish the gateway with Tailscale on this computer or a domain of your own, in Settings, Connectivity.";
+/** The pages FUNNEL_PARAGRAPH links to, and where an unavailable relay is looked at. */
+const PUBLISH_ROUTES = ["/portal/settings/host-tailscale", "/portal/settings/own-address"];
+const RELAY_ROUTE = "/portal/settings/relay";
 
 describe("relayPublicAddress", () => {
   test("shows nothing of the relay when the gateway does not advertise it", () => {
@@ -158,10 +176,10 @@ describe("relayPublicAddress", () => {
 
 const READY: Relay = { state: "ready", url: RELAY };
 const UNAVAILABLE = [
-  ["off", "turned off", "Remote access is turned off.", "Turn it on in Settings, Account."],
-  ["checking", "being checked", "This gateway's Omnesis address is still being checked.", "This takes up to a minute. Follow it in Settings, Account."],
-  ["disconnected", "not connected", "Remote access is not connected right now.", "Check it in Settings, Account."],
-  ["unreachable", "not reachable", "This gateway's Omnesis address could not be reached.", "Check remote access in Settings, Account."],
+  ["off", "turned off", "Remote access is turned off.", "Turn it on in Settings, Connectivity."],
+  ["checking", "being checked", "This gateway's Omnesis address is still being checked.", "This takes up to a minute. Follow it in Settings, Connectivity."],
+  ["disconnected", "not connected", "Remote access is not connected right now.", "Check it in Settings, Connectivity."],
+  ["unreachable", "not reachable", "This gateway's Omnesis address could not be reached.", "Check the relay in Settings, Connectivity."],
 ] as const;
 const PRIVATE_CLAUDE =
   "This address is private. Claude connects from Anthropic's servers, so it cannot reach this gateway until you publish it.";
@@ -218,11 +236,8 @@ describe("hostedClientAddress", () => {
       expect(notice.usable).toBe(false);
       expect(notice.notice.warning).toBe(true);
       expect(paragraphs(notice)).toEqual([PRIVATE_CLAUDE, FUNNEL_PARAGRAPH]);
-      expect(links(notice)).toEqual([
-        "https://omnesis.dev/docs/connect#tailscale-funnel",
-        "https://omnesis.dev/docs/setup#public-domain",
-      ]);
-      expect(routes(notice)).toEqual([]);
+      expect(links(notice)).toEqual([]);
+      expect(routes(notice)).toEqual(PUBLISH_ROUTES);
     });
 
     test("an address the owner published is taken at its word", () => {
@@ -259,14 +274,14 @@ describe("hostedClientAddress", () => {
     expect(paragraphs(notice)).toEqual([
       PRIVATE_CLAUDE,
       FUNNEL_PARAGRAPH,
-      "Or connect this gateway to an Omnesis account in Settings, Account to give it a public address.",
+      "Or connect this gateway to an Omnesis account in Settings, Connectivity to give it a public address.",
     ]);
-    expect(routes(notice)).toEqual([ACCOUNT_SETTINGS_ROUTE]);
+    expect(routes(notice)).toEqual([...PUBLISH_ROUTES, ACCOUNT_SETTINGS_ROUTE]);
     expect(ACCOUNT_SETTINGS_ROUTE).toBe("/portal/settings/account");
     expect(paragraphs(hosted(CLAUDE, OWN, { state: "not-connected" }, OWN, []))).toEqual([
       REACHABLE_CLAUDE,
       FUNNEL_PARAGRAPH,
-      "Or connect this gateway to an Omnesis account in Settings, Account to give it a public address.",
+      "Or connect this gateway to an Omnesis account in Settings, Connectivity to give it a public address.",
     ]);
   });
 
@@ -296,7 +311,7 @@ describe("hostedClientAddress", () => {
           `${headline} Claude connects from Anthropic's servers, so it cannot reach this address right now.`,
           action,
         ]);
-        expect(routes(notice)).toEqual([ACCOUNT_SETTINGS_ROUTE]);
+        expect(routes(notice)).toEqual([RELAY_ROUTE]);
         expect(links(notice)).toEqual([]);
       }
     });
@@ -344,7 +359,7 @@ describe("hostedClientAddress", () => {
       const notice = hosted(CLAUDE, TAILNET, { state, url: RELAY });
       expect(notice.usable).toBe(false);
       expect(paragraphs(notice)).toEqual([PRIVATE_CLAUDE, `This gateway has an Omnesis address. ${headline} ${action}`]);
-      expect(routes(notice)).toEqual([ACCOUNT_SETTINGS_ROUTE]);
+      expect(routes(notice)).toEqual([RELAY_ROUTE]);
       expect(links(notice)).toEqual([]);
     });
 
@@ -352,7 +367,7 @@ describe("hostedClientAddress", () => {
       expect(paragraphs(hosted(CLAUDE, TAILNET, { state: "not-connected" }, TAILNET, [LOCAL]))).toEqual([
         PRIVATE_CLAUDE,
         FUNNEL_PARAGRAPH,
-        "Or connect this gateway to an Omnesis account in Settings, Account to give it a public address.",
+        "Or connect this gateway to an Omnesis account in Settings, Connectivity to give it a public address.",
       ]);
     });
 
@@ -435,6 +450,7 @@ describe("agentSetups with the relay", () => {
     expect(agentSetups(trusted(TAILNET, [])).filter((agent) => agent.addressNotice).map((agent) => agent.id)).toEqual([
       "chatgpt",
       "claude-apps",
+      "grok-bot",
     ]);
   });
 
@@ -454,7 +470,7 @@ describe("agentSetups with the relay", () => {
 
   test("with a private address selected, hosted agents are blocked and the others are written for it", () => {
     const setups = agentSetups(trusted(TAILNET), { relay: READY });
-    expect(blocked(setups)).toEqual(["chatgpt", "claude-apps"]);
+    expect(blocked(setups)).toEqual(["chatgpt", "claude-apps", "grok-bot"]);
     expect(setups.find((agent) => agent.id === "claude-code")!.commands[0]!.value).toContain(TAILNET);
     expect(JSON.stringify(setups.filter((agent) => !agent.addressNotice))).not.toContain("relay.example.test");
   });
@@ -480,22 +496,24 @@ describe("agentSetups with the relay", () => {
   test("without the relay every agent is what it was", () => {
     for (const resource of [TAILNET, LOCAL, OWN]) {
       expect(agentSetups(trusted(resource, []), { relay: { state: "none" } })).toEqual(agentSetups(trusted(resource, [])));
-      expect(agentSetups(trusted(resource, [])).some((agent) => !agent.addressNotice === Boolean(agent.id.match(/^(chatgpt|claude-apps)$/u)))).toBe(false);
+      expect(agentSetups(trusted(resource, [])).some((agent) => !agent.addressNotice === Boolean(agent.id.match(/^(chatgpt|claude-apps|grok-bot)$/u)))).toBe(false);
     }
   });
 });
 
 describe("hostedClientsHint", () => {
-  test("keeps the page's own sentence without the relay", () => {
-    expect(hostedClientsHint()).toBeNull();
-    expect(hostedClientsHint({ state: "none" })).toBeNull();
+  test("without the relay or the device, points at publishing the gateway in Connectivity", () => {
+    const hint = "ChatGPT, Claude apps and Grok bot need an Internet-reachable address: publish the gateway with Tailscale on this computer or a domain of your own.";
+    expect(text(hostedClientsHint()!)).toBe(hint);
+    expect(text(hostedClientsHint({ state: "none" })!)).toBe(hint);
+    expect(hostedClientsHint()!.flatMap((part) => (typeof part === "object" && "route" in part ? [part.route] : []))).toEqual(PUBLISH_ROUTES);
   });
 
   test.each([
-    ["ready", "ChatGPT and Claude apps can use this gateway's Omnesis address."],
-    ["off", "ChatGPT and Claude apps can use this gateway's Omnesis address. Remote access is turned off. Turn it on in Settings, Account."],
-    ["checking", "ChatGPT and Claude apps can use this gateway's Omnesis address. This gateway's Omnesis address is still being checked. This takes up to a minute. Follow it in Settings, Account."],
-    ["not-connected", "ChatGPT and Claude apps need an Internet-reachable address. Connecting this gateway to an Omnesis account in Settings, Account gives it one."],
+    ["ready", "ChatGPT, Claude apps and Grok bot can use this gateway's Omnesis address."],
+    ["off", "ChatGPT, Claude apps and Grok bot can use this gateway's Omnesis address. Remote access is turned off. Turn it on in Settings, Connectivity."],
+    ["checking", "ChatGPT, Claude apps and Grok bot can use this gateway's Omnesis address. This gateway's Omnesis address is still being checked. This takes up to a minute. Follow it in Settings, Connectivity."],
+    ["not-connected", "ChatGPT, Claude apps and Grok bot need an Internet-reachable address. Connecting this gateway to an Omnesis account in Settings, Connectivity gives it one."],
   ])("%s", (state, expected) => {
     expect(text(hostedClientsHint({ state, url: RELAY })!)).toBe(expected);
   });
@@ -507,5 +525,187 @@ describe("leadsWithLocalAddress", () => {
     expect(leadsWithLocalAddress({ resource: RELAY, loopbackOnly: true })).toBe(false);
     expect(leadsWithLocalAddress({ resource: LOCAL })).toBe(false);
     expect(leadsWithLocalAddress(null)).toBe(false);
+  });
+});
+
+describe("the gateway's own Tailscale device", () => {
+  const DEVICE = "https://omnesis.example-net.ts.net/mcp";
+  const device = (publicState: string, over: Record<string, unknown> = {}) => ({
+    connection: "connected",
+    url: "https://omnesis.example-net.ts.net",
+    public: { wanted: publicState !== "off", state: publicState },
+    ...over,
+  });
+  const NONE = { state: "none" };
+  const ON = { state: "on", url: DEVICE };
+  const OFF = { state: "off", url: DEVICE };
+  const choose = (lead: string, others: string[], relay: Relay, tailscale: Relay, resource?: string) => {
+    const choices = addressChoices(oauth(lead, others), relay, tailscale);
+    return { choices, notice: hostedClientAddress(CLAUDE, resource ?? choices.initial, relay, choices) };
+  };
+
+  test("its address is offered only when the feature is on, the device connected and the address authorized", () => {
+    expect(tailscalePublicAddress(false, device("on"), oauth(LOCAL, [DEVICE]))).toEqual(NONE);
+    expect(tailscalePublicAddress(true, null, oauth(LOCAL, [DEVICE]))).toEqual(NONE);
+    expect(tailscalePublicAddress(true, device("on", { connection: "needs-sign-in" }), oauth(LOCAL, [DEVICE]))).toEqual(NONE);
+    expect(tailscalePublicAddress(true, device("on"), oauth(LOCAL, []))).toEqual(NONE);
+    expect(tailscalePublicAddress(true, device("on"), oauth(LOCAL, [DEVICE]))).toEqual(ON);
+    expect(tailscalePublicAddress(true, device("starting"), oauth(LOCAL, [DEVICE]))).toEqual({ state: "starting", url: DEVICE });
+    expect(tailscalePublicAddress(true, device("off"), oauth(LOCAL, [DEVICE]))).toEqual(OFF);
+    for (const refused of ["needs-enable", "unavailable"]) {
+      expect(tailscalePublicAddress(true, device(refused), oauth(LOCAL, [DEVICE]))).toEqual({ state: "refused", url: DEVICE });
+    }
+  });
+
+  test("without the relay it alone makes the address selectable, and its public address is picked first", () => {
+    const { choices, notice } = choose(LOCAL, [DEVICE], NO_RELAY_FOR_TEST, ON);
+    expect(choices.selectable).toBe(true);
+    expect(choices.initial).toBe(DEVICE);
+    expect(choices.options.map((option) => option.text)).toEqual([
+      `This machine only: ${LOCAL}`,
+      `Tailscale public address: ${DEVICE}`,
+    ]);
+    expect(notice.usable).toBe(true);
+    expect(paragraphs(notice)).toEqual([
+      "Claude connects from Anthropic's servers, and this address is reachable from the Internet.",
+    ]);
+  });
+
+  test("while it answers only on the tailnet it is named so, refused to hosted agents, and points at its settings", () => {
+    const { choices, notice } = choose(LOCAL, [DEVICE], NO_RELAY_FOR_TEST, OFF, DEVICE);
+    expect(choices.initial).toBe(LOCAL);
+    expect(choices.options[1].text).toBe(`Tailscale network only: ${DEVICE}`);
+    expect(notice.usable).toBe(false);
+    expect(notice.notice.warning).toBe(true);
+    expect(paragraphs(notice)).toEqual([
+      "This address only answers on your Tailscale network. Claude connects from Anthropic's servers, so it cannot reach this gateway there.",
+      "Put its MCP server on the Internet in Settings, MCP server.",
+    ]);
+    expect(routes(notice)).toEqual(["/portal/settings/mcp"]);
+    // An agent on the owner's own network uses it as it is.
+    expect(localClientAddress(DEVICE, NO_RELAY_FOR_TEST, choices)).toBeNull();
+    // A private address beside it names the device's settings instead of publishing advice.
+    const lead = hostedClientAddress(CLAUDE, LOCAL, NO_RELAY_FOR_TEST, choices);
+    expect(lead.usable).toBe(false);
+    expect(paragraphs(lead).at(-1)).toBe(
+      "This gateway's Tailscale device has an address. This address only answers on your Tailscale network. Put its MCP server on the Internet in Settings, MCP server.",
+    );
+  });
+
+  test("an address opening says so and offers another usable one", () => {
+    const { choices, notice } = choose(OWN, [DEVICE], NO_RELAY_FOR_TEST, { state: "starting", url: DEVICE }, DEVICE);
+    expect(choices.initial).toBe(OWN);
+    expect(paragraphs(notice)).toEqual([
+      "This address's public access is still opening. Claude connects from Anthropic's servers, so it cannot reach this gateway there.",
+      "This takes up to a minute. Follow it in Settings, Connectivity.",
+      "Or pick another address from the list above.",
+    ]);
+  });
+
+  test("a public address Tailscale refuses says so instead of asking to turn it on", () => {
+    const { notice } = choose(LOCAL, [DEVICE], NO_RELAY_FOR_TEST, { state: "refused", url: DEVICE }, DEVICE);
+    expect(paragraphs(notice)).toEqual([
+      "Tailscale is not letting this address be public yet. Claude connects from Anthropic's servers, so it cannot reach this gateway there.",
+      "See what it needs in Settings, Connectivity.",
+    ]);
+  });
+
+  test("a relay not yet connected is still suggested beside the device's address", () => {
+    const relay = { state: "not-connected" };
+    const choices = addressChoices(oauth(LOCAL, [DEVICE]), relay, OFF);
+    const lead = hostedClientAddress(CLAUDE, LOCAL, relay, choices);
+    expect(paragraphs(lead).slice(-2)).toEqual([
+      "This gateway's Tailscale device has an address. This address only answers on your Tailscale network. Put its MCP server on the Internet in Settings, MCP server.",
+      "Or connect this gateway to an Omnesis account in Settings, Connectivity to give it a public address.",
+    ]);
+  });
+
+  test("all three are additive: the owner's own address, the relay's and the device's are each offered", () => {
+    const relay = { state: "ready", url: RELAY };
+    const { choices } = choose(OWN, [RELAY, DEVICE], relay, ON);
+    expect(choices.selectable).toBe(true);
+    expect(choices.initial).toBe(OWN);
+    expect(choices.options.map((option) => option.kind)).toEqual(["public", "relay", "tailscale"]);
+    for (const option of choices.options) {
+      expect(hostedClientAddress(CLAUDE, option.resource, relay, choices).usable, option.text).toBe(true);
+    }
+    // Without the owner's own address the relay still leads, then the device.
+    expect(choose(LOCAL, [RELAY, DEVICE], relay, ON).choices.initial).toBe(RELAY);
+    expect(choose(LOCAL, [RELAY, DEVICE], { state: "off", url: RELAY }, ON).choices.initial).toBe(DEVICE);
+  });
+
+  test("a localhost-led page names the device's address to hosted apps, the relay's wording first", () => {
+    expect(text(hostedClientsHint(NO_RELAY_FOR_TEST, NONE)!)).toMatch(/^ChatGPT, Claude apps and Grok bot need an Internet-reachable address: publish/u);
+    expect(text(hostedClientsHint(NO_RELAY_FOR_TEST, ON)!)).toBe(
+      "ChatGPT, Claude apps and Grok bot can use this gateway's Tailscale public address.",
+    );
+    expect(text(hostedClientsHint(NO_RELAY_FOR_TEST, OFF)!)).toBe(
+      "ChatGPT, Claude apps and Grok bot need an Internet-reachable address. Putting the MCP server of this gateway's Tailscale device on the Internet, in Settings, MCP server, gives it one.",
+    );
+    expect(text(hostedClientsHint({ state: "ready", url: RELAY }, OFF)!)).toBe(
+      "ChatGPT, Claude apps and Grok bot can use this gateway's Omnesis address.",
+    );
+    // A relay that cannot serve yet does not hide a device address that already works.
+    expect(text(hostedClientsHint({ state: "not-connected" }, ON)!)).toBe(
+      "ChatGPT, Claude apps and Grok bot can use this gateway's Tailscale public address.",
+    );
+    expect(text(hostedClientsHint({ state: "ready", url: RELAY }, ON)!)).toBe(
+      "ChatGPT, Claude apps and Grok bot can use this gateway's Omnesis address.",
+    );
+  });
+
+  test("the owner's own public address needs no publishing advice once the device has an address", () => {
+    const { notice } = choose(OWN, [DEVICE], NO_RELAY_FOR_TEST, OFF, OWN);
+    expect(notice.usable).toBe(true);
+    expect(paragraphs(notice)).not.toContain(FUNNEL_PARAGRAPH);
+  });
+
+  test("agent setups carry the device's address through to every agent's notice", () => {
+    const setups = agentSetupsWithTailscale(oauth(DEVICE, []), { tailscale: OFF });
+    const claude = setups.find((setup) => setup.id === "claude-apps");
+    expect(claude?.blocked).toBe(true);
+    expect(routes(claude!.addressNotice!)).toContain("/portal/settings/mcp");
+  });
+});
+
+describe("this computer's Tailscale address", () => {
+  const HOST = "https://studio.example-net.ts.net:10000/mcp";
+  test("kept to the Tailscale network, it is named so and hosted agents are sent to the MCP page", () => {
+    const choices = addressChoices(
+      { resource: OWN, resources: [{ resource: OWN }, { resource: HOST, tailscaleHost: "private" }] },
+      { state: "none" },
+      // The gateway's own Tailscale device is on, so the dialog offers a choice.
+      { state: "off", url: "https://omnesis-elsewhere.example-net.ts.net/mcp" },
+    );
+    expect(choices.selectable).toBe(true);
+    expect(choices.options.map((option) => option.text)).toEqual([
+      `Your public address: ${OWN}`,
+      `Tailscale network only: ${HOST}`,
+    ]);
+    const notice = hostedClientAddress(CLAUDE, HOST, NO_RELAY_FOR_TEST, choices);
+    expect(notice.usable).toBe(false);
+    expect(paragraphs(notice)).toEqual([
+      "This address only answers on your Tailscale network. Claude connects from Anthropic's servers, so it cannot reach this gateway there.",
+      "Put its MCP server on the Internet in Settings, MCP server.",
+      "Or pick another address from the list above.",
+    ]);
+    expect(routes(notice)).toEqual(["/portal/settings/mcp"]);
+    // Shown alone, as on a gateway without the relay or the device, it says the same.
+    const alone = addressChoices({ resource: HOST, resources: [{ resource: HOST, tailscaleHost: "private" }] });
+    expect(paragraphs(hostedClientAddress(CLAUDE, HOST, NO_RELAY_FOR_TEST, alone))[0]).toBe(
+      "This address only answers on your Tailscale network. Claude connects from Anthropic's servers, so it cannot reach this gateway there.",
+    );
+    // Agents on the owner's own network use it as it is.
+    expect(localClientAddress(HOST, NO_RELAY_FOR_TEST, choices)).toBeNull();
+  });
+
+  test("on the Internet, it is public, and hosted agents are told so without advice to publish it", () => {
+    const choices = addressChoices({ resource: HOST, resources: [{ resource: HOST, tailscaleHost: "public" }] });
+    expect(choices.options[0]).toMatchObject({ kind: "public", text: `Tailscale on this computer, public: ${HOST}` });
+    const notice = hostedClientAddress(CLAUDE, HOST, NO_RELAY_FOR_TEST, choices);
+    expect(notice.usable).toBe(true);
+    expect(paragraphs(notice)).toEqual([
+      "Claude connects from Anthropic's servers, and this address is reachable from the Internet.",
+    ]);
   });
 });

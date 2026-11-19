@@ -77,6 +77,7 @@ function setup(
     abuseLimits?: RelayAbuseLimits;
     challengeTtlMs?: number;
     maxPendingChallenges?: number;
+    challengeCooldownMs?: number;
   } = {},
 ) {
   const clock: Clock = options.clock ?? { now: () => 10_000 };
@@ -93,6 +94,7 @@ function setup(
     abuseGuard: options.abuseLimits ? new RelayAbuseGuard(options.abuseLimits) : undefined,
     challengeTtlMs: options.challengeTtlMs,
     maxPendingChallenges: options.maxPendingChallenges,
+    challengeCooldownMs: options.challengeCooldownMs,
   });
   const target: RelayTarget =
     platform === "ios"
@@ -123,6 +125,87 @@ async function enrolAndVerify(set: ReturnType<typeof setup>): Promise<string> {
 }
 
 describe("RelayService enrolment possession proof", () => {
+  it("reuses one pending possession proof without spending another global slot", async () => {
+    const set = setup("ios", {
+      abuseLimits: { ...testAbuseLimits, globalEnrol: { limit: 2, windowMs: 1_000 } },
+    });
+    const first = await set.service.enrol(set.target, "first-source");
+    const retried = await set.service.enrol(
+      { ...set.target, token: set.target.token.toUpperCase() },
+      "retry-source",
+    );
+    expect(retried).toEqual(first);
+    expect(set.carrier.challenges).toHaveLength(1);
+    await expect(
+      set.service.enrol({ ...set.target, token: "cd".repeat(32) }, "other-source"),
+    ).resolves.toHaveProperty("challengeId");
+    expect(set.carrier.challenges).toHaveLength(2);
+    const nonce = set.carrier.challenges[0]!.nonce;
+    expect(() => set.service.verify(first.challengeId, "different-nonce")).toThrow();
+    expect(set.service.verify(first.challengeId, nonce).credential).toMatch(/^omnrelay_v1_/);
+    await set.service.dispose();
+  });
+
+  it("shares the result of an in-flight carrier dispatch between concurrent retries", async () => {
+    const set = setup("android");
+    let finishDispatch!: () => void;
+    const original = set.carrier.sendChallenge.bind(set.carrier);
+    vi.spyOn(set.carrier, "sendChallenge").mockImplementation(async (target, nonce) => {
+      await new Promise<void>((resolve) => {
+        finishDispatch = resolve;
+      });
+      await original(target, nonce);
+    });
+    const first = set.service.enrol(set.target, "first-source");
+    const second = set.service.enrol(set.target, "second-source");
+    let secondSettled = false;
+    void second.then(() => {
+      secondSettled = true;
+    });
+    await Promise.resolve();
+    expect(secondSettled).toBe(false);
+    finishDispatch();
+    expect(await second).toEqual(await first);
+    expect(set.carrier.challenges).toHaveLength(1);
+    await set.service.dispose();
+  });
+
+  it("keeps a short target cooldown after verification and resumes normal rotation", async () => {
+    let now = 10_000;
+    const set = setup("android", { clock: { now: () => now } });
+    const credential = await enrolAndVerify(set);
+    await expect(set.service.enrol(set.target, "another-source")).rejects.toMatchObject({
+      code: "rate_limited",
+      retryAfterMs: 30_000,
+    });
+    await set.service.wake(credential);
+    now += 30_000;
+    const renewed = await enrolAndVerify(set);
+    await set.service.wake(renewed);
+    await expect(set.service.wake(credential)).rejects.toMatchObject({
+      code: "credential_rejected",
+    });
+    await set.service.dispose();
+  });
+
+  it("recovers from a failed dispatch after cooldown without extending it on retries", async () => {
+    let now = 10_000;
+    const set = setup("android", { clock: { now: () => now } });
+    set.carrier.failChallenge = true;
+    await expect(set.service.enrol(set.target)).rejects.toMatchObject({ code: "carrier_failed" });
+    set.carrier.failChallenge = false;
+    now += 29_999;
+    await expect(set.service.enrol(set.target)).rejects.toMatchObject({
+      code: "rate_limited",
+      retryAfterMs: 1,
+    });
+    now += 1;
+    const credential = await enrolAndVerify(set);
+    await set.service.wake(credential);
+    expect(set.carrier.challenges).toHaveLength(1);
+    await set.service.dispose();
+  });
+
   it("counts notification traffic regardless of delivery, excluding enrolments and rejected credentials", async () => {
     let now = 10_000;
     const set = setup("android", { clock: { now: () => now } });
@@ -160,7 +243,9 @@ describe("RelayService enrolment possession proof", () => {
       maxPendingChallenges: 1,
     });
     await set.service.enrol(set.target, "source-a");
-    await expect(set.service.enrol(set.target, "source-b")).rejects.toMatchObject({
+    await expect(
+      set.service.enrol({ ...set.target, token: "other-token" }, "source-b"),
+    ).rejects.toMatchObject({
       code: "capacity_unavailable",
     });
     const row = set.store.db.prepare("SELECT expires_at FROM relay_challenges").get() as {
@@ -176,7 +261,9 @@ describe("RelayService enrolment possession proof", () => {
       abuseLimits: { ...testAbuseLimits, globalEnrol: { limit: 1, windowMs: 1_000 } },
     });
     await set.service.enrol(set.target, "source-a");
-    await expect(set.service.enrol(set.target, "source-b")).rejects.toMatchObject({
+    await expect(
+      set.service.enrol({ ...set.target, token: "other-token" }, "source-b"),
+    ).rejects.toMatchObject({
       code: "capacity_unavailable",
     });
     expect(set.carrier.challenges).toHaveLength(1);
@@ -188,7 +275,10 @@ describe("RelayService enrolment possession proof", () => {
   });
 
   it("reserves a bounded renewal lane when new enrolments fill their circuit and capacity", async () => {
+    let now = 10_000;
     const set = setup("ios", {
+      clock: { now: () => now },
+      challengeCooldownMs: 1,
       abuseLimits: {
         ...testAbuseLimits,
         globalEnrol: { limit: 9, windowMs: 1_000 },
@@ -197,6 +287,7 @@ describe("RelayService enrolment possession proof", () => {
       maxPendingChallenges: 10,
     });
     const oldCredential = await enrolAndVerify(set);
+    now += 1;
     for (let index = 0; index < 8; index += 1) {
       await set.service.enrol({ ...set.target, token: `new-token-${index}` }, `source-${index}`);
     }
@@ -205,8 +296,8 @@ describe("RelayService enrolment possession proof", () => {
     ).rejects.toMatchObject({ code: "capacity_unavailable" });
 
     const { challengeId } = await set.service.enrol(set.target, "renewal-source");
-    await expect(set.service.enrol(set.target, "another-renewal-source")).rejects.toMatchObject({
-      code: "capacity_unavailable",
+    await expect(set.service.enrol(set.target, "another-renewal-source")).resolves.toEqual({
+      challengeId,
     });
     const nonce = set.carrier.challenges.at(-1)!.nonce;
     const renewed = set.service.verify(challengeId, nonce, "renewal-source").credential;
@@ -224,10 +315,20 @@ describe("RelayService enrolment possession proof", () => {
     const dispatch = vi.spyOn(set.carrier, "sendChallenge");
     const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     try {
-      await expect(set.service.enrol(set.target, "source-a")).rejects.toMatchObject({
+      await expect(
+        set.service.enrol(
+          { ...set.target, token: `failed-${dispatch.mock.calls.length}` },
+          "source-a",
+        ),
+      ).rejects.toMatchObject({
         code: "carrier_failed",
       });
-      await expect(set.service.enrol(set.target, "source-a")).rejects.toMatchObject({
+      await expect(
+        set.service.enrol(
+          { ...set.target, token: `failed-${dispatch.mock.calls.length}` },
+          "source-a",
+        ),
+      ).rejects.toMatchObject({
         code: "carrier_failed",
       });
       const rejection = await set.service.enrol(set.target, "source-a").catch((error) => error);
@@ -254,15 +355,27 @@ describe("RelayService enrolment possession proof", () => {
     set.carrier.failChallenge = true;
 
     for (let attempt = 0; attempt < 4; attempt += 1) {
-      await expect(set.service.enrol(set.target, "source-a")).rejects.toMatchObject({
+      await expect(
+        set.service.enrol(
+          { ...set.target, token: `failed-${dispatch.mock.calls.length}` },
+          "source-a",
+        ),
+      ).rejects.toMatchObject({
         code: "carrier_failed",
       });
     }
     set.carrier.failChallenge = false;
-    await expect(set.service.enrol(set.target, "source-a")).resolves.toHaveProperty("challengeId");
+    await expect(
+      set.service.enrol({ ...set.target, token: "successful-token" }, "source-a"),
+    ).resolves.toHaveProperty("challengeId");
     set.carrier.failChallenge = true;
     for (let attempt = 0; attempt < 2; attempt += 1) {
-      await expect(set.service.enrol(set.target, "source-a")).rejects.toMatchObject({
+      await expect(
+        set.service.enrol(
+          { ...set.target, token: `failed-${dispatch.mock.calls.length}` },
+          "source-a",
+        ),
+      ).rejects.toMatchObject({
         code: "carrier_failed",
       });
     }
@@ -280,8 +393,12 @@ describe("RelayService enrolment possession proof", () => {
     });
 
     await expect(set.service.enrol(set.target, "source-a")).resolves.toHaveProperty("challengeId");
-    await expect(set.service.enrol(set.target, "source-b")).resolves.toHaveProperty("challengeId");
-    await expect(set.service.enrol(set.target, "source-c")).resolves.toHaveProperty("challengeId");
+    await expect(
+      set.service.enrol({ ...set.target, token: "second-token" }, "source-b"),
+    ).resolves.toHaveProperty("challengeId");
+    await expect(
+      set.service.enrol({ ...set.target, token: "third-token" }, "source-c"),
+    ).resolves.toHaveProperty("challengeId");
     expect(set.carrier.challenges).toHaveLength(3);
     await set.service.dispose();
   });
@@ -371,14 +488,18 @@ describe("RelayService enrolment possession proof", () => {
     await set.service.dispose();
   });
 
-  it("deletes a challenge when its carrier dispatch fails", async () => {
+  it("invalidates a failed challenge while retaining its target cooldown", async () => {
     const set = setup("ios");
     set.carrier.failChallenge = true;
     await expect(set.service.enrol(set.target)).rejects.toMatchObject({ code: "carrier_failed" });
     const rows = set.store.db.prepare("SELECT COUNT(*) AS count FROM relay_challenges").get() as {
       count: number;
     };
-    expect(rows.count).toBe(0);
+    expect(rows.count).toBe(1);
+    expect(() =>
+      set.service.verify("00000000-0000-4000-8000-000000000001", "unknown-nonce"),
+    ).toThrow();
+    await expect(set.service.enrol(set.target)).rejects.toMatchObject({ code: "rate_limited" });
     const metrics = set.metrics.render(set.store.operationalSnapshot());
     expect(metrics).toContain('relay_enrolments_total{platform="ios",outcome="failed"} 1');
     expect(metrics).not.toContain('relay_enrolments_total{platform="ios",outcome="accepted"}');
@@ -533,6 +654,7 @@ describe("RelayService credential enforcement", () => {
     set.carrier.challengeError = new CarrierDispatchError("credential_mint_failed");
     await expect(set.service.enrol(set.target)).rejects.toMatchObject({ code: "carrier_failed" });
     set.carrier.challengeError = null;
+    set.target.token = "another-carrier-token";
     const credential = await enrolAndVerify(set);
     set.carrier.wakeError = new CarrierDispatchError("credential_mint_failed");
     await expect(set.service.wake(credential)).rejects.toMatchObject({ code: "carrier_failed" });

@@ -10,6 +10,8 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createLogger } from "@omnesis/core";
 import { ProviderId, SourceId } from "@omnesis/types";
@@ -88,7 +90,7 @@ const outcomeIds = () =>
     .sort();
 
 beforeEach(() => {
-  path = `/tmp/omnesis-test-${randomUUID()}.db`;
+  path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
   db = createDatabase(path);
 });
 afterEach(() => {

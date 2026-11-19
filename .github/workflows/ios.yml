@@ -37,6 +37,9 @@ jobs:
         run: |
           [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
           test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+      - name: Keep this job off production Omnesis services
+        id: production-network
+        run: $GITHUB_WORKSPACE/scripts/ci/production-network.sh isolate
       - name: Show Xcode version
         run: xcodebuild -version
 
@@ -44,6 +47,12 @@ jobs:
         run: |
           udid="$(node scripts/ci/prepare-ios-simulator.mjs)"
           echo "IOS_DESTINATION=platform=iOS Simulator,id=$udid" >> "$GITHUB_ENV"
+
+      # These real-network proxy tests compile only on macOS, so the simulator
+      # suite below cannot exercise their route-selection assertions.
+      - name: lane [ios-proxy-logic]
+        working-directory: ios
+        run: swift test --filter GatewayRoutingProxyTests
 
       - name: Install XcodeGen
         run: brew install xcodegen
@@ -118,6 +127,10 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+      - name: Check nothing tried to reach production Omnesis services
+        if: ${{ always() && steps.production-network.outcome == 'success' }}
+        run: $GITHUB_WORKSPACE/scripts/ci/production-network.sh verify
+
   live-gateway-e2e:
     needs: build-and-test
     runs-on: macos-26
@@ -139,6 +152,10 @@ jobs:
         run: |
           [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
           test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+
+      - name: Keep this job off production Omnesis services
+        id: production-network
+        run: $GITHUB_WORKSPACE/scripts/ci/production-network.sh isolate
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -182,3 +199,7 @@ jobs:
           path: ${{ env.OMNESIS_CONFIG_DIR }}/logs/*.log
           if-no-files-found: ignore
           retention-days: 7
+
+      - name: Check nothing tried to reach production Omnesis services
+        if: ${{ always() && steps.production-network.outcome == 'success' }}
+        run: $GITHUB_WORKSPACE/scripts/ci/production-network.sh verify

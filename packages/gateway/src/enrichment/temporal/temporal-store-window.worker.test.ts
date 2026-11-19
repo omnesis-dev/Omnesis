@@ -10,6 +10,8 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { TEMPORAL_STATUSES } from "@omnesis/types";
 import { createDatabase } from "../../db.js";
@@ -44,7 +46,7 @@ let direct: TemporalStoreReads;
 let ids: FixtureIds;
 
 beforeAll(async () => {
-  dbPath = `/tmp/omnesis-test-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
   db = createDatabase(dbPath) as unknown as Database.Database;
   ids = seedTemporalFixture(db);
   direct = directTemporalStoreReads(db);

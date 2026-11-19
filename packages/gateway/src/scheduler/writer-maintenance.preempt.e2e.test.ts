@@ -20,7 +20,7 @@
  * calls are. `OMNESIS_WRITER_MAINTENANCE_DOCS` sizes the corpus for a bench.
  */
 
-import { randomBytes, randomUUID } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
 import { createLogger } from "@omnesis/core";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
@@ -28,6 +28,7 @@ import { createDatabase, openReadOnlyDatabase } from "../db.js";
 import { runWithPriority } from "../priority.js";
 import { setActiveAlgoVersion } from "../near-dupes/meta.js";
 import { BUCKET_DELETE_FOR_DOC_SQL } from "../near-dupes/NearDupWriterOps.js";
+import { sqlitePerformanceDatabasePath } from "../../test/sqlite-performance-temp.js";
 import { Scheduler } from "./scheduler.js";
 import { WriterTaskRunner } from "./runners/writer.js";
 import { IoTaskRunner } from "./runners/io.js";
@@ -113,7 +114,7 @@ describe("writer maintenance against a large encrypted corpus", () => {
   let pressureSeq = 0;
 
   beforeAll(async () => {
-    dbPath = `/tmp/omnesis-test-${randomUUID()}.db`;
+    dbPath = sqlitePerformanceDatabasePath();
     const seed = createDatabase(dbPath, { encryptionKey: key }) as unknown as Database.Database;
     try {
       setActiveAlgoVersion(seed as never, PILOT_ALGO);

@@ -359,6 +359,47 @@ export function migrationReadout(versions) {
 }
 
 /**
+ * Readout for a keyword-index rebuild to a new lexical version: the release
+ * changed how text is cut into words, and the gateway rebuilds the keyword
+ * index in the background while search keeps using the current one. Returns
+ * null when no rebuild is running. Numbers are clamped like
+ * {@link migrationReadout}'s.
+ */
+export function keywordMigrationReadout(lexical) {
+  const building = lexical?.building;
+  if (!building || typeof building !== "object") return null;
+  const num = (v) => (Number.isFinite(v) ? v : 0);
+  const docsBuilt = Math.max(0, num(building.chunksDone));
+  const docsTotal = Math.max(0, num(building.chunksTotal));
+  const percent = Math.max(0, Math.min(100, num(building.percent)));
+  const from = Number.isInteger(lexical.activeVersion) ? `version ${lexical.activeVersion}` : null;
+  const to = `version ${num(building.version)}`;
+  const switching = building.phase === "switching";
+  return {
+    kind: from ? "migration" : "build",
+    label: switching ? "Finishing" : "Rebuilding",
+    detail: from ? `Keyword index: ${from} → ${to}` : `Keyword index: ${to}`,
+    percent,
+    docsBuilt,
+    docsTotal,
+    unit: "chunks",
+    note: switching
+      ? "Every chunk is in the new index — preparing search to switch over"
+      : from
+        ? `Keyword search stays on ${from} — switches automatically when ready`
+        : "Keyword search limited until the rebuild completes",
+  };
+}
+
+/**
+ * Background-progress element for a keyword-index rebuild, styled like
+ * {@link MigrationBar}. Renders nothing when no rebuild is running.
+ */
+export function KeywordMigrationBar({ lexical }) {
+  return ProgressReadout(keywordMigrationReadout(lexical));
+}
+
+/**
  * Separate, clearly-labeled background-progress element for a graceful embedder
  * swap. Renders BELOW the OverviewBar and per-source bars, which
  * keep reporting the ACTIVE generation as complete/serving — this element never
@@ -366,7 +407,10 @@ export function migrationReadout(versions) {
  * not a loss of the existing index. Renders nothing when no rebuild is running.
  */
 export function MigrationBar({ versions }) {
-  const r = migrationReadout(versions);
+  return ProgressReadout(migrationReadout(versions));
+}
+
+function ProgressReadout(r) {
   if (!r) return null;
   const showDocs = r.docsTotal > 0;
   return html`
@@ -377,11 +421,11 @@ export function MigrationBar({ versions }) {
           <span class="index-migration-label">${r.label.toUpperCase()}</span>
         </span>
         <span class="index-migration-detail">
-          ${r.verb} <code class="index-migration-model">${r.model}</code>
+          ${r.detail ?? html`${r.verb} <code class="index-migration-model">${r.model}</code>`}
         </span>
         <span class="index-migration-figures">
           <span class="index-migration-pct">${r.percent}%</span>
-          ${showDocs && html`<span class="index-migration-count">${fmtNumber(r.docsBuilt)} / ${fmtNumber(r.docsTotal)} docs</span>`}
+          ${showDocs && html`<span class="index-migration-count">${fmtNumber(r.docsBuilt)} / ${fmtNumber(r.docsTotal)} ${r.unit ?? "docs"}</span>`}
         </span>
       </div>
       <div class="index-migration-track">

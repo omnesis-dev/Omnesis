@@ -10,9 +10,11 @@ import { SCOPE_READ } from "@omnesis/types";
 import { createDatabase } from "../../db.js";
 import { createDevice } from "./DeviceRepository.js";
 import { createToken, lookupToken, cleanupExpiredTokens } from "./TokenRepository.js";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 function testDbPath(): string {
-  return `/tmp/omnesis-token-ttl-test-${randomUUID()}.db`;
+  return fixtureJoin(fixtureTmpdir(), `omnesis-token-ttl-test-${randomUUID()}.db`);
 }
 function cleanupDb(path: string): void {
   for (const suffix of ["", "-wal", "-shm", "-journal"]) {

@@ -7,6 +7,7 @@ import {
   PairingQrService,
   relayPairingAddress,
   type RelayPairingAddress,
+  type TailnetPairingAddress,
 } from "./PairingQrService.js";
 import type { DeviceKind } from "@omnesis/types";
 
@@ -40,14 +41,18 @@ function qr(
     tlsSpkiFingerprint?: string | (() => string);
     strictPinSpkiFingerprint?: () => string | undefined;
     relayAddress?: () => Promise<RelayPairingAddress | null>;
+    tailnetAddress?: () => TailnetPairingAddress | null;
+    preferRelay?: () => boolean;
   } = {},
 ): PairingQrService {
   return new PairingQrService({
     tlsFingerprint,
-    strictPinOrigins: extra.strictPinOrigins,
+    strictPinOrigins: extra.strictPinOrigins && (() => extra.strictPinOrigins ?? []),
     tlsSpkiFingerprint: extra.tlsSpkiFingerprint,
     strictPinSpkiFingerprint: extra.strictPinSpkiFingerprint,
     relayAddress: extra.relayAddress,
+    tailnetAddress: extra.tailnetAddress,
+    preferRelay: extra.preferRelay,
     systemTrustOrigins,
     pairingKind: () => kind,
     discoverIdentities: async () => extra.identities ?? IDENTITIES,
@@ -1198,6 +1203,127 @@ describe("the gateway's Omnesis address", () => {
     expect((await service.pairingAddresses(input)).addresses[0]).toMatchObject({
       label: "Omnesis address",
       kind: "relay",
+    });
+  });
+});
+
+describe("the gateway's own tailnet device", () => {
+  const fingerprint = "a".repeat(64);
+  const tailnetOrigin = "https://omnesis.example-net.ts.net";
+  const lanOnly: NetworkIdentity[] = [
+    { address: "192.168.1.20", label: "LAN (en0)", kind: "lan", offLan: false },
+  ];
+  const input = { pairingCode: "fictional", requestHost: "192.168.1.20", requestPort: "7600" };
+  const withTailnet = (address: TailnetPairingAddress | null, kind: DeviceKind = "ios") =>
+    qr(fingerprint, [], kind, {
+      identities: lanOnly,
+      listenPort: 7600,
+      tailnetAddress: () => address,
+    });
+  const encoded = (service: PairingQrService, gatewayUrl: string) =>
+    JSON.parse(service.encode({ pairingCode: "ABCDEF0123", gatewayUrl })) as Record<
+      string,
+      unknown
+    >;
+
+  it("is never offered on a gateway without the device", async () => {
+    const service = qr(fingerprint, [], "android", { identities: lanOnly, listenPort: 7600 });
+    const listed = (await service.pairingAddresses(input)).addresses.map((a) => a.gatewayUrl);
+    expect(listed).not.toContain(tailnetOrigin);
+    expect(encoded(service, "https://192.168.1.20:7600")).not.toHaveProperty("tailnet");
+  });
+
+  describe("with the device", () => {
+    it("offers a trusted tailnet name first, under system trust, marked as on the tailnet", async () => {
+      const service = withTailnet({ origin: `${tailnetOrigin}/`, trusted: true });
+      const result = await service.pairingAddresses(input);
+      expect(result.addresses[0]).toMatchObject({
+        gatewayUrl: tailnetOrigin,
+        label: "Tailscale (this gateway's own device)",
+      });
+      expect(encoded(service, tailnetOrigin)).toMatchObject({
+        tls: { mode: "system" },
+        tailnet: true,
+      });
+      // Another address on the same gateway is not marked.
+      expect(encoded(service, "https://192.168.1.20:7600")).not.toHaveProperty("tailnet");
+    });
+
+    it("puts the tailnet address ahead of the relay's unless the owner chose the relay first", async () => {
+      vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
+      const relayOrigin = "https://g-fictional.relay.example.test";
+      let relayFirst = false;
+      const service = qr(fingerprint, [], "ios", {
+        identities: lanOnly,
+        listenPort: 7600,
+        tailnetAddress: () => ({ origin: tailnetOrigin, trusted: true }),
+        relayAddress: async () => ({ origin: relayOrigin, ready: true }),
+        preferRelay: () => relayFirst,
+      });
+      const order = async () =>
+        (await service.pairingAddresses(input)).addresses.map((a) => a.gatewayUrl);
+      expect((await order()).slice(0, 2)).toEqual([tailnetOrigin, relayOrigin]);
+      relayFirst = true;
+      expect((await order()).slice(0, 2)).toEqual([relayOrigin, tailnetOrigin]);
+      expect((await service.pairingAddresses(input)).recommendedUrl).toBe(relayOrigin);
+    });
+
+    it("moves the relay ahead of the tailnet address only, never ahead of the owner's public address", async () => {
+      vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
+      const relayOrigin = "https://g-fictional.relay.example.test";
+      const publicOrigin = "https://omnesis.example.org";
+      const service = (tailnet: TailnetPairingAddress | null, preferRelay: boolean) =>
+        qr(fingerprint, [], "ios", {
+          identities: lanOnly,
+          listenPort: 7600,
+          publiclyTrustedHosts: ["omnesis.example.org"],
+          tailnetAddress: () => tailnet,
+          relayAddress: async () => ({ origin: relayOrigin, ready: true }),
+          preferRelay: () => preferRelay,
+        });
+      const order = async (s: PairingQrService) =>
+        (
+          await s.pairingAddresses({
+            ...input,
+            requestHost: "omnesis.example.org",
+            requestPort: "443",
+          })
+        ).addresses.map((a) => a.gatewayUrl);
+      const tailnet = { origin: tailnetOrigin, trusted: true };
+      const before = await order(service(tailnet, false));
+      const after = await order(service(tailnet, true));
+      expect(before.indexOf(relayOrigin)).toBeGreaterThan(before.indexOf(publicOrigin));
+      expect(after.indexOf(relayOrigin)).toBe(after.indexOf(tailnetOrigin) - 1);
+      // Every other address keeps its order, the owner's public address after the tailnet's.
+      const withoutRelay = (list: string[]) => list.filter((url) => url !== relayOrigin);
+      expect(withoutRelay(after)).toEqual(withoutRelay(before));
+      // Without a relay address to offer, the choice changes nothing.
+      const noRelay = qr(fingerprint, [], "ios", {
+        identities: lanOnly,
+        listenPort: 7600,
+        tailnetAddress: () => tailnet,
+        relayAddress: async () => null,
+        preferRelay: () => true,
+      });
+      expect((await noRelay.pairingAddresses(input)).addresses[0]?.gatewayUrl).toBe(tailnetOrigin);
+      // Without the tailnet address, the choice changes nothing.
+      expect(await order(service(null, true))).toEqual(await order(service(null, false)));
+    });
+
+    it("pins the gateway's own certificate when the tailnet cannot certify its name, still marked", () => {
+      const service = withTailnet({ origin: tailnetOrigin, trusted: false }, "android");
+      const payload = encoded(service, tailnetOrigin);
+      expect(payload).toMatchObject({ tailnet: true });
+      expect(payload).not.toMatchObject({ tls: { mode: "system" } });
+    });
+
+    it("offers nothing when the device is not connected, or reports an address that is not an origin", async () => {
+      for (const address of [null, { origin: "not an origin", trusted: true }]) {
+        const service = withTailnet(address);
+        const listed = (await service.pairingAddresses(input)).addresses.map((a) => a.label);
+        expect(listed).not.toContain("Tailscale (this gateway's own device)");
+        expect(encoded(service, "https://192.168.1.20:7600")).not.toHaveProperty("tailnet");
+      }
     });
   });
 });

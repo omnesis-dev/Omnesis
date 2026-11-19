@@ -11,19 +11,26 @@
 
 import { html } from "htm/preact";
 import { CopyIconButton } from "../components/copy-button.js";
-import { useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import { RelayProblems, relayProblems, relayDiagnostics } from "../components/relay-problems.js";
 import {
-  GatewayPasskeyConfirm,
-  passkeyConfirmationNeeded,
+  accountConfirmation,
+  CONFIRM_ON_LOAD,
+  FinishSetup,
+  openOnGateway,
+  SetupReminder,
 } from "../components/gateway-passkey-confirm.js";
-import { useRelayManagement } from "../lib/use-relay-management.js";
+import { onGatewayOrigin } from "../lib/gateway-passkey.js";
+import { navigate } from "../lib/router.js";
+import { useAccountRefresh, useRelayManagement } from "../lib/use-relay-management.js";
 import {
   relayError,
+  dnsVerificationUrl,
   relayClock,
   relayHttpsUrl,
-  relaySignupAccess,
 } from "../lib/cloud-relay-api.js";
+import { AccountConnect } from "./remote-access/account-step.js";
+import { ACCOUNT_PAGE } from "./remote-access/manage.js";
 
 /**
  * The one state the page is in, from the gateway's status. Order matters: an
@@ -48,13 +55,6 @@ export function relayPhase(status) {
 }
 
 const TONES = {
-  loading: "idle",
-  unavailable: "idle",
-  "not-connected": "idle",
-  waiting: "progress",
-  registering: "progress",
-  linking: "progress",
-  failed: "danger",
   off: "idle",
   connected: "ok",
   reconnecting: "warning",
@@ -88,7 +88,7 @@ function TipButton({ id, tip, children, ...button }) {
 }
 
 /** Accounts need approval: where to ask, with the link's host in plain sight. */
-function RequestAccess({ access }) {
+export function RequestAccess({ access }) {
   return html`<p class="relay-invite">
     Omnesis accounts are invite-only for now.${" "}
     <a href=${access.url} target="_blank" rel="noopener noreferrer">Request access</a>
@@ -97,60 +97,11 @@ function RequestAccess({ access }) {
   </p>`;
 }
 
+/** The relay page's headline once the gateway is registered: connected, reconnecting, dropped or off. */
 function Hero({ status, phase, busy, run }) {
   const disabled = Boolean(busy) && busy !== "refresh";
   const hostname = status?.hostname;
-  const connectError = status?.connect?.error ?? status?.enrollment?.error;
-  const access = relaySignupAccess(status);
-  // Said before anyone tries, and again when a sign-in was refused for not being approved.
-  const invite =
-    access && (phase === "not-connected" || (phase === "failed" && connectError === "not-allowed"));
-  // Creating an account is always the person's explicit choice, here and on the sign-in page.
-  const connect = (intent) => run("connect", { termsAccepted: true, intent });
   const copy = {
-    "not-connected": {
-      title: "Enroll this gateway in your Omnesis Account",
-      lede: "An Omnesis account lets you reach your gateway from your phone and laptop outside your home network and pair new devices by signing in. Traffic is encrypted end to end, and the keys never leave this gateway. Connecting gives this gateway a public address and a certificate.",
-      action: html`<button
-          type="button"
-          class="btn-primary"
-          disabled=${disabled}
-          onClick=${() => connect("create")}
-        >
-          ${busy === "connect" ? "Connecting…" : "Create an Omnesis account"}
-        </button>
-        <button
-          type="button"
-          class="relay-quiet"
-          disabled=${disabled}
-          onClick=${() => connect("existing")}
-        >
-          I already have one
-        </button>`,
-    },
-    waiting: {
-      title: "Sign in to your Omnesis account",
-      lede: "Continue in the sign-in tab to finish connecting. This page updates by itself.",
-    },
-    registering: {
-      title: "Registering this gateway…",
-      lede: "Getting its address and certificate. This usually takes less than a minute.",
-    },
-    linking: { title: "Connecting to your Omnesis account…", lede: "Almost done." },
-    failed: {
-      title: "Couldn't connect",
-      lede: connectError
-        ? relayError(connectError)
-        : "The connection could not be set up. Nothing on this gateway changed.",
-      action: html`<button
-        type="button"
-        class="btn-primary"
-        disabled=${disabled}
-        onClick=${() => connect()}
-      >
-        ${busy === "connect" ? "Connecting…" : "Try again"}
-      </button>`,
-    },
     connected: {
       title: html`Connected as <span class="relay-hostname">${hostname ?? "your gateway"}</span>`,
       lede: "Your devices can reach this gateway from anywhere. Traffic is encrypted end to end, and the keys never leave this gateway.",
@@ -186,28 +137,32 @@ function Hero({ status, phase, busy, run }) {
         ${busy === "enable" ? "Turning on…" : "Turn on"}
       <//>`,
     },
-    unavailable: {
-      title: "Remote access isn't available",
-      lede: status?.serviceError
-        ? relayError(status.serviceError)
-        : "This installation is not set up for Omnesis accounts. Direct connections and QR pairing keep working.",
-    },
   }[phase];
-  const tone = TONES[phase];
-  const dot = phase !== "not-connected";
-  return html`<section class=${`relay-hero ${dot ? "" : "relay-hero-plain"}`} aria-live="polite">
-    ${dot && html`<${Dot} tone=${tone} />`}
+  return html`<section class="relay-hero" aria-live="polite">
+    <${Dot} tone=${TONES[phase]} />
     <div class="relay-hero-text">
       <h2 class="relay-headline">${copy.title}</h2>
       <p class="relay-lede">${copy.lede}</p>
-      ${invite && html`<${RequestAccess} access=${access} />`}
       ${copy.action && html`<div class="relay-actions relay-hero-action">${copy.action}</div>`}
-      ${phase === "waiting" && html`<${Waiting} connect=${status.connect} busy=${busy} run=${run} />`}
     </div>
   </section>`;
 }
 
-function Waiting({ connect, busy, run }) {
+/** Waiting for sign-in: open the relay's sign-in page, or enter the code on another device. */
+export function Waiting({ connect, busy, run }) {
+  if (connect.verification) {
+    const url = dnsVerificationUrl(connect.verification.url);
+    return html`<div class="relay-waiting">
+      <div class="relay-actions relay-hero-action">
+        ${url && html`<a class="btn-primary relay-button-link" href=${url} target="_blank" rel="noopener noreferrer">Open security check</a>`}
+        <button type="button" class="relay-quiet" disabled=${Boolean(busy) && busy !== "refresh"} onClick=${() => run("connect/cancel", {})}>
+          ${busy === "connect/cancel" ? "Cancelling…" : "Cancel"}
+        </button>
+      </div>
+      <p class="relay-hint">${url ? `Security check at ${new URL(url).host}. This page continues automatically once it finishes.` : "The security check link is unavailable. Cancel and try connecting again."}</p>
+      ${relayClock(connect.verification.expiresAt) && html`<p class="relay-hint">Complete by ${relayClock(connect.verification.expiresAt)}.</p>`}
+    </div>`;
+  }
   const authorizeUrl = relayHttpsUrl(connect.authorizeUrl);
   const connectUrl = relayHttpsUrl(connect.connectUrl);
   // The relay's short address is only shown; the link itself stays on the relay's own page.
@@ -287,6 +242,12 @@ function ManageAccountLink({ serviceUrl }) {
  * gateway does: it drops the account link and its trusted sign-ins, and leaves
  * remote access and paired devices alone.
  */
+/** Unlinking is confirmed first, in these words, wherever it is offered. */
+export const UNLINK_CONFIRM = {
+  title: "Unlink this gateway from your Omnesis account?",
+  body: "This gateway leaves your Omnesis account. It can no longer be reached from outside your home network, and devices can no longer join by signing in. Devices already paired keep working on your home network.",
+};
+
 function Unlink({ operation, disabled, busy, run }) {
   const [asking, setAsking] = useState(false);
   if (!asking)
@@ -299,14 +260,8 @@ function Unlink({ operation, disabled, busy, run }) {
       Unlink this gateway
     </button>`;
   return html`<div class="relay-confirm" role="group" aria-labelledby="relay-unlink-title">
-    <p class="relay-row-value" id="relay-unlink-title">
-      Unlink this gateway from your Omnesis account?
-    </p>
-    <p class="relay-hint">
-      This gateway leaves your Omnesis account. It can no longer be reached from outside your home
-      network, and devices can no longer join by signing in. Devices already paired keep working on
-      your home network.
-    </p>
+    <p class="relay-row-value" id="relay-unlink-title">${UNLINK_CONFIRM.title}</p>
+    <p class="relay-hint">${UNLINK_CONFIRM.body}</p>
     <div class="relay-actions">
       <button
         type="button"
@@ -526,43 +481,6 @@ function RemoteAccess({ status, busy, run }) {
   </section>`;
 }
 
-const POLICY_CHOICES = [
-  {
-    value: "automatic",
-    title: "Join automatically",
-    text: "A device joins once you sign in to your Omnesis account with a sign-in this gateway trusts. You're notified and can remove it any time.",
-  },
-  {
-    value: "ask",
-    title: "Ask me first",
-    text: "A device waits until you approve it on a device you already use, and the codes match. Someone with your Google password still can't get in.",
-  },
-];
-
-function PolicyChoices({ name, value, disabled, onChange }) {
-  return html`<div class="relay-options" role="radiogroup" aria-label="When a new device signs in">
-    ${POLICY_CHOICES.map(
-      (choice) =>
-        html`<label
-          class=${`relay-option ${value === choice.value ? "relay-option-selected" : ""}`}
-        >
-          <input
-            type="radio"
-            name=${name}
-            value=${choice.value}
-            checked=${value === choice.value}
-            disabled=${disabled}
-            onChange=${() => onChange(choice.value)}
-          />
-          <span>
-            <span class="relay-option-title">${choice.title}</span>
-            <span class="relay-option-text">${choice.text}</span>
-          </span>
-        </label>`,
-    )}
-  </div>`;
-}
-
 /** Where a trusted sign-in came from, in the words `omnesis cloud trusted-sign-ins` uses. */
 const SIGN_IN_SOURCES = {
   "link-page": "Used to connect this gateway",
@@ -593,7 +511,6 @@ function TrustedSignIns({ enrollment }) {
   ];
   if (rows.length === 0) return null;
   return html`<div class="relay-sign-ins">
-    <p class="relay-row-value relay-strong">Trusted sign-ins</p>
     <ul class="relay-sign-in-list">
       ${rows.map((signIn) => {
         const source = signIn.source
@@ -601,7 +518,7 @@ function TrustedSignIns({ enrollment }) {
           : undefined;
         const confirmation = signIn.via
           ? (CONFIRMED_VIA[signIn.via] ?? "Confirmed")
-          : "Not confirmed on this gateway";
+          : "Not confirmed on this gateway: devices using it wait for your approval";
         return html`<li class="relay-sign-in" key=${`${signIn.type}:${signIn.id}`}>
           <span class="relay-row-value">
             ${`${signIn.type === "passkey" ? "Passkey" : "Google account"} `}
@@ -614,29 +531,18 @@ function TrustedSignIns({ enrollment }) {
   </div>`;
 }
 
-function NewDevices({ enrollment, held, busy, run }) {
-  // While a certificate incident holds the gateway, the choice can't take effect, so it waits.
-  const disabled = held || (Boolean(busy) && busy !== "refresh");
-  return html`<section class="relay-section" aria-labelledby="relay-new-devices-title">
-    <h3 class="relay-section-title" id="relay-new-devices-title">New devices</h3>
-    ${
-      passkeyConfirmationNeeded(enrollment) &&
-      !held &&
-      html`<${GatewayPasskeyConfirm} enrollment=${enrollment} busy=${busy} run=${run} />`
-    }
-    <p class="relay-hint">What happens when a new device signs in to your Omnesis account.</p>
-    ${
-      held &&
-      html`<p class="relay-hint">
-        Every new device waits for your approval until the certificate problem above is dealt with.
-      </p>`
-    }
-    <${PolicyChoices}
-      name="relay-policy"
-      value=${enrollment.policy}
-      disabled=${disabled}
-      onChange=${(policy) => policy !== enrollment.policy && run("enrollment", { policy }, "PUT")}
-    />
+/**
+ * The sign-ins this gateway trusts, with the setup reminder above them. What
+ * new devices may do is one answer for every way in, set in Settings →
+ * Connectivity, so this page does not repeat it.
+ */
+function SignIns({ enrollment, reminder, onFinish, held }) {
+  const showReminder = !held && reminder;
+  const hasSignIns = (enrollment.trustedSignIns ?? []).length + (enrollment.confirmedSignIns ?? []).length > 0;
+  if (!showReminder && !hasSignIns) return null;
+  return html`<section class="relay-section" aria-labelledby="relay-sign-ins-title">
+    <h3 class="relay-section-title" id="relay-sign-ins-title">Trusted sign-ins</h3>
+    ${showReminder && html`<${SetupReminder} onFinish=${onFinish} />`}
     <${TrustedSignIns} enrollment=${enrollment} />
   </section>`;
 }
@@ -655,8 +561,90 @@ function Skeleton() {
   </section>`;
 }
 
-export function RelayView() {
+/** Where "Not now" on the setup checklist is remembered, per gateway, in this browser only. */
+const SETUP_LATER_KEY = "omnesis.relay.setup-later";
+/** The phases in which this gateway is enrolled with the relay, whether or not it is on. */
+const ESTABLISHED = ["connected", "reconnecting", "disconnected", "off"];
+function setupLater(gatewayId) {
+  try {
+    return globalThis.localStorage?.getItem(SETUP_LATER_KEY) === String(gatewayId);
+  } catch {
+    return false;
+  }
+}
+function rememberSetupLater(gatewayId, later) {
+  try {
+    if (later) globalThis.localStorage?.setItem(SETUP_LATER_KEY, String(gatewayId));
+    else globalThis.localStorage?.removeItem(SETUP_LATER_KEY);
+  } catch {
+    // Without storage, "Not now" lasts until the page is reloaded.
+  }
+}
+
+const CONNECTING = ["waiting", "registering", "linking"];
+
+/** Whether the relay has enrolled this gateway, in the phase `relayPhase` gave. */
+export function relayEstablished(phase) {
+  return ESTABLISHED.includes(phase);
+}
+
+/**
+ * What the account still needs once it is connected: `enrollment` is the gateway's device
+ * enrollment while it is linked to an account, `setup` the last step "Finish setting up" asks for
+ * (see `accountConfirmation`), and `ready` whether the secure address has its certificate.
+ */
+export function relayAccountSetup(status, phase) {
+  const enrollment =
+    status?.account?.linked && relayEstablished(phase) ? status.deviceEnrollment : undefined;
+  const setup = enrollment && !status.incidentHold ? accountConfirmation(enrollment) : null;
+  return { enrollment, setup, ready: status?.certificate?.state === "valid" };
+}
+
+/** "Not now" on the setup checklist, remembered per gateway in this browser: `[later, chooseLater]`. */
+export function useSetupLater(gatewayId) {
+  const [choice, setChoice] = useState(null);
+  const later = choice ?? setupLater(gatewayId);
+  const chooseLater = (value) => {
+    rememberSetupLater(gatewayId, value);
+    setChoice(value);
+  };
+  return [later, chooseLater];
+}
+
+/**
+ * Connecting from a page ends on the gateway's own address once its certificate is ready, so a
+ * passkey account's last step runs there straight away: once a connect this page followed
+ * reaches `connected`, the gateway's own page opens with the passkey prompt.
+ */
+export function usePasskeyHandoff({ phase, enrollment, setup, ready, later, open, location }) {
+  const connecting = useRef(false);
+  useEffect(() => {
+    if (CONNECTING.includes(phase)) connecting.current = true;
+    else if (phase !== "connected") connecting.current = false;
+    else if (connecting.current && setup === "passkey" && ready && !later) {
+      connecting.current = false;
+      if (!onGatewayOrigin(enrollment.confirmOrigin, location))
+        open(enrollment.confirmOrigin, { next: CONFIRM_ON_LOAD, location }).catch(() => {});
+    }
+  }, [phase, setup, ready, later]);
+}
+
+/**
+ * One of the two pages behind Settings → Connectivity that the relay's status
+ * feeds. `part` "account" is the Omnesis account — connecting and signing in,
+ * the link, finishing setup and the trusted sign-ins: how devices find and
+ * join this gateway. `part` "relay" is the Omnesis relay — its connection,
+ * problems, the addresses it serves and turning it off and on: how devices
+ * reach this gateway from anywhere.
+ */
+export function RelayView({ part = "account", open = openOnGateway, location = globalThis.location } = {}) {
   const { status, error, busy, run, version } = useRelayManagement();
+  // A sign-in added on the account page shows here within seconds, not at the hourly check-in.
+  useAccountRefresh(() => void run());
+  const [later, chooseLater] = useSetupLater(status?.gatewayId);
+  const phase = status ? relayPhase(status) : "loading";
+  const { enrollment, setup, ready } = relayAccountSetup(status, phase);
+  usePasskeyHandoff({ phase, enrollment, setup, ready, later, open, location });
   if (!status) {
     if (busy) return html`<div class="relay-view"><${Skeleton} /></div>`;
     return html`<div class="relay-view">
@@ -672,16 +660,64 @@ export function RelayView() {
       </section>
     </div>`;
   }
-  const phase = relayPhase(status);
-  const established = ["connected", "reconnecting", "disconnected", "off"].includes(phase);
-  const linked = Boolean(status.account?.linked);
-  const enrollment = linked && established ? status.deviceEnrollment : undefined;
+  const established = relayEstablished(phase);
+  // The checklist stands in for the headline while it's the one thing left to do.
+  const checklist = setup && !later && phase === "connected";
   const problems = relayProblems(status, phase);
   // A failed connect or a dropped connection is said in the headline; the details still help.
   const troubled = problems.length > 0 || phase === "failed" || phase === "disconnected";
+  const problemBox =
+    troubled &&
+    html`<${RelayProblems} messages=${problems} details=${relayDiagnostics(status, { phase, version })} />`;
+  if (part === "relay") {
+    if (!established)
+      return html`<div class="relay-view">
+        <section class="relay-hero relay-hero-plain">
+          <div class="relay-hero-text">
+            ${phase === "unavailable"
+              ? html`<h2 class="relay-headline">The Omnesis relay isn't available</h2>
+                  <p class="relay-lede">
+                    ${status.serviceError
+                      ? relayError(status.serviceError)
+                      : "This installation is not set up for Omnesis accounts. Direct connections and QR pairing keep working."}
+                  </p>`
+              : html`<h2 class="relay-headline">The Omnesis relay needs an Omnesis account</h2>
+                  <p class="relay-lede">
+                    Once this gateway is linked to your account, the relay can reach it from any network,
+                    with nothing to install.
+                  </p>
+                  <div class="relay-actions relay-hero-action">
+                    <button type="button" class="btn-secondary" onClick=${() => navigate(ACCOUNT_PAGE)}>Set up your account</button>
+                  </div>`}
+          </div>
+        </section>
+      </div>`;
+    return html`<div class="relay-view">
+      <${Hero} status=${status} phase=${phase} busy=${busy} run=${run} />
+      ${error && html`<p role="alert" class="relay-notice">${error}</p>`}
+      ${problemBox}
+      <${RemoteAccess} status=${status} busy=${busy} run=${run} />
+    </div>`;
+  }
+  // The account choice says its own error, so the page says it only beside anything else.
+  const pageError = error && (checklist || established);
   return html`<div class="relay-view">
-    <${Hero} status=${status} phase=${phase} busy=${busy} run=${run} />
-    ${error && html`<p role="alert" class="relay-notice">${error}</p>`}
+    ${
+      checklist
+        ? html`<${FinishSetup}
+            enrollment=${enrollment}
+            hostname=${status.hostname}
+            ready=${ready}
+            serviceUrl=${status.config?.relayUrl}
+            busy=${busy}
+            run=${run}
+            open=${open}
+            location=${location}
+            onDismiss=${() => chooseLater(true)}
+          />`
+        : !established && html`<${AccountConnect} relay=${{ status, busy, run, error }} />`
+    }
+    ${pageError && html`<p role="alert" class="relay-notice">${error}</p>`}
     ${
       status.notice === "account-deleted" &&
       html`<p role="status" class="relay-notice">
@@ -691,21 +727,22 @@ export function RelayView() {
       </p>`
     }
     ${
-      troubled &&
-      html`<${RelayProblems}
-        messages=${problems}
-        details=${relayDiagnostics(status, { phase, version })}
-      />`
+      status.notice === "gateway-removed" &&
+      html`<p role="status" class="relay-notice">
+        This gateway was unlinked from your Omnesis account on the account page, so it has no
+        address outside your home network. Nothing on it was deleted, and devices already paired
+        keep working at home. Connect it again to reach it from anywhere.
+      </p>`
     }
+    ${!established && problemBox}
     ${established && html`<${AccountSection} status=${status} busy=${busy} run=${run} />`}
-    ${established && html`<${RemoteAccess} status=${status} busy=${busy} run=${run} />`}
     ${
       enrollment &&
-      html`<${NewDevices}
+      html`<${SignIns}
         enrollment=${enrollment}
+        reminder=${Boolean(setup) && later}
+        onFinish=${() => chooseLater(false)}
         held=${Boolean(status.incidentHold)}
-        busy=${busy}
-        run=${run}
       />`
     }
   </div>`;

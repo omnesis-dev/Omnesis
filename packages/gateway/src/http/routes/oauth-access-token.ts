@@ -2,13 +2,13 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { createLogger } from "@omnesis/core";
+import { resolveRequestOAuthUrls } from "../oauth-request.js";
 
 import {
   ClientAssertionVerifier,
   JWT_BEARER_CLIENT_ASSERTION_TYPE,
   unverifiedAssertionSubject,
 } from "../../access/client-assertion.js";
-import { resolveOAuthUrls, type OAuthEndpointUrls } from "../../access/oauth-urls.js";
 import { oauthTokenRateLimiter } from "../../rate-limit.js";
 import { oauthRevokeForm, oauthTokenForm } from "../schemas/oauth-access.js";
 import { scope } from "../scope.js";
@@ -24,6 +24,7 @@ import {
   readOAuthForm,
   tokenMutationError,
 } from "./oauth-access-shared.js";
+import type { OAuthEndpointUrls } from "../../access/oauth-urls.js";
 import type { MiddlewareHandler } from "hono";
 import type { AccessService } from "../../access/service.js";
 import type { OAuthClientAuthMethod, OAuthClientCredentials } from "../../access/types.js";
@@ -54,8 +55,8 @@ export function mountOAuthTokenRoutes(
   app: RouteApp,
   access: AccessService,
   options: {
-    publicBaseUrl?: string;
-    mcpResourceUrls?: readonly string[];
+    /** The gateway's public address, read on every request so a saved one applies at once. */
+    publicAddress?: import("../../public-address.js").PublicAddressSource;
     additionalOAuthIssuerUrls?: import("../../access/oauth-urls.js").OAuthIssuerSource;
     clientAssertionVerifier?: Pick<ClientAssertionVerifier, "verify">;
   },
@@ -178,10 +179,10 @@ export function mountOAuthTokenRoutes(
       if (!params.success) {
         return oauthError(c, 400, "invalid_request", "The token request is invalid.");
       }
-      const urls = resolveOAuthUrls(
-        c.req.url,
-        options.publicBaseUrl,
-        options.mcpResourceUrls,
+      const urls = resolveRequestOAuthUrls(
+        c,
+        options.publicAddress?.baseUrl(),
+        options.publicAddress?.mcpResourceUrls(),
         options.additionalOAuthIssuerUrls,
       );
       if (!urls) return oauthConfigurationRequired(c);
@@ -272,10 +273,10 @@ export function mountOAuthTokenRoutes(
           "Use exactly one client authentication method.",
         );
       }
-      const urls = resolveOAuthUrls(
-        c.req.url,
-        options.publicBaseUrl,
-        options.mcpResourceUrls,
+      const urls = resolveRequestOAuthUrls(
+        c,
+        options.publicAddress?.baseUrl(),
+        options.publicAddress?.mcpResourceUrls(),
         options.additionalOAuthIssuerUrls,
       );
       if (!urls) return oauthConfigurationRequired(c);

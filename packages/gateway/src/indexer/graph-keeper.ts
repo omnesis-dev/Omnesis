@@ -112,6 +112,8 @@ export interface GraphKeeperDeps {
   /** Replaceable for tests. */
   headroom?: () => number;
   onProgress: (fraction: number) => void;
+  /** Awaited between the build's pages; a test seam that holds a rebuild part way. */
+  betweenPages?: () => Promise<void>;
   onState: (state: SemanticSearchStatus) => void;
   log: (level: "info" | "warn", message: string) => void;
 }
@@ -257,6 +259,7 @@ export class GraphKeeper {
       pageSize: this.deps.pageSize,
       checkpointIntervalMs: this.deps.checkpointIntervalMs,
       onProgress: this.deps.onProgress,
+      betweenPages: this.deps.betweenPages,
       shouldStop: () => this.memoryShort() || !this.canGrow(),
       canCheckpoint: () => this.canGrow(),
       onRebuildStart: () => {

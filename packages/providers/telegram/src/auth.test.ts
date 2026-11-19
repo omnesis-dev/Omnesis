@@ -3,9 +3,10 @@
 
 import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MissingCredentialsError, listProviderAccountIds } from "@omnesis/core";
 import { AuthFailure } from "@omnesis/source-sdk";
+import * as appCredentials from "./credentials-spec.js";
 import { loginFlow, removeConnectedAccount } from "./auth.js";
 import { mapRpcError } from "./client/errors.js";
 import { readSessionRecord, writeSessionRecord } from "./session-store.js";
@@ -20,6 +21,11 @@ import {
 } from "./testing/fixtures.js";
 import type { QrChallenge } from "@omnesis/source-sdk";
 
+vi.mock("./credentials-spec.js", async (original) => {
+  const actual = await original<typeof import("./credentials-spec.js")>();
+  return { ...actual, loadAppCredentials: vi.fn(actual.loadAppCredentials) };
+});
+
 describe("Telegram sign-in", () => {
   let configDir: string;
   let sim: SimulatedTelegram;
@@ -32,6 +38,7 @@ describe("Telegram sign-in", () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     rmSync(configDir, { recursive: true, force: true });
   });
 
@@ -273,6 +280,37 @@ describe("Telegram sign-in", () => {
         timeoutMs: 30,
       }),
     ).rejects.toThrow(/timed out/u);
+    expect(existsSync(stateDir)).toBe(false);
+  });
+
+  it("does not start logout after its deadline expires during credential loading", async () => {
+    await writeSessionRecord(
+      {
+        session: sim.issueSession(SELF.id),
+        userId: String(SELF.id),
+        apiId: "1234567",
+        connectedAt: "2026-03-10T09:00:00.000Z",
+      },
+      configDir,
+    );
+    const credentials = await appCredentials.loadAppCredentials(configDir);
+    let loadingStarted = false;
+    vi.mocked(appCredentials.loadAppCredentials).mockImplementationOnce(async () => {
+      loadingStarted = true;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      return credentials;
+    });
+    const auth = vi.spyOn(sim.factory, "auth");
+    const stateDir = join(configDir, "telegram", String(SELF.id));
+    await expect(
+      removeConnectedAccount(String(SELF.id), configDir, {
+        factory: sim.factory,
+        stateDir,
+        timeoutMs: 10,
+      }),
+    ).rejects.toThrow(/timed out/u);
+    expect(loadingStarted).toBe(true);
+    expect(auth).not.toHaveBeenCalled();
     expect(existsSync(stateDir)).toBe(false);
   });
 

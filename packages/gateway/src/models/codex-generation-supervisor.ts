@@ -4,6 +4,7 @@
 /** Graceful admission, leasing, and replacement for Codex process generations. */
 
 import { AsyncLocalStorage } from "node:async_hooks";
+import { CodexGenerationCleanupError } from "./codex-runtime-cleanup.js";
 
 import type {
   CodexAppServerRuntime,
@@ -12,6 +13,7 @@ import type {
   CodexTurnRunner,
 } from "@omnesis/agent";
 import type { AgentEvent } from "@omnesis/core";
+export { CodexGenerationCleanupError } from "./codex-runtime-cleanup.js";
 
 export type CodexGenerationLane = "interactive" | "background" | "inference";
 
@@ -24,6 +26,8 @@ export interface CodexRuntimeGeneration {
   nestedPool?: (depth: number) => CodexRuntimePool;
 }
 
+const generationDisposals = new WeakMap<CodexRuntimeGeneration, Promise<void>>();
+
 interface TurnLease {
   generation: CodexRuntimeGeneration;
   depth: number;
@@ -31,14 +35,24 @@ interface TurnLease {
   release: () => void;
 }
 
-export async function disposeCodexGeneration(generation: CodexRuntimeGeneration): Promise<void> {
-  await Promise.all([
-    generation.runtime.dispose(),
-    generation.interactivePool?.dispose(),
-    generation.inferencePool?.dispose(),
-    generation.backgroundPool?.dispose(),
-    ...[...(generation.nestedPools?.values() ?? [])].map((pool) => pool.dispose()),
+export function disposeCodexGeneration(generation: CodexRuntimeGeneration): Promise<void> {
+  const existing = generationDisposals.get(generation);
+  if (existing) return existing;
+  const members = new Set([
+    generation.runtime,
+    generation.interactivePool,
+    generation.inferencePool,
+    generation.backgroundPool,
+    ...(generation.nestedPools?.values() ?? []),
   ]);
+  const disposal = Promise.allSettled(
+    [...members].map((member) => Promise.resolve().then(() => member?.dispose())),
+  ).then((results) => {
+    const failed = results.find((result) => result.status === "rejected");
+    if (failed?.status === "rejected") throw new CodexGenerationCleanupError(failed.reason);
+  });
+  generationDisposals.set(generation, disposal);
+  return disposal;
 }
 
 export function reassertCodexGenerationAuth(generation: CodexRuntimeGeneration): void {
@@ -58,6 +72,7 @@ export class CodexGenerationSupervisor {
   private exclusiveTail: Promise<void> = Promise.resolve();
   private admissionWaiters: Array<() => void> = [];
   private drainWaiters: Array<() => void> = [];
+  private cleanupFailure: CodexGenerationCleanupError | null = null;
 
   constructor(initial: CodexRuntimeGeneration) {
     this.generation = initial;
@@ -71,6 +86,30 @@ export class CodexGenerationSupervisor {
     return this.active;
   }
 
+  get cleanupError(): CodexGenerationCleanupError | null {
+    return this.cleanupFailure;
+  }
+
+  holdCleanup(error: CodexGenerationCleanupError): CodexGenerationCleanupError {
+    this.cleanupFailure ??= error;
+    this.admissionClosed = true;
+    for (const wake of this.admissionWaiters.splice(0)) wake();
+    for (const wake of this.drainWaiters.splice(0)) wake();
+    return this.cleanupFailure;
+  }
+
+  async retire(generation: CodexRuntimeGeneration): Promise<void> {
+    try {
+      await disposeCodexGeneration(generation);
+    } catch (error) {
+      throw this.holdCleanup(
+        error instanceof CodexGenerationCleanupError
+          ? error
+          : new CodexGenerationCleanupError(error),
+      );
+    }
+  }
+
   runner(lane: CodexGenerationLane): CodexTurnRunner {
     return { runTurn: (opts) => this.runTurn(lane, opts) };
   }
@@ -78,6 +117,7 @@ export class CodexGenerationSupervisor {
   async use<T>(fn: (generation: CodexRuntimeGeneration) => Promise<T>): Promise<T> {
     const lease = await this.acquire();
     try {
+      this.assertAvailable();
       return await fn(lease.generation);
     } finally {
       lease.release();
@@ -100,10 +140,14 @@ export class CodexGenerationSupervisor {
     this.admissionClosed = true;
     try {
       await abortable(previous, signal);
+      if (this.cleanupFailure) throw this.cleanupFailure;
       if (this.disposed) throw new Error("Codex runtime service disposed");
       await abortable(this.waitForDrain(), signal);
       signal?.throwIfAborted();
+      if (this.cleanupFailure) throw this.cleanupFailure;
+      if (this.disposed) throw new Error("Codex runtime service disposed");
       return await fn(this.generation, (next) => {
+        this.assertAvailable();
         this.generation = next;
       });
     } finally {
@@ -113,7 +157,8 @@ export class CodexGenerationSupervisor {
       // switch overlap the still-running predecessor.
       await previous;
       releaseQueue();
-      if (!this.disposed && this.exclusiveRequests === 0) this.openAdmission();
+      if (!this.disposed && !this.cleanupFailure && this.exclusiveRequests === 0)
+        this.openAdmission();
     }
   }
 
@@ -121,7 +166,9 @@ export class CodexGenerationSupervisor {
     this.disposed = true;
     this.admissionClosed = true;
     for (const wake of this.admissionWaiters.splice(0)) wake();
-    await disposeCodexGeneration(this.generation);
+    for (const wake of this.drainWaiters.splice(0)) wake();
+    await this.retire(this.generation);
+    if (this.cleanupFailure) throw this.cleanupFailure;
   }
 
   private async *runTurn(
@@ -131,6 +178,8 @@ export class CodexGenerationSupervisor {
     const parent = this.turnContext.getStore();
     const lease = await this.acquire(opts.signal, parent);
     try {
+      opts.signal?.throwIfAborted();
+      this.assertAvailable();
       const runner =
         lease.depth > 0
           ? lease.generation.nestedPool?.(lease.depth)
@@ -157,11 +206,16 @@ export class CodexGenerationSupervisor {
     }
   }
 
+  private assertAvailable(): void {
+    if (this.cleanupFailure) throw this.cleanupFailure;
+    if (this.disposed) throw new Error("Codex runtime service disposed");
+  }
+
   private async acquire(signal?: AbortSignal, parent?: TurnLease): Promise<TurnLease> {
     // Only descendants of a still-active turn may enter during a drain. They
     // must finish before that turn can release the generation being replaced.
     const inherited = parent?.active && parent.generation === this.generation;
-    while (this.admissionClosed && !this.disposed && !inherited) {
+    while (this.admissionClosed && !this.disposed && !this.cleanupFailure && !inherited) {
       signal?.throwIfAborted();
       let wake!: () => void;
       const waiting = new Promise<void>((resolve) => {
@@ -176,6 +230,7 @@ export class CodexGenerationSupervisor {
       }
     }
     signal?.throwIfAborted();
+    if (this.cleanupFailure) throw this.cleanupFailure;
     if (this.disposed) throw new Error("Codex runtime service disposed");
     this.active += 1;
     const lease: TurnLease = {

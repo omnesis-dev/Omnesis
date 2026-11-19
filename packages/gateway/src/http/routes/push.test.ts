@@ -16,7 +16,10 @@ import type { AppEnv } from "./types.js";
 
 const databases: import("better-sqlite3").Database[] = [];
 
-afterEach(() => databases.splice(0).forEach((db) => db.close()));
+afterEach(() => {
+  databases.splice(0).forEach((db) => db.close());
+  vi.restoreAllMocks();
+});
 
 function appWithPhone(kind: "ios" | "android" = "ios", publish = vi.fn(() => Promise.resolve([]))) {
   const db = createDatabase(":memory:");
@@ -132,4 +135,35 @@ describe("push test route", () => {
     );
     expect(unknown.status).toBe(404);
   });
+});
+
+describe("push credential import response", () => {
+  test.each([
+    [
+      "/admin/push/import-credential",
+      { platform: "ios", sourcePath: "/owned/AuthKey_FICTIONAL.p8" },
+      "path",
+    ],
+    ["/admin/apns/import-key", { sourcePath: "/owned/AuthKey_FICTIONAL.p8" }, "keyPath"],
+  ] as const)(
+    "%s waits for durable import and preserves its JSON response",
+    async (path, body, responseKey) => {
+      const imported = "/owned/config/apns/AuthKey_FICTIONAL.p8";
+      const save = vi
+        .spyOn(PushAdminService.prototype, "importCredential")
+        .mockResolvedValue(imported);
+      const { app } = appWithPhone();
+      const response = await app.request(path, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ [responseKey]: imported });
+      expect(save).toHaveBeenCalledExactlyOnceWith({
+        platform: "ios",
+        sourcePath: body.sourcePath,
+      });
+    },
+  );
 });

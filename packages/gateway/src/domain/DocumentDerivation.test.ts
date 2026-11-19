@@ -8,6 +8,8 @@
 
 import { unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import { createDatabase } from "../db.js";
 import {
@@ -28,7 +30,7 @@ describe("document derivation", () => {
   let db: Db;
 
   beforeEach(() => {
-    dbPath = `/tmp/omnesis-test-${randomUUID()}.db`;
+    dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
     db = createDatabase(dbPath);
   });
 

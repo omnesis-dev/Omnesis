@@ -24,6 +24,7 @@
  */
 
 import { createLogger, toCanonicalInstant, toCanonicalWallClock } from "@omnesis/core";
+import { stravaId, type StravaId } from "./ids.js";
 import {
   requireEnrichmentBudget,
   StravaApiError,
@@ -97,9 +98,9 @@ const STRIKE_MEMORY_MS = 7 * 24 * 60 * 60 * 1000;
 
 /** SQL row shape from `SELECT * FROM strava_activities WHERE …` — only the columns we use. */
 interface PendingRow {
-  id: number | bigint;
+  id: StravaId | bigint;
   name: string;
-  athlete_id: number | bigint;
+  athlete_id: StravaId | bigint;
   sport_type: string;
   activity_type?: string | null;
   start_date_local?: string | null;
@@ -116,7 +117,7 @@ interface PhaseDeps {
   sourceId: SourceId;
   providerId: ProviderId;
   athleteName?: string;
-  athleteId: number;
+  athleteId: StravaId;
 }
 
 interface PhaseResult {
@@ -205,7 +206,7 @@ export async function syncDetailBackfill(
   let struck = false;
 
   for (const row of pending) {
-    const id = Number(row.id);
+    const id = stravaId(row.id);
     let detail: StravaDetailedActivity;
     try {
       detail = await deps.client.getActivity(id);
@@ -386,7 +387,7 @@ export async function syncSocialBackfill(
   let struck = false;
 
   for (const row of pending) {
-    const id = Number(row.id);
+    const id = stravaId(row.id);
     let comments: StravaComment[];
     let kudoers: StravaSummaryAthlete[];
     try {
@@ -514,12 +515,12 @@ export async function syncZonesBackfill(
 
   const stampRows: Record<string, unknown>[] = [];
   const zoneRows: Record<string, unknown>[] = [];
-  const refetched: number[] = [];
+  const refetched: StravaId[] = [];
   let enrichStrikes = rememberedStrikes(cur);
   let struck = false;
 
   for (const row of pending) {
-    const id = Number(row.id);
+    const id = stravaId(row.id);
     try {
       const zones = await deps.client.getActivityZones(id);
       enrichStrikes = cleared(enrichStrikes, "zones", id);
@@ -595,7 +596,7 @@ export async function syncStreamsBackfill(
   let pageBytes = 0;
 
   for (const row of pending) {
-    const id = Number(row.id);
+    const id = stravaId(row.id);
     let record: Record<string, unknown>;
     try {
       record = streamSetToRecord(id, await deps.client.getActivityStreams(id));
@@ -800,7 +801,7 @@ async function strikeActivity(
   err: unknown,
   strikes: Record<string, EnrichStrike> | undefined,
   tier: EnrichmentTier,
-  id: number,
+  id: StravaId,
   client: StravaClient,
 ): Promise<{ giveUp: boolean; enrichStrikes: Record<string, EnrichStrike> | undefined }> {
   if (!(err instanceof StravaApiError)) throw err;
@@ -840,7 +841,7 @@ async function strikeActivity(
 function cleared(
   strikes: Record<string, EnrichStrike> | undefined,
   tier: EnrichmentTier,
-  id: number,
+  id: StravaId,
 ): Record<string, EnrichStrike> | undefined {
   const kept = Object.entries(strikes ?? {}).filter(([key]) => key !== `${tier}:${id}`);
   return kept.length > 0 ? Object.fromEntries(kept) : undefined;
@@ -872,12 +873,10 @@ function rememberedStrikes(cur: StravaActivitiesCursor): Record<string, EnrichSt
  */
 async function zonesWorthAsking(deps: PhaseDeps): Promise<boolean> {
   // Interpolated, as `ownedBy` interpolates it for every other read here.
-  if (!Number.isSafeInteger(deps.athleteId)) {
-    throw new Error(`Invalid Strava athlete id ${deps.athleteId}`);
-  }
+  const athleteId = stravaId(deps.athleteId);
   try {
     const { rows } = await deps.analytics.query(
-      `SELECT summit, premium FROM strava_athlete WHERE id = ${deps.athleteId}`,
+      `SELECT summit, premium FROM strava_athlete WHERE id = ${athleteId}`,
     );
     const profile = rows[0] as { summit?: boolean | null; premium?: boolean | null } | undefined;
     return (profile?.summit ?? profile?.premium) !== false;
@@ -963,8 +962,8 @@ function storedDetail(row: PendingRow, bestEfforts: StravaBestEffort[]): StravaD
 
 function bestEffortFromRow(row: Record<string, unknown>): StravaBestEffort {
   return {
-    id: Number(row.id),
-    activity: { id: Number(row.activity_id) },
+    id: stravaId(row.id),
+    activity: { id: stravaId(row.activity_id) },
     name: String(row.name ?? ""),
     distance: Number(row.distance_m ?? 0),
     elapsed_time: Number(row.elapsed_time_seconds ?? 0),
@@ -975,12 +974,12 @@ function bestEffortFromRow(row: Record<string, unknown>): StravaBestEffort {
 
 function commentFromRow(row: Record<string, unknown>): StravaComment {
   return {
-    id: Number(row.id),
-    activity_id: Number(row.activity_id),
+    id: stravaId(row.id),
+    activity_id: stravaId(row.activity_id),
     text: String(row.text ?? ""),
     created_at: String(row.created_at ?? ""),
     athlete: {
-      id: numOrUndef(row.athlete_id),
+      id: idOrUndef(row.athlete_id),
       firstname: (row.athlete_firstname as string | null | undefined) ?? undefined,
       lastname: (row.athlete_lastname as string | null | undefined) ?? undefined,
     },
@@ -989,7 +988,7 @@ function commentFromRow(row: Record<string, unknown>): StravaComment {
 
 function kudoerFromRow(row: Record<string, unknown>): StravaSummaryAthlete {
   return {
-    id: numOrUndef(row.athlete_id),
+    id: idOrUndef(row.athlete_id),
     firstname: (row.firstname as string | null | undefined) ?? undefined,
     lastname: (row.lastname as string | null | undefined) ?? undefined,
   };
@@ -1006,8 +1005,8 @@ function stampOnlyRow(row: PendingRow, stamps: Record<string, unknown>): Record<
 /** Best-effort hydrate a SummaryActivity from the stored row. */
 function rowToSummary(row: PendingRow): StravaSummaryActivity {
   return {
-    id: Number(row.id),
-    athlete: { id: Number(row.athlete_id) },
+    id: stravaId(row.id),
+    athlete: { id: stravaId(row.athlete_id) },
     name: String(row.name ?? ""),
     distance: Number(row.distance_m ?? 0),
     moving_time: Number(row.moving_time_seconds ?? 0),
@@ -1059,7 +1058,7 @@ function rowToSummary(row: PendingRow): StravaSummaryActivity {
     max_heartrate: numOrUndef(row.max_heartrate_bpm),
     elev_high: numOrUndef(row.elev_high_m),
     elev_low: numOrUndef(row.elev_low_m),
-    upload_id: numOrUndef(row.upload_id),
+    upload_id: idOrUndef(row.upload_id),
     external_id: (row.external_id as string | null) ?? null,
     pr_count: numOrUndef(row.pr_count),
     suffer_score: numOrUndef(row.suffer_score),
@@ -1161,4 +1160,8 @@ function structuredEmpty(
   cursor: StravaActivitiesCursor,
 ): StructuredSyncResult<StravaActivitiesCursor> {
   return { cursor, hasMore: false };
+}
+
+function idOrUndef(value: unknown): StravaId | undefined {
+  return value === null || value === undefined ? undefined : stravaId(value);
 }

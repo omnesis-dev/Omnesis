@@ -346,7 +346,10 @@ async function* streamTextDelta(
     }
     const chunk = fullDelta.slice(i, end);
     if (!first) {
-      await sleep(perChunkMs, signal);
+      // A zero timeout still incurs the platform's timer floor. Immediate
+      // replay yields to I/O without adding a timer delay to every chunk.
+      if (perChunkMs > 0) await sleep(perChunkMs, signal);
+      else await new Promise<void>((resolve) => setImmediate(resolve));
       if (signal?.aborted) return;
     }
     first = false;

@@ -64,6 +64,7 @@ export class AccountServices {
       sessions: RelaySessions;
       google?: IdentityProvider;
       admission: LoginAdmission;
+      ownerAdmission: LoginAdmission;
       gatewayAccounts(google: string): string[];
       gatewayBinding(owner: string): GatewayBinding | undefined;
       currentOwner(owner: string): AccountBrowserOwner | undefined;
@@ -71,6 +72,13 @@ export class AccountServices {
       deleteAccount(account: string, version: number): void;
       /** Takes one gateway out of its account, with its registration and its live tunnel. */
       deleteGateway(owner: string): void;
+      /**
+       * The same, done from the account page rather than by the gateway, which the relay then
+       * tells why it no longer has it the next time it proves its keys.
+       */
+      removeGateway(owner: string): void;
+      /** Whether the relay holds a live tunnel for this gateway now. */
+      gatewayOnline(owner: string): boolean;
       authenticateOwner(
         req: IncomingMessage,
       ): Promise<AccountBrowserOwner & { sessionExpiresAt: number }>;
@@ -94,6 +102,7 @@ export class AccountServices {
       accounts: linkedOwners,
       binding: options.gatewayBinding,
       name: (owner) => options.accounts.gatewayDisplayName(owner),
+      online: options.gatewayOnline,
     });
     const migrate = (account: string, identities: readonly string[]) => {
       for (const identity of identities)
@@ -208,6 +217,7 @@ export class AccountServices {
         throw new RelayError(401, "Account changed; sign in again");
     };
     const codes = new ConnectCodes();
+    const { ownerAdmission } = options;
     if (options.configuration.enrollmentAuthority) {
       const linkedAccount = (owner: string) => {
         const link = accounts.gatewayAccount(owner);
@@ -255,6 +265,7 @@ export class AccountServices {
       this.browserHttp = new AccountBrowserHttp({
         broker: this.browser,
         admission: options.admission,
+        ownerAdmission,
         authenticateOwner: options.authenticateOwner,
       });
       this.signup = new GatewaySignup({
@@ -279,6 +290,7 @@ export class AccountServices {
       this.signupHttp = new GatewaySignupHttp({
         signup: this.signup,
         admission: options.admission,
+        ownerAdmission,
         authenticateOwner: options.authenticateOwner,
       });
     }
@@ -308,6 +320,13 @@ export class AccountServices {
       authentication: this.authentication,
       passkeys: this.passkeys,
       choices: (account) => directory.choices(account),
+      unlinkGateway: (account, gatewayId) => {
+        options.assertCurrent();
+        // Only a gateway the account page lists can be the one meant.
+        const owner = directory.owner(account, gatewayId);
+        if (!owner) throw new RelayError(404, "This gateway is not in your Omnesis account");
+        options.removeGateway(owner);
+      },
       deleteAccount: options.deleteAccount,
       googleAvailable: Boolean(options.google),
       admission: options.admission,
@@ -344,6 +363,9 @@ export class AccountServices {
   }
   googleFailure(context: string | undefined): string {
     return this.web.googleFailure(context);
+  }
+  googleRetry(req: IncomingMessage): string {
+    return this.web.googleRetry(req);
   }
   /** Whether a new gateway can connect here from a sign-in alone. */
   signupOpen(): boolean {

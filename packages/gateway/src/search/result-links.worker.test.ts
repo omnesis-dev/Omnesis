@@ -9,6 +9,8 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, expect, it } from "vitest";
 import { createDatabase } from "../db.js";
 import { Scheduler } from "../scheduler/scheduler.js";
@@ -31,7 +33,7 @@ afterEach(async () => {
 });
 
 it("returns what the direct read returns", async () => {
-  const path = `/tmp/omnesis-test-${randomUUID()}.db`;
+  const path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
   paths.push(path);
   const db = createDatabase(path);
   const insert = db.prepare(

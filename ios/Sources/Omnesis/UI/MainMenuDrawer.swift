@@ -112,6 +112,7 @@ struct MainMenuDrawer: View {
                 menuSection
                 conversationsHeader
                 AgentConversationsList(onSelect: { item in
+                    AutomationTouchLog.menuAction("menu.conversation")
                     // Always return to the Agent surface before resuming
                     // — taps from non-Agent sections (e.g. Search) would
                     // otherwise load the conversation in the background
@@ -150,6 +151,7 @@ struct MainMenuDrawer: View {
     private var actionBar: some View {
         HStack(spacing: Theme.Spacing.md) {
             Button {
+                AutomationTouchLog.menuAction("menu.settings")
                 onOpenSettings()
             } label: {
                 Image(systemName: "gearshape")
@@ -175,6 +177,7 @@ struct MainMenuDrawer: View {
             Spacer(minLength: 0)
 
             Button {
+                AutomationTouchLog.menuAction("menu.newConversation")
                 store.agent.newConversation()
                 select(.agent)
             } label: {
@@ -352,7 +355,10 @@ struct MainMenuDrawer: View {
     )
         -> some View {
         HStack(spacing: 0) {
-            Button(action: action) {
+            Button {
+                AutomationTouchLog.menuAction("menu.\(id)")
+                action()
+            } label: {
                 HStack(spacing: 14) {
                     Image(systemName: icon)
                         .font(.system(size: 18))
@@ -394,7 +400,10 @@ struct MainMenuDrawer: View {
                 .accessibilityLabel(warning.label)
             }
             if let trailingAction {
-                Button(action: trailingAction.onTap) {
+                Button {
+                    AutomationTouchLog.menuAction("menu.\(trailingAction.id)")
+                    trailingAction.onTap()
+                } label: {
                     Image(systemName: trailingAction.icon)
                         .font(.system(size: 17, weight: .medium))
                         .foregroundStyle(Theme.accent)

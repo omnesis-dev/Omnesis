@@ -14,6 +14,8 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { createLogger } from "@omnesis/core";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createDatabase } from "../db.js";
@@ -139,7 +141,7 @@ function drainInbox(): void {
 }
 
 beforeEach(async () => {
-  dbPath = `/tmp/omnesis-test-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
   db = createDatabase(dbPath) as unknown as Database.Database;
   const handle = db as unknown as Db;
   setActiveAlgoVersion(handle, algoVersion);

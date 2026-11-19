@@ -16,6 +16,7 @@ const choiceSchema = z
       .max(80)
       .refine((value) => !/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/.test(value))
       .optional(),
+    online: z.boolean(),
   })
   .strict();
 const pageSchema = z

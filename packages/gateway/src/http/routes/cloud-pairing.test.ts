@@ -14,12 +14,15 @@ import {
   enrollmentSignatureTranscript,
   signDeviceTranscript,
   EnrollmentChallenges,
+  PasskeyNotOnAccount,
   type GatewayEnrollment,
   type VerifiedSignIn,
 } from "@omnesis/cloud-relay";
 import { SCOPE_ADMIN, SCOPE_READ, SCOPE_PUSH_CLAIM } from "@omnesis/types";
 import { createDatabase } from "../../db.js";
 import { createServer } from "../../server.js";
+import { fixedPublicAddress } from "../../public-address.js";
+import { PortalSignals } from "../../portal-signals/hub.js";
 import { createDevice, listDevices } from "../../data/repositories/DeviceRepository.js";
 import {
   createToken,
@@ -127,6 +130,46 @@ test("public Google pairing request bodies are bounded before parsing or identit
       code: "PAYLOAD_TOO_LARGE",
     });
   }
+});
+
+test("open portals hear when a sign-in request arrives and when it is decided", async () => {
+  const portalSignals = new PortalSignals();
+  const heard: string[] = [];
+  portalSignals.subscribe((topic) => heard.push(topic));
+  const server = createServer(db, path, {
+    tlsFingerprintSha256: "a".repeat(64),
+    cloudIdentity: { identity, ownerAccountId },
+    portalSignals,
+  });
+  const value = await request();
+  expect((await submit(server, value)).ok).toBe(true);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(heard).toEqual(["devices"]);
+  // A refused decision changes nothing and says nothing.
+  expect(
+    (
+      await post(
+        server,
+        "/admin/cloud-pairing/decision",
+        { requestId: randomUUID(), approve: false },
+        admin,
+      )
+    ).status,
+  ).not.toBe(200);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(heard).toEqual(["devices"]);
+  expect(
+    (
+      await post(
+        server,
+        "/admin/cloud-pairing/decision",
+        { requestId: value.requestId, approve: false },
+        admin,
+      )
+    ).status,
+  ).toBe(200);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(heard).toEqual(["devices", "devices"]);
 });
 
 test("Google login awaits explicit gateway owner approval and a normal device pairing exchange", async () => {
@@ -273,7 +316,7 @@ function webApp() {
   vi.stubEnv("OMNESIS_CLOUD_RELAY_GOOGLE_WEB_CLIENT_ID", "fictional-web-client");
   vi.stubEnv("OMNESIS_CLOUD_RELAY_GOOGLE_WEB_SECRET_FILE", secretFile);
   return createServer(db, path, {
-    publicBaseUrl: "https://gateway.example.test",
+    publicAddress: fixedPublicAddress("https://gateway.example.test"),
     tlsFingerprintSha256: "a".repeat(64),
     cloudIdentity: { identity, ownerAccountId },
   });
@@ -1069,13 +1112,18 @@ test("verified enrollment delivers a private reminder only to an updated adminis
   });
   expect(claim.status).toBe(200);
   const content = await claim.json();
+  // The banner asks about the device by the name it chose, and a tap opens that request. It
+  // carries no code, secret or token, and no way to approve from the notification.
   expect(content).toMatchObject({
     kind: "device-pairing",
     targetId: "pairing",
-    route: { kind: "device-pairing" },
+    title: "Is this you?",
+    body: `${value.name} wants to connect to your gateway. Tap to review.`,
+    route: { kind: "device-pairing", requestId: value.requestId },
   });
   expect(JSON.stringify(content)).not.toContain(value.secret);
-  expect(JSON.stringify(content)).not.toContain(value.name);
+  expect(JSON.stringify(content)).not.toContain(value.identityToken);
+  expect(JSON.stringify(content)).not.toMatch(/approve/i);
   expect(
     (await post(server, "/notifications/confirm", { id: content.id }, administrator)).status,
   ).toBe(200);
@@ -1094,7 +1142,11 @@ test("verified enrollment delivers a private reminder only to an updated adminis
   expect(await stillPending.json()).toMatchObject({ status: "pending" });
 });
 
-function enrollmentServer(options: { trusted: boolean; spki?: string | undefined }) {
+function enrollmentServer(options: {
+  trusted: boolean;
+  spki?: string | undefined;
+  gatewayPasskey?: { rpId: string; origin: string };
+}) {
   const spki = "spki" in options ? options.spki : "c".repeat(64);
   const signIn: VerifiedSignIn = {
     type: "google",
@@ -1110,6 +1162,25 @@ function enrollmentServer(options: { trusted: boolean; spki?: string | undefined
     verifyProof: vi.fn(async () => signIn),
     canTrust: vi.fn(async (value: VerifiedSignIn) => !value.trusted),
     trustSignIn: vi.fn(async () => {}),
+    verifyGatewayPasskey: vi.fn(async () => signIn),
+    gatewayPasskey: () => options.gatewayPasskey,
+    approvalCeremony: vi.fn((binding: string) =>
+      options.gatewayPasskey
+        ? {
+            purpose: "approve-request" as const,
+            ...options.gatewayPasskey,
+            challenge: "Y2hhbGxlbmdlY2hhbGxlbmdlY2hhbGxlbmdlY2hhbGw",
+            binding,
+            webauthnChallenge: "fictional",
+            expiresAt: Date.now() + 60_000,
+          }
+        : undefined,
+    ),
+    verifyApproval: vi.fn(async () => true),
+    passkeyApproval: () => Boolean(options.gatewayPasskey),
+    accountPasskey: () => Boolean(options.gatewayPasskey),
+    // A passkey is confirmed here, so loosening actions through the relay ask for it first.
+    stepUpRequired: () => true,
   };
   const unused = () => Promise.reject(new Error("Unused management operation"));
   const server = createServer(db, path, {
@@ -1194,6 +1265,157 @@ test("account config advertises automatic enrollment with the gateway SPKI only 
   expect(config).not.toHaveProperty("gatewaySpkiFingerprint");
 });
 
+test("a gateway with an origin of its own advertises passkey sign-in there and hands out its ceremony", async () => {
+  const where = { rpId: "relay.example.test", origin: "https://g-abcdefgh.relay.example.test" };
+  const { server, spki } = enrollmentServer({ trusted: true, gatewayPasskey: where });
+  expect(await (await server.request("/devices/account/config")).json()).toMatchObject({
+    gatewayPasskey: where,
+    // Which buttons a page offers: approving with a passkey here, and signing in with one.
+    passkeyApproval: true,
+    accountPasskey: true,
+  });
+  const { publicKey } = generateKeyPairSync("ec", { namedCurve: "prime256v1" });
+  const fields = {
+    requestId: randomUUID(),
+    kind: "portal",
+    name: "Fictional browser",
+    secret: randomBytes(32).toString("hex"),
+    devicePublicKey: publicKey.export({ type: "spki", format: "der" }).toString("base64url"),
+  };
+  const options = await post(server, "/devices/account/passkey/options", fields);
+  expect(options.status).toBe(200);
+  expect(options.headers.get("cache-control")).toBe("no-store");
+  const ceremony = await options.json();
+  expect(ceremony).toMatchObject({
+    purpose: "device-enrollment",
+    ...where,
+    challenge: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/),
+    binding: enrollmentNonce(fields as Parameters<typeof enrollmentNonce>[0]),
+  });
+  for (const body of [{}, { ...fields, extra: true }, { ...fields, devicePublicKey: "short" }])
+    expect((await post(server, "/devices/account/passkey/options", body)).status).toBe(400);
+  // Google-only pairing routes have no such ceremony.
+  expect((await post(server, "/devices/google/passkey/options", fields)).status).toBe(404);
+  // It spends the same allowance as the gateway's other pairing calls.
+  for (let index = 1; index < 10; index++)
+    expect((await post(server, "/devices/account/passkey/options", fields)).status).toBe(200);
+  expect((await post(server, "/devices/account/passkey/options", fields)).status).toBe(429);
+  // Without an origin of its own, none is offered.
+  const plain = enrollmentServer({ trusted: true }).server;
+  const plainConfig = await (await plain.request("/devices/account/config")).json();
+  expect(plainConfig).not.toHaveProperty("gatewayPasskey");
+  expect(plainConfig).toMatchObject({ passkeyApproval: false, accountPasskey: false });
+  expect((await post(plain, "/devices/account/passkey/options", fields)).status).toBe(404);
+  void spki;
+});
+
+test("a held request is shown on the public approval page and a passkey the gateway accepts approves it", async () => {
+  const where = { rpId: "relay.example.test", origin: "https://g-abcdefgh.relay.example.test" };
+  const { server, enrollment, spki } = enrollmentServer({ trusted: false, gatewayPasskey: where });
+  const { body, response } = await signedRequest(server, spki);
+  const held = await response.json();
+  const view = await server.request(`/devices/account/approval/${body.requestId}`);
+  expect(view.status).toBe(200);
+  expect(view.headers.get("cache-control")).toBe("no-store");
+  expect(await view.json()).toEqual({
+    requestId: body.requestId,
+    kind: "ios",
+    name: "Fictional phone",
+    verificationCode: held.verificationCode,
+    createdAt: expect.any(Number),
+    expiresAt: held.expiresAt,
+    signIn: "google",
+    deviceKeyRequired: false,
+    passkeyApproval: true,
+  });
+  for (const path of [`/devices/account/approval/${randomUUID()}`, "/devices/account/approval/x"])
+    expect((await server.request(path)).status).toBe(404);
+  expect((await post(server, "/devices/account/approval/options", {})).status).toBe(400);
+  const options = await post(server, "/devices/account/approval/options", {
+    requestId: body.requestId,
+  });
+  expect(options.status).toBe(200);
+  const ceremony = await options.json();
+  expect(ceremony).toMatchObject({ purpose: "approve-request", ...where });
+  const proof = {
+    type: "gateway-passkey",
+    challenge: ceremony.challenge,
+    credential: {
+      id: "Y3JlZA",
+      rawId: "Y3JlZA",
+      type: "public-key",
+      clientExtensionResults: {},
+      response: {
+        clientDataJSON: "e30",
+        authenticatorData: "YQ",
+        signature: "cw",
+        userHandle: "dQ",
+      },
+    },
+  };
+  for (const bad of [{ requestId: body.requestId }, { requestId: body.requestId, proof, x: 1 }])
+    expect((await post(server, "/devices/account/approval", bad)).status).toBe(400);
+  vi.mocked(enrollment.verifyApproval!).mockResolvedValueOnce(false);
+  expect(
+    (await post(server, "/devices/account/approval", { requestId: body.requestId, proof })).status,
+  ).toBe(403);
+  const approved = await post(server, "/devices/account/approval", {
+    requestId: body.requestId,
+    proof,
+    trustSignIn: true,
+  });
+  expect(approved.status).toBe(200);
+  expect(await approved.json()).toEqual({ ok: true });
+  expect(enrollment.verifyApproval).toHaveBeenLastCalledWith(proof, ceremony.binding);
+  expect(enrollment.trustSignIn).toHaveBeenCalledOnce();
+  const polled = await post(server, "/devices/account/poll", {
+    requestId: body.requestId,
+    secret: body.secret,
+  });
+  expect(await polled.json()).toMatchObject({ status: "approved" });
+  // Google-only pairing routes have no approval page, and a gateway without an origin of its own
+  // offers no ceremony.
+  expect((await server.request(`/devices/google/approval/${body.requestId}`)).status).toBe(404);
+  const plain = enrollmentServer({ trusted: false });
+  const other = await signedRequest(plain.server, plain.spki);
+  expect(
+    (
+      await post(plain.server, "/devices/account/approval/options", {
+        requestId: other.body.requestId,
+      })
+    ).status,
+  ).toBe(404);
+});
+
+test("the approval page allows ten tries a minute from one address", async () => {
+  const { server } = enrollmentServer({ trusted: false });
+  for (let index = 0; index < 10; index++)
+    expect((await server.request(`/devices/account/approval/${randomUUID()}`)).status).toBe(404);
+  expect((await server.request(`/devices/account/approval/${randomUUID()}`)).status).toBe(429);
+  expect(
+    (await post(server, "/devices/account/approval/options", { requestId: randomUUID() })).status,
+  ).toBe(429);
+  const proof = {
+    type: "gateway-passkey",
+    challenge: "Y2hhbGxlbmdlY2hhbGxlbmdlY2hhbGxlbmdlY2hhbGw",
+    credential: {
+      id: "Y3JlZA",
+      rawId: "Y3JlZA",
+      type: "public-key",
+      clientExtensionResults: {},
+      response: {
+        clientDataJSON: "e30",
+        authenticatorData: "YQ",
+        signature: "cw",
+        userHandle: "dQ",
+      },
+    },
+  };
+  expect(
+    (await post(server, "/devices/account/approval", { requestId: randomUUID(), proof })).status,
+  ).toBe(429);
+});
+
 test("a trusted sign-in with a signed device key joins at once; the challenge is one-use", async () => {
   const { server, enrollment, spki } = enrollmentServer({ trusted: true });
   const { body, response } = await signedRequest(server, spki);
@@ -1214,6 +1436,43 @@ test("a trusted sign-in with a signed device key joins at once; the challenge is
   expect(await held.response.json()).toMatchObject({ status: "pending" });
 });
 
+// F6: a phone can't tell the owner's gateway from one a hacked relay listed, so it asks to be held.
+// The owner's real gateway must then hold even a sign-in that would join by itself, show the owner
+// the code the phone shows, and hand the phone its pairing code only once a person approved.
+test("F6: a phone that can't check the gateway asks to be held, and a trusted sign-in then waits for the owner with the same code", async () => {
+  const { server, spki } = enrollmentServer({ trusted: true });
+  const { body, response } = await signedRequest(server, spki, { requireApproval: true });
+  const held = (await response.json()) as { status: string; verificationCode: string };
+  expect(held).toMatchObject({ status: "pending" });
+  expect(held).not.toHaveProperty("pairingCode");
+  const listed = (await (
+    await server.request("/admin/cloud-pairing/requests", {
+      headers: { authorization: `Bearer ${admin}` },
+    })
+  ).json()) as { items: { requestId: string; verificationCode: string }[] };
+  expect(listed.items.find((item) => item.requestId === body.requestId)?.verificationCode).toBe(
+    held.verificationCode,
+  );
+  const poll = () =>
+    post(server, "/devices/account/poll", { requestId: body.requestId, secret: body.secret });
+  expect(await (await poll()).json()).toMatchObject({ status: "pending" });
+  expect(
+    (
+      await post(
+        server,
+        "/admin/cloud-pairing/decision",
+        { requestId: body.requestId, approve: true },
+        admin,
+      )
+    ).status,
+  ).toBe(200);
+  expect(await (await poll()).json()).toMatchObject({
+    status: "approved",
+    verificationCode: held.verificationCode,
+    pairingCode: expect.any(String),
+  });
+});
+
 test("an untrusted sign-in is held, listed as trustable, and approving with trustSignIn pins it", async () => {
   const { server, enrollment, spki } = enrollmentServer({ trusted: false });
   const { body, response } = await signedRequest(server, spki);
@@ -1226,6 +1485,15 @@ test("an untrusted sign-in is held, listed as trustable, and approving with trus
   expect(listed.items).toEqual([
     expect.objectContaining({ requestId: body.requestId, signIn: "google", canTrustSignIn: true }),
   ]);
+  // From the gateway's own network approving asks nothing more; through the relay it would, and
+  // the list says so for the button to name it.
+  expect(listed.stepUpRequired).toBe(false);
+  const relayed = await (
+    await server.request("/admin/cloud-pairing/requests", {
+      headers: { authorization: `Bearer ${admin}`, "x-omnesis-cloud-relay": "1" },
+    })
+  ).json();
+  expect(relayed.stepUpRequired).toBe(true);
   expect(
     (
       await post(
@@ -1316,4 +1584,60 @@ test("a request without the gateway's challenge is refused, and the code shown t
   expect(
     (await post(server, "/devices/google/request", { ...(await request()), challenge })).status,
   ).toBe(409);
+});
+
+test("a passkey sign-in on the gateway's page with a passkey the account doesn't have is named as such", async () => {
+  const where = { rpId: "relay.example.test", origin: "https://g-abcdefgh.relay.example.test" };
+  const { server, enrollment, spki } = enrollmentServer({ trusted: true, gatewayPasskey: where });
+  const { privateKey, publicKey } = generateKeyPairSync("ec", { namedCurve: "prime256v1" });
+  const devicePublicKey = publicKey.export({ type: "spki", format: "der" }).toString("base64url");
+  const send = async () => {
+    const fields = {
+      requestId: randomUUID(),
+      kind: "portal" as const,
+      name: "Fictional browser",
+      secret: randomBytes(32).toString("hex"),
+    };
+    const ceremony = await (
+      await post(server, "/devices/account/passkey/options", { ...fields, devicePublicKey })
+    ).json();
+    const signature = signDeviceTranscript(
+      privateKey,
+      enrollmentSignatureTranscript({
+        ...fields,
+        gatewaySpkiFingerprint: spki,
+        challenge: ceremony.challenge,
+        devicePublicKey,
+      }),
+    );
+    return post(server, "/devices/account/request", {
+      ...fields,
+      deviceKey: { publicKey: devicePublicKey, challenge: ceremony.challenge, signature },
+      proof: {
+        type: "gateway-passkey",
+        challenge: ceremony.challenge,
+        credential: {
+          id: "b2xk",
+          rawId: "b2xk",
+          type: "public-key",
+          clientExtensionResults: {},
+          response: {
+            clientDataJSON: "e30",
+            authenticatorData: "YQ",
+            signature: "cw",
+            userHandle: "dQ",
+          },
+        },
+      },
+    });
+  };
+  vi.mocked(enrollment.verifyGatewayPasskey!).mockRejectedValueOnce(new PasskeyNotOnAccount());
+  const refused = await send();
+  expect(refused.status).toBe(401);
+  expect(JSON.stringify(await refused.json())).toContain("PASSKEY_NOT_ON_ACCOUNT");
+  // A check that fails for any other reason stays the generic refusal.
+  vi.mocked(enrollment.verifyGatewayPasskey!).mockResolvedValueOnce(undefined);
+  const failed = await send();
+  expect(failed.status).toBe(401);
+  expect(JSON.stringify(await failed.json())).not.toContain("PASSKEY_NOT_ON_ACCOUNT");
 });

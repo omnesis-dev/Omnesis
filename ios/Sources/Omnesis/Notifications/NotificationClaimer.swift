@@ -13,12 +13,13 @@ public enum ClaimedNotificationRoute: Equatable, Sendable, Decodable {
     case needsAuth(sourceId: String, providerId: String?)
     case privacyApproval(approvalId: String)
     case accessAuthorization
-    case devicePairing
+    /// A device waiting for the owner's OK; newer gateways name the request.
+    case devicePairing(requestId: String? = nil)
     case unknown
 
     private enum CodingKeys: String, CodingKey {
         case kind, conversationId, watchId, firingKey
-        case sourceId, providerId, approvalId
+        case sourceId, providerId, approvalId, requestId
     }
 
     public init(from decoder: Decoder) throws {
@@ -65,7 +66,7 @@ public enum ClaimedNotificationRoute: Equatable, Sendable, Decodable {
         case "access-authorization":
             self = .accessAuthorization
         case "device-pairing":
-            self = .devicePairing
+            self = .devicePairing(requestId: try? values.decodeIfPresent(String.self, forKey: .requestId))
         default:
             self = .unknown
         }
@@ -133,7 +134,7 @@ public struct ClaimedNotification: Decodable, Equatable, Sendable {
                  ("needs-auth", .needsAuth(_, _)),
                  ("privacy-approval", .privacyApproval(_)),
                  ("access-authorization", .accessAuthorization),
-                 ("device-pairing", .devicePairing):
+                 ("device-pairing", .devicePairing(_)):
                 route
             default:
                 nil
@@ -163,6 +164,9 @@ public struct ClaimedNotification: Decodable, Equatable, Sendable {
             ["kind": "device-pairing", "targetId": "pairing"]
         case .unknown, nil:
             ["kind": kind, "targetId": targetId]
+        }
+        if case .devicePairing(let requestId?) = matchedRoute {
+            omnesis["requestId"] = requestId
         }
         if let affectedDeviceId {
             omnesis["affectedDeviceId"] = affectedDeviceId
@@ -472,8 +476,13 @@ public struct NotificationClaimer: Sendable {
         urlRequest.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         urlRequest.setValue("application/json", forHTTPHeaderField: "Accept")
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        if claimsPairingNotifications, path == "/notifications/claim" {
-            urlRequest.setValue("1", forHTTPHeaderField: "X-Omnesis-Pairing-Notifications")
+        if path == "/notifications/claim" {
+            if claimsPairingNotifications {
+                urlRequest.setValue("1", forHTTPHeaderField: "X-Omnesis-Pairing-Notifications")
+            }
+            // Every build routes devices waiting to join through Tailscale. A
+            // gateway that never sends them ignores the header.
+            urlRequest.setValue("1", forHTTPHeaderField: "X-Omnesis-Tailscale-Join-Notifications")
         }
         urlRequest.httpBody = try JSONEncoder().encode(body)
         let (data, response) = try await request(urlRequest)

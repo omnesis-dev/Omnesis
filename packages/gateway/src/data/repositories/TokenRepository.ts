@@ -492,26 +492,36 @@ export function hasTokens(db: Db): boolean {
  * Returns the raw token if one was created, null if already present.
  */
 export function ensureBootstrapToken(db: Db, configDir: string): string | null {
-  if (hasTokens(db)) return null;
+  // Keep rows provisional until the private credential file is published.
+  // Nested callers retain their transaction via better-sqlite3 savepoints.
+  return db.transaction((): string | null => {
+    if (hasTokens(db)) return null;
 
-  // Create a bootstrap device with admin + read + write:* scopes — enough to
-  // pair the first real device (typically the operator CLI).
-  const deviceId = DeviceId(randomUUID());
-  db.prepare(
-    `INSERT INTO devices (id, name, kind, capabilities, paired_at)
-     VALUES (?, ?, ?, ?, ?)`,
-  ).run(deviceId, "bootstrap", "cli" as DeviceKind, devicesCapabilitiesCodec.serialize({}), now());
+    // Create a bootstrap device with admin + read + write:* scopes — enough to
+    // pair the first real device (typically the operator CLI).
+    const deviceId = DeviceId(randomUUID());
+    db.prepare(
+      `INSERT INTO devices (id, name, kind, capabilities, paired_at)
+       VALUES (?, ?, ?, ?, ?)`,
+    ).run(
+      deviceId,
+      "bootstrap",
+      "cli" as DeviceKind,
+      devicesCapabilitiesCodec.serialize({}),
+      now(),
+    );
 
-  const { token } = createToken(
-    db,
-    deviceId,
-    [SCOPE_ADMIN, SCOPE_READ, SCOPE_WRITE_ALL],
-    "bootstrap",
-  );
-  const tokenPath = join(configDir, "token");
-  ensurePrivateDirSync(configDir);
-  writeSecretTextFileSync(tokenPath, token + "\n", { configDir });
-  return token;
+    const { token } = createToken(
+      db,
+      deviceId,
+      [SCOPE_ADMIN, SCOPE_READ, SCOPE_WRITE_ALL],
+      "bootstrap",
+    );
+    const tokenPath = join(configDir, "token");
+    ensurePrivateDirSync(configDir);
+    writeSecretTextFileSync(tokenPath, token + "\n", { configDir });
+    return token;
+  })();
 }
 
 // --- Session management (portal cookie auth) ---

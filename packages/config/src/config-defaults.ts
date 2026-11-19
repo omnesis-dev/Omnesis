@@ -407,6 +407,10 @@ export const CONFIG_DEFAULTS = {
       maxPageSize: 1000,
       minBetweenPageSleep: "10ms",
     },
+    lexicalRebuild: {
+      batchSize: 1000,
+      pause: "50ms",
+    },
     chunker: {
       chunkSize: 2048,
       overlap: 512,

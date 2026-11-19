@@ -265,16 +265,23 @@ class FcmPushManager @Inject constructor(
                     putExtra(MainActivity.EXTRA_DEVICES_DEVICE_ID, target.deviceId)
                     putExtra(MainActivity.EXTRA_DEVICES_LAUNCH_STAMP, System.nanoTime())
                 }
-                NotificationTarget.PairingRequests -> {
+                is NotificationTarget.PairingRequests -> {
                     action = MainActivity.ACTION_DEVICES
                     putExtra(MainActivity.EXTRA_DEVICES_PAIRING_REQUESTS, true)
+                    putExtra(MainActivity.EXTRA_DEVICES_PAIRING_REQUEST_ID, target.requestId)
                     putExtra(MainActivity.EXTRA_DEVICES_LAUNCH_STAMP, System.nanoTime())
+                }
+                NotificationTarget.TailscaleJoinRequests -> {
+                    action = MainActivity.ACTION_TAILSCALE_JOIN_REQUESTS
+                    putExtra(MainActivity.EXTRA_TAILSCALE_JOIN_LAUNCH_STAMP, System.nanoTime())
                 }
                 NotificationTarget.App -> Unit
             }
         }
         // A request that arrives while the app is open also refreshes the main screen's banner.
-        if (route.target == NotificationTarget.PairingRequests) PairingPendingRequests.requestRefresh()
+        if (route.target is NotificationTarget.PairingRequests || route.target == NotificationTarget.TailscaleJoinRequests) {
+            PairingPendingRequests.requestRefresh()
+        }
         val pendingIntent = PendingIntent.getActivity(
             context,
             0,

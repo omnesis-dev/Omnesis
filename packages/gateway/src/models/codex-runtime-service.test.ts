@@ -1,17 +1,22 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { access, chmod, copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import { CODEX_RUNTIME_COMPAT, CodexAppServerRuntime } from "@omnesis/agent";
 import { z } from "zod";
-import { CODEX_SUPPORTED_ROLES, type AgentEvent } from "@omnesis/core";
+import { CODEX_SUPPORTED_ROLES, ownedProcessCleanupReceipt, type AgentEvent } from "@omnesis/core";
 import { ConfigStore } from "../config-store.js";
 import { AgentSetupUnavailableError } from "./agent-assignment-setup.js";
-import { CodexRuntimeLifecycleConflictError } from "./codex-runtime-lifecycle.js";
+import {
+  CodexRuntimeLifecycle,
+  CodexRuntimeLifecycleConflictError,
+} from "./codex-runtime-lifecycle.js";
+import { CodexRuntimeUpdater } from "./codex-runtime-updater.js";
+import { CodexGenerationSupervisor } from "./codex-generation-supervisor.js";
 import {
   CodexRuntimeService,
   parseCodexAppServerModels,
@@ -23,6 +28,558 @@ import type { CodexRuntimeInstaller } from "./codex-runtime-installer.js";
 const fakeCodexPath = fileURLToPath(
   new URL("../../../agent/src/test-fixtures/fake-codex-app-server.mjs", import.meta.url),
 );
+
+describe("Codex service disposal failures", () => {
+  it.each(["version", "auth", "models"] as const)(
+    "holds admission instead of starting a fallback after unjoined %s discovery",
+    async (stage) => {
+      const dir = await mkdtemp(join(tmpdir(), "omnesis-codex-discovery-unjoined-"));
+      const home = join(dir, "codex-home");
+      await mkdir(home);
+      await writeFile(join(home, "auth.json"), "{}");
+      const agent = await import("@omnesis/agent");
+      const core = await import("@omnesis/core");
+      const failure = Object.assign(new Error("invented discovery failure"), {
+        cleanupFailure: new Error("invented missing native join"),
+      });
+      vi.spyOn(agent, "ensureCodexHome").mockResolvedValue(undefined);
+      vi.spyOn(CodexAppServerRuntime.prototype, "resolveCommandInfo").mockResolvedValue({
+        source: "override",
+        command: process.execPath,
+      });
+      const probe = vi.spyOn(CodexAppServerRuntime.prototype, "probeRuntime");
+      if (stage === "version") probe.mockRejectedValue(failure);
+      else probe.mockResolvedValue({ command: process.execPath, version: "0.167.0" });
+      vi.spyOn(CodexAppServerRuntime.prototype, "listModels").mockRejectedValue(failure);
+      const execute = vi.spyOn(core, "execWindowsJob");
+      if (stage === "auth") execute.mockRejectedValue(failure);
+      else execute.mockResolvedValue({ stdout: "invented logged-in status", stderr: "" });
+      const service = new CodexRuntimeService({
+        configDir: dir,
+        command: process.execPath,
+        interactivePoolSize: 0,
+        backgroundPoolSize: 1,
+        inferencePoolSize: 1,
+      });
+      const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+      Object.defineProperty(process, "platform", { ...platform, value: "win32" });
+      try {
+        expect(await service.refresh()).toMatchObject({
+          status: "unreachable",
+          reason: expect.stringMatching(/cleanup/u),
+        });
+        expect(await service.refresh()).toMatchObject({ status: "unreachable" });
+        await expect(service.startDeviceLogin()).rejects.toThrow(/cleanup/u);
+        await expect(service.logout()).rejects.toThrow(/cleanup/u);
+        expect(execute).toHaveBeenCalledTimes(stage === "version" ? 0 : 1);
+        expect(await readFile(join(home, "auth.json"), "utf8")).toBe("{}");
+      } finally {
+        Object.defineProperty(process, "platform", platform);
+        await service.dispose().catch(() => {});
+        vi.restoreAllMocks();
+        await rm(dir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it("keeps logout cleanup uncertainty fenced through lifecycle disposal", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "omnesis-codex-unjoined-logout-"));
+    const auth = join(dir, "auth.json");
+    await writeFile(auth, "invented auth marker");
+    const core = await import("@omnesis/core");
+    const failure = Object.assign(new Error("invented logout timeout"), {
+      code: "ETIMEDOUT",
+      cleanupFailure: new Error("invented missing native join"),
+    });
+    const execute = vi.spyOn(core, "execWindowsJob").mockRejectedValue(failure);
+    const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+    const invalidateRefresh = vi.fn();
+    const holdCleanup = vi.fn((error: Error) => error);
+    const lifecycle = new CodexRuntimeLifecycle({
+      codexHome: dir,
+      cliArgsPrefix: [],
+      env: process.env,
+      refreshTimeoutMs: 100,
+      loginStartTimeoutMs: 100,
+      loginTtlMs: 100,
+      supervisor: {
+        holdCleanup,
+        current: {
+          runtime: { resolveCommandInfo: () => Promise.resolve({ command: process.execPath }) },
+        },
+      } as unknown as CodexGenerationSupervisor,
+      ensureSelectedRuntime: () => Promise.resolve(),
+      updateInProgress: () => false,
+      refresh: () => Promise.reject(new Error("unexpected refresh")),
+      invalidateRefresh,
+      describeRuntime: () => Promise.resolve(undefined),
+      setStatus: vi.fn(),
+    });
+    Object.defineProperty(process, "platform", { ...platform, value: "win32" });
+    try {
+      await expect(lifecycle.logout()).rejects.toBe(failure);
+      expect(await readFile(auth, "utf8")).toBe("invented auth marker");
+      expect(lifecycle.busy).toBe(true);
+      expect(invalidateRefresh).not.toHaveBeenCalled();
+      const operation = vi.fn(() => Promise.resolve("unexpected"));
+      await expect(lifecycle.runAgentSetup(operation)).rejects.toThrow(/cleanup/u);
+      await expect(lifecycle.startDeviceLogin()).rejects.toThrow(/cleanup/u);
+      await expect(lifecycle.logout()).rejects.toThrow(/cleanup/u);
+      expect(operation).not.toHaveBeenCalled();
+      const disposal = lifecycle.dispose();
+      await expect(disposal).rejects.toMatchObject({ cause: failure });
+      expect(lifecycle.dispose()).toBe(disposal);
+      await expect(lifecycle.dispose()).rejects.toBe(holdCleanup.mock.results[0]!.value);
+      expect(execute).toHaveBeenCalledOnce();
+    } finally {
+      Object.defineProperty(process, "platform", platform);
+      vi.restoreAllMocks();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it.each(["logout", "agent-setup", "logout-resolution"] as const)(
+    "joins accepted %s work before lifecycle disposal settles",
+    async (kind) => {
+      const dir = await mkdtemp(join(tmpdir(), "omnesis-codex-lifecycle-join-"));
+      const core = await import("@omnesis/core");
+      let release!: () => void, started!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const entered = new Promise<void>((resolve) => {
+        started = resolve;
+      });
+      const execute = vi.spyOn(core, "execWindowsJob").mockImplementation(async () => {
+        started();
+        await gate;
+        return { stdout: "", stderr: "" };
+      });
+      const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+      const lifecycle = new CodexRuntimeLifecycle({
+        codexHome: dir,
+        cliArgsPrefix: [],
+        env: process.env,
+        refreshTimeoutMs: 100,
+        loginStartTimeoutMs: 100,
+        loginTtlMs: 100,
+        supervisor: {
+          current: {
+            runtime: {
+              resolveCommandInfo: async () => {
+                if (kind === "logout-resolution") {
+                  started();
+                  await gate;
+                }
+                return { command: process.execPath };
+              },
+            },
+          },
+        } as unknown as CodexGenerationSupervisor,
+        ensureSelectedRuntime: () => Promise.resolve(),
+        updateInProgress: () => false,
+        refresh: () => Promise.reject(new Error("Unexpected refresh")),
+        invalidateRefresh: vi.fn(),
+        describeRuntime: () => Promise.resolve(undefined),
+        setStatus: vi.fn(),
+      });
+      Object.defineProperty(process, "platform", { ...platform, value: "win32" });
+      const work = kind.startsWith("logout")
+        ? lifecycle.logout()
+        : lifecycle.runAgentSetup(async () => {
+            started();
+            await gate;
+            return "joined";
+          });
+      const workResult = work.catch((error: unknown) => error);
+      let closed = false;
+      let closing: Promise<void> | undefined;
+      try {
+        await entered;
+        closing = lifecycle.dispose().then(() => {
+          closed = true;
+        });
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        expect(closed).toBe(false);
+        expect(lifecycle.cleanupReceipt()).toMatchObject({ cleanupPending: true });
+        release();
+        const result = await workResult;
+        if (kind === "logout-resolution")
+          expect(result).toMatchObject({ message: "Codex runtime service disposed." });
+        else expect(result).not.toBeInstanceOf(Error);
+        await closing;
+        expect(lifecycle.cleanupReceipt()).toBeUndefined();
+        expect(execute).toHaveBeenCalledTimes(kind === "logout" ? 1 : 0);
+      } finally {
+        release();
+        await work.catch(() => {});
+        await closing?.catch(() => {});
+        Object.defineProperty(process, "platform", platform);
+        vi.restoreAllMocks();
+        await rm(dir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it("closes service admission synchronously while accepted cleanup is held", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "omnesis-codex-closed-admission-"));
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    vi.spyOn(CodexRuntimeLifecycle.prototype, "dispose").mockReturnValue(held);
+    vi.spyOn(CodexRuntimeUpdater.prototype, "dispose").mockResolvedValue();
+    vi.spyOn(CodexAppServerRuntime.prototype, "resolveCommandInfo").mockRejectedValue(
+      new Error("Unexpected admission"),
+    );
+    const refresh = vi.spyOn(CodexGenerationSupervisor.prototype, "use");
+    const login = vi.spyOn(CodexRuntimeLifecycle.prototype, "startDeviceLogin");
+    const logout = vi.spyOn(CodexRuntimeLifecycle.prototype, "logout");
+    const setup = vi.spyOn(CodexRuntimeLifecycle.prototype, "runAgentSetup");
+    const update = vi.spyOn(CodexRuntimeUpdater.prototype, "start");
+    const service = new CodexRuntimeService({ configDir: dir, command: process.execPath });
+    const backend = service.createBackend({ model: "gpt-example-frontier" });
+    const closing = service.dispose();
+    try {
+      await expect(service.refresh()).rejects.toThrow(/disposed/);
+      await expect(service.startDeviceLogin()).rejects.toThrow(/disposed/);
+      await expect(service.logout()).rejects.toThrow(/disposed/);
+      await expect(service.setupAgent({} as ConfigStore, "gpt-example-frontier")).rejects.toThrow(
+        /disposed/,
+      );
+      await expect(service.getRuntimeUpdate()).rejects.toThrow(/disposed/);
+      await expect(service.startRuntimeUpdate({ dryRun: false })).rejects.toThrow(/disposed/);
+      await expect(service.cancelRuntimeUpdate()).rejects.toThrow(/disposed/);
+      const run = async () => {
+        for await (const event of backend.runTurn({
+          sessionId: "invented",
+          messageId: "invented",
+          userMessage: "Invented input",
+          systemPrompt: "",
+          history: [],
+          tools: [],
+        }))
+          void event;
+      };
+      await expect(run()).rejects.toThrow(/disposed/);
+      expect(refresh).not.toHaveBeenCalled();
+      expect(login).not.toHaveBeenCalled();
+      expect(logout).not.toHaveBeenCalled();
+      expect(setup).not.toHaveBeenCalled();
+      expect(update).not.toHaveBeenCalled();
+    } finally {
+      release();
+      await closing;
+      vi.restoreAllMocks();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("rechecks disposal after a turn's accepted runtime selection settles", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "omnesis-codex-selection-close-"));
+    let releaseSelection!: () => void, entered!: () => void, releaseCleanup!: () => void;
+    const selected = new Promise<void>((resolve) => {
+      releaseSelection = resolve;
+    });
+    const selecting = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const cleanup = new Promise<void>((resolve) => {
+      releaseCleanup = resolve;
+    });
+    vi.spyOn(CodexRuntimeUpdater.prototype, "ensureSelectedRuntime").mockImplementation(() => {
+      entered();
+      return selected;
+    });
+    vi.spyOn(CodexRuntimeUpdater.prototype, "dispose").mockResolvedValue();
+    vi.spyOn(CodexRuntimeLifecycle.prototype, "dispose").mockReturnValue(cleanup);
+    const run = vi
+      .spyOn(CodexAppServerRuntime.prototype, "runTurn")
+      .mockImplementation(async function* () {
+        yield* [];
+      });
+    const service = new CodexRuntimeService({
+      configDir: dir,
+      command: process.execPath,
+      interactivePoolSize: 0,
+    });
+    const turn = (async () => {
+      for await (const event of service.createBackend({ model: "gpt-example-frontier" }).runTurn({
+        sessionId: "invented",
+        messageId: "invented",
+        userMessage: "Invented input",
+        systemPrompt: "",
+        history: [],
+        tools: [],
+      }))
+        void event;
+    })();
+    const result = turn.catch((error: unknown) => error);
+    await selecting;
+    const closing = service.dispose();
+    try {
+      releaseSelection();
+      expect(await result).toMatchObject({ message: "Codex runtime service disposed." });
+      expect(run).not.toHaveBeenCalled();
+    } finally {
+      releaseSelection();
+      releaseCleanup();
+      await result;
+      await closing;
+      vi.restoreAllMocks();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("joins an accepted refresh helper before service disposal can confirm cleanup", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "omnesis-codex-refresh-join-"));
+    const home = join(dir, "codex-home");
+    await mkdir(home);
+    await writeFile(join(home, "auth.json"), "{}");
+    const agent = await import("@omnesis/agent"),
+      core = await import("@omnesis/core");
+    vi.spyOn(agent, "ensureCodexHome").mockResolvedValue();
+    vi.spyOn(CodexAppServerRuntime.prototype, "resolveCommandInfo").mockResolvedValue({
+      source: "override",
+      command: process.execPath,
+    });
+    vi.spyOn(CodexAppServerRuntime.prototype, "probeRuntime").mockResolvedValue({
+      command: process.execPath,
+      version: "0.167.0",
+    });
+    let release!: () => void, entered!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const running = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const execute = vi.spyOn(core, "execWindowsJob").mockImplementation(async () => {
+      entered();
+      await gate;
+      return { stdout: "invented logged-in status", stderr: "" };
+    });
+    const models = vi.spyOn(CodexAppServerRuntime.prototype, "listModels");
+    const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+    Object.defineProperty(process, "platform", { ...platform, value: "win32" });
+    const service = new CodexRuntimeService({ configDir: dir, command: process.execPath });
+    const refreshing = service.refresh();
+    let closed = false;
+    let closing: Promise<void> | undefined;
+    try {
+      await running;
+      closing = service.dispose().then(() => {
+        closed = true;
+      });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(closed).toBe(false);
+      release();
+      await refreshing;
+      await closing;
+      expect(models).not.toHaveBeenCalled();
+      expect(execute).toHaveBeenCalledOnce();
+      expect(service.cleanupFailure()).toBeUndefined();
+    } finally {
+      release();
+      await refreshing.catch(() => {});
+      await closing?.catch(() => {});
+      Object.defineProperty(process, "platform", platform);
+      vi.restoreAllMocks();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("clears a pending shutdown receipt after the retained disposal positively settles", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "omnesis-codex-joined-dispose-"));
+    let release!: () => void;
+    const update = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    vi.spyOn(CodexRuntimeUpdater.prototype, "dispose").mockReturnValue(update);
+    vi.spyOn(CodexRuntimeLifecycle.prototype, "dispose").mockResolvedValue();
+    vi.spyOn(CodexGenerationSupervisor.prototype, "dispose").mockResolvedValue();
+    const service = new CodexRuntimeService({ configDir: dir, command: process.execPath });
+    try {
+      const disposal = service.dispose();
+      expect(service.cleanupFailure()).toMatchObject({
+        cleanupFailure: true,
+        cleanupPending: true,
+      });
+      release();
+      await disposal;
+      expect(service.cleanupFailure()).toBeUndefined();
+      expect(service.dispose()).toBe(disposal);
+    } finally {
+      release();
+      await service.dispose();
+      vi.restoreAllMocks();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it.each(["updater", "lifecycle", "supervisor"] as const)(
+    "joins all owners after %s fails and preserves repeated rejection",
+    async (component) => {
+      const dir = await mkdtemp(join(tmpdir(), "omnesis-codex-dispose-"));
+      const failure = new Error(`invented ${component} cleanup failure`);
+      let releaseUpdate!: () => void, releaseRetirement!: () => void;
+      const update = new Promise<void>((resolve, reject) => {
+        releaseUpdate = () => (component === "updater" ? reject(failure) : resolve());
+      });
+      const retirement = new Promise<void>((resolve, reject) => {
+        releaseRetirement = () => (component === "supervisor" ? reject(failure) : resolve());
+      });
+      const updater = vi.spyOn(CodexRuntimeUpdater.prototype, "dispose").mockReturnValue(update);
+      const lifecycle = vi
+        .spyOn(CodexRuntimeLifecycle.prototype, "dispose")
+        .mockImplementation(() =>
+          component === "lifecycle" ? Promise.reject(failure) : Promise.resolve(),
+        );
+      const supervisor = vi
+        .spyOn(CodexGenerationSupervisor.prototype, "dispose")
+        .mockReturnValue(retirement);
+      const service = new CodexRuntimeService({
+        configDir: dir,
+        command: process.execPath,
+        interactivePoolSize: 0,
+        inferencePoolSize: 1,
+        backgroundPoolSize: 1,
+      });
+      expect(service.cleanupFailure()).toBeUndefined();
+      const disposal = service.dispose();
+      const pendingReceipt = service.cleanupFailure();
+      expect(pendingReceipt).toMatchObject({ cleanupFailure: true, cleanupPending: true });
+      expect(service.cleanupFailure()).toBe(pendingReceipt);
+      let settled = false;
+      void disposal.then(
+        () => {
+          settled = true;
+        },
+        () => {
+          settled = true;
+        },
+      );
+      try {
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(supervisor).not.toHaveBeenCalled();
+        expect(settled).toBe(false);
+        releaseUpdate();
+        await vi.waitFor(() => expect(supervisor).toHaveBeenCalledOnce());
+        expect(settled).toBe(false);
+        releaseRetirement();
+        await expect(disposal).rejects.toBe(failure);
+        expect(service.cleanupFailure()).toMatchObject({ cleanupFailure: true, cause: failure });
+        expect(service.dispose()).toBe(disposal);
+        await expect(service.dispose()).rejects.toBe(failure);
+        expect(updater).toHaveBeenCalledOnce();
+        expect(lifecycle).toHaveBeenCalledOnce();
+        expect(supervisor).toHaveBeenCalledOnce();
+      } finally {
+        releaseUpdate();
+        releaseRetirement();
+        await disposal.catch(() => {});
+        vi.restoreAllMocks();
+        await rm(dir, { recursive: true, force: true });
+      }
+    },
+  );
+});
+
+describe("Codex JavaScript command lifecycle", () => {
+  it.each([false, true])(
+    "refreshes and logs out a JavaScript command (fallback=%s)",
+    async (fallback) => {
+      const dir = await mkdtemp(join(tmpdir(), "omnesis-codex-js-service-"));
+      const command = join(dir, "codex command & $().mjs");
+      await copyFile(fakeCodexPath, command);
+      await chmod(command, 0o700);
+      const home = join(dir, "codex-home");
+      await mkdir(home);
+      await writeFile(join(home, "auth.json"), "{}");
+      if (fallback)
+        vi.spyOn(CodexAppServerRuntime.prototype, "listModels").mockRejectedValue(
+          new Error("synthetic protocol unavailable"),
+        );
+      const service = new CodexRuntimeService({
+        configDir: dir,
+        command,
+        interactivePoolSize: 0,
+        backgroundPoolSize: 1,
+        inferencePoolSize: 1,
+      });
+      try {
+        const status = await service.refresh();
+        expect(status.loggedIn).toBe(true);
+        expect(status.discovery).toBe(fallback ? "debug-models" : "app-server");
+        expect(status.models).toContain("gpt-example-frontier");
+        const result = await service.logout();
+        expect(result.ok).toBe(true);
+        await expect(access(join(home, "auth.json"))).rejects.toMatchObject({ code: "ENOENT" });
+      } finally {
+        vi.restoreAllMocks();
+        await service.dispose();
+        await rm(dir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.each(process.platform === "win32" ? [false, true] : [false])(
+    "starts and cancels device login through a JavaScript wrapper (wrapperExits=%s)",
+    async (wrapperExits) => {
+      const dir = await mkdtemp(join(tmpdir(), "omnesis-codex-js-login-"));
+      const command = join(dir, "codex command & $().mjs");
+      const pidPath = join(dir, "child.pid");
+      const wrapperPidPath = join(dir, "wrapper.pid");
+      await writeFile(
+        command,
+        `#!/usr/bin/env node
+import { spawn } from 'node:child_process';
+import { writeFileSync } from 'node:fs';
+const args = process.argv.slice(2);
+if (args.includes("--device-auth")) writeFileSync(${JSON.stringify(wrapperPidPath)}, String(process.pid));
+const child = spawn(process.execPath, [${JSON.stringify(fakeCodexPath)}, ...args], { detached: ${wrapperExits}, stdio: 'inherit' });
+child.once('spawn', () => { if (args.includes('--device-auth')) writeFileSync(${JSON.stringify(pidPath)}, String(child.pid)); });
+process.on('SIGTERM', () => child.kill('SIGTERM'));
+child.on('exit', (code) => process.exit(code ?? 1));
+if (${wrapperExits} && args.includes('--device-auth')) child.once('spawn', () => { child.unref(); process.exit(0); });
+`,
+        { mode: 0o700 },
+      );
+      const service = new CodexRuntimeService({
+        configDir: dir,
+        command,
+        interactivePoolSize: 0,
+        backgroundPoolSize: 1,
+        inferencePoolSize: 1,
+      });
+      let childPid: number | undefined;
+      try {
+        const flow = await service.startDeviceLogin();
+        expect(flow.status).toBe("pending");
+        expect(flow.userCode).toBe("ABCD-12345");
+        childPid = Number(await readFile(pidPath, "utf8"));
+        if (wrapperExits) {
+          const wrapperPid = Number(await readFile(wrapperPidPath, "utf8"));
+          await vi.waitFor(() => expect(() => process.kill(wrapperPid, 0)).toThrow());
+        }
+        expect(service.cancelLogin().canceled).toBe(true);
+        await service.dispose();
+        expect(() => process.kill(childPid!, 0)).toThrow();
+      } finally {
+        await service.dispose();
+        if (childPid !== undefined) {
+          try {
+            process.kill(childPid, "SIGKILL");
+          } catch {
+            /* already exited */
+          }
+        }
+        await rm(dir, { recursive: true, force: true });
+      }
+    },
+  );
+});
 
 describe("CodexRuntimeService parsers", () => {
   it("parses list-visible Codex models and omits hidden or upgrade-gated entries", () => {
@@ -252,12 +809,20 @@ describe("CodexRuntimeService parsers", () => {
       }))
         void event;
     };
-    const runs = Array.from({ length: 5 }, (_, index) => run("background", `background-${index}`));
+    const runs = Array.from({ length: 4 }, (_, index) => run("background", `background-${index}`));
     try {
       await waitUntil(async () => started.length === 4);
-      expect(started).toEqual(["background-0", "background-1", "background-2", "background-3"]);
+      const initial = [...started];
+      expect(initial.sort()).toEqual([
+        "background-0",
+        "background-1",
+        "background-2",
+        "background-3",
+      ]);
+      runs.push(run("background", "background-4"));
       await run("interactive", "interactive");
-      expect(started).toContain("interactive");
+      expect([...started]).toContain("interactive");
+      expect([...started]).not.toContain("background-4");
       finishSecond();
       await waitUntil(async () => started.includes("background-4"));
     } finally {
@@ -291,7 +856,6 @@ describe("CodexRuntimeService parsers", () => {
       const service = new CodexRuntimeService({
         configDir: dir,
         command: join(dir, "missing-codex"),
-        refreshTimeoutMs: 50,
       });
       const result = await service.logout();
 
@@ -312,7 +876,6 @@ describe("CodexRuntimeService parsers", () => {
       const service = new CodexRuntimeService({
         configDir: dir,
         command: join(dir, "missing-codex"),
-        refreshTimeoutMs: 50,
       });
 
       const status = await service.refresh();
@@ -374,7 +937,7 @@ describe("CodexRuntimeService parsers", () => {
     },
   );
 
-  it("keeps canceled login isolated until its child exits and owns it during shutdown", async () => {
+  it("keeps canceled login isolated until cleanup is confirmed and joins it during shutdown", async () => {
     const dir = await mkdtemp(join(tmpdir(), "omnesis-codex-login-shutdown-"));
     const managed = {
       source: "managed" as const,
@@ -399,7 +962,45 @@ describe("CodexRuntimeService parsers", () => {
     const configStore = new ConfigStore({ filePath: join(dir, "omnesis.json") });
     await configStore.load();
 
+    let releaseConfirmation = () => {};
+    let restoreTermination: (() => void) | undefined;
+    let primaryFailure: unknown;
+    let failed = false;
+    let cleanupFailed = false;
+    let cleanupFailure: unknown;
     try {
+      const confirmation = new Promise<void>((resolve) => {
+        releaseConfirmation = resolve;
+      });
+      let markConfirmationEntered!: () => void;
+      const confirmationEntered = new Promise<void>((resolve) => {
+        markConfirmationEntered = resolve;
+      });
+      const core = await import("@omnesis/core");
+      if (process.platform === "win32") {
+        const originalSpawn = core.spawnWindowsJob;
+        const spawning = vi.spyOn(core, "spawnWindowsJob").mockImplementation((...args) => {
+          const child = originalSpawn(...args);
+          // Hold only the receipt after the real kernel Job has joined; a
+          // Windows hard cancellation need not keep the physical child alive.
+          child.jobClosed = child.jobClosed.then(() => {
+            markConfirmationEntered();
+            return confirmation;
+          });
+          return child;
+        });
+        restoreTermination = () => spawning.mockRestore();
+      } else {
+        const originalTerminate = core.terminateChildProcess;
+        const terminating = vi
+          .spyOn(core, "terminateChildProcess")
+          .mockImplementation(async (...args) => {
+            await originalTerminate(...args);
+            markConfirmationEntered();
+            await confirmation;
+          });
+        restoreTermination = () => terminating.mockRestore();
+      }
       const flow = await service.startDeviceLogin();
       expect(flow.status).toBe("pending");
       await expect(service.setupAgent(configStore, "gpt-example-frontier")).rejects.toThrow(
@@ -410,11 +1011,60 @@ describe("CodexRuntimeService parsers", () => {
         "Finish or cancel",
       );
       await expect(service.startDeviceLogin()).rejects.toThrow("previous Codex login process");
-      await expect(service.dispose()).resolves.toBeUndefined();
+      const closing = service.dispose();
+      let settled = false;
+      void closing.then(
+        () => {
+          settled = true;
+        },
+        () => {
+          settled = true;
+        },
+      );
+      await Promise.race([
+        confirmationEntered,
+        closing.then(() => {
+          throw new Error("Disposal skipped the held process confirmation");
+        }),
+      ]);
+      await Promise.resolve();
+      expect(settled).toBe(false);
+      releaseConfirmation();
+      await expect(closing).resolves.toBeUndefined();
+    } catch (error) {
+      failed = true;
+      primaryFailure = error;
     } finally {
+      releaseConfirmation();
       configStore.stop();
-      await rm(dir, { recursive: true, force: true });
+      try {
+        await service.dispose();
+      } catch (cleanupError) {
+        cleanupFailed = true;
+        cleanupFailure = cleanupError;
+      }
+      restoreTermination?.();
+      if (!cleanupFailed)
+        await rm(dir, { recursive: true, force: true }).catch((error: unknown) => {
+          cleanupFailed = true;
+          cleanupFailure = error;
+        });
     }
+    if (cleanupFailed) {
+      if (!failed) throw cleanupFailure;
+      const marked = [cleanupFailure, primaryFailure].find(
+        (error) => ownedProcessCleanupReceipt(error) !== undefined,
+      );
+      const receipt = ownedProcessCleanupReceipt(marked);
+      const aggregate = new AggregateError(
+        [primaryFailure, cleanupFailure],
+        "Canceled login fixture cleanup was not confirmed",
+        { cause: receipt === undefined ? cleanupFailure : marked },
+      );
+      if (receipt !== undefined) Object.assign(aggregate, { cleanupFailure: receipt.failure });
+      throw aggregate;
+    }
+    if (failed) throw primaryFailure;
   });
 
   it("reschedules login expiry to the lifetime advertised by Codex", async () => {
