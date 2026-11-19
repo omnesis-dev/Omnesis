@@ -86,7 +86,7 @@ function runStorageWorker(
 ): Promise<{ frames: number; ms: number } | GatewayIndexBootResult> {
   if (options.signal?.aborted) return Promise.reject(abortError());
   const entry = resolveWorkerEntry(
-    "./storage-worker.ts",
+    "../workers/storage-boot-worker.ts",
     import.meta.url,
     "../workers/register-tsx.mjs",
   );

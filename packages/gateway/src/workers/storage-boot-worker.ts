@@ -16,9 +16,9 @@ import { quarantineCorruptUsearchAsync } from "../indexer/usearch-boot-guard.js"
 import { tryUnlink } from "../indexer/usearch-sidecar-crypto.js";
 import { prepareEncryptedGraphForBoot } from "../indexer/usearch-sidecar-boot.js";
 import { resolveActiveUsearchTarget } from "../indexer/usearch-read-registry.js";
-import type { StorageBootMessage, StorageBootRequest } from "./storage.js";
+import type { StorageBootMessage, StorageBootRequest } from "../startup/storage.js";
 
-if (!parentPort) throw new Error("storage-worker must run as a worker thread");
+if (!parentPort) throw new Error("storage-boot-worker must run as a worker thread");
 const port = parentPort;
 const post = (message: StorageBootMessage): void => port.postMessage(message);
 const request = workerData as StorageBootRequest;
