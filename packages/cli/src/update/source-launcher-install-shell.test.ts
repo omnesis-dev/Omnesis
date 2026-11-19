@@ -69,12 +69,15 @@ describe("installed POSIX source launcher", () => {
     writeFileSync(join(rootDir, "packages/cli/package.json"), JSON.stringify({ type: "module" }));
     symlinkSync(join(process.cwd(), "node_modules/tsx"), join(rootDir, "node_modules/tsx"), "dir");
     const ready = join(dir, "ready");
+    const pendingReady = join(dir, "ready.pending");
     const completed = join(dir, "completed");
+    // Readiness publishes a complete PID by rename: the test waits for the
+    // file to exist, so a file created before its write would read as PID zero.
     writeFileSync(
       join(rootDir, "packages/cli/src/index.ts"),
-      `import {writeFileSync} from 'node:fs';
+      `import {renameSync,writeFileSync} from 'node:fs';
 process.on('SIGTERM',()=>{const end=Date.now()+250;while(Date.now()<end){};writeFileSync(${JSON.stringify(completed)},'drained');process.exit(0)});
-writeFileSync(${JSON.stringify(ready)},String(process.pid));setInterval(()=>{},1000);
+writeFileSync(${JSON.stringify(pendingReady)},String(process.pid));renameSync(${JSON.stringify(pendingReady)},${JSON.stringify(ready)});setInterval(()=>{},1000);
 `,
     );
     const installer = readFileSync(join(process.cwd(), "scripts/install.sh"), "utf8");
