@@ -91,7 +91,7 @@ jobs:
     # The project requires Xcode 26; provision an available iPhone simulator
     # for that Xcode rather than assuming the image has a particular name.
     runs-on: macos-26
-    # Setup, the build, indexing the corpus and the journeys: 38 to 72 min
+    # Setup, the build, indexing the corpus and the journeys: 38 to 73 min
     # measured, and a retried journey adds up to 9 min more. The limit stops
     # a hung simulator or xcodebuild from holding the runner.
     timeout-minutes: 90
@@ -169,13 +169,14 @@ jobs:
   ios-cloud-pairing:
     # The cloud pairing interaction UI tests drive the Demo app's bounded
     # fixture scenes and need no gateway, so they run beside the journeys on a
-    # runner and time limit of their own instead of after them. They build the
-    # app themselves, with code coverage, as they did in the journeys job.
+    # runner and time limit of their own. They build the app themselves, with
+    # code coverage.
     needs: changes
     if: ${{ !cancelled() && (github.event_name == 'schedule' || (github.event_name == 'pull_request' && needs.changes.outputs.ios == 'true') || (github.event_name == 'workflow_dispatch' && inputs.platforms != 'android')) }}
     runs-on: macos-26
-    # Setup, a clean build and eight UI tests: 13 to 29 min measured. The
-    # limit stops a hung simulator or xcodebuild from holding the runner.
+    # About 5 min of setup, then a clean build and eight UI tests: 8 to 21 min
+    # measured. The limit stops a hung simulator or xcodebuild from holding
+    # the runner.
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
