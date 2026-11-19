@@ -3,12 +3,14 @@
 
 import { html } from "htm/preact";
 import { useEffect, useRef, useState } from "preact/hooks";
-import { getStorage, setStoragePolicy, refreshStorage } from "../api.js";
+import { getStorage, setStoragePolicy, refreshStorage, cancelStorageCleanup } from "../api.js";
 import { sourceIcon, sourceLabel } from "../lib/format.js";
 import { RowActionMenu } from "../components/row-action-menu.js";
 import { StorageFootprint } from "./storage-footprint.js";
 import { StorageHistory } from "./storage-history.js";
 import { StorageRetentionDialog } from "./storage-retention-dialog.js";
+import { StorageHistoryCleanupDialog } from "./storage-history-cleanup-dialog.js";
+import { storageCleanupActive } from "./storage-cleanup-data.js";
 import { GIB, storageBytes, storageSources, scheduledStorageCutoff, storageTrimStatus, visibleStorageTrimJobs } from "./storage-data.js";
 
 const PRESSURE_REASONS = {
@@ -110,14 +112,15 @@ export function StorageView({ onChange } = {}) {
   const [message, setMessage] = useState(null);
   const [retry, setRetry] = useState(0);
   const [dialog, setDialog] = useState(null);
+  const [cleanupDialog, setCleanupDialog] = useState(null);
   const busyRef = useRef(false);
+  const limitInitialized = useRef(false);
   const snapshotRevision = useRef(0);
   const [measuring, setMeasuring] = useState(false);
   const [now, setNow] = useState(Date.now);
 
   useEffect(() => {
     let active = true, timer;
-    let initialized = false;
     async function poll() {
       const revision = snapshotRevision.current;
       try {
@@ -129,11 +132,11 @@ export function StorageView({ onChange } = {}) {
           return;
         }
         setSnapshot(result); setNow(Date.now()); setError(null);
-        if (!initialized) {
+        if (!limitInitialized.current) {
           setLimit(result.policy?.maxBytes ? String(result.policy.maxBytes / GIB) : "");
-          initialized = true;
+          limitInitialized.current = true;
         }
-        const pending = result.trimJobs?.some((job) => job.cleanupPending || ["queued", "running"].includes(job.state));
+        const pending = result.cleanupJobs?.some(storageCleanupActive) || result.trimJobs?.some((job) => job.cleanupPending || ["queued", "running"].includes(job.state));
         timer = setTimeout(poll, pending ? 2500 : 30_000);
       } catch (err) {
         if (!active) return;
@@ -164,6 +167,19 @@ export function StorageView({ onChange } = {}) {
     } finally {
       setMeasuring(false);
     }
+  }
+
+  function recordCleanupJob(job) {
+    setSnapshot((current) => current ? {...current, cleanupJobs: [job, ...(current.cleanupJobs ?? []).filter((entry) => entry.id !== job.id)]} : current);
+  }
+
+  async function stopCleanup(id) {
+    await action(async () => {
+      const {job} = await cancelStorageCleanup(id);
+      recordCleanupJob(job);
+      setMessage(job.state === "completed" ? "Cleanup finished before it could be stopped." : job.state === "cancelled" ? "Cleanup cancelled. Already removed items stay removed." : "Stopping after the current cleanup finishes. Already removed items stay removed.");
+      setRetry((value) => value + 1);
+    });
   }
 
   async function savePolicy(event) {
@@ -223,7 +239,11 @@ export function StorageView({ onChange } = {}) {
         </section>
         <section class="storage-panel"><h3>On disk</h3>
           ${snapshot.physical ? html`<${UsageChart} label="Omnesis files" entries=${snapshot.physical.stores ?? []}
-            renderLegend=${(chart) => html`<${StorageFootprint} snapshot=${snapshot} ...${chart} />`} />` : html`<p>File measurement is unavailable.</p>`}
+            renderLegend=${(chart) => html`<${StorageFootprint} snapshot=${snapshot} ...${chart}
+              cleanupBusy=${busy} onCancelCleanup=${stopCleanup} onOpenCleanup=${(target) => {
+                if (busyRef.current || snapshot.cleanupJobs?.some((job) => job.target === target && storageCleanupActive(job))) return;
+                setMessage(null); setCleanupDialog(target);
+              }} />`} />` : html`<p>File measurement is unavailable.</p>`}
         </section>
       </div>
       <section class="storage-panel">
@@ -241,6 +261,11 @@ export function StorageView({ onChange } = {}) {
         </table></div>` : html`<p>${snapshot.logical ? "No source documents are stored." : "Source accounting is not available yet."}</p>`}
       </section>
     `}
+    ${cleanupDialog && html`<${StorageHistoryCleanupDialog} target=${cleanupDialog} onClose=${() => setCleanupDialog(null)} onSaved=${async (status, job) => {
+      snapshotRevision.current++;
+      recordCleanupJob(job); setCleanupDialog(null); setMessage(status); setRetry((value) => value + 1);
+      await onChange?.();
+    }} />`}
     ${dialog && html`<${StorageRetentionDialog} mode=${dialog.mode} source=${rows.find((row) => row.sourceId === dialog.source.sourceId) ?? dialog.source}
       retentionDays=${policies.get(dialog.source.sourceId)} onClose=${() => setDialog(null)}
       onSaved=${async (status, job) => {

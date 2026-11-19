@@ -89,6 +89,7 @@ import type {
   TranscriptionVocabulary,
 } from "@omnesis/core";
 import type {
+  ConversationCleanupInspection,
   ConversationRetentionCandidate,
   ConversationRetentionFile,
 } from "../agent/conversation-retention.js";
@@ -159,6 +160,10 @@ export interface IoGate extends ReadPort<typeof IO_READS>, KnowledgeSelectionRea
     corpusTotal: number;
   }>;
   /** Parse a bounded transcript-file batch off the main event loop. */
+  conversationCleanupCandidates(
+    files: readonly ConversationRetentionFile[],
+    cutoffMs: number,
+  ): Promise<ConversationCleanupInspection[]>;
   conversationRetentionCandidates(
     files: readonly ConversationRetentionFile[],
     cutoffMs: number,
@@ -573,6 +578,7 @@ const COMPUTE_OP_DEFS: readonly IoOpDef[] = [
     priority: "background",
     latencyBudgetMs: HEAVY_BUDGET_MS,
   },
+  { name: "io.conversationCleanupCandidates", priority: "background" },
   { name: "io.conversationRetentionCandidates", priority: "background" },
   { name: "io.browsePeople", priority: "user" },
   { name: "io.personDocuments", priority: "user" },
@@ -730,6 +736,8 @@ export function ioGateFromScheduler(scheduler: Scheduler): IoGate {
     sqliteQuery: (request) => call("io.sqliteQuery", [request]),
     bootstrapCorpusByMonth: (recencyFloor, todayIso) =>
       call("io.bootstrapCorpusByMonth", [recencyFloor, todayIso]),
+    conversationCleanupCandidates: (files, cutoffMs) =>
+      call("io.conversationCleanupCandidates", [files, cutoffMs]),
     conversationRetentionCandidates: (files, cutoffMs) =>
       call("io.conversationRetentionCandidates", [files, cutoffMs]),
     browsePeople: (query, limit, options) => call("io.browsePeople", [query, limit, options]),

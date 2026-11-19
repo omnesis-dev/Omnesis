@@ -11,7 +11,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import * as core from "@omnesis/core";
 
 import { FsConversationStore, deriveTitle, type ConversationRecord } from "./conversation-store.js";
-import { originIsPermanent } from "./conversation-retention.js";
+import {
+  originIsPermanent,
+  readConversationCleanupCandidates,
+  readConversationRetentionCandidates,
+} from "./conversation-retention.js";
 import { paginateVisibleConversationMessages } from "./service.js";
 
 import type { ChatMessage } from "@omnesis/agent";
@@ -60,6 +64,30 @@ describe("FsConversationStore", () => {
       ...over,
     };
   }
+
+  it.each(["automatic", "manual"] as const)(
+    "%s retention refuses an invalid cutoff",
+    async (mode) => {
+      const store = fresh();
+      try {
+        await store.save(rec({ id: "s_invalid_cutoff" }));
+        const files = [
+          {
+            id: "s_invalid_cutoff",
+            path: join(dirs.at(-1)!, "conversations", "s_invalid_cutoff.json"),
+          },
+        ];
+        const inspect =
+          mode === "automatic"
+            ? readConversationRetentionCandidates
+            : readConversationCleanupCandidates;
+        expect(await inspect(files, Number.NaN)).toEqual([]);
+        expect(await store.load("s_invalid_cutoff")).not.toBeNull();
+      } finally {
+        await store.close();
+      }
+    },
+  );
 
   it("Windows private publication failure preserves the previous transcript and summary", async () => {
     const dir = tmpDir();

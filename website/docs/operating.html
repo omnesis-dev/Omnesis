@@ -513,6 +513,21 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
           <a href="sources#storage-retention">Source retention</a>.
         </p>
         <p>
+          The Storage page also lets you trim <strong>Brain run logs</strong> and
+          <strong>Chat history</strong>, or delete old completed <strong>Backups</strong>. Choose a
+          cutoff date and confirm to start a background cleanup of all eligible items before that
+          date. Brain logs use the run's completion date; chats use their last activity. Pinned,
+          permanent and active conversations are protected. Removing Brain log files does not delete
+          knowledge produced by those runs.
+        </p>
+        <p>
+          Backup cleanup keeps the newest completed backup by default. Clear that protection only if
+          you intend to remove your last local backup; incomplete or active backups remain
+          protected. Cleanup progress and results stay on the Storage page after a reload or
+          restart. Cancellation stops new selections after any already committed removal finishes.
+          These are one-off commands and do not change automatic retention settings.
+        </p>
+        <p>
           Deletion frees pages inside a database for reuse; it does not guarantee a smaller file on
           disk. Omnesis does not automatically run a full database compaction under storage
           pressure: that operation can need substantial temporary space. The configuration keys are

@@ -2,9 +2,22 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { createHash, randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import Database from "better-sqlite3";
+import { FsConversationStore } from "@omnesis/gateway/src/agent/conversation-store.js";
+import { createDatabase, upsertDocuments } from "@omnesis/gateway/src/db.js";
+import { createIndexDatabase } from "@omnesis/gateway/src/indexer/db.js";
+import { readConversationCleanupCandidates } from "@omnesis/gateway/src/agent/conversation-retention.js";
+import {
+  startHistoryCleanupJob,
+  updateHistoryCleanupJob,
+} from "@omnesis/gateway/src/storage/history-cleanup-store.js";
+import { ProviderId, SourceId } from "@omnesis/types";
+import {
+  FsCognitionTranscriptStore,
+  cognitionTranscriptsDir,
+} from "@omnesis/gateway/src/brain/transcripts.js";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { MultiCollectorHarness, type PairedCollector } from "./multi-collector-harness.js";
 
@@ -293,4 +306,259 @@ describe("gateway storage admission and explicit retention", () => {
     await push([document(SOURCE, "old")]);
     expect(stored(SOURCE)).not.toContain("old");
   }, 90_000);
+});
+
+/** Exercise the production worker/routes on small invented files, without model inference. */
+describe("manual storage history cleanup", () => {
+  let harness: MultiCollectorHarness;
+  let transcriptDir: string;
+  let conversationsDir: string;
+  let backupsDir: string;
+  let pendingConversationJobId: string;
+  let indexPath: string;
+  const mirroredDocumentIds = new Map<string, string>();
+  const cutoff = "2020-01-01T00:00:00.000Z";
+  const older = "2019-01-01T00:00:00.000Z";
+  const newer = "2021-01-01T00:00:00.000Z";
+  type Job = {
+    id: string;
+    state: string;
+    removed: number;
+    protected: number;
+    error: string | null;
+  };
+  beforeAll(async () => {
+    harness = new MultiCollectorHarness({ extraGatewayEnv: { OMNESIS_INDEXER_ENABLED: "false" } });
+    transcriptDir = cognitionTranscriptsDir(harness.gatewayConfigDir);
+    conversationsDir = join(harness.gatewayConfigDir, "conversations");
+    backupsDir = join(harness.gatewayConfigDir, "backups");
+    const transcripts = new FsCognitionTranscriptStore(transcriptDir);
+    for (const [runId, date] of [
+      ["invented-old-run", older],
+      ["invented-new-run", newer],
+    ]) {
+      transcripts.save({
+        runId: runId!,
+        kind: "data",
+        attempt: 1,
+        startedAt: Date.parse(date!),
+        finishedAt: Date.parse(date!),
+        prompt: "Invented diagnostic prompt",
+        events: [],
+        finalText: "Invented diagnostic output",
+        outcome: "completed",
+        usage: null,
+      });
+    }
+    await transcripts.close();
+    const conversations = new FsConversationStore(conversationsDir);
+    for (const [id, updatedAt, pinned] of [
+      ["s_cleanup_old", older, false],
+      ["s_cleanup_recent", newer, false],
+      ["s_cleanup_pinned", older, true],
+    ] as const) {
+      await conversations.save({
+        id,
+        callerId: "token:fictional",
+        model: "scripted",
+        backend: "fixture",
+        createdAt: older,
+        updatedAt,
+        title: "Invented cleanup conversation",
+        pinned,
+        messages: [{ role: "user", parts: [{ kind: "text", text: "Invented fixture" }] }],
+      });
+    }
+    await conversations.close();
+    // Populate the production stores before boot. The pending command models a
+    // process that stopped after authorizing cleanup but before its next batch.
+    const main = createDatabase(harness.getDbPath());
+    indexPath = join(harness.gatewayConfigDir, "index.db");
+    const index = createIndexDatabase(indexPath);
+    try {
+      for (const [externalId, updatedAt] of [
+        ["s_cleanup_old", older],
+        ["s_cleanup_recent", newer],
+        ["s_cleanup_pinned", older],
+      ]) {
+        upsertDocuments(main, [
+          {
+            providerId: ProviderId("system"),
+            sourceId: SourceId("omnesis-chat"),
+            externalId: externalId!,
+            title: "Invented mirrored conversation",
+            content: "Invented evidence stored alongside the conversation",
+            contentHash: externalId!,
+            metadata: {},
+            sourceCreatedAt: older,
+            sourceUpdatedAt: updatedAt!,
+          },
+        ]);
+        const document = main
+          .prepare("SELECT id FROM documents WHERE provider_id=? AND source_id=? AND external_id=?")
+          .get("system", "omnesis-chat", externalId) as { id: string };
+        mirroredDocumentIds.set(externalId!, document.id);
+        const insert = index.prepare(
+          "INSERT INTO chunks(id,document_id,chunk_index,content,source_id,title,source_created_at) VALUES(?,?,?,'Invented chunk content','omnesis-chat','Invented mirrored conversation',?)",
+        );
+        for (let n = 0; n < (externalId === "s_cleanup_old" ? 130 : 1); n++)
+          insert.run(externalId + "-chunk-" + n, document.id, n, older);
+      }
+      const inspected = (
+        await readConversationCleanupCandidates(
+          [{ id: "s_cleanup_old", path: join(conversationsDir, "s_cleanup_old.json") }],
+          Date.parse(cutoff),
+        )
+      )[0]!;
+      const pending = startHistoryCleanupJob(main, {
+        request: { target: "conversations", before: cutoff },
+        now: Date.now(),
+      });
+      pendingConversationJobId = pending.id;
+      updateHistoryCleanupJob(main, {
+        expectedRevision: pending.revision,
+        job: {
+          ...pending,
+          state: "running",
+          scanned: 1,
+          pending: {
+            id: "s_cleanup_old",
+            identity: inspected.candidate!.fileIdentity,
+            bytesEstimate: inspected.bytesEstimate,
+            detail: inspected.candidate!.updatedAt,
+          },
+        },
+      });
+      expect(index.prepare("SELECT COUNT(*) AS n FROM chunks").get()).toEqual({ n: 132 });
+    } finally {
+      index.close();
+      main.close();
+    }
+    for (const [id, date] of [
+      ["2018-01-01T00-00-00", "2018-01-01T00:00:00.000Z"],
+      ["2019-01-01T00-00-00", older],
+    ]) {
+      const dir = join(backupsDir, id!);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "omnesis.db"), "Invented backup payload");
+      writeFileSync(
+        join(dir, "backup-manifest.json"),
+        JSON.stringify({
+          version: "0.0.0",
+          startedAt: date,
+          finishedAt: date,
+          includeIndex: false,
+          files: [{ name: "omnesis.db", bytes: 23 }],
+        }),
+      );
+    }
+    mkdirSync(join(backupsDir, "2017-01-01T00-00-00"), { recursive: true });
+    writeFileSync(join(backupsDir, "2017-01-01T00-00-00", "incomplete"), "Keep unfinished backup");
+    await harness.start();
+  }, 90_000);
+  afterAll(async () => {
+    await harness?.destroy();
+  }, 20_000);
+  const start = async (target: string, extra = {}) =>
+    harness.json<{ job: Job }>("/admin/storage/cleanup/jobs", {
+      method: "POST",
+      body: JSON.stringify({ target, before: cutoff, ...extra }),
+    });
+  async function completed(id: string): Promise<Job> {
+    let result: Job | undefined;
+    await expect
+      .poll(
+        async () => {
+          const { jobs } = await harness.json<{ jobs: Job[] }>("/admin/storage/cleanup/jobs");
+          result = jobs.find((job) => job.id === id);
+          if (result?.state === "failed")
+            throw new Error(`Cleanup failed: ${harness.getGatewayOutput()}`);
+          return result?.state;
+        },
+        { timeout: 60_000, interval: 200 },
+      )
+      .toBe("completed");
+    expect(result!.error).toBeNull();
+    return result!;
+  }
+  test("trims all old Brain log files and retains newer logs across restart", async () => {
+    const { job } = await start("brain-transcripts");
+    expect((await completed(job.id)).removed).toBe(1);
+    expect(existsSync(join(transcriptDir, `${Date.parse(older)}-invented-old-run-a1.json`))).toBe(
+      false,
+    );
+    expect(existsSync(join(transcriptDir, `${Date.parse(newer)}-invented-new-run-a1.json`))).toBe(
+      true,
+    );
+    await harness.restartGateway();
+    const { jobs } = await harness.json<{ jobs: Job[] }>("/admin/storage/cleanup/jobs");
+    expect(jobs.find((entry) => entry.id === job.id)).toMatchObject({
+      state: "completed",
+      removed: 1,
+    });
+  }, 90_000);
+  test("recovers pending chat cleanup through the real corpus/index cascade without a model", async () => {
+    expect((await completed(pendingConversationJobId)).removed).toBe(1);
+    expect(existsSync(join(conversationsDir, "s_cleanup_old.json"))).toBe(false);
+    expect(existsSync(join(conversationsDir, "s_cleanup_recent.json"))).toBe(true);
+    expect(existsSync(join(conversationsDir, "s_cleanup_pinned.json"))).toBe(true);
+    const main = new Database(harness.getDbPath(), { readonly: true, fileMustExist: true });
+    const index = new Database(indexPath, { readonly: true, fileMustExist: true });
+    try {
+      expect(
+        main
+          .prepare("SELECT id FROM documents WHERE id=?")
+          .get(mirroredDocumentIds.get("s_cleanup_old")),
+      ).toBeUndefined();
+      expect(
+        index
+          .prepare("SELECT COUNT(*) AS n FROM chunks WHERE document_id=?")
+          .get(mirroredDocumentIds.get("s_cleanup_old")),
+      ).toEqual({ n: 0 });
+      for (const id of ["s_cleanup_recent", "s_cleanup_pinned"]) {
+        expect(
+          main.prepare("SELECT id FROM documents WHERE id=?").get(mirroredDocumentIds.get(id)),
+        ).toEqual({ id: mirroredDocumentIds.get(id) });
+        expect(
+          index
+            .prepare("SELECT COUNT(*) AS n FROM chunks WHERE document_id=?")
+            .get(mirroredDocumentIds.get(id)),
+        ).toEqual({ n: 1 });
+      }
+    } finally {
+      index.close();
+      main.close();
+    }
+  }, 90_000);
+  test("deletes old completed backups while preserving the newest and incomplete backups", async () => {
+    const { job } = await start("backups");
+    expect((await completed(job.id)).removed).toBe(1);
+    expect(existsSync(join(backupsDir, "2018-01-01T00-00-00"))).toBe(false);
+    expect(existsSync(join(backupsDir, "2019-01-01T00-00-00"))).toBe(true);
+    expect(existsSync(join(backupsDir, "2017-01-01T00-00-00", "incomplete"))).toBe(true);
+    const { job: final } = await start("backups", { keepNewest: false });
+    expect((await completed(final.id)).removed).toBe(1);
+    expect(existsSync(join(backupsDir, "2019-01-01T00-00-00"))).toBe(false);
+    expect(existsSync(join(backupsDir, "2017-01-01T00-00-00", "incomplete"))).toBe(true);
+  }, 90_000);
+  test("accepts cancellation through the real writer and preserves unfinished backup files", async () => {
+    const { job } = await start("backups");
+    const response = await harness.json<{ job: Job }>(
+      `/admin/storage/cleanup/jobs/${job.id}/cancel`,
+      { method: "POST", body: JSON.stringify({}) },
+    );
+    expect(response.job.id).toBe(job.id);
+    await expect
+      .poll(
+        async () => {
+          const { jobs } = await harness.json<{ jobs: Job[] }>("/admin/storage/cleanup/jobs");
+          return ["cancelled", "completed"].includes(
+            jobs.find((entry) => entry.id === job.id)?.state ?? "",
+          );
+        },
+        { timeout: 10_000, interval: 100 },
+      )
+      .toBe(true);
+    expect(existsSync(join(backupsDir, "2017-01-01T00-00-00", "incomplete"))).toBe(true);
+  }, 30_000);
 });

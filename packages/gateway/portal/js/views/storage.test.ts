@@ -6,7 +6,7 @@ import { act } from "preact/test-utils";
 import { parseHTML } from "linkedom";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 
-const api = vi.hoisted(() => ({ getStorage: vi.fn(), setStoragePolicy: vi.fn(), startStorageTrim: vi.fn(), setStorageRetention: vi.fn(), refreshStorage: vi.fn() }));
+const api = vi.hoisted(() => ({ getStorage: vi.fn(), setStoragePolicy: vi.fn(), startStorageTrim: vi.fn(), setStorageRetention: vi.fn(), refreshStorage: vi.fn(), startStorageCleanup: vi.fn(), cancelStorageCleanup: vi.fn() }));
 vi.mock("../api.js", () => api);
 
 // @ts-expect-error — portal modules are plain JS.
@@ -51,6 +51,117 @@ async function openAction(label: string) {
 async function submit(selector: string) {
   await act(async () => { host.querySelector(selector)?.dispatchEvent(new window.Event("submit", { bubbles: true, cancelable: true })); });
 }
+
+const cleanupSnapshot = {...snapshot, physical: {totalBytes: 1084, stores: [
+  ...snapshot.physical.stores, {id: "transcripts", label: "Brain run logs", bytes: 20},
+  {id: "conversations", label: "Chat history", bytes: 20}, {id: "backups", label: "Backups", bytes: 20},
+]}};
+async function openCleanup(label: string, action: string) {
+  await act(async () => {
+    const trigger = host.querySelector<HTMLButtonElement>(`[aria-label="Cleanup actions for ${label}"]`)!;
+    trigger.getBoundingClientRect = () => ({bottom: 10, top: 0, right: 10}) as DOMRect;
+    trigger.click();
+  });
+  await act(async () => {
+    const item = [...host.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find((node) => node.textContent?.trim() === action);
+    item!.click();
+  });
+}
+
+test.each([
+  ["Brain run logs", "Trim run logs", "brain-transcripts"],
+  ["Chat history", "Trim chat history", "conversations"],
+  ["Backups", "Delete old backups", "backups"],
+])("opens %s cleanup from its physical row and immediately shows accepted job progress", async (label, action, target) => {
+  api.getStorage.mockResolvedValue(cleanupSnapshot);
+  await mount(); await openCleanup(label, action);
+  expect(host.querySelector('[role="dialog"]')).not.toBeNull();
+  const job = {id: "cleanup-one", target, state: "queued", removed: 0, protected: 0, scanned: 0};
+  api.startStorageCleanup.mockResolvedValue({job});
+  api.getStorage.mockResolvedValue({...cleanupSnapshot, cleanupJobs: [job]});
+  await input("#storage-cleanup-before", "2024-01-01");
+  await act(async () => {
+    const confirm = host.querySelector<HTMLInputElement>("#storage-cleanup-confirm")!;
+    confirm.checked = true; confirm.dispatchEvent(new window.Event("change", {bubbles: true}));
+  });
+  await submit(".storage-dialog form"); await act(async () => {});
+  expect(api.startStorageCleanup).toHaveBeenCalledExactlyOnceWith({target, before: "2024-01-01T00:00:00.000Z", ...(target === "backups" ? {keepNewest: true} : {})});
+  expect(host.querySelector('[role="dialog"]')).toBeNull();
+  expect(host.textContent).toContain("Cleanup scheduled");
+  expect(host.textContent).toContain("Cleanup queued");
+  expect(host.querySelector(".storage-cleanup-progress .spinner")).not.toBeNull();
+  expect(api.refreshStorage).not.toHaveBeenCalled();
+});
+
+test("restores a pending failed cleanup after reload, protects zero-byte row visibility and allows stopping it", async () => {
+  const job = {id: "cleanup-pending", target: "backups", state: "failed", hasPendingRemoval: true, removed: 2,
+    protected: 1, protectedReasons: {newest: 1}, scanned: 10, error: "Waiting to retry cleanup"};
+  api.getStorage.mockResolvedValue({...snapshot, cleanupJobs: [job]});
+  await mount();
+  expect(host.querySelector('[data-storage-store="backups"]')).not.toBeNull();
+  expect(host.textContent).toContain("retrying automatically");
+  expect(host.textContent).toContain("Newest backup: 1");
+  expect(host.textContent).toContain("10 items checked");
+  await openCleanup("Backups", "Delete old backups");
+  expect(host.querySelector('[role="dialog"]')).toBeNull();
+  expect(api.startStorageCleanup).not.toHaveBeenCalled();
+  const cancelled = {...job, state: "cancelled", hasPendingRemoval: false, error: null};
+  api.cancelStorageCleanup.mockResolvedValue({job: cancelled});
+  api.getStorage.mockResolvedValue({...snapshot, cleanupJobs: [cancelled]});
+  await click("Stop cleanup"); await act(async () => {});
+  expect(api.cancelStorageCleanup).toHaveBeenCalledExactlyOnceWith("cleanup-pending");
+  expect(host.textContent).toContain("Cleanup cancelled");
+  expect(host.querySelector('[data-storage-store="backups"]')).not.toBeNull();
+});
+
+test("cancellation failure keeps the job visible and exposes the gateway error", async () => {
+  api.getStorage.mockResolvedValue({...snapshot, cleanupJobs: [{id: "cleanup-one", target: "conversations", state: "running"}]});
+  api.cancelStorageCleanup.mockRejectedValue(new Error("Cleanup stop request refused"));
+  await mount(); await click("Stop cleanup"); await act(async () => {});
+  expect(host.textContent).toContain("Cleanup stop request refused");
+  expect(host.querySelector(".storage-cleanup-progress .spinner")).not.toBeNull();
+  expect(host.querySelector('[data-storage-store="conversations"]')).not.toBeNull();
+});
+
+test("a current cleanup hides the previous failure for that category", async () => {
+  api.getStorage.mockResolvedValue({...snapshot, cleanupJobs: [
+    {id: "old", target: "conversations", state: "failed", error: "Previous operation failed", updatedAt: 1},
+    {id: "current", target: "conversations", state: "queued", updatedAt: 2},
+  ]});
+  await mount();
+  expect(host.querySelectorAll(".storage-cleanup-progress")).toHaveLength(1);
+  expect(host.textContent).toContain("Cleanup queued");
+  expect(host.textContent).not.toContain("Previous operation failed");
+});
+
+test("a completion racing with Stop is reported accurately and keeps the storage-limit draft", async () => {
+  const job = {id: "cleanup-one", target: "backups", state: "running"};
+  api.getStorage.mockResolvedValue({...snapshot, cleanupJobs: [job]});
+  await mount(); await input("#storage-limit", "42");
+  const completed = {...job, state: "completed"};
+  api.cancelStorageCleanup.mockResolvedValue({job: completed});
+  api.getStorage.mockResolvedValue({...snapshot, cleanupJobs: [completed]});
+  await click("Stop cleanup"); await act(async () => {});
+  expect(host.textContent).toContain("Cleanup finished before it could be stopped");
+  expect(host.querySelector<HTMLInputElement>("#storage-limit")?.value).toBe("42");
+});
+
+test("cleanup jobs use cached snapshot polling until terminal completion", async () => {
+  vi.useFakeTimers();
+  try {
+    const job = {id: "cleanup-one", target: "brain-transcripts", state: "running", removed: 1};
+    api.getStorage.mockResolvedValue({...snapshot, cleanupJobs: [job]});
+    await mount();
+    api.getStorage.mockResolvedValue({...snapshot, cleanupJobs: [{...job, state: "completed", removed: 12}]});
+    await act(async () => {await vi.advanceTimersByTimeAsync(2500);});
+    expect(host.textContent).toContain("Cleanup completed · 12 removed");
+    expect(host.querySelector(".storage-cleanup-progress .spinner")).toBeNull();
+    expect(api.getStorage).toHaveBeenCalledTimes(2);
+    await act(async () => {await vi.advanceTimersByTimeAsync(2500);});
+    expect(api.getStorage).toHaveBeenCalledTimes(2);
+    expect(api.refreshStorage).not.toHaveBeenCalled();
+  } finally {vi.useRealTimers();}
+});
 test("distinguishes measured physical files, logical estimates and storage protection", async () => {
   await mount();
   expect(host.textContent).toContain("Storage protection is active");

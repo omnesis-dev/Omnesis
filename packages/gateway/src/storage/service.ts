@@ -23,6 +23,7 @@ import type { DiskUsageSnapshot } from "@omnesis/core/doctor";
 import type { StoragePressureManager } from "./pressure.js";
 
 export interface StorageServiceDeps {
+  historyCleanup?: import("./history-cleanup-service.js").HistoryCleanupService;
   pressure: StoragePressureManager;
   physical: () => DiskUsageSnapshot | null;
   logical: () => import("./accounting.js").StorageAccounting | null;
@@ -105,8 +106,27 @@ export class StorageService {
         ({ sourceId, maxAgeDays }) => ({ sourceId, maxAgeDays }),
       ),
       trimJobs: this.deps.retention.jobs(),
+      cleanupJobs: this.deps.historyCleanup?.jobs() ?? [],
       accounting: this.deps.accountingStatus?.() ?? null,
     };
+  }
+
+  cleanupJobs() {
+    return { jobs: this.requireHistoryCleanup().jobs() };
+  }
+
+  async startCleanup(request: import("./history-cleanup-types.js").HistoryCleanupRequest) {
+    return { job: await this.requireHistoryCleanup().start(request) };
+  }
+
+  async cancelCleanup(id: string) {
+    return { job: await this.requireHistoryCleanup().cancel(id) };
+  }
+
+  private requireHistoryCleanup() {
+    if (!this.deps.historyCleanup)
+      throw new ServiceUnavailableError("History cleanup is unavailable");
+    return this.deps.historyCleanup;
   }
 
   async refresh() {

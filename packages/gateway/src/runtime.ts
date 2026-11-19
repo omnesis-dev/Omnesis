@@ -213,6 +213,9 @@ import { defaultMemoryLimitMiB as defaultAnalyticsMemoryLimitMiB } from "./analy
 import { startWatchV2 } from "./watch/host.js";
 import { resolveWatchJournal, watchJournalPath } from "./watch/journal-path.js";
 import { StorageRuntime } from "./storage/runtime.js";
+import { HistoryCleanupService } from "./storage/history-cleanup-service.js";
+import { transcriptCleanupAdapter } from "./storage/history-cleanup-transcripts.js";
+import { conversationCleanupAdapter } from "./storage/history-cleanup-conversations.js";
 import { assertStorageVolumeGrowth } from "./storage/volumes.js";
 import { InsufficientStorageError } from "./http/errors.js";
 import {
@@ -1416,8 +1419,10 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
   // lands the normal way.
 
   const conversationsDir = join(configDir, "conversations");
-  const conversationStore = new FsConversationStore(conversationsDir, (files, cutoffMs) =>
-    ioGate.conversationRetentionCandidates([...files], cutoffMs),
+  const conversationStore = new FsConversationStore(
+    conversationsDir,
+    (files, cutoffMs) => ioGate.conversationRetentionCandidates([...files], cutoffMs),
+    (files, cutoffMs) => ioGate.conversationCleanupCandidates([...files], cutoffMs),
   );
   const subscriptionsPolicyStore = new PrivacyPolicyStore(configDir, { db, writeGate });
   // Access grants may bind Answer to the Default policy as soon as the HTTP
@@ -1546,6 +1551,26 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
     // delivers it.
     notifyConversation: (notification) => conversationNotifier.notify(notification),
   });
+  const retentionTranscripts = ownTranscriptStore(
+    new FsCognitionTranscriptStore(cognitionTranscriptsDir(configDir)),
+  );
+  const historyCleanup = new HistoryCleanupService({
+    db,
+    writes: writeGate,
+    adapters: {
+      "brain-transcripts": transcriptCleanupAdapter(retentionTranscripts),
+      conversations: conversationCleanupAdapter(conversationStore, agentLifecycle),
+      backups: backupService.createCleanupAdapter(),
+    },
+  });
+  const historyCleanupOwner = {
+    close: () => historyCleanup.dispose(),
+    cleanupFailure: () => undefined,
+  };
+  boot.ownCleanup(new OptionalServiceCleanup("Storage history cleanup", () => historyCleanupOwner));
+  // Restore only the small set of unfinished ownership fences before any
+  // AgentService can admit a resume; deletion remains background work.
+  await historyCleanup.initialize();
   phase("agent");
   const conversationCleanupOwner = {
     cleanupFailure: (): unknown => {
@@ -2884,6 +2909,7 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
     privacyPolicyStore: subscriptionsPolicyStore,
     analyticsDb,
     backupService,
+    historyCleanup,
     exportService,
     wsServer,
     fleetUpdateService: fleetUpdate,
@@ -3848,9 +3874,6 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
   // Disposable operational history is pruned by one bounded background unit per
   // tick. The task exists even when disabled (the default), so a live config edit
   // can enable or shorten retention without restarting the gateway.
-  const retentionTranscripts = ownTranscriptStore(
-    new FsCognitionTranscriptStore(cognitionTranscriptsDir(configDir)),
-  );
   // A migration that retires a class of runs can delete their rows but not their
   // transcript files — it has no filesystem. It leaves the ids behind; this is
   // where they are collected, now that the directory is in scope. Not awaited:
@@ -3868,6 +3891,19 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
     },
     scheduler,
   );
+  scheduleAfterRepairs({
+    name: "storage.history-cleanup.tick",
+    runner: "main",
+    priority: "background",
+    periodMs: 1_000,
+    initialArgs: undefined,
+    run: async () => {
+      const result = await historyCleanup.sweep();
+      if (result.hasMore && result.progressed)
+        scheduler.kickPeriodic("storage.history-cleanup.tick");
+      return { kind: "done", value: undefined };
+    },
+  });
   const activityRetentionHandle = scheduleAfterRepairs(activityRetentionBundle.task);
   void activityRetentionHandle;
   configStore.onChange((_before, _after, changedPaths) => {
@@ -4116,6 +4152,13 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
     // alongside HTTP; its closure proof also participates in the shutdown fence.
     const [httpDrained] = await Promise.all([httpDrain, realtimeService.dispose()]);
     if (!httpDrained) log.warn("HTTP shutdown drain timed out; remaining connections closed");
+    try {
+      await historyCleanup.dispose();
+    } catch (error) {
+      log.error(
+        `Storage cleanup shutdown failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
     try {
       await app.close();
     } catch (error) {
