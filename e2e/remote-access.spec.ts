@@ -235,7 +235,7 @@ test("with no account and no Tailscale device, Connectivity offers the account, 
   page.on("request", (request) => {
     if (/\/admin\/tailscale/.test(request.url())) requested.push(request.url());
   });
-  // A gateway that never linked an account, installed without the Tailscale helper program.
+  // A gateway with no relay named and no account, installed without the Tailscale helper program.
   await page.route("**/status", (route) =>
     amend(route, (body) => ({ ...body, tailscaleEmbed: false })),
   );
@@ -246,7 +246,7 @@ test("with no account and no Tailscale device, Connectivity offers the account, 
   await expect(page.locator(".config-tab.active")).toHaveText("Connectivity");
   await expect(heading(page)).toHaveText("Connectivity");
   await expect(page.locator(".remote-access-item-title")).toHaveText([
-    "No Omnesis account",
+    "Omnesis accounts",
     "Omnesis relay",
     "Tailscale on this computer",
     "Your own domain or reverse proxy",

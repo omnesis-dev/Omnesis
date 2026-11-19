@@ -97,7 +97,7 @@ const addressSelect = (page: Page) => page.locator("select#access-mcp-address");
 const agentCard = (page: Page, id: string) => page.locator(`button[data-agent='${id}']`);
 const commands = (page: Page) => page.locator(".access-agent-steps .access-agent-command code");
 
-test("a gateway with no Omnesis account has one address, and a hosted app is told to publish it or connect an account", async ({
+test("a gateway with no relay has one address, and a hosted app is told to publish the gateway", async ({
   page,
 }) => {
   const relayQuestions: string[] = [];
@@ -114,12 +114,12 @@ test("a gateway with no Omnesis account has one address, and a hosted app is tol
     await expect(notice(page).locator("p")).toHaveText([
       `This address is private. ${needs}, so it cannot reach this gateway until you publish it.`,
       "Publish the gateway with Tailscale on this computer or a domain of your own, in Settings, Connectivity.",
-      "Or connect this gateway to an Omnesis account in Settings, Connectivity to give it a public address.",
     ]);
     await expect(agentCard(page, id).locator(".access-agent-warning")).toBeVisible();
     await agentCard(page, id).click();
   }
   const dialog = page.locator(".access-connect-dialog");
+  await expect(dialog).not.toContainText("Omnesis account");
   await expect(dialog).not.toContainText("Omnesis address");
   await expect(dialog).not.toContainText("Settings, Account");
   // Reading the gateway's own account state asks the relay nothing.
