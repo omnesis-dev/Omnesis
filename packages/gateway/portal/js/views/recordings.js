@@ -11,6 +11,10 @@
  * be played while the operator keeps it (`inference.recordings.keepAudioDays`;
  * by default it is deleted once transcribed). Deleting a recording deletes its
  * chunks, any audio kept and its document.
+ *
+ * Suggestions — attendees and the title of a calendar event the recording
+ * overlaps, names heard addressed in it — are offered beside what they would
+ * change, and only applied when the owner accepts one.
  */
 
 import { html } from "htm/preact";
@@ -18,12 +22,15 @@ import { useEffect, useRef, useState } from "preact/hooks";
 
 import {
   deleteRecording,
+  dismissRecordingSuggestion,
   getPeople,
   getRecordingChunkAudio,
   getRecordingChunks,
   getRecordingSpeakers,
+  getRecordingSuggestions,
   listRecordings,
   setRecordingSpeaker,
+  setRecordingTitle,
 } from "../api.js";
 import { ConfirmModal } from "../components/confirm-modal.js";
 import { Loading } from "../components/loading.js";
@@ -306,7 +313,46 @@ function NameForm({ initial, onSave, onCancel, disabled }) {
   </form>`;
 }
 
-function SpeakerRow({ recordingId, speaker, onSpeakers }) {
+/** Why a person is suggested, in a few words. */
+function suggestionReason(suggestion) {
+  return suggestion.source === "mention"
+    ? `Heard: “${suggestion.evidence}”`
+    : `On your calendar: ${suggestion.evidence}`;
+}
+
+/**
+ * The people suggested for one speaker: each can be accepted, which names the
+ * speaker, or dismissed, which stops it being offered.
+ */
+function SpeakerSuggestions({ suggestions, disabled, onAccept, onDismiss }) {
+  if (suggestions.length === 0) return null;
+  return html`<div class="recording-suggestions">
+    <span class="recording-suggestions-label">Suggested</span>
+    <ul class="recording-suggestion-list">
+      ${suggestions.map(
+        (suggestion) => html`<li key=${suggestion.key} class="recording-suggestion" data-key=${suggestion.key}>
+          <button
+            type="button"
+            class="btn-tiny recording-suggestion-accept"
+            disabled=${disabled}
+            onClick=${() => onAccept(suggestion)}
+          >${suggestion.name}</button>
+          <span class="recording-suggestion-why">${suggestionReason(suggestion)}</span>
+          <button
+            type="button"
+            class="btn-tiny recording-suggestion-dismiss"
+            aria-label=${`Dismiss ${suggestion.name}`}
+            title="Dismiss"
+            disabled=${disabled}
+            onClick=${() => onDismiss(suggestion)}
+          >×</button>
+        </li>`,
+      )}
+    </ul>
+  </div>`;
+}
+
+function SpeakerRow({ recordingId, speaker, suggestions = [], onSpeakers, onDismiss }) {
   // null, "person" or "name": which picker is open.
   const [mode, setMode] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -346,6 +392,24 @@ function SpeakerRow({ recordingId, speaker, onSpeakers }) {
           ${speaker.samples.map((sample, i) => html`<li key=${i}>“${sample}”</li>`)}
         </ul>`
       : null}
+    ${mapped || mode !== null
+      ? null
+      : html`<${SpeakerSuggestions}
+          suggestions=${suggestions}
+          disabled=${busy}
+          onAccept=${(s) => apply(s.personId ? { personId: s.personId } : { name: s.name })}
+          onDismiss=${async (s) => {
+            setBusy(true);
+            setError(null);
+            try {
+              await onDismiss(s);
+            } catch (err) {
+              setError(errorText(err));
+            } finally {
+              setBusy(false);
+            }
+          }}
+        />`}
     ${mode === "person"
       ? html`<${PersonSearch}
           disabled=${busy}
@@ -379,6 +443,32 @@ function SpeakerRow({ recordingId, speaker, onSpeakers }) {
           </div>`}
     ${error ? html`<div class="privacy-banner error" role="alert">${error}</div>` : null}
   </li>`;
+}
+
+/** The calendar's title for a recording, offered under its own. */
+function TitleSuggestion({ suggestion, onAccept, onDismiss }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  async function act(action) {
+    setBusy(true);
+    setError(null);
+    try {
+      await action(suggestion);
+    } catch (err) {
+      setError(errorText(err));
+      setBusy(false);
+    }
+  }
+  return html`<div class="recording-title-suggestion" data-key=${suggestion.key}>
+    <span>Your calendar had <strong>${suggestion.title}</strong> at this time.</span>
+    <button type="button" class="btn-tiny" disabled=${busy} onClick=${() => act(onAccept)}>
+      Use this title
+    </button>
+    <button type="button" class="btn-tiny" disabled=${busy} onClick=${() => act(onDismiss)}>
+      Dismiss
+    </button>
+    ${error ? html`<span class="recording-chunk-error" role="alert">${error}</span>` : null}
+  </div>`;
 }
 
 // ── chunks ────────────────────────────────────────────────────────────
@@ -450,15 +540,30 @@ function ChunkList({ recordingId, recording, chunks }) {
 
 // ── one recording ─────────────────────────────────────────────────────
 
-/** One recording, with its speakers and chunks; null fields while not loaded. */
+/** A recording's suggestions; none when they cannot be read, which never blocks the page. */
+async function loadSuggestions(id) {
+  try {
+    const payload = await getRecordingSuggestions(id);
+    return Array.isArray(payload?.suggestions) ? payload.suggestions : [];
+  } catch {
+    return [];
+  }
+}
+
+/** One recording, with its speakers, chunks and suggestions. */
 async function loadRecording(id) {
   try {
-    const [detail, speakers] = await Promise.all([getRecordingChunks(id), getRecordingSpeakers(id)]);
+    const [detail, speakers, suggestions] = await Promise.all([
+      getRecordingChunks(id),
+      getRecordingSpeakers(id),
+      loadSuggestions(id),
+    ]);
     return {
       kind: "found",
       recording: detail.recording,
       chunks: Array.isArray(detail.chunks) ? detail.chunks : [],
       speakers: Array.isArray(speakers?.speakers) ? speakers.speakers : [],
+      suggestions,
     };
   } catch (err) {
     if (err?.status === 404) return { kind: "missing" };
@@ -501,7 +606,30 @@ function RecordingDetail({ id }) {
     </div>`;
   }
 
-  const { recording, chunks, speakers } = loaded;
+  const { recording, chunks, speakers, suggestions } = loaded;
+  const titleSuggestion = suggestions.find((s) => s.kind === "title") ?? null;
+  const forSpeaker = (n) =>
+    suggestions.filter((s) => s.kind === "person" && (s.speaker === n || s.speaker === null));
+
+  // Accepting or dismissing one suggestion can settle others (a person named
+  // for one speaker is no longer offered for the rest), so they are read again.
+  function update(patch) {
+    setLoaded((current) =>
+      current?.kind === "found"
+        ? { ...current, ...patch, recording: { ...current.recording, ...patch.recording } }
+        : current,
+    );
+  }
+
+  async function refreshSuggestions() {
+    const next = await loadSuggestions(id);
+    update({ suggestions: next });
+  }
+
+  async function dismiss(suggestion) {
+    await dismissRecordingSuggestion(id, suggestion.key);
+    await refreshSuggestions();
+  }
   const documentHref = recording.documentId
     ? `/portal/doc/${encodeURIComponent(recording.documentId)}`
     : null;
@@ -533,6 +661,17 @@ function RecordingDetail({ id }) {
         ${recordingStateLabel(recording.state)}
       </span>
     </header>
+    ${titleSuggestion
+      ? html`<${TitleSuggestion}
+          suggestion=${titleSuggestion}
+          onAccept=${async (s) => {
+            const summary = await setRecordingTitle(id, s.title);
+            update({ recording: summary ?? { title: s.title } });
+            await refreshSuggestions();
+          }}
+          onDismiss=${dismiss}
+        />`
+      : null}
     <div class="recording-actions">
       ${documentHref
         ? html`<a
@@ -568,10 +707,13 @@ function RecordingDetail({ id }) {
                 key=${speaker.speaker}
                 recordingId=${id}
                 speaker=${speaker}
+                suggestions=${forSpeaker(speaker.speaker)}
+                onDismiss=${dismiss}
                 onSpeakers=${(next) => {
                   if (!next) return;
                   const named = next.filter((s) => s.isSelf || s.personId || s.name).length;
-                  setLoaded({ ...loaded, speakers: next, recording: { ...recording, namedSpeakers: named } });
+                  update({ speakers: next, recording: { namedSpeakers: named } });
+                  refreshSuggestions();
                 }}
               />`,
             )}

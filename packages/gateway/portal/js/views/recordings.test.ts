@@ -12,12 +12,15 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 const api = vi.hoisted(() => ({
   deleteRecording: vi.fn(),
+  dismissRecordingSuggestion: vi.fn(),
   getPeople: vi.fn(),
   getRecordingChunkAudio: vi.fn(),
   getRecordingChunks: vi.fn(),
   getRecordingSpeakers: vi.fn(),
+  getRecordingSuggestions: vi.fn(),
   listRecordings: vi.fn(),
   setRecordingSpeaker: vi.fn(),
+  setRecordingTitle: vi.fn(),
 }));
 const router = vi.hoisted(() => ({ navigate: vi.fn() }));
 
@@ -107,6 +110,7 @@ describe("Recordings page", () => {
     host = parsed.document.querySelector("#root") as unknown as HTMLElement;
     api.getRecordingChunks.mockResolvedValue({ recording: recording(), chunks: CHUNKS });
     api.getRecordingSpeakers.mockResolvedValue({ speakers: [speaker(1), speaker(2)] });
+    api.getRecordingSuggestions.mockResolvedValue({ suggestions: [] });
   });
 
   afterEach(() => {
@@ -278,5 +282,97 @@ describe("Recordings page", () => {
     await click(button("Delete"));
     expect(api.deleteRecording).toHaveBeenCalledWith(ID);
     expect(router.navigate).toHaveBeenCalledWith("/portal/recordings");
+  });
+  describe("suggestions", () => {
+    const TITLE = { key: "title:doc-sync", kind: "title", source: "calendar", title: "Weekly sync", documentId: "doc-sync" };
+    const JAMIE = {
+      key: "mention:2:p-jamie",
+      kind: "person",
+      source: "mention",
+      speaker: 2,
+      personId: "p-jamie",
+      name: "Jamie",
+      evidence: "Thanks, Jamie.",
+    };
+    const ALEX = { ...JAMIE, key: "mention:1:alex", speaker: 1, personId: null, name: "Alex", evidence: "Alex, go on." };
+    const PRIYA = {
+      key: "person:p-priya",
+      kind: "person",
+      source: "calendar",
+      speaker: null,
+      personId: "p-priya",
+      name: "Priya",
+      evidence: "Weekly sync",
+    };
+    const offered = (n: number) =>
+      [...speakerRow(n).querySelectorAll(".recording-suggestion-accept")].map((b) => b.textContent);
+
+    test("each unnamed speaker is offered who was heard answering, and the meeting's attendees", async () => {
+      api.getRecordingSuggestions.mockResolvedValue({ suggestions: [JAMIE, PRIYA] });
+      await mount({ recordingId: ID });
+      expect(offered(1)).toEqual(["Priya"]);
+      expect(offered(2)).toEqual(["Jamie", "Priya"]);
+      expect(speakerRow(2).querySelector(".recording-suggestion-why")?.textContent).toBe("Heard: “Thanks, Jamie.”");
+      expect(speakerRow(1).querySelector(".recording-suggestion-why")?.textContent).toBe("On your calendar: Weekly sync");
+    });
+
+    test("a named speaker is offered nothing", async () => {
+      api.getRecordingSpeakers.mockResolvedValue({ speakers: [speaker(1, { isSelf: true }), speaker(2)] });
+      api.getRecordingSuggestions.mockResolvedValue({ suggestions: [PRIYA] });
+      await mount({ recordingId: ID });
+      expect(offered(1)).toEqual([]);
+      expect(offered(2)).toEqual(["Priya"]);
+    });
+
+    test("accepting a person names the speaker, then the suggestions are read again", async () => {
+      api.getRecordingSuggestions.mockResolvedValueOnce({ suggestions: [JAMIE, PRIYA] }).mockResolvedValue({ suggestions: [PRIYA] });
+      api.setRecordingSpeaker.mockResolvedValue({
+        speakers: [speaker(1), speaker(2, { personId: "p-jamie", name: "Jamie" })],
+      });
+      await mount({ recordingId: ID });
+      await click(within(speakerRow(2), "Jamie"));
+      expect(api.setRecordingSpeaker).toHaveBeenCalledWith(ID, 2, { personId: "p-jamie" });
+      expect(api.getRecordingSuggestions).toHaveBeenCalledTimes(2);
+      expect(speakerRow(2).textContent).toContain("Jamie, from People");
+      expect(offered(2)).toEqual([]);
+      expect(offered(1)).toEqual(["Priya"]);
+    });
+
+    test("accepting a plain name gives the speaker that name", async () => {
+      api.getRecordingSuggestions.mockResolvedValue({ suggestions: [ALEX] });
+      api.setRecordingSpeaker.mockResolvedValue({ speakers: [speaker(1, { name: "Alex" }), speaker(2)] });
+      await mount({ recordingId: ID });
+      await click(within(speakerRow(1), "Alex"));
+      expect(api.setRecordingSpeaker).toHaveBeenCalledWith(ID, 1, { name: "Alex" });
+    });
+
+    test("dismissing a suggestion stops it being offered", async () => {
+      api.getRecordingSuggestions.mockResolvedValueOnce({ suggestions: [JAMIE, PRIYA] }).mockResolvedValue({ suggestions: [JAMIE] });
+      api.dismissRecordingSuggestion.mockResolvedValue(null);
+      await mount({ recordingId: ID });
+      await click(speakerRow(1).querySelector('[data-key="person:p-priya"] .recording-suggestion-dismiss') as HTMLButtonElement);
+      expect(api.dismissRecordingSuggestion).toHaveBeenCalledWith(ID, "person:p-priya");
+      expect(offered(1)).toEqual([]);
+      expect(offered(2)).toEqual(["Jamie"]);
+    });
+
+    test("the calendar's title is offered under the recording's own, and accepted", async () => {
+      api.getRecordingSuggestions.mockResolvedValueOnce({ suggestions: [TITLE] }).mockResolvedValue({ suggestions: [] });
+      api.setRecordingTitle.mockResolvedValue(recording({ title: "Weekly sync" }));
+      await mount({ recordingId: ID });
+      expect(host.querySelector(".recording-title-suggestion")?.textContent).toContain("Your calendar had Weekly sync at this time.");
+      await click(button("Use this title"));
+      expect(api.setRecordingTitle).toHaveBeenCalledWith(ID, "Weekly sync");
+      expect(host.querySelector("h1")?.textContent).toBe("Weekly sync");
+      expect(host.querySelector(".recording-title-suggestion")).toBeNull();
+    });
+
+    test("suggestions that cannot be read leave the page as it is", async () => {
+      api.getRecordingSuggestions.mockRejectedValue(new Error("503"));
+      await mount({ recordingId: ID });
+      expect(host.querySelector("h1")?.textContent).toBe("Planning the move");
+      expect(host.querySelector(".recording-suggestions")).toBeNull();
+      expect(host.querySelector(".privacy-banner.error")).toBeNull();
+    });
   });
 });
