@@ -6789,6 +6789,130 @@ p.devices-pair-expiry {
   background: color-mix(in srgb, var(--accent) 13%, transparent);
 }
 
+/* Recordings (experimental): recorded conversations, their speakers and chunks. */
+.recordings-list .privacy-item-status.warning,
+.recording-detail .privacy-item-status.warning {
+  color: var(--warning);
+}
+
+.recording-detail .privacy-detail-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.recording-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0 20px;
+}
+
+.recording-actions .btn-secondary.danger {
+  color: var(--danger);
+}
+
+.recording-speakers,
+.recording-chunks {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.recording-speaker {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border-light);
+}
+
+.recording-speaker-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+}
+
+.recording-speaker-who.is-unnamed,
+.recording-speaker-talk,
+.recording-speaker-hint,
+.recording-chunk-until {
+  color: var(--text-muted);
+}
+
+.recording-speaker-samples {
+  margin: 0;
+  padding-left: 16px;
+  color: var(--text-secondary);
+}
+
+.recording-speaker-samples li {
+  overflow-wrap: anywhere;
+}
+
+.recording-speaker-actions,
+.recording-speaker-picker,
+.recording-speaker-matches {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.recording-speaker-matches {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.recording-speaker-input {
+  min-width: 0;
+  flex: 1 1 200px;
+  max-width: 320px;
+}
+
+.recording-chunk {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 16px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border-light);
+  font-variant-numeric: tabular-nums;
+}
+
+.recording-chunk-at {
+  min-width: 80px;
+}
+
+.recording-chunk.is-failed .recording-chunk-status {
+  color: var(--danger);
+}
+
+.recording-chunk.is-silent,
+.recording-chunk.is-pending {
+  color: var(--text-muted);
+}
+
+.recording-chunk-kept,
+.recording-chunk-play {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.recording-chunk-audio {
+  max-width: 100%;
+  height: 32px;
+}
+
+.recording-chunk-error {
+  color: var(--danger);
+}
+
 .privacy-subscription-exact {
   margin: 0;
   padding: 14px;

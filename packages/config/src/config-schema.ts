@@ -3715,6 +3715,32 @@ const dictationSettings = z
   })
   .strict();
 
+// Recorded conversations (experimental). `speakers` tells the voices of one
+// recording apart so the owner can say who each speaker is: `local` runs
+// sherpa-onnx on the gateway (its two models, about 32 MB, are downloaded
+// into the models directory on first use), `replay` is the test double.
+// `keepAudioDays` keeps each chunk's audio that long after it is transcribed,
+// for the portal to play; 0, the default, deletes it at once.
+const recordingsSettings = z
+  .object({
+    speakers: z
+      .enum(["off", "local", "replay"])
+      .describe(
+        "Tell the speakers of a recorded conversation apart (experimental). `local` downloads two small voice models on first use and separates voices on this machine; voice vectors are deleted once each recording's transcript is written. Default `off`.",
+      )
+      .optional(),
+    keepAudioDays: z
+      .number()
+      .int()
+      .min(0)
+      .max(365)
+      .describe(
+        "Days the gateway keeps a recorded conversation's audio after each piece is transcribed (experimental), so the owner can listen to it in the portal. Default 0: the audio is deleted as soon as its transcript is written. Lowering it deletes what is now older at once; deleting a recording deletes its audio.",
+      )
+      .optional(),
+  })
+  .strict();
+
 // `typesafe` and `claude-code` are not reserved here: 0.6.0 accepted both, so
 // a configured backend of either name keeps serving the roles it did (see the
 // inference registry). Clients avoid them for new names.
@@ -3896,6 +3922,7 @@ const inference = z
       .strict()
       .optional(),
     dictation: dictationSettings.optional(),
+    recordings: recordingsSettings.optional(),
     transcriptionVocabulary: transcriptionVocabularySettings.optional(),
   })
   .strict()
