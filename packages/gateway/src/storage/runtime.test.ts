@@ -397,11 +397,11 @@ test("disposal cancels its allocation owner once and suppresses late publication
 
 test("an initial capacity refresh finishing after disposal never messages an indexer owner", async () => {
   const f = await fixture();
-  const pending = deferred<ReturnType<typeof f.runtime.pressure.snapshot>>();
+  const pending = deferred<void>();
   vi.spyOn(f.runtime.pressure, "refresh").mockReturnValueOnce(pending.promise);
   f.runtime.start();
   await f.runtime.dispose();
-  pending.resolve(f.runtime.pressure.snapshot());
+  pending.resolve();
   await Promise.resolve();
   expect(f.indexer.setStoragePressure).not.toHaveBeenCalled();
 });
