@@ -187,7 +187,7 @@ describe("sync tombstone cascade outbox", () => {
       deleteIndex: async () => {
         throw new IndexCleanupPendingError(1);
       },
-      cascadeCognition: async () => {
+      cascadeCognition: async (): Promise<void> => {
         throw cognitionFailure;
       },
       acknowledge: async (id: number, part: "index" | "cognition") => {
