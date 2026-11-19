@@ -834,23 +834,6 @@ class AdminClientTest {
     }
 
     @Test
-    fun network_identities_decodes_page() = runTest {
-        server.enqueue(
-            MockResponse().setBody(
-                """{"items":[{"address":"192.0.2.42","label":"LAN (en0)","kind":"lan","offLan":false},
-                  {"address":"198.51.100.7","label":"Tailscale","kind":"tailscale","offLan":true}],
-                  "pageInfo":{"hasMore":false,"limit":2}}""",
-            ),
-        )
-        val ids = client().networkIdentities()
-        val req = server.takeRequest()
-        assertEquals("GET", req.method)
-        assertEquals("/admin/network-identities", req.path)
-        assertEquals(2, ids.size)
-        assertTrue(ids[1].offLan)
-    }
-
-    @Test
     fun model_overview_decodes_inference_catalog_and_installed() = runTest {
         server.enqueue(
             MockResponse().setBody(
@@ -1735,16 +1718,6 @@ class AdminClientTest {
         val err = runCatching { client().removeSource("s") }.exceptionOrNull()
         assertEquals(GatewayException.Unauthorized::class.java, err?.javaClass)
         assertNull((err as? GatewayException.ServerError)?.status)
-    }
-
-    @Test
-    fun gateway_origin_exposes_the_clients_scheme_host_and_port() {
-        // Pairing-QR URL building swaps a chosen host into this origin while
-        // preserving the gateway's real scheme + port (mirrors the portal).
-        val admin = AdminClient(GatewayHttp(OkHttpClient(), "https://mac.local:17600/", "tok"))
-        assertEquals("https", admin.gatewayOrigin.scheme)
-        assertEquals("mac.local", admin.gatewayOrigin.host)
-        assertEquals(17600, admin.gatewayOrigin.port)
     }
 
     @Test

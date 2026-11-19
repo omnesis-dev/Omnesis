@@ -12,7 +12,6 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.omnesis.android.AppVersionInfo
 import dev.omnesis.android.notes.NotesRepository
 import dev.omnesis.android.access.AccessAuthorizationPairingIdentity
-import dev.omnesis.android.BuildConfig
 import dev.omnesis.android.access.AccessPendingRequests
 import dev.omnesis.android.access.AccessPendingRequestsState
 import dev.omnesis.android.access.PairingPendingRequests
@@ -227,9 +226,9 @@ class HomeViewModel @Inject constructor(
 
     private var pairingPendingGeneration = 0L
 
-    /** The gateway's pairing requests, for an administrator's phone in a build with the Omnesis account. */
-    fun pairingApprovalClient(cloudEnabled: Boolean = BuildConfig.CLOUD_RELAY_ENABLED): GatewayPairingApproving? =
-        session.session?.takeIf { PairingPendingRequests.eligible(cloudEnabled, it.pairing.scopes) }?.admin
+    /** The gateway's pairing requests, for an administrator's phone. */
+    fun pairingApprovalClient(): GatewayPairingApproving? =
+        session.session?.takeIf { PairingPendingRequests.eligible(it.pairing.scopes) }?.admin
 
     /** Reads can overlap, and only the latest one started lands. Any other phone never asks. */
     fun refreshPairingPending() {

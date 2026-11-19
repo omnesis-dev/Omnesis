@@ -83,7 +83,7 @@ class DeviceEnrollmentLiveE2ETest {
             // Claimed here to prove the gateway, not the flag, is what refuses.
             deviceKeyRecorded = true, tokenRotatedAt = 0,
         )))
-        val service = PairingService(store, cloudRelay = true)
+        val service = PairingService(store)
         val pairing = service.current()!!
         assertFalse(DeviceTokenRotator({ softwareDeviceKey() }).rotate(pairing, deviceHttp(pairing), service))
         assertEquals(config.apiToken, service.current()!!.token)

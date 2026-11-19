@@ -16,8 +16,8 @@ import org.junit.Test
 class DeviceCapabilitiesTest {
     @Test
     fun pairingRemindersAreAdvertisedWhileOlderCapabilityPayloadsRemainSupported() {
-        assertFalse(DeviceCapabilities.android(emptyList()).pairingNotifications)
-        val current = DeviceCapabilities.android(emptyList(), pairingNotifications = true)
+        val current = DeviceCapabilities.android(emptyList())
+        assertTrue(current.pairingNotifications)
         val wire = OmnesisJson.encodeToJsonElement(DeviceCapabilities.serializer(), current).jsonObject
         assertEquals("true", wire["pairingNotifications"]!!.jsonPrimitive.content)
         val legacy = kotlinx.serialization.json.JsonObject(wire.filterKeys { it != "pairingNotifications" })
@@ -26,12 +26,10 @@ class DeviceCapabilitiesTest {
 
     @Test
     fun everyBuildAnnouncesThatItRoutesTailscaleJoinNotifications() {
-        for (cloud in listOf(false, true)) {
-            val capabilities = DeviceCapabilities.android(emptyList(), pairingNotifications = cloud)
-            assertTrue(capabilities.tailscaleJoinNotifications)
-            val wire = OmnesisJson.encodeToJsonElement(DeviceCapabilities.serializer(), capabilities).jsonObject
-            assertEquals("true", wire["tailscaleJoinNotifications"]!!.jsonPrimitive.content)
-        }
+        val capabilities = DeviceCapabilities.android(emptyList())
+        assertTrue(capabilities.tailscaleJoinNotifications)
+        val announced = OmnesisJson.encodeToJsonElement(DeviceCapabilities.serializer(), capabilities).jsonObject
+        assertEquals("true", announced["tailscaleJoinNotifications"]!!.jsonPrimitive.content)
         // An older payload without the key reads as a device that cannot route them.
         val wire = OmnesisJson.encodeToJsonElement(DeviceCapabilities.serializer(), DeviceCapabilities.android(emptyList())).jsonObject
         val legacy = kotlinx.serialization.json.JsonObject(wire.filterKeys { it != "tailscaleJoinNotifications" })

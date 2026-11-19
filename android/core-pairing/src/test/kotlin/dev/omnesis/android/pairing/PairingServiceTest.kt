@@ -22,17 +22,10 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
-import org.junit.Assume.assumeFalse
-import org.junit.Assume.assumeTrue
 import org.junit.Before
 import org.junit.Test
 
-class PairingServiceTest : PairingServiceCases(cloudRelay = true)
-
-/** A build without cloud connectivity: pairing behaves as it did before the feature. */
-class PairingServiceCloudOffTest : PairingServiceCases(cloudRelay = false)
-
-abstract class PairingServiceCases(private val cloudRelay: Boolean) {
+class PairingServiceTest {
 
     private lateinit var server: MockWebServer
 
@@ -67,7 +60,6 @@ abstract class PairingServiceCases(private val cloudRelay: Boolean) {
             strictClientFactory = { exchangeClient() },
             keyClientFactory = { _, _ -> exchangeClient() },
             fetchDirectCandidates = { _, _, _ -> emptyList() },
-            cloudRelay = cloudRelay,
         )
 
     private fun exchangeClient() = OkHttpClient.Builder().addInterceptor { chain ->
@@ -79,7 +71,6 @@ abstract class PairingServiceCases(private val cloudRelay: Boolean) {
 
     @Test
     fun stableKeyPinPersistsSeparatelyAndCannotBeReinterpretedAsLeafTrust() = runTest {
-        assumeTrue(cloudRelay)
         val store = InMemoryStore()
         val spki = "a1".repeat(32)
         server.enqueue(MockResponse().setBody("""{"device":{"id":"dev-key","name":"Fictional gateway","kind":"android"},"tokenId":"new-key-generation","token":"synthetic-key-token","scopes":["read"]}"""))
@@ -94,7 +85,7 @@ abstract class PairingServiceCases(private val cloudRelay: Boolean) {
         assertNull(service(store).current())
         for (tls in listOf("""{"mode":"pinned-key-strict","fingerprint":"$spki"}""", """{"mode":"pinned-leaf-strict","spkiFingerprint":"$spki"}""")) {
             assertThrows(PairingPayloadException::class.java) {
-                PairingPayload.decode("""{"v":4,"gatewayUrl":"${baseUrl()}","pairingCode":"SYNTHETIC","tls":$tls}""", cloudRelay = true)
+                PairingPayload.decode("""{"v":4,"gatewayUrl":"${baseUrl()}","pairingCode":"SYNTHETIC","tls":$tls}""")
             }
         }
     }
@@ -162,7 +153,7 @@ abstract class PairingServiceCases(private val cloudRelay: Boolean) {
         } == true)
         assertEquals("dev.omnesis.android", caps?.get("pushAppId")?.jsonPrimitive?.content)
         assertNull(caps?.get("syncLease"))
-        // Every build routes Tailscale join notifications, with or without cloud connectivity.
+        // Every build routes Tailscale join notifications.
         assertEquals("true", caps?.get("tailscaleJoinNotifications")?.jsonPrimitive?.content)
     }
 
@@ -232,7 +223,6 @@ abstract class PairingServiceCases(private val cloudRelay: Boolean) {
         val store = InMemoryStore()
         val svc = PairingService(
             store,
-            cloudRelay = cloudRelay,
             deviceName = "Pixel",
             clientFactory = { fingerprint ->
                 fingerprints += fingerprint
@@ -258,7 +248,6 @@ abstract class PairingServiceCases(private val cloudRelay: Boolean) {
 
     @Test
     fun cloud_pairing_persists_strict_pin_and_never_upgrades_to_generic_public_trust() = runTest {
-        assumeTrue(cloudRelay)
         server.enqueue(MockResponse().setBody(
             """{"device":{"id":"dev-cloud","name":"Cloud gateway","kind":"android"},"tokenId":"tid","token":"device-test-token","scopes":["read"]}""",
         ))
@@ -276,86 +265,13 @@ abstract class PairingServiceCases(private val cloudRelay: Boolean) {
         assertEquals(pin, stored.fingerprint)
     }
 
-    private val strictPayloads get() = listOf(
-        """{"v":4,"gatewayUrl":"${baseUrl()}","pairingCode":"SYNTHETIC","tls":{"mode":"pinned-key-strict","spkiFingerprint":"${"a1".repeat(32)}"}}""",
-        """{"v":4,"gatewayUrl":"${baseUrl()}","pairingCode":"SYNTHETIC","tls":{"mode":"pinned-leaf-strict","fingerprint":"${"b2".repeat(32)}"}}""",
-    )
-
     @Test
-    fun without_cloud_connectivity_strict_trust_modes_are_refused_before_any_request() = runTest {
-        assumeFalse(cloudRelay)
-        val store = InMemoryStore()
-        for (payload in strictPayloads) {
-            val error = assertThrows(PairingPayloadException::class.java) { kotlinx.coroutines.runBlocking { service(store).pair(payload) } }
-            assertEquals("invalid TLS trust mode", error.message)
-        }
-        assertEquals(0, server.requestCount)
-        assertNull(service(store).current())
-    }
-
-    @Test
-    fun without_cloud_connectivity_a_stored_strict_pairing_reads_as_unpaired() {
-        assumeFalse(cloudRelay)
-        for ((mode, fingerprint, spki) in listOf(
-            Triple("pinned-key-strict", null, "a1".repeat(32)),
-            Triple("pinned-leaf-strict", "b2".repeat(32), null),
-        )) {
-            val store = InMemoryStore().apply {
-                set("gateway.credential.v1", OmnesisJson.encodeToString(PairingCredentialBundle(
-                    baseUrl(), "synthetic-token", "generation", "local", "dev-1", "Fictional gateway", listOf("read"),
-                    mode, fingerprint = fingerprint, spkiFingerprint = spki)))
-            }
-            assertNull(service(store).current())
-            assertNull(PairingService(store).current())
-            assertEquals(mode, PairingService(store, cloudRelay = true).current()?.tlsMode?.persistedValue)
-        }
-        val split = InMemoryStore().apply {
-            set("gateway.url", baseUrl()); set("gateway.token", "synthetic-token"); set("gateway.accountId", "local")
-            set("gateway.name", "Fictional gateway"); set("gateway.fingerprint", "b2".repeat(32)); set("gateway.tlsMode", "pinned-leaf-strict")
-        }
-        assertNull(service(split).current())
-    }
-
-    @Test
-    fun without_cloud_connectivity_a_failed_exchange_has_already_cleared_the_push_claim() = runTest {
-        assumeFalse(cloudRelay)
-        val svc = service(InMemoryStore())
-        svc.setPushClaimCredential("dev-1", "narrow-token")
-        server.enqueue(MockResponse().setResponseCode(500))
-        assertTrue(runCatching { svc.pairManually(baseUrl(), "AB-CD") }.isFailure)
-        assertNull(svc.pushClaimCredential("dev-1"))
-    }
-
-    @Test
-    fun with_cloud_connectivity_a_failed_exchange_keeps_the_push_claim() = runTest {
-        assumeTrue(cloudRelay)
+    fun a_failed_exchange_keeps_the_push_claim() = runTest {
         val svc = service(InMemoryStore())
         svc.setPushClaimCredential("dev-1", "narrow-token")
         server.enqueue(MockResponse().setResponseCode(500))
         assertTrue(runCatching { svc.pairManually(baseUrl(), "AB-CD") }.isFailure)
         assertEquals("narrow-token", svc.pushClaimCredential("dev-1"))
-    }
-
-    @Test
-    fun without_cloud_connectivity_an_unpair_during_the_exchange_does_not_cancel_the_pairing() = runTest {
-        assumeFalse(cloudRelay)
-        server.enqueue(MockResponse().setBody(
-            """{"device":{"id":"dev-1","name":"Fictional gateway","kind":"android"},"tokenId":"tid","token":"synthetic-token","scopes":["read"]}""",
-        ))
-        lateinit var svc: PairingService
-        svc = PairingService(
-            InMemoryStore(),
-            clientFactory = {
-                OkHttpClient.Builder().addInterceptor { chain ->
-                    svc.unpair()
-                    chain.proceed(chain.request().newBuilder().url(server.url(chain.request().url.encodedPath)).build())
-                }.build()
-            },
-            cloudRelay = cloudRelay,
-        )
-        val pairing = svc.pairManually(baseUrl(), "AB-CD")
-        assertEquals("dev-1", pairing.deviceId)
-        assertEquals(pairing, svc.current())
     }
 
     @Test
@@ -379,7 +295,6 @@ abstract class PairingServiceCases(private val cloudRelay: Boolean) {
         }
         val svc = PairingService(
             store,
-            cloudRelay = cloudRelay,
             clientFactory = {
                 OkHttpClient.Builder().addInterceptor { chain ->
                     chain.proceed(chain.request().newBuilder().url(server.url("/devices/pair")).build())
@@ -510,7 +425,6 @@ abstract class PairingServiceCases(private val cloudRelay: Boolean) {
         val store = InMemoryStore()
         val svc = PairingService(
             store,
-            cloudRelay = cloudRelay,
             clientFactory = {
                 OkHttpClient.Builder().addInterceptor { chain ->
                     chain.proceed(chain.request().newBuilder().url(server.url("/devices/pair")).build())

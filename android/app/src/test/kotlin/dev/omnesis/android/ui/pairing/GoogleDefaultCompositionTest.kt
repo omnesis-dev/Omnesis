@@ -17,7 +17,6 @@ import dagger.hilt.android.testing.HiltAndroidRule
 import dagger.hilt.android.testing.HiltAndroidTest
 import dagger.hilt.android.testing.HiltTestApplication
 import dev.omnesis.android.pairing.CloudPairingChallenge
-import dev.omnesis.android.pairing.CloudPairingException
 import dev.omnesis.android.ui.home.HomeScaffoldHarnessEntryPoint
 import dev.omnesis.android.ui.home.MockGateway
 import kotlinx.coroutines.runBlocking
@@ -42,14 +41,9 @@ class GoogleDefaultCompositionTest {
     private val gateway = MockGateway()
     private val clientId = "synthetic.apps.googleusercontent.com"
 
-    // These cases run the graph as a build with cloud connectivity.
-    init { dev.omnesis.android.ui.home.HomeScaffoldTestModule.cloudRelay = true }
-
     @After fun close() {
-        try {
-            graph.sessionManager().beginRepair()
-            gateway.close()
-        } finally { dev.omnesis.android.ui.home.HomeScaffoldTestModule.cloudRelay = false }
+        graph.sessionManager().beginRepair()
+        gateway.close()
     }
 
     @Test fun `public injected constructor stages and confirms QR through its real session getter`() {
@@ -65,9 +59,9 @@ class GoogleDefaultCompositionTest {
         assertTrue("POST /devices/pair" in gateway.requests)
     }
 
-    @Test fun `configured production callbacks carry OAuth nonce preserve provider errors and apply strict TLS QR`() = runBlocking {
+    @Test fun `the production Google sign-in carries the OAuth nonce and client and preserves provider errors`() = runBlocking {
         val challenge = CloudPairingChallenge.create("Synthetic phone")
-        assertNotNull(GooglePairingDefaults.credentialManager(application))
+        assertNotNull(GoogleCredentialToken.createManager(application))
         var providerCalls = 0
         val providerError = IllegalStateException("owned provider cancellation")
         val manager = Proxy.newProxyInstance(CredentialManager::class.java.classLoader,
@@ -82,30 +76,9 @@ class GoogleDefaultCompositionTest {
                 .setIdToken("provider-test-token").build()
             GetCredentialResponse(CustomCredential(GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL, credential.data))
         } as CredentialManager
-        val ports = GooglePairingDefaults.configuredPorts(graph.sessionManager(), "https://relay.example.test",
-            clientId, "synthetic-android.apps.googleusercontent.com") { context ->
-            assertSame(application, context)
-            manager
-        }
-        val token = ports.acquireToken(application, challenge.nonce)
-        assertEquals("provider-test-token", token)
-        try { ports.acquireToken(application, challenge.nonce); fail("Provider error was swallowed") }
+        assertEquals("provider-test-token", GoogleCredentialToken.acquire(application, clientId, challenge.nonce, manager))
+        try { GoogleCredentialToken.acquire(application, clientId, challenge.nonce, manager); fail("Provider error was swallowed") }
         catch (actual: IllegalStateException) { assertSame(providerError, actual) }
-        val client = ports.createClient()
-        client.close()
-        // A retired production client fails before Google's JWKS or relay network request.
-        try { client.start(challenge, token); fail("Retired client started") }
-        catch (_: CloudPairingException) { }
-        val invalid = GooglePairingDefaults.configuredPorts(graph.sessionManager(), "http://relay.example.test",
-            clientId, clientId) { manager }
-        assertThrows(IllegalArgumentException::class.java) { invalid.createClient() }
-        ports.applyPairing(payload())
-        assertEquals("device-test", graph.pairingService().current()!!.deviceId)
-        val saved = graph.pairingService().current()
-        try { ports.applyPairing("malformed QR"); fail("Malformed replacement was persisted") }
-        catch (_: Exception) { }
-        assertEquals(saved, graph.pairingService().current())
-        assertEquals(1, gateway.requests.count { it == "POST /devices/pair" })
     }
 
     @Test fun `live key-paired session refreshes hints without replacing clients and late metadata cannot restore retired authority`() = runBlocking {
@@ -141,15 +114,13 @@ class GoogleDefaultCompositionTest {
     @Test fun `trusted approval client is available only to an established admin session`() = runBlocking {
         val manager = graph.sessionManager()
         val vm = dev.omnesis.android.ui.devices.DevicesViewModel(manager, dev.omnesis.android.access.PairingPendingRequests())
-        assertNull(vm.pairingApprovalClient(cloudEnabled = true))
+        assertNull(vm.pairingApprovalClient())
         gateway.pairingScopesJson = "[\"read\"]"
         manager.pairFromQr(payload())
-        assertNull(vm.pairingApprovalClient(cloudEnabled = true))
+        assertNull(vm.pairingApprovalClient())
         gateway.pairingScopesJson = "[\"read\",\"admin\"]"
         manager.pairFromQr(payload())
-        assertSame(manager.session!!.admin, vm.pairingApprovalClient(cloudEnabled = true))
-        // A build without cloud connectivity never offers pairing requests.
-        assertNull(vm.pairingApprovalClient(cloudEnabled = false))
+        assertSame(manager.session!!.admin, vm.pairingApprovalClient())
     }
 
     @Test fun `legacy direct preissued credential remains optional and foreground recovery does not re-enroll`() = runBlocking {

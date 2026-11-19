@@ -17,7 +17,6 @@ import dev.omnesis.android.designsystem.theme.OmnesisTheme
 import dev.omnesis.android.transport.dto.DeviceCapabilities
 import dev.omnesis.android.transport.dto.DeviceRecord
 import dev.omnesis.android.transport.dto.AwayFromHomeHint
-import dev.omnesis.android.transport.dto.NetworkIdentity
 import dev.omnesis.android.transport.dto.PairingAddressOption
 import dev.omnesis.android.transport.dto.PairingAddressPlan
 import dev.omnesis.android.transport.dto.PendingPairing
@@ -27,7 +26,6 @@ import dev.omnesis.android.ui.common.Loadable
 import dev.omnesis.android.ui.devices.DeviceCard
 import dev.omnesis.android.ui.devices.DevicesContent
 import dev.omnesis.android.ui.devices.DevicesViewModel
-import dev.omnesis.android.ui.devices.LegacyPairDeviceContent
 import dev.omnesis.android.ui.devices.PairDeviceContent
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -467,91 +465,6 @@ class DevicesScreenshotTest {
             addressPlan = PairingAddressPlan(null, listOf(agentTailscale, agentLan), recommendedUrl = agentTailscale.gatewayUrl),
             selectedUrl = agentTailscale.gatewayUrl,
             expanded = true,
-        )
-    }
-
-    // --- The pair sheet of a build without cloud connectivity: main's, byte for byte ------
-    // These keep main's names and goldens; the cases above render the cloud build's sheet.
-
-    @Test
-    fun pair_result_dark() = capture("pair_result_dark", dark = true) {
-        ThemedSurface {
-            LegacyPairDeviceContent(
-                pending = PendingPairing(
-                    pairingCode = "7K3M-9QX2",
-                    expiresAt = NOW + 540_000L,
-                ),
-                kind = "ios",
-                identities = listOf(
-                    NetworkIdentity("host.example", "Public HTTPS", "public", true),
-                    NetworkIdentity("192.0.2.42", "LAN (en0)", "lan", false),
-                    NetworkIdentity("198.51.100.7", "Tailscale (off-LAN)", "tailscale", true),
-                ),
-                selectedHostIdx = 0,
-                qrPayload = "{\"v\":4,\"gatewayUrl\":\"https://host.example:7600\",\"pairingCode\":\"7K3M-9QX2\",\"tls\":{\"mode\":\"system\"}}",
-                qrError = null,
-                submitting = false,
-                error = null,
-                onPair = {},
-                onSelectHost = {},
-            )
-        }
-    }
-
-    @Test
-    fun repair_result_dark() = capture("repair_result_dark", dark = true) {
-        ThemedSurface { legacyRepairResult() }
-    }
-
-    @Test
-    fun repair_result_light() = capture("repair_result_light", dark = false) {
-        ThemedSurface { legacyRepairResult() }
-    }
-
-    @Composable
-    private fun legacyRepairResult() {
-        LegacyPairDeviceContent(
-            pending = PendingPairing(pairingCode = "7K3M-9QX2", expiresAt = NOW + 540_000L),
-            kind = "android",
-            identities = listOf(NetworkIdentity("gateway.example", "Public HTTPS", "public", true)),
-            selectedHostIdx = 0,
-            qrPayload = "{\"v\":4,\"gatewayUrl\":\"https://gateway.example:7600\",\"pairingCode\":\"7K3M-9QX2\",\"tls\":{\"mode\":\"system\"}}",
-            qrError = null,
-            submitting = false,
-            error = null,
-            onPair = {},
-            onSelectHost = {},
-            repairTarget = devices()[1],
-        )
-    }
-
-    @Test
-    fun pair_agent_result_light() = capture("pair_agent_result_light", dark = false) {
-        ThemedSurface { legacyAgentPairResult() }
-    }
-
-    @Test
-    fun pair_agent_result_dark() = capture("pair_agent_result_dark", dark = true) {
-        ThemedSurface { legacyAgentPairResult() }
-    }
-
-    @Composable
-    private fun legacyAgentPairResult() {
-        LegacyPairDeviceContent(
-            pending = PendingPairing(
-                pairingCode = "FICTION-2486",
-                expiresAt = NOW + 540_000L,
-            ),
-            kind = "agent",
-            gatewayUrl = "https://gateway.example:7600",
-            identities = emptyList(),
-            selectedHostIdx = 0,
-            qrPayload = null,
-            qrError = null,
-            submitting = false,
-            error = null,
-            onPair = {},
-            onSelectHost = {},
         )
     }
 

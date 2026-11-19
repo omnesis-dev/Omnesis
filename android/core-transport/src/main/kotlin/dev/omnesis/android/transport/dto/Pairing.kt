@@ -92,16 +92,3 @@ data class PairingAddressPlan(
     fun selected(gatewayUrl: String?): PairingAddressOption? = usable.firstOrNull { it.gatewayUrl == gatewayUrl }
 }
 
-/**
- * One row of `GET /admin/network-identities`. Mirrors `NetworkIdentity` in
- * `@omnesis/core/network-discovery.ts` — an address the gateway is reachable
- * at, with a human label and an off-LAN flag the pairing UI surfaces as the
- * recommended pick when traveling.
- */
-@Serializable
-data class NetworkIdentity(
-    val address: String,
-    val label: String = "",
-    val kind: String = "",
-    val offLan: Boolean = false,
-)

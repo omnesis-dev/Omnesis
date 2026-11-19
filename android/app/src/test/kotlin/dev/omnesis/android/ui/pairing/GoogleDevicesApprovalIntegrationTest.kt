@@ -34,12 +34,9 @@ class GoogleDevicesApprovalIntegrationTest {
     private val graph get() = EntryPoints.get(ApplicationProvider.getApplicationContext<HiltTestApplication>(), HomeScaffoldHarnessEntryPoint::class.java)
     private val gateway = MockGateway()
 
-    // These cases run the graph as a build with cloud connectivity.
-    init { dev.omnesis.android.ui.home.HomeScaffoldTestModule.cloudRelay = true }
-
     @After fun close() {
-        try { graph.sessionManager().beginRepair(); gateway.close() }
-        finally { dev.omnesis.android.ui.home.HomeScaffoldTestModule.cloudRelay = false }
+        graph.sessionManager().beginRepair()
+        gateway.close()
     }
 
     @Test fun admin_device_opens_and_dismisses_requests_and_retirement_removes_the_admin_affordance() {
@@ -47,7 +44,7 @@ class GoogleDevicesApprovalIntegrationTest {
         val vm = DevicesViewModel(graph.sessionManager(), dev.omnesis.android.access.PairingPendingRequests())
         // The mock gateway does not advertise Tailscale joins, so they are never asked for.
         val joins = dev.omnesis.android.ui.devices.TailscaleJoinRequestsViewModel { dev.omnesis.android.ui.devices.tailscaleJoinClient(graph.sessionManager()) }
-        compose.setContent { OmnesisTheme { DevicesScreen(onBack = {}, cloudFeatures = true, vm = vm, tailscaleJoins = joins) } }
+        compose.setContent { OmnesisTheme { DevicesScreen(onBack = {}, vm = vm, tailscaleJoins = joins) } }
         compose.onNodeWithContentDescription("Pairing requests").performClick()
         compose.onNodeWithText("Waiting for your OK").assertExists()
         compose.onNodeWithText("Done").performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick) { it() }

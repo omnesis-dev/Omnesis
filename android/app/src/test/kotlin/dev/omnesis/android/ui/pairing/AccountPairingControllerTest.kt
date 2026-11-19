@@ -121,7 +121,7 @@ class AccountPairingControllerTest {
         assertEquals("Expired. Cancel and sign in again.", pairingExpiryText(400))
         assertEquals("Expired. Cancel and sign in again.", pairingExpiryText(-30_000))
         // The review's vocabulary: no mechanism words on the waiting screen.
-        for (text in listOf(PAIRING_WAITING_TITLE, PAIRING_WAITING_FROM_ANOTHER_DEVICE, PAIRING_WAITING_CODE_LEAD, PAIRING_WAITING_COMPARE, PAIRING_CODE_CHECK_TEXT) + PAIRING_WAITING_PLACES)
+        for (text in listOf(PAIRING_WAITING_TITLE, PAIRING_WAITING_FROM_ANOTHER_DEVICE, PAIRING_WAITING_CODE_LEAD, PAIRING_WAITING_COMPARE) + PAIRING_WAITING_PLACES)
             for (word in listOf("trusted device", "held", "relay", "pairing request", "other device")) assertFalse("$word in $text", text.lowercase().contains(word))
     }
 

@@ -27,7 +27,7 @@ class DirectCandidatePersistenceTest {
             var writes = 0
             override fun set(key: String, value: String) { writes++; backing.set(key, value) }
         }
-        val service = PairingService(store, cloudRelay = true)
+        val service = PairingService(store)
         val expected = service.current()!!
         assertTrue(service.updateDirectCandidates(expected, emptyList()))
         assertEquals(0, store.writes)
@@ -39,7 +39,7 @@ class DirectCandidatePersistenceTest {
         // Same authority remains current even while successive DHCP facts replace older hints.
         assertTrue(service.updateDirectCandidates(expected, second))
         assertEquals(expected.copy(directCandidates = second), service.current())
-        assertEquals(expected.copy(directCandidates = second), PairingService(store, cloudRelay = true).current())
+        assertEquals(expected.copy(directCandidates = second), PairingService(store).current())
         assertEquals(bundle.copy(directCandidates = second), OmnesisJson.decodeFromString<PairingCredentialBundle>(store.get("gateway.credential.v1")!!))
         assertTrue(service.updateDirectCandidates(expected, emptyList()))
         assertEquals(expected, service.current())
@@ -50,7 +50,7 @@ class DirectCandidatePersistenceTest {
 
     @Test fun `every stale authority field and unpair reject without restoring credentials`() {
         val store = store()
-        val service = PairingService(store, cloudRelay = true)
+        val service = PairingService(store)
         val expected = service.current()!!
         val stale = listOf(
             expected.copy(url = "https://other.example.test"), expected.copy(token = "other-token"),
@@ -70,7 +70,7 @@ class DirectCandidatePersistenceTest {
 
     @Test fun `ordinary direct credentials and corrupt state never acquire cloud routing facts`() {
         val directStore = store(bundle.copy(tlsMode = PairingTlsMode.SYSTEM.persistedValue, spkiFingerprint = null))
-        val direct = PairingService(directStore, cloudRelay = true)
+        val direct = PairingService(directStore)
         assertFalse(direct.updateDirectCandidates(direct.current()!!, first))
         val split = InMemoryStore().apply {
             set("gateway.url", bundle.url); set("gateway.token", bundle.token)
@@ -79,11 +79,11 @@ class DirectCandidatePersistenceTest {
             set("gateway.tlsMode", PairingTlsMode.PINNED_LEAF_STRICT.persistedValue)
             set("gateway.fingerprint", "ab".repeat(32))
         }
-        val legacy = PairingService(split, cloudRelay = true)
+        val legacy = PairingService(split)
         assertFalse(legacy.updateDirectCandidates(legacy.current()!!, first))
-        val service = PairingService(store(), cloudRelay = true)
+        val service = PairingService(store())
         val expected = service.current()!!
         val corrupt = store().apply { set("gateway.credential.v1", "not JSON") }
-        assertFalse(PairingService(corrupt, cloudRelay = true).updateDirectCandidates(expected, first))
+        assertFalse(PairingService(corrupt).updateDirectCandidates(expected, first))
     }
 }

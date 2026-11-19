@@ -6,7 +6,6 @@ package dev.omnesis.android.pairing
 import dev.omnesis.android.transport.routing.DirectGatewayRoute
 import dev.omnesis.android.transport.tls.PinnedOkHttp
 import kotlinx.coroutines.suspendCancellableCoroutine
-import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.*
 import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaType
@@ -15,7 +14,6 @@ import java.io.IOException
 import java.net.URI
 import java.security.cert.X509Certificate
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
@@ -109,82 +107,3 @@ private const val REFUSAL_BODY_LIMIT = 256L
 
 /** Provisional transport pins the compared candidate's exact certificate until enrollment completes. */
 internal fun provisionalGatewayTransport(fingerprint: String): CloudPairingTransport = CloudPairingHTTP(fingerprint)
-
-/** Google authenticates the requester; the independent code comparison authenticates the gateway pin. */
-class GoogleCloudPairingClient(private val relayOrigin: String, private val clientId: String,
-                              private val direct: CloudPairingTransport = CloudPairingHTTP(),
-                              private val createGateway: (String) -> CloudPairingTransport = ::provisionalGatewayTransport,
-                              private val now: () -> Long = { System.currentTimeMillis() / 1000 },
-                              private val presenterClientIds: Set<String> = setOf(clientId)) : AutoCloseable {
-    private val json = Json { ignoreUnknownKeys = true }
-    private var gateway: CloudPairingTransport? = null
-    private var active: CloudPairingConfirmation? = null
-    private val closed = AtomicBoolean(false)
-    private val started = AtomicBoolean(false)
-    private val lifecycle = Any()
-    init {
-        val uri = URI(relayOrigin)
-        require(uri.scheme == "https" && uri.host != null && uri.userInfo == null && uri.query == null && uri.fragment == null && uri.path in listOf("", "/"))
-        require(clientId.endsWith(".apps.googleusercontent.com"))
-    }
-
-    suspend fun start(challenge: CloudPairingChallenge, idToken: String): CloudPairingConfirmation {
-        checkOpen()
-        if (!started.compareAndSet(false, true)) throw CloudPairingException()
-        val jwks = direct.request("https://www.googleapis.com/oauth2/v3/certs")
-        checkOpen()
-        val owner = GoogleIdentityVerifier(jwks, setOf(clientId), presenterClientIds).verify(idToken, challenge.nonce, now())
-        val session = json.parseToJsonElement(direct.request("${relayOrigin.trimEnd('/')}/_relay/v1/login",
-            buildJsonObject { put("idToken", idToken) }.toString())).jsonObject
-        checkOpen()
-        if ((session["accountId"] as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull != owner.accountId) throw CloudPairingException()
-        val token = (session["token"] as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull ?: throw CloudPairingException()
-        if (token.isEmpty() || token.length > 4096) throw CloudPairingException()
-        val candidate = json.decodeFromString<GoogleGatewayBinding>(direct.request("${relayOrigin.trimEnd('/')}/_relay/v2/gateway", bearer = token))
-        checkOpen()
-        val pending = CloudPairingConfirmation(challenge, candidate, now() * 1000)
-        val pinned = createGateway(pending.fingerprint)
-        val registered = synchronized(lifecycle) {
-            if (closed.get()) false else { gateway = pinned; true }
-        }
-        if (!registered) { pinned.close(); throw CloudPairingException() }
-        // The gateway commits to its part of the comparison code before the secret leaves this device.
-        val issued = (json.parseToJsonElement(pinned.request("${pending.origin}/devices/google/challenge", "{}")).jsonObject["challenge"] as? JsonPrimitive)
-            ?.takeIf { it.isString }?.content ?: throw CloudPairingException()
-        checkOpen()
-        pending.expect(issued)
-        val request = json.encodeToJsonElement(challenge).jsonObject.toMutableMap().apply {
-            put("identityToken", JsonPrimitive(idToken))
-            // Without a device key the challenge is named at the top level.
-            put("challenge", JsonPrimitive(issued))
-        }
-        val status = json.decodeFromString<CloudPairingProgress>(pinned.request("${pending.origin}/devices/google/request", JsonObject(request).toString()))
-        checkOpen()
-        pending.receive(status, now() * 1000)
-        synchronized(lifecycle) { checkOpen(); active = pending }
-        return pending
-    }
-
-    suspend fun poll(pending: CloudPairingConfirmation) {
-        val pinned = synchronized(lifecycle) {
-            checkOpen()
-            if (pending !== active) throw CloudPairingException()
-            // The active confirmation and gateway are cleared together under this same lock.
-            gateway!!
-        }
-        val body = buildJsonObject { put("requestId", pending.challenge.requestId); put("secret", pending.challenge.secret) }.toString()
-        val data = pinned.request("${pending.origin}/devices/google/poll", body)
-        checkOpen()
-        pending.receive(json.decodeFromString<CloudPairingProgress>(data), now() * 1000)
-    }
-
-    override fun close() {
-        val previous = synchronized(lifecycle) {
-            if (!closed.compareAndSet(false, true)) return
-            active = null
-            gateway.also { gateway = null }
-        }
-        previous?.close(); direct.close()
-    }
-    private fun checkOpen() { if (closed.get()) throw CloudPairingException() }
-}

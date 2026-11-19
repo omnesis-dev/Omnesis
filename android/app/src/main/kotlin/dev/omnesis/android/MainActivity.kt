@@ -271,15 +271,9 @@ class MainActivity : ComponentActivity() {
         return true
     }
 
-    /**
-     * A notification that a device joined, or a pairing request, opens Devices. A pairing request
-     * exists only in a cloud-relay build; without the flag that launch is not handled at all, as
-     * on a build without the feature. A device that joined through Tailscale opens Devices in
-     * every build.
-     */
+    /** A notification that a device joined, or a pairing request, opens Devices. */
     private fun handleDevices(launchIntent: Intent, delivery: LaunchDelivery): Boolean {
         val pairingRequests = launchIntent.getBooleanExtra(EXTRA_DEVICES_PAIRING_REQUESTS, false)
-        if (pairingRequests && !BuildConfig.CLOUD_RELAY_ENABLED) return false
         val stamp = launchIntent.getLongExtra(EXTRA_DEVICES_LAUNCH_STAMP, 0L)
         if (!launches.accept(KIND_DEVICES, launchIntent, stamp, delivery)) return false
         if (pairingRequests) {

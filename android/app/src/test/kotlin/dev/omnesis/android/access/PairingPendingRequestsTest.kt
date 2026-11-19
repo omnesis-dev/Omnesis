@@ -112,12 +112,6 @@ class PairingPendingRequestsTest {
         assertNull(requests.state.value.banner)
     }
 
-    @Test fun `the main screen polls with cloud connectivity or a gateway that advertises Tailscale joins`() {
-        assertFalse(PairingPendingRequests.polls(cloudEnabled = false, tailscaleEmbed = false))
-        assertTrue(PairingPendingRequests.polls(cloudEnabled = false, tailscaleEmbed = true))
-        assertTrue(PairingPendingRequests.polls(cloudEnabled = true, tailscaleEmbed = false))
-    }
-
     @Test fun `a phone that may not review Tailscale joins never asks and holds none`() = runTest {
         val requests = PairingPendingRequests { now }
         requests.tailscaleListed(listOf(join("a")))
@@ -151,11 +145,10 @@ class PairingPendingRequestsTest {
         assertEquals(listOf(join("b")), requests.state.value.tailscale)
     }
 
-    @Test fun `only an administrator's phone in a build with the Omnesis account asks`() {
-        assertTrue(PairingPendingRequests.eligible(cloudEnabled = true, scopes = listOf("read", "admin")))
-        assertFalse(PairingPendingRequests.eligible(cloudEnabled = true, scopes = listOf("read")))
-        assertFalse(PairingPendingRequests.eligible(cloudEnabled = false, scopes = listOf("admin")))
-        assertFalse(PairingPendingRequests.eligible(cloudEnabled = true, scopes = null))
+    @Test fun `only an administrator's phone asks`() {
+        assertTrue(PairingPendingRequests.eligible(scopes = listOf("read", "admin")))
+        assertFalse(PairingPendingRequests.eligible(scopes = listOf("read")))
+        assertFalse(PairingPendingRequests.eligible(scopes = null))
     }
 
     @Test fun `a pairing notification asks for a fresh read`() {

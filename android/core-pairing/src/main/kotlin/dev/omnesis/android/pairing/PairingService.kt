@@ -38,8 +38,6 @@ class PairingService(
         PinnedOkHttp.build(spkiFingerprint = spki, host = host, requirePin = true)
     },
     private val fetchDirectCandidates: suspend (String, String, String) -> List<DirectGatewayCandidate> = ::fetchPairedDirectCandidates,
-    /** Follows the capability the build sets with cloud connectivity. Off, pairing behaves as it did before the feature. */
-    private val cloudRelay: Boolean = deviceCapabilities.pairingNotifications,
 ) {
     private val mutations = ReentrantLock()
     private var generation = java.util.UUID.randomUUID()
@@ -51,8 +49,8 @@ class PairingService(
 
     /** Pair from a scanned QR payload (V1-V4). */
     suspend fun pair(raw: String): Pairing {
-        val payload = PairingPayload.decode(raw, cloudRelay)
-        if (cloudRelay) currentCoroutineContext().ensureActive()
+        val payload = PairingPayload.decode(raw)
+        currentCoroutineContext().ensureActive()
         val operation = begin()
         return when (val p = payload) {
         is PairingPayload.V4 -> when (val tls = p.tls) {
@@ -139,7 +137,7 @@ class PairingService(
     /** Pair from manual entry (V2-style; V3 when a fingerprint is supplied). */
     suspend fun pairManually(gatewayUrl: String, pairingCode: String, fingerprint: String? = null): Pairing {
         PairingPayload.requireHttpsUrl(gatewayUrl)
-        if (cloudRelay) currentCoroutineContext().ensureActive()
+        currentCoroutineContext().ensureActive()
         val operation = begin()
         val fp = fingerprint?.takeIf { it.isNotBlank() }?.lowercase()?.also(PairingPayload::requireValidFingerprint)
         return exchangeAndPersist(
@@ -170,7 +168,7 @@ class PairingService(
                 ?: emptyList()
             val fingerprint = store.get(Keys.FINGERPRINT)
             val tlsMode = PairingTlsMode.fromPersisted(store.get(Keys.TLS_MODE), fingerprint) ?: return null
-            if (tlsMode == PairingTlsMode.PINNED_KEY_STRICT || tlsMode.isStrict && !cloudRelay) return null
+            if (tlsMode == PairingTlsMode.PINNED_KEY_STRICT) return null
             if (runCatching { PairingPayload.requireHttpsUrl(url) }.isFailure) return null
             if (tlsMode.requiresPin &&
                 runCatching { PairingPayload.requireValidFingerprint(fingerprint.orEmpty()) }.isFailure
@@ -391,7 +389,6 @@ class PairingService(
         tlsMode: PairingTlsMode,
         spkiFingerprint: String? = null,
     ): Pairing {
-        if (!cloudRelay) clearPushClaimCredential()
         val client = if (tlsMode == PairingTlsMode.PINNED_KEY_STRICT) keyClientFactory(requireNotNull(spkiFingerprint), java.net.URI(gatewayUrl).host)
             else if (tlsMode == PairingTlsMode.PINNED_LEAF_STRICT) strictClientFactory(requireNotNull(fingerprint))
             else clientFactory(fingerprint)
@@ -407,10 +404,10 @@ class PairingService(
                 candidates
             }
         } else emptyList()
-        if (cloudRelay) currentCoroutineContext().ensureActive()
+        currentCoroutineContext().ensureActive()
         return mutations.withLock {
             checkOperation(operation)
-            if (cloudRelay) clearPushClaimCredential()
+            clearPushClaimCredential()
             persistBundle(
                 PairingCredentialBundle(
                     url = gatewayUrl,
@@ -431,7 +428,7 @@ class PairingService(
     }
 
     private fun checkOperation(operation: java.util.UUID) {
-        if (cloudRelay && generation != operation) throw CancellationException("pairing superseded")
+        if (generation != operation) throw CancellationException("pairing superseded")
     }
 
     private fun persistV1(p: PairingPayload.V1): Pairing {
@@ -461,7 +458,6 @@ class PairingService(
 
     private fun pairingFromBundle(bundle: PairingCredentialBundle): Pairing? {
         val tlsMode = PairingTlsMode.fromPersisted(bundle.tlsMode, bundle.fingerprint) ?: return null
-        if (tlsMode.isStrict && !cloudRelay) return null
         if (runCatching { PairingPayload.requireHttpsUrl(bundle.url) }.isFailure) return null
         val pin = if (tlsMode == PairingTlsMode.PINNED_KEY_STRICT) bundle.spkiFingerprint else bundle.fingerprint
         if (tlsMode.requiresPin &&
