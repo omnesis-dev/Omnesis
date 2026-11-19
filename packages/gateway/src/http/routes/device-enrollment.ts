@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { cloudRelayEnabled, isTailscaleNodeIdentity } from "@omnesis/core";
+import { isTailscaleNodeIdentity } from "@omnesis/core";
 import {
   deviceSignatureSchema,
   EnrollmentChallenges,
@@ -36,11 +36,10 @@ export interface DeviceEnrollmentRoutesDeps {
 }
 
 /**
- * Device-key token rotation. Mounted only behind the cloud relay opt-in: off
- * it, these routes do not exist.
+ * Device-key token rotation, for a device that joined with a device key; any
+ * other device is refused.
  */
 export function mountDeviceEnrollmentRoutes(app: RouteApp, deps: DeviceEnrollmentRoutesDeps): void {
-  if (!cloudRelayEnabled()) return;
   const { db, writeGate: w, spkiFingerprints } = deps;
   const rotationChallenges = new EnrollmentChallenges(deps.now ?? Date.now);
   const bounded = bodyLimit({

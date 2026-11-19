@@ -23,7 +23,6 @@ import { DEFAULT_TUNNEL_LIMITS } from "./tunnels.js";
 // F16: one client could take every gateway offline, by flooding sign-ins (which gateway
 // session renewals shared) or by holding a gateway's streams, which never timed out.
 
-beforeEach(() => vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1"));
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllEnvs();

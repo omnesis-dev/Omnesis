@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { hostNetworkFromText, type HostNetwork, type NetworkIdentity } from "@omnesis/core";
 import {
   PairingQrService,
@@ -68,23 +68,25 @@ function qr(
   });
 }
 
-// The strict modes below exist only with the cloud relay opt-in.
-beforeEach(() => vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1"));
-afterEach(() => vi.unstubAllEnvs());
-
-it("refuses the strict trust modes without the cloud relay opt-in", () => {
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "");
-  const gatewayUrl = "https://public-gateway.example.com";
-  const service = qr("b".repeat(64), [gatewayUrl], "ios", { tlsSpkiFingerprint: "a".repeat(64) });
-  for (const trustMode of ["pinned-leaf-strict", "pinned-key-strict"] as const)
-    expect(() => service.encode({ gatewayUrl, pairingCode: "ABCDEF0123", trustMode })).toThrow(
-      "unsupported TLS trust mode",
-    );
-  // The modes a gateway has always had are untouched.
-  expect(
-    JSON.parse(service.encode({ gatewayUrl, pairingCode: "ABCDEF0123", trustMode: "pinned-leaf" }))
-      .tls,
-  ).toEqual({ mode: "pinned-leaf", fingerprint: "b".repeat(64) });
+it("a gateway that never connected to the relay makes the same QR codes as before", () => {
+  // No relay address and no strict-pin origin: only a mode the caller names can be strict.
+  const leaf = "b".repeat(64);
+  const publicUrl = "https://public-gateway.example.com";
+  const lanUrl = "https://192.168.1.20:7600";
+  const service = qr(leaf, [publicUrl], "ios", { tlsSpkiFingerprint: "a".repeat(64) });
+  const tls = (gatewayUrl: string, trustMode?: "auto" | "pinned-leaf") =>
+    JSON.parse(service.encode({ gatewayUrl, pairingCode: "ABCDEF0123", trustMode })).tls;
+  for (const trustMode of [undefined, "auto"] as const) {
+    expect(tls(publicUrl, trustMode)).toEqual({ mode: "system" });
+    expect(tls(lanUrl, trustMode)).toBeUndefined();
+  }
+  expect(tls(publicUrl, "pinned-leaf")).toEqual({ mode: "pinned-leaf", fingerprint: leaf });
+  expect(JSON.parse(service.encode({ gatewayUrl: lanUrl, pairingCode: "ABCDEF0123" }))).toEqual({
+    v: 3,
+    gatewayUrl: lanUrl,
+    pairingCode: "ABCDEF0123",
+    fingerprint: leaf,
+  });
 });
 
 describe("PairingQrService", () => {
@@ -1114,15 +1116,16 @@ describe("the gateway's Omnesis address", () => {
     ]);
   });
 
-  it("is never read without the cloud relay opt-in", async () => {
-    vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "");
-    const read = vi.fn(async () => ({ origin: relayOrigin, ready: true }));
-    const service = connected("ios", { current: null }, { relayAddress: read });
-    const plan = await service.pairingAddresses(input);
-    expect(plan.addresses.map((a) => a.gatewayUrl)).toEqual(["https://192.168.1.20:7600"]);
-    expect(plan.addresses.every((a) => !("kind" in a))).toBe(true);
-    expect(await service.relayAddress()).toBeNull();
-    expect(read).not.toHaveBeenCalled();
+  it("is absent on a gateway that never connected to the relay", async () => {
+    for (const service of [
+      connected("ios", { current: null }),
+      connected("ios", { current: null }, { relayAddress: undefined }),
+    ]) {
+      const plan = await service.pairingAddresses(input);
+      expect(plan.addresses.map((a) => a.gatewayUrl)).toEqual(["https://192.168.1.20:7600"]);
+      expect(plan.addresses.every((a) => !("kind" in a))).toBe(true);
+      expect(await service.relayAddress()).toBeNull();
+    }
   });
 
   for (const kind of ["ios", "android"] as const) {
@@ -1250,7 +1253,6 @@ describe("the gateway's own tailnet device", () => {
     });
 
     it("puts the tailnet address ahead of the relay's unless the owner chose the relay first", async () => {
-      vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
       const relayOrigin = "https://g-fictional.relay.example.test";
       let relayFirst = false;
       const service = qr(fingerprint, [], "ios", {
@@ -1269,7 +1271,6 @@ describe("the gateway's own tailnet device", () => {
     });
 
     it("moves the relay ahead of the tailnet address only, never ahead of the owner's public address", async () => {
-      vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
       const relayOrigin = "https://g-fictional.relay.example.test";
       const publicOrigin = "https://omnesis.example.org";
       const service = (tailnet: TailnetPairingAddress | null, preferRelay: boolean) =>

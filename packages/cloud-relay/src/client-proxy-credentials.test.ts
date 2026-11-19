@@ -5,12 +5,9 @@ import { request } from "node:http";
 import { once } from "node:events";
 import { WebSocket } from "ws";
 import { websocketAuthProtocol } from "@omnesis/core";
-import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 import { fixture, echoGateway, listen } from "../test/support.js";
 import { createRelayClientProxy } from "./client-proxy.js";
-
-beforeEach(() => vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1"));
-afterEach(() => vi.unstubAllEnvs());
 
 type Headers = Record<string, string | string[]>;
 async function rawStatus(

@@ -37,17 +37,13 @@ const OFF = {
 };
 
 /**
- * The gateway under test runs without the flag. The portal is shown what an
- * opted-in gateway connected to an account reports: the feature on `/status`,
- * the relay's status, and the addresses it authorizes. `lead` replaces the
+ * The gateway under test is not connected to an account. The portal is shown
+ * what a gateway connected to an account reports: the relay's status, and the
+ * addresses it authorizes. `lead` replaces the
  * localhost address the test gateway leads with; `"keep"` lists the relay
  * address beside it.
  */
 async function connectedGateway(page: Page, relay: Record<string, unknown>, lead: string) {
-  await page.route("**/status", async (route) => {
-    const response = await route.fetch();
-    await route.fulfill({ response, json: { ...(await response.json()), cloudRelay: true } });
-  });
   await page.route("**/admin/cloud-relay", async (route) => {
     await route.fulfill({
       json: {

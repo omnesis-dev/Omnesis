@@ -93,23 +93,26 @@ describe("expiresIn", () => {
 });
 
 describe("WaitingDevices", () => {
-  test("with neither feature it renders nothing and asks nothing", async () => {
+  test("without sign-in pairing or a Tailscale device it shows an empty section and asks for no requests", async () => {
+    cloud.cloudPairingConfig.mockResolvedValue(null);
     await show({});
-    expect(host.innerHTML).toBe("");
-    expect(cloud.cloudPairingConfig).not.toHaveBeenCalled();
+    const section = host.querySelector("section.cloud-pairing-requests") as HTMLElement;
+    expect(section.children).toHaveLength(0);
+    expect(cloud.cloudPairingConfig).toHaveBeenCalled();
+    expect(cloud.cloudPairingRequests).not.toHaveBeenCalled();
     expect(tailscale.tailscaleJoinRequests).not.toHaveBeenCalled();
   });
 
-  test("relay only: never asks for Tailscale requests", async () => {
+  test("without a Tailscale device: never asks for Tailscale requests", async () => {
     cloud.cloudPairingRequests.mockResolvedValue({ items: [relayRequest] });
-    await show({ cloudRelay: true });
+    await show({});
     expect(titles()).toEqual(["Waiting for your OK"]);
     expect(text()).toContain("Fictional phone wants to connect");
     expect(tailscale.tailscaleJoinRequests).not.toHaveBeenCalled();
   });
 
   test("nothing waiting: an empty section that the page hides", async () => {
-    await show({ cloudRelay: true, tailscaleEmbed: true });
+    await show({ tailscaleEmbed: true });
     const section = host.querySelector("section.cloud-pairing-requests") as HTMLElement;
     expect(section.children).toHaveLength(0);
     expect(titles()).toEqual([]);
@@ -118,7 +121,7 @@ describe("WaitingDevices", () => {
   test("both kinds under one title, each saying how it asked", async () => {
     cloud.cloudPairingRequests.mockResolvedValue({ items: [relayRequest] });
     tailscale.tailscaleJoinRequests.mockResolvedValue({ requests: [join("t1")] });
-    await show({ cloudRelay: true, tailscaleEmbed: true });
+    await show({ tailscaleEmbed: true });
     expect(titles()).toEqual(["Waiting for your OK"]);
     const cards = [...host.querySelectorAll("article")];
     expect(cards.map((card) => card.getAttribute("aria-label"))).toEqual([
@@ -131,10 +134,11 @@ describe("WaitingDevices", () => {
     expect(ts).toContain("Is studio-laptop one of your devices?");
   });
 
-  test("Tailscale only: approving says so, and the card leaves", async () => {
+  test("Tailscale joins without sign-in pairing: approving says so, and the card leaves", async () => {
+    cloud.cloudPairingConfig.mockResolvedValue(null);
     tailscale.tailscaleJoinRequests.mockResolvedValue({ requests: [join("t1"), join("t2", { expiresAt: new Date(Date.now() - 1).toISOString() })] });
     await show({ tailscaleEmbed: true });
-    expect(cloud.cloudPairingConfig).not.toHaveBeenCalled();
+    expect(cloud.cloudPairingRequests).not.toHaveBeenCalled();
     expect(host.querySelectorAll("article")).toHaveLength(1);
     tailscale.decideTailscaleJoin.mockResolvedValue({ status: "approved" });
     tailscale.tailscaleJoinRequests.mockResolvedValue({ requests: [] });
@@ -202,7 +206,7 @@ describe("WaitingDevices", () => {
 
   test("both kinds are read again when the gateway signals waiting devices changed, and only then", async () => {
     cloud.cloudPairingRequests.mockResolvedValue({ items: [] });
-    await show({ cloudRelay: true, tailscaleEmbed: true });
+    await show({ tailscaleEmbed: true });
     expect(cloud.cloudPairingRequests).toHaveBeenCalledTimes(1);
     expect(tailscale.tailscaleJoinRequests).toHaveBeenCalledTimes(1);
     signals.emit("answers");

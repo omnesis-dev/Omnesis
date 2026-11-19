@@ -23,6 +23,9 @@ test("uses authenticated same-origin status and mutation calls with cancellation
   const signal = new AbortController().signal;
   expect(await relayManagement("", undefined, signal)).toEqual(status);
   expect(request).toHaveBeenLastCalledWith("/admin/cloud-relay", { cache: "no-store", signal });
+  // Only a page that shows how to sign up lets the gateway ask the relay about it.
+  await relayManagement("", undefined, signal, "POST", { signup: true });
+  expect(request).toHaveBeenLastCalledWith("/admin/cloud-relay?signup=1", { cache: "no-store", signal });
   await relayManagement("enable", { invitation: "fictional-invitation" }, signal);
   expect(request).toHaveBeenLastCalledWith("/admin/cloud-relay/enable", {
     cache: "no-store",

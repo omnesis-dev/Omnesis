@@ -5,7 +5,6 @@ import {
   deviceTlsFollowsPublicRenewal,
   deviceTlsTrust,
   deviceTlsTrustMode,
-  cloudRelayEnabled,
   normalizeEmail,
   normalizePhone,
 } from "@omnesis/core";
@@ -165,14 +164,13 @@ export function mountDeviceRoutes(app: RouteApp, deps: AdminRoutesDeps): void {
   const pairingQrService = new PairingQrService({
     strictPinOrigins: () => {
       const address = deps.publicBaseUrl?.();
-      return cloudRelayEnabled() && process.env.OMNESIS_CLOUD_RELAY_URL && address ? [address] : [];
+      return process.env.OMNESIS_CLOUD_RELAY_URL && address ? [address] : [];
     },
     // A gateway connected from the portal gets its address at run time, so it
     // is read from the management service on every request.
-    relayAddress:
-      cloudRelayEnabled() && deps.cloudRelayManagement
-        ? async () => relayPairingAddress(await deps.cloudRelayManagement!.status())
-        : undefined,
+    relayAddress: deps.cloudRelayManagement
+      ? async () => relayPairingAddress(await deps.cloudRelayManagement!.status())
+      : undefined,
     tlsFingerprint: tlsFingerprintSha256,
     tlsSpkiFingerprint: tlsSpkiFingerprintSha256,
     strictPinSpkiFingerprint: cloudTlsSpkiFingerprintSha256,
@@ -243,14 +241,10 @@ export function mountDeviceRoutes(app: RouteApp, deps: AdminRoutesDeps): void {
               appId: d.capabilities.pushAppId,
             })
           : null;
-      // Off the opt-in, no response mentions enrollment at all.
-      const { enrollment, ...device } = d;
       return {
-        ...device,
-        ...(enrollment && cloudRelayEnabled() ? { enrollment } : {}),
+        ...d,
         online: wsServer?.isConnected(d.id) ?? false,
-        connectionPath:
-          d.revokedAt || !cloudRelayEnabled() ? undefined : wsServer?.connectionPath(d.id),
+        connectionPath: d.revokedAt ? undefined : wsServer?.connectionPath(d.id),
         versionState: deviceVersionState(d),
         updateDisposition: fleetUpdate.dispositionFor(d),
         needsPairing: deviceNeedsPairing(d, statusCache.sourceHostingDeviceIds.has(d.id)),

@@ -32,12 +32,12 @@ let directory: string, manager: GatewayCloudRelayManagement | undefined;
 let unanswered: string[] = [];
 /**
  * The network a test sees unless it answers a request itself: the relay has no managed Google
- * browser client, and every other request is refused. No test reaches a real service, whether
+ * browser client and offers no account sign-in, and every other request is refused. No test reaches a real service, whether
  * through the gateway's `fetch` or the global one.
  */
 const offline: typeof fetch = (request) => {
   const url = request instanceof Request ? request.url : String(request);
-  if (url.includes("/_relay/v2/google/browser/config"))
+  if (url.includes("/_relay/v2/google/browser/config") || url.includes("/_relay/v3/account-keys"))
     return Promise.resolve(new Response(null, { status: 404 }));
   unanswered.push(url);
   return Promise.reject(new Error(`No test answers ${url}`));
@@ -555,12 +555,13 @@ test("existing environment gateway identity is adopted without preparing a secon
       OMNESIS_CLOUD_RELAY_SESSION_FILE: join(directory, "legacy-session"),
     },
     controller: undefined,
-    startTunnel: undefined,
     stopLegacy: vi.fn(async () => {}),
     probe: undefined,
   });
-  const transport = vi.fn<typeof fetch>(async () =>
-    Response.json({ resource: "https://gateway.example.test/mcp" }),
+  const transport = vi.fn<typeof fetch>(async (url) =>
+    String(url).includes("/_relay/v3/account-keys")
+      ? new Response(null, { status: 404 })
+      : Response.json({ resource: "https://gateway.example.test/mcp" }),
   );
   vi.stubGlobal("fetch", transport);
   manager = await GatewayCloudRelayManagement.open(f.options);
@@ -1369,10 +1370,10 @@ test("managed Google capabilities are fetched only after enrollment and expose a
   expect(await manager.status()).toMatchObject({
     google: { configured: true, canLink: true, linked: false },
   });
-  expect(transport).toHaveBeenCalledOnce();
-  expect(String(transport.mock.calls[0]![0])).toBe(
-    "https://relay.example.test/_relay/v2/google/browser/config",
-  );
+  // Google's capabilities are read once; the account sign-in probe is its own request.
+  expect(
+    transport.mock.calls.map(([url]) => String(url)).filter((url) => url.includes("/google/")),
+  ).toEqual(["https://relay.example.test/_relay/v2/google/browser/config"]);
   await manager.disable();
   expect(manager.managedGoogleBrowser()).toBeUndefined();
 });
@@ -1444,6 +1445,8 @@ test("an empty trust registry leaves Google unavailable without querying the rel
   const transport = vi.fn<typeof fetch>(async () => {
     throw new Error("unconfigured Google must not query a service");
   });
+  const googleCalls = () =>
+    transport.mock.calls.map(([url]) => String(url)).filter((url) => url.includes("/google/"));
   const f = fixture({
     fetch: transport,
     googleTrust: () => ({ deviceClientIds: [], deviceAuthorizedParties: [] }),
@@ -1452,7 +1455,7 @@ test("an empty trust registry leaves Google unavailable without querying the rel
   await manager.configure(input);
   await manager.enable();
   await idle();
-  expect(transport).not.toHaveBeenCalled();
+  expect(googleCalls()).toEqual([]);
   expect(await manager.status()).toMatchObject({
     enabled: true,
     enrollment: { state: "enrolled" },
@@ -1464,7 +1467,7 @@ test("an empty trust registry leaves Google unavailable without querying the rel
   await expect(
     manager.googleLink({ requestOrigin: "https://gateway.example.test" }),
   ).rejects.toMatchObject({ code: "google-unavailable" });
-  expect(transport).not.toHaveBeenCalled();
+  expect(googleCalls()).toEqual([]);
   expect(f.options.startTunnel).toHaveBeenCalledOnce();
 });
 
@@ -1555,7 +1558,6 @@ test("account linking is offered only while the optional service is ready and th
   );
   const f = fixture({
     env: {
-      OMNESIS_CLOUD_RELAY_ENABLED: "1",
       OMNESIS_CLOUD_RELAY_URL: "https://relay.example.test",
     },
     fetch: vi.fn<typeof fetch>(async (url) =>
@@ -1608,7 +1610,6 @@ async function connecting(
   const f = fixture({
     configDir: await mkdtemp(join(directory, "connect-")),
     env: {
-      OMNESIS_CLOUD_RELAY_ENABLED: "1",
       OMNESIS_CLOUD_RELAY_URL: "https://relay.example.test",
     },
     fetch: relay.fetch,
@@ -1907,7 +1908,6 @@ test("a gateway enrolled from its environment links through the installed key re
   const f = fixture({
     configDir,
     env: {
-      OMNESIS_CLOUD_RELAY_ENABLED: "1",
       OMNESIS_CLOUD_RELAY_URL: "https://relay.example.test",
       OMNESIS_CLOUD_RELAY_GATEWAY_ID: "00000000-0000-4000-8000-000000000001",
       OMNESIS_CLOUD_RELAY_GATEWAY_ORIGIN: "https://gateway.example.test",
@@ -2919,7 +2919,6 @@ async function connectingWithDnsCheck() {
   let hold: (() => Promise<void>) | undefined;
   const f = await connecting(relay, {
     env: {
-      OMNESIS_CLOUD_RELAY_ENABLED: "1",
       OMNESIS_CLOUD_RELAY_URL: "https://relay.example.test",
       OMNESIS_ACME_DNS_PROVIDER: "broker",
       OMNESIS_ACME_DNS_BROKER_URL: broker.origin,

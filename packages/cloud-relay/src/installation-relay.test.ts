@@ -37,7 +37,7 @@ test("synthetic, test and spawned E2E gateways never fall back to the distributi
     { OMNESIS_TEST_INSTANCE: "1" },
     { OMNESIS_E2E_DISABLE_DEFAULT_RELAY: "1" },
   ]) {
-    expect(installationRelayUrl({ OMNESIS_CLOUD_RELAY_ENABLED: "1", ...marker })).toBeUndefined();
+    expect(installationRelayUrl(marker)).toBeUndefined();
     // A relay named for the instance, or one it already uses, is still honoured.
     expect(
       installationRelayUrl({ ...marker, OMNESIS_CLOUD_RELAY_URL: "http://127.0.0.1:32123" }),

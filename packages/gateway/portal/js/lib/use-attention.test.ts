@@ -83,9 +83,11 @@ const reads = () =>
   Object.fromEntries(Object.entries(api).map(([name, fn]) => [name, fn.mock.calls.length]));
 
 describe("what is read, by feature", () => {
-  test("with every optional feature off, only agent access and held answers are read", async () => {
+  test("with no linked account and every optional feature off, only agent access and held answers are read", async () => {
+    // A gateway that never linked an account offers no sign-in pairing.
+    api.cloudPairingConfig.mockResolvedValue(null);
     await show();
-    expect(api.cloudPairingConfig).not.toHaveBeenCalled();
+    expect(api.cloudPairingConfig).toHaveBeenCalledTimes(1);
     expect(api.cloudPairingRequests).not.toHaveBeenCalled();
     expect(api.tailscaleJoinRequests).not.toHaveBeenCalled();
     expect(api.listSubscriptionApprovals).not.toHaveBeenCalled();
@@ -95,25 +97,26 @@ describe("what is read, by feature", () => {
     signals.emit(null);
     await act(async () => { vi.advanceTimersByTime(SIGNAL_FALLBACK_MS); });
     await settle();
+    expect(api.cloudPairingRequests).not.toHaveBeenCalled();
     expect(api.tailscaleJoinRequests).not.toHaveBeenCalled();
     expect(api.listSubscriptionApprovals).not.toHaveBeenCalled();
   });
 
   test("sign-in requests are read only once the gateway says sign-in pairing is configured", async () => {
     api.cloudPairingConfig.mockResolvedValue(null);
-    await show({ cloudRelay: true });
+    await show();
     expect(api.cloudPairingConfig).toHaveBeenCalledTimes(1);
     expect(api.cloudPairingRequests).not.toHaveBeenCalled();
     render(null, host);
     api.cloudPairingConfig.mockRejectedValue(new Error("unavailable"));
-    await show({ cloudRelay: true });
+    await show();
     expect(api.cloudPairingRequests).not.toHaveBeenCalled();
   });
 
   test("the configuration answer arriving after the shell is gone reads nothing", async () => {
     let deliver!: (value: unknown) => void;
     api.cloudPairingConfig.mockReturnValue(new Promise((resolve) => { deliver = resolve; }));
-    await show({ cloudRelay: true });
+    await show();
     render(null, host);
     deliver({ clientId: "fictional-client" });
     await settle();
@@ -125,7 +128,7 @@ describe("what is read, by feature", () => {
       items: [cloudRequest("a"), cloudRequest("b", 600_000, "approving"), cloudRequest("c", 600_000, "approved"), cloudRequest("d", -1)],
     });
     api.tailscaleJoinRequests.mockResolvedValue({ requests: [join("t1"), join("t2", -1)] });
-    await show({ cloudRelay: true, tailscaleEmbed: true });
+    await show({ tailscaleEmbed: true });
     expect(seen.devices.count).toBe(3);
     expect((seen.devices.cloud as Array<{ requestId: string }>).map((r) => r.requestId)).toEqual(["a", "b"]);
     expect((seen.devices.tailscale as Array<{ id: string }>).map((r) => r.id)).toEqual(["t1"]);
@@ -158,10 +161,7 @@ describe("what is read, by feature", () => {
     api.tailscaleJoinRequests.mockResolvedValue({ requests: [join("t1")] });
     await show({ tailscaleEmbed: true });
     expect(seen.devices.count).toBe(1);
-    api.cloudPairingRequests.mockResolvedValue({ items: [cloudRequest("a")] });
-    await show({ tailscaleEmbed: true, cloudRelay: true });
-    expect(seen.devices.count).toBe(2);
-    await show({ tailscaleEmbed: false, cloudRelay: false });
+    await show({ tailscaleEmbed: false });
     expect(seen.devices.count).toBe(0);
   });
 });
@@ -242,7 +242,7 @@ describe("when a topic is read again", () => {
   test("a device kind that fails keeps its last answer while the other updates", async () => {
     api.cloudPairingRequests.mockResolvedValue({ items: [cloudRequest("a")] });
     api.tailscaleJoinRequests.mockResolvedValue({ requests: [join("t1")] });
-    await show({ cloudRelay: true, tailscaleEmbed: true });
+    await show({ tailscaleEmbed: true });
     expect(seen.devices.count).toBe(2);
     api.cloudPairingRequests.mockRejectedValue(new Error("offline"));
     api.tailscaleJoinRequests.mockResolvedValue({ requests: [] });
@@ -321,7 +321,7 @@ describe("sign-in pairing configuration", () => {
   test("a failed configuration read is retried on the fallback interval until it answers", async () => {
     api.cloudPairingConfig.mockRejectedValueOnce(new Error("offline"));
     api.cloudPairingRequests.mockResolvedValue({ items: [cloudRequest("a")] });
-    await show({ cloudRelay: true });
+    await show();
     expect(api.cloudPairingRequests).not.toHaveBeenCalled();
     // Even with healthy signals: the configuration is not something they cover.
     await act(async () => { signals.setHealthy(true); });
@@ -339,7 +339,7 @@ describe("sign-in pairing configuration", () => {
   test("a gateway that said sign-in pairing is off is asked again on a devices signal or a resync", async () => {
     api.cloudPairingConfig.mockResolvedValueOnce(null).mockResolvedValueOnce(null);
     api.cloudPairingRequests.mockResolvedValue({ items: [cloudRequest("a")] });
-    await show({ cloudRelay: true });
+    await show();
     await act(async () => { signals.setHealthy(true); });
     await act(async () => { vi.advanceTimersByTime(SIGNAL_FALLBACK_MS * 2); });
     expect(api.cloudPairingConfig).toHaveBeenCalledTimes(1);

@@ -23,7 +23,6 @@ const DOMAIN = "https://omnesis.example.org:8443";
 let dir: string;
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "mcp-addresses-"));
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
 });
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -286,18 +285,17 @@ describe("MCP per address", () => {
     expect((await policy.list())[0]).toMatchObject({ id: "relay", url: RELAY, available: false });
   });
 
-  test("offers the relay with its opt-in, the Tailscale device where it exists and this computer where there is a port", async () => {
-    vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "");
-    expect(Object.keys(await reaches(addresses().policy))).toEqual(["tailnet", "host", "domain"]);
+  test("offers the relay, the Tailscale device where it exists and this computer where there is a port", async () => {
     expect(Object.keys(await reaches(addresses({ tailscale: undefined }).policy))).toEqual([
+      "relay",
       "host",
       "domain",
     ]);
     expect(Object.keys(await reaches(addresses({ host: undefined }).policy))).toEqual([
+      "relay",
       "tailnet",
       "domain",
     ]);
-    vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
     expect(Object.keys(await reaches(addresses().policy))).toEqual([
       "relay",
       "tailnet",
@@ -359,10 +357,6 @@ describe("MCP per address", () => {
     );
     expect(await policy.refusal(request(`${DOMAIN}/oauth/token`, { relayed: true }))).toBe("relay");
     expect(await policy.refusal(request("https://localhost:7600/mcp"))).toBeNull();
-    vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "");
-    expect(
-      await policy.refusal(request("https://localhost:7600/mcp", { relayed: true })),
-    ).toBeNull();
   });
 
   test("the tailnet address is a request from the tailnet, or one naming the device; the public address is not", async () => {
@@ -504,12 +498,18 @@ describe("MCP per address", () => {
     });
   });
 
-  test("a relay address is recognised only with the relay opt-in", async () => {
-    const { policy, settings } = addresses();
+  test("a gateway that never connected to the relay has no relay address, and nothing matches one", async () => {
+    const { policy, settings } = addresses({
+      relayOrigin: () => undefined,
+      relayState: async () => ({ origin: undefined, serving: false }),
+    });
+    expect((await policy.list())[0]).toMatchObject({ id: "relay", url: null, available: false });
     await policy.update({ relay: "off" });
-    vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "");
+    // Only a request that came through the tunnel is the relay's; no Host names it.
     expect(await policy.refusal(request(`${RELAY}/mcp`))).toBeNull();
-    // The choice is kept for when the opt-in returns.
+    expect(await policy.refusal(request(`${DOMAIN}/mcp`))).toBeNull();
+    expect(await policy.refusal(request("https://localhost:7600/mcp"))).toBeNull();
+    expect(await policy.publicAddressWay(RELAY)).toBeNull();
     expect(settings.get().mcp).toEqual({ relay: false });
   });
 
@@ -531,9 +531,8 @@ describe("MCP per address", () => {
   });
 
   test("refuses a choice for an address the gateway does not offer, or one it lacks", async () => {
-    vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "");
     const { policy, settings } = addresses({ tailscale: undefined });
-    await expect(policy.update({ relay: "off" })).rejects.toThrow(/relay/);
+    await expect(policy.update({ relay: "private" })).rejects.toThrow(/relay/);
     await expect(policy.update({ tailnet: "public" })).rejects.toThrow(/tailnet/);
     await expect(policy.update({ domain: "private" })).rejects.toThrow(/domain/);
     expect(settings.get().mcp).toBeUndefined();

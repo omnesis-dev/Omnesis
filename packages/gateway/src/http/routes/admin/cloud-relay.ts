@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { cloudRelayEnabled } from "@omnesis/core";
 import { bodyLimit } from "hono/body-limit";
 import { CloudRelayManagementFailure } from "@omnesis/cloud-relay";
 import { scope } from "../../scope.js";
@@ -29,7 +28,7 @@ export function mountCloudRelayManagementRoutes(
     revokeJoinedWith(signInId: string): Promise<string[]>;
   },
 ): void {
-  if (!cloudRelayEnabled() || !service) return;
+  if (!service) return;
   app.use("/admin/cloud-relay*", async (c, next) => {
     c.header("Cache-Control", "no-store");
     await next();
@@ -37,8 +36,10 @@ export function mountCloudRelayManagementRoutes(
   const bounded = bodyLimit({ maxSize: 16_384 });
   app.get("/admin/cloud-relay", scope.admin(), async (c) =>
     respond(c, async () => {
-      // Only this read asks the relay; other callers of status() never reach the network.
-      await service.refreshSignupAccess?.();
+      // Only this read asks the relay, and only for a page or command that shows how to sign up
+      // (`?signup=1`): the status other pages poll never reaches the network, so a gateway that
+      // was never connected contacts no relay while its owner browses the portal.
+      if (c.req.query("signup") === "1") await service.refreshSignupAccess?.();
       return {
         ...(await service.status()),
         // Whether loosening actions from this session ask for a passkey first. Labels only.

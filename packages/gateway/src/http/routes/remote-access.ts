@@ -4,9 +4,9 @@
 /**
  * Settings → Connectivity as one setting: the guided setup's own state, the
  * checks for an address the owner runs themselves, and Tailscale already on
- * the host. Every gateway has these; `features` says which optional ways in
- * it also offers: the cloud relay (OMNESIS_CLOUD_RELAY_ENABLED=1) and the
- * gateway's own Tailscale device (an installation with its helper program).
+ * the host. Every gateway has these and the Omnesis account and relay;
+ * `features` says whether it also offers its own Tailscale device (an
+ * installation with its helper program).
  *
  * The account, the relay and the gateway's Tailscale device keep their own
  * routes (cloud-relay.ts, tailscale.ts); the portal's guided setup calls them
@@ -26,7 +26,6 @@
  * See host-access.ts for how the two choices share one Funnel.
  */
 
-import { cloudRelayEnabled } from "@omnesis/core";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod";
 import { ADDRESS_CHECK_PATH, type AddressChecks } from "../../remote-access/address-check.js";
@@ -122,7 +121,7 @@ export function mountRemoteAccessRoutes(app: RouteApp, options: RemoteAccessRout
     ]);
     return {
       ...choices,
-      features: { cloudRelay: cloudRelayEnabled(), tailscaleEmbed: options.tailscaleEmbed },
+      features: { tailscaleEmbed: options.tailscaleEmbed },
       publicBaseUrl: {
         configured,
         // OMNESIS_PUBLIC_BASE_URL sets it, so one saved in the config changes nothing.

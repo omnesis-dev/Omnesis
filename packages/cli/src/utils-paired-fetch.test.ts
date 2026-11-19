@@ -8,12 +8,11 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.resetModules();
 });
-async function configured(paired = true, cloudRelay = true) {
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", cloudRelay ? "1" : "");
+async function configured(paired = true) {
   vi.stubEnv("OMNESIS_TOKEN", "cli-test-token");
   vi.stubEnv("OMNESIS_GATEWAY_URL", "https://gateway.example.test");
   if (paired) vi.stubEnv("OMNESIS_GATEWAY_REQUEST_URL", "http://127.0.0.1:32100/");
-  else vi.stubEnv("OMNESIS_GATEWAY_REQUEST_URL", "");
+  else vi.stubEnv("OMNESIS_GATEWAY_REQUEST_URL", undefined);
   vi.resetModules();
   return import("./utils.js");
 }
@@ -57,10 +56,10 @@ test("legacy direct absolute URLs and redirect options preserve their existing b
     expect.objectContaining({ redirect: "manual" }),
   );
 });
-test("without the cloud relay opt-in the request URL variable changes nothing", async () => {
+test("without a paired transport, requests go to the gateway URL itself", async () => {
   const fetcher = vi.fn().mockResolvedValue(new Response("{}"));
   vi.stubGlobal("fetch", fetcher);
-  const { gatewayFetch, GATEWAY_REQUEST_URL } = await configured(true, false);
+  const { gatewayFetch, GATEWAY_REQUEST_URL } = await configured(false);
   expect(GATEWAY_REQUEST_URL).toBe("https://gateway.example.test");
   await gatewayFetch("/status?check=1", { redirect: "manual" });
   expect(fetcher).toHaveBeenLastCalledWith(

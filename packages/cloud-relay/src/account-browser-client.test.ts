@@ -88,7 +88,6 @@ async function fixture() {
     account.expiresAt,
   );
   const env: NodeJS.ProcessEnv = {
-    OMNESIS_CLOUD_RELAY_ENABLED: "1",
     OMNESIS_CLOUD_RELAY_URL: origin,
     OMNESIS_CLOUD_RELAY_GATEWAY_ID: gatewayId,
     OMNESIS_CLOUD_RELAY_GATEWAY_ORIGIN: "https://gateway.example.test",
@@ -326,15 +325,15 @@ test("last-known UI capability never authorizes a handoff after a failed fresh p
   }
 });
 
-test("local opt-out, account changes, expiry and cancellation cannot produce late handoff results", async () => {
+test("a gateway with no relay ID, account changes, expiry and cancellation cannot produce late handoff results", async () => {
   const f = await fixture();
-  f.env.OMNESIS_CLOUD_RELAY_ENABLED = "0";
+  // A gateway the relay never registered asks it nothing and offers no sign-in.
+  const gatewayId = f.env.OMNESIS_CLOUD_RELAY_GATEWAY_ID;
+  delete f.env.OMNESIS_CLOUD_RELAY_GATEWAY_ID;
   await f.client.refresh();
   expect(f.client.available()).toBe(false);
   expect(f.transport).not.toHaveBeenCalled();
-  await expect(f.start()).rejects.toThrow("unavailable");
-  await expect(f.client.unlink()).rejects.toThrow("unavailable");
-  f.env.OMNESIS_CLOUD_RELAY_ENABLED = "1";
+  f.env.OMNESIS_CLOUD_RELAY_GATEWAY_ID = gatewayId;
   const pending = await f.start(),
     result = await f.confirm(pending);
   f.env.OMNESIS_CLOUD_RELAY_URL = "https://other.example.test";
@@ -420,7 +419,7 @@ test("a validly signed proof must still match the result account and original ha
 });
 
 test("local identity, configuration, or cancellation changes across network awaits invalidate the operation", async () => {
-  for (const attack of ["gateway", "origin", "enabled", "cancel", "owner"] as const) {
+  for (const attack of ["gateway", "origin", "cancel", "owner"] as const) {
     const f = await fixture(),
       pending = await f.start(),
       result = await f.confirm(pending),
@@ -431,7 +430,6 @@ test("local identity, configuration, or cancellation changes across network awai
         if (attack === "gateway") f.env.OMNESIS_CLOUD_RELAY_GATEWAY_ID = randomUUID();
         if (attack === "origin")
           f.env.OMNESIS_CLOUD_RELAY_GATEWAY_ORIGIN = "https://other.example.test";
-        if (attack === "enabled") f.env.OMNESIS_CLOUD_RELAY_ENABLED = "0";
         if (attack === "cancel") f.client.cancel();
         if (attack === "owner")
           pending.owner = { ...pending.owner, publicOrigin: "https://other.example.test" };
@@ -487,15 +485,14 @@ test("a local owner-key rotation immediately after registration cannot authorize
   client.cancel();
 });
 
-test("native enrollment verification refuses unavailable authorities, account changes and local opt-out", async () => {
-  for (const attack of ["disabled", "keys", "account"] as const) {
+test("native enrollment verification refuses unavailable authorities and account changes", async () => {
+  for (const attack of ["keys", "account"] as const) {
     const f = await fixture();
     const linked = await f.start();
     await f.confirm(linked);
     const pending = await f.start("device-enrollment"),
       proof = await f.client.redeem(pending, await f.confirm(pending));
     const original = f.transport.getMockImplementation()!;
-    if (attack === "disabled") f.env.OMNESIS_CLOUD_RELAY_ENABLED = "0";
     f.transport.mockImplementation(async (target, init) => {
       if (new URL(String(target)).pathname.endsWith("account-keys")) {
         if (attack === "keys") return new Response("", { status: 503 });
@@ -507,7 +504,7 @@ test("native enrollment verification refuses unavailable authorities, account ch
   }
 });
 
-test("credentials list the linked account's current sign-ins and answer nothing when unlinked, refused or opted out", async () => {
+test("credentials list the linked account's current sign-ins and answer nothing when unlinked or refused", async () => {
   const f = await fixture();
   const pending = await f.start();
   await f.client.redeem(pending, await f.confirm(pending));
@@ -557,10 +554,6 @@ test("credentials list the linked account's current sign-ins and answer nothing 
   // Once it has disconnected, the relay no longer knows it at all.
   await f.client.unlink();
   await expect(f.client.credentials()).rejects.toThrow("no longer has a registration");
-  f.env.OMNESIS_CLOUD_RELAY_ENABLED = "0";
-  const before = f.transport.mock.calls.length;
-  expect(await f.client.credentials()).toBeUndefined();
-  expect(f.transport.mock.calls.length).toBe(before);
 });
 
 /** Base64url text of a given length, standing in for signed bytes whose content is not checked here. */

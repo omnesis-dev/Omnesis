@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { pipeline, type Duplex } from "node:stream";
-import { createLogger, cloudRelayEnabled } from "@omnesis/core";
+import { createLogger } from "@omnesis/core";
 import { createWebSocketStream, WebSocket } from "ws";
 import { z } from "zod";
 import { gatewayIdSchema } from "./accounts.js";
@@ -89,7 +89,6 @@ export class GatewayTunnel {
   private directRefusedUntil = 0;
 
   constructor(private readonly options: GatewayTunnelOptions) {
-    if (!cloudRelayEnabled()) throw new Error("Cloud relay requires OMNESIS_CLOUD_RELAY_ENABLED=1");
     this.relay = relayOrigin(options.relayUrl);
     this.gateway = relayOrigin(options.gatewayUrl);
     if (this.gateway.protocol !== "https:") throw new Error("Tunnel gateway must terminate TLS");

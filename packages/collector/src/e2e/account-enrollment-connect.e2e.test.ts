@@ -72,7 +72,6 @@ describe.skipIf(!browserReady)("connect a gateway by signing in", () => {
   /** The real `omnesis cloud connect`, run against a gateway with its admin token and no terminal. */
   function cloudConnect(gateway: Gateway, args: string[]) {
     return runCli(world, ["cloud", "connect", "--accept-terms", ...args], {
-      OMNESIS_CLOUD_RELAY_ENABLED: "1",
       OMNESIS_CONFIG_DIR: join(directory, `cli-${gateway.gatewayId}`),
       OMNESIS_GATEWAY_URL: gateway.harness.gatewayUrl,
       OMNESIS_TOKEN: gateway.harness.apiKey,
@@ -110,7 +109,7 @@ describe.skipIf(!browserReady)("connect a gateway by signing in", () => {
   }, 60_000);
 
   test(
-    "a brand-new gateway with only the flag, a relay URL and a certificate directory connects from its portal all the way, and a device that signs in on the relay's page is held until the owner approves it",
+    "a brand-new gateway with only a relay URL and a certificate directory connects from its portal all the way, and a device that signs in on the relay's page is held until the owner approves it",
     async () => {
       // A private ACME directory the gateway is told about, as an operator would
       // name a staging or private CA. Its leaves carry an embedded SCT list.
@@ -130,12 +129,11 @@ describe.skipIf(!browserReady)("connect a gateway by signing in", () => {
       // The gateway's own outbound checks trust both fixture authorities.
       const bundle = join(directory, "gateway-trust.pem");
       await writeFile(bundle, world.pki.caCert + authority.root);
-      // Nothing but the opt-in, the relay and the directory: no gateway id,
+      // Nothing but the relay and the directory: no gateway id,
       // session, owner key, invitation or certificate.
       const fresh = new E2EHarness({
         extraGatewayEnv: {
           ...world.clientEnv({ NODE_EXTRA_CA_CERTS: bundle }),
-          OMNESIS_CLOUD_RELAY_ENABLED: "1",
           OMNESIS_CLOUD_RELAY_URL: world.relayOrigin,
           OMNESIS_ACME_DIRECTORY_URL: authority.directoryUrl,
           OMNESIS_ACME_CA_FILE: acmeRoot,

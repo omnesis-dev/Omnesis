@@ -48,7 +48,6 @@ vi.mock("./private-inputs.js", async (actual) => ({
 let directory: string;
 let manager: GatewayCloudRelayManagement | undefined;
 beforeEach(async () => {
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
   directory = await mkdtemp(join(tmpdir(), "relay-cleanup-lifecycle-"));
   storage.clear();
   sockets.created = 0;

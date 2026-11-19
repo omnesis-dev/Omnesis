@@ -3,6 +3,8 @@
 
 import { randomUUID } from "node:crypto";
 import { rmSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { defaultScopesForDeviceKind } from "@omnesis/types";
 import { createDatabase } from "../../../db.js";
@@ -15,14 +17,11 @@ import { directWriteGate } from "../../../write-gate.js";
 import { revokeDevicesJoinedWithSignIn } from "./devices.js";
 import type Database from "better-sqlite3";
 import type { DeviceId } from "@omnesis/types";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 let db: Database.Database;
 let path: string;
 
 beforeEach(() => {
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
   path = fixtureJoin(fixtureTmpdir(), `omnesis-sign-in-revocation-${randomUUID()}.db`);
   db = createDatabase(path);
 });

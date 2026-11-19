@@ -4,7 +4,7 @@
 import { createPublicKey, randomBytes } from "node:crypto";
 import { mkdir, rm } from "node:fs/promises";
 import { dirname } from "node:path";
-import { atomicWriteFileSync, cloudRelayEnabled, ownedProcessCleanupReceipt } from "@omnesis/core";
+import { atomicWriteFileSync, ownedProcessCleanupReceipt } from "@omnesis/core";
 import { z } from "zod";
 import {
   ManagedAccountBrowser,
@@ -494,10 +494,7 @@ export class GatewayAccountLink {
     return this.confirmedPasskeys().length > 0 && this.gatewayOrigin() !== undefined;
   }
   verifiedAccountId(): string | undefined {
-    return this.bound &&
-      this.record?.linked &&
-      cloudRelayEnabled(this.options.env()) &&
-      this.matchesEnvironment(this.record.binding)
+    return this.bound && this.record?.linked && this.matchesEnvironment(this.record.binding)
       ? this.record.accountId
       : undefined;
   }

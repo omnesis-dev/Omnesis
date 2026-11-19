@@ -1073,10 +1073,10 @@ test("with the closed policy every route says so clearly, and nothing else runs"
   expect(await config.json()).toMatchObject({ invitationRequired: true, signup: true });
 });
 
-test("without the cloud opt-in none of these surfaces exist", async () => {
+test("a relay without account services serves none of these surfaces", async () => {
   const accounts = new RelayAccounts(":memory:"),
     sessions = new RelaySessions(randomBytes(32));
-  // This is the relay runtime when OMNESIS_CLOUD_RELAY_ENABLED is unset: no account services.
+  // A relay with no public origin runs no account services.
   const relay = createCloudRelay({
     accounts,
     sessions,

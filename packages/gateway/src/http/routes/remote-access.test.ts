@@ -36,6 +36,7 @@ function app({
   configured = null as string | null,
   hostRunning = false,
   device = false,
+  relay = true,
   publicAddress = fixedPublicAddress(configured ?? undefined) as PublicAddressSource,
 } = {}) {
   const host = {
@@ -106,10 +107,11 @@ function app({
     mcpAddresses: new McpAddresses({
       settings,
       publicBaseUrl: () => publicAddress.baseUrl(),
-      relayOrigin: () => "https://gw-fictional.relay.example.net",
+      // A gateway that never connected to the relay has no relay address.
+      relayOrigin: () => (relay ? "https://gw-fictional.relay.example.net" : undefined),
       relayState: async () => ({
-        origin: "https://gw-fictional.relay.example.net",
-        serving: true,
+        origin: relay ? "https://gw-fictional.relay.example.net" : undefined,
+        serving: relay,
       }),
       ...(device
         ? {
@@ -143,10 +145,16 @@ function app({
 
 describe("remote access routes", () => {
   test("with neither way in of its own, every route still exists", async () => {
-    const { send } = app();
+    const { send } = app({ relay: false });
     const state = await (await send("GET", "/admin/remote-access")).json();
-    expect(state.features).toEqual({ cloudRelay: false, tailscaleEmbed: false });
-    expect(state.mcpAddresses.map((row: { id: string }) => row.id)).toEqual(["host", "domain"]);
+    expect(state.features).toEqual({ tailscaleEmbed: false });
+    expect(state.mcpAddresses.map((row: { id: string }) => row.id)).toEqual([
+      "relay",
+      "host",
+      "domain",
+    ]);
+    // The relay is offered but not connected, so no agent is pointed at it.
+    expect(state.mcpAddresses[0]).toMatchObject({ url: null, available: false });
     expect((await send("GET", "/admin/remote-access/host-tailscale")).status).toBe(200);
     expect(
       (await send("POST", "/admin/remote-access/check-address", { url: "http://x" })).status,
@@ -154,7 +162,6 @@ describe("remote access routes", () => {
   });
 
   test("the public address is the one in use now, and says when the environment sets it", async () => {
-    vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
     let address: string | undefined;
     let fromEnvironment = false;
     const { send } = app({
@@ -184,13 +191,12 @@ describe("remote access routes", () => {
   });
 
   test("with the relay only, the setup's state lists the relay beside this computer and the domain", async () => {
-    vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
     const { send } = app({ configured: "https://omnesis.example.org" });
     const state = await (await send("GET", "/admin/remote-access")).json();
     expect(state).toEqual({
       setupCompletedAt: null,
       first: "tailscale",
-      features: { cloudRelay: true, tailscaleEmbed: false },
+      features: { tailscaleEmbed: false },
       publicBaseUrl: {
         configured: "https://omnesis.example.org",
         setByEnvironment: false,
@@ -229,7 +235,7 @@ describe("remote access routes", () => {
     ).json();
     expect(changed).toMatchObject({
       first: "relay",
-      features: { cloudRelay: false, tailscaleEmbed: true },
+      features: { tailscaleEmbed: true },
     });
     expect(Date.parse(changed.setupCompletedAt)).not.toBeNaN();
     const reopened = await (
@@ -242,7 +248,6 @@ describe("remote access routes", () => {
   });
 
   test("checks only an https address, and answers only the nonce it issued", async () => {
-    vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
     const { send } = app();
     expect(
       (
@@ -272,7 +277,6 @@ describe("remote access routes", () => {
   });
 
   test("the nonce route answers a nonce issued during a check, once", async () => {
-    vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
     const { send, checks } = app();
     let seen = "";
     // A check whose address forwards back to this very router.
@@ -293,7 +297,6 @@ describe("remote access routes", () => {
   });
 
   test("Tailscale on the host is read freely, and publishing it asks for a step-up where required", async () => {
-    vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
     const { send, host } = app({ stepUp: true, device: true });
     expect((await send("GET", "/admin/remote-access/host-tailscale")).status).toBe(200);
     const refused = await send(
@@ -323,7 +326,6 @@ describe("remote access routes", () => {
   });
 
   test("unpublishing Tailscale on the host only closes the gateway, so it never asks for a step-up", async () => {
-    vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
     const { send, host } = app({ stepUp: true });
     const res = await send(
       "POST",
@@ -345,7 +347,6 @@ describe("remote access routes", () => {
   });
 
   test("lists every address with where MCP answers, as far as it reaches until the owner chooses", async () => {
-    vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
     const { send, settings, tailscale } = app({
       configured: "https://omnesis.example.org",
       hostRunning: true,
@@ -354,7 +355,7 @@ describe("remote access routes", () => {
     const rows = (body: { mcpAddresses: Array<{ id: string; reach: string }> }) =>
       Object.fromEntries(body.mcpAddresses.map((row) => [row.id, row.reach]));
     const before = await (await send("GET", "/admin/remote-access")).json();
-    expect(before.features).toEqual({ cloudRelay: true, tailscaleEmbed: true });
+    expect(before.features).toEqual({ tailscaleEmbed: true });
     expect(rows(before)).toEqual({
       relay: "public",
       tailnet: "private",
@@ -406,7 +407,6 @@ describe("remote access routes", () => {
   });
 
   test("refuses an empty, unknown or malformed choice, and one for an address this gateway lacks", async () => {
-    vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
     const { send, settings } = app();
     for (const mcp of [
       {},
@@ -427,7 +427,6 @@ describe("remote access routes", () => {
   });
 
   test("letting MCP answer further asks for a step-up where required; narrowing it never does", async () => {
-    vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
     const { send, settings, tailscale } = app({ stepUp: true, device: true });
     const viaRelay = { "x-omnesis-cloud-relay": "1" };
     const patch = (mcp: object) => send("PATCH", "/admin/remote-access", { mcp }, viaRelay);

@@ -58,6 +58,8 @@ test("polls visible status with single in-flight request and pauses hidden tabs"
   request.mockReturnValueOnce(first.promise).mockResolvedValue({ revision: 2 });
   await mount();
   expect(current.busy).toBe("refresh");
+  // The pages this hook serves show how to sign up, so their status read asks for it.
+  expect(request.mock.calls[0]).toEqual(["", {}, expect.any(AbortSignal), "POST", { signup: true }]);
   await act(async () => {
     await current.run();
     await vi.advanceTimersByTimeAsync(5000);
@@ -89,6 +91,7 @@ test("mutation invalidates stale poll and blocks a second mutation until it fini
   });
   expect(oldSignal.aborted).toBe(true);
   expect(request).toHaveBeenCalledTimes(2);
+  expect(request.mock.calls[1]).toEqual(["enable", { invitation: "fake" }, expect.any(AbortSignal), "POST"]);
   await act(async () => old.resolve({ revision: 0 }));
   expect(current.status).toBeNull();
   expect(current.busy).toBe("enable");

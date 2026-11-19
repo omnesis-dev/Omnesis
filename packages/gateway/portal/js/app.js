@@ -119,15 +119,15 @@ if (typeof window !== "undefined") {
   });
 }
 
-// Sign-in appears only when the gateway advertises the optional cloud relay. With Omnesis account
-// sign-in on offer, it comes first and the token or pairing-code form waits behind a quiet link.
-function LoginView({ reason, cloudRelay = false } = {}) {
+// Omnesis account sign-in appears once the gateway offers it, which takes a linked account. Then it
+// comes first and the token or pairing-code form waits behind a quiet link.
+function LoginView({ reason } = {}) {
   const [token, setToken] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [accountSignIn, setAccountSignIn] = useState(false);
   const [showForm, setShowForm] = useState(false);
-  const collapsed = cloudRelay && accountSignIn && !showForm;
+  const collapsed = accountSignIn && !showForm;
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -171,7 +171,7 @@ function LoginView({ reason, cloudRelay = false } = {}) {
             ${loading ? "Authenticating..." : "Log in"}
           </button>
         </form>`}
-        ${cloudRelay && html`<${CloudPairingLogin} onReady=${() => setAccountSignIn(true)} />`}
+        <${CloudPairingLogin} onReady=${() => setAccountSignIn(true)} />
         ${collapsed
           ? html`<button type="button" class="cloud-pairing-quiet" onClick=${() => setShowForm(true)}>
               Have a pairing code? Enter it
@@ -307,7 +307,6 @@ function App() {
   const [experimental, setExperimental] = useState(false);
   const [labAvailable, setLabAvailable] = useState(false);
   const [lab, setLab] = useState({ brain: false, tasks: false, watches: false });
-  const [cloudRelay, setCloudRelay] = useState(false);
   // Whether the gateway has its own Tailscale device: its installation includes the helper program.
   const [tailscaleEmbed, setTailscaleEmbed] = useState(false);
 
@@ -336,7 +335,7 @@ function App() {
   // What waits for the owner's decision — devices, agent access, held
   // answers, watch requests — kept current by the gateway's signals: the strip
   // on every page and every attention mark show this one answer.
-  const attention = useAttention({ cloudRelay, tailscaleEmbed, watches: lab.watches });
+  const attention = useAttention({ tailscaleEmbed, watches: lab.watches });
 
   // Today's open tasks, shown on the Tasks nav item as "Tasks (n)". Read
   // from `/tasks/counts` on arrival, on every navigation and on an interval;
@@ -378,7 +377,6 @@ function App() {
       setExperimental(status?.experimental === true);
       setLabAvailable(status?.labAvailable === true);
       setLab({ brain: status?.lab?.brain === true, tasks: status?.lab?.tasks === true, watches: status?.lab?.watches === true });
-      setCloudRelay(status?.cloudRelay === true);
       setTailscaleEmbed(status?.tailscaleEmbed === true);
       setDeveloper(status?.developer === true);
       setDemo(status?.demo === true);
@@ -598,10 +596,7 @@ function App() {
   };
 
   if (sessionExpired) {
-    return html`<${LoginView}
-      reason="Your session expired. Log in again to continue."
-      cloudRelay=${cloudRelay}
-    />`;
+    return html`<${LoginView} reason="Your session expired. Log in again to continue." />`;
   }
 
   // A client opened this window to ask one question, so it gets one question.
@@ -818,7 +813,6 @@ function App() {
               device=${route.device ?? null}
               policyId=${route.policyId}
               completeAccessInPortal=${route.completeAccessInPortal}
-              cloudRelay=${cloudRelay}
               tailscaleEmbed=${tailscaleEmbed}
               attention=${attention}
               experimental=${experimental}
@@ -888,20 +882,20 @@ async function init() {
   await consumeUrlToken();
   let session = await checkSession();
   // A signed-in portal on another address opened this one: sign in with what it handed over.
-  // Only the cloud relay mints one, and a browser already signed in here doesn't need it.
+  // A browser already signed in here doesn't need it.
   const handoff = takePortalHandoff();
   let handoffReason;
-  if (handoff && !session.authenticated && session.cloudRelay === true) {
+  if (handoff && !session.authenticated) {
     if (await redeemPortalHandoff(handoff)) session = await checkSession();
     else
       handoffReason =
         "That link expired or was already used. Go back to the page you came from and open it again, or sign in below.";
   }
 
-  // Only the cloud relay's sign-in view can use a handed-over sign-in; anywhere else it is dropped.
-  if (session.authenticated || session.cloudRelay !== true) takeAccountSignIn();
+  // Only the sign-in view can use a handed-over sign-in; a signed-in portal drops it.
+  if (session.authenticated) takeAccountSignIn();
   // Approving a device with a passkey needs no portal login: the passkey is the credential.
-  if (session.cloudRelay === true && window.location.pathname === "/portal/approve") {
+  if (window.location.pathname === "/portal/approve") {
     const { ApproveView } = await import("./views/approve.js");
     render(html`<${ErrorBoundary}><${ApproveView} /></${ErrorBoundary}>`, document.getElementById("app"));
     return;
@@ -909,7 +903,7 @@ async function init() {
   if (session.authenticated) {
     render(html`<${ErrorBoundary}><${App} /></${ErrorBoundary}>`, document.getElementById("app"));
   } else {
-    render(html`<${ErrorBoundary}><${LoginView} reason=${handoffReason} cloudRelay=${session.cloudRelay === true} /></${ErrorBoundary}>`, document.getElementById("app"));
+    render(html`<${ErrorBoundary}><${LoginView} reason=${handoffReason} /></${ErrorBoundary}>`, document.getElementById("app"));
   }
 }
 

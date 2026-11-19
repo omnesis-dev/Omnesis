@@ -2,7 +2,6 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { defineCommand } from "citty";
-import { cloudRelayEnabled } from "@omnesis/core";
 import { CliError, EXIT_USER_ERROR } from "@omnesis/cli-shared";
 
 export type CloudRecoveryOperation =
@@ -15,8 +14,6 @@ export type CloudRecoveryOperation =
 
 /** Offline/local operations use explicit private file paths; runtime output contains public results only. */
 export async function runCloudRecoveryCommand(command: CloudRecoveryOperation): Promise<void> {
-  if (!cloudRelayEnabled())
-    throw new CliError("Cloud recovery requires OMNESIS_CLOUD_RELAY_ENABLED=1", EXIT_USER_ERROR);
   try {
     const { runRelayCommand } = await import("@omnesis/cloud-relay/runtime");
     await runRelayCommand(command, process.env);

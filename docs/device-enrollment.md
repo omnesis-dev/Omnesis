@@ -401,8 +401,8 @@ cannot add a device. The gateway checks this in `gateway/src/http/step-up.ts`.
   it already carries `push:claim`. That scope only claims and confirms the
   device's own queued notifications, so the new token can do nothing its caller
   can't. Anything else sent to a guarded route needs the step-up.
-- Nothing changes without `OMNESIS_CLOUD_RELAY_ENABLED`, before the owner confirms
-  a passkey, or for a gateway with no account.
+- Nothing changes before the owner confirms a passkey, or for a gateway with no
+  account.
 
 The exchange:
 
@@ -938,10 +938,12 @@ The relay says before anyone signs in whether an invite is needed:
 `{"signup":{"inviteOnly":true}}` under `invite` and `{}` under any other policy.
 It is a separate path because gateways parse `/_relay/v2/config` strictly. A
 gateway that is not linked to an account reads it when its owner opens
-Settings → Omnesis account (or runs `omnesis cloud status` or `connect`), at
-most every ten minutes; unknown fields are ignored. `POST
-/_relay/v3/signup/invite` checks an invite without using it, for the gateway
-before it starts connecting and for the relay's own invite page.
+Settings → Omnesis account or Connectivity (or runs `omnesis cloud status` or
+`connect`): those status reads carry `?signup=1`, and no other read of `GET
+/admin/cloud-relay` reaches the relay. It asks at most every ten minutes;
+unknown fields are ignored. `POST /_relay/v3/signup/invite` checks an invite
+without using it, for the gateway before it starts connecting and for the
+relay's own invite page.
 
 ### Accounts are created on purpose
 

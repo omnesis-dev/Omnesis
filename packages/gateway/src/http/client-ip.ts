@@ -33,7 +33,6 @@
  */
 
 import { isRelayTunnelPeer, relayedClientAddress } from "@omnesis/cloud-relay";
-import { cloudRelayEnabled } from "@omnesis/core";
 import { tailnetCallerAddress, tailnetCallerOfEnv } from "../tailscale-embed/caller.js";
 
 const exposedRequests = new WeakMap<object, number>();
@@ -157,12 +156,11 @@ export function clientAddress(header: HeaderReader, env: unknown): string {
 /**
  * Whether a request may have reached the gateway through its cloud relay,
  * and so from the open internet: the tunnel recorded its client, the relay
- * marked it, or the gateway was exposing itself when it arrived. Off without
- * the cloud relay opt-in. Use it only to withhold something; a client can
- * claim to be relayed but never claim not to be.
+ * marked it, or the gateway was exposing itself when it arrived. Use it only
+ * to withhold something; a client can claim to be relayed but never claim
+ * not to be.
  */
 export function isRelayedRequest(header: HeaderReader, env: unknown): boolean {
-  if (!cloudRelayEnabled()) return false;
   return (
     (typeof env === "object" && env !== null && exposedRequests.has(env)) ||
     relayedClientBucket(env) !== undefined ||
@@ -197,10 +195,9 @@ export function isLoopbackClient(header: HeaderReader, env: unknown): boolean {
   // Relay traffic arrives on a local tunnel socket but remains remote traffic.
   // This marker can only remove an exemption; it never grants access.
   if (
-    cloudRelayEnabled() &&
-    (exposedRequests.has(env as object) ||
-      process.env.OMNESIS_CLOUD_RELAY_URL ||
-      header("x-omnesis-cloud-relay") === "1")
+    exposedRequests.has(env as object) ||
+    process.env.OMNESIS_CLOUD_RELAY_URL ||
+    header("x-omnesis-cloud-relay") === "1"
   )
     return false;
   const peer = socketPeerAddress(env);
@@ -217,13 +214,22 @@ export function isLoopbackClient(header: HeaderReader, env: unknown): boolean {
  * home-network request while remote access is on, so it can gate what only
  * the owner on the gateway itself may do. A relay can't make its requests
  * look local: the tunnel's sockets are recorded here, not by the relay.
+ * Any client can send the header, so use it only to withhold something;
+ * `arrivedThroughRelayTunnel` is the answer a client cannot claim.
  */
 export function arrivedThroughRelay(header: HeaderReader, env: unknown): boolean {
-  if (!cloudRelayEnabled()) return false;
+  return arrivedThroughRelayTunnel(env) || header("x-omnesis-cloud-relay") === "1";
+}
+
+/**
+ * Whether this request's socket is one the relay tunnel in this process
+ * dialled. Every request through the relay arrives this way, and no header
+ * can make another request look like one, so unlike `arrivedThroughRelay` it
+ * may exempt a request from a check that applies to every other way in.
+ */
+export function arrivedThroughRelayTunnel(env: unknown): boolean {
   const socket = (
     env as { incoming?: { socket?: { remoteAddress?: string; remotePort?: number } } }
   )?.incoming?.socket;
-  return (
-    (socket !== undefined && isRelayTunnelPeer(socket)) || header("x-omnesis-cloud-relay") === "1"
-  );
+  return socket !== undefined && isRelayTunnelPeer(socket);
 }

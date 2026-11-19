@@ -320,7 +320,6 @@ export class EnrollmentWorld {
       env: {
         ...e2eGatewayEnv(),
         ...this.clientEnv(),
-        OMNESIS_CLOUD_RELAY_ENABLED: "1",
         OMNESIS_SYNTHETIC: "1",
         OMNESIS_LOG_LEVEL: "info",
         OMNESIS_CLOUD_RELAY_KEY_FILE: this.relayKeyFile,
@@ -808,7 +807,6 @@ export class EnrollmentGateway {
         { mode: 0o600 },
       );
       const relayEnv = {
-        OMNESIS_CLOUD_RELAY_ENABLED: "1",
         OMNESIS_CLOUD_RELAY_URL: world.relayOrigin,
         OMNESIS_CLOUD_RELAY_SESSION_FILE: gateway.sessionFile,
         OMNESIS_CLOUD_RELAY_OWNER_KEY_FILE: gateway.ownerKeyFile,

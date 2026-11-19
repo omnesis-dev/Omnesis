@@ -3973,7 +3973,6 @@ describe("device management endpoints", () => {
   });
 
   test("/admin/devices/pair-addresses and pair-qr follow the gateway's Omnesis address as remote access comes and goes", async () => {
-    vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
     const relayOrigin = "https://g-fictional1.relay.example.test";
     const spki = "c".repeat(64);
     const relay = { enabled: true, ready: true, origin: relayOrigin as string | undefined };
@@ -4031,18 +4030,13 @@ describe("device management endpoints", () => {
       relay.origin = undefined;
       expect((await plan()).addresses.some((a) => a.kind === "relay")).toBe(false);
 
-      // Without the opt-in the management service is never consulted.
-      vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "");
-      relay.enabled = relay.ready = true;
-      relay.origin = relayOrigin;
-      status.mockClear();
-      const offApp = createServer(db, undefined, options);
+      // A gateway whose relay management did not start offers the addresses it always had.
+      const offApp = createServer(db, undefined, { ...options, cloudRelayManagement: undefined });
       const offPlan = (await (
         await post(offApp, "/admin/devices/pair-addresses", { pairingCode })
       ).json()) as { addresses: Array<Record<string, unknown>> };
       expect(offPlan.addresses.map((a) => a.gatewayUrl)).not.toContain(relayOrigin);
       expect(offPlan.addresses.every((a) => !("kind" in a))).toBe(true);
-      expect(status).not.toHaveBeenCalled();
     } finally {
       vi.unstubAllEnvs();
     }
@@ -5079,31 +5073,20 @@ describe("sync state endpoints", () => {
     const full = await (await req("/portal/source-meta.json")).json();
     expect(full["example-browser:maya@example.com"]).toMatchObject({ label: "Maya's browser" });
 
-    vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
-    try {
-      const relayed = { "x-omnesis-cloud-relay": "1" };
-      for (const path of ["/portal/source-meta.json", "/portal/icons.json"]) {
-        const res = await app.request(path, { headers: relayed });
-        expect(res.status).toBe(200);
-        const text = await res.text();
-        expect(JSON.parse(text)).toEqual({ "example-browser": { label: "Browsers" } });
-        expect(text).not.toContain("maya@example.com");
-        expect(text).not.toContain("Maya's browser");
-      }
-      // Signed in through the relay, or on the local network: exactly as before.
-      expect(await (await req("/portal/source-meta.json", { headers: relayed })).json()).toEqual(
-        full,
-      );
-      expect(await (await app.request("/portal/source-meta.json")).json()).toEqual(full);
-    } finally {
-      vi.unstubAllEnvs();
+    const relayed = { "x-omnesis-cloud-relay": "1" };
+    for (const path of ["/portal/source-meta.json", "/portal/icons.json"]) {
+      const res = await app.request(path, { headers: relayed });
+      expect(res.status).toBe(200);
+      const text = await res.text();
+      expect(JSON.parse(text)).toEqual({ "example-browser": { label: "Browsers" } });
+      expect(text).not.toContain("maya@example.com");
+      expect(text).not.toContain("Maya's browser");
     }
-    // Without the cloud relay opt-in a relay header changes nothing.
-    expect(
-      await (
-        await app.request("/portal/source-meta.json", { headers: { "x-omnesis-cloud-relay": "1" } })
-      ).json(),
-    ).toEqual(full);
+    // Signed in through the relay, or on the local network: exactly as before.
+    expect(await (await req("/portal/source-meta.json", { headers: relayed })).json()).toEqual(
+      full,
+    );
+    expect(await (await app.request("/portal/source-meta.json")).json()).toEqual(full);
   });
 
   test("legacy cursor writes cannot regress a claimed source", async () => {

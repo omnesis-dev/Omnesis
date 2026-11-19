@@ -66,7 +66,6 @@ async function fixture() {
     gatewayId = randomUUID(),
     ownerAccountId = gatewayKeyAccount({ gatewayId, ownerPublicKey });
   const env: NodeJS.ProcessEnv = {
-    OMNESIS_CLOUD_RELAY_ENABLED: "1",
     OMNESIS_CLOUD_RELAY_URL: origin,
     OMNESIS_CLOUD_RELAY_GATEWAY_ID: gatewayId,
     OMNESIS_CLOUD_RELAY_OWNER_KEY_FILE: join(directory, "owner.pem"),
@@ -252,12 +251,9 @@ test("expiry and bounded pending requests remain recoverable", async () => {
   expect(f.browser.begin).toHaveBeenCalledTimes(9);
 });
 
-test("owner rotation, changed routing identity and opt-out never reuse a saved account", async () => {
+test("owner rotation and a changed routing identity never reuse a saved account", async () => {
   const f = await fixture();
   await f.link();
-  f.env.OMNESIS_CLOUD_RELAY_ENABLED = "0";
-  expect(f.manager.verifiedAccountId()).toBeUndefined();
-  f.env.OMNESIS_CLOUD_RELAY_ENABLED = "1";
   f.env.OMNESIS_CLOUD_RELAY_GATEWAY_ID = randomUUID();
   expect(f.manager.verifiedAccountId()).toBeUndefined();
   await f.manager.refresh();

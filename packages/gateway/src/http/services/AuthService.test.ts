@@ -3,6 +3,8 @@
 
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { SCOPE_READ, type DeviceId, type Scope, type TokenId } from "@omnesis/types";
 import { createDatabase } from "../../db.js";
@@ -11,8 +13,6 @@ import { createSession, createToken } from "../../data/repositories/TokenReposit
 import { AuthService } from "./AuthService.js";
 import type { WriteGate } from "../../write-gate.js";
 import type { StatusCache } from "./StatusCache.js";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 let dbPath: string;
 let db: ReturnType<typeof createDatabase>;
@@ -143,8 +143,7 @@ describe("AuthService portal sessions", () => {
 });
 
 describe("AuthService sign-in portal codes", () => {
-  test("without the cloud relay opt-in a pairing code is never looked up as a sign-in code", async () => {
-    vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "");
+  test("a portal code minted without a sign-in takes the ordinary path", async () => {
     const { createPairing } = await import("../../data/repositories/DeviceRepository.js");
     const redeemEnrollmentPairing = vi.fn();
     const legacy = vi.fn(async () => {
@@ -157,11 +156,7 @@ describe("AuthService sign-in portal codes", () => {
       createOrReplaceDeviceForPair: legacy,
       redeemEnrollmentPairing,
     });
-    const pending = createPairing(db, {
-      kind: "portal",
-      scopes: [SCOPE_READ],
-      enrollment: { method: "automatic", signIn: "passkey", devicePublicKey: "portal-key" },
-    });
+    const pending = createPairing(db, { kind: "portal", scopes: [SCOPE_READ] });
     await service.login(pending.pairingCode, {}).catch(() => undefined);
     expect(redeemEnrollmentPairing).not.toHaveBeenCalled();
     // The code went down the path every portal code has always taken.
@@ -169,7 +164,6 @@ describe("AuthService sign-in portal codes", () => {
   });
 
   test("a code from a sign-in redeems through the device-key path as a new device", async () => {
-    vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
     const { PairingService } = await import("./PairingService.js");
     const { directWriteGate } = await import("../../write-gate.js");
     const { createPairing } = await import("../../data/repositories/DeviceRepository.js");

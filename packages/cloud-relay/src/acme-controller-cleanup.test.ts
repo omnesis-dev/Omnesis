@@ -12,7 +12,6 @@ import { createGatewayAcmeController } from "./acme-integration.js";
 let directory: string;
 beforeEach(async () => {
   directory = await mkdtemp(join(tmpdir(), "acme-controller-cleanup-"));
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
 });
 afterEach(async () => {
   vi.restoreAllMocks();
@@ -21,7 +20,6 @@ afterEach(async () => {
 });
 function environment() {
   return {
-    OMNESIS_CLOUD_RELAY_ENABLED: "1",
     OMNESIS_ACME_DIRECTORY_URL: "https://ca.example.test/directory",
     OMNESIS_ACME_TERMS_ACCEPTED: "1",
     OMNESIS_ACME_CERT_FILE: join(directory, "public.pem"),

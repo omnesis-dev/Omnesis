@@ -83,5 +83,4 @@ test("DNS lease and queue gauges reflect a slow publication and return to zero a
   }
 });
 
-beforeEach(() => vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1"));
 afterEach(() => vi.unstubAllEnvs());

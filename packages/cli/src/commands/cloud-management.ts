@@ -5,7 +5,6 @@ import { createReadStream } from "node:fs";
 import { createInterface } from "node:readline/promises";
 import { setTimeout as delay } from "node:timers/promises";
 import { defineCommand } from "citty";
-import { cloudRelayEnabled } from "@omnesis/core";
 import { CliError, EXIT_USER_ERROR } from "@omnesis/cli-shared";
 import {
   formatCloudStatus,
@@ -15,14 +14,6 @@ import {
   trustedSignInLines,
   type CloudStatus,
 } from "./cloud-status.js";
-
-export function requireCloudRelay(): void {
-  if (!cloudRelayEnabled())
-    throw new CliError(
-      "Omnesis account commands require OMNESIS_CLOUD_RELAY_ENABLED=1",
-      EXIT_USER_ERROR,
-    );
-}
 
 const DONE = {
   status: "",
@@ -62,10 +53,12 @@ export async function manageCloud(
     query?: Record<string, string>;
   } = {},
 ): Promise<void> {
-  requireCloudRelay();
   const { gatewayJson } = await import("../utils.js");
   const method = options.method ?? "POST";
-  const query = options.query ? `?${new URLSearchParams(options.query).toString()}` : "";
+  // Status shows how to sign up, so it lets the gateway ask the relay whether accounts are
+  // invite-only; no other read reaches the relay.
+  const params = action === "status" ? { ...options.query, signup: "1" } : options.query;
+  const query = params ? `?${new URLSearchParams(params).toString()}` : "";
   const result = await gatewayJson<CloudStatus & { revokedDevices?: unknown }>(
     `/admin/cloud-relay${action === "status" ? "" : `/${action}`}${options.id === undefined ? "" : `/${encodeURIComponent(options.id)}`}${query}`,
     action === "status"
@@ -93,7 +86,6 @@ export async function manageCloud(
 
 /** The ids `omnesis cloud remove-sign-in` takes, with what each sign-in is. */
 export async function listTrustedSignIns(): Promise<void> {
-  requireCloudRelay();
   const { gatewayJson } = await import("../utils.js");
   const lines = trustedSignInLines(await gatewayJson<CloudStatus>("/admin/cloud-relay"));
   process.stdout.write(
@@ -134,7 +126,6 @@ export async function connectGateway(options: {
   /** An invite link or code: the person is creating a new Omnesis account with it. */
   invite?: string;
 }): Promise<void> {
-  requireCloudRelay();
   const { gatewayJson } = await import("../utils.js");
   const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
   if (!options.acceptTerms) {
@@ -191,7 +182,7 @@ export async function connectGateway(options: {
       process.stdout.write(`${INVITE_ONLY_LINE}\n`);
     }
     await delay(2000);
-    status = (await gatewayJson("/admin/cloud-relay")) as ConnectStatus;
+    status = (await gatewayJson("/admin/cloud-relay?signup=1")) as ConnectStatus;
   }
   if (status.connect?.state !== "done") {
     const error = status.connect?.error;

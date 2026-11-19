@@ -11,14 +11,11 @@
  * CLI: importing `index.ts` performs the TLS preflight and dispatches argv.
  */
 
-import { cloudRelayEnabled } from "@omnesis/core";
 import type { SubCommandsDef } from "citty";
 
 export const SUB_COMMANDS: SubCommandsDef = {
-  // The cloud relay is opt-in: without the flag the command does not exist, as on a build without it.
-  ...(cloudRelayEnabled()
-    ? { cloud: () => import("./commands/cloud.js").then((m) => m.cloudCommand) }
-    : {}),
+  // The Omnesis account and the cloud relay.
+  cloud: () => import("./commands/cloud.js").then((m) => m.cloudCommand),
   // The gateway's own Tailscale device.
   tailscale: () => import("./commands/tailscale.js").then((m) => m.tailscaleCommand),
   // ── Read commands (any token) ────────────────────────────────────────

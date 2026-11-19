@@ -31,19 +31,17 @@ function memory(initial: Record<string, string> = {}) {
 const remote = (over: Record<string, unknown> = {}) => ({
   setupCompletedAt: null,
   first: "tailscale",
-  features: { cloudRelay: true, tailscaleEmbed: true },
+  features: { tailscaleEmbed: true },
   publicBaseUrl: { configured: null, setByEnvironment: false, way: null },
   ...over,
 });
 
 describe("the setup's steps and progress", () => {
-  test("the account is asked only with the relay, new devices only while one can ask, MCP only with an address away", () => {
-    expect(setupSteps({ cloudRelay: true })).toEqual(["account", "connection"]);
-    expect(setupSteps({ cloudRelay: false })).toEqual(["connection"]);
-    expect(setupSteps()).toEqual(["connection"]);
-    expect(setupSteps({ cloudRelay: true, devices: true, mcp: true })).toEqual(["account", "connection", "devices", "mcp"]);
-    expect(setupSteps({ devices: true })).toEqual(["connection", "devices"]);
-    expect(setupSteps({ mcp: true })).toEqual(["connection", "mcp"]);
+  test("the account is always asked, new devices only while one can ask, MCP only with an address away", () => {
+    expect(setupSteps()).toEqual(["account", "connection"]);
+    expect(setupSteps({ devices: true, mcp: true })).toEqual(["account", "connection", "devices", "mcp"]);
+    expect(setupSteps({ devices: true })).toEqual(["account", "connection", "devices"]);
+    expect(setupSteps({ mcp: true })).toEqual(["account", "connection", "mcp"]);
   });
 
   test("a saved flow comes back only when well formed for these steps", () => {

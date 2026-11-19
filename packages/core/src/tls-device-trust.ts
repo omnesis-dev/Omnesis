@@ -25,7 +25,6 @@
  * has been silent since. Derived on every read, never stored.
  */
 
-import { cloudRelayEnabled } from "./cloud-relay-enabled.js";
 import type { DeviceTlsTrustMode } from "@omnesis/types";
 import type { TlsLifecycleSnapshot } from "./tls-material.js";
 
@@ -80,8 +79,6 @@ function reportedTls(capabilities: unknown): Record<string, unknown> | null {
 export function deviceTlsTrustMode(capabilities: unknown): DeviceTlsTrustMode | null {
   const mode = reportedTls(capabilities)?.mode;
   if (typeof mode !== "string" || !KNOWN_MODES.has(mode)) return null;
-  // The strict modes belong to the cloud relay; without it they are unknown.
-  if (mode.endsWith("-strict") && !cloudRelayEnabled()) return null;
   return mode as DeviceTlsTrustMode;
 }
 
