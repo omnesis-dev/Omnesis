@@ -9,10 +9,11 @@ name: mobile-journeys
 # 15:17 UTC. Manual dispatch selects either or both platforms
 # (`gh workflow run mobile-journeys.yml --ref <branch>`). A pull request runs
 # the platform whose app, or whose shared journey machinery, it changes. The
-# iOS lane takes one macOS runner; the Android lane runs the emulator on Linux
-# with KVM. The lanes stay
-# outside full-validation, so a simulator or emulator flake cannot turn the
-# README badge red; a journey that fails is retried once before the lane fails.
+# iOS lane takes two macOS runners at once, one for the journeys and one for
+# the cloud pairing interaction UI tests; the Android lane runs the emulator on
+# Linux with KVM. The lanes stay outside full-validation, so a simulator or
+# emulator flake cannot turn the README badge red; a journey that fails is
+# retried once before the lane fails.
 #
 # Pull requests — fork pull requests included, once a maintainer approves the
 # run — use the plain `pull_request` trigger: a read-only token and no secrets.
@@ -90,6 +91,9 @@ jobs:
     # The project requires Xcode 26; provision an available iPhone simulator
     # for that Xcode rather than assuming the image has a particular name.
     runs-on: macos-26
+    # Setup, the build, indexing the corpus and the journeys: 38 to 73 min
+    # measured, and a retried journey adds up to 9 min more. The limit stops
+    # a hung simulator or xcodebuild from holding the runner.
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -145,24 +149,6 @@ jobs:
           OMNESIS_CONFIG_DIR: ${{ runner.temp }}/mobile-journeys-gateway
         run: scripts/run-mobile-journeys.sh ios
 
-      - name: lane [ios-cloud-pairing-interactions]
-        # The bounded Demo simulator scene uses the production views and models.
-        # These XCUI actions complement the real gateway and TLS journey tests.
-        run: |
-          set -o pipefail
-          mkdir -p "${{ runner.temp }}/mobile-journeys"
-          xcodebuild test \
-            -project ios/Omnesis.xcodeproj \
-            -scheme OmnesisDemoUITests \
-            -destination "platform=iOS Simulator,id=$OMNESIS_JOURNEY_IOS_UDID" \
-            -clonedSourcePackagesDirPath "$PWD/ios/build/packages" \
-            -disableAutomaticPackageResolution \
-            -derivedDataPath "${{ runner.temp }}/cloud-pairing-derived-data" \
-            -enableCodeCoverage YES \
-            -resultBundlePath "${{ runner.temp }}/mobile-journeys/cloud-pairing.xcresult" \
-            -only-testing:OmnesisDemoUITests/CloudPairingInteractionUITests \
-            2>&1 | tee "${{ runner.temp }}/mobile-journeys/cloud-pairing-xcodebuild.log"
-
       - name: Upload journey artifacts
         # The screen recording, xcresult bundle (screenshots of every failure),
         # xcodebuild log and gateway logs. A failed upload must not mask the
@@ -173,6 +159,90 @@ jobs:
         with:
           name: ios-journeys
           path: ${{ runner.temp }}/mobile-journeys/
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Check nothing tried to reach production Omnesis services
+        if: ${{ always() && steps.production-network.outcome == 'success' }}
+        run: $GITHUB_WORKSPACE/scripts/ci/production-network.sh verify
+
+  ios-cloud-pairing:
+    # The cloud pairing interaction UI tests drive the Demo app's bounded
+    # fixture scenes and need no gateway, so they run beside the journeys on a
+    # runner and time limit of their own. They build the app themselves, with
+    # code coverage.
+    needs: changes
+    if: ${{ !cancelled() && (github.event_name == 'schedule' || (github.event_name == 'pull_request' && needs.changes.outputs.ios == 'true') || (github.event_name == 'workflow_dispatch' && inputs.platforms != 'android')) }}
+    runs-on: macos-26
+    # About 5 min of setup, then a clean build and eight UI tests: 8 to 21 min
+    # measured. The limit stops a hung simulator or xcodebuild from holding
+    # the runner.
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Keep this job off production Omnesis services
+        id: production-network
+        run: $GITHUB_WORKSPACE/scripts/ci/production-network.sh isolate
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+
+      - name: Prepare iPhone simulator
+        run: |
+          udid="$(node scripts/ci/prepare-ios-simulator.mjs)"
+          echo "OMNESIS_IOS_UDID=$udid" >> "$GITHUB_ENV"
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Stub Local.xcconfig
+        run: |
+          if [ ! -f ios/Local.xcconfig ]; then
+            echo "DEVELOPMENT_TEAM = " > ios/Local.xcconfig
+          fi
+
+      - name: Cache Swift packages
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ios/build/packages
+          key: ios-packages-${{ runner.os }}-${{ hashFiles('ios/project.yml') }}
+
+      - name: Generate the project and resolve its packages
+        run: |
+          (cd ios && xcodegen generate)
+          scripts/ci/resolve-ios-packages.sh OmnesisDemoUITests
+
+      - name: lane [ios-cloud-pairing-interactions]
+        # The bounded Demo simulator scene uses the production views and models.
+        # These XCUI actions complement the real gateway and TLS journey tests.
+        run: |
+          set -o pipefail
+          mkdir -p "${{ runner.temp }}/cloud-pairing"
+          xcodebuild test \
+            -project ios/Omnesis.xcodeproj \
+            -scheme OmnesisDemoUITests \
+            -destination "platform=iOS Simulator,id=$OMNESIS_IOS_UDID" \
+            -clonedSourcePackagesDirPath "$PWD/ios/build/packages" \
+            -disableAutomaticPackageResolution \
+            -derivedDataPath "${{ runner.temp }}/cloud-pairing-derived-data" \
+            -enableCodeCoverage YES \
+            -resultBundlePath "${{ runner.temp }}/cloud-pairing/cloud-pairing.xcresult" \
+            -only-testing:OmnesisDemoUITests/CloudPairingInteractionUITests \
+            2>&1 | tee "${{ runner.temp }}/cloud-pairing/cloud-pairing-xcodebuild.log"
+
+      - name: Upload cloud pairing artifacts
+        # The xcresult bundle (screenshots of every failure) and the xcodebuild
+        # log. A failed upload must not mask the test result.
+        if: failure() || cancelled()
+        continue-on-error: true
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: ios-cloud-pairing
+          path: ${{ runner.temp }}/cloud-pairing/
           if-no-files-found: ignore
           retention-days: 14
 

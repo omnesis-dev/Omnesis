@@ -131,7 +131,11 @@ same way, to prove that a step does.
 selects either or both platforms. Pull requests run the corresponding platform
 when they change its app or the shared machinery (the journey script,
 `synth-gateway.sh`, the `e2e-minimal` universe, the replay scenarios, the
-workflow). The iOS lane uses one `macos-26` runner. The Android lane boots an
+workflow). The iOS lane uses two `macos-26` runners at once: one job builds
+the app, boots the gateway and runs the journeys, and a second runs the cloud
+pairing interaction UI tests (`CloudPairingInteractionUITests`), which drive
+the Demo app's fixture scenes and need no gateway. Each job has its own time
+limit, so neither waits for the other. The Android lane boots an
 API 34 emulator with KVM on `ubuntu-latest`, rendering through ANGLE
 (`-gpu swangle_indirect`): with SwiftShader's own GL or guest rendering, the
 emulator process dies while the app draws its Ask screen. Neither lane needs a
@@ -146,4 +150,5 @@ test fails it.
 
 The lanes are not part of `full-validation`, so the README badge keeps
 reporting the full suite alone. On failure, the job uploads everything listed
-above as the `ios-journeys` or `android-journeys` artifact.
+above as the `ios-journeys` or `android-journeys` artifact; the cloud pairing
+job uploads its xcresult bundle and xcodebuild log as `ios-cloud-pairing`.
