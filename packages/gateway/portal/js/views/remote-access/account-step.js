@@ -125,7 +125,7 @@ export function accountConnect(relay, { invite = "", setInvite = () => {} } = {}
   const fullBlurb =
     state === "none"
       ? html`${blurb}${inviteOnly &&
-          " Omnesis accounts are private and invite-only for now: creating one needs an invite link."}
+          " Omnesis accounts are private and invite-only for now: creating one needs an invite link. "}
         It's optional: skip it and set it up any time from Settings, Connectivity.`
       : blurb;
   const choice = html`<button type="button" class="btn-secondary" disabled=${disabled} onClick=${() => connect("existing")}>

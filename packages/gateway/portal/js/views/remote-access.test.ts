@@ -334,6 +334,23 @@ describe("which readers run", () => {
     expect(tailscaleApi.getTailscale).toHaveBeenCalled();
   });
 
+  test("before any account, an invite-only relay is named on the account line and on step 1", async () => {
+    gateway.relay = { ...relayNone(), signup: { inviteOnly: true } };
+    await mount(FLAGS.relay);
+    expect(detail("No Omnesis account")).toBe(
+      "Private, invite only: creating an account needs an invite link. Devices pair with a code from Settings, Devices.",
+    );
+    await startSetup();
+    expect(host.querySelector(".relay-private-badge")?.textContent).toBe("Private · invite only");
+    expect(host.querySelector("#relay-invite-input")).not.toBeNull();
+    expect(button("Create an account")?.disabled).toBe(true);
+  });
+
+  test("a relay anyone can join says nothing about invites on the account line", async () => {
+    await mount(FLAGS.relay);
+    expect(detail("No Omnesis account")).toBe("Devices pair with a code from Settings, Devices.");
+  });
+
   test("a gateway with no account and no device offers the account, this computer's Tailscale, a domain and MCP", async () => {
     const tailscaleApi = await import(
       // @ts-expect-error — portal modules are plain JS.
@@ -534,29 +551,26 @@ describe("without the gateway's own Tailscale device", () => {
     expect(button("Continue")?.className).toBe("btn-primary");
   });
 
-  test("an invite-only relay links to its request-access page in the paragraph, and again after a refused sign-in", async () => {
-    const signup = { inviteOnly: true, requestAccessUrl: "https://relay.example.test/request-access" };
-    const inline = () => [...host.querySelectorAll<HTMLAnchorElement>(".access-wizard-copy a")].find((a) => a.textContent === "request access");
-    const refused = () => [...host.querySelectorAll<HTMLAnchorElement>(".relay-invite a")].find((a) => a.textContent === "Request access");
+  test("on an invite-only relay, step 1 says so and offers the invite field, and again after a refused invite", async () => {
+    const signup = { inviteOnly: true };
     gateway.relay = { ...relayNone(), signup };
     savedSetup("account");
     await mount(FLAGS.relay);
     expect(heading()).toBe("Do you want an Omnesis account?");
-    expect(inline()?.href).toBe("https://relay.example.test/request-access");
-    expect(inline()?.target).toBe("_blank");
     expect(host.querySelector(".access-wizard-copy p")?.textContent?.replace(/\s+/g, " ")).toContain(
-      "Accounts are invite-only for now: request access (relay.example.test), then create your account once it's approved.",
+      "Omnesis accounts are private and invite-only for now: creating one needs an invite link.",
     );
-    gateway.relay = { ...relayNone(), signup, connect: { state: "failed", error: "not-allowed" } };
+    expect(host.querySelector("#relay-invite-input")).not.toBeNull();
+    gateway.relay = { ...relayNone(), signup, connect: { state: "failed", error: "invite-used" } };
     await remount(FLAGS.relay);
-    expect(refused()?.href).toBe("https://relay.example.test/request-access");
-    // A relay open to everyone, or a link that is not https, shows no invitation.
-    gateway.relay = { ...relayNone(), signup: { inviteOnly: false, requestAccessUrl: signup.requestAccessUrl } };
+    expect(heading()).toBe("Couldn't connect");
+    expect(text()).toContain("That invite was already used to create an account.");
+    expect(host.querySelector("#relay-invite-input")).not.toBeNull();
+    // A relay open to everyone asks for no invite.
+    gateway.relay = { ...relayNone(), signup: { inviteOnly: false } };
     await remount(FLAGS.relay);
-    expect(inline()).toBeUndefined();
-    gateway.relay = { ...relayNone(), signup: { inviteOnly: true, requestAccessUrl: "http://relay.example.test/x" } };
-    await remount(FLAGS.relay);
-    expect(inline()).toBeUndefined();
+    expect(host.querySelector("#relay-invite-input")).toBeNull();
+    expect(text()).not.toContain("invite-only");
   });
 
   test("an unavailable installation and a failed connect say why", async () => {
@@ -568,7 +582,7 @@ describe("without the gateway's own Tailscale device", () => {
     gateway.relay = { ...relayNone(), connect: { state: "failed", error: "not-allowed" } };
     await remount(FLAGS.relay);
     expect(heading()).toBe("Couldn't connect");
-    expect(text()).toContain("hasn't been approved");
+    expect(text()).toContain("account can't connect this gateway.");
     await click("Try again");
     expect(calls("relay").at(-1)).toEqual(["relay", "connect", { termsAccepted: true }, "POST"]);
   });
