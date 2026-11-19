@@ -122,7 +122,9 @@ and then on a simulator, so each iOS journey step that taps the menu button, a
 menu row, the Settings gear, the composer or Send checks the one thing that
 tap's action changes, and taps again when it did not change. `DEMO_CANCEL_TOUCHES=2`
 (touch ordinals, counting from 1) makes a DEBUG build cancel those touches the
-same way, to prove that a step does.
+same way, to prove that a step does. The cloud pairing interaction tests'
+connection-status steps use the same helper, `retap` in
+`ios/UITests/OmnesisDemoUITests/Retap.swift`.
 
 ## In CI
 

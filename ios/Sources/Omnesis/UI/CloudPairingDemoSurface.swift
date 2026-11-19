@@ -113,6 +113,8 @@ struct CloudPairingDemoSurface: View {
                 }
             }
         }
+        // Logs the scene's taps and cancels chosen ones when a UI test asks.
+        .automationTouchLog()
     }
 
     private func row(_ name: String, path: String?, revoked: Bool = false) -> DeviceRecord {

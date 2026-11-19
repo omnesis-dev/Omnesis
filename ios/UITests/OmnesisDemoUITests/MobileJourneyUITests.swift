@@ -250,23 +250,6 @@ final class MobileJourneyUITests: XCTestCase {
         }
     }
 
-    /// Makes a tap until `element` shows its effect, at most three times.
-    ///
-    /// The simulator's system gesture gate now and then claims a synthesized
-    /// touch for one of the system's own gestures and cancels it: the control
-    /// under it may show its pressed state, but its action never runs. So a
-    /// step that taps checks the one thing its action changes first, and taps
-    /// again only when that has not happened, which a tap that did act can
-    /// never cause.
-    private func retap(until element: XCUIElement, has effect: String, or failure: String, _ makeTap: () -> Void) {
-        for _ in 0 ..< 3 {
-            makeTap()
-            let acted = XCTNSPredicateExpectation(predicate: NSPredicate(format: effect), object: element)
-            if XCTWaiter.wait(for: [acted], timeout: 10) == .completed { return }
-        }
-        XCTFail(failure)
-    }
-
     private func launchPaired(pairedUrl: URL? = nil) throws {
         let deviceName = "Journey iPhone \(UUID().uuidString.prefix(8))"
         app.launchEnvironment["DEMO_PAIRING_JSON"] = try gateway.automationPairingJSON(
