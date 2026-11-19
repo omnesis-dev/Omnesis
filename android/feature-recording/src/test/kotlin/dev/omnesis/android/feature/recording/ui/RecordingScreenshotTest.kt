@@ -8,6 +8,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalInspectionMode
 import com.github.takahirom.roborazzi.captureRoboImage
 import dev.omnesis.android.designsystem.theme.OmnesisTheme
+import dev.omnesis.android.feature.recording.RecordingInput
 import dev.omnesis.android.feature.recording.RecordingState
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -19,7 +20,7 @@ import org.robolectric.annotation.GraphicsMode
 /**
  * Render-review screenshots for the Recordings screen: ready to record,
  * starting, recording, paused, paused by a lost microphone, unavailable,
- * and the list of recordings on the phone,
+ * the list of recordings on the phone, and a linked wearable as the input,
  * light + dark. All fixture data is invented (privacy rule).
  *
  *   ./gradlew :feature-recording:recordRoborazziDebug   ->   feature-recording/src/test/roborazzi/
@@ -29,16 +30,16 @@ import org.robolectric.annotation.GraphicsMode
 @Config(sdk = [34], qualifiers = "w411dp-h891dp-xxhdpi")
 class RecordingScreenshotTest {
 
-    private fun capture(name: String, dark: Boolean, state: RecordingUiState) {
+    private fun capture(name: String, dark: Boolean, state: RecordingUiState, wearableCard: (@Composable () -> Unit)? = null) {
         captureRoboImage(filePath = "src/test/roborazzi/$name.png") {
             CompositionLocalProvider(LocalInspectionMode provides true) {
-                OmnesisTheme(darkTheme = dark) { content(state) }
+                OmnesisTheme(darkTheme = dark) { content(state, wearableCard) }
             }
         }
     }
 
     @Composable
-    private fun content(state: RecordingUiState) {
+    private fun content(state: RecordingUiState, wearableCard: (@Composable () -> Unit)?) {
         RecordingContent(
             state = state,
             onTitleChange = {},
@@ -49,6 +50,7 @@ class RecordingScreenshotTest {
             onWifiOnlyChange = {},
             onDelete = {},
             onDismissError = {},
+            wearableCard = wearableCard,
         )
     }
 
@@ -110,6 +112,32 @@ class RecordingScreenshotTest {
         true,
         RecordingUiState(availability = RecordingAvailability.Availability.TRANSCRIPTION_OFF, recent = recent),
     )
+
+    private val wearableReady = ready.copy(wearableName = "Omi", wearableReady = true, input = RecordingInput.WEARABLE, recent = emptyList())
+
+    @Test fun wearable_ready_light() = capture("recording_wearable_ready_light", false, wearableReady) {
+        androidx.compose.material3.Text("Wearable card slot")
+    }
+    @Test fun wearable_ready_dark() = capture("recording_wearable_ready_dark", true, wearableReady)
+
+    private val wearableLost = recording.copy(
+        wearableName = "Omi",
+        recording = recording.recording!!.copy(runningSinceMs = null, micLost = true, input = RecordingInput.WEARABLE),
+    )
+
+    @Test fun wearable_recording_light() = capture(
+        "recording_wearable_active_light",
+        false,
+        recording.copy(wearableName = "Omi", recording = recording.recording!!.copy(input = RecordingInput.WEARABLE)),
+    )
+    @Test fun wearable_lost_light() = capture("recording_wearable_lost_light", false, wearableLost)
+    @Test fun wearable_lost_dark() = capture("recording_wearable_lost_dark", true, wearableLost)
+
+    @Test fun startUsesTheWearableOnlyWhileItIsReady() {
+        assertEquals(RecordingInput.WEARABLE, wearableReady.startInput)
+        assertEquals(RecordingInput.PHONE, wearableReady.copy(wearableReady = false).startInput)
+        assertEquals(RecordingInput.PHONE, wearableReady.copy(input = RecordingInput.PHONE).startInput)
+    }
 
     @Test fun formatsElapsedAndStatus() {
         assertEquals("0:05", formatElapsed(5_000))

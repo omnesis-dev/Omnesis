@@ -14,9 +14,17 @@ class RecordingSettings(private val prefs: SharedPreferences) {
             prefs.edit().putBoolean(KEY_WIFI_ONLY, value).apply()
         }
 
+    /** The input the Start button records from, as last chosen; null until a choice is made. */
+    var preferredInput: RecordingInput?
+        get() = prefs.getString(KEY_INPUT, null)?.let { runCatching { RecordingInput.valueOf(it) }.getOrNull() }
+        set(value) {
+            prefs.edit().putString(KEY_INPUT, value?.name).apply()
+        }
+
     companion object {
         const val PREFS_NAME = "omnesis.recording"
         private const val KEY_WIFI_ONLY = "wifiOnly"
+        private const val KEY_INPUT = "input"
         /** A session stops on its own after this long. */
         const val MAX_SESSION_MS = 4L * 60 * 60 * 1000
     }

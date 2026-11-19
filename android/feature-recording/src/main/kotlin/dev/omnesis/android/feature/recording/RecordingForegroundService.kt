@@ -21,20 +21,28 @@ import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
 import dagger.hilt.android.EntryPointAccessors
 import dagger.hilt.components.SingletonComponent
+import java.util.Optional
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 /**
- * Records a conversation with the screen off: a foreground service of type
- * microphone, with a persistent notification showing the elapsed time and
- * Pause/Resume/Stop. It is only ever started from a visible screen (the
- * platform requires that for a microphone service, and the app never records
- * silently), and stops on its own after [RecordingSettings.MAX_SESSION_MS].
+ * Records a conversation with the screen off: a foreground service with a
+ * persistent notification showing the elapsed time and Pause/Resume/Stop.
+ * With the phone's microphone it is of type microphone and only ever started
+ * from a visible screen (the platform requires that, and the app never
+ * records silently). With a [WearableAudio] input it is of type
+ * connectedDevice and may also be started by the wearable's own button; a
+ * wearable that drops its link pauses the recording, which resumes when it
+ * comes back, or is stopped after [WEARABLE_GONE_MS]. Either stops on its own
+ * after [RecordingSettings.MAX_SESSION_MS].
  * One recording at a time: a Start while one is starting, running or closing
  * is ignored, and a Stop during a start runs once the start settles. Every
  * method runs on the main thread; the outbox writes go to the controller's
@@ -46,11 +54,16 @@ class RecordingForegroundService : Service() {
     @InstallIn(SingletonComponent::class)
     interface Deps {
         fun recordingController(): RecordingController
+        fun wearableAudio(): Optional<WearableAudio>
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private lateinit var controller: RecordingController
-    private var recorder: ChunkedAudioRecorder? = null
+    private var wearable: WearableAudio? = null
+    private var recorder: ChunkRecorder? = null
+    private var input = RecordingInput.PHONE
+    /** Waits for a lost wearable to come back and resumes. */
+    private var reconnect: Job? = null
     private var sessionId: String? = null
     /** A start is opening the session and the microphone. */
     private var starting = false
@@ -59,18 +72,27 @@ class RecordingForegroundService : Service() {
     /** The recorder stopped and the session's close is being filed. */
     private var stopping = false
     private val maxLength = Runnable { stopRecording() }
+    private val wearableGone = Runnable {
+        Log.w(TAG, "The wearable did not come back; stopping")
+        stopRecording()
+    }
     private val handler by lazy { android.os.Handler(mainLooper) }
 
     override fun onCreate() {
         super.onCreate()
-        controller = EntryPointAccessors.fromApplication(applicationContext, Deps::class.java).recordingController()
+        val deps = EntryPointAccessors.fromApplication(applicationContext, Deps::class.java)
+        controller = deps.recordingController()
+        wearable = deps.wearableAudio().orElse(null)
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
-            ACTION_START -> startRecording(intent.getStringExtra(EXTRA_TITLE))
+            ACTION_START -> startRecording(
+                intent.getStringExtra(EXTRA_TITLE),
+                intent.getStringExtra(EXTRA_INPUT)?.let { runCatching { RecordingInput.valueOf(it) }.getOrNull() } ?: RecordingInput.PHONE,
+            )
             ACTION_PAUSE -> pauseRecording()
             ACTION_RESUME -> resumeRecording()
             ACTION_STOP -> stopRecording()
@@ -80,16 +102,24 @@ class RecordingForegroundService : Service() {
         return START_NOT_STICKY
     }
 
-    private fun startRecording(title: String?) {
+    private fun startRecording(title: String?, requested: RecordingInput) {
         ensureChannel(this)
+        val busy = recorder != null || starting || stopping
+        if (!busy) input = requested
         // Every start command must reach the foreground, even one that is ignored.
         startInForeground(currentNotification())
-        if (recorder != null || starting || stopping) return
+        if (busy) return
+        val source = wearable
+        if (input == RecordingInput.WEARABLE && (source == null || !source.ready.value)) {
+            Log.w(TAG, "The wearable is not linked; recording not started")
+            stopSelfCleanly()
+            return
+        }
         starting = true
         val id = UUID.randomUUID().toString()
         scope.launch {
             val active = try {
-                controller.begin(title, id)
+                controller.begin(title, id, input)
             } catch (e: CancellationException) {
                 // The service is going away mid-start; the queue still opens the session.
                 controller.discard(id)
@@ -101,14 +131,23 @@ class RecordingForegroundService : Service() {
                 if (recorder == null && !stopping) stopSelfCleanly()
                 return@launch
             }
-            val r = ChunkedAudioRecorder(
-                context = this@RecordingForegroundService,
-                directory = controller.directoryFor(id),
-                onChunk = { chunk -> controller.chunkClosed(id, chunk) },
-                onMicrophoneLost = ::onMicrophoneLost,
-            )
+            val r: ChunkRecorder = when (input) {
+                RecordingInput.PHONE -> ChunkedAudioRecorder(
+                    context = this@RecordingForegroundService,
+                    directory = controller.directoryFor(id),
+                    onChunk = { chunk -> controller.chunkClosed(id, chunk) },
+                    onMicrophoneLost = ::onMicrophoneLost,
+                )
+                RecordingInput.WEARABLE -> FrameAudioRecorder(
+                    directory = controller.directoryFor(id),
+                    input = source!!,
+                    onChunk = { chunk -> controller.chunkClosed(id, chunk) },
+                    onInputLost = ::onWearableLost,
+                )
+            }
             if (!r.start()) {
-                Log.w(TAG, "Microphone unavailable; recording not started")
+                Log.w(TAG, "$input input unavailable; recording not started")
+                r.stop()
                 controller.discard(id)
                 stopWhenStarted = false
                 stopSelfCleanly()
@@ -126,7 +165,13 @@ class RecordingForegroundService : Service() {
 
     private fun pauseRecording() {
         val r = recorder ?: return
-        if (!r.isRecording) return
+        cancelReconnect()
+        if (!r.isRecording) {
+            // Paused by a lost input: the user's pause makes it theirs.
+            controller.onPaused()
+            refreshNotification()
+            return
+        }
         r.pause()
         controller.onPaused()
         refreshNotification()
@@ -135,8 +180,43 @@ class RecordingForegroundService : Service() {
     private fun resumeRecording() {
         val r = recorder ?: return
         if (r.isRecording) return
-        if (r.start()) controller.onResumed() else controller.onPaused(micLost = true)
+        if (r.start()) {
+            cancelReconnect()
+            controller.onResumed()
+        } else {
+            controller.onPaused(micLost = true)
+            if (input == RecordingInput.WEARABLE) awaitWearable()
+        }
         refreshNotification()
+    }
+
+    /** The wearable's link dropped mid-recording: pause, and resume once it is back. */
+    private fun onWearableLost() {
+        if (recorder == null) return
+        controller.onPaused(micLost = true)
+        refreshNotification()
+        awaitWearable()
+    }
+
+    private fun awaitWearable() {
+        val source = wearable ?: return
+        if (reconnect?.isActive == true) return
+        handler.removeCallbacks(wearableGone)
+        handler.postDelayed(wearableGone, WEARABLE_GONE_MS)
+        reconnect = scope.launch {
+            // Wait for the link to drop first: a ready flag not yet cleared is the old link.
+            source.ready.filter { !it }.first()
+            source.ready.filter { it }.first()
+            val active = controller.state.value as? RecordingState.Active
+            // Resume only a pause the link caused, never one the user chose meanwhile.
+            if (active?.micLost == true) resumeRecording()
+        }
+    }
+
+    private fun cancelReconnect() {
+        reconnect?.cancel()
+        reconnect = null
+        handler.removeCallbacks(wearableGone)
     }
 
     /** The recorder could not reopen the microphone at a chunk boundary: show it paused. */
@@ -159,6 +239,7 @@ class RecordingForegroundService : Service() {
         sessionId = null
         stopping = true
         handler.removeCallbacks(maxLength)
+        cancelReconnect()
         r.stop()
         // Every chunk the recorder reported is filed before the session closes.
         controller.stopped(id, r.chunksRecorded) { scope.launch { stopSelfCleanly() } }
@@ -180,6 +261,7 @@ class RecordingForegroundService : Service() {
             controller.stopped(id, r.chunksRecorded)
         }
         handler.removeCallbacks(maxLength)
+        handler.removeCallbacks(wearableGone)
         scope.cancel()
         super.onDestroy()
     }
@@ -196,7 +278,9 @@ class RecordingForegroundService : Service() {
     }
 
     private fun startInForeground(notification: Notification) {
-        val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+        val type = if (input == RecordingInput.WEARABLE && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
         } else {
             0
@@ -213,9 +297,10 @@ class RecordingForegroundService : Service() {
             .setContentTitle(if (paused) "Recording paused" else "Recording conversation")
             .setContentText(
                 when {
+                    micLost && input == RecordingInput.WEARABLE -> "The ${inputName()} is not connected. Recording resumes when it is back"
                     micLost -> "The microphone is in use elsewhere. Tap Resume to try again"
                     paused -> "Tap Resume to continue"
-                    else -> "Omnesis is recording with the microphone"
+                    else -> "Omnesis is recording with the ${inputName()}"
                 },
             )
             .setOngoing(true)
@@ -234,6 +319,8 @@ class RecordingForegroundService : Service() {
         return builder.build()
     }
 
+    private fun inputName(): String = if (input == RecordingInput.WEARABLE) wearable?.name ?: "wearable" else "microphone"
+
     private fun actionIntent(action: String): PendingIntent =
         PendingIntent.getService(
             this,
@@ -251,12 +338,23 @@ class RecordingForegroundService : Service() {
         const val ACTION_RESUME = "dev.omnesis.android.recording.RESUME"
         const val ACTION_STOP = "dev.omnesis.android.recording.STOP"
         private const val EXTRA_TITLE = "title"
+        private const val EXTRA_INPUT = "input"
 
-        /** Start recording. Call only from a visible screen, after RECORD_AUDIO is granted. */
-        fun start(context: Context, title: String?) {
+        /** How long a wearable may stay unlinked before its recording is stopped and filed. */
+        const val WEARABLE_GONE_MS = 10 * 60 * 1000L
+
+        /**
+         * Start recording. With [RecordingInput.PHONE], call only from a
+         * visible screen, after RECORD_AUDIO is granted; a wearable may be
+         * started by its own button.
+         */
+        fun start(context: Context, title: String?, input: RecordingInput = RecordingInput.PHONE) {
             ContextCompat.startForegroundService(
                 context,
-                Intent(context, RecordingForegroundService::class.java).setAction(ACTION_START).putExtra(EXTRA_TITLE, title),
+                Intent(context, RecordingForegroundService::class.java)
+                    .setAction(ACTION_START)
+                    .putExtra(EXTRA_TITLE, title)
+                    .putExtra(EXTRA_INPUT, input.name),
             )
         }
 
