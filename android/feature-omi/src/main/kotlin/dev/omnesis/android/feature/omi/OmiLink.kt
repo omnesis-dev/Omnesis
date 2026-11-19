@@ -66,9 +66,10 @@ sealed interface OmiStatus {
  * The Bluetooth LE link to one associated Omi pendant, and the
  * [WearableAudio] the recorder reads. It connects over LE, bonds so the link
  * is encrypted, asks for a large MTU, checks the audio format, listens to the
- * button and the battery, and keeps the pendant's capture muted whenever no
- * recording is streaming, so it neither records nor fills its own storage
- * outside a session. A dropped link reconnects on its own until [disconnect].
+ * button and the battery, and, on firmware that has the capture mute, keeps
+ * the pendant's capture muted whenever no recording is streaming, so it
+ * neither records nor fills its own storage outside a session. A dropped link
+ * reconnects on its own until [disconnect].
  *
  * Android allows one GATT operation at a time per link; every operation goes
  * through [gattOp], which waits for its callback.
@@ -87,15 +88,21 @@ class OmiLink(
     override val ready: StateFlow<Boolean> = _ready.asStateFlow()
     private val _details = MutableStateFlow<OmiDetails?>(null)
 
-    /** What the pendant reports about itself; null until it has linked once in this process. */
+    /** What the pendant reports about itself; null until the details are first read ([refreshDetails]). */
     val details: StateFlow<OmiDetails?> = _details.asStateFlow()
     private var linkMtu: Int? = null
     private val _buttons = MutableSharedFlow<OmiButton>(extraBufferCapacity = 8)
     val buttons: SharedFlow<OmiButton> = _buttons.asSharedFlow()
 
     private val ops = Mutex()
-    private var pendingOp: CompletableDeferred<Pair<Int, ByteArray?>>? = null
-    private var gatt: BluetoothGatt? = null
+
+    /** The operation in flight and the callback that may complete it. */
+    private class PendingOp(val kind: OpKind, val uuid: UUID?, val done: CompletableDeferred<Pair<Int, ByteArray?>>)
+
+    private enum class OpKind { MTU, DISCOVER, READ, WRITE, DESCRIPTOR, RSSI }
+
+    @Volatile private var pendingOp: PendingOp? = null
+    @Volatile private var gatt: BluetoothGatt? = null
     private var setup: Job? = null
     @Volatile private var wanted = false
     @Volatile private var sink: WearableAudio.FrameSink? = null
@@ -130,7 +137,7 @@ class OmiLink(
             context,
             bondReceiver,
             IntentFilter(BluetoothDevice.ACTION_BOND_STATE_CHANGED),
-            ContextCompat.RECEIVER_EXPORTED,
+            ContextCompat.RECEIVER_NOT_EXPORTED,
         )
     }
 
@@ -165,7 +172,8 @@ class OmiLink(
     fun disconnect() {
         wanted = false
         setup?.cancel()
-        sink?.let { s -> sink = null; s.onLinkLost() }
+        _ready.value = false
+        takeSink()?.onLinkLost()
         gatt?.let { g ->
             runCatching { g.disconnect() }
             runCatching { g.close() }
@@ -196,19 +204,30 @@ class OmiLink(
     }
 
     override fun startStreaming(sink: WearableAudio.FrameSink): Boolean {
-        if (!_ready.value) return false
-        assembler.reset()
-        this.sink = sink
+        // Under the lock the link-drop callback takes, so a drop either refuses the start or reports to this sink.
+        synchronized(this) {
+            if (!_ready.value) return false
+            synchronized(assembler) { assembler.reset() }
+            this.sink = sink
+        }
         commands.trySend {
             if (canMute) write(OmiProtocol.SETTINGS_SERVICE, OmiProtocol.CAPTURE_MUTE, OmiProtocol.mute(false))
-            notify(OmiProtocol.AUDIO_SERVICE, OmiProtocol.AUDIO_DATA, true)
+            if (!notify(OmiProtocol.AUDIO_SERVICE, OmiProtocol.AUDIO_DATA, true)) {
+                Log.w(TAG, "The pendant did not start sending audio; dropping the link to retry")
+                takeSink()?.onLinkLost()
+                gatt?.disconnect()
+                return@trySend
+            }
             gatt?.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_HIGH)
         }
         return true
     }
 
+    /** Detach the recorder's sink, if any, under the lock [startStreaming] takes. */
+    private fun takeSink(): WearableAudio.FrameSink? = synchronized(this) { sink.also { sink = null } }
+
     override fun stopStreaming() {
-        sink = null
+        takeSink()
         commands.trySend { quiet() }
     }
 
@@ -229,7 +248,7 @@ class OmiLink(
 
     private suspend fun readDetails() {
         val g = gatt ?: return
-        val rssi = gattOp { g.readRemoteRssi() }?.takeIf { it.first == BluetoothGatt.GATT_SUCCESS }?.second?.firstOrNull()?.toInt()
+        val rssi = gattOp(OpKind.RSSI) { g.readRemoteRssi() }?.takeIf { it.first == BluetoothGatt.GATT_SUCCESS }?.second?.firstOrNull()?.toInt()
         _details.value = OmiDetails(
             name = runCatching { g.device.name }.getOrNull(),
             address = g.device.address,
@@ -248,7 +267,7 @@ class OmiLink(
             canMute = canMute,
             features = OmiProtocol.features(read(OmiProtocol.FEATURES_SERVICE, OmiProtocol.FEATURES)),
             storage = OmiProtocol.storage(read(OmiProtocol.STORAGE_SERVICE, OmiProtocol.STORAGE_STATUS)),
-            framesLost = if (sink != null) assembler.lost else null,
+            framesLost = if (sink != null) synchronized(assembler) { assembler.lost } else null,
         )
     }
 
@@ -268,9 +287,9 @@ class OmiLink(
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                 Log.i(TAG, "Pendant link dropped (status $status)")
                 setup?.cancel()
-                pendingOp?.complete(-1 to null)
-                _ready.value = false
-                sink?.let { s -> sink = null; s.onLinkLost() }
+                pendingOp?.done?.complete(-1 to null)
+                synchronized(this@OmiLink) { _ready.value = false }
+                takeSink()?.onLinkLost()
                 if (!wanted) return
                 _status.value = OmiStatus.Disconnected
                 // Reconnect in the background whenever it comes back in range.
@@ -282,35 +301,35 @@ class OmiLink(
         }
 
         override fun onServicesDiscovered(g: BluetoothGatt, status: Int) {
-            pendingOp?.complete(status to null)
+            completeOp(OpKind.DISCOVER, null, status, null)
         }
 
         override fun onMtuChanged(g: BluetoothGatt, mtu: Int, status: Int) {
-            Log.i(TAG, "MTU $mtu")
+            Log.d(TAG, "MTU $mtu")
             linkMtu = mtu
-            pendingOp?.complete(status to null)
+            completeOp(OpKind.MTU, null, status, null)
         }
 
         @Deprecated("Below API 33")
         override fun onCharacteristicRead(g: BluetoothGatt, c: BluetoothGattCharacteristic, status: Int) {
             @Suppress("DEPRECATION")
-            pendingOp?.complete(status to c.value)
+            completeOp(OpKind.READ, c.uuid, status, c.value)
         }
 
         override fun onCharacteristicRead(g: BluetoothGatt, c: BluetoothGattCharacteristic, value: ByteArray, status: Int) {
-            pendingOp?.complete(status to value)
+            completeOp(OpKind.READ, c.uuid, status, value)
         }
 
         override fun onCharacteristicWrite(g: BluetoothGatt, c: BluetoothGattCharacteristic, status: Int) {
-            pendingOp?.complete(status to null)
+            completeOp(OpKind.WRITE, c.uuid, status, null)
         }
 
         override fun onReadRemoteRssi(g: BluetoothGatt, rssi: Int, status: Int) {
-            pendingOp?.complete(status to byteArrayOf(rssi.toByte()))
+            completeOp(OpKind.RSSI, null, status, byteArrayOf(rssi.toByte()))
         }
 
         override fun onDescriptorWrite(g: BluetoothGatt, d: BluetoothGattDescriptor, status: Int) {
-            pendingOp?.complete(status to null)
+            completeOp(OpKind.DESCRIPTOR, d.characteristic?.uuid, status, null)
         }
 
         @Deprecated("Below API 33")
@@ -326,7 +345,7 @@ class OmiLink(
 
     private fun changed(uuid: UUID, value: ByteArray) {
         when (uuid) {
-            OmiProtocol.AUDIO_DATA -> if (sink != null) assembler.accept(value)
+            OmiProtocol.AUDIO_DATA -> if (sink != null) synchronized(assembler) { assembler.accept(value) }
             OmiProtocol.BUTTON_EVENT -> OmiProtocol.buttonEvent(value)?.let {
                 Log.i(TAG, "Pendant button $it")
                 _buttons.tryEmit(it)
@@ -335,7 +354,6 @@ class OmiLink(
                 (_status.value as? OmiStatus.Ready)?.let { _status.value = it.copy(battery = level) }
                 _details.value = _details.value?.copy(battery = level)
             }
-            OmiProtocol.CHARGING -> OmiProtocol.byte(value)?.let { c -> _details.value = _details.value?.copy(charging = c == 1) }
         }
     }
 
@@ -351,13 +369,13 @@ class OmiLink(
             bondWait = null
             if (result != BluetoothDevice.BOND_BONDED) Log.w(TAG, "Pendant not bonded; the link is not encrypted")
         }
-        gattOp { g.requestMtu(OmiProtocol.MTU) }
-        if (gattOp { g.discoverServices() }?.first != BluetoothGatt.GATT_SUCCESS) {
+        gattOp(OpKind.MTU) { g.requestMtu(OmiProtocol.MTU) }
+        if (gattOp(OpKind.DISCOVER) { g.discoverServices() }?.first != BluetoothGatt.GATT_SUCCESS) {
             Log.w(TAG, "Service discovery failed; dropping the link to retry")
             g.disconnect()
             return
         }
-        Log.i(TAG, "Pendant services ${g.services.joinToString { it.uuid.toString().take(8) }}")
+        Log.d(TAG, "Pendant services ${g.services.joinToString { it.uuid.toString().take(8) }}")
         val codec = read(OmiProtocol.AUDIO_SERVICE, OmiProtocol.AUDIO_CODEC)?.firstOrNull()?.toInt()?.and(0xFF)
         if (codec == null) {
             // No answer is a struggling link, not a verdict on the firmware: drop it and try again.
@@ -384,13 +402,13 @@ class OmiLink(
         if (!canMute) Log.i(TAG, "This firmware cannot mute the pendant's microphone")
         quiet()
         _status.value = OmiStatus.Ready(battery, encrypted = device.bondState == BluetoothDevice.BOND_BONDED, canMute = canMute)
-        _ready.value = true
+        synchronized(this) { _ready.value = true }
     }
 
     private suspend fun read(service: UUID, characteristic: UUID): ByteArray? {
         val g = gatt ?: return null
         val c = g.getService(service)?.getCharacteristic(characteristic) ?: return null
-        val result = gattOp { g.readCharacteristic(c) } ?: return null
+        val result = gattOp(OpKind.READ, characteristic) { g.readCharacteristic(c) } ?: return null
         return result.second.takeIf { result.first == BluetoothGatt.GATT_SUCCESS }
     }
 
@@ -401,7 +419,7 @@ class OmiLink(
             return false
         }
         val type = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
-        return gattOp {
+        return gattOp(OpKind.WRITE, characteristic) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 g.writeCharacteristic(c, value, type) == BluetoothGatt.GATT_SUCCESS
             } else {
@@ -420,7 +438,7 @@ class OmiLink(
         if (!g.setCharacteristicNotification(c, on)) return false
         val d = c.getDescriptor(OmiProtocol.CCC) ?: return false
         val value = if (on) BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE else BluetoothGattDescriptor.DISABLE_NOTIFICATION_VALUE
-        return gattOp {
+        return gattOp(OpKind.DESCRIPTOR, characteristic) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 g.writeDescriptor(d, value) == BluetoothGatt.GATT_SUCCESS
             } else {
@@ -432,9 +450,15 @@ class OmiLink(
         }?.first == BluetoothGatt.GATT_SUCCESS
     }
 
-    /** Start one GATT operation and wait for its callback; null when it could not start or timed out. */
-    private suspend fun gattOp(start: () -> Boolean): Pair<Int, ByteArray?>? = ops.withLock {
-        val done = CompletableDeferred<Pair<Int, ByteArray?>>().also { pendingOp = it }
+    /**
+     * Start one GATT operation and wait for its callback; null when it could not
+     * start or timed out. Only the callback of the same kind (and characteristic)
+     * completes it. A timeout leaves the stack's queue busy, so the link is
+     * dropped and reconnects clean.
+     */
+    private suspend fun gattOp(kind: OpKind, uuid: UUID? = null, start: () -> Boolean): Pair<Int, ByteArray?>? = ops.withLock {
+        val done = CompletableDeferred<Pair<Int, ByteArray?>>()
+        pendingOp = PendingOp(kind, uuid, done)
         try {
             val started = try {
                 start()
@@ -443,10 +467,20 @@ class OmiLink(
                 false
             }
             if (!started) return@withLock null
-            withTimeoutOrNull(OP_TIMEOUT_MS) { done.await() }
+            withTimeoutOrNull(OP_TIMEOUT_MS) { done.await() }.also {
+                if (it == null) {
+                    Log.w(TAG, "The pendant did not answer a $kind; dropping the link to retry")
+                    gatt?.disconnect()
+                }
+            }
         } finally {
             pendingOp = null
         }
+    }
+
+    private fun completeOp(kind: OpKind, uuid: UUID?, status: Int, value: ByteArray?) {
+        val op = pendingOp ?: return
+        if (op.kind == kind && (op.uuid == null || op.uuid == uuid)) op.done.complete(status to value)
     }
 
     private fun deviceExtra(intent: Intent): BluetoothDevice? =

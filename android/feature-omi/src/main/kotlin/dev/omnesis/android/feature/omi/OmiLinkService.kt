@@ -57,7 +57,16 @@ class OmiLinkService : Service() {
         link = deps.omiLink()
         val policy = OmiButtonPolicy(
             recording = deps.recordingController().state,
-            startRecording = { RecordingForegroundService.start(this, title = null, input = RecordingInput.WEARABLE) },
+            startRecording = {
+                try {
+                    RecordingForegroundService.start(this, title = null, input = RecordingInput.WEARABLE)
+                    true
+                } catch (e: IllegalStateException) {
+                    // Not allowed from the background now (the association was removed in system settings).
+                    Log.w(TAG, "Could not start a recording from the pendant: ${e.message}")
+                    false
+                }
+            },
             stopRecording = { RecordingForegroundService.send(this, RecordingForegroundService.ACTION_STOP) },
             vibrate = link::vibrate,
             scope = scope,

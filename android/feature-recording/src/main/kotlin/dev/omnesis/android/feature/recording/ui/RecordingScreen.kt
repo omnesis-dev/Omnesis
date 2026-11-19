@@ -70,7 +70,7 @@ import dev.omnesis.android.feature.recording.RecordingState
 @Composable
 fun RecordingScreen(
     onOpenMenu: () -> Unit,
-    /** The linked wearable's own card (pairing, status), shown below the recorder. */
+    /** The wearable's status, supplied by the module that links it, shown below the recorder. */
     wearableCard: (@Composable () -> Unit)? = null,
     vm: RecordingViewModel = hiltViewModel(),
 ) {

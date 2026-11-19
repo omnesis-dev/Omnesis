@@ -133,6 +133,24 @@ class RecordingControllerTest {
         assertFalse((controller.state.value as RecordingState.Active).micLost)
     }
 
+    @Test fun aPauseTheUserMakesDuringALostInputBecomesTheirs() = runTest {
+        controller.begin("Standup")!!
+        controller.onPaused(micLost = true)
+        controller.onPaused()
+        assertFalse((controller.state.value as RecordingState.Active).micLost)
+    }
+
+    @Test fun aStretchTheInputSentNothingForKeepsItsLength() = runTest {
+        val active = controller.begin("Standup")!!
+        val gap = File(root, "gap.m4a").apply { writeBytes(ByteArray(0)) }
+        val failed = File(root, "failed.m4a").apply { writeBytes(ByteArray(0)) }
+        controller.chunkClosed(active.sessionId, RecordedChunk(0, now, 5_000, gap, interrupted = false, silence = true))
+        controller.chunkClosed(active.sessionId, RecordedChunk(1, now + 5_000, 4_000, failed, interrupted = false))
+        controller.flush()
+
+        assertEquals(listOf(5_000L to true, 0L to true), outbox.pendingChunks(active.sessionId).map { it.durationMs to it.silent })
+    }
+
     @Test fun tracksElapsedTimeAcrossAPause() = runTest {
         controller.begin(null)
         now += 30_000
