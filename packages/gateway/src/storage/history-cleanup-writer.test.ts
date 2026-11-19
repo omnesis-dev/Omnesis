@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "vitest";
 import { createLogger } from "@omnesis/core";
+import { omnesisConfigSchema } from "@omnesis/config";
 import { ProviderId, SourceId } from "@omnesis/types";
 import { createDatabase, openReadOnlyDatabase, upsertDocuments } from "../db.js";
 import { initializeGatewayIndex } from "../startup/storage.js";
@@ -111,7 +112,7 @@ test("a disabled-model pending conversation drains 130 chunks through the runtim
   try {
     await scheduler.start();
     const writes = writeGateFromScheduler(scheduler);
-    const config = { inference: { assignments: {} } };
+    const config = omnesisConfigSchema.parse({ inference: { assignments: {} } });
     const registry = new InferenceRegistry({
       modelsDir: join(root, "models"),
       configDir: root,
@@ -140,7 +141,7 @@ test("a disabled-model pending conversation drains 130 chunks through the runtim
       conversationStore: store,
       log: createLogger("test:history-agent"),
       wsEventHandler: { attachAgentService: () => {} },
-      deleteDocumentIndexBatch: (id, limit, sourceDeleted) =>
+      deleteDocumentIndexBatch: (id: string, limit: number, sourceDeleted: boolean) =>
         indexer.deleteDocumentIndexBatch(id, limit, sourceDeleted),
     } as unknown as AgentLifecycleDeps);
     cleanup = new HistoryCleanupService({
