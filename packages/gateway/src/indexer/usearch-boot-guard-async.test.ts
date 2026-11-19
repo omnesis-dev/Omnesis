@@ -133,6 +133,7 @@ describe("async graph validation", () => {
   it("kills and reaps its validator on cancellation before rejecting, leaving graph data untouched", async () => {
     const path = join(dir, "example.usearch");
     const pidPath = join(dir, "validator.pid");
+    const pendingPidPath = join(dir, "validator.pid.pending");
     writeFileSync(path, "example index bytes");
     const controller = new AbortController();
     const boot = quarantineCorruptUsearchAsync(
@@ -140,10 +141,12 @@ describe("async graph validation", () => {
       3,
       controller.signal,
       validator(`
-      import { writeFileSync } from 'node:fs';
-      writeFileSync(${JSON.stringify(pidPath)}, String(process.pid));
+      import { renameSync, writeFileSync } from 'node:fs';
       process.on('SIGTERM', () => {});
       setInterval(() => {}, 1000);
+      // Readiness must publish a complete PID, never an opened empty file (PID zero).
+      writeFileSync(${JSON.stringify(pendingPidPath)}, String(process.pid));
+      renameSync(${JSON.stringify(pendingPidPath)}, ${JSON.stringify(pidPath)});
     `),
     );
     const assertion = expect(boot).rejects.toMatchObject({ name: "AbortError" });
