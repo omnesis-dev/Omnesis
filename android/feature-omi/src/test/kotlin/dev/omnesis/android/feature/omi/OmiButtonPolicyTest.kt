@@ -18,10 +18,11 @@ import org.junit.Test
 class OmiButtonPolicyTest {
     private val state = MutableStateFlow<RecordingState>(RecordingState.Idle)
     private val calls = mutableListOf<String>()
+    private var startAllowed = true
 
     private fun TestScope.policy() = OmiButtonPolicy(
         recording = state,
-        startRecording = { calls += "start" },
+        startRecording = { calls += "start"; startAllowed },
         stopRecording = { calls += "stop" },
         vibrate = { calls += it.name },
         scope = backgroundScope,
@@ -39,6 +40,17 @@ class OmiButtonPolicyTest {
         state.value = active(RecordingInput.WEARABLE)
         runCurrent()
         assertEquals(listOf("start", "STARTED"), calls)
+    }
+
+    @Test fun aStartTheSystemRefusesGivesTheLongPulseAtOnce() = runTest {
+        startAllowed = false
+        val policy = policy()
+        policy.onButton(OmiButton.TAP)
+        assertEquals(listOf("start", "FAILED"), calls)
+        // And the next tap tries again.
+        startAllowed = true
+        policy.onButton(OmiButton.TAP)
+        assertEquals(listOf("start", "FAILED", "start"), calls)
     }
 
     @Test fun aStartThatNeverRunsGivesTheLongPulse() = runTest {

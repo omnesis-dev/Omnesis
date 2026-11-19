@@ -123,7 +123,7 @@ class OmiViewModel @Inject constructor(
     }
 }
 
-/** The pendant's place on the Recordings screen: associate it, see its state, forget it. */
+/** The pendant's card in Settings: associate it, see its state and details, forget it. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun OmiCard(vm: OmiViewModel = hiltViewModel()) {

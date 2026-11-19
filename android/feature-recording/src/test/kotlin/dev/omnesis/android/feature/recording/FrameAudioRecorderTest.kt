@@ -20,14 +20,20 @@ class FrameAudioRecorderTest {
     private val input = FakeWearable()
     /** Samples each chunk file received, by name. */
     private val written = mutableMapOf<String, Int>()
+    /** Chunk files whose encoder fails to open. */
+    private val unopenable = mutableSetOf<String>()
+    private var decoderAvailable = true
 
     private val recorder = FrameAudioRecorder(
         directory = dir,
         input = input,
         onChunk = { chunks += it },
         onInputLost = { inputLost++ },
-        decoders = { FakeDecoder() },
-        encoders = { file -> FakeEncoder(file) },
+        decoders = { check(decoderAvailable) { "no Opus decoder" }; FakeDecoder() },
+        encoders = { file ->
+            if (unopenable.remove(file.name)) throw java.io.IOException("cannot open ${file.name}")
+            FakeEncoder(file)
+        },
         worker = DirectExecutor(),
         postToMain = { it.run() },
     )
@@ -90,6 +96,7 @@ class FrameAudioRecorderTest {
         assertEquals(1_000L to 5_000L, chunks[1].startedAtMs to chunks[1].durationMs)
         assertEquals(0L, chunks[1].file.length())
         assertEquals(6_000L to 1_000L, chunks[2].startedAtMs to chunks[2].durationMs)
+        assertEquals(listOf(false, true, false), chunks.map { it.silence })
         assertEquals(3, recorder.chunksRecorded)
     }
 
@@ -121,6 +128,33 @@ class FrameAudioRecorderTest {
         assertEquals(1, chunks.size)
         assertEquals(0, inputLost)
         assertEquals(1, recorder.chunksRecorded)
+    }
+
+    @Test fun aChunkThatCannotBeOpenedLeavesNoHoleInTheNumbers() {
+        unopenable += "chunk-00000.m4a"
+        recorder.start()
+        frames(10, fromMs = 20)
+        recorder.stop()
+        // The first frame was lost with the file; the next one opened chunk 0.
+        assertEquals(listOf(0), chunks.map { it.seq })
+        assertEquals(1, recorder.chunksRecorded)
+    }
+
+    @Test fun aDecoderThatCannotStartRefusesTheStart() {
+        decoderAvailable = false
+        assertFalse(recorder.start())
+        assertFalse(input.streaming)
+        recorder.stop()
+        assertTrue(chunks.isEmpty())
+    }
+
+    @Test fun aLinkLostBetweenChunksMarksNothingInterrupted() {
+        recorder.start()
+        input.sink!!.onLinkLost() // nothing written yet
+        recorder.start()
+        frames(10, fromMs = 20)
+        recorder.stop()
+        assertFalse(chunks.single().interrupted)
     }
 
     @Test fun anInputThatIsNotReadyDoesNotStart() {

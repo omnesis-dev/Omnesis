@@ -22,6 +22,12 @@ data class RecordedChunk(
     val file: File,
     /** The microphone was taken from the recorder during the chunk. */
     val interrupted: Boolean,
+    /**
+     * A stretch the input sent nothing for (a wearable whose microphone slept):
+     * its empty file is filed as silent with its duration, where an empty file
+     * from a recorder that failed counts for no time.
+     */
+    val silence: Boolean = false,
 )
 
 /** Pure choices about the audio: kept separate so they are unit-testable. */

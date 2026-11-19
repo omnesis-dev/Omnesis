@@ -22,7 +22,8 @@ import kotlinx.coroutines.withTimeoutOrNull
  */
 class OmiButtonPolicy(
     private val recording: StateFlow<RecordingState>,
-    private val startRecording: () -> Unit,
+    /** False when the system refused to start the recording service. */
+    private val startRecording: () -> Boolean,
     private val stopRecording: () -> Unit,
     private val vibrate: (Haptic) -> Unit,
     private val scope: CoroutineScope,
@@ -38,7 +39,10 @@ class OmiButtonPolicy(
             vibrate(Haptic.STOPPED)
             return
         }
-        startRecording()
+        if (!startRecording()) {
+            vibrate(Haptic.FAILED)
+            return
+        }
         starting = scope.launch {
             val started = withTimeoutOrNull(startTimeoutMs) {
                 recording.first { it is RecordingState.Active && it.input == RecordingInput.WEARABLE }

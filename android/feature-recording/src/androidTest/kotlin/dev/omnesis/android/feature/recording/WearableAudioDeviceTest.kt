@@ -61,6 +61,7 @@ class WearableAudioDeviceTest {
         assertEquals(0L, file.length())
     }
 
+    /** The same invented sentence the JVM speech tests use (Piper, LJ Speech voice), 16 kHz mono 16-bit. */
     private fun speech(): ShortArray {
         val bytes = instrumentation.context.assets.open("vad/speech_16k.wav").use { it.readBytes() }
         val wav = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
@@ -116,7 +117,7 @@ class WearableAudioDeviceTest {
     }
 
     private companion object {
-        const val TAG = "OmnesisWearableAudio"
+        const val TAG = "Omnesis:WearableAudioTest"
         const val FRAME_SAMPLES = 320 // 20 ms at 16 kHz
     }
 }

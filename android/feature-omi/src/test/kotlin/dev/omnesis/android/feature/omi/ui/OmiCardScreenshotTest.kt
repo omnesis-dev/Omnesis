@@ -25,9 +25,10 @@ import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 
 /**
- * Render-review screenshots for the Omi card on the Recordings screen: not
- * linked, linking, connected (encrypted and not), out of reach, and firmware
- * the app cannot read, light + dark.
+ * Render-review screenshots for the Omi pendant: its Settings card (not
+ * linked, linking, connected with and without encryption or a capture mute,
+ * out of reach, firmware the app cannot read), the details panel and the
+ * one-line status on the Recordings screen, light + dark.
  *
  *   ./gradlew :feature-omi:recordRoborazziDebug   ->   feature-omi/src/test/roborazzi/
  */
