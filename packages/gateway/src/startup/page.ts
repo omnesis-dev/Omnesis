@@ -5,10 +5,45 @@ import { createHash } from "node:crypto";
 
 const STYLES = String.raw`
 :root{color-scheme:light dark;--bg:#f5f7fb;--surface:#fff;--ink:#182333;--muted:#5d6c7f;--line:#dde4ed;--accent:#1f6feb;--accent-soft:#eaf2ff;--good:#187452;--bad:#a13c35;--shadow:0 24px 90px #15294a0c}
-*{box-sizing:border-box}body{margin:0;min-height:100vh;background:var(--bg);color:var(--ink);font:15px/1.55 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;display:grid;place-items:center;padding:48px 22px}main{width:min(100%,680px)}header{text-align:center;margin-bottom:30px}.brand-mark{width:58px;height:58px;fill:var(--accent)}.wordmark{margin:12px 0 24px;font-size:11px;font-weight:650;letter-spacing:.2em;color:var(--muted)}h1{font-size:clamp(25px,4.5vw,34px);line-height:1.18;letter-spacing:-.035em;margin:0 0 14px}header p{max-width:470px;margin:0 auto;color:var(--muted);font-size:15px}.card{background:var(--surface);border:1px solid var(--line);border-radius:18px;box-shadow:var(--shadow);overflow:hidden}.status-head{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:21px 25px;border-bottom:1px solid var(--line)}.status-head strong{font-size:13px;font-weight:650}.clock{color:var(--muted);font:12px ui-monospace,SFMono-Regular,monospace;font-variant-numeric:tabular-nums;white-space:nowrap}ol{list-style:none;margin:0;padding:8px 25px}li{display:grid;grid-template-columns:25px minmax(0,1fr) auto;align-items:start;gap:13px;padding:15px 0;border-bottom:1px solid var(--line)}li:last-child{border-bottom:0}.step-symbol{width:21px;height:21px;border:1.5px solid var(--line);border-radius:50%;display:grid;place-items:center;font-size:12px;font-weight:700;line-height:1;color:var(--muted);margin-top:1px}.step-label{font-size:14px;font-weight:550}.step-detail{display:block;margin-top:4px;color:var(--muted);font-size:12px}.step-status{font-size:11px;color:var(--muted);text-align:right;margin-top:2px}.step-status small{display:block;margin-top:2px;font-size:11px}.step-status,.clock{font-variant-numeric:tabular-nums}li[data-state=running] .step-symbol{border-color:var(--accent);color:var(--accent);background:var(--accent-soft)}li[data-state=running] .step-symbol:before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor;animation:pulse 1.8s ease-in-out infinite}li[data-state=running] .step-label,li[data-state=running] .step-status{color:var(--accent)}li[data-state=succeeded] .step-symbol{border-color:var(--good);color:var(--good)}li[data-state=failed] .step-symbol{border-color:var(--bad);color:var(--bad)}li[data-state=failed] .step-status{color:var(--bad)}li[data-state=skipped],li[data-state=blocked]{opacity:.7}.summary{margin:0;padding:16px 25px;background:var(--accent-soft);border-top:1px solid var(--line);font-size:12px;color:var(--muted);min-height:52px}.footnote{text-align:center;color:var(--muted);font-size:12px;margin:20px 12px 0}.empty{margin:0;padding:21px 25px;color:var(--muted);font-size:13px}noscript p{text-align:center;color:var(--muted);font-size:13px}@keyframes pulse{50%{opacity:.35}}
+*{box-sizing:border-box}
+body{margin:0;height:100vh;height:100dvh;overflow:hidden;background:var(--bg);color:var(--ink);font:15px/1.5 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;display:flex;align-items:center;justify-content:center;padding:clamp(12px,3vh,32px) 22px}
+main{width:min(100%,640px);max-height:100%;min-height:0;display:flex;flex-direction:column;gap:20px}
+header{flex:none;text-align:center}
+.brand{display:flex;align-items:center;justify-content:center;margin:0 0 18px;font-size:28px;font-weight:700;line-height:1;letter-spacing:-.02em}
+.brand-mark{width:.83em;height:.83em;margin-right:.026em;flex:none;fill:currentColor}
+.wordmark{font:inherit}
+h1{font-size:clamp(24px,4.5vw,30px);line-height:1.18;letter-spacing:-.035em;margin:0 0 8px}
+header p{margin:0 auto;color:var(--muted);font-size:14px}
+.card{min-height:0;display:flex;flex-direction:column;background:var(--surface);border:1px solid var(--line);border-radius:18px;box-shadow:var(--shadow);overflow:hidden}
+.status-head{flex:none;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 20px;border-bottom:1px solid var(--line)}
+.status-head strong{font-size:12px;font-weight:650}
+.clock{color:var(--muted);font:12px ui-monospace,SFMono-Regular,monospace;white-space:nowrap}
+ol{min-height:0;overflow-y:auto;overscroll-behavior:contain;scrollbar-gutter:stable;scrollbar-width:thin;scrollbar-color:var(--muted) transparent;list-style:none;margin:0;padding:3px 20px}
+ol:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+li{display:grid;grid-template-columns:20px minmax(0,1fr) auto;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--line);line-height:1.4}
+li:last-child{border-bottom:0}
+.step-symbol{width:19px;height:19px;border:1.5px solid var(--line);border-radius:50%;display:grid;place-items:center;font-size:11px;font-weight:700;line-height:1;color:var(--muted)}
+.step-label{font-size:14px;font-weight:550}
+.step-detail{display:block;margin-top:3px;color:var(--muted);font-size:12px}
+.step-status{display:inline-flex;align-items:baseline;justify-content:flex-end;gap:7px;white-space:nowrap;font-size:11px;color:var(--muted);text-align:right}
+.step-status small{font:inherit;color:var(--muted)}
+.step-status,.clock{font-variant-numeric:tabular-nums}
+li[data-state=running] .step-symbol{border-color:var(--accent);color:var(--accent);background:var(--accent-soft)}
+li[data-state=running] .step-symbol:before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor;animation:pulse 1.8s ease-in-out infinite}
+li[data-state=running] .step-label,li[data-state=running] .step-status{color:var(--accent)}
+li[data-state=succeeded] .step-symbol{border-color:var(--good);color:var(--good)}
+li[data-state=failed] .step-symbol{border-color:var(--bad);color:var(--bad)}
+li[data-state=failed] .step-status{color:var(--bad)}
+li[data-state=skipped],li[data-state=blocked]{opacity:.7}
+.summary{flex:none;margin:0;padding:12px 20px;background:var(--accent-soft);border-top:1px solid var(--line);font-size:12px;color:var(--muted)}
+[hidden]{display:none!important}
+noscript p{text-align:center;color:var(--muted);font-size:13px;margin:0}
+@keyframes pulse{50%{opacity:.35}}
 @media(prefers-color-scheme:dark){:root{--bg:#0d1117;--surface:#151b23;--ink:#e6edf3;--muted:#96a4b5;--line:#2b3543;--accent:#58a6ff;--accent-soft:#17283d;--good:#6fc9a0;--bad:#f48b83;--shadow:0 24px 90px #0003}}
 @media(prefers-reduced-motion:reduce){li[data-state=running] .step-symbol:before{animation:none}}
-@media(max-width:480px){body{padding:30px 15px}.status-head{padding:17px 18px}ol{padding:5px 18px}li{gap:9px;grid-template-columns:21px minmax(0,1fr) 73px;padding:13px 0}.step-label{font-size:13px}.step-status{font-size:10px}.summary{padding:15px 18px}.card{border-radius:14px}.brand-mark{width:48px;height:48px}.wordmark{margin-bottom:20px}}
+@media(max-width:480px){body{padding:16px 14px}main{gap:16px}.brand{font-size:26px;margin-bottom:14px}.status-head{padding:12px 16px}ol{padding:3px 16px}li{gap:8px;grid-template-columns:19px minmax(0,1fr) auto;padding:8px 0}.step-label{font-size:13px}.step-status{font-size:10px;gap:6px}.summary{padding:10px 16px}.card{border-radius:14px}}
+@media(max-height:500px){body{padding:12px 14px}main{gap:12px}.brand{margin-bottom:10px;font-size:24px}h1{font-size:24px}.status-head{padding-top:10px;padding-bottom:10px}}
+@media(max-height:320px){body{padding:8px 12px}main{gap:8px}.brand{font-size:20px;margin-bottom:8px}h1{font-size:20px;margin:0}header p{display:none}.status-head{padding:8px 12px}}
 `;
 
 const SCRIPT = String.raw`
@@ -72,7 +107,12 @@ const SCRIPT = String.raw`
     return Math.floor(seconds / 60) + "m " + (seconds % 60) + "s";
   }
 
+  function updateText(element, value) {
+    if (element.textContent !== value) element.textContent = value;
+  }
+
   function render() {
+    const scrollTop = list.scrollTop;
     list.replaceChildren();
     let next = false;
     for (const step of snapshot.steps) {
@@ -86,7 +126,7 @@ const SCRIPT = String.raw`
       const label = document.createElement("span");
       label.className = "step-label";
       label.textContent = step.label;
-      if (step.progress && step.state === "running") {
+      if (step.progress && step.progress.total > 0 && step.state === "running") {
         const detail = document.createElement("span");
         detail.className = "step-detail";
         detail.textContent = step.progress.completed + " of " + step.progress.total + " migrations committed";
@@ -110,27 +150,30 @@ const SCRIPT = String.raw`
       row.append(symbol, label, status);
       list.append(row);
     }
+    list.scrollTop = scrollTop;
     clock.textContent = duration(Date.now() - snapshot.startedAt) + " elapsed";
+    summary.hidden = false;
     if (snapshot.state === "failed") {
       title.textContent = "Your gateway could not start";
-      subtitle.textContent = "A required startup step failed. Check the gateway’s service logs for details.";
-      phase.textContent = "Startup needs attention";
-      summary.textContent = "The gateway may restart automatically. This page will reconnect when it is available.";
+      subtitle.textContent = "Check the gateway’s service logs for details.";
+      updateText(phase, "Startup needs attention");
+      updateText(summary, "This page will reconnect if the gateway restarts.");
     } else if (snapshot.state === "stopping") {
       title.textContent = "Your gateway is stopping";
-      subtitle.textContent = "The gateway is closing its services safely. Waiting to reconnect.";
-      phase.textContent = "Stopping services";
-      summary.textContent = "Your destination is preserved. This page will continue when the gateway returns.";
+      subtitle.textContent = "Closing services safely.";
+      updateText(phase, "Stopping services");
+      updateText(summary, "Waiting for the gateway to return.");
     } else if (snapshot.state === "ready") {
-      phase.textContent = "Ready";
-      summary.textContent = "Your gateway is ready. Opening your page…";
+      updateText(phase, "Ready");
+      updateText(summary, "Opening your page…");
     } else {
-      title.textContent = "Your Omnesis gateway is starting up";
-      subtitle.textContent = "Getting everything ready. Your page will open automatically when it is available.";
+      title.textContent = "Your gateway is starting up";
+      subtitle.textContent = "Your page will open automatically when ready.";
       const running = snapshot.steps.filter(step => step.state === "running");
-      phase.textContent = running.length ? running[0].label : "Preparing your gateway";
-      summary.textContent = running.length > 1 ? running.length + " steps are running in parallel. Remaining time depends on the work in each step." :
-        "Your page will open as soon as its required services are ready.";
+      const completed = snapshot.steps.filter(step => step.state === "succeeded" || step.state === "skipped").length;
+      updateText(phase, completed + " of " + snapshot.steps.length + " steps complete");
+      summary.hidden = running.length < 2;
+      updateText(summary, running.length > 1 ? running.length + " steps are running in parallel." : "");
     }
   }
 
@@ -157,9 +200,10 @@ const SCRIPT = String.raw`
       }
     } catch {
       if (!stopped && generation === lifecycle) {
-        phase.textContent = "Reconnecting to your gateway";
-        summary.textContent = snapshot ? "Showing the last confirmed startup state. Waiting for a fresh update…" :
-          "Waiting for the gateway’s startup progress. This page will reconnect automatically.";
+        updateText(phase, "Reconnecting to your gateway");
+        summary.hidden = false;
+        updateText(summary, snapshot ? "Showing the last confirmed startup state. Waiting for a fresh update…" :
+          "Waiting for the gateway’s startup progress. This page will reconnect automatically.");
       }
     } finally {
       clearTimeout(timeout);
@@ -194,9 +238,9 @@ const LOGO =
 export function renderStartupPage(): string {
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><meta name="referrer" content="no-referrer"><title>Starting up · Omnesis</title><style>${STYLES}</style></head>
-<body><main><header>${LOGO}<div class="wordmark">OMNESIS</div><h1 id="startup-title">Your Omnesis gateway is starting up</h1><p id="startup-subtitle">Getting everything ready. Your page will open automatically when it is available.</p></header>
-<section class="card" aria-label="Gateway startup progress"><div class="status-head"><strong id="startup-phase">Connecting to your gateway</strong><span class="clock" id="startup-clock"></span></div><ol id="startup-steps" aria-label="Startup steps"></ol><p id="startup-summary" class="summary" role="status">Waiting for the first startup update…</p></section>
-<p class="footnote">You can leave this page open. Your destination will be preserved.</p><noscript><p>Enable JavaScript to see live startup progress, then refresh to open your page.</p></noscript></main><script>${SCRIPT}</script></body></html>`;
+<body><main><header><div class="brand" role="img" aria-label="Omnesis">${LOGO}<span class="wordmark" aria-hidden="true">MNESIS</span></div><h1 id="startup-title">Your gateway is starting up</h1><p id="startup-subtitle">Your page will open automatically when ready.</p></header>
+<section class="card" aria-label="Gateway startup progress"><div class="status-head"><strong id="startup-phase" aria-live="polite" aria-atomic="true">Startup progress</strong><span class="clock" id="startup-clock"></span></div><ol id="startup-steps" aria-label="Startup steps" tabindex="0"></ol><p id="startup-summary" class="summary" role="status">Connecting to your gateway…</p></section>
+<noscript><p>Enable JavaScript to see live startup progress, then refresh to open your page.</p></noscript></main><script>${SCRIPT}</script></body></html>`;
 }
 
 /** Exact hashes permit the embedded script/style without allowing arbitrary inline code. */
