@@ -31,15 +31,11 @@ class PairingPayloadTest {
     }
 
     @Test
-    fun strict_trust_modes_are_unknown_unless_cloud_connectivity_is_enabled() {
+    fun strict_trust_modes_decode() {
         val key = """{"v":4,"gatewayUrl":"https://gateway.example.com","pairingCode":"AB-CD","tls":{"mode":"pinned-key-strict","spkiFingerprint":"${"c".repeat(64)}"}}"""
         val leaf = """{"v":4,"gatewayUrl":"https://gateway.example.com","pairingCode":"AB-CD","tls":{"mode":"pinned-leaf-strict","fingerprint":"${"d".repeat(64)}"}}"""
-        for (payload in listOf(key, leaf)) {
-            val error = assertThrows(PairingPayloadException::class.java) { PairingPayload.decode(payload) }
-            assertEquals("invalid TLS trust mode", error.message)
-        }
-        assertEquals(PairingPayload.V4Tls.PinnedKeyStrict("c".repeat(64)), (PairingPayload.decode(key, cloudRelay = true) as PairingPayload.V4).tls)
-        assertEquals(PairingPayload.V4Tls.PinnedLeafStrict("d".repeat(64)), (PairingPayload.decode(leaf, cloudRelay = true) as PairingPayload.V4).tls)
+        assertEquals(PairingPayload.V4Tls.PinnedKeyStrict("c".repeat(64)), (PairingPayload.decode(key) as PairingPayload.V4).tls)
+        assertEquals(PairingPayload.V4Tls.PinnedLeafStrict("d".repeat(64)), (PairingPayload.decode(leaf) as PairingPayload.V4).tls)
     }
 
     @Test

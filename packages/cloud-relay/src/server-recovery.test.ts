@@ -241,7 +241,6 @@ test("fresh dual-key proof cannot use another owner's receipt, a wrong hostname 
 });
 
 test("SNI routing rechecks untrusted receipt rows before any application bytes enter a live gateway", async () => {
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
   const f = await setup();
   const response = await f.complete(f.receipt());
   expect(response.status).toBe(200);

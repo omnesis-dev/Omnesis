@@ -32,7 +32,6 @@ struct PairingView: View {
     @State private var isPairing = false
     @State private var showingPasteJSON = false
     @State private var manualJSON = ""
-    @State private var showingGoogleSignIn = false
     @State private var showingScanner = false
     /// Decoded payload waiting for user confirmation. We show a sheet
     /// with host + fingerprint and require an explicit "Pair" tap
@@ -43,17 +42,18 @@ struct PairingView: View {
     /// kept so "Try again" pairs with exactly the same code.
     @State private var tailnetRetry: TailnetPairingRetry?
     @Environment(\.openURL) private var openURL
-    private let googleConfiguration: GoogleCloudPairingConfiguration?
     private let accountConfiguration: AccountCloudPairingConfiguration?
+    /// The sign-in coordinator a scripted UI-test scene supplies; nil builds the real one.
+    private let accountModel: AccountCloudPairingCoordinator?
 
     init(
         initialGatewayURL: URL? = nil,
-        googleConfiguration: GoogleCloudPairingConfiguration? = .configured(),
-        accountConfiguration: AccountCloudPairingConfiguration? = .configured()
+        accountConfiguration: AccountCloudPairingConfiguration? = .configured(),
+        accountModel: AccountCloudPairingCoordinator? = nil
     ) {
         _manualGatewayUrl = State(initialValue: initialGatewayURL?.absoluteString ?? "")
-        self.googleConfiguration = googleConfiguration
         self.accountConfiguration = accountConfiguration
+        self.accountModel = accountModel
     }
 
     var body: some View {
@@ -72,6 +72,7 @@ struct PairingView: View {
         presentations(
             AccountCloudPairingView(
                 configuration: configuration,
+                model: accountModel,
                 onScan: { showingScanner = true },
                 onManual: { showingManualEntry = true }
             )
@@ -89,11 +90,6 @@ struct PairingView: View {
                 Text("Pairing…").foregroundStyle(.white).font(.headline)
             }
         }
-    }
-
-    /// The Google-only sign-in of a build without an Omnesis account configuration.
-    private var legacyGoogle: GoogleCloudPairingConfiguration? {
-        accountConfiguration == nil ? googleConfiguration : nil
     }
 
     /// `pushed` is the scanner opened from the account entry. Cancel and the sign-in choices stay on that entry.
@@ -120,16 +116,6 @@ struct PairingView: View {
             }
             ToolbarItem(placement: .primaryAction) {
                 Menu {
-                    if legacyGoogle != nil {
-                        Button { showingGoogleSignIn = true } label: {
-                            Label {
-                                Text("Sign in with Google")
-                            } icon: {
-                                Image("GoogleSignInMark").renderingMode(.original)
-                            }
-                        }
-                        .accessibilityIdentifier("pairing.google.menuSignIn")
-                    }
                     Button("Enter code manually") { showingManualEntry = true }
                     Button("Paste JSON") { showingPasteJSON = true }
                 } label: {
@@ -145,11 +131,6 @@ struct PairingView: View {
         content
             .sheet(isPresented: $showingManualEntry) {
                 manualEntrySheet
-            }
-            .sheet(isPresented: $showingGoogleSignIn) {
-                if let configuration = legacyGoogle {
-                    GoogleCloudPairingView(configuration: configuration)
-                }
             }
             .sheet(isPresented: $showingPasteJSON) {
                 pasteJSONSheet
@@ -199,10 +180,6 @@ struct PairingView: View {
                 .font(.footnote.bold().monospaced())
             Text("Then scan the QR code shown in the terminal.")
                 .font(.footnote)
-            if legacyGoogle != nil {
-                GoogleSignInButton { showingGoogleSignIn = true }
-                    .accessibilityIdentifier("pairing.google.open")
-            }
         }
         .padding()
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
@@ -407,39 +384,24 @@ struct PairingManualEntryView: View {
 
 /// Confirmation sheet shown between "decoded a payload" and "exchange
 /// the code". Displays the host and explicit TLS trust policy before any
-/// network call. Legacy V1/V2 payloads get a warning row.
+/// network call. Legacy V1/V2 payloads get a warning row. It scrolls, so the
+/// full public key fingerprint fits at any text size.
 @available(iOS 17.0, *)
 struct PairingConfirmationSheet: View {
     let payload: PairingPayload
     let isPairing: Bool
     let onCancel: () -> Void
     let onConfirm: () -> Void
-    /// The scrolling layout fits the longer key text a cloud build can show.
-    var cloudRelayEnabled = CloudRelayFeature.enabled
 
     var body: some View {
         NavigationStack {
-            Group {
-                if cloudRelayEnabled {
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: Theme.Spacing.lg) {
-                            summary
-                            actions
-                        }
-                        .padding(Theme.Spacing.lg)
-                        .frame(maxWidth: .infinity, alignment: .topLeading)
-                    }
-                } else {
-                    VStack(alignment: .leading, spacing: Theme.Spacing.lg) {
-                        summary
-
-                        Spacer()
-
-                        actions
-                    }
-                    .padding(Theme.Spacing.lg)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            ScrollView {
+                VStack(alignment: .leading, spacing: Theme.Spacing.lg) {
+                    summary
+                    actions
                 }
+                .padding(Theme.Spacing.lg)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
             }
             .background(Theme.bgPrimary.ignoresSafeArea())
             .navigationBarTitleDisplayMode(.inline)
@@ -541,19 +503,11 @@ struct PairingConfirmationSheet: View {
                         Text("The gateway keeps this key when its HTTPS certificate renews.").font(.caption)
                             .foregroundStyle(Theme.textSecondary)
                     }
-                    if cloudRelayEnabled {
-                        Text(formatted)
-                            .font(.system(.footnote, design: .monospaced))
-                            .foregroundStyle(Theme.textPrimary)
-                            .textSelection(.enabled)
-                            .fixedSize(horizontal: false, vertical: true)
-                    } else {
-                        Text(formatted)
-                            .font(Theme.monospace(size: 12))
-                            .foregroundStyle(Theme.textPrimary)
-                            .textSelection(.enabled)
-                            .lineLimit(4)
-                    }
+                    Text(formatted)
+                        .font(.system(.footnote, design: .monospaced))
+                        .foregroundStyle(Theme.textPrimary)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
                 } else {
                     Text(legacyUsesHTTPS ? "System-trusted HTTPS (legacy)" : "Unencrypted (legacy payload)")
                         .font(.subheadline.bold())
@@ -660,7 +614,7 @@ struct PairingConfirmationSheet: View {
 #if DEBUG
 @available(iOS 17.0, *)
 #Preview("Pairing") {
-    PairingView(googleConfiguration: PreviewMocks.googleCloudPairingConfiguration)
+    PairingView(accountConfiguration: nil)
         .environment(AppStore.preview())
 }
 
@@ -700,28 +654,6 @@ struct PairingConfirmationSheet: View {
         isPairing: false,
         onCancel: {},
         onConfirm: {}
-    )
-}
-
-@available(iOS 17.0, *)
-#Preview("Confirmation — V3 (pinned), cloud build") {
-    PairingConfirmationSheet(
-        payload: .v3(PreviewMocks.pairingPayloadV3),
-        isPairing: false,
-        onCancel: {},
-        onConfirm: {},
-        cloudRelayEnabled: true
-    )
-}
-
-@available(iOS 17.0, *)
-#Preview("Confirmation — V3 (pinned), default build") {
-    PairingConfirmationSheet(
-        payload: .v3(PreviewMocks.pairingPayloadV3),
-        isPairing: false,
-        onCancel: {},
-        onConfirm: {},
-        cloudRelayEnabled: false
     )
 }
 

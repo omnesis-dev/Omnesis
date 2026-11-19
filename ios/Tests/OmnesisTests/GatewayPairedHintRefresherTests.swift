@@ -23,7 +23,7 @@ final class GatewayPairedHintRefresherTests: XCTestCase {
         let store = InMemoryStore()
         let bundle = PairingCredentialBundle(pairing, url: pairing.url, tlsMode: pairing.tlsMode, fingerprint: pairing.fingerprint)
         try store.set(bundle.encoded(), forKey: PairingCredentialBundle.key)
-        return PairingService(store: store, cloudRelayEnabled: true)
+        return PairingService(store: store)
     }
 
     func testInitialEmptyHintsAcquireAndClearFactsWithoutChangingAuthority() async throws {

@@ -6,25 +6,21 @@ import Observation
 
 #if canImport(AuthenticationServices)
 
+/// Signing in to the cloud account: the relay this build talks to, and Google when the build
+/// carries a valid client ID with its callback scheme. Passkeys need only the relay.
 struct AccountCloudPairingConfiguration: Sendable {
     let relayOrigin: URL
     let google: GoogleCloudPairingConfiguration?
-    let passkeysEnabled: Bool
     var checksPublicCertificate = true
 
     static func configured(bundle: Bundle = .main) -> AccountCloudPairingConfiguration? {
-        guard bundle.object(forInfoDictionaryKey: "OmnesisCloudRelayEnabled") as? String == "1",
-              let value = bundle.object(forInfoDictionaryKey: "OmnesisCloudRelayURL") as? String,
+        guard let value = bundle.object(forInfoDictionaryKey: "OmnesisCloudRelayURL") as? String,
               let parts = URLComponents(string: value), parts.scheme == "https", parts.host != nil,
               parts.user == nil, parts.password == nil, parts.query == nil, parts.fragment == nil,
               ["", "/"].contains(parts.path), parts.port == nil || parts.port == 443, let origin = parts.url else { return nil }
-        let google = GoogleCloudPairingConfiguration.configured(bundle: bundle)
-        let passkeysEnabled = bundle.object(forInfoDictionaryKey: "OmnesisCloudRelayPasskeysEnabled") as? String == "1"
-        guard google != nil || passkeysEnabled else { return nil }
         return AccountCloudPairingConfiguration(
             relayOrigin: origin,
-            google: google,
-            passkeysEnabled: passkeysEnabled,
+            google: GoogleCloudPairingConfiguration.configured(bundle: bundle),
             checksPublicCertificate: checksPublicCertificate(bundle: bundle)
         )
     }
@@ -169,8 +165,7 @@ extension AccountCloudPairingClient: AccountPairingSession {}
                     phase = .finding
                     choices = try await client.google(idToken: idToken)
                 case .passkey:
-                    guard configuration.passkeysEnabled,
-                          let rpId = configuration.relayOrigin.host else { throw CloudPairingError.configuration }
+                    guard let rpId = configuration.relayOrigin.host else { throw CloudPairingError.configuration }
                     let options = try await client.passkeyOptions()
                     try checkCurrent(operation)
                     let assertion = try await passkeyProvider.assertion(options: options.options, rpId: rpId)

@@ -73,7 +73,6 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
-import dev.omnesis.android.BuildConfig
 import dev.omnesis.android.designsystem.components.LoadingView
 import dev.omnesis.android.designsystem.components.OmSpinner
 import dev.omnesis.android.designsystem.components.OmnesisCard
@@ -138,8 +137,7 @@ class CloudAccountViewModel @Inject constructor(
     val state = controller.state
     private var polling: Job? = null
 
-    /** Never read from the gateway unless the build enables cloud connectivity. */
-    private fun client(): CloudRelayManaging? = session.session?.takeIf { BuildConfig.CLOUD_RELAY_ENABLED }?.admin
+    private fun client(): CloudRelayManaging? = session.session?.admin
 
     /**
      * Re-reads the status for as long as the screen is in front. A sign-in finishes on the

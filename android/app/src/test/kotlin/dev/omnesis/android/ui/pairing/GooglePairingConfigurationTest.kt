@@ -3,21 +3,25 @@
 
 package dev.omnesis.android.ui.pairing
 
+import dev.omnesis.android.BuildConfig
+import java.net.URI
 import org.junit.Assert.*
 import org.junit.Test
 
 class GooglePairingConfigurationTest {
-    @Test fun `Google pairing stays optional and requires both platform registrations and a fixed HTTPS origin`() {
+    @Test fun `Google sign-in requires both platform registrations`() {
         val id = "synthetic.apps.googleusercontent.com"
-        for (origin in listOf("https://relay.example.com", "https://relay.example.com/", "https://relay.example.com:8443"))
-            assertTrue(googlePairingConfigured(id, id, origin, enabled = true))
-        for (origin in listOf("", "not a URL", "https:/", "http://relay.example.com", "https://relay.example.com/path",
-            "https://user@relay.example.com", "https://relay.example.com?query", "https://relay.example.com#fragment",
-            "https://relay.example.com:0", "https://relay.example.com:65536"))
-            assertFalse(origin, googlePairingConfigured(id, id, origin, enabled = true))
-        assertFalse(googlePairingConfigured("", id, "https://relay.example.com", enabled = true))
-        assertFalse(googlePairingConfigured(id, "", "https://relay.example.com", enabled = true))
-        assertFalse(googlePairingConfigured(id, id, "https://relay.example.com", enabled = false))
-        assertEquals(googlePairingConfigured(), PairingViewModel.State().googleAvailable)
+        assertTrue(googlePairingConfigured(id, id))
+        assertFalse(googlePairingConfigured("", id))
+        assertFalse(googlePairingConfigured(id, ""))
+        assertFalse(googlePairingConfigured("synthetic.example.com", id))
+    }
+
+    @Test fun `every build names an https relay origin`() {
+        val relay = URI(BuildConfig.CLOUD_RELAY_URL)
+        assertEquals("https", relay.scheme)
+        assertFalse(relay.host.isNullOrEmpty())
+        assertTrue(relay.path in listOf("", "/"))
+        assertNull(relay.query)
     }
 }

@@ -43,7 +43,6 @@ test.each(["control", "data"])(
             env: {
               PATH: process.env.PATH,
               SystemRoot: process.env.SystemRoot,
-              OMNESIS_CLOUD_RELAY_ENABLED: "1",
               OMNESIS_CLOUD_RELAY_BIND: "127.0.0.1",
               OMNESIS_CLOUD_RELAY_KEY_FILE: keyFile,
               OMNESIS_CLOUD_RELAY_DB: join(directory, "accounts.sqlite"),

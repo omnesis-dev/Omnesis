@@ -37,17 +37,13 @@ const OFF = {
 };
 
 /**
- * The gateway under test runs without the flag. The portal is shown what an
- * opted-in gateway connected to an account reports: the feature on `/status`,
- * the relay's status, and the addresses it authorizes. `lead` replaces the
+ * The gateway under test is not connected to an account. The portal is shown
+ * what a gateway connected to an account reports: the relay's status, and the
+ * addresses it authorizes. `lead` replaces the
  * localhost address the test gateway leads with; `"keep"` lists the relay
  * address beside it.
  */
 async function connectedGateway(page: Page, relay: Record<string, unknown>, lead: string) {
-  await page.route("**/status", async (route) => {
-    const response = await route.fetch();
-    await route.fulfill({ response, json: { ...(await response.json()), cloudRelay: true } });
-  });
   await page.route("**/admin/cloud-relay", async (route) => {
     await route.fulfill({
       json: {
@@ -101,12 +97,14 @@ const addressSelect = (page: Page) => page.locator("select#access-mcp-address");
 const agentCard = (page: Page, id: string) => page.locator(`button[data-agent='${id}']`);
 const commands = (page: Page) => page.locator(".access-agent-steps .access-agent-command code");
 
-test("without the cloud relay there is one address and a hosted app is told to publish the gateway, as before", async ({
+test("a gateway with no relay has one address, and a hosted app is told to publish the gateway", async ({
   page,
 }) => {
-  let relayReads = 0;
+  const relayQuestions: string[] = [];
   page.on("request", (request) => {
-    if (new URL(request.url()).pathname.startsWith("/admin/cloud-relay")) relayReads += 1;
+    const url = new URL(request.url());
+    if (url.pathname.startsWith("/admin/cloud-relay") && url.searchParams.has("signup"))
+      relayQuestions.push(url.href);
   });
   await openConnectDialog(page);
   await expect(page.locator("#access-mcp-address")).toHaveCount(0);
@@ -124,7 +122,8 @@ test("without the cloud relay there is one address and a hosted app is told to p
   await expect(dialog).not.toContainText("Omnesis account");
   await expect(dialog).not.toContainText("Omnesis address");
   await expect(dialog).not.toContainText("Settings, Account");
-  expect(relayReads).toBe(0);
+  // Reading the gateway's own account state asks the relay nothing.
+  expect(relayQuestions).toEqual([]);
 });
 
 test("the owner's public address and a ready relay address: a drop-down that starts on the owner's and drives the setup", async ({

@@ -916,7 +916,6 @@ export function DeviceCard({
   onRevokeToken,
   accessOverview,
   onSetDeviceLevel,
-  cloudRelay = false,
 }) {
   const d = device;
   const hostname = d.capabilities?.hostname;
@@ -931,8 +930,8 @@ export function DeviceCard({
     d.kind === "ios" || d.kind === "android"
       ? `Notifications: ${notificationTransportLabel(d)}`
       : null;
-  // How a device joined exists only with the optional cloud relay switched on.
-  const joined = cloudRelay ? deviceJoinedLabel(d.enrollment) : null;
+  // How a device joined, for one that signed in with the Omnesis account.
+  const joined = deviceJoinedLabel(d.enrollment);
   const sub = [kindLabel, hostname || harness, phoneTransport, joined].filter(Boolean).join(" · ");
   const revoked = Boolean(d.revokedAt);
   const needsPairing = revoked && Boolean(d.needsPairing);
@@ -957,7 +956,7 @@ export function DeviceCard({
             <span class="devices-card-titlerow">
               <span class="devices-card-name">${d.name}</span>
               ${isThis && html`<span class="devices-card-badge">This device</span>`}
-              ${cloudRelay && html`<${DeviceConnectionPill} path=${d.connectionPath} revoked=${revoked} />`}
+              <${DeviceConnectionPill} path=${d.connectionPath} revoked=${revoked} />
               ${revoked && html`<span class=${`devices-card-badge ${needsPairing ? "needs-pairing" : "revoked"}`}>${needsPairing ? "Needs re-pairing" : "Revoked"}</span>`}
               ${!revoked && versionChip(d)}
               ${!revoked && updateChip(d)}
@@ -991,7 +990,7 @@ export function DeviceCard({
             <span>Last activity ${isThis ? "now" : d.lastSeenAt ? relativeTime(d.lastSeenAt) : "not recorded"}</span>
             <code class="devices-card-id">${d.id}</code>
           </div>
-          ${cloudRelay && html`<${DeviceSignIn} enrollment=${d.enrollment} />`}
+          <${DeviceSignIn} enrollment=${d.enrollment} />
           ${needsPairing && html`
             <div class="devices-card-repair">
               This device still hosts sources. Bring it back with its identity, sources and cursors intact:
@@ -1359,7 +1358,7 @@ export function resolvePairKindRequest(pairKindRequest) {
   return DEVICE_KINDS.includes(pairKindRequest) ? pairKindRequest : null;
 }
 
-export function DevicesView({ pairKindRequest = null, focusDeviceId = null, cloudRelay = false, tailscaleEmbed = false } = {}) {
+export function DevicesView({ pairKindRequest = null, focusDeviceId = null, tailscaleEmbed = false } = {}) {
   const requestedPairKind = resolvePairKindRequest(pairKindRequest);
   const [devices, setDevices] = useState([]);
   const [tokens, setTokens] = useState([]);
@@ -1608,7 +1607,7 @@ export function DevicesView({ pairKindRequest = null, focusDeviceId = null, clou
   function handleRevokeDevice(device) {
     const corpusImpact = deviceCorpusCredentialImpact(device);
     // A device that joined by signing in can also take its sign-in's trust with it.
-    const signIn = cloudRelay && !device.revokedAt ? deviceSignIn(device.enrollment) : null;
+    const signIn = !device.revokedAt ? deviceSignIn(device.enrollment) : null;
     const choice = { stopTrusting: false };
     setConfirmState({
       title: `Revoke device "${device.name}"?`,
@@ -1843,11 +1842,10 @@ export function DevicesView({ pairKindRequest = null, focusDeviceId = null, clou
       onRevokeToken=${handleRevokeToken}
       accessOverview=${accessOverview}
       onSetDeviceLevel=${handleSetDeviceLevel}
-      cloudRelay=${cloudRelay}
     />`;
 
   return html`
-    <div class=${cloudRelay ? "devices-view relay-on" : "devices-view"}>
+    <div class="devices-view">
       ${pairPageOpen
         ? html`
           <${PairPage}
@@ -1920,7 +1918,7 @@ export function DevicesView({ pairKindRequest = null, focusDeviceId = null, clou
             </div>
           </div>
 
-          <${WaitingDevices} cloudRelay=${cloudRelay} tailscaleEmbed=${tailscaleEmbed} />
+          <${WaitingDevices} tailscaleEmbed=${tailscaleEmbed} />
           ${error && html`<div class="devices-banner error">${error}</div>`}
           ${doctorError && html`<div class="devices-banner error">${doctorError}</div>`}
           ${showHealthProgress && !doctorError && html`

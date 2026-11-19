@@ -179,3 +179,13 @@ export {
   gatewaySignupUnsigned,
 } from "./gateway-signup-contract.js";
 export type { GatewaySignupDenialReason } from "./gateway-signup-contract.js";
+export {
+  INVITE_PAGE_PATH,
+  InviteRefused,
+  InviteVerifier,
+  inviteLink,
+  invitePublicKeyValue,
+  inviteToken,
+  signInvite,
+} from "./invites.js";
+export type { InviteRefusal, VerifiedInvite } from "./invites.js";

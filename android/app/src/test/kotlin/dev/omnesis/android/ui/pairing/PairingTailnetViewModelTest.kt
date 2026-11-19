@@ -48,8 +48,9 @@ class PairingTailnetViewModelTest {
             attempts++
             throw failures.removeFirstOrNull() ?: unreachable
         },
-        googlePorts = GooglePairingPorts({ _, _ -> error("google") }, { error("client") }, { error("session") }),
+        accountPorts = AccountPairingPorts({ _, _ -> error("google") }, { _, _ -> error("passkey") }, { error("client") }, { error("session") }),
         googleAvailable = false,
+        passkeyAvailable = false,
     )
 
     @Test fun `an unreachable marked address shows the Tailscale state, not the error`() = runTest(dispatcher) {

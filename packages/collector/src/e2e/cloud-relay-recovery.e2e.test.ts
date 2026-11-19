@@ -72,7 +72,6 @@ async function bridge(record = false) {
 test(
   "empty relay rebuild rotates routing credentials automatically while stable gateway TLS, devices, MCP and direct access survive",
   async () => {
-    vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
     const directory = await mkdtemp(join(tmpdir(), "omnesis-recovery-wipe-"));
     const control = await bridge(),
       data = await bridge(true),
@@ -132,7 +131,6 @@ test(
       let directUrl = "";
       harness = new E2EHarness({
         extraGatewayEnv: {
-          OMNESIS_CLOUD_RELAY_ENABLED: "1",
           OMNESIS_CLOUD_RELAY_URL: logicalRelay,
           OMNESIS_CLOUD_RELAY_SESSION_FILE: sessionFile,
           OMNESIS_CLOUD_RELAY_OWNER_KEY_FILE: ownerKeyFile,

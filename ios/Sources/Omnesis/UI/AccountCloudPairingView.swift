@@ -4,13 +4,13 @@
 #if canImport(SwiftUI) && canImport(UIKit)
 import SwiftUI
 
-/// The first pairing step of a build with an Omnesis account. Sign-in runs on this one screen: its
-/// progress replaces the choices, and a failure brings them back with the reason beside them.
+/// The first pairing step of a build with an Omnesis account: one button to sign in with the
+/// cloud account, and the ways to pair directly. The button opens `AccountSignInScreen`.
 @available(iOS 17.0, *)
 struct AccountCloudPairingView: View {
-    @Environment(AppStore.self) private var store
     @Environment(\.dismiss) private var dismiss
     @State private var model: AccountCloudPairingCoordinator
+    @State private var showingSignIn = false
     let configuration: AccountCloudPairingConfiguration
     let onScan: () -> Void
     let onManual: () -> Void
@@ -27,6 +27,31 @@ struct AccountCloudPairingView: View {
         _model = State(initialValue: model ?? AccountCloudPairingCoordinator(approvalBrowser: OmnesisAccountSystemBrowser()))
     }
 
+    var body: some View {
+        PairingAccountEntryView(onSignIn: { showingSignIn = true }, onScan: onScan, onManual: onManual)
+            .navigationTitle("Pair with your gateway")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+            }
+            .navigationDestination(isPresented: $showingSignIn) {
+                // The pairing closes from here: a dismiss read on the pushed screen would only pop it.
+                AccountSignInScreen(model: model, configuration: configuration, onPaired: { dismiss() })
+            }
+    }
+}
+
+/// Signing in, on its own screen: Google or a passkey first, then the sign-in's progress in
+/// their place. A failure brings the choices back with the reason beside them.
+@available(iOS 17.0, *)
+struct AccountSignInScreen: View {
+    @Environment(AppStore.self) private var store
+    let model: AccountCloudPairingCoordinator
+    let configuration: AccountCloudPairingConfiguration
+    let onPaired: () -> Void
+
     private var choosing: Bool {
         model.phase == .idle || model.phase == .failed
     }
@@ -40,13 +65,10 @@ struct AccountCloudPairingView: View {
             approved: model.gatewayApproved,
             error: model.error,
             googleAvailable: configuration.google != nil,
-            passkeysAvailable: configuration.passkeysEnabled,
             onGoogle: { model.start(configuration: configuration, method: .google) },
             onPasskey: { model.start(configuration: configuration, method: .passkey) },
             onChoose: { model.choose($0) },
             onPair: pair,
-            onScan: onScan,
-            onManual: onManual,
             approvalPageAvailable: model.approvalPage != nil,
             onApprovalPage: { model.openApprovalPage() },
             expiresAt: model.expiresAt,
@@ -58,15 +80,16 @@ struct AccountCloudPairingView: View {
             // use and this iPhone checked the gateway's code: there is nothing left to compare.
             if phase == .joining { pair() }
         }
-        .navigationTitle("Pair with your gateway")
+        .navigationTitle(AccountSignInChoiceView.title)
         .navigationBarTitleDisplayMode(.inline)
+        // Back returns to the ways to pair; a sign-in under way is left with Cancel first.
+        .navigationBarBackButtonHidden(!choosing)
         .toolbar {
-            ToolbarItem(placement: .cancellationAction) {
-                // Cancel leaves a sign-in in progress first, and pairing only from the choices.
-                Button("Cancel") {
-                    if choosing { dismiss() } else { model.cancel() }
+            if !choosing {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { model.cancel() }
+                        .disabled(model.phase == .pairing)
                 }
-                .disabled(model.phase == .pairing)
             }
         }
         .onDisappear { model.cancel() }
@@ -80,7 +103,7 @@ struct AccountCloudPairingView: View {
                 await store.pairAsync(raw: raw)
                 return model.acceptsCompletedPairing(store.pairing, previousGeneration: previous)
             }
-            if model.phase == .idle { dismiss() }
+            if model.phase == .idle { onPaired() }
         }
     }
 }
@@ -94,13 +117,10 @@ struct AccountCloudPairingPanel: View {
     let approved: Bool
     let error: Error?
     let googleAvailable: Bool
-    let passkeysAvailable: Bool
     let onGoogle: () -> Void
     let onPasskey: () -> Void
     let onChoose: (String) -> Void
     let onPair: () -> Void
-    let onScan: () -> Void
-    let onManual: () -> Void
     /// Whether the gateway offers its own page to approve this request with a confirmed passkey.
     var approvalPageAvailable = false
     var onApprovalPage: () -> Void = {}
@@ -110,48 +130,37 @@ struct AccountCloudPairingPanel: View {
     var continuesOnApproval = false
     var onCancel: () -> Void = {}
 
-    private var waiting: Bool {
-        phase == .comparing || phase == .pairing
-    }
-
     var body: some View {
         if phase == .idle || phase == .failed {
-            PairingAccountEntryView(
+            AccountSignInChoiceView(
                 googleAvailable: googleAvailable,
-                passkeysAvailable: passkeysAvailable,
                 notice: (error as? AccountPairingError)?.signInNotice,
                 failure: error.map(accountPairingErrorMessage),
                 onGoogle: onGoogle,
-                onPasskey: onPasskey,
-                onScan: onScan,
-                onManual: onManual
+                onPasskey: onPasskey
             )
         } else {
             progress
         }
     }
 
-    private var header: some View {
+    private var chooserHeader: some View {
         VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
-            Text(phase == .choosing ? "Choose a gateway" : "Pair using your Omnesis Account")
+            Text("Choose a gateway")
                 .font(.title3.bold())
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityAddTraits(.isHeader)
-            Text(
-                phase == .choosing
-                    ? "Your Omnesis account has more than one. Pick the one this device joins."
-                    : PairingAccountEntryView.accountDetail
-            )
-            .font(.subheadline)
-            .foregroundStyle(.secondary)
-            .fixedSize(horizontal: false, vertical: true)
+            Text("Your Omnesis account has more than one. Pick the one this device joins.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
     private var progress: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
-                if !waiting { header }
+                if phase == .choosing { chooserHeader }
                 switch phase {
                 case .idle, .failed:
                     EmptyView()
@@ -296,44 +305,8 @@ struct AccountGatewayPresence: View {
 }
 
 #if DEBUG
-#Preview("Omnesis account sign-in") {
-    AccountCloudPairingPanel(
-        phase: .idle,
-        gateways: [],
-        verificationCode: nil,
-        gatewayHost: nil,
-        approved: false,
-        error: nil,
-        googleAvailable: true,
-        passkeysAvailable: true,
-        onGoogle: {},
-        onPasskey: {},
-        onChoose: { _ in },
-        onPair: {},
-        onScan: {},
-        onManual: {}
-    )
-}
-
-#Preview("Choose a gateway") {
-    AccountCloudPairingPanel(
-        phase: .choosing,
-        gateways: PreviewMocks.accountGatewayChoices,
-        verificationCode: nil,
-        gatewayHost: nil,
-        approved: false,
-        error: nil,
-        googleAvailable: true,
-        passkeysAvailable: true,
-        onGoogle: {},
-        onPasskey: {},
-        onChoose: { _ in },
-        onPair: {},
-        onScan: {},
-        onManual: {}
-    )
-}
-
+#Preview("Omnesis account sign-in") { NavigationStack { PreviewMocks.accountPairingPanel(.idle) } }
+#Preview("Choose a gateway") { PreviewMocks.accountPairingPanel(.choosing) }
 #Preview("Choose a gateway, online and offline, dark") { PreviewMocks.accountPairingPanel(.choosing).preferredColorScheme(.dark) }
 #Preview("Choose a gateway, large text") { PreviewMocks.accountPairingPanel(.choosing).dynamicTypeSize(.accessibility2) }
 

@@ -8,6 +8,7 @@
 // guided setup can be walked from here at will.
 
 import { html } from "htm/preact";
+import { relayInviteOnly } from "../../lib/cloud-relay-api.js";
 import { relayPhase, relayEstablished } from "../relay.js";
 import { tailscalePhase } from "../tailscale.js";
 import { DevicesChoice, devicePolicies } from "./devices-step.js";
@@ -85,7 +86,13 @@ export function Summary({ remote, setRemote, relay, tailscale, headingRef, onSta
   const hostServes = host?.state === "available" && host.servesGateway;
   const policies = devicePolicies(relay, tailscale);
   const applies = policies.relayLinked || policies.tailscaleOn;
-  const [accountMark, accountTitle, accountDetail] = ACCOUNT_ITEMS[accountState(relayStatus)];
+  const accountNow = accountState(relayStatus);
+  const [accountMark, accountTitle, plainDetail] = ACCOUNT_ITEMS[accountNow];
+  // Before any account, the line says up front that creating one needs an invite.
+  const accountDetail =
+    accountNow === "none" && relayInviteOnly(relayStatus)
+      ? `Private, invite only: creating an account needs an invite link. ${plainDetail}`
+      : plainDetail;
   const google = !relayStatus?.account?.linked && relayStatus?.google?.linked;
   const mcp = mcpRows(remote);
   const mcpOn = mcp.filter((row) => row.reach !== "off");

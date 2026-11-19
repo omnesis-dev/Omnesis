@@ -730,7 +730,7 @@ export function createServer(
     onDeviceJoined?: import("./http/services/PairingService.js").PairingServiceDeps["onDeviceJoined"];
     /** The gateway's own tailnet device; present when the installation has its helper program. */
     tailscaleEmbed?: import("./tailscale-embed/service.js").TailscaleEmbedService;
-    /** The Omnesis relay origin the gateway is enrolled under; only with the relay opt-in. */
+    /** The Omnesis relay origin the gateway is enrolled under, once it has one. */
     relayPublicOrigin?: () => string | undefined;
     cloudIdentity?: {
       identity: import("@omnesis/cloud-relay").IdentityProvider;

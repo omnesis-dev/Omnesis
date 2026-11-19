@@ -11,7 +11,8 @@ import {
   gatewayVersion,
   googleAuthorizationUrl,
   accountAuthorizationUrl,
-  relaySignupAccess,
+  relayInvite,
+  relayInviteOnly,
   stopTrustingSignIn,
   // @ts-expect-error portal JS
 } from "./cloud-relay-api.js";
@@ -22,6 +23,9 @@ test("uses authenticated same-origin status and mutation calls with cancellation
   const signal = new AbortController().signal;
   expect(await relayManagement("", undefined, signal)).toEqual(status);
   expect(request).toHaveBeenLastCalledWith("/admin/cloud-relay", { cache: "no-store", signal });
+  // Only a page that shows how to sign up lets the gateway ask the relay about it.
+  await relayManagement("", undefined, signal, "POST", { signup: true });
+  expect(request).toHaveBeenLastCalledWith("/admin/cloud-relay?signup=1", { cache: "no-store", signal });
   await relayManagement("enable", { invitation: "fictional-invitation" }, signal);
   expect(request).toHaveBeenLastCalledWith("/admin/cloud-relay/enable", {
     cache: "no-store",
@@ -60,25 +64,37 @@ test("never displays server bodies, unknown codes, paths or credentials", async 
     "certificate-renewal-failed",
     "public-endpoint-unreachable",
     "not-allowed",
+    "invite-invalid",
+    "invite-expired",
+    "invite-used",
   ])
     expect(relayError(code)).not.toContain("An operation failed");
 });
-test("an invite-only relay's request link is shown only as a safe https address, with its host", () => {
-  const requestAccessUrl = "https://groups.example.com/g/fictional-testers";
-  expect(relaySignupAccess({ signup: { inviteOnly: true, requestAccessUrl } })).toEqual({
-    url: requestAccessUrl,
-    host: "groups.example.com",
-  });
-  for (const status of [
-    null,
-    {},
-    { signup: null },
-    { signup: { inviteOnly: "true", requestAccessUrl } },
-    { signup: { inviteOnly: true, requestAccessUrl: "http://groups.example.com/" } },
-    { signup: { inviteOnly: true, requestAccessUrl: "https://a:b@groups.example.com/" } },
-    { signup: { inviteOnly: true, requestAccessUrl: ["https://groups.example.com/"] } },
+test("the relay is invite-only only when the gateway says exactly that", () => {
+  expect(relayInviteOnly({ signup: { inviteOnly: true } })).toBe(true);
+  for (const status of [null, {}, { signup: null }, { signup: { inviteOnly: "true" } }])
+    expect(relayInviteOnly(status)).toBe(false);
+});
+test("a pasted invite link, its fragment or the bare code all give the invite's token", () => {
+  const token = `${"a".repeat(36)}.${"b".repeat(120)}.${"c".repeat(86)}`;
+  for (const value of [
+    token,
+    ` ${token}\n`,
+    `#${token}`,
+    `https://relay.example.test/invite#${token}`,
   ])
-    expect(relaySignupAccess(status)).toBeNull();
+    expect(relayInvite(value)).toBe(token);
+  for (const value of [
+    undefined,
+    7,
+    "",
+    "https://relay.example.test/invite",
+    `${token}x`.replace(/c+x$/, "c"),
+    `${token}.extra`,
+    `${"a".repeat(36)}.${"b".repeat(1000)}.${"c".repeat(86)}`,
+    token.replace("a", "+"),
+  ])
+    expect(relayInvite(value)).toBeNull();
 });
 test("the gateway version is read from health and is never an error or an odd string", async () => {
   request.mockResolvedValue({ ok: true, json: async () => ({ version: "9.8.7-rc.1" }) });

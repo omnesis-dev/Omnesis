@@ -17,9 +17,6 @@ import SwiftUI
 ///
 /// The form asks for the device kind only: the gateway grants the kind's
 /// canonical scopes. A narrower or custom grant is minted from the CLI.
-///
-/// With the cloud build flag off the sheet is `LegacyPairDeviceView`, unchanged from a
-/// build without cloud connectivity (see `PairDeviceSheetStyle`).
 @available(iOS 17.0, *)
 struct PairDeviceView: View {
     @Environment(AppStore.self) private var store
@@ -27,11 +24,9 @@ struct PairDeviceView: View {
 
     @State private var phase: Phase = .form
     let repairTarget: DeviceRecord?
-    private let style: PairDeviceSheetStyle
 
-    init(repairTarget: DeviceRecord? = nil, cloudRelayEnabled: Bool = CloudRelayFeature.enabled) {
+    init(repairTarget: DeviceRecord? = nil) {
         self.repairTarget = repairTarget
-        style = PairDeviceSheetStyle(cloudRelayEnabled: cloudRelayEnabled)
     }
 
     enum Phase: Equatable {
@@ -40,15 +35,6 @@ struct PairDeviceView: View {
     }
 
     var body: some View {
-        switch style {
-        case .networkIdentities:
-            LegacyPairDeviceView(repairTarget: repairTarget)
-        case .addressPlan:
-            addressPlanSheet
-        }
-    }
-
-    private var addressPlanSheet: some View {
         NavigationStack {
             content
                 .background(Theme.bgPrimary.ignoresSafeArea())

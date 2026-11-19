@@ -8,28 +8,24 @@ import { SETTINGS_TAB_KEYS, settingsTabAvailable, settingsTabParent, settingsTab
 const keys = (options: Record<string, boolean> = {}) =>
   (settingsTabs(options) as Array<{ key: string }>).map((tab) => tab.key);
 
-test("relay and experimental settings have independent opt-ins", () => {
+test("experimental settings follow experimental mode; Connectivity and Devices are always there", () => {
   for (const experimental of [false, true]) {
-    for (const cloudRelay of [false, true]) {
-      const shown = keys({ experimental, cloudRelay });
-      expect(shown.includes("connectivity")).toBe(true);
-      expect(shown.includes("sweeps")).toBe(experimental);
-      expect(shown.includes("devices")).toBe(true);
-    }
+    const shown = keys({ experimental });
+    expect(shown.includes("connectivity")).toBe(true);
+    expect(shown.includes("sweeps")).toBe(experimental);
+    expect(shown.includes("devices")).toBe(true);
   }
 });
 
-test("Lab availability, Brain opt-in, and cloud account availability remain independent", () => {
+test("Lab availability and Brain opt-in remain independent", () => {
   for (const experimental of [false, true]) {
     for (const labAvailable of [false, true]) {
       for (const brain of [false, true]) {
-        for (const cloudRelay of [false, true]) {
-          const shown = keys({ experimental, labAvailable, brain, cloudRelay });
-          expect(shown.includes("lab")).toBe(experimental && labAvailable);
-          if (experimental && labAvailable) expect(shown.slice(0, 2)).toEqual(["config", "lab"]);
-          expect(shown.includes("sweeps")).toBe(experimental && brain);
-          expect(shown.includes("connectivity")).toBe(true);
-        }
+        const shown = keys({ experimental, labAvailable, brain });
+        expect(shown.includes("lab")).toBe(experimental && labAvailable);
+        if (experimental && labAvailable) expect(shown.slice(0, 2)).toEqual(["config", "lab"]);
+        expect(shown.includes("sweeps")).toBe(experimental && brain);
+        expect(shown.includes("connectivity")).toBe(true);
       }
     }
   }
@@ -37,16 +33,14 @@ test("Lab availability, Brain opt-in, and cloud account availability remain inde
 
 test("one Connectivity tab, last, on every gateway whatever its optional features", () => {
   for (const experimental of [false, true]) {
-    for (const cloudRelay of [false, true]) {
-      for (const tailscaleEmbed of [false, true]) {
-        const tabs = settingsTabs({ experimental, cloudRelay, tailscaleEmbed }) as Array<{ key: string; label: string }>;
-        const shown = tabs.map((tab) => tab.key);
-        // Every page behind Connectivity is a detail page, never a tab.
-        for (const detail of ["account", "relay", "tailscale", "host-tailscale", "own-address", "mcp"]) {
-          expect(shown).not.toContain(detail);
-        }
-        expect(tabs.at(-1)).toEqual({ key: "connectivity", label: "Connectivity" });
+    for (const tailscaleEmbed of [false, true]) {
+      const tabs = settingsTabs({ experimental, tailscaleEmbed }) as Array<{ key: string; label: string }>;
+      const shown = tabs.map((tab) => tab.key);
+      // Every page behind Connectivity is a detail page, never a tab.
+      for (const detail of ["account", "relay", "tailscale", "host-tailscale", "own-address", "mcp"]) {
+        expect(shown).not.toContain(detail);
       }
+      expect(tabs.at(-1)).toEqual({ key: "connectivity", label: "Connectivity" });
     }
   }
 });
@@ -60,20 +54,19 @@ test("the detail pages keep their paths and name Connectivity as their tab", () 
   expect(settingsTabParent("missing")).toBeNull();
 });
 
-test("each page exists only with the feature it belongs to", () => {
-  for (const cloudRelay of [false, true]) {
-    for (const tailscaleEmbed of [false, true]) {
-      const flags = { cloudRelay, tailscaleEmbed };
-      expect(settingsTabAvailable("connectivity", flags)).toBe(true);
-      expect(settingsTabAvailable("host-tailscale", flags)).toBe(true);
-      expect(settingsTabAvailable("own-address", flags)).toBe(true);
-      expect(settingsTabAvailable("mcp", flags)).toBe(true);
-      expect(settingsTabAvailable("account", flags)).toBe(cloudRelay);
-      expect(settingsTabAvailable("relay", flags)).toBe(cloudRelay);
-      expect(settingsTabAvailable("tailscale", flags)).toBe(tailscaleEmbed);
-      expect(settingsTabAvailable("devices", flags)).toBe(true);
-    }
+test("only the Tailscale device's page depends on an optional feature", () => {
+  for (const tailscaleEmbed of [false, true]) {
+    const flags = { tailscaleEmbed };
+    expect(settingsTabAvailable("connectivity", flags)).toBe(true);
+    expect(settingsTabAvailable("host-tailscale", flags)).toBe(true);
+    expect(settingsTabAvailable("own-address", flags)).toBe(true);
+    expect(settingsTabAvailable("mcp", flags)).toBe(true);
+    expect(settingsTabAvailable("account", flags)).toBe(true);
+    expect(settingsTabAvailable("relay", flags)).toBe(true);
+    expect(settingsTabAvailable("tailscale", flags)).toBe(tailscaleEmbed);
+    expect(settingsTabAvailable("devices", flags)).toBe(true);
   }
-  expect(settingsTabAvailable("account")).toBe(false);
-  expect(settingsTabAvailable("missing", { cloudRelay: true })).toBe(false);
+  expect(settingsTabAvailable("account")).toBe(true);
+  expect(settingsTabAvailable("tailscale")).toBe(false);
+  expect(settingsTabAvailable("missing", { tailscaleEmbed: true })).toBe(false);
 });

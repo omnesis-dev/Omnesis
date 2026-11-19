@@ -166,6 +166,26 @@ describe("iOS build identities", () => {
     );
   });
 
+  // Passkey sign-in to the cloud account needs the relay's domain as a web
+  // credentials domain, so every distribution profile of the two phone apps
+  // must carry the Associated Domains capability.
+  it("gives both phone apps the passkey domain and an Associated Domains profile", () => {
+    for (const path of ["ios/Omnesis.entitlements", "ios/Omnesis-Demo.entitlements"]) {
+      expect(read(path)).toMatch(
+        /<key>com\.apple\.developer\.associated-domains<\/key>\s*<array>\s*<string>webcredentials:\$\(OMNESIS_CLOUD_RELAY_RP_ID\)<\/string>\s*<\/array>/,
+      );
+    }
+    expect(read("ios/Config.xcconfig")).toMatch(
+      /^OMNESIS_CLOUD_RELAY_RP_ID = relay\.omnesis\.app$/m,
+    );
+    expect(spec.targets.Omnesis.settings.configs.Release.PROVISIONING_PROFILE_SPECIFIER).toBe(
+      "Omnesis Cloud App Store",
+    );
+    expect(spec.targets.OmnesisDemo.settings.configs.Release.PROVISIONING_PROFILE_SPECIFIER).toBe(
+      "Omnesis Cloud Demo App Store",
+    );
+  });
+
   // WebRTC bundles BoringSSL, which is not Apple's encryption: shipping it
   // would take the production app out of the export-compliance exemption.
   it("builds realtime voice and WebRTC into the demo app only", () => {

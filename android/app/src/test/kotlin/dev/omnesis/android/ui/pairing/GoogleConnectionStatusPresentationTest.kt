@@ -37,7 +37,7 @@ class GoogleConnectionStatusPresentationTest {
         var opens = 0
         compose.setContent { OmnesisTheme {
             DevicesContent(devices = Loadable.Content(listOf(row.value)), thisDeviceId = "device", tokens = emptyMap(),
-                onBack = {}, onRetry = {}, onPairingRequests = if (mayApprove.value) ({ opens++ }) else null, cloudFeatures = true)
+                onBack = {}, onRetry = {}, onPairingRequests = if (mayApprove.value) ({ opens++ }) else null)
         } }
         compose.onNodeWithContentDescription("Pairing requests").assertDoesNotExist()
         for ((wire, label) in listOf("local" to "Local", "relay" to "Remote", "reconnecting" to "Reconnecting")) {
@@ -61,7 +61,7 @@ class GoogleConnectionStatusPresentationTest {
             SettingsContent(gateway = SettingsViewModel.GatewayInfo("Test gateway", "https://gateway.example.test", "device",
                 listOf("read"), PairingTlsMode.PINNED_KEY_STRICT, usesDirectRouting = routed.value),
                 connection = state.value, mode = AppearanceMode.SYSTEM, appVersion = AppVersionInfo("1.2.3", "42", 1),
-                onClose = {}, onSetAppearance = {}, onSaveUrl = { null }, onUnpair = {}, cloudFeatures = true)
+                onClose = {}, onSetAppearance = {}, onSaveUrl = { null }, onUnpair = {})
         } } }
         compose.onNodeWithTag("gateway.connectionPath", useUnmergedTree = true).assertDoesNotExist()
         for ((path, label) in listOf(GatewayConnectionPath.LOCAL to "Local", GatewayConnectionPath.RELAY to "Remote", GatewayConnectionPath.RECONNECTING to "Reconnecting")) {

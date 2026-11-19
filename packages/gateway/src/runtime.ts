@@ -25,7 +25,6 @@ import {
   makeEvent,
   createLogger,
   experimentalEnabled,
-  cloudRelayEnabled,
   loadManifest,
   primeSecretFileKeyCache,
   resolveWorkerEntry,
@@ -2004,7 +2003,9 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
   let acmeController: Awaited<ReturnType<typeof createGatewayAcmeController>>;
   const acmeCleanup = new OptionalServiceCleanup("Public ACME", () => acmeController);
   const publicSni = new GatewayPublicSni();
-  if (cloudRelayEnabled()) boot.listener.setSniCallback(publicSni.callback);
+  // Serves the public name only once a certificate for it is activated; every other name keeps
+  // the default context, as without a callback.
+  boot.listener.setSniCallback(publicSni.callback);
   let cloudTunnel: ReturnType<typeof startGatewayCloudTunnel>;
   const tunnelCleanup = boot.ownCleanup(
     new OptionalServiceCleanup("Cloud relay tunnel", () => cloudTunnel),
@@ -2051,12 +2052,8 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
   const relayCleanup = new OptionalServiceCleanup("Cloud relay", () => cloudRelayManagement);
   /** The Omnesis relay origin agents reach this gateway by, once it has one. */
   const relayPublicOrigin = (): string | undefined =>
-    cloudRelayEnabled()
-      ? (cloudRelayManagement?.publicOrigin() ??
-        (process.env.OMNESIS_CLOUD_RELAY_GATEWAY_ORIGIN
-          ? publicGatewayOrigin(process.env)
-          : undefined))
-      : undefined;
+    cloudRelayManagement?.publicOrigin() ??
+    (process.env.OMNESIS_CLOUD_RELAY_GATEWAY_ORIGIN ? publicGatewayOrigin(process.env) : undefined);
   /** The key a device sees when it reaches this gateway through the relay. */
   const cloudPublicSpkiFingerprint = (): string | undefined =>
     cloudRelayManagement?.managesPublicCertificate()
@@ -2067,71 +2064,71 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
   let cloudRelayInitializationFailed = false;
   try {
     boot.signal.throwIfAborted();
-    cloudRelayManagement = cloudRelayEnabled()
-      ? await GatewayCloudRelayManagement.open({
-          configDir,
-          env: process.env,
-          gatewayUrl: () => `https://localhost:${cloudListenPort}`,
-          googleCallbackOrigins: () => {
-            const hostNetwork = inContainer ? readHostNetwork(configDir) : null;
-            return {
-              origins: [
-                publicAddress.baseUrl(),
-                cloudRelayManagement?.publicOrigin(),
-                ...publicAddress.mcpResourceUrls().map((value) => new URL(value).origin),
-              ],
-              localNames: ["localhost", osHostname(), `${osHostname()}.local`, ...tlsExtraHosts],
-              port: hostNetwork?.port ?? cloudListenPort,
-              ...(hostNetwork
-                ? {
-                    localAddresses: hostNetwork.identities
-                      .filter((value) => value.kind === "lan")
-                      .map((value) => value.address),
-                  }
-                : {}),
-              certificates: [new X509Certificate(tlsBundle.cert)],
-            };
-          },
-          directCertificateCoversHostname: (hostname) => tlsLifecycle.coversHostname(hostname),
-          publicSpkiFingerprint: cloudPublicSpkiFingerprint,
-          onIncidentHold: () => void certificateIncidentNotifier.notify(),
-          activate: async (material, signal) => {
-            signal.throwIfAborted();
-            publicSni.activate(material);
-          },
-          stopLegacy: async () => {
-            await closeOptionalServices([tunnelCleanup, acmeCleanup]);
-            cloudTunnel = undefined;
-            acmeController = undefined;
-          },
-          directIdentity: () => {
-            const value = tlsLifecycle.snapshot();
-            return {
-              id: "direct",
-              names: value.served.names,
-              label: value.ownership,
-              kind:
-                value.ownership === "self-signed"
-                  ? "self-signed"
-                  : value.ownership === "mkcert"
-                    ? "local-ca"
-                    : value.ownership === "tailscale"
-                      ? "public-ca"
-                      : "external",
-              state:
-                value.served.state === "valid"
-                  ? "valid"
-                  : value.served.state === "expiring"
-                    ? "expiring"
-                    : value.served.state === "expired"
-                      ? "expired"
-                      : "failed",
-              expiresAt: value.served.notAfter ?? undefined,
-              pinPolicy: "existing-device-policy",
-            };
-          },
-        })
-      : undefined;
+    // Reads what this gateway saved, if anything; it reaches the relay only once a saved
+    // configuration starts below or the owner connects from the portal.
+    cloudRelayManagement = await GatewayCloudRelayManagement.open({
+      configDir,
+      env: process.env,
+      gatewayUrl: () => `https://localhost:${cloudListenPort}`,
+      googleCallbackOrigins: () => {
+        const hostNetwork = inContainer ? readHostNetwork(configDir) : null;
+        return {
+          origins: [
+            publicAddress.baseUrl(),
+            cloudRelayManagement?.publicOrigin(),
+            ...publicAddress.mcpResourceUrls().map((value) => new URL(value).origin),
+          ],
+          localNames: ["localhost", osHostname(), `${osHostname()}.local`, ...tlsExtraHosts],
+          port: hostNetwork?.port ?? cloudListenPort,
+          ...(hostNetwork
+            ? {
+                localAddresses: hostNetwork.identities
+                  .filter((value) => value.kind === "lan")
+                  .map((value) => value.address),
+              }
+            : {}),
+          certificates: [new X509Certificate(tlsBundle.cert)],
+        };
+      },
+      directCertificateCoversHostname: (hostname) => tlsLifecycle.coversHostname(hostname),
+      publicSpkiFingerprint: cloudPublicSpkiFingerprint,
+      onIncidentHold: () => void certificateIncidentNotifier.notify(),
+      activate: async (material, signal) => {
+        signal.throwIfAborted();
+        publicSni.activate(material);
+      },
+      stopLegacy: async () => {
+        await closeOptionalServices([tunnelCleanup, acmeCleanup]);
+        cloudTunnel = undefined;
+        acmeController = undefined;
+      },
+      directIdentity: () => {
+        const value = tlsLifecycle.snapshot();
+        return {
+          id: "direct",
+          names: value.served.names,
+          label: value.ownership,
+          kind:
+            value.ownership === "self-signed"
+              ? "self-signed"
+              : value.ownership === "mkcert"
+                ? "local-ca"
+                : value.ownership === "tailscale"
+                  ? "public-ca"
+                  : "external",
+          state:
+            value.served.state === "valid"
+              ? "valid"
+              : value.served.state === "expiring"
+                ? "expiring"
+                : value.served.state === "expired"
+                  ? "expired"
+                  : "failed",
+          expiresAt: value.served.notAfter ?? undefined,
+          pinPolicy: "existing-device-policy",
+        };
+      },
+    });
   } catch (error) {
     cloudRelayInitializationFailed = true;
     if (boot.signal.aborted) {
@@ -2907,19 +2904,13 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
     // Externally-reachable HTTPS base URL (gateway.publicBaseUrl) and the MCP
     // resources it implies, as they stand at each request.
     publicAddress,
-    ...(cloudRelayEnabled() || tailscaleEmbed
-      ? {
-          additionalOAuthIssuerUrls: () => {
-            // Agents reach the gateway by its tailnet name, on the tailnet or
-            // through its public address; both are the same origin.
-            const tailnetOrigin = tailscaleEmbed?.tailnetOrigin() ?? undefined;
-            return [relayPublicOrigin(), tailnetOrigin].filter(
-              (origin): origin is string => !!origin,
-            );
-          },
-        }
-      : {}),
-    ...(cloudRelayEnabled() ? { relayPublicOrigin } : {}),
+    additionalOAuthIssuerUrls: () => {
+      // Agents reach the gateway by its tailnet name, on the tailnet or
+      // through its public address; both are the same origin.
+      const tailnetOrigin = tailscaleEmbed?.tailnetOrigin() ?? undefined;
+      return [relayPublicOrigin(), tailnetOrigin].filter((origin): origin is string => !!origin);
+    },
+    relayPublicOrigin,
     tailscaleEmbed,
     cloudRelayManagement,
     cloudRelayExposure: () => cloudRelayManagement?.isExposing() ?? false,

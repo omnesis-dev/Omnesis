@@ -64,7 +64,7 @@ describe("pairing a phone with the gateway's Omnesis address", () => {
 
   beforeAll(async () => {
     directory = await mkdtemp(join(tmpdir(), "omnesis-relay-address-"));
-    world = await EnrollmentWorld.create(directory, { signupPolicy: "invitation" });
+    world = await EnrollmentWorld.create(directory, { signupPolicy: "closed" });
     gateway = await EnrollmentGateway.start(world, "home");
     await waitFor(
       async () =>

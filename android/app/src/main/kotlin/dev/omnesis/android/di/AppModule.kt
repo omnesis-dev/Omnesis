@@ -39,7 +39,6 @@ object AppModule {
         optIns.map(HostedSourceOptIn::hostedSourceContract),
         version = appVersion.version,
         pushAppId = BuildConfig.APPLICATION_ID,
-        pairingNotifications = BuildConfig.CLOUD_RELAY_ENABLED,
     )
 
     @Provides

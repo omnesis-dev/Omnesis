@@ -78,6 +78,9 @@ export default defineConfig({
       OMNESIS_CONFIG_DIR: tempDir,
       OMNESIS_DB_PATH: join(tempDir, "omnesis.db"),
       OMNESIS_ANALYTICS_DB_PATH: join(tempDir, "analytics.db"),
+      // A test gateway names no relay, so opening the account pages asks none (and never the
+      // production one) whether new accounts need an invite.
+      OMNESIS_E2E_DISABLE_DEFAULT_RELAY: "1",
     },
     // Wait on the public /health route over HTTPS — a deterministic readiness
     // signal, never `networkidle` (which never fires on the portal's SSE/WS

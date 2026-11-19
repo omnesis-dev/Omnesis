@@ -3,13 +3,13 @@
 
 import { createPublicKey, generateKeyPairSync } from "node:crypto";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { markedFileError } from "../test/private-operation-fixture.js";
+import { passkeyAuthenticator } from "../test/passkey-authenticator.js";
 import { GatewayAccountLink } from "./gateway-account-link.js";
 import * as credentials from "./google-credentials.js";
 import * as gatewayKeys from "./gateway-key-client.js";
 import { gatewayKeyAccount } from "./gateway-key-auth.js";
 import { hostedGatewayHostname } from "./hosted-name.js";
-import { markedFileError } from "../test/private-operation-fixture.js";
-import { passkeyAuthenticator } from "../test/passkey-authenticator.js";
 import { gatewayPasskeyChallenge, gatewayPasskeySignInProofSchema } from "./device-enrollment.js";
 
 // The real browser client reaches its private registration seam; no filesystem,
@@ -70,7 +70,6 @@ async function fixture(failure: Error, confirmed?: ReturnType<typeof passkeyAuth
     Promise.reject(new Error("No fixture transport is expected")),
   );
   const env = {
-    OMNESIS_CLOUD_RELAY_ENABLED: "1",
     OMNESIS_CLOUD_RELAY_URL: relayOrigin,
     OMNESIS_CLOUD_RELAY_GATEWAY_ID: gatewayId,
     OMNESIS_CLOUD_RELAY_GATEWAY_ORIGIN: origin,

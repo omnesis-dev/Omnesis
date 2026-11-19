@@ -126,14 +126,13 @@ describe("Access page with the gateway's Tailscale device", () => {
     api.getAccessOverview.mockResolvedValue(overview(LOCAL, { loopbackOnly: true }, [DEVICE]));
     await mount({ tailscaleEmbed: true });
     expect(tailscaleApi.getTailscale).toHaveBeenCalled();
-    expect(relayApi.relayManagement).not.toHaveBeenCalled();
     expect(addressOptions()).toEqual([`${LOCAL}`, `${DEVICE}`]);
     expect(addressSelect()?.value).toBe(DEVICE);
   });
 
   test("the owner's address, the relay's and the device's are all offered together", async () => {
     api.getAccessOverview.mockResolvedValue(overview(OWN, {}, [RELAY, DEVICE]));
-    await mount({ cloudRelay: true, tailscaleEmbed: true });
+    await mount({ tailscaleEmbed: true });
     expect(addressOptions()).toEqual([
       `${OWN}`,
       `${RELAY}`,

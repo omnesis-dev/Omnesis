@@ -3,10 +3,9 @@
 
 // Settings → Connectivity: how this gateway's devices reach it when they are
 // away from home. Every gateway has it: the home network, Tailscale already on
-// the computer and the owner's own domain need no optional feature. With the
-// cloud relay (OMNESIS_CLOUD_RELAY_ENABLED=1) it adds the Omnesis account and
-// the relay, and with its own Tailscale device (an installation with its helper
-// program) that device; `/status` advertises each as `cloudRelay` and `tailscaleEmbed`.
+// the computer, the owner's own domain, the Omnesis account and the relay. With
+// its own Tailscale device (an installation with its helper program) it adds
+// that device, which `/status` advertises as `tailscaleEmbed`.
 //
 // The page is a summary of what is on, where everything can be set up or
 // changed: each line opens its own page, and the answers for new devices and
@@ -41,7 +40,7 @@ import {
   startFlow,
 } from "./remote-access/model.js";
 
-/** The relay's status and its one-at-a-time requests, read only when the relay is on. */
+/** The relay's status and its one-at-a-time requests. */
 function RelayFeed({ children }) {
   const relay = useRelayManagement();
   // A sign-in added on the account page shows here within seconds, as on the account page.
@@ -54,19 +53,18 @@ function TailscaleFeed({ children }) {
   return children(useTailscaleAdmin());
 }
 
-/** Mounts only the readers for the features the gateway has, so the others send no request. */
-function Feeds({ cloudRelay, tailscaleEmbed, children }) {
+/** Mounts the Tailscale device's reader only where the gateway has one, so otherwise it sends no request. */
+function Feeds({ tailscaleEmbed, children }) {
   const withTailscale = (relay) =>
     tailscaleEmbed
       ? html`<${TailscaleFeed}>${(tailscale) => children(relay, tailscale)}<//>`
       : children(relay, null);
-  return cloudRelay ? html`<${RelayFeed}>${withTailscale}<//>` : withTailscale(null);
+  return html`<${RelayFeed}>${withTailscale}<//>`;
 }
 
-function Flow({ remote, setRemote, relay, tailscale, cloudRelay, tailscaleEmbed }) {
+function Flow({ remote, setRemote, relay, tailscale, tailscaleEmbed }) {
   const policies = devicePolicies(relay, tailscale);
   const steps = setupSteps({
-    cloudRelay,
     devices: policies.relayLinked || policies.tailscaleOn,
     mcp: mcpRows(remote).length > 0,
   });
@@ -172,7 +170,7 @@ export function useRemoteAccess() {
   return { remote, setRemote, error, load };
 }
 
-export function RemoteAccessView({ cloudRelay = false, tailscaleEmbed = false }) {
+export function RemoteAccessView({ tailscaleEmbed = false }) {
   const { remote, setRemote, error, load } = useRemoteAccess();
   return html`<section class="remote-access-view" aria-label="Connectivity">
     ${error &&
@@ -182,7 +180,7 @@ export function RemoteAccessView({ cloudRelay = false, tailscaleEmbed = false })
     </div>`}
     ${!remote && !error && html`<p class="remote-access-loading" role="status">Loading…</p>`}
     ${remote &&
-    html`<${Feeds} cloudRelay=${cloudRelay} tailscaleEmbed=${tailscaleEmbed}>
+    html`<${Feeds} tailscaleEmbed=${tailscaleEmbed}>
       ${(relay, tailscale) =>
         // Where the page opens depends on what is already on, so it waits for each feature's first answer.
         (relay && !relay.status && !relay.error) || (tailscale && !tailscale.state && !tailscale.error)
@@ -192,7 +190,6 @@ export function RemoteAccessView({ cloudRelay = false, tailscaleEmbed = false })
               setRemote=${setRemote}
               relay=${relay}
               tailscale=${tailscale}
-              cloudRelay=${cloudRelay}
               tailscaleEmbed=${tailscaleEmbed}
             />`}
     <//>`}

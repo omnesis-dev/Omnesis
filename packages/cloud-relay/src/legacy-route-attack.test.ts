@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { createHash, generateKeyPairSync, randomBytes, randomUUID } from "node:crypto";
+import { generateKeyPairSync, randomBytes, randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -17,10 +17,11 @@ import { keyBindingOwnerAccount } from "./gateway-key-auth.js";
 import { hostedGatewayHostname } from "./hosted-name.js";
 import { RelaySessions, localIdentityProvider } from "./identity.js";
 import { createCloudRelay } from "./server.js";
+import { InviteVerifier, invitePublicKeyValue } from "./invites.js";
 
 /**
  * Plays someone the sign-up policy does not admit, against a relay configured the way a public
- * one is: an allowlist that names somebody else, Google audiences configured for sign-in, hosted
+ * one is: invite-only with an invite key they don't hold, Google audiences configured for sign-in, hosted
  * gateway names, and a single free account slot. They walk the whole pre-account path with their
  * own Google identity and a self-signed certificate, and must come away with nothing.
  */
@@ -39,15 +40,10 @@ afterEach(async () => {
 
 async function publicRelay() {
   const googleKey = randomBytes(32);
-  const allowlistFile = join(directory, "allowlist.json");
-  // The only admitted sign-in belongs to somebody else.
-  await writeFile(
-    allowlistFile,
-    JSON.stringify({
-      googleSubjects: [createHash("sha256").update("fictional-admitted-person").digest("hex")],
-    }),
-    { mode: 0o600 },
-  );
+  // Only the operator holds the private half of the invite key.
+  const invites = new InviteVerifier(origin, [
+    invitePublicKeyValue(generateKeyPairSync("ed25519").publicKey),
+  ]);
   const accounts = new RelayAccounts(":memory:", 1);
   const sessions = new RelaySessions(randomBytes(32));
   const relay = createCloudRelay({
@@ -63,7 +59,7 @@ async function publicRelay() {
         origin,
         generateKeyPairSync("ed25519").privateKey,
       ),
-      signup: { policy: "allowlist", allowlistFile },
+      signup: { policy: "invite", invites },
     },
   });
   const url = await listen(relay.server);

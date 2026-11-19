@@ -101,7 +101,7 @@ internal fun shownTailscaleJoins(
 
 /**
  * Every device waiting for the owner's OK, however it asked: devices that signed in with the
- * Omnesis account ([client]; null where this build or phone does not review them), and devices on
+ * Omnesis account ([client]; null where this phone does not review them), and devices on
  * the owner's Tailscale network that asked to join ([tailscale]; null where this phone does not
  * review them). Each kind keeps its own reads and decisions; the sheet lists them together.
  */
@@ -112,7 +112,7 @@ fun DeviceApprovalsSheet(
     onOpenSettings: () -> Unit = {},
     /** Told what sign-in requests still wait after every read or decision, so a banner elsewhere stays current. */
     onRequests: (List<GatewayPairingApprovalRequest>) -> Unit = {},
-    /** Signs the gateway's passkey ceremony in this app; null in a build that can't. */
+    /** Signs the gateway's passkey ceremony in this app; null where this install has no app origin to name. */
     passkey: GatewayPasskeySigner? = LocalContext.current.let { context -> remember(context) { defaultGatewayPasskeySigner(context) } },
     /** The sign-in request a notification named, listed first. */
     focus: String? = null,

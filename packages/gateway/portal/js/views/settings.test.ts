@@ -116,7 +116,7 @@ describe("Settings header actions", () => {
 
   test("every gateway has the Connectivity tab, last, and the pages behind it that need no feature", async () => {
     const labels = () => [...host.querySelectorAll(".config-tab")].map((tab) => tab.textContent?.trim());
-    for (const flags of [{}, { cloudRelay: true }, { tailscaleEmbed: true }, { cloudRelay: true, tailscaleEmbed: true }]) {
+    for (const flags of [{}, { tailscaleEmbed: true }]) {
       await act(async () => { render(h(SettingsView, { tab: "connectivity", ...flags }), host); });
       expect(host.querySelector(".settings-view")?.getAttribute("class")).toBe("settings-view");
       expect(labels().at(-1)).toBe("Connectivity");
@@ -135,8 +135,8 @@ describe("Settings header actions", () => {
 
   test("each detail page shows Connectivity as current, with the way back to it", async () => {
     const pages = [
-      ["account", { cloudRelay: true }],
-      ["relay", { cloudRelay: true }],
+      ["account", {}],
+      ["relay", {}],
       ["tailscale", { tailscaleEmbed: true }],
       ["host-tailscale", {}],
       ["own-address", {}],
@@ -157,7 +157,7 @@ describe("Settings header actions", () => {
       expect(router.replaceRoute).toHaveBeenCalledWith("/portal/settings/connectivity");
     }
     // A page that needs a feature the gateway lacks lands on Config.
-    for (const [tab, flags] of [["tailscale", { cloudRelay: true }], ["account", { tailscaleEmbed: true }], ["relay", {}]] as const) {
+    for (const [tab, flags] of [["tailscale", {}]] as const) {
       await act(async () => { render(h(SettingsView, { tab, ...flags }), host); });
       expect(host.querySelector(".config-tab.active")?.textContent).toBe("Config");
       expect(host.querySelector(".remote-access-back")).toBeNull();
@@ -263,15 +263,15 @@ describe("Settings header actions", () => {
   });
 
   test("cloud account access preserves Lab order and Brain-off deep-link fallback", async () => {
-    const flags = { experimental: true, cloudRelay: true, labAvailable: true, lab: { brain: false } };
+    const flags = { experimental: true, labAvailable: true, lab: { brain: false } };
     await act(async () => { render(h(SettingsView, { tab: "account", ...flags }), host); });
     const labels = [...host.querySelectorAll(".config-tab")].map((tab) => tab.textContent?.trim());
     expect(labels.slice(0, 2)).toEqual(["Config", "Omnesis Lab"]);
     expect(labels).not.toContain("Sweeps");
     expect(host.querySelector(".config-tab.active")?.textContent).toBe("Connectivity");
-    for (const tab of ["sweeps", "lab", "account"]) {
+    for (const tab of ["sweeps", "lab"]) {
       await act(async () => {
-        render(h(SettingsView, { ...flags, tab, labAvailable: false, cloudRelay: false }), host);
+        render(h(SettingsView, { ...flags, tab, labAvailable: false }), host);
       });
       expect(host.querySelector(".config-tab.active")?.textContent).toBe("Config");
     }

@@ -4,10 +4,12 @@
 OMNESIS_BUNDLE_ID = com.example.myomnesis
 DEVELOPMENT_TEAM = YOURTEAMID
 
-// Optional Google pairing. Use the iOS OAuth client for this bundle id.
-// The relay and gateway must also allow this client id. No client secret is used.
-// OMNESIS_CLOUD_RELAY_ENABLED = 1
+// Optional: cloud account sign-in under your own identity. Use an iOS OAuth
+// client registered for your bundle ID; its callback scheme is the reversed
+// client ID. The relay and gateway must also allow this client ID, and the
+// relay's domain must list your app for passkeys. No client secret is used.
 // OMNESIS_GOOGLE_CLIENT_ID = fictional-ios.apps.googleusercontent.com
 // OMNESIS_GOOGLE_CALLBACK_SCHEME = com.googleusercontent.apps.fictional-ios
 // Escape the second slash so xcconfig does not treat the URL as a comment.
 // OMNESIS_CLOUD_RELAY_URL = https:/$()/relay.example.test
+// OMNESIS_CLOUD_RELAY_RP_ID = relay.example.test

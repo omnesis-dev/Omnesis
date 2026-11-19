@@ -8,11 +8,23 @@ import { renderStartupPage, startupPageCsp } from "./page.js";
 import { StartupManager } from "./manager.js";
 
 class Element {
-  textContent = "";
+  private text = "";
+  textWrites = 0;
   className = "";
+  hidden = false;
+  scrollTop = 0;
   dataset: Record<string, string> = {};
   children: Element[] = [];
   attributes: Record<string, string> = {};
+
+  get textContent(): string {
+    return this.text;
+  }
+
+  set textContent(value: string) {
+    this.text = value;
+    this.textWrites++;
+  }
 
   append(...nodes: Element[]): void {
     this.children.push(...nodes);
@@ -20,6 +32,7 @@ class Element {
 
   replaceChildren(...nodes: Element[]): void {
     this.children = nodes;
+    this.scrollTop = 0;
   }
 
   setAttribute(name: string, value: string): void {
@@ -167,6 +180,96 @@ describe("startup page", () => {
     );
     await vi.advanceTimersByTimeAsync(10_000);
     expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps completion counts separate from step labels and avoids repeating the handoff message", async () => {
+    const ui = browser(
+      vi.fn().mockResolvedValue(
+        response(
+          snapshot({
+            steps: [
+              step({ id: "launcher", state: "succeeded", finishedAt: 1_200 }),
+              step({ id: "optional", state: "skipped", startedAt: undefined }),
+              step(),
+            ],
+          }),
+        ),
+      ),
+    );
+    await flush();
+    expect(ui.get("startup-phase").textContent).toBe("2 of 3 steps complete");
+    expect(ui.get("startup-summary").hidden).toBe(true);
+    expect(ui.get("startup-summary").textContent).toBe("");
+    expect(ui.get("startup-subtitle").textContent).toBe(
+      "Your page will open automatically when ready.",
+    );
+  });
+
+  it("preserves the user's list position while applying a fresh progress update", async () => {
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(response(snapshot()))
+      .mockResolvedValueOnce(
+        response(
+          snapshot({
+            sequence: 2,
+            steps: [step({ progress: { current: 2, total: 4, completed: 1 } })],
+          }),
+        ),
+      );
+    const ui = browser(fetch);
+    await flush();
+    ui.get("startup-steps").scrollTop = 137;
+    await vi.advanceTimersByTimeAsync(750);
+    expect(ui.get("startup-steps").scrollTop).toBe(137);
+    expect(ui.get("startup-steps").children[0].children[1].children[0].textContent).toBe(
+      "1 of 4 migrations committed · applying migration 2",
+    );
+  });
+
+  it("does not repeat unchanged live-region announcements on every poll", async () => {
+    const parallel = (completed: number) =>
+      snapshot({
+        sequence: completed,
+        steps: [
+          step({ progress: { current: completed, total: 4, completed } }),
+          step({ id: "backend", label: "Backend discovery", optional: true }),
+        ],
+      });
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(response(parallel(1)))
+      .mockResolvedValueOnce(response(parallel(2)));
+    const ui = browser(fetch);
+    await flush();
+    const phaseWrites = ui.get("startup-phase").textWrites;
+    const summaryWrites = ui.get("startup-summary").textWrites;
+    await vi.advanceTimersByTimeAsync(750);
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(ui.get("startup-steps").children[0].children[1].children[0].textContent).toBe(
+      "2 of 4 migrations committed",
+    );
+    expect(ui.get("startup-phase").textWrites).toBe(phaseWrites);
+    expect(ui.get("startup-summary").textWrites).toBe(summaryWrites);
+  });
+
+  it("omits an empty migration counter and restores connection notices after a normal update", async () => {
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        response(snapshot({ steps: [step({ progress: { current: 0, total: 0, completed: 0 } })] })),
+      )
+      .mockRejectedValueOnce(new Error("network unavailable"))
+      .mockResolvedValueOnce(response(snapshot({ sequence: 2 })));
+    const ui = browser(fetch);
+    await flush();
+    expect(ui.get("startup-steps").children[0].children[1].children).toHaveLength(0);
+    expect(ui.get("startup-summary").hidden).toBe(true);
+    await vi.advanceTimersByTimeAsync(750);
+    expect(ui.get("startup-summary").hidden).toBe(false);
+    expect(ui.get("startup-summary").textContent).toContain("last confirmed startup state");
+    await vi.advanceTimersByTimeAsync(750);
+    expect(ui.get("startup-summary").hidden).toBe(true);
   });
 
   it.each([

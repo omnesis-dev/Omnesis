@@ -22,6 +22,7 @@ import { CloudRelayManagementFailure } from "./management.js";
 import { HostedNameTaken } from "./relay-configuration.js";
 import { googleBrowserTrust } from "./google-browser-trust.js";
 import { hostedGatewayHostname } from "./hosted-name.js";
+import { signInvite } from "./invites.js";
 import { GatewayAccountLink } from "./gateway-account-link.js";
 import { GatewayUnregistered, readOrCreateGatewayOwnerKey } from "./gateway-key-client.js";
 import * as privateCredentials from "./google-credentials.js";
@@ -31,12 +32,12 @@ let directory: string, manager: GatewayCloudRelayManagement | undefined;
 let unanswered: string[] = [];
 /**
  * The network a test sees unless it answers a request itself: the relay has no managed Google
- * browser client, and every other request is refused. No test reaches a real service, whether
+ * browser client and offers no account sign-in, and every other request is refused. No test reaches a real service, whether
  * through the gateway's `fetch` or the global one.
  */
 const offline: typeof fetch = (request) => {
   const url = request instanceof Request ? request.url : String(request);
-  if (url.includes("/_relay/v2/google/browser/config"))
+  if (url.includes("/_relay/v2/google/browser/config") || url.includes("/_relay/v3/account-keys"))
     return Promise.resolve(new Response(null, { status: 404 }));
   unanswered.push(url);
   return Promise.reject(new Error(`No test answers ${url}`));
@@ -554,12 +555,13 @@ test("existing environment gateway identity is adopted without preparing a secon
       OMNESIS_CLOUD_RELAY_SESSION_FILE: join(directory, "legacy-session"),
     },
     controller: undefined,
-    startTunnel: undefined,
     stopLegacy: vi.fn(async () => {}),
     probe: undefined,
   });
-  const transport = vi.fn<typeof fetch>(async () =>
-    Response.json({ resource: "https://gateway.example.test/mcp" }),
+  const transport = vi.fn<typeof fetch>(async (url) =>
+    String(url).includes("/_relay/v3/account-keys")
+      ? new Response(null, { status: 404 })
+      : Response.json({ resource: "https://gateway.example.test/mcp" }),
   );
   vi.stubGlobal("fetch", transport);
   manager = await GatewayCloudRelayManagement.open(f.options);
@@ -1368,10 +1370,10 @@ test("managed Google capabilities are fetched only after enrollment and expose a
   expect(await manager.status()).toMatchObject({
     google: { configured: true, canLink: true, linked: false },
   });
-  expect(transport).toHaveBeenCalledOnce();
-  expect(String(transport.mock.calls[0]![0])).toBe(
-    "https://relay.example.test/_relay/v2/google/browser/config",
-  );
+  // Google's capabilities are read once; the account sign-in probe is its own request.
+  expect(
+    transport.mock.calls.map(([url]) => String(url)).filter((url) => url.includes("/google/")),
+  ).toEqual(["https://relay.example.test/_relay/v2/google/browser/config"]);
   await manager.disable();
   expect(manager.managedGoogleBrowser()).toBeUndefined();
 });
@@ -1443,6 +1445,8 @@ test("an empty trust registry leaves Google unavailable without querying the rel
   const transport = vi.fn<typeof fetch>(async () => {
     throw new Error("unconfigured Google must not query a service");
   });
+  const googleCalls = () =>
+    transport.mock.calls.map(([url]) => String(url)).filter((url) => url.includes("/google/"));
   const f = fixture({
     fetch: transport,
     googleTrust: () => ({ deviceClientIds: [], deviceAuthorizedParties: [] }),
@@ -1451,7 +1455,7 @@ test("an empty trust registry leaves Google unavailable without querying the rel
   await manager.configure(input);
   await manager.enable();
   await idle();
-  expect(transport).not.toHaveBeenCalled();
+  expect(googleCalls()).toEqual([]);
   expect(await manager.status()).toMatchObject({
     enabled: true,
     enrollment: { state: "enrolled" },
@@ -1463,7 +1467,7 @@ test("an empty trust registry leaves Google unavailable without querying the rel
   await expect(
     manager.googleLink({ requestOrigin: "https://gateway.example.test" }),
   ).rejects.toMatchObject({ code: "google-unavailable" });
-  expect(transport).not.toHaveBeenCalled();
+  expect(googleCalls()).toEqual([]);
   expect(f.options.startTunnel).toHaveBeenCalledOnce();
 });
 
@@ -1554,7 +1558,6 @@ test("account linking is offered only while the optional service is ready and th
   );
   const f = fixture({
     env: {
-      OMNESIS_CLOUD_RELAY_ENABLED: "1",
       OMNESIS_CLOUD_RELAY_URL: "https://relay.example.test",
     },
     fetch: vi.fn<typeof fetch>(async (url) =>
@@ -1607,7 +1610,6 @@ async function connecting(
   const f = fixture({
     configDir: await mkdtemp(join(directory, "connect-")),
     env: {
-      OMNESIS_CLOUD_RELAY_ENABLED: "1",
       OMNESIS_CLOUD_RELAY_URL: "https://relay.example.test",
     },
     fetch: relay.fetch,
@@ -1638,6 +1640,63 @@ test("connecting passes the person's choice to create an account or sign in on t
     await manager.close();
     manager = undefined;
   }
+});
+
+const fictionalInvite = signInvite(generateKeyPairSync("ed25519").privateKey, {
+  origin: "https://relay.example.test",
+  expiresAt: Math.floor(Date.now() / 1000) + 3600,
+});
+const inviteAnswer = (status: "valid" | "invalid" | "expired" | "used") => () =>
+  Response.json(status === "valid" ? { status, expiresAt: 1_900_000_000 } : { status });
+
+test("an invite is checked with the relay before anything else, then goes with the sign-up", async () => {
+  const f = await connecting();
+  f.relay.handle("/_relay/v3/signup/invite", inviteAnswer("valid"));
+  manager = await GatewayCloudRelayManagement.open(f.options);
+  const link = `https://relay.example.test/invite#${fictionalInvite}`;
+  expect(
+    (await manager.connect({ termsAccepted: true, intent: "create", invite: link })).connect,
+  ).toMatchObject({ state: "waiting" });
+  expect(f.relay.calls.indexOf("/_relay/v3/signup/invite")).toBeLessThan(
+    f.relay.calls.indexOf("/_relay/v3/signup/start"),
+  );
+  expect(f.relay.started()).toMatchObject({ intent: "create", invite: fictionalInvite });
+});
+
+for (const status of ["invalid", "expired", "used"] as const)
+  test(`an ${status} invite stops connecting before this gateway claims anything`, async () => {
+    const f = await connecting();
+    f.relay.handle("/_relay/v3/signup/invite", inviteAnswer(status));
+    manager = await GatewayCloudRelayManagement.open(f.options);
+    await expect(
+      manager.connect({ termsAccepted: true, intent: "create", invite: fictionalInvite }),
+    ).rejects.toMatchObject({ code: `invite-${status}` });
+    expect(f.relay.calls).toEqual(["/_relay/v3/signup/invite"]);
+    expect((await manager.status()).connect).toBeUndefined();
+    expect((await manager.status()).configured).toBe(false);
+  });
+
+test("a relay that can't check the invite now still gets it at sign-up, and refuses it there", async () => {
+  const f = await connecting();
+  f.relay.handle("/_relay/v3/signup/invite", () => new Response(null, { status: 503 }));
+  f.relay.handle("/_relay/v3/signup/start", () =>
+    Response.json({ error: "invite-used" }, { status: 403 }),
+  );
+  manager = await GatewayCloudRelayManagement.open(f.options);
+  await expect(
+    manager.connect({ termsAccepted: true, intent: "create", invite: fictionalInvite }),
+  ).rejects.toMatchObject({ code: "invite-used" });
+  expect(f.relay.calls).toContain("/_relay/v3/signup/start");
+  expect((await manager.status()).connect).toBeUndefined();
+});
+
+test("without a relay to ask, the invite is not checked ahead", async () => {
+  const f = await connecting(undefined, { env: { OMNESIS_SYNTHETIC: "1" } });
+  manager = await GatewayCloudRelayManagement.open(f.options);
+  await manager
+    .connect({ termsAccepted: true, intent: "create", invite: fictionalInvite })
+    .catch(() => undefined);
+  expect(f.relay.calls).not.toContain("/_relay/v3/signup/invite");
 });
 
 test(
@@ -1849,7 +1908,6 @@ test("a gateway enrolled from its environment links through the installed key re
   const f = fixture({
     configDir,
     env: {
-      OMNESIS_CLOUD_RELAY_ENABLED: "1",
       OMNESIS_CLOUD_RELAY_URL: "https://relay.example.test",
       OMNESIS_CLOUD_RELAY_GATEWAY_ID: "00000000-0000-4000-8000-000000000001",
       OMNESIS_CLOUD_RELAY_GATEWAY_ORIGIN: "https://gateway.example.test",
@@ -2408,16 +2466,15 @@ test("signup access is not asked for or shown without a usable relay service or 
 });
 
 test("by default the gateway asks its relay's public signup path through its own fetch", async () => {
-  const requestAccessUrl = "https://groups.example.com/g/fictional-testers";
   const fetch = vi.fn<typeof globalThis.fetch>(async (url) =>
     String(url) === "https://relay.example.test/_relay/v3/signup/access"
-      ? Response.json({ signup: { inviteOnly: true, requestAccessUrl } })
+      ? Response.json({ signup: { inviteOnly: true } })
       : new Response(null, { status: 404 }),
   );
   manager = await GatewayCloudRelayManagement.open(fixture({ fetch }).options);
   await manager.refreshSignupAccess();
   expect(fetch).toHaveBeenCalledTimes(1);
-  expect((await manager.status()).signup).toEqual({ inviteOnly: true, requestAccessUrl });
+  expect((await manager.status()).signup).toEqual({ inviteOnly: true });
 });
 
 test("a delivered release retry cannot restart work during or after close", async () => {
@@ -2862,7 +2919,6 @@ async function connectingWithDnsCheck() {
   let hold: (() => Promise<void>) | undefined;
   const f = await connecting(relay, {
     env: {
-      OMNESIS_CLOUD_RELAY_ENABLED: "1",
       OMNESIS_CLOUD_RELAY_URL: "https://relay.example.test",
       OMNESIS_ACME_DNS_PROVIDER: "broker",
       OMNESIS_ACME_DNS_BROKER_URL: broker.origin,
@@ -3001,6 +3057,25 @@ for (const [status, code] of [
     expect((await manager.status()).configured).toBe(false);
   });
 }
+
+test("an invite the relay refuses after the security check stays on the status with its reason", async () => {
+  const f = await connectingWithDnsCheck();
+  f.relay.handle("/_relay/v3/signup/invite", inviteAnswer("valid"));
+  f.relay.handle("/_relay/v3/signup/start", () =>
+    Response.json({ error: "invite-expired" }, { status: 403 }),
+  );
+  manager = await GatewayCloudRelayManagement.open(f.options);
+  await manager.connect({ termsAccepted: true, intent: "create", invite: fictionalInvite });
+  f.verify();
+  await vi.waitFor(
+    async () =>
+      expect((await manager!.status()).connect).toEqual({
+        state: "failed",
+        error: "invite-expired",
+      }),
+    { timeout: 5000 },
+  );
+});
 
 test("a DNS security check that exceeds the setup lifetime expires without contacting the relay", async () => {
   const f = await connectingWithDnsCheck();

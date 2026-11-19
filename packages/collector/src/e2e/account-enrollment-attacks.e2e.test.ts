@@ -649,7 +649,6 @@ describe.skipIf(!browserReady)("a relay cannot enroll devices on its own", () =>
 
         // The owner, on the gateway host, acknowledges it.
         const ack = runCli(world, ["cloud", "incidents", "ack"], {
-          OMNESIS_CLOUD_RELAY_ENABLED: "1",
           OMNESIS_CONFIG_DIR: join(directory, "incident-cli"),
           OMNESIS_GATEWAY_URL: gateway.harness.gatewayUrl,
           OMNESIS_TOKEN: token,

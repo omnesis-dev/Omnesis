@@ -3,6 +3,8 @@
 
 import { randomUUID } from "node:crypto";
 import { rmSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { defaultScopesForDeviceKind, SCOPE_ADMIN } from "@omnesis/types";
 import { createDatabase } from "../../db.js";
@@ -24,8 +26,6 @@ import {
 import { createToken, lookupToken } from "./TokenRepository.js";
 import type { DeviceCapability, DeviceKind } from "@omnesis/types";
 import type Database from "better-sqlite3";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 const VICTIM_KEY = "victim-device-key";
 const ATTACKER_KEY = "attacker-device-key";
@@ -34,8 +34,6 @@ let db: Database.Database;
 let path: string;
 
 beforeEach(() => {
-  // Enrollment records are read back only with the cloud relay opt-in.
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
   path = fixtureJoin(fixtureTmpdir(), `omnesis-enrollment-${randomUUID()}.db`);
   db = createDatabase(path);
 });
@@ -307,13 +305,15 @@ describe("the sign-in a device joined with", () => {
   });
 });
 
-test("without the cloud relay opt-in no device record mentions enrollment", () => {
-  const { device } = paired(redeem(enrolled(VICTIM_KEY), { suggestedName: "Fresh" }));
-  expect(device.enrollment).toBeDefined();
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "");
-  const read = getDevice(db, device.id)!;
-  expect("enrollment" in read).toBe(false);
+test("only a device that joined with a device key mentions enrollment", () => {
+  const legacy = createDevice(db, { name: "Fictional laptop", kind: "cli" });
   expect(JSON.stringify(listDevices(db))).not.toContain("enrollment");
+  const { device } = paired(redeem(enrolled(VICTIM_KEY), { suggestedName: "Fresh" }));
+  expect(getDevice(db, device.id)!.enrollment).toBeDefined();
+  expect("enrollment" in getDevice(db, legacy.id)!).toBe(false);
+  const listed = listDevices(db);
+  expect(listed.find((d) => d.id === legacy.id)).not.toHaveProperty("enrollment");
+  expect(listed.find((d) => d.id === device.id)).toHaveProperty("enrollment");
 });
 
 describe("legacy pairings", () => {

@@ -29,13 +29,13 @@ function initial() {
     can: { configure: true, enable: false, disable: false, reconnect: false, renew: false },
   };
 }
-/** The gateway under test runs without the flag; the portal sees it on, as an opted-in gateway reports. */
-async function relayOn(page: Page) {
+/** The portal as a stable gateway shows it, whatever mode the gateway under test runs in. */
+async function stableStatus(page: Page) {
   await page.route("**/status", async (route) => {
     const response = await route.fetch();
     await route.fulfill({
       response,
-      json: { ...(await response.json()), experimental: false, cloudRelay: true },
+      json: { ...(await response.json()), experimental: false },
     });
   });
 }
@@ -68,7 +68,7 @@ async function management(
   // The page asks the gateway to read the account when it opens and regains focus. That changes
   // nothing the page set, so it is counted apart from the actions.
   let refreshes = 0;
-  await relayOn(page);
+  await stableStatus(page);
   await page.route("**/admin/cloud-relay**", async (route) => {
     const operation = new URL(route.request().url()).pathname.split("/").slice(3).join("/");
     if (operation === "account/refresh") {
@@ -369,7 +369,7 @@ test("creating an account and using one are two explicit choices, and each tells
 }) => {
   const { calls } = await management(page);
   // A relay that is not invite-only adds nothing to the two choices.
-  await expect(page.locator(".relay-invite")).toHaveCount(0);
+  await expect(page.locator(".relay-private-badge, .relay-invite-field")).toHaveCount(0);
   // One "Connect" that might create an account as a side effect is gone.
   await expect(page.getByRole("button", { name: "Connect", exact: true })).toHaveCount(0);
   const create = page.getByRole("button", { name: "Create an account", exact: true });
@@ -394,41 +394,50 @@ test("creating an account and using one are two explicit choices, and each tells
   });
 });
 
-test("an invite-only relay says so in the paragraph above the two choices, with where to request access and its host", async ({
+test("an invite-only relay says the account is private, and creating one waits for a whole invite link", async ({
   page,
 }) => {
-  const requestAccessUrl = "https://groups.example.com/g/fictional-testers";
-  const { calls } = await management(
-    page,
-    { configured: false },
-    { signup: { inviteOnly: true, requestAccessUrl } },
-  );
+  const { calls } = await management(page, { configured: false }, { signup: { inviteOnly: true } });
   const notice = page.locator(".relay-hero .relay-lede");
   await expect(notice).toContainText(
-    "Accounts are invite-only for now: request access (groups.example.com), then create your account once it's approved.",
+    "Omnesis accounts are private and invite-only for now: creating one needs an invite link.",
   );
-  const request = notice.getByRole("link", { name: "request access", exact: true });
-  await expect(request).toHaveAttribute("href", requestAccessUrl);
-  await expect(request).toHaveAttribute("target", "_blank");
-  await expect(request).toHaveAttribute("rel", "noopener noreferrer");
+  await expect(page.locator(".relay-private-badge")).toHaveText("Private · invite only");
+  const field = page.getByLabel("Invite link", { exact: true });
   const create = page.getByRole("button", { name: "Create an account", exact: true });
-  await expect(create).toBeEnabled();
-  await expect(page.getByRole("button", { name: "I already have one", exact: true })).toBeEnabled();
+  const existing = page.getByRole("button", { name: "I already have one", exact: true });
+  await expect(create).toBeDisabled();
+  await expect(existing).toBeEnabled();
   // The notice sits above the choices.
   const noticeBox = (await notice.boundingBox())!;
   expect(noticeBox.y + noticeBox.height).toBeLessThanOrEqual((await create.boundingBox())!.y);
+  // Part of a link is named as such and still creates nothing.
+  await field.fill("https://relay.example.test/invite#aGVhZGVy.Y2xhaW1z");
+  await expect(page.locator(".relay-invite-field")).toContainText(
+    "That isn't a whole invite link. Copy all of it, including the part after #.",
+  );
+  await expect(create).toBeDisabled();
+  const token = `aGVhZGVy.Y2xhaW1z.${"s".repeat(86)}`;
+  await field.fill(`https://relay.example.test/invite#${token}`);
+  await expect(create).toBeEnabled();
   await page.screenshot({
     path: test.info().outputPath("account-invite-only.png"),
     fullPage: true,
   });
+  await create.click();
+  // Only the token goes to the gateway, never the rest of the link.
+  await expect
+    .poll(() => calls)
+    .toEqual([
+      { operation: "connect", body: { termsAccepted: true, intent: "create", invite: token } },
+    ]);
   await page.setViewportSize({ width: 390, height: 844 });
-  await expect(request).toBeVisible();
+  await expect(field).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.screenshot({
     path: test.info().outputPath("account-invite-only-mobile.png"),
     fullPage: true,
   });
-  expect(calls).toEqual([]);
 });
 
 test("Google management navigates only to the real authorization endpoint, then unlinks without changing relay enrollment", async ({
@@ -504,7 +513,7 @@ async function pathDevices(page: Page) {
 test("device pills distinguish reported local, relay and reconnecting paths while legacy devices retain ordinary presence", async ({
   page,
 }) => {
-  await relayOn(page);
+  await stableStatus(page);
   await pathDevices(page);
   await signIn(page);
   await page.goto("/portal/settings/devices");
@@ -535,16 +544,6 @@ test("device pills distinguish reported local, relay and reconnecting paths whil
     fullPage: true,
   });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-});
-
-test("without the flag the devices page shows no connection pills", async ({ page }) => {
-  await pathDevices(page);
-  await signIn(page);
-  await page.goto("/portal/settings/devices");
-  await page.getByRole("button", { name: /^Other devices/ }).click();
-  for (const name of PATH_DEVICES)
-    await expect(page.getByText(name, { exact: true })).toBeVisible();
-  await expect(page.locator(".device-connection-pill")).toHaveCount(0);
 });
 
 test("the account row offers the account page and a disconnect that asks first, says what happens and avoids conflicting Google actions", async ({

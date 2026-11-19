@@ -31,7 +31,7 @@ internal const val POLICIES_ROUTE = "policies"
 internal const val POLICY_ROUTE_PATTERN = "$POLICIES_ROUTE/{familyId}?name={name}"
 internal const val ACCESS_AUTHORIZATION_ROUTE = "access/authorize"
 
-/** The gateway's Omnesis account and remote access. Only a build with cloud connectivity opens it. */
+/** The gateway's Omnesis account and remote access. */
 internal const val OMNESIS_ACCOUNT_ROUTE = "omnesis-account"
 
 /**

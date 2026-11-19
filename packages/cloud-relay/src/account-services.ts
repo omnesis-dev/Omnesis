@@ -13,6 +13,7 @@ import { ConnectCodes } from "./connect-codes.js";
 import { ConnectHttp } from "./connect-http.js";
 import { GatewaySignup, type SignupConfiguration } from "./gateway-signup.js";
 import { GatewaySignupHttp } from "./gateway-signup-http.js";
+import { InviteHttp } from "./invite-http.js";
 import { GatewayDirectory } from "./gateway-directory.js";
 import { NativeAccountAuthentication } from "./native-account-authentication.js";
 import { NativeAccountHttp } from "./native-account-http.js";
@@ -56,6 +57,7 @@ export class AccountServices {
   private readonly connectHttp: ConnectHttp;
   private readonly signup?: GatewaySignup;
   private readonly signupHttp?: GatewaySignupHttp;
+  private readonly inviteHttp?: InviteHttp;
   constructor(
     private readonly options: {
       origin: string;
@@ -86,6 +88,9 @@ export class AccountServices {
     },
   ) {
     const accounts = options.accounts.identities;
+    const signupPolicy = options.configuration.signup?.policy ?? "closed";
+    // Under `closed` no sign-up reaches account creation at all; under `invite` each must bring one.
+    accounts.invitesRequired = signupPolicy === "invite";
     const linkedOwners = (account: string) =>
       accounts
         .gatewayLinks(account)
@@ -169,6 +174,7 @@ export class AccountServices {
             gatewayId: owner.gatewayId,
             ownerAccountId: owner.ownerAccountId,
             assertCurrent,
+            carriedOver: true,
           };
         }
       }
@@ -270,7 +276,8 @@ export class AccountServices {
       });
       this.signup = new GatewaySignup({
         origin: options.origin,
-        configuration: options.configuration.signup ?? { policy: "invitation" },
+        configuration: options.configuration.signup ?? { policy: "closed" },
+        inviteRedeemed: (id) => accounts.inviteRedeemed(id),
         authority: options.configuration.enrollmentAuthority,
         sessions: options.sessions,
         codes,
@@ -280,13 +287,13 @@ export class AccountServices {
           const { accounts: used, maxAccounts } = options.accounts.snapshot();
           return used < maxAccounts || options.gatewayBinding(owner) !== undefined;
         },
-        hasLinkedGateway: (account) => linkedOwners(account).length > 0,
         assertAccount,
         assertCurrent: options.assertCurrent,
         linkedAccount,
         linkAccount,
         setDisplayName: (owner, name) => options.accounts.setGatewayDisplayName(owner, name),
       });
+      if (signupPolicy === "invite") this.inviteHttp = new InviteHttp(options.origin);
       this.signupHttp = new GatewaySignupHttp({
         signup: this.signup,
         admission: options.admission,
@@ -334,7 +341,10 @@ export class AccountServices {
       desktop: this.desktop,
       signup: this.signup,
       portal: this.portal,
-      signupAdmission: (id, cookie) => (id ? this.browser?.signupAdmission(id, cookie) : undefined),
+      // Under `invite`, a new account comes only from gateway sign-up, which checks the invite: a
+      // registered gateway that never linked one could otherwise create accounts from its own page.
+      signupAdmission: (id, cookie) =>
+        id && !accounts.invitesRequired ? this.browser?.signupAdmission(id, cookie) : undefined,
     });
   }
 
@@ -343,6 +353,7 @@ export class AccountServices {
       Boolean(this.options.configuration.associations?.handle(req, res)) ||
       (await this.desktopHttp.handle(req, res)) ||
       (await this.connectHttp.handle(req, res)) ||
+      Boolean(this.inviteHttp?.handle(req, res)) ||
       Boolean(await this.signupHttp?.handle(req, res)) ||
       (await this.nativeHttp.handle(req, res)) ||
       (await this.discoveryHttp.handle(req, res)) ||

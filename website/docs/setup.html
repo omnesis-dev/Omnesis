@@ -221,9 +221,10 @@
         <h2 id="portal">Portal</h2>
         <p>
           If the gateway is starting, your browser shows its startup progress and database
-          preparation first. It opens the page you requested automatically when the required
-          services are ready. The progress page needs a working HTTPS listener, so certificate
-          creation or a gateway that has not yet bound its port can still delay the first response.
+          preparation first. Scroll within the progress card to see every step while its heading
+          stays visible. It opens the page you requested automatically when the required services
+          are ready. The progress page needs a working HTTPS listener, so certificate creation or a
+          gateway that has not yet bound its port can still delay the first response.
         </p>
         <p>
           The portal is the gateway's built-in web interface, at
@@ -401,6 +402,20 @@
           time. At home, devices always connect directly.
         </p>
         <ul>
+          <li>
+            <strong>Omnesis account</strong> links the gateway to an account on the Omnesis relay.
+            Your phones and computers then find the gateway by signing in to the account, with a
+            passkey or Google, instead of scanning a QR code, a new device can ask to join from
+            anywhere, and the gateway is reachable away from home through the relay. The relay
+            passes the encrypted connection through without opening it: the gateway's certificate
+            key never leaves the gateway, and your documents, searches and answers stay on it. The
+            account knows only how you sign in and which gateways are yours. Accounts are private
+            and invite-only for now: creating one needs an invite link. Paste it under
+            <strong>Settings → Connectivity → Omnesis account</strong>, or run
+            <code>omnesis cloud connect --invite &lt;link&gt;</code>. Each invite creates one
+            account and expires; signing in to an account you already have needs no invite. Opening
+            the link in a browser shows whether it still works.
+          </li>
           <li>
             <strong>This gateway's own Tailscale device</strong> joins your tailnet as a device of
             its own, named <code>omnesis</code>, with no Tailscale app on the gateway machine. It

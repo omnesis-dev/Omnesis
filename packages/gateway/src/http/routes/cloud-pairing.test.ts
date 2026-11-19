@@ -51,7 +51,6 @@ let admin: string;
 let reader: string;
 beforeEach(() => {
   vi.stubEnv("OMNESIS_EXPERIMENTAL", "0");
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
   vi.stubEnv("OMNESIS_CLOUD_RELAY_GOOGLE_CLIENT_ID", "fictional-google-client");
   vi.stubEnv("OMNESIS_CLOUD_RELAY_GATEWAY_ORIGIN", undefined);
   vi.stubEnv("OMNESIS_CLOUD_RELAY_OWNER_ACCOUNT", "");
@@ -294,15 +293,30 @@ test("invalid identity, account, request data and polling secret disclose no cre
   ).toBe(409);
 });
 
-test("Google configuration is absent when optional configuration or cloud relay is disabled", async () => {
-  const unconfigured = createServer(db, path);
-  expect((await unconfigured.request("/devices/google/config")).status).toBe(404);
-  expect((await post(unconfigured, "/devices/google/request", await request())).status).toBe(404);
-  vi.stubEnv("OMNESIS_EXPERIMENTAL", "1");
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "0");
-  const disabled = app();
-  expect((await disabled.request("/devices/google/config")).status).toBe(404);
-  expect((await post(disabled, "/devices/google/request", await request())).status).toBe(404);
+test("a gateway with no sign-in configured and no linked account answers every pairing route 404", async () => {
+  const unlinked = (management?: object) =>
+    createServer(db, path, {
+      tlsFingerprintSha256: "a".repeat(64),
+      // As at run time: a source that is always asked, and a relay that never linked.
+      cloudIdentitySource: () => undefined,
+      ...(management ? { cloudRelayManagement: management } : {}),
+    } as never);
+  for (const server of [
+    createServer(db, path),
+    unlinked(),
+    unlinked({ accountModeActivated: () => false, accountPairingIdentity: () => undefined }),
+  ]) {
+    for (const base of ["/devices/google", "/devices/account"]) {
+      expect((await server.request(`${base}/config`)).status).toBe(404);
+      expect((await post(server, `${base}/request`, await request())).status).toBe(404);
+      expect((await post(server, `${base}/challenge`, {})).status).toBe(404);
+    }
+    const listed = await server.request("/admin/cloud-pairing/requests", {
+      headers: { authorization: `Bearer ${admin}` },
+    });
+    expect(listed.status).toBe(404);
+    expect(db.prepare("SELECT COUNT(*) AS n FROM device_pairings").get()).toEqual({ n: 0 });
+  }
 });
 
 function webApp() {

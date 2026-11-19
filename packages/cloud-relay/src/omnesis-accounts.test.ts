@@ -673,3 +673,54 @@ test("a passkey keeps the sign-in that vouched for it until the passkey is remov
     db.close();
   }
 });
+
+test("an invite-only store creates an account only with an unused, unexpired invite or an admitted gateway", () => {
+  const { db, accounts } = fixture();
+  try {
+    accounts.invitesRequired = true;
+    const count = () =>
+      (db.prepare("SELECT count(*) AS n FROM omnesis_accounts").get() as { n: number }).n;
+    // Neither a bare sign-in nor a gateway admission without an invite creates anything.
+    for (const admission of [undefined, testAccountAdmission()])
+      expect(() => accounts.signInFederated("google", "a".repeat(64), admission)).toThrow(
+        expect.objectContaining({ status: 403, code: "invite-required" }),
+      );
+    expect(count()).toBe(0);
+    const invite = { id: "FixtureInvite000000001", expiresAt: Math.floor(Date.now() / 1000) + 60 };
+    expect(accounts.inviteRedeemed(invite.id)).toBe(false);
+    const created = accounts.signInFederated("google", "a".repeat(64), {
+      ...testAccountAdmission(),
+      invite,
+    });
+    expect(accounts.inviteRedeemed(invite.id)).toBe(true);
+    // The same invite again creates nothing, and the failed attempt leaves no account behind.
+    expect(() =>
+      accounts.registerPasskey(OmnesisAccounts.newId(), passkey("second"), true, undefined, {
+        ...testAccountAdmission(),
+        invite,
+      }),
+    ).toThrow(expect.objectContaining({ code: "invite-used" }));
+    expect(count()).toBe(1);
+    expect(accounts.passkey("second")).toBeUndefined();
+    // An invite that expired after the sign-up started is refused at creation.
+    expect(() =>
+      accounts.signInFederated("google", "b".repeat(64), {
+        ...testAccountAdmission(),
+        invite: { id: "FixtureInvite000000002", expiresAt: Math.floor(Date.now() / 1000) },
+      }),
+    ).toThrow(expect.objectContaining({ code: "invite-expired" }));
+    expect(accounts.inviteRedeemed("FixtureInvite000000002")).toBe(false);
+    // A gateway this relay already admitted creates its account without one.
+    expect(
+      accounts.signInFederated("google", "c".repeat(64), {
+        ...testAccountAdmission(),
+        carriedOver: true,
+      }),
+    ).not.toBe(created);
+    expect(count()).toBe(2);
+    // Signing in to an account that exists needs nothing.
+    expect(accounts.signInFederated("google", "a".repeat(64))).toBe(created);
+  } finally {
+    db.close();
+  }
+});

@@ -112,7 +112,6 @@ describe.skipIf(!browserReady)(
     let owner: PasskeySession;
     const terminalRuns: ReturnType<typeof runEnrollmentTerminal>[] = [];
     const priorCaFile = process.env.OMNESIS_CLOUD_RELAY_GATEWAY_CA_FILE;
-    const priorEnabled = process.env.OMNESIS_CLOUD_RELAY_ENABLED;
 
     /** Starts the real Node pairing client. `launchUrl` is what it would open in a browser. */
     async function startPairing(options: {
@@ -175,8 +174,6 @@ describe.skipIf(!browserReady)(
       directory = await mkdtemp(join(tmpdir(), "omnesis-enroll-security-"));
       world = await EnrollmentWorld.create(directory, { signupPolicy: "open" });
       process.env.OMNESIS_CLOUD_RELAY_GATEWAY_CA_FILE = world.pki.caCertFile;
-      // The pairing client runs in this process.
-      process.env.OMNESIS_CLOUD_RELAY_ENABLED = "1";
       browser = await PasskeyBrowser.launch(world);
       gateway = await EnrollmentGateway.start(world, "security");
       owner = await browser.session();
@@ -207,8 +204,6 @@ describe.skipIf(!browserReady)(
       } finally {
         if (priorCaFile === undefined) delete process.env.OMNESIS_CLOUD_RELAY_GATEWAY_CA_FILE;
         else process.env.OMNESIS_CLOUD_RELAY_GATEWAY_CA_FILE = priorCaFile;
-        if (priorEnabled === undefined) delete process.env.OMNESIS_CLOUD_RELAY_ENABLED;
-        else process.env.OMNESIS_CLOUD_RELAY_ENABLED = priorEnabled;
       }
     }, 60_000);
 
@@ -301,7 +296,6 @@ describe.skipIf(!browserReady)(
             OMNESIS_GATEWAY_URL: undefined,
             OMNESIS_TOKEN: undefined,
             OMNESIS_CONFIG_DIR: configDir,
-            OMNESIS_CLOUD_RELAY_ENABLED: "1",
             OMNESIS_CLOUD_RELAY_URL: world.relayOrigin,
             OMNESIS_CLOUD_RELAY_GATEWAY_CA_FILE: world.pki.caCertFile,
           },
@@ -473,7 +467,7 @@ describe("one client cannot use up the rate limits of another", () => {
 
   beforeAll(async () => {
     directory = await mkdtemp(join(tmpdir(), "omnesis-enroll-rates-"));
-    world = await EnrollmentWorld.create(directory, { signupPolicy: "invitation" });
+    world = await EnrollmentWorld.create(directory, { signupPolicy: "closed" });
     gateway = await EnrollmentGateway.start(world, "rates");
   }, gatewayBootBudgetMs() + 60_000);
 

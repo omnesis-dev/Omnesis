@@ -3,3 +3,4 @@
 
 export function installAccountUI(): void;
 export function installConnectUI(): void;
+export function installInviteUI(): void;

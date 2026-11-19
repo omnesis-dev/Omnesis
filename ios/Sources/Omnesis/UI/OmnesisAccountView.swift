@@ -384,7 +384,7 @@ struct OmnesisAccountCopyButton: View {
 @available(iOS 17.0, *)
 private func omnesisAccountPreview(_ status: CloudRelayStatus?, failure: String? = nil, loadError: Error? = nil) -> some View {
     NavigationStack {
-        OmnesisAccountView(model: OmnesisAccountModel(enabled: true, status: status, failure: failure, loadError: loadError), client: nil)
+        OmnesisAccountView(model: OmnesisAccountModel(status: status, failure: failure, loadError: loadError), client: nil)
     }
 }
 

@@ -96,14 +96,16 @@ class MobileJourneyTest {
         val denySelector = By.res(Pattern.compile(".*permissioncontroller:id/permission_deny_button"))
         var deny: androidx.test.uiautomator.UiObject2? = null
         tap("onboarding.pair")
+        // The pairing screen opens on its entry, beside the cloud account sign-in; direct
+        // pairing starts at its scanner row, tapped below once it is on screen.
         val deadline = System.currentTimeMillis() + PAIRING_TIMEOUT_MS
         while (deny == null && System.currentTimeMillis() < deadline) {
             // A stalled system app's "isn't responding" dialog can cover the
             // request; waiting on it is the emulator's business, not the app's.
             device.findObject(By.res("android", "aerr_wait"))?.click()
             deny = device.wait(Until.findObject(denySelector), 5_000)
-            if (deny == null && onScreen(hasTestTag("onboarding.pair"))) {
-                compose.onAllNodesWithTag("onboarding.pair").onFirst().performClick()
+            for (tag in listOf("onboarding.pair", "pairing.entry.scan")) {
+                if (deny == null && onScreen(hasTestTag(tag))) compose.onAllNodesWithTag(tag).onFirst().performClick()
             }
         }
         checkNotNull(deny) { "the pairing screen never asked for the camera" }.click()

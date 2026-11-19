@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from "node:crypto";
-import { cloudRelayEnabled, createLogger, isTailscaleNodeIdentity } from "@omnesis/core";
+import { createLogger, isTailscaleNodeIdentity } from "@omnesis/core";
 import {
   DeviceId,
   SourceType,
@@ -759,8 +759,7 @@ function rowEnrollment(row: DeviceRow): DeviceEnrollment | null {
 }
 
 function rowToDevice(row: DeviceRow): DeviceRecord {
-  // Without the cloud relay opt-in no record mentions enrollment at all.
-  const enrollment = cloudRelayEnabled() ? rowEnrollment(row) : null;
+  const enrollment = rowEnrollment(row);
   return {
     // Omitted rather than null, so a device that never used sign-in enrollment
     // serializes exactly as it always has.

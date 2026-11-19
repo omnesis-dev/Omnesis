@@ -14,7 +14,7 @@
 import { createLogger } from "@omnesis/core";
 import { tailnetCallerOfEnv } from "../tailscale-embed/caller.js";
 import { FUNNEL_REQUEST_HEADER } from "../remote-access/host-access.js";
-import { arrivedThroughRelay } from "./client-ip.js";
+import { arrivedThroughRelayTunnel } from "./client-ip.js";
 import type { McpAddresses } from "../remote-access/mcp-addresses.js";
 import type { MiddlewareHandler } from "hono";
 import type { AppEnv } from "./routes/types.js";
@@ -29,7 +29,9 @@ export function mcpAddressGate(
       url: c.req.url,
       path: c.req.path,
       via: tailnetCallerOfEnv(c.env)?.via ?? null,
-      relayed: arrivedThroughRelay((name) => c.req.header(name), c.env),
+      // The tunnel's own socket, never a header: being relayed exempts a request from the
+      // Funnel check, so a client must not be able to claim it.
+      relayed: arrivedThroughRelayTunnel(c.env),
       funnel: c.req.header(FUNNEL_REQUEST_HEADER) === "?1",
     });
     if (!refused) return next();

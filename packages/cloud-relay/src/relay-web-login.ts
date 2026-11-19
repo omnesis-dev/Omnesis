@@ -19,11 +19,8 @@ export interface RelayWebLoginOptions {
   publicOrigin: string;
   identity: IdentityProvider;
   accountBrowser: {
-    /**
-     * `nonce` is set when the sign-in must commit to an operation, and `email` when its policy
-     * needs the verified address.
-     */
-    begin(req: IncomingMessage): Promise<{ context?: string; nonce?: string; email?: boolean }>;
+    /** `nonce` is set when the sign-in must commit to an operation. */
+    begin(req: IncomingMessage): Promise<{ context?: string; nonce?: string }>;
     complete(
       idToken: string,
       nonce: string,
@@ -95,14 +92,13 @@ export class RelayWebLogin {
       }
       req.resume();
       await this.admission.run(async () => {
-        const { context, nonce, email } = await this.options.accountBrowser.begin(req);
+        const { context, nonce } = await this.options.accountBrowser.begin(req);
         this.prune();
         if (this.pending.size >= 32) throw new RelayError(429, "Too many Google sign-in requests");
         const authorization = beginGoogleAuthorization({
           clientId: this.options.clientId,
           redirectUri: new URL("/_relay/web/callback", this.origin).href,
           nonce: nonce ?? randomBytes(32).toString("base64url"),
-          email,
           endpoint: this.options.authorizationEndpoint,
         });
         this.pending.set(authorization.state, { authorization, context });

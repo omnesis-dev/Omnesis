@@ -425,7 +425,6 @@ test("broker HTTP refuses unbounded bodies, malformed messages and unsupported m
 });
 
 test("a synthetic RFC8555 authority issues through the independent broker and gateway ACME selector, keeping account/TLS keys off the broker", async () => {
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
   const f = await fixture();
   const { localAcmeAuthority } = await import("../test/acme-authority.js");
   const { issueAcmeCertificate } = await import("./acme-client.js");
@@ -445,7 +444,6 @@ test("a synthetic RFC8555 authority issues through the independent broker and ga
     const activate = vi.fn(async () => {});
     controller = await createGatewayAcmeController(
       {
-        OMNESIS_CLOUD_RELAY_ENABLED: "1",
         OMNESIS_ACME_DIRECTORY_URL: authority.directoryUrl,
         OMNESIS_ACME_TERMS_ACCEPTED: "1",
         OMNESIS_ACME_CERT_FILE: f.gateway.certificateFile,
@@ -495,10 +493,8 @@ test("a synthetic RFC8555 authority issues through the independent broker and ga
 });
 
 test("independent mode requires an operator broker URL and refuses a local DNS-provider token", async () => {
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
   const { createGatewayAcmeController } = await import("./acme-integration.js");
   const base = {
-    OMNESIS_CLOUD_RELAY_ENABLED: "1",
     OMNESIS_ACME_DIRECTORY_URL: "https://ca.example.test/directory",
     OMNESIS_ACME_TERMS_ACCEPTED: "1",
     OMNESIS_ACME_CERT_FILE: join(directory, "public.pem"),

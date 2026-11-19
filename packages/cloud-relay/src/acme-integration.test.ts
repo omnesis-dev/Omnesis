@@ -19,7 +19,6 @@ let directory: string;
 beforeEach(async () => {
   directory = await mkdtemp(join(tmpdir(), "omnesis-acme-integration-"));
   if (process.platform === "win32") await core.ensurePrivateDirs([directory]);
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
 });
 afterEach(async () => {
   vi.restoreAllMocks();
@@ -37,7 +36,6 @@ async function environment() {
     OMNESIS_TLS_CERT: tls.certFile,
     OMNESIS_TLS_KEY: tls.keyFile,
     OMNESIS_PUBLIC_BASE_URL: "https://owned.test",
-    OMNESIS_CLOUD_RELAY_ENABLED: process.env.OMNESIS_CLOUD_RELAY_ENABLED,
     OMNESIS_CLOUD_RELAY_URL: "https://relay.example.test",
     OMNESIS_CLOUD_RELAY_SESSION_FILE: join(directory, "session"),
     OMNESIS_CLOUD_RELAY_GATEWAY_ID: randomUUID(),
@@ -47,7 +45,7 @@ async function environment() {
     OMNESIS_ACME_DNS_TOKEN_FILE: tokenFile,
   };
 }
-test("ACME absent or experimental disabled leaves all files, certificate contexts and provider activity untouched", async () => {
+test("without an ACME directory nothing is created, activated or asked, whatever else is configured", async () => {
   const activate = vi.fn(async () => {}),
     fetch = vi.fn<typeof globalThis.fetch>();
   const prepared = await environment();
@@ -55,20 +53,14 @@ test("ACME absent or experimental disabled leaves all files, certificate context
   expect(
     await createGatewayAcmeController({}, { configDir: directory, activate, fetch }),
   ).toBeUndefined();
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "0");
-  expect(
-    await createGatewayAcmeController(
-      { OMNESIS_ACME_DIRECTORY_URL: "malformed", OMNESIS_ACME_TERMS_ACCEPTED: "invalid" },
-      { configDir: directory, activate, fetch },
-    ),
-  ).toBeUndefined();
-  // Without the flag, neither the official broker nor a configured one is ever asked anything.
+  // A gateway that never chose ACME asks neither the official broker nor a configured one.
+  const withoutDirectory: NodeJS.ProcessEnv = { ...prepared };
+  delete withoutDirectory.OMNESIS_ACME_DIRECTORY_URL;
   for (const provider of [{}, { OMNESIS_ACME_DNS_PROVIDER: "broker" }])
     expect(
       await createGatewayAcmeController(
         {
-          ...prepared,
-          OMNESIS_CLOUD_RELAY_ENABLED: "0",
+          ...withoutDirectory,
           OMNESIS_CLOUD_RELAY_URL: "https://relay.omnesis.app",
           OMNESIS_ACME_DNS_BROKER_URL: "https://dns.example.test",
           ...provider,

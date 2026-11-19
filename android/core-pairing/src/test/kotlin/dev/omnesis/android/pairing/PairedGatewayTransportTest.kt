@@ -87,7 +87,7 @@ class PairedGatewayTransportTest {
             server.start()
             val origin = server.url("/").toString().trimEnd('/')
             val key = LeafCertPinner.sha256Hex(certificate.certificate.publicKey.encoded)
-            val service = PairingService(InMemoryStore(), cloudRelay = true)
+            val service = PairingService(InMemoryStore())
             val value = service.pair("""{"v":4,"gatewayUrl":"$origin","pairingCode":"SYNTHETIC","tls":{"mode":"pinned-key-strict","spkiFingerprint":"$key"}}""")
             assertEquals(key, value.spkiFingerprint)
             assertNull(value.fingerprint)

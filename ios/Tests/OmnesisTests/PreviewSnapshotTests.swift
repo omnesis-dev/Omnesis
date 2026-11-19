@@ -110,33 +110,33 @@ final class PreviewSnapshotTests: XCTestCase {
         )
     }
 
-    func testPairingEntryWithAnOmnesisAccount() {
-        func entry(google: Bool = true, passkeys: Bool = true, notice: String? = nil) -> some View {
-            NavigationStack {
-                PairingAccountEntryView(
-                    googleAvailable: google,
-                    passkeysAvailable: passkeys,
-                    notice: notice,
-                    onGoogle: {},
-                    onPasskey: {},
-                    onScan: {},
-                    onManual: {}
-                )
+    func testPairingEntryAndSignInChoice() {
+        let entry = NavigationStack {
+            PairingAccountEntryView(onSignIn: {}, onScan: {}, onManual: {})
                 .navigationTitle("Pair with your gateway")
                 .navigationBarTitleDisplayMode(.inline)
-            }
         }
-        snapshot(entry(), name: "pairing-entry-account")
-        snapshot(
-            entry(notice: AccountPairingError.noPasskey.signInNotice).preferredColorScheme(.dark),
-            name: "pairing-entry-no-passkey-dark"
-        )
-        snapshot(entry(google: false), name: "pairing-entry-account-passkey-only")
-        snapshot(entry().dynamicTypeSize(.accessibility2), name: "pairing-entry-account-large")
+        let small = CGSize(width: 320, height: 568)
+        snapshot(entry, name: "pairing-entry-account")
+        snapshot(entry, name: "pairing-entry-account-small", size: small)
+        snapshot(entry.dynamicTypeSize(.accessibility2), name: "pairing-entry-account-large")
         snapshot(
             PairingView(accountConfiguration: PreviewMocks.accountCloudPairingConfiguration).environment(AppStore.preview()),
             name: "pairing-entry-account-in-sheet"
         )
+        func choice(google: Bool = true, notice: String? = nil, failure: String? = nil) -> some View {
+            NavigationStack {
+                AccountSignInChoiceView(googleAvailable: google, notice: notice, failure: failure, onGoogle: {}, onPasskey: {})
+                    .navigationTitle(AccountSignInChoiceView.title)
+                    .navigationBarTitleDisplayMode(.inline)
+            }
+        }
+        snapshot(choice(), name: "sign-in-choice")
+        snapshot(choice(), name: "sign-in-choice-small", size: small)
+        snapshot(choice().dynamicTypeSize(.accessibility2), name: "sign-in-choice-large")
+        snapshot(choice(google: false), name: "sign-in-choice-passkey-only")
+        snapshot(choice(notice: AccountPairingError.noPasskey.signInNotice), name: "sign-in-choice-no-passkey")
+        snapshot(choice(failure: accountPairingErrorMessage(AccountPairingError.expired)), name: "sign-in-choice-failed")
         snapshot(
             NavigationStack { PreviewMocks.accountPairingPanel(.idle) }.dynamicTypeSize(.accessibility2),
             name: "account-pairing-idle-large"
@@ -167,8 +167,7 @@ final class PreviewSnapshotTests: XCTestCase {
             DevicesList(
                 devices: PreviewMocks.devicesWithSignInJoins,
                 thisDeviceId: PreviewMocks.devicePhone.id,
-                tokensByDevice: [:],
-                cloudRelayEnabled: true
+                tokensByDevice: [:]
             )
             .background(Theme.bgPrimary.ignoresSafeArea())
             .navigationTitle("Devices")
@@ -177,7 +176,7 @@ final class PreviewSnapshotTests: XCTestCase {
         snapshot(view.environment(store), name: "devices-sign-in-joins", size: CGSize(width: 393, height: 1100))
         snapshot(
             ScrollView {
-                DeviceCard(device: PreviewMocks.deviceJoinedWithGoogle, tokens: [], cloudRelayEnabled: true)
+                DeviceCard(device: PreviewMocks.deviceJoinedWithGoogle, tokens: [])
                     .padding(Theme.Spacing.lg)
                     .dynamicTypeSize(.accessibility2)
             }
@@ -192,7 +191,7 @@ final class PreviewSnapshotTests: XCTestCase {
         func screen(_ status: CloudRelayStatus?, failure: String? = nil, loadError: Error? = nil) -> some View {
             NavigationStack {
                 OmnesisAccountView(
-                    model: OmnesisAccountModel(enabled: true, status: status, failure: failure, loadError: loadError),
+                    model: OmnesisAccountModel(status: status, failure: failure, loadError: loadError),
                     client: nil
                 )
             }
@@ -260,16 +259,11 @@ final class PreviewSnapshotTests: XCTestCase {
         }
         let small = CGSize(width: 393, height: 320)
         snapshot(
-            row(OmnesisAccountModel(enabled: true, status: PreviewMocks.cloudRelayConnected)),
+            row(OmnesisAccountModel(status: PreviewMocks.cloudRelayConnected)),
             name: "omnesis-account-settings-row",
             size: small
         )
-        snapshot(row(OmnesisAccountModel(enabled: true)), name: "omnesis-account-settings-row-absent", size: small)
-        snapshot(
-            row(OmnesisAccountModel(enabled: false, status: PreviewMocks.cloudRelayConnected)),
-            name: "omnesis-account-settings-row-flag-off",
-            size: small
-        )
+        snapshot(row(OmnesisAccountModel()), name: "omnesis-account-settings-row-absent", size: small)
     }
 
     func testPairingApprovalOffersToTrustASignIn() async {
@@ -431,7 +425,7 @@ final class PreviewSnapshotTests: XCTestCase {
         snapshot(toolbar(nil), name: "waiting-for-ok-entry-absent", size: bar)
         snapshot(toolbar(DeviceApprovalKinds.neither), name: "waiting-for-ok-entry-flags-off", size: bar)
         snapshot(
-            toolbar(DeviceApprovalKinds(cloudRelayEnabled: true, tailscaleEmbed: true, scopes: ["read"])),
+            toolbar(DeviceApprovalKinds(tailscaleEmbed: true, scopes: ["read"])),
             name: "waiting-for-ok-entry-not-admin",
             size: bar
         )
@@ -538,100 +532,6 @@ final class PreviewSnapshotTests: XCTestCase {
         )
     }
 
-    /// With the cloud build flag off, a gateway's new fields change nothing: these screens
-    /// render exactly as they do for rows and connections that never had them.
-    func testCloudFlagOffLeavesDevicesAndSettingsUnchanged() throws {
-        let store = AppStore.preview()
-        func devices(_ records: [DeviceRecord]) -> some View {
-            NavigationStack {
-                DevicesList(
-                    devices: records,
-                    tokensByDevice: [:],
-                    cloudRelayEnabled: false
-                )
-                .background(Theme.bgPrimary.ignoresSafeArea())
-                .navigationTitle("Devices")
-                .navigationBarTitleDisplayMode(.inline)
-            }
-            .environment(store)
-        }
-        let plain = PreviewMocks.devices
-        let decorated = plain.map {
-            DeviceRecord(
-                id: $0.id,
-                name: $0.name,
-                kind: $0.kind,
-                pairedAt: $0.pairedAt,
-                lastSeenAt: $0.lastSeenAt,
-                revokedAt: $0.revokedAt,
-                capabilities: $0.capabilities,
-                online: $0.online,
-                connectionPath: "relay",
-                enrollment: DeviceEnrollmentInfo(method: "automatic", signIn: "google")
-            )
-        }
-        snapshot(devices(plain), name: "cloud-off-devices-plain")
-        snapshot(devices(decorated), name: "cloud-off-devices-decorated")
-        try assertSameImage("cloud-off-devices-plain", "cloud-off-devices-decorated")
-
-        let connected = DeviceSocket.ConnectionState.connected(deviceId: "d", deviceName: "iPhone", scopes: [])
-        snapshot(List { GatewayConnectionRow(state: connected, cloudRelayEnabled: false) }, name: "cloud-off-row-plain")
-        snapshot(List { GatewayConnectionRow(state: connected, path: .relay, cloudRelayEnabled: false) }, name: "cloud-off-row-relay")
-        try assertSameImage("cloud-off-row-plain", "cloud-off-row-relay")
-
-        try XCTSkipIf(CloudRelayFeature.enabled, "This host app was built with the cloud flag on")
-        func settings(_ path: GatewayConnectionPath?) -> some View {
-            SettingsView(initialDestination: .root, previewData: true).environment(AppStore.preview(
-                pairedDeviceId: "fixture-phone",
-                wsState: connected,
-                connectionPath: path
-            ))
-        }
-        snapshot(settings(nil), name: "cloud-off-settings-plain")
-        snapshot(settings(.relay), name: "cloud-off-settings-relay")
-        try assertSameImage("cloud-off-settings-plain", "cloud-off-settings-relay")
-        XCTAssertNil(PushTarget.fromUserInfo(["omnesis": ["kind": "device-joined", "targetId": "d"]]))
-    }
-
-    /// With the cloud build flag off the QR confirmation sheet keeps its fixed layout
-    /// (actions at the bottom edge, the pin in its small type), whatever the payload.
-    func testCloudFlagOffKeepsTheConfirmationSheetLayout() throws {
-        @ViewBuilder
-        func sheet(_ payload: PairingPayload, cloudRelayEnabled enabled: Bool? = nil) -> some View {
-            if let enabled {
-                PairingConfirmationSheet(payload: payload, isPairing: false, onCancel: {}, onConfirm: {}, cloudRelayEnabled: enabled)
-            } else {
-                PairingConfirmationSheet(payload: payload, isPairing: false, onCancel: {}, onConfirm: {})
-            }
-        }
-        let payloads: [(String, PairingPayload)] = [
-            ("system", .v4(PreviewMocks.pairingPayloadV4System)),
-            ("leaf", .v3(PreviewMocks.pairingPayloadV3)),
-            ("legacy", .v2(PreviewMocks.pairingPayloadV2)),
-        ]
-        for (name, payload) in payloads {
-            snapshot(sheet(payload, cloudRelayEnabled: false), name: "cloud-off-confirm-\(name)")
-            snapshot(sheet(payload, cloudRelayEnabled: true), name: "cloud-on-confirm-\(name)")
-            snapshot(sheet(payload), name: "cloud-build-confirm-\(name)")
-            try assertDifferentImage("cloud-off-confirm-\(name)", "cloud-on-confirm-\(name)")
-            // The sheet a build shows follows its own flag.
-            try assertSameImage("cloud-build-confirm-\(name)", "cloud-\(CloudRelayFeature.enabled ? "on" : "off")-confirm-\(name)")
-        }
-    }
-
-    /// The heading stands alone in a flag-off row; a path never adds or moves anything.
-    func testCloudFlagOffConnectionRowIgnoresThePath() throws {
-        for entry in GatewayConnectionRowPreviewStates.all {
-            let name = entry.name.lowercased().filter { $0.isLetter || $0.isNumber }
-            snapshot(List { GatewayConnectionRow(state: entry.state, cloudRelayEnabled: false) }, name: "cloud-off-row-\(name)")
-            snapshot(
-                List { GatewayConnectionRow(state: entry.state, path: .local, cloudRelayEnabled: false) },
-                name: "cloud-off-row-\(name)-local"
-            )
-            try assertSameImage("cloud-off-row-\(name)", "cloud-off-row-\(name)-local")
-        }
-    }
-
     private func assertDifferentImage(_ first: String, _ second: String, file: StaticString = #filePath, line: UInt = #line) throws {
         for suffix in ["", "-light"] {
             let left = try Data(contentsOf: Self.outputDir.appendingPathComponent("\(first)\(suffix).png"))
@@ -648,40 +548,11 @@ final class PreviewSnapshotTests: XCTestCase {
         }
     }
 
-    func testGoogleCloudPairingStates() {
+    func testGoogleSignInButton() {
         XCTAssertNotNil(UIImage(named: "GoogleSignInMark"), "Google sign-in artwork must be bundled as an original-color image")
         snapshot(GoogleSignInButton {}.padding(), name: "google-sign-in-button")
         snapshot(GoogleSignInButton {}.padding().preferredColorScheme(.dark), name: "google-sign-in-button-dark")
         snapshot(GoogleSignInButton {}.padding().dynamicTypeSize(.accessibility2), name: "google-sign-in-button-large")
-        snapshot(
-            PairingView(googleConfiguration: PreviewMocks.googleCloudPairingConfiguration).environment(AppStore.preview()),
-            name: "google-pairing-qr-entry"
-        )
-        snapshot(
-            GoogleCloudPairingView(configuration: PreviewMocks.googleCloudPairingConfiguration)
-                .environment(AppStore.preview()),
-            name: "google-pairing-sheet"
-        )
-        for (phase, name) in [
-            (GoogleCloudPairingCoordinator.Phase.idle, "idle"),
-            (.signingIn, "signing-in"),
-            (.findingGateway, "finding"),
-            (.comparing, "compare"),
-            (.waiting, "waiting"),
-            (.ready, "approved"),
-            (.pairing, "pairing"),
-            (.failed, "failed"),
-        ] {
-            snapshot(NavigationStack { PreviewMocks.googlePairingPanel(phase) }, name: "google-pairing-\(name)")
-            snapshot(
-                NavigationStack { PreviewMocks.googlePairingPanel(phase) }.preferredColorScheme(.dark),
-                name: "google-pairing-\(name)-dark"
-            )
-        }
-        snapshot(
-            NavigationStack { PreviewMocks.googlePairingPanel(.ready) }.dynamicTypeSize(.accessibility2),
-            name: "google-pairing-approved-large"
-        )
     }
 
     func testChapterTwoTrustSurfaces() async {
@@ -703,12 +574,12 @@ final class PreviewSnapshotTests: XCTestCase {
         for dark in [false, true] {
             let suffix = dark ? "dark" : "light"
             snapshot(
-                PairingConfirmationSheet(payload: payload, isPairing: false, onCancel: {}, onConfirm: {}, cloudRelayEnabled: true)
+                PairingConfirmationSheet(payload: payload, isPairing: false, onCancel: {}, onConfirm: {})
                     .preferredColorScheme(dark ? .dark : .light),
                 name: "chapter-two-key-confirm-\(suffix)"
             )
             snapshot(
-                PairingConfirmationSheet(payload: payload, isPairing: false, onCancel: {}, onConfirm: {}, cloudRelayEnabled: true)
+                PairingConfirmationSheet(payload: payload, isPairing: false, onCancel: {}, onConfirm: {})
                     .preferredColorScheme(dark ? .dark : .light).dynamicTypeSize(.accessibility2),
                 name: "chapter-two-key-confirm-large-\(suffix)"
             )
@@ -771,8 +642,7 @@ final class PreviewSnapshotTests: XCTestCase {
                 )),
                 isPairing: false,
                 onCancel: {},
-                onConfirm: {},
-                cloudRelayEnabled: true
+                onConfirm: {}
             ),
             name: "chapter-two-legacy-leaf-qr"
         )
@@ -780,8 +650,7 @@ final class PreviewSnapshotTests: XCTestCase {
             payload: .v2(.init(gatewayUrl: "https://gateway.example.test", pairingCode: "TEST-CODE")),
             isPairing: false,
             onCancel: {},
-            onConfirm: {},
-            cloudRelayEnabled: true
+            onConfirm: {}
         ), name: "chapter-two-legacy-direct-qr")
         snapshot(PairingManualEntryView(
             gatewayURL: .constant("https://gateway.example.test"),
@@ -3428,64 +3297,7 @@ final class PreviewSnapshotTests: XCTestCase {
         snapshot(view.environment(store), name: "58b-repair-form", size: CGSize(width: 393, height: 400))
     }
 
-    func testPairDeviceResultWithTheCloudFlagOff() {
-        // Pairing result: the one-time code, expiry, host picker, and the
-        // generated QR (encoded from a fixed payload so the QR is stable).
-        let store = AppStore.preview()
-        let view = NavigationStack {
-            LegacyPairingResultView(
-                pending: PreviewMocks.pendingPairing,
-                kind: "ios",
-                identities: PreviewMocks.networkIdentities,
-                encodeQr: { code, url in
-                    "{\"v\":4,\"gatewayUrl\":\"\(url)\",\"pairingCode\":\"\(code)\",\"tls\":{\"mode\":\"system\"}}"
-                },
-                // Seed the resolved payload so the QR renders in the captured
-                // frame (the async .task wouldn't complete before the snapshot).
-                initialPayload: #"{"v":4,"gatewayUrl":"https://gateway.example:7600","pairingCode":"7K3M-9QX2","tls":{"mode":"system"}}"#
-            )
-            .background(Theme.bgPrimary.ignoresSafeArea())
-            .navigationTitle("Pair a device")
-            .navigationBarTitleDisplayMode(.inline)
-        }
-        snapshot(view.environment(store), name: "59-pair-result", size: CGSize(width: 393, height: 620))
-    }
-
-    func testRepairDeviceResultWithTheCloudFlagOff() {
-        let store = AppStore.preview()
-        let payload = #"{"v":4,"gatewayUrl":"https://gateway.example:7600","pairingCode":"7K3M-9QX2","tls":{"mode":"system"}}"#
-        let view = NavigationStack {
-            LegacyPairingResultView(
-                pending: PreviewMocks.pendingPairing,
-                kind: "ios",
-                identities: PreviewMocks.networkIdentities,
-                repairDeviceName: PreviewMocks.deviceRevoked.name,
-                initialPayload: payload
-            )
-            .background(Theme.bgPrimary.ignoresSafeArea())
-            .navigationTitle("Repair device")
-            .navigationBarTitleDisplayMode(.inline)
-        }
-        snapshot(view.environment(store), name: "59a-repair-result", size: CGSize(width: 393, height: 620))
-    }
-
-    func testPairAgentResultWithTheCloudFlagOff() {
-        let store = AppStore.preview()
-        let view = NavigationStack {
-            LegacyPairingResultView(
-                pending: PreviewMocks.pendingPairing,
-                kind: "agent",
-                identities: PreviewMocks.networkIdentities,
-                gatewayOrigin: URL(string: "https://gateway.example:7600")
-            )
-            .background(Theme.bgPrimary.ignoresSafeArea())
-            .navigationTitle("Connect an agent")
-            .navigationBarTitleDisplayMode(.inline)
-        }
-        snapshot(view.environment(store), name: "59b-pair-agent-result", size: CGSize(width: 393, height: 620))
-    }
-
-    func testPairDeviceResultWithTheCloudFlagOn() {
+    func testPairDeviceResult() {
         // Pairing result: the one-time code, expiry, the QR for the gateway's recommended
         // address (seeded so it is stable), and the gateway's other addresses.
         let store = AppStore.preview()

@@ -7,7 +7,7 @@
  * confirming a passkey, minting a pairing code or a token, moving a device to another access
  * level). See docs/device-enrollment.md, "Step-up".
  *
- * Only with the cloud relay opt-in, and only once the owner confirmed a passkey here. Then a
+ * Only once the owner confirmed a passkey here, on a linked Omnesis account. Then a
  * request that arrived through the relay, or one from a device that joined by signing in on its
  * own (`enrollment_method = automatic`), must carry `X-Omnesis-Step-Up`: the id that
  * `POST /admin/step-up` returned for this exact request (method, path, body and device) within
@@ -27,7 +27,6 @@
  */
 
 import { createHash, randomBytes } from "node:crypto";
-import { cloudRelayEnabled } from "@omnesis/core";
 import { SCOPE_PUSH_CLAIM } from "@omnesis/types";
 import {
   gatewayPasskeySignInProofSchema,
@@ -107,7 +106,7 @@ export class StepUps {
 
   /** Whether this request must carry a step-up before it may loosen the gateway. */
   required(c: Context<AppEnv>): boolean {
-    if (!cloudRelayEnabled() || !this.source.enrollment()?.stepUpRequired?.()) return false;
+    if (!this.source.enrollment()?.stepUpRequired?.()) return false;
     if (arrivedThroughRelay((name) => c.req.header(name), c.env)) return true;
     const device = requestingDevice(c.get("auth"));
     return device !== null && this.source.enrollmentMethod(device) === "automatic";
@@ -220,11 +219,10 @@ const stepUpAssertion = z
 
 /**
  * Installs step-up on `app`: the id store every guarded route reads, and the two routes that
- * hand out an id. Mount it before any guarded route. Without the cloud relay opt-in it adds
- * nothing, and every guarded route behaves as before.
+ * hand out an id. Mount it before any guarded route. Until the owner confirms a passkey on a
+ * linked account no request requires one, and every guarded route behaves as without it.
  */
 export function mountStepUp(app: RouteApp, source: StepUpSource): void {
-  if (!cloudRelayEnabled()) return;
   const stepUps = new StepUps(source);
   app.use("*", async (c, next) => {
     c.set("stepUps", stepUps);

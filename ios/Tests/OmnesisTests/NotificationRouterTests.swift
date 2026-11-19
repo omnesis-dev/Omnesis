@@ -9,12 +9,11 @@ import XCTest
 final class NotificationRouterTests: XCTestCase {
     func testPairingReminderOnlyNavigatesToTheTrustedDeviceList() throws {
         XCTAssertEqual(
-            PushTarget.fromUserInfo(["omnesis": ["kind": "device-pairing", "targetId": "pairing"]], cloudRelayEnabled: true),
+            PushTarget.fromUserInfo(["omnesis": ["kind": "device-pairing", "targetId": "pairing"]]),
             .pairingRequests(requestId: nil)
         )
         XCTAssertNil(PushTarget.fromUserInfo(
-            ["omnesis": ["kind": "device-pairing", "targetId": "untrusted-request"]],
-            cloudRelayEnabled: true
+            ["omnesis": ["kind": "device-pairing", "targetId": "untrusted-request"]]
         ))
         XCTAssertEqual(PushTarget.pairingRequests().kindName, "device-pairing")
         let route = try JSONDecoder().decode(ClaimedNotificationRoute.self, from: Data(#"{"kind":"device-pairing"}"#.utf8))
@@ -38,15 +37,13 @@ final class NotificationRouterTests: XCTestCase {
         let id = "00000000-0000-4000-8000-000000000951"
         XCTAssertEqual(
             PushTarget.fromUserInfo(
-                ["omnesis": ["kind": "device-pairing", "targetId": "pairing", "requestId": id]],
-                cloudRelayEnabled: true
+                ["omnesis": ["kind": "device-pairing", "targetId": "pairing", "requestId": id]]
             ),
             .pairingRequests(requestId: id)
         )
         XCTAssertEqual(
             PushTarget.fromUserInfo(
-                ["omnesis": ["kind": "device-pairing", "targetId": "pairing", "requestId": "../devices"]],
-                cloudRelayEnabled: true
+                ["omnesis": ["kind": "device-pairing", "targetId": "pairing", "requestId": "../devices"]]
             ),
             .pairingRequests(requestId: nil)
         )
@@ -67,7 +64,7 @@ final class NotificationRouterTests: XCTestCase {
             route: route
         )
         XCTAssertEqual(notification.routingPayload, ["kind": "device-pairing", "targetId": "pairing", "requestId": id])
-        XCTAssertEqual(PushTarget.fromUserInfo(notification.userInfo, cloudRelayEnabled: true), .pairingRequests(requestId: id))
+        XCTAssertEqual(PushTarget.fromUserInfo(notification.userInfo), .pairingRequests(requestId: id))
     }
 
     private let policyNow = Date(timeIntervalSince1970: 1_800_000_000)

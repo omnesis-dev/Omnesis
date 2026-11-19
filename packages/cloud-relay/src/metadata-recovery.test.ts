@@ -518,5 +518,4 @@ test("a running SPKI-paired route recovers expired same-key TLS only after exact
   }
 });
 
-beforeEach(() => vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1"));
 afterEach(() => vi.unstubAllEnvs());

@@ -7,14 +7,12 @@ import dev.omnesis.android.ui.common.stepUpRefusal
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
-import dev.omnesis.android.BuildConfig
 import dev.omnesis.android.access.PairingPendingRequests
 import dev.omnesis.android.transport.dto.GatewayPairingApprovalRequest
 import dev.omnesis.android.session.SessionManager
 import dev.omnesis.android.transport.dto.GatewayPairingApproving
 import dev.omnesis.android.transport.GatewayException
 import dev.omnesis.android.transport.dto.DeviceRecord
-import dev.omnesis.android.transport.dto.NetworkIdentity
 import dev.omnesis.android.transport.dto.PairingAddressPlan
 import dev.omnesis.android.transport.dto.PendingPairing
 import dev.omnesis.android.transport.dto.TailscaleJoinRequest
@@ -54,20 +52,10 @@ internal class DevicesPairRequestGate {
  * failure nothing is mutated locally and a red notice surfaces.
  */
 @HiltViewModel
-class DevicesViewModel internal constructor(
+class DevicesViewModel @Inject constructor(
     private val session: SessionManager,
     private val pairingPendingRequests: PairingPendingRequests,
-    /**
-     * Off, the pair sheet is the one on main: it lists `GET /admin/network-identities` and
-     * swaps the chosen host into the gateway's origin. On, it asks the gateway's address plan.
-     */
-    private val cloudRelayEnabled: Boolean,
 ) : ViewModel() {
-
-    @Inject constructor(
-        session: SessionManager,
-        pairingPendingRequests: PairingPendingRequests,
-    ) : this(session, pairingPendingRequests, BuildConfig.CLOUD_RELAY_ENABLED)
 
     private val _devices = MutableStateFlow<Loadable<List<DeviceRecord>>>(Loadable.Loading)
     val devices = _devices.asStateFlow()
@@ -101,11 +89,6 @@ class DevicesViewModel internal constructor(
 
     /** State for the pair-a-device sheet. */
     data class PairState(
-        /** Without cloud connectivity: origin passed verbatim to the supported agent-harness connect commands. */
-        val gatewayUrl: String? = null,
-        /** Without cloud connectivity: the addresses `GET /admin/network-identities` lists. */
-        val identities: List<NetworkIdentity> = emptyList(),
-        val selectedHostIdx: Int = 0,
         /** The gateway's judgement of each address for the phone or agent the pending code is for. */
         val addressPlan: PairingAddressPlan? = null,
         val planError: String? = null,
@@ -147,8 +130,7 @@ class DevicesViewModel internal constructor(
         }
     }
 
-    fun pairingApprovalClient(cloudEnabled: Boolean = BuildConfig.CLOUD_RELAY_ENABLED): GatewayPairingApproving? = runCatching {
-        if (!cloudEnabled) return null
+    fun pairingApprovalClient(): GatewayPairingApproving? = runCatching {
         val current = session.requireSession()
         current.admin.takeIf { "admin" in current.pairing.scopes }
     }.getOrNull()
@@ -243,33 +225,13 @@ class DevicesViewModel internal constructor(
     // --- Pair ---------------------------------------------------------------
 
     fun openPair() {
-        if (!cloudRelayEnabled) return legacyOpenPair(repairTarget = null)
         pairRequests.beginSheet()
         _pair.update { PairState() }
     }
 
     fun openRepair(device: DeviceRecord) {
-        if (!cloudRelayEnabled) return legacyOpenPair(repairTarget = device)
         pairRequests.beginSheet()
         _pair.update { PairState(repairTarget = device) }
-    }
-
-    /** The sheet as main opens it: the gateway's origin and its network identities. */
-    private fun legacyOpenPair(repairTarget: DeviceRecord?) {
-        val generation = pairRequests.beginSheet()
-        val gatewayUrl = runCatching {
-            session.requireSession().admin.gatewayOrigin.toString().trimEnd('/')
-        }.getOrNull()
-        _pair.update { PairState(gatewayUrl = gatewayUrl, repairTarget = repairTarget) }
-        viewModelScope.launch {
-            runCatching { session.requireSession().admin.networkIdentities() }
-                .onSuccess { ids ->
-                    if (pairRequests.ownsSheet(generation)) {
-                        _pair.update { it?.copy(identities = ids) }
-                        if (_pair.value?.pending != null) legacyRefreshQr(generation)
-                    }
-                }
-        }
     }
 
     fun closePair() {
@@ -293,12 +255,6 @@ class DevicesViewModel internal constructor(
                     onSuccess = { pending ->
                         if (!pairRequests.ownsSheet(generation)) return@fold
                         _pair.update { it?.copy(submitting = false, pending = pending, kind = kind) }
-                        if (!cloudRelayEnabled) {
-                            // Only the mobile apps consume the QR payload; a CLI/portal/
-                            // collector pairs by exchanging the raw code, so don't encode one.
-                            if (DeviceKindMeta.usesQr(kind)) legacyRefreshQr(generation)
-                            return@fold
-                        }
                         // Only a phone or an agent is told which address to use; a CLI, portal
                         // or collector pairs by exchanging the raw code.
                         if (pairingChoosesAddress(kind)) loadPairAddresses(generation)
@@ -319,61 +275,6 @@ class DevicesViewModel internal constructor(
         _pair.update { it?.copy(selectedUrl = gatewayUrl, qrPayload = null, qrError = null) }
         // An address change is within the same sheet and only invalidates QR work.
         refreshQr(pairRequests.currentSheet())
-    }
-
-    /** Without cloud connectivity: one of the network identities, by index. */
-    fun selectPairHost(idx: Int) {
-        _pair.update { it?.copy(selectedHostIdx = idx, qrPayload = null, qrError = null) }
-        val state = _pair.value ?: return
-        // A host change is within the same sheet and only invalidates QR work.
-        legacyRefreshQrForState(state, pairRequests.currentSheet())
-    }
-
-    /** Re-encode the QR payload for the current code + chosen host. */
-    private fun legacyRefreshQr(expectedPairGeneration: Long) {
-        legacyRefreshQrForState(_pair.value ?: return, expectedPairGeneration)
-    }
-
-    private fun legacyRefreshQrForState(
-        state: PairState,
-        expectedPairGeneration: Long,
-    ) {
-        val pending = state.pending ?: return
-        val sheetGeneration = expectedPairGeneration
-        val requestGeneration = pairRequests.beginQr()
-        val pairingCode = pending.pairingCode
-        val selectedHostIdx = state.selectedHostIdx
-        val identities = state.identities
-        val chosen = identities.getOrNull(state.selectedHostIdx.coerceIn(0, (identities.size - 1).coerceAtLeast(0)))
-        if (chosen == null || chosen.address.isBlank()) {
-            _pair.update { it?.copy(qrError = "no reachable address") }
-            return
-        }
-        viewModelScope.launch {
-            runCatching {
-                val admin = session.requireSession().admin
-                val gatewayUrl = swapHost(admin.gatewayOrigin, chosen.address)
-                admin.buildPairQr(pairingCode, gatewayUrl)
-            }
-                .fold(
-                    onSuccess = { payload ->
-                        if (pairRequests.ownsQr(sheetGeneration, requestGeneration) &&
-                            _pair.value?.pending?.pairingCode == pairingCode &&
-                            _pair.value?.selectedHostIdx == selectedHostIdx
-                        ) {
-                            _pair.update { it?.copy(qrPayload = payload, qrError = null) }
-                        }
-                    },
-                    onFailure = { e ->
-                        if (pairRequests.ownsQr(sheetGeneration, requestGeneration) &&
-                            _pair.value?.pending?.pairingCode == pairingCode &&
-                            _pair.value?.selectedHostIdx == selectedHostIdx
-                        ) {
-                            _pair.update { it?.copy(qrError = gatewayMessage(e)) }
-                        }
-                    },
-                )
-        }
     }
 
     /**

@@ -22,7 +22,7 @@ class NotificationsClientTest {
 
     @Before fun setUp() {
         server = MockWebServer().also { it.start() }
-        client = NotificationsClient(GatewayHttp(OkHttpClient(), server.url("/"), "device-token"), pairingNotifications = true)
+        client = NotificationsClient(GatewayHttp(OkHttpClient(), server.url("/"), "device-token"))
     }
 
     @After fun tearDown() = server.shutdown()
@@ -44,15 +44,6 @@ class NotificationsClientTest {
         assertEquals("1", request.getHeader("X-Omnesis-Tailscale-Join-Notifications"))
         assertEquals("Bearer device-token", request.getHeader("Authorization"))
         assertEquals("{}", request.body.readUtf8())
-    }
-
-    @Test fun a_build_without_cloud_connectivity_does_not_ask_for_pairing_notifications() = runTest {
-        server.enqueue(MockResponse().setResponseCode(204))
-        NotificationsClient(GatewayHttp(OkHttpClient(), server.url("/"), "device-token")).claim()
-        val request = server.takeRequest()
-        assertNull(request.getHeader("X-Omnesis-Pairing-Notifications"))
-        // Every build routes Tailscale join notifications; a gateway without the feature ignores the header.
-        assertEquals("1", request.getHeader("X-Omnesis-Tailscale-Join-Notifications"))
     }
 
     @Test fun empty_queue_maps_204_to_null() = runTest {

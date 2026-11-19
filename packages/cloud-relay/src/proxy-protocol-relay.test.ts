@@ -14,7 +14,6 @@ import { fixture as relayFixture, listen, closeServer, tlsFiles } from "../test/
 import { ProxyProtocolPeers } from "./proxy-protocol.js";
 import { relayedClientAddress } from "./relay-client-address.js";
 
-beforeEach(() => vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1"));
 afterEach(() => vi.unstubAllEnvs());
 
 // Real IPv6 and IPv4 loopback peers exercise distinct trust decisions on every OS.

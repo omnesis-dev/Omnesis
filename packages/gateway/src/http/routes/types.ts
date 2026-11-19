@@ -57,7 +57,7 @@ export type AppEnv = {
     ctx: RequestContext;
     wsAuth: WsUpgradeAuth;
     wsClientIp: string;
-    /** Set only with the cloud relay opt-in; see `step-up.ts`. */
+    /** Set wherever step-up is mounted; see `step-up.ts`. */
     stepUps: StepUps | undefined;
   };
 };

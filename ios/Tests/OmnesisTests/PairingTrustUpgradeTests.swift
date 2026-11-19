@@ -82,8 +82,7 @@ final class PairingTrustUpgradeTests: XCTestCase {
             store: store,
             exchange: exchange,
             pinnedExchangeBuilder: { _ in nil },
-            strictPinnedExchangeBuilder: { _ in nil },
-            cloudRelayEnabled: true
+            strictPinnedExchangeBuilder: { _ in nil }
         )
         let raw = #"{"v":4,"gatewayUrl":"https://gateway.example.com","pairingCode":"AAAA-BBBB","tls":{"mode":"pinned-leaf-strict","fingerprint":"\#(pin)"}}"#
         let pairing = try await service.pairAsync(raw: raw)

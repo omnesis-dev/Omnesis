@@ -6,7 +6,7 @@
  * everything here should be reused at least twice.
  */
 import { z } from "zod";
-import { cloudRelayEnabled, sourceContractWireRangeSchema } from "@omnesis/core";
+import { sourceContractWireRangeSchema } from "@omnesis/core";
 import {
   DEVICE_KINDS,
   MULTI_DEVICE_MODES,
@@ -47,33 +47,6 @@ export const scopeSchema = z
   .refine(isValidScope, { message: "invalid scope" })
   .transform((s): ScopeType => Scope(s));
 
-/** A field whose accepted shape depends on an opt-in, read at parse time. */
-function optInGated<On extends z.ZodTypeAny>(
-  enabled: () => boolean,
-  on: On,
-  off: z.ZodTypeAny,
-): z.ZodType<z.output<On>, unknown> {
-  return z.unknown().transform((value, ctx): z.output<On> => {
-    const result = (enabled() ? on : off).safeParse(value);
-    if (result.success) return result.data as z.output<On>;
-    for (const issue of result.error.issues)
-      ctx.addIssue({ code: "custom", message: issue.message, path: [...issue.path] });
-    return z.NEVER;
-  });
-}
-
-/**
- * A field whose accepted shape depends on the cloud relay opt-in. Each side
- * reports its own issues unchanged, so a gateway without the opt-in
- * validates, and words its refusals, exactly as it did before.
- */
-export function cloudRelayGated<On extends z.ZodTypeAny>(
-  on: On,
-  off: z.ZodTypeAny,
-): z.ZodType<z.output<On>, unknown> {
-  return optInGated(cloudRelayEnabled, on, off);
-}
-
 /** Non-empty array of scopes (branded as `Scope[]`). */
 export const scopeArraySchema = z.array(scopeSchema).min(1);
 
@@ -96,8 +69,8 @@ export const deviceCapabilitySchema = z
     replicaVersionPolicies: z.record(sourceTypeSchema, z.literal("source-updated-at")).optional(),
     syncLease: z.boolean().optional(),
     deviceDoctor: z.literal(true).optional(),
-    // Typed only with the cloud relay; otherwise an unknown key like any other.
-    pairingNotifications: cloudRelayGated(z.boolean(), z.unknown()).optional(),
+    // The client can show and decide sign-in pairing requests.
+    pairingNotifications: z.boolean().optional(),
     // The client can show and decide Tailscale join requests.
     tailscaleJoinNotifications: z.boolean().optional(),
     pushAppId: z.string().trim().min(1).max(255).optional(),

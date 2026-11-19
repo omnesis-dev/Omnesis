@@ -30,8 +30,7 @@ import XCTest
     private func configuration() throws -> AccountCloudPairingConfiguration {
         try AccountCloudPairingConfiguration(
             relayOrigin: XCTUnwrap(URL(string: "https://relay.example.test")),
-            google: nil,
-            passkeysEnabled: true
+            google: nil
         )
     }
 
@@ -295,22 +294,15 @@ import XCTest
         return try XCTUnwrap(Bundle(url: folder))
     }
 
-    func testAccountConfigurationIsIndependentOfExperimentalModeAndValidatesItsOriginAndAvailableMethods() throws {
-        XCTAssertNil(AccountCloudPairingConfiguration.configured())
-        let valid: [String: Any] = [
-            "OmnesisCloudRelayEnabled": "1",
-            "OmnesisCloudRelayURL": "https://relay.example.test",
-            "OmnesisCloudRelayPasskeysEnabled": "1",
-        ]
+    func testAccountConfigurationNeedsOnlyTheRelayAndOffersGoogleWhenItsClientIsRegistered() throws {
+        let valid: [String: Any] = ["OmnesisCloudRelayURL": "https://relay.example.test"]
         let configured = try XCTUnwrap(AccountCloudPairingConfiguration.configured(bundle: configurationBundle(valid)))
-        XCTAssertTrue(configured.passkeysEnabled)
+        XCTAssertEqual(configured.relayOrigin.absoluteString, "https://relay.example.test")
         XCTAssertNil(configured.google)
-        for flag: Any in [false, true, "0", "true", "$(OMNESIS_CLOUD_RELAY_ENABLED)"] {
-            var input = valid
-            input["OmnesisCloudRelayEnabled"] = flag
-            XCTAssertNil(try AccountCloudPairingConfiguration.configured(bundle: configurationBundle(input)))
-        }
+        XCTAssertTrue(configured.checksPublicCertificate)
         for origin in [
+            "",
+            "$(OMNESIS_CLOUD_RELAY_URL)",
             "not an origin",
             "http://relay.example.test",
             "https:/missing-host",
@@ -325,25 +317,23 @@ import XCTest
             input["OmnesisCloudRelayURL"] = origin
             XCTAssertNil(try AccountCloudPairingConfiguration.configured(bundle: configurationBundle(input)))
         }
-        var googleOnly = valid
-        googleOnly["OmnesisCloudRelayPasskeysEnabled"] = "0"
-        XCTAssertNil(try AccountCloudPairingConfiguration.configured(bundle: configurationBundle(googleOnly)))
-        googleOnly["OmnesisGoogleClientID"] = "fixture-ios.apps.googleusercontent.com"
-        googleOnly["CFBundleURLTypes"] = [["CFBundleURLSchemes": ["com.googleusercontent.apps.fixture-ios"]]]
-        let accepted = try XCTUnwrap(AccountCloudPairingConfiguration.configured(bundle: configurationBundle(googleOnly)))
-        XCTAssertFalse(accepted.passkeysEnabled)
-        XCTAssertNotNil(accepted.google)
+        XCTAssertNil(try AccountCloudPairingConfiguration.configured(bundle: configurationBundle([:])))
+        var withGoogle = valid
+        withGoogle["OmnesisGoogleClientID"] = "fixture-ios.apps.googleusercontent.com"
+        withGoogle["CFBundleURLTypes"] = [["CFBundleURLSchemes": ["com.googleusercontent.apps.fixture-ios"]]]
+        let accepted = try XCTUnwrap(AccountCloudPairingConfiguration.configured(bundle: configurationBundle(withGoogle)))
+        XCTAssertEqual(accepted.google?.clientId, "fixture-ios.apps.googleusercontent.com")
     }
 
     func testGoogleUsesTheServerNonceBeforeDiscoveringGatewaysAndRequiresExplicitChoice() async throws {
         let fixture = try fixture(), gate = AccountApprovalGate(), browser = AccountModelGoogle()
         browser.succeeds = true
         let session = AccountModelSession(binding: fixture.gateway, clock: fixture.clock, gate: gate)
-        let google = try GoogleCloudPairingConfiguration(
-            clientId: "fixture-ios.apps.googleusercontent.com",
-            relayOrigin: XCTUnwrap(URL(string: "https://relay.example.test"))
+        let google = GoogleCloudPairingConfiguration(clientId: "fixture-ios.apps.googleusercontent.com")
+        let configuration = try AccountCloudPairingConfiguration(
+            relayOrigin: XCTUnwrap(URL(string: "https://relay.example.test")),
+            google: google
         )
-        let configuration = AccountCloudPairingConfiguration(relayOrigin: google.relayOrigin, google: google, passkeysEnabled: false)
         let model = AccountCloudPairingCoordinator(
             googleBrowser: browser,
             passkeyProvider: AccountModelPasskey(),
@@ -364,7 +354,7 @@ import XCTest
         XCTAssertNil(model.error)
     }
 
-    func testDisabledMethodsAndFailedCredentialApplicationNeverReportPairedSuccess() async throws {
+    func testGoogleWithoutAClientAndFailedCredentialApplicationNeverReportPairedSuccess() async throws {
         let fixture = try fixture(), gate = AccountApprovalGate()
         await gate.release()
         let session = AccountModelSession(binding: fixture.gateway, clock: fixture.clock, gate: gate)
@@ -374,15 +364,13 @@ import XCTest
             makeClient: { _ in session },
             now: { fixture.clock }
         )
-        let disabled = try AccountCloudPairingConfiguration(
+        let withoutGoogle = try AccountCloudPairingConfiguration(
             relayOrigin: XCTUnwrap(URL(string: "https://relay.example.test")),
-            google: nil,
-            passkeysEnabled: false
+            google: nil
         )
-        await model.start(configuration: disabled, method: .google)?.value
+        await model.start(configuration: withoutGoogle, method: .google)?.value
         XCTAssertEqual(model.phase, .failed)
-        await model.start(configuration: disabled, method: .passkey)?.value
-        XCTAssertEqual(model.phase, .failed)
+        XCTAssertEqual(model.error as? CloudPairingError, .configuration)
         try await model.start(configuration: configuration(), method: .passkey)?.value
         await model.choose(fixture.gateway.gatewayId)?.value
         XCTAssertTrue(model.gatewayApproved)
@@ -394,8 +382,7 @@ import XCTest
         let installed = AccountCloudPairingCoordinator()
         let invalid = try AccountCloudPairingConfiguration(
             relayOrigin: XCTUnwrap(URL(string: "https://relay.example.test/invalid")),
-            google: nil,
-            passkeysEnabled: true
+            google: nil
         )
         await installed.start(configuration: invalid, method: .passkey)?.value
         XCTAssertEqual(installed.phase, .failed)
@@ -412,11 +399,11 @@ import XCTest
             passkeyProvider: AccountModelPasskey(),
             makeClient: { _ in session }
         )
-        let google = try GoogleCloudPairingConfiguration(
-            clientId: "fixture-ios.apps.googleusercontent.com",
-            relayOrigin: XCTUnwrap(URL(string: "https://relay.example.test"))
+        let google = GoogleCloudPairingConfiguration(clientId: "fixture-ios.apps.googleusercontent.com")
+        let configuration = try AccountCloudPairingConfiguration(
+            relayOrigin: XCTUnwrap(URL(string: "https://relay.example.test")),
+            google: google
         )
-        let configuration = AccountCloudPairingConfiguration(relayOrigin: google.relayOrigin, google: google, passkeysEnabled: false)
         await model.start(configuration: configuration, method: .google)?.value
         XCTAssertEqual(model.phase, .failed)
         XCTAssertNotNil(model.error)
@@ -531,11 +518,11 @@ extension AccountCloudPairingModelTests {
     /// A Google sign-in the gateway joins at once never looks for a page.
     func testAGoogleSignInOffersTheApprovalPageWhenHeldAndStillJoinsAutomaticallyWhenConfirmed() async throws {
         let fixture = try fixture()
-        let google = try GoogleCloudPairingConfiguration(
-            clientId: "fixture-ios.apps.googleusercontent.com",
-            relayOrigin: XCTUnwrap(URL(string: "https://relay.example.test"))
+        let google = GoogleCloudPairingConfiguration(clientId: "fixture-ios.apps.googleusercontent.com")
+        let configuration = try AccountCloudPairingConfiguration(
+            relayOrigin: XCTUnwrap(URL(string: "https://relay.example.test")),
+            google: google
         )
-        let configuration = AccountCloudPairingConfiguration(relayOrigin: google.relayOrigin, google: google, passkeysEnabled: false)
         for joins in [false, true] {
             let browser = AccountModelGoogle(), pages = AccountModelApprovalBrowser(), gate = AccountApprovalGate()
             browser.succeeds = true

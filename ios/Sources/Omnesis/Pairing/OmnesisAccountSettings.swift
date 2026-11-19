@@ -26,32 +26,27 @@ public final class OmnesisAccountModel {
     /// Why there is no status to show. Stays nil while an earlier status is on screen.
     public private(set) var loadError: Error?
 
-    private let enabled: Bool
     private let browser: (any OmnesisAccountBrowsing)?
     @ObservationIgnored private var generation = 0
     /// Whether this screen opened the connect sign-in, to close it again once the gateway has moved on.
     @ObservationIgnored private var signInOpened = false
     @ObservationIgnored private var verificationOpened = false
 
-    /// `enabled` is the cloud build flag: while it is off the model never asks the gateway anything.
     public init(
-        enabled: Bool = CloudRelayFeature.enabled,
         browser: (any OmnesisAccountBrowsing)? = nil,
         status: CloudRelayStatus? = nil,
         failure: String? = nil,
         loadError: Error? = nil
     ) {
-        self.enabled = enabled
         self.browser = browser
         self.status = status
         self.failure = failure
         self.loadError = loadError
     }
 
-    /// Whether Settings lists the Omnesis account: the build has cloud connectivity
-    /// and the gateway answered with a status this device may read.
+    /// Whether Settings lists the Omnesis account: the gateway answered with a status this device may read.
     public var offered: Bool {
-        enabled && status != nil
+        status != nil
     }
 
     /// While a connect is under way the screen follows it closely; otherwise a slow poll is enough.
@@ -63,7 +58,7 @@ public final class OmnesisAccountModel {
     /// administer answers 403 to reads and changes alike; both leave nothing to offer. Any other failure keeps
     /// what is on screen for the next poll to replace.
     public func load(client: (any CloudRelayManaging)?) async {
-        guard enabled, busy == nil, let client else { return }
+        guard busy == nil, let client else { return }
         let started = generation
         do {
             let fresh = try await client.cloudRelayStatus()

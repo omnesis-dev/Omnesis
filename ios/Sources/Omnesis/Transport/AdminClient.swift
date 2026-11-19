@@ -223,8 +223,8 @@ public final class AdminClient: Sendable {
     /// POST `/admin/devices/pair-qr` — encode the pairing payload server-side
     /// so every client shares the versioned pairing contract. Automatic policy
     /// uses system trust for configured public origins and leaf pinning elsewhere.
-    /// `gatewayUrl` is which network identity the new phone should reach: with the
-    /// cloud build flag on, an address from `pairAddresses`, passed back unchanged.
+    /// `gatewayUrl` is which address the new phone should reach: one from
+    /// `pairAddresses`, passed back unchanged.
     /// Returns the JSON string ready for QR rendering.
     public func buildPairQr(pairingCode: String, gatewayUrl: String) async throws -> String {
         struct Body: Encodable {

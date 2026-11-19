@@ -15,13 +15,12 @@ import okhttp3.RequestBody.Companion.toRequestBody
 /**
  * Device-scoped notification lease client. Notification text only crosses the paired channel.
  *
- * Every claim says this app routes Tailscale join notifications; the pairing ones only when
- * [pairingNotifications] (a build with cloud connectivity).
+ * Every claim says this app routes the pairing and Tailscale join notifications.
  */
-class NotificationsClient(private val http: GatewayHttp, private val pairingNotifications: Boolean = false) {
+class NotificationsClient(private val http: GatewayHttp) {
     suspend fun claim(): ClaimedNotificationDelivery? {
         val request = http.newRequest(http.urlFor("notifications/claim"))
-            .apply { if (pairingNotifications) header("X-Omnesis-Pairing-Notifications", "1") }
+            .header("X-Omnesis-Pairing-Notifications", "1")
             .header("X-Omnesis-Tailscale-Join-Notifications", "1")
             .post("{}".toRequestBody(JSON_MEDIA))
             .build()

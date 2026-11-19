@@ -7,7 +7,7 @@ import { createServer as httpsServer } from "node:https";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
-import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 import { WebSocket } from "ws";
 import { closeServer, echoGateway, fixture, listen, tlsFiles, until } from "../test/support.js";
 import { AdaptiveGatewayPath } from "./adaptive-path.js";
@@ -16,9 +16,6 @@ import { createRelayClientProxy } from "./client-proxy.js";
 import { certificateFingerprint } from "./gateway-binding.js";
 import { pinnedGatewayJson } from "./google-device-pairing.js";
 import { connectOrigin } from "./network.js";
-
-beforeEach(() => vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1"));
-afterEach(() => vi.unstubAllEnvs());
 
 const authorization = { authorization: "Bearer fixture-token" };
 const coded = (code: string) => Object.assign(new Error(code), { code });

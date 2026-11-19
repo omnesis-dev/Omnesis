@@ -84,18 +84,26 @@ The phone app's unit tests include loopback tests (`app/src/test/.../wear/loopba
 that run the watch's real logic against this relay over an in-memory Data Layer,
 so the two sides are tested against each other and not only against the contract.
 
-## Optional Google pairing through the experimental relay
+## Signing in with an Omnesis account
 
-QR and manual pairing remain available without Google. A configured build may
-also offer Google sign-in using Credential Manager. Supply these public Gradle
-properties or environment variables (the ignored `local.push.properties` may
-also hold them):
+QR and manual pairing need no account. Every build also offers **Sign in with cloud
+account** wherever the phone can sign in, which opens a choice of Google or a passkey
+(Android 9 and later) through Credential Manager.
+Supply these public Gradle properties or environment variables (the ignored
+`local.push.properties` may also hold them):
 
 ```properties
 OMNESIS_GOOGLE_WEB_CLIENT_ID=fictional-web.apps.googleusercontent.com
 OMNESIS_GOOGLE_ANDROID_CLIENT_ID=fictional-android.apps.googleusercontent.com
+# Optional; the default is https://relay.omnesis.app
 OMNESIS_CLOUD_RELAY_URL=https://relay.example.test
 ```
+
+The relay URL must be an https origin; the build fails otherwise. Passkeys need no
+build value: the relay's `/.well-known/assetlinks.json` must list the application
+ID with the SHA-256 fingerprint of the certificate that signs the installed app
+(for a Google Play install, Play's app signing key). Without both Google client IDs
+the choice offers a passkey alone.
 
 Register the Android OAuth client for the application ID and signing-certificate
 fingerprint. The web client is the ID-token audience; the Android client is an
@@ -130,9 +138,3 @@ a certificate that isn't asks the gateway to hold the request for approval. Set
 `OMNESIS_CLOUD_RELAY_PUBLIC_CERT_CHECK=0` to skip that check for a test gateway in a
 debug build; a release build always checks, and `:app:verifyPlayReleasePolicy` fails if
 it would not.
-Without `OMNESIS_CLOUD_RELAY_ENABLED=1` none of this exists in the build: no key,
-settings, device details, notifications or token rotation.
-The same value decides whether the sign-in libraries are packaged: the code that
-needs them lives in `app/src/cloudRelay` and joins the app only when it is set.
-Otherwise the app's manifest gains nothing from them, a QR naming a strict trust
-mode is refused as unknown, and the tests alone compile that code.

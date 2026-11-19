@@ -119,7 +119,7 @@ final class TailnetPairingTests: XCTestCase {
     func testTheCoordinatorRecordsTheTailscaleStateBesideItsSentence() async {
         let exchange = StubExchange()
         exchange.response = .failure(URLError(.cannotConnectToHost))
-        let coordinator = PairingCoordinator(service: PairingService(store: InMemoryStore(), exchange: exchange, cloudRelayEnabled: false))
+        let coordinator = PairingCoordinator(service: PairingService(store: InMemoryStore(), exchange: exchange))
         var sentences: [String?] = []
         coordinator.setOnError { sentences.append($0) }
 
@@ -137,7 +137,7 @@ final class TailnetPairingTests: XCTestCase {
     func testASuccessfulPairingClearsTheLastFailure() async {
         let exchange = StubExchange()
         exchange.response = .failure(URLError(.timedOut))
-        let coordinator = PairingCoordinator(service: PairingService(store: InMemoryStore(), exchange: exchange, cloudRelayEnabled: false))
+        let coordinator = PairingCoordinator(service: PairingService(store: InMemoryStore(), exchange: exchange))
         _ = await coordinator.pairAsync(raw: v4(tailnet: "true"))
         XCTAssertEqual(coordinator.lastFailure, .tailnetUnreachable)
 

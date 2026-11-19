@@ -8,7 +8,6 @@ import dev.omnesis.android.transport.dto.PairingAddressOption
 import dev.omnesis.android.transport.dto.PairingAddressPlan
 import dev.omnesis.android.transport.http.GatewayHttp
 import kotlinx.coroutines.runBlocking
-import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
@@ -37,40 +36,6 @@ class PairDeviceLogicTest {
     )
     private val refused = PairingAddressOption("https://100.64.0.7:7600", "100.64.0.7", "Tailscale IP", usable = false, reason = "Not for this phone.")
     private val plan = PairingAddressPlan("android", listOf(relay, tailscale, lan, refused), recommendedUrl = relay.gatewayUrl)
-
-    // A build without cloud connectivity keeps main's sheet: the chosen network identity's
-    // host is swapped into the gateway's origin.
-    @Test
-    fun swap_host_preserves_scheme_and_port() {
-        // The portal swaps only the host, keeping the gateway's real scheme/port.
-        assertEquals(
-            "https://198.51.100.7:7600",
-            swapHost("https://mac.local:7600/".toHttpUrl(), "198.51.100.7"),
-        )
-        // Non-default port is preserved (guards against a hardcoded :7600).
-        assertEquals(
-            "https://192.0.2.42:17600",
-            swapHost("https://mac.local:17600/".toHttpUrl(), "192.0.2.42"),
-        )
-        // No origin → https fallback, no port assumed.
-        assertEquals("https://192.0.2.42", swapHost(null, "192.0.2.42"))
-    }
-
-    @Test
-    fun agent_gateway_url_uses_selected_advertised_identity() {
-        assertEquals(
-            "https://gateway.tail.example:17600",
-            agentGatewayUrl(
-                "https://gateway.example:17600",
-                listOf("192.0.2.42", "gateway.tail.example"),
-                1,
-            ),
-        )
-        assertEquals(
-            "https://gateway.example:17600",
-            agentGatewayUrl("https://gateway.example:17600", emptyList(), 0),
-        )
-    }
 
     @Test
     fun `the plan opens on the gateway's recommendation and titles each option from the gateway's words`() {
