@@ -26,12 +26,18 @@ final class CloudPairingInteractionUITests: XCTestCase {
         app = nil
     }
 
-    private func launch(_ scenario: String) {
+    /// Launches the Demo scene for `scenario`. `cancellingTouches` lists the
+    /// ordinals of the touches the app cancels, counting from 1, the way the
+    /// system's gesture gate sometimes does (`DEMO_CANCEL_TOUCHES`).
+    private func launch(_ scenario: String, cancellingTouches: String? = nil) {
         app?.terminate()
         app = XCUIApplication()
         app.launchEnvironment["DEMO_PLAIN_GLASS"] = "1"
         app.launchEnvironment["DEMO_RESET_PAIRING"] = "1"
         app.launchEnvironment["DEMO_CLOUD_PAIRING"] = scenario
+        // Logs where each tap lands and how it ends; see `AutomationTouchLog`.
+        app.launchEnvironment["DEMO_TOUCH_LOG"] = "1"
+        if let cancellingTouches { app.launchEnvironment["DEMO_CANCEL_TOUCHES"] = cancellingTouches }
         app.launch()
         XCTAssertTrue(app.staticTexts["cloud.fixture.receipt"].waitForExistence(timeout: 15), "The isolated fixture did not load")
         if scenario.hasPrefix("google") { XCTAssertTrue(app.buttons["Sign in with Google"].waitForExistence(timeout: 15)) }
@@ -156,11 +162,35 @@ final class CloudPairingInteractionUITests: XCTestCase {
         let missing = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Missing row")).firstMatch
         XCTAssertTrue(missing.label.contains("Active now"))
         launch("settings")
+        showEachSettingsPath()
+    }
+
+    /// The Settings steps when the system takes the first tap on "Show
+    /// reconnecting" away, as its gesture gate sometimes does on a simulator:
+    /// the button shows its pressed state and the row still says Remote. The
+    /// step notices and taps again.
+    func testSettingsConnectionStatusSurvivesACancelledTap() {
+        // Touch 1 is the tap on "Show relay" and touch 2 the first tap on
+        // "Show reconnecting".
+        launch("settings", cancellingTouches: "2")
+        showEachSettingsPath()
+    }
+
+    /// Switches the settings scene from the local path to the relay, then to
+    /// reconnecting, and checks that Settings names each one. A button only
+    /// sets the scene's path, so tapping it again after a cancelled tap does
+    /// nothing a single tap would not.
+    private func showEachSettingsPath() {
         XCTAssertTrue(app.staticTexts["Gateway connection: Local"].waitForExistence(timeout: 5))
-        app.buttons["Show relay"].tap()
-        XCTAssertTrue(app.staticTexts["Gateway connection: Remote"].waitForExistence(timeout: 5))
-        app.buttons["Show reconnecting"].tap()
-        XCTAssertTrue(app.staticTexts["Gateway connection: Reconnecting"].waitForExistence(timeout: 5))
+        for (button, path) in [("Show relay", "Remote"), ("Show reconnecting", "Reconnecting")] {
+            retap(
+                until: app.staticTexts["Gateway connection: \(path)"],
+                has: "exists == true",
+                or: "tapping \"\(button)\" never made Settings say \(path)"
+            ) {
+                app.buttons[button].tap()
+            }
+        }
     }
 
     func testOptionalGoogleOverlayAndMenuActionsPresentTheSameSheet() {
