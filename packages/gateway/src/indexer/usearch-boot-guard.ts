@@ -22,7 +22,7 @@
 
 import { existsSync, readdirSync, renameSync, rmSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createLogger, resolveSubprocessEntry, type SubprocessEntry } from "@omnesis/core";
 
 const log = createLogger("gateway:usearch").child("boot-guard");
@@ -85,6 +85,68 @@ export function quarantineCorruptUsearch(
     encoding: "utf8",
   });
 
+  return finishValidation(path, dimensions, result);
+}
+
+/** Async boot-worker path: abort owns the validator until its process and pipes close. */
+export async function quarantineCorruptUsearchAsync(
+  path: string,
+  dimensions: number,
+  signal?: AbortSignal,
+  validator: SubprocessEntry = resolveSubprocessEntry(
+    "./usearch-validate-subprocess.ts",
+    import.meta.url,
+  ),
+): Promise<UsearchGuardResult> {
+  signal?.throwIfAborted();
+  pruneQuarantinedCopies(path);
+  if (!existsSync(path)) return "absent";
+  const result = await new Promise<ValidationResult>((resolve) => {
+    const child = spawn(validator.command, [...validator.args, path, String(dimensions)], {
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    let stderr = "";
+    let error: Error | undefined;
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk: string) => {
+      if (stderr.length < VALIDATOR_OUTPUT_LOG_CHARS)
+        stderr += chunk.slice(0, VALIDATOR_OUTPUT_LOG_CHARS - stderr.length);
+    });
+    child.once("error", (err) => {
+      error = err;
+    });
+    const abort = (): void => {
+      child.kill("SIGKILL");
+    };
+    signal?.addEventListener("abort", abort, { once: true });
+    if (signal?.aborted) abort();
+    const timer = setTimeout(() => {
+      error ??= new Error("usearch validation timed out");
+      child.kill("SIGKILL");
+    }, VALIDATE_TIMEOUT_MS);
+    timer.unref();
+    child.once("close", (status, exitSignal) => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", abort);
+      resolve({ status, signal: exitSignal, error, stderr });
+    });
+  });
+  signal?.throwIfAborted();
+  return finishValidation(path, dimensions, result);
+}
+
+interface ValidationResult {
+  status: number | null;
+  signal: NodeJS.Signals | null;
+  error?: Error;
+  stderr: string | null;
+}
+
+function finishValidation(
+  path: string,
+  dimensions: number,
+  result: ValidationResult,
+): UsearchGuardResult {
   if (result.status === 0 && !result.signal && !result.error) {
     log.info(`usearch sidecar ${path} validated (dim ${dimensions})`);
     return "ok";

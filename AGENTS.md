@@ -34,7 +34,7 @@ The repo at a glance:
 packages/core/         shared types, branded IDs, define-source helpers, people-utils, attachments, the shared doctor health check (`@omnesis/core/doctor`)
 packages/config/       config schema (omnesisConfigSchema, zod validators, defaults)
 packages/gateway-client/ shared HTTP + WS GatewayClient implementation (HttpGatewayClient, GatewayWsClient) — extracted from collector
-packages/gateway/      HTTP server, SQLite store, indexer, scheduler, search, analytics-db
+packages/gateway/      HTTP server, SQLite store, indexer, scheduler, search, analytics-db (src/index.ts is the early HTTPS bootstrap; src/runtime.ts composes services)
 packages/collector/    sync engine, source manager, auth subprocess
 packages/cli/          unified `omnesis` CLI — read commands hit /search, /documents, /analytics, /status, /whoami; admin commands hit /admin/*; also hosts the daemons (`gateway serve` / `collector run`) and the `service`/`update`/`uninstall` lifecycle commands (`uninstall` discovers an install from disk in `src/uninstall/`)
 packages/providers/*   one package per provider (google, apple, notion, whatsapp, …)

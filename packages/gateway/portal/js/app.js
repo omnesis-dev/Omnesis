@@ -235,6 +235,16 @@ function orderConversations(conversations) {
 
 function App() {
   const [route, setRoute] = useState(parseRoute());
+  const [, setSourceMetaReady] = useState(false);
+  useEffect(() => {
+    let mounted = true;
+    // The shell renders with generic labels/icons while metadata loads. A
+    // parent update refreshes the current view without remounting its state.
+    loadSourceMeta().catch(() => {}).finally(() => {
+      if (mounted) setSourceMetaReady(true);
+    });
+    return () => { mounted = false; };
+  }, []);
   const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false);
   const mobileNavigationButton = useRef(null);
   useLayoutEffect(() => {
@@ -881,11 +891,10 @@ async function consumeUrlToken() {
   }
 }
 
-// Check session, prefetch icons, then render
+// Authenticate before rendering. Source metadata loads after the shell mounts.
 async function init() {
   await consumeUrlToken();
   const session = await checkSession();
-  await loadSourceMeta();
 
   // Only the cloud relay's sign-in view can use a handed-over sign-in; anywhere else it is dropped.
   if (session.authenticated || session.cloudRelay !== true) takeAccountSignIn();

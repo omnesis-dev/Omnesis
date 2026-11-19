@@ -2,11 +2,12 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Fail-closed boot E2E: the real gateway PROCESS must refuse to start — exit
- * non-zero and never listen — when at-rest encryption cannot be honored
- * safely. The unit tests assert `resolveGatewayStorageEncryptionKeys` throws;
- * this asserts the boot wiring in `index.ts` actually turns that throw into a
- * dead process rather than a fail-OPEN gateway serving a plaintext corpus.
+ * Fail-closed boot E2E: the real gateway PROCESS must exit non-zero without
+ * opening its stores or exposing corpus APIs when at-rest encryption cannot
+ * be honored safely. A database-independent startup page may listen first;
+ * it must never turn API health green or bypass storage/authentication gates.
+ * The unit tests assert key resolution throws; this proves the production
+ * entrypoint exits instead of falling back to a plaintext corpus.
  *
  * Two ways the invariant can break, each proven against a spawned gateway:
  *   - a tampered fail-closed marker         → "failed integrity verification"
@@ -14,16 +15,28 @@
  */
 
 import { spawn } from "node:child_process";
-import { createConnection, createServer, type AddressInfo, type Socket } from "node:net";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createServer, type AddressInfo } from "node:net";
+import { request as httpsRequest } from "node:https";
+import type { ClientRequest } from "node:http";
+import { readdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ensureInstallRootKey, markStorageEncryptionRequired } from "@omnesis/core";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { e2eGatewayEnv, e2eTsxCommand } from "./gateway-env.js";
+import { e2eGatewayEnv, e2eTsxCommand, gatewayBootBudgetMs } from "./gateway-env.js";
 import { killSubprocessGroup, registerSubprocessGroup } from "./subprocess-reaper.js";
 
 const REPO_ROOT = join(import.meta.dirname, "../../../..");
+const BOOT_BUDGET = gatewayBootBudgetMs();
+const PROGRESS_PATH = "/.well-known/omnesis-startup";
+const API_PATHS = ["/health", "/portal/api/session", "/admin/config", "/documents"] as const;
+
+interface ObservedResponse {
+  path: string;
+  status: number;
+  body: string;
+  complete: boolean;
+}
 
 async function freePort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -39,12 +52,13 @@ async function freePort(): Promise<number> {
 interface BootAttempt {
   code: number | null;
   output: string;
-  acceptedConnection: boolean;
+  responses: ObservedResponse[];
 }
 
 /**
  * Spawn the gateway entrypoint through the local tsx loader and resolve
- * once it exits, probing its port throughout to prove it never listened.
+ * once it exits, probing live HTTPS throughout to prove no corpus API becomes
+ * available even if the static startup observer is already listening.
  */
 async function spawnGatewayExpectingExit(
   configDir: string,
@@ -61,6 +75,7 @@ async function spawnGatewayExpectingExit(
       OMNESIS_INDEX_DB_PATH: join(configDir, "index.db"),
       OMNESIS_ANALYTICS_DB_PATH: join(configDir, "analytics.db"),
       OMNESIS_GATEWAY_PORT: String(port),
+      OMNESIS_BIND: "127.0.0.1",
       OMNESIS_MDNS_DISABLE: "1",
       OMNESIS_PARENT_PID: String(process.pid),
       ...extraEnv,
@@ -71,43 +86,102 @@ async function spawnGatewayExpectingExit(
   registerSubprocessGroup(child);
 
   let output = "";
-  child.stdout.on("data", (b: Buffer) => (output += b.toString()));
-  child.stderr.on("data", (b: Buffer) => (output += b.toString()));
+  let sawListener = false;
+  const recordOutput = (chunk: Buffer): void => {
+    output += chunk.toString();
+    // Cumulative output handles a marker split across stdout chunks. Probe
+    // immediately rather than missing a short warm-runtime startup window.
+    if (!sawListener && output.includes("Startup page listening")) {
+      sawListener = true;
+      probeRound();
+    }
+  };
+  child.stdout.on("data", recordOutput);
+  child.stderr.on("data", recordOutput);
 
-  let acceptedConnection = false;
-  const sockets = new Set<Socket>();
-  const pendingProbes = new Set<Promise<void>>();
-  const probe = () => {
-    const pending = new Promise<void>((resolve) => {
-      const socket = createConnection({ host: "127.0.0.1", port });
-      sockets.add(socket);
+  const responses: ObservedResponse[] = [];
+  const requests = new Set<ClientRequest>();
+  let pendingRound: Promise<void> | undefined;
+  let probeAgain = false;
+  let probingStopped = false;
+  const probe = (path: string): Promise<void> =>
+    new Promise((resolve) => {
       let settled = false;
-      const finish = (connected: boolean) => {
+      const request = httpsRequest(
+        {
+          hostname: "127.0.0.1",
+          port,
+          path,
+          method: "GET",
+          agent: false,
+          rejectUnauthorized: false,
+          headers: {
+            Accept: path === "/portal/" ? "text/html" : "application/json",
+          },
+        },
+        (response) => {
+          const observed = {
+            path,
+            status: response.statusCode!,
+            body: "",
+            complete: false,
+          };
+          // Record headers immediately: a forbidden 200 still counts if the
+          // failing process closes the connection before its body finishes.
+          responses.push(observed);
+          response.setEncoding("utf8");
+          response.on("data", (chunk: string) => {
+            observed.body += chunk;
+          });
+          response.once("end", () => {
+            observed.complete = true;
+            finish();
+          });
+          response.once("error", finish);
+          response.once("close", finish);
+        },
+      );
+      const finish = (): void => {
         if (settled) return;
         settled = true;
-        if (connected) acceptedConnection = true;
-        sockets.delete(socket);
-        socket.destroy();
+        requests.delete(request);
+        request.destroy();
         resolve();
       };
-      socket.setTimeout(100);
-      socket.once("connect", () => finish(true));
-      socket.once("error", () => finish(false));
-      socket.once("timeout", () => finish(false));
+      requests.add(request);
+      request.once("error", finish);
+      request.once("close", finish);
+      request.setTimeout(500, finish);
+      request.end();
     });
-    pendingProbes.add(pending);
-    void pending.finally(() => pendingProbes.delete(pending));
+  const probeRound = (): void => {
+    if (probingStopped) return;
+    // Never stack probe rounds on a slow handshake or a closing listener.
+    // Retain one immediate follow-up if the listen marker arrives mid-round.
+    if (pendingRound) {
+      probeAgain = true;
+      return;
+    }
+    pendingRound = Promise.all([...API_PATHS, "/portal/", PROGRESS_PATH].map(probe))
+      .then(() => {})
+      .finally(() => {
+        pendingRound = undefined;
+        if (probeAgain && !probingStopped) {
+          probeAgain = false;
+          probeRound();
+        }
+      });
   };
-  probe();
-  const poll = setInterval(probe, 100);
+  probeRound();
+  const poll = setInterval(probeRound, 100);
 
   let code: number | null;
   try {
     code = await new Promise<number | null>((resolve, reject) => {
       const timer = setTimeout(() => {
-        reject(new Error(`gateway did not exit within 45s; output:\n${output}`));
-      }, 45_000);
-      child.once("exit", (exitCode) => {
+        reject(new Error(`gateway did not exit within the shared boot budget; output:\n${output}`));
+      }, BOOT_BUDGET);
+      child.once("close", (exitCode) => {
         clearTimeout(timer);
         resolve(exitCode);
       });
@@ -117,12 +191,52 @@ async function spawnGatewayExpectingExit(
       });
     });
   } finally {
+    probingStopped = true;
     clearInterval(poll);
-    await Promise.all(pendingProbes);
-    for (const socket of sockets) socket.destroy();
+    for (const request of requests) request.destroy();
+    await pendingRound;
     await killSubprocessGroup(child);
   }
-  return { code, output, acceptedConnection };
+  return { code, output, responses };
+}
+
+/** The startup observer must never be confused with an available corpus. */
+function expectStorageGateClosed(result: BootAttempt, configDir: string): void {
+  expect(result.code).toBe(1);
+  expect(result.output).not.toContain("Live storage is UNENCRYPTED");
+  expect(result.output).not.toContain("Analytics DB opened");
+  expect(result.output).not.toContain("Listening on https://");
+  // A real HTTPS response proves this exercised the early listener rather
+  // than treating connection refusal as evidence about its API policy.
+  const apiResponses = result.responses.filter((response) =>
+    API_PATHS.some((path) => path === response.path),
+  );
+  expect(apiResponses.length).toBeGreaterThan(0);
+  for (const response of apiResponses) {
+    expect(response.status, response.path).toBe(503);
+    if (response.complete) {
+      expect(["GATEWAY_STARTING", "GATEWAY_SHUTTING_DOWN"]).toContain(
+        JSON.parse(response.body).code,
+      );
+    }
+  }
+  for (const response of result.responses.filter((response) => response.path === PROGRESS_PATH)) {
+    expect([200, 503]).toContain(response.status);
+    if (response.status === 200 && response.complete)
+      expect(JSON.parse(response.body).state).not.toBe("ready");
+  }
+  for (const response of result.responses.filter((response) => response.path === "/portal/")) {
+    expect([200, 503]).toContain(response.status);
+    if (response.status === 200 && response.complete)
+      expect(response.body).toContain("<title>Starting up · Omnesis</title>");
+  }
+  // Configured stores are omnesis.db, index.db, analytics.db and watch.db.
+  // Include nested paths and sidecars so another plaintext fallback cannot
+  // escape the assertion by using a different filename or partial file.
+  const stores = readdirSync(configDir, { recursive: true, encoding: "utf8" }).filter((name) =>
+    /\.(?:db|sqlite)(?:-(?:wal|shm|journal))?$/.test(name),
+  );
+  expect(stores).toEqual([]);
 }
 
 const dirs: string[] = [];
@@ -149,35 +263,41 @@ function tmp(): string {
 }
 
 describe("gateway boot fails closed at the process level", () => {
-  test("a tampered fail-closed marker exits the process, never serving", async () => {
-    const configDir = tmp();
-    process.env.OMNESIS_SECRET_STORE = "file";
-    await ensureInstallRootKey({ backend: "file", configDir });
-    // Arm a valid MAC-bound marker with the real root key, then corrupt the MAC.
-    await markStorageEncryptionRequired(configDir, { backend: "file" });
-    const marker = join(configDir, "keyring", "storage-encryption-required");
-    writeFileSync(marker, readFileSync(marker, "utf8").replace("mac=", "mac=AAAA"));
+  test(
+    "a tampered fail-closed marker exits without exposing APIs or opening stores",
+    async () => {
+      const configDir = tmp();
+      process.env.OMNESIS_SECRET_STORE = "file";
+      await ensureInstallRootKey({ backend: "file", configDir });
+      // Arm a valid MAC-bound marker with the real root key, then corrupt the MAC.
+      await markStorageEncryptionRequired(configDir, { backend: "file" });
+      const marker = join(configDir, "keyring", "storage-encryption-required");
+      writeFileSync(marker, readFileSync(marker, "utf8").replace("mac=", "mac=AAAA"));
 
-    const r = await spawnGatewayExpectingExit(configDir, await freePort(), {
-      OMNESIS_SECRET_STORE: "file",
-    });
-    expect(r.acceptedConnection).toBe(false);
-    expect(r.code).not.toBe(0);
-    expect(r.output).toMatch(/failed integrity verification/i);
-  }, 60_000);
+      const r = await spawnGatewayExpectingExit(configDir, await freePort(), {
+        OMNESIS_SECRET_STORE: "file",
+      });
+      expectStorageGateClosed(r, configDir);
+      expect(r.output).toMatch(/failed integrity verification/i);
+    },
+    BOOT_BUDGET + 10_000,
+  );
 
-  test("a present-but-unopenable root key (wrong passphrase) exits the process", async () => {
-    const configDir = tmp();
-    process.env.OMNESIS_SECRET_STORE = "passphrase";
-    process.env.OMNESIS_KEYRING_PASSPHRASE = "initial passphrase";
-    await ensureInstallRootKey({ backend: "passphrase", configDir });
+  test(
+    "a present-but-unopenable root key (wrong passphrase) exits the process",
+    async () => {
+      const configDir = tmp();
+      process.env.OMNESIS_SECRET_STORE = "passphrase";
+      process.env.OMNESIS_KEYRING_PASSPHRASE = "initial passphrase";
+      await ensureInstallRootKey({ backend: "passphrase", configDir });
 
-    const r = await spawnGatewayExpectingExit(configDir, await freePort(), {
-      OMNESIS_SECRET_STORE: "passphrase",
-      OMNESIS_KEYRING_PASSPHRASE: "wrong passphrase",
-    });
-    expect(r.acceptedConnection).toBe(false);
-    expect(r.code).not.toBe(0);
-    expect(r.output).toMatch(/cannot be read/i);
-  }, 60_000);
+      const r = await spawnGatewayExpectingExit(configDir, await freePort(), {
+        OMNESIS_SECRET_STORE: "passphrase",
+        OMNESIS_KEYRING_PASSPHRASE: "wrong passphrase",
+      });
+      expectStorageGateClosed(r, configDir);
+      expect(r.output).toMatch(/cannot be read/i);
+    },
+    BOOT_BUDGET + 10_000,
+  );
 });

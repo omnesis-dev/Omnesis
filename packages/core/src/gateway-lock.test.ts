@@ -30,6 +30,45 @@ beforeEach(() => {
   sleeper = null;
 });
 
+describe.skipIf(process.platform === "win32")("gateway ownership cancellation", () => {
+  it("cancels a pre-aborted claim without creating ownership", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    await expect(acquireGatewayLock(dir, { signal: controller.signal })).rejects.toMatchObject({
+      name: "AbortError",
+    });
+    expect(readGatewayLockHolder(dir)).toBeNull();
+  });
+
+  it("cancels a waiting replacement without disturbing the real owner", async () => {
+    const owner = await acquireGatewayLock(dir);
+    try {
+      const controller = new AbortController();
+      await expect(
+        acquireGatewayLock(dir, {
+          signal: controller.signal,
+          onWaiting: () => controller.abort(),
+        }),
+      ).rejects.toMatchObject({ name: "AbortError" });
+      expect(readGatewayLockHolder(dir)?.pid).toBe(process.pid);
+    } finally {
+      owner.release();
+    }
+    const next = await acquireGatewayLock(dir, { waitMs: 0 });
+    next.release();
+  });
+
+  it("unwinds a cancelled guard before another claim takes the directory", async () => {
+    const controller = new AbortController();
+    const pending = acquireGatewayLock(dir, { signal: controller.signal });
+    setImmediate(() => controller.abort());
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    expect(readGatewayLockHolder(dir)).toBeNull();
+    const next = await acquireGatewayLock(dir, { waitMs: 0 });
+    next.release();
+  });
+});
+
 describe.skipIf(process.platform === "win32")("macOS process identity across locales", () => {
   it("keeps a gateway live across writer/reader locales and still rejects a reused PID", async () => {
     const pid = await spawnSleeper();

@@ -77,6 +77,9 @@ export class SchedulerCore {
   private nextTaskId = 1;
   disposed = false;
   private started = false;
+  private starting: Promise<void> | null = null;
+  private initializing: Promise<void> | null = null;
+  private disposing: Promise<void> | null = null;
 
   /**
    * When true, `popNext` refuses to dispatch background-priority tasks.
@@ -119,6 +122,9 @@ export class SchedulerCore {
   ) {}
 
   registerRunner(runner: TaskRunner): void {
+    if ((this.starting && !this.started) || this.disposed) {
+      throw new Error("cannot register runner during scheduler startup or disposal");
+    }
     if (this.runners.has(runner.kind)) {
       throw new Error(`runner already registered: ${runner.kind}`);
     }
@@ -168,39 +174,86 @@ export class SchedulerCore {
     return this.started;
   }
 
-  async start(): Promise<void> {
-    if (this.started) return;
-    this.started = true;
-    for (const state of this.runners.values()) {
-      await state.runner.start();
+  start(): Promise<void> {
+    if (this.disposed) return Promise.reject(new Error("scheduler disposed"));
+    if (this.starting) return this.starting;
+    if (this.started) return Promise.resolve();
+    // Keep the raw initialization separate: disposal may await it, whereas
+    // the externally returned promise also waits for failure cleanup.
+    this.initializing = Promise.resolve().then(() => this.startRunners());
+    this.starting = this.initializing
+      .then(() => {
+        if (this.disposed) throw new Error("scheduler disposed during startup");
+        this.started = true;
+      })
+      .catch(async (error: unknown) => {
+        await this.dispose().catch((cleanupError: unknown) => {
+          log.warn(`runner startup cleanup failed: ${String(cleanupError)}`);
+        });
+        throw error;
+      });
+    return this.starting;
+  }
+
+  private async startRunners(): Promise<void> {
+    if (this.disposed) throw new Error("scheduler disposed during startup");
+    // The writer establishes ownership of its handle before readers start.
+    // The main runner creates no pool. Only the independent worker pools
+    // overlap, in pairs, so startup cannot fan out every pool at once.
+    for (const kind of ["writer", "main"] as const) {
+      await this.runners.get(kind)?.runner.start();
+      if (this.disposed) throw new Error("scheduler disposed during startup");
+    }
+    const remaining = [...this.runners.values()].filter(
+      ({ runner }) => runner.kind !== "writer" && runner.kind !== "main",
+    );
+    for (let offset = 0; offset < remaining.length; offset += 2) {
+      const outcomes = await Promise.allSettled(
+        remaining.slice(offset, offset + 2).map(async ({ runner }) => runner.start()),
+      );
+      // A rejected sibling must not trigger cleanup while another sibling is
+      // still constructing resources. allSettled establishes that boundary.
+      const failure = outcomes.find((outcome) => outcome.status === "rejected");
+      if (failure?.status === "rejected") throw failure.reason;
+      if (this.disposed) throw new Error("scheduler disposed during startup");
     }
   }
 
   /**
-   * Tear down every registered runner. Periodics and wakeables stop
-   * themselves before this runs (the façade calls them first). All
-   * pending + in-flight tasks are rejected; abort controllers fire so
-   * anything wired to `ctx.signal` sees the shutdown.
+   * Stop admission immediately, settle initialization, then drain every
+   * runner. Shared completion means concurrent shutdown callers all await
+   * actual cleanup rather than seeing the admission flag as completion.
    */
-  async dispose(): Promise<void> {
-    if (this.disposed) return;
+  dispose(): Promise<void> {
+    if (this.disposing) return this.disposing;
     this.disposed = true;
+    this.started = false;
     for (const state of this.runners.values()) {
       for (const prio of PRIORITIES) {
-        for (const p of state.queues[prio]) {
-          p.reject(new Error("scheduler disposed"));
+        for (const pending of state.queues[prio]) {
+          pending.reject(new Error("scheduler disposed"));
         }
         state.queues[prio].length = 0;
       }
-      // Abort in-flight tasks' AbortControllers so anything wired to
-      // `ctx.signal` (HTTP fetch, abortable IO) sees the shutdown.
-      // The runner.dispose() path then drains worker-backed runners;
-      // MainTaskRunner awaits its in-flight Set.
-      for (const p of state.inflight.values()) {
-        p.abortController?.abort(new Error("scheduler disposed"));
+      for (const pending of state.inflight.values()) {
+        pending.abortController?.abort(new Error("scheduler disposed"));
       }
-      await state.runner.dispose();
     }
+    this.disposing = this.disposeRunners();
+    return this.disposing;
+  }
+
+  private async disposeRunners(): Promise<void> {
+    await this.initializing?.catch(() => {});
+    const errors: unknown[] = [];
+    for (const { runner } of this.runners.values()) {
+      try {
+        await runner.dispose();
+      } catch (error) {
+        errors.push(error);
+      }
+    }
+    if (errors.length > 0) throw new AggregateError(errors, "scheduler runner cleanup failed");
   }
 
   /**

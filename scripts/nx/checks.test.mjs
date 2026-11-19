@@ -55,6 +55,19 @@ function buildFixturePlan(files) {
 }
 
 describe("Nx change selection", () => {
+  test("gateway bootstrap changes select startup and ownership lifecycle coverage", () => {
+    for (const input of [
+      "packages/gateway/src/index.ts",
+      "packages/gateway/src/runtime.ts",
+      "packages/gateway/src/startup/server.ts",
+    ]) {
+      expect(behavioralBundles([input])).toContain("gateway-core");
+    }
+    const startup = "packages/collector/src/e2e/gateway-startup.e2e.test.ts";
+    const ownership = "packages/collector/src/e2e/gateway-lifecycle.e2e.test.ts";
+    expect(bundleTestArgs("gateway-core", [startup, ownership])).toEqual([startup, ownership]);
+  });
+
   test("maps representative product areas to behavioral bundles", () => {
     expect(behavioralBundles(["packages/providers/google/src/index.ts"])).toEqual([
       "ingestion-providers",
