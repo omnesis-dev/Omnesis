@@ -302,6 +302,10 @@ The separate opaque data listener defaults to port 8789. Set
 gateway hostname's HTTPS port, preserving TLS bytes. Control TLS credentials are
 separate from gateway TLS credentials. Start with `npm run cloud-relay -- serve`.
 
+Startup failures exit non-zero and log a fixed diagnostic, optionally followed
+by an allowlisted operating-system or SQLite error code such as `EADDRINUSE`.
+Credential parser messages, paths and stacks are omitted.
+
 Sign-in and account routes (logins, account pages, connect-code claims, native,
 desktop and gateway-signup operations) share global bounds,
 `OMNESIS_CLOUD_RELAY_MAX_CONCURRENT_LOGINS` (default 8) and

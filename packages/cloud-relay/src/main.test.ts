@@ -62,6 +62,84 @@ test("startup errors set a failure status and never log credential parser payloa
   );
 });
 
+test.each([
+  "EADDRINUSE",
+  "EACCES",
+  "ENOENT",
+  "EMFILE",
+  "ENFILE",
+  "ENOSPC",
+  "SQLITE_BUSY",
+  "SQLITE_CANTOPEN",
+])("startup failures expose only the allowlisted %s code", async (code) => {
+  mocks.run.mockRejectedValue(
+    Object.assign(new Error("fictional-private-parser-payload"), { code }),
+  );
+  await import("./main.js");
+  expect(process.exitCode).toBe(1);
+  expect(mocks.error.mock.calls).toEqual([
+    [`Cloud relay command failed; check configuration and credentials (${code})`],
+  ]);
+});
+
+test.each([
+  "fictional-private-code",
+  "EADDRINUSE\nfictional-private-payload",
+  123,
+  null,
+  { toString: () => "fictional-private-payload" },
+])("unknown startup codes retain the private generic fallback (%j)", async (code) => {
+  mocks.run.mockRejectedValue(Object.assign(new Error("fictional-private-payload"), { code }));
+  await import("./main.js");
+  expect(process.exitCode).toBe(1);
+  expect(mocks.error.mock.calls).toEqual([
+    ["Cloud relay command failed; check configuration and credentials"],
+  ]);
+});
+
+test("failure diagnostics do not invoke an error's code getter", async () => {
+  const getter = vi.fn(() => {
+    throw new Error("fictional-private-getter-payload");
+  });
+  mocks.run.mockRejectedValue(Object.defineProperty(new Error("private"), "code", { get: getter }));
+  await import("./main.js");
+  expect(getter).not.toHaveBeenCalled();
+  expect(process.exitCode).toBe(1);
+  expect(mocks.error.mock.calls).toEqual([
+    ["Cloud relay command failed; check configuration and credentials"],
+  ]);
+});
+
+test.each([undefined, null, "fictional-private-payload", 123])(
+  "a non-object failure retains the private generic fallback (%j)",
+  async (failure) => {
+    mocks.run.mockRejectedValue(failure);
+    await import("./main.js");
+    expect(process.exitCode).toBe(1);
+    expect(mocks.error.mock.calls).toEqual([
+      ["Cloud relay command failed; check configuration and credentials"],
+    ]);
+  },
+);
+
+test("a throwing error descriptor cannot prevent the generic fatal diagnostic", async () => {
+  mocks.run.mockRejectedValue(
+    new Proxy(
+      {},
+      {
+        getOwnPropertyDescriptor: () => {
+          throw new Error("private");
+        },
+      },
+    ),
+  );
+  await import("./main.js");
+  expect(process.exitCode).toBe(1);
+  expect(mocks.error.mock.calls).toEqual([
+    ["Cloud relay command failed; check configuration and credentials"],
+  ]);
+});
+
 test("shutdown failures are contained and set a failure status", async () => {
   mocks.run.mockResolvedValue({
     url: "http://127.0.0.1:1234",

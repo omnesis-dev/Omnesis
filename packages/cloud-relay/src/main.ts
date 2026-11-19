@@ -5,6 +5,28 @@ import { createLogger, cloudRelayEnabled } from "@omnesis/core";
 import { runRelayCommand } from "./runtime.js";
 
 const log = createLogger("cloud-relay");
+const diagnosticCodes = new Set([
+  "EADDRINUSE",
+  "EACCES",
+  "ENOENT",
+  "EMFILE",
+  "ENFILE",
+  "ENOSPC",
+  "SQLITE_BUSY",
+  "SQLITE_CANTOPEN",
+]);
+
+function commandFailureCode(error: unknown): string | undefined {
+  if (typeof error !== "object" || error === null) return undefined;
+  try {
+    // Reading the data descriptor avoids invoking an error's code accessor.
+    const code: unknown = Object.getOwnPropertyDescriptor(error, "code")?.value;
+    return typeof code === "string" && diagnosticCodes.has(code) ? code : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 try {
   if (!cloudRelayEnabled()) throw new Error("Cloud relay requires OMNESIS_CLOUD_RELAY_ENABLED=1");
   const runtime = await runRelayCommand(process.argv[2] ?? "serve", process.env);
@@ -31,8 +53,12 @@ try {
   } else if (process.argv[2] !== "prepare-owner") {
     log.info("Cloud relay command complete");
   }
-} catch {
+} catch (error) {
   // Errors may originate in credential parsers; never log their payloads.
-  log.error("Cloud relay command failed; check configuration and credentials");
+  // See #1086 — intermittent startup failures need privacy-safe diagnostics.
+  const code = commandFailureCode(error);
+  log.error(
+    `Cloud relay command failed; check configuration and credentials${code ? ` (${code})` : ""}`,
+  );
   process.exitCode = 1;
 }
