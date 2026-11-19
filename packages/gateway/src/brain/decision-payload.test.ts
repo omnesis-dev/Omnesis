@@ -282,3 +282,95 @@ it("reads a long-edited page's history once per cited target, in the order its r
   db.prepare("DELETE FROM documents WHERE id='third'").run();
   expect(readDecisionPayload(db, "history").availability).toBe("unavailable");
 });
+
+const SOURCE_SUBJECT_BACKFILL =
+  "SELECT decision_id,'source',source_id FROM knowledge_decision_inputs";
+function insertRawInput(id: string, sourceId: string | null) {
+  db.prepare(
+    "INSERT INTO knowledge_decision_inputs(decision_id,source_id,input_revision,request_json,response_json,availability,created_at) VALUES(?,?,'v1',?,?,'available',1)",
+  ).run(id, sourceId, payload.requestJson, payload.responseJson);
+}
+function sourceSubjects(id: string) {
+  return db
+    .prepare<[string], { id: string }>(
+      "SELECT id FROM knowledge_decision_input_subjects WHERE decision_id=? AND kind='source' ORDER BY id",
+    )
+    .all(id)
+    .map((row) => row.id);
+}
+function dropSourceSubjectTriggers() {
+  db.exec(
+    "DROP TRIGGER knowledge_decision_input_source_subject_insert; DROP TRIGGER knowledge_decision_input_source_subject_update",
+  );
+}
+function setupStatements(): string[] {
+  const statements: string[] = [];
+  const exec = db.exec.bind(db);
+  db.exec = (sql: string) => {
+    statements.push(sql);
+    return exec(sql);
+  };
+  try {
+    createDecisionPayloadTables(db);
+  } finally {
+    db.exec = exec;
+  }
+  return statements;
+}
+
+it("names a decision input's source among its subjects on every write, without rescanning history at setup", () => {
+  insertRawInput("written", "first");
+  insertRawInput("unsourced", null);
+  expect(sourceSubjects("written")).toEqual(["first"]);
+  expect(sourceSubjects("unsourced")).toEqual([]);
+  db.prepare("UPDATE knowledge_decision_inputs SET source_id='second' WHERE decision_id=?").run(
+    "unsourced",
+  );
+  expect(sourceSubjects("unsourced")).toEqual(["second"]);
+
+  const statements = setupStatements();
+  expect(statements.some((sql) => sql.includes(SOURCE_SUBJECT_BACKFILL))).toBe(false);
+
+  db.prepare("DELETE FROM documents WHERE id='second'").run();
+  expect(
+    db.prepare("SELECT decision_id FROM knowledge_decision_inputs ORDER BY decision_id").all(),
+  ).toEqual([{ decision_id: "written" }]);
+});
+
+it("covers inputs written while the subject triggers were absent, once, when it installs them", () => {
+  insertRawInput("covered", "first");
+  dropSourceSubjectTriggers();
+  insertRawInput("uncovered", "second");
+  expect(sourceSubjects("uncovered")).toEqual([]);
+
+  expect(setupStatements().some((sql) => sql.includes(SOURCE_SUBJECT_BACKFILL))).toBe(true);
+  expect(sourceSubjects("uncovered")).toEqual(["second"]);
+  expect(sourceSubjects("covered")).toEqual(["first"]);
+  expect(setupStatements().some((sql) => sql.includes(SOURCE_SUBJECT_BACKFILL))).toBe(false);
+
+  db.prepare("DELETE FROM documents WHERE id='second'").run();
+  expect(
+    db.prepare("SELECT decision_id FROM knowledge_decision_inputs ORDER BY decision_id").all(),
+  ).toEqual([{ decision_id: "covered" }]);
+});
+
+it("leaves neither subjects nor triggers behind when installing them fails, and covers the inputs on retry", () => {
+  dropSourceSubjectTriggers();
+  insertRawInput("uncovered", "first");
+  db.exec(
+    "CREATE TRIGGER refuse_subjects BEFORE INSERT ON knowledge_decision_input_subjects BEGIN SELECT RAISE(ABORT,'refused'); END",
+  );
+  expect(() => createDecisionPayloadTables(db)).toThrow(/refused/);
+  expect(sourceSubjects("uncovered")).toEqual([]);
+  expect(
+    db
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE 'knowledge_decision_input_source_subject_%'",
+      )
+      .all(),
+  ).toEqual([]);
+
+  db.exec("DROP TRIGGER refuse_subjects");
+  createDecisionPayloadTables(db);
+  expect(sourceSubjects("uncovered")).toEqual(["first"]);
+});
