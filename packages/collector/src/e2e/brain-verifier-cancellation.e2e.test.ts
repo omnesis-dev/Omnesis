@@ -49,13 +49,10 @@ let stop: (() => Promise<void>) | undefined;
 let releaseAnnotations: (() => void) | undefined;
 afterEach(async () => {
   releaseAnnotations?.();
-  try {
-    await bench?.destroy();
-  } finally {
-    const cleanup = await Promise.allSettled([stop?.(), model?.close(), healthy?.close()]);
-    const failed = cleanup.filter((result) => result.status === "rejected");
-    if (failed.length) throw new AggregateError(failed.map((result) => result.reason));
-  }
+  const gateway = await Promise.allSettled([bench?.destroy()]);
+  const servers = await Promise.allSettled([stop?.(), model?.close(), healthy?.close()]);
+  const failed = [...gateway, ...servers].filter((result) => result.status === "rejected");
+  if (failed.length) throw new AggregateError(failed.map((result) => result.reason));
 }, 60_000);
 
 it("bounds overlapping remote verifications and closes timed-out calls before retries", async () => {
