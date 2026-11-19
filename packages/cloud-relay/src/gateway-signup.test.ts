@@ -2,9 +2,6 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { createHash, generateKeyPairSync, randomBytes, randomUUID, sign } from "node:crypto";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
 import { AccountEnrollmentAuthority } from "./account-enrollment-proof.js";
 import { ConnectCodes } from "./connect-codes.js";
@@ -18,17 +15,25 @@ import {
   type GatewaySignupIntent,
 } from "./gateway-signup-contract.js";
 import { NoAccount } from "./account-admission.js";
-import {
-  GatewaySignup,
-  SignupDenied,
-  SignupUnavailable,
-  type SignupConfiguration,
-} from "./gateway-signup.js";
+import { GatewaySignup, SignupDenied, type SignupConfiguration } from "./gateway-signup.js";
+import { InviteRefused, InviteVerifier, invitePublicKeyValue, signInvite } from "./invites.js";
 import { RelaySessions } from "./identity.js";
 import { RelayError } from "./tunnels.js";
 
 const origin = "https://relay.example.test",
   opaque = () => randomBytes(32).toString("base64url");
+const inviteKey = generateKeyPairSync("ed25519");
+/** The invite-only configuration, checked against this file's own invite key. */
+const inviteOnly = (): SignupConfiguration => ({
+  policy: "invite",
+  invites: new InviteVerifier(origin, [invitePublicKeyValue(inviteKey.publicKey)]),
+});
+const invite = (options: { expiresAt?: number; issuedAt?: number; relay?: string } = {}) =>
+  signInvite(inviteKey.privateKey, {
+    origin: options.relay ?? origin,
+    expiresAt: options.expiresAt ?? Math.floor(Date.now() / 1000) + 3600,
+    ...(options.issuedAt === undefined ? {} : { issuedAt: options.issuedAt }),
+  });
 const cleanup: (() => Promise<void> | void)[] = [];
 afterEach(async () => {
   vi.useRealTimers();
@@ -46,8 +51,8 @@ function fixture(
     names: new Map<string, string>(),
     capacity: true,
     active: true,
-    hasGateway: false,
     current: true,
+    redeemed: new Set<string>(),
   };
   const sessions = new RelaySessions(randomBytes(32)),
     codes = new ConnectCodes(),
@@ -62,7 +67,7 @@ function fixture(
     ...limits,
     gatewayOwner: (id) => state.owners.get(id),
     hasCapacity: () => state.capacity,
-    hasLinkedGateway: () => state.hasGateway,
+    inviteRedeemed: (id) => state.redeemed.has(id),
     assertAccount: () => {
       if (!state.active) throw new RelayError(401, "Account changed");
     },
@@ -85,8 +90,12 @@ function fixture(
     tlsSpkiFingerprint: "c".repeat(64),
     ownerPublicKey,
   };
-  /** The intent rides beside the signed request: the owner key does not sign it. */
-  const request = (overrides: Record<string, unknown> = {}, intent?: GatewaySignupIntent) => {
+  /** The intent and the invite ride beside the signed request: the owner key signs neither. */
+  const request = (
+    overrides: Record<string, unknown> = {},
+    intent?: GatewaySignupIntent,
+    invite?: string,
+  ) => {
     const now = Math.floor(Date.now() / 1000),
       redemptionSecret = opaque();
     const unsigned = {
@@ -111,11 +120,16 @@ function fixture(
           key.privateKey,
         ).toString("base64url"),
         ...(intent ? { intent } : {}),
+        ...(invite ? { invite } : {}),
       },
     };
   };
-  const launched = (overrides: Record<string, unknown> = {}, intent?: GatewaySignupIntent) => {
-    const value = request(overrides, intent),
+  const launched = (
+    overrides: Record<string, unknown> = {},
+    intent?: GatewaySignupIntent,
+    invite?: string,
+  ) => {
+    const value = request(overrides, intent, invite),
       started = signup.start(value.signed);
     const launch = signup.launch(
       started.operationId,
@@ -161,14 +175,6 @@ function fixture(
     approved,
   };
 }
-async function allowlistFile(value: unknown) {
-  const directory = await mkdtemp(join(tmpdir(), "omnesis-signup-"));
-  cleanup.push(() => rm(directory, { recursive: true, force: true }));
-  const file = join(directory, "allowlist.json");
-  await writeFile(file, typeof value === "string" ? value : JSON.stringify(value));
-  return file;
-}
-
 test("a signed request gets one launch, one approval and one collection of the proof", async () => {
   const f = fixture(),
     op = f.launched({ displayName: "Fictional gateway" });
@@ -309,17 +315,12 @@ test("changes during approval's signing refuse to approve", async () => {
   }
 });
 
-test("cancelling while the policy is being read refuses every kind of sign-in", async () => {
-  const f = fixture({ policy: "allowlist", allowlistFile: await allowlistFile({}) }),
-    subject = { subjectDigest: "e".repeat(64) };
-  for (const signIn of [
-    (id: string, cookie: string) => f.signup.authorizeGoogle(id, cookie, subject),
-    (id: string, cookie: string) => f.signup.authorizeAccount(id, cookie, f.actor.accountId),
-  ]) {
-    const op = f.launched(),
-      pending = signIn(op.id, op.cookie);
+test("a cancelled operation refuses every kind of sign-in", async () => {
+  const f = fixture(inviteOnly());
+  for (const google of [{ account: "a".repeat(64) }, {}]) {
+    const op = f.launched({}, "create");
     f.signup.cancel(op.redemption);
-    await expect(pending).rejects.toThrow();
+    expect(() => f.signup.authorizeGoogle(op.id, op.cookie, google)).toThrow("cancelled");
   }
   const op = f.launched();
   f.signIn(op);
@@ -328,87 +329,165 @@ test("cancelling while the policy is being read refuses every kind of sign-in", 
   await expect(confirming).rejects.toThrow("cancelled");
 });
 
-test("the allowlist is read afresh on every check and fails closed", async () => {
-  const listed = "e".repeat(64),
-    account = "a".repeat(64);
-  const file = await allowlistFile({ accounts: [account], googleSubjects: [listed] });
-  const f = fixture({ policy: "allowlist", allowlistFile: file }, { maxPerOwner: 32 });
-  const check = (subjectDigest: string, known?: string) => {
-    const op = f.launched({}, "create");
-    return f.signup.authorizeGoogle(op.id, op.cookie, { subjectDigest, account: known });
-  };
-  await expect(check(listed)).resolves.toMatchObject({ gatewayId: f.gatewayId });
-  await expect(check("f".repeat(64), account)).resolves.toMatchObject({ gatewayId: f.gatewayId });
-  await expect(check("f".repeat(64))).rejects.toBeInstanceOf(SignupDenied);
-  await expect(check("f".repeat(64), "b".repeat(64))).rejects.toBeInstanceOf(SignupDenied);
-  f.state.hasGateway = true;
-  await expect(check("f".repeat(64), "b".repeat(64))).resolves.toBeDefined();
-  f.state.hasGateway = false;
-  await writeFile(file, JSON.stringify({ googleSubjects: [] }));
-  await expect(check(listed)).rejects.toBeInstanceOf(SignupDenied);
-  await writeFile(file, "not json");
-  await expect(check(listed)).rejects.toBeInstanceOf(SignupDenied);
-  await writeFile(file, JSON.stringify({ googleSubjects: ["not-a-digest"] }));
-  await expect(check(listed)).rejects.toBeInstanceOf(SignupDenied);
-  await rm(file);
-  await expect(check(listed)).rejects.toBeInstanceOf(SignupDenied);
+test("an existing account connects another gateway without an invite", async () => {
+  for (const configuration of [inviteOnly(), { policy: "open" as const }]) {
+    const f = fixture(configuration);
+    for (const intent of ["existing", "create"] as const) {
+      const op = f.launched({}, intent);
+      expect(f.signup.authorizeGoogle(op.id, op.cookie, { account: "a".repeat(64) })).toMatchObject(
+        { gatewayId: f.gatewayId },
+      );
+      expect(f.signup.describe(op.id, op.cookie)).not.toHaveProperty("denied");
+    }
+    const op = f.launched();
+    f.signIn(op);
+    await expect(f.signup.confirm(op.id, op.cookie, f.actor)).resolves.toBeDefined();
+  }
 });
 
-test("signing in never creates an account: an unknown Google sign-in is refused until the person chooses to create one", async () => {
-  const unknown = "e".repeat(64),
-    known = "a".repeat(64);
-  for (const configuration of [
-    { policy: "open" as const },
-    {
-      policy: "allowlist" as const,
-      allowlistFile: await allowlistFile({ googleSubjects: [unknown], accounts: [known] }),
-    },
-  ]) {
-    const f = fixture(configuration);
+test("signing in never creates an account: an unknown Google sign-in is refused until the person chooses to create one", () => {
+  const known = "a".repeat(64);
+  for (const [configuration, carried] of [
+    [{ policy: "open" as const }, undefined],
+    [inviteOnly(), invite()],
+  ] as const) {
+    const f = fixture(configuration, { maxPerOwner: 32 });
     // A request that says nothing signs in to an existing account, as does one that says so.
-    for (const op of [f.launched(), f.launched({}, "existing")]) {
-      expect(f.signup.describe(op.id, op.cookie)).toMatchObject({ intent: "existing" });
+    for (const op of [f.launched({}, undefined, carried), f.launched({}, "existing", carried)]) {
+      expect(f.signup.describe(op.id, op.cookie)).toMatchObject({
+        intent: "existing",
+        canCreate: true,
+      });
       expect(f.signup.creationAdmission(op.id, op.cookie)).toBeUndefined();
-      await expect(
-        f.signup.authorizeGoogle(op.id, op.cookie, { subjectDigest: unknown }),
-      ).rejects.toBeInstanceOf(NoAccount);
+      expect(() => f.signup.authorizeGoogle(op.id, op.cookie, {})).toThrow(NoAccount);
       // Having no account is not a refusal by the operator: the operation goes on.
       expect(f.signup.describe(op.id, op.cookie)).not.toHaveProperty("denied");
       expect(f.signup.poll(op.redemption)).toMatchObject({ status: "pending" });
       // An account that exists signs in whichever view is showing.
-      await expect(
-        f.signup.authorizeGoogle(op.id, op.cookie, {
-          subjectDigest: "f".repeat(64),
-          account: known,
-        }),
-      ).resolves.toMatchObject({ gatewayId: f.gatewayId });
+      expect(f.signup.authorizeGoogle(op.id, op.cookie, { account: known })).toMatchObject({
+        gatewayId: f.gatewayId,
+      });
       // Only the browser holding the operation can switch it.
       expect(() => f.signup.setIntent(op.id, "", "create")).toThrow();
       expect(f.signup.describe(op.id, op.cookie)).toMatchObject({ intent: "existing" });
       f.signup.setIntent(op.id, op.cookie, "create");
       expect(f.signup.describe(op.id, op.cookie)).toMatchObject({ intent: "create" });
-      expect(f.signup.creationAdmission(op.id, op.cookie) !== undefined).toBe(
-        configuration.policy === "open",
-      );
-      await expect(
-        f.signup.authorizeGoogle(op.id, op.cookie, { subjectDigest: unknown }),
-      ).resolves.toMatchObject({ gatewayId: f.gatewayId, ownerAccountId: f.ownerAccountId });
+      expect(f.signup.creationAdmission(op.id, op.cookie)).toMatchObject({
+        gatewayId: f.gatewayId,
+        ...(carried ? { invite: { id: expect.any(String) } } : {}),
+      });
+      expect(f.signup.authorizeGoogle(op.id, op.cookie, {})).toMatchObject({
+        gatewayId: f.gatewayId,
+        ownerAccountId: f.ownerAccountId,
+      });
       // And back: the offer to create is withdrawn.
       f.signup.setIntent(op.id, op.cookie, "existing");
       expect(f.signup.creationAdmission(op.id, op.cookie)).toBeUndefined();
-      await expect(
-        f.signup.authorizeGoogle(op.id, op.cookie, { subjectDigest: unknown }),
-      ).rejects.toBeInstanceOf(NoAccount);
+      expect(() => f.signup.authorizeGoogle(op.id, op.cookie, {})).toThrow(NoAccount);
     }
   }
 });
 
+test("an invite-only sign-up without an invite cannot create an account, and says why", async () => {
+  const f = fixture(inviteOnly()),
+    op = f.launched({}, "create");
+  expect(f.signup.describe(op.id, op.cookie)).toMatchObject({ intent: "create", canCreate: false });
+  expect(f.signup.creationAdmission(op.id, op.cookie)).toBeUndefined();
+  expect(() => f.signup.authorizeGoogle(op.id, op.cookie, {})).toThrow(SignupDenied);
+  expect(f.signup.describe(op.id, op.cookie)).toMatchObject({
+    denied: { reason: "not-allowed", inviteRequired: true },
+  });
+  expect(f.signup.poll(op.redemption)).toEqual({ status: "denied", reason: "not-allowed" });
+  await expect(f.signup.confirm(op.id, op.cookie, f.actor)).rejects.toThrow("no longer waiting");
+  // A closed relay creates nothing either, and has no invite to ask for.
+  const closed = fixture({ policy: "closed" }),
+    refused = closed.launched({}, "create");
+  expect(closed.signup.describe(refused.id, refused.cookie)).toMatchObject({ canCreate: false });
+  expect(() => closed.signup.authorizeGoogle(refused.id, refused.cookie, {})).toThrow(SignupDenied);
+  expect(closed.signup.describe(refused.id, refused.cookie).denied).toEqual({
+    reason: "not-allowed",
+  });
+});
+
+test("an invite is checked at the start, and once used it creates nothing more", () => {
+  const f = fixture(inviteOnly(), { maxPerOwner: 32 }),
+    value = invite();
+  const op = f.launched({}, "create", value);
+  const admission = f.signup.creationAdmission(op.id, op.cookie)!;
+  expect(admission.invite).toEqual({
+    id: expect.stringMatching(/^[A-Za-z0-9_-]{22}$/),
+    expiresAt: expect.any(Number),
+  });
+  expect(f.signup.checkInvite({ invite: value })).toEqual({
+    status: "valid",
+    expiresAt: admission.invite!.expiresAt,
+  });
+  // Another sign-up started with the same invite before it was used may still try.
+  const racing = f.launched({}, "create", value);
+  // Creating the account records the invite: from then on nothing more starts with it.
+  f.state.redeemed.add(admission.invite!.id);
+  expect(f.signup.describe(op.id, op.cookie)).toMatchObject({ canCreate: false });
+  expect(f.signup.creationAdmission(racing.id, racing.cookie)).toBeUndefined();
+  expect(f.signup.checkInvite({ invite: value })).toEqual({ status: "used" });
+  expect(() => f.signup.start(f.request({}, "create", value).signed)).toThrow(
+    expect.objectContaining({ status: 403, code: "invite-used" }),
+  );
+  // A link the person pasted whole works like the bare token.
+  expect(f.signup.checkInvite({ invite: `${origin}/invite#${invite()}` })).toMatchObject({
+    status: "valid",
+  });
+});
+
+test("expired, forged and other relays' invites are refused at the start with their reason", () => {
+  const f = fixture(inviteOnly(), { maxPerOwner: 32 }),
+    now = Math.floor(Date.now() / 1000);
+  const cases = [
+    [invite({ expiresAt: now - 1, issuedAt: now - 60 }), "invite-expired", "expired"],
+    [invite({ relay: "https://other.example.test" }), "invite-invalid", "invalid"],
+    [
+      signInvite(generateKeyPairSync("ed25519").privateKey, { origin, expiresAt: now + 60 }),
+      "invite-invalid",
+      "invalid",
+    ],
+    ["not an invite", "invite-invalid", "invalid"],
+  ] as const;
+  for (const [value, code, status] of cases) {
+    let refusal: unknown;
+    try {
+      f.signup.start(f.request({}, "create", value).signed);
+    } catch (error) {
+      refusal = error;
+    }
+    expect(refusal).toBeInstanceOf(InviteRefused);
+    expect(refusal).toMatchObject({ status: 403, code });
+    expect(f.signup.checkInvite({ invite: value })).toEqual({ status });
+  }
+  expect(() => f.signup.checkInvite({})).toThrow("Invalid invite check");
+  expect(() => f.signup.checkInvite({ invite: "x", extra: true })).toThrow("Invalid invite check");
+  // Without invite keys nothing is valid, and an open relay ignores an invite it was given.
+  expect(fixture({ policy: "closed" }).signup.checkInvite({ invite: invite() })).toEqual({
+    status: "invalid",
+  });
+  const open = fixture(),
+    ignored = open.launched({}, "create", "not an invite");
+  expect(open.signup.creationAdmission(ignored.id, ignored.cookie)).not.toHaveProperty("invite");
+});
+
+test("an invite check that fails for another reason is not reported as a refusal", () => {
+  const configuration = inviteOnly(),
+    f = fixture(configuration);
+  vi.spyOn(configuration.invites!, "verify").mockImplementation(() => {
+    throw new Error("unexpected");
+  });
+  expect(() => f.signup.checkInvite({ invite: invite() })).toThrow("unexpected");
+  f.state.current = false;
+  expect(() => f.signup.checkInvite({ invite: invite() })).toThrow("paused");
+});
+
 test("the choice to create can't be made on an operation that is refused, approved or cancelled", async () => {
-  const f = fixture({ policy: "allowlist", allowlistFile: await allowlistFile({}) });
+  const f = fixture({ policy: "closed" });
   const denied = f.launched({}, "create");
-  await expect(
-    f.signup.authorizeGoogle(denied.id, denied.cookie, { subjectDigest: "e".repeat(64) }),
-  ).rejects.toBeInstanceOf(SignupDenied);
+  expect(() => f.signup.authorizeGoogle(denied.id, denied.cookie, {})).toThrow(SignupDenied);
   expect(() => f.signup.setIntent(denied.id, denied.cookie, "existing")).toThrow(
     "no longer waiting",
   );
@@ -437,41 +516,19 @@ test("the owner signature does not cover the intent, so the same request starts 
   });
 });
 
-test("a refusal shows who to list, ends the operation and reaches the gateway", async () => {
-  const f = fixture({ policy: "allowlist", allowlistFile: await allowlistFile({}) });
-  const google = f.launched({}, "create"),
-    subjectDigest = "e".repeat(64);
-  await expect(
-    f.signup.authorizeGoogle(google.id, google.cookie, { subjectDigest }),
-  ).rejects.toBeInstanceOf(SignupDenied);
+test("a refusal ends the operation and reaches the gateway", () => {
+  const f = fixture({ policy: "closed" });
+  const google = f.launched({}, "create");
+  expect(() => f.signup.authorizeGoogle(google.id, google.cookie, {})).toThrow(SignupDenied);
   expect(f.signup.describe(google.id, google.cookie)).toMatchObject({
-    denied: { reason: "not-allowed", googleSubject: subjectDigest },
+    denied: { reason: "not-allowed" },
   });
   expect(f.signup.poll(google.redemption)).toEqual({ status: "denied", reason: "not-allowed" });
   expect(() => f.signup.proofCommitment(google.id, google.cookie)).toThrow("no longer waiting");
   expect(f.signup.creationAdmission(google.id, google.cookie)).toBeUndefined();
-  await expect(f.signup.confirm(google.id, google.cookie, f.actor)).rejects.toThrow(
-    "no longer waiting",
-  );
-
-  const passkey = f.launched();
-  expect(await f.signup.authorizeAccount(passkey.id, passkey.cookie, f.actor.accountId)).toBe(
-    false,
-  );
-  expect(f.signup.describe(passkey.id, passkey.cookie)).toMatchObject({
-    denied: { reason: "not-allowed", accountId: f.actor.accountId },
-  });
 });
 
-test("an allowed account passes, and only an open relay admits a new passkey account", async () => {
-  const closed = fixture({
-    policy: "allowlist",
-    allowlistFile: await allowlistFile({ accounts: ["a".repeat(64)] }),
-  });
-  const op = closed.launched({}, "create");
-  expect(closed.signup.creationAdmission(op.id, op.cookie)).toBeUndefined();
-  expect(await closed.signup.authorizeAccount(op.id, op.cookie, "a".repeat(64))).toBe(true);
-
+test("a new passkey account is admitted under open, and with an invite under invite", () => {
   const open = fixture(),
     fresh = open.launched({}, "create"),
     admission = open.signup.creationAdmission(fresh.id, fresh.cookie)!;
@@ -479,12 +536,17 @@ test("an allowed account passes, and only an open relay admits a new passkey acc
     gatewayId: open.gatewayId,
     ownerAccountId: open.ownerAccountId,
   });
+  expect(admission).not.toHaveProperty("invite");
   admission.assertCurrent();
   open.state.owners.set(open.gatewayId, "d".repeat(64));
   expect(() => admission.assertCurrent()).toThrow("another owner");
   open.state.owners.clear();
   open.signup.cancel(fresh.redemption);
   expect(() => admission.assertCurrent()).toThrow();
+
+  const invited = fixture(inviteOnly()),
+    op = invited.launched({}, "create", invite());
+  expect(invited.signup.creationAdmission(op.id, op.cookie)?.invite).toBeDefined();
 });
 
 test("an admission from an earlier launch of the same ID cannot admit a later one", async () => {
@@ -500,57 +562,19 @@ test("an admission from an earlier launch of the same ID cannot admit a later on
   expect(f.signup.creationAdmission(replay.operationId, cookie)).toBeDefined();
 });
 
-test("the policy is checked again at approval, including for capacity", async () => {
-  const listed = "a".repeat(64),
-    file = await allowlistFile({ accounts: [listed] });
-  const f = fixture({ policy: "allowlist", allowlistFile: file }, { maxPerOwner: 32 });
-  const account = { ...f.actor, accountId: listed };
-  const op = f.launched();
-  f.signIn(op, listed);
-  await writeFile(file, JSON.stringify({ accounts: [] }));
-  await expect(f.signup.confirm(op.id, op.cookie, account)).rejects.toBeInstanceOf(SignupDenied);
-  expect(f.signup.poll(op.redemption)).toEqual({ status: "denied", reason: "not-allowed" });
-
-  await writeFile(file, JSON.stringify({ accounts: [listed] }));
-  const full = f.launched();
-  f.signIn(full, listed);
-  f.state.capacity = false;
-  await expect(f.signup.confirm(full.id, full.cookie, account)).rejects.toBeInstanceOf(
+test("capacity is checked again at approval", async () => {
+  const invited = fixture(inviteOnly(), { maxPerOwner: 32 }),
+    full = invited.launched();
+  invited.signIn(full);
+  invited.state.capacity = false;
+  await expect(invited.signup.confirm(full.id, full.cookie, invited.actor)).rejects.toBeInstanceOf(
     SignupDenied,
   );
-  expect(f.signup.poll(full.redemption)).toEqual({ status: "denied", reason: "capacity" });
-  f.state.capacity = true;
-
-  const google = f.launched({}, "create"),
-    subjectDigest = "e".repeat(64);
-  await writeFile(file, JSON.stringify({ googleSubjects: [subjectDigest] }));
-  await f.signup.authorizeGoogle(google.id, google.cookie, { subjectDigest });
-  f.signIn(google, listed);
-  await expect(f.signup.confirm(google.id, google.cookie, account)).resolves.toBeDefined();
-});
-
-test("a passkey after an allowed Google sign-in is judged on its own", async () => {
-  const subjectDigest = "e".repeat(64),
-    f = fixture({
-      policy: "allowlist",
-      allowlistFile: await allowlistFile({ googleSubjects: [subjectDigest] }),
-    }),
-    op = f.launched({}, "create");
-  await f.signup.authorizeGoogle(op.id, op.cookie, { subjectDigest });
-  const proof = (await import("./device-enrollment.js")).passkeyProofChallenge;
-  const { salt, issuedAt, nonce } = f.signup.proofCommitment(op.id, op.cookie);
-  const { passkeyAuthenticator } = await import("../test/passkey-authenticator.js");
-  f.signup.recordProof(op.id, op.cookie, {
-    type: "passkey",
-    accountId: f.actor.accountId,
-    challenge: proof(salt, issuedAt, nonce),
-    credential: passkeyAuthenticator().authentication(proof(salt, issuedAt, nonce), opaque()),
-    credentialPublicKey: "ZmljdGlvbmFs",
-  });
-  await expect(f.signup.confirm(op.id, op.cookie, f.actor)).rejects.toBeInstanceOf(SignupDenied);
-  expect(f.signup.describe(op.id, op.cookie)).toMatchObject({
-    denied: { reason: "not-allowed", accountId: f.actor.accountId },
-  });
+  expect(invited.signup.poll(full.redemption)).toEqual({ status: "denied", reason: "capacity" });
+  invited.state.capacity = true;
+  const ok = invited.launched();
+  invited.signIn(ok);
+  await expect(invited.signup.confirm(ok.id, ok.cookie, invited.actor)).resolves.toBeDefined();
 });
 
 test("an existing gateway with another owner is refused, and its own owner may continue", async () => {
@@ -686,16 +710,11 @@ test("the first browser to open a request keeps it; the link and the code reopen
   expect(f.signup.describe(started.operationId, first)).toMatchObject({ needsProof: true });
 });
 
-test("a refused, cancelled or replaced request cannot be reopened", async () => {
-  const listed = fixture({
-    policy: "allowlist",
-    allowlistFile: await allowlistFile({ accounts: [] }),
-  });
+test("a refused, cancelled or replaced request cannot be reopened", () => {
+  const listed = fixture({ policy: "closed" });
   const denied = listed.launched({}, "create"),
     ticket = new URL(denied.started.authorizeUrl).searchParams.get("ticket")!;
-  await expect(
-    listed.signup.authorizeGoogle(denied.id, denied.cookie, { subjectDigest: "e".repeat(64) }),
-  ).rejects.toBeInstanceOf(SignupDenied);
+  expect(() => listed.signup.authorizeGoogle(denied.id, denied.cookie, {})).toThrow(SignupDenied);
   expect(() => listed.signup.launch(denied.id, ticket, "")).toThrow("opened in another browser");
   expect(() => listed.codes.claim(denied.started.code, "")).toThrow("opened in another browser");
   expect(listed.signup.describe(denied.id, denied.cookie)).toMatchObject({
@@ -769,10 +788,16 @@ test("closed or paused coordination stops every path", () => {
   expect(() => f.signup.poll(op.redemption)).toThrow("unavailable");
 });
 
-test("only a relay that opted in has signup enabled", () => {
-  expect(fixture({ policy: "invitation" }).signup.enabled()).toBe(false);
-  expect(fixture({ policy: "allowlist", allowlistFile: "/unused" }).signup.enabled()).toBe(true);
-  expect(fixture({ policy: "open" }).signup.enabled()).toBe(true);
+test("only a relay that opted in has signup enabled, and only an invite-only one says so", () => {
+  const closed = fixture({ policy: "closed" }).signup,
+    invited = fixture(inviteOnly()).signup,
+    open = fixture({ policy: "open" }).signup;
+  expect([closed.enabled(), invited.enabled(), open.enabled()]).toEqual([false, true, true]);
+  expect([closed.access(), invited.access(), open.access()]).toEqual([
+    undefined,
+    { inviteOnly: true },
+    undefined,
+  ]);
 });
 
 test("the owner signature covers the relay, the gateway and the optional name", () => {
@@ -798,281 +823,4 @@ test("a cancelled and restarted request never receives the earlier sign-in's res
   f.signup.start(op.signed);
   await expect(confirming).rejects.toThrow("replaced");
   expect(f.signup.poll(op.redemption)).toMatchObject({ status: "pending" });
-});
-
-/** A group that knows its members, or fails as Google can, and counts what it was asked. */
-function group(members: string[] = [], joinUrl?: string) {
-  const gate = {
-    joinUrl,
-    failing: false,
-    asked: [] as string[],
-    async isMember(email: string) {
-      gate.asked.push(email);
-      if (gate.failing) throw new Error("membership lookup failed with HTTP 503");
-      return members.includes(email);
-    },
-  };
-  return gate;
-}
-const invitedEmail = "maya.reeves@example.com";
-const joinUrl = "https://groups.example.com/g/testers";
-
-test("a google sign-in whose verified email is in the group creates an account and is approved", async () => {
-  const gate = group([invitedEmail], joinUrl);
-  const f = fixture({
-    policy: "allowlist",
-    allowlistFile: await allowlistFile({}),
-    googleGroup: gate,
-  });
-  const op = f.launched({}, "create"),
-    subjectDigest = "e".repeat(64);
-  expect(f.signup.requestsEmail(op.id, op.cookie)).toBe(true);
-  // A group decides about Google sign-ins only; a new passkey account still needs `open`.
-  expect(f.signup.creationAdmission(op.id, op.cookie)).toBeUndefined();
-  await expect(
-    f.signup.authorizeGoogle(op.id, op.cookie, { subjectDigest, email: () => invitedEmail }),
-  ).resolves.toMatchObject({ gatewayId: f.gatewayId });
-  expect(gate.asked).toEqual([invitedEmail]);
-  f.signIn(op);
-  // Approval honours the invitation it just checked, without asking Google again.
-  await expect(f.signup.confirm(op.id, op.cookie, f.actor)).resolves.toBeDefined();
-  expect(gate.asked).toHaveLength(1);
-  expect(f.signup.poll(op.redemption)).toMatchObject({ status: "approved" });
-});
-
-test("a google sign-in not in the group is refused with the join link, and the gateway sees only the usual refusal", async () => {
-  const gate = group([], joinUrl);
-  const f = fixture({
-    policy: "allowlist",
-    allowlistFile: await allowlistFile({}),
-    googleGroup: gate,
-  });
-  const op = f.launched({}, "create"),
-    subjectDigest = "e".repeat(64);
-  await expect(
-    f.signup.authorizeGoogle(op.id, op.cookie, { subjectDigest, email: () => "jamie@example.com" }),
-  ).rejects.toBeInstanceOf(SignupDenied);
-  expect(f.signup.describe(op.id, op.cookie).denied).toEqual({
-    reason: "not-allowed",
-    googleSubject: subjectDigest,
-    inviteOnly: true,
-    joinUrl,
-  });
-  expect(f.signup.poll(op.redemption)).toEqual({ status: "denied", reason: "not-allowed" });
-
-  // Without a join link the refusal is still invite-only, with no link to show.
-  const quiet = fixture({ policy: "allowlist", googleGroup: group() });
-  const other = quiet.launched({}, "create");
-  await expect(
-    quiet.signup.authorizeGoogle(other.id, other.cookie, {
-      subjectDigest,
-      email: () => "jamie@example.com",
-    }),
-  ).rejects.toBeInstanceOf(SignupDenied);
-  expect(quiet.signup.describe(other.id, other.cookie).denied).toEqual({
-    reason: "not-allowed",
-    googleSubject: subjectDigest,
-    inviteOnly: true,
-  });
-});
-
-test("a group check google cannot answer refuses the sign-up for now and leaves the operation to retry", async () => {
-  const gate = group([invitedEmail], joinUrl);
-  const f = fixture({ policy: "allowlist", googleGroup: gate });
-  const op = f.launched({}, "create"),
-    google = { subjectDigest: "e".repeat(64), email: () => invitedEmail };
-  gate.failing = true;
-  const error = await f.signup.authorizeGoogle(op.id, op.cookie, google).catch((e: unknown) => e);
-  expect(error).toBeInstanceOf(SignupUnavailable);
-  expect((error as RelayError).message).toBe(
-    "We couldn't check your invitation right now. Try again in a few minutes.",
-  );
-  // Nothing was decided: no refusal, no sign-in, and the gateway keeps waiting.
-  expect(f.signup.describe(op.id, op.cookie)).not.toHaveProperty("denied");
-  expect(f.signup.poll(op.redemption)).toMatchObject({ status: "pending" });
-  gate.failing = false;
-  await expect(f.signup.authorizeGoogle(op.id, op.cookie, google)).resolves.toBeDefined();
-});
-
-test("an unverified or missing email is refused as not invited without asking google", async () => {
-  const gate = group([invitedEmail], joinUrl);
-  const f = fixture({ policy: "allowlist", googleGroup: gate }, { maxPerOwner: 32 });
-  for (const email of [undefined, () => undefined]) {
-    const op = f.launched({}, "create");
-    await expect(
-      f.signup.authorizeGoogle(op.id, op.cookie, {
-        subjectDigest: "e".repeat(64),
-        ...(email ? { email } : {}),
-      }),
-    ).rejects.toBeInstanceOf(SignupDenied);
-    expect(f.signup.describe(op.id, op.cookie).denied).toMatchObject({ inviteOnly: true, joinUrl });
-  }
-  expect(gate.asked).toEqual([]);
-});
-
-test("the allowlist and a linked gateway answer first, without asking the group", async () => {
-  const listed = "e".repeat(64),
-    known = "a".repeat(64),
-    withGateway = "c".repeat(64);
-  const gate = group([], joinUrl);
-  const email = vi.fn(() => invitedEmail);
-  const f = fixture(
-    {
-      policy: "allowlist",
-      allowlistFile: await allowlistFile({ googleSubjects: [listed], accounts: [known] }),
-      googleGroup: gate,
-    },
-    { maxPerOwner: 32 },
-  );
-  const creating = f.launched({}, "create");
-  await expect(
-    f.signup.authorizeGoogle(creating.id, creating.cookie, { subjectDigest: listed, email }),
-  ).resolves.toBeDefined();
-  for (const intent of ["create", "existing"] as const) {
-    const op = f.launched({}, intent);
-    // On a relay with a group every sign-in asks for the address: whose it is comes later.
-    expect(f.signup.requestsEmail(op.id, op.cookie)).toBe(true);
-    await expect(
-      f.signup.authorizeGoogle(op.id, op.cookie, {
-        subjectDigest: "f".repeat(64),
-        account: known,
-        email,
-      }),
-    ).resolves.toBeDefined();
-    f.state.hasGateway = true;
-    const linked = f.launched({}, intent);
-    await expect(
-      f.signup.authorizeGoogle(linked.id, linked.cookie, {
-        subjectDigest: "f".repeat(64),
-        account: withGateway,
-        email,
-      }),
-    ).resolves.toBeDefined();
-    f.state.hasGateway = false;
-  }
-  // Signing in without choosing to create is told there is no account, as before.
-  const existing = f.launched({}, "existing");
-  await expect(
-    f.signup.authorizeGoogle(existing.id, existing.cookie, {
-      subjectDigest: "f".repeat(64),
-      email,
-    }),
-  ).rejects.toBeInstanceOf(NoAccount);
-  expect(gate.asked).toEqual([]);
-  expect(email).not.toHaveBeenCalled();
-});
-
-test("an existing account with no gateway is admitted by the group, and refused once it leaves", async () => {
-  const members = [invitedEmail];
-  const gate = group(members, joinUrl);
-  const f = fixture(
-    { policy: "allowlist", allowlistFile: await allowlistFile({}), googleGroup: gate },
-    { maxPerOwner: 32 },
-  );
-  const google = {
-    subjectDigest: "e".repeat(64),
-    account: f.actor.accountId,
-    email: () => invitedEmail,
-  };
-  for (const intent of ["existing", "create"] as const) {
-    const op = f.launched({}, intent);
-    await expect(f.signup.authorizeGoogle(op.id, op.cookie, google)).resolves.toMatchObject({
-      gatewayId: f.gatewayId,
-    });
-    f.signIn(op);
-    // Approval honours the invitation just checked for this sign-in.
-    await expect(f.signup.confirm(op.id, op.cookie, f.actor)).resolves.toBeDefined();
-    expect(f.signup.poll(op.redemption)).toMatchObject({ status: "approved" });
-  }
-  expect(gate.asked).toEqual([invitedEmail, invitedEmail]);
-
-  // Removed from the group: the same account is refused as not invited.
-  members.splice(0);
-  const removed = f.launched({}, "existing");
-  await expect(f.signup.authorizeGoogle(removed.id, removed.cookie, google)).rejects.toBeInstanceOf(
-    SignupDenied,
-  );
-  expect(f.signup.describe(removed.id, removed.cookie).denied).toEqual({
-    reason: "not-allowed",
-    googleSubject: google.subjectDigest,
-    inviteOnly: true,
-    joinUrl,
-  });
-  expect(f.signup.poll(removed.redemption)).toEqual({ status: "denied", reason: "not-allowed" });
-
-  // Google not answering refuses for now, and leaves the operation to retry.
-  gate.failing = true;
-  const failing = f.launched({}, "existing");
-  await expect(f.signup.authorizeGoogle(failing.id, failing.cookie, google)).rejects.toBeInstanceOf(
-    SignupUnavailable,
-  );
-  expect(f.signup.describe(failing.id, failing.cookie)).not.toHaveProperty("denied");
-
-  // No verified email: refused as not invited, without asking.
-  gate.failing = false;
-  const asked = gate.asked.length;
-  const unverified = f.launched({}, "existing");
-  await expect(
-    f.signup.authorizeGoogle(unverified.id, unverified.cookie, {
-      ...google,
-      email: () => undefined,
-    }),
-  ).rejects.toBeInstanceOf(SignupDenied);
-  expect(gate.asked).toHaveLength(asked);
-});
-
-test("a passkey for an account the allowlist does not name is told to sign in with google", async () => {
-  const gate = group([invitedEmail], joinUrl);
-  const f = fixture({
-    policy: "allowlist",
-    allowlistFile: await allowlistFile({}),
-    googleGroup: gate,
-  });
-  const op = f.launched({}, "existing");
-  expect(await f.signup.authorizeAccount(op.id, op.cookie, f.actor.accountId)).toBe(false);
-  expect(f.signup.describe(op.id, op.cookie).denied).toEqual({
-    reason: "not-allowed",
-    accountId: f.actor.accountId,
-    googleRequired: true,
-    joinUrl,
-  });
-  expect(f.signup.poll(op.redemption)).toEqual({ status: "denied", reason: "not-allowed" });
-  expect(gate.asked).toEqual([]);
-
-  // Without a group the refusal is what it always was.
-  const plain = fixture({ policy: "allowlist", allowlistFile: await allowlistFile({}) });
-  const other = plain.launched({}, "existing");
-  expect(await plain.signup.authorizeAccount(other.id, other.cookie, plain.actor.accountId)).toBe(
-    false,
-  );
-  expect(plain.signup.describe(other.id, other.cookie).denied).toEqual({
-    reason: "not-allowed",
-    accountId: plain.actor.accountId,
-  });
-});
-
-test("an invitation holds only for the google sign-in it was checked for", async () => {
-  const gate = group([invitedEmail]);
-  const f = fixture({ policy: "allowlist", googleGroup: gate });
-  const op = f.launched({}, "create");
-  await f.signup.authorizeGoogle(op.id, op.cookie, {
-    subjectDigest: "e".repeat(64),
-    email: () => invitedEmail,
-  });
-  // A passkey proof replaces the Google sign-in, and with it the invitation.
-  const proof = (await import("./device-enrollment.js")).passkeyProofChallenge;
-  const { salt, issuedAt, nonce } = f.signup.proofCommitment(op.id, op.cookie);
-  const { passkeyAuthenticator } = await import("../test/passkey-authenticator.js");
-  f.signup.recordProof(op.id, op.cookie, {
-    type: "passkey",
-    accountId: f.actor.accountId,
-    challenge: proof(salt, issuedAt, nonce),
-    credential: passkeyAuthenticator().authentication(proof(salt, issuedAt, nonce), opaque()),
-    credentialPublicKey: "ZmljdGlvbmFs",
-  });
-  await expect(f.signup.confirm(op.id, op.cookie, f.actor)).rejects.toBeInstanceOf(SignupDenied);
-  // A relay without a group never asks Google for the address.
-  const plain = fixture({ policy: "open" }),
-    creating = plain.launched({}, "create");
-  expect(plain.signup.requestsEmail(creating.id, creating.cookie)).toBe(false);
 });

@@ -11,9 +11,8 @@ import { html } from "htm/preact";
 import { useState } from "preact/hooks";
 import { ConfirmModal } from "../../components/confirm-modal.js";
 import { FinishSetup, openOnGateway } from "../../components/gateway-passkey-confirm.js";
-import { relayError, relaySignupAccess } from "../../lib/cloud-relay-api.js";
+import { relayError, relayInvite, relayInviteOnly } from "../../lib/cloud-relay-api.js";
 import {
-  RequestAccess,
   UNLINK_CONFIRM,
   Waiting,
   relayAccountSetup,
@@ -57,6 +56,36 @@ const COPY = {
   },
 };
 
+/** The invite the person is typing, kept by whichever view shows the account choice. */
+export function useInvite() {
+  const [invite, setInvite] = useState("");
+  return { invite, setInvite };
+}
+
+/** Where the invite link goes. Only creating an account needs it. */
+function InviteField({ value, onInput, disabled }) {
+  const incomplete = value.trim() !== "" && !relayInvite(value);
+  return html`<div class="relay-invite-field">
+    <label for="relay-invite-input">Invite link</label>
+    <input
+      id="relay-invite-input"
+      type="text"
+      autocomplete="off"
+      spellcheck="false"
+      placeholder="Paste the invite link you were sent"
+      value=${value}
+      disabled=${disabled}
+      aria-invalid=${incomplete ? "true" : "false"}
+      onInput=${(event) => onInput(event.currentTarget.value)}
+    />
+    <p class="relay-hint" role=${incomplete ? "alert" : undefined}>
+      ${incomplete
+        ? "That isn't a whole invite link. Copy all of it, including the part after #."
+        : "Needed only to create a new account. Signing in to an account you already have needs no invite."}
+    </p>
+  </div>`;
+}
+
 /**
  * Connecting an Omnesis account, by the relay's status: the heading, the words
  * under it, what shows beneath (the assurance, the invite, waiting for the
@@ -64,12 +93,23 @@ const COPY = {
  * its own way on; the account page shows them as its header until an account
  * is linked, so both offer exactly the same choice.
  */
-export function accountConnect(relay) {
+export function accountConnect(relay, { invite = "", setInvite = () => {} } = {}) {
   const { status, busy, run } = relay;
   const state = accountState(status);
   const disabled = Boolean(busy) && busy !== "refresh";
+  const inviteOnly = relayInviteOnly(status);
+  const token = relayInvite(invite);
   // Creating an account is always the person's explicit choice, here and on the sign-in page.
-  const connect = (intent) => run("connect", { termsAccepted: true, intent });
+  const connect = (intent) =>
+    run("connect", {
+      termsAccepted: true,
+      intent,
+      ...(intent === "create" && token ? { invite: token } : {}),
+    });
+  // A refused invite brings back the choice, with the invite field to fix it.
+  const inviteRefused =
+    state === "failed" && /^invite-/.test(status.connect?.error ?? "");
+  const choosing = state === "none" || inviteRefused;
   const copy = state === "waiting" && status.connect?.verification ? {
     heading: "Verify this gateway's setup",
     blurb: "Open the security check to get this gateway's public address. Cloudflare usually checks automatically; it may ask you to confirm you're human. No approval from Omnesis is needed.",
@@ -80,26 +120,33 @@ export function accountConnect(relay) {
       : state === "failed" && (status.connect?.error ?? status.enrollment?.error)
         ? relayError(status.connect?.error ?? status.enrollment?.error)
         : copy.blurb;
-  const access = relaySignupAccess(status);
   // Before any account, everything to know is one paragraph: what it does, what it never
-  // sees, the invite, and that it can wait.
+  // sees, that new accounts need an invite, and that it can wait.
   const fullBlurb =
     state === "none"
-      ? html`${blurb}${access &&
-          html` Accounts are invite-only for now:${" "}<a href=${access.url} target="_blank" rel="noopener noreferrer">request access</a>${" "}(${access.host}), then create your account once it's approved.`}
+      ? html`${blurb}${inviteOnly &&
+          " Omnesis accounts are private and invite-only for now: creating one needs an invite link."}
         It's optional: skip it and set it up any time from Settings, Connectivity.`
       : blurb;
-  const invite = access && state === "failed" && status.connect?.error === "not-allowed";
+  const choice = html`<button type="button" class="btn-secondary" disabled=${disabled} onClick=${() => connect("existing")}>
+      I already have one
+    </button>
+    <button
+      type="button"
+      class="btn-primary"
+      disabled=${disabled || (inviteOnly && !token)}
+      title=${inviteOnly && !token ? "Paste your invite link first" : undefined}
+      onClick=${() => connect("create")}
+    >
+      ${busy === "connect" ? "Connecting…" : "Create an account"}
+    </button>`;
   const buttons = {
-    none: html`<button type="button" class="btn-secondary" disabled=${disabled} onClick=${() => connect("existing")}>
-        I already have one
-      </button>
-      <button type="button" class="btn-primary" disabled=${disabled} onClick=${() => connect("create")}>
-        ${busy === "connect" ? "Connecting…" : "Create an account"}
-      </button>`,
-    failed: html`<button type="button" class="btn-primary" disabled=${disabled} onClick=${() => connect()}>
-      ${busy === "connect" ? "Connecting…" : "Try again"}
-    </button>`,
+    none: choice,
+    failed: inviteRefused
+      ? choice
+      : html`<button type="button" class="btn-primary" disabled=${disabled} onClick=${() => connect()}>
+          ${busy === "connect" ? "Connecting…" : "Try again"}
+        </button>`,
     enrolled:
       status?.account?.canLink &&
       html`<button type="button" class="btn-secondary" disabled=${disabled} onClick=${() => run("account/link")}>
@@ -108,14 +155,17 @@ export function accountConnect(relay) {
   }[state] ?? null;
   const body = html`${relay.error && html`<p role="alert" class="relay-notice">${relay.error}</p>`}
     ${state === "loading" && !busy && html`<button type="button" class="btn-secondary" onClick=${() => run()}>Try again</button>`}
-    ${invite && html`<${RequestAccess} access=${access} />`}
+    ${choosing &&
+    inviteOnly &&
+    html`<p class="relay-private-badge">Private · invite only</p>
+      <${InviteField} value=${invite} onInput=${setInvite} disabled=${disabled} />`}
     ${state === "waiting" && html`<${Waiting} connect=${status.connect} busy=${busy} run=${run} />`}`;
   return { state, heading: copy.heading, blurb: fullBlurb, body, buttons, disabled };
 }
 
 /** The account page's header until an account is linked: the same choice as step 1. */
 export function AccountConnect({ relay }) {
-  const { heading, blurb, body, buttons } = accountConnect(relay);
+  const { heading, blurb, body, buttons } = accountConnect(relay, useInvite());
   return html`<section class="relay-hero relay-hero-plain" aria-live="polite">
     <div class="relay-hero-text">
       <h2 class="relay-headline">${heading}</h2>
@@ -142,7 +192,7 @@ export function AccountStep({
 }) {
   const { status, busy, run } = relay;
   const phase = relayPhase(status);
-  const { state, heading, blurb, body, buttons, disabled } = accountConnect(relay);
+  const { state, heading, blurb, body, buttons, disabled } = accountConnect(relay, useInvite());
   const [later, chooseLater] = useSetupLater(status?.gatewayId);
   const { enrollment, setup, ready } = relayAccountSetup(status, phase);
   usePasskeyHandoff({ phase, enrollment, setup, ready, later, open, location });

@@ -5,7 +5,7 @@ import { runInNewContext } from "node:vm";
 import { parseHTML } from "linkedom";
 import { afterEach, expect, test, vi } from "vitest";
 import { build } from "esbuild";
-import { installAccountUI, installConnectUI } from "./account-browser.js";
+import { installAccountUI, installConnectUI, installInviteUI } from "./account-browser.js";
 
 const signedOut = { authenticated: false, googleAvailable: true, canCreateAccount: true };
 const authenticated = {
@@ -282,11 +282,10 @@ test("the code is shown with its warning, and approval is never promised uncondi
   }
 });
 
-test("a refused sign-in shows what to send the operator and offers nothing else", async () => {
-  for (const [denied, shown, message] of [
-    [{ reason: "not-allowed", googleSubject: "a".repeat(64) }, "a".repeat(64), "isn't accepting"],
-    [{ reason: "not-allowed", accountId: "b".repeat(64) }, "b".repeat(64), "isn't accepting"],
-    [{ reason: "capacity" }, undefined, "no room"],
+test("a refused sign-in says why, offers nothing else, and asks for nothing to send", async () => {
+  for (const [denied, message] of [
+    [{ reason: "not-allowed" }, "isn't accepting"],
+    [{ reason: "capacity" }, "no room"],
   ] as const) {
     const f = setup();
     f.location.search = "?signup=b1fba1ce-2398-4c2c-a66b-9044433d1a02";
@@ -303,93 +302,70 @@ test("a refused sign-in shows what to send the operator and offers nothing else"
     installAccountUI();
     await f.wait(message);
     expect(f.document.querySelectorAll("button")).toHaveLength(0);
-    const code = f.document.querySelector(".code.long");
-    expect(code?.textContent).toBe(shown);
+    expect(f.document.querySelector(".code.long")).toBeNull();
     expect(f.document.getElementById("account-root")!.textContent).toContain("start again");
   }
 });
 
-test("a sign-up outside the invitation group is told accounts are invite-only and where to ask to join", async () => {
-  const pending = {
-    purpose: "gateway-signup",
-    gatewayName: "Fictional gateway",
-    code: "ABCD-EF23",
-    needsProof: true,
-  };
+const inviteNeeded =
+  "Omnesis accounts are invite-only for now. Creating one needs an invite link.If you have one, start again from your gateway and paste it there. Otherwise, sign in to an account you already have.";
+const inviteUnusable =
+  "This invite can't create an account any more: it has expired or was already used. Ask for a new invite, then start again from your gateway.";
+
+test("a sign-up refused for want of an invite says accounts are invite-only and offers nothing", async () => {
   const f = setup();
   f.location.search = "?signup=b1fba1ce-2398-4c2c-a66b-9044433d1a02";
   f.session({
     ...signedOut,
     pending: {
-      ...pending,
-      denied: {
-        reason: "not-allowed",
-        googleSubject: "a".repeat(64),
-        inviteOnly: true,
-        joinUrl: "https://groups.example.com/g/testers",
-      },
+      purpose: "gateway-signup",
+      gatewayName: "Fictional gateway",
+      code: "ABCD-EF23",
+      needsProof: true,
+      denied: { reason: "not-allowed", inviteRequired: true },
     },
   });
   installAccountUI();
-  await f.wait("Omnesis accounts are invite-only for now.");
+  await f.wait("invite-only");
   const root = f.document.getElementById("account-root")!;
-  expect(root.textContent).toContain("Ask to join here: https://groups.example.com/g/testers");
-  const link = root.querySelector("a")!;
-  expect(link.getAttribute("href")).toBe("https://groups.example.com/g/testers");
-  expect(link.getAttribute("rel")).toBe("noopener noreferrer");
-  // Joining is the way in, so the page does not ask the person to send the operator a digest.
-  expect(f.document.querySelector(".code.long")).toBeNull();
-  expect(root.textContent).toContain("start again from your gateway");
+  expect(root.textContent).toContain(inviteNeeded);
+  expect(root.textContent).not.toContain("isn't accepting");
   expect(f.document.querySelectorAll("button")).toHaveLength(0);
-
-  // Without a usable link, the operator's value is shown as before.
-  for (const joinUrl of [undefined, "javascript:alert(1)", "not a url"]) {
-    const plain = setup();
-    plain.location.search = "?signup=b1fba1ce-2398-4c2c-a66b-9044433d1a02";
-    plain.session({
-      ...signedOut,
-      pending: {
-        ...pending,
-        denied: { reason: "not-allowed", googleSubject: "a".repeat(64), inviteOnly: true, joinUrl },
-      },
-    });
-    installAccountUI();
-    await plain.wait("invite-only");
-    expect(plain.document.querySelector("a")).toBeNull();
-    expect(plain.document.querySelector(".code.long")?.textContent).toBe("a".repeat(64));
-  }
+  expect(f.document.querySelector("a")).toBeNull();
 });
 
-test("a passkey refused on an invite-only relay is told to sign in with google", async () => {
-  for (const joinUrl of ["https://groups.example.com/g/testers", undefined]) {
-    const f = setup();
-    f.location.search = "?signup=b1fba1ce-2398-4c2c-a66b-9044433d1a02";
-    f.session({
-      ...authenticated,
-      pending: {
-        purpose: "gateway-signup",
-        gatewayName: "Fictional gateway",
-        needsProof: true,
-        denied: { reason: "not-allowed", accountId: "b".repeat(64), googleRequired: true, joinUrl },
-      },
-    });
-    installAccountUI();
-    await f.wait("invite-only");
-    const text = f.document.getElementById("account-root")!.textContent;
-    expect(text).toContain(
-      "If you were invited, start again from your gateway and sign in with Google, so your invitation can be checked.",
-    );
-    expect(f.document.querySelectorAll("button")).toHaveLength(0);
-    if (joinUrl) {
-      expect(f.document.querySelector("a")?.getAttribute("href")).toBe(joinUrl);
-      expect(f.document.querySelector(".code.long")).toBeNull();
-    } else expect(f.document.querySelector(".code.long")?.textContent).toBe("b".repeat(64));
-  }
-});
-
-test("an invitation that could not be checked says to try again, and offers the sign-in again", async () => {
+test("the create view without an invite says one is needed and offers the account the person has", async () => {
   const f = setup();
-  f.location.search = "?failed=invitation&signup=b1fba1ce-2398-4c2c-a66b-9044433d1a02";
+  f.location.search = "?signup=b1fba1ce-2398-4c2c-a66b-9044433d1a02";
+  f.session({
+    ...signedOut,
+    canCreateAccount: false,
+    pending: {
+      purpose: "gateway-signup",
+      gatewayName: "Fictional gateway",
+      needsProof: true,
+      intent: "create",
+      canCreate: false,
+    },
+  });
+  installAccountUI();
+  await f.wait("invite-only");
+  expect(f.document.getElementById("account-root")!.textContent).toContain(inviteNeeded);
+  expect(f.button("Create with Google")).toBeUndefined();
+  expect(f.button("Create with a passkey")).toBeUndefined();
+  await press(f, "I already have an account");
+  await vi.waitFor(() => expect(f.button("Sign in with Passkey")).toBeDefined());
+  const intents = f.request.mock.calls.filter(
+    ([url]) => new URL(String(url), f.location.origin).pathname === "/_relay/account/api/intent",
+  );
+  expect(intents.map(([, init]) => JSON.parse(String(init!.body)))).toEqual([
+    { intent: "existing" },
+  ]);
+});
+
+test("an invite spent before the account was made says so, whether Google or the relay reports it", async () => {
+  const f = setup();
+  f.location.search = "?failed=invite&signup=b1fba1ce-2398-4c2c-a66b-9044433d1a02";
   f.session({
     ...signedOut,
     pending: {
@@ -397,15 +373,30 @@ test("an invitation that could not be checked says to try again, and offers the 
       gatewayName: "Fictional gateway",
       needsProof: true,
       intent: "create",
+      canCreate: true,
     },
   });
   installAccountUI();
-  await vi.waitFor(() =>
-    expect(f.alert()).toBe(
-      "We couldn't check your invitation right now. Try again in a few minutes.",
-    ),
-  );
+  await vi.waitFor(() => expect(f.alert()).toBe(inviteUnusable));
   expect(f.button("Create with Google")).toBeDefined();
+
+  // A refusal the relay names as an invite's is said the same way; any other stays generic.
+  for (const [body, text] of [
+    [{ error: "invite-used" }, inviteUnusable],
+    [{ error: "something-else" }, "did not complete"],
+    [{}, "did not complete"],
+  ] as const) {
+    const page = setup();
+    page.location.search = "?signup=b1fba1ce-2398-4c2c-a66b-9044433d1a02";
+    page.session({
+      ...authenticated,
+      pending: { purpose: "gateway-signup", gatewayName: "Fictional gateway", needsProof: false },
+    });
+    page.onContinue(() => Response.json(body, { status: 403 }));
+    installAccountUI();
+    await press(page, "Connect this gateway");
+    await vi.waitFor(() => expect(page.alert()).toContain(text));
+  }
 });
 
 test("a refused continuation refreshes the page, so it offers what the operation now needs", async () => {
@@ -2947,4 +2938,91 @@ test("each gateway's actions sit behind its own \u201c…\u201d menu, apart from
   expect(focused.at(-1)).toBe(rowMenu(f, "Fictional home").trigger);
   expect(unlinks(f)).toEqual([]);
   expect(f.location.assign).not.toHaveBeenCalled();
+});
+
+// ── The invite page ──────────────────────────────────────────────────────────
+
+const inviteToken = "aGVhZGVy.Y2xhaW1z." + "s".repeat(86);
+function inviteSetup(hash = `#${inviteToken}`) {
+  const { document, window } = parseHTML(
+    '<html><body><p id="invite-status"></p><p id="invite-value"></p><button type="button" id="invite-copy" hidden>Copy invite</button></body></html>',
+  );
+  const href = `https://relay.example.test/invite${hash}`;
+  const location = { origin: "https://relay.example.test", hash, href };
+  Object.assign(window, { location });
+  const request = vi.fn<typeof fetch>(async () =>
+    Response.json({ status: "valid", expiresAt: Date.UTC(2026, 11, 24, 12) / 1000 }),
+  );
+  const clipboard = { writeText: vi.fn(async (_text: string) => {}) };
+  vi.stubGlobal("document", document);
+  vi.stubGlobal("window", window);
+  vi.stubGlobal("navigator", { clipboard });
+  vi.stubGlobal("fetch", request);
+  const status = () => document.getElementById("invite-status")!.textContent;
+  const copy = () => document.getElementById("invite-copy") as unknown as HTMLButtonElement;
+  return { document, window, href, request, clipboard, status, copy };
+}
+
+test("the invite page checks the invite in its fragment and says until when it works", async () => {
+  const f = inviteSetup();
+  installInviteUI();
+  await vi.waitFor(() => expect(f.status()).toMatch(/^This invite works until .*2026\.$/));
+  const [path, init] = f.request.mock.calls[0]!;
+  expect(path).toBe("/_relay/v3/signup/invite");
+  expect(init).toMatchObject({ method: "POST", credentials: "omit", redirect: "error" });
+  expect(JSON.parse(String(init!.body))).toEqual({ invite: inviteToken });
+  // The whole link is what the person pastes into their gateway.
+  expect(f.document.getElementById("invite-value")!.textContent).toBe(f.href);
+  expect(f.copy().hidden).toBe(false);
+  f.copy().dispatchEvent(new f.window.Event("click"));
+  await vi.waitFor(() => expect(f.copy().textContent).toBe("Copied"));
+  expect(f.clipboard.writeText).toHaveBeenCalledWith(f.href);
+  const refused = inviteSetup();
+  refused.clipboard.writeText.mockRejectedValueOnce(new Error("not allowed"));
+  installInviteUI();
+  refused.copy().dispatchEvent(new refused.window.Event("click"));
+  await vi.waitFor(() =>
+    expect(refused.copy().textContent).toBe("Select the invite above and copy it"),
+  );
+});
+
+test("the invite page says plainly when an invite is missing, unusable or can't be checked", async () => {
+  const empty = inviteSetup("");
+  installInviteUI();
+  expect(empty.status()).toContain("has no invite in it");
+  expect(empty.request).not.toHaveBeenCalled();
+  expect(empty.copy().hidden).toBe(true);
+  for (const [answer, text] of [
+    [() => Response.json({ status: "used" }), "already used to create an account"],
+    [() => Response.json({ status: "expired" }), "has expired"],
+    [() => Response.json({ status: "invalid" }), "isn't valid"],
+    [() => Response.json({ status: "something new" }), "isn't valid"],
+    [() => new Response("", { status: 429 }), "couldn't check this invite"],
+    [
+      () => {
+        throw new TypeError("private network detail");
+      },
+      "couldn't check this invite",
+    ],
+  ] as const) {
+    const f = inviteSetup();
+    f.request.mockImplementationOnce(async () => answer());
+    installInviteUI();
+    await vi.waitFor(() => expect(f.status()).toContain(text));
+    expect(f.status()).not.toContain("private");
+  }
+});
+
+test("the invite script stays self-contained when served as one function", async () => {
+  const f = inviteSetup();
+  expect(() =>
+    runInNewContext(`(${installInviteUI.toString()})();`, {
+      document: f.document,
+      window: { location: { hash: `#${inviteToken}`, href: f.href } },
+      navigator: { clipboard: f.clipboard },
+      fetch: f.request,
+      JSON,
+      Date,
+    }),
+  ).not.toThrow();
 });

@@ -473,7 +473,7 @@ describe("one client cannot use up the rate limits of another", () => {
 
   beforeAll(async () => {
     directory = await mkdtemp(join(tmpdir(), "omnesis-enroll-rates-"));
-    world = await EnrollmentWorld.create(directory, { signupPolicy: "invitation" });
+    world = await EnrollmentWorld.create(directory, { signupPolicy: "closed" });
     gateway = await EnrollmentGateway.start(world, "rates");
   }, gatewayBootBudgetMs() + 60_000);
 

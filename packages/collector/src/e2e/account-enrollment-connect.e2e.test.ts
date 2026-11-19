@@ -22,9 +22,9 @@ import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
-import { closeEnrollmentFixture } from "./enrollment-fixture-cleanup.js";
 import { authorizeAccountDesktop, pairAccountDevice } from "@omnesis/cloud-relay";
 import { localAcmeAuthority } from "../../../cloud-relay/test/acme-authority.js";
+import { closeEnrollmentFixture } from "./enrollment-fixture-cleanup.js";
 import {
   CREATE_ACCOUNT_HEADING,
   EnrollmentGateway,
@@ -66,8 +66,6 @@ describe.skipIf(!browserReady)("connect a gateway by signing in", () => {
   let world: EnrollmentWorld;
   let browser: PasskeyBrowser;
   const gateways: Gateway[] = [];
-  let allowed: { session: PasskeySession; accountId: string };
-  let refused: { session: PasskeySession; accountId: string };
   /** A gateway linked to an account it created, and the browser holding that account's passkey. */
   let switched: { gateway: Gateway; session: PasskeySession; accountId: string };
 
@@ -454,71 +452,41 @@ describe.skipIf(!browserReady)("connect a gateway by signing in", () => {
   }, 180_000);
 
   test(
-    "allowlist signup: an account not on the list ends failed not-allowed with nothing linked or pinned",
+    "invite signup: an account with no gateway connects through the real CLI without an invite, which pins its sign-in and records the owner's choice to approve each device",
     async () => {
-      // Two passkey accounts exist before the relay starts limiting signups.
-      const allowedSession = await browser.session();
-      allowed = {
-        session: allowedSession,
-        accountId: await createUnlinkedAccount(world, allowedSession),
-      };
-      const refusedSession = await browser.session();
-      refused = {
-        session: refusedSession,
-        accountId: await createUnlinkedAccount(world, refusedSession),
-      };
-      expect(allowed.accountId).not.toBe(refused.accountId);
+      // A passkey account exists, with no gateway, before the relay becomes invite-only.
+      const session = await browser.session();
+      const existing = { session, accountId: await createUnlinkedAccount(world, session) };
       await world.stopRelay();
-      await world.setAllowlist({ accounts: [allowed.accountId] });
-      await world.startRelay({ signupPolicy: "allowlist" });
+      await world.startRelay({ signupPolicy: "invite" });
 
-      const gateway = await EnrollmentGateway.start(world, "allowlist");
+      const gateway = await EnrollmentGateway.start(world, "invite-only");
       gateways.push(gateway);
-      const run = cloudConnect(gateway, []);
+      const run = cloudConnect(gateway, ["--ask-first"]);
       const printed = await printedGatewayCode(run);
-      await enterConnectCode(refused.session.page, printed.connectUrl, printed.code);
-      await clickFirst(refused.session.page, ["Sign in with Passkey"]);
-      await expectText(
-        refused.session.page,
-        "This service isn't accepting your Omnesis account yet.",
-      );
-      expect(await run.exit).not.toBe(0);
-      expect(run.stderr() + run.stdout()).toContain("not-allowed");
+      await enterConnectCode(existing.session.page, printed.connectUrl, printed.code);
+      // The CLI connects to an account the person already has: sign in, then connect.
+      await existing.session.page
+        .getByRole("heading", { name: SIGN_IN_HEADING, exact: true })
+        .waitFor();
+      await clickFirst(existing.session.page, ["Sign in with Passkey"]);
+      await connectThisGateway(existing.session.page);
+      expect(await run.exit).toBe(0);
+      expect(run.stdout()).toContain("Connected to your Omnesis account.");
+      expect(run.stdout()).toContain("New devices will wait for your approval.");
 
       const status = await gateway.status();
-      expect(status.connect).toMatchObject({ state: "failed", error: "not-allowed" });
-      expect(status.account.linked).toBe(false);
-      // Not linked, so nothing joins automatically.
-      expect(status.deviceEnrollment).toMatchObject({ policy: "ask", trustedSignIns: [] });
-      expect((await signedInAccount(world, refused.session)).accountId).toBe(refused.accountId);
+      expect(status.connect).toMatchObject({ state: "done" });
+      expect(status.account.linked).toBe(true);
+      expect(status.tunnel.state).toBe("online");
+      expect(status.deviceEnrollment).toMatchObject({ policy: "ask" });
+      expect(status.deviceEnrollment.trustedSignIns.map((pin) => pin.id)).toEqual(
+        await passkeyIds(existing.session),
+      );
+      expect((await signedInAccount(world, existing.session)).accountId).toBe(existing.accountId);
+      // The first gateway's link survived the relay restart and policy change.
+      expect((await gateways[0]!.status()).account.linked).toBe(true);
     },
     gatewayBootBudgetMs() + 180_000,
   );
-
-  test("allowlist signup: a listed account connects through the real CLI, which pins its sign-in and records the owner's choice to approve each device", async () => {
-    const gateway = gateways.at(-1)!;
-    const run = cloudConnect(gateway, ["--ask-first"]);
-    const printed = await printedGatewayCode(run);
-    await enterConnectCode(allowed.session.page, printed.connectUrl, printed.code);
-    // The CLI connects to an account the person already has: sign in, then connect.
-    await allowed.session.page
-      .getByRole("heading", { name: SIGN_IN_HEADING, exact: true })
-      .waitFor();
-    await clickFirst(allowed.session.page, ["Sign in with Passkey"]);
-    await connectThisGateway(allowed.session.page);
-    expect(await run.exit).toBe(0);
-    expect(run.stdout()).toContain("Connected to your Omnesis account.");
-    expect(run.stdout()).toContain("New devices will wait for your approval.");
-
-    const status = await gateway.status();
-    expect(status.connect).toMatchObject({ state: "done" });
-    expect(status.account.linked).toBe(true);
-    expect(status.tunnel.state).toBe("online");
-    expect(status.deviceEnrollment).toMatchObject({ policy: "ask" });
-    expect(status.deviceEnrollment.trustedSignIns.map((pin) => pin.id)).toEqual(
-      await passkeyIds(allowed.session),
-    );
-    // The first gateway's link survived the relay restart and policy change.
-    expect((await gateways[0]!.status()).account.linked).toBe(true);
-  }, 180_000);
 });

@@ -19877,3 +19877,9 @@ summary.decision-card-head {
 .tailscale-view.remote-access-tailscale { max-width: none; padding: 0; }
 
 /* tailscale-embed:end */
+.relay-private-badge { display: inline-block; margin: 10px 0 0 !important; padding: 2px 10px; border: 1px solid var(--accent); border-radius: 999px; font-size: 12px; font-weight: 600; letter-spacing: 0.02em; color: var(--accent); }
+.relay-invite-field { display: grid; gap: 6px; margin-top: 12px; max-width: 62ch; }
+.relay-invite-field label { font-size: 13px; font-weight: 600; color: var(--text-primary); }
+.relay-invite-field input { width: 100%; box-sizing: border-box; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-primary); color: var(--text-primary); font: inherit; font-size: 14px; }
+.relay-invite-field input[aria-invalid="true"] { border-color: var(--danger, var(--accent)); }
+.relay-invite-field .relay-hint { margin: 0; }

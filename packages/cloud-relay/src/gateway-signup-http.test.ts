@@ -9,7 +9,7 @@ import {
   randomUUID,
   sign,
 } from "node:crypto";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createLocalJWKSet, UnsecuredJWT } from "jose";
@@ -36,6 +36,7 @@ import { readOrCreateGatewayOwnerKey, type registerGatewayKey } from "./gateway-
 import { accountId, RelaySessions } from "./identity.js";
 import { ACCOUNT_TERMS_VERSION } from "./omnesis-accounts.js";
 import { createCloudRelay } from "./server.js";
+import { InviteVerifier, invitePublicKeyValue, signInvite } from "./invites.js";
 import type Database from "better-sqlite3";
 import type { SignupConfiguration } from "./gateway-signup.js";
 
@@ -43,6 +44,14 @@ const origin = "https://relay.example.test",
   opaque = () => randomBytes(32).toString("base64url"),
   cleanup: (() => Promise<void>)[] = [],
   googleSubject = "fictional-signup-account";
+const inviteKey = generateKeyPairSync("ed25519");
+/** The invite-only configuration, checked against this file's own invite key. */
+const inviteOnly = (): SignupConfiguration => ({
+  policy: "invite",
+  invites: new InviteVerifier(origin, [invitePublicKeyValue(inviteKey.publicKey)]),
+});
+const invite = (expiresAt = Math.floor(Date.now() / 1000) + 3600) =>
+  signInvite(inviteKey.privateKey, { origin, expiresAt });
 const googleIdentity = () => ({
   issuer: "https://accounts.google.com",
   subject: googleSubject,
@@ -92,9 +101,19 @@ async function fixture(
     await relay.close();
     accounts.close();
   });
-  const key = generateKeyPairSync("ed25519"),
-    gatewayId = randomUUID(),
-    ownerPublicKey = key.publicKey.export({ format: "pem", type: "spki" }).toString(),
+  /** A gateway's identity: its ID and the owner key that signs its requests. */
+  const newGateway = () => {
+    const key = generateKeyPairSync("ed25519"),
+      gatewayId = randomUUID();
+    return {
+      key,
+      gatewayId,
+      ownerPublicKey: key.publicKey.export({ format: "pem", type: "spki" }).toString(),
+    };
+  };
+  type Gateway = ReturnType<typeof newGateway>;
+  const main = newGateway(),
+    { key, gatewayId, ownerPublicKey } = main,
     ownerAccountId = gatewayKeyAccount({ gatewayId, ownerPublicKey });
   const post = (path: string, body: unknown, headers: Record<string, string> = {}) =>
     fetch(`${url}/_relay/v3/signup/${path}`, {
@@ -102,15 +121,20 @@ async function fixture(
       headers: { "content-type": "application/json", ...headers },
       body: JSON.stringify(body),
     });
-  /** The intent is sent beside the signed request; a gateway that sends none signs in. */
-  const start = async (overrides: Record<string, unknown> = {}, intent?: "create" | "existing") => {
+  /** The intent and invite are sent beside the signed request; a gateway that sends none signs in. */
+  const start = async (
+    overrides: Record<string, unknown> = {},
+    intent?: "create" | "existing",
+    invite?: string,
+    gateway: Gateway = main,
+  ) => {
     const now = Math.floor(Date.now() / 1000),
       redemptionSecret = opaque();
     const unsigned = {
       protocol: GATEWAY_SIGNUP_PROTOCOL,
       operationId: randomUUID(),
-      gatewayId,
-      ownerPublicKey,
+      gatewayId: gateway.gatewayId,
+      ownerPublicKey: gateway.ownerPublicKey,
       displayName: "Fictional gateway",
       nonce: opaque(),
       redemptionSha256: createHash("sha256").update(redemptionSecret).digest("hex"),
@@ -123,9 +147,10 @@ async function fixture(
       ownerSignature: sign(
         null,
         gatewaySignupTranscript(origin, unsigned),
-        key.privateKey,
+        gateway.key.privateKey,
       ).toString("base64url"),
       ...(intent ? { intent } : {}),
+      ...(invite ? { invite } : {}),
     });
     return {
       response,
@@ -133,8 +158,8 @@ async function fixture(
       redemption: { operationId: unsigned.operationId, redemptionSecret },
     };
   };
-  const launched = async (intent?: "create" | "existing") => {
-    const op = await start({}, intent);
+  const launched = async (intent?: "create" | "existing", invite?: string, gateway?: Gateway) => {
+    const op = await start({}, intent, invite, gateway);
     expect(op.response.status).toBe(200);
     const started = await op.response.json(),
       target = new URL(started.authorizeUrl);
@@ -234,6 +259,7 @@ async function fixture(
     ownerPublicKey,
     ownerAccountId,
     post,
+    newGateway,
     start,
     launched,
     api,
@@ -255,11 +281,6 @@ const verifier = (trusted: () => string = () => origin) =>
     passkeyOrigins: () => [],
     trusted: () => [],
   });
-async function allowlist(value: unknown) {
-  const file = join(directory, `${randomUUID()}.json`);
-  await writeFile(file, JSON.stringify(value));
-  return file;
-}
 const subjectDigest = () => accountId(googleIdentity());
 /** The OAuth nonce the relay sent Google, which a real token would carry. */
 let committedNonce: string | undefined;
@@ -363,15 +384,16 @@ test("a new gateway connects end to end: passkey account, proof, invitation, reg
   });
 });
 
-test("an allowlisted Google subject connects, and its digest is what a gateway computes", async () => {
-  const f = await fixture({
-    policy: "allowlist",
-    allowlistFile: await allowlist({ googleSubjects: [subjectDigest()] }),
+test("an invited Google sign-up creates an account and connects, and its digest is what a gateway computes", async () => {
+  const f = await fixture(inviteOnly());
+  const value = invite(),
+    op = await f.launched("create", value);
+  expect(await f.session(op)).toMatchObject({
+    canCreateAccount: true,
+    pending: { intent: "create", canCreate: true },
   });
-  const op = await f.launched("create");
-  expect(await f.session(op)).toMatchObject({ canCreateAccount: false });
   const signIn = await f.google(op);
-  // Without a group, the relay never asks Google for the address.
+  // The relay never asks Google for the address.
   expect(signIn.scope).toBe("openid");
   expect(signIn.callback.headers.get("location")).toBe(`${origin}/_relay/account${op.query}`);
   expect(f.verify).toHaveBeenCalledWith(f.idToken, signIn.nonce);
@@ -388,7 +410,7 @@ test("an allowlisted Google subject connects, and its digest is what a gateway c
     googleProofNonce(polled.signInProof.salt, signInProofNonce("gateway-link", op.unsigned.nonce)),
   );
   committedNonce = signIn.nonce;
-  // Both sides must arrive at the same digest for trusted sign-ins and the allowlist to work.
+  // Both sides must arrive at the same digest for trusted sign-ins to work.
   expect(
     await verifier().verify(polled.signInProof, "gateway-link", op.unsigned.nonce),
   ).toMatchObject({
@@ -406,58 +428,56 @@ test("an allowlisted Google subject connects, and its digest is what a gateway c
   ).json();
   expect(credentials.google).toEqual([subjectDigest()]);
   expect(credentials.passkeys).toEqual([]);
+  // The invite created this account and is spent: another sign-up can't even start with it.
+  const reused = await f.start({}, "create", value);
+  expect(reused.response.status).toBe(403);
+  expect(await reused.response.json()).toEqual({ error: "invite-used" });
+  const checked = await f.post("invite", { invite: value });
+  expect(await checked.json()).toEqual({ status: "used" });
 });
 
-test("after deleting their account a person creates a new one only while the allowlist still admits them, and deleting lists nobody", async () => {
-  const listed = JSON.stringify({ googleSubjects: [subjectDigest()] });
-  const allowlistFile = await allowlist(JSON.parse(listed));
-  const f = await fixture({ policy: "allowlist", allowlistFile });
-  /** Connects the gateway by creating an account with Google, as far as the policy lets it. */
-  const create = async () => {
-    const op = await f.launched("create");
+test("after deleting their account a person needs a new invite to create another", async () => {
+  const f = await fixture(inviteOnly());
+  /** Connects the gateway by creating an account with Google, as far as the invite lets it. */
+  const create = async (value: string) => {
+    const started = await f.start({}, "create", value);
+    if (started.response.status !== 200) return (await started.response.json()) as unknown;
+    await started.response.body?.cancel();
+    const op = await f.launched("create", value);
     const signIn = await f.google(op);
-    if (!signIn.cookie) return (await f.session(op)).pending.denied as { reason: string };
     expect((await f.api("continue", op.query, `${op.cookie}; ${signIn.cookie}`)).status).toBe(200);
     await f.post("poll", op.redemption);
     expect((await f.post("link", op.redemption, await f.registerGateway())).status).toBe(200);
     return f.identities.federatedAccount("google", subjectDigest())!;
   };
-  const first = (await create()) as string;
+  const used = invite();
+  const first = (await create(used)) as string;
   expect(first).toMatch(/^[a-f0-9]{64}$/);
-  expect(f.identities.gatewayAccount(f.ownerAccountId)?.accountId).toBe(first);
   f.accounts.deleteAccount(first);
   expect(f.identities.snapshot().identityAccounts).toBe(0);
-  // Deleting wrote nothing to the operator's list.
-  expect(await readFile(allowlistFile, "utf8")).toBe(listed);
-
-  // Still listed: the same person, from the same gateway, gets a brand-new account.
-  const second = (await create()) as string;
+  // Deleting the account keeps the record that its invite was used.
+  expect(await create(used)).toEqual({ error: "invite-used" });
+  const second = (await create(invite())) as string;
   expect(second).toMatch(/^[a-f0-9]{64}$/);
   expect(second).not.toBe(first);
   expect(f.identities.gatewayAccount(f.ownerAccountId)?.accountId).toBe(second);
-  f.accounts.deleteAccount(second);
-
-  // Listing the account that no longer exists admits nobody, and neither does an empty list.
-  for (const value of [{ accounts: [first, second] }, {}]) {
-    await writeFile(allowlistFile, JSON.stringify(value));
-    expect(await create()).toMatchObject({ reason: "not-allowed" });
-    expect(f.identities.snapshot().identityAccounts).toBe(0);
-    expect(f.accounts.snapshot().gatewayBindings).toBe(0);
-  }
 });
 
-test("an unlisted Google sign-in creates nothing and shows the digest to send the operator", async () => {
-  const f = await fixture({ policy: "allowlist", allowlistFile: await allowlist({}) });
+test("a Google sign-up without an invite creates nothing and is told it needs one", async () => {
+  const f = await fixture(inviteOnly());
   const op = await f.launched("create");
-  const before = f.identities.snapshot().identityAccounts;
+  expect(await f.session(op)).toMatchObject({
+    canCreateAccount: false,
+    pending: { canCreate: false },
+  });
   const signIn = await f.google(op);
   expect(signIn.callback.status).toBe(303);
   expect(signIn.callback.headers.get("location")).toBe(`${origin}/_relay/account${op.query}`);
   expect(signIn.cookie).toBe("");
-  expect(f.identities.snapshot().identityAccounts).toBe(before);
-  expect(await f.session(op)).toMatchObject({
-    authenticated: false,
-    pending: { denied: { reason: "not-allowed", googleSubject: subjectDigest() } },
+  expect(f.identities.snapshot().identityAccounts).toBe(0);
+  expect((await f.session(op)).pending.denied).toEqual({
+    reason: "not-allowed",
+    inviteRequired: true,
   });
   expect(await (await f.post("poll", op.redemption)).json()).toEqual({
     status: "denied",
@@ -465,15 +485,56 @@ test("an unlisted Google sign-in creates nothing and shows the digest to send th
   });
 });
 
+test("an invite that expires before Google answers creates nothing, and the page says why", async () => {
+  const f = await fixture(inviteOnly());
+  const now = Math.floor(Date.now() / 1000);
+  const op = await f.launched("create", invite(now + 10));
+  vi.useFakeTimers({ toFake: ["Date"], now: Date.now() + 20_000 });
+  const signIn = await f.google(op);
+  expect(signIn.cookie).toBe("");
+  expect(signIn.callback.headers.get("location")).toBe(
+    `${origin}/_relay/account?failed=invite&signup=${op.id}`,
+  );
+  expect(f.identities.snapshot().identityAccounts).toBe(0);
+});
+
+test("two sign-ups started with one invite create one account: the second is refused and leaves nothing", async () => {
+  const f = await fixture(inviteOnly());
+  const value = invite();
+  const first = await f.launched("create", value),
+    second = await f.launched("create", value, f.newGateway());
+  /** Both pages are ready to create the account before either does. */
+  const ceremony = async (op: Awaited<ReturnType<typeof f.launched>>) => {
+    const cookie = `${op.cookie}; ${fixtureBrowser()}`,
+      authenticator = passkeyAuthenticator();
+    const options = await (
+      await f.api("passkeys/register/options", op.query, cookie, { createAccount: true })
+    ).json();
+    return () =>
+      f.api("passkeys/register/complete", op.query, cookie, {
+        ceremonyId: options.ceremonyId,
+        credential: authenticator.registration(options.options.challenge),
+      });
+  };
+  const completeFirst = await ceremony(first),
+    completeSecond = await ceremony(second);
+  expect((await completeFirst()).status).toBe(200);
+  expect(f.identities.snapshot().identityAccounts).toBe(1);
+  const refused = await completeSecond();
+  expect(refused.status).toBe(403);
+  expect(await refused.json()).toEqual({ error: "invite-used" });
+  expect(f.identities.snapshot()).toMatchObject({ identityAccounts: 1, identityPasskeys: 1 });
+  expect(await f.session(second)).toMatchObject({
+    canCreateAccount: false,
+    pending: { canCreate: false },
+  });
+});
+
 test("signing in to connect a gateway creates no account; choosing to create one does, records the consent and connects", async () => {
-  for (const policy of ["open", "allowlist"] as const) {
-    const f = await fixture(
-      policy === "open"
-        ? { policy }
-        : { policy, allowlistFile: await allowlist({ googleSubjects: [subjectDigest()] }) },
-    );
+  for (const policy of ["open", "invite"] as const) {
+    const f = await fixture(policy === "open" ? { policy } : inviteOnly());
     // A gateway that names no intent, or an older one, opens the sign-in view.
-    const op = await f.launched();
+    const op = await f.launched(undefined, policy === "invite" ? invite() : undefined);
     const before = f.identities.snapshot();
     expect(await f.session(op)).toMatchObject({
       authenticated: false,
@@ -515,7 +576,7 @@ test("signing in to connect a gateway creates no account; choosing to create one
     expect(chosen.status).toBe(200);
     expect(await chosen.json()).toEqual({ ok: true });
     expect(await f.session(op)).toMatchObject({
-      canCreateAccount: policy === "open",
+      canCreateAccount: true,
       pending: { intent: "create" },
     });
     // And can change their mind, which withdraws the offer again.
@@ -555,8 +616,8 @@ test("signing in to connect a gateway creates no account; choosing to create one
   }
 });
 
-test("an unlisted Google sign-in on the sign-in view is told it has no account, not shown a digest", async () => {
-  const f = await fixture({ policy: "allowlist", allowlistFile: await allowlist({}) });
+test("an unknown Google sign-in on the sign-in view is told it has no account", async () => {
+  const f = await fixture(inviteOnly());
   const op = await f.launched("existing");
   const signIn = await f.google(op);
   expect(signIn.callback.headers.get("location")).toBe(
@@ -721,25 +782,14 @@ test("a Google press the browser doesn't label same-origin returns to the sign-u
   expect(await f.session(op)).toMatchObject({ pending: { needsProof: false } });
 });
 
-test("an existing account signs in with a passkey, subject to the policy", async () => {
-  const listed = await fixture({ policy: "allowlist", allowlistFile: await allowlist({}) });
-  const account = listed.identities.signInFederated("google", "a".repeat(64));
-  const passkey = await registeredPasskey(listed.identities, { accountId: account, version: 1 });
-  const denied = await listed.launched();
-  expect(await signInOnOperation(listed.url, denied.query, denied.cookie, passkey)).toBe("");
-  expect(await listed.session(denied)).toMatchObject({
-    pending: { denied: { reason: "not-allowed", accountId: account } },
-  });
-
-  const allowed = await fixture({ policy: "allowlist", allowlistFile: await allowlist({}) });
-  const linkedAccount = allowed.identities.signInFederated("google", "a".repeat(64));
-  allowed.identities.linkGateway(
-    linkedAccount,
-    "e".repeat(64),
-    allowed.sessions.sealAccountGatewayLink(origin, linkedAccount, "e".repeat(64)),
-  );
+test("an existing account signs in with a passkey and connects without an invite", async () => {
+  // An invite-only relay lets in any account it has, even one with no gateway yet.
+  const allowed = await fixture(inviteOnly());
+  allowed.identities.invitesRequired = false;
+  const existing = allowed.identities.signInFederated("google", "a".repeat(64));
+  allowed.identities.invitesRequired = true;
   const keyed = await registeredPasskey(allowed.identities, {
-    accountId: linkedAccount,
+    accountId: existing,
     version: 1,
   });
   const op = await allowed.launched();
@@ -999,17 +1049,22 @@ test("a gateway ID that already has another owner is refused", async () => {
   expect((await f.start()).response.status).toBe(409);
 });
 
-test("with the invitation policy every route says so clearly, and nothing else runs", async () => {
-  for (const signup of [undefined, { policy: "invitation" as const }]) {
+test("with the closed policy every route says so clearly, and nothing else runs", async () => {
+  for (const signup of [undefined, { policy: "closed" as const }]) {
     const f = await fixture(signup);
     for (const path of ["start", "poll", "link", "cancel", "begin", "complete", "unknown"]) {
       const response = await f.post(path, {});
       expect(response.status, path).toBe(403);
       expect(await response.json()).toEqual({
-        reason: "invitation-required",
-        message: expect.stringContaining("invitation"),
+        reason: "signup-closed",
+        message: "This relay is not accepting new gateways.",
       });
     }
+    // Nothing is an invite here, and there is no invite page.
+    expect(await (await f.post("invite", { invite: invite() })).json()).toEqual({
+      status: "invalid",
+    });
+    expect((await fetch(`${f.url}/invite`)).status).toBe(404);
     const config = await fetch(`${f.url}/_relay/v2/config?gatewayId=${f.gatewayId}`);
     expect(await config.json()).toMatchObject({ invitationRequired: true, signup: false });
   }
@@ -1155,10 +1210,7 @@ test("a relay without an account authority never advertises signup", async () =>
 });
 
 test("the gateway's own signup client drives start, poll and link against a running relay", async () => {
-  const f = await fixture({
-    policy: "allowlist",
-    allowlistFile: await allowlist({ googleSubjects: [subjectDigest()] }),
-  });
+  const f = await fixture({ policy: "open" });
   const ownerKeyFile = join(directory, randomUUID(), "owner.pem"),
     key = await readOrCreateGatewayOwnerKey(ownerKeyFile),
     gatewayId = randomUUID();
@@ -1236,142 +1288,75 @@ test("the gateway's own signup client drives start, poll and link against a runn
   await expect(client.poll(cancelled, signal)).rejects.toThrow("410");
 });
 
-/** A group that admits one address and can be made to fail like Google can. */
-const invitedEmail = "maya.reeves@example.com",
-  joinUrl = "https://groups.example.com/g/testers";
-function group() {
-  const gate = {
-    joinUrl,
-    failing: false,
-    asked: [] as string[],
-    async isMember(email: string) {
-      gate.asked.push(email);
-      if (gate.failing) throw new Error("membership lookup failed with HTTP 503");
-      return email === invitedEmail;
-    },
-  };
-  return gate;
-}
-
-test("an invited google sign-in asks for the email, creates an account and connects", async () => {
-  const gate = group();
-  const f = await fixture({ policy: "allowlist", googleGroup: gate }, 100, undefined, undefined, {
-    email: " Maya.Reeves@Example.com",
-    email_verified: true,
+test("the invite check answers a gateway and the relay's own page, and nobody else", async () => {
+  const f = await fixture(inviteOnly());
+  const value = invite();
+  const check = (body: unknown, headers: Record<string, string> = {}, path = "invite") =>
+    f.post(path, body, headers);
+  const valid = await check({ invite: value });
+  expect(valid.status).toBe(200);
+  expect(valid.headers.get("cache-control")).toBe("no-store");
+  expect(await valid.json()).toEqual({ status: "valid", expiresAt: expect.any(Number) });
+  expect(await (await check({ invite: value }, { origin })).json()).toMatchObject({
+    status: "valid",
   });
-  // Any sign-in here asks for the address, but one with no account is never checked.
-  const existing = await f.launched("existing");
-  const plain = await f.google(existing);
-  expect(plain.scope).toBe("openid email");
-  expect(plain.callback.headers.get("location")).toContain("failed=no-account");
-  expect(gate.asked).toEqual([]);
-
-  const op = await f.launched("create");
-  expect(await f.session(op)).toMatchObject({ canCreateAccount: false });
-  const signIn = await f.google(op);
-  expect(signIn.scope).toBe("openid email");
-  expect(signIn.callback.headers.get("location")).toBe(`${origin}/_relay/account${op.query}`);
-  expect(gate.asked).toEqual([invitedEmail]);
-  expect((await f.api("continue", op.query, `${op.cookie}; ${signIn.cookie}`)).status).toBe(200);
-  const polled = await (await f.post("poll", op.redemption)).json();
-  expect(polled.status).toBe("approved");
-  expect((await f.post("link", op.redemption, await f.registerGateway())).status).toBe(200);
-  expect(f.identities.federatedAccount("google", subjectDigest())).toBe(polled.accountId);
-  expect(gate.asked).toHaveLength(1);
+  expect(await (await check({ invite: "not an invite" })).json()).toEqual({ status: "invalid" });
+  const now = Math.floor(Date.now() / 1000);
+  const expired = signInvite(inviteKey.privateKey, {
+    origin,
+    issuedAt: now - 60,
+    expiresAt: now - 1,
+  });
+  expect(await (await check({ invite: expired })).json()).toEqual({ status: "expired" });
+  expect(
+    (await check({ invite: value }, { origin: "https://elsewhere.example.test" })).status,
+  ).toBe(403);
+  expect((await check({ invite: value }, {}, "invite?x=1")).status).toBe(403);
+  expect((await check({})).status).toBe(400);
+  expect(
+    (
+      await fetch(`${f.url}/_relay/v3/signup/invite`, {
+        method: "POST",
+        headers: { "content-type": "text/plain" },
+        body: "{}",
+      })
+    ).status,
+  ).toBe(415);
+  expect((await fetch(`${f.url}/_relay/v3/signup/invite`)).status).toBe(405);
+  // An invalid invite at the start says which kind it was.
+  const started = await f.start({}, "create", "not an invite");
+  expect(started.response.status).toBe(403);
+  expect(await started.response.json()).toEqual({ error: "invite-invalid" });
 });
 
-test("a google sign-in outside the group creates nothing and is shown the join link", async () => {
-  const gate = group();
-  const f = await fixture({ policy: "allowlist", googleGroup: gate }, 100, undefined, undefined, {
-    email: "jamie.lopez@example.com",
-    email_verified: true,
-  });
-  const op = await f.launched("create");
-  const signIn = await f.google(op);
-  expect(signIn.cookie).toBe("");
-  expect(signIn.callback.headers.get("location")).toBe(`${origin}/_relay/account${op.query}`);
-  expect(f.identities.snapshot().identityAccounts).toBe(0);
-  expect((await f.session(op)).pending.denied).toEqual({
-    reason: "not-allowed",
-    googleSubject: subjectDigest(),
-    inviteOnly: true,
-    joinUrl,
-  });
-  // The gateway learns no more than before.
-  expect(await (await f.post("poll", op.redemption)).json()).toEqual({
-    status: "denied",
-    reason: "not-allowed",
-  });
-});
-
-test("a google sign-in whose email google did not verify is refused without asking the group", async () => {
-  const gate = group();
-  const f = await fixture({ policy: "allowlist", googleGroup: gate }, 100, undefined, undefined, {
-    email: invitedEmail,
-    email_verified: false,
-  });
-  const op = await f.launched("create");
-  expect((await f.google(op)).cookie).toBe("");
-  expect((await f.session(op)).pending.denied).toMatchObject({ inviteOnly: true, joinUrl });
-  expect(gate.asked).toEqual([]);
-});
-
-test("when google cannot answer, the sign-up is refused for now and the same request can be retried", async () => {
-  const gate = group();
-  gate.failing = true;
-  const f = await fixture({ policy: "allowlist", googleGroup: gate }, 100, undefined, undefined, {
-    email: invitedEmail,
-    email_verified: true,
-  });
-  const op = await f.launched("create");
-  const failed = await f.google(op);
-  expect(failed.cookie).toBe("");
-  expect(failed.callback.headers.get("location")).toBe(
-    `${origin}/_relay/account?failed=invitation&signup=${op.id}`,
-  );
-  expect(f.identities.snapshot().identityAccounts).toBe(0);
-  expect((await f.session(op)).pending).not.toHaveProperty("denied");
-  expect(await (await f.post("poll", op.redemption)).json()).toMatchObject({ status: "pending" });
-  gate.failing = false;
-  const retried = await f.google(op);
-  expect(retried.cookie).not.toBe("");
-  expect((await f.api("continue", op.query, `${op.cookie}; ${retried.cookie}`)).status).toBe(200);
-});
-
-test("an invite-only relay publishes where to ask for access, and every other policy says nothing", async () => {
+test("an invite-only relay serves its invite page and says it is invite-only; other policies say nothing", async () => {
   const access = async (url: string, init?: RequestInit) =>
     fetch(`${url}/_relay/v3/signup/access`, init);
-  const inviteOnly = await fixture({ policy: "allowlist", googleGroup: group() });
-  const response = await access(inviteOnly.url);
+  const invited = await fixture(inviteOnly());
+  const response = await access(invited.url);
   expect(response.status).toBe(200);
   expect(response.headers.get("cache-control")).toBe("no-store");
-  expect(await response.json()).toEqual({
-    signup: { inviteOnly: true, requestAccessUrl: joinUrl },
-  });
+  expect(await response.json()).toEqual({ signup: { inviteOnly: true } });
   // The gateway reads it as the relay serves it, and nothing about the gateway is sent.
-  expect(await relaySignupAccess(inviteOnly.url, AbortSignal.timeout(5000))).toEqual({
+  expect(await relaySignupAccess(invited.url, AbortSignal.timeout(5000))).toEqual({
     inviteOnly: true,
-    requestAccessUrl: joinUrl,
   });
-  expect((await access(inviteOnly.url, { method: "POST" })).status).toBe(405);
-  expect((await fetch(`${inviteOnly.url}/_relay/v3/signup/access?gatewayId=x`)).status).toBe(400);
-  const { joinUrl: _, ...withoutLink } = group();
-  for (const signup of [
-    { policy: "allowlist" as const, googleGroup: withoutLink },
-    { policy: "open" as const },
-    { policy: "invitation" as const },
-    undefined,
-  ]) {
+  expect((await access(invited.url, { method: "POST" })).status).toBe(405);
+  expect((await fetch(`${invited.url}/_relay/v3/signup/access?gatewayId=x`)).status).toBe(400);
+  const page = await fetch(`${invited.url}/invite`);
+  expect(page.status).toBe(200);
+  expect(await page.text()).toContain("You're invited to Omnesis");
+  expect((await fetch(`${invited.url}/invite/script.js`)).status).toBe(200);
+  for (const signup of [{ policy: "open" as const }, { policy: "closed" as const }, undefined]) {
     const f = await fixture(signup);
     const reply = await access(f.url);
     expect(reply.status).toBe(200);
     expect(await reply.json()).toEqual({});
     expect(await relaySignupAccess(f.url, AbortSignal.timeout(5000))).toBeUndefined();
+    expect((await fetch(`${f.url}/invite`)).status).toBe(404);
   }
   // The routing configuration older gateways read strictly is unchanged.
-  const config = await fetch(
-    `${inviteOnly.url}/_relay/v2/config?gatewayId=${inviteOnly.gatewayId}`,
-  );
+  const config = await fetch(`${invited.url}/_relay/v2/config?gatewayId=${invited.gatewayId}`);
   expect(Object.keys(await config.json()).sort()).toEqual([
     "dnsChallenges",
     "gatewayId",

@@ -10,8 +10,8 @@ import { CliError, EXIT_USER_ERROR } from "@omnesis/cli-shared";
 import {
   formatCloudStatus,
   dnsVerificationUrl,
-  inviteOnlyLine,
-  requestAccessUrl,
+  INVITE_ONLY_LINE,
+  signupInviteOnly,
   trustedSignInLines,
   type CloudStatus,
 } from "./cloud-status.js";
@@ -131,6 +131,8 @@ async function ask(question: string): Promise<string> {
 export async function connectGateway(options: {
   acceptTerms: boolean;
   policy?: "automatic" | "ask";
+  /** An invite link or code: the person is creating a new Omnesis account with it. */
+  invite?: string;
 }): Promise<void> {
   requireCloudRelay();
   const { gatewayJson } = await import("../utils.js");
@@ -147,14 +149,25 @@ export async function connectGateway(options: {
     if (!["", "y", "yes"].includes(await ask("Accept the terms and continue? [Y/n] ")))
       throw new CliError("Connection cancelled", EXIT_USER_ERROR);
   }
-  let status = (await gatewayJson("/admin/cloud-relay/connect", {
-    method: "POST",
-    body: JSON.stringify({ termsAccepted: true }),
-  })) as ConnectStatus;
+  let status: ConnectStatus;
+  try {
+    status = (await gatewayJson("/admin/cloud-relay/connect", {
+      method: "POST",
+      body: JSON.stringify({
+        termsAccepted: true,
+        ...(options.invite ? { intent: "create", invite: options.invite } : {}),
+      }),
+    })) as ConnectStatus;
+  } catch (error) {
+    // The gateway checks the invite with the relay before anything else, and names a refusal.
+    const refusal = Object.keys(INVITE_ERRORS).find((code) => String(error).includes(code));
+    if (refusal) throw new CliError(INVITE_ERRORS[refusal]!.trim(), EXIT_USER_ERROR);
+    throw error;
+  }
   let announced = false;
   let verificationAnnounced: string | undefined;
-  // The gateway learns from its relay whether accounts need approval; said once, when it knows.
-  let access: string | undefined;
+  // The gateway learns from its relay whether new accounts need an invite; said once, when it knows.
+  let inviteOnlyShown = Boolean(options.invite);
   while (status.connect && !["done", "failed", "idle"].includes(status.connect.state)) {
     if (status.connect.verification) {
       const url = dnsVerificationUrl(status.connect.verification.url);
@@ -173,18 +186,17 @@ export async function connectGateway(options: {
         `\nOn any device, visit ${status.connect.connectShortUrl ?? status.connect.connectUrl}\nand enter ${status.connect.code}\n\nWaiting for you to sign in to your Omnesis account…\n`,
       );
     }
-    if (!access) {
-      access = requestAccessUrl(status);
-      if (access) process.stdout.write(`${inviteOnlyLine(access)}\n`);
+    if (!inviteOnlyShown && signupInviteOnly(status)) {
+      inviteOnlyShown = true;
+      process.stdout.write(`${INVITE_ONLY_LINE}\n`);
     }
     await delay(2000);
     status = (await gatewayJson("/admin/cloud-relay")) as ConnectStatus;
   }
   if (status.connect?.state !== "done") {
-    const refused =
-      status.connect?.error === "not-allowed" ? (requestAccessUrl(status) ?? access) : undefined;
+    const error = status.connect?.error;
     throw new CliError(
-      `This gateway could not connect to your Omnesis account (${status.connect?.error ?? "unknown"}). Nothing changed on this gateway's existing access.${refused ? ` This account isn't approved yet: request access at ${refused}` : ""}`,
+      `This gateway could not connect to your Omnesis account (${error ?? "unknown"}). Nothing changed on this gateway's existing access.${error ? (INVITE_ERRORS[error] ?? "") : ""}`,
       EXIT_USER_ERROR,
     );
   }
@@ -205,6 +217,12 @@ export async function connectGateway(options: {
   );
 }
 
+const INVITE_ERRORS: Record<string, string> = {
+  "invite-invalid": " The invite isn't valid: check that you copied the whole link.",
+  "invite-expired": " The invite has expired: ask for a new one.",
+  "invite-used": " The invite was already used to create an account: ask for a new one.",
+};
+
 export const cloudManagementCommands = {
   connect: defineCommand({
     meta: {
@@ -223,10 +241,15 @@ export const cloudManagementCommands = {
         default: false,
         description: "Let new devices join when you sign in to your Omnesis account (the default)",
       },
+      invite: {
+        type: "string",
+        description: "The invite link you were sent, to create a new Omnesis account",
+      },
     },
     run: ({ args }) =>
       connectGateway({
         acceptTerms: args["accept-terms"],
+        ...(args.invite ? { invite: args.invite } : {}),
         ...(args["ask-first"]
           ? { policy: "ask" as const }
           : args.automatic

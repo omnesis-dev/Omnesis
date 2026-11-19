@@ -12,17 +12,34 @@ import { relayOrigin } from "./network.js";
 import { readOrCreateGatewayOwnerKey, type registerGatewayKey } from "./gateway-key-client.js";
 import {
   GATEWAY_SIGNUP_ACCESS_PATH,
+  GATEWAY_SIGNUP_INVITE_PATH,
   GATEWAY_SIGNUP_PATH,
   GATEWAY_SIGNUP_PROTOCOL,
   gatewaySignupAccess,
+  gatewaySignupInviteStatus,
   gatewaySignupLinked,
   gatewaySignupPollResult,
   gatewaySignupStarted,
   gatewaySignupTranscript,
   type GatewaySignupAccess,
   type GatewaySignupIntent,
+  type GatewaySignupInviteStatus,
 } from "./gateway-signup-contract.js";
 import { readBoundedJson } from "./google-credentials.js";
+import { inviteToken, type InviteRefusal } from "./invites.js";
+
+const inviteRefusals: readonly string[] = [
+  "invite-invalid",
+  "invite-expired",
+  "invite-used",
+] satisfies InviteRefusal[];
+/** The relay refused the invite this sign-up brought, and said why. */
+export class GatewaySignupInviteRefused extends Error {
+  constructor(readonly reason: InviteRefusal) {
+    super(`The relay refused the invite (${reason})`);
+    this.name = "GatewaySignupInviteRefused";
+  }
+}
 
 export interface GatewaySignupPending {
   operationId: string;
@@ -68,16 +85,29 @@ export class GatewaySignupClient {
       body: JSON.stringify(body),
     });
     if (!response.ok) {
-      await response.body?.cancel();
+      let reason: unknown;
+      if (response.status === 403 && response.headers.get("content-type") === "application/json")
+        reason = await readBoundedJson(response).then(
+          (value) => (value as { error?: unknown } | null)?.error,
+          () => undefined,
+        );
+      else await response.body?.cancel();
+      if (typeof reason === "string" && inviteRefusals.includes(reason))
+        throw new GatewaySignupInviteRefused(reason as InviteRefusal);
       throw new Error(`Gateway signup ${path} refused (${response.status})`);
     }
     return readBoundedJson(response);
   }
 
+  /** `invite` is what the person pasted; only its token goes to the relay. */
   async start(
     signal: AbortSignal,
     intent: GatewaySignupIntent = "existing",
+    invite?: string,
   ): Promise<GatewaySignupPending> {
+    const token = invite === undefined ? undefined : inviteToken(invite);
+    if (invite !== undefined && token === undefined)
+      throw new GatewaySignupInviteRefused("invite-invalid");
     const { key, ownerPublicKey } = await this.owner();
     const redemptionSecret = randomBytes(32).toString("base64url");
     const issuedAt = Math.floor(Date.now() / 1000);
@@ -102,7 +132,7 @@ export class GatewaySignupClient {
     const started = gatewaySignupStarted.parse(
       await this.post(
         `${GATEWAY_SIGNUP_PATH}/start`,
-        { ...unsigned, ownerSignature, intent },
+        { ...unsigned, ownerSignature, intent, ...(token ? { invite: token } : {}) },
         signal,
       ),
     );
@@ -198,4 +228,31 @@ export async function relaySignupAccess(
     return undefined;
   }
   return gatewaySignupAccess(await readBoundedJson(response));
+}
+
+/**
+ * Whether an invite could create an account on this relay now. Asked before connecting starts, so
+ * a mistyped or spent invite is named at once. The relay checks the invite again when the sign-up
+ * starts, and when the account is created.
+ */
+export async function relayInviteStatus(
+  relayUrl: string,
+  invite: string,
+  signal: AbortSignal,
+  transport: typeof fetch = fetch,
+): Promise<GatewaySignupInviteStatus> {
+  const token = inviteToken(invite);
+  if (!token) return { status: "invalid" };
+  const response = await transport(new URL(GATEWAY_SIGNUP_INVITE_PATH, relayOrigin(relayUrl)), {
+    method: "POST",
+    redirect: "error",
+    signal: AbortSignal.any([signal, AbortSignal.timeout(10_000)]),
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ invite: token }),
+  });
+  if (!response.ok) {
+    await response.body?.cancel();
+    throw new Error(`Invite check refused (${response.status})`);
+  }
+  return gatewaySignupInviteStatus.parse(await readBoundedJson(response));
 }

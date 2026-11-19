@@ -910,7 +910,7 @@ certificate. Only a matching comparison and gateway approval let it redeem a cre
 
 `POST /_relay/v3/signup/start` is signed by the gateway's owner key and returns
 `authorizeUrl`, `connectUrl`, `code`. After sign-in, subject to the relay's
-`OMNESIS_CLOUD_RELAY_SIGNUP_POLICY` (`invitation`, `allowlist`, `open`),
+`OMNESIS_CLOUD_RELAY_SIGNUP_POLICY` (`closed`, `invite`, `open`),
 `POST /_relay/v3/signup/poll` returns an enrollment invitation and sign-in proof.
 The gateway registers with the invitation, then `POST /_relay/v3/signup/link`
 binds the account using its new owner session.
@@ -922,41 +922,26 @@ this gateway". Whoever started the request chose that name, so the press is the
 person's confirmation that it is theirs. Pairing a browser from a gateway's own
 portal still goes on by itself after sign-in.
 
-Under `allowlist`, the relay may also take invitations from a Google Group
-(`OMNESIS_CLOUD_RELAY_SIGNUP_GOOGLE_GROUP`, its service account key in
-`OMNESIS_CLOUD_RELAY_SIGNUP_GOOGLE_GROUP_CREDENTIALS_FILE`, and an optional
-`https` link to ask to join in `OMNESIS_CLOUD_RELAY_SIGNUP_GOOGLE_GROUP_JOIN_URL`;
-`packages/cloud-relay/README.md` lists the Google-side setup). It applies only
-to a Google sign-in that the allowlist does not already admit and that either
-would create an account or is for an existing account with no linked gateway.
-On such a relay, the sign-in for connecting a gateway also asks Google for the
-`email` scope,
-and the address Google marked `email_verified` is checked once against the group
-through the Cloud Identity Groups API. The address is never stored, logged or
-returned, and the account is keyed by Google's subject as always. A member
-creates the account or connects the gateway to it; anyone else is refused with "Omnesis accounts are
-invite-only for now." and the join link, and the gateway's poll sees the usual
-`not-allowed`. If Google cannot answer, the sign-up is refused for now ("We
-couldn't check your invitation right now. Try again in a few minutes."),
-nothing is recorded, and the person can sign in again on the same request.
-An account that already has a linked gateway, or that the allowlist names, is
-never checked against the group. A passkey sign-in the allowlist refuses stays
-refused, since it carries no email; the page asks the person to start again
-from the gateway and sign in with Google.
+Under `invite`, creating an account needs an invite: a token the relay's
+operator signed offline with an Ed25519 key whose public half the relay holds
+(`OMNESIS_CLOUD_RELAY_INVITE_KEYS`; `packages/cloud-relay/README.md` gives the
+format). The person receives it as a link to the relay's `/invite` page and
+pastes it on their gateway, which sends it beside its signed start request. The
+relay checks the invite before anyone is sent to sign in, refusing a bad one
+with `invite-invalid`, `invite-expired` or `invite-used`, and records it as used
+in the transaction that creates the account, so an invite creates at most one
+account, with a passkey or with Google. Without an invite the page offers only
+signing in to an account that exists, which may connect any number of gateways.
 
-With a join link configured, the relay also says so before anyone signs in:
+The relay says before anyone signs in whether an invite is needed:
 `GET /_relay/v3/signup/access` (public, no parameters) answers
-`{"signup":{"inviteOnly":true,"requestAccessUrl":"…"}}` under `allowlist`, and
-`{}` under any other policy or without a link. It is a separate path because
-gateways parse `/_relay/v2/config` strictly. A gateway with
-`OMNESIS_CLOUD_RELAY_ENABLED=1` that is not linked to an account reads it when
-its owner opens Settings → Omnesis account (or runs `omnesis cloud status` or
-`connect`), at most every ten minutes, and keeps it only if the link is an
-`https` URL without credentials of at most 2048 characters; unknown fields are
-ignored. The management status then carries `signup`, and the portal shows
-"Omnesis accounts are invite-only for now." with a Request access link and its
-host above the two choices, and again when a sign-in is refused as
-`not-allowed`; the CLI prints the link once while waiting.
+`{"signup":{"inviteOnly":true}}` under `invite` and `{}` under any other policy.
+It is a separate path because gateways parse `/_relay/v2/config` strictly. A
+gateway that is not linked to an account reads it when its owner opens
+Settings → Omnesis account (or runs `omnesis cloud status` or `connect`), at
+most every ten minutes; unknown fields are ignored. `POST
+/_relay/v3/signup/invite` checks an invite without using it, for the gateway
+before it starts connecting and for the relay's own invite page.
 
 ### Accounts are created on purpose
 

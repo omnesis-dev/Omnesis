@@ -307,7 +307,6 @@ export async function startRelayDaemon(
         env,
         database: config.OMNESIS_CLOUD_RELAY_DB,
         origin: config.OMNESIS_CLOUD_RELAY_PUBLIC_ORIGIN,
-        googleFetch: fixture?.fetch,
         nativeGoogleIdentity: mockKey
           ? identity
           : deviceAudiences.length

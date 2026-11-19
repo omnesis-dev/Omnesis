@@ -17,6 +17,8 @@ import { GatewayGoogleWeb } from "./google-gateway-web.js";
 import { GatewayAccountLink } from "./gateway-account-link.js";
 import {
   GatewaySignupClient,
+  GatewaySignupInviteRefused,
+  relayInviteStatus,
   relaySignupAccess,
   type GatewaySignupPending,
 } from "./gateway-signup-client.js";
@@ -65,6 +67,21 @@ import {
 import type { CertificateIncident } from "./certificate-monitor.js";
 import type { GatewaySignupAccess } from "./gateway-signup-contract.js";
 const log = createLogger("cloud-relay:management");
+
+type ConnectFailure = NonNullable<NonNullable<CloudRelayManagementStatus["connect"]>["error"]>;
+/** Failures a person can act on, kept on the status once setup showed a security check. */
+const SHOWN_CONNECT_FAILURES: readonly string[] = [
+  "dns-capacity",
+  "dns-allocation-rate",
+  "invite-invalid",
+  "invite-expired",
+  "invite-used",
+] satisfies ConnectFailure[];
+function shownConnectFailure(error: unknown): ConnectFailure | undefined {
+  return error instanceof CloudRelayManagementFailure && SHOWN_CONNECT_FAILURES.includes(error.code)
+    ? (error.code as ConnectFailure)
+    : undefined;
+}
 const PROBE_RETRIES = 20;
 /** How long the relay's answer about who may sign up is kept, and how soon a failed read is retried. */
 const SIGNUP_ACCESS_TTL_MS = 10 * 60_000;
@@ -123,6 +140,7 @@ export interface CloudRelayManagerOptions {
   prepare?: typeof prepareGatewayOwner;
   discover?: typeof relayPublicConfiguration;
   signupAccess?: typeof relaySignupAccess;
+  inviteStatus?: typeof relayInviteStatus;
   probe?(origin: string, signal: AbortSignal): Promise<boolean>;
   /** How long to wait before checking the public address again after a failed check. */
   probeRetryMs?: number;
@@ -1322,9 +1340,12 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
   async connect(input: {
     termsAccepted: boolean;
     intent?: "create" | "existing";
+    /** The invite link or code that may create the account, as the person pasted it. */
+    invite?: string;
   }): Promise<CloudRelayManagementStatus> {
     return this.run(async () => {
       if (!input.termsAccepted) throw new CloudRelayManagementFailure(400, "ca-terms-required");
+      if (input.invite !== undefined) await this.checkInvite(input.invite);
       if (
         ["waiting", "registering", "linking"].includes(this.connection.state) &&
         (this.connection.state !== "waiting" || this.connectPreparation || this.signup)
@@ -1365,11 +1386,7 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
           this.connection = verificationShown
             ? {
                 state: "failed",
-                error:
-                  error instanceof CloudRelayManagementFailure &&
-                  (error.code === "dns-capacity" || error.code === "dns-allocation-rate")
-                    ? error.code
-                    : "enrollment-refused",
+                error: shownConnectFailure(error) ?? "enrollment-refused",
               }
             : { state: "idle" };
           this.revision++;
@@ -1385,8 +1402,30 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
       return this.status();
     });
   }
+  /**
+   * Names a mistyped, expired or spent invite before connecting starts, rather than after this
+   * gateway has claimed a name. A relay that can't answer now still checks it when sign-up starts.
+   */
+  private async checkInvite(invite: string): Promise<void> {
+    const relayUrl = installationRelayUrl(this.options.env, this.settings?.relayUrl);
+    if (!relayUrl) return;
+    let answer;
+    try {
+      answer = await (this.options.inviteStatus ?? relayInviteStatus)(
+        relayUrl,
+        invite,
+        AbortSignal.timeout(10_000),
+        this.options.fetch,
+      );
+    } catch (error) {
+      log.debug(`Checking the invite with the relay failed: ${String(error)}`);
+      return;
+    }
+    if (answer.status !== "valid")
+      throw new CloudRelayManagementFailure(400, `invite-${answer.status}`);
+  }
   private async prepareConnect(
-    input: { termsAccepted: boolean; intent?: "create" | "existing" },
+    input: { termsAccepted: boolean; intent?: "create" | "existing"; invite?: string },
     signal: AbortSignal,
     onVerification: (verification: DnsBrokerVerification | undefined) => void,
     lifetime: AbortSignal,
@@ -1406,9 +1445,11 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
       });
       let pending: GatewaySignupPending;
       try {
-        pending = await this.admitted(() => client.start(signal, input.intent));
+        pending = await this.admitted(() => client.start(signal, input.intent, input.invite));
       } catch (error) {
         if (this.cleanup.observe(error)) throw error;
+        if (error instanceof GatewaySignupInviteRefused)
+          throw new CloudRelayManagementFailure(400, error.reason);
         throw new CloudRelayManagementFailure(503, "relay-unreachable");
       }
       signal.throwIfAborted();

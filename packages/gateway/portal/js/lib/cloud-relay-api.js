@@ -90,7 +90,10 @@ const ERRORS = {
   "enrollment-refused": "This gateway couldn't register with Omnesis Relay. It keeps trying by itself. If this message stays, try connecting again.",
   "tunnel-disconnected": "Remote access was interrupted. Reconnect to try again.",
   "not-allowed":
-    "This account hasn't been approved for Omnesis yet. Nothing on this gateway changed.",
+    "This Omnesis account can't connect this gateway. Nothing on this gateway changed.",
+  "invite-invalid": "That invite isn't valid. Check that you pasted the whole invite link.",
+  "invite-expired": "That invite has expired. Ask whoever sent it for a new one.",
+  "invite-used": "That invite was already used to create an account. Ask for a new one.",
   "certificate-setup-failed":
     "The certificate for this gateway's address could not be prepared. The gateway tries again by itself.",
   "certificate-renewal-failed":
@@ -152,15 +155,22 @@ export function dnsVerificationUrl(value) {
   } catch { return null; }
 }
 
+/** Whether the gateway's relay creates new accounts only with an invite. */
+export function relayInviteOnly(status) {
+  return status?.signup?.inviteOnly === true;
+}
+
 /**
- * Where to ask for an account when the relay's accounts are invite-only, with the host to show
- * beside the link so a substituted address is visible. Null when the gateway reported nothing usable.
+ * The invite in what the person pasted: a whole invite link, its fragment, or the bare code.
+ * Null when it can't be one. The relay checks the invite itself; this only spares a round trip.
  */
-export function relaySignupAccess(status) {
-  const signup = status?.signup;
-  if (!signup || signup.inviteOnly !== true) return null;
-  const url = relayHttpsUrl(signup.requestAccessUrl);
-  return url ? { url, host: new URL(url).host } : null;
+export function relayInvite(value) {
+  if (typeof value !== "string") return null;
+  const text = value.trim();
+  const token = text.slice(text.lastIndexOf("#") + 1);
+  return token.length <= 1024 && /^[A-Za-z0-9_-]{1,200}\.[A-Za-z0-9_-]{1,700}\.[A-Za-z0-9_-]{86}$/.test(token)
+    ? token
+    : null;
 }
 
 /** Accept Google directly or a single-use launch on the gateway's authenticated installation service. */

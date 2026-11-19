@@ -40,6 +40,9 @@ import {
   RelaySessions,
   gatewayKeyAccount,
   hostedGatewayHostname,
+  inviteLink,
+  invitePublicKeyValue,
+  signInvite,
 } from "@omnesis/cloud-relay";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import {
@@ -172,11 +175,10 @@ export async function writeLoopbackDnsPreload(directory: string): Promise<string
 // ── World: PKI, preload, relay ───────────────────────────────────────────────
 
 export interface WorldOptions {
-  signupPolicy: "invitation" | "allowlist" | "open";
+  /** Under `invite`, the relay checks invites against this world's own key (`invite()`). */
+  signupPolicy: "closed" | "invite" | "open";
   /** Offer Google sign-in, answered by `FakeGoogle` (see the file comment). */
   google?: boolean;
-  /** Accounts the `allowlist` policy admits. The file is re-read on every check. */
-  allowlist?: { accounts?: string[]; googleSubjects?: string[] };
   /** More relay settings, applied last (for example lower per-client sign-in limits). */
   extraEnv?: NodeJS.ProcessEnv;
 }
@@ -187,7 +189,8 @@ export class EnrollmentWorld {
   readonly relayOrigin: string;
   readonly relayKeyFile: string;
   readonly accountKeyFile: string;
-  readonly allowlistFile: string;
+  /** The operator's invite key: the relay is given only its public half. */
+  private readonly inviteKey = generateKeyPairSync("ed25519");
   readonly logs: string[] = [];
   relay?: ChildProcess;
   private readonly cliRuns = new Set<SpawnedCli>();
@@ -217,7 +220,6 @@ export class EnrollmentWorld {
     this.relayOrigin = `https://${RELAY_HOST}:${ports.relay}`;
     this.relayKeyFile = join(directory, "relay-session.key");
     this.accountKeyFile = join(directory, "relay-account-authority.pem");
-    this.allowlistFile = join(directory, "relay-allowlist.json");
   }
 
   static async create(directory: string, options: WorldOptions): Promise<EnrollmentWorld> {
@@ -249,7 +251,6 @@ export class EnrollmentWorld {
       if (process.platform === "win32")
         await createWindowsPrivateFile(world.accountKeyFile, Buffer.from(authorityKey));
       else await writeFile(world.accountKeyFile, authorityKey, { mode: 0o600 });
-      await world.setAllowlist(options.allowlist ?? {});
       world.dnsFixture = await startDnsFixture(world.dnsRecords);
       if (options.google) world.google = await FakeGoogle.start(directory, pki);
       await writeFile(
@@ -298,11 +299,16 @@ export class EnrollmentWorld {
       : {};
   }
 
-  async setAllowlist(list: { accounts?: string[]; googleSubjects?: string[] }): Promise<void> {
-    await writeFile(
-      this.allowlistFile,
-      JSON.stringify({ accounts: list.accounts ?? [], googleSubjects: list.googleSubjects ?? [] }),
-      { mode: 0o600 },
+  /** A link to an invite for this world's relay, signed as the operator's own tool signs it. */
+  invite(options: { expiresAt?: number; issuedAt?: number } = {}): string {
+    const now = Math.floor(Date.now() / 1000);
+    return inviteLink(
+      this.relayOrigin,
+      signInvite(this.inviteKey.privateKey, {
+        origin: this.relayOrigin,
+        expiresAt: options.expiresAt ?? now + 3600,
+        ...(options.issuedAt === undefined ? {} : { issuedAt: options.issuedAt }),
+      }),
     );
   }
 
@@ -346,8 +352,8 @@ export class EnrollmentWorld {
         OMNESIS_CLOUD_RELAY_MAX_CONCURRENT_GATEWAY_LOGINS_PER_CLIENT: "32",
         OMNESIS_CLOUD_RELAY_MAX_STREAMS_PER_CLIENT: "256",
         OMNESIS_CLOUD_RELAY_MAX_STREAMS_PER_CLIENT_PER_GATEWAY: "16",
-        ...(this.options.signupPolicy === "allowlist"
-          ? { OMNESIS_CLOUD_RELAY_SIGNUP_ALLOWLIST_FILE: this.allowlistFile }
+        ...(this.options.signupPolicy === "invite"
+          ? { OMNESIS_CLOUD_RELAY_INVITE_KEYS: invitePublicKeyValue(this.inviteKey.publicKey) }
           : {}),
         ...this.googleEnv(),
         ...(this.google
@@ -973,10 +979,10 @@ export class EnrollmentGateway {
    * What the portal's two buttons send: "Create an account" is `create`,
    * "I already have one" is `existing`. Signing in never creates an account.
    */
-  async connect(intent: "create" | "existing"): Promise<CloudRelayStatus> {
+  async connect(intent: "create" | "existing", invite?: string): Promise<CloudRelayStatus> {
     return this.json<CloudRelayStatus>("/admin/cloud-relay/connect", {
       method: "POST",
-      body: JSON.stringify({ termsAccepted: true, intent }),
+      body: JSON.stringify({ termsAccepted: true, intent, ...(invite ? { invite } : {}) }),
     });
   }
 
@@ -1483,8 +1489,9 @@ export async function connectGatewayBySignIn(
   gateway: EnrollmentGateway,
   session: PasskeySession,
   account: "create" | "existing",
+  invite?: string,
 ): Promise<CloudRelayStatus> {
-  const started = await gateway.connect(account);
+  const started = await gateway.connect(account, invite);
   if (started.connect?.state !== "waiting")
     throw new Error(`Connect did not start: ${JSON.stringify(started.connect)}`);
   await enterConnectCode(session.page, started.connect.connectUrl!, started.connect.code!);
@@ -1548,7 +1555,11 @@ export async function launchedUrls(world: EnrollmentWorld): Promise<string[]> {
  * sends it, from a throwaway gateway identity. Returns what the relay started and
  * the secret only that gateway holds, to poll or cancel it.
  */
-export async function startGatewaySignup(world: EnrollmentWorld, intent: "create" | "existing") {
+export async function startGatewaySignup(
+  world: EnrollmentWorld,
+  intent: "create" | "existing",
+  invite?: string,
+) {
   const { sign } = await import("node:crypto");
   const {
     GATEWAY_SIGNUP_PATH,
@@ -1580,9 +1591,14 @@ export async function startGatewaySignup(world: EnrollmentWorld, intent: "create
         owner.privateKey,
       ).toString("base64url"),
       intent,
+      ...(invite ? { invite } : {}),
     }),
   });
-  if (!response.ok) throw new Error(`Signup start refused: ${response.status}`);
+  if (!response.ok)
+    throw Object.assign(new Error(`Signup start refused: ${response.status}`), {
+      status: response.status,
+      body: await response.text(),
+    });
   const started = gatewaySignupStarted.parse(await response.json());
   const call = (path: "poll" | "cancel") =>
     fetch(`${world.relayOrigin}${GATEWAY_SIGNUP_PATH}/${path}`, {

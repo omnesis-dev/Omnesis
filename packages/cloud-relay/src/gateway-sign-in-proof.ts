@@ -19,7 +19,7 @@ import {
   type SignInPurpose,
 } from "./device-enrollment.js";
 import { bindingOrigin } from "./gateway-binding.js";
-import { verifiedGoogleEmail } from "./google-group.js";
+import { verifiedGoogleEmail } from "./google-email.js";
 import { accountId, type IdentityProvider } from "./identity.js";
 
 /** A proof older than this is refused even when its signature still verifies. */

@@ -87,16 +87,6 @@ function TipButton({ id, tip, children, ...button }) {
   </span>`;
 }
 
-/** Accounts need approval: where to ask, with the link's host in plain sight. */
-export function RequestAccess({ access }) {
-  return html`<p class="relay-invite">
-    Omnesis accounts are invite-only for now.${" "}
-    <a href=${access.url} target="_blank" rel="noopener noreferrer">Request access</a>
-    ${" "}<span class="relay-invite-host">(${access.host})</span> — you can create your account
-    once it's approved.
-  </p>`;
-}
-
 /** The relay page's headline once the gateway is registered: connected, reconnecting, dropped or off. */
 function Hero({ status, phase, busy, run }) {
   const disabled = Boolean(busy) && busy !== "refresh";

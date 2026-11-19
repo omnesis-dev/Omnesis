@@ -9,6 +9,9 @@ export type CloudRelayManagementError =
   | "dns-capacity"
   | "dns-allocation-rate"
   | "relay-unreachable"
+  | "invite-invalid"
+  | "invite-expired"
+  | "invite-used"
   | "invitation-required"
   | "enrollment-refused"
   | "hostname-required"
@@ -109,7 +112,10 @@ export interface CloudRelayManagementStatus {
       | "enrollment-refused"
       | "account-link-failed"
       | "dns-capacity"
-      | "dns-allocation-rate";
+      | "dns-allocation-rate"
+      | "invite-invalid"
+      | "invite-expired"
+      | "invite-used";
   };
   /**
    * The certificate monitor saw a certificate for this gateway's name with a key the gateway

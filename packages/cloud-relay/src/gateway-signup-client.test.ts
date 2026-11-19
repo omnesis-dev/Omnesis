@@ -4,10 +4,16 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createPublicKey, randomUUID, verify } from "node:crypto";
+import { createPublicKey, generateKeyPairSync, randomUUID, verify } from "node:crypto";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { fakeSignupRelay, signupRelayOrigin } from "../test/fake-signup-relay.js";
-import { GatewaySignupClient, relaySignupAccess } from "./gateway-signup-client.js";
+import {
+  GatewaySignupClient,
+  GatewaySignupInviteRefused,
+  relayInviteStatus,
+  relaySignupAccess,
+} from "./gateway-signup-client.js";
+import { inviteLink, signInvite } from "./invites.js";
 import {
   gatewaySignupStart,
   gatewaySignupTranscript,
@@ -178,8 +184,7 @@ test("cancel is best effort", async () => {
   await expect(signup.cancel(pending)).resolves.toBeUndefined();
 });
 
-test("the relay's signup access is read with a plain public request and checked again on the gateway", async () => {
-  const requestAccessUrl = "https://groups.example.com/g/fictional-testers";
+test("the relay's signup access is read with a plain public request, and says only whether it is invite-only", async () => {
   const answer = (body: unknown, status = 200) =>
     vi.fn<typeof fetch>(async () =>
       typeof body === "string" ? new Response(body, { status }) : Response.json(body, { status }),
@@ -188,38 +193,134 @@ test("the relay's signup access is read with a plain public request and checked 
     relaySignupAccess("https://relay.example.test", AbortSignal.timeout(5000), transport);
   const transport = answer({
     protocol: 9,
-    signup: { inviteOnly: true, requestAccessUrl, unknownField: "ignored" },
+    signup: { inviteOnly: true, unknownField: "ignored" },
     anotherField: true,
   });
   // Fields this gateway does not know are ignored, so a relay can add some.
-  expect(await read(transport)).toEqual({ inviteOnly: true, requestAccessUrl });
+  expect(await read(transport)).toEqual({ inviteOnly: true });
   const [target, init] = transport.mock.calls[0]!;
   expect(String(target)).toBe("https://relay.example.test/_relay/v3/signup/access");
   expect(init).toMatchObject({ redirect: "error" });
   expect(init).not.toHaveProperty("method");
   expect(init).not.toHaveProperty("headers");
   expect(init).not.toHaveProperty("body");
-  for (const signup of [
-    { inviteOnly: true, requestAccessUrl: "http://groups.example.com/g/fictional-testers" },
-    { inviteOnly: true, requestAccessUrl: "https://name:secret@groups.example.com/" },
-    { inviteOnly: true, requestAccessUrl: "https://:secret@groups.example.com/" },
-    { inviteOnly: true, requestAccessUrl: `https://groups.example.com/${"a".repeat(2048)}` },
-    { inviteOnly: true, requestAccessUrl: "javascript:alert(1)" },
-    { inviteOnly: true, requestAccessUrl: "not a url" },
-    { inviteOnly: true, requestAccessUrl: 42 },
-    { inviteOnly: true, requestAccessUrl: [requestAccessUrl] },
-    { inviteOnly: "true", requestAccessUrl },
-    { requestAccessUrl },
-    "invite-only",
-    null,
-  ])
+  for (const signup of [{ inviteOnly: "true" }, { inviteOnly: false }, {}, "invite-only", null])
     expect(await read(answer({ signup })), JSON.stringify(signup)).toBeUndefined();
   for (const transport of [
     answer({}),
     answer([]),
     answer("null"),
-    answer({ signup: { inviteOnly: true, requestAccessUrl } }, 404),
+    answer({ signup: { inviteOnly: true } }, 404),
   ])
     expect(await read(transport)).toBeUndefined();
   await expect(read(answer("{"))).rejects.toThrow();
+});
+
+const invite = signInvite(generateKeyPairSync("ed25519").privateKey, {
+  origin: signupRelayOrigin,
+  expiresAt: Math.floor(Date.now() / 1000) + 3600,
+});
+
+test("start sends only the token of a pasted invite link, unsigned, and refuses what is no invite", async () => {
+  const relay = fakeSignupRelay(),
+    signup = client(relay);
+  await signup.start(signal(), "create", `  ${inviteLink(signupRelayOrigin, invite)}\n`);
+  const { invite: sent, intent, ownerSignature, ...unsigned } = relay.started()!;
+  expect(sent).toBe(invite);
+  expect(intent).toBe("create");
+  // The relay checks the invite's own signature; the owner key signs the request without it.
+  expect(
+    verify(
+      null,
+      gatewaySignupTranscript(signupRelayOrigin, gatewaySignupUnsigned.parse(unsigned)),
+      createPublicKey(String(unsigned.ownerPublicKey)),
+      Buffer.from(String(ownerSignature), "base64url"),
+    ),
+  ).toBe(true);
+  await signup.start(signal(), "existing");
+  expect(relay.started()).not.toHaveProperty("invite");
+  const calls = relay.calls.length;
+  await expect(signup.start(signal(), "create", "not an invite")).rejects.toMatchObject({
+    name: "GatewaySignupInviteRefused",
+    reason: "invite-invalid",
+  });
+  expect(relay.calls).toHaveLength(calls);
+});
+
+test("the relay's refusal of an invite reaches the gateway with its reason, and any other refusal stays generic", async () => {
+  const relay = fakeSignupRelay(),
+    signup = client(relay);
+  const refuse = (status: number, body: unknown, type = "application/json") =>
+    relay.handle(
+      "/_relay/v3/signup/start",
+      () => new Response(JSON.stringify(body), { status, headers: { "content-type": type } }),
+    );
+  for (const reason of ["invite-invalid", "invite-expired", "invite-used"] as const) {
+    refuse(403, { error: reason });
+    const error = await signup.start(signal(), "create", invite).catch((value: unknown) => value);
+    expect(error).toBeInstanceOf(GatewaySignupInviteRefused);
+    expect(error).toMatchObject({ reason });
+  }
+  for (const [status, body, type] of [
+    [403, { error: "gateway-removed" }, "application/json"],
+    [403, { error: "invite-used" }, "text/plain"],
+    [400, { error: "invite-used" }, "application/json"],
+    [403, "{", "application/json"],
+    [403, null, "application/json"],
+  ] as const) {
+    relay.handle(
+      "/_relay/v3/signup/start",
+      () =>
+        new Response(typeof body === "string" ? body : JSON.stringify(body), {
+          status,
+          headers: { "content-type": type },
+        }),
+    );
+    const error = await signup.start(signal(), "create", invite).catch((value: unknown) => value);
+    expect(error).not.toBeInstanceOf(GatewaySignupInviteRefused);
+    expect(String(error)).toContain(`refused (${status})`);
+  }
+});
+
+test("an invite is checked with the relay before connecting, and only its token is sent", async () => {
+  const transport = vi.fn<typeof fetch>(async () =>
+    Response.json({ status: "valid", expiresAt: 1_900_000_000 }),
+  );
+  expect(
+    await relayInviteStatus(
+      signupRelayOrigin,
+      inviteLink(signupRelayOrigin, invite),
+      AbortSignal.timeout(5000),
+      transport,
+    ),
+  ).toEqual({ status: "valid", expiresAt: 1_900_000_000 });
+  const [target, init] = transport.mock.calls[0]!;
+  expect(String(target)).toBe(`${signupRelayOrigin}/_relay/v3/signup/invite`);
+  expect(init).toMatchObject({ method: "POST", redirect: "error" });
+  expect(JSON.parse(String(init!.body))).toEqual({ invite });
+  for (const status of ["invalid", "expired", "used"] as const) {
+    transport.mockResolvedValueOnce(Response.json({ status }));
+    expect(
+      await relayInviteStatus(signupRelayOrigin, invite, AbortSignal.timeout(5000), transport),
+    ).toEqual({ status });
+  }
+  const calls = transport.mock.calls.length;
+  expect(
+    await relayInviteStatus(signupRelayOrigin, "nonsense", AbortSignal.timeout(5000), transport),
+  ).toEqual({ status: "invalid" });
+  expect(transport).toHaveBeenCalledTimes(calls);
+  transport.mockResolvedValueOnce(new Response("busy", { status: 429 }));
+  await expect(
+    relayInviteStatus(signupRelayOrigin, invite, AbortSignal.timeout(5000), transport),
+  ).rejects.toThrow("(429)");
+  transport.mockResolvedValueOnce(Response.json({ status: "maybe" }));
+  await expect(
+    relayInviteStatus(signupRelayOrigin, invite, AbortSignal.timeout(5000), transport),
+  ).rejects.toThrow();
+  // Without a transport the global fetch is used.
+  vi.stubGlobal("fetch", transport);
+  transport.mockResolvedValueOnce(Response.json({ status: "used" }));
+  expect(await relayInviteStatus(signupRelayOrigin, invite, AbortSignal.timeout(5000))).toEqual({
+    status: "used",
+  });
 });

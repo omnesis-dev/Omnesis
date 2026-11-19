@@ -70,6 +70,13 @@ export function installAccountUI() {
     ],
   };
   const noAccount = "There's no Omnesis account for this sign-in.";
+  // Omnesis accounts are invite-only: these say what to do when an invite is missing or spent.
+  const inviteNeeded = [
+    "Omnesis accounts are invite-only for now. Creating one needs an invite link.",
+    "If you have one, start again from your gateway and paste it there. Otherwise, sign in to an account you already have.",
+  ];
+  const inviteUnusable =
+    "This invite can't create an account any more: it has expired or was already used. Ask for a new invite, then start again from your gateway.";
   const signInFailed = "Sign-in did not complete. Please try again.";
   const signInRefused = "That didn't sign you in. Try again, or use another sign-in method.";
   // No account has this passkey any more, such as after the account was deleted.
@@ -158,10 +165,17 @@ export function installAccountUI() {
         throw error;
       }
       if (!response.ok) {
+        const reason =
+          response.headers.get("content-type") === "application/json"
+            ? (await response.json()).error
+            : undefined;
         const error = new Error(
           "This request could not be completed. Sign in again or try another sign-in method.",
         );
         error.status = response.status;
+        // The relay names a refused invite, which the page says in place of the generic failure.
+        if (typeof reason === "string" && reason.startsWith("invite-"))
+          error.name = "InviteUnusable";
         throw error;
       }
       return response.json();
@@ -221,9 +235,11 @@ export function installAccountUI() {
               ? signInRefused
               : error?.name === "UnknownPasskey"
                 ? `${unknownPasskey} ${current.googleAvailable ? "Choose another passkey, or continue with Google." : "Choose another passkey."}`
-                : error?.name === "NotAllowedError" || error?.name === "AbortError"
-                  ? "No passkey was used. The request may have been cancelled, timed out, or no matching passkey was available. Try again, or sign in with Google to add a passkey."
-                  : failure;
+                : error?.name === "InviteUnusable"
+                  ? inviteUnusable
+                  : error?.name === "NotAllowedError" || error?.name === "AbortError"
+                    ? "No passkey was used. The request may have been cancelled, timed out, or no matching passkey was available. Try again, or sign in with Google to add a passkey."
+                    : failure;
       } finally {
         busy = false;
         for (const element of root.querySelectorAll("button"))
@@ -683,49 +699,18 @@ export function installAccountUI() {
       await ui.refresh();
     },
     denied(denied) {
-      if (denied.inviteOnly || denied.googleRequired) {
-        root.append(ui.node("p", "Omnesis accounts are invite-only for now."));
-        // A passkey carries no email, so only a Google sign-in can show the invitation.
-        if (denied.googleRequired)
-          root.append(
-            ui.node(
-              "p",
-              "If you were invited, start again from your gateway and sign in with Google, so your invitation can be checked.",
-            ),
-          );
-        let join;
-        try {
-          join = denied.joinUrl && new URL(denied.joinUrl);
-        } catch {
-          join = undefined;
-        }
-        if (join && join.protocol === "https:") {
-          const line = ui.node("p", "Ask to join here: "),
-            link = ui.node("a", join.href);
-          link.href = join.href;
-          link.rel = "noopener noreferrer";
-          line.append(link);
-          root.append(line);
-          if (!denied.googleRequired)
-            root.append(ui.node("p", "Once you're in, start again from your gateway."));
-          return;
-        }
-      } else
-        root.append(
-          ui.node(
-            "p",
-            denied.reason === "capacity"
-              ? "This service has no room for more gateways right now."
-              : "This service isn't accepting your Omnesis account yet.",
-          ),
-        );
-      const identifier = denied.googleSubject ?? denied.accountId;
-      if (identifier) {
-        root.append(ui.node("p", "To ask for access, send its operator this:"));
-        const value = ui.node("p", identifier);
-        value.className = "code long";
-        root.append(value);
+      if (denied.inviteRequired) {
+        root.append(...inviteNeeded.map((line) => ui.node("p", line)));
+        return;
       }
+      root.append(
+        ui.node(
+          "p",
+          denied.reason === "capacity"
+            ? "This service has no room for more gateways right now."
+            : "This service isn't accepting your Omnesis account yet.",
+        ),
+      );
       root.append(ui.node("p", "Then start again from your gateway."));
     },
     pending(session) {
@@ -760,6 +745,11 @@ export function installAccountUI() {
           code,
           ui.node("p", "Only continue if you started this on that machine and the code matches."),
         );
+      }
+      if (creating && pending.canCreate === false) {
+        root.append(...inviteNeeded.map((line) => ui.node("p", line)));
+        ui.button("I already have an account", () => ui.setIntent("existing"));
+        return;
       }
       if (creating) {
         root.append(...createCopy.lines.map((line) => ui.node("p", line)));
@@ -1265,9 +1255,7 @@ export function installAccountUI() {
     if (query.get("failed") === "google")
       alert.textContent = "Google sign-in did not complete. Try again or use a passkey.";
     if (query.get("failed") === "again") ui.say(googleAgain);
-    if (query.get("failed") === "invitation")
-      alert.textContent =
-        "We couldn't check your invitation right now. Try again in a few minutes.";
+    if (query.get("failed") === "invite") alert.textContent = inviteUnusable;
     if (query.get("failed") === "no-account")
       alert.textContent = current.pending?.intent
         ? `${noAccount} You can create one below.`
@@ -1366,4 +1354,52 @@ export function installConnectUI() {
       button.disabled = false;
     }
   });
+}
+
+/** The invite page: says whether the invite in the link still works, and lets the person copy it. */
+export function installInviteUI() {
+  const status = document.getElementById("invite-status");
+  const value = document.getElementById("invite-value");
+  const copy = document.getElementById("invite-copy");
+  const invite = window.location.hash.slice(1);
+  const say = (text) => {
+    status.textContent = text;
+  };
+  if (!invite) {
+    say("This link has no invite in it. Ask whoever sent it for the whole link.");
+    return;
+  }
+  value.textContent = window.location.href;
+  copy.hidden = false;
+  copy.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(window.location.href);
+      copy.textContent = "Copied";
+    } catch {
+      copy.textContent = "Select the invite above and copy it";
+    }
+  });
+  const messages = {
+    invalid: "This invite isn't valid. Check that you copied the whole link.",
+    expired: "This invite has expired. Ask for a new one.",
+    used: "This invite was already used to create an account. Ask for a new one.",
+  };
+  fetch("/_relay/v3/signup/invite", {
+    method: "POST",
+    credentials: "omit",
+    redirect: "error",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ invite }),
+  })
+    .then(async (response) => {
+      if (!response.ok) throw new Error();
+      const result = await response.json();
+      if (result.status === "valid") {
+        const until = new Date(result.expiresAt * 1000).toLocaleDateString(undefined, {
+          dateStyle: "long",
+        });
+        say(`This invite works until ${until}.`);
+      } else say(messages[result.status] ?? messages.invalid);
+    })
+    .catch(() => say("We couldn't check this invite right now. You can still use it."));
 }

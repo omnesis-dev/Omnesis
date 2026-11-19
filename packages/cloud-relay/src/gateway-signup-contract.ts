@@ -41,6 +41,11 @@ export type GatewaySignupIntent = z.infer<typeof gatewaySignupIntent>;
 export const gatewaySignupStart = gatewaySignupUnsigned.safeExtend({
   ownerSignature: z.string().regex(/^[A-Za-z0-9_-]{86}$/),
   intent: gatewaySignupIntent.default("existing"),
+  /**
+   * The invite that may create the account, as the person pasted it. Like the intent it is not
+   * signed: the relay checks the invite's own signature, and it can only ever create one account.
+   */
+  invite: z.string().min(1).max(2048).optional(),
 });
 export const gatewaySignupStarted = z
   .object({
@@ -77,41 +82,35 @@ export const gatewaySignupLinked = z
 export type GatewaySignupDenialReason = z.infer<typeof gatewaySignupDenialReason>;
 
 /**
- * Public and unauthenticated: `{ signup: GatewaySignupAccess }` on an invite-only relay with a
- * join link, `{}` otherwise. A separate path, so gateways that read `/_relay/v2/config` strictly
- * keep working.
+ * Public and unauthenticated: `{ signup: GatewaySignupAccess }` on an invite-only relay, `{}`
+ * otherwise. A separate path, so gateways that read `/_relay/v2/config` strictly keep working.
  */
 export const GATEWAY_SIGNUP_ACCESS_PATH = `${GATEWAY_SIGNUP_PATH}/access`;
 export interface GatewaySignupAccess {
+  /** New accounts here need an invite. */
   inviteOnly: true;
-  /** Where a person asks to be let in. HTTPS, without credentials. */
-  requestAccessUrl: string;
 }
-const MAX_REQUEST_ACCESS_URL = 2048;
 
 /**
- * The gateway's reading of the relay's answer. A link a person is sent to is checked again here:
- * anything but a bounded HTTPS URL without credentials drops the whole notice. Fields the gateway
- * does not know are ignored, so a relay can add some.
+ * Public: whether an invite can still create an account here. Gateways ask before they start
+ * connecting, and the relay's invite page asks to show the person whether their link works.
  */
+export const GATEWAY_SIGNUP_INVITE_PATH = `${GATEWAY_SIGNUP_PATH}/invite`;
+export const gatewaySignupInviteCheck = z.object({ invite: z.string().min(1).max(2048) }).strict();
+export const gatewaySignupInviteStatus = z.discriminatedUnion("status", [
+  z.object({ status: z.literal("valid"), expiresAt: seconds }).strict(),
+  z.object({ status: z.enum(["invalid", "expired", "used"]) }).strict(),
+]);
+export type GatewaySignupInviteStatus = z.infer<typeof gatewaySignupInviteStatus>;
+/** The gateway's reading of the relay's answer. Fields it does not know are ignored. */
 export function gatewaySignupAccess(value: unknown): GatewaySignupAccess | undefined {
   const signup = value && typeof value === "object" && "signup" in value ? value.signup : undefined;
-  if (!signup || typeof signup !== "object") return undefined;
-  const { inviteOnly, requestAccessUrl } = signup as Record<string, unknown>;
-  if (
-    inviteOnly !== true ||
-    typeof requestAccessUrl !== "string" ||
-    requestAccessUrl.length > MAX_REQUEST_ACCESS_URL
-  )
-    return undefined;
-  let url: URL;
-  try {
-    url = new URL(requestAccessUrl);
-  } catch {
-    return undefined;
-  }
-  if (url.protocol !== "https:" || url.username || url.password) return undefined;
-  return { inviteOnly: true, requestAccessUrl: url.href };
+  return signup &&
+    typeof signup === "object" &&
+    "inviteOnly" in signup &&
+    signup.inviteOnly === true
+    ? { inviteOnly: true }
+    : undefined;
 }
 
 /** The owner key signs the exact request, so a relay cannot reuse it for another gateway or nonce. */

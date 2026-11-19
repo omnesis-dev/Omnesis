@@ -11,6 +11,7 @@ import {
   type SignInProof,
 } from "./device-enrollment.js";
 import { ACCOUNT_SESSION_SECONDS } from "./identity.js";
+import { InviteRefused } from "./invites.js";
 import { RelayError } from "./tunnels.js";
 import type { AccountAdmission } from "./account-admission.js";
 import type Database from "better-sqlite3";
@@ -88,7 +89,26 @@ export class OmnesisAccounts {
       credential_id TEXT PRIMARY KEY, countersignature TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS omnesis_passkeys_account ON omnesis_passkeys(account_id);
-    CREATE TABLE IF NOT EXISTS omnesis_deleted_passkeys (credential_digest TEXT PRIMARY KEY);`);
+    CREATE TABLE IF NOT EXISTS omnesis_deleted_passkeys (credential_digest TEXT PRIMARY KEY);
+    CREATE TABLE IF NOT EXISTS omnesis_redeemed_invites (
+      invite_id TEXT PRIMARY KEY, redeemed_at INTEGER NOT NULL, expires_at INTEGER NOT NULL
+    );`);
+  }
+
+  /**
+   * Set while the relay's sign-up policy is invite-only: a new account then needs an invite, or an
+   * admission for a gateway this relay already admitted. Checked inside the transaction that
+   * creates the account, whichever sign-in path asked for it.
+   */
+  invitesRequired = false;
+
+  /** Whether an account was already created with this invite. */
+  inviteRedeemed(inviteId: string): boolean {
+    return (
+      this.db
+        .prepare("SELECT 1 FROM omnesis_redeemed_invites WHERE invite_id = ?")
+        .get(inviteId) !== undefined
+    );
   }
 
   /** Aggregate operator counters never expose account identifiers or credential material. */
@@ -698,6 +718,14 @@ export class OmnesisAccounts {
   }
 
   private create(account: string, admission?: AccountAdmission): void {
+    if (this.invitesRequired && !admission?.invite && !admission?.carriedOver)
+      throw new RelayError(
+        403,
+        "An invite is required to create an Omnesis account",
+        "invite-required",
+      );
+    if (admission?.invite && admission.invite.expiresAt <= Math.floor(Date.now() / 1000))
+      throw new InviteRefused("invite-expired");
     if (admission) {
       admission.assertCurrent();
       accountIdSchema.parse(admission.ownerAccountId);
@@ -730,6 +758,14 @@ export class OmnesisAccounts {
       this.db
         .prepare("INSERT OR REPLACE INTO omnesis_account_admissions VALUES (?,?,?)")
         .run(admission.gatewayId, admission.ownerAccountId, account);
+    if (admission?.invite) {
+      // Recorded without the account, so deleting the account leaves the invite spent. The primary
+      // key makes a second account with the same invite fail, however the two raced.
+      if (this.inviteRedeemed(admission.invite.id)) throw new InviteRefused("invite-used");
+      this.db
+        .prepare("INSERT INTO omnesis_redeemed_invites VALUES (?,?,?)")
+        .run(admission.invite.id, Date.now(), admission.invite.expiresAt);
+    }
   }
 
   private requireVersion(account: string, expected?: number): void {
