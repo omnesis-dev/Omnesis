@@ -104,7 +104,10 @@ test("anything else is invalid: another key, another relay, another header, or c
   expect(reason(forge(goodHeader, claims({ iat: now + 300 })))).toBe("valid");
   // A signature that is not the one over these bytes.
   const token = signInvite(operator.privateKey, { origin, expiresAt: now + 60 });
-  expect(reason(`${token.slice(0, -2)}AA`)).toBe("invite-invalid");
+  const cut = token.lastIndexOf(".") + 1;
+  const signature = Buffer.from(token.slice(cut), "base64url");
+  signature.writeUInt8(signature.readUInt8(0) ^ 1, 0);
+  expect(reason(`${token.slice(0, cut)}${signature.toString("base64url")}`)).toBe("invite-invalid");
   expect(reason("")).toBe("invite-invalid");
 });
 
