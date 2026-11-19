@@ -35,8 +35,9 @@ sealed interface RecordingState {
         /** When the current run started (epoch ms), or null while paused. */
         val runningSinceMs: Long?,
         val chunks: Int,
-        /** Paused because the microphone could not be reopened, not by the user. */
+        /** Paused because the input was lost (the microphone taken, the wearable gone), not by the user. */
         val micLost: Boolean = false,
+        val input: RecordingInput = RecordingInput.PHONE,
     ) : RecordingState {
         val paused: Boolean get() = runningSinceMs == null
 
@@ -111,7 +112,11 @@ class RecordingController(
      * Open a session; the service starts the microphone right after. Null
      * while another session is active or its stop is still being filed.
      */
-    suspend fun begin(title: String?, id: String = UUID.randomUUID().toString()): RecordingState.Active? = serial {
+    suspend fun begin(
+        title: String?,
+        id: String = UUID.randomUUID().toString(),
+        input: RecordingInput = RecordingInput.PHONE,
+    ): RecordingState.Active? = serial {
         if (_state.value != RecordingState.Idle) return@serial null
         val now = clock()
         val instant = Instant.ofEpochMilli(now)
@@ -132,7 +137,7 @@ class RecordingController(
                 refusal = null,
             ),
         )
-        val active = RecordingState.Active(id, title, recordedMs = 0, runningSinceMs = now, chunks = 0)
+        val active = RecordingState.Active(id, title, recordedMs = 0, runningSinceMs = now, chunks = 0, input = input)
         _state.value = active
         onWorkQueued()
         active

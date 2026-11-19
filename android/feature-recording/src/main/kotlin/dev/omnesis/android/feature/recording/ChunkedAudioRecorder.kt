@@ -99,7 +99,7 @@ class ChunkedAudioRecorder(
     private val onChunk: (RecordedChunk) -> Unit,
     private val onMicrophoneLost: () -> Unit,
     private val clock: () -> Long = System::currentTimeMillis,
-) {
+) : ChunkRecorder {
     private var recorder: MediaRecorder? = null
     private var nextSeq = 0
     private var current: Pending? = null
@@ -110,14 +110,14 @@ class ChunkedAudioRecorder(
 
     private class Pending(val seq: Int, val file: File, var startedAtMs: Long)
 
-    val chunksRecorded: Int get() = nextSeq
-    val isRecording: Boolean get() = recorder != null
+    override val chunksRecorded: Int get() = nextSeq
+    override val isRecording: Boolean get() = recorder != null
 
     /**
      * Start, or resume after [pause]. Returns false when the microphone could
      * not be opened. The session directory must exist.
      */
-    fun start(): Boolean {
+    override fun start(): Boolean {
         if (recorder != null) return true
         val first = newPending(clock())
         var opened: MediaRecorder? = null
@@ -144,12 +144,12 @@ class ChunkedAudioRecorder(
     }
 
     /** Close the current chunk and stop; [start] resumes with a new chunk. */
-    fun pause() {
+    override fun pause() {
         close()?.let(onChunk)
     }
 
     /** Close the last chunk and stop for good. */
-    fun stop() = pause()
+    override fun stop() = pause()
 
     /** Mark the chunk in progress as interrupted (a call, another app taking the microphone). */
     fun markInterrupted() {

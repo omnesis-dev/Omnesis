@@ -12,16 +12,19 @@ import dev.omnesis.android.feature.recording.OutboxSession
 import dev.omnesis.android.feature.recording.RecordingController
 import dev.omnesis.android.feature.recording.RecordingFiles
 import dev.omnesis.android.feature.recording.RecordingForegroundService
+import dev.omnesis.android.feature.recording.RecordingInput
 import dev.omnesis.android.feature.recording.RecordingOutbox
 import dev.omnesis.android.feature.recording.RecordingSessionProvider
 import dev.omnesis.android.feature.recording.RecordingSettings
 import dev.omnesis.android.feature.recording.RecordingState
 import dev.omnesis.android.feature.recording.RecordingUploadScheduler
+import dev.omnesis.android.feature.recording.WearableAudio
 import dev.omnesis.android.transport.GatewayException
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import java.util.Optional
 import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -73,7 +76,16 @@ data class RecordingUiState(
     val starting: Boolean = false,
     val recent: List<RecentRecording> = emptyList(),
     val deleteError: String? = null,
-)
+    /** The paired wearable's name, when the app links one; null hides the input choice. */
+    val wearableName: String? = null,
+    /** The wearable is linked now and can record. */
+    val wearableReady: Boolean = false,
+    /** The input Start records from. */
+    val input: RecordingInput = RecordingInput.PHONE,
+) {
+    /** The input Start will really use: the wearable only while it is ready. */
+    val startInput: RecordingInput get() = if (input == RecordingInput.WEARABLE && wearableReady) RecordingInput.WEARABLE else RecordingInput.PHONE
+}
 
 @HiltViewModel
 class RecordingViewModel @Inject constructor(
@@ -84,7 +96,9 @@ class RecordingViewModel @Inject constructor(
     private val settings: RecordingSettings,
     private val sessions: RecordingSessionProvider,
     availability: RecordingAvailability,
+    wearable: Optional<WearableAudio>,
 ) : ViewModel() {
+    private val wearable: WearableAudio? = wearable.orElse(null)
 
     private val _state = MutableStateFlow(RecordingUiState(wifiOnly = settings.wifiOnly))
     private var startTimeout: Job? = null
@@ -92,6 +106,11 @@ class RecordingViewModel @Inject constructor(
 
     init {
         viewModelScope.launch { availability.state.collect { a -> _state.update { it.copy(availability = a) } } }
+        this.wearable?.let { w ->
+            // With a wearable linked, Start records from it unless the user chose the phone.
+            _state.update { it.copy(wearableName = w.name, input = settings.preferredInput ?: RecordingInput.WEARABLE) }
+            viewModelScope.launch { w.ready.collect { ready -> _state.update { it.copy(wearableReady = ready) } } }
+        }
         viewModelScope.launch {
             controller.state.collect { s ->
                 val active = s as? RecordingState.Active
@@ -126,12 +145,20 @@ class RecordingViewModel @Inject constructor(
         if (granted) start()
     }
 
+    fun onInputChange(input: RecordingInput) {
+        settings.preferredInput = input
+        _state.update { it.copy(input = input) }
+    }
+
+    /** Start from the wearable: it needs no microphone permission on the phone. */
+    fun startWearable() = start()
+
     private fun start() {
         val current = _state.value
         if (current.starting || current.recording != null) return
         // See #863 — planned: starting while the gateway is unreachable.
         if (current.availability != RecordingAvailability.Availability.AVAILABLE) return
-        RecordingForegroundService.start(context, current.title.trim().ifEmpty { null })
+        RecordingForegroundService.start(context, current.title.trim().ifEmpty { null }, current.startInput)
         _state.update { it.copy(title = "", starting = true) }
         // Recording showing in the controller's state clears `starting`; a
         // start that never shows (the microphone did not open) clears it here.
