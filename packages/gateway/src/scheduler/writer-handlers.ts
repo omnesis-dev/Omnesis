@@ -526,6 +526,8 @@ import {
   abandonRecordingSession,
   rescheduleRecordingChunk,
   settleRecordingChunk,
+  purgeRecordingAudio,
+  type RecordingChunkSettling,
   markRecordingSessionProjected,
   assignRecordingVoices,
   setRecordingSpeaker,
@@ -2061,7 +2063,10 @@ export const writerHandlers = {
     sessionId: string,
     seq: number,
     outcome: RecordingChunkSettlement,
-  ): boolean => settleRecordingChunk(db, sessionId, seq, outcome),
+    settling: RecordingChunkSettling,
+  ): boolean => settleRecordingChunk(db, sessionId, seq, outcome, settling),
+  "recordings.purgeAudio": (db: Db, settledBefore: string): number =>
+    purgeRecordingAudio(db, settledBefore),
   "recordings.markProjected": (db: Db, id: string, revision: number) =>
     markRecordingSessionProjected(db, id, revision),
   "recordings.assignVoices": (

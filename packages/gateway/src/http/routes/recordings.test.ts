@@ -24,6 +24,7 @@ import { ReplayVoiceSeparator } from "../../recordings/voices/replay-voice-separ
 import { backfillOnePerson, findOrCreatePerson } from "../../people.js";
 import { MAX_RECORDING_CHUNK_BYTES } from "./recordings.js";
 import type { OmnesisConfig } from "@omnesis/config";
+import type { ConfigStore } from "../../config-store.js";
 import type { RecordingTranscriptionService } from "../../recordings/index.js";
 import type Database from "better-sqlite3";
 
@@ -34,6 +35,8 @@ let ADMIN_TOKEN: string;
 let optedIn: boolean | undefined;
 let priorExperimental: string | undefined;
 let recordings: RecordingTranscriptionService | undefined;
+/** The operator's `inference.recordings.keepAudioDays`; undefined leaves it unset. */
+let keepAudioDays: number | undefined;
 
 const START = "2026-03-02T09:00:00.000Z";
 const voices = new ReplayVoiceSeparator();
@@ -99,6 +102,7 @@ beforeEach(() => {
   db = createDatabase(dbPath);
   ADMIN_TOKEN = mintToken([SCOPE_ADMIN, SCOPE_READ]);
   optedIn = undefined;
+  keepAudioDays = undefined;
   const transcribeService = new TranscribeService({
     resolveAssignment: () => ({ role: "transcriber", kind: "replay" }),
     deps: {
@@ -121,6 +125,12 @@ beforeEach(() => {
       recordings = service;
     },
     voiceSeparator: () => voices,
+    configStore: {
+      get: () =>
+        (keepAudioDays === undefined
+          ? {}
+          : { inference: { recordings: { keepAudioDays } } }) as OmnesisConfig,
+    } as unknown as ConfigStore,
   });
 });
 
@@ -272,6 +282,65 @@ describe("recordings routes", () => {
       (await request("PUT", `/recordings/${id}/speakers/1`, { self: true, name: "x" })).status,
     ).toBe(400);
     expect((await request("GET", `/recordings/${randomUUID()}/speakers`)).status).toBe(404);
+  });
+
+  test("a session's chunks are listed, and audio kept by the operator is served as audio only", async () => {
+    keepAudioDays = 3;
+    const id = randomUUID();
+    await startRecording(id);
+    await request("PUT", `/recordings/${id}/chunks/0`, chunkForm(0, "We open on Monday."));
+    await request("PUT", `/recordings/${id}/chunks/1`, chunkForm(1, null));
+    // A device that labels its upload as a page gets it back as bytes.
+    const page = chunkForm(2, "<script>alert(1)</script>");
+    page.set("audio", new Blob(["<script>alert(1)</script>"], { type: "text/html" }), "c.html");
+    await request("PUT", `/recordings/${id}/chunks/2`, page);
+    await recordings?.idle();
+
+    const listed = await request("GET", `/recordings/${id}/chunks`);
+    expect(listed.headers.get("cache-control")).toBe("no-store");
+    const { recording, chunks } = (await listed.json()) as {
+      recording: Record<string, unknown>;
+      chunks: Record<string, unknown>[];
+    };
+    expect(recording).toMatchObject({
+      id,
+      state: "recording",
+      durationMs: 180_000,
+      chunks: { received: 3, transcribed: 2, silent: 1 },
+    });
+    expect(chunks.map((c) => [c.seq, c.status, c.audio])).toEqual([
+      [0, "transcribed", true],
+      [1, "silent", false],
+      [2, "transcribed", true],
+    ]);
+    expect(typeof chunks[0]!.audioDeletedAt).toBe("string");
+
+    const audio = await request("GET", `/recordings/${id}/chunks/0/audio`);
+    expect(audio.status).toBe(200);
+    expect(audio.headers.get("content-type")).toBe("audio/aac");
+    expect(audio.headers.get("content-security-policy")).toBe("sandbox");
+    expect(audio.headers.get("content-disposition")).toMatch(/^attachment;/);
+    expect(new TextDecoder().decode(await audio.arrayBuffer())).toBe("We open on Monday.");
+
+    const html = await request("GET", `/recordings/${id}/chunks/2/audio`);
+    expect(html.headers.get("content-type")).toBe("application/octet-stream");
+
+    expect((await request("GET", `/recordings/${id}/chunks/1/audio`)).status).toBe(404);
+    expect((await request("GET", `/recordings/${id}/chunks/9/audio`)).status).toBe(404);
+    expect((await request("GET", `/recordings/${id}/chunks/x/audio`)).status).toBe(404);
+    expect((await request("GET", `/recordings/${randomUUID()}/chunks`)).status).toBe(404);
+  });
+
+  test("without a retention the audio is gone once transcribed", async () => {
+    const id = randomUUID();
+    await startRecording(id);
+    await request("PUT", `/recordings/${id}/chunks/0`, chunkForm(0, "We open on Monday."));
+    await recordings?.idle();
+    const { chunks } = (await (await request("GET", `/recordings/${id}/chunks`)).json()) as {
+      chunks: Record<string, unknown>[];
+    };
+    expect(chunks[0]).toMatchObject({ status: "transcribed", audio: false, audioDeletedAt: null });
+    expect((await request("GET", `/recordings/${id}/chunks/0/audio`)).status).toBe(404);
   });
 
   test("retries are idempotent", async () => {

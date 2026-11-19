@@ -2203,6 +2203,8 @@ export function createServer(
         ]),
       buildDocument: buildRecordingDocument,
       ...(opts.voiceSeparator ? { voices: opts.voiceSeparator } : {}),
+      // Read on every pass, so a changed retention applies without a restart.
+      keepAudioDays: () => opts.configStore?.get().inference?.recordings?.keepAudioDays ?? 0,
     });
     recordings.start();
     // The source is listed only in experimental mode; its display identity

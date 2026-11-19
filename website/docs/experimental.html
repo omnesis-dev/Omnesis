@@ -626,11 +626,12 @@
           dictation and voice notes, so most of a long meeting is transcribed by the time it ends.
           Hours of audio need a fast transcriber: a CPU-bound local Whisper model falls far behind,
           so assign a GPU-backed or HTTP transcriber. The audio of each chunk is deleted from the
-          gateway once it is transcribed. When the recording is finished and every chunk is settled,
-          the gateway writes one document with a timestamp on each sentence (on each passage with a
-          transcriber that reports no timings) and lines for pauses, silence, interruptions and
-          parts that did not arrive. A recording the phone never finishes is finished for it after
-          twelve hours without an upload; parts the phone uploads after that reopen it.
+          gateway once it is transcribed, unless you keep it (below). When the recording is finished
+          and every chunk is settled, the gateway writes one document with a timestamp on each
+          sentence (on each passage with a transcriber that reports no timings) and lines for
+          pauses, silence, interruptions and parts that did not arrive. A recording the phone never
+          finishes is finished for it after twelve hours without an upload; parts the phone uploads
+          after that reopen it.
         </p>
         <p>
           To tell the speakers apart, set <code>inference.recordings.speakers</code> to
@@ -647,12 +648,23 @@
           with the first things they said, and say who they are: you, a person in Omnesis, or just a
           name. The document is rewritten with those names, and every person you choose is listed as
           a participant, so the conversation appears with that person like their messages and emails
-          do. Two speakers can be the same person when one voice was split.
+          do. Two speakers can be the same person when one voice was split. The portal's
+          <strong>Recordings</strong> page, shown in experimental mode, does the same, and also
+          lists every recording with its state (recording, transcribing, done), its chunks and any
+          that could not be transcribed.
         </p>
         <p>
-          The document is read-only in the corpus. Deleting the recording from the app removes its
-          document and anything still stored for it on the gateway. Recording other people is your
-          responsibility: tell them, and follow the law where you record.
+          To listen back, set <code>inference.recordings.keepAudioDays</code> to the number of days
+          the gateway keeps each chunk's audio after transcribing it (up to 365). The portal's
+          Recordings page then plays each kept chunk and says until when it is kept. The setting
+          takes effect without a restart, and lowering it deletes the audio that is now older. The
+          default, 0, deletes the audio as soon as it is transcribed.
+        </p>
+        <p>
+          The document is read-only in the corpus. Deleting the recording from the app or the portal
+          removes its document and anything still stored for it on the gateway, kept audio included.
+          Recording other people is your responsibility: tell them, and follow the law where you
+          record.
         </p>
 
         <h2 id="brain">Omnesis Brain</h2>

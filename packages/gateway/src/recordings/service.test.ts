@@ -53,6 +53,8 @@ let docs: Map<string, DocumentInput>;
 let held: Promise<void> | null;
 let separator: VoiceSeparator | null;
 let release: () => void;
+/** The operator's `inference.recordings.keepAudioDays`. */
+let keepDays: number;
 
 const START = "2026-03-02T09:00:00.000Z";
 const at = (offsetMs: number) => new Date(Date.parse(START) + offsetMs).toISOString();
@@ -112,6 +114,7 @@ beforeEach(() => {
   failingIngest = new Set();
   held = null;
   separator = null;
+  keepDays = 0;
   service = new RecordingTranscriptionService({
     writeGate: directWriteGate(db),
     readDb: db,
@@ -136,6 +139,7 @@ beforeEach(() => {
     },
     buildDocument: buildRecordingDocument,
     voices: () => separator,
+    keepAudioDays: () => keepDays,
     now: () => now,
   });
 });
@@ -456,6 +460,146 @@ describe("RecordingTranscriptionService", () => {
     expect(docs.size).toBe(0);
     expect(service.status(id)).toBeNull();
     expect(await service.delete(id)).toBe(false);
+  });
+});
+
+describe("RecordingTranscriptionService kept audio", () => {
+  const DAY = 24 * 60 * 60 * 1000;
+
+  test("by default the audio is gone once a chunk is settled, and nothing can be played", async () => {
+    const id = await start();
+    transcripts.push({ text: "hello" });
+    await service.addChunk(chunk(id, 0));
+    await service.idle();
+    expect(service.chunks(id)).toEqual([
+      {
+        seq: 0,
+        startedAt: at(0),
+        durationMs: 60_000,
+        status: "transcribed",
+        interrupted: false,
+        audio: false,
+        audioDeletedAt: null,
+      },
+    ]);
+    expect(service.chunkAudio(id, 0)).toBeNull();
+  });
+
+  test("kept audio can be played until its retention ends, then is deleted", async () => {
+    keepDays = 2;
+    const id = await start();
+    transcripts.push({ text: "hello" }, null);
+    await service.addChunk(chunk(id, 0));
+    await service.addChunk(chunk(id, 1, { silent: true, audio: null, mimeType: null }));
+    await service.idle();
+    const settledAt = now.toISOString();
+
+    // Kept with its type, and dated for deletion two days after it settled.
+    expect(service.chunkAudio(id, 0)).toEqual({
+      audio: new TextEncoder().encode("audio-0"),
+      mimeType: "audio/aac",
+    });
+    expect(service.chunks(id)?.[0]).toMatchObject({
+      audio: true,
+      audioDeletedAt: new Date(Date.parse(settledAt) + 2 * DAY).toISOString(),
+    });
+    // A silent chunk never had audio to keep.
+    expect(service.chunks(id)?.[1]).toMatchObject({ status: "silent", audio: false });
+
+    advance(2 * DAY - 1);
+    await pass();
+    expect(service.chunkAudio(id, 0)).not.toBeNull();
+    advance(1);
+    await pass();
+    expect(service.chunkAudio(id, 0)).toBeNull();
+    expect(service.chunks(id)?.[0]).toMatchObject({ audio: false, audioDeletedAt: null });
+    // The transcript stays.
+    expect(getRecordingChunk(db, id, 0)).toMatchObject({ status: "transcribed", text: "hello" });
+  });
+
+  test("a chunk given up on keeps its audio too", async () => {
+    keepDays = 1;
+    const id = await start();
+    transcripts.push({ kind: "unreadable" });
+    await service.addChunk(chunk(id, 0));
+    await service.idle();
+    expect(getRecordingChunk(db, id, 0)).toMatchObject({ status: "failed" });
+    expect(service.chunkAudio(id, 0)?.mimeType).toBe("audio/aac");
+  });
+
+  test("a pending chunk's audio is never played nor deleted by the retention sweep", async () => {
+    keepDays = 1;
+    readiness = { runnable: false, reason: "no model" };
+    const id = await start();
+    await service.addChunk(chunk(id, 0));
+    await service.idle();
+    advance(3 * DAY);
+    await pass();
+    expect(service.chunks(id)?.[0]).toMatchObject({
+      status: "pending",
+      audio: true,
+      audioDeletedAt: null,
+    });
+    expect(service.chunkAudio(id, 0)).toBeNull();
+    expect(readRecordingChunkAudio(db, id, 0)).not.toBeNull();
+  });
+
+  test("lowering the retention to nothing deletes the kept audio at the next pass", async () => {
+    keepDays = 30;
+    const id = await start();
+    transcripts.push({ text: "hello" });
+    await service.addChunk(chunk(id, 0));
+    await service.idle();
+    expect(service.chunkAudio(id, 0)).not.toBeNull();
+    keepDays = 0;
+    await pass();
+    expect(service.chunkAudio(id, 0)).toBeNull();
+  });
+
+  test("a retention past a year is held to a year", async () => {
+    keepDays = 10_000;
+    const id = await start();
+    transcripts.push({ text: "hello" });
+    await service.addChunk(chunk(id, 0));
+    await service.idle();
+    expect(service.chunks(id)?.[0]?.audioDeletedAt).toBe(
+      new Date(now.getTime() + 365 * DAY).toISOString(),
+    );
+  });
+
+  test("deleting a recording deletes its kept audio", async () => {
+    keepDays = 7;
+    const id = await start();
+    transcripts.push({ text: "hello" });
+    await service.addChunk(chunk(id, 0));
+    await service.idle();
+    expect(await service.delete(id)).toBe(true);
+    expect(readRecordingChunkAudio(db, id, 0)).toBeNull();
+    expect(service.chunks(id)).toBeNull();
+  });
+
+  test("the list of recordings carries chunk counts and the recorded time", async () => {
+    const id = await start(undefined, "Standup");
+    transcripts.push({ text: "hello" }, null, null, null, null, null, null);
+    await service.addChunk(chunk(id, 0));
+    await service.addChunk(
+      chunk(id, 1, { silent: true, audio: null, mimeType: null, durationMs: 30_000 }),
+    );
+    await service.idle();
+    expect(service.recent(10)).toEqual([
+      {
+        id,
+        title: "Standup",
+        startedAt: START,
+        state: "recording",
+        chunkCount: null,
+        chunks: { received: 2, pending: 0, transcribed: 1, failed: 0, silent: 1 },
+        durationMs: 90_000,
+        speakers: 0,
+        namedSpeakers: 0,
+        documentId: null,
+      },
+    ]);
   });
 });
 
