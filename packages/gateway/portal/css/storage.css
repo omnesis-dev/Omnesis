@@ -78,4 +78,6 @@
 .storage-history-legend .storage-history-scheduled-key::before { height: 8px; background: var(--storage-scheduled, #f97316); opacity: .65; }
 .storage-trim-status { display: block; margin-top: 4px; font-size: 12px; color: var(--text-secondary); }
 .storage-trim-status.is-active { color: var(--storage-scheduled, #f97316); }
+.storage-trim-status .storage-trim-spinner { width: 10px; height: 10px; margin-right: 6px; border-color: currentColor; border-top-color: transparent; }
+@media (prefers-reduced-motion: reduce) { .storage-trim-status .storage-trim-spinner { animation: none; } }
 .storage-view #storage-limit { width: calc(15ch + 38px); }

@@ -81,7 +81,10 @@ function SourceStorageRow({ row, retentionDays, jobs = [], now, onOpen }) {
         <div class="source-cell-name-text"><span class="source-display-name">${label}</span>
           ${label !== sourceId && html`<span class="source-id-inline"><code>${sourceId}</code></span>`}
           ${retentionDays && html`<small class="storage-note">Keeps ${retentionDays.toLocaleString()} days</small>`}
-          ${visibleStorageTrimJobs(jobs).map((job) => html`<small key=${job.id} class=${`storage-trim-status${["queued", "running"].includes(job.state) ? " is-active" : ""}`} role="status">${storageTrimStatus(job)}</small>`)}
+          ${visibleStorageTrimJobs(jobs).map((job) => {
+            const active = ["queued", "running"].includes(job.state) || (job.state === "completed" && job.cleanupPending);
+            return html`<small key=${job.id} class=${`storage-trim-status${active ? " is-active" : ""}`} role="status">${active && html`<span class="spinner storage-trim-spinner" aria-hidden="true"></span>`}${storageTrimStatus(job)}</small>`;
+          })}
         </div>
       </div></td>
       <td><strong>${partial && !row.bytes ? "Not measured" : storageBytes(row.bytes)}</strong>

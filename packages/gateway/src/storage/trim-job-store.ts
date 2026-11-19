@@ -155,6 +155,25 @@ export function readStorageTrimPendingCascade(
     : null;
 }
 
+/** Pending committed cleanup is discoverable independently of job history and live authority. */
+export function readNextStorageTrimCleanup(
+  db: Database.Database,
+  afterJobId: string,
+): StoredStorageTrimJob | null {
+  const next =
+    db
+      .prepare<[string], { job_id: string }>(
+        `SELECT job_id FROM storage_trim_job_cascades WHERE job_id > ? ORDER BY job_id, cascade_id LIMIT 1`,
+      )
+      .get(afterJobId) ??
+    db
+      .prepare<[], { job_id: string }>(
+        `SELECT job_id FROM storage_trim_job_cascades ORDER BY job_id, cascade_id LIMIT 1`,
+      )
+      .get();
+  return next ? readStorageTrimJob(db, next.job_id) : null;
+}
+
 export function listStorageTrimJobs(
   db: Database.Database,
   currentIncarnationOnly = false,

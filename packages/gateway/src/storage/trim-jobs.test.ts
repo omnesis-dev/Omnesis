@@ -9,7 +9,11 @@ import { AccountId, ProviderId, SourceId, SourceType } from "@omnesis/types";
 import { createDatabase, upsertDocuments } from "../db.js";
 import { createDevice } from "../data/repositories/DeviceRepository.js";
 import { createSource } from "../data/repositories/SourceRepository.js";
-import { acknowledgeAbsenceCascade } from "../data/repositories/AbsenceRepository.js";
+import {
+  acknowledgeAbsenceCascade,
+  type AbsenceCascade,
+} from "../data/repositories/AbsenceRepository.js";
+import { finishDocumentCascade } from "../absence/document-cascade.js";
 import { SourceWriteEpochFence } from "../source-write-epoch-fence.js";
 import { StorageRetentionService } from "./retention.js";
 import {
@@ -18,6 +22,7 @@ import {
   failStorageTrimJob,
   readStorageTrimPage,
   readStorageTrimJob,
+  readNextStorageTrimCleanup,
   STORAGE_TRIM_PAGE_SQL,
 } from "./trim-job-store.js";
 import {
@@ -60,7 +65,10 @@ function add(
     },
   ]);
 }
-function engine(readPage?: typeof readStorageTrimPage, finish?: () => Promise<void>) {
+function engine(
+  readPage?: typeof readStorageTrimPage,
+  finish?: (cascade: AbsenceCascade) => Promise<void>,
+) {
   return new StorageRetentionService({
     db,
     clock: () => now,
@@ -74,7 +82,7 @@ function engine(readPage?: typeof readStorageTrimPage, finish?: () => Promise<vo
       storageTrimPage: async (job) => (readPage ?? readStorageTrimPage)(db, job),
     },
     finishCascade: async (cascade) => {
-      if (finish) await finish();
+      if (finish) await finish(cascade);
       acknowledgeAbsenceCascade(db, cascade.id, "index");
       acknowledgeAbsenceCascade(db, cascade.id, "cognition");
     },
@@ -390,4 +398,137 @@ test("writer independently preserves an accepted manual command against a compet
     }),
   ).toBeNull();
   expect(readStorageTrimJob(db, command.id)).toMatchObject({ state: "queued", before });
+});
+
+function cleanupEngine(
+  deleteIndex: (ids: readonly string[]) => Promise<number>,
+  readPage?: typeof readStorageTrimPage,
+) {
+  return engine(readPage, (cascade) =>
+    finishDocumentCascade(cascade, {
+      deleteIndex,
+      cascadeCognition: async () => {},
+      acknowledge: async (id, part) => acknowledgeAbsenceCascade(db, id, part),
+    }).then(() => {}),
+  );
+}
+
+test.each([
+  ["manual", "completed"],
+  ["manual", "failed"],
+  ["manual", "cancelled"],
+  ["rolling", "completed"],
+  ["rolling", "failed"],
+  ["rolling", "cancelled"],
+] as const)(
+  "%s %s cleanup survives restart, lost authority and hidden history",
+  async (kind, state) => {
+    add("old");
+    const deleteIndex = vi
+      .fn<(ids: readonly string[]) => Promise<number>>()
+      .mockRejectedValueOnce(new Error("Search cleanup is continuing in the background."))
+      .mockResolvedValue(0);
+    const first = cleanupEngine(deleteIndex);
+    const policy = kind === "rolling" ? policies() : [];
+    if (kind === "manual") await first.startTrim(sourceId, before);
+    expect((await first.sweep(policy)).deleted).toBe(1);
+    const id = db.prepare<[], { id: string }>("SELECT id FROM storage_trim_jobs").get()!.id;
+    expect(readStorageTrimJob(db, id)).toMatchObject({
+      state: "completed",
+      deleted: 1,
+      cleanupPending: true,
+    });
+    expect(
+      db.prepare("SELECT index_done,cognition_done FROM snapshot_absence_cascade_outbox").get(),
+    ).toEqual({ index_done: 0, cognition_done: 1 });
+    db.prepare("UPDATE storage_trim_jobs SET state=? WHERE id=?").run(state, id);
+    // Neither public history nor a current source/policy is needed to finish an
+    // already committed deletion. The old command deliberately disappears there.
+    const incarnation = readStorageSourceIncarnation(db, sourceId)!;
+    const insert = db.prepare(
+      "INSERT INTO storage_trim_jobs(id,kind,source_id,source_incarnation,before_date,state,upper_date,upper_id,created_at,updated_at) VALUES(?,'manual',?,?,?,'completed','','',?,?)",
+    );
+    for (let i = 0; i < 25; i++)
+      insert.run(`later-${i}`, sourceId, incarnation, before, now + i + 1, now + i + 1);
+    db.prepare("DELETE FROM sources WHERE id=?").run(sourceId);
+    const stored = readStorageTrimJob(db, id)!;
+    const read = vi.fn(readStorageTrimPage);
+    const restarted = cleanupEngine(deleteIndex, read);
+    expect(restarted.jobs()).toEqual([]);
+    expect(await restarted.sweep([])).toEqual({ deleted: 0, hasMore: false });
+    expect(read).not.toHaveBeenCalled();
+    expect(deleteIndex).toHaveBeenCalledTimes(2);
+    expect(readStorageTrimJob(db, id)).toEqual({ ...stored, cleanupPending: false });
+    expect(db.prepare("SELECT 1 FROM storage_trim_job_cascades").get()).toBeUndefined();
+    expect(db.prepare("SELECT 1 FROM snapshot_absence_cascade_outbox").get()).toBeUndefined();
+    await restarted.sweep([]);
+    expect(deleteIndex).toHaveBeenCalledTimes(2);
+  },
+);
+
+test("cleanup retry rotates failed obligations and leaves a turn for new document work", async () => {
+  const pendingIds: string[] = [];
+  for (const source of [sourceId, "fictional-notes:other"]) {
+    add(`old-${source}`, old, {}, source);
+    const job = startStorageTrimJob(db, {
+      kind: "manual",
+      sourceId: source,
+      before,
+      sourceIncarnation: readStorageSourceIncarnation(db, source)!,
+      now,
+    })!;
+    applyStorageTrimPage(db, {
+      jobId: job.id,
+      revision: job.revision,
+      page: readStorageTrimPage(db, job),
+      now,
+    });
+    pendingIds.push(job.id);
+  }
+  const ordered = [...pendingIds].sort();
+  expect(readNextStorageTrimCleanup(db, "")!.id).toBe(ordered[0]);
+  expect(readNextStorageTrimCleanup(db, ordered[0]!)!.id).toBe(ordered[1]);
+  expect(readNextStorageTrimCleanup(db, ordered[1]!)!.id).toBe(ordered[0]);
+  // New retained documents arrive after the completed one-off commands.
+  add("new-old");
+  const retries: string[] = [];
+  const service = engine(undefined, async (cascade) => {
+    const link = db
+      .prepare<[number], { job_id: string }>(
+        "SELECT job_id FROM storage_trim_job_cascades WHERE cascade_id=?",
+      )
+      .get(cascade.id)!;
+    retries.push(link.job_id);
+    throw new Error("index unavailable");
+  });
+  const next = await service.startTrim(sourceId, before);
+  expect(await service.sweep([])).toEqual({ deleted: 0, hasMore: false });
+  expect(retries).toHaveLength(1);
+  expect((await service.sweep([])).deleted).toBe(1);
+  expect(readStorageTrimJob(db, next.id)).toMatchObject({ state: "completed", deleted: 1 });
+  // Round robin advances even when a cleanup attempt fails; no oldest job monopolizes it.
+  const afterNewPage = retries.length;
+  for (let i = 0; i < 3; i++) {
+    const previous = retries.length;
+    expect(await service.sweep([])).toEqual({ deleted: 0, hasMore: false });
+    expect(retries.length - previous).toBe(1);
+  }
+  expect(new Set(retries.slice(afterNewPage))).toEqual(new Set([...pendingIds, next.id]));
+  expect(
+    db
+      .prepare<[], { n: number }>("SELECT COUNT(*) AS n FROM snapshot_absence_cascade_outbox")
+      .get()!.n,
+  ).toBe(3);
+});
+
+test("pending cleanup candidate lookup uses a covering seek independent of terminal history", () => {
+  const plan = db
+    .prepare<[string], { detail: string }>(
+      "EXPLAIN QUERY PLAN SELECT job_id FROM storage_trim_job_cascades WHERE job_id > ? ORDER BY job_id,cascade_id LIMIT 1",
+    )
+    .all("middle")
+    .map((row) => row.detail)
+    .join("\n");
+  expect(plan).toContain("SEARCH storage_trim_job_cascades USING COVERING INDEX");
+  expect(plan).not.toMatch(/SCAN|TEMP B-TREE/);
 });

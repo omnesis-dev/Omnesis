@@ -11,6 +11,7 @@ import {
 import {
   listStorageTrimJobs,
   readStorageTrimJob,
+  readNextStorageTrimCleanup,
   readStorageTrimPendingCascade,
   readStorageTrimPage,
   type FailStorageTrimJob,
@@ -81,6 +82,8 @@ export class StorageTrimJobs {
   private manualTurn = true;
   private nextPolicy = 0;
   private lastManualId = "";
+  private lastCleanupId = "";
+  private cleanupTurn = true;
   constructor(private readonly deps: StorageTrimJobsDeps) {
     this.clock = deps.clock ?? Date.now;
   }
@@ -132,6 +135,22 @@ export class StorageTrimJobs {
       .sort((a, b) => a.id.localeCompare(b.id));
     const manual = manuals.find((job) => job.id > this.lastManualId) ?? manuals[0];
     const policies = getPolicies();
+    const cleanup = readNextStorageTrimCleanup(this.deps.db, this.lastCleanupId);
+    if (cleanup && (this.cleanupTurn || (!manual && policies.length === 0))) {
+      this.cleanupTurn = false;
+      this.lastCleanupId = cleanup.id;
+      // This obligation authorizes only cleanup of already-deleted ids. Policy,
+      // source incarnation and job state govern new deletion, not acknowledgement.
+      return this.deps.sourceWriteEpochFence.runSourceExclusive(cleanup.sourceId, async () => {
+        const pending = readStorageTrimPendingCascade(this.deps.db, cleanup.id);
+        if (!pending) return { deleted: 0, hasMore: false };
+        return this.finishPendingCascade(
+          pending,
+          cleanup.state === "queued" || cleanup.state === "running",
+        );
+      });
+    }
+    this.cleanupTurn = true;
     if (manual && (this.manualTurn || policies.length === 0)) {
       this.manualTurn = false;
       this.lastManualId = manual.id;
@@ -177,19 +196,26 @@ export class StorageTrimJobs {
     );
   }
 
+  private async finishPendingCascade(
+    cascade: AbsenceCascade,
+    resume: boolean,
+  ): Promise<{ deleted: number; hasMore: boolean }> {
+    try {
+      await this.deps.finishCascade(cascade);
+    } catch {
+      // Keep the durable obligation and use the periodic cadence, not a hot retry loop.
+      return { deleted: 0, hasMore: false };
+    }
+    return { deleted: 0, hasMore: resume };
+  }
+
   private async processUnfenced(
     job: StoredStorageTrimJob,
     assertPolicy?: () => boolean,
   ): Promise<{ deleted: number; hasMore: boolean }> {
     const pending = readStorageTrimPendingCascade(this.deps.db, job.id);
-    if (pending) {
-      try {
-        await this.deps.finishCascade(pending);
-      } catch {
-        return { deleted: 0, hasMore: false };
-      }
-      return { deleted: 0, hasMore: true };
-    }
+    if (pending)
+      return this.finishPendingCascade(pending, job.state === "queued" || job.state === "running");
     let result: AppliedStorageTrimPage;
     try {
       const page = await (this.deps.readPage

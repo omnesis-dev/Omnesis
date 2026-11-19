@@ -239,16 +239,36 @@ test("rolling policy shades its moving cutoff orange and its proposed change red
   expect(host.querySelector('[role="dialog"] .storage-history-scheduled-area')).toBeNull();
 });
 
+test.each([
+  ["queued", false, true],
+  ["running", false, true],
+  ["completed", true, true],
+  ["completed", false, false],
+  ["failed", false, false],
+  ["cancelled", false, false],
+])("trim spinner follows %s with cleanup pending=%s", async (state, cleanupPending, active) => {
+  api.getStorage.mockResolvedValue({ ...snapshot, trimJobs: [
+    { id: "spinner-job", sourceId: "source-example", before: "2021-01-01T00:00:00.000Z", state, cleanupPending, deleted: 123 },
+  ] });
+  await mount();
+  const status = host.querySelector('.storage-trim-status')!;
+  expect(status.classList.contains("is-active")).toBe(active);
+  expect(status.querySelector('.storage-trim-spinner') !== null).toBe(active);
+  if (active) expect(status.querySelector('.storage-trim-spinner')?.getAttribute('aria-hidden')).toBe('true');
+});
+
 test("polls job progress, preserves a limit being edited, and stops polling after unmount", async () => {
   vi.useFakeTimers();
   try {
     const job = { id: "poll-job", sourceId: "source-example", before: "2021-01-01T00:00:00.000Z", state: "running", deleted: 10 };
     api.getStorage.mockResolvedValue({ ...snapshot, trimJobs: [job] });
     await mount();
+    expect(host.querySelector(".storage-trim-spinner")).not.toBeNull();
     await input("#storage-limit", "42");
     api.getStorage.mockResolvedValue({ ...snapshot, trimJobs: [{ ...job, state: "completed", deleted: 350 }] });
     await act(async () => { await vi.advanceTimersByTimeAsync(2500); });
     expect(host.textContent).toContain("Trim completed · 350 documents removed");
+    expect(host.querySelector(".storage-trim-spinner")).toBeNull();
     expect(host.querySelector<HTMLInputElement>("#storage-limit")?.value).toBe("42");
     expect(api.getStorage).toHaveBeenCalledTimes(2);
     await act(async () => { await vi.advanceTimersByTimeAsync(2500); });
