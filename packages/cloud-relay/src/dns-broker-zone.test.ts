@@ -229,3 +229,30 @@ test("a redirect from the DNS provider is refused, not followed", async () => {
   await expect(zone.createTxt(lease, signal())).rejects.toThrow("DNS provider request refused");
   expect(seen.map((init) => init.redirect)).toEqual(["manual"]);
 });
+
+test("capacity inventory is bounded even when provider pagination claims endless pages", async () => {
+  const cloudflare = fakeCloudflare();
+  const zone = setup(async (input, init) => {
+    const url = new URL(String(input));
+    if (url.pathname.endsWith("/dns_records") && !url.searchParams.has("type"))
+      return Response.json({ success: true, result: [], result_info: { total_pages: 101 } });
+    return cloudflare.fetch(input, init);
+  }).zone;
+  await expect(zone.capacity!(signal())).rejects.toThrow("inventory is too large");
+});
+
+test("capacity tolerates a single inventory page without optional pagination metadata", async () => {
+  const cloudflare = fakeCloudflare();
+  cloudflare.add({ type: "A", name: "*.relay.example.test", content: "192.0.2.1" });
+  const zone = setup(async (input, init) => {
+    const response = await cloudflare.fetch(input, init);
+    if (new URL(String(input)).pathname.endsWith("/dns_records")) {
+      const { result_info: _metadata, ...body } = (await response.json()) as {
+        result_info?: unknown;
+      };
+      return Response.json(body);
+    }
+    return response;
+  }).zone;
+  expect(await zone.capacity!(signal())).toMatchObject({ recordsPerName: 2 });
+});

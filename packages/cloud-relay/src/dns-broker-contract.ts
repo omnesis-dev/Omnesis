@@ -136,6 +136,8 @@ export const brokerChallengeSchema = z
     nonce: z.string().regex(/^[a-f0-9]{64}$/),
     requestDigest: z.string().regex(/^[a-f0-9]{64}$/),
     expiresAt: z.number().int().positive(),
+    /** Authenticated stateless challenge, when public admission is enabled. */
+    ticket: z.string().min(1).max(8192).optional(),
   })
   .strict();
 export type BrokerChallenge = z.infer<typeof brokerChallengeSchema>;
@@ -144,6 +146,7 @@ export const brokerCompletionSchema = z
   .object({
     challengeId: z.string().uuid(),
     ownerSignature: z.string().regex(/^[A-Za-z0-9_-]{86}$/),
+    ticket: z.string().min(1).max(8192).optional(),
   })
   .strict();
 
@@ -163,6 +166,7 @@ export const brokerHealthSchema = z
     protocol: z.literal(DNS_BROKER_PROTOCOL),
     relayDomain: relayDomainSchema,
     ownerProofRequired: z.literal(true).optional(),
+    publicAdmission: z.literal(true).optional(),
     caa: z.object({ issuer: domainSchema, accountUriPrefix: accountUriSchema }).strict(),
   })
   .strict();

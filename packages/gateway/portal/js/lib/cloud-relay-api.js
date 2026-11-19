@@ -78,6 +78,12 @@ const ERRORS = {
   "relay-service-mismatch":
     "OMNESIS_CLOUD_RELAY_URL names a different relay service from the one this gateway is registered with. Set it back to that service, then restart the gateway.",
   "configuration-invalid": "Check the public gateway origin and certificate settings.",
+  "dns-capacity":
+    "Cloud gateway address capacity is temporarily full. Try connecting later. Existing gateways keep working.",
+  "dns-allocation-rate":
+    "New gateway setup is temporarily rate limited. Wait and try again. Existing gateways keep working.",
+  "dns-verification-required":
+    "Complete the security check shown by `omnesis cloud status`, then retry this gateway's setup.",
   "relay-unreachable":
     "Omnesis Relay could not be reached. Check this gateway's internet connection. It keeps trying by itself.",
   "invitation-required": "This relay requires an invitation for this gateway ID.",
@@ -132,6 +138,18 @@ export function relayHttpsUrl(value) {
   } catch {
     return null;
   }
+}
+
+/** A broker verification ticket, already checked against local broker configuration by the gateway. */
+export function dnsVerificationUrl(value) {
+  if (typeof value !== "string" || value.length > 16_384) return null;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && !url.username && !url.password && !url.hash &&
+      url.pathname === "/_dns/v2/enroll" && url.searchParams.getAll("ticket").length === 1 &&
+      url.searchParams.get("ticket") && [...url.searchParams.keys()].every((key) => key === "ticket")
+      ? url.href : null;
+  } catch { return null; }
 }
 
 /**

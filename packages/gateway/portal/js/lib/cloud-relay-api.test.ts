@@ -7,6 +7,7 @@ import {
   relayManagement,
   relayError,
   relayHttpsUrl,
+  dnsVerificationUrl,
   gatewayVersion,
   googleAuthorizationUrl,
   accountAuthorizationUrl,
@@ -49,6 +50,9 @@ test("never displays server bodies, unknown codes, paths or credentials", async 
     "relay-service-unavailable",
     "configuration-invalid",
     "relay-unreachable",
+    "dns-capacity",
+    "dns-allocation-rate",
+    "dns-verification-required",
     "invitation-required",
     "enrollment-refused",
     "tunnel-disconnected",
@@ -93,6 +97,10 @@ test("the gateway version is read from health and is never an error or an odd st
   expect(await gatewayVersion()).toBe("");
 });
 test("only known typed refusal codes cross the API error boundary", async () => {
+  for (const code of ["dns-capacity", "dns-allocation-rate", "dns-verification-required"]) {
+    request.mockResolvedValueOnce({ ok: false, json: async () => ({ code, error: "private diagnostic" }) });
+    await expect(relayManagement("connect", {})).rejects.toMatchObject({ code });
+  }
   request.mockResolvedValueOnce({
     ok: false,
     json: async () => ({ code: "ca-terms-required", error: "secret" }),
@@ -265,4 +273,18 @@ test("stopping trust in a sign-in deletes it by its encoded id and nothing else"
     method: "DELETE",
     body: undefined,
   });
+});
+
+
+test("DNS verification links accept long broker tickets and reject ambiguous browser destinations", () => {
+  const base = "https://dns.example.test/_dns/v2/enroll";
+  const valid = `${base}?ticket=${"a".repeat(3000)}`;
+  expect(dnsVerificationUrl(valid)).toBe(valid);
+  for (const value of [undefined, null, 1, "not a URL", "a".repeat(16_385),
+    `${base}?ticket=`, base, `${base}?ticket=one&ticket=two`, `${base}?ticket=one&next=elsewhere`,
+    `${base}?ticket=one#fragment`, "http://dns.example.test/_dns/v2/enroll?ticket=one",
+    "https://user@dns.example.test/_dns/v2/enroll?ticket=one",
+    "https://:password@dns.example.test/_dns/v2/enroll?ticket=one",
+    "https://dns.example.test/elsewhere?ticket=one",
+  ]) expect(dnsVerificationUrl(value), String(value)).toBeNull();
 });

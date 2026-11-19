@@ -1246,3 +1246,37 @@ test("the page asks the gateway to read the account, and reads its status again 
   // A plain status read: no operation, so nothing changes on the gateway.
   expect(state.run).toHaveBeenCalledExactlyOnceWith();
 });
+
+test("a new gateway's browser check precedes account sign-in and never asks for operator approval", async () => {
+  const url = "https://dns.example.test/_dns/v2/enroll?ticket=fictional";
+  state.status = { ...base(), connect: { state: "waiting", verification: { url, expiresAt: Date.now() + 60_000 } } };
+  await show();
+  expect(headline()).toBe("Verify this gateway's setup");
+  expect(link("Open security check").getAttribute("href")).toBe(url);
+  expect(link("Open security check").getAttribute("target")).toBe("_blank");
+  expect(text()).toContain("Cloudflare usually checks automatically");
+  expect(text()).toContain("No approval from Omnesis is needed");
+  expect(text()).not.toContain("Open sign-in");
+  await click("Cancel");
+  expect(state.run).toHaveBeenLastCalledWith("connect/cancel", {});
+});
+
+test("an invalid security check URL remains visible as a recoverable setup error without a link", async () => {
+  state.status = { ...base(), connect: { state: "waiting", verification: { url: "javascript:alert(1)", expiresAt: Date.now() + 60_000 } } };
+  await show();
+  expect(text()).toContain("security check link is unavailable");
+  expect([...host.querySelectorAll("a")].some((a) => a.getAttribute("href")?.startsWith("javascript:"))).toBe(false);
+  expect(button("Cancel")).toBeTruthy();
+});
+
+
+test("cancelling a browser check disables duplicate cancellation and tolerates a missing expiry", async () => {
+  state.busy = "connect/cancel";
+  state.status = { ...base(), connect: { state: "waiting", verification: {
+    url: "https://dns.example.test/_dns/v2/enroll?ticket=fictional",
+  } } };
+  await show();
+  expect(button("Cancelling…").disabled).toBe(true);
+  expect(text()).not.toContain("Complete by");
+  expect(link("Open security check")).toBeTruthy();
+});

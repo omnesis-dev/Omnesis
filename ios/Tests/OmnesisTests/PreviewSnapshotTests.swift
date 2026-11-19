@@ -206,6 +206,12 @@ final class PreviewSnapshotTests: XCTestCase {
             size: tall
         )
         snapshot(screen(PreviewMocks.cloudRelayWaiting), name: "omnesis-account-waiting")
+        snapshot(screen(PreviewMocks.cloudRelayVerification), name: "omnesis-account-security-check")
+        snapshot(
+            screen(PreviewMocks.cloudRelayVerification).dynamicTypeSize(.accessibility2),
+            name: "omnesis-account-security-check-large",
+            size: tall
+        )
         snapshot(screen(PreviewMocks.cloudRelayRegistering), name: "omnesis-account-registering")
         snapshot(screen(PreviewMocks.cloudRelayFailed), name: "omnesis-account-failed")
         snapshot(screen(PreviewMocks.cloudRelayConnected), name: "omnesis-account-connected", size: tall)

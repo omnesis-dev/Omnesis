@@ -21,6 +21,7 @@ import dev.omnesis.android.transport.dto.CloudRelayCertificateIncident
 import dev.omnesis.android.transport.dto.CloudRelayCertificateMonitor
 import dev.omnesis.android.transport.dto.CloudRelayConfig
 import dev.omnesis.android.transport.dto.CloudRelayConnect
+import dev.omnesis.android.transport.dto.CloudRelayVerification
 import dev.omnesis.android.transport.dto.CloudRelayEnrollment
 import dev.omnesis.android.transport.dto.CloudRelayPublicMcp
 import dev.omnesis.android.transport.dto.CloudRelayStatus
@@ -132,6 +133,31 @@ class CloudAccountScreenshotTest {
             ),
             connectIntent = "create",
         ),
+    )
+
+    @Test fun security_check_before_account_sign_in() = capture(
+        "security-check",
+        shown(fresh.copy(connect = CloudRelayConnect(
+            state = "waiting",
+            verification = CloudRelayVerification(
+                "https://dns.example.com/_dns/v2/enroll?ticket=fictional",
+                JsonPrimitive(System.currentTimeMillis() + 300_000),
+            ),
+        ))),
+    )
+
+    @Test
+    @Config(qualifiers = TALL)
+    fun security_check_large_text() = capture(
+        "security-check-large",
+        shown(fresh.copy(connect = CloudRelayConnect(
+            state = "waiting",
+            verification = CloudRelayVerification(
+                "https://dns.example.com/_dns/v2/enroll?ticket=fictional",
+                JsonPrimitive(System.currentTimeMillis() + 300_000),
+            ),
+        ))),
+        large = true,
     )
 
     @Test

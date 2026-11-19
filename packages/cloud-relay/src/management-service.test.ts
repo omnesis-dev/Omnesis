@@ -8,11 +8,11 @@ import { generateKeyPairSync } from "node:crypto";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import * as core from "@omnesis/core";
 import { markedFileError } from "../test/private-operation-fixture.js";
-import { GatewayGoogleWeb } from "./google-gateway-web.js";
 import { tlsFiles } from "../test/support.js";
 import { expiredCertificate } from "../test/expired-certificate.js";
 import { fakeSignupRelay } from "../test/fake-signup-relay.js";
 import { brokerCall, brokerHarness, brokerOwner } from "../test/dns-broker-owner.js";
+import { GatewayGoogleWeb } from "./google-gateway-web.js";
 import { AccountEnrollmentAuthority } from "./account-enrollment-proof.js";
 import {
   GatewayCloudRelayManagement,
@@ -2626,17 +2626,26 @@ test("a name the broker binds to another key costs a new gateway a redraw, and a
   expect(f.discover).not.toHaveBeenCalled();
 });
 
-test("until the official broker answers, a new gateway connects as before", async () => {
-  const transport = vi.fn<typeof fetch>(async () => {
-    throw new TypeError("fetch failed");
-  });
-  const f = fixture({ env: {}, fetch: transport });
-  manager = await GatewayCloudRelayManagement.open(f.options);
-  await manager.configure({ relayUrl: "https://relay.omnesis.app", termsAccepted: true });
-  expect(transport.mock.calls.map(([url]) => String(url))).toEqual([
-    "https://dns.omnesis.app/_dns/v2/health",
-  ]);
-  expect(f.discover).toHaveBeenCalledOnce();
+test("new official setup fails closed without disclosing its gateway id when the broker is unavailable", async () => {
+  for (const reply of [undefined, { protocol: "unexpected-broker" }]) {
+    const transport = vi.fn<typeof fetch>(async () => {
+      if (!reply) throw new TypeError("fetch failed");
+      return Response.json(reply);
+    });
+    const f = fixture({ env: {}, fetch: transport });
+    manager = await GatewayCloudRelayManagement.open(f.options);
+    await expect(
+      manager.configure({ relayUrl: "https://relay.omnesis.app", termsAccepted: true }),
+    ).rejects.toMatchObject({ code: "relay-unreachable" });
+    expect(transport.mock.calls.map(([url]) => String(url))).toEqual([
+      "https://dns.omnesis.app/_dns/v2/health",
+    ]);
+    expect(f.discover).not.toHaveBeenCalled();
+    expect(f.prepare).not.toHaveBeenCalled();
+    expect(manager.hasSavedConfiguration()).toBe(false);
+    await manager.close();
+    manager = undefined;
+  }
 });
 
 test("a broker the operator requires must answer, and a custom domain never asks it", async () => {
@@ -2838,4 +2847,276 @@ test("by default the portal's account refresh reads at most once every fifteen s
   clock.mockReturnValue(now + 15_000);
   await manager!.refreshAccount();
   expect(refresh).toHaveBeenCalledTimes(2);
+});
+
+async function connectingWithDnsCheck() {
+  const relay = fakeSignupRelay();
+  const broker = await brokerHarness({ fallback: relay.fetch });
+  const verification = {
+    url: `${broker.origin}/_dns/v2/enroll?ticket=fictional`,
+    expiresAt: Date.now() + 60_000,
+  };
+  let verified = false;
+  let refusal: { status: number; code: string } | undefined;
+  const claims: { gatewayId: string; ownerPublicKey: string }[] = [];
+  let hold: (() => Promise<void>) | undefined;
+  const f = await connecting(relay, {
+    env: {
+      OMNESIS_CLOUD_RELAY_ENABLED: "1",
+      OMNESIS_CLOUD_RELAY_URL: "https://relay.example.test",
+      OMNESIS_ACME_DNS_PROVIDER: "broker",
+      OMNESIS_ACME_DNS_BROKER_URL: broker.origin,
+    },
+    fetch: async (input, init) => {
+      if (String(input) === `${broker.origin}/_dns/v2/challenge`) {
+        claims.push(JSON.parse(String(init?.body)));
+        const pending = hold;
+        hold = undefined;
+        await pending?.();
+        if (refusal) return Response.json({ error: refusal.code }, { status: refusal.status });
+        if (!verified)
+          return Response.json(
+            { error: "browser-verification-required", verification },
+            { status: 428 },
+          );
+      }
+      return broker.fetch(input, init);
+    },
+    discover: vi.fn(async (_url: string, gatewayId: string) => ({
+      protocol: 2 as const,
+      gatewayId,
+      publicOrigin: `https://${hostedGatewayHostname(gatewayId, "relay.example.test")}`,
+      invitationRequired: false,
+      dnsChallenges: true,
+    })),
+  });
+  return {
+    ...f,
+    verification,
+    claims,
+    refuse: (status: number, code: string) => {
+      refusal = { status, code };
+    },
+    verify: () => {
+      verified = true;
+    },
+    holdNext: (value: () => Promise<void>) => {
+      hold = value;
+    },
+  };
+}
+
+test("first cloud connect exposes an independent DNS check without disclosing the gateway id to the relay", async () => {
+  const f = await connectingWithDnsCheck();
+  manager = await GatewayCloudRelayManagement.open(f.options);
+  const waiting = await manager.connect({ termsAccepted: true });
+  expect(waiting.connect).toEqual({ state: "waiting", verification: f.verification });
+  expect(waiting.configured).toBe(false);
+  // A repeated connect during the browser check joins the existing attempt.
+  expect((await manager.connect({ termsAccepted: true })).connect).toEqual(waiting.connect);
+  expect(f.claims).toHaveLength(1);
+  expect(f.options.discover).not.toHaveBeenCalled();
+  expect(f.relay.started()).toBeUndefined();
+  expect(f.claims).toHaveLength(1);
+  f.verify();
+  await vi.waitFor(async () => expect((await manager!.status()).connect?.code).toBe("ABCD-EF23"), {
+    timeout: 5000,
+  });
+  expect((await manager.status()).connect).not.toHaveProperty("verification");
+  expect(f.options.discover).toHaveBeenCalledOnce();
+  expect(
+    f.claims.every(
+      (claim) =>
+        claim.gatewayId === f.claims[0]!.gatewayId &&
+        claim.ownerPublicKey === f.claims[0]!.ownerPublicKey,
+    ),
+  ).toBe(true);
+});
+
+test("cancelling a delayed DNS check joins its setup before a retry and cannot overwrite that retry", async () => {
+  const f = await connectingWithDnsCheck();
+  manager = await GatewayCloudRelayManagement.open(f.options);
+  await manager.connect({ termsAccepted: true });
+  let entered!: () => void;
+  const checking = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  f.holdNext(async () => {
+    entered();
+    await held;
+  });
+  await checking;
+  const cancelling = manager.cancelConnect();
+  release();
+  expect((await cancelling).connect).toBeUndefined();
+  const retry = await manager.connect({ termsAccepted: true });
+  expect(retry.connect).toEqual({ state: "waiting", verification: f.verification });
+  expect(f.relay.started()).toBeUndefined();
+  f.verify();
+  await vi.waitFor(async () => expect((await manager!.status()).connect?.code).toBe("ABCD-EF23"), {
+    timeout: 5000,
+  });
+  expect((await manager.status()).connect?.state).toBe("waiting");
+  expect(f.claims.every((claim) => claim.gatewayId === f.claims[0]!.gatewayId)).toBe(true);
+});
+
+test("advanced configure reports a required browser check and reuses its gateway id after verification", async () => {
+  const f = await connectingWithDnsCheck();
+  manager = await GatewayCloudRelayManagement.open(f.options);
+  await expect(manager.configure({ termsAccepted: true })).rejects.toMatchObject({
+    code: "dns-verification-required",
+  });
+  expect((await manager.status()).connect?.verification).toEqual(f.verification);
+  f.verify();
+  const configured = await manager.configure({ termsAccepted: true });
+  expect(configured.configured).toBe(true);
+  expect(configured.connect).toBeUndefined();
+  expect(f.claims.map((claim) => claim.gatewayId)).toEqual([
+    f.claims[0]!.gatewayId,
+    f.claims[0]!.gatewayId,
+  ]);
+});
+
+for (const [status, code] of [
+  [507, "dns-capacity"],
+  [429, "dns-allocation-rate"],
+  [503, "enrollment-refused"],
+] as const) {
+  test(`a pending DNS check reports ${code} and keeps the gateway private when admission fails`, async () => {
+    const f = await connectingWithDnsCheck();
+    manager = await GatewayCloudRelayManagement.open(f.options);
+    await manager.connect({ termsAccepted: true });
+    f.refuse(status, code);
+    await vi.waitFor(
+      async () =>
+        expect((await manager!.status()).connect).toEqual({ state: "failed", error: code }),
+      { timeout: 5000 },
+    );
+    expect(f.options.discover).not.toHaveBeenCalled();
+    expect(f.relay.started()).toBeUndefined();
+    expect((await manager.status()).configured).toBe(false);
+  });
+}
+
+test("a DNS security check that exceeds the setup lifetime expires without contacting the relay", async () => {
+  const f = await connectingWithDnsCheck();
+  const expired = new AbortController();
+  const timeout = AbortSignal.timeout.bind(AbortSignal);
+  vi.spyOn(AbortSignal, "timeout").mockImplementation((ms) =>
+    ms === 10 * 60_000 ? expired.signal : timeout(ms),
+  );
+  manager = await GatewayCloudRelayManagement.open(f.options);
+  await manager.connect({ termsAccepted: true });
+  expired.abort(new DOMException("Timed out", "TimeoutError"));
+  await vi.waitFor(async () =>
+    expect((await manager!.status()).connect).toEqual({ state: "failed", error: "expired" }),
+  );
+  expect(f.options.discover).not.toHaveBeenCalled();
+  expect((await manager.status()).configured).toBe(false);
+});
+
+for (const [status, code] of [
+  [507, "dns-capacity"],
+  [429, "dns-allocation-rate"],
+] as const) {
+  test(`advanced setup surfaces ${code} before sending a gateway identity to the relay`, async () => {
+    const f = await connectingWithDnsCheck();
+    f.refuse(status, code);
+    manager = await GatewayCloudRelayManagement.open(f.options);
+    await expect(manager.configure({ termsAccepted: true })).rejects.toMatchObject({ code });
+    expect(f.options.discover).not.toHaveBeenCalled();
+    expect((await manager.status()).configured).toBe(false);
+  });
+}
+
+test("disconnecting and reconnecting owns the new setup even when the previous sign-in transport ignores abort", async () => {
+  const relay = fakeSignupRelay();
+  const gate = () => {
+    let resolve!: () => void;
+    const promise = new Promise<void>((done) => {
+      resolve = done;
+    });
+    return { promise, resolve };
+  };
+  const firstRelease = gate(),
+    secondRelease = gate();
+  let starts = 0;
+  const f = await connecting(relay, {
+    fetch: async (input, init) => {
+      if (String(input).endsWith("/signup/start")) {
+        const attempt = ++starts;
+        if (attempt === 1) {
+          await firstRelease.promise;
+        }
+        if (attempt === 2) {
+          await secondRelease.promise;
+        }
+      }
+      return relay.fetch(input, init);
+    },
+  });
+  manager = await GatewayCloudRelayManagement.open(f.options);
+  await manager.configure({ termsAccepted: true });
+  const previous = manager.connect({ termsAccepted: true });
+  try {
+    await vi.waitFor(() => expect(starts).toBe(1));
+    await manager.accountUnlink();
+    const current = manager.connect({ termsAccepted: true });
+    await vi.waitFor(() => expect(starts).toBe(2));
+    firstRelease.resolve();
+    await previous;
+    // The old catch cannot publish a failed/idle state, and its finally cannot clear
+    // the new preparation: another click must still join that same second attempt.
+    expect((await manager.connect({ termsAccepted: true })).connect).toEqual({ state: "waiting" });
+    expect(starts).toBe(2);
+    secondRelease.resolve();
+    expect((await current).connect?.code).toBe("ABCD-EF23");
+    expect(starts).toBe(2);
+  } finally {
+    firstRelease.resolve();
+    secondRelease.resolve();
+  }
+});
+
+test("cancelling and failed sign-in setup drain safely in either microtask order", async () => {
+  // An HTTP failure and a user's cancellation can land in adjacent microtasks.
+  // Vary their ordering without inspecting or replacing the manager's private promises.
+  for (let turns = 0; turns < 25; turns++) {
+    const relay = fakeSignupRelay();
+    let entered!: () => void, reject!: (error: Error) => void;
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const transport = new Promise<never>((_resolve, fail) => {
+      reject = fail;
+    });
+    const f = await connecting(relay, {
+      fetch: async (input, init) => {
+        if (String(input).endsWith("/signup/start")) {
+          entered();
+          return transport;
+        }
+        return relay.fetch(input, init);
+      },
+    });
+    manager = await GatewayCloudRelayManagement.open(f.options);
+    await manager.configure({ termsAccepted: true });
+    const preparing = manager.connect({ termsAccepted: true }).catch(() => undefined);
+    await started;
+    reject(new Error("fixture sign-in service unavailable"));
+    for (let turn = 0; turn < turns; turn++) await Promise.resolve();
+    await manager.cancelConnect();
+    await preparing;
+    expect(
+      (await manager.status()).connect,
+      `cancellation after ${turns} microtasks`,
+    ).toBeUndefined();
+    expect((await manager.status()).configured).toBe(true);
+    await manager.close();
+    manager = undefined;
+  }
 });

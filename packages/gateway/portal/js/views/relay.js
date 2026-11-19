@@ -25,6 +25,7 @@ import { navigate } from "../lib/router.js";
 import { useAccountRefresh, useRelayManagement } from "../lib/use-relay-management.js";
 import {
   relayError,
+  dnsVerificationUrl,
   relayClock,
   relayHttpsUrl,
 } from "../lib/cloud-relay-api.js";
@@ -149,6 +150,19 @@ function Hero({ status, phase, busy, run }) {
 
 /** Waiting for sign-in: open the relay's sign-in page, or enter the code on another device. */
 export function Waiting({ connect, busy, run }) {
+  if (connect.verification) {
+    const url = dnsVerificationUrl(connect.verification.url);
+    return html`<div class="relay-waiting">
+      <div class="relay-actions relay-hero-action">
+        ${url && html`<a class="btn-primary relay-button-link" href=${url} target="_blank" rel="noopener noreferrer">Open security check</a>`}
+        <button type="button" class="relay-quiet" disabled=${Boolean(busy) && busy !== "refresh"} onClick=${() => run("connect/cancel", {})}>
+          ${busy === "connect/cancel" ? "Cancelling…" : "Cancel"}
+        </button>
+      </div>
+      <p class="relay-hint">${url ? `Security check at ${new URL(url).host}. This page continues automatically once it finishes.` : "The security check link is unavailable. Cancel and try connecting again."}</p>
+      ${relayClock(connect.verification.expiresAt) && html`<p class="relay-hint">Complete by ${relayClock(connect.verification.expiresAt)}.</p>`}
+    </div>`;
+  }
   const authorizeUrl = relayHttpsUrl(connect.authorizeUrl);
   const connectUrl = relayHttpsUrl(connect.connectUrl);
   // The relay's short address is only shown; the link itself stays on the relay's own page.

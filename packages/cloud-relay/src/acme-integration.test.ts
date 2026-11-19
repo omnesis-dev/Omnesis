@@ -563,7 +563,7 @@ async function hostedEnvironment(relayUrl: string, extra: NodeJS.ProcessEnv = {}
   };
 }
 
-test("until the official broker answers, the official relay's gateways publish DNS-01 through the relay", async () => {
+test("an unavailable official broker never falls back to publishing DNS-01 through the relay", async () => {
   const { env } = await hostedEnvironment("https://relay.omnesis.app");
   const keys = await import("./gateway-key-client.js"),
     client = await import("./dns-broker-client.js");
@@ -586,10 +586,11 @@ test("until the official broker answers, the official relay's gateways publish D
     const presenter = presenters.mock.results[0]!.value as ReturnType<
       typeof client.brokerOrRelayPresenter
     >;
-    expect(await presenter.create("a".repeat(43), new AbortController().signal)).toEqual({ id });
+    await expect(presenter.create("a".repeat(43), new AbortController().signal)).rejects.toThrow(
+      "DNS broker is unavailable",
+    );
     expect(transport.mock.calls.map(([url]) => String(url))).toEqual([
       "https://dns.omnesis.app/_dns/v2/health",
-      "https://relay.omnesis.app/_relay/v2/acme/challenge",
     ]);
   } finally {
     await controller!.close();

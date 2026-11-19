@@ -34,16 +34,39 @@ export class DnsBrokerNameTaken extends Error {
   }
 }
 
+export interface DnsBrokerVerification {
+  url: string;
+  expiresAt: number;
+}
+
+/** First setup needs a browser check at the independently configured DNS broker. */
+export class DnsBrokerVerificationRequired extends Error {
+  constructor(readonly verification: DnsBrokerVerification) {
+    super("Open the DNS verification link, then retry this gateway's setup");
+  }
+}
+
+/** The broker refuses new allocation without affecting already registered gateways. */
+export class DnsBrokerAdmissionRefused extends Error {
+  constructor(readonly code: "dns-capacity" | "dns-allocation-rate") {
+    super(
+      code === "dns-capacity"
+        ? "Cloud gateway address capacity is full; retry later"
+        : "New gateway setup is temporarily rate limited; retry later",
+    );
+  }
+}
+
 export interface DnsBrokerSelection {
   url: string;
-  /** Set by the operator: no fallback to the relay when the broker can't be reached. */
-  required: boolean;
+  /** A selected broker must authorize the hosted name; no fallback to the relay. */
+  required: true;
 }
 
 /**
  * The broker for a gateway on this relay. `OMNESIS_ACME_DNS_PROVIDER=broker` names one
- * explicitly; by default (`auto`) the official relay's gateways use the compiled official
- * broker when it is reachable, and every other relay keeps its own DNS cooperation.
+ * explicitly; by default (`auto`) the official relay requires the compiled official broker.
+ * Every other relay keeps its own DNS cooperation.
  */
 export function dnsBrokerSelection(
   env: NodeJS.ProcessEnv,
@@ -56,7 +79,7 @@ export function dnsBrokerSelection(
     return { url: relayOrigin(env.OMNESIS_ACME_DNS_BROKER_URL).origin, required: true };
   }
   if (provider === "auto" && relayOrigin(relayUrl).origin === DEFAULT_INSTALLATION_RELAY_URL)
-    return { url: OFFICIAL_DNS_BROKER_URL, required: false };
+    return { url: OFFICIAL_DNS_BROKER_URL, required: true };
   return undefined;
 }
 
@@ -77,6 +100,10 @@ export function dnsBrokerClient(options: {
   gatewayId: string;
   owner: () => Promise<KeyObject>;
   fetch?: typeof fetch;
+  /** Called only for a verified URL on the locally configured broker origin. */
+  onVerificationRequired?(verification: DnsBrokerVerification | undefined): void;
+  /** Test seam: production waits two seconds before retrying browser verification. */
+  verificationPollMs?: number;
 }): DnsBrokerClient {
   const broker = relayOrigin(options.brokerUrl);
   const relayDomain = relayOrigin(options.relayUrl).hostname;
@@ -105,6 +132,41 @@ export function dnsBrokerClient(options: {
         body: JSON.stringify(body),
       });
       if (!response.ok) {
+        if (response.status === 428 && operation.type === "claim") {
+          const body = z
+            .object({
+              error: z.literal("browser-verification-required"),
+              verification: z
+                .object({ url: z.string().max(16_384), expiresAt: z.number().int().positive() })
+                .strict(),
+            })
+            .strict()
+            .parse(await readBoundedJson(response));
+          const url = new URL(body.verification.url);
+          if (
+            url.origin !== broker.origin ||
+            url.username ||
+            url.password ||
+            url.pathname !== "/_dns/v2/enroll" ||
+            url.hash ||
+            [...url.searchParams.keys()].some((key) => key !== "ticket") ||
+            url.searchParams.getAll("ticket").length !== 1 ||
+            !url.searchParams.get("ticket") ||
+            body.verification.expiresAt <= Date.now() ||
+            body.verification.expiresAt > Date.now() + 11 * 60_000
+          ) {
+            throw new Error("The DNS broker verification destination was refused");
+          }
+          throw new DnsBrokerVerificationRequired(body.verification);
+        }
+        if (response.status === 429 || response.status === 507) {
+          const value = await readBoundedJson(response).catch(() => undefined);
+          const refused = z
+            .object({ error: z.enum(["dns-capacity", "dns-allocation-rate"]) })
+            .safeParse(value);
+          if (refused.success) throw new DnsBrokerAdmissionRefused(refused.data.error);
+          throw new Error("The DNS broker refused the gateway operation");
+        }
         await response.body?.cancel();
         if (response.status === 409 && operation.type === "claim") throw new DnsBrokerNameTaken();
         throw new Error("The DNS broker refused the gateway operation");
@@ -136,6 +198,7 @@ export function dnsBrokerClient(options: {
     return brokerResultSchemas[operation.type].parse(
       await post("/_dns/v2/complete", {
         challengeId: challenge.challengeId,
+        ...("ticket" in challenge ? { ticket: challenge.ticket } : {}),
         ownerSignature: sign(null, brokerTranscript(challenge), owner).toString("base64url"),
       }),
     );
@@ -163,7 +226,31 @@ export function dnsBrokerClient(options: {
       }
     },
     async claim(signal) {
-      await call({ type: "claim" }, signal);
+      let verification: DnsBrokerVerification | undefined;
+      try {
+        for (;;) {
+          signal.throwIfAborted();
+          try {
+            await call({ type: "claim" }, signal);
+            return;
+          } catch (error) {
+            if (
+              !(error instanceof DnsBrokerVerificationRequired) ||
+              !options.onVerificationRequired
+            )
+              throw error;
+            if (!verification) {
+              verification = error.verification;
+              options.onVerificationRequired(verification);
+            }
+            if (verification.expiresAt <= Date.now())
+              throw new Error("DNS browser verification expired", { cause: error });
+            await delay(options.verificationPollMs ?? 2000, undefined, { signal });
+          }
+        }
+      } finally {
+        if (verification) options.onVerificationRequired?.(undefined);
+      }
     },
     presenter: () => ({
       async create(value, signal) {

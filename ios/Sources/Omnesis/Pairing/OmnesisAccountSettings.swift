@@ -31,6 +31,7 @@ public final class OmnesisAccountModel {
     @ObservationIgnored private var generation = 0
     /// Whether this screen opened the connect sign-in, to close it again once the gateway has moved on.
     @ObservationIgnored private var signInOpened = false
+    @ObservationIgnored private var verificationOpened = false
 
     /// `enabled` is the cloud build flag: while it is off the model never asks the gateway anything.
     public init(
@@ -82,6 +83,7 @@ public final class OmnesisAccountModel {
 
     /// Starts the sign-in that connects this gateway, and opens it for the person.
     public func connect(_ intent: CloudRelayConnectIntent, client: any CloudRelayManaging) async {
+        guard busy == nil else { return }
         await perform(.connect(intent), client: client)
         guard failure == nil, status?.phase == .waiting else { return }
         openSignIn()
@@ -103,10 +105,11 @@ public final class OmnesisAccountModel {
         }
     }
 
-    /// Opens the sign-in of the connect under way; the person may have closed it.
+    /// Opens the pending security check or sign-in; the person may have closed it.
     public func openSignIn() {
-        guard status?.phase == .waiting, let url = CloudRelayPresentation.httpsURL(status?.connect?.authorizeUrl) else { return }
+        guard status?.phase == .waiting, let url = CloudRelayPresentation.connectBrowserURL(status?.connect) else { return }
         signInOpened = true
+        verificationOpened = status?.connect?.verification != nil
         browser?.open(url)
     }
 
@@ -114,15 +117,22 @@ public final class OmnesisAccountModel {
     public func openAccountPage() {
         guard let url = CloudRelayPresentation.accountPageURL(relayUrl: status?.config?.relayUrl) else { return }
         signInOpened = false
+        verificationOpened = false
         browser?.open(url)
     }
 
     private func adopt(_ fresh: CloudRelayStatus) {
         status = fresh
         loadError = nil
+        if signInOpened, verificationOpened, fresh.phase == .waiting, fresh.connect?.verification == nil,
+           let url = CloudRelayPresentation.connectBrowserURL(fresh.connect) {
+            verificationOpened = false
+            browser?.open(url)
+        }
         // The sign-in ends on the relay's page; the gateway moving on is what closes it here.
         if signInOpened, fresh.phase != .waiting {
             signInOpened = false
+            verificationOpened = false
             browser?.close()
         }
     }

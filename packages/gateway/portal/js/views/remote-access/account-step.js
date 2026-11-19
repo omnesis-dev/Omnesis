@@ -70,7 +70,10 @@ export function accountConnect(relay) {
   const disabled = Boolean(busy) && busy !== "refresh";
   // Creating an account is always the person's explicit choice, here and on the sign-in page.
   const connect = (intent) => run("connect", { termsAccepted: true, intent });
-  const copy = COPY[state];
+  const copy = state === "waiting" && status.connect?.verification ? {
+    heading: "Verify this gateway's setup",
+    blurb: "Open the security check to get this gateway's public address. Cloudflare usually checks automatically; it may ask you to confirm you're human. No approval from Omnesis is needed.",
+  } : COPY[state];
   const blurb =
     state === "unavailable" && status.serviceError
       ? relayError(status.serviceError)

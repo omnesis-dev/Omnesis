@@ -616,3 +616,43 @@ test("status names an invite-only relay's request page", async () => {
   await manageCloud("status");
   expect(String(output.mock.calls[0]![0])).not.toContain("Sign-up");
 });
+
+test("connect prints the independent security check once, then continues to ordinary sign-in", async () => {
+  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
+  const output = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+  const verification = {
+    url: "https://dns.example.test/_dns/v2/enroll?ticket=fictional",
+    expiresAt: Date.now() + 60_000,
+  };
+  gatewayReplies(
+    { connect: { state: "waiting", verification } },
+    { connect: { state: "waiting", verification } },
+    waiting,
+    done,
+  );
+  await connectGateway({ acceptTerms: true });
+  const text = output.mock.calls.map(([value]) => String(value)).join("");
+  expect(text.split(verification.url)).toHaveLength(2);
+  expect(text).toContain("No approval from Omnesis is needed");
+  expect(text).toContain("ABCD-EF23");
+  expect(text.indexOf(verification.url)).toBeLessThan(text.indexOf("ABCD-EF23"));
+  expect(text).toContain("Connected to your Omnesis account.");
+});
+
+test("connect refuses malformed browser check links without printing them", async () => {
+  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
+  const output = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+  for (const url of [
+    "javascript:alert(1)",
+    "https://dns.example.test/not-enrollment?ticket=fictional",
+    "https://dns.example.test/_dns/v2/enroll?ticket=one&ticket=two",
+  ]) {
+    gatewayReplies({
+      connect: { state: "waiting", verification: { url, expiresAt: Date.now() + 60_000 } },
+    });
+    await expect(connectGateway({ acceptTerms: true })).rejects.toThrow(
+      "security check link was refused",
+    );
+    expect(output.mock.calls.map(([value]) => String(value)).join("")).not.toContain(url);
+  }
+});

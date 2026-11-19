@@ -28,6 +28,8 @@ import dev.omnesis.android.transport.dto.CloudRelayAccountLink
 import dev.omnesis.android.transport.dto.CloudRelayCertificate
 import dev.omnesis.android.transport.dto.CloudRelayConfig
 import dev.omnesis.android.transport.dto.CloudRelayConnect
+import dev.omnesis.android.transport.dto.CloudRelayVerification
+import kotlinx.serialization.json.JsonPrimitive
 import dev.omnesis.android.transport.dto.CloudRelayEnrollment
 import dev.omnesis.android.transport.dto.CloudRelayPublicMcp
 import dev.omnesis.android.transport.dto.CloudRelayStatus
@@ -89,6 +91,18 @@ class CloudAccountContentTest {
                 }
             }
         }
+    }
+
+    @Test fun `security check opens its independent link before account sign in`() {
+        val url = "https://dns.example.com/_dns/v2/enroll?ticket=fictional"
+        val opened = mutableListOf<String>()
+        show(fresh.copy(connect = CloudRelayConnect(state = "waiting",
+            verification = CloudRelayVerification(url, JsonPrimitive(System.currentTimeMillis() + 300_000)))),
+            actions = CloudAccountActions(openSignIn = { opened += it }))
+        compose.onNodeWithText("Verify this gateway setup").assertExists()
+        compose.onNodeWithText("Open security check").performClick()
+        assertEquals(listOf(url), opened)
+        compose.onNodeWithText("Open sign-in").assertDoesNotExist()
     }
 
     @Test fun `not connected offers both ways in and each sends its intent`() {
