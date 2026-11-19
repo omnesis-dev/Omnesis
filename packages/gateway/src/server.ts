@@ -643,11 +643,7 @@ export function createServer(
     getStorageIndex?: () => import("./storage/index-accounting.js").IndexStorageAccounting | null;
     onStorageService?: (service: StorageService) => void;
     refreshStorageIfStale?: () => void;
-    getStorageAccountingStatus?: () => {
-      refreshing: boolean;
-      measuredAt: string | null;
-      error: string | null;
-    };
+    getStorageAccountingStatus?: () => import("./storage/accounting-status.js").StorageAccountingStatus;
     refreshStorage?: () => Promise<void>;
     /**
      * Called after a model-provider credential file is written or
