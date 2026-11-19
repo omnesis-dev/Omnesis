@@ -51,6 +51,33 @@ every lane.
 - Workspace target inference: `scripts/nx/project-plugin.mjs`
 - Dirty-tree identity: `scripts/nx/tree-state.mjs`
 
+### Storage pressure and retention have separate authority
+
+`storage/runtime.ts` composes independent capacity, accounting and retention
+jobs. Capacity refresh is realtime infrastructure, so pausing background work
+cannot silently expire ingestion's admission lease. Logical corpus accounting
+runs on read workers and never delays capacity probes. Physical footprint,
+SQLite page allocation and logical source payload are separate measurements;
+never add them together or promise a logical deletion shrinks a database file.
+
+Capacity limits only pause growth. Deletion requires an explicit source-and-cutoff trim request or a per-source
+rolling-retention policy. Both feed the same bounded background deletion engine.
+Durable jobs store one cursor per intent, not one queued task per document. The
+writer revalidates source incarnation and document revisions before deletion and
+commits cursor progress and a durable derived-store cleanup obligation with it.
+Configuration stores user choices; source incarnations, policy bindings and job
+progress belong in the database.
+Rolling batches also carry a shared config-revision fence to the writer, so
+a raw config edit can revoke work still waiting in its queue. Index cleanup
+uses the owning worker's bounded document-purge protocol; an
+incomplete purge must not acknowledge the obligation. Privacy invalidation and
+reclamation remain runnable while growth is paused.
+
+- Composition: `packages/gateway/src/storage/runtime.ts`
+- Deletion authority: `packages/gateway/src/storage/retention.ts`
+- Atomic deletion: `packages/gateway/src/storage/retention-store.ts`
+- Index coordination: `packages/gateway/src/indexer/index-write-gate.ts`
+
 ### `defineSource()` over `class … implements Source`
 
 Source providers expose a `defineSource<Cursor>({...})` factory call rather than implementing a `Source` interface — there is no such interface; structural typing on the descriptor object is the contract. Compact providers (Things, Browser History) live in a single `index.ts`; larger providers (Apple, Google) compose sub-modules behind the descriptor.

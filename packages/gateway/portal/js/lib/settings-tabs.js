@@ -33,6 +33,7 @@
 const TABS = [
   { key: "config", label: "Config" },
   { key: "lab", label: "Omnesis Lab", experimental: true },
+  { key: "storage", label: "Storage" },
   // Keyed `omnesis-md` rather than `omnesis.md`: the router's tab segment
   // pattern accepts lower-case letters and hyphens only, so a dot in the key
   // would make the tab unreachable by URL.

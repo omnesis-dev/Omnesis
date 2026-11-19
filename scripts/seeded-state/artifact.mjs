@@ -88,6 +88,12 @@ const REBUILT_TABLES = new Set([
 // These tables contain bearer material or active delivery claims and may never
 // cross the seeded-state boundary, even when a caller mistakenly allowlists one.
 const FORBIDDEN_TABLES = new Set([
+  // Deletion authority and unfinished reclamation belong to one installation.
+  // Clones create fresh source identities when the gateway opens their database.
+  "storage_retention_bindings",
+  "storage_source_incarnations",
+  "storage_trim_job_cascades",
+  "storage_trim_jobs",
   // A queued conversation handoff is active delivery work, not seed data.
   "note_agent_handoffs",
   // Exact unfinished source output is live write authority, never a seed.

@@ -24,6 +24,7 @@ import { createToken } from "../data/repositories/TokenRepository.js";
 import { directWriteGate } from "../write-gate.js";
 import { EventBus } from "../events.js";
 import { priorContentRequested } from "../data/document-prior-content.js";
+import { insertTemporalAnnotation } from "../enrichment/temporal-annotations/storage.js";
 import {
   briefsFeatureStatus as computeBriefsStatus,
   bootBriefs as prepareBriefs,
@@ -770,6 +771,78 @@ describe("bootBriefs — the run-queue drainer follows the live model gate", () 
     ]);
     // The diff engine's pre-write body capture is now requested.
     expect(priorContentRequested()).toBe(true);
+  });
+
+  it("capacity pressure parks growth while temporal evidence invalidation remains active", async () => {
+    process.env.OMNESIS_EXPERIMENTAL = "1";
+    const { deps, schedule } = makeBootDeps(assignedResolver);
+    const bus = new EventBus();
+    (deps.runQueue as { eventBus?: Pick<EventBus, "on"> }).eventBus = bus;
+    const invalidate = vi.fn(async () => ({
+      invalidated: 1,
+      kept: 0,
+      resurrected: 0,
+      atomsBroken: 1,
+      atomsHealed: 0,
+    }));
+    deps.writeGate.invalidateTemporalAnnotationsForDoc = invalidate;
+    const date = "2026-01-01T00:00:00.000Z";
+    db.prepare(
+      `INSERT INTO documents (id, provider_id, source_id, external_id, title, content,
+      content_hash, source_created_at, source_updated_at, ingested_at, updated_at)
+      VALUES ('capacity-evidence', 'fictional-provider', 'fictional-notes', 'evidence',
+       'Invented deadline', 'The workshop is tomorrow.', 'old-hash', ?, ?, ?, ?)`,
+    ).run(date, date, date, date);
+    insertTemporalAnnotation(
+      db,
+      {
+        id: "capacity-annotation",
+        intervalStartMs: Date.UTC(2026, 0, 2),
+        intervalEndMs: Date.UTC(2026, 0, 3) - 1,
+        precision: "day",
+        canonical: "2026-01-02",
+        sentence: "Workshop deadline",
+        kind: "deadline",
+        documentIds: ["capacity-evidence"],
+        createdByRun: "fictional-run",
+      },
+      Date.parse(date),
+    );
+    await bootBriefs({ ...deps, canGrow: () => false });
+    const after = {
+      id: "capacity-evidence",
+      providerId: "fictional-provider",
+      sourceId: "fictional-notes",
+      externalId: "evidence",
+      documentType: "note",
+      title: "Invented deadline",
+      contentHash: "new-hash",
+      metadata: {},
+      sourceCreatedAt: date,
+      sourceUpdatedAt: date,
+      people: [],
+    };
+    bus.emit("document.upserted", {
+      before: { ...after, contentHash: "old-hash" },
+      after,
+      afterContent: "The workshop moved.",
+      changedFields: ["contentHash"],
+      contentChanged: true,
+    });
+    expect(invalidate).toHaveBeenCalledWith("capacity-evidence", expect.any(Number));
+    const drain = schedule.mock.calls
+      .map(([task]) => task)
+      .find((task) => task.name === "briefs.wakerDrain");
+    expect(drain).toBeDefined();
+    await drain.run(undefined, {
+      shouldYield: () => false,
+      elapsedMs: () => 0,
+      signal: new AbortController().signal,
+    });
+    expect(
+      db.prepare<[], { count: number }>("SELECT COUNT(*) AS count FROM cognition_runs").get()!
+        .count,
+    ).toBe(0);
   });
 });
 

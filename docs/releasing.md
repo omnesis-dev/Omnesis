@@ -233,6 +233,10 @@ can mint a fresh credential. Seed provenance is hashed from named input files,
 declared row counts are checked, and the main database `user_version` must match
 the declared schema version.
 
+Storage policy bindings, trim jobs and their cleanup links never cross this
+boundary. Source incarnation markers are also omitted; first boot creates
+fresh identities for the copied sources without inheriting deletion authority.
+
 The command prints the SHA-256 of `seeded-state-manifest.json`. Treat that digest
 as release metadata outside the artifact itself: a colocated manifest is not an
 authenticity boundary. To initialize the compiled image, mount the artifact

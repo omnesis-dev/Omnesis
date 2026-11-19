@@ -118,6 +118,7 @@ export class AnalyticsService {
     private readonly absencePolicy?: () => SnapshotAbsencePolicy,
     private readonly replicaLedger?: AnalyticsReplicaLedger,
     private readonly diskGuard?: {
+      readonly assertStorageCanGrow?: () => void;
       readonly dbPath: string;
       readonly minFreeBytes: number;
       readonly check?: (path: string, minFreeBytes: number) => DiskSpaceCheck;
@@ -216,6 +217,7 @@ export class AnalyticsService {
   }
 
   private assertWriteSpace(): void {
+    this.diskGuard?.assertStorageCanGrow?.();
     if (!this.diskGuard) return;
     const check = this.diskGuard.check ?? hasFreeDiskSpace;
     const result = check(dirname(this.diskGuard.dbPath), this.diskGuard.minFreeBytes);

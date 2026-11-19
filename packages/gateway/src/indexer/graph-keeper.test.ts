@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { randomBytes, randomUUID } from "node:crypto";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { readFileSync, existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -140,7 +140,15 @@ describe("GraphKeeper", () => {
     );
   }
 
-  function start(opts: { indexDbKey?: Buffer; pageSize?: number; headroom?: () => number } = {}): {
+  function start(
+    opts: {
+      indexDbKey?: Buffer;
+      pageSize?: number;
+      headroom?: () => number;
+      canGrow?: () => boolean;
+      onProgress?: (fraction: number) => void;
+    } = {},
+  ): {
     keeper: GraphKeeper;
     handle: UsearchWriteHandle;
   } {
@@ -154,13 +162,70 @@ describe("GraphKeeper", () => {
       indexDbKey: opts.indexDbKey ?? null,
       budget: { bytes: 8 * GIB, source: "config" },
       pageSize: opts.pageSize,
+      canGrow: opts.canGrow,
       headroom: opts.headroom ?? (() => headroom),
-      onProgress: () => {},
+      onProgress: opts.onProgress ?? (() => {}),
       onState: (state) => states.push(state),
       log: () => {},
     });
     return { keeper, handle };
   }
+
+  it("does not checkpoint a storage-blocked graph and resumes after capacity returns", async () => {
+    seed(0, 5);
+    let allowed = false;
+    const { keeper, handle } = start({ canGrow: () => allowed });
+    await keeper.open();
+    expect(existsSync(path)).toBe(false);
+    expect(handle.isDetached).toBe(false);
+    expect(await keeper.resumeStorageWork()).toBe(false);
+    allowed = true;
+    expect(await keeper.resumeStorageWork()).toBe(true);
+    expect(existsSync(path)).toBe(true);
+    expect(states.at(-1)).toMatchObject({ state: "ready" });
+    keeper.stop();
+    handle.release();
+  });
+
+  it("does not force a checkpoint when storage blocks a graph build mid-page", async () => {
+    seed(0, 10);
+    let allowed = true;
+    let firstPage = true;
+    const { keeper, handle } = start({
+      pageSize: 2,
+      canGrow: () => allowed,
+      onProgress: () => {
+        if (firstPage) {
+          firstPage = false;
+          allowed = false;
+        }
+      },
+    });
+    await keeper.open();
+    expect(existsSync(path)).toBe(false);
+    expect(handle.backfillCursor).not.toBeNull();
+    allowed = true;
+    expect(await keeper.resumeStorageWork()).toBe(true);
+    expect(existsSync(path)).toBe(true);
+    expect(states.at(-1)).toMatchObject({ state: "ready" });
+    keeper.stop();
+    handle.release();
+  });
+
+  it("keeps a stored graph untouched while storage is blocked", async () => {
+    seed(0, 5);
+    const initial = start();
+    await initial.keeper.open();
+    initial.keeper.stop();
+    initial.handle.release();
+    const before = readFileSync(path);
+    seed(5, 10);
+    const deferred = start({ canGrow: () => false });
+    await deferred.keeper.open();
+    expect(readFileSync(path)).toEqual(before);
+    deferred.keeper.stop();
+    deferred.handle.release();
+  });
 
   it("stamps the saved graph's encoding, which reads as floats until a save", async () => {
     seed(0, 5);

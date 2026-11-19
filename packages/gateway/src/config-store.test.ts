@@ -56,6 +56,46 @@ beforeEach(() => {
   store = new ConfigStore({ filePath: path, watchDebounceMs: 40 });
 });
 
+describe("ConfigStore — worker authority revision", () => {
+  test("API changes revoke captured and structured-cloned authority; no-op and rejected changes do not", async () => {
+    await store.load();
+    const captured = store.captureRevisionFence();
+    const cloned = structuredClone(captured);
+    await store.patch({ indexer: { cycleInterval: "10m" } });
+    expect(Atomics.load(new Int32Array(captured.buffer), 0)).not.toBe(captured.revision);
+    expect(Atomics.load(new Int32Array(cloned.buffer), 0)).not.toBe(cloned.revision);
+    const afterPatch = store.captureRevisionFence();
+    await store.patch({ indexer: { cycleInterval: "10m" } });
+    await store.patch({ indexer: { cycleInterval: "invalid" } });
+    expect(store.captureRevisionFence().revision).toBe(afterPatch.revision);
+    await store.put({ indexer: { cycleInterval: "20m" } });
+    expect(store.captureRevisionFence().revision).not.toBe(afterPatch.revision);
+    const afterPut = store.captureRevisionFence();
+    await store.update((current) => ({ ...current, indexer: { cycleInterval: "30m" } }));
+    expect(store.captureRevisionFence().revision).not.toBe(afterPut.revision);
+  });
+
+  test("loading a saved configuration advances authority", async () => {
+    const before = store.captureRevisionFence();
+    writeFileSync(path, JSON.stringify({ indexer: { cycleInterval: "10m" } }));
+    await store.load();
+    expect(Atomics.load(new Int32Array(before.buffer), 0)).not.toBe(before.revision);
+  });
+
+  test("external removal revokes authority when its empty configuration is applied", async () => {
+    await store.load();
+    await store.patch({ indexer: { cycleInterval: "10m" } });
+    const before = store.captureRevisionFence();
+    rmSync(path);
+    const deadline = Date.now() + 3000;
+    while (Date.now() < deadline && store.captureRevisionFence().revision === before.revision) {
+      await wait(20);
+    }
+    expect(store.get()).toEqual({});
+    expect(Atomics.load(new Int32Array(before.buffer), 0)).not.toBe(before.revision);
+  });
+});
+
 afterEach(() => {
   store.stop();
   rmSync(dir, { recursive: true, force: true });
@@ -265,12 +305,14 @@ describe("ConfigStore — listeners + file watcher", () => {
   });
 
   test("external file edit triggers reload + listener", async () => {
+    const authority = store.captureRevisionFence();
     let changed: string[] | null = null;
     store.onChange((_b, _a, paths) => {
       changed = paths;
     });
     await writeExternalCycleInterval("30m");
     expect(changed).toContain("/indexer/cycleInterval");
+    expect(Atomics.load(new Int32Array(authority.buffer), 0)).not.toBe(authority.revision);
   });
 
   test("our own writes don't re-trigger listeners (hash-dedup)", async () => {

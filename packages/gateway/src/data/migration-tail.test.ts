@@ -88,6 +88,8 @@ const WOUND_BACK = [
   217,
   // 218 indexes name aliases by their lowercased text; windBack drops the index.
   218,
+  // 219 installs source identity markers, policy bindings and trim jobs, dropped by windBack.
+  219,
 ];
 
 let dir: string;
@@ -298,6 +300,11 @@ function undoStickyRevocation(db: Db): void {
 }
 
 function windBack(db: Db): void {
+  db.exec("DROP TABLE storage_trim_job_cascades");
+  db.exec("DROP TABLE storage_trim_jobs");
+  db.exec("DROP TABLE storage_retention_bindings");
+  db.exec("DROP TRIGGER storage_source_incarnation_insert");
+  db.exec("DROP TABLE storage_source_incarnations");
   db.exec("DROP INDEX idx_person_aliases_name_lower");
   undoStickyRevocation(db);
   db.exec("DROP INDEX idx_documents_id_document_type");

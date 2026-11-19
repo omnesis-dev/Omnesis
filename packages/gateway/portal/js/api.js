@@ -1828,3 +1828,10 @@ export const getKnowledgeLibraryRetirement = (id) => request("GET", `/admin/brai
 export const getKnowledgeNodeDecisions = (id) => request("GET", `/admin/brain/knowledge/${encodeURIComponent(id)}/decisions`);
 
 export const getKnowledgePendingWork = (query = {}) => request("GET", "/admin/brain/knowledge/pending-work", { query });
+
+// Storage controls share portal authentication, CSRF, and error handling.
+export const getStorage = () => request("GET", "/admin/storage", { cache: "no-store" });
+export const setStoragePolicy = (policy) => request("PATCH", "/admin/storage/policy", { body: policy });
+export const startStorageTrim = (sourceId, before) => request("POST", "/admin/storage/trim/jobs", { body: { sourceId, before } });
+export const setStorageRetention = (sourceId, maxAgeDays) => request("PATCH", "/admin/storage/retention", { body: { sourceId, maxAgeDays } });
+export const refreshStorage = () => request("POST", "/admin/storage/refresh", { body: {} });

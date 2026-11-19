@@ -97,7 +97,7 @@ import { createActivityRetentionTask } from "./activity-retention/task.js";
 import { createAbsenceSweepTask } from "./absence/task.js";
 import { createOwnershipRepairTask } from "./analytics/ownership-repair-task.js";
 import { createTemporalProjectionRelinker } from "./analytics/projection-relink.js";
-import { directIndexWriteGate } from "./indexer/index-write-gate.js";
+import { workerCoordinatedIndexWriteGate } from "./indexer/index-write-gate.js";
 import { cascadeCognitiveStateThroughGate } from "./brain/cognitive-state-cascade.js";
 import { resolveRelaySettings } from "./push/relay-settings.js";
 import { generateSelfSigned, tlsExtraHostNames } from "./tls.js";
@@ -212,7 +212,9 @@ import { AnalyticsDb } from "./analytics-db.js";
 import { defaultMemoryLimitMiB as defaultAnalyticsMemoryLimitMiB } from "./analytics/connection-pool.js";
 import { startWatchV2 } from "./watch/host.js";
 import { resolveWatchJournal, watchJournalPath } from "./watch/journal-path.js";
-import { DiskUsageMonitor, measureDiskUsage } from "./disk-usage.js";
+import { StorageRuntime } from "./storage/runtime.js";
+import { assertStorageVolumeGrowth } from "./storage/volumes.js";
+import { InsufficientStorageError } from "./http/errors.js";
 import {
   analyticsPortFor,
   openWatchStores,
@@ -310,6 +312,7 @@ import {
   getCognitionEngineState,
 } from "./brain/storage/engine-state.js";
 import { chatRoleReadiness, type ChatRoleReadinessDeps } from "./models/chat-role-readiness.js";
+import { resolveStoragePolicy, type StoragePressureManager } from "./storage/pressure.js";
 import { DeferredStartupTasks } from "./startup/deferred-tasks.js";
 import { createStartupShutdown } from "./startup/shutdown.js";
 import { initializeGatewayDatabase, initializeGatewayIndex } from "./startup/storage.js";
@@ -374,6 +377,11 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
   const configDir = boot.configDir;
   const DB_PATH = process.env.OMNESIS_DB_PATH ?? join(configDir, "omnesis.db");
   const PORT = boot.port;
+  let storagePressureHandle: StoragePressureManager | undefined = undefined;
+  function storageCanGrow(): boolean {
+    const state = storagePressureHandle?.snapshot().state;
+    return state === "normal" || state === "warning";
+  }
   if (reverseProxyTrusted() && !isLoopbackIp(process.env.OMNESIS_BIND ?? "0.0.0.0")) {
     log.warn(
       "OMNESIS_TRUST_PROXY is set; bind loopback behind the proxy to preserve client-address trust",
@@ -1749,7 +1757,10 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
     backgroundJobs,
     ioGate,
     writeGate,
-    getSettings: () => resolveDateEnrichmentSettings(configStore.get().enrichment),
+    getSettings: () => {
+      const settings = resolveDateEnrichmentSettings(configStore.get().enrichment);
+      return { ...settings, enabled: settings.enabled && storageCanGrow() };
+    },
     getDecision: () => decisionService.get(),
     recordSpend: (modelId, inputTokens) =>
       recordDecisionSpend(
@@ -1760,7 +1771,7 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
         inputTokens,
       ),
     countPending: () => countPendingMentionJudgements(db),
-    active: mentionWorthGateActive,
+    active: () => storageCanGrow() && mentionWorthGateActive(),
     log: log.child("enrichment:mention-worth-gate"),
   });
   // Turning the gate on, assigning a decision model or moving the threshold
@@ -1787,7 +1798,10 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
     ioGate,
     cpuGate,
     writeGate,
-    getSettings: () => resolveDateEnrichmentSettings(configStore.get().enrichment),
+    getSettings: () => {
+      const settings = resolveDateEnrichmentSettings(configStore.get().enrichment);
+      return { ...settings, enabled: settings.enabled && storageCanGrow() };
+    },
     countPending: () => countPendingDateExtraction(db),
     onApplied: mentionWorthGate.kick,
     // A notes day holding a voice note still being transcribed is read once the
@@ -1823,7 +1837,7 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
         });
     };
 
-  const indexerLifecycle = new IndexerLifecycle({
+  const indexerLifecycle: IndexerLifecycle = new IndexerLifecycle({
     inferenceRegistry,
     configStore,
     indexerStatus,
@@ -1831,6 +1845,16 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
     backgroundJobs,
     runtime,
     initialProbe,
+    getStoragePressure: () =>
+      storagePressureHandle?.snapshot() ?? {
+        state: "unknown",
+        reasons: ["measurement"],
+        measuredAt: null,
+        usageBytes: null,
+        volumes: [],
+        policy: resolveStoragePolicy(configStore.get().gateway?.storage, runtime.minFreeDiskMb),
+        validUntil: 0,
+      },
     log,
     gatewayDbPath: DB_PATH,
     gatewayDbKeyHex: storageEncryption.mainDbKeyHex,
@@ -1873,6 +1897,15 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
   // wipe-and-reindex for the embedder; a hot swap for the rest).
   const lastModelProgressBroadcastAt = new Map<string, number>();
   const modelManager = new ModelManager({
+    assertStorageCanGrow: (additionalBytes) => {
+      if (!storagePressureHandle)
+        throw new InsufficientStorageError(
+          "Storage measurement is still starting. Open Settings → Storage.",
+        );
+      const policy = storagePressureHandle.snapshot().policy;
+      assertStorageVolumeGrowth(MODELS_DIR, policy, additionalBytes);
+      storagePressureHandle.assertCanGrow(additionalBytes);
+    },
     modelsDir: MODELS_DIR,
     configDir,
     catalog: () => anthropicCatalogService.catalog(),
@@ -2325,7 +2358,7 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
   const watchV2 = journal.ok
     ? tryStart("the watch journal", () =>
         startWatchV2({
-          active: () => labFeatureEnabled(db, "watches"),
+          active: () => storageCanGrow() && labFeatureEnabled(db, "watches"),
           journalPath: journal.path,
           db,
           indexDb,
@@ -2677,10 +2710,8 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
     watchV2EngineHandle = watchV2Engine;
   }
 
-  // Measured in the background from boot, so the first /status already carries
-  // the whole footprint rather than falling back to the main database alone.
-  const diskUsage = new DiskUsageMonitor(() =>
-    measureDiskUsage({
+  const storageRuntime: StorageRuntime = new StorageRuntime({
+    layout: {
       configDir,
       dbPath: DB_PATH,
       indexDbPath,
@@ -2690,9 +2721,18 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
       conversationsDir,
       modelsDir: MODELS_DIR,
       backupsDir,
-    }),
-  );
-  void diskUsage.refresh();
+    },
+    configStore,
+    scheduler,
+    reads: ioGate,
+    getMinFreeDiskMb: () => resolveRuntimeSettings(configStore.get()).minFreeDiskMb,
+    getIndexer: () => indexerLifecycle.indexerProxy,
+    setStoragePressure: (blocked, validUntil) =>
+      indexerLifecycle.setStoragePressure(blocked, validUntil),
+  });
+  const storagePressure: StoragePressureManager = storageRuntime.pressure;
+  storagePressureHandle = storagePressure;
+  storageRuntime.start();
 
   const httpShutdown = boot.listener.shutdown;
   // What follows a task change, wherever it is made: the searchable loop mirror
@@ -2746,7 +2786,18 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
     },
     interest: interestEngine,
     taskEffects,
-    getDiskUsage: () => diskUsage.snapshot(),
+    getDiskUsage: () => storageRuntime.physical,
+    storagePressure,
+    storageReads: ioGate,
+    assertStorageCanGrow: () => storagePressure.assertCanGrow(),
+    getStorageLogical: () => storageRuntime.logical,
+    getStorageIndex: () => storageRuntime.index,
+    onStorageService: (service) => {
+      storageRuntime.service = service;
+    },
+    refreshStorage: () => storageRuntime.refresh(),
+    refreshStorageIfStale: () => storageRuntime.refreshIfStale(),
+    getStorageAccountingStatus: () => storageRuntime.accountingStatus(),
     requestAdmission: (_c, next) => Promise.resolve(httpShutdown.guard(next)),
     // The same store the agent prompts read from, so a portal save and the next
     // prompt build cannot disagree about what the file says.
@@ -2883,6 +2934,10 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
       // before it is ready for search/admin calls. Returns undefined only when no
       // worker owns the handle, when the direct fallback is safe.
       deleteSourceIndex: (sourceId) => indexerLifecycle.deleteSourceIndex(sourceId),
+      deleteDocumentIndexBatch: (id, limit, sourceDeleted) =>
+        indexerLifecycle.deleteDocumentIndexBatch(id, limit, sourceDeleted),
+      deleteDocumentsIndexBatch: (ids, limit, sourceDeleted) =>
+        indexerLifecycle.deleteDocumentsIndexBatch(ids, limit, sourceDeleted),
       wake: () => {
         // Routed through the Scheduler's debounced wake primitive — see
         // `indexerWakeTask` registration below. Drops if the worker
@@ -3307,6 +3362,7 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
   });
 
   await bootBriefs({
+    canGrow: storageCanGrow,
     isEnabled: () => labFeatureEnabled(db, "brain"),
     registry: inferenceRegistry,
     readiness: chatRoleReadinessDeps,
@@ -3607,6 +3663,7 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
 
   const backfillBundle = createBackfillTasks(
     {
+      canGrow: storageCanGrow,
       writeGate,
       ioGate,
       cpuGate,
@@ -3834,7 +3891,14 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
     {
       writeGate,
       ioGate,
-      indexWriteGate: directIndexWriteGate(indexDb),
+      indexWriteGate: workerCoordinatedIndexWriteGate(
+        indexDb,
+        (sourceId) => indexerLifecycle.deleteSourceIndex(sourceId),
+        (id, limit, sourceDeleted) =>
+          indexerLifecycle.deleteDocumentIndexBatch(id, limit, sourceDeleted),
+        (ids, limit, sourceDeleted) =>
+          indexerLifecycle.deleteDocumentsIndexBatch(ids, limit, sourceDeleted),
+      ),
       analyticsDb,
       cascadeCognitionFor: (documentIds) =>
         cascadeCognitiveStateThroughGate(db, writeGate, documentIds),
@@ -3893,7 +3957,7 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
     getDevice: (deviceId) => getDevice(db, deviceId),
     policyStore: subscriptionsPolicyStore,
     log: log.child("subscriptions:delivery"),
-    isEnabled: () => labFeatureEnabled(db, "watches"),
+    isEnabled: () => storageCanGrow() && labFeatureEnabled(db, "watches"),
     reevaluatePendingWatchPolicies: () =>
       subscriptionService?.reevaluatePendingWatchPolicies() ?? Promise.resolve(0),
     reapplyOperatorApprovals: () =>

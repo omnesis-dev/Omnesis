@@ -3,6 +3,8 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { describe, test, expect, beforeEach, afterEach, vi } from "vitest";
 import { renderConversationDay } from "@omnesis/core";
 import { ProviderId, SourceId } from "@omnesis/types";
@@ -38,8 +40,6 @@ import type { UrlCanonicalizerSpec } from "@omnesis/core";
 import type { DocumentSource, Embedder, IndexableDocument } from "./types.js";
 import type { DocumentInput } from "@omnesis/types";
 import type Database from "better-sqlite3";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 type Db = Database.Database;
 
 // Mock embedder that returns deterministic vectors, with optional failure injection
@@ -1658,4 +1658,33 @@ describe("lexical indexing", () => {
     expect(getChunkCount(db)).toBe(1);
     expect(getIndexErrorCountsBySource(db)).toEqual({});
   });
+});
+
+describe("reversible storage pressure", () => {
+  test.each(["indexUpdated", "reindexMissing"] as const)(
+    "%s stops between pages and resumes pending documents",
+    async (method) => {
+      source.documents = Array.from({ length: 6 }, (_, index) => makeDoc(`capacity-${index}`));
+      source.allIds = source.documents.map((doc) => doc.id);
+      let allowed = true;
+      const original = embedder.embed.bind(embedder);
+      vi.spyOn(embedder, "embed").mockImplementation(async (texts) => {
+        const result = await original(texts);
+        allowed = false;
+        return result;
+      });
+      const controlled = new Indexer(db, source, new DocumentChunker(), embedder, {
+        pageSize: 2,
+        betweenPageSleepMs: 0,
+        canGrow: () => allowed,
+      });
+      await controlled[method]();
+      expect(getIndexedDocumentCount(db)).toBeGreaterThan(0);
+      expect(getIndexedDocumentCount(db)).toBeLessThan(6);
+      vi.mocked(embedder.embed).mockImplementation(original);
+      allowed = true;
+      await controlled[method]();
+      expect(getIndexedDocumentCount(db)).toBe(6);
+    },
+  );
 });

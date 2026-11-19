@@ -325,6 +325,7 @@ function App() {
   const [releaseUpdate, setReleaseUpdate] = useState(null);
   const statusRequestGeneration = useRef(0);
   const [modelHealth, setModelHealth] = useState({ warnings: [] });
+  const [storagePressure, setStoragePressure] = useState(null);
 
   // Half the window the gateway believes a viewing mark for, so a refresh
   // always lands well inside it. Derived rather than hardcoded: the two
@@ -374,6 +375,7 @@ function App() {
       const status = await getStatus();
       if (generation !== statusRequestGeneration.current) return;
       setModelHealth(status?.modelHealth ?? { warnings: [] });
+      setStoragePressure(status?.storagePressure ?? null);
       setExperimental(status?.experimental === true);
       setLabAvailable(status?.labAvailable === true);
       setLab({ brain: status?.lab?.brain === true, tasks: status?.lab?.tasks === true, watches: status?.lab?.watches === true });
@@ -654,9 +656,10 @@ function App() {
             // to a brand-new empty session).
             const isActive = route.view === item.view && !(item.isNewConvo && activeConvoId);
             const modelWarning = item.view === "settings" && modelHealth.warnings.length > 0;
-            // A decision waiting expires, so it leads where its item goes, ahead of a model problem.
+            const storageWarning = item.view === "settings" && storagePressure && storagePressure.state !== "normal";
+            // Expiring approval requests lead first; persistent health warnings stay marked.
             const waiting = navAttention(item.view, attention);
-            const href = waiting?.href ?? (modelWarning ? "/portal/settings/models" : item.href);
+            const href = waiting?.href ?? (storageWarning ? "/portal/settings/storage" : modelWarning ? "/portal/settings/models" : item.href);
             return html`
               <a
                 key=${item.view}
@@ -674,7 +677,7 @@ function App() {
                 <span class="sidebar-label"
                   >${item.view === "tasks" ? countLabel(item.label, openTasksToday) : item.label}</span
                 >
-                ${modelWarning && html`<${WarningTriangle} label="Models need attention" />`}
+                ${storageWarning ? html`<${WarningTriangle} label="Storage needs attention" />` : modelWarning && html`<${WarningTriangle} label="Models need attention" />`}
                 ${waiting && html`<${AttentionIcon} label=${waiting.label} />`}
               </a>
             `;
@@ -803,6 +806,8 @@ function App() {
               tab=${route.tab}
               modelsSection=${route.modelsSection}
               modelHealth=${modelHealth}
+              storagePressure=${storagePressure}
+              onStorageRefresh=${refreshGatewayStatus}
               onModelsRefresh=${refreshGatewayStatus}
               onLabChange=${refreshGatewayStatus}
               accessAuthorizationId=${route.accessAuthorizationId}

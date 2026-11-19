@@ -57,7 +57,12 @@ import {
 } from "@omnesis/core";
 import { z } from "zod";
 import { scope } from "../http/scope.js";
-import { BadRequestError, ConflictError, ValidationError } from "../http/errors.js";
+import {
+  InsufficientStorageError,
+  BadRequestError,
+  ConflictError,
+  ValidationError,
+} from "../http/errors.js";
 import { CodexRuntimeUpdateConflictError } from "./codex-runtime-updater.js";
 import { CodexRuntimeLifecycleConflictError } from "./codex-runtime-lifecycle.js";
 import { AgentSetupConflictError, AgentSetupUnavailableError } from "./agent-assignment-setup.js";
@@ -319,6 +324,7 @@ export function registerModelRoutes(app: RouteApp, opts: RegisterOptions): void 
       const { downloadId } = modelManager.install(body.id);
       return c.json({ ok: true, downloadId });
     } catch (err) {
+      if (err instanceof InsufficientStorageError) throw err;
       const message = err instanceof Error ? err.message : String(err);
       // Bad-input failures (unknown id / already installed / etc.) come
       // back as 400; the manager throws synchronously in those cases.

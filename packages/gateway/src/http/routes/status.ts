@@ -111,6 +111,7 @@ export interface StatusRoutesDeps {
    * reports `diskUsage: null` and clients fall back to `dbSizeBytes`.
    */
   getDiskUsage?: () => DiskUsageSnapshot | null;
+  getStoragePressure?: () => import("../../storage/pressure.js").StoragePressureSnapshot | null;
 }
 
 /**
@@ -553,6 +554,7 @@ export function mountStatusRoutes(app: RouteApp, deps: StatusRoutesDeps): void {
       // `diskUsage`, which is the whole footprint with its breakdown.
       dbSizeBytes,
       diskUsage: getDiskUsage?.() ?? null,
+      storagePressure: deps.getStoragePressure?.() ?? null,
       uptime: Math.floor(process.uptime()),
       configHealth,
       modelHealth: deps.getModelHealth?.() ?? { warnings: [] },

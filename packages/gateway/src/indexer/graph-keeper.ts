@@ -105,6 +105,8 @@ export interface GraphKeeperDeps {
   indexDbKey: Buffer | null;
   /** Null disables the memory guard. */
   budget: MemoryBudget | null;
+  /** Live capacity gate; stopping for storage must never checkpoint a large graph. */
+  canGrow?: () => boolean;
   pageSize?: number;
   checkpointIntervalMs?: number;
   /** Replaceable for tests. */
@@ -126,6 +128,8 @@ export class GraphKeeper {
   private persisted: { changeSeq: number; cursor: number | null } | null = null;
   private persistedAt = 0;
   private guard: ReturnType<typeof setInterval> | null = null;
+  private storageDeferred = false;
+  private deferredBuildCursor: number | null = null;
 
   constructor(private readonly deps: GraphKeeperDeps) {
     if (deps.indexDbKey) {
@@ -145,11 +149,22 @@ export class GraphKeeper {
   async open(): Promise<void> {
     const { indexDb, handle } = this.deps;
     if (handle.isDetached) return;
+    if (!this.canGrow()) {
+      this.deferForStorage(this.deferredBuildCursor);
+      return;
+    }
+    const resumeCursor = this.storageDeferred ? this.deferredBuildCursor : null;
+    this.storageDeferred = false;
     const savedChange = getUsearchSavedChangeSeq(indexDb);
     const cursor = getUsearchBackfillCursor(indexDb);
-    const shouldStop = () => this.memoryShort();
+    const shouldStop = () => this.memoryShort() || !this.canGrow();
     let outcome: GraphBuildOutcome;
-    if (
+    if (resumeCursor !== null) {
+      outcome = await handle.backfillFromDbCooperatively(
+        indexDb,
+        this.buildOptions({ resumeAfterRowid: resumeCursor }),
+      );
+    } else if (
       this.deps.graphFileExisted &&
       savedChange !== null &&
       savedChange >= getVectorChangesPrunedThrough(indexDb)
@@ -159,6 +174,10 @@ export class GraphKeeper {
         shouldStop,
       });
       if (caughtUp === "stopped") {
+        if (!this.canGrow()) {
+          this.deferForStorage();
+          return;
+        }
         this.shed(this.shortReason("while catching the graph up"));
         return;
       }
@@ -180,6 +199,10 @@ export class GraphKeeper {
         this.buildOptions({ forceRebuild: !consistent }),
       );
     }
+    if (!this.canGrow()) {
+      this.deferForStorage(handle.backfillCursor);
+      return;
+    }
     if (outcome === "stopped") {
       this.shed(this.shortReason("while building the graph"));
       return;
@@ -189,6 +212,25 @@ export class GraphKeeper {
     this.stamp();
     this.persist(true);
     this.deps.onState({ state: "ready" });
+  }
+
+  /** Retry only a capacity-deferred open; ordinary cycles must not rebuild the graph. */
+  async resumeStorageWork(): Promise<boolean> {
+    if (this.storageDeferred) await this.open();
+    return !this.storageDeferred;
+  }
+
+  private canGrow(): boolean {
+    return this.deps.canGrow?.() ?? true;
+  }
+
+  private deferForStorage(cursor: number | null = null): void {
+    this.storageDeferred = true;
+    this.deferredBuildCursor = cursor;
+    this.deps.onState({
+      state: "degraded",
+      reason: "Storage capacity is low or unverified; graph maintenance is paused.",
+    });
   }
 
   /** Check headroom every `intervalMs` and shed the graph when it runs short. */
@@ -218,7 +260,8 @@ export class GraphKeeper {
       checkpointIntervalMs: this.deps.checkpointIntervalMs,
       onProgress: this.deps.onProgress,
       betweenPages: this.deps.betweenPages,
-      shouldStop: () => this.memoryShort(),
+      shouldStop: () => this.memoryShort() || !this.canGrow(),
+      canCheckpoint: () => this.canGrow(),
       onRebuildStart: () => {
         // A rebuild reads every chunk after this point, so the empty graph
         // already reflects every change logged so far.
@@ -257,6 +300,7 @@ export class GraphKeeper {
    * writes its sidecar, at most every 15 minutes unless forced.
    */
   private persist(force: boolean): void {
+    if (!this.canGrow()) return;
     const { indexDb, indexDbKey, graphPath } = this.deps;
     const changeSeq = getUsearchSavedChangeSeq(indexDb);
     if (changeSeq === null) return;
@@ -313,7 +357,7 @@ export class GraphKeeper {
     const { handle } = this.deps;
     if (handle.isDetached) return;
     this.stop();
-    if (this.certified) {
+    if (this.certified && this.canGrow()) {
       try {
         handle.save();
         this.persist(true);

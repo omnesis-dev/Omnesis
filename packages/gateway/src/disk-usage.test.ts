@@ -2,11 +2,24 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { linkSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { lstat, readdir, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { DiskUsageMonitor, measureDiskUsage, type DiskUsageLayout } from "./disk-usage.js";
 import type { DiskUsageSnapshot } from "@omnesis/core/doctor";
+
+// Keep real filesystem traversal, but inject syscall failures without relying
+// on platform-specific permission or invalid-path behavior.
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return {
+    ...actual,
+    lstat: vi.fn(actual.lstat),
+    readdir: vi.fn(actual.readdir),
+    realpath: vi.fn(actual.realpath),
+  };
+});
 
 let root: string;
 let configDir: string;
@@ -32,7 +45,21 @@ function layout(overrides: Partial<DiskUsageLayout> = {}): DiskUsageLayout {
 }
 
 function bytesOf(snapshot: DiskUsageSnapshot): Record<string, number> {
+  for (const store of snapshot.stores) {
+    if (store.components)
+      expect(store.components.reduce((sum, component) => sum + component.bytes, 0)).toBe(
+        store.bytes,
+      );
+  }
   return Object.fromEntries(snapshot.stores.map((s) => [s.id, s.bytes]));
+}
+
+function componentsOf(snapshot: DiskUsageSnapshot, storeId: string): Record<string, number> {
+  return Object.fromEntries(
+    snapshot.stores
+      .find((store) => store.id === storeId)
+      ?.components?.map((c) => [c.id, c.bytes]) ?? [],
+  );
 }
 
 beforeEach(() => {
@@ -46,6 +73,99 @@ afterEach(() => {
 });
 
 describe("measureDiskUsage", () => {
+  test.each(["direct", "directory alias"])(
+    "strict inventories reject a store path resolution failure through a %s path",
+    async (kind) => {
+      file(join(configDir, "omnesis.db"), 10);
+      const native = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+      let directory = configDir;
+      if (kind === "directory alias") {
+        directory = join(root, "config-alias");
+        symlinkSync(configDir, directory, "junction");
+      }
+      const path = join(directory, "omnesis.db");
+      const canonicalPath = await native.realpath(path);
+      if (kind === "directory alias") expect(canonicalPath).not.toBe(path);
+      const selected = layout({ dbPath: path });
+      expect(bytesOf(await measureDiskUsage(selected))).toEqual({ documents: 10 });
+      const error = Object.assign(new Error("Invented path resolution failure"), {
+        code: "EACCES",
+      });
+      if (kind === "directory alias") {
+        // A denial keyed to the original spelling misses the resolved store.
+        // Keep this control so the alias fixture reproduces that failure on
+        // every platform, even where the temporary directory has no alias.
+        vi.mocked(realpath).mockImplementation((candidate, options) =>
+          candidate === path ? Promise.reject(error) : native.realpath(candidate, options),
+        );
+        try {
+          expect(
+            bytesOf(await measureDiskUsage(selected, () => new Date(), { strict: true })),
+          ).toEqual({ documents: 10 });
+        } finally {
+          vi.mocked(realpath).mockImplementation(native.realpath);
+        }
+      }
+      // The scanner resolves the parent before measuring the store. Deny the
+      // actual target, independent of directory aliases or native path spelling.
+      vi.mocked(realpath).mockImplementation((candidate, options) =>
+        candidate === canonicalPath ? Promise.reject(error) : native.realpath(candidate, options),
+      );
+      try {
+        await expect(measureDiskUsage(selected, () => new Date(), { strict: true })).rejects.toBe(
+          error,
+        );
+        expect(await measureDiskUsage(selected)).toMatchObject({ totalBytes: 0, stores: [] });
+      } finally {
+        vi.mocked(realpath).mockImplementation(native.realpath);
+      }
+      expect(bytesOf(await measureDiskUsage(selected))).toEqual({ documents: 10 });
+    },
+  );
+
+  test.each(["EACCES", "EIO", "ENOTDIR"])(
+    "strict quota measurement propagates a store stat failure (%s)",
+    async (code) => {
+      file(join(configDir, "omnesis.db"), 10);
+      const error = Object.assign(new Error("Invented filesystem failure"), { code });
+      vi.mocked(lstat).mockRejectedValueOnce(error);
+      await expect(measureDiskUsage(layout(), () => new Date(), { strict: true })).rejects.toBe(
+        error,
+      );
+      vi.mocked(lstat).mockRejectedValueOnce(error);
+      const partial = await measureDiskUsage(layout());
+      expect(partial).toMatchObject({ totalBytes: 0, stores: [] });
+      expect(bytesOf(await measureDiskUsage(layout()))).toEqual({ documents: 10 });
+    },
+  );
+
+  test("strict inventories reject directory read failures while ordinary inventories remain best effort", async () => {
+    file(join(configDir, "omnesis.db"), 10);
+    const error = Object.assign(new Error("Invented directory read failure"), { code: "EACCES" });
+    vi.mocked(readdir).mockRejectedValueOnce(error);
+    await expect(measureDiskUsage(layout(), () => new Date(), { strict: true })).rejects.toBe(
+      error,
+    );
+    vi.mocked(readdir).mockRejectedValueOnce(error);
+    expect(bytesOf(await measureDiskUsage(layout()))).toEqual({ documents: 10 });
+  });
+
+  test("strict inventories tolerate a store disappearing after its path resolved", async () => {
+    file(join(configDir, "omnesis.db"), 10);
+    vi.mocked(lstat).mockRejectedValueOnce(
+      Object.assign(new Error("Invented vanished file"), { code: "ENOENT" }),
+    );
+    expect(await measureDiskUsage(layout(), () => new Date(), { strict: true })).toMatchObject({
+      totalBytes: 0,
+      stores: [],
+    });
+  });
+
+  test("strict quota measurement still tolerates stores absent on a fresh install", async () => {
+    const snapshot = await measureDiskUsage(layout(), () => new Date(), { strict: true });
+    expect(snapshot.totalBytes).toBe(0);
+  });
+
   test("counts every store with its sidecars and puts the rest under other", async () => {
     file(join(configDir, "omnesis.db"), 1000);
     file(join(configDir, "omnesis.db-wal"), 100);
@@ -97,12 +217,37 @@ describe("measureDiskUsage", () => {
       "other",
     ]);
     expect(snapshot.stores[0]!.label).toBe("Main database");
+    expect(componentsOf(snapshot, "documents")).toEqual({
+      database: 1000,
+      "write-log": 100,
+      coordination: 10,
+    });
+    expect(componentsOf(snapshot, "index")).toEqual({
+      database: 2000,
+      "write-log": 200,
+      graph: 6500,
+    });
+    expect(componentsOf(snapshot, "analytics")).toEqual({
+      database: 4000,
+      "write-log": 40,
+      spill: 4,
+      extensions: 400,
+    });
+    expect(componentsOf(snapshot, "watch")).toEqual({ database: 50, "write-log": 5 });
+    for (const id of ["transcripts", "conversations", "models", "backups", "other"])
+      expect(snapshot.stores.find((store) => store.id === id)?.components).toBeUndefined();
+    expect(JSON.stringify(snapshot)).not.toContain(configDir);
   });
 
   test("omits empty parts and reports zero for a missing config dir", async () => {
     file(join(configDir, "omnesis.db"), 10);
     expect((await measureDiskUsage(layout())).stores).toEqual([
-      { id: "documents", label: "Main database", bytes: 10 },
+      {
+        id: "documents",
+        label: "Main database",
+        bytes: 10,
+        components: [{ id: "database", label: "Database file", bytes: 10 }],
+      },
     ]);
 
     const empty = await measureDiskUsage(layout({ configDir: join(root, "absent") }));
@@ -136,6 +281,45 @@ describe("measureDiskUsage", () => {
 
     // models/ is measured where it points; the stray link below the root is not followed.
     expect(bytesOf(snapshot)).toEqual({ documents: 100, models: 5000 });
+  });
+
+  test("groups journal and WAL once and omits missing or zero-byte components", async () => {
+    file(join(configDir, "omnesis.db"), 100);
+    file(join(configDir, "omnesis.db-wal"), 20);
+    file(join(configDir, "omnesis.db-journal"), 30);
+    file(join(configDir, "omnesis.db-shm"), 0);
+    const snapshot = await measureDiskUsage(layout(), () => new Date(), { strict: true });
+    expect(bytesOf(snapshot)).toEqual({ documents: 150 });
+    expect(snapshot.stores[0]!.components).toEqual([
+      { id: "database", label: "Database file", bytes: 100 },
+      { id: "write-log", label: "Write log", bytes: 50 },
+    ]);
+  });
+
+  test("component ownership follows the same deduplication for aliases and external stores", async () => {
+    const external = join(root, "external-store", "corpus.db");
+    file(external, 100);
+    symlinkSync(external, join(configDir, "omnesis.db"));
+    linkSync(external, join(configDir, "omnesis.db-wal"));
+    file(`${external}-wal`, 20);
+    file(join(configDir, "index.usearch.enc"), 30);
+    linkSync(join(configDir, "index.usearch.enc"), join(configDir, "index-2.usearch"));
+    const snapshot = await measureDiskUsage(layout({ indexDbPath: external }));
+    // The main store's root alias owns the shared database inode. Search owns
+    // only its separate write log and the first link to its graph inode.
+    expect(bytesOf(snapshot)).toEqual({ documents: 100, index: 50 });
+    expect(componentsOf(snapshot, "documents")).toEqual({ database: 100 });
+    expect(componentsOf(snapshot, "index")).toEqual({ "write-log": 20, graph: 30 });
+    expect(JSON.stringify(snapshot)).not.toContain(root);
+  });
+
+  test("a shared engine path belongs wholly to its first store", async () => {
+    const shared = join(configDir, "shared.db");
+    file(shared, 100);
+    file(`${shared}-wal`, 10);
+    const snapshot = await measureDiskUsage(layout({ dbPath: shared, indexDbPath: shared }));
+    expect(bytesOf(snapshot)).toEqual({ documents: 110 });
+    expect(componentsOf(snapshot, "documents")).toEqual({ database: 100, "write-log": 10 });
   });
 
   test("measures a config dir reached through a symlink", async () => {

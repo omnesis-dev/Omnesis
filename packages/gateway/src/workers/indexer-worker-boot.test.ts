@@ -2111,7 +2111,7 @@ test("source and document reapply journals stay pending until the in-flight owne
     await proxy.whenReady();
     await fake.holds[0]!.started;
     deleteDocumentsBySource(paths.gatewayDbPath, sourceId);
-    await expect(proxy.deleteDocumentIndexBatch(documentId, 64, true)).resolves.toMatchObject({
+    await expect(proxy.deleteDocumentsIndexBatch([documentId], 64, true)).resolves.toMatchObject({
       complete: false,
     });
     await proxy.deleteSourceIndex(sourceId);
@@ -2141,3 +2141,154 @@ test("source and document reapply journals stay pending until the in-flight owne
     await closeServer(fake.server);
   }
 }, 30_000);
+
+test("storage pressure gates initial indexing and recovery without restarting the worker", async () => {
+  const paths = createFixture([makeDocument("capacity-one", "fictional orange prism")]);
+  const proxy = new IndexerWorkerProxy({
+    ...makeWorkerOptions(paths, "http://127.0.0.1:9"),
+    lexicalOnly: true,
+    embedDim: 1,
+    modelName: "keyword-only",
+    storagePressure: { blocked: true, validUntil: Date.now() + 60000 },
+  });
+  try {
+    await proxy.whenReady();
+    const before = await proxy.storageAccounting();
+    expect(before.sources).toEqual([]);
+    proxy.setStoragePressure(false, Date.now() + 60000);
+    await waitForCycleRuns(proxy, 1);
+    const after = await proxy.storageAccounting();
+    expect(after.sources.reduce((sum, source) => sum + source.chunkCount, 0)).toBeGreaterThan(0);
+  } finally {
+    await proxy.dispose();
+  }
+});
+
+test("shutdown acknowledges a semantic worker parked on initial storage pressure", async () => {
+  const paths = createFixture([makeDocument("capacity-parked", "Invented copper sphere")]);
+  const entry = resolveWorkerEntry("./indexer-worker.ts", import.meta.url, "./register-tsx.mjs");
+  const worker = new Worker(entry.url, { execArgv: entry.execArgv });
+  let parked = false;
+  let ready = false;
+  let acknowledged = false;
+  let failure: Error | undefined;
+  const exited = new Promise<void>((resolve) => worker.once("exit", () => resolve()));
+  worker.on("error", (error) => {
+    failure = error;
+  });
+  worker.on("message", (message: IndexerToMain) => {
+    if (message.type === "vectorIndex" && message.state === "degraded") parked = true;
+    if (message.type === "ready") ready = true;
+    if (message.type === "initError") failure = new Error(message.error);
+    if (message.type === "shutdownComplete") acknowledged = true;
+  });
+  try {
+    worker.postMessage({
+      ...makeWorkerOptions(paths, "http://127.0.0.1:9"),
+      type: "init",
+      heartbeatIntervalMs: 30_000,
+      storagePressure: { blocked: true, validUntil: Date.now() + 60_000 },
+    } satisfies IndexerInit);
+    await waitUntil(() => {
+      if (failure) throw failure;
+      return parked;
+    }, "storage-blocked semantic startup");
+    worker.postMessage({ type: "shutdown" });
+    // No pressure recovery, timeout, or force termination unblocks initialization:
+    // shutdown must wake its own storage wait before awaiting that initialization.
+    await waitUntil(() => {
+      if (failure) throw failure;
+      return acknowledged;
+    }, "blocked startup shutdown acknowledgement");
+    await exited;
+    expect(ready).toBe(false);
+    expect(existsSync(paths.usearchIndexPath)).toBe(false);
+  } finally {
+    await worker.terminate();
+  }
+});
+
+test("semantic startup preserves stored graphs while pressure blocks model replacement", async () => {
+  const paths = createFixture([makeDocument("capacity-semantic", "fictional blue lantern")]);
+  const fake = await startFakeEmbedder();
+  let proxy: IndexerWorkerProxy | undefined;
+  try {
+    proxy = createProxy(paths, fake.url);
+    await proxy.whenReady();
+    await waitForCycleRuns(proxy, 1);
+    await proxy.dispose();
+    proxy = undefined;
+    const stored = readFileSync(paths.usearchIndexPath);
+    proxy = new IndexerWorkerProxy({
+      ...makeWorkerOptions(paths, fake.url),
+      modelName: "replacement-test-model",
+      storagePressure: { blocked: true, validUntil: Date.now() + 60000 },
+    });
+    const deadline = Date.now() + 10000;
+    while (proxy.vectorIndex?.state !== "degraded" && Date.now() < deadline)
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(proxy.vectorIndex?.state).toBe("degraded");
+    expect(readFileSync(paths.usearchIndexPath)).toEqual(stored);
+    proxy.setStoragePressure(false, Date.now() + 60000);
+    await proxy.whenReady();
+    await waitForCycleRuns(proxy, 1);
+    expect(countVectors(paths.indexDbPath)).toBeGreaterThan(0);
+  } finally {
+    await proxy?.dispose();
+    await new Promise<void>((resolve) => fake.server.close(() => resolve()));
+  }
+});
+
+test("one bulk document request removes indexed rows and publishes its vectors without touching a sibling", async () => {
+  const sourceId = "synthetic:bulk-purge@example.com";
+  const sibling = "synthetic:bulk-kept@example.org";
+  const paths = createFixture([
+    ...Array.from({ length: 5 }, (_, index) =>
+      makeDocument(`bulk-${index}`, `Fictional archive entry ${index}`, sourceId),
+    ),
+    makeDocument("bulk-kept", "Fictional sibling entry", sibling),
+  ]);
+  const fake = await startFakeEmbedder();
+  const proxy = createProxy(paths, fake.url);
+  try {
+    await proxy.whenReady();
+    await waitForCycleRuns(proxy, 1);
+    await proxy.pauseIndexing();
+    const gateway = createDatabase(paths.gatewayDbPath);
+    let ids: string[];
+    try {
+      ids = gateway
+        .prepare<[string], { id: string }>("SELECT id FROM documents WHERE source_id = ?")
+        .all(sourceId)
+        .map((row) => row.id);
+    } finally {
+      gateway.close();
+    }
+    deleteDocumentsBySource(paths.gatewayDbPath, sourceId);
+    await expect(proxy.deleteDocumentsIndexBatch(ids, 64, true)).resolves.toMatchObject({
+      deletedChunks: 5,
+      complete: true,
+    });
+    const db = openIndexDb(paths.indexDbPath, { readonly: true });
+    const graph = UsearchReadHandle.open(paths.usearchIndexPath, EMBED_DIM);
+    try {
+      expect(
+        db.prepare("SELECT count(*) AS n FROM chunks WHERE source_id = ?").get(sourceId),
+      ).toEqual({ n: 0 });
+      expect(
+        db.prepare("SELECT count(*) AS n FROM chunks WHERE source_id = ?").get(sibling),
+      ).toEqual({ n: 1 });
+      expect(listPendingDocumentIndexPurges(db)).toEqual([]);
+      expect(db.prepare("SELECT count(*) AS n FROM pending_vector_deletes").get()).toEqual({
+        n: 0,
+      });
+      expect(graph.size()).toBe(1);
+    } finally {
+      db.close();
+      graph.close();
+    }
+  } finally {
+    await proxy.dispose();
+    await closeServer(fake.server);
+  }
+}, 60_000);

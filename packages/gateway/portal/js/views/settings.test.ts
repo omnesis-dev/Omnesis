@@ -93,6 +93,27 @@ describe("Settings header actions", () => {
     expect(host.querySelector(".warning-triangle")).toBeNull();
   });
 
+  test("marks Storage independently and clears after recovery", async () => {
+    await act(async () => { render(h(SettingsView, { tab: "config", storagePressure: { state: "blocked" } }), host); });
+    const warning = host.querySelector('[aria-label="Storage needs attention"]');
+    expect(warning).not.toBeNull();
+    await act(async () => { (warning?.closest("button") as HTMLButtonElement).click(); });
+    expect(router.replaceRoute).toHaveBeenCalledWith("/portal/settings/storage");
+    await act(async () => { render(h(SettingsView, { tab: "config", storagePressure: { state: "normal" } }), host); });
+    expect(host.querySelector('[aria-label="Storage needs attention"]')).toBeNull();
+  });
+
+  test("storage, model and approval marks remain independent on their settings tabs", async () => {
+    await act(async () => {
+      render(h(SettingsView, {tab: "config", storagePressure: {state: "blocked"},
+        modelHealth: {warnings: [{role: "agent"}]}, attention: attention(1, 1)}), host);
+    });
+    expect(host.querySelector('[aria-label="Storage needs attention"]')).not.toBeNull();
+    expect(host.querySelector('[aria-label="Models need attention"]')).not.toBeNull();
+    expect(host.querySelectorAll(".config-tab .attention-icon")).toHaveLength(2);
+    expect(host.querySelectorAll(".config-tab .warning-triangle")).toHaveLength(2);
+  });
+
   test("every gateway has the Connectivity tab, last, and the pages behind it that need no feature", async () => {
     const labels = () => [...host.querySelectorAll(".config-tab")].map((tab) => tab.textContent?.trim());
     for (const flags of [{}, { tailscaleEmbed: true }]) {

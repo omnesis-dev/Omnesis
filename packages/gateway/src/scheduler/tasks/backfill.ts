@@ -127,6 +127,8 @@ export interface BackfillTaskOptsInternal extends BackfillTaskOpts {
 }
 
 export interface BackfillTaskOpts {
+  /** Live reversible capacity admission; a parked tick leaves progress and inboxes untouched. */
+  canGrow?: () => boolean;
   writeGate: WriteGate;
   ioGate: IoGate;
   cpuGate: CpuGate;
@@ -317,6 +319,14 @@ export function createBackfillTasks(opts: BackfillTaskOpts, scheduler: Scheduler
     nearDupDfRefresh,
     nearDupAlgoSweep,
   ];
+
+  for (const task of tasks) {
+    const run = task.run.bind(task);
+    task.run = async (args, context) => {
+      if (opts.canGrow?.() === false) return { kind: "done", value: { idle: true } };
+      return run(args, context);
+    };
+  }
 
   const jobs: BackgroundJob[] = [
     periodicJob(linkBackfill, {

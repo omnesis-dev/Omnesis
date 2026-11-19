@@ -214,6 +214,34 @@ describe("decisions waiting, marked on the nav item where each is decided", () =
     expect(itemNamed("Settings")?.getAttribute("href")).toBe("/portal/settings");
   });
 
+  test("prioritizes storage protection on Settings and preserves model warnings after recovery", async () => {
+    getStatus.mockResolvedValue({ storagePressure: { state: "blocked" }, modelHealth: { warnings: [{ role: "agent" }] } } as never);
+    await mount();
+    await vi.waitFor(() => expect(itemNamed("Settings")?.getAttribute("href")).toBe("/portal/settings/storage"));
+    expect(itemNamed("Settings")?.querySelector('[aria-label="Storage needs attention"]')).not.toBeNull();
+    getStatus.mockResolvedValue({ storagePressure: { state: "normal" }, modelHealth: { warnings: [{ role: "agent" }] } } as never);
+    await act(async () => { document.dispatchEvent(new window.Event("visibilitychange")); });
+    await vi.waitFor(() => expect(itemNamed("Settings")?.getAttribute("href")).toBe("/portal/settings/models"));
+  });
+
+  test("keeps storage warnings visible while an expiring device approval leads Settings", async () => {
+    joins.tailscaleJoinRequests.mockResolvedValue({ requests: [{
+      id: "waiting-storage-device", name: "Example collector", kind: "collector", machine: "example-machine",
+      login: "maya@example.com", requestedAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 600_000).toISOString(),
+    }] });
+    getStatus.mockResolvedValue({ tailscaleEmbed: true, storagePressure: {state: "blocked"},
+      modelHealth: {warnings: [{role: "agent"}]} } as never);
+    await mount();
+    await vi.waitFor(() => expect(itemNamed("Settings")?.getAttribute("href")).toBe("/portal/settings/devices"));
+    expect(itemNamed("Settings")?.querySelector('[aria-label="Storage needs attention"]')).not.toBeNull();
+    expect(itemNamed("Settings")?.querySelector(".attention-icon")).not.toBeNull();
+    joins.tailscaleJoinRequests.mockResolvedValue({ requests: [] });
+    await act(async () => { document.dispatchEvent(new window.Event("visibilitychange")); });
+    await vi.waitFor(() => expect(itemNamed("Settings")?.getAttribute("href")).toBe("/portal/settings/storage"));
+    expect(itemNamed("Settings")?.querySelector('[aria-label="Storage needs attention"]')).not.toBeNull();
+  });
+
   test("flags Settings and its route with devices waiting for approval, and clears when none wait", async () => {
     const waiting = {
       id: "j1",

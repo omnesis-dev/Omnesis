@@ -92,6 +92,7 @@ import { createTranscriptionVocabularyState } from "../transcribe/vocabulary/reb
 import { installTranscriptionVocabulary } from "../transcribe/vocabulary/storage.js";
 import { createNoteAgentTables } from "../brain/note-agent/storage.js";
 import { createNoteHandoffTables } from "../brain/note-agent/handoffs.js";
+import { addStorageAuthority } from "./migration-219-storage-authority.js";
 import { migrateV152AccessGrants } from "./migration-152-access-grants.js";
 import { migrateV153AccessPolicyFamilies } from "./migration-153-access-policy-families.js";
 import { markLinkStatsDirty } from "./DirtyMarks.js";
@@ -5012,6 +5013,11 @@ export const MIGRATIONS: readonly Migration[] = [
     version: 218,
     description: "index name aliases by their lowercased text so a name lookup seeks",
     up: indexPersonNameAliases,
+  },
+  {
+    version: 219,
+    description: "persist source-bound storage policy authority and resumable trim jobs",
+    up: addStorageAuthority,
   },
 ];
 

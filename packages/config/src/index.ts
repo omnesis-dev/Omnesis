@@ -21,3 +21,8 @@ export * from "./config-diff.js";
 export * from "./config-describe.js";
 export * from "./config-defaults.js";
 export * from "./load-dotenv.js";
+
+export {
+  legacyStorageRetentionBindingsFromInput,
+  type LegacyStorageRetentionBinding,
+} from "./storage-retention-config.js";

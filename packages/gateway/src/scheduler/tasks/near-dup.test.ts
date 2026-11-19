@@ -47,6 +47,7 @@ interface NearDupStubState {
   /** Eligible-doc count the DF refresh sees (drives the chunk loop). */
   /** DF doc-content chunks; each fetchDfDocChunk call consumes one. */
   dfDocChunks?: string[][];
+  onDfFetch?: () => void;
   /** Whether a file-like document arrived since the last DF build. */
   dfFilesArrived?: boolean;
   /** Captures the snapshot handed to applyNearDupDfSnapshot. */
@@ -106,11 +107,13 @@ function stubGates(state: NearDupStubState): { compute: IoGate; write: WriteGate
       capturedVersion: 0,
     }),
     captureDfOccVersion: async () => 0,
-    fetchDfDocChunk: async () =>
-      (state.dfDocChunks?.shift() ?? []).map((content, index) => ({
+    fetchDfDocChunk: async () => {
+      state.onDfFetch?.();
+      return (state.dfDocChunks?.shift() ?? []).map((content, index) => ({
         id: `doc-${index}-${content.slice(0, 8)}`,
         content,
-      })),
+      }));
+    },
     nearDupFileLikeDocsSince: async () => state.dfFilesArrived ?? true,
     fetchMergeCandidatesData: async () => ({
       aliasRows: [],
@@ -230,6 +233,7 @@ function stubGates(state: NearDupStubState): { compute: IoGate; write: WriteGate
 function buildTasks(
   state: NearDupStubState,
   plannerStatisticsIntervalMs = 0,
+  canGrow?: () => boolean,
 ): {
   nearDupCompute: PeriodicTask<unknown, IdleResult>;
   nearDupDfRefresh: PeriodicTask<unknown, IdleResult>;
@@ -237,6 +241,7 @@ function buildTasks(
   scheduler: Scheduler;
   taskNames: string[];
   jobIds: string[];
+  tasks: PeriodicTask<unknown, IdleResult>[];
 } {
   const { compute, write, cpu } = stubGates(state);
   // In-memory DB with the schema applied — the drip task does query
@@ -249,6 +254,7 @@ function buildTasks(
   scheduler.registerRunner(new MainTaskRunner({ concurrency: 1 }));
   const bundle = createBackfillTasks(
     {
+      canGrow,
       writeGate: write,
       ioGate: compute,
       cpuGate: cpu,
@@ -286,6 +292,7 @@ function buildTasks(
     scheduler,
     taskNames: bundle.tasks.map((t) => t.name),
     jobIds: bundle.jobs.map((j) => j.id),
+    tasks: bundle.tasks,
   };
 }
 
@@ -526,4 +533,84 @@ describe("planner statistics task", () => {
     const on = buildTasks(state(), 3_600_000);
     expect(on.taskNames).toContain("backfill.plannerStatistics");
   });
+});
+
+test("all backfill ticks park without consuming progress and resume after capacity recovers", async () => {
+  const state: NearDupStubState = {
+    dfBuiltAt: 1700000000,
+    batches: [
+      {
+        algoVersion: DEFAULT_NEAR_DUP_CONFIG.algorithm.algoVersion,
+        processedInboxIds: [1],
+        signatureDeletes: ["fictional-doc"],
+        signatures: [],
+        bucketRows: [],
+        edgeUpserts: [],
+        edgeDeletes: [],
+      },
+    ],
+    computeBatchCalls: 0,
+    applyBatchCalls: 0,
+    applyDfCalls: 0,
+    algoSweepCalls: 0,
+  };
+  let allowed = false;
+  const bundle = buildTasks(state, 3600000, () => allowed);
+  try {
+    for (const task of bundle.tasks) {
+      assertIdle(await task.run(undefined, undefined), true);
+    }
+    expect(state.computeBatchCalls).toBe(0);
+    expect(state.applyBatchCalls).toBe(0);
+    expect(state.applyDfCalls).toBe(0);
+    expect(state.algoSweepCalls).toBe(0);
+    expect(state.batches).toHaveLength(1);
+    allowed = true;
+    assertIdle(await bundle.nearDupCompute.run(undefined, undefined), false);
+    expect(state.computeBatchCalls).toBe(1);
+    expect(state.applyBatchCalls).toBe(1);
+    expect(state.batches).toHaveLength(0);
+    allowed = false;
+    assertIdle(await bundle.nearDupCompute.run(undefined, undefined), true);
+    expect(state.computeBatchCalls).toBe(1);
+  } finally {
+    await bundle.scheduler.dispose();
+  }
+});
+
+test("DF capacity loss cleans staging without applying a partial statistic and restarts the full pass", async () => {
+  let allowed = true;
+  let fetchedPages = 0;
+  const corpus = [["shared alpha"], ["shared beta"]];
+  const state: NearDupStubState = {
+    dfBuiltAt: null,
+    batches: [],
+    computeBatchCalls: 0,
+    applyBatchCalls: 0,
+    applyDfCalls: 0,
+    algoSweepCalls: 0,
+    dfDocChunks: corpus.map((page) => [...page]),
+    onDfFetch: () => {
+      if (++fetchedPages === 2) allowed = false;
+    },
+  };
+  const bundle = buildTasks(state, 0, () => allowed);
+  const stagingPath = join(tmpdir(), `near-dup-df-staging-${process.pid}.sqlite`);
+  try {
+    assertIdle(await bundle.nearDupDfRefresh.run(undefined, undefined), true);
+    expect(fetchedPages).toBe(2);
+    expect(state.applyDfCalls).toBe(0);
+    expect(state.dfBuiltAt).toBeNull();
+    expect(existsSync(stagingPath)).toBe(false);
+    allowed = true;
+    state.dfDocChunks = corpus.map((page) => [...page]);
+    state.onDfFetch = undefined;
+    assertIdle(await bundle.nearDupDfRefresh.run(undefined, undefined), false);
+    expect(state.applyDfCalls).toBe(1);
+    expect(state.lastDfStaging?.totalDocs).toBe(2);
+    expect(state.stagedRows).toEqual([{ shingle: "shared", df: 2 }]);
+    expect(existsSync(stagingPath)).toBe(false);
+  } finally {
+    await bundle.scheduler.dispose();
+  }
 });

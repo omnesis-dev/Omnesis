@@ -1776,10 +1776,12 @@ function adjustSourceIndexStats(
       `UPDATE source_index_stats SET
          indexed_docs = MAX(0, indexed_docs + ?),
          chunks       = MAX(0, chunks + ?),
+         earliest_source_date = CASE WHEN ? < 0 THEN NULL ELSE earliest_source_date END,
+         latest_source_date = CASE WHEN ? < 0 THEN NULL ELSE latest_source_date END,
          last_computed_at = ?
        WHERE source_id = ?`,
     )
-    .run(indexedDelta, chunksDelta, new Date().toISOString(), sourceId);
+    .run(indexedDelta, chunksDelta, chunksDelta, chunksDelta, new Date().toISOString(), sourceId);
   if (updated.changes === 0 && indexedDelta > 0) {
     db.prepare(
       `INSERT OR IGNORE INTO source_index_stats (source_id, indexed_docs, chunks, last_computed_at)

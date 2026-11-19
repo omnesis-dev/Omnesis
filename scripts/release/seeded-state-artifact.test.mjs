@@ -18,7 +18,18 @@ import { inspectWindowsPrivatePathSync } from "@omnesis/core";
 import { afterEach, describe, expect, it } from "vitest";
 import { createBriefsStorageTables } from "../../packages/gateway/src/brain/storage/schema.js";
 import { runSchemaSetup } from "../../packages/gateway/src/data/schema.js";
-import { createDatabase } from "../../packages/gateway/src/db.js";
+import { createDatabase, upsertDocuments } from "../../packages/gateway/src/db.js";
+import { createDevice } from "../../packages/gateway/src/data/repositories/DeviceRepository.js";
+import { createSource } from "../../packages/gateway/src/data/repositories/SourceRepository.js";
+import {
+  bindStorageRetentionPolicy,
+  readStorageSourceIncarnation,
+} from "../../packages/gateway/src/storage/retention-bindings.js";
+import {
+  startStorageTrimJob,
+  readStorageTrimPage,
+  applyStorageTrimPage,
+} from "../../packages/gateway/src/storage/trim-job-store.js";
 import { LATEST_SCHEMA_VERSION } from "../../packages/gateway/src/data/schema-version.js";
 import { createTranscriptionVocabularyTables } from "../../packages/gateway/src/transcribe/vocabulary/storage.js";
 import { createIndexDatabase } from "../../packages/gateway/src/indexer/db.js";
@@ -361,6 +372,109 @@ describe("seeded-state artifacts", () => {
       });
       expect(unclassified).toEqual([]);
       database.close();
+    }
+  });
+
+  it("copies source data without trim authority and creates fresh identities on first boot", () => {
+    const paths = fixture();
+    const sourcePath = join(paths.root, "storage-seed.db");
+    const source = createDatabase(sourcePath);
+    const device = createDevice(source, { name: "Invented seed collector", kind: "collector" });
+    const account = createSource(source, {
+      type: "fictional-notes",
+      accountId: "seed",
+      deviceId: device.id,
+    });
+    const incarnation = readStorageSourceIncarnation(source, account.id);
+    for (const [externalId, date] of [
+      ["old", "2020-01-01T00:00:00.000Z"],
+      ["kept", "2026-01-01T00:00:00.000Z"],
+    ]) {
+      upsertDocuments(source, [
+        {
+          providerId: "fictional-provider",
+          sourceId: account.id,
+          externalId,
+          title: "Invented seed entry",
+          content: "Fictional reference",
+          contentHash: externalId,
+          metadata: {},
+          sourceCreatedAt: date,
+          sourceUpdatedAt: date,
+        },
+      ]);
+    }
+    bindStorageRetentionPolicy(source, {
+      sourceId: account.id,
+      maxAgeDays: 365,
+      sourceIncarnation: incarnation,
+    });
+    const job = startStorageTrimJob(source, {
+      sourceId: account.id,
+      sourceIncarnation: incarnation,
+      kind: "manual",
+      before: "2023-01-01T00:00:00.000Z",
+      now: Date.parse("2026-01-01T00:00:00.000Z"),
+    });
+    applyStorageTrimPage(source, {
+      jobId: job.id,
+      revision: job.revision,
+      page: readStorageTrimPage(source, job),
+      now: Date.parse("2026-01-01T00:00:01.000Z"),
+    });
+    const operational = [
+      "storage_retention_bindings",
+      "storage_source_incarnations",
+      "storage_trim_job_cascades",
+      "storage_trim_jobs",
+    ];
+    for (const table of operational) {
+      expect(source.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get().n).toBe(1);
+      expect(seededStateTableSpec(table, [])).toBeNull();
+      expect(() =>
+        createSeededStateArtifact(
+          spec(paths, ["documents", table]),
+          join(paths.root, `refused-${table}`),
+        ),
+      ).toThrow(/cannot be exported/u);
+    }
+    const devices = seededStateTableSpec(
+      "devices",
+      source.prepare("SELECT name FROM pragma_table_info('devices')").pluck().all(),
+    );
+    source.close();
+    createSeededStateArtifact(
+      {
+        ...spec(paths),
+        schemaVersion: LATEST_SCHEMA_VERSION,
+        databases: [
+          { source: sourcePath, target: "omnesis.db", tables: [devices, "sources", "documents"] },
+        ],
+        expected: { rowCounts: { "omnesis.db": { devices: 1, sources: 1, documents: 1 } } },
+      },
+      paths.artifact,
+    );
+    installSeededStateArtifact(
+      paths.artifact,
+      paths.state,
+      installOptions(paths, { maxSchemaVersion: LATEST_SCHEMA_VERSION }),
+    );
+    const installedPath = join(paths.state, "omnesis.db");
+    const installed = new Database(installedPath, { readonly: true });
+    for (const table of operational)
+      expect(installed.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get().n).toBe(0);
+    installed.close();
+    const booted = createDatabase(installedPath);
+    try {
+      expect(readStorageSourceIncarnation(booted, account.id)).toEqual(expect.any(String));
+      expect(readStorageSourceIncarnation(booted, account.id)).not.toBe(incarnation);
+      for (const table of operational.filter((table) => table !== "storage_source_incarnations"))
+        expect(booted.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get().n).toBe(0);
+      expect(booted.prepare("SELECT external_id FROM documents").all()).toEqual([
+        { external_id: "kept" },
+      ]);
+    } finally {
+      booted.close();
     }
   });
 

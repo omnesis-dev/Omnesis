@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
@@ -147,6 +147,98 @@ function seedGeneration1(): void {
   writer.backfillFromDb(db);
   writer.close();
 }
+
+describe("generation capacity admission", () => {
+  test("blocked build and resume leave the active and partial generation files untouched", async () => {
+    seedGeneration1();
+    const active = readFileSync(usearchPathForVersion(dir, 1));
+    const path = usearchPathForVersion(dir, 2);
+    writeFileSync(path, "partial generation retained");
+    const builder = new GenerationBuilder(db, dir, 2, ordinalEmbedder(DIM_B), DIM_B, {
+      assertCanGrow: () => {
+        throw new Error("storage unavailable");
+      },
+    });
+    await expect(builder.build()).rejects.toThrow("storage unavailable");
+    await expect(builder.resume()).rejects.toThrow("storage unavailable");
+    expect(readFileSync(path, "utf8")).toBe("partial generation retained");
+    expect(readFileSync(usearchPathForVersion(dir, 1))).toEqual(active);
+    expect(getActiveIndexVersion(db)).toBe(1);
+    expect(getBuildingEmbeddingCount(db)).toBe(0);
+  });
+
+  test("capacity lost during an embedding call prevents staging or graph persistence", async () => {
+    seedGeneration1();
+    createBuildingIndexVersion(db, {
+      version: 2,
+      embedModel: "new-embedder",
+      embedDim: DIM_B,
+      docsTotal: N,
+    });
+    const active = readFileSync(usearchPathForVersion(dir, 1));
+    let blocked = false;
+    const builder = new GenerationBuilder(
+      db,
+      dir,
+      2,
+      ordinalEmbedder(DIM_B, undefined, () => {
+        blocked = true;
+      }),
+      DIM_B,
+      {
+        assertCanGrow: () => {
+          if (blocked) throw new Error("storage unavailable");
+        },
+      },
+    );
+    await expect(builder.build()).rejects.toThrow("storage unavailable");
+    expect(getBuildingEmbeddingCount(db)).toBe(0);
+    expect(existsSync(usearchPathForVersion(dir, 2))).toBe(false);
+    expect(readFileSync(usearchPathForVersion(dir, 1))).toEqual(active);
+    expect(getActiveIndexVersion(db)).toBe(1);
+  });
+
+  test("catch-up rechecks capacity after an in-flight model call", async () => {
+    seedGeneration1();
+    createBuildingIndexVersion(db, {
+      version: 2,
+      embedModel: "new-embedder",
+      embedDim: DIM_B,
+      docsTotal: N,
+    });
+    const active = readFileSync(usearchPathForVersion(dir, 1));
+    let blocked = false;
+    let loseCapacityOnEmbed = false;
+    const embedder = ordinalEmbedder(DIM_B);
+    const builder = new GenerationBuilder(
+      db,
+      dir,
+      2,
+      {
+        ...embedder,
+        async embed(texts) {
+          const result = await embedder.embed(texts);
+          if (loseCapacityOnEmbed) blocked = true;
+          return result;
+        },
+      },
+      DIM_B,
+      {
+        assertCanGrow: () => {
+          if (blocked) throw new Error("storage unavailable");
+        },
+      },
+    );
+    await builder.build();
+    const building = readFileSync(usearchPathForVersion(dir, 2));
+    upsertChunks(db, [makeChunk(N + 1, DIM_A)]);
+    loseCapacityOnEmbed = true;
+    await expect(builder.catchUp()).rejects.toThrow("storage unavailable");
+    expect(getBuildingEmbeddingCount(db)).toBe(N);
+    expect(readFileSync(usearchPathForVersion(dir, 2))).toEqual(building);
+    expect(readFileSync(usearchPathForVersion(dir, 1))).toEqual(active);
+  });
+});
 
 describe("GenerationBuilder + atomic flip (headline: graceful swap keeps vector search live)", () => {
   test("active generation serves throughout the rebuild, new generation serves after the flip — no restart", async () => {

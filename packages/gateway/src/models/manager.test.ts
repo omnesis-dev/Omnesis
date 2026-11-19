@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync, writeFileSync, existsSync, readFileSync } from "no
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { ModelManager, type ProgressBroadcast } from "./manager.js";
 import type { InferenceOverview } from "@omnesis/core";
 
@@ -498,4 +498,76 @@ describe("ModelManager", () => {
     const { issues } = await mgr.doctor(GGUF_ID);
     expect(issues).toEqual(["no manifest entry"]);
   });
+});
+
+describe("model install capacity", () => {
+  it("rejects before starting a download when the full model cannot fit", () => {
+    const fetch = vi.fn();
+    globalThis.fetch = fetch as typeof globalThis.fetch;
+    const mgr = new ModelManager({
+      modelsDir: dir,
+      assertStorageCanGrow: () => {
+        throw new Error("Storage limit reached");
+      },
+    });
+    expect(() => mgr.install(GGUF_ID)).toThrow("Storage limit reached");
+    expect(fetch).not.toHaveBeenCalled();
+    expect(mgr.isDownloading(GGUF_ID)).toBe(false);
+  });
+
+  it("broadcasts a storage-specific terminal failure and never records a partial as installed", async () => {
+    const { events, terminal, onBroadcast } = broadcastCollector();
+    globalThis.fetch = (async () =>
+      new Response(new Uint8Array(Buffer.from("fictional-weights")))) as typeof globalThis.fetch;
+    let checks = 0;
+    const mgr = new ModelManager({
+      modelsDir: dir,
+      onBroadcast,
+      assertStorageCanGrow: () => {
+        if (++checks > 1) throw new Error("open settings/storage");
+      },
+    });
+    mgr.install(GGUF_ID);
+    await terminal;
+    expect(events.at(-1)).toMatchObject({
+      kind: "failed",
+      code: "storage_capacity",
+      message: "open settings/storage",
+    });
+    expect(mgr.isDownloading(GGUF_ID)).toBe(false);
+    expect(mgr.isInstalled(GGUF_ID)).toBe(false);
+  });
+});
+
+it("includes other active downloads in model capacity preflight", async () => {
+  const base = new ModelManager({ modelsDir: dir }).getCatalogEntry(GGUF_ID);
+  if (!base || base.kind !== "gguf") throw new Error("Missing test GGUF");
+  const first = { ...base, id: "capacity-first", filename: "capacity-first.gguf", sizeBytes: 100 };
+  const second = {
+    ...base,
+    id: "capacity-second",
+    filename: "capacity-second.gguf",
+    sizeBytes: 150,
+  };
+  const { terminal, onBroadcast } = broadcastCollector();
+  globalThis.fetch = ((_url, init) =>
+    new Promise((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+    })) as typeof globalThis.fetch;
+  const planned: number[] = [];
+  const mgr = new ModelManager({
+    modelsDir: dir,
+    catalog: () => [first, second],
+    onBroadcast,
+    assertStorageCanGrow: (additional = 0) => {
+      planned.push(additional);
+      if (additional > 200) throw new Error("Capacity already reserved");
+    },
+  });
+  mgr.install(first.id);
+  expect(() => mgr.install(second.id)).toThrow("Capacity already reserved");
+  expect(planned).toEqual([100, 250]);
+  expect(mgr.isDownloading(second.id)).toBe(false);
+  mgr.cancel(first.id);
+  await terminal;
 });

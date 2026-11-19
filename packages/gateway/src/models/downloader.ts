@@ -36,7 +36,7 @@ import {
 } from "node:fs";
 import { join, dirname } from "node:path";
 import { createHash, type Hash } from "node:crypto";
-import { Readable } from "node:stream";
+import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { GgufCatalogEntry } from "@omnesis/core";
 
@@ -63,6 +63,8 @@ export interface DownloadOptions {
   modelsDir: string;
   /** Fired on every chunk. The caller throttles to WS as needed. */
   onProgress: (progress: DownloadProgress) => void;
+  /** Called before writing each chunk, with this download's planned remaining bytes. */
+  assertCanGrow?: (remainingBytes: number) => void;
 }
 
 export class DownloadError extends Error {
@@ -142,24 +144,40 @@ export function startDownload(entry: GgufCatalogEntry, opts: DownloadOptions): D
     const out = createWriteStream(partialPath, { flags: resumeFrom > 0 ? "a" : "w" });
     const source = Readable.fromWeb(res.body as never);
 
-    // Push chunks through the running hash + progress reporter while
-    // the pipeline copies them to disk. Doing this with a Transform
-    // would be cleaner, but a "before pipeline" tap keeps the hot path
-    // free of allocations — a 1.5 GB GGUF makes the difference visible.
-    source.on("data", (chunk: Buffer) => {
-      runningHash.update(chunk);
-      downloadedBytes += chunk.byteLength;
-      const elapsedMs = Math.max(1, Date.now() - startedAt);
-      const speedBytesPerSec = ((downloadedBytes - resumeFrom) / elapsedMs) * 1000;
-      const etaMs =
-        totalBytes > 0 && speedBytesPerSec > 0
-          ? Math.round(((totalBytes - downloadedBytes) / speedBytesPerSec) * 1000)
-          : -1;
-      opts.onProgress({ downloadedBytes, totalBytes, speedBytesPerSec, etaMs });
+    // The Transform reports admission failures through pipeline, which closes
+    // the file before cleanup. Throwing from a data listener would escape it.
+    const growthGate = new Transform({
+      transform(chunk: Buffer, _encoding, callback) {
+        try {
+          opts.assertCanGrow?.(Math.max(chunk.byteLength, totalBytes - downloadedBytes));
+        } catch (error) {
+          callback(
+            new DownloadError(
+              "storage_capacity",
+              error instanceof Error ? error.message : String(error),
+            ),
+          );
+          return;
+        }
+        try {
+          runningHash.update(chunk);
+          downloadedBytes += chunk.byteLength;
+          const elapsedMs = Math.max(1, Date.now() - startedAt);
+          const speedBytesPerSec = ((downloadedBytes - resumeFrom) / elapsedMs) * 1000;
+          const etaMs =
+            totalBytes > 0 && speedBytesPerSec > 0
+              ? Math.round(((totalBytes - downloadedBytes) / speedBytesPerSec) * 1000)
+              : -1;
+          opts.onProgress({ downloadedBytes, totalBytes, speedBytesPerSec, etaMs });
+          callback(null, chunk);
+        } catch (error) {
+          callback(error instanceof Error ? error : new Error(String(error)));
+        }
+      },
     });
 
     try {
-      await pipeline(source, out);
+      await pipeline(source, growthGate, out);
     } catch (err) {
       try {
         unlinkSync(partialPath);
@@ -169,6 +187,7 @@ export function startDownload(entry: GgufCatalogEntry, opts: DownloadOptions): D
       if (controller.signal.aborted) {
         throw new DownloadError("aborted", "download cancelled");
       }
+      if (err instanceof DownloadError) throw err;
       throw new DownloadError(
         "network",
         `download interrupted: ${err instanceof Error ? err.message : String(err)}`,

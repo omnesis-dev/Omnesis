@@ -10,6 +10,9 @@ import {
   validateDocumentTemporalProjectionContracts,
 } from "@omnesis/core";
 import { SourceId, sourceTypeOf, type DocumentInput, type Scope } from "@omnesis/types";
+import { readBoundStorageRetentionPolicies } from "../../storage/retention-bindings.js";
+import { readActiveStorageTrimCutoff } from "../../storage/trim-job-authority.js";
+import { isBeforeRetentionCutoff, retentionCutoff } from "../../storage/retention-policy.js";
 import { getInitialSourceInventory } from "../../data/repositories/SourceInventoryRepository.js";
 import { isKnowledgeDocumentReadable } from "../../brain/knowledge/retrieval-fence.js";
 import {
@@ -44,7 +47,7 @@ import { resolveRuntimeSettings } from "../../runtime-settings.js";
 import { getNearDupEdges } from "../../near-dupes/index.js";
 import { withHiddenSourcesExcluded } from "../../search/hidden-sources.js";
 import { runWithPriority } from "../../priority.js";
-import { isSourceRemoved } from "../../data/repositories/SourceRepository.js";
+import { getSource, isSourceRemoved } from "../../data/repositories/SourceRepository.js";
 import { hasFreeDiskSpace, type DiskSpaceCheck } from "../../disk-guard.js";
 import { BadRequestError, InsufficientStorageError } from "../errors.js";
 import { normalizeSnapshot, vouchesForWholeSource } from "../../absence/snapshot-claims.js";
@@ -113,6 +116,8 @@ export interface IngestResult {
 }
 
 export interface DocumentServiceDeps {
+  /** Shared capacity admission; only growth paths consult it, never user deletion. */
+  assertStorageCanGrow?: () => void;
   db: Db;
   writeGate: WriteGate;
   events: EventService;
@@ -253,6 +258,7 @@ export class DocumentService {
    * lost. Inert when no `gatewayDbPath` / `minFreeDiskBytes` is wired.
    */
   private assertDiskSpace(): void {
+    this.deps.assertStorageCanGrow?.();
     const { gatewayDbPath, minFreeDiskBytes } = this.deps;
     if (!gatewayDbPath || minFreeDiskBytes === undefined) return;
     const check = this.deps.checkDiskSpace ?? hasFreeDiskSpace;
@@ -328,16 +334,39 @@ export class DocumentService {
    */
   private applyMaxAgeCutoff(documents: readonly DocumentInput[]): DocumentInput[] {
     const liveConfig = this.deps.configStore?.get() ?? this.deps.config ?? {};
-    const cutoffCache = new Map<string, string | null>();
+    const cutoffCache = new Map<string, { maxAge: string | null; retention: string | null }>();
+    const now = Date.now();
     const before = documents.length;
     const filtered = documents.filter((d) => {
       if (d.metadata?.documentType === "contact") return true;
-      let cutoff = cutoffCache.get(d.sourceId);
-      if (cutoff === undefined) {
-        cutoff = getSourceCutoffDate(liveConfig, d.sourceId);
-        cutoffCache.set(d.sourceId, cutoff);
+      let cutoffs = cutoffCache.get(d.sourceId);
+      if (cutoffs === undefined) {
+        const retention = liveConfig.gateway?.storage?.retention?.find(
+          (policy) => policy.sourceId === d.sourceId,
+        );
+        cutoffs = {
+          maxAge: getSourceCutoffDate(liveConfig, d.sourceId),
+          retention:
+            [
+              retentionCutoff(
+                readBoundStorageRetentionPolicies(this.deps.db, retention ? [retention] : []),
+                d.sourceId,
+                now,
+              ),
+              readActiveStorageTrimCutoff(this.deps.db, d.sourceId),
+            ]
+              .filter((value): value is string => value !== null)
+              .sort()
+              .at(-1) ?? null,
+        };
+        cutoffCache.set(d.sourceId, cutoffs);
       }
-      return cutoff === null || d.sourceCreatedAt >= cutoff;
+      // Preserve the established import maxAge comparison. Rolling retention
+      // is independent and only excludes documents whose age is trustworthy.
+      if (cutoffs.maxAge !== null && d.sourceCreatedAt < cutoffs.maxAge) return false;
+      return (
+        cutoffs.retention === null || !isBeforeRetentionCutoff(d.sourceCreatedAt, cutoffs.retention)
+      );
     });
     const dropped = before - filtered.length;
     if (dropped > 0) {

@@ -198,3 +198,49 @@ describe("startDownload — supply-chain integrity", () => {
     expect(existsSync(join(dir, `${FILENAME}.partial`))).toBe(false);
   });
 });
+
+describe("storage admission while streaming", () => {
+  it("stops a stream when capacity disappears and removes partial bytes before rejecting", async () => {
+    const payload = Buffer.from("fictional-model-weights");
+    const entry = entryFor(payload);
+    let checks = 0;
+    globalThis.fetch = (async () =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          pull(controller) {
+            if (checks >= 1) controller.enqueue(new Uint8Array(payload));
+            else controller.enqueue(new Uint8Array(payload.subarray(0, 3)));
+          },
+        }),
+      )) as typeof globalThis.fetch;
+    const handle = startDownload(entry, {
+      modelsDir: dir,
+      onProgress: noProgress,
+      assertCanGrow: () => {
+        if (++checks >= 2) throw new Error("open settings/storage to reclaim space");
+      },
+    });
+    await expect(handle.done).rejects.toMatchObject({
+      code: "storage_capacity",
+      message: "open settings/storage to reclaim space",
+    });
+    expect(checks).toBe(2);
+    expect(existsSync(join(dir, FILENAME))).toBe(false);
+    expect(existsSync(join(dir, `${FILENAME}.partial`))).toBe(false);
+  });
+
+  it("checks planned remaining bytes before admitting each chunk", async () => {
+    const payload = Buffer.from("fictional-model-weights");
+    const entry = entryFor(payload);
+    globalThis.fetch = (async () =>
+      new Response(new Uint8Array(payload))) as typeof globalThis.fetch;
+    const requests: number[] = [];
+    await startDownload(entry, {
+      modelsDir: dir,
+      onProgress: noProgress,
+      assertCanGrow: (remaining) => requests.push(remaining),
+    }).done;
+    expect(requests[0]).toBe(payload.byteLength);
+    expect(existsSync(join(dir, FILENAME))).toBe(true);
+  });
+});

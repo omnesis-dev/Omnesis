@@ -14,11 +14,12 @@
  */
 
 import { Worker } from "node:worker_threads";
-import { createLogger, resolveWorkerEntry } from "@omnesis/core";
+import { assertNever, createLogger, resolveWorkerEntry } from "@omnesis/core";
 import { UNLIMITED_MAX_AGE } from "@omnesis/config";
 import { ambientAnswerProfiler, type AnswerProfiler } from "../privacy/answer-profile.js";
 import { shutdownWorker } from "./shutdown-worker.js";
 import { PendingRequest } from "./pending-request.js";
+import type { IndexStorageAccounting } from "../storage/index-accounting.js";
 import type { BackgroundJob, JobObservation, JobState } from "../background-jobs/types.js";
 import type { EmbedderEncoding } from "../indexer/embedder-prefixes.js";
 import type { SemanticSearchStatus } from "@omnesis/source-sdk";
@@ -106,6 +107,7 @@ export interface IndexerWorkerOptions {
    * the worker skips an indexing cycle. Resolved from `gateway.minFreeDiskMb`.
    */
   minFreeDiskMb: number;
+  storagePressure?: { blocked: boolean; validUntil: number };
   /**
    * Per-model retrieval encoding: none | text-prefix | api-param.
    * Resolved at gateway boot from `search.embedderPrefixes.enabled` × the
@@ -227,6 +229,7 @@ export class IndexerWorkerProxy implements Embedder {
       readyForSourceDelete: boolean;
     }>
   >();
+  private pendingAccounting = new Map<number, PendingRequest<IndexStorageAccounting>>();
   private pendingPause = new Map<number, PendingRequest<void>>();
   private pendingFlushSave = new Map<number, PendingRequest<boolean>>();
   private pendingLexicalSwitch = new Map<number, PendingRequest<boolean>>();
@@ -272,6 +275,9 @@ export class IndexerWorkerProxy implements Embedder {
     });
     this.worker.on("exit", (code) => {
       this.workerExited = true;
+      for (const request of this.pendingAccounting.values())
+        request.fail(new Error("Indexer worker exited"));
+      this.pendingAccounting.clear();
       if (!this.readySettled) {
         this.readySettled = true;
         this.rejectReady(
@@ -306,6 +312,7 @@ export class IndexerWorkerProxy implements Embedder {
       embedderTimeoutMs: opts.embedderTimeoutMs,
       embedderMaxInputChars: opts.embedderMaxInputChars,
       minFreeDiskMb: opts.minFreeDiskMb,
+      storagePressure: opts.storagePressure,
       embedderEncoding: opts.embedderEncoding,
       httpEmbedderUrl: opts.httpEmbedderUrl,
       httpEmbedderModel: opts.httpEmbedderModel,
@@ -440,6 +447,25 @@ export class IndexerWorkerProxy implements Embedder {
     return req.promise;
   }
 
+  /** Asynchronous physical/page and logical payload inventory on the index worker. */
+  async storageAccounting(): Promise<IndexStorageAccounting> {
+    if (this.workerExited || this.shutdownPromise) throw new Error("Indexer is unavailable");
+    const id = this.nextId++;
+    const request = new PendingRequest<IndexStorageAccounting>(30_000, () => {
+      const pending = this.pendingAccounting.get(id);
+      if (pending && this.pendingAccounting.delete(id))
+        pending.fail(new Error("Index storage accounting timed out"));
+    });
+    this.pendingAccounting.set(id, request);
+    this.post({ type: "storageAccounting", id });
+    return request.promise;
+  }
+
+  /** Independent from model-swap pause: capacity recovery must never resume a frozen swap. */
+  setStoragePressure(blocked: boolean, validUntil: number): void {
+    this.post({ type: "storagePressure", blocked, validUntil });
+  }
+
   /**
    * Wake the indexer. Fire-and-forget signal that a fresh document just
    * landed in the gateway DB, so the worker should run a cycle now instead
@@ -509,8 +535,20 @@ export class IndexerWorkerProxy implements Embedder {
     return req.promise;
   }
 
-  async deleteDocumentIndexBatch(
-    documentId: string,
+  async deleteDocumentIndexBatch(documentId: string, limit: number, sourceDeleted: boolean) {
+    return this.requestDocumentIndexBatch(documentId, limit, sourceDeleted);
+  }
+
+  async deleteDocumentsIndexBatch(
+    documentIds: readonly string[],
+    limit: number,
+    sourceDeleted: boolean,
+  ) {
+    return this.requestDocumentIndexBatch(documentIds, limit, sourceDeleted);
+  }
+
+  private async requestDocumentIndexBatch(
+    documentId: string | readonly string[],
     limit: number,
     sourceDeleted: boolean,
   ): Promise<{ deletedChunks: number; complete: boolean; readyForSourceDelete: boolean }> {
@@ -733,6 +771,18 @@ export class IndexerWorkerProxy implements Embedder {
         }
         break;
       }
+      case "storageAccountingResult": {
+        const pending = this.pendingAccounting.get(msg.id);
+        this.pendingAccounting.delete(msg.id);
+        pending?.settle(msg.accounting);
+        break;
+      }
+      case "storageAccountingError": {
+        const pending = this.pendingAccounting.get(msg.id);
+        this.pendingAccounting.delete(msg.id);
+        pending?.fail(new Error(msg.error));
+        break;
+      }
       case "runReindexMissingResult": {
         const pending = this.pendingReindex.get(msg.id);
         if (pending) {
@@ -828,6 +878,8 @@ export class IndexerWorkerProxy implements Embedder {
       case "shutdownComplete":
         // shutdownWorker joins the actual exit after native cleanup.
         break;
+      default:
+        assertNever(msg);
     }
   }
 

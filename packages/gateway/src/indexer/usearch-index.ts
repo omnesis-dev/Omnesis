@@ -89,6 +89,8 @@ type BackfillOptions = {
   checkpointIntervalMs?: number;
   /** Fired after each checkpoint save, including the final one. */
   onCheckpoint?: () => void;
+  /** Capacity admission may prohibit rewriting a graph even when a build must stop. */
+  canCheckpoint?: () => boolean;
   /**
    * Checked after every page. True stops the build after a checkpoint, so
    * the caller can release the graph's memory and resume on a later start.
@@ -472,10 +474,12 @@ export class UsearchWriteHandle {
     return "complete";
   }
 
-  private checkpoint(opts?: BackfillOptions): void {
+  private checkpoint(opts?: BackfillOptions): boolean {
+    if (opts?.canCheckpoint && !opts.canCheckpoint()) return false;
     this.dirty = true;
     this.save();
     opts?.onCheckpoint?.();
+    return true;
   }
 
   private *backfillFromDbBatches(
@@ -601,9 +605,9 @@ export class UsearchWriteHandle {
       opts?.onProgress?.(totalInDb > 0 ? Math.min((resumedWith + added) / totalInDb, 1) : 1);
       if (opts?.shouldStop?.()) {
         restorePageCache();
-        this.checkpoint(opts);
+        const checkpointed = this.checkpoint(opts);
         log.info(
-          `HNSW backfill stopped after rowid ${lastRowid}: ${resumedWith + added}/${totalInDb} vectors saved for the next start`,
+          `HNSW backfill stopped after rowid ${lastRowid}: ${resumedWith + added}/${totalInDb} vectors ${checkpointed ? "saved for the next start" : "kept in memory until storage recovers"}`,
         );
         return "stopped";
       }
