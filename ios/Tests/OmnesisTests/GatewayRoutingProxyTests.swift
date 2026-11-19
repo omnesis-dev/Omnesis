@@ -517,7 +517,7 @@ extension GatewayRoutingProxyTests {
             while !proxy.isListening, ContinuousClock.now < deadline {
                 try await Task.sleep(for: .milliseconds(10))
             }
-            XCTAssertTrue(proxy.isListening)
+            XCTAssertTrue(proxy.isListening, "stalled: \(stalled)\n" + factory.log.report(port: port))
             XCTAssertEqual(proxy.listeningPort, port)
             var request = URLRequest(url: route.origin.appendingPathComponent("probe"))
             request.setValue("Bearer device-test-token", forHTTPHeaderField: "Authorization")
@@ -528,7 +528,7 @@ extension GatewayRoutingProxyTests {
             socket.resume()
             _ = try await socket.receive()
             socket.cancel(with: .goingAway, reason: nil)
-            XCTAssertEqual(factory.count, stalled ? 2 : 1)
+            XCTAssertEqual(factory.count, stalled ? 2 : 1, factory.log.report(port: port))
         }
     }
 
@@ -672,6 +672,7 @@ private final class RepairableLiveListenerFactory: @unchecked Sendable {
     private let stallFirst: Bool
     private var holdStartup: Bool
     private var released = false
+    let log = GatewayListenerStateLog()
     init(initialFailures: Int = 0, stallFirst: Bool = false, holdStartup: Bool = false) {
         self.initialFailures = initialFailures
         self.stallFirst = stallFirst
@@ -710,12 +711,15 @@ private final class RepairableLiveListenerFactory: @unchecked Sendable {
             if self.initialFailures > 0 || (self.holdStartup && (!self.stallFirst || !self.listeners.isEmpty)) {
                 self.initialFailures = max(0, self.initialFailures - 1)
                 self.lock.unlock()
+                self.log.record("startup held by the test: no listener made")
                 throw GatewayRoutingError.listenerUnavailable
             }
-            let first = self.listeners.isEmpty
+            let first = self.listeners.isEmpty, index = self.listeners.count
             self.lock.unlock()
             let listener = try GatewayNetworkTransport.live.makeListener(parameters)
-            let wrapped = StalledLiveListener(listener, stall: self.stallFirst && first) { [weak self] in
+            let log = self.log
+            let record = { (event: String) in log.record("listener #\(index) \(event)") }
+            let wrapped = StalledLiveListener(listener, stall: self.stallFirst && first, record: record) { [weak self] in
                 guard let self, first else { return }
                 self.lock.lock()
                 self.released = true
@@ -746,9 +750,11 @@ private final class StalledLiveListener: GatewayByteListener {
     private let wrapped: any GatewayByteListener
     private let stall: Bool
     private let cancelled: () -> Void
-    init(_ wrapped: any GatewayByteListener, stall: Bool, cancelled: @escaping () -> Void) {
+    private let record: (String) -> Void
+    init(_ wrapped: any GatewayByteListener, stall: Bool, record: @escaping (String) -> Void, cancelled: @escaping () -> Void) {
         self.wrapped = wrapped
         self.stall = stall
+        self.record = record
         self.cancelled = cancelled
     }
 
@@ -758,6 +764,7 @@ private final class StalledLiveListener: GatewayByteListener {
 
     func onState(_ handler: @escaping (NWListener.State) -> Void) {
         wrapped.onState { state in
+            self.record("\(state)")
             if case .cancelled = state { self.cancelled() }
             if self.stall, case .ready = state { return }
             handler(state)
@@ -769,10 +776,12 @@ private final class StalledLiveListener: GatewayByteListener {
     }
 
     func start(queue: DispatchQueue) {
+        record("start")
         wrapped.start(queue: queue)
     }
 
     func cancel() {
+        record("cancel")
         wrapped.cancel()
     }
 }
