@@ -61,7 +61,6 @@ describe.skipIf(!browserReady)("passkeys on the gateway's own page", () => {
   /** Holds the passkey of the account the gateway is linked to. */
   let owner: PasskeySession;
   const priorCaFile = process.env.OMNESIS_CLOUD_RELAY_GATEWAY_CA_FILE;
-  const priorEnabled = process.env.OMNESIS_CLOUD_RELAY_ENABLED;
 
   /**
    * Opens the portal on the gateway's public name, logged in with the owner's admin token. A
@@ -81,7 +80,6 @@ describe.skipIf(!browserReady)("passkeys on the gateway's own page", () => {
     directory = await mkdtemp(join(tmpdir(), "omnesis-enroll-gateway-passkey-"));
     world = await EnrollmentWorld.create(directory, { signupPolicy: "open" });
     process.env.OMNESIS_CLOUD_RELAY_GATEWAY_CA_FILE = world.pki.caCertFile;
-    process.env.OMNESIS_CLOUD_RELAY_ENABLED = "1";
     browser = await PasskeyBrowser.launch(world);
     gateway = await EnrollmentGateway.start(world, "home");
     owner = await browser.session();
@@ -98,8 +96,6 @@ describe.skipIf(!browserReady)("passkeys on the gateway's own page", () => {
     } finally {
       if (priorCaFile === undefined) delete process.env.OMNESIS_CLOUD_RELAY_GATEWAY_CA_FILE;
       else process.env.OMNESIS_CLOUD_RELAY_GATEWAY_CA_FILE = priorCaFile;
-      if (priorEnabled === undefined) delete process.env.OMNESIS_CLOUD_RELAY_ENABLED;
-      else process.env.OMNESIS_CLOUD_RELAY_ENABLED = priorEnabled;
       if (directory) await rm(directory, { recursive: true, force: true });
     }
   }, 60_000);
@@ -491,7 +487,6 @@ describe.skipIf(!browserReady)("passkeys on the gateway's own page", () => {
       const handoff = new ManagedAccountBrowser({
         accountId: () => account,
         env: () => ({
-          OMNESIS_CLOUD_RELAY_ENABLED: "1",
           OMNESIS_CLOUD_RELAY_URL: world.relayOrigin,
           OMNESIS_CLOUD_RELAY_SESSION_FILE: rogue.sessionFile,
           OMNESIS_CLOUD_RELAY_OWNER_KEY_FILE: rogue.ownerKeyFile,

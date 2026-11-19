@@ -119,7 +119,6 @@ describe.skipIf(!browserReady)("devices join a gateway by signing in", () => {
   let second: PasskeySession;
   const terminalRuns: ReturnType<typeof runEnrollmentTerminal>[] = [];
   const priorCaFile = process.env.OMNESIS_CLOUD_RELAY_GATEWAY_CA_FILE;
-  const priorEnabled = process.env.OMNESIS_CLOUD_RELAY_ENABLED;
 
   /**
    * Pairs a CLI or collector in this process with the real Node client. The
@@ -244,8 +243,6 @@ describe.skipIf(!browserReady)("devices join a gateway by signing in", () => {
     directory = await mkdtemp(join(tmpdir(), "omnesis-enroll-devices-"));
     world = await EnrollmentWorld.create(directory, { signupPolicy: "open" });
     process.env.OMNESIS_CLOUD_RELAY_GATEWAY_CA_FILE = world.pki.caCertFile;
-    // The collector's relay client runs in this process.
-    process.env.OMNESIS_CLOUD_RELAY_ENABLED = "1";
     browser = await PasskeyBrowser.launch(world);
     gateway = await EnrollmentGateway.start(world, "home");
     first = await browser.session();
@@ -265,8 +262,6 @@ describe.skipIf(!browserReady)("devices join a gateway by signing in", () => {
     } finally {
       if (priorCaFile === undefined) delete process.env.OMNESIS_CLOUD_RELAY_GATEWAY_CA_FILE;
       else process.env.OMNESIS_CLOUD_RELAY_GATEWAY_CA_FILE = priorCaFile;
-      if (priorEnabled === undefined) delete process.env.OMNESIS_CLOUD_RELAY_ENABLED;
-      else process.env.OMNESIS_CLOUD_RELAY_ENABLED = priorEnabled;
     }
   }, 60_000);
 
@@ -511,7 +506,6 @@ describe.skipIf(!browserReady)("devices join a gateway by signing in", () => {
           OMNESIS_GATEWAY_URL: undefined,
           OMNESIS_TOKEN: undefined,
           OMNESIS_CONFIG_DIR: configDir,
-          OMNESIS_CLOUD_RELAY_ENABLED: "1",
           OMNESIS_CLOUD_RELAY_URL: world.relayOrigin,
           OMNESIS_CLOUD_RELAY_GATEWAY_CA_FILE: world.pki.caCertFile,
         },

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { afterEach, describe, expect, test, vi } from "vitest";
+import { describe, expect, test } from "vitest";
 import { parseRequestPayload, PROTOCOL_VERSION, SOURCE_CONTRACT_WIRE_RANGE } from "@omnesis/core";
 import { deviceCapabilitySchema } from "./common.js";
 
@@ -42,9 +42,7 @@ describe("deviceCapabilitySchema", () => {
     ).toBe(accepted);
   });
   describe("the pairing-reminder capability", () => {
-    afterEach(() => vi.unstubAllEnvs());
-    test("is a typed boolean with the cloud relay opt-in", () => {
-      vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
+    test("is an optional typed boolean", () => {
       expect(deviceCapabilitySchema.parse({ pairingNotifications: true })).toEqual({
         pairingNotifications: true,
       });
@@ -55,13 +53,9 @@ describe("deviceCapabilitySchema", () => {
           message: "Invalid input: expected boolean, received string",
         },
       ]);
-    });
-    test("is an unknown key like any other without it", () => {
-      vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "");
-      for (const value of [true, "yes", { enabled: 1 }, null])
-        expect(deviceCapabilitySchema.parse({ pairingNotifications: value })).toEqual({
-          pairingNotifications: value,
-        });
+      expect(deviceCapabilitySchema.parse({ pairingNotifications: false })).toEqual({
+        pairingNotifications: false,
+      });
       expect(deviceCapabilitySchema.parse({})).toEqual({});
     });
   });

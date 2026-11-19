@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-// The cloud relay is purely additive: with OMNESIS_CLOUD_RELAY_ENABLED unset the
-// Devices view must render exactly as before, even if a device row happens to
-// carry relay fields. These tests pin both sides of that switch.
+// The devices view and the Omnesis account: a device that joined by signing in
+// says so, and one paired with a code or QR renders as it always has, with no
+// sign-in, connection pill or extra request on a gateway that never linked an
+// account.
 
 import { h, render } from "preact";
 import { act } from "preact/test-utils";
@@ -100,50 +101,48 @@ const card = (props: Record<string, unknown> = {}) =>
     ...props,
   });
 
-test("flag off: a device row shows nothing relay-related, even when the row carries relay fields", async () => {
-  await act(async () => render(card({ expanded: true }), host));
+const paired = { ...device, connectionPath: undefined, enrollment: undefined };
+
+test("a device paired with a code shows nothing about sign-ins or its connection", async () => {
+  await act(async () => render(card({ device: paired, expanded: true }), host));
   expect(host.querySelector(".devices-card-sign-in")).toBeNull();
-  expect(host.textContent).not.toContain(device.enrollment.signInId);
-  await act(async () => render(card(), host));
+  await act(async () => render(card({ device: paired }), host));
   const text = host.textContent ?? "";
-  for (const value of ["Joined", "Remote", "Approved"])
-    expect(text).not.toContain(value);
+  for (const value of ["Joined", "Remote", "Approved"]) expect(text).not.toContain(value);
   expect(host.querySelector(".device-connection-pill")).toBeNull();
   expect(host.querySelector(".devices-card-sub")?.textContent).toBe("CLI");
 });
 
-test("flag off: the view adds no class, no section and no request", async () => {
+test("a gateway without sign-in pairing asks for no requests and shows no approval section", async () => {
+  pairing.cloudPairingConfig.mockResolvedValue(null);
+  apiMocks.listDevices.mockResolvedValue({ items: [paired] });
   await act(async () => render(h(DevicesView, {}), host));
   await vi.waitFor(() => expect(host.querySelector(".devices-card")).not.toBeNull());
-  expect(host.querySelector(".devices-view")?.getAttribute("class")).toBe("devices-view");
-  expect(
-    host.querySelector(".relay-on, .cloud-pairing-requests"),
-  ).toBeNull();
-  expect(apiMocks.apiFetch).not.toHaveBeenCalled();
-  expect(pairing.cloudPairingConfig).not.toHaveBeenCalled();
+  await vi.waitFor(() => expect(pairing.cloudPairingConfig).toHaveBeenCalled());
+  expect(host.querySelector(".cloud-pairing-requests")?.children.length ?? 0).toBe(0);
+  expect(pairing.cloudPairingRequests).not.toHaveBeenCalled();
 });
 
-test("flag on: rows say how each device joined and show the connection path", async () => {
-  await act(async () => render(card({ cloudRelay: true }), host));
+test("rows say how each device joined and show the connection path", async () => {
+  await act(async () => render(card(), host));
   expect(host.querySelector(".devices-card-sub")?.textContent).toBe("CLI · Joined with Omnesis account");
   expect(host.querySelector(".device-connection-pill")?.textContent).toBe("Remote");
   // Remove stays one menu away for every device.
   expect(host.querySelector(".devices-card-menu")).not.toBeNull();
   await act(async () =>
-    render(card({ cloudRelay: true, device: { ...device, enrollment: undefined } }), host),
+    render(card({ device: { ...device, enrollment: undefined } }), host),
   );
   expect(host.querySelector(".devices-card-sub")?.textContent).toBe("CLI");
 });
 
-test("flag on: the view scopes its relay styles and adds the approval section", async () => {
-  apiMocks.apiFetch.mockResolvedValue(new Response(JSON.stringify({ items: [] })));
-  await act(async () => render(h(DevicesView, { cloudRelay: true }), host));
-  await vi.waitFor(() => expect(pairing.cloudPairingConfig).toHaveBeenCalled());
-  expect(host.querySelector(".devices-view")?.getAttribute("class")).toBe("devices-view relay-on");
+test("with sign-in pairing configured, the view reads the waiting requests", async () => {
+  await act(async () => render(h(DevicesView, {}), host));
+  await vi.waitFor(() => expect(pairing.cloudPairingRequests).toHaveBeenCalled());
+  expect(host.querySelector(".devices-view")?.getAttribute("class")).toBe("devices-view");
 });
 
-test("flag on: an open device names the sign-in it joined with", async () => {
-  await act(async () => render(card({ cloudRelay: true, expanded: true }), host));
+test("an open device names the sign-in it joined with", async () => {
+  await act(async () => render(card({ expanded: true }), host));
   expect(host.querySelector(".devices-card-sign-in")?.textContent).toContain(
     "Joined by signing in with a Google account",
   );
@@ -153,11 +152,11 @@ test("flag on: an open device names the sign-in it joined with", async () => {
 });
 
 /** Opens the device's menu, chooses Revoke device, and returns the dialog. */
-async function openRevokeDialog(cloudRelay: boolean) {
+async function openRevokeDialog() {
   const win = globalThis.window as unknown as { innerHeight: number; innerWidth: number };
   win.innerHeight = 800;
   win.innerWidth = 1200;
-  await act(async () => render(h(DevicesView, { cloudRelay }), host));
+  await act(async () => render(h(DevicesView, {}), host));
   await vi.waitFor(() => expect(host.querySelector(".source-action-trigger")).not.toBeNull());
   const trigger = host.querySelector(".source-action-trigger") as HTMLElement;
   trigger.getBoundingClientRect = () => ({ top: 100, bottom: 120, right: 400 }) as DOMRect;
@@ -175,8 +174,8 @@ const confirm = async (dialog: HTMLElement) => {
   await act(async () => (button as unknown as { click(): void }).click());
 };
 
-test("flag on: revoking leaves the sign-in trusted unless the owner ticks the box", async () => {
-  const dialog = await openRevokeDialog(true);
+test("revoking leaves the sign-in trusted unless the owner ticks the box", async () => {
+  const dialog = await openRevokeDialog();
   const box = dialog.querySelector('input[type="checkbox"]') as HTMLInputElement;
   expect(Boolean(box.checked)).toBe(false);
   expect(dialog.textContent).toContain("Also stop trusting the Google account it signed in with");
@@ -186,11 +185,11 @@ test("flag on: revoking leaves the sign-in trusted unless the owner ticks the bo
   expect(relayApi.stopTrustingSignIn).not.toHaveBeenCalled();
 });
 
-test("flag on: ticking the box stops trusting that sign-in after the device is revoked", async () => {
+test("ticking the box stops trusting that sign-in after the device is revoked", async () => {
   const order: string[] = [];
   apiMocks.revokeDevice.mockImplementation(async () => order.push("revoke"));
   relayApi.stopTrustingSignIn.mockImplementation(async (id: string) => order.push(`stop ${id}`));
-  const dialog = await openRevokeDialog(true);
+  const dialog = await openRevokeDialog();
   const box = dialog.querySelector('input[type="checkbox"]') as HTMLInputElement;
   box.checked = true;
   await act(async () => {
@@ -200,9 +199,9 @@ test("flag on: ticking the box stops trusting that sign-in after the device is r
   await vi.waitFor(() => expect(order).toEqual(["revoke", `stop ${device.enrollment.signInId}`]));
 });
 
-test("flag on: a sign-in that cannot be removed says the device was still revoked", async () => {
+test("a sign-in that cannot be removed says the device was still revoked", async () => {
   relayApi.stopTrustingSignIn.mockRejectedValue(new Error("Try again."));
-  const dialog = await openRevokeDialog(true);
+  const dialog = await openRevokeDialog();
   const box = dialog.querySelector('input[type="checkbox"]') as HTMLInputElement;
   box.checked = true;
   await act(async () => {
@@ -216,8 +215,9 @@ test("flag on: a sign-in that cannot be removed says the device was still revoke
   );
 });
 
-test("flag off: the revoke dialog offers nothing about sign-ins", async () => {
-  const dialog = await openRevokeDialog(false);
+test("revoking a device paired with a code offers nothing about sign-ins", async () => {
+  apiMocks.listDevices.mockResolvedValue({ items: [paired] });
+  const dialog = await openRevokeDialog();
   expect(dialog.querySelector('input[type="checkbox"]')).toBeNull();
   await confirm(dialog);
   await vi.waitFor(() => expect(apiMocks.revokeDevice).toHaveBeenCalledTimes(1));

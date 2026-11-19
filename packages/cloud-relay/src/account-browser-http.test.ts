@@ -18,6 +18,8 @@ import { AccountEnrollmentAuthority } from "./account-enrollment-proof.js";
 import { ACCOUNT_BROWSER_PROTOCOL, accountBrowserTranscript } from "./account-browser-contract.js";
 import { gatewayKeyAccount, gatewayKeyIdentity, KEY_BINDING_PREFIX } from "./gateway-key-auth.js";
 import { tlsSpkiFingerprint } from "./pinned-key.js";
+import { InviteVerifier, invitePublicKeyValue } from "./invites.js";
+import type { SignupConfiguration } from "./gateway-signup.js";
 
 const origin = "https://relay.example.test",
   cleanup: (() => Promise<void>)[] = [];
@@ -35,6 +37,7 @@ async function fixture(
   google = false,
   recoveryPolicy?: Parameters<typeof createCloudRelay>[0]["recoveryPolicy"],
   loginLimits?: Parameters<typeof createCloudRelay>[0]["loginLimits"],
+  signup?: SignupConfiguration,
 ) {
   const accounts = new RelayAccounts(":memory:"),
     sessions = new RelaySessions(randomBytes(32));
@@ -68,7 +71,7 @@ async function fixture(
     accounts,
     sessions,
     controlOrigin: origin,
-    accountSignIn: { enrollmentAuthority: authority },
+    accountSignIn: { enrollmentAuthority: authority, ...(signup ? { signup } : {}) },
     recoveryPolicy,
     loginLimits,
     ...(google
@@ -97,8 +100,12 @@ async function fixture(
   const session = await sessions.issue(
     gatewayKeyIdentity({ gatewayId, ownerPublicKey }, Math.floor(Date.now() / 1000) + 3600),
   );
-  const accountId = accounts.identities.signInFederated("google", "a".repeat(64)),
-    account = await sessions.issueAccountSession({ accountId, version: 1 }, "passkey", origin);
+  // An account that already exists, however the relay's policy now creates new ones.
+  const required = accounts.identities.invitesRequired;
+  accounts.identities.invitesRequired = false;
+  const accountId = accounts.identities.signInFederated("google", "a".repeat(64));
+  accounts.identities.invitesRequired = required;
+  const account = await sessions.issueAccountSession({ accountId, version: 1 }, "passkey", origin);
   accounts.identities.registerSession(
     account.accountId,
     account.version,
@@ -436,6 +443,50 @@ test("Google OAuth returns to the same pending account intent, creating an accou
       })
     ).status,
   ).toBe(403);
+});
+
+test("under the invite policy a registered gateway's own page creates no account, by passkey or Google", async () => {
+  const verifier = new InviteVerifier(origin, [
+    invitePublicKeyValue(generateKeyPairSync("ed25519").publicKey),
+  ]);
+  const f = await fixture(true, undefined, undefined, { policy: "invite", invites: verifier }),
+    value = await f.begin(),
+    operation = `operation=${value.unsigned.operationId}`;
+  const before = f.accounts.identities.snapshot();
+  const chosen = await fetch(f.url + `/_relay/account/api/intent?${operation}`, {
+    method: "POST",
+    headers: { origin, cookie: value.cookie, "content-type": "application/json" },
+    body: JSON.stringify({ intent: "create" }),
+  });
+  expect(chosen.status).toBe(200);
+  const signedOut = `${value.operationCookie}; ${fixtureBrowser()}`;
+  const session = await fetch(f.url + `/_relay/account/api/session?${operation}`, {
+    headers: { cookie: signedOut },
+  });
+  expect((await session.json()).canCreateAccount).toBe(false);
+  const passkey = await fetch(
+    f.url + `/_relay/account/api/passkeys/register/options?${operation}`,
+    {
+      method: "POST",
+      headers: { origin, cookie: signedOut, "content-type": "application/json" },
+      body: JSON.stringify({ createAccount: true }),
+    },
+  );
+  expect(passkey.status).toBe(403);
+  const start = await fetch(f.url + `/_relay/web/start?${operation}`, {
+    method: "POST",
+    headers: { origin, cookie: value.cookie },
+    redirect: "manual",
+  });
+  const authorization = new URL(start.headers.get("location")!);
+  const googleCookie = start.headers.getSetCookie()[0]!.split(";")[0]!;
+  const callback = await fetch(
+    f.url +
+      `/_relay/web/callback?state=${authorization.searchParams.get("state")}&code=fictional-code`,
+    { headers: { cookie: value.cookie + "; " + googleCookie }, redirect: "manual" },
+  );
+  expect(callback.headers.get("location")).toContain("failed=no-account");
+  expect(f.accounts.identities.snapshot()).toEqual(before);
 });
 
 test("signing in where nothing can create an account creates none: the plain page, pairing a device and a desktop", async () => {

@@ -11,8 +11,8 @@
  * in (whoever completes the sign-in chooses the tailnet), opening the public
  * address, joining automatically, and approving a request. Turning it off,
  * signing it out, asking first, switching joining off and denying never do.
- * Step-up applies only where the cloud relay opt-in and a confirmed passkey
- * make the gateway require it; otherwise these guards pass every request.
+ * Step-up applies only once the owner confirmed a passkey on a linked Omnesis
+ * account; otherwise these guards pass every request.
  */
 
 import { assertNever, tailscaleJoinPolicySchema } from "@omnesis/core";

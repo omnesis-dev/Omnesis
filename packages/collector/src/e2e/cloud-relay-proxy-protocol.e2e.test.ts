@@ -172,7 +172,7 @@ describe("a relay behind a PROXY protocol front layer", () => {
   beforeAll(async () => {
     directory = await mkdtemp(join(tmpdir(), "omnesis-relay-proxy-"));
     world = await EnrollmentWorld.create(directory, {
-      signupPolicy: "invitation",
+      signupPolicy: "closed",
       extraEnv: {
         // Only the front may (and must) send a header. The gateway's own tunnel
         // reaches the relay directly from 127.0.0.1, as an unlisted peer.

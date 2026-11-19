@@ -24,7 +24,6 @@ let dir: string;
 let path: string;
 beforeEach(() => {
   vi.stubEnv("OMNESIS_EXPERIMENTAL", "0");
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
   dir = mkdtempSync(join(tmpdir(), "omnesis-token-step-up-"));
   path = join(dir, "gateway.sqlite");
   db = createDatabase(path);
@@ -171,9 +170,8 @@ test("a caller whose own token can't claim notifications gets no exception for m
   expect(response.status).toBe(428);
 });
 
-test("without the cloud relay opt-in, minting a token is as before", async () => {
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "0");
-  const server = linkedServer();
+test("on a gateway that never linked an account, minting a token is as before", async () => {
+  const server = createServer(db, path, { tlsFingerprintSha256: "a".repeat(64) });
   const phone = joinedPhone("Fictional phone");
   const other = createDevice(db, { name: "Fictional other phone", kind: "ios" });
   for (const body of [

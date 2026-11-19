@@ -43,7 +43,6 @@ afterEach(async () => {
 
 function fixture() {
   const env = {
-    OMNESIS_CLOUD_RELAY_ENABLED: "1",
     OMNESIS_ACME_DIRECTORY_URL: "https://ca.example.test/directory",
     OMNESIS_ACME_TERMS_ACCEPTED: "1",
     OMNESIS_ACME_DNS_PROVIDER: "cloudflare",

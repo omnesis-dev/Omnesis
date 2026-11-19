@@ -12,7 +12,6 @@ import { createRelayClientProxy } from "./client-proxy.js";
 import { SESSION_HEADER } from "./network.js";
 import * as network from "./network.js";
 
-beforeEach(() => vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1"));
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllEnvs();

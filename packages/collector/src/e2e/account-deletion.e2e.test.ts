@@ -123,7 +123,7 @@ describe.skipIf(!browserReady)("leave an Omnesis account", () => {
   }, 60_000);
 
   /**
-   * A gateway given nothing but the opt-in, the relay and a certificate directory, with what a
+   * A gateway given nothing but the relay and a certificate directory, with what a
    * test does to it: read its Omnesis account status, connect it by signing in, and join a
    * device to it by signing in.
    */
@@ -147,7 +147,6 @@ describe.skipIf(!browserReady)("leave an Omnesis account", () => {
     const gateway = new E2EHarness({
       extraGatewayEnv: {
         ...world.clientEnv({ NODE_EXTRA_CA_CERTS: bundle }),
-        OMNESIS_CLOUD_RELAY_ENABLED: "1",
         OMNESIS_CLOUD_RELAY_URL: world.relayOrigin,
         OMNESIS_ACME_DIRECTORY_URL: authority.directoryUrl,
         OMNESIS_ACME_CA_FILE: acmeRoot,

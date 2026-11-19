@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { createLogger, cloudRelayEnabled } from "@omnesis/core";
+import { createLogger } from "@omnesis/core";
 import { runRelayCommand } from "./runtime.js";
 
 const log = createLogger("cloud-relay");
@@ -28,7 +28,6 @@ function commandFailureCode(error: unknown): string | undefined {
 }
 
 try {
-  if (!cloudRelayEnabled()) throw new Error("Cloud relay requires OMNESIS_CLOUD_RELAY_ENABLED=1");
   const runtime = await runRelayCommand(process.argv[2] ?? "serve", process.env);
   if (runtime) {
     log.info(`Listening on ${runtime.url}`);

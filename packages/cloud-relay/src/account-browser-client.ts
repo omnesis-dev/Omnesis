@@ -12,7 +12,6 @@ import {
 import { readFile } from "node:fs/promises";
 import { createLocalJWKSet, decodeJwt } from "jose";
 import { z } from "zod";
-import { cloudRelayEnabled } from "@omnesis/core";
 import {
   ACCOUNT_BROWSER_PATH,
   ACCOUNT_BROWSER_PROTOCOL,
@@ -196,7 +195,6 @@ export class ManagedAccountBrowser implements AccountBrowserPort {
   available(): boolean {
     const env = this.options.env();
     return (
-      cloudRelayEnabled(env) &&
       this.readyOrigin !== undefined &&
       // Probe expiry controls network refresh, not whether an idle gateway offers
       // sign-in. Each handoff refreshes first and enrollment verifies fresh keys.
@@ -206,7 +204,7 @@ export class ManagedAccountBrowser implements AccountBrowserPort {
   }
   async refresh(signal?: AbortSignal): Promise<void> {
     const env = this.environment();
-    if (!cloudRelayEnabled(env) || !env.OMNESIS_CLOUD_RELAY_GATEWAY_ID) {
+    if (!env.OMNESIS_CLOUD_RELAY_GATEWAY_ID) {
       this.readyOrigin = undefined;
       return;
     }
@@ -329,8 +327,7 @@ export class ManagedAccountBrowser implements AccountBrowserPort {
     const signal = this.signal(callerSignal),
       env = this.environment(),
       origin = this.origin(env);
-    if (origin !== pending.relayOrigin || !cloudRelayEnabled(env))
-      throw new Error("Account handoff service changed");
+    if (origin !== pending.relayOrigin) throw new Error("Account handoff service changed");
     this.assertFresh(pending);
     const session = await this.session(env, signal),
       material = await this.owner(env);
@@ -401,7 +398,6 @@ export class ManagedAccountBrowser implements AccountBrowserPort {
   async credentials(callerSignal?: AbortSignal) {
     const signal = this.signal(callerSignal),
       env = this.environment();
-    if (!cloudRelayEnabled(env)) return undefined;
     const session = await this.session(env, signal);
     signal.throwIfAborted();
     const response = await this.request(
@@ -424,7 +420,6 @@ export class ManagedAccountBrowser implements AccountBrowserPort {
   async unlink(callerSignal?: AbortSignal): Promise<void> {
     const signal = this.signal(callerSignal),
       env = this.environment();
-    if (!cloudRelayEnabled(env)) throw new Error("Account sign-in is unavailable");
     const session = await this.session(env, signal);
     signal.throwIfAborted();
     this.assertEnvironment(env);
@@ -447,7 +442,6 @@ export class ManagedAccountBrowser implements AccountBrowserPort {
     const env = this.environment(),
       signal = this.signal(),
       origin = this.origin(env);
-    if (!cloudRelayEnabled(env)) throw new Error("Account sign-in is unavailable");
     const material = await this.owner(env),
       account = z
         .string()
@@ -487,7 +481,6 @@ export class ManagedAccountBrowser implements AccountBrowserPort {
   private assertEnvironment(previous: NodeJS.ProcessEnv): void {
     const current = this.environment();
     if (
-      !cloudRelayEnabled(current) ||
       this.origin(current) !== this.origin(previous) ||
       current.OMNESIS_CLOUD_RELAY_GATEWAY_ID !== previous.OMNESIS_CLOUD_RELAY_GATEWAY_ID ||
       publicGatewayOrigin(current) !== publicGatewayOrigin(previous)

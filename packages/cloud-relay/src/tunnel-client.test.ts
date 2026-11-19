@@ -65,7 +65,6 @@ const flush = async (): Promise<void> => {
 
 beforeEach(() => {
   vi.useFakeTimers();
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
   mocks.sockets.length = 0;
   mocks.connect.mockReset();
   mocks.stream.mockReset();
@@ -77,10 +76,7 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-test("rejects disabled, remote-destination, invalid-ID and invalid-limit configurations", () => {
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "0");
-  expect(() => new GatewayTunnel(options())).toThrow("OMNESIS_CLOUD_RELAY_ENABLED=1");
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
+test("rejects remote-destination, invalid-ID and invalid-limit configurations", () => {
   expect(
     () => new GatewayTunnel({ ...options(), gatewayUrl: "https://gateway.example.test" }),
   ).toThrow("local gateway");

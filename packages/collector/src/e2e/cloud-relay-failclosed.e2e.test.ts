@@ -12,7 +12,6 @@ import { MultiCollectorHarness } from "./multi-collector-harness.js";
 import type { AddressInfo } from "node:net";
 
 test("corrupt saved relay settings keep the direct gateway available and cannot re-enable legacy environment exposure", async () => {
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
   let attempts = 0;
   const relay = createServer((_req, res) => {
     attempts++;
@@ -28,7 +27,6 @@ test("corrupt saved relay settings keep the direct gateway available and cannot 
   const relayUrl = `http://127.0.0.1:${(relay.address() as AddressInfo).port}`;
   const gatewayId = randomUUID();
   const environment: NodeJS.ProcessEnv = {
-    OMNESIS_CLOUD_RELAY_ENABLED: "1",
     OMNESIS_CLOUD_RELAY_URL: relayUrl,
     OMNESIS_CLOUD_RELAY_GATEWAY_ID: gatewayId,
     OMNESIS_PUBLIC_BASE_URL: "https://gateway.example.test",

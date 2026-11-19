@@ -619,7 +619,7 @@ test("pairing reminders publish and claim over existing private delivery without
   }
 });
 
-test("without the cloud relay opt-in a claim runs no pairing-reminder query", () => {
+test("with no pairing reminder waiting, a claim only checks for one and changes nothing", () => {
   const device = id(46);
   const db = makeDb([device]);
   enqueueNotification(db, {
@@ -638,23 +638,25 @@ test("without the cloud relay opt-in a claim runs no pairing-reminder query", ()
   const pairingQueries = () =>
     prepare.mock.calls.filter(([sql]) => String(sql).includes("device-pairing")).length;
   try {
-    vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "");
     expect(claimNotification(db, { deviceId: device, now: 1_001 })).toMatchObject({
       kind: "diagnostic",
     });
-    expect(pairingQueries()).toBe(0);
-    // The same claim with the opt-in does look, so the absence above means something.
-    vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
-    claimNotification(db, { deviceId: device, now: 1_002 });
+    // One bounded lookup, and no capability read or supersede when nothing is waiting.
     expect(pairingQueries()).toBe(1);
+    expect(
+      prepare.mock.calls.filter(([sql]) => String(sql).includes("$.pairingNotifications")),
+    ).toEqual([]);
+    expect(
+      db
+        .prepare("SELECT COUNT(*) AS n FROM notification_deliveries WHERE state='superseded'")
+        .get(),
+    ).toEqual({ n: 0 });
   } finally {
-    vi.unstubAllEnvs();
     prepare.mockRestore();
   }
 });
 
 test("an app downgrade drops only its unsupported reminder and does not block ordinary notifications or another administrator", () => {
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
   const downgraded = id(44),
     current = id(45);
   const db = makeDb([downgraded, current]);

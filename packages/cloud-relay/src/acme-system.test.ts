@@ -27,7 +27,6 @@ import type { AddressInfo } from "node:net";
 let directory: string;
 beforeEach(async () => {
   directory = await mkdtemp(join(tmpdir(), "omnesis-acme-system-"));
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
 });
 afterEach(async () => {
   vi.unstubAllEnvs();
@@ -125,7 +124,6 @@ test("real gateway-only ACME DNS01 issuance plus opaque tunnel keeps direct TLS 
       OMNESIS_TLS_CERT: tls.certFile,
       OMNESIS_TLS_KEY: tls.keyFile,
       OMNESIS_PUBLIC_BASE_URL: publicOrigin,
-      OMNESIS_CLOUD_RELAY_ENABLED: process.env.OMNESIS_CLOUD_RELAY_ENABLED,
       OMNESIS_CLOUD_RELAY_URL: relayUrl,
       OMNESIS_CLOUD_RELAY_SESSION_FILE: sessionFile,
       OMNESIS_CLOUD_RELAY_GATEWAY_ID: gatewayId,
@@ -322,7 +320,6 @@ test("managed setup discovers hosted routing, enrolls without Google, obtains a 
     configDir: directory,
     probeRetryMs: 100,
     env: {
-      OMNESIS_CLOUD_RELAY_ENABLED: "1",
       OMNESIS_CLOUD_RELAY_URL: relayUrl,
       OMNESIS_CLOUD_RELAY_CERTIFICATE_MONITOR_ENABLED: "0",
     },

@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { cloudRelayEnabled } from "@omnesis/core";
 import { defaultScopesForDeviceKind } from "@omnesis/types";
 import {
   gatewayPasskeyOptionsSchema,
@@ -45,7 +44,6 @@ export function mountCloudPairingRoutes(
   spkiFingerprint?: () => string | undefined,
   revokedDeviceKey?: ConstructorParameters<typeof CloudPairingRuntime>[0]["revokedDeviceKey"],
 ): void {
-  if (!cloudRelayEnabled()) return;
   const clientId = process.env.OMNESIS_CLOUD_RELAY_GOOGLE_CLIENT_ID;
   const webClientId = process.env.OMNESIS_CLOUD_RELAY_GOOGLE_WEB_CLIENT_ID;
   const initial = identitySource ? undefined : cloudPairingIdentity(process.env, options);

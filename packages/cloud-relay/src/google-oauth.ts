@@ -22,8 +22,6 @@ export function beginGoogleAuthorization(options: {
   redirectUri: string;
   nonce: string;
   offline?: boolean;
-  /** Also asks for the verified email address, for a policy that needs it. */
-  email?: boolean;
   /** Test-only: a loopback stand-in for Google's authorization endpoint. */
   endpoint?: string;
 }): GoogleAuthorization {
@@ -49,7 +47,7 @@ export function beginGoogleAuthorization(options: {
     client_id: options.clientId,
     redirect_uri: options.redirectUri,
     response_type: "code",
-    scope: options.email ? "openid email" : "openid",
+    scope: "openid",
     state,
     nonce: options.nonce,
     code_challenge: createHash("sha256").update(verifier).digest("base64url"),

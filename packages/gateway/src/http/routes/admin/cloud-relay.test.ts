@@ -42,7 +42,6 @@ let devices:
 beforeEach(() => {
   devices = { revokeJoinedWith: vi.fn(async (_signInId: string): Promise<string[]> => []) };
   vi.stubEnv("OMNESIS_EXPERIMENTAL", "0");
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
   service = {
     status: vi.fn().mockResolvedValue(status),
     configure: vi.fn().mockResolvedValue(status),
@@ -77,15 +76,12 @@ const post = (body: unknown = {}, headers = {}) => ({
   headers: { "content-type": "application/json", ...headers },
   body: JSON.stringify(body),
 });
-test("management is absent with cloud relay disabled or without a service, and always requires admin", async () => {
+test("management is absent without a service, and always requires admin", async () => {
   expect((await app(null).request("/admin/cloud-relay")).status).toBe(401);
   expect(
     (await app({ ...bearer, scopes: [SCOPE_READ] }).request("/admin/cloud-relay")).status,
   ).toBe(403);
   expect((await app(bearer, false).request("/admin/cloud-relay")).status).toBe(404);
-  vi.stubEnv("OMNESIS_EXPERIMENTAL", "1");
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "0");
-  expect((await app().request("/admin/cloud-relay")).status).toBe(404);
   expect(service.status).not.toHaveBeenCalled();
 });
 test("reads and operates the lifecycle service with exact validated inputs and no caching", async () => {
@@ -489,7 +485,7 @@ test("sign-in connection controls are explicitly unavailable when the service ha
     });
   }
 });
-test("reading the status lets the service ask its relay about signup first, and no operation does", async () => {
+test("only the account page's read asks the relay about signup, and no operation does", async () => {
   const order: string[] = [];
   const signup = {
     inviteOnly: true as const,
@@ -503,18 +499,23 @@ test("reading the status lets the service ask its relay about signup first, and 
     return { ...status, signup };
   });
   const router = app();
-  expect(await (await router.request("/admin/cloud-relay")).json()).toMatchObject({ signup });
+  // The status every other page polls never reaches the relay, so an unlinked gateway's portal
+  // makes no outbound request by being open.
+  expect((await router.request("/admin/cloud-relay")).status).toBe(200);
+  expect((await router.request("/admin/cloud-relay?signup=0")).status).toBe(200);
+  expect(service.refreshSignupAccess).not.toHaveBeenCalled();
+  expect(order).toEqual(["status", "status"]);
+  order.length = 0;
+  expect(await (await router.request("/admin/cloud-relay?signup=1")).json()).toMatchObject({
+    signup,
+  });
   expect(order).toEqual(["refresh", "status"]);
   await router.request("/admin/cloud-relay/disable", post());
+  await router.request("/admin/cloud-relay/account/refresh", post());
   expect(service.refreshSignupAccess).toHaveBeenCalledTimes(1);
   // A service without it (an older implementation) still answers.
   delete service.refreshSignupAccess;
-  expect((await app().request("/admin/cloud-relay")).status).toBe(200);
-  // Without the flag nothing is read.
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "0");
-  service.refreshSignupAccess = vi.fn(async () => {});
-  expect((await app().request("/admin/cloud-relay")).status).toBe(404);
-  expect(service.refreshSignupAccess).not.toHaveBeenCalled();
+  expect((await app().request("/admin/cloud-relay?signup=1")).status).toBe(200);
 });
 
 test("a certificate incident is acknowledged only by an admin request that didn't come through the relay", async () => {
@@ -571,9 +572,10 @@ test("a certificate incident is acknowledged only by an admin request that didn'
   const unavailable = await app().request("/admin/cloud-relay/incidents/ack", post());
   expect(unavailable.status).toBe(503);
   expect(await unavailable.json()).toMatchObject({ code: "account-unavailable" });
-  // Without the opt-in the route doesn't exist.
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "0");
-  expect((await app().request("/admin/cloud-relay/incidents/ack", post())).status).toBe(404);
+  // Without a service the route doesn't exist.
+  expect(
+    (await app(bearer, false).request("/admin/cloud-relay/incidents/ack", post())).status,
+  ).toBe(404);
 });
 
 const gatewayProof = {
@@ -735,9 +737,10 @@ test("an account refresh is an admin action that reads the account and answers w
   expect(missing.status).toBe(503);
   expect(await missing.json()).toMatchObject({ code: "account-unavailable" });
 });
-test("with the cloud relay flag off an account refresh is not a route", async () => {
+test("without a service an account refresh is not a route", async () => {
   service.refreshAccount = vi.fn().mockResolvedValue(status);
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "0");
-  expect((await app().request("/admin/cloud-relay/account/refresh", post())).status).toBe(404);
+  expect(
+    (await app(bearer, false).request("/admin/cloud-relay/account/refresh", post())).status,
+  ).toBe(404);
   expect(service.refreshAccount).not.toHaveBeenCalled();
 });

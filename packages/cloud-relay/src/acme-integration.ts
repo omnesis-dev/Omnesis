@@ -5,12 +5,7 @@ import { X509Certificate } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { rootCertificates } from "node:tls";
-import {
-  createLogger,
-  cloudRelayEnabled,
-  resolveTlsMaterial,
-  ownedProcessCleanupReceipt,
-} from "@omnesis/core";
+import { createLogger, resolveTlsMaterial, ownedProcessCleanupReceipt } from "@omnesis/core";
 import { z } from "zod";
 import { ensureAcmeBootstrap } from "./acme-bootstrap.js";
 import { AcmeDnsChallenges } from "./acme-dns.js";
@@ -110,7 +105,7 @@ export async function createGatewayAcmeController(
     }
   | undefined
 > {
-  if (!cloudRelayEnabled(env) || !env.OMNESIS_ACME_DIRECTORY_URL) return undefined;
+  if (!env.OMNESIS_ACME_DIRECTORY_URL) return undefined;
   const config = schema.parse(env);
   if (
     config.OMNESIS_ACME_DNS_PROVIDER === "independent" &&

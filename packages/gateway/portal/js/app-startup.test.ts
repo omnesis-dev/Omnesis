@@ -7,7 +7,6 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   authenticated: true,
-  cloudRelay: false,
   handoff: null as string | null,
   metadataReady: false,
   mounts: 0,
@@ -24,7 +23,7 @@ vi.mock("./lib/cloud-pairing-handoff.js", () => ({
 vi.mock("./views/search.js", () => ({ SearchView: () => null }));
 vi.mock("./api.js", () => ({
   apiFetch: vi.fn(async () => ({ ok: true, json: async () => ({ conversations: [], nextCursor: null }) })),
-  checkSession: vi.fn(async () => ({ authenticated: mocks.authenticated, cloudRelay: mocks.cloudRelay })),
+  checkSession: vi.fn(async () => ({ authenticated: mocks.authenticated })),
   getStatus: vi.fn(async () => ({ experimental: false, developer: false })),
   getHostFleetUpdate: vi.fn(async () => ({ plan: null, operation: null })),
   isAuthenticated: vi.fn(() => mocks.authenticated),
@@ -63,7 +62,6 @@ beforeEach(() => {
   vi.stubGlobal("window", parsed.window);
   host = parsed.document.querySelector("#app") as unknown as HTMLElement;
   mocks.authenticated = true;
-  mocks.cloudRelay = false;
   mocks.handoff = null;
   mocks.redeemHandoff.mockReset().mockImplementation(async () => {
     mocks.authenticated = true;
@@ -112,7 +110,6 @@ test("renders the login screen without fetching or waiting for source metadata",
 
 test("redeems a portal handoff before mounting the shell without waiting for metadata", async () => {
   mocks.authenticated = false;
-  mocks.cloudRelay = true;
   mocks.handoff = "fictional-preview-handoff";
   await mount();
   await vi.waitFor(() => expect(host.querySelector(".app-layout")).not.toBeNull());

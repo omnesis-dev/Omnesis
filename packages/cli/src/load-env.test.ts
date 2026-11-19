@@ -13,7 +13,9 @@ const require = createRequire(import.meta.url);
 const tsx = pathToFileURL(require.resolve("tsx")).href;
 const bootstrap = new URL("./load-env.ts", import.meta.url).href;
 const roots: string[] = [];
-const unsafe = "OMNESIS_BOOTSTRAP_INVENTED_VALUE=untrusted\nOMNESIS_CLOUD_RELAY_ENABLED=1\n";
+// An untrusted file must not steer the paired-device transport bootstrap either.
+const unsafe =
+  "OMNESIS_BOOTSTRAP_INVENTED_VALUE=untrusted\nOMNESIS_CLOUD_RELAY_DEVICE_FILE=/untrusted/device.json\n";
 afterEach(() => {
   for (const dir of roots.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
@@ -24,7 +26,10 @@ function run(args: string[], platform = "win32", repairFailure = false, safe = f
   const dotenv = join(dir, ".env");
   writeFileSync(
     dotenv,
-    platform === "win32" && !safe ? unsafe : "OMNESIS_BOOTSTRAP_INVENTED_VALUE=trusted\n",
+    platform === "win32" && !safe
+      ? unsafe
+      : // A CLI configured for a gateway skips the paired-device transport bootstrap.
+        "OMNESIS_BOOTSTRAP_INVENTED_VALUE=trusted\nOMNESIS_GATEWAY_URL=https://gateway.example.invalid\n",
   );
   const primitive = join(dir, "private-reader.mjs");
   writeFileSync(
@@ -62,7 +67,7 @@ let continued = false;
 process.on('exit', () => writeFileSync(process.env.TEST_RESULT, JSON.stringify({
   continued,
   value: process.env.OMNESIS_BOOTSTRAP_INVENTED_VALUE ?? null,
-  relay: process.env.OMNESIS_CLOUD_RELAY_ENABLED ?? null,
+  relay: process.env.OMNESIS_CLOUD_RELAY_DEVICE_FILE ?? null,
 })));
 await import(${JSON.stringify(bootstrap)});
 continued = true;

@@ -45,6 +45,14 @@ const PRE_FEATURE_FILE = `${JSON.stringify(
   2,
 )}\n`;
 
+// The sockets the relay tunnel in this process dialled; the table itself is tested in cloud-relay.
+const tunnelSockets = vi.hoisted(() => new Set<string>());
+vi.mock("@omnesis/cloud-relay", async (original) => ({
+  ...(await original<typeof import("@omnesis/cloud-relay")>()),
+  isRelayTunnelPeer: (peer: { remoteAddress?: string; remotePort?: number }) =>
+    tunnelSockets.has(`${peer.remoteAddress}|${peer.remotePort}`),
+}));
+
 // Tailscale on this computer answers with a fixed name; no Tailscale command runs.
 vi.mock("./remote-access/host-tailscale.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./remote-access/host-tailscale.js")>();
@@ -80,7 +88,6 @@ const closeables: Array<{ close(): Promise<unknown> | unknown }> = [];
 const apps = new Set<ReturnType<typeof createServer>>();
 
 beforeEach(async () => {
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
   vi.stubEnv("OMNESIS_EXPERIMENTAL", "0");
   dir = mkdtempSync(join(tmpdir(), "omnesis-mcp-addresses-"));
   db = createDatabase(join(dir, "gateway.db"));
@@ -361,16 +368,28 @@ describe("an address the owner turned MCP off on", () => {
   });
 
   test("a request through the relay cannot name another host to reach MCP", async () => {
-    const { send, adminRequest } = gateway();
+    const { app, adminRequest } = gateway();
     expect((await adminRequest("PATCH", { mcp: { relay: "off" } })).status).toBe(200);
-    const relayed = { "x-omnesis-cloud-relay": "1" };
-    for (const url of [
-      "https://localhost:7600/mcp",
-      "https://localhost:7600/.well-known/oauth-authorization-server",
-    ]) {
-      expect((await send(url, { headers: relayed })).status, url).toBe(404);
+    // Every relayed request arrives on a socket the tunnel dialled, and carries its marker.
+    tunnelSockets.add("127.0.0.1|41000");
+    try {
+      const relayed = (url: string) =>
+        app.fetch(new Request(url, { headers: { "x-omnesis-cloud-relay": "1" } }), {
+          incoming: {
+            headers: {},
+            socket: { remoteAddress: "127.0.0.1", remotePort: 41000 },
+          } as unknown as IncomingMessage,
+        });
+      for (const url of [
+        "https://localhost:7600/mcp",
+        "https://localhost:7600/.well-known/oauth-authorization-server",
+      ]) {
+        expect((await relayed(url)).status, url).toBe(404);
+      }
+      expect((await relayed("https://localhost:7600/health")).status).toBe(200);
+    } finally {
+      tunnelSockets.clear();
     }
-    expect((await send("https://localhost:7600/health", { headers: relayed })).status).toBe(200);
   });
 });
 

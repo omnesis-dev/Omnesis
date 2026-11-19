@@ -17,7 +17,6 @@ import { parseTrustedProxies, type CdnFront } from "./cdn-front.js";
 import { ProxyProtocolPeers } from "./proxy-protocol.js";
 import { startRelayDaemon } from "./runtime.js";
 
-beforeEach(() => vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1"));
 afterEach(() => vi.unstubAllEnvs());
 
 const EDGE = "::1";

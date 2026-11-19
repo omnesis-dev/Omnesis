@@ -2,11 +2,11 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * The login page and the optional cloud relay.
+ * The login page and Omnesis account sign-in.
  *
- * A gateway without the opt-in must be asked nothing new by its login page:
- * sign-in is mounted only when the session answer the page already fetches
- * says the gateway offers it.
+ * The page asks the gateway whether it offers sign-in; a gateway that never
+ * linked an account answers 404 (`cloudPairingConfig` resolves null), and its
+ * login page is the token and pairing-code form alone.
  */
 
 import { render } from "preact";
@@ -76,16 +76,18 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-test("a gateway without the cloud relay gets no sign-in request and no sign-in section", async () => {
+test("a gateway with no linked account shows the token form alone", async () => {
+  mocks.cloudPairingConfig.mockResolvedValueOnce(null as never);
   await mountLogin({ authenticated: false });
-  expect(mocks.cloudPairingConfig).not.toHaveBeenCalled();
+  await vi.waitFor(() => expect(mocks.cloudPairingConfig).toHaveBeenCalledTimes(1));
   expect(transport).not.toHaveBeenCalled();
   expect(host.querySelector(".cloud-pairing-login")).toBeNull();
+  expect(host.querySelector(".cloud-pairing-quiet")).toBeNull();
   expect(host.querySelector(".login-input")).not.toBeNull();
 });
 
-test("a gateway advertising the cloud relay is asked for its sign-in configuration", async () => {
-  await mountLogin({ authenticated: false, cloudRelay: true });
+test("the login page asks the gateway for its sign-in configuration", async () => {
+  await mountLogin({ authenticated: false });
   await vi.waitFor(() => expect(mocks.cloudPairingConfig).toHaveBeenCalledTimes(1));
   await vi.waitFor(() => expect(host.querySelector(".cloud-pairing-login")).not.toBeNull());
   // The older Google-only pairing doesn't lead: the token form stays where it was.
@@ -99,7 +101,7 @@ test("with account sign-in on offer, it leads and the token form waits behind a 
     gatewayFingerprint: "a".repeat(64),
     accountSignIn: true,
   } as never);
-  await mountLogin({ authenticated: false, cloudRelay: true });
+  await mountLogin({ authenticated: false });
   await vi.waitFor(() => expect(host.querySelector(".cloud-pairing-login")).not.toBeNull());
   await vi.waitFor(() => expect(host.querySelector(".login-input")).toBeNull());
   const quiet = host.querySelector(".cloud-pairing-quiet") as HTMLButtonElement;
@@ -134,7 +136,7 @@ describe("opening the gateway's own address from a signed-in portal", () => {
   test("a handoff signs this browser in, then the session is read again", async () => {
     arriveWith(`#portal-handoff=${CODE}`);
     transport.mockImplementation(async () => new Response("{}"));
-    await mountLogin({ authenticated: false, cloudRelay: true });
+    await mountLogin({ authenticated: false });
     expect(redeemed()).toHaveLength(1);
     expect(JSON.parse(redeemed()[0]![1].body)).toEqual({ code: CODE });
     expect(host.querySelector(".login-reason")).toBeNull();
@@ -145,15 +147,19 @@ describe("opening the gateway's own address from a signed-in portal", () => {
     transport.mockImplementation(async (path: string) =>
       path === "/portal/api/handoff/redeem" ? new Response("{}", { status: 401 }) : new Response("{}"),
     );
-    await mountLogin({ authenticated: false, cloudRelay: true });
+    await mountLogin({ authenticated: false });
     expect(host.querySelector(".login-reason")?.textContent).toContain(
       "That link expired or was already used.",
     );
   });
 
-  test("without the cloud relay, or already signed in here, a handoff is never sent", async () => {
+  test("a browser already signed in here never sends a handoff", async () => {
     arriveWith(`#portal-handoff=${CODE}`);
-    await mountLogin({ authenticated: false });
+    mocks.session = { authenticated: true };
+    vi.resetModules();
+    // @ts-expect-error — portal modules are plain JS without sibling declarations.
+    await import("./app.js");
+    await new Promise((resolve) => setTimeout(resolve, 20));
     expect(redeemed()).toHaveLength(0);
   });
 });

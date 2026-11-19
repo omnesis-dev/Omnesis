@@ -12,10 +12,10 @@
  *
  * The addresses, in the order the owner sees them, with the choices each has:
  *
- * - `relay` (off, public): the Omnesis relay address
- *   (OMNESIS_CLOUD_RELAY_ENABLED=1), recognised by the request arriving
- *   through the relay tunnel, or by its Host, since the gateway terminates TLS
- *   for that name.
+ * - `relay` (off, public): the Omnesis relay address, recognised by the
+ *   request arriving through the relay tunnel, or by its Host, since the
+ *   gateway terminates TLS for that name. Until the gateway is connected it
+ *   has no address and nothing matches it.
  * - `tailnet` (off, private, public): the gateway's own Tailscale device,
  *   recognised by the request arriving from the tailnet through the helper's
  *   private socket, or by its Host. Public is the device's own `publicAccess`
@@ -47,7 +47,7 @@
  * it being the gateway's public address.
  */
 
-import { assertNever, cloudRelayEnabled, createLogger } from "@omnesis/core";
+import { assertNever, createLogger } from "@omnesis/core";
 import { publicPathAllowed } from "../tailscale-embed/caller.js";
 import type { CloudRelayManagement } from "@omnesis/cloud-relay";
 import type { RemoteAccessSettingsStore } from "./settings.js";
@@ -242,7 +242,7 @@ export class McpAddresses {
     return MCP_ADDRESS_IDS.filter((id) => {
       switch (id) {
         case "relay":
-          return cloudRelayEnabled();
+          return true;
         case "tailnet":
           return !!this.options.tailscale;
         case "host":
@@ -426,7 +426,7 @@ export class McpAddresses {
 
   /** The relay's live origin and whether it serves this gateway; not serving when unknown. */
   private async relayNow(): Promise<{ origin: string | null; serving: boolean }> {
-    if (!cloudRelayEnabled() || !this.options.relayState) {
+    if (!this.options.relayState) {
       return { origin: originOf(this.options.relayOrigin?.()), serving: false };
     }
     try {
@@ -528,11 +528,10 @@ export class McpAddresses {
     const matched = new Set<McpAddressId>();
     const tailscale = !!this.options.tailscale;
     if (tailscale && via === "tailnet") matched.add("tailnet");
-    if (cloudRelayEnabled() && relayed) matched.add("relay");
+    if (relayed) matched.add("relay");
     const hostname = addressHostname(url);
     if (hostname && !isLoopbackHostname(hostname)) {
-      if (cloudRelayEnabled() && hostname === addressHostname(this.options.relayOrigin?.()))
-        matched.add("relay");
+      if (hostname === addressHostname(this.options.relayOrigin?.())) matched.add("relay");
       if (
         tailscale &&
         via !== "public" &&
@@ -552,8 +551,7 @@ export class McpAddresses {
   /** The way in, other than the owner's domain, whose address names `hostname`. */
   private wayNamed(hostname: string | null): Exclude<McpAddressId, "domain"> | null {
     if (!hostname) return null;
-    if (cloudRelayEnabled() && hostname === addressHostname(this.options.relayOrigin?.()))
-      return "relay";
+    if (hostname === addressHostname(this.options.relayOrigin?.())) return "relay";
     if (
       this.options.tailscale &&
       hostname === addressHostname(this.options.tailscale.tailnetOrigin())

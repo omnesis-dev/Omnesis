@@ -67,9 +67,7 @@ function app() {
   return { send, calls };
 }
 
-beforeEach(() => {
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
-});
+beforeEach(() => {});
 afterEach(() => vi.unstubAllEnvs());
 
 describe("step-up on the owner's Tailscale controls", () => {

@@ -139,7 +139,6 @@ test("real sockets recover absent heartbeats, abrupt resets and transient sessio
   const { WebSocketServer } = await import("ws");
   const { GatewayTunnel } = await import("./tunnel-client.js");
   const { listen, until, closeServer } = await import("../test/support.js");
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
   const server = createServer();
   const sockets = new WebSocketServer({ noServer: true });
   let admitted = 0;

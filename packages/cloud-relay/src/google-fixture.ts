@@ -4,10 +4,7 @@
 import { createRemoteJWKSet, type JWTVerifyGetKey } from "jose";
 
 /** Origins of the APIs the relay calls itself at Google; a fixture serves their paths unchanged. */
-const GOOGLE_API_ORIGINS = new Set([
-  "https://oauth2.googleapis.com",
-  "https://cloudidentity.googleapis.com",
-]);
+const GOOGLE_API_ORIGINS = new Set(["https://oauth2.googleapis.com"]);
 
 export interface GoogleFixture {
   authorizationEndpoint: string;
@@ -16,8 +13,8 @@ export interface GoogleFixture {
 }
 
 /**
- * Test-only: one loopback server stands in for Google's sign-in, token, signing-key and Cloud
- * Identity endpoints, so end-to-end tests can sign in without Google. A synthetic relay on a
+ * Test-only: one loopback server stands in for Google's sign-in, token and signing-key endpoints,
+ * so end-to-end tests can sign in without Google. A synthetic relay on a
  * loopback listener only, like the DNS fixture.
  */
 export function googleFixture(

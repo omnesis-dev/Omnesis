@@ -4,9 +4,11 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   arrivedThroughRelay,
+  arrivedThroughRelayTunnel,
   clientAddress,
   forwardedClientAddress,
   isLoopbackClient,
+  isRelayedRequest,
   markRelayRequestExposure,
   relayedClientBucket,
 } from "./client-ip.js";
@@ -169,30 +171,53 @@ describe("with OMNESIS_TRUST_PROXY=true", () => {
   });
 });
 
-test("experimental tunnel traffic never inherits local rate-limit exemptions", () => {
-  const cloudRelay = process.env.OMNESIS_CLOUD_RELAY_ENABLED;
+describe("on a gateway that never connected to the relay", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  test("a local caller keeps its loopback exemption and a local proxy is believed as before", () => {
+    delete process.env.OMNESIS_TRUST_PROXY;
+    vi.stubEnv("OMNESIS_CLOUD_RELAY_URL", undefined);
+    for (const address of ["127.0.0.1", "::1"]) {
+      expect(isLoopbackClient(headers({}), peer(address))).toBe(true);
+      expect(clientAddress(headers({}), peer(address))).toBe(address);
+      expect(isRelayedRequest(headers({}), peer(address))).toBe(false);
+      expect(arrivedThroughRelay(headers({}), peer(address))).toBe(false);
+    }
+    const proxied = headers({ "x-forwarded-for": "203.0.113.10" });
+    expect(clientAddress(proxied, peer("127.0.0.1"))).toBe("203.0.113.10");
+    expect(isLoopbackClient(proxied, peer("127.0.0.1"))).toBe(false);
+  });
+
+  test("a client claiming the relay's header only ever gives something up", () => {
+    delete process.env.OMNESIS_TRUST_PROXY;
+    vi.stubEnv("OMNESIS_CLOUD_RELAY_URL", undefined);
+    const claimed = headers({ "x-omnesis-cloud-relay": "1" });
+    for (const from of [peer("127.0.0.1"), peer("198.51.100.20")]) {
+      // Treated as remote, and withheld from as if relayed...
+      expect(isLoopbackClient(claimed, from)).toBe(false);
+      expect(isRelayedRequest(claimed, from)).toBe(true);
+      expect(arrivedThroughRelay(claimed, from)).toBe(true);
+      // ...but never taken for the tunnel, nor bucketed as a relayed client.
+      expect(arrivedThroughRelayTunnel(from)).toBe(false);
+      expect(relayedClientBucket(from)).toBeUndefined();
+    }
+    expect(clientAddress(claimed, peer("198.51.100.20"))).toBe("198.51.100.20");
+  });
+});
+
+test("a gateway configured for a relay by its environment treats no loopback caller as local", () => {
+  vi.stubEnv("OMNESIS_CLOUD_RELAY_URL", "https://relay.example.test");
   try {
-    process.env.OMNESIS_CLOUD_RELAY_ENABLED = "1";
-    expect(isLoopbackClient(headers({ "x-omnesis-cloud-relay": "1" }), peer("127.0.0.1"))).toBe(
-      false,
-    );
-    expect(isLoopbackClient(headers({}), peer("127.0.0.1"))).toBe(true);
-    process.env.OMNESIS_CLOUD_RELAY_ENABLED = "0";
-    expect(isLoopbackClient(headers({ "x-omnesis-cloud-relay": "1" }), peer("127.0.0.1"))).toBe(
-      true,
-    );
+    expect(isLoopbackClient(headers({}), peer("127.0.0.1"))).toBe(false);
   } finally {
-    if (cloudRelay === undefined) delete process.env.OMNESIS_CLOUD_RELAY_ENABLED;
-    else process.env.OMNESIS_CLOUD_RELAY_ENABLED = cloudRelay;
+    vi.unstubAllEnvs();
   }
 });
 
 test("trusted per-request relay exposure removes exemptions without affecting another app or accepting a header assertion", () => {
-  const priorCloudRelayEnabled = process.env.OMNESIS_CLOUD_RELAY_ENABLED,
-    priorRelay = process.env.OMNESIS_CLOUD_RELAY_URL;
+  const priorRelay = process.env.OMNESIS_CLOUD_RELAY_URL;
   try {
     delete process.env.OMNESIS_CLOUD_RELAY_URL;
-    process.env.OMNESIS_CLOUD_RELAY_ENABLED = "1";
     const direct = peer("127.0.0.1") as object,
       relayed = peer("127.0.0.1") as object;
     const release = markRelayRequestExposure(relayed);
@@ -200,18 +225,14 @@ test("trusted per-request relay exposure removes exemptions without affecting an
     expect(isLoopbackClient(headers({}), direct)).toBe(true);
     expect(isLoopbackClient(headers({}), relayed)).toBe(false);
     expect(isLoopbackClient(headers({ "x-forwarded-for": "127.0.0.1" }), relayed)).toBe(false);
-    process.env.OMNESIS_CLOUD_RELAY_ENABLED = "0";
-    expect(isLoopbackClient(headers({}), relayed)).toBe(true);
-    process.env.OMNESIS_CLOUD_RELAY_ENABLED = "1";
-    expect(isLoopbackClient(headers({}), direct)).toBe(true);
+    expect(isRelayedRequest(headers({}), relayed)).toBe(true);
+    expect(isRelayedRequest(headers({}), direct)).toBe(false);
     release();
     release();
     expect(isLoopbackClient(headers({}), relayed)).toBe(false);
     releaseConcurrent();
     expect(isLoopbackClient(headers({}), relayed)).toBe(true);
   } finally {
-    if (priorCloudRelayEnabled === undefined) delete process.env.OMNESIS_CLOUD_RELAY_ENABLED;
-    else process.env.OMNESIS_CLOUD_RELAY_ENABLED = priorCloudRelayEnabled;
     if (priorRelay === undefined) delete process.env.OMNESIS_CLOUD_RELAY_URL;
     else process.env.OMNESIS_CLOUD_RELAY_URL = priorRelay;
   }
@@ -259,16 +280,10 @@ describe("a request through this gateway's relay tunnel", () => {
     expect(relayedClientBucket(peer("127.0.0.1"))).toBeUndefined();
     expect(relayedClientBucket(undefined)).toBeUndefined();
     relayed.set("127.0.0.1|40100", "198.51.100.30");
-    const priorEnabled = process.env.OMNESIS_CLOUD_RELAY_ENABLED;
-    process.env.OMNESIS_CLOUD_RELAY_ENABLED = "1";
-    try {
-      expect(
-        isLoopbackClient(headers({ "x-omnesis-cloud-relay": "1" }), tunnelled("127.0.0.1", 40100)),
-      ).toBe(false);
-    } finally {
-      if (priorEnabled === undefined) delete process.env.OMNESIS_CLOUD_RELAY_ENABLED;
-      else process.env.OMNESIS_CLOUD_RELAY_ENABLED = priorEnabled;
-    }
+    expect(
+      isLoopbackClient(headers({ "x-omnesis-cloud-relay": "1" }), tunnelled("127.0.0.1", 40100)),
+    ).toBe(false);
+    expect(isRelayedRequest(headers({}), tunnelled("127.0.0.1", 40100))).toBe(true);
   });
 });
 
@@ -282,7 +297,6 @@ describe("whether a request came through the relay", () => {
   });
 
   test("a socket the tunnel dialled is the relay's whatever its headers say, and a local one is not", () => {
-    vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
     tunnelSockets.add("127.0.0.1|40200");
     // The relay left out its forwarding header and named no client: still relayed.
     expect(arrivedThroughRelay(headers({}), socket("127.0.0.1", 40200))).toBe(true);
@@ -302,10 +316,13 @@ describe("whether a request came through the relay", () => {
     release();
   });
 
-  test("is never true without the cloud relay opt-in", () => {
-    vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "0");
+  test("only the tunnel's own socket counts as the tunnel, never a header", () => {
     tunnelSockets.add("127.0.0.1|40200");
-    expect(arrivedThroughRelay(headers({}), socket("127.0.0.1", 40200))).toBe(false);
-    expect(arrivedThroughRelay(headers({ "x-omnesis-cloud-relay": "1" }), undefined)).toBe(false);
+    expect(arrivedThroughRelayTunnel(socket("127.0.0.1", 40200))).toBe(true);
+    expect(arrivedThroughRelayTunnel(socket("127.0.0.1", 40201))).toBe(false);
+    expect(arrivedThroughRelayTunnel(undefined)).toBe(false);
+    expect(arrivedThroughRelayTunnel({})).toBe(false);
+    expect(arrivedThroughRelay(headers({ "x-omnesis-cloud-relay": "1" }), undefined)).toBe(true);
+    expect(arrivedThroughRelayTunnel(socket("198.51.100.20", 40200))).toBe(false);
   });
 });

@@ -51,7 +51,6 @@ type Oauth = {
 type Agent = { needsPublicAddress: string; standardPortOnly?: string };
 
 const relayPublicAddress = untypedRelayPublicAddress as (
-  cloudRelay: boolean,
   status: Record<string, unknown> | null,
   oauth: Oauth | null,
 ) => Relay;
@@ -129,22 +128,18 @@ const PUBLISH_ROUTES = ["/portal/settings/host-tailscale", "/portal/settings/own
 const RELAY_ROUTE = "/portal/settings/relay";
 
 describe("relayPublicAddress", () => {
-  test("shows nothing of the relay when the gateway does not advertise it", () => {
-    expect(relayPublicAddress(false, status(), oauth(TAILNET))).toEqual({ state: "none" });
-  });
-
   test("shows nothing until the status has been read", () => {
-    expect(relayPublicAddress(true, null, oauth(TAILNET))).toEqual({ state: "none" });
+    expect(relayPublicAddress(null, oauth(TAILNET))).toEqual({ state: "none" });
   });
 
-  test("a gateway with the feature on and no public address is not connected", () => {
+  test("a gateway with no public address is not connected", () => {
     const unconnected = status({ enabled: false, configured: false, enrollment: { state: "unconfigured" }, tunnel: { state: "disabled" }, publicMcp: { ready: false } });
-    expect(relayPublicAddress(true, unconnected, oauth(TAILNET, []))).toEqual({ state: "not-connected" });
+    expect(relayPublicAddress(unconnected, oauth(TAILNET, []))).toEqual({ state: "not-connected" });
   });
 
   test("an installation that cannot connect to an account is offered nothing", () => {
     const unavailable = status({ enabled: false, serviceConfigured: false, publicMcp: { ready: false } });
-    expect(relayPublicAddress(true, unavailable, oauth(TAILNET, []))).toEqual({ state: "none" });
+    expect(relayPublicAddress(unavailable, oauth(TAILNET, []))).toEqual({ state: "none" });
   });
 
   test.each([
@@ -155,22 +150,22 @@ describe("relayPublicAddress", () => {
     ["disconnected", status({ tunnel: { state: "connecting" }, publicMcp: { ready: false, url: RELAY } })],
     ["off", status({ enabled: false, tunnel: { state: "disabled" }, publicMcp: { ready: false, url: RELAY } })],
   ])("a connected gateway's public address is %s", (state, relayStatus) => {
-    expect(relayPublicAddress(true, relayStatus, oauth(TAILNET))).toEqual({ state, url: RELAY });
+    expect(relayPublicAddress(relayStatus, oauth(TAILNET))).toEqual({ state, url: RELAY });
   });
 
   test("remote access turned off outranks a stale ready answer", () => {
-    expect(relayPublicAddress(true, status({ enabled: false }), oauth(TAILNET)).state).toBe("off");
+    expect(relayPublicAddress(status({ enabled: false }), oauth(TAILNET)).state).toBe("off");
   });
 
   test("never offers an address the gateway does not authorize", () => {
-    expect(relayPublicAddress(true, status(), oauth(TAILNET, []))).toEqual({ state: "none" });
-    expect(relayPublicAddress(true, status(), { resource: TAILNET })).toEqual({ state: "none" });
-    expect(relayPublicAddress(true, status(), { resource: RELAY })).toEqual({ state: "ready", url: RELAY });
+    expect(relayPublicAddress(status(), oauth(TAILNET, []))).toEqual({ state: "none" });
+    expect(relayPublicAddress(status(), { resource: TAILNET })).toEqual({ state: "none" });
+    expect(relayPublicAddress(status(), { resource: RELAY })).toEqual({ state: "ready", url: RELAY });
   });
 
   test("never offers an address that is not plain https", () => {
     const plain = status({ publicMcp: { ready: true, url: "http://g-fictional.relay.example.test/mcp" } });
-    expect(relayPublicAddress(true, plain, oauth(TAILNET))).toEqual({ state: "not-connected" });
+    expect(relayPublicAddress(plain, oauth(TAILNET))).toEqual({ state: "not-connected" });
   });
 });
 

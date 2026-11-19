@@ -22,7 +22,11 @@ export const cloudRelayRemoveSignInQuery = z
   .object({ revokeDevices: z.enum(["true", "false"]).optional() })
   .strict();
 export const cloudRelayConnectBody = z
-  .object({ termsAccepted: z.literal(true), intent: z.enum(["create", "existing"]).optional() })
+  .object({
+    termsAccepted: z.literal(true),
+    intent: z.enum(["create", "existing"]).optional(),
+    invite: z.string().trim().min(1).max(2048).optional(),
+  })
   .strict();
 /** A passkey assertion made on this gateway's page to confirm the passkey as the owner's. */
 export const cloudRelayConfirmPasskeyBody = z

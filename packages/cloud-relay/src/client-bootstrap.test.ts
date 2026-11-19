@@ -16,20 +16,23 @@ afterEach(() => {
 
 test("native bootstrap is optional and explicit operator destination wins without reading any pairing credential", async () => {
   const start = vi.fn();
+  // No paired device file, or a destination the operator chose: nothing starts.
   for (const env of [
     {},
-    { OMNESIS_CLOUD_RELAY_ENABLED: "1" },
-    { OMNESIS_CLOUD_RELAY_DEVICE_FILE: "private.json" },
+    { OMNESIS_TOKEN: "manual-token" },
     {
-      OMNESIS_CLOUD_RELAY_ENABLED: "1",
       OMNESIS_CLOUD_RELAY_DEVICE_FILE: "private.json",
       OMNESIS_GATEWAY_URL: "https://manual.example",
+    },
+    {
+      OMNESIS_CLOUD_RELAY_DEVICE_FILE: "private.json",
+      OMNESIS_GATEWAY_REQUEST_URL: "http://127.0.0.1:12345",
     },
   ])
     await initializePairedDeviceTransport(env, { start, findDefault: async () => undefined });
   for (const args of [["--help"], ["-h"], ["--version"], ["-V"], ["help"]])
     await initializePairedDeviceTransport(
-      { OMNESIS_CLOUD_RELAY_ENABLED: "1", OMNESIS_CLOUD_RELAY_DEVICE_FILE: "private.json" },
+      { OMNESIS_CLOUD_RELAY_DEVICE_FILE: "private.json" },
       { start },
       args,
     );
@@ -38,7 +41,6 @@ test("native bootstrap is optional and explicit operator destination wins withou
 
 test("automatic ephemeral adapter changes only destination, keeps component-owned token and closes on exit", async () => {
   const env = {
-    OMNESIS_CLOUD_RELAY_ENABLED: "1",
     OMNESIS_CLOUD_RELAY_DEVICE_FILE: "private.json",
     OMNESIS_TOKEN: "component-owned-token",
   } as NodeJS.ProcessEnv;
@@ -54,7 +56,6 @@ test("automatic ephemeral adapter changes only destination, keeps component-owne
   expect(env.OMNESIS_GATEWAY_REQUEST_URL).toBe("http://127.0.0.1:12345");
   expect(env.OMNESIS_TOKEN).toBe("component-owned-token");
   expect(start).toHaveBeenCalledWith({
-    OMNESIS_CLOUD_RELAY_ENABLED: "1",
     OMNESIS_CLOUD_RELAY_DEVICE_FILE: "private.json",
     OMNESIS_TOKEN: "component-owned-token",
     OMNESIS_CLOUD_RELAY_CLIENT_PORT: "0",
@@ -75,7 +76,7 @@ test("production launcher uses client mode and one beforeExit handler, while sta
     gatewayUrl: "https://canonical.example.com",
     close,
   });
-  const env = { OMNESIS_CLOUD_RELAY_ENABLED: "1", OMNESIS_CLOUD_RELAY_DEVICE_FILE: "private.json" };
+  const env = { OMNESIS_CLOUD_RELAY_DEVICE_FILE: "private.json" };
   await initializePairedDeviceTransport({ ...env });
   expect(runRelayCommand).toHaveBeenCalledWith(
     "client",
@@ -97,7 +98,6 @@ test("production launcher uses client mode and one beforeExit handler, while sta
 
 test("transport loopback stays distinct from logical identity and unrelated explicit destinations", () => {
   const env = {
-    OMNESIS_CLOUD_RELAY_ENABLED: "1",
     OMNESIS_GATEWAY_REQUEST_URL: "http://127.0.0.1:12345",
     OMNESIS_GATEWAY_URL: "https://canonical.example.com",
   };
@@ -107,26 +107,22 @@ test("transport loopback stays distinct from logical identity and unrelated expl
   expect(pairedLogicalGatewayUrl("https://manual.example", env)).toBe("https://manual.example");
   expect(
     pairedLogicalGatewayUrl("http://127.0.0.1:12345", {
-      OMNESIS_CLOUD_RELAY_ENABLED: "1",
       OMNESIS_GATEWAY_REQUEST_URL: "http://127.0.0.1:12345",
     }),
   ).toBe("http://127.0.0.1:12345");
   expect(pairedLogicalGatewayUrl("https://manual.example")).toBe("https://manual.example");
 });
 
-test("the request URL variable is read only with the cloud relay opt-in", () => {
+test("the paired request URL exists only once the bootstrap set it", () => {
   const env = {
     OMNESIS_GATEWAY_REQUEST_URL: "http://127.0.0.1:12345",
     OMNESIS_GATEWAY_URL: "https://canonical.example.com",
   };
-  expect(pairedGatewayRequestUrl(env)).toBeUndefined();
-  expect(pairedLogicalGatewayUrl(env.OMNESIS_GATEWAY_REQUEST_URL, env)).toBe(
-    env.OMNESIS_GATEWAY_REQUEST_URL,
-  );
-  expect(pairedGatewayRequestUrl({ ...env, OMNESIS_CLOUD_RELAY_ENABLED: "1" })).toBe(
-    env.OMNESIS_GATEWAY_REQUEST_URL,
-  );
-  expect(pairedGatewayRequestUrl({ OMNESIS_CLOUD_RELAY_ENABLED: "1" })).toBeUndefined();
+  expect(pairedGatewayRequestUrl(env)).toBe(env.OMNESIS_GATEWAY_REQUEST_URL);
+  expect(pairedGatewayRequestUrl({ OMNESIS_GATEWAY_URL: env.OMNESIS_GATEWAY_URL })).toBeUndefined();
+  expect(pairedGatewayRequestUrl({})).toBeUndefined();
+  // An empty value is no transport, so callers fall back to the gateway URL.
+  expect(pairedGatewayRequestUrl({ OMNESIS_GATEWAY_REQUEST_URL: "" })).toBeUndefined();
 });
 
 test("automatic component bundles require matching active tokens and never override manual destinations or credentials", async () => {
@@ -135,7 +131,7 @@ test("automatic component bundles require matching active tokens and never overr
   const { join } = await import("node:path");
   const { defaultCloudDeviceFile } = await import("./client-bootstrap.js");
   const dir = await mkdtemp(join(tmpdir(), "cloud-default-bootstrap-"));
-  const env = { OMNESIS_CLOUD_RELAY_ENABLED: "1", OMNESIS_CONFIG_DIR: dir };
+  const env = { OMNESIS_CONFIG_DIR: dir };
   try {
     expect(await defaultCloudDeviceFile(env, "cli")).toBeUndefined();
     await mkdir(join(dir, "cloud-relay"));
@@ -151,7 +147,6 @@ test("automatic component bundles require matching active tokens and never overr
     await writeFile(join(dir, "collector-token"), "cloud-collector\n");
     expect(await defaultCloudDeviceFile(env, "collector")).toBe(collectorFile);
     for (const override of [
-      { OMNESIS_CLOUD_RELAY_ENABLED: "0" },
       { OMNESIS_GATEWAY_URL: "https://manual.example.test" },
       { OMNESIS_GATEWAY_REQUEST_URL: "https://manual.example.test" },
       { OMNESIS_TOKEN: "manual-token" },

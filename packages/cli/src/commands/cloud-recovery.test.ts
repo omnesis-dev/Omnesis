@@ -13,17 +13,7 @@ afterEach(() => {
   runRelayCommand.mockReset();
 });
 
-test("every recovery command is cloud-relay gated before importing or invoking runtime", async () => {
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "0");
-  for (const command of Object.values(cloudRecoveryCommands))
-    await expect(runCommand(command, { rawArgs: [] })).rejects.toThrow(
-      "OMNESIS_CLOUD_RELAY_ENABLED=1",
-    );
-  expect(runRelayCommand).not.toHaveBeenCalled();
-});
-
 test("all six commands preserve runtime public JSON output without adding a misleading success suffix", async () => {
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
   const output = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
   runRelayCommand.mockImplementation(async () => {
     process.stdout.write('{"publicResult":true}\n');
@@ -37,7 +27,6 @@ test("all six commands preserve runtime public JSON output without adding a misl
 });
 
 test("recovery authority, parser and filesystem failures expose no private paths or signing material", async () => {
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
   const output = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
   const error = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
   runRelayCommand.mockRejectedValue(new Error("private-signing-fixture /private/authority.key"));

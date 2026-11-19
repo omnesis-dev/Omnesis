@@ -11,7 +11,6 @@ vi.mock("@omnesis/core", async (original) => ({
 }));
 
 beforeEach(() => {
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
   vi.stubEnv("OMNESIS_EXPERIMENTAL", "0");
 });
 const argv = process.argv;
@@ -168,10 +167,10 @@ test("offline prepare-owner keeps stdout public JSON free of generic success mes
   expect(mocks.info).not.toHaveBeenCalled();
 });
 
-test("experimental mode alone cannot start the dedicated relay entrypoint", async () => {
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "0");
-  vi.stubEnv("OMNESIS_EXPERIMENTAL", "1");
+test("the relay entrypoint needs no opt-in setting to start", async () => {
+  process.argv = ["node", "main", "prepare-owner"];
+  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", undefined);
+  mocks.run.mockResolvedValue(undefined);
   await import("./main.js");
-  expect(mocks.run).not.toHaveBeenCalled();
-  expect(process.exitCode).toBe(1);
+  expect(mocks.run).toHaveBeenCalledWith("prepare-owner", process.env);
 });

@@ -18,15 +18,15 @@ export const STEP_LABELS = {
 };
 
 /**
- * The steps the setup walks: the account only with the relay; new devices
- * only while a device can ask to join (`devices`: an account is linked or the
+ * The steps the setup walks: the account; the connection; new devices only
+ * while a device can ask to join (`devices`: an account is linked or the
  * gateway's own Tailscale device is on); and the MCP server last, only while
  * some address away from home exists to offer it on (`mcp`). A step with
  * nothing to choose is left out.
  */
-export function setupSteps({ cloudRelay = false, devices = false, mcp = false } = {}) {
+export function setupSteps({ devices = false, mcp = false } = {}) {
   return [
-    ...(cloudRelay ? ["account"] : []),
+    "account",
     "connection",
     ...(devices ? ["devices"] : []),
     ...(mcp ? ["mcp"] : []),

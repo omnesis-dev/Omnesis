@@ -67,11 +67,10 @@ describe("e2eGatewayEnv", () => {
   });
 
   test("never lets a spawned gateway fall back to the production cloud relay", () => {
-    // A harness that inherits OMNESIS_CLOUD_RELAY_ENABLED=1 without naming a
-    // relay gets no relay at all (installation-relay.ts reads this marker).
+    // A spawned gateway that names no relay gets no relay at all
+    // (installation-relay.ts reads this marker).
     expect(
       e2eGatewayEnv({
-        OMNESIS_CLOUD_RELAY_ENABLED: "1",
         OMNESIS_E2E_DISABLE_DEFAULT_RELAY: "0",
       }),
     ).toMatchObject({ OMNESIS_E2E_DISABLE_DEFAULT_RELAY: "1" });

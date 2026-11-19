@@ -324,44 +324,64 @@ test("failed: a readable reason and one way to try again", async () => {
 });
 
 describe("invite-only relay", () => {
-  const JOIN = "https://groups.example.com/g/fictional-testers";
-  const NOTICE =
-    "Omnesis accounts are invite-only for now. Request access (groups.example.com) — you can create your account once it's approved.";
-  const notice = () => host.querySelector(".relay-invite");
-  const INLINE =
-    "Accounts are invite-only for now: request access (groups.example.com), then create your account once it's approved.";
-  test("before connecting, says accounts need approval in the same paragraph and links to the request page", async () => {
-    state.status = { ...base(), signup: { inviteOnly: true, requestAccessUrl: JOIN } };
+  const INVITE = `${"a".repeat(36)}.${"b".repeat(120)}.${"c".repeat(86)}`;
+  const LINK = `https://relay.example.test/invite#${INVITE}`;
+  const field = () => host.querySelector("#relay-invite-input") as HTMLInputElement | null;
+  async function type(value: string) {
+    await act(async () => {
+      const input = field()!;
+      input.value = value;
+      input.dispatchEvent(new (window as any).Event("input", { bubbles: true }));
+    });
+  }
+  test("before connecting, says accounts are private and invite-only, and creates one only with an invite", async () => {
+    state.status = { ...base(), signup: { inviteOnly: true } };
     await show();
-    expect(host.querySelector(".relay-lede")?.textContent?.replace(/\s+/g, " ")).toContain(INLINE);
-    const request = link("request access");
-    expect(request.getAttribute("href")).toBe(JOIN);
-    expect(request.getAttribute("target")).toBe("_blank");
-    expect(request.getAttribute("rel")).toBe("noopener noreferrer");
-    expect(notice()).toBeNull();
-    expect(button("Create an account")).toBeDefined();
-    expect(button("I already have one")).toBeDefined();
+    expect(host.querySelector(".relay-lede")?.textContent?.replace(/\s+/g, " ")).toContain(
+      "Omnesis accounts are private and invite-only for now: creating one needs an invite link.",
+    );
+    expect(host.querySelector(".relay-private-badge")?.textContent).toBe("Private · invite only");
+    expect(field()?.getAttribute("placeholder")).toBe("Paste the invite link you were sent");
+    expect(text()).toContain("Signing in to an account you already have needs no invite.");
+    // Without an invite there is no account to create, but an existing one can still connect.
+    expect(button("Create an account").disabled).toBe(true);
+    await click("I already have one");
+    expect(state.run).toHaveBeenLastCalledWith("connect", {
+      termsAccepted: true,
+      intent: "existing",
+    });
+    await type("https://relay.example.test/invite#cut-short");
+    expect(field()?.getAttribute("aria-invalid")).toBe("true");
+    expect(text()).toContain("That isn't a whole invite link.");
+    expect(button("Create an account").disabled).toBe(true);
+    await type(`  ${LINK} `);
+    expect(field()?.getAttribute("aria-invalid")).toBe("false");
+    expect(button("Create an account").disabled).toBe(false);
+    await click("Create an account");
+    // Only the invite's own token leaves the page.
+    expect(state.run).toHaveBeenLastCalledWith("connect", {
+      termsAccepted: true,
+      intent: "create",
+      invite: INVITE,
+    });
+    // Signing in to an existing account never sends the invite.
+    await click("I already have one");
+    expect(state.run).toHaveBeenLastCalledWith("connect", {
+      termsAccepted: true,
+      intent: "existing",
+    });
   });
-  test("says nothing when the relay is not invite-only or its link is not a safe https address", async () => {
-    for (const signup of [
-      undefined,
-      { inviteOnly: false, requestAccessUrl: JOIN },
-      { inviteOnly: true },
-      { inviteOnly: true, requestAccessUrl: "http://groups.example.com/g/fictional-testers" },
-      { inviteOnly: true, requestAccessUrl: "javascript:alert(1)" },
-      { inviteOnly: true, requestAccessUrl: "https://name:secret@groups.example.com/" },
-      { inviteOnly: true, requestAccessUrl: `https://groups.example.com/${"a".repeat(2100)}` },
-      { inviteOnly: true, requestAccessUrl: 7 },
-    ]) {
+  test("a relay that is not invite-only asks for no invite", async () => {
+    for (const signup of [undefined, { inviteOnly: false }, { inviteOnly: "true" }]) {
       state.status = { ...base(), ...(signup ? { signup } : {}) };
       await show();
       expect(text()).not.toContain("invite-only");
-      expect(link("request access")).toBeUndefined();
-      expect(button("Create an account")).toBeDefined();
+      expect(field()).toBeNull();
+      expect(button("Create an account").disabled).toBe(false);
     }
   });
-  test("is not shown once connecting or connected", async () => {
-    const signup = { inviteOnly: true, requestAccessUrl: JOIN };
+  test("is not shown once connecting or connected, or after another failure", async () => {
+    const signup = { inviteOnly: true };
     for (const status of [
       { ...base(), signup, connect: { state: "waiting", authorizeUrl: AUTHORIZE } },
       { ...base(), signup, connect: { state: "failed", error: "relay-unreachable" } },
@@ -369,27 +389,25 @@ describe("invite-only relay", () => {
     ]) {
       state.status = status;
       await show();
-      expect(notice()).toBeNull();
+      expect(field()).toBeNull();
+      expect(host.querySelector(".relay-private-badge")).toBeNull();
     }
   });
-  test("a sign-in refused for not being approved points to the same request page", async () => {
-    state.status = {
-      ...base(),
-      signup: { inviteOnly: true, requestAccessUrl: JOIN },
-      connect: { state: "failed", error: "not-allowed" },
-    };
-    await show();
-    expect(headline()).toBe("Couldn't connect");
-    expect(text()).toContain("This account hasn't been approved for Omnesis yet.");
-    expect(notice()?.textContent?.replace(/\s+/g, " ").trim()).toBe(NOTICE);
-    expect(link("Request access").getAttribute("href")).toBe(JOIN);
-    expect(button("Try again")).toBeDefined();
-    // Without a link the refusal still reads plainly.
-    state.status = { ...base(), connect: { state: "failed", error: "not-allowed" } };
-    await show();
-    expect(text()).toContain("This account hasn't been approved for Omnesis yet.");
-    expect(notice()).toBeNull();
-  });
+  for (const [error, words] of [
+    ["invite-invalid", "That invite isn't valid. Check that you pasted the whole invite link."],
+    ["invite-expired", "That invite has expired. Ask whoever sent it for a new one."],
+    ["invite-used", "That invite was already used to create an account. Ask for a new one."],
+  ] as const)
+    test(`a refused invite (${error}) says why and offers the choice again`, async () => {
+      state.status = { ...base(), signup: { inviteOnly: true }, connect: { state: "failed", error } };
+      await show();
+      expect(headline()).toBe("Couldn't connect");
+      expect(text()).toContain(words);
+      expect(field()).not.toBeNull();
+      expect(button("Create an account").disabled).toBe(true);
+      expect(button("I already have one")).toBeDefined();
+      expect(button("Try again")).toBeUndefined();
+    });
 });
 
 test("unavailable installations explain the situation, offer nothing to press and never show service URLs", async () => {

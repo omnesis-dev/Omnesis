@@ -24,18 +24,7 @@ afterEach(() => {
   gatewayJson.mockReset();
 });
 
-test("Google cloud commands are hidden and refused unless cloud relay is explicitly enabled", async () => {
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "0");
-  expect((await freshTree()).visibleSubCommands()).not.toHaveProperty("cloud");
-  expect((await freshTree()).SUB_COMMANDS).not.toHaveProperty("cloud");
-  await expect(runCloudIdentityCommand("google-login")).rejects.toThrow(
-    "OMNESIS_CLOUD_RELAY_ENABLED=1",
-  );
-  expect(runRelayCommand).not.toHaveBeenCalled();
-});
-
 test("installed CLI dispatches Google login, gateway registration and device pairing without dialing a default gateway", async () => {
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
   vi.spyOn(process.stdout, "write").mockImplementation(() => true);
   expect((await freshTree()).visibleSubCommands()).toHaveProperty("cloud");
   for (const [subcommand, operation] of [
@@ -55,7 +44,6 @@ test("installed CLI dispatches Google login, gateway registration and device pai
 });
 
 test("credential parser and OAuth errors are never printed by the CLI", async () => {
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
   runRelayCommand.mockRejectedValue(new Error("fictional-sensitive-refresh-token"));
   await expect(runCloudIdentityCommand("google-login")).rejects.not.toThrow(
     "fictional-sensitive-refresh-token",
@@ -77,7 +65,6 @@ function pending(extra = {}) {
 }
 
 test("owner requests and decisions use the trusted gateway and require the new device's exact comparison code", async () => {
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
   const output = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
   gatewayJson.mockResolvedValue({ items: [pending({ name: "Fictional\u001b[31mphone" })] });
   expect(isDefaultGatewayTrustExempt(["cloud", "requests"])).toBe(false);
@@ -101,7 +88,6 @@ test("owner requests and decisions use the trusted gateway and require the new d
 });
 
 test("owner approval refuses mismatched, absent, expired and already decided requests without a write", async () => {
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
   for (const row of [undefined, pending({ status: "approved" }), pending({ expiresAt: 1 })]) {
     gatewayJson.mockResolvedValue({ items: row ? [row] : [] });
     await expect(decideCloudPairing("approve", requestId, verificationCode)).rejects.toThrow(
@@ -115,12 +101,9 @@ test("owner approval refuses mismatched, absent, expired and already decided req
     true,
   );
   await expect(decideCloudPairing("deny", "not-a-uuid")).rejects.toThrow();
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "0");
-  await expect(decideCloudPairing("list")).rejects.toThrow("OMNESIS_CLOUD_RELAY_ENABLED=1");
 });
 
 test("prepare-owner preserves the runtime public JSON output without a success suffix", async () => {
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
   const output = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
   await runCloudIdentityCommand("prepare-owner");
   expect(output).not.toHaveBeenCalled();
@@ -128,7 +111,6 @@ test("prepare-owner preserves the runtime public JSON output without a success s
 });
 
 test("installed cloud command exposes six explicit offline/local recovery operations without unrelated gateway calls", async () => {
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
   vi.spyOn(process.stdout, "write").mockImplementation(() => true);
   for (const operation of [
     "recovery-create-authority",
@@ -146,7 +128,6 @@ test("installed cloud command exposes six explicit offline/local recovery operat
 });
 
 test("pair flags select the component and approval name without modifying operator environment", async () => {
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
   vi.spyOn(process.stdout, "write").mockReturnValue(true);
   await runCommand(cloudCommand, {
     rawArgs: ["pair", "--kind", "collector", "--name", "Chosen collector"],

@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-// Settings → Omnesis account: the account link and remote access through the optional cloud relay. Only
-// rendered when the gateway runs with OMNESIS_CLOUD_RELAY_ENABLED=1.
+// Settings → Omnesis account: the account link and remote access through the Omnesis relay.
 //
 // The page leads with one state headline and at most one primary action, then
 // three short sections: the account, remote access and new devices. Anything
@@ -85,16 +84,6 @@ function TipButton({ id, tip, children, ...button }) {
     <button type="button" title=${tip} aria-describedby=${id} ...${button}>${children}</button>
     <span class="relay-tip" id=${id} role="tooltip">${tip}</span>
   </span>`;
-}
-
-/** Accounts need approval: where to ask, with the link's host in plain sight. */
-export function RequestAccess({ access }) {
-  return html`<p class="relay-invite">
-    Omnesis accounts are invite-only for now.${" "}
-    <a href=${access.url} target="_blank" rel="noopener noreferrer">Request access</a>
-    ${" "}<span class="relay-invite-host">(${access.host})</span> — you can create your account
-    once it's approved.
-  </p>`;
 }
 
 /** The relay page's headline once the gateway is registered: connected, reconnecting, dropped or off. */

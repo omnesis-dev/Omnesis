@@ -598,7 +598,6 @@ test("a cancelled invalidated generation cannot overwrite replacement routing cr
 });
 
 test("a real tunnel recovers a relay restart with a rotated HMAC by reproving stable keys instead of retrying the cached session", async () => {
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
   const f = await fixture();
   const transport = vi.fn<typeof fetch>((url, init) => fetch(url, init));
   const source = gatewayKeySessionSource({ ...f.options, fetch: transport });

@@ -277,7 +277,6 @@ describe.skipIf(!browserReady)("a sign-in made to link a gateway never enrolls a
    */
   function outsiderHandoff() {
     const env = {
-      OMNESIS_CLOUD_RELAY_ENABLED: "1",
       OMNESIS_CLOUD_RELAY_URL: world.relayOrigin,
       OMNESIS_CLOUD_RELAY_SESSION_FILE: outsider.sessionFile,
       OMNESIS_CLOUD_RELAY_OWNER_KEY_FILE: outsider.ownerKeyFile,

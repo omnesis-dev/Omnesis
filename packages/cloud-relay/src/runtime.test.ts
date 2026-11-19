@@ -27,7 +27,6 @@ let dir: string;
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), "omnesis-cloud-runtime-"));
   if (process.platform === "win32") await core.ensurePrivateDirs([dir]);
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
 });
 
 test.each(["session", "mock-identity", "tls", "invitation", "identity-token"])(
@@ -416,7 +415,6 @@ describe("local daemon and credential files", () => {
       OMNESIS_CLOUD_RELAY_GOOGLE_WEB_CLIENT_ID: "fictional-web-client",
       OMNESIS_CLOUD_RELAY_GOOGLE_WEB_SECRET_FILE: secretFile,
       OMNESIS_CLOUD_RELAY_PUBLIC_ORIGIN: "https://relay.example.test",
-      OMNESIS_CLOUD_RELAY_ENABLED: "1",
     };
     const relay = await startRelayDaemon(configured);
     try {
@@ -474,7 +472,6 @@ describe("local daemon and credential files", () => {
       OMNESIS_CLOUD_RELAY_GOOGLE_WEB_CLIENT_ID: "fictional-web-client",
       OMNESIS_CLOUD_RELAY_GOOGLE_WEB_SECRET_FILE: secretFile,
       OMNESIS_CLOUD_RELAY_PUBLIC_ORIGIN: "https://relay.example.test",
-      OMNESIS_CLOUD_RELAY_ENABLED: "1",
     };
     const relay = await startRelayDaemon(configured);
     try {
@@ -606,7 +603,6 @@ describe("local daemon and credential files", () => {
       expect(first).toMatch(/^ey/);
       expect(
         await runRelayCommand("login", {
-          OMNESIS_CLOUD_RELAY_ENABLED: process.env.OMNESIS_CLOUD_RELAY_ENABLED,
           OMNESIS_CLOUD_RELAY_URL: relay.url,
           OMNESIS_CLOUD_RELAY_SESSION_FILE: sessionFile,
           OMNESIS_CLOUD_RELAY_ID_TOKEN_FILE: tokenFile,
@@ -614,7 +610,6 @@ describe("local daemon and credential files", () => {
       ).toBeUndefined();
       expect(await readRelaySession(sessionFile)).toMatch(/^ey/);
       const client = await runRelayCommand("client", {
-        OMNESIS_CLOUD_RELAY_ENABLED: process.env.OMNESIS_CLOUD_RELAY_ENABLED,
         OMNESIS_CLOUD_RELAY_URL: relay.url,
         OMNESIS_CLOUD_RELAY_SESSION_FILE: sessionFile,
         OMNESIS_CLOUD_RELAY_CLIENT_PORT: "0",
@@ -728,7 +723,6 @@ describe("local daemon and credential files", () => {
     await expect(startRelayDaemon(invalidBind)).rejects.toThrow("loopback");
     await expect(
       runRelayCommand("unknown", {
-        OMNESIS_CLOUD_RELAY_ENABLED: process.env.OMNESIS_CLOUD_RELAY_ENABLED,
         OMNESIS_CLOUD_RELAY_URL: "http://127.0.0.1",
         OMNESIS_CLOUD_RELAY_SESSION_FILE: "unused",
       }),
@@ -816,18 +810,16 @@ describe("local daemon and credential files", () => {
     await relay.close();
   });
 
-  test("gateway integration is opt-in, requires complete configuration and respects the feature gate", async () => {
+  test("gateway integration starts only with a relay URL and gateway ID, and requires complete configuration", async () => {
     expect(startGatewayCloudTunnel("https://localhost:1", {})).toBeUndefined();
     // A relay URL without a gateway ID chooses a service for portal setup; it starts nothing.
     expect(
       startGatewayCloudTunnel("https://localhost:1", {
-        OMNESIS_CLOUD_RELAY_ENABLED: process.env.OMNESIS_CLOUD_RELAY_ENABLED,
         OMNESIS_CLOUD_RELAY_URL: "http://127.0.0.1:1",
       }),
     ).toBeUndefined();
     expect(() =>
       startGatewayCloudTunnel("https://localhost:1", {
-        OMNESIS_CLOUD_RELAY_ENABLED: process.env.OMNESIS_CLOUD_RELAY_ENABLED,
         OMNESIS_CLOUD_RELAY_URL: "http://127.0.0.1:1",
         OMNESIS_CLOUD_RELAY_GATEWAY_ID: randomUUID(),
       }),
@@ -836,7 +828,6 @@ describe("local daemon and credential files", () => {
     const path = join(dir, "session.json");
     await writeFile(path, JSON.stringify(f.session));
     const env = {
-      OMNESIS_CLOUD_RELAY_ENABLED: process.env.OMNESIS_CLOUD_RELAY_ENABLED,
       OMNESIS_CLOUD_RELAY_URL: f.url,
       OMNESIS_CLOUD_RELAY_GATEWAY_ID: randomUUID(),
       OMNESIS_CLOUD_RELAY_SESSION_FILE: path,
@@ -845,13 +836,6 @@ describe("local daemon and credential files", () => {
       const tunnel = startGatewayCloudTunnel("https://localhost:1", env);
       expect(tunnel).toBeDefined();
       tunnel!.stop();
-      vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "0");
-      expect(
-        startGatewayCloudTunnel("https://localhost:1", {
-          ...env,
-          OMNESIS_CLOUD_RELAY_ENABLED: "0",
-        }),
-      ).toBeUndefined();
     } finally {
       await f.close();
     }
