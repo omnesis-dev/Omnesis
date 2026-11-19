@@ -11,14 +11,14 @@
  *
  * Two ways the invariant can break, each proven against a spawned gateway:
  *   - a tampered fail-closed marker         → "failed integrity verification"
- *   - a present root key that will not open → "cannot be read" (wrong passphrase)
+ *   - a present root key that will not open → TLS key persistence refuses the passphrase
  */
 
 import { spawn } from "node:child_process";
 import { createServer, type AddressInfo } from "node:net";
 import { request as httpsRequest } from "node:https";
 import type { ClientRequest } from "node:http";
-import { readdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ensureInstallRootKey, markStorageEncryptionRequired } from "@omnesis/core";
@@ -78,6 +78,10 @@ async function spawnGatewayExpectingExit(
       OMNESIS_BIND: "127.0.0.1",
       OMNESIS_MDNS_DISABLE: "1",
       OMNESIS_PARENT_PID: String(process.pid),
+      // Exercise this fixture's TLS material, never inherited certificate paths.
+      OMNESIS_TLS_CERT: "",
+      OMNESIS_TLS_KEY: "",
+      OMNESIS_TLS_EXTRA_NAMES: "",
       ...extraEnv,
     },
     stdio: ["ignore", "pipe", "pipe"],
@@ -201,17 +205,34 @@ async function spawnGatewayExpectingExit(
 }
 
 /** The startup observer must never be confused with an available corpus. */
-function expectStorageGateClosed(result: BootAttempt, configDir: string): void {
+function expectStorageGateClosed(
+  result: BootAttempt,
+  configDir: string,
+  expectedListener: "startup" | "tls-refused",
+): void {
   expect(result.code).toBe(1);
+  expect(result.output).toContain("Cannot start:");
   expect(result.output).not.toContain("Live storage is UNENCRYPTED");
   expect(result.output).not.toContain("Analytics DB opened");
   expect(result.output).not.toContain("Listening on https://");
-  // A real HTTPS response proves this exercised the early listener rather
-  // than treating connection refusal as evidence about its API policy.
   const apiResponses = result.responses.filter((response) =>
     API_PATHS.some((path) => path === response.path),
   );
-  expect(apiResponses.length).toBeGreaterThan(0);
+  if (expectedListener === "startup") {
+    // A real response proves this reached the startup listener. Requests
+    // racing its fatal shutdown may finish as connection refusal instead.
+    expect(result.output).toContain("Startup page listening");
+    expect(apiResponses.length).toBeGreaterThan(0);
+  } else {
+    // TLS private keys are encrypted before HTTPS binds. Failure to unlock
+    // the install root key must refuse TLS itself, rather than create a
+    // plaintext private key just to offer a startup observer.
+    expect(result.output).toContain("PassphraseMismatchError");
+    expect(result.output).not.toContain("Startup page listening");
+    expect(result.responses).toEqual([]);
+    expect(existsSync(join(configDir, "tls", "key.pem"))).toBe(false);
+    expect(existsSync(join(configDir, "tls", "cert.pem"))).toBe(false);
+  }
   for (const response of apiResponses) {
     expect(response.status, response.path).toBe(503);
     if (response.complete) {
@@ -277,14 +298,14 @@ describe("gateway boot fails closed at the process level", () => {
       const r = await spawnGatewayExpectingExit(configDir, await freePort(), {
         OMNESIS_SECRET_STORE: "file",
       });
-      expectStorageGateClosed(r, configDir);
+      expectStorageGateClosed(r, configDir, "startup");
       expect(r.output).toMatch(/failed integrity verification/i);
     },
     BOOT_BUDGET + 10_000,
   );
 
   test(
-    "a present-but-unopenable root key (wrong passphrase) exits the process",
+    "a wrong passphrase refuses TLS without binding HTTPS or opening stores",
     async () => {
       const configDir = tmp();
       process.env.OMNESIS_SECRET_STORE = "passphrase";
@@ -295,8 +316,8 @@ describe("gateway boot fails closed at the process level", () => {
         OMNESIS_SECRET_STORE: "passphrase",
         OMNESIS_KEYRING_PASSPHRASE: "wrong passphrase",
       });
-      expectStorageGateClosed(r, configDir);
-      expect(r.output).toMatch(/cannot be read/i);
+      expectStorageGateClosed(r, configDir, "tls-refused");
+      expect(r.output).toMatch(/keyring passphrase does not open the stored secret/i);
     },
     BOOT_BUDGET + 10_000,
   );
