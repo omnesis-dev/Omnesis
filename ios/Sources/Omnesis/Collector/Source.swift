@@ -81,7 +81,9 @@ public struct PairingCapabilities: Codable, Equatable, Sendable {
     /// tell a pinned phone apart before its certificate renews. Absent from
     /// the pairing exchange, where the gateway itself chose the mode.
     public let tls: TLS?
-    /// Advertises support without requiring older paired phones to understand a new reminder kind.
+    /// This app routes a device waiting for the owner's approval (`device-pairing`) and one
+    /// that joined (`device-joined`). Sent by every build; optional so a capability set from
+    /// an older app still decodes.
     public var pairingNotifications: Bool?
     /// This app routes a device waiting to join through Tailscale (`tailscale-join`) and
     /// one that joined (`tailscale-joined`). Sent by every build; optional so a capability
@@ -100,8 +102,7 @@ public struct PairingCapabilities: Codable, Equatable, Sendable {
         previousDeviceId: String? = nil,
         pushAppId: String? = Bundle.main.bundleIdentifier,
         version: String = omnesisAppVersion(),
-        tlsMode: PairingTlsMode? = nil,
-        pairingNotifications: Bool = CloudRelayFeature.enabled
+        tlsMode: PairingTlsMode? = nil
     )
         -> PairingCapabilities {
         let contracts = NativeHostedSourceRegistry.ios
@@ -125,8 +126,7 @@ public struct PairingCapabilities: Codable, Equatable, Sendable {
             }),
             syncLease: contracts.contains { $0.multiDeviceMode == .replicated },
             tls: tlsMode.map { TLS(mode: $0.rawValue) },
-            // Absent, not false, off the cloud build flag: the wire body stays as it was.
-            pairingNotifications: pairingNotifications ? true : nil,
+            pairingNotifications: true,
             tailscaleJoinNotifications: true
         )
     }

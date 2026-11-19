@@ -190,16 +190,9 @@ extension PairingPayload {
             .replacingOccurrences(of: "\u{201D}", with: "\"")
     }
 
-    private static func decodeVersion<Value: Decodable>(
-        _ type: Value.Type,
-        from data: Data,
-        cloudRelayEnabled: Bool = true
-    ) throws
-        -> Value {
+    private static func decodeVersion<Value: Decodable>(_ type: Value.Type, from data: Data) throws -> Value {
         do {
-            let decoder = JSONDecoder()
-            decoder.userInfo[.pairingStrictTLSAllowed] = cloudRelayEnabled
-            return try decoder.decode(type, from: data)
+            return try JSONDecoder().decode(type, from: data)
         } catch {
             throw PairingPayloadError.invalidShape("\(error)")
         }
@@ -215,8 +208,8 @@ extension PairingPayload {
         return v3
     }
 
-    private static func decodeV4(from data: Data, cloudRelayEnabled: Bool) throws -> V4 {
-        let v4 = try decodeVersion(V4.self, from: data, cloudRelayEnabled: cloudRelayEnabled)
+    private static func decodeV4(from data: Data) throws -> V4 {
+        let v4 = try decodeVersion(V4.self, from: data)
         if v4.gatewayUrl.isEmpty { throw PairingPayloadError.missingField("gatewayUrl") }
         if v4.pairingCode.isEmpty { throw PairingPayloadError.missingField("pairingCode") }
         try validateGatewayOrigin(v4.gatewayUrl)
@@ -237,13 +230,8 @@ extension PairingPayload {
 
     /// Decode a pairing payload from raw QR-decoded text. Trims whitespace,
     /// straightens typographic quotes, validates invariants, and returns a
-    /// tagged case. Off the cloud build flag the strict V4 trust modes are
-    /// unknown modes, refused as any other unknown mode is.
-    public static func decode(
-        from raw: String,
-        cloudRelayEnabled: Bool = CloudRelayFeature.enabled
-    ) throws
-        -> PairingPayload {
+    /// tagged case.
+    public static func decode(from raw: String) throws -> PairingPayload {
         let trimmed = straighteningQuotes(in: raw).trimmingCharacters(in: .whitespacesAndNewlines)
         guard let data = trimmed.data(using: .utf8) else {
             throw PairingPayloadError.invalidJSON
@@ -260,7 +248,7 @@ extension PairingPayload {
 
         switch peek.v {
         case 4:
-            return try .v4(decodeV4(from: data, cloudRelayEnabled: cloudRelayEnabled))
+            return try .v4(decodeV4(from: data))
 
         case 3:
             return try .v3(decodeV3(from: data))

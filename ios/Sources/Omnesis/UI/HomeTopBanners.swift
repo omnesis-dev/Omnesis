@@ -36,7 +36,6 @@ struct HomeTopBanners: View {
 
     private var approvalKinds: DeviceApprovalKinds {
         DeviceApprovalKinds(
-            cloudRelayEnabled: CloudRelayFeature.enabled,
             tailscaleEmbed: store.statusSnapshot?.tailscaleEmbed == true,
             scopes: store.pairing?.scopes
         )

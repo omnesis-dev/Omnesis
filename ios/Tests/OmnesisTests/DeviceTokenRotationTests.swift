@@ -6,72 +6,11 @@ import Foundation
 @testable import Omnesis
 import XCTest
 
-/// With `OMNESIS_CLOUD_RELAY_ENABLED` off nothing about sign-in enrollment runs, and a QR
-/// pairing behaves as it does without cloud connectivity. Rotation is covered here too,
-/// because its gate and its behaviour are the same few lines.
-final class CloudRelayGateTests: XCTestCase {
+/// A device that joined by signing in renews its token every thirty days, signed with its
+/// enrollment key; a QR pairing has no enrollment and never rotates.
+final class DeviceTokenRotationTests: XCTestCase {
     private let clock = 1_800_000_000.0
     private let spki = String(repeating: "c", count: 64)
-
-    private func bundle(_ info: [String: Any]) throws -> Bundle {
-        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathExtension("bundle")
-        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        addTeardownBlock { try? FileManager.default.removeItem(at: folder) }
-        let data = try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0)
-        try data.write(to: folder.appendingPathComponent("Info.plist"))
-        return try XCTUnwrap(Bundle(url: folder))
-    }
-
-    func testTheFlagIsOnOnlyWhenTheBuildSaysOne() throws {
-        XCTAssertTrue(try CloudRelayFeature.isEnabled(in: bundle(["OmnesisCloudRelayEnabled": "1"])))
-        for value: Any in ["0", "", "true", "$(OMNESIS_CLOUD_RELAY_ENABLED)", true] {
-            XCTAssertFalse(try CloudRelayFeature.isEnabled(in: bundle(["OmnesisCloudRelayEnabled": value])))
-        }
-        XCTAssertFalse(try CloudRelayFeature.isEnabled(in: bundle([:])))
-    }
-
-    func testNotificationsAreIgnoredWithTheFlagOff() {
-        let joined: [AnyHashable: Any] = ["omnesis": ["kind": "device-joined", "targetId": "dev-1"]]
-        let pairing: [AnyHashable: Any] = ["omnesis": ["kind": "device-pairing", "targetId": "pairing"]]
-        XCTAssertNil(PushTarget.fromUserInfo(joined, cloudRelayEnabled: false))
-        XCTAssertNil(PushTarget.fromUserInfo(pairing, cloudRelayEnabled: false))
-        XCTAssertEqual(PushTarget.fromUserInfo(joined, cloudRelayEnabled: true), .deviceJoined)
-        XCTAssertEqual(PushTarget.fromUserInfo(["omnesis": ["kind": "device-joined"]], cloudRelayEnabled: true), .deviceJoined)
-        XCTAssertEqual(PushTarget.deviceJoined.kindName, "device-joined")
-        XCTAssertTrue(PushTarget.deviceJoined.opensDevices)
-        XCTAssertTrue(PushTarget.pairingRequests().opensDevices)
-        XCTAssertFalse(PushTarget.accessAuthorization.opensDevices)
-    }
-
-    func testClaimsDoNotAskForPairingNotificationsWithTheFlagOff() async throws {
-        let seen = RequestLog()
-        for enabled in [false, true] {
-            let claimer = try NotificationClaimer(
-                baseURL: XCTUnwrap(URL(string: "https://gateway.example.test")),
-                token: "omn_device",
-                claimsPairingNotifications: enabled
-            ) { request in
-                seen.append(request)
-                let url = try XCTUnwrap(request.url)
-                let response = try XCTUnwrap(HTTPURLResponse(url: url, statusCode: 204, httpVersion: nil, headerFields: nil))
-                return (Data(), response)
-            }
-            _ = try await claimer.claim()
-        }
-        XCTAssertEqual(seen.all.map { $0.value(forHTTPHeaderField: "X-Omnesis-Pairing-Notifications") }, [nil, "1"])
-    }
-
-    func testRotationNeverTouchesTheKeychainOrNetworkWithTheFlagOff() async throws {
-        let store = CountingStore()
-        let transport = RotationTransport()
-        var subject = rotator(store: store, transport: transport, replaced: Replacement())
-        subject.enabled = false
-        let rotated = try await subject.rotateIfDue(pairing: pairing())
-        XCTAssertFalse(rotated)
-        XCTAssertEqual(store.reads, 0)
-        XCTAssertEqual(store.writes, 0)
-        XCTAssertTrue(transport.paths.isEmpty)
-    }
 
     func testAQrPairingHasNoRecordAndNeverRotates() async throws {
         let store = InMemoryStore()
@@ -170,7 +109,7 @@ final class CloudRelayGateTests: XCTestCase {
             ).encoded(),
             forKey: PairingCredentialBundle.key
         )
-        let service = PairingService(store: store, cloudRelayEnabled: true)
+        let service = PairingService(store: store)
         let current = try XCTUnwrap(service.current())
         XCTAssertTrue(try service.replaceToken(expected: current, token: "omn_new", tokenId: "tok_new"))
         let updated = try XCTUnwrap(service.current())
@@ -226,7 +165,6 @@ final class CloudRelayGateTests: XCTestCase {
     private func rotator(store: any PairingStore, transport: RotationTransport, replaced: Replacement) -> DeviceTokenRotator {
         let clock = clock
         return DeviceTokenRotator(
-            enabled: true,
             store: store,
             deviceKey: { try DeviceEnrollmentKey.loadOrCreate(store: InMemoryStore(), enclaveAvailable: false) },
             makeTransport: { _, _ in transport },
@@ -241,18 +179,6 @@ final class CloudRelayGateTests: XCTestCase {
 
 private final class Replacement: @unchecked Sendable {
     var value: (token: String, tokenId: String?)?
-}
-
-private final class RequestLog: @unchecked Sendable {
-    private let lock = NSLock()
-    private var requests: [URLRequest] = []
-    var all: [URLRequest] {
-        lock.withLock { requests }
-    }
-
-    func append(_ request: URLRequest) {
-        lock.withLock { requests.append(request) }
-    }
 }
 
 private final class RotationTransport: CloudPairingTransport, @unchecked Sendable {
@@ -291,29 +217,4 @@ private final class RotationTransport: CloudPairingTransport, @unchecked Sendabl
     }
 
     func close() {}
-}
-
-private final class CountingStore: PairingStore, @unchecked Sendable {
-    var reads = 0
-    var writes = 0
-    func set(_ value: String, forKey key: String) throws {
-        writes += 1
-    }
-
-    func get(_ key: String) throws -> String? {
-        reads += 1
-        return nil
-    }
-
-    func getLegacySynchronizable(_ key: String) throws -> String? {
-        nil
-    }
-
-    func hasLegacySynchronizableValues() throws -> Bool {
-        false
-    }
-
-    func deleteLegacySynchronizableValues() throws {}
-    func delete(_ key: String) throws {}
-    func deleteAll() throws {}
 }

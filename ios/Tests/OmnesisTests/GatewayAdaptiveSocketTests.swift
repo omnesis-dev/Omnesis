@@ -466,7 +466,7 @@ extension GatewayAdaptiveSocketTests {
         let store = InMemoryStore()
         let bundle = PairingCredentialBundle(original, url: origin, tlsMode: original.tlsMode, fingerprint: nil)
         try store.set(bundle.encoded(), forKey: PairingCredentialBundle.key)
-        let service = PairingService(store: store, cloudRelayEnabled: true)
+        let service = PairingService(store: store)
         // Removing stale hints changes future routes while the owned loopback WS keeps running.
         // The synthetic persisted hint is never used as a network endpoint by this fixture.
         let facts: [GatewayDirectCandidate] = []

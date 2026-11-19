@@ -80,7 +80,7 @@ final class GatewayStoredTrustContractTests: XCTestCase {
         ] {
             try store.set(value, forKey: key)
         }
-        XCTAssertNil(try PairingService(store: store, cloudRelayEnabled: true).current())
+        XCTAssertNil(try PairingService(store: store).current())
         XCTAssertNil(try store.get(PairingCredentialBundle.key))
     }
 
@@ -91,7 +91,7 @@ final class GatewayStoredTrustContractTests: XCTestCase {
         }
         let origin = "https://localhost:\(peer.info.targetPort)"
         let store = InMemoryStore()
-        let service = PairingService(store: store, cloudRelayEnabled: true)
+        let service = PairingService(store: store)
         let previous = try service.pair(raw: """
         {"v":1,"url":"\(origin)","token":"old-device-token","accountId":"old-device","name":"Test gateway"}
         """)

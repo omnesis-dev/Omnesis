@@ -43,8 +43,6 @@ public final class PairingService: Sendable {
     private let strictPinnedExchangeBuilder: @Sendable (String) -> PairingExchangeHTTP?
     private let keyPinnedExchangeBuilder: @Sendable (String, String) -> PairingExchangeHTTP?
     private let directDiscovery: any GatewayDirectDiscovering
-    /// Off, QR pairing stores every redeemed code and the strict trust modes do not exist.
-    let cloudRelayEnabled: Bool
 
     public init(
         store: PairingStore = Keychain(),
@@ -60,8 +58,7 @@ public final class PairingService: Sendable {
         keyPinnedExchangeBuilder: @escaping @Sendable (String, String) -> PairingExchangeHTTP? = { spki, host in
             URLSessionPairingExchange(ownedSession: PinnedSession(spkiFingerprint: spki, host: host).session)
         },
-        directDiscovery: any GatewayDirectDiscovering = GatewayDirectDiscovery(),
-        cloudRelayEnabled: Bool = CloudRelayFeature.enabled
+        directDiscovery: any GatewayDirectDiscovering = GatewayDirectDiscovery()
     ) {
         self.store = store
         self.exchange = exchange
@@ -70,7 +67,6 @@ public final class PairingService: Sendable {
         self.strictPinnedExchangeBuilder = strictPinnedExchangeBuilder
         self.keyPinnedExchangeBuilder = keyPinnedExchangeBuilder
         self.directDiscovery = directDiscovery
-        self.cloudRelayEnabled = cloudRelayEnabled
     }
 
     /// Pair from a raw QR payload.
@@ -85,7 +81,7 @@ public final class PairingService: Sendable {
     /// non-V1 payloads.
     @discardableResult
     public func pair(raw: String) throws -> Pairing {
-        let payload = try PairingPayload.decode(from: raw, cloudRelayEnabled: cloudRelayEnabled)
+        let payload = try PairingPayload.decode(from: raw)
         let operation = mutations.begin()
         switch payload {
         case .v4:
@@ -111,7 +107,7 @@ public final class PairingService: Sendable {
     /// (exchange + pinned `URLSession` for the cert fingerprint).
     @discardableResult
     public func pairAsync(raw: String) async throws -> Pairing {
-        let payload = try PairingPayload.decode(from: raw, cloudRelayEnabled: cloudRelayEnabled)
+        let payload = try PairingPayload.decode(from: raw)
         let operation = mutations.begin()
         switch payload {
         case .v4(let v4):
@@ -126,7 +122,7 @@ public final class PairingService: Sendable {
     }
 
     private func persistV1(_ v1: PairingPayload.V1, operation: UUID) throws -> Pairing {
-        try mutations.commit(operation, fenced: cloudRelayEnabled) {
+        try mutations.commit(operation) {
             guard let url = URL(string: v1.url) else {
                 throw PairingPayloadError.invalidURL
             }
@@ -270,8 +266,7 @@ public final class PairingService: Sendable {
             // entitlement `UIDevice.name` is the generic model name, so two
             // iPhones would otherwise suggest the same name.
             suggestedName: "\(host)-\(installId.prefix(6))",
-            installId: installId,
-            pairingNotifications: cloudRelayEnabled
+            installId: installId
         )
         // A re-pair names the row this install was paired as before, so the
         // gateway adopts it even if the operator renamed it.
@@ -324,7 +319,7 @@ public final class PairingService: Sendable {
                 directCandidates = nil
             }
         }
-        return try mutations.commit(operation, fenced: cloudRelayEnabled) {
+        return try mutations.commit(operation) {
             // See the `Pairing` doc comment for why this is hardcoded.
             let accountId = "local"
 
@@ -450,7 +445,7 @@ public final class PairingService: Sendable {
         // invariant `accountId == gateway deviceId`.
         let deviceId = (try? store.get(Keys.deviceId)) ?? nil ?? accountId
         let fingerprint = try store.get(Keys.fingerprint)
-        let tlsMode = try storedTlsMode(store.get(Keys.tlsMode) ?? "") ?? (fingerprint == nil ? .legacy : .pinnedLeaf)
+        let tlsMode = try PairingTlsMode(rawValue: store.get(Keys.tlsMode) ?? "") ?? (fingerprint == nil ? .legacy : .pinnedLeaf)
         if tlsMode == .pinnedKeyStrict || (tlsMode.requiresPin && !isValidFingerprint(fingerprint)) {
             return nil
         }
@@ -474,7 +469,7 @@ public final class PairingService: Sendable {
     private func materialize(_ credential: PairingCredentialBundle) -> Pairing? {
         guard let url = validatedGatewayURL(credential.url),
               !credential.token.isEmpty,
-              let tlsMode = storedTlsMode(credential.tlsMode)
+              let tlsMode = PairingTlsMode(rawValue: credential.tlsMode)
         else { return nil }
         let pin = tlsMode == .pinnedKeyStrict ? credential.spkiFingerprint : credential.fingerprint
         if tlsMode.requiresPin, !isValidFingerprint(pin) {
@@ -729,14 +724,6 @@ public final class PairingService: Sendable {
         components.query = nil
         components.fragment = nil
         return components.url?.absoluteString
-    }
-}
-
-extension PairingService {
-    /// Off the cloud build flag a stored strict mode is an unknown mode.
-    private func storedTlsMode(_ rawValue: String) -> PairingTlsMode? {
-        guard let mode = PairingTlsMode(rawValue: rawValue), cloudRelayEnabled || !mode.isStrict else { return nil }
-        return mode
     }
 }
 

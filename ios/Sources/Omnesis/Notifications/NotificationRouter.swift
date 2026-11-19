@@ -149,16 +149,11 @@ extension PushTarget {
     /// normal launch flow.
     /// One parser intentionally owns compatibility for canonical and legacy payloads.
     // swiftlint:disable:next cyclomatic_complexity
-    public static func fromUserInfo(
-        _ userInfo: [AnyHashable: Any],
-        cloudRelayEnabled: Bool = CloudRelayFeature.enabled
-    )
-        -> PushTarget? {
+    public static func fromUserInfo(_ userInfo: [AnyHashable: Any]) -> PushTarget? {
         guard let omnesis = userInfo["omnesis"] as? [String: Any] else { return nil }
         let kind = omnesis["kind"] as? String
-        if kind == "device-joined" { return cloudRelayEnabled ? .deviceJoined : nil }
-        // The Tailscale kinds carry nothing to act on, and only a gateway with its
-        // own Tailscale device sends them, so every build routes them.
+        if kind == "device-joined" { return .deviceJoined }
+        // The Tailscale kinds carry nothing to act on; only a gateway with its own Tailscale device sends them.
         if kind == "tailscale-join" { return .tailscaleJoinRequests }
         if kind == "tailscale-joined" { return .deviceJoined }
         if let targetId = omnesis["targetId"] as? String, !targetId.isEmpty {
@@ -174,7 +169,7 @@ extension PushTarget {
             case "access-authorization":
                 return targetId == "access" ? .accessAuthorization : nil
             case "device-pairing":
-                return cloudRelayEnabled && targetId == "pairing" ? .pairingRequests(requestId: pairingRequestId(omnesis)) : nil
+                return targetId == "pairing" ? .pairingRequests(requestId: pairingRequestId(omnesis)) : nil
             default: break
             }
         }

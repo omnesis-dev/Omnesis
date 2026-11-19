@@ -32,25 +32,6 @@ final class DeviceGroupingTests: XCTestCase {
         )
     }
 
-    func testAgentPairResultUsesSelectedAdvertisedIdentityWithoutLosingSchemeOrPort() {
-        XCTAssertEqual(
-            agentGatewayURL(
-                gatewayOrigin: URL(string: "https://gateway.example:17600"),
-                identityAddresses: ["192.0.2.42", "gateway.tail.example"],
-                selectedIndex: 1
-            ),
-            "https://gateway.tail.example:17600"
-        )
-        XCTAssertEqual(
-            agentGatewayURL(
-                gatewayOrigin: URL(string: "https://gateway.example:17600"),
-                identityAddresses: [],
-                selectedIndex: 0
-            ),
-            "https://gateway.example:17600"
-        )
-    }
-
     private func device(_ id: String, online: Bool, lastSeenAt: Int64?) -> DeviceRecord {
         DeviceRecord(
             id: id,

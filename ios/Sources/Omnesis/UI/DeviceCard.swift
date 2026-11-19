@@ -26,7 +26,6 @@ struct DeviceCard: View {
     var onRepairDevice: () -> Void = {}
     var onRevokeToken: (String) -> Void = { _ in }
     var mutationsDisabled = false
-    var cloudRelayEnabled = CloudRelayFeature.enabled
 
     @State private var expanded: Bool
 
@@ -41,8 +40,7 @@ struct DeviceCard: View {
         onRepairDevice: @escaping () -> Void = {},
         onRevokeToken: @escaping (String) -> Void = { _ in },
         mutationsDisabled: Bool = false,
-        startExpanded: Bool = false,
-        cloudRelayEnabled: Bool = CloudRelayFeature.enabled
+        startExpanded: Bool = false
     ) {
         self.device = device
         self.isThis = isThis
@@ -54,14 +52,13 @@ struct DeviceCard: View {
         self.onRepairDevice = onRepairDevice
         self.onRevokeToken = onRevokeToken
         self.mutationsDisabled = mutationsDisabled
-        self.cloudRelayEnabled = cloudRelayEnabled
         self._expanded = State(initialValue: startExpanded)
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
-            if cloudRelayEnabled, let enrollment = device.enrollment {
+            if let enrollment = device.enrollment {
                 DeviceJoinRow(enrollment: enrollment)
                     .padding(.top, Theme.Spacing.sm)
             }
@@ -169,17 +166,11 @@ struct DeviceCard: View {
         .buttonStyle(.plain)
     }
 
-    /// The cloud build names the menu for VoiceOver; with the flag off it reads as it
-    /// always has, from its ellipsis symbol.
-    @ViewBuilder
+    /// Named for VoiceOver, which would otherwise read the ellipsis symbol.
     private var deviceMenu: some View {
-        if cloudRelayEnabled {
-            deviceActionsMenu
-                .accessibilityLabel("Device actions")
-                .accessibilityIdentifier("devices.actions")
-        } else {
-            deviceActionsMenu
-        }
+        deviceActionsMenu
+            .accessibilityLabel("Device actions")
+            .accessibilityIdentifier("devices.actions")
     }
 
     /// Every action on the device, from the one list `DeviceActions.menu` gives.
@@ -245,7 +236,7 @@ struct DeviceCard: View {
             Circle()
                 .fill(activeNow ? Theme.success : Theme.textMuted)
                 .frame(width: 6, height: 6)
-            if cloudRelayEnabled, !device.isRevoked, let value = device.connectionPath, let path = GatewayConnectionPath(rawValue: value) {
+            if !device.isRevoked, let value = device.connectionPath, let path = GatewayConnectionPath(rawValue: value) {
                 GatewayConnectionPill(path: path)
             } else {
                 Text(DeviceGrouping.statusLine(device, isCurrent: isThis))
@@ -384,7 +375,7 @@ private struct DeviceCardPreview: View {
 @available(iOS 17.0, *)
 #Preview("Device card — joined with Omnesis account") {
     ScrollView {
-        DeviceCard(device: PreviewMocks.deviceJoinedWithGoogle, tokens: [], cloudRelayEnabled: true)
+        DeviceCard(device: PreviewMocks.deviceJoinedWithGoogle, tokens: [])
             .padding(Theme.Spacing.lg)
     }
     .background(Theme.bgPrimary.ignoresSafeArea())

@@ -323,16 +323,11 @@ final class OmnesisAccountSettingsTests: XCTestCase {
     // MARK: - Model
 
     @MainActor
-    func testTheEntryStaysHiddenWithTheBuildFlagOffAndOnAGatewayWithoutTheEndpoint() async throws {
+    func testTheEntryStaysHiddenOnAGatewayWithoutTheEndpoint() async throws {
         let session = RelaySession()
         let client = try session.client()
 
-        let off = OmnesisAccountModel(enabled: false)
-        await off.load(client: client)
-        XCTAssertFalse(off.offered)
-        XCTAssertTrue(session.requests.isEmpty, "A build without cloud connectivity never asks the gateway")
-
-        let model = OmnesisAccountModel(enabled: true)
+        let model = OmnesisAccountModel()
         XCTAssertFalse(model.offered)
         session.status = 404
         await model.load(client: client)
@@ -355,7 +350,7 @@ final class OmnesisAccountSettingsTests: XCTestCase {
         // A token without the admin scope cannot read the status either.
         session.status = 403
         session.response = #"{"error":"Forbidden: admin scope required","code":"FORBIDDEN"}"#
-        let limited = OmnesisAccountModel(enabled: true)
+        let limited = OmnesisAccountModel()
         await limited.load(client: client)
         XCTAssertFalse(limited.offered)
     }
@@ -364,7 +359,7 @@ final class OmnesisAccountSettingsTests: XCTestCase {
     func testARefusedChangeShowsThePortalsWords() async throws {
         let session = RelaySession()
         let client = try session.client()
-        let model = OmnesisAccountModel(enabled: true)
+        let model = OmnesisAccountModel()
         await model.load(client: client)
 
         session.status = 409
@@ -392,7 +387,7 @@ final class OmnesisAccountSettingsTests: XCTestCase {
         let session = RelaySession()
         let client = try session.client()
         let browser = RecordingBrowser()
-        let model = OmnesisAccountModel(enabled: true, browser: browser)
+        let model = OmnesisAccountModel(browser: browser)
         session.response = RelayFixture.notConnected
         await model.load(client: client)
         XCTAssertEqual(model.pollInterval, .seconds(5))
@@ -428,7 +423,7 @@ final class OmnesisAccountSettingsTests: XCTestCase {
         let session = RelaySession()
         let client = try session.client()
         let browser = RecordingBrowser()
-        let model = OmnesisAccountModel(enabled: true, browser: browser)
+        let model = OmnesisAccountModel(browser: browser)
 
         session.status = 503
         session.response = #"{"error":"Relay operation was refused.","code":"relay-unreachable"}"#
@@ -448,7 +443,7 @@ final class OmnesisAccountSettingsTests: XCTestCase {
         let session = RelaySession()
         let client = try session.client()
         let browser = RecordingBrowser()
-        let model = OmnesisAccountModel(enabled: true, browser: browser)
+        let model = OmnesisAccountModel(browser: browser)
         await model.load(client: client)
 
         model.openAccountPage()
@@ -463,7 +458,7 @@ final class OmnesisAccountSettingsTests: XCTestCase {
             stale: RelayFixture.decode(RelayFixture.established(tunnel: "online")),
             fresh: RelayFixture.decode(RelayFixture.established(tunnel: "disabled", enabled: false))
         )
-        let model = OmnesisAccountModel(enabled: true)
+        let model = OmnesisAccountModel()
         let read = Task { await model.load(client: slow) }
         await slow.readStarted()
         await model.perform(.disable, client: slow)

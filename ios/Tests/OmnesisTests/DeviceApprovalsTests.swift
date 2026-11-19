@@ -40,21 +40,19 @@ final class DeviceApprovalsTests: XCTestCase {
 
     // MARK: - Which kinds this phone reviews
 
-    func testEachKindFollowsItsOwnOptInAndNeedsTheAdminScope() {
+    func testAnAdministratorReviewsSignInsAndTailscaleOnlyOnAGatewayThatRunsIt() {
         let admin = ["read", "admin"]
-        XCTAssertEqual(DeviceApprovalKinds(cloudRelayEnabled: false, tailscaleEmbed: false, scopes: admin), .neither)
         XCTAssertFalse(DeviceApprovalKinds.neither.any)
         XCTAssertEqual(
-            DeviceApprovalKinds(cloudRelayEnabled: true, tailscaleEmbed: false, scopes: admin),
+            DeviceApprovalKinds(tailscaleEmbed: false, scopes: admin),
             DeviceApprovalKinds(cloud: true, tailscale: false)
         )
         XCTAssertEqual(
-            DeviceApprovalKinds(cloudRelayEnabled: false, tailscaleEmbed: true, scopes: admin),
-            DeviceApprovalKinds(cloud: false, tailscale: true)
+            DeviceApprovalKinds(tailscaleEmbed: true, scopes: admin),
+            DeviceApprovalKinds(cloud: true, tailscale: true)
         )
-        XCTAssertTrue(DeviceApprovalKinds(cloudRelayEnabled: true, tailscaleEmbed: true, scopes: admin).any)
         for scopes: [String]? in [nil, [], ["read"], ["read", "write:web"]] {
-            XCTAssertEqual(DeviceApprovalKinds(cloudRelayEnabled: true, tailscaleEmbed: true, scopes: scopes), .neither, "\(scopes ?? [])")
+            XCTAssertEqual(DeviceApprovalKinds(tailscaleEmbed: true, scopes: scopes), .neither, "\(scopes ?? [])")
         }
     }
 

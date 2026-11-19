@@ -14,28 +14,12 @@ extension DeviceSocket {
         expectedDeviceId: String? = nil,
         promotionClock: any GatewayPromotionWaiting = GatewayPromotionClock(),
         hintRefresher: (any GatewayDirectHintRefreshing)? = nil,
-        liveness: Liveness? = CloudRelayFeature.enabled ? Liveness() : nil
+        liveness: Liveness = Liveness()
     ) {
         // OmnesisURLSession.shared pins the gateway's TLS leaf cert when a
         // fingerprint is in Keychain (post-pair) and falls through to
         // URLSession.shared otherwise. URLSessionWebSocketTask is supported
         // by both shapes — both .ephemeral (PinnedSession) and .default.
-        guard let liveness else {
-            // Off the cloud build flag: the socket pings only when the network path changes.
-            self.init(
-                gatewayUrl: gatewayUrl,
-                token: token,
-                connector: URLSessionDeviceSocketConnector(session: routingOwner?.session ?? session),
-                capabilities: capabilities,
-                pathObserver: SystemNetworkPathObserver(),
-                clock: ContinuousDeviceSocketClock(),
-                routingOwner: routingOwner,
-                expectedDeviceId: expectedDeviceId,
-                promotionClock: promotionClock,
-                hintRefresher: hintRefresher
-            )
-            return
-        }
         var limits = DeviceSocketReconnectPolicy.Limits()
         limits.helloTimeout = liveness.helloTimeout
         limits.probeTimeout = liveness.pongTimeout

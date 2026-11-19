@@ -103,14 +103,13 @@ final class PendingPairingRequestsTests: XCTestCase {
         XCTAssertNil(state.offer(from: [], nowMillis: now))
     }
 
-    func testOnlyAnAdministratorInACloudBuildAsks() {
-        func cloud(_ enabled: Bool, _ scopes: [String]?) -> Bool {
-            DeviceApprovalKinds(cloudRelayEnabled: enabled, tailscaleEmbed: false, scopes: scopes).cloud
+    func testOnlyAnAdministratorAsks() {
+        func cloud(_ scopes: [String]?) -> Bool {
+            DeviceApprovalKinds(tailscaleEmbed: false, scopes: scopes).cloud
         }
-        XCTAssertTrue(cloud(true, ["read", "admin"]))
-        XCTAssertFalse(cloud(true, ["read"]))
-        XCTAssertFalse(cloud(true, nil))
-        XCTAssertFalse(cloud(false, ["read", "admin"]))
+        XCTAssertTrue(cloud(["read", "admin"]))
+        XCTAssertFalse(cloud(["read"]))
+        XCTAssertFalse(cloud(nil))
     }
 
     /// The banner disappears when none are pending, when a read fails and when there is no gateway to ask.
@@ -149,8 +148,7 @@ final class PendingPairingRequestsTests: XCTestCase {
     /// A pairing request notification, tapped, asks for Waiting for your OK.
     func testThePairingNotificationRoutesToPairingRequests() {
         let payload: [AnyHashable: Any] = ["omnesis": ["kind": "device-pairing", "targetId": "pairing"]]
-        XCTAssertEqual(PushTarget.fromUserInfo(payload, cloudRelayEnabled: true), .pairingRequests(requestId: nil))
+        XCTAssertEqual(PushTarget.fromUserInfo(payload), .pairingRequests(requestId: nil))
         XCTAssertTrue(PushTarget.pairingRequests().opensDevices)
-        XCTAssertNil(PushTarget.fromUserInfo(payload, cloudRelayEnabled: false))
     }
 }

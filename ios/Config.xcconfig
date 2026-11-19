@@ -5,14 +5,15 @@
 // optional include (#include?) is a no-op when the file is missing, so CI
 // and other developers don't fail on a missing Local.xcconfig.
 OMNESIS_BUNDLE_ID = dev.omnesis.ios
-// Optional Google pairing; configure public identifiers in Local.xcconfig.
-OMNESIS_GOOGLE_CLIENT_ID =
-OMNESIS_CLOUD_RELAY_URL =
-OMNESIS_GOOGLE_CALLBACK_SCHEME = com.omnesis.google-unconfigured
-// Independent opt-in for Google enrollment and cloud connectivity.
-OMNESIS_CLOUD_RELAY_ENABLED = 0
-// Native passkeys require an associated-domain-enabled signing profile and entitlements file.
-OMNESIS_CLOUD_RELAY_PASSKEYS_ENABLED = 0
+// Cloud account sign-in. These are the official app's public identifiers: the
+// relay, the iOS Google OAuth client (no secret) and its callback scheme, the
+// reversed client ID. A build under another identity overrides them in
+// Local.xcconfig. The `$()` keeps xcconfig from reading `//` as a comment.
+OMNESIS_CLOUD_RELAY_URL = https:/$()/relay.omnesis.app
+OMNESIS_GOOGLE_CLIENT_ID = 69746762909-071jh21ngi85ne01k4oe5krfng2frmhr.apps.googleusercontent.com
+OMNESIS_GOOGLE_CALLBACK_SCHEME = com.googleusercontent.apps.69746762909-071jh21ngi85ne01k4oe5krfng2frmhr
+// Passkeys: the domain in the app's webcredentials entitlement. It must serve an
+// apple-app-site-association file that lists this app.
 OMNESIS_CLOUD_RELAY_RP_ID = relay.omnesis.app
 // Debug builds only: let a test gateway with a private certificate join without the first-contact check.
 OMNESIS_CLOUD_RELAY_SKIP_PUBLIC_CERTIFICATE_CHECK = 0

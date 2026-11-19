@@ -30,13 +30,10 @@ final class PairingMutationFence: @unchecked Sendable {
         }
     }
 
-    /// Unfenced, a redeemed code is always stored, whatever happened meanwhile.
-    func commit<T>(_ operation: UUID, fenced: Bool = true, _ body: () throws -> T) throws -> T {
+    func commit<T>(_ operation: UUID, _ body: () throws -> T) throws -> T {
         try serialized {
-            if fenced {
-                try Task.checkCancellation()
-                guard generation == operation else { throw CancellationError() }
-            }
+            try Task.checkCancellation()
+            guard generation == operation else { throw CancellationError() }
             return try body()
         }
     }

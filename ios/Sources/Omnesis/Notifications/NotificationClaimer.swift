@@ -410,8 +410,6 @@ public struct NotificationClaimer: Sendable {
     private let baseURL: URL
     private let token: String
     private let request: Request
-    /// Asks for pairing requests in claims; only a cloud build can act on them.
-    private let claimsPairingNotifications: Bool
 
     public init(baseURL: URL, token: String, session: URLSession) {
         self.init(baseURL: baseURL, token: token) { request in
@@ -427,12 +425,10 @@ public struct NotificationClaimer: Sendable {
     public init(
         baseURL: URL,
         token: String,
-        claimsPairingNotifications: Bool = CloudRelayFeature.enabled,
         request: @escaping Request
     ) {
         self.baseURL = baseURL
         self.token = token
-        self.claimsPairingNotifications = claimsPairingNotifications
         self.request = request
     }
 
@@ -477,11 +473,9 @@ public struct NotificationClaimer: Sendable {
         urlRequest.setValue("application/json", forHTTPHeaderField: "Accept")
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
         if path == "/notifications/claim" {
-            if claimsPairingNotifications {
-                urlRequest.setValue("1", forHTTPHeaderField: "X-Omnesis-Pairing-Notifications")
-            }
-            // Every build routes devices waiting to join through Tailscale. A
-            // gateway that never sends them ignores the header.
+            // This app routes devices waiting for approval and devices waiting to
+            // join through Tailscale. A gateway that never sends them ignores the headers.
+            urlRequest.setValue("1", forHTTPHeaderField: "X-Omnesis-Pairing-Notifications")
             urlRequest.setValue("1", forHTTPHeaderField: "X-Omnesis-Tailscale-Join-Notifications")
         }
         urlRequest.httpBody = try JSONEncoder().encode(body)

@@ -108,7 +108,7 @@ final class DeviceSocketTests: XCTestCase {
     /// bundle's — and the bundle read must yield something rather than
     /// crashing on a host that declares no version.
     func testPairingRemindersAreAdvertisedAndOlderCapabilitiesRemainDecodable() throws {
-        let current = PairingCapabilities.ios(pairingNotifications: true)
+        let current = PairingCapabilities.ios()
         XCTAssertEqual(current.jsonObject["pairingNotifications"], .bool(true))
         let encoded = try JSONEncoder().encode(current)
         var legacy = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])

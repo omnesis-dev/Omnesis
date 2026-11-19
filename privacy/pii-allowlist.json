@@ -2353,7 +2353,7 @@
     {
       "value": "10.0.0.4",
       "paths": [
-        "ios/Tests/OmnesisTests/CloudRelayFlagOffTests.swift",
+        "ios/Tests/OmnesisTests/CloudConnectivityTests.swift",
         "ios/Tests/OmnesisTests/GatewayPairingCoordinatorTests.swift",
         "packages/gateway/src/http/services/DirectCandidates.test.ts"
       ],
@@ -12006,8 +12006,24 @@
       "reason": "reviewed invented test fixture"
     },
     {
+      "value": "Associated Domains",
+      "paths": ["scripts/ios-identity.test.mjs"],
+      "reason": "Apple capability name in the iOS signing test, not a person"
+    },
+    {
+      "value": "Omnesis Cloud App",
+      "paths": ["scripts/ios-identity.test.mjs"],
+      "reason": "provisioning profile name the Release build signs with, not a person"
+    },
+    {
+      "value": "Omnesis Cloud Demo",
+      "paths": ["scripts/ios-identity.test.mjs"],
+      "reason": "provisioning profile name the Release build signs with, not a person"
+    },
+    {
       "value": "App Store",
       "paths": [
+        "scripts/ios-identity.test.mjs",
         "packages/gateway/portal/js/components/ios-promo.js",
         "packages/gateway/portal/js/components/ios-promo.test.ts"
       ],

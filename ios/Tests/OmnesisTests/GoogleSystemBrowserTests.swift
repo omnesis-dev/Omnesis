@@ -39,7 +39,7 @@ final class GoogleSystemBrowserTests: XCTestCase {
     }
 
     func testDefaultCompositionCreatesTheActualEphemeralSystemSessionWithoutOpeningAWindowOrNetwork() throws {
-        let browser = try XCTUnwrap(GoogleCloudPairingCoordinator.systemBrowser() as? GoogleSystemBrowser)
+        let browser = GoogleSystemBrowser()
         _ = browser.anchorProvider()
         let session = try browser.sessionFactory(authorization(), { _, _ in }, browser)
         let actual = try XCTUnwrap(session as? ASWebAuthenticationSession)

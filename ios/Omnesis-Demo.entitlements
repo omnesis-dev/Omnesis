@@ -24,5 +24,11 @@
 
     <key>aps-environment</key>
     <string>$(OMNESIS_APNS_ENVIRONMENT)</string>
+    <!-- Passkey sign-in to the cloud account: the relay's domain lists this
+         app in its apple-app-site-association file. -->
+    <key>com.apple.developer.associated-domains</key>
+    <array>
+        <string>webcredentials:$(OMNESIS_CLOUD_RELAY_RP_ID)</string>
+    </array>
 </dict>
 </plist>

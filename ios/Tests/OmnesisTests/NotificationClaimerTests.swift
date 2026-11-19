@@ -92,7 +92,6 @@ final class NotificationClaimerTests: XCTestCase {
         let claimer = NotificationClaimer(
             baseURL: baseURL,
             token: "omn_device",
-            claimsPairingNotifications: true,
             request: http.perform
         )
 
