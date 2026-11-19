@@ -169,18 +169,16 @@ describe("knowledge cascade on the writer against an ingest backlog", () => {
     "a write queued behind a slice of %i steps stops it after the step it is on and is served",
     async (limit) => {
       const before = pendingJobs();
-      const dispatched = Promise.withResolvers<void>();
       const release = Promise.withResolvers<void>();
       const exec = writer.exec.bind(writer);
       const held = vi.spyOn(writer, "exec").mockImplementationOnce(async (...args) => {
-        dispatched.resolve();
         await release.promise;
         return exec(...args);
       });
       const cascade = slice(limit);
       let pressure: Promise<boolean> | undefined;
       try {
-        await dispatched.promise;
+        expect(held).toHaveBeenCalledOnce();
         const preemptRequests = scheduler.preemptRequestCount;
         pressure = unrelatedWrite();
         expect(scheduler.preemptRequestCount).toBe(preemptRequests + 1);
