@@ -96,9 +96,9 @@ export class OmnesisAccounts {
   }
 
   /**
-   * Set while the relay's sign-up policy is invite-only: a new account then needs an invite, or an
-   * admission for a gateway this relay already admitted. Checked inside the transaction that
-   * creates the account, whichever sign-in path asked for it.
+   * Set while the relay's sign-up policy is invite-only: a new account then needs an invite, or a
+   * Google link from before accounts existed. Checked inside the transaction that creates the
+   * account, whichever sign-in path asked for it.
    */
   invitesRequired = false;
 

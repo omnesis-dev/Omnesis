@@ -22,8 +22,8 @@ export interface AccountAdmission {
   /** The invite the account is created with; creating the account records it as used. */
   invite?: VerifiedInvite;
   /**
-   * The gateway was admitted to this relay before, by a sign-up or by its Google link from before
-   * Omnesis accounts existed, so the account it creates needs no invite.
+   * A gateway linked with Google before Omnesis accounts existed, carried into an account; it
+   * needs no invite.
    */
   carriedOver?: true;
 }

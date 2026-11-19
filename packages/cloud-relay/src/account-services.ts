@@ -341,7 +341,10 @@ export class AccountServices {
       desktop: this.desktop,
       signup: this.signup,
       portal: this.portal,
-      signupAdmission: (id, cookie) => (id ? this.browser?.signupAdmission(id, cookie) : undefined),
+      // Under `invite`, a new account comes only from gateway sign-up, which checks the invite: a
+      // registered gateway that never linked one could otherwise create accounts from its own page.
+      signupAdmission: (id, cookie) =>
+        id && !accounts.invitesRequired ? this.browser?.signupAdmission(id, cookie) : undefined,
     });
   }
 

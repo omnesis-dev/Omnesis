@@ -7,7 +7,7 @@
  * confirming a passkey, minting a pairing code or a token, moving a device to another access
  * level). See docs/device-enrollment.md, "Step-up".
  *
- * Only with the cloud relay opt-in, and only once the owner confirmed a passkey here. Then a
+ * Only once the owner confirmed a passkey here, on a linked Omnesis account. Then a
  * request that arrived through the relay, or one from a device that joined by signing in on its
  * own (`enrollment_method = automatic`), must carry `X-Omnesis-Step-Up`: the id that
  * `POST /admin/step-up` returned for this exact request (method, path, body and device) within

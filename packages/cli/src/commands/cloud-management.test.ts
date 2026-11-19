@@ -551,7 +551,7 @@ test("connect --invite creates an account with it, and names each way the invite
   await runCommand(cloudManagementCommands.connect, {
     rawArgs: ["--accept-terms", "--invite", link],
   });
-  expect(JSON.parse(String(gatewayJson.mock.calls[0]![1]!.body))).toEqual({
+  expect(JSON.parse(String((gatewayJson.mock.calls[0]![1] as { body: string }).body))).toEqual({
     termsAccepted: true,
     intent: "create",
     invite: link,

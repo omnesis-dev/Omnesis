@@ -156,8 +156,30 @@ test("invite keys make sign-up invite-only; without them it is closed unless cho
     await expect(signup({ OMNESIS_CLOUD_RELAY_INVITE_KEYS: keys })).rejects.toThrow(
       "OMNESIS_CLOUD_RELAY_INVITE_KEYS must list one to eight",
     );
-  for (const policy of ["everyone", "allowlist", "invitation"])
-    await expect(signup({ OMNESIS_CLOUD_RELAY_SIGNUP_POLICY: policy })).rejects.toThrow();
+  await expect(signup({ OMNESIS_CLOUD_RELAY_SIGNUP_POLICY: "everyone" })).rejects.toThrow();
+  for (const policy of ["allowlist", "invitation"])
+    await expect(signup({ OMNESIS_CLOUD_RELAY_SIGNUP_POLICY: policy })).rejects.toThrow(
+      `OMNESIS_CLOUD_RELAY_SIGNUP_POLICY=${policy} is no longer supported`,
+    );
+  // Legacy routes link Google accounts that become Omnesis accounts without an invite.
+  for (const env of [
+    { OMNESIS_CLOUD_RELAY_INVITE_KEYS: key },
+    { OMNESIS_CLOUD_RELAY_SIGNUP_POLICY: "invite", OMNESIS_CLOUD_RELAY_INVITE_KEYS: key },
+  ])
+    await expect(signup({ ...env, OMNESIS_CLOUD_RELAY_LEGACY_ROUTES: "1" })).rejects.toThrow(
+      "cannot be combined with OMNESIS_CLOUD_RELAY_LEGACY_ROUTES=1",
+    );
+  for (const env of [
+    { OMNESIS_CLOUD_RELAY_SIGNUP_POLICY: "open" },
+    { OMNESIS_CLOUD_RELAY_INVITE_KEYS: key, OMNESIS_CLOUD_RELAY_LEGACY_ROUTES: "0" },
+    {},
+  ])
+    await expect(
+      signup({
+        ...env,
+        OMNESIS_CLOUD_RELAY_LEGACY_ROUTES: env.OMNESIS_CLOUD_RELAY_LEGACY_ROUTES ?? "1",
+      }),
+    ).resolves.toBeDefined();
 });
 
 test("a setting of the retired allowlist or group gate stops startup naming it", async () => {

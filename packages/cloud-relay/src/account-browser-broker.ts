@@ -338,12 +338,10 @@ export class AccountBrowserBroker implements AccountOperationBroker {
     };
     if (this.options.linkedAccount(operation.owner.ownerAccountId) !== undefined) return undefined;
     assertCurrent();
-    // Only a gateway this relay registered gets here, and registering needed an admitted sign-up.
     return {
       gatewayId: operation.owner.gatewayId,
       ownerAccountId: operation.owner.ownerAccountId,
       assertCurrent,
-      carriedOver: true,
     };
   }
   unlink(owner: AccountBrowserOwner): void {

@@ -7,7 +7,7 @@
  * address. Instead of a link to a login page, the portal there asks for a one-use handoff and opens
  * the gateway's own page with it in the URL fragment, which no server ever receives.
  *
- * Only with the cloud relay opt-in, and only while the gateway has an origin of its own (linked,
+ * Only while the gateway has an origin of its own on the Omnesis relay (linked,
  * and no certificate incident: while one is open, a page on that name may not be the gateway's).
  * A handoff:
  *

@@ -28,6 +28,21 @@ export async function accountRuntimeConfiguration(options: {
   database: string;
   nativeGoogleIdentity?: IdentityProvider;
 }): Promise<AccountSignInConfiguration | undefined> {
+  const retiredPolicy = options.env.OMNESIS_CLOUD_RELAY_SIGNUP_POLICY?.trim();
+  if (retiredPolicy === "allowlist" || retiredPolicy === "invitation")
+    throw new Error(
+      `OMNESIS_CLOUD_RELAY_SIGNUP_POLICY=${retiredPolicy} is no longer supported: use invite (with OMNESIS_CLOUD_RELAY_INVITE_KEYS), closed or open`,
+    );
+  // Legacy routes link Google accounts that later become Omnesis accounts without an invite.
+  if (
+    options.env.OMNESIS_CLOUD_RELAY_LEGACY_ROUTES === "1" &&
+    (options.env.OMNESIS_CLOUD_RELAY_SIGNUP_POLICY?.trim() === "invite" ||
+      (options.env.OMNESIS_CLOUD_RELAY_SIGNUP_POLICY === undefined &&
+        options.env.OMNESIS_CLOUD_RELAY_INVITE_KEYS !== undefined))
+  )
+    throw new Error(
+      "The invite signup policy cannot be combined with OMNESIS_CLOUD_RELAY_LEGACY_ROUTES=1",
+    );
   for (const name of RETIRED_SIGNUP_SETTINGS)
     if (options.env[name] !== undefined)
       throw new Error(
