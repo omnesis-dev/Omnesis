@@ -73,24 +73,55 @@ afterEach(() => {
 });
 
 describe("measureDiskUsage", () => {
-  test("strict inventories reject a store path resolution failure", async () => {
-    const path = join(configDir, "omnesis.db");
-    file(path, 10);
-    const native = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
-    const error = Object.assign(new Error("Invented path resolution failure"), { code: "EACCES" });
-    vi.mocked(realpath).mockImplementation((candidate, options) =>
-      candidate === path ? Promise.reject(error) : native.realpath(candidate, options),
-    );
-    try {
-      await expect(measureDiskUsage(layout(), () => new Date(), { strict: true })).rejects.toBe(
-        error,
+  test.each(["direct", "directory alias"])(
+    "strict inventories reject a store path resolution failure through a %s path",
+    async (kind) => {
+      file(join(configDir, "omnesis.db"), 10);
+      const native = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+      let directory = configDir;
+      if (kind === "directory alias") {
+        directory = join(root, "config-alias");
+        symlinkSync(configDir, directory, "junction");
+      }
+      const path = join(directory, "omnesis.db");
+      const canonicalPath = await native.realpath(path);
+      if (kind === "directory alias") expect(canonicalPath).not.toBe(path);
+      const selected = layout({ dbPath: path });
+      expect(bytesOf(await measureDiskUsage(selected))).toEqual({ documents: 10 });
+      const error = Object.assign(new Error("Invented path resolution failure"), {
+        code: "EACCES",
+      });
+      if (kind === "directory alias") {
+        // A denial keyed to the original spelling misses the resolved store.
+        // Keep this control so the alias fixture reproduces that failure on
+        // every platform, even where the temporary directory has no alias.
+        vi.mocked(realpath).mockImplementation((candidate, options) =>
+          candidate === path ? Promise.reject(error) : native.realpath(candidate, options),
+        );
+        try {
+          expect(
+            bytesOf(await measureDiskUsage(selected, () => new Date(), { strict: true })),
+          ).toEqual({ documents: 10 });
+        } finally {
+          vi.mocked(realpath).mockImplementation(native.realpath);
+        }
+      }
+      // The scanner resolves the parent before measuring the store. Deny the
+      // actual target, independent of directory aliases or native path spelling.
+      vi.mocked(realpath).mockImplementation((candidate, options) =>
+        candidate === canonicalPath ? Promise.reject(error) : native.realpath(candidate, options),
       );
-      expect(await measureDiskUsage(layout())).toMatchObject({ totalBytes: 0, stores: [] });
-    } finally {
-      vi.mocked(realpath).mockImplementation(native.realpath);
-    }
-    expect(bytesOf(await measureDiskUsage(layout()))).toEqual({ documents: 10 });
-  });
+      try {
+        await expect(measureDiskUsage(selected, () => new Date(), { strict: true })).rejects.toBe(
+          error,
+        );
+        expect(await measureDiskUsage(selected)).toMatchObject({ totalBytes: 0, stores: [] });
+      } finally {
+        vi.mocked(realpath).mockImplementation(native.realpath);
+      }
+      expect(bytesOf(await measureDiskUsage(selected))).toEqual({ documents: 10 });
+    },
+  );
 
   test.each(["EACCES", "EIO", "ENOTDIR"])(
     "strict quota measurement propagates a store stat failure (%s)",
