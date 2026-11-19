@@ -223,6 +223,12 @@ const current: Record<string, unknown> = {
     snapshot: { ids: { documents: ["3", "7", "9"] } },
   },
   plaid: { phase: "transactions", transactionsCursor: "page-2", lastSnapshotDate: "2026-01-02" },
+  "plaud-recordings": {
+    known: { "rec-1": "0a1b2c3d4e5f6a7b" },
+    pending: [{ id: "rec-2", filename: "Weekly planning", start_time: 1_790_000_000_000 }],
+    lastSnapshotAt: timestamp,
+    snapshot: { ids: { recordings: ["rec-1", "rec-2"] } },
+  },
   "telegram-messages": { phase: "incremental", committedSeq: 42, storeId: "store-1" },
   "whatsapp-messages": {
     phase: "incremental",
@@ -346,6 +352,8 @@ const incompatible: Record<string, unknown> = {
   // A sweep in progress without what it has listed would end by vouching for
   // an empty archive.
   "paperless-documents": { phase: "snapshot", watermark: timestamp, pending: [7, 3] },
+  // A presence ledger without the sweep it belongs to would vouch for a stale listing.
+  "plaud-recordings": { known: {}, snapshot: { ids: { recordings: ["rec-1"] } } },
 };
 
 function options(id: string, version?: number): SourceConformanceOptions {

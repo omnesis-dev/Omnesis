@@ -715,9 +715,68 @@
                   up deleted ones.
                 </td>
               </tr>
+              <tr>
+                <td>
+                  Plaud<br /><span class="pill">any collector</span>
+                  <span class="pill">experimental</span>
+                </td>
+                <td>
+                  Recordings from Plaud voice recorders, one conversation document each, with
+                  Plaud's summary. Offered only when the collector runs with
+                  <code>OMNESIS_EXPERIMENTAL=1</code>. See <a href="#plaud">Plaud</a>.
+                </td>
+              </tr>
             </tbody>
           </table>
         </div>
+
+        <h3 id="plaud">Plaud</h3>
+        <p>
+          Plaud reads the recordings a <a href="https://www.plaud.ai/">Plaud</a> recorder uploaded
+          to Plaud's cloud. It is experimental: it uses the API Plaud's own web app uses, which is
+          not published and can change without notice, and the collector offers it only with
+          <code>OMNESIS_EXPERIMENTAL=1</code>. It signs in the way Plaud's app does: you enter the
+          email address of your Plaud account, Plaud emails a one-time code, and you enter the code.
+          Accounts created with Google or Apple sign-in have no emailed code and cannot be
+          connected.
+        </p>
+        <div class="term">
+          <pre><span class="t-p">$ </span><span class="t-cmd">omnesis sources add plaud</span></pre>
+        </div>
+        <ul>
+          <li>
+            <strong>Transcripts.</strong> When a transcriber is assigned (Settings → Models), the
+            collector downloads each recording's audio, has the gateway transcribe it and discards
+            the audio. It keeps the transcript, encrypted with the rest of the account's sign-in, so
+            a renamed recording or a new Plaud summary does not transcribe the audio again. Plaud's
+            own transcript, with its speaker labels, stands in when no transcriber is available,
+            when a recording is larger than the transcriber accepts (25 MiB), or when the
+            transcriber cannot read it. A recording with neither shows that no transcript is
+            available yet and is read again once Plaud finishes its own.
+          </li>
+          <li>
+            <strong>Summaries and details.</strong> Plaud's summary, key points and action items
+            become a section of the document; the recorder's name, the length, Plaud's keywords and
+            its speaker labels are searchable details.
+          </li>
+          <li>
+            <strong>Changes and deletions.</strong> Each sync, every 30 minutes by default, lists
+            your recordings and reads the ones that are new or changed. Once a day the listing also
+            removes recordings you deleted or moved to Plaud's trash. Several Plaud accounts can be
+            connected, one per address.
+          </li>
+          <li>
+            <strong>Signing in again.</strong> Plaud renews the sign-in on its own until it expires;
+            then the source needs authentication, and
+            <code>omnesis sources reauth plaud:&lt;email&gt;</code> asks Plaud for a new code.
+          </li>
+        </ul>
+        <p>
+          <strong>Plaud's terms.</strong> Using this source is subject to the
+          <a href="https://www.plaud.ai/pages/plaud-terms-of-service">Plaud Terms of Service</a>. It
+          is your responsibility to read them before connecting the source and to follow them while
+          you use it.
+        </p>
 
         <h2 id="coding-agents">Coding agents</h2>
         <p>
