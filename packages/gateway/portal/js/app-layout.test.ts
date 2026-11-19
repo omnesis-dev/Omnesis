@@ -139,6 +139,7 @@ describe("portal Settings actions", () => {
     expect(host.querySelector(".app-sidebar")?.textContent).toContain("Audit");
     expect(host.querySelector(".app-sidebar")?.textContent).toMatch(/tell omnesis/i);
     expect(host.querySelector(".app-sidebar")?.textContent).not.toContain("Watches");
+    expect(host.querySelector(".app-sidebar")?.textContent).not.toContain("Recordings");
   });
 
   test("marks Audit while answers wait for review, with the count in words", () => {
@@ -463,6 +464,12 @@ describe("decisions waiting, marked on the nav item where each is decided", () =
     expect(itemNamed("Tasks")).toBeUndefined();
     expect(itemNamed("Watches")).toBeUndefined();
     expect(listSubscriptionApprovals).not.toHaveBeenCalled();
+  });
+
+  test("experimental mode offers Recordings", async () => {
+    getStatus.mockResolvedValue({ experimental: true, lab: { brain: false, tasks: false, watches: false } });
+    await mount();
+    await vi.waitFor(() => expect(itemNamed("Recordings")?.getAttribute("href")).toBe("/portal/recordings"));
   });
 
 });

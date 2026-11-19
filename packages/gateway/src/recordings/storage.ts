@@ -9,8 +9,11 @@
  * per uploaded chunk, keyed by `(session_id, seq)` so a retried upload is a
  * no-op. `recording_marks` holds the moments the owner marked during a
  * session, each saved as a voice note. A chunk's audio waits here until the transcriber has read it, then is
- * dropped: the transcript is what stays. Audio lives in the main database so
- * it shares the corpus's encryption at rest, as voice notes do.
+ * dropped: the transcript is what stays. An operator may keep it for some days
+ * after that (`inference.recordings.keepAudioDays`); `settled_at` dates when
+ * each chunk was settled, so the kept audio is dropped on time. Audio lives in
+ * the main database so it shares the corpus's encryption at rest, as voice
+ * notes do.
  *
  * Pure SQL over a better-sqlite3 handle. Writes go through the WriteGate
  * (`recordings.*` writer ops); reads run on the gateway's read handle.
@@ -118,6 +121,10 @@ export interface RecordingChunk {
   attempts: number;
   nextAttemptAt: string;
   receivedAt: string;
+  /** When the chunk was settled; null while it is pending. */
+  settledAt: string | null;
+  /** Whether the gateway still holds the chunk's audio. */
+  hasAudio: boolean;
 }
 
 /** A moment the owner marked during a session; the marked audio became note `noteId`. */
@@ -189,6 +196,7 @@ export function createRecordingTables(db: Db): void {
       attempts INTEGER NOT NULL DEFAULT 0,
       next_attempt_at TEXT NOT NULL,
       received_at TEXT NOT NULL,
+      settled_at TEXT,
       PRIMARY KEY (session_id, seq)
     );
     CREATE INDEX IF NOT EXISTS idx_recording_chunks_due
@@ -210,6 +218,18 @@ export function createRecordingTables(db: Db): void {
       name TEXT,
       PRIMARY KEY (session_id, speaker)
     );
+  `);
+  const chunkColumns = db
+    .prepare("SELECT name FROM pragma_table_info('recording_chunks')")
+    .all() as Array<{ name: string }>;
+  if (!chunkColumns.some((column) => column.name === "settled_at")) {
+    db.exec("ALTER TABLE recording_chunks ADD COLUMN settled_at TEXT");
+  }
+  // Only settled chunks whose audio is kept: what the retention sweep reads.
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_recording_chunks_kept_audio
+      ON recording_chunks(settled_at)
+      WHERE audio IS NOT NULL AND status != 'pending';
   `);
 }
 
@@ -463,10 +483,13 @@ interface ChunkRow {
   attempts: number;
   next_attempt_at: string;
   received_at: string;
+  settled_at: string | null;
+  has_audio: number;
 }
 
 const CHUNK_COLUMNS = `session_id, seq, started_at, duration_ms, silent, interrupted, mime_type,
-  status, text, segments, voices, attempts, next_attempt_at, received_at`;
+  status, text, segments, voices, attempts, next_attempt_at, received_at, settled_at,
+  audio IS NOT NULL AS has_audio`;
 
 function toChunk(row: ChunkRow): RecordingChunk {
   return {
@@ -484,6 +507,8 @@ function toChunk(row: ChunkRow): RecordingChunk {
     attempts: row.attempts,
     nextAttemptAt: row.next_attempt_at,
     receivedAt: row.received_at,
+    settledAt: row.settled_at,
+    hasAudio: row.has_audio === 1,
   };
 }
 
@@ -509,8 +534,8 @@ export function insertRecordingChunk(db: Db, c: NewRecordingChunk): InsertRecord
     .prepare(
       `INSERT OR IGNORE INTO recording_chunks
          (session_id, seq, started_at, duration_ms, silent, interrupted, audio, mime_type,
-          status, attempts, next_attempt_at, received_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`,
+          status, attempts, next_attempt_at, received_at, settled_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`,
     )
     .run(
       c.sessionId,
@@ -526,6 +551,7 @@ export function insertRecordingChunk(db: Db, c: NewRecordingChunk): InsertRecord
       pending ? "pending" : "silent",
       c.receivedAt,
       c.receivedAt,
+      pending ? null : c.receivedAt,
     );
   if (result.changes === 0) return "duplicate";
   db.prepare(
@@ -588,16 +614,26 @@ export function rescheduleRecordingChunk(
   ).run(attempts, nextAttemptAt, sessionId, seq);
 }
 
+/** When a chunk is settled, and whether its audio is kept past that. */
+export interface RecordingChunkSettling {
+  /** ISO-8601 instant of the settling. */
+  settledAt: string;
+  /** Keep the audio; the retention sweep drops it later. */
+  keepAudio: boolean;
+}
+
 /**
  * Settle a pending chunk: keep its transcript (or record that it could not
- * be transcribed) and drop its audio. Marks the session changed so its
- * document is written again; the device's activity clock is left alone.
+ * be transcribed) and drop its audio, unless the operator keeps it for a
+ * while. Marks the session changed so its document is written again; the
+ * device's activity clock is left alone.
  */
 export function settleRecordingChunk(
   db: Db,
   sessionId: string,
   seq: number,
   outcome: RecordingChunkSettlement,
+  settling: RecordingChunkSettling,
 ): boolean {
   const transcribed = outcome.status === "transcribed" ? outcome : null;
   const segments = transcribed?.segments?.length ? JSON.stringify(transcribed.segments) : null;
@@ -605,7 +641,8 @@ export function settleRecordingChunk(
   const result = db
     .prepare(
       `UPDATE recording_chunks
-          SET status = ?, text = ?, segments = ?, voices = ?, voice_vectors = ?, audio = NULL
+          SET status = ?, text = ?, segments = ?, voices = ?, voice_vectors = ?, settled_at = ?,
+              audio = CASE WHEN ? = 1 THEN audio ELSE NULL END
         WHERE session_id = ? AND seq = ? AND status = 'pending'`,
     )
     .run(
@@ -614,12 +651,38 @@ export function settleRecordingChunk(
       segments,
       voices ? JSON.stringify(voices.windows) : null,
       voices ? packVectors(voices.vectors) : null,
+      settling.settledAt,
+      settling.keepAudio ? 1 : 0,
       sessionId,
       seq,
     );
   if (result.changes === 0) return false;
   db.prepare(`UPDATE recording_sessions SET revision = revision + 1 WHERE id = ?`).run(sessionId);
   return true;
+}
+
+/**
+ * Drop the kept audio of every chunk settled at or before `settledBefore`.
+ * Returns how many chunks lost their audio. A pending chunk keeps its audio
+ * whatever its age: the transcriber has not read it yet.
+ */
+export function purgeRecordingAudio(db: Db, settledBefore: string): number {
+  return db
+    .prepare(
+      `UPDATE recording_chunks SET audio = NULL
+        WHERE audio IS NOT NULL AND status != 'pending' AND settled_at <= ?`,
+    )
+    .run(settledBefore).changes;
+}
+
+/** The recorded time of a session's chunks, ms. */
+export function sumRecordingChunkDurations(db: Db, sessionId: string): number {
+  const row = db
+    .prepare<[string], { ms: number | null }>(
+      `SELECT SUM(duration_ms) AS ms FROM recording_chunks WHERE session_id = ?`,
+    )
+    .get(sessionId);
+  return row?.ms ?? 0;
 }
 
 /** Per-status chunk counts for one session. */

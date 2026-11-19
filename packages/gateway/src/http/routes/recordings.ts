@@ -22,6 +22,12 @@
  *   - `DELETE /recordings/:id` removes the session, its chunks and its document.
  *   - `GET /recordings?limit=` lists the most recent sessions, with how many
  *     speakers each has and how many the owner has named.
+ *   - `GET /recordings/:id/chunks` answers a session as the list shows it,
+ *     with its chunks: their state, and whether their audio is still kept and
+ *     until when.
+ *   - `GET /recordings/:id/chunks/:seq/audio` answers a settled chunk's kept
+ *     audio; 404 when none is kept (the default: audio is deleted once the
+ *     chunk is transcribed) or the chunk is still waiting for the transcriber.
  *   - `GET /recordings/:id/speakers` lists a session's speakers with how long
  *     each spoke and the first things they said.
  *   - `PUT /recordings/:id/speakers/:n` says who speaker `n` is — `{self:
@@ -67,6 +73,8 @@ import type { RouteApp } from "./types.js";
 /** The largest chunk accepted: several minutes of compressed speech, or a minute of WAV. */
 export const MAX_RECORDING_CHUNK_BYTES = 10 * 1024 * 1024;
 const METADATA_ALLOWANCE_BYTES = 16 * 1024;
+/** A media type served back as it was uploaded: audio, and nothing that could carry parameters. */
+const AUDIO_TYPE = /^audio\/[a-z0-9.+-]{1,64}$/i;
 
 const tooLarge = {
   error: `Chunk too large (max ${MAX_RECORDING_CHUNK_BYTES / (1024 * 1024)} MB)`,
@@ -227,6 +235,34 @@ export function mountRecordingRoutes(app: RouteApp, deps: RecordingRoutesDeps): 
     enforceScope(c);
     c.header("Cache-Control", "no-store");
     return c.json({ recordings: deps.service.recent(c.req.valid("query").limit ?? 20) });
+  });
+
+  app.get("/recordings/:id/chunks", scope.writeAny(), (c) => {
+    enforceScope(c);
+    const id = parseId(c.req.param("id"));
+    const recording = deps.service.summary(id);
+    const chunks = deps.service.chunks(id);
+    if (!recording || !chunks) throw new NotFoundError("recording not found");
+    c.header("Cache-Control", "no-store");
+    return c.json({ recording, chunks });
+  });
+
+  app.get("/recordings/:id/chunks/:seq/audio", scope.writeAny(), (c) => {
+    enforceScope(c);
+    const id = parseId(c.req.param("id"));
+    const seq = recordingChunkSeq.safeParse(c.req.param("seq"));
+    if (!seq.success) throw new NotFoundError("audio not found");
+    const kept = deps.service.chunkAudio(id, seq.data);
+    if (!kept) throw new NotFoundError("audio not found");
+    // The type is the uploading device's word: only an audio type is echoed,
+    // and the body is never rendered as a page on the gateway's origin.
+    return c.body(kept.audio, 200, {
+      "Content-Type": AUDIO_TYPE.test(kept.mimeType) ? kept.mimeType : "application/octet-stream",
+      "Cache-Control": "no-store",
+      "Content-Disposition": `attachment; filename="recording-${id}-${seq.data}"`,
+      "Content-Security-Policy": "sandbox",
+      "X-Content-Type-Options": "nosniff",
+    });
   });
 
   app.get("/recordings/:id/speakers", scope.writeAny(), (c) => {

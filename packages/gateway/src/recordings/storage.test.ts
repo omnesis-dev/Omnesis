@@ -15,6 +15,7 @@ import {
   insertRecordingSession,
   listRecordingChunks,
   listRecordingMarks,
+  purgeRecordingAudio,
   readRecordingChunkAudio,
   settleRecordingChunk,
 } from "./storage.js";
@@ -23,6 +24,8 @@ import type Database from "better-sqlite3";
 let dbPath: string;
 let db: Database.Database;
 const NOW = "2026-03-02T09:00:00.000Z";
+const LATER = "2026-03-02T09:05:00.000Z";
+const dropAudio = { settledAt: LATER, keepAudio: false };
 
 beforeEach(() => {
   dbPath = `/tmp/omnesis-test-${randomUUID()}.db`;
@@ -81,21 +84,54 @@ describe("recording storage", () => {
     chunk("s1", 1, new Uint8Array([7]));
     expect(listRecordingChunks(db, "s1").map((c) => c.status)).toEqual(["silent", "pending"]);
     expect(readRecordingChunkAudio(db, "s1", 1)).toEqual(new Uint8Array([7]));
-    expect(settleRecordingChunk(db, "s1", 1, { status: "transcribed", text: "hi" })).toBe(true);
-    expect(settleRecordingChunk(db, "s1", 1, { status: "failed" })).toBe(false);
+    expect(listRecordingChunks(db, "s1")[0]).toMatchObject({ settledAt: NOW, hasAudio: false });
+    expect(listRecordingChunks(db, "s1")[1]).toMatchObject({ settledAt: null, hasAudio: true });
+    expect(
+      settleRecordingChunk(db, "s1", 1, { status: "transcribed", text: "hi" }, dropAudio),
+    ).toBe(true);
+    expect(settleRecordingChunk(db, "s1", 1, { status: "failed" }, dropAudio)).toBe(false);
     expect(readRecordingChunkAudio(db, "s1", 1)).toBeNull();
     expect(listRecordingChunks(db, "s1")[1]).toMatchObject({
       status: "transcribed",
       text: "hi",
       segments: null,
+      settledAt: LATER,
+      hasAudio: false,
     });
+  });
+
+  test("kept audio outlives settling until the retention sweep passes its date", () => {
+    session("s1");
+    chunk("s1", 0, new Uint8Array([7]));
+    chunk("s1", 1, new Uint8Array([8]));
+    settleRecordingChunk(db, "s1", 0, { status: "failed" }, { settledAt: LATER, keepAudio: true });
+    expect(listRecordingChunks(db, "s1")[0]).toMatchObject({
+      status: "failed",
+      settledAt: LATER,
+      hasAudio: true,
+    });
+    // Before the chunk settled: nothing to drop. A pending chunk is never touched.
+    expect(purgeRecordingAudio(db, NOW)).toBe(0);
+    expect(purgeRecordingAudio(db, LATER)).toBe(1);
+    expect(readRecordingChunkAudio(db, "s1", 0)).toBeNull();
+    expect(readRecordingChunkAudio(db, "s1", 1)).toEqual(new Uint8Array([8]));
+  });
+
+  test("the retention sweep reads only the chunks whose audio is kept", () => {
+    const plan = db
+      .prepare(
+        `EXPLAIN QUERY PLAN UPDATE recording_chunks SET audio = NULL
+          WHERE audio IS NOT NULL AND status != 'pending' AND settled_at <= ?`,
+      )
+      .all(LATER) as { detail: string }[];
+    expect(plan.map((row) => row.detail).join(" ")).toContain("idx_recording_chunks_kept_audio");
   });
 
   test("a transcript's timed segments are kept with it", () => {
     session("s1");
     chunk("s1", 0, new Uint8Array([7]));
     const segments = [{ startMs: 250, endMs: 1_000, text: "hi" }];
-    settleRecordingChunk(db, "s1", 0, { status: "transcribed", text: "hi", segments });
+    settleRecordingChunk(db, "s1", 0, { status: "transcribed", text: "hi", segments }, dropAudio);
     expect(listRecordingChunks(db, "s1")[0]!.segments).toEqual(segments);
   });
 

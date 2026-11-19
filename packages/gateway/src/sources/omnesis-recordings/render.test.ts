@@ -52,6 +52,8 @@ function chunk(
     attempts: 0,
     nextAttemptAt: START,
     receivedAt: START,
+    settledAt: START,
+    hasAudio: false,
     ...extra,
   };
 }

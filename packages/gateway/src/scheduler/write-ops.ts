@@ -654,6 +654,8 @@ const WRITE_OP_DEFS: readonly WriteOpDef[] = [
   { name: "recordings.addMark", priority: "user" },
   { name: "recordings.rescheduleChunk", priority: "background" },
   { name: "recordings.settleChunk", priority: "background" },
+  // Drops kept audio past the operator's retention; one UPDATE over an index.
+  { name: "recordings.purgeAudio", priority: "background" },
   { name: "recordings.markProjected", priority: "background" },
   // Bounded by one session's chunks: a four-hour recording has 240.
   { name: "recordings.assignVoices", priority: "background" },
