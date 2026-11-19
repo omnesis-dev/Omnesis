@@ -86,7 +86,7 @@ let scheduler: Scheduler | null = null;
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "omnesis-watch-journal-worker-"));
-  gatewayDbPath = `/tmp/omnesis-test-${randomUUID()}.db`;
+  gatewayDbPath = join(tmpdir(), `omnesis-test-${randomUUID()}.db`);
   createDatabase(gatewayDbPath).close();
 });
 

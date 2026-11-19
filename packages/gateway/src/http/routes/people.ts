@@ -175,7 +175,7 @@ export function mountPeopleRoutes(app: RouteApp, deps: PeopleRoutesDeps): void {
     return c.json({ rules });
   });
 
-  app.get("/people/merge-rule-groups", scope.read(), (c) => {
+  app.get("/people/merge-rule-groups", scope.read(), async (c) => {
     const limit = clampLimit(c.req.query("limit"), { default: 50, max: 200 });
     const q = (c.req.query("q") ?? "").trim();
     const kindParam = c.req.query("kind");
@@ -197,7 +197,7 @@ export function mountPeopleRoutes(app: RouteApp, deps: PeopleRoutesDeps): void {
       }
       return { latest: value.latest, key: value.key };
     });
-    const result = personService.listMergeRuleGroups({
+    const result = await personService.listMergeRuleGroups({
       limit,
       ...(q ? { q } : {}),
       ...(kind ? { kind } : {}),
@@ -411,14 +411,14 @@ export function mountPeopleRoutes(app: RouteApp, deps: PeopleRoutesDeps): void {
     });
   });
 
-  app.get("/people/:id/documents", scope.read(), (c) => {
+  app.get("/people/:id/documents", scope.read(), async (c) => {
     const id = c.req.param("id");
     const role = c.req.query("role");
     const limit = clampLimit(c.req.query("limit"), { default: 50, max: 500 });
     const offsetRaw = c.req.query("cursor") ?? c.req.query("offset");
     const offset = offsetRaw ? Math.max(0, parseInt(offsetRaw, 10) || 0) : 0;
     // Fetch one extra row to detect hasMore without a count query.
-    const probe = personService.getDocuments(id, {
+    const probe = await personService.getDocuments(id, {
       role: role ?? undefined,
       limit: limit + 1,
       offset,

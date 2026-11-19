@@ -139,15 +139,19 @@ extension OmnesisAppDelegate: UNUserNotificationCenterDelegate {
     /// Foreground presentation: when the app is in the foreground
     /// and APNs delivers a push, iOS would otherwise silently drop
     /// it. Request both immediate banner presentation and Notification Center
-    /// placement, matching the surfaces accepted by the claim policy. A pairing
-    /// request that arrives while the app is open also refreshes the home banner.
+    /// placement, matching the surfaces accepted by the claim policy. A device waiting
+    /// for approval, however it asked, that arrives while the app is open also
+    /// refreshes the home banner.
     public func userNotificationCenter(
         _: UNUserNotificationCenter,
         willPresent notification: UNNotification,
         withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
     ) {
-        if PushTarget.fromUserInfo(notification.request.content.userInfo) == .pairingRequests {
+        switch PushTarget.fromUserInfo(notification.request.content.userInfo) {
+        case .pairingRequests?, .tailscaleJoinRequests?:
             Task { @MainActor in PendingPairingRequests.shared.requestRefresh() }
+        default:
+            break
         }
         completionHandler(NotificationPresentationPolicy.foregroundOptions)
     }

@@ -10,6 +10,8 @@
 export interface WatchdogWorkerData {
   /** One slot the main thread increments while its event loop turns. */
   heartbeat: BigInt64Array;
+  /** Shared admission fence: 0 idle, 1 owned work, -1 watchdog exit claimed. */
+  exitHold?: Int32Array;
   stallLimitMs: number;
   /** How often the worker reads the heartbeat. */
   checkIntervalMs: number;
@@ -19,6 +21,22 @@ export interface WatchdogWorkerData {
 
 /** The message the worker posts once it is watching. */
 export const WATCHDOG_ARMED = "armed";
+
+/** Claim before inspector capture; an admitted producer and exit cannot both win. */
+export function claimWatchdogExit(hold?: Int32Array): boolean {
+  return hold === undefined || Atomics.compareExchange(hold, 0, 0, -1) === 0;
+}
+
+/** Called synchronously before a producer may begin Native-capable work. */
+export function retainWatchdogExit(hold: Int32Array): void {
+  if (Atomics.compareExchange(hold, 0, 0, 1) === -1)
+    throw new Error("Collector watchdog has already claimed process exit");
+}
+
+/** Only positive aggregate owner settlement may clear an admitted hold. */
+export function releaseWatchdogExit(hold: Int32Array): void {
+  Atomics.compareExchange(hold, 0, 1, 0);
+}
 
 /**
  * Whether the main thread has stalled, judged from the worker's checks.

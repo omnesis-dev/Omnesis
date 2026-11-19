@@ -90,7 +90,9 @@ export class HttpTranscriber implements TranscribeCapability {
     this.apiKey = opts.apiKey;
     this.allowRemoteInference = opts.allowRemoteInference === true;
     this.fetchFn = opts.fetchFn ?? fetchAllowingSlowResponse;
-    this.decodeAudio = opts.decodeAudio ?? ((bytes) => decodeToPcm16kMono(bytes));
+    this.decodeAudio =
+      opts.decodeAudio ??
+      ((bytes, _mime, options) => decodeToPcm16kMono(bytes, { signal: options?.signal }));
     this.maxChunkSamples = chunkSamples(opts.maxChunkSeconds);
   }
 
@@ -99,7 +101,7 @@ export class HttpTranscriber implements TranscribeCapability {
     mimeType: string,
     opts?: Parameters<TranscribeCapability["transcribe"]>[2],
   ): Promise<TranscriptionResult> {
-    const pcm = await this.decodeAudio(audio, mimeType);
+    const pcm = await this.decodeAudio(audio, mimeType, { signal: opts?.signal });
     const durationSec = pcm.length / PCM_SAMPLE_RATE;
     // A container with no samples has no speech to send; a server would
     // refuse the empty file and the recording would be retried forever.

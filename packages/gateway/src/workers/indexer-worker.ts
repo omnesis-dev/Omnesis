@@ -60,6 +60,11 @@ import {
 import { GraphKeeper, planGraphAdmission } from "../indexer/graph-keeper.js";
 import { memoryHeadroom } from "../memory-budget.js";
 import { openEncryptedSqlite } from "../sqlite-encryption.js";
+import {
+  lexicalRebuildStep,
+  readLexicalIndexState,
+  switchLexicalIndex,
+} from "../indexer/lexical-index-store.js";
 import { computeRatePerSec, type IndexRateSample } from "./indexer-rate.js";
 import { shouldRunIndexCycle } from "./indexer-disk-guard.js";
 import { applyPendingPurges } from "./pending-source-purges.js";
@@ -230,6 +235,9 @@ let state: {
   cycleTimer: ReturnType<typeof setTimeout> | null;
   reconcileTimer: ReturnType<typeof setTimeout> | null;
   reindexMissingTimer: ReturnType<typeof setTimeout> | null;
+  /** Next tick of the keyword-index rebuild (see {@link runLexicalRebuildTick}). */
+  lexicalTimer: ReturnType<typeof setTimeout> | null;
+  lexicalRebuild: { batchSize: number; pauseMs: number };
   heartbeatInterval: ReturnType<typeof setInterval>;
   /**
    * Single in-flight gate shared by all three indexer jobs (cycle,
@@ -556,6 +564,17 @@ function flushDeferredDocumentDeletes(): void {
   }
 }
 
+/**
+ * Wait without blocking the event loop until the hold cell reads zero, so a
+ * held rebuild keeps serving messages. See `IndexerInit.usearchBackfillHold`.
+ */
+async function waitForBackfillRelease(hold: Int32Array): Promise<void> {
+  for (let value = Atomics.load(hold, 0); value !== 0; value = Atomics.load(hold, 0)) {
+    const wait = Atomics.waitAsync(hold, 0, value);
+    if (wait.async) await wait.value;
+  }
+}
+
 /** Construct the configured embedder (HTTP backend, or the local model). */
 let embeddingSequence = 0;
 
@@ -583,6 +602,7 @@ async function buildEmbedder(init: IndexerInit): Promise<import("../indexer/type
     embed: (texts) => observe(() => embedder.embed(texts)),
     embedQuery: (text) => observe(() => embedder.embedQuery(text)),
     dispose: () => embedder.dispose(),
+    ...(embedder.quiesce ? { quiesce: () => embedder.quiesce!() } : {}),
   };
 }
 
@@ -611,6 +631,11 @@ async function buildRawEmbedder(
     onLoadProgress: (progress) => post({ type: "bootProgress", stage: "loading-model", progress }),
   });
 }
+
+let initialization: Promise<void> | null = null;
+let initializingEmbedder: import("../indexer/types.js").Embedder | null = null;
+let shutdownRequested = false;
+const queryWork = new Set<Promise<void>>();
 
 async function handleInit(init: IndexerInit): Promise<void> {
   if (state) {
@@ -653,6 +678,7 @@ async function handleInit(init: IndexerInit): Promise<void> {
       // The embedder is built here and reused below; the warm-up is paid once
       // either way.
       warmupEmbedder = await buildEmbedder(init);
+      initializingEmbedder = warmupEmbedder;
       post({ type: "bootProgress", stage: "warmup", progress: 0 });
       await warmupEmbedder.embed(["warmup"]);
       post({ type: "bootProgress", stage: "warmup", progress: 1 });
@@ -686,6 +712,9 @@ async function handleInit(init: IndexerInit): Promise<void> {
             loading: graphFileExisted && getUsearchBackfillCursor(indexDb) === null,
           })
         : ({ admitted: true } as const);
+      const backfillHold = init.usearchBackfillHold
+        ? new Int32Array(init.usearchBackfillHold)
+        : null;
       usearchHandle = new UsearchWriteHandle(init.usearchIndexPath, init.embedDim, {
         detached: !admission.admitted,
       });
@@ -698,6 +727,7 @@ async function handleInit(init: IndexerInit): Promise<void> {
         budget: init.memoryBudget ?? null,
         pageSize: init.usearchBackfillPageSize,
         checkpointIntervalMs: init.usearchCheckpointIntervalMs,
+        ...(backfillHold ? { betweenPages: () => waitForBackfillRelease(backfillHold) } : {}),
         onProgress: (fraction) =>
           post({ type: "bootProgress", stage: "hnsw-backfill", progress: fraction }),
         onState: (graph) => post({ type: "vectorIndex", ...graph }),
@@ -732,6 +762,7 @@ async function handleInit(init: IndexerInit): Promise<void> {
     const source = new DirectDocumentSource(gatewayDb);
     const chunker = new DocumentChunker(init.chunkerChunkSize, init.chunkerOverlap);
     const embedder = init.lexicalOnly ? null : (warmupEmbedder ?? (await buildEmbedder(init)));
+    initializingEmbedder = embedder;
     currentCutoffs = init.cutoffs;
     const walProbe = indexDb.prepare<[], { log: number; checkpointed: number }>(
       "PRAGMA wal_checkpoint(NOOP)",
@@ -828,6 +859,8 @@ async function handleInit(init: IndexerInit): Promise<void> {
       cycleTimer: null,
       reconcileTimer: null,
       reindexMissingTimer: null,
+      lexicalTimer: null,
+      lexicalRebuild: init.lexicalRebuild,
       heartbeatInterval,
       inFlightWork: null,
       pendingSourcePurges: new Set(listPendingSourceIndexPurges(indexDb)),
@@ -841,6 +874,8 @@ async function handleInit(init: IndexerInit): Promise<void> {
       lastDiskSkipLogAt: 0,
     };
     startupIndexResources = null;
+    initializingEmbedder = null;
+    if (shutdownRequested) return;
 
     // A prior worker may have stopped after acknowledging a source deletion
     // but before its trailing purge became durable. Replay that persisted
@@ -1106,6 +1141,7 @@ async function handleInit(init: IndexerInit): Promise<void> {
     armCycle();
     armReconcile();
     armReindexMissing();
+    armLexicalRebuild(0);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     startupIndexResources = null;
@@ -1126,9 +1162,10 @@ async function handleInit(init: IndexerInit): Promise<void> {
     // Release a model the early mismatch warm-up loaded; nothing else holds it
     // once init fails. Guarded on the live state so a failure that lands after
     // the worker adopted the embedder cannot dispose the one it is using.
-    if (warmupEmbedder && state?.embedder !== warmupEmbedder) {
+    if (initializingEmbedder && state?.embedder !== initializingEmbedder) {
       try {
-        await warmupEmbedder.dispose?.();
+        await initializingEmbedder.dispose();
+        initializingEmbedder = null;
       } catch {
         /* disposal is best-effort on an already-failed boot */
       }
@@ -1321,6 +1358,102 @@ async function runReindexMissingCycle(
   return outcome;
 }
 
+/** Pause between rebuild ticks while a user request is in flight. */
+const LEXICAL_BUSY_PAUSE_MS = 1_000;
+/** Check for rebuild work this often when there is none. */
+const LEXICAL_IDLE_MS = 60_000;
+/** Retry this soon when another indexer job held the worker, or it was quiesced. */
+const LEXICAL_RETRY_MS = 1_000;
+
+function armLexicalRebuild(delayMs: number): void {
+  if (!state || state.shuttingDown) return;
+  if (state.lexicalTimer) clearTimeout(state.lexicalTimer);
+  state.lexicalTimer = setTimeout(() => {
+    if (state) state.lexicalTimer = null;
+    void runLexicalRebuildTick().then(armLexicalRebuild, (err: unknown) => {
+      log(
+        "error",
+        "indexer-worker",
+        `keyword-index rebuild step failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      armLexicalRebuild(LEXICAL_IDLE_MS);
+    });
+  }, delayMs);
+}
+
+/**
+ * One tick of the keyword-index rebuild (see indexer/lexical-index-store.ts):
+ * copy one batch, as an exclusive indexer job so it never interleaves with a
+ * cycle's writes, and return the delay before the next tick. Steps that copy
+ * nothing (dropping a replaced or stale index, starting a build) run on in the
+ * same tick. A user request in flight stretches the pause, so the rebuild
+ * yields to foreground work. A build that has copied every chunk is announced
+ * to the main thread, which switches it in once its in-memory index of the new
+ * version is ready.
+ */
+async function runLexicalRebuildTick(): Promise<number> {
+  if (!state || state.shuttingDown) return LEXICAL_IDLE_MS;
+  // Quiesced for an embedder swap, or short of disk: try again later.
+  if (state.paused || !diskOkForCycle()) return LEXICAL_RETRY_MS * 5;
+  const { batchSize, pauseMs } = state.lexicalRebuild;
+  const outcome = await runExclusive((): Promise<"working" | "idle"> => {
+    try {
+      const db = state!.indexDb;
+      for (;;) {
+        const step = lexicalRebuildStep(db, { batchSize });
+        if (step === "backfilled-batch" || step === "retired-batch") {
+          return Promise.resolve("working");
+        }
+        // "idle" is the answer of every periodic check while there is no rebuild.
+        if (step !== "idle") log("info", "indexer-worker", `keyword-index rebuild: ${step}`);
+        if (step === "idle" || step === "backfill-complete") {
+          const { build } = readLexicalIndexState(db);
+          if (build?.backfilledAt) post({ type: "lexicalBackfilled", version: build.version });
+          return Promise.resolve("idle");
+        }
+      }
+    } finally {
+      drainPendingWake();
+    }
+  });
+  if (outcome === "skipped") return LEXICAL_RETRY_MS;
+  if (outcome === "idle") return LEXICAL_IDLE_MS;
+  return userActive ? Math.max(pauseMs, LEXICAL_BUSY_PAUSE_MS) : pauseMs;
+}
+
+/** Switch the backfilled keyword-index build in, between the worker's other jobs. */
+async function handleLexicalSwitch(id: number, version: number): Promise<void> {
+  for (;;) {
+    if (!state || state.shuttingDown) {
+      post({ type: "lexicalSwitchResult", id, switched: false, error: "indexer is shutting down" });
+      return;
+    }
+    let outcome: boolean | "skipped";
+    try {
+      outcome = await runExclusive(() =>
+        Promise.resolve(switchLexicalIndex(state!.indexDb, version)),
+      );
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err);
+      log("error", "indexer-worker", `keyword-index switch to version ${version} failed: ${error}`);
+      post({ type: "lexicalSwitchResult", id, switched: false, error });
+      return;
+    }
+    if (outcome === "skipped") {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      continue;
+    }
+    drainPendingWake();
+    if (outcome) {
+      log("info", "indexer-worker", `keyword index switched to version ${version}`);
+      // The replaced index is dropped by the next rebuild tick.
+      armLexicalRebuild(0);
+    }
+    post({ type: "lexicalSwitchResult", id, switched: outcome });
+    return;
+  }
+}
+
 function handleWake(): void {
   if (!state || state.shuttingDown) return;
   // Debounce + coalesce now live in the main-thread Scheduler
@@ -1339,8 +1472,12 @@ async function handleEmbedQuery(id: number, text: string, sentAtMs: number): Pro
   //     Metal/CPU work.
   const recvAtMs = Date.now();
   const ipcInMs = recvAtMs - sentAtMs;
-  if (!state?.embedder) {
-    post({ type: "embedQueryError", id, error: "embedder not ready" });
+  if (shutdownRequested || !state?.embedder) {
+    post({
+      type: "embedQueryError",
+      id,
+      error: shutdownRequested ? "indexer shutting down" : "embedder not ready",
+    });
     return;
   }
   try {
@@ -1529,21 +1666,47 @@ function handleDeleteDocumentIndexBatch(
 }
 
 async function handleShutdown(): Promise<void> {
+  if (shutdownRequested) return;
+  shutdownRequested = true;
+  // Initialization owns native warmup before publishing state. It must finish
+  // before disposal; a JS embedding timeout does not stop the C++ operation.
+  if (state) {
+    state.shuttingDown = true;
+    state.indexer.stop();
+  }
+  await initialization;
   // The guard saves and releases the graph on its own timer; it must not fire
   // into databases this shutdown is about to close.
   graphKeeper?.stop();
   if (!state) {
+    try {
+      await initializingEmbedder?.dispose();
+      initializingEmbedder = null;
+    } catch (error) {
+      log(
+        "error",
+        "indexer-worker",
+        `native cleanup failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return;
+    }
     post({ type: "shutdownComplete" });
+    parentPort!.close();
     return;
   }
-  if (state.shuttingDown) return;
   state.shuttingDown = true;
 
   if (state.cycleTimer) clearTimeout(state.cycleTimer);
   if (state.reconcileTimer) clearTimeout(state.reconcileTimer);
   if (state.reindexMissingTimer) clearTimeout(state.reindexMissingTimer);
+  if (state.lexicalTimer) clearTimeout(state.lexicalTimer);
   clearInterval(state.heartbeatInterval);
   state.indexer.stop();
+  // The indexer checks for a stop between pages, and one page is a single
+  // embed call over all of its chunks. Stop the local embedder starting more
+  // native calls, so the cycle ends once the calls already running finish.
+  // Its queued chunks fail as transient, and their documents stay pending.
+  void state.embedder?.quiesce?.();
 
   if (state.inFlightWork) {
     try {
@@ -1552,6 +1715,8 @@ async function handleShutdown(): Promise<void> {
       /* already logged */
     }
   }
+
+  await Promise.allSettled(queryWork);
 
   // Retry queued privacy cleanup before the last graph publication. When it
   // still fails, leave the prior snapshot untouched; the durable obligation
@@ -1569,8 +1734,15 @@ async function handleShutdown(): Promise<void> {
 
   try {
     await state.embedder?.dispose();
-  } catch {
-    /* best-effort */
+  } catch (error) {
+    log(
+      "error",
+      "indexer-worker",
+      `native cleanup failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    // An acknowledgement authorizes thread termination; failed native cleanup
+    // remains owned by the gateway process shutdown boundary.
+    return;
   }
   try {
     state.indexDb.close();
@@ -1583,8 +1755,8 @@ async function handleShutdown(): Promise<void> {
     /* best-effort */
   }
 
-  // Main-side proxy terminates the worker after shutdownComplete.
   post({ type: "shutdownComplete" });
+  parentPort!.close();
 }
 
 /**
@@ -1683,11 +1855,17 @@ function handleUpdateCutoffs(cutoffs: IndexerCutoffMap): void {
 parentPort.on("message", (msg: MainToIndexer) => {
   switch (msg.type) {
     case "init":
-      void handleInit(msg);
+      if (!initialization && !shutdownRequested) initialization = handleInit(msg);
       break;
-    case "embedQuery":
-      void handleEmbedQuery(msg.id, msg.text, msg.sentAtMs);
+    case "embedQuery": {
+      const operation = handleEmbedQuery(msg.id, msg.text, msg.sentAtMs);
+      queryWork.add(operation);
+      void operation.then(
+        () => queryWork.delete(operation),
+        () => queryWork.delete(operation),
+      );
       break;
+    }
     case "runReindexMissing":
       void handleRunReindexMissing(msg.id);
       break;
@@ -1714,6 +1892,9 @@ parentPort.on("message", (msg: MainToIndexer) => {
       break;
     case "flushSave":
       void handleFlushSave(msg.id);
+      break;
+    case "lexicalSwitch":
+      void handleLexicalSwitch(msg.id, msg.version);
       break;
     case "shutdown":
       void handleShutdown();

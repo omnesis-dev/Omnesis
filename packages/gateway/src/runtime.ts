@@ -7,6 +7,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { hostname as osHostname } from "node:os";
+import { EventEmitter } from "node:events";
 import {
   startGatewayCloudTunnel,
   createGatewayAcmeController,
@@ -15,6 +16,7 @@ import {
   GatewayCloudRelayManagement,
 } from "@omnesis/cloud-relay";
 import { CONFIG_DEFAULTS, DEFAULT_PUSH_WAKE_RETRY_SETTINGS, scaffoldDotEnv } from "@omnesis/config";
+import { getRequestListener } from "@hono/node-server";
 import { createNodeWebSocket } from "@hono/node-ws";
 import {
   GATEWAY_SHUTDOWN_BUDGET_MS,
@@ -105,6 +107,8 @@ import { currentTlsMaterialPaths, partitionAddressedHosts } from "./tls-lifecycl
 import { isLoopbackIp, reverseProxyTrusted } from "./http/client-ip.js";
 import { createHostMinter } from "./tls-lifecycle/minters.js";
 import { TlsLifecycleService } from "./tls-lifecycle/service.js";
+import { ownedProcessCleanupReceipt } from "./owned-process-cleanup.js";
+import { closeOptionalServices, OptionalServiceCleanup } from "./optional-service-cleanup.js";
 import { createAcmeRenewalTask } from "./tls-lifecycle/acme-task.js";
 import { createTlsLifecycleTask } from "./tls-lifecycle/task.js";
 import { DEFAULT_MDNS_ENABLED, DEFAULT_MDNS_HOSTNAME, MdnsAdvertiser } from "./mdns-advertiser.js";
@@ -114,6 +118,10 @@ import { RealtimeService } from "./realtime/service.js";
 import { mountRealtimeRoutes } from "./realtime/route.js";
 import { lookupToken, listDeviceIdsWithActiveScope } from "./data/repositories/TokenRepository.js";
 import { PairingNotifier } from "./push/pairing-notifier.js";
+import { TailscaleJoinNotifier } from "./tailscale-embed/notifier.js";
+import { PortalSignals } from "./portal-signals/hub.js";
+import { helperInstalled } from "./tailscale-embed/helper-binary.js";
+import { TailscaleEmbedService } from "./tailscale-embed/service.js";
 import { CertificateIncidentNotifier } from "./push/certificate-incident-notifier.js";
 import { WsEventHandler } from "./http/services/WsEventHandler.js";
 import { FleetUpdateService } from "./http/services/FleetUpdateService.js";
@@ -159,6 +167,7 @@ import { describeMemoryBudget } from "./memory-budget.js";
 import { encryptSidecar, tryUnlink as tryUnlinkSidecar } from "./indexer/usearch-sidecar-crypto.js";
 import { IndexerStatusReporter } from "./indexer/indexer-status.js";
 import { IndexerLifecycle } from "./indexer/indexer-lifecycle.js";
+import { activeLexicalRules } from "./indexer/lexical-index-store.js";
 import {
   Scheduler,
   WriterTaskRunner,
@@ -186,6 +195,7 @@ import {
   backfillOptsFromRuntime,
   resolveRuntimeSettings,
 } from "./runtime-settings.js";
+import { PublicAddress } from "./public-address.js";
 import { SearchPipeline } from "./search/pipeline.js";
 import { SearchWorkerPool } from "./workers/search-pool.js";
 import { startSearchCacheWarm, type SearchCacheWarm } from "./workers/search-warm.js";
@@ -316,6 +326,7 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
   const log = createLogger("gateway");
   const GATEWAY_STARTED_AT = boot.startedAt;
   const { startup } = boot;
+  const ownedProcessShutdown = boot.ownedProcesses;
   const phase = (id: Parameters<typeof startup.start>[0]): void => {
     boot.signal.throwIfAborted();
     if (!startup.start(id)) throw new Error("Gateway startup interrupted");
@@ -415,6 +426,12 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
   // individual key in `gateway.*` / `indexer.*`. See src/mitigations.ts.
   const runtime = resolveRuntimeSettings(config);
   announceRuntimeSettings(runtime);
+  // The public address applies as soon as it is saved: everything that uses it
+  // reads it from here on each use.
+  const publicAddress = PublicAddress.following(configStore);
+  log.info(
+    `Public address: ${publicAddress.baseUrl() ?? "(unset — loopback OAuth/callback fallback only)"}`,
+  );
   // How much memory the gateway may use: the knob, else the cgroup limit, else
   // the host's memory. The worker pools are sized from it, and the indexer keeps
   // the HNSW graph within it.
@@ -681,6 +698,11 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
   };
 
   const wsServerRef: { current?: DeviceWsServer } = {};
+  const ownedTranscriptStores = new Set<{ close(): Promise<void> }>();
+  function ownTranscriptStore(store: FsCognitionTranscriptStore): FsCognitionTranscriptStore {
+    ownedTranscriptStores.add(store);
+    return store;
+  }
   let watchV2EngineHandle: import("./watch/engine-task.js").WatchV2Engine | undefined;
   const pushBroadcaster = new PushBroadcaster({
     queue: writeGate,
@@ -786,6 +808,38 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
     pushBroadcaster,
     () => listDevices(db),
     () => listDeviceIdsWithActiveScope(db, SCOPE_ADMIN),
+  );
+  // The gateway's own tailnet device, on an installation that has its helper program.
+  // It stays idle until the owner turns it on, then starts once the HTTP server is
+  // listening (`attach` below).
+  // Tells the owner's open portals at once when something waits for them.
+  const portalSignals = new PortalSignals();
+  const tailscaleJoinNotifier = new TailscaleJoinNotifier(
+    pushBroadcaster,
+    () => listDevices(db),
+    () => listDeviceIdsWithActiveScope(db, SCOPE_ADMIN),
+  );
+  const tailscaleEmbed = helperInstalled()
+    ? new TailscaleEmbedService({
+        configDir,
+        servedMaterial: () => tlsLifecycle.servedMaterial(),
+        tlsMaterial: () => {
+          // The same files the gateway serves, including after a rotation.
+          const paths = currentTlsMaterialPaths(configDir, process.env, dotEnvKeysAtBoot);
+          return {
+            cert: paths.certPath ?? join(configDir, "tls", "cert.pem"),
+            key: paths.keyPath ?? join(configDir, "tls", "key.pem"),
+          };
+        },
+        joins: {
+          notifyWaiting: (request) => void tailscaleJoinNotifier.waiting(request),
+          notifyJoined: (device) => void tailscaleJoinNotifier.joined(device),
+          onWaitingChanged: () => portalSignals.publish("devices"),
+        },
+      })
+    : undefined;
+  const tailnetCleanup = boot.ownCleanup(
+    new OptionalServiceCleanup("Embedded Tailscale", () => tailscaleEmbed),
   );
   const certificateIncidentNotifier = new CertificateIncidentNotifier(
     pushBroadcaster,
@@ -1050,6 +1104,7 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
 
   const searchPipeline = new SearchPipeline({
     indexDb: searchIndexDb,
+    refreshIndexSnapshot: () => searchSnapshot.refresh(),
     searchConfig,
     embeddingModelId: embeddingModelIdForPipeline,
     queryEnricher: searchQueryEnricher,
@@ -1116,8 +1171,9 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
   const lexicalIndexService =
     (config.search?.bm25?.memoryIndex ?? CONFIG_DEFAULTS.search.bm25.memoryIndex)
       ? new LexicalIndexService({
-          build: () =>
+          build: (source) =>
             startLexicalIndexBuild({
+              source,
               indexDbPath,
               indexDbKeyHex: storageEncryption.indexDbKeyHex,
               cacheSizeBytes: SEARCH_WARM_PAGE_CACHE_BYTES,
@@ -1140,6 +1196,8 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
             searchPipeline.setLexicalRanker(new LexicalIndex(data));
             searchWorkerPool?.setLexicalIndex(data);
           },
+          switchVersion: (version) => indexerLifecycle.switchLexicalIndex(version),
+          activeVersion: () => activeLexicalRules(searchIndexDb)?.version ?? null,
         })
       : undefined;
   if (!lexicalIndexService) log.info("in-memory BM25 index disabled by config");
@@ -1180,16 +1238,15 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
   const analyticsDbPath = process.env.OMNESIS_ANALYTICS_DB_PATH ?? join(configDir, "analytics.db");
   const backupsDir = join(configDir, "backups");
   const exportsDir = join(configDir, "exports");
-  // The coordinated shutdown is assembled once every subsystem exists, at the
-  // end of this module; until then a fatal store error can only exit outright.
+  // Full shutdown is assembled once every subsystem exists. Earlier failures
+  // return to bootstrap's ownership fence and tracked-operation cleanup.
   let coordinatedShutdown: ((exitCode: number) => Promise<void>) | null = null;
   function requestShutdown(exitCode: number): void {
     if (coordinatedShutdown) {
       void coordinatedShutdown(exitCode);
       return;
     }
-    log.error(`Fatal error before the gateway finished booting; exiting with code ${exitCode}`);
-    process.exit(exitCode);
+    boot.fail(new Error(`Fatal error before the gateway finished booting (exit code ${exitCode})`));
   }
   const analyticsDb = new AnalyticsDb(analyticsDbPath, {
     metrics,
@@ -1301,6 +1358,10 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
       config.inference?.codex?.turnIdleTimeoutMs,
     getSubagentDepthCap: () =>
       configStore.get().agent?.subagentDepthCap ?? CONFIG_DEFAULTS.agent.subagentDepthCap,
+  });
+  const codexCleanup = boot.ownCleanup({
+    receipt: () => codexRuntimeService.cleanupFailure(),
+    settle: () => codexRuntimeService.dispose(),
   });
   // The operator's own Claude Code CLI, run under its existing login.
   const claudeCodeService = new ClaudeCodeService({
@@ -1463,6 +1524,7 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
       return indexerLifecycle.deleteDocumentIndexBatch(documentId, limit, sourceDeleted);
     },
     notifyPrivacyApproval: (approvalId) => privacyApprovalNotifier.notify(approvalId),
+    onPrivacyApprovalHeld: () => portalSignals.publish("answers"),
     // Slow-answer push: an agent turn requested with `notifyAfterMs` that
     // outlives its budget delivers the finished answer over APNs.
     notifyAgentAnswer: (notification) =>
@@ -1478,7 +1540,40 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
     notifyConversation: (notification) => conversationNotifier.notify(notification),
   });
   phase("agent");
-  await agentLifecycle.bootAgent();
+  const conversationCleanupOwner = {
+    cleanupFailure: (): unknown => {
+      // The shared store also retains failures from an earlier service instance.
+      const failures = [
+        conversationStore.cleanupFailure(),
+        agentLifecycle.routeDeps.agentService?.cleanupFailure(),
+      ];
+      return (
+        failures.find((failure) => {
+          const receipt = ownedProcessCleanupReceipt(failure);
+          return receipt !== undefined && !receipt.pending;
+        }) ?? failures.find((failure) => ownedProcessCleanupReceipt(failure) !== undefined)
+      );
+    },
+    close: async (): Promise<void> => {
+      // Aborted turns can still publish their last transcript. Drain their
+      // service before closing admission to the one store shared across swaps.
+      await agentLifecycle.shutdown();
+      await conversationStore.close();
+    },
+  };
+  const conversationCleanup = new OptionalServiceCleanup(
+    "Agent conversations",
+    () => conversationCleanupOwner,
+  );
+  try {
+    boot.signal.throwIfAborted();
+    await agentLifecycle.bootAgent();
+  } finally {
+    // The lifecycle may install its service asynchronously. Enroll only after
+    // that operation settles, so partial cleanup cannot memoize an empty owner.
+    boot.ownCleanup(conversationCleanup);
+  }
+  boot.signal.throwIfAborted();
   complete("agent");
 
   // metrics + analyticsDb were initialised earlier (see the block before
@@ -1753,6 +1848,24 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
       modelsDir: MODELS_DIR,
     },
   });
+  // A keyword-index rebuild that holds every chunk is switched in once its
+  // in-memory index is ready (see LexicalIndexService.prepareSwitch); with the
+  // in-memory index disabled, it is switched in at once.
+  indexerLifecycle.onLexicalBackfilled = (version) => {
+    if (lexicalIndexService) {
+      void lexicalIndexService.prepareSwitch(version);
+      return;
+    }
+    indexerLifecycle.switchLexicalIndex(version).then(
+      (switched) => {
+        if (switched) log.info(`keyword index switched to version ${version}`);
+      },
+      (err: unknown) =>
+        log.warn(
+          `keyword index switch to version ${version} failed: ${err instanceof Error ? err.message : String(err)}`,
+        ),
+    );
+  };
 
   // ── Model manager ────────────────────────────────────────────────────
   // Owns the catalog/manifest/download surface for installable models.
@@ -1847,17 +1960,22 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
   const addressedHosts = () =>
     partitionAddressedHosts({
       gatewayUrl: process.env.OMNESIS_GATEWAY_URL,
-      publicBaseUrl: runtime.publicBaseUrl,
+      publicBaseUrl: publicAddress.baseUrl(),
       trustOrigins: [
         ...runtime.pairingSystemTrustOrigins,
         ...(configStore.get().gateway?.pairingSystemTrustOrigins ?? []),
       ],
       proxyTrusted: reverseProxyTrusted(),
+      gatewayPort: PORT,
     });
   let acmeController: Awaited<ReturnType<typeof createGatewayAcmeController>>;
+  const acmeCleanup = new OptionalServiceCleanup("Public ACME", () => acmeController);
   const publicSni = new GatewayPublicSni();
   if (cloudRelayEnabled()) boot.listener.setSniCallback(publicSni.callback);
   let cloudTunnel: ReturnType<typeof startGatewayCloudTunnel>;
+  const tunnelCleanup = boot.ownCleanup(
+    new OptionalServiceCleanup("Cloud relay tunnel", () => cloudTunnel),
+  );
   let cloudListenPort = 0;
   const tlsLifecycle = new TlsLifecycleService({
     configDir,
@@ -1881,10 +1999,31 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
     }),
     // Those tiers renew on the host.
     inContainer,
-    onRotation: (fingerprintSha256) => advertiser?.setFingerprint(fingerprintSha256),
+    onRotation: (fingerprintSha256) => {
+      advertiser?.setFingerprint(fingerprintSha256);
+      void tailscaleEmbed?.refreshGatewayCertificate().catch((error: unknown) => {
+        log.warn(
+          `Embedded Tailscale certificate refresh failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      });
+    },
+  });
+
+  const tlsCleanup = boot.ownCleanup({
+    receipt: () => tlsLifecycle.cleanupFailure(),
+    settle: () => tlsLifecycle.close(),
   });
 
   let cloudRelayManagement: GatewayCloudRelayManagement | undefined;
+  const relayCleanup = new OptionalServiceCleanup("Cloud relay", () => cloudRelayManagement);
+  /** The Omnesis relay origin agents reach this gateway by, once it has one. */
+  const relayPublicOrigin = (): string | undefined =>
+    cloudRelayEnabled()
+      ? (cloudRelayManagement?.publicOrigin() ??
+        (process.env.OMNESIS_CLOUD_RELAY_GATEWAY_ORIGIN
+          ? publicGatewayOrigin(process.env)
+          : undefined))
+      : undefined;
   /** The key a device sees when it reaches this gateway through the relay. */
   const cloudPublicSpkiFingerprint = (): string | undefined =>
     cloudRelayManagement?.managesPublicCertificate()
@@ -1894,6 +2033,7 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
         : tlsLifecycle.spkiFingerprintSha256();
   let cloudRelayInitializationFailed = false;
   try {
+    boot.signal.throwIfAborted();
     cloudRelayManagement = cloudRelayEnabled()
       ? await GatewayCloudRelayManagement.open({
           configDir,
@@ -1903,9 +2043,9 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
             const hostNetwork = inContainer ? readHostNetwork(configDir) : null;
             return {
               origins: [
-                runtime.publicBaseUrl,
+                publicAddress.baseUrl(),
                 cloudRelayManagement?.publicOrigin(),
-                ...runtime.mcpResourceUrls.map((value) => new URL(value).origin),
+                ...publicAddress.mcpResourceUrls().map((value) => new URL(value).origin),
               ],
               localNames: ["localhost", osHostname(), `${osHostname()}.local`, ...tlsExtraHosts],
               port: hostNetwork?.port ?? cloudListenPort,
@@ -1927,9 +2067,8 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
             publicSni.activate(material);
           },
           stopLegacy: async () => {
-            cloudTunnel?.stop();
+            await closeOptionalServices([tunnelCleanup, acmeCleanup]);
             cloudTunnel = undefined;
-            await acmeController?.close();
             acmeController = undefined;
           },
           directIdentity: () => {
@@ -1960,12 +2099,22 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
           },
         })
       : undefined;
-  } catch {
+  } catch (error) {
     cloudRelayInitializationFailed = true;
-    log.warn(
-      "Optional cloud relay management configuration is invalid; direct gateway access remains available",
-    );
+    if (boot.signal.aborted) {
+      relayCleanup.captureFailure(error);
+      throw error;
+    }
+    if (relayCleanup.captureFailure(error))
+      log.error("Cloud relay startup cleanup is unconfirmed; public relay startup is disabled");
+    else
+      log.warn(
+        "Optional cloud relay management configuration is invalid; direct gateway access remains available",
+      );
+  } finally {
+    boot.ownCleanup(relayCleanup);
   }
+  boot.signal.throwIfAborted();
 
   // Speech-to-text service. Lazily loads the assigned transcriber (a local
   // Whisper model or an HTTP transcription backend) on first use and self-heals
@@ -1987,6 +2136,9 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
       maxPromptTokens: () => transcriptionVocabularyService.maxPromptTokens(),
     },
   });
+  const transcriberCleanup = boot.ownCleanup(
+    new OptionalServiceCleanup("Transcriber", () => transcribeService),
+  );
   // Start the local Whisper runtime probe now, off the boot path, so the first
   // `/status` poll already knows whether dictation can run.
   transcribeService.readiness();
@@ -2342,7 +2494,9 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
     const compileReasoningTokens = watchTunables?.compileReasoningTokens;
     const watchCompileRecorder = new WatchCompileRecorder({
       writeGate,
-      transcripts: new FsCognitionTranscriptStore(cognitionTranscriptsDir(configDir)),
+      transcripts: ownTranscriptStore(
+        new FsCognitionTranscriptStore(cognitionTranscriptsDir(configDir)),
+      ),
       log: log.child("watch-v2:compile-runs"),
     });
     const authoring: AuthorWatchDeps = {
@@ -2584,7 +2738,15 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
     interestEnabled: () => interestEngine.enabled(),
   };
   const taskService = new TaskService(db, writeGate, briefsVirtualClock ?? Date.now, taskEffects);
+  let doctorCleanupOwner: { cleanupFailure(): unknown; close(): Promise<void> } | undefined;
+  const doctorCleanup = boot.ownCleanup(
+    new OptionalServiceCleanup("Host security audit", () => doctorCleanupOwner),
+  );
   const app = createServer(db, DB_PATH, {
+    portalSignals,
+    onDoctorCleanupOwner: (owner) => {
+      doctorCleanupOwner = owner;
+    },
     interest: interestEngine,
     taskEffects,
     getDiskUsage: () => diskUsage.snapshot(),
@@ -2691,22 +2853,23 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
       sessionTtlMs: runtime.sessionTtlMs,
       sessionRefreshThrottleMs: runtime.sessionRefreshThrottleMs,
     },
-    // Externally-reachable HTTPS base URL (gateway.publicBaseUrl); forwarded
-    // in auth.begin so OAuth/aggregator sources build their redirect URI as
-    // `${publicBaseUrl}/oauth/callback`. See runtime-settings.ts.
-    publicBaseUrl: runtime.publicBaseUrl,
-    ...(cloudRelayEnabled()
+    // Externally-reachable HTTPS base URL (gateway.publicBaseUrl) and the MCP
+    // resources it implies, as they stand at each request.
+    publicAddress,
+    ...(cloudRelayEnabled() || tailscaleEmbed
       ? {
           additionalOAuthIssuerUrls: () => {
-            const origin =
-              cloudRelayManagement?.publicOrigin() ??
-              (process.env.OMNESIS_CLOUD_RELAY_GATEWAY_ORIGIN
-                ? publicGatewayOrigin(process.env)
-                : undefined);
-            return origin ? [origin] : [];
+            // Agents reach the gateway by its tailnet name, on the tailnet or
+            // through its public address; both are the same origin.
+            const tailnetOrigin = tailscaleEmbed?.tailnetOrigin() ?? undefined;
+            return [relayPublicOrigin(), tailnetOrigin].filter(
+              (origin): origin is string => !!origin,
+            );
           },
         }
       : {}),
+    ...(cloudRelayEnabled() ? { relayPublicOrigin } : {}),
+    tailscaleEmbed,
     cloudRelayManagement,
     cloudRelayExposure: () => cloudRelayManagement?.isExposing() ?? false,
     cloudIdentitySource: cloudPairingIdentitySource(
@@ -2718,8 +2881,7 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
       cloudRelayManagement?.publicOrigin() ??
       (process.env.OMNESIS_CLOUD_RELAY_GATEWAY_ORIGIN
         ? publicGatewayOrigin(process.env)
-        : runtime.publicBaseUrl),
-    mcpResourceUrls: runtime.mcpResourceUrls,
+        : publicAddress.baseUrl()),
     indexerModel: indexerLifecycle.modelInfo,
     indexerReadiness: () => indexerStatus.getReadiness(),
     getSemanticSearch: () => indexerLifecycle.vectorIndex,
@@ -2919,7 +3081,7 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
     // host's launcher records the host's, which is where phones reach it.
     hostNetwork: inContainer ? () => readHostNetwork(configDir) : undefined,
     systemTrustPairingOrigins: () => [
-      ...(runtime.publicBaseUrl ? [runtime.publicBaseUrl] : []),
+      ...[publicAddress.baseUrl()].filter((origin): origin is string => !!origin),
       ...runtime.pairingSystemTrustOrigins,
       ...(configStore.get().gateway?.pairingSystemTrustOrigins ?? []),
     ],
@@ -3160,6 +3322,9 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
     writeGate,
     log,
     runQueue: {
+      onTranscriptStore: (store) => {
+        ownedTranscriptStores.add(store);
+      },
       db,
       scheduler,
       backgroundJobs,
@@ -3314,6 +3479,21 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
 
   const server = boot.listener.server;
   scheduler.schedule(createTlsLifecycleTask(tlsLifecycle));
+  if (tailscaleEmbed) {
+    // The helper forwards to a private socket served by the same app, with the
+    // same WebSocket routes and drain tracking as the main listener.
+    const tailnetUpgrades = new EventEmitter();
+    injectWebSocket(tailnetUpgrades as unknown as Parameters<typeof injectWebSocket>[0]);
+    await tailscaleEmbed.attach({
+      listener: getRequestListener((request, env) => boot.listener.handle(request, env)),
+      upgrade: (req, socket, head) =>
+        boot.listener.admitUpgrade(req, socket, () => {
+          tailnetUpgrades.emit("upgrade", req, socket, head);
+        }),
+      onServer: (tailnetServer) => httpShutdown.attach(tailnetServer),
+    });
+  }
+  boot.signal.throwIfAborted();
 
   wsServer.start();
 
@@ -3324,6 +3504,7 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
   cloudListenPort = listenPort;
   if (!cloudRelayInitializationFailed && !cloudRelayManagement?.hasSavedConfiguration()) {
     try {
+      boot.signal.throwIfAborted();
       acmeController = await createGatewayAcmeController(process.env, {
         configDir,
         activate: async (material) => {
@@ -3331,21 +3512,44 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
           publicSni.activate(material);
         },
       });
-    } catch {
-      log.warn("Public ACME configuration is invalid; direct gateway TLS remains available");
+    } catch (error) {
+      if (boot.signal.aborted) {
+        acmeCleanup.captureFailure(error);
+        throw error;
+      }
+      if (acmeCleanup.captureFailure(error))
+        log.error("Public ACME startup cleanup is unconfirmed; relay startup is disabled");
+      else log.warn("Public ACME configuration is invalid; direct gateway TLS remains available");
+    } finally {
+      boot.ownCleanup(acmeCleanup);
     }
-    try {
-      cloudTunnel = startGatewayCloudTunnel(`https://localhost:${listenPort}`, {
-        ...process.env,
-        OMNESIS_CONFIG_DIR: configDir,
-      });
-    } catch {
-      log.warn(
-        "Cloud relay environment configuration is incomplete; direct gateway access remains available",
-      );
+    boot.signal.throwIfAborted();
+    if (!acmeCleanup.hasTerminalFailure()) {
+      try {
+        boot.signal.throwIfAborted();
+        cloudTunnel = startGatewayCloudTunnel(`https://localhost:${listenPort}`, {
+          ...process.env,
+          OMNESIS_CONFIG_DIR: configDir,
+        });
+      } catch (error) {
+        if (boot.signal.aborted) {
+          tunnelCleanup.captureFailure(error);
+          throw error;
+        }
+        if (tunnelCleanup.captureFailure(error))
+          log.error("Cloud relay startup cleanup is unconfirmed; public relay startup is disabled");
+        else
+          log.warn(
+            "Cloud relay environment configuration is incomplete; direct gateway access remains available",
+          );
+      }
+      if (acmeController && !tunnelCleanup.hasTerminalFailure())
+        scheduler.schedule(createAcmeRenewalTask(acmeController));
     }
-    if (acmeController) scheduler.schedule(createAcmeRenewalTask(acmeController));
-  } else cloudRelayManagement?.start();
+  } else if (!relayCleanup.hasTerminalFailure()) {
+    boot.signal.throwIfAborted();
+    cloudRelayManagement?.start();
+  }
 
   // Advertise the gateway on the LAN via mDNS so same-LAN collectors with
   // no OMNESIS_GATEWAY_URL auto-discover it, and the portal is reachable at
@@ -3596,7 +3800,9 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
   // Disposable operational history is pruned by one bounded background unit per
   // tick. The task exists even when disabled (the default), so a live config edit
   // can enable or shorten retention without restarting the gateway.
-  const retentionTranscripts = new FsCognitionTranscriptStore(cognitionTranscriptsDir(configDir));
+  const retentionTranscripts = ownTranscriptStore(
+    new FsCognitionTranscriptStore(cognitionTranscriptsDir(configDir)),
+  );
   // A migration that retires a class of runs can delete their rows but not their
   // transcript files — it has no filesystem. It leaves the ids behind; this is
   // where they are collected, now that the directory is in scope. Not awaited:
@@ -3701,6 +3907,7 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
       subscriptionService?.reevaluatePendingWatchPolicies() ?? Promise.resolve(0),
     reapplyOperatorApprovals: () =>
       subscriptionService?.reapplyOperatorApprovals() ?? Promise.resolve(0),
+    onExpired: () => portalSignals.publish("watches"),
     config: {
       maxAttempts: subscriptionDeliveryConfig?.maxDeliveryAttempts,
       baseBackoffMs: subscriptionDeliveryConfig?.deliveryBaseBackoffMs,
@@ -3805,15 +4012,14 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
   // writer worker in Phase 2+), then dispose the writer worker, then close
   // the main-thread DB handles.
   //
-  // Wallclock cap: 60 seconds. If any of the awaited steps wedges (worker
-  // in a native call ignoring shutdown messages, etc.) the supervisor
-  // gets a guaranteed exit. Per-stage runners already apply their own
-  // 5s fallback; this is the umbrella net. Sized to comfortably clear the
+  // Wallclock cap: 60 seconds. A timeout records a failed stop; accepted owned
+  // process proofs still settle before exit, and terminal cleanup uncertainty
+  // retains the PID and lease for review. Per-stage runners apply their own
+  // 5s fallback. The ordinary shutdown budget comfortably clears the
   // indexer flush-save (its own 20s budget — a large HNSW graph rewrites the
   // whole ~GB file) plus the backup/export/agent drains ahead of it and the
   // dispose + sidecar encrypt after it, so the clean-exit path wins over the
-  // force-exit even on a big install; still well under the service manager's
-  // stop timeout.
+  // timeout even on a big install, within the service manager's stop timeout.
   const SHUTDOWN_TIMEOUT_MS = GATEWAY_SHUTDOWN_BUDGET_MS;
 
   /**
@@ -3828,25 +4034,41 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
   const COMPILE_DRAIN_TIMEOUT_MS = 10_000;
 
   const doShutdown = async (): Promise<void> => {
-    try {
-      await cloudRelayManagement?.close();
-    } catch {
-      log.warn("Optional relay cleanup deferred; direct gateway shutdown continues");
-    }
-    try {
-      await acmeController?.close();
-    } catch {
-      log.warn("ACME DNS cleanup deferred to the persisted challenge journal");
-    }
-    cloudTunnel?.stop();
+    const optionalCleanup = [
+      {
+        owner: relayCleanup,
+        warning: "Optional relay cleanup deferred; direct gateway shutdown continues",
+      },
+      {
+        owner: acmeCleanup,
+        warning: "ACME DNS cleanup deferred to the persisted challenge journal",
+      },
+      { owner: tunnelCleanup, warning: "Cloud relay tunnel cleanup failed" },
+      { owner: doctorCleanup, warning: "Host security audit cleanup is unconfirmed" },
+      { owner: tailnetCleanup, warning: "Embedded Tailscale cleanup is unconfirmed" },
+      { owner: transcriberCleanup, warning: "Transcriber process cleanup is unconfirmed" },
+    ];
+    const optionalDrain = Promise.allSettled(
+      optionalCleanup.map(({ owner }) => ownedProcessShutdown.join(owner)),
+    );
     // Stop admitting HTTP requests and WebSocket frames while their services
     // still exist. This drain is bounded so a streaming client cannot consume
     // the entire shutdown budget before the indexer has persisted its graph.
     wsServer.stop();
     collectorDescriptors.close();
     const httpDrain = httpShutdown.close(server, 5_000);
+    // The optional Tailscale owner drains its listener and joins its helper
+    // alongside HTTP; its closure proof also participates in the shutdown fence.
     const [httpDrained] = await Promise.all([httpDrain, realtimeService.dispose()]);
     if (!httpDrained) log.warn("HTTP shutdown drain timed out; remaining connections closed");
+    try {
+      await app.close();
+    } catch (error) {
+      log.error(
+        `Route resource cleanup failed: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}`,
+      );
+    }
+    await ownedProcessShutdown.join(tlsCleanup);
     // A warm still scanning competes with the sidecar persist below for I/O and
     // the shutdown budget; its thread is throwaway, so stop it first — after the
     // lexical index service, because a settled warm starts the service's build.
@@ -3914,7 +4136,7 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
       );
     }
 
-    await agentLifecycle.shutdown();
+    await ownedProcessShutdown.join(conversationCleanup);
     // Voice notes: stop picking up queued notes. One being transcribed right now
     // is not awaited — it stays queued and is transcribed again after restart.
     voiceNoteService?.dispose();
@@ -3956,13 +4178,19 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
     }
     if (codexRuntimeService) {
       try {
-        await codexRuntimeService.dispose();
+        await ownedProcessShutdown.join(codexCleanup);
       } catch (err) {
         log.error(
           `codexRuntimeService.dispose threw: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`,
         );
       }
     }
+
+    // Optional-service callbacks can still need the writer. Join them after
+    // client and agent admission closes, before tearing down shared stores.
+    const optionalResults = await optionalDrain;
+    for (const [index, result] of optionalResults.entries())
+      if (result.status === "rejected") log.warn(optionalCleanup[index]!.warning);
 
     // Near-dup inbox: detach the subscriber so no further docs buffer and stop
     // the periodic flush so it can't drain concurrently, then drain what's
@@ -4071,6 +4299,15 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
         `scheduler.dispose threw: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`,
       );
     }
+    const transcriptClosures = await Promise.allSettled(
+      [...ownedTranscriptStores].map((store) => store.close()),
+    );
+    ownedTranscriptStores.clear();
+    for (const result of transcriptClosures)
+      if (result.status === "rejected")
+        log.error(
+          `Transcript cleanup failed: ${result.reason instanceof Error ? result.reason.message : String(result.reason)}`,
+        );
     processVitals.dispose();
     await stallMonitor.dispose();
     // DB handles last — by this point no scheduled writer task is in
@@ -4114,14 +4351,15 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
     }
     await inferenceRegistry.health.flush();
     processLauncherHost.dispose();
-    // Last: every store is closed, so a replacement gateway may take the dir.
-    gatewayLock.release();
+    // Unconfirmed owned processes retain their gateway's lease for explicit review.
+    ownedProcessShutdown.releaseLock(gatewayLock);
   };
 
   const shutdown = createStartupShutdown({
     timeoutMs: SHUTDOWN_TIMEOUT_MS,
     async drain() {
       startup.stop();
+      boot.abortStartup();
       log.info("Shutting down...");
       // Stop ingress before an async relay or service cleanup can yield.
       void httpShutdown.close(server, 5_000);
@@ -4129,7 +4367,7 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
       deferredStartupTasks.stop();
       await doShutdown();
     },
-    finish: (exitCode) => process.exit(exitCode),
+    finish: (exitCode) => ownedProcessShutdown.finish(() => process.exit(exitCode)),
     onFailure: (error) =>
       log.error(
         `Gateway shutdown failed: ${error instanceof Error ? error.message : String(error)}`,

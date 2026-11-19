@@ -37,6 +37,8 @@ import {
 import { createOpenLoop } from "./open-loops.js";
 import type { ObservationScores } from "./types.js";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 type Db = Database.Database;
 
@@ -105,7 +107,7 @@ describe("observation repository", () => {
   }
 
   beforeEach(() => {
-    path = `/tmp/omnesis-test-${randomUUID()}.db`;
+    path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
     db = createDatabase(path);
     upsertDocuments(db, [
       doc("a", "The studio rent invoice is due on Friday."),

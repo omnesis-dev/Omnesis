@@ -14,6 +14,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { inspectWindowsPrivatePathSync } from "@omnesis/platform/windows-private-file";
 import { CliError } from "../utils.js";
 import {
   FileConfigTarget,
@@ -104,10 +105,11 @@ describe("probeGateway", () => {
 });
 
 describe("resolveConfigTarget", () => {
+  const configDir = join(tmpdir(), "omnesis-config-target-test");
   function env(overrides: Partial<ConfigTargetEnvironment>): ConfigTargetEnvironment {
     return {
       gatewayUrl: "https://localhost:7600",
-      configDir: "/tmp/omnesis-config-target-test",
+      configDir,
       gatewayHolder: () => null,
       probe: vi.fn(() => Promise.resolve("refused" as const)),
       ...overrides,
@@ -150,9 +152,7 @@ describe("resolveConfigTarget", () => {
     ]) {
       const target = await resolveConfigTarget(env({ gatewayUrl }));
       expect(target).toBeInstanceOf(FileConfigTarget);
-      expect((target as FileConfigTarget).path).toBe(
-        "/tmp/omnesis-config-target-test/omnesis.json",
-      );
+      expect((target as FileConfigTarget).path).toBe(join(configDir, "omnesis.json"));
     }
   });
 });
@@ -183,7 +183,9 @@ describe("FileConfigTarget", () => {
     expect(JSON.parse(readFileSync(file(), "utf8"))).toEqual({
       gateway: { mdns: { enabled: false } },
     });
-    expect(statSync(file()).mode & 0o777).toBe(0o600);
+    if (process.platform === "win32")
+      expect(inspectWindowsPrivatePathSync(file(), "file").private).toBe(true);
+    else expect(statSync(file()).mode & 0o777).toBe(0o600);
     expect(readdirSync(dir)).toEqual(["omnesis.json"]);
     expect((await target().load()).config).toEqual({ gateway: { mdns: { enabled: false } } });
   });

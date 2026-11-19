@@ -27,6 +27,8 @@ import { markMorningBriefSent, replaceMorningBriefItems } from "./storage/mornin
 import { insertCognitionDecision } from "./storage/decisions.js";
 import type { BriefsFeatureStatus } from "./feature-gate.js";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 const NOW = Date.parse("2026-07-02T10:00:00.000Z");
 const DAY = 86_400_000;
@@ -67,7 +69,7 @@ function observe(
 }
 
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-test-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
   db = createDatabase(dbPath);
   ADMIN = mint([SCOPE_ADMIN, SCOPE_READ]);
   READ = mint([SCOPE_READ]);

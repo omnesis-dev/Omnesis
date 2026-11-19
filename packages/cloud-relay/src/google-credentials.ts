@@ -4,7 +4,7 @@
 import { mkdir } from "node:fs/promises";
 import { createReadStream } from "node:fs";
 import { dirname } from "node:path";
-import { atomicWriteFile, atomicWriteFileSync } from "@omnesis/core";
+import { atomicWriteFile, atomicWriteFileSync, readWindowsPrivateFile } from "@omnesis/core";
 import { z } from "zod";
 import { accountId, googleIdentityProvider, type IdentityProvider } from "./identity.js";
 import { refreshGoogleAuthorization, type GoogleCredentials } from "./google-oauth.js";
@@ -28,10 +28,14 @@ const relaySessionSchema = z.object({
 export async function readPrivateJson(path: string): Promise<unknown> {
   const chunks: Buffer[] = [];
   let size = 0;
-  for await (const chunk of createReadStream(path)) {
-    size += chunk.length;
-    if (size > 65_536) throw new Error("Credential file is too large");
-    chunks.push(chunk);
+  if (process.platform === "win32") {
+    chunks.push(await readWindowsPrivateFile(path, 65_536));
+  } else {
+    for await (const chunk of createReadStream(path)) {
+      size += chunk.length;
+      if (size > 65_536) throw new Error("Credential file is too large");
+      chunks.push(chunk);
+    }
   }
   try {
     return JSON.parse(Buffer.concat(chunks).toString("utf8"));

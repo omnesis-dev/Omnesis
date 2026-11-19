@@ -164,6 +164,7 @@ import { addAnnotationRecheckQueuedAt } from "./migration-213-annotation-recheck
 import { addDeviceEnrollment } from "./migration-214-device-enrollment.js";
 import { indexDocumentsByIdAndType } from "./migration-216-documents-id-type-index.js";
 import { addStickyDeviceRevocation } from "./migration-217-sticky-revocation.js";
+import { indexPersonNameAliases } from "./migration-218-person-name-alias-index.js";
 import { LATEST_SCHEMA_VERSION } from "./schema-version.js";
 import type { Db } from "./types.js";
 
@@ -5006,6 +5007,11 @@ export const MIGRATIONS: readonly Migration[] = [
     description:
       "keep revoked device keys from joining automatically; record each device's sign-in",
     up: addStickyDeviceRevocation,
+  },
+  {
+    version: 218,
+    description: "index name aliases by their lowercased text so a name lookup seeks",
+    up: indexPersonNameAliases,
   },
 ];
 

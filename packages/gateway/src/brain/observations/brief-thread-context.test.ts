@@ -10,6 +10,8 @@ import { markMorningBriefSent, replaceMorningBriefItems } from "../storage/morni
 import { createOpenLoop } from "../storage/open-loops.js";
 import { renderDailyBriefContext } from "./brief-thread-context.js";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 const NOW = Date.parse("2026-07-02T07:00:00.000Z");
 const DAY = "2026-07-02";
@@ -28,7 +30,7 @@ describe("renderDailyBriefContext", () => {
   }
 
   beforeEach(() => {
-    path = `/tmp/omnesis-test-${randomUUID()}.db`;
+    path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
     db = createDatabase(path);
     createOpenLoop(
       db,

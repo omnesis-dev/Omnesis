@@ -10,6 +10,8 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { existsSync, unlinkSync } from "node:fs";
 import { SCOPE_ADMIN } from "@omnesis/types";
 import { Hono } from "hono";
@@ -27,7 +29,8 @@ import type { AppEnv } from "./types.js";
 const WORKER_URL = new URL("../../workers/io-worker.ts", import.meta.url);
 const LOADER_URL = new URL("../../workers/register-tsx.mjs", import.meta.url).href;
 
-const dbPath = `/tmp/omnesis-test-${randomUUID()}.db`;
+const dbPath = join(tmpdir(), `omnesis-test-${randomUUID()}.db`);
+const routes = new Set<ReturnType<typeof mountAnalyticsRoutes>>();
 let db: Database.Database;
 let scheduler: Scheduler;
 let gate: IoGate;
@@ -73,12 +76,13 @@ function appWith(gateway?: Pick<IoGate, "sqliteQuery">): {
   // The fallback opens a read-only handle of its own onto this file; a spy on
   // the handle the route was given sees any read that strays onto it.
   const prepare = vi.spyOn(db, "prepare");
-  mountAnalyticsRoutes(app, {
+  const mounted = mountAnalyticsRoutes(app, {
     db: db as unknown as AnalyticsRoutesDeps["db"],
     analyticsService: null,
     sourceService: {} as AnalyticsRoutesDeps["sourceService"],
     ...(gateway ? { ioGate: gateway } : {}),
   });
+  routes.add(mounted);
   app.onError((err, c) => {
     if (err instanceof HttpError) return errorResponse(c, err);
     throw err;
@@ -176,6 +180,8 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await scheduler?.dispose();
+  for (const mounted of routes) await mounted.close();
+  routes.clear();
   db?.close();
   for (const suffix of ["", "-wal", "-shm"])
     if (existsSync(dbPath + suffix)) unlinkSync(dbPath + suffix);

@@ -21,6 +21,8 @@ import { proposeTaskChange } from "../storage/tasks.js";
 import { createMutableClock } from "../virtual-clock.js";
 import type { StatusCache } from "../../http/services/StatusCache.js";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 const NOW = Date.parse("2026-03-10T12:00:00");
 const TODAY = "2026-03-10";
@@ -66,7 +68,7 @@ const action = (id: string, body: Record<string, unknown>) =>
 
 beforeEach(() => {
   clock.set(NOW);
-  dbPath = `/tmp/omnesis-test-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
   db = createDatabase(dbPath);
   vi.stubEnv("OMNESIS_EXPERIMENTAL", "1");
   setLabFlag(db, "tasks", true);

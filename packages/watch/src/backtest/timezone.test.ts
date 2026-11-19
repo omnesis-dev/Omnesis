@@ -61,7 +61,9 @@ describe("goldens under a shifted host timezone", () => {
       }
     },
     // Seventeen replays of a season-long journal, per zone, alongside the rest
-    // of the package. Well past the default ceiling on a loaded pool.
-    120_000,
+    // of the suite. A zone takes about half a minute on an idle machine and
+    // has taken over two on a shared runner, so the ceiling leaves several
+    // times that.
+    600_000,
   );
 });

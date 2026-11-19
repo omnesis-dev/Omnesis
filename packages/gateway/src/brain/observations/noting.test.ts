@@ -23,6 +23,8 @@ import { DEFAULT_SALIENCE_THRESHOLDS } from "./salience.js";
 import type { CognitionDecisionRecord } from "../storage/decisions.js";
 import type { OwnerInterest } from "../interest/lookup.js";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 const log = createLogger("test").child("observation-noting");
 const NOTED_AT = Date.parse("2026-07-02T15:00:00.000Z");
@@ -83,7 +85,7 @@ describe("createObservationScorer", () => {
   });
 
   beforeEach(() => {
-    path = `/tmp/omnesis-test-${randomUUID()}.db`;
+    path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
     db = createDatabase(path);
     decisions = [];
     recordSpend = vi.fn(async () => {});

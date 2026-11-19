@@ -116,6 +116,8 @@ export type IndexerInit = {
   indexerBetweenPageSleepMs: number;
   /** Catch-up pacing for a backlogged scan. See `indexer.catchUp`. */
   indexerCatchUp: IndexerCatchUpSettings;
+  /** Keyword-index rebuild pacing. See `indexer.lexicalRebuild`. */
+  lexicalRebuild: { batchSize: number; pauseMs: number };
   /** Whether to run the heavy reindexMissing scan once at boot. */
   reindexMissingAtBoot: boolean;
   /** Chunker max chunk length, chars. See `indexer.chunker.chunkSize`. */
@@ -149,6 +151,11 @@ export type IndexerInit = {
   usearchBackfillPageSize?: number;
   /** Optional cold-rebuild checkpoint interval, ms; production uses the write handle default. */
   usearchCheckpointIntervalMs?: number;
+  /**
+   * Test seam: one Int32 cell. While it is non-zero the cold rebuild waits at
+   * its next page boundary, still serving messages. Production leaves it unset.
+   */
+  usearchBackfillHold?: SharedArrayBuffer;
   /**
    * The gateway's memory budget (see `memory-budget.ts`). The worker holds the
    * HNSW graph in memory only while it fits; absent, nothing is checked.
@@ -210,6 +217,10 @@ export type MainToIndexer =
   // save can't be cut short by the 5s dispose ack — otherwise the next boot
   // rebuilds (~18 min) instead of restoring from the sidecar / plaintext file.
   | { type: "flushSave"; id: number }
+  // Make the backfilled keyword-index build of `version` the active index (see
+  // indexer/lexical-index-store.ts). The main thread sends it once its in-memory
+  // index of that version is ready; the worker runs it between its other jobs.
+  | { type: "lexicalSwitch"; id: number; version: number }
   | { type: "shutdown" };
 
 /** Stable IDs for the worker-hosted background jobs surfaced to /admin/background-jobs. */
@@ -302,6 +313,13 @@ export type IndexerToMain =
   // threw (the gateway then proceeds; the next boot rebuilds or reopens what is on
   // disk, fail-safe).
   | { type: "flushSaveComplete"; id: number; ok: boolean }
+  // A keyword-index build of `version` has copied every chunk and waits for
+  // the switch. Sent each time the worker finds one waiting, so a main thread
+  // that missed it (restarted, or busy) hears it again.
+  | { type: "lexicalBackfilled"; version: number }
+  // Answer to `lexicalSwitch`: whether the build was switched in (false when it
+  // was superseded meanwhile), or why it failed.
+  | { type: "lexicalSwitchResult"; id: number; switched: boolean; error?: string }
   | IndexerJobUpdate
   // Whether the HNSW graph is being built, serving, or released for lack of
   // memory (semantic search degraded, keyword search only).

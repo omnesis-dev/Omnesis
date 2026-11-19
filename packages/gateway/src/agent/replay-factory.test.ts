@@ -300,9 +300,9 @@ describe("makeReplayBackendFactory — replay pacing", () => {
         for await (const event of backend(mode, "immediate").runTurn(input, controller.signal)) {
           events.push(event);
           if (event.type === "agent.text.delta") {
-            // Cancellation comes from another event-loop task, like an HTTP
-            // cancel request, rather than synchronously inside the consumer.
-            setTimeout(() => controller.abort(), 0);
+            // A queued event-loop task cancels before the next chunk's yield.
+            // Timer and immediate ordering differs between event-loop phases.
+            setImmediate(() => controller.abort());
           }
         }
       })();

@@ -13,6 +13,8 @@ import type { DecisionPayloadCapture } from "../decision-payload.js";
 import type { OwnerInterest } from "../interest/lookup.js";
 import type { CognitionDecisionRecord } from "../storage/decisions.js";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 const log = createLogger("test").child("task-checks");
 const capture: DecisionPayloadCapture = {
@@ -77,7 +79,7 @@ describe("TaskChecks ledger", () => {
     });
 
   beforeEach(() => {
-    path = `/tmp/omnesis-test-${randomUUID()}.db`;
+    path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
     db = createDatabase(path);
     records = [];
     interest = null;

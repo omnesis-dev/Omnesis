@@ -5,6 +5,7 @@ import { afterEach, expect, test, vi } from "vitest";
 const apiFetch = vi.hoisted(() => vi.fn<typeof fetch>());
 vi.mock("../api.js", () => ({ apiFetch }));
 import {
+  askBeforeEveryNewDevice,
   cloudPairingConfig,
   cloudPairingRequests,
   decideCloudPairing,
@@ -63,4 +64,25 @@ test("a decision can trust the sign-in, and a refusal never shows the gateway's 
       "It may have expired",
     );
   }
+});
+test("an approval whose button already named the passkey says so, so no extra note comes before it", async () => {
+  apiFetch.mockResolvedValueOnce(new Response(JSON.stringify({ ok: true })));
+  await decideCloudPairing("fictional-request", true, undefined, { stepUpAnnounced: true });
+  expect(apiFetch).toHaveBeenLastCalledWith("/admin/cloud-pairing/decision", {
+    method: "POST",
+    body: JSON.stringify({ requestId: "fictional-request", approve: true }),
+    stepUpAnnounced: true,
+  });
+});
+test("making every new device ask writes ask-first, and a refusal is said plainly", async () => {
+  apiFetch.mockResolvedValueOnce(new Response(JSON.stringify({ revision: 2 })));
+  expect(await askBeforeEveryNewDevice()).toEqual({ revision: 2 });
+  expect(apiFetch).toHaveBeenLastCalledWith("/admin/cloud-relay/enrollment", {
+    method: "PUT",
+    body: JSON.stringify({ policy: "ask" }),
+  });
+  apiFetch.mockResolvedValueOnce(new Response("private backend detail", { status: 503 }));
+  await expect(askBeforeEveryNewDevice()).rejects.toThrow(
+    "Couldn't change this. Try again in Settings → Connectivity.",
+  );
 });

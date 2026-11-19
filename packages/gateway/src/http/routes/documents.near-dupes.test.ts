@@ -12,6 +12,8 @@ import { createDevice } from "../../data/repositories/DeviceRepository.js";
 import { createToken } from "../../data/repositories/TokenRepository.js";
 import { setActiveAlgoVersion } from "../../near-dupes/meta.js";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 type Db = Database.Database;
 
@@ -96,8 +98,8 @@ function seedEdge(
 }
 
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-near-dupes-test-${randomUUID()}.db`;
-  indexDbPath = `/tmp/omnesis-near-dupes-index-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-near-dupes-test-${randomUUID()}.db`);
+  indexDbPath = fixtureJoin(fixtureTmpdir(), `omnesis-near-dupes-index-${randomUUID()}.db`);
   db = createDatabase(dbPath);
   indexDb = createIndexDatabase(indexDbPath);
   token = mintToken([SCOPE_ADMIN, SCOPE_READ, SCOPE_WRITE_ALL]);

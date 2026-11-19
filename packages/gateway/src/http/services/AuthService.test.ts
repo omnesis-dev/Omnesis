@@ -11,12 +11,14 @@ import { createSession, createToken } from "../../data/repositories/TokenReposit
 import { AuthService } from "./AuthService.js";
 import type { WriteGate } from "../../write-gate.js";
 import type { StatusCache } from "./StatusCache.js";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 let dbPath: string;
 let db: ReturnType<typeof createDatabase>;
 
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-auth-service-test-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-auth-service-test-${randomUUID()}.db`);
   db = createDatabase(dbPath);
 });
 

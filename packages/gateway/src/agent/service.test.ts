@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -1037,11 +1037,14 @@ describe("AgentService", () => {
   it("keeps conversation pagination cursors bounded across many pages", async () => {
     const d = mkdtempSync(join(tmpdir(), `omnesis-svc-${process.pid}-`));
     tempDirs.push(d);
-    const store = new FsConversationStore(join(d, "conversations"));
+    const directory = join(d, "conversations");
+    mkdirSync(directory);
+    const store = new FsConversationStore(directory);
+    // Existing transcripts exercise pagination from a cold on-disk archive.
     for (let i = 0; i < 125; i++) {
       const stamp = String(i + 1).padStart(3, "0");
       const timestamp = new Date(Date.UTC(2026, 0, 1, 0, 0, i)).toISOString();
-      await store.save({
+      const record: ConversationRecord = {
         id: `S_${stamp}`,
         callerId: callerA,
         model: "stored",
@@ -1053,7 +1056,8 @@ describe("AgentService", () => {
         messages: [
           { role: "user", parts: [{ kind: "text", text: `stored conversation ${stamp}` }] },
         ],
-      });
+      };
+      writeFileSync(join(directory, `${record.id}.json`), JSON.stringify(record), { mode: 0o600 });
     }
     const service = new AgentService({
       backendFactory: () => ({

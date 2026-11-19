@@ -137,7 +137,6 @@ type PairingCommandDependencies = {
       selectGateway: typeof chooseGateway;
       deviceKeyFile: string;
       onConnectCode(value: { connectUrl: string; connectShortUrl?: string; code: string }): void;
-      awaitApproval(value: { gatewayUrl: string; verificationCode: string }): void;
     },
   ) => ReturnType<typeof pairGoogleDevice>;
   confirm?: typeof confirmGatewayCode;
@@ -216,15 +215,9 @@ async function runDevicePairing(
     onConnectCode: ({ connectUrl, connectShortUrl, code }) =>
       process.stderr.write(
         `Sign in to your Omnesis account to connect this ${config.OMNESIS_CLOUD_RELAY_DEVICE_KIND}. If no browser opens, visit ${connectShortUrl ?? connectUrl} on any device and enter ${code}\n` +
-          `Signing in on another device needs your approval on your phone or another paired device; this ${config.OMNESIS_CLOUD_RELAY_DEVICE_KIND} then shows a code to check there, and continues once you approve.\n`,
+          `Signing in on another device needs your approval on your phone or another paired device; this ${config.OMNESIS_CLOUD_RELAY_DEVICE_KIND} then asks you to enter the code from that trusted device.\n`,
       ),
     confirm: dependencies.confirm ?? confirmGatewayCode,
-    awaitApproval: ({ gatewayUrl, verificationCode }) =>
-      process.stderr.write(
-        `Gateway: ${gatewayUrl}\n` +
-          `Approve this ${config.OMNESIS_CLOUD_RELAY_DEVICE_KIND} on your phone or another paired device, under Devices → Pairing requests. Check that it shows this code: ${verificationCode}\n` +
-          `Waiting for approval…\n`,
-      ),
     selectGateway:
       dependencies.selectGateway ??
       ((choices, signal) =>
@@ -279,7 +272,7 @@ export async function chooseGateway(
       choices
         .map(
           (choice, index) =>
-            `${index + 1}. ${(choice.displayName ?? new URL(choice.publicOrigin).hostname).replace(/[\p{Cc}\p{Cf}]/gu, " ")} — ${bindingOrigin(choice.publicOrigin).origin}`,
+            `${index + 1}. ${(choice.displayName ?? new URL(choice.publicOrigin).hostname).replace(/[\p{Cc}\p{Cf}]/gu, " ")} — ${bindingOrigin(choice.publicOrigin).origin} (${choice.online ? "online" : "offline"})`,
         )
         .join("\n") +
       "\n",

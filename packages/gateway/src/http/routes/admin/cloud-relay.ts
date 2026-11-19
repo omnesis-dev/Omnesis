@@ -7,6 +7,7 @@ import { CloudRelayManagementFailure } from "@omnesis/cloud-relay";
 import { scope } from "../../scope.js";
 import { validateJson, validateQuery } from "../../validate.js";
 import { arrivedThroughRelay } from "../../client-ip.js";
+import { asksFirst, requireStepUp, stepUpRequired } from "../../step-up.js";
 import {
   cloudRelayConfigureBody,
   cloudRelayEnableBody,
@@ -38,7 +39,11 @@ export function mountCloudRelayManagementRoutes(
     respond(c, async () => {
       // Only this read asks the relay; other callers of status() never reach the network.
       await service.refreshSignupAccess?.();
-      return service.status();
+      return {
+        ...(await service.status()),
+        // Whether loosening actions from this session ask for a passkey first. Labels only.
+        stepUpRequired: stepUpRequired(c),
+      };
     }),
   );
   app.post(
@@ -66,6 +71,21 @@ export function mountCloudRelayManagementRoutes(
         const result = await service.accountLink({ requestOrigin: new URL(c.req.url).origin });
         c.header("Set-Cookie", result.cookie);
         return { authorizeUrl: result.authorizeUrl };
+      }),
+  );
+  // The portal's account page asks for this when it opens or regains focus, so a sign-in added
+  // on the relay's account page shows within seconds. The service throttles it, and it is the
+  // periodic check-in's own read of the account: it can't make anything trusted.
+  app.post(
+    "/admin/cloud-relay/account/refresh",
+    scope.admin(),
+    bounded,
+    validateJson(cloudRelayActionBody),
+    async (c) =>
+      respond(c, async () => {
+        if (!service.refreshAccount)
+          throw new CloudRelayManagementFailure(503, "account-unavailable");
+        return { ...(await service.refreshAccount()), stepUpRequired: stepUpRequired(c) };
       }),
   );
   app.post(
@@ -107,6 +127,8 @@ export function mountCloudRelayManagementRoutes(
     "/admin/cloud-relay/enrollment",
     scope.admin(),
     bounded,
+    // Choosing automatic joins needs a step-up; "ask me first" never does.
+    requireStepUp(asksFirst),
     validateJson(cloudRelayEnrollmentBody),
     async (c) =>
       respond(c, async () => {
@@ -195,6 +217,8 @@ export function mountCloudRelayManagementRoutes(
     "/admin/cloud-relay/passkeys/confirm",
     scope.admin(),
     bounded,
+    // Once one passkey is confirmed, confirming another needs a step-up with it.
+    requireStepUp(),
     validateJson(cloudRelayConfirmPasskeyBody),
     async (c) =>
       respond(c, async () => {

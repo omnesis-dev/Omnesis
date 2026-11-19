@@ -9,13 +9,10 @@
  * database costs exactly the sources that read it, and nothing else.
  */
 
-import { chmodSync, existsSync, rmSync } from "node:fs";
+import { setAppleFixtureReadable } from "./testing/apple-read-denial.test.fixture.js";
+import { existsSync, rmSync } from "node:fs";
 import { describe, expect, test, beforeEach, afterEach } from "vitest";
-import {
-  canDenyReads,
-  makeAppleDbFixture,
-  type AppleDbFixture,
-} from "./testing/apple-db-fixtures.js";
+import { makeAppleDbFixture, type AppleDbFixture } from "./testing/apple-db-fixtures.js";
 
 describe("AppleProvider — per-database tolerance", () => {
   let fixture: AppleDbFixture;
@@ -29,27 +26,18 @@ describe("AppleProvider — per-database tolerance", () => {
     rmSync(fixture.dir, { recursive: true, force: true });
   });
 
-  // The suite is worthless if the denial silently stops being stageable, and a
-  // skipped test reads exactly like a passing one.
-  test("the environment can stage a denied read", () => {
-    if (process.env.CI) expect(canDenyReads).toBe(true);
+  test("an unreadable Notes database leaves the other databases open and usable", async () => {
+    setAppleFixtureReadable(fixture.notesPath, false);
+
+    await expect(fixture.provider.authenticate()).resolves.toBeUndefined();
+
+    expect(fixture.provider.getIMessageDb()).not.toBeNull();
+    expect(fixture.provider.getCalendarDb()).not.toBeNull();
+    expect(fixture.provider.getNotesDb()).toBeNull();
   });
 
-  test.skipIf(!canDenyReads)(
-    "an unreadable Notes database leaves the other databases open and usable",
-    async () => {
-      chmodSync(fixture.notesPath, 0o000);
-
-      await expect(fixture.provider.authenticate()).resolves.toBeUndefined();
-
-      expect(fixture.provider.getIMessageDb()).not.toBeNull();
-      expect(fixture.provider.getCalendarDb()).not.toBeNull();
-      expect(fixture.provider.getNotesDb()).toBeNull();
-    },
-  );
-
-  test.skipIf(!canDenyReads)("the failure is attributed to Notes and no one else", async () => {
-    chmodSync(fixture.notesPath, 0o000);
+  test("the failure is attributed to Notes and no one else", async () => {
+    setAppleFixtureReadable(fixture.notesPath, false);
     await fixture.provider.authenticate();
 
     expect(fixture.provider.getNotesOpenFailure()).toMatchObject({ kind: "denied" });
@@ -58,34 +46,31 @@ describe("AppleProvider — per-database tolerance", () => {
     expect(fixture.provider.getCalendarOpenFailure()).toBeNull();
   });
 
-  test.skipIf(!canDenyReads)(
-    "a host where every database is refused fails rather than registering dead sources",
-    async () => {
-      for (const path of [
-        fixture.notesPath,
-        fixture.imessagePath,
-        fixture.calendarPath,
-        fixture.callLogPath,
-      ]) {
-        chmodSync(path, 0o000);
-      }
+  test("a host where every database is refused fails rather than registering dead sources", async () => {
+    for (const path of [
+      fixture.notesPath,
+      fixture.imessagePath,
+      fixture.calendarPath,
+      fixture.callLogPath,
+    ]) {
+      setAppleFixtureReadable(path, false);
+    }
 
-      await expect(fixture.provider.authenticate()).rejects.toThrow(/full disk access/i);
-      // The refusal is the same typed failure a single source would raise, so
-      // the collector reports the remedy beside every source it costs — and
-      // scopes it to the connection, since every Apple source on this host
-      // shares the one full-disk access grant that was just refused.
-      await expect(fixture.provider.authenticate()).rejects.toMatchObject({
-        kind: "permission",
-        scope: "connection",
-        remediation: {
-          summary: expect.stringMatching(/full disk access is required/i),
-          executable: process.execPath,
-        },
-      });
-      await expect(fixture.provider.isAuthenticated()).resolves.toBe(false);
-    },
-  );
+    await expect(fixture.provider.authenticate()).rejects.toThrow(/full disk access/i);
+    // The refusal is the same typed failure a single source would raise, so
+    // the collector reports the remedy beside every source it costs — and
+    // scopes it to the connection, since every Apple source on this host
+    // shares the one full-disk access grant that was just refused.
+    await expect(fixture.provider.authenticate()).rejects.toMatchObject({
+      kind: "permission",
+      scope: "connection",
+      remediation: {
+        summary: expect.stringMatching(/full disk access is required/i),
+        executable: process.execPath,
+      },
+    });
+    await expect(fixture.provider.isAuthenticated()).resolves.toBe(false);
+  });
 
   test("a readable Notes database carries no failure", async () => {
     await fixture.provider.authenticate();
@@ -94,28 +79,25 @@ describe("AppleProvider — per-database tolerance", () => {
     expect(fixture.provider.getNotesOpenFailure()).toBeNull();
   });
 
-  test.skipIf(!canDenyReads)(
-    "a database that becomes readable again opens, without a restart",
-    async () => {
-      chmodSync(fixture.notesPath, 0o000);
-      await fixture.provider.authenticate();
-      expect(fixture.provider.getNotesDb()).toBeNull();
+  test("a database that becomes readable again opens, without a restart", async () => {
+    setAppleFixtureReadable(fixture.notesPath, false);
+    await fixture.provider.authenticate();
+    expect(fixture.provider.getNotesDb()).toBeNull();
 
-      chmodSync(fixture.notesPath, 0o644);
+    setAppleFixtureReadable(fixture.notesPath, true);
 
-      expect(fixture.provider.getNotesDb()).not.toBeNull();
-      expect(fixture.provider.getNotesOpenFailure()).toBeNull();
-    },
-  );
+    expect(fixture.provider.getNotesDb()).not.toBeNull();
+    expect(fixture.provider.getNotesOpenFailure()).toBeNull();
+  });
 
   // A denial that outlives the database it was recorded against would tell the
   // operator to grant access to a file that is no longer there.
-  test.skipIf(!canDenyReads)("a database that disappears stops being a failure", async () => {
-    chmodSync(fixture.notesPath, 0o000);
+  test("a database that disappears stops being a failure", async () => {
+    setAppleFixtureReadable(fixture.notesPath, false);
     await fixture.provider.authenticate();
     expect(fixture.provider.getNotesOpenFailure()).not.toBeNull();
 
-    chmodSync(fixture.notesPath, 0o644);
+    setAppleFixtureReadable(fixture.notesPath, true);
     rmSync(fixture.notesPath, { force: true });
 
     expect(fixture.provider.getNotesDb()).toBeNull();

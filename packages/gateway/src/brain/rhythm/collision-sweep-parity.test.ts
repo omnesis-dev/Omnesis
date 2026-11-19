@@ -31,6 +31,8 @@ import {
   type SweepArms,
 } from "./collision-sweep-test-utils.js";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 type Db = Database.Database;
 
@@ -65,7 +67,7 @@ const ARMS: Record<string, SweepArms> = {
 let path: string;
 let db: Db;
 beforeEach(() => {
-  path = `/tmp/omnesis-test-${randomUUID()}.db`;
+  path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
   db = createDatabase(path);
 });
 afterEach(() => {

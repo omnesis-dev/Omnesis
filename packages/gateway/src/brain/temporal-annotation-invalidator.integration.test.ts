@@ -43,6 +43,8 @@ import { subscribeTemporalAnnotationInvalidator } from "./temporal-annotation-in
 import type { Db } from "../data/types.js";
 import type { Logger } from "@omnesis/core";
 import type { DocumentInput } from "@omnesis/types";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 const NOW = Date.parse("2026-07-08T12:00:00Z");
 const PROVIDER = "google" as DocumentInput["providerId"];
@@ -192,7 +194,7 @@ function seedAnnotation(
 }
 
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-test-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
   db = createDatabase(dbPath);
   writeGate = directWriteGate(db);
   bus = new EventBus();

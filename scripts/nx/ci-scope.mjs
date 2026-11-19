@@ -114,7 +114,7 @@ function iosSelected(bundles) {
 // dependency manifests and lockfile, the root toolchain configs, the workflows,
 // the core package everything imports, and the check runners and planner.
 const sharedInputs =
-  /^(?:package-lock\.json$|(?:.+\/)?package\.json$|nx\.json$|tsconfig[^/]*\.json$|vitest\.config\.ts$|eslint\.config\.js$|\.github\/workflows\/|packages\/core\/|scripts\/nx\/|scripts\/lib\/check-|scripts\/run-(?:check|e2e)\.mjs$|scripts\/test-env\.sh$)/;
+  /^(?:package-lock\.json$|(?:.+\/)?package\.json$|nx\.json$|tsconfig[^/]*\.json$|vitest\.config\.ts$|eslint\.config\.js$|\.github\/workflows\/|packages\/(?:core|platform)\/|scripts\/nx\/|scripts\/lib\/check-|scripts\/run-(?:check|e2e)\.mjs$|scripts\/test-env\.sh$)/;
 
 const any = (files, pattern) => files.some((file) => pattern.test(file));
 
@@ -328,7 +328,7 @@ async function main(mode = process.argv[2]) {
   return 0;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (import.meta.main) {
   main().then(
     (code) => (process.exitCode = code),
     (error) => {

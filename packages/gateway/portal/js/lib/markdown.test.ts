@@ -7,6 +7,17 @@ vi.mock("dompurify", () => ({ default: { sanitize: (html: string) => html } }));
 // @ts-expect-error — portal modules are plain JS.
 import { renderCopyableMarkdown } from "./markdown.js";
 
+it("links copyable HTTP URL values only when requested by the setup renderer", () => {
+  const text = '`https://example.org/setup?a=1&b=2` and `javascript:alert(1)` and `localhost`';
+  const result = renderCopyableMarkdown(text, { linkCodeUrls: true });
+  expect(result.html).toContain('href="https://example.org/setup?a=1&amp;b=2"');
+  expect(result.html.match(/<a /g)).toHaveLength(1);
+  expect(result.targets.map((target: { text: string }) => target.text)).toEqual([
+    "https://example.org/setup?a=1&b=2", "javascript:alert(1)", "localhost",
+  ]);
+  expect(renderCopyableMarkdown(text).html).not.toContain("<a ");
+});
+
 describe("Markdown copy payloads", () => {
   it("normalizes inline whitespace without interpreting literal HTML or entities", () => {
     const result = renderCopyableMarkdown("`  00123\n<&amp;>  ` and ``a`b``");

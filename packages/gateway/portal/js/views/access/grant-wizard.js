@@ -18,8 +18,8 @@
 // the lead step straight to the review.
 
 import { html } from "htm/preact";
-import { useEffect, useRef } from "preact/hooks";
 
+import { StepNav, useStepFocus } from "../../components/step-nav.js";
 import { CapabilityPicker, GrantDataPrivacy } from "../../components/grant-builder.js";
 import {
   hasCapability,
@@ -56,21 +56,10 @@ export function GrantWizard({
   finalAction = null,
   error = "",
 }) {
-  const stepHeadingRef = useRef(null);
-  const initialStep = useRef(true);
-  const ruleError = validateGrantRules(rules, sources);
-
   // Focus follows the step so a keyboard move forward lands on the new
-  // heading rather than staying where the pressed button used to be. The first
-  // render is not a move, and stealing focus there would fight the page's own
-  // heading.
-  useEffect(() => {
-    if (initialStep.current) {
-      initialStep.current = false;
-      return;
-    }
-    stepHeadingRef.current?.focus();
-  }, [step]);
+  // heading rather than staying where the pressed button used to be.
+  const stepHeadingRef = useStepFocus(step);
+  const ruleError = validateGrantRules(rules, sources);
 
   // Data & privacy asks which sources a capability may read and how its
   // answers are released. Permissions that only write notes have neither
@@ -87,15 +76,11 @@ export function GrantWizard({
   const label = (phase) => (phase === 0 ? leadStep.label : steps[phase - 1]);
 
   return html`<div class="access-request access-request--page">
-    <nav class="access-wizard-steps" aria-label="Progress">
-      ${path.map((phase, index) => html`<button type="button" key=${label(phase)}
-          class=${phase === step ? "is-current" : phase < step ? "is-complete" : ""}
-          aria-current=${phase === step ? "step" : undefined}
-          disabled=${disabled || phase > step}
-          onClick=${() => phase < step && onStep(phase)}>
-          <span>${phase < step ? "✓" : index + 1}</span>${label(phase)}
-        </button>`)}
-    </nav>
+    <${StepNav}
+      items=${path.map((phase) => ({ key: label(phase), label: label(phase), current: phase === step, complete: phase < step }))}
+      disabled=${disabled}
+      onSelect=${(key) => onStep(path.find((phase) => label(phase) === key))}
+    />
 
     <div class="access-wizard-panel">
       ${step === 0 && leadStep && html`

@@ -21,7 +21,12 @@
  */
 
 import { createHash } from "node:crypto";
-import { MAX_TRANSCRIBE_AUDIO_BYTES, createLogger, assertNever } from "@omnesis/core";
+import {
+  MAX_TRANSCRIBE_AUDIO_BYTES,
+  createLogger,
+  assertNever,
+  ownedProcessCleanupReceipt,
+} from "@omnesis/core";
 import { AudioDecodeError } from "./audio-decode.js";
 import { loadTranscriberFromResolved, type LoadTranscriberDeps } from "./loader.js";
 import { LOCAL_WHISPER_UNAVAILABLE, whisperDepsAvailable } from "./whisper-transcriber.js";
@@ -200,6 +205,18 @@ export class TranscribeService {
   private readonly deps: LoadTranscriberDeps;
   private current: { signature: string; capability: TranscribeCapability | null } | null = null;
   private loading: Promise<TranscribeCapability | null> | null = null;
+  private readonly capabilities = new Set<TranscribeCapability>();
+  private readonly retiring = new Map<TranscribeCapability, Promise<void>>();
+  private readonly accepted = new Set<Promise<unknown>>();
+  private readonly shutdown = new AbortController();
+  private closed = false;
+  private closing: Promise<void> | undefined;
+  private terminalFailure: unknown;
+  private readonly pendingCleanup = Object.assign(new Error("Transcriber work remains owned"), {
+    cleanupFailure: undefined,
+    cleanupPending: true as const,
+  });
+
   /** Transcriptions waiting their turn, by priority; one runs at a time. */
   private readonly queued: Record<TranscriptionPriority, Array<() => Promise<void>>> = {
     interactive: [],
@@ -226,6 +243,7 @@ export class TranscribeService {
   }
 
   private async ensureCapability(): Promise<TranscribeCapability | null> {
+    this.assertAdmitting();
     const resolved = this.resolveAssignment();
     const signature = signatureOf(
       resolved,
@@ -238,9 +256,16 @@ export class TranscribeService {
 
     // Assignment changed (or first use) — dispose the old capability and load anew.
     const previous = this.current?.capability ?? null;
+    this.current = null;
     this.loading = (async () => {
-      if (previous) await previous.dispose().catch(() => {});
+      if (previous) await this.retire(previous);
+      if (this.closed) return null;
       const capability = await loadTranscriberFromResolved(resolved, this.deps);
+      if (capability) this.capabilities.add(capability);
+      if (this.closed) {
+        if (capability) await this.retire(capability);
+        return null;
+      }
       this.current = { signature, capability };
       return capability;
     })();
@@ -259,6 +284,11 @@ export class TranscribeService {
    * runtime nobody has seen yet.
    */
   readiness(): TranscriberReadiness {
+    if (this.closed)
+      return { runnable: false, reason: "The transcriber service is shutting down." };
+    const receipt = ownedProcessCleanupReceipt(this.cleanupFailure());
+    if (receipt && !receipt.pending)
+      return { runnable: false, reason: "Transcriber process cleanup is unconfirmed." };
     const resolved = this.resolveAssignment();
     const readiness = assignmentReadiness(resolved);
     if (!readiness.runnable || resolved.kind !== "local") return readiness;
@@ -284,9 +314,17 @@ export class TranscribeService {
   }
 
   private probeLocalRuntime(): void {
-    this.probing ??= whisperDepsAvailable(this.deps.loadModule).then((available) => {
-      this.localRuntime = available;
-    });
+    this.probing ??= whisperDepsAvailable(this.deps.loadModule).then(
+      (available) => {
+        this.localRuntime = available;
+      },
+      (error: unknown) => {
+        this.localRuntime = false;
+        this.retainFailure(error);
+        throw error;
+      },
+    );
+    void this.probing.catch(() => {});
   }
 
   /** Best-effort transcription for callers that own their retry policy. */
@@ -305,45 +343,52 @@ export class TranscribeService {
     mimeType: string,
     opts?: TranscribeOptions,
   ): Promise<TranscriptionOutcome> {
+    const signal = opts?.signal
+      ? AbortSignal.any([opts.signal, this.shutdown.signal])
+      : this.shutdown.signal;
+    const requestOpts: TranscribeOptions = { ...opts, signal };
     // Resolve/load the capability AND run the transcription inside the same
     // serialization fence. A model reassignment disposes the previous
     // capability (kills its worker subprocess); doing that resolution inside the
     // fence guarantees no earlier-queued transcription is still running on the
     // old worker when it's torn down.
-    return this.serialize(opts?.priority ?? "interactive", async () => {
+    return this.serialize(requestOpts?.priority ?? "interactive", async () => {
       // A caller that gave up while this waited in the queue gets nothing from
       // running it; skipping it keeps the transcriber free for work someone
       // still wants.
-      if (opts?.signal?.aborted) {
+      if (requestOpts?.signal?.aborted) {
         log.info("Skipped a queued transcription whose caller stopped waiting");
         return { kind: "cancelled" };
       }
       const capability = await this.ensureCapability();
+      if (signal.aborted) return { kind: "cancelled" };
       if (!capability) return { kind: "unavailable" };
       try {
         let vocabulary: TranscriptionVocabulary | undefined;
         if (
-          opts?.allowVocabulary !== false &&
+          requestOpts?.allowVocabulary !== false &&
           capability.vocabularyRuntime &&
           this.vocabulary?.enabled()
         ) {
           vocabulary = await this.lookupVocabulary(
             this.vocabulary,
-            opts?.context ?? {
+            requestOpts?.context ?? {
               purpose: "source-audio",
-              ...(opts?.language ? { languageHints: [opts.language] } : {}),
+              ...(requestOpts?.language ? { languageHints: [requestOpts.language] } : {}),
             },
-            opts?.signal,
+            requestOpts?.signal,
           );
         }
-        if (opts?.signal?.aborted) {
+        if (requestOpts?.signal?.aborted) {
           log.info("Skipped a transcription whose caller stopped waiting");
           return { kind: "cancelled" };
         }
         const result = await capability.transcribe(audio, mimeType, {
-          ...(opts?.language ? { language: opts.language } : {}),
-          ...(opts?.minTimeoutMs !== undefined ? { minTimeoutMs: opts.minTimeoutMs } : {}),
-          ...(opts?.signal ? { signal: opts.signal } : {}),
+          ...(requestOpts?.language ? { language: requestOpts.language } : {}),
+          ...(requestOpts?.minTimeoutMs !== undefined
+            ? { minTimeoutMs: requestOpts.minTimeoutMs }
+            : {}),
+          ...(requestOpts?.signal ? { signal: requestOpts.signal } : {}),
           ...(vocabulary && this.vocabulary?.enabled()
             ? {
                 vocabulary,
@@ -353,7 +398,11 @@ export class TranscribeService {
         });
         return { kind: "transcribed", result };
       } catch (err) {
-        if (opts?.signal?.aborted) {
+        if (ownedProcessCleanupReceipt(err)) {
+          this.retainFailure(err);
+          throw err;
+        }
+        if (requestOpts?.signal?.aborted) {
           log.info("Stopped a transcription whose caller stopped waiting");
           return { kind: "cancelled" };
         }
@@ -414,10 +463,28 @@ export class TranscribeService {
    * queued transcription of a higher priority is waiting.
    */
   private serialize<T>(priority: TranscriptionPriority, fn: () => Promise<T>): Promise<T> {
-    return new Promise<T>((resolve, reject) => {
-      this.queued[priority].push(() => fn().then(resolve, reject));
+    try {
+      this.assertAdmitting();
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    const work = new Promise<T>((resolve, reject) => {
+      this.queued[priority].push(() =>
+        Promise.resolve()
+          .then(fn)
+          .then(resolve, (error: unknown) => {
+            this.retainFailure(error);
+            reject(error);
+          }),
+      );
       this.runNext();
     });
+    this.accepted.add(work);
+    void work.then(
+      () => this.accepted.delete(work),
+      () => this.accepted.delete(work),
+    );
+    return work;
   }
 
   private runNext(): void {
@@ -431,15 +498,95 @@ export class TranscribeService {
     });
   }
 
-  async dispose(): Promise<void> {
-    const capability = this.current?.capability ?? null;
-    this.current = null;
-    if (capability) {
-      await capability.dispose().catch((err) => {
-        log.warn(
-          `Failed to dispose transcriber: ${err instanceof Error ? err.message : String(err)}`,
-        );
-      });
+  private retainFailure(error: unknown): void {
+    const receipt = ownedProcessCleanupReceipt(error);
+    if (receipt)
+      this.terminalFailure ??= Object.assign(
+        new Error("Transcriber cleanup is unconfirmed", { cause: error }),
+        { cleanupFailure: receipt.failure },
+      );
+  }
+
+  private assertAdmitting(): void {
+    const failure = this.cleanupFailure();
+    const receipt = ownedProcessCleanupReceipt(failure);
+    if (receipt && !receipt.pending) {
+      this.retainFailure(failure);
+      throw this.terminalFailure;
     }
+    if (this.closed) throw new Error("The transcriber service is shutting down");
+  }
+
+  cleanupFailure(): unknown {
+    if (this.terminalFailure) return this.terminalFailure;
+    for (const capability of this.capabilities) {
+      const failure = capability.cleanupFailure?.();
+      const receipt = ownedProcessCleanupReceipt(failure);
+      if (receipt && !receipt.pending) return failure;
+    }
+    return this.capabilities.size ||
+      this.loading ||
+      this.accepted.size ||
+      (this.probing && this.localRuntime === null)
+      ? this.pendingCleanup
+      : undefined;
+  }
+
+  /** A failed disposal cannot silently replace a process that still owns model input. */
+  private retire(capability: TranscribeCapability): Promise<void> {
+    const prior = this.retiring.get(capability);
+    if (prior) return prior;
+    const closing = (async () => {
+      await Promise.resolve();
+      let failure: unknown;
+      let failed = false;
+      try {
+        await capability.dispose();
+      } catch (error) {
+        failed = true;
+        failure = error;
+        this.retainFailure(error);
+      }
+      const remaining = capability.cleanupFailure?.();
+      if (ownedProcessCleanupReceipt(remaining)) {
+        failed = true;
+        this.retainFailure(remaining);
+        failure = this.terminalFailure;
+      }
+      if (!ownedProcessCleanupReceipt(failure)) {
+        this.capabilities.delete(capability);
+        this.retiring.delete(capability);
+      }
+      if (failed) throw failure;
+    })();
+    this.retiring.set(capability, closing);
+    void closing.catch(() => {});
+    return closing;
+  }
+
+  close(): Promise<void> {
+    return this.dispose();
+  }
+
+  dispose(): Promise<void> {
+    if (this.closing) return this.closing;
+    this.closed = true;
+    this.shutdown.abort(new Error("The transcriber service is shutting down"));
+    this.current = null;
+    const stops = [...this.capabilities].map((capability) => this.retire(capability));
+    this.closing = (async () => {
+      const stopped = await Promise.allSettled(stops);
+      await this.loading?.catch((error: unknown) => this.retainFailure(error));
+      await this.probing?.catch((error: unknown) => this.retainFailure(error));
+      await Promise.allSettled(this.accepted);
+      const remaining = await Promise.allSettled(this.retiring.values());
+      if (this.terminalFailure) throw this.terminalFailure;
+      const failures = [...stopped, ...remaining].flatMap((result) =>
+        result.status === "rejected" ? [result.reason as unknown] : [],
+      );
+      if (failures.length) throw new AggregateError(failures, "Transcriber disposal failed");
+    })();
+    void this.closing.catch(() => {});
+    return this.closing;
   }
 }

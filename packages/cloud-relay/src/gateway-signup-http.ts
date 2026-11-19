@@ -6,6 +6,7 @@ import { GATEWAY_SIGNUP_ACCESS_PATH, GATEWAY_SIGNUP_PATH } from "./gateway-signu
 import { readJsonBody } from "./relay-json-body.js";
 import { RelayError } from "./tunnels.js";
 import { brand } from "./relay-page.js";
+import { serveLaunch } from "./browser-launch.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { AccountBrowserOwner } from "./account-browser-contract.js";
 import type { LoginAdmission } from "./admission.js";
@@ -20,12 +21,16 @@ const refusal = JSON.stringify({
   message: "This relay connects new gateways by invitation only. Ask its operator for one.",
 });
 
+const restart =
+  "To use this browser instead, go back to your gateway, press Cancel and connect again.";
+
 /** The gateway has no relay session yet, so its owner signature and redemption secret stand in. */
 export class GatewaySignupHttp {
   constructor(
     private readonly options: {
       signup: GatewaySignup;
       admission: LoginAdmission;
+      ownerAdmission: LoginAdmission;
       authenticateOwner(req: IncomingMessage): Promise<AccountBrowserOwner>;
     },
   ) {}
@@ -65,20 +70,18 @@ export class GatewaySignupHttp {
       return true;
     }
     if (action === "begin") {
-      if (req.method !== "GET") throw new RelayError(405, "Method not allowed");
-      const parsed = launch.safeParse(Object.fromEntries(url.searchParams));
-      if (url.searchParams.size !== 2 || !parsed.success)
-        throw new RelayError(400, "Invalid gateway signup launch");
-      return this.options.admission.run(async () => {
-        const result = this.options.signup.launch(
-          parsed.data.operationId,
-          parsed.data.ticket,
-          req.headers.cookie ?? "",
-        );
-        res.writeHead(303, { location: result.location, "set-cookie": result.cookie });
-        res.end();
-        return true;
-      }, req);
+      const { signup, admission } = this.options;
+      // Opening the link changes nothing; the Continue press binds the sign-up (F43).
+      return serveLaunch(req, res, url, {
+        admission,
+        origin: signup.origin,
+        path: GATEWAY_SIGNUP_PATH + "/begin",
+        names: { required: ["operationId", "ticket"] },
+        parse: (fields) => launch.safeParse(fields).data,
+        peek: (input, cookie) => signup.peekLaunch(input.operationId, input.ticket, cookie),
+        launch: (input, cookie) => signup.launch(input.operationId, input.ticket, cookie),
+        restart,
+      });
     }
     if (!["start", "poll", "link", "cancel"].includes(action))
       throw new RelayError(404, "Gateway signup operation not found");
@@ -91,27 +94,30 @@ export class GatewaySignupHttp {
       throw new RelayError(403, "Use your gateway to connect");
     if (req.headers["content-type"]?.split(";")[0]?.trim().toLowerCase() !== "application/json")
       throw new RelayError(415, "JSON gateway signup request required");
-    // Waiting on an operation already started is not a new sign-in attempt.
-    return this.options.admission[action === "poll" || action === "cancel" ? "poll" : "run"](
-      async () => {
-        const owner = action === "link" ? await this.options.authenticateOwner(req) : undefined;
-        const body = await readJsonBody(req, 8192);
-        let value: unknown;
-        if (action === "start") value = this.options.signup.start(body);
-        else if (action === "poll") value = this.options.signup.poll(body);
-        else if (owner) value = await this.options.signup.link(owner, body);
-        else {
-          this.options.signup.cancel(body);
-          value = { ok: true };
-        }
-        res.writeHead(200, { "content-type": "application/json" });
-        res.end(JSON.stringify(value));
-        return true;
-      },
-      req,
-    ).catch((error: unknown) => {
+    try {
+      const owner = action === "link" ? await this.options.authenticateOwner(req) : undefined;
+      const admission = owner ? this.options.ownerAdmission : this.options.admission;
+      // Waiting on an operation already started is not a new sign-in attempt.
+      return await admission[action === "poll" || action === "cancel" ? "poll" : "run"](
+        async () => {
+          const body = await readJsonBody(req, 8192);
+          let value: unknown;
+          if (action === "start") value = this.options.signup.start(body);
+          else if (action === "poll") value = this.options.signup.poll(body);
+          else if (owner) value = await this.options.signup.link(owner, body);
+          else {
+            this.options.signup.cancel(body);
+            value = { ok: true };
+          }
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(JSON.stringify(value));
+          return true;
+        },
+        req,
+      );
+    } catch (error) {
       req.resume();
       throw error;
-    });
+    }
   }
 }

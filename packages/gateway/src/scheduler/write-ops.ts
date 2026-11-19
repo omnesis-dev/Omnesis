@@ -73,6 +73,7 @@ const WRITE_OP_DEFS: readonly WriteOpDef[] = [
   { name: "knowledge.checkpoint", priority: "background" },
   { name: "knowledge.retireBeyondHorizon", priority: "background" },
   { name: "knowledge.retireExcludedSources", priority: "background" },
+  { name: "knowledge.retireRewrittenHistory", priority: "background" },
   { name: "knowledge.admitOrganization", priority: "background" },
   { name: "knowledge.gateOrganizationSources", priority: "background" },
   { name: "knowledge.reconsiderRetrieval", priority: "background" },
@@ -148,8 +149,9 @@ const WRITE_OP_DEFS: readonly WriteOpDef[] = [
   { name: "db.acknowledgePendingSourcePage", priority: "realtime" },
   { name: "db.abandonPendingSourcePage", priority: "realtime" },
   { name: "db.revokeSyncAttempt", priority: "realtime" },
-  // A per-device resync: the operator waits on it, like the wipes above.
+  // A resync that deletes nothing: the operator waits on it, like the wipes above.
   { name: "db.resetMemberCursor", priority: "user" },
+  { name: "db.resetSourceCursors", priority: "user" },
   { name: "db.setSyncState", priority: "realtime" },
   { name: "db.setSourceMeta", priority: "realtime" },
   // Atomic per-page sync write — bundles up to upsertDocuments +

@@ -37,6 +37,7 @@ import { makeOutcomeAssessment, recordOutcomeAssessmentAttempt } from "./outcome
 import { convertKnowledgeOwner } from "./owner-adapters.js";
 import { installKnowledgeOwnerTriggers } from "./owner-triggers.js";
 import { createKnowledgeSourceTriggers } from "./source-triggers.js";
+import { readKnowledgeSourceRevision } from "./source-revision.js";
 import { createKnowledgeDecisionTable, recordKnowledgeDecision } from "./decision-storage.js";
 import { readKnowledgeDecisionAudit } from "./decision-query.js";
 import { createKnowledgeTables } from "./schema.js";
@@ -195,11 +196,12 @@ describe("knowledge coordinator", () => {
       throw new Error("Terminal work must not resolve a model");
     });
     const dir = mkdtempSync(join(tmpdir(), "omnesis-terminal-run-"));
+    const transcripts = new FsCognitionTranscriptStore(dir);
     try {
       const driver = new CognitionRunDriver({
         resolveBackend,
         log,
-        transcripts: new FsCognitionTranscriptStore(dir),
+        transcripts,
         preflight: async (run) => knowledgeFrontierPreflight(await engine.next(batch.id, run.id)),
       });
       expect(
@@ -227,6 +229,7 @@ describe("knowledge coordinator", () => {
         db.prepare("SELECT status FROM knowledge_work WHERE id='later-source-work'").get(),
       ).toEqual({ status: "pending" });
     } finally {
+      await transcripts.close();
       rmSync(dir, { recursive: true, force: true });
     }
   });
@@ -2898,6 +2901,10 @@ describe("explicit initial inventory admission", () => {
     inventorySource("old", Date.parse("2020-01-01T00:00:00Z"));
     source("late", "v1", "A newly received old letter.", Date.parse("2020-01-01T00:00:00Z"));
     source("old", "v2", "A new correction to older evidence.", Date.parse("2020-01-01T00:00:00Z"));
+    // The owner's correction: its provider records the edit as recent.
+    db.prepare("UPDATE documents SET source_updated_at=? WHERE id='old'").run(
+      new Date(now).toISOString(),
+    );
     await engine.tick();
     expect(
       db
@@ -3539,8 +3546,9 @@ it.each([
       score: available ? 0.5 : null,
       scheduling: {
         status: "scheduled",
-        applied: { tier: coalesce ? "immediate" : "soon" },
-        fallbackSoon: !available,
+        // A missing verdict never outranks judged work: routine, judged again later.
+        applied: { tier: coalesce ? "immediate" : available ? "soon" : "routine" },
+        awaitingVerdict: !available,
       },
       input: available
         ? {
@@ -4185,4 +4193,382 @@ it("leaves an owner a source discovery just created to that discovery, not a rev
   const view = await engine.next(batch.id, batch.runId);
   expect(view.interrupted).toBeUndefined();
   expect(view.items.map((item) => item.id)).toEqual(["rehearsal"]);
+});
+
+describe("rewrites of unread history", () => {
+  const archived = Date.parse("2019-06-01T00:00:00Z");
+  /** A document already stored before the Brain ran: no journal obligation. */
+  function stored(id: string, at = archived) {
+    source(id, "v1", "An invented archived workshop invoice.", at);
+    db.exec("DELETE FROM knowledge_changes");
+  }
+  const work = () =>
+    db
+      .prepare(
+        "SELECT subject_id,reason,status FROM knowledge_work WHERE subject_kind='source' ORDER BY subject_id",
+      )
+      .all();
+  const read = (id: string) =>
+    recordKnowledgeCoverage(
+      db,
+      {
+        subjectId: id,
+        inputRevision: "v1",
+        phase: "organization",
+        policyVersion: KNOWLEDGE_DISCOVERY_POLICY,
+        status: "considered",
+      },
+      now,
+    );
+
+  it("leaves a rewrite of an unread old document to historical admission without asking urgency", async () => {
+    stored("rewritten");
+    source("rewritten", "v2", "An invented archived workshop invoice, renormalized.", archived);
+    await engine.tick();
+    expect(work()).toEqual([]);
+    expect(decisions).toBe(0);
+    expect(db.prepare("SELECT COUNT(*) AS count FROM knowledge_changes").get()).toEqual({
+      count: 0,
+    });
+    // Historical admission reads it once the operator starts it.
+    settings = resolveBrainSettings({ bootstrap: { enabled: true, horizon: "3650d" } });
+    db.prepare(
+      "INSERT INTO cognition_engine_state(key,value) VALUES('bootstrap_started_at',?)",
+    ).run(String(now));
+    await engine.tick();
+    expect(work()).toEqual([{ subject_id: "rewritten", reason: "discovery", status: "batched" }]);
+  });
+
+  it("keeps first arrivals, recent edits and rewrites of read documents reactive", async () => {
+    stored("edited");
+    stored("read");
+    // A first arrival is live whatever its date.
+    source("late-arrival", "v1", "An invented letter delivered late.", archived);
+    // The provider records an owner's edit within the recent window.
+    source("edited", "v2", "An invented workshop note, edited today.", archived);
+    db.prepare("UPDATE documents SET source_updated_at=? WHERE id='edited'").run(
+      new Date(now).toISOString(),
+    );
+    // This one was already read at its earlier revision.
+    read("read");
+    source("read", "v2", "An invented archived workshop invoice, corrected.", archived);
+    await engine.tick();
+    expect(work()).toEqual([
+      { subject_id: "edited", reason: "change", status: "batched" },
+      { subject_id: "late-arrival", reason: "change", status: "batched" },
+      { subject_id: "read", reason: "change", status: "batched" },
+    ]);
+  });
+
+  it("retires reactive work a mass rewrite queued earlier, keeping live and read work", async () => {
+    stored("backlog");
+    source("backlog", "v2", "An invented archived workshop invoice, rewritten.", archived);
+    stored("read");
+    read("read");
+    source("read", "v2", "An invented archived workshop invoice, corrected.", archived);
+    stored("recent", now - 86_400_000);
+    source("recent", "v2", "An invented workshop plan.", now - 86_400_000);
+    db.exec("DELETE FROM knowledge_changes");
+    // Queued as the engine did before rewrites of unread history were routed.
+    for (const id of ["backlog", "read", "recent"])
+      await writeGate["knowledge.enqueue"](
+        {
+          id: `kw-${id}`,
+          subjectId: id,
+          subjectKind: "source",
+          reason: "change",
+          inputRevision: readKnowledgeSourceRevision(db, id)!,
+          tier: "soon",
+          dueAt: now + 86_400_000,
+        },
+        now,
+      );
+    await engine.tick();
+    expect(work()).toEqual([
+      { subject_id: "read", reason: "change", status: "pending" },
+      { subject_id: "recent", reason: "change", status: "pending" },
+    ]);
+  });
+});
+
+describe("urgency without a verdict", () => {
+  let available: boolean, failing: boolean, asked: number;
+  beforeEach(() => {
+    available = false;
+    failing = false;
+    asked = 0;
+    const decision: DecisionCapability = {
+      modelId: "scripted",
+      dispose() {},
+      async decide(request) {
+        asked++;
+        if (failing) throw new Error("decision backend unreachable");
+        return {
+          model: "scripted",
+          answers: Object.fromEntries(
+            Object.keys(request.questions).map((key) => [
+              key,
+              { type: "score" as const, score: 1.8 },
+            ]),
+          ),
+        };
+      },
+    };
+    engine = new KnowledgeEngine({
+      db,
+      writeGate,
+      service,
+      getSettings: () => settings,
+      clock: () => now,
+      log,
+      idGen: () => String(++serial),
+      decisions: {
+        getDecision: () => (available ? decision : null),
+        log,
+        recordSpend: async () => {},
+      },
+    });
+  });
+  const pending = () =>
+    db
+      .prepare(
+        "SELECT tier,due_at AS dueAt,status,last_error AS lastError FROM knowledge_work WHERE subject_id='input'",
+      )
+      .get();
+
+  it("schedules routine work awaiting a verdict and promotes it once the model answers", async () => {
+    source();
+    await engine.tick();
+    expect(pending()).toEqual({
+      tier: "routine",
+      dueAt: now + settings.knowledge.routineDelayMs,
+      status: "pending",
+      lastError: "awaiting_urgency",
+    });
+    // No model: nothing is asked again, and the work keeps waiting.
+    await engine.tick();
+    expect(pending()).toMatchObject({ tier: "routine", status: "pending" });
+    available = true;
+    await engine.tick();
+    expect(asked).toBe(1);
+    expect(pending()).toMatchObject({ tier: "immediate", status: "batched", lastError: null });
+  });
+
+  it("asks an unreachable model again only after a soon delay, and still runs the work as routine", async () => {
+    available = true;
+    failing = true;
+    source();
+    await engine.tick();
+    expect(pending()).toMatchObject({ tier: "routine", lastError: "awaiting_urgency" });
+    // The planner's first retry in the same tick failed too, so it now rests.
+    const first = asked;
+    await engine.tick();
+    await engine.tick();
+    expect(asked).toBe(first);
+    now += settings.knowledge.soonDelayMs;
+    await engine.tick();
+    expect(asked - first).toBe(1);
+    expect(pending()).toMatchObject({ tier: "routine", status: "pending" });
+    // Fail open: the routine deadline still runs it without a verdict.
+    now += settings.knowledge.routineDelayMs;
+    await engine.tick();
+    expect(pending()).toMatchObject({ tier: "routine", status: "batched", lastError: null });
+  });
+});
+
+describe("unrelated routine source changes", () => {
+  let mode: "up" | "down" | "unassigned";
+  let scores: Record<string, number>;
+  let asked: string[];
+  beforeEach(() => {
+    mode = "up";
+    // Routine urgency; worth interpreting.
+    scores = { urgency: 0.1, discovery: 1, impact: 1 };
+    asked = [];
+    const decision: DecisionCapability = {
+      modelId: "scripted",
+      dispose() {},
+      async decide(request) {
+        asked.push(...Object.keys(request.questions));
+        if (mode === "down") throw new Error("decision backend unreachable");
+        return {
+          model: "scripted",
+          answers: Object.fromEntries(
+            Object.keys(request.questions).map((key) => [
+              key,
+              { type: "score" as const, score: (scores[key] ?? 1) * 2 },
+            ]),
+          ),
+        };
+      },
+    };
+    engine = new KnowledgeEngine({
+      db,
+      writeGate,
+      service,
+      getSettings: () => settings,
+      clock: () => now,
+      log,
+      idGen: () => String(++serial),
+      decisions: {
+        getDecision: () => (mode === "unassigned" ? null : decision),
+        log,
+        recordSpend: async () => {},
+      },
+    });
+  });
+  const ids = ["memo-a", "memo-b", "memo-c"];
+  const note = (id: string) => source(id, "v1", `An invented note numbered ${id}.`);
+  /** Three unrelated routine changes, due and planned. */
+  async function dueRoutine(): Promise<{ id: string; runId: string }> {
+    for (const id of ids) note(id);
+    await engine.tick();
+    now += settings.knowledge.routineDelayMs;
+    await engine.tick();
+    return batchFor(ids[0]!);
+  }
+  const batches = () =>
+    db
+      .prepare(
+        "SELECT DISTINCT batch_id AS batchId FROM knowledge_work WHERE subject_kind='source' AND status='batched'",
+      )
+      .all() as Array<{ batchId: string }>;
+  const offeredSources = (view: { items: Array<{ source?: { id: string } }> }) =>
+    view.items.flatMap((item) => (item.source ? [item.source.id] : [])).sort();
+
+  it("packs them into one batch that a single run settles", async () => {
+    const batch = await dueRoutine();
+    expect(batches()).toEqual([{ batchId: batch.id }]);
+    expect(db.prepare("SELECT tier FROM knowledge_batches WHERE id=?").get(batch.id)).toEqual({
+      tier: "routine",
+    });
+    const view = await engine.next(batch.id, batch.runId, { preflight: true });
+    expect(offeredSources(view)).toEqual(ids);
+    for (const item of view.items)
+      await engine.completeSource(batch.id, batch.runId, item.id, item.inputFingerprint);
+    expect((await engine.next(batch.id, batch.runId)).done).toBe(true);
+  });
+
+  it("settles the ones the gate scores low before any agent turn", async () => {
+    const batch = await dueRoutine();
+    scores.discovery = 0;
+    expect(
+      knowledgeFrontierPreflight(await engine.next(batch.id, batch.runId, { preflight: true })),
+    ).toBe("complete");
+    expect(
+      db
+        .prepare(
+          "SELECT DISTINCT status FROM knowledge_discovery_coverage WHERE subject_id IN ('memo-a','memo-b','memo-c')",
+        )
+        .all(),
+    ).toEqual([{ status: "gated" }]);
+  });
+
+  it("keeps urgent work, and work not yet due, out of a pack", async () => {
+    note("memo-a");
+    await engine.tick();
+    now += settings.knowledge.routineDelayMs;
+    note("memo-c");
+    await engine.tick();
+    const routine = batchFor("memo-a");
+    expect(db.prepare("SELECT status FROM knowledge_work WHERE subject_id='memo-c'").get()).toEqual(
+      { status: "pending" },
+    );
+    scores.urgency = 1;
+    note("memo-b");
+    await engine.tick();
+    expect(batchFor("memo-b").id).not.toBe(routine.id);
+    expect(batches()).toHaveLength(2);
+  });
+
+  it("retries each source of a failed pack alone", async () => {
+    const pack = await dueRoutine();
+    // The failed run had every source offered, so each failure is charged.
+    expect(offeredSources(await engine.next(pack.id, pack.runId, { preflight: true }))).toEqual(
+      ids,
+    );
+    db.prepare("UPDATE cognition_runs SET status='failed' WHERE id=?").run(pack.runId);
+    await engine.tick();
+    expect(db.prepare("SELECT status FROM knowledge_batches WHERE id=?").get(pack.id)).toEqual({
+      status: "abandoned",
+    });
+    now += settings.knowledge.retryBackoffCapMs + settings.knowledge.routineDelayMs;
+    await engine.tick();
+    const retried = ids.map((id) => batchFor(id).id);
+    expect(new Set(retried).size).toBe(ids.length);
+    expect(retried).not.toContain(pack.id);
+  });
+
+  it("holds a routine batch during a decision outage and asks once per retry", async () => {
+    const batch = await dueRoutine();
+    mode = "down";
+    asked = [];
+    const held = await engine.next(batch.id, batch.runId, { preflight: true });
+    expect(held).toMatchObject({ done: false, items: [] });
+    expect(held.heldUntil).toBe(now + settings.knowledge.soonDelayMs);
+    expect(knowledgeFrontierPreflight(held)).toEqual({ deferUntil: held.heldUntil });
+    // One failed question for the batch, not one per source; nothing offered.
+    expect(asked).toEqual(["discovery"]);
+    expect(listKnowledgeFrontier(db, batch.id).map((row) => row.status)).toEqual([
+      "pending",
+      "pending",
+      "pending",
+    ]);
+    // Within the retry delay the model is not asked again.
+    await engine.next(batch.id, batch.runId, { preflight: true });
+    expect(asked).toHaveLength(1);
+    // Once it answers, the gate settles the batch without an agent turn.
+    now = held.heldUntil!;
+    mode = "up";
+    scores.discovery = 0;
+    await engine.next(batch.id, batch.runId, { preflight: true });
+    expect(await engine.next(batch.id, batch.runId, { preflight: true })).toMatchObject({
+      done: true,
+    });
+  });
+
+  it("fails open once an outage outlasts the routine delay", async () => {
+    const batch = await dueRoutine();
+    mode = "down";
+    const start = now;
+    let view = await engine.next(batch.id, batch.runId, { preflight: true });
+    while (view.heldUntil !== undefined) {
+      expect(view.heldUntil).toBeLessThanOrEqual(start + settings.knowledge.routineDelayMs);
+      now = view.heldUntil;
+      view = await engine.next(batch.id, batch.runId, { preflight: true });
+    }
+    expect(now).toBe(start + settings.knowledge.routineDelayMs);
+    expect(offeredSources(view)).toEqual(ids);
+  });
+
+  it("never holds when no decision model is assigned, inside a run, or for urgent work", async () => {
+    const batch = await dueRoutine();
+    mode = "unassigned";
+    expect(offeredSources(await engine.next(batch.id, batch.runId, { preflight: true }))).toEqual(
+      ids,
+    );
+
+    mode = "up";
+    note("memo-d");
+    await engine.tick();
+    now += settings.knowledge.routineDelayMs;
+    await engine.tick();
+    const inRun = batchFor("memo-d");
+    mode = "down";
+    // An agent turn already paid for: the gate fails open as before.
+    expect(offeredSources(await engine.next(inRun.id, inRun.runId))).toEqual(["memo-d"]);
+
+    mode = "up";
+    scores.urgency = 1;
+    note("memo-e");
+    await engine.tick();
+    const urgent = batchFor("memo-e");
+    expect(db.prepare("SELECT tier FROM knowledge_batches WHERE id=?").get(urgent.id)).toEqual({
+      tier: "immediate",
+    });
+    mode = "down";
+    expect(offeredSources(await engine.next(urgent.id, urgent.runId, { preflight: true }))).toEqual(
+      ["memo-e"],
+    );
+  });
 });

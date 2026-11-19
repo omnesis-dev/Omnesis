@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { keyCompletionSchema } from "./gateway-key-auth.js";
+import { GATEWAY_REMOVED, keyCompletionSchema } from "./gateway-key-auth.js";
 import { bindingOrigin } from "./gateway-binding.js";
 import { RelayError } from "./tunnels.js";
 import type { GatewayKeyAuthentication } from "./gateway-key-auth.js";
@@ -57,10 +57,13 @@ export async function completeKeyEnrollment(input: unknown, options: KeyEnrollme
       options.accounts.legacyTransfer(session.accountId, completed.binding));
   if (!allowNew && !options.accounts.keyEnrollmentExempt(session.accountId, completed.binding)) {
     // A gateway nobody registered here gets its own answer, once both its keys are proven: one
-    // whose Omnesis account was deleted learns from it that it is no longer connected.
+    // whose Omnesis account was deleted, or that was unlinked on its account page, learns from it
+    // that it is no longer connected, and which of the two happened.
     if (!completion.enrollmentToken)
       throw options.accounts.ownerForGateway(completed.binding.gatewayId) === undefined
-        ? new RelayError(410, "This gateway is not registered")
+        ? options.accounts.removedFromAccount(completed.binding.gatewayId)
+          ? new RelayError(410, "This gateway was unlinked from its account", GATEWAY_REMOVED)
+          : new RelayError(410, "This gateway is not registered")
         : new RelayError(403, "A gateway enrollment invitation is required");
     try {
       await options.sessions.verifyEnrollmentInvitation(

@@ -7,6 +7,7 @@ import {
   relayManagement,
   relayError,
   relayHttpsUrl,
+  dnsVerificationUrl,
   gatewayVersion,
   googleAuthorizationUrl,
   accountAuthorizationUrl,
@@ -28,6 +29,15 @@ test("uses authenticated same-origin status and mutation calls with cancellation
     method: "POST",
     body: '{"invitation":"fictional-invitation"}',
   });
+  // A choice that already said the passkey comes next tells the request so.
+  await relayManagement("enrollment", { policy: "automatic" }, signal, "PUT", { stepUpAnnounced: true });
+  expect(request).toHaveBeenLastCalledWith("/admin/cloud-relay/enrollment", {
+    cache: "no-store",
+    signal,
+    method: "PUT",
+    body: '{"policy":"automatic"}',
+    stepUpAnnounced: true,
+  });
 });
 test("never displays server bodies, unknown codes, paths or credentials", async () => {
   request.mockResolvedValue({ ok: false, text: () => "private-key-secret" });
@@ -40,6 +50,9 @@ test("never displays server bodies, unknown codes, paths or credentials", async 
     "relay-service-unavailable",
     "configuration-invalid",
     "relay-unreachable",
+    "dns-capacity",
+    "dns-allocation-rate",
+    "dns-verification-required",
     "invitation-required",
     "enrollment-refused",
     "tunnel-disconnected",
@@ -84,6 +97,10 @@ test("the gateway version is read from health and is never an error or an odd st
   expect(await gatewayVersion()).toBe("");
 });
 test("only known typed refusal codes cross the API error boundary", async () => {
+  for (const code of ["dns-capacity", "dns-allocation-rate", "dns-verification-required"]) {
+    request.mockResolvedValueOnce({ ok: false, json: async () => ({ code, error: "private diagnostic" }) });
+    await expect(relayManagement("connect", {})).rejects.toMatchObject({ code });
+  }
   request.mockResolvedValueOnce({
     ok: false,
     json: async () => ({ code: "ca-terms-required", error: "secret" }),
@@ -198,6 +215,13 @@ test("account handoffs never accept Google URLs or another authority's launch ca
       "b".repeat(43),
   ])
     expect(() => accountAuthorizationUrl(invalid, origin)).toThrow();
+  // The sign-in this page chose rides along, from a fixed set only.
+  expect(accountAuthorizationUrl(url, origin, "google")).toBe(`${url}&method=google`);
+  expect(accountAuthorizationUrl(url, origin, "passkey")).toBe(`${url}&method=passkey`);
+  for (const method of ["", "Google", "password", "google&extra=1"])
+    expect(() => accountAuthorizationUrl(url, origin, method), method).toThrow();
+  // A capability that already names a method is not one the relay made.
+  expect(() => accountAuthorizationUrl(`${url}&method=google`, origin)).toThrow();
 });
 
 test("account launch refuses a capability with either required query field absent", () => {
@@ -249,4 +273,18 @@ test("stopping trust in a sign-in deletes it by its encoded id and nothing else"
     method: "DELETE",
     body: undefined,
   });
+});
+
+
+test("DNS verification links accept long broker tickets and reject ambiguous browser destinations", () => {
+  const base = "https://dns.example.test/_dns/v2/enroll";
+  const valid = `${base}?ticket=${"a".repeat(3000)}`;
+  expect(dnsVerificationUrl(valid)).toBe(valid);
+  for (const value of [undefined, null, 1, "not a URL", "a".repeat(16_385),
+    `${base}?ticket=`, base, `${base}?ticket=one&ticket=two`, `${base}?ticket=one&next=elsewhere`,
+    `${base}?ticket=one#fragment`, "http://dns.example.test/_dns/v2/enroll?ticket=one",
+    "https://user@dns.example.test/_dns/v2/enroll?ticket=one",
+    "https://:password@dns.example.test/_dns/v2/enroll?ticket=one",
+    "https://dns.example.test/elsewhere?ticket=one",
+  ]) expect(dnsVerificationUrl(value), String(value)).toBeNull();
 });

@@ -5,6 +5,7 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test, type Page, type Route } from "@playwright/test";
+import { controlPortalSignals, sendPortalSignal } from "./portal-signals-control.js";
 
 const fingerprint = "a".repeat(64);
 const codeNonce = "pJWNXrJQNFNxwwlR2tLh_1z0tfx97lCkE06ZmeKdzVk";
@@ -108,7 +109,7 @@ test("without the flag the login page offers no sign-in and never asks for its c
   });
   await page.goto("/portal/");
   await expect(page.getByRole("button", { name: "Log in", exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Sign in with Google" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Continue with Google" })).toHaveCount(0);
   expect(asked).toBe(false);
 });
 
@@ -119,7 +120,7 @@ test("optional Google sign-in stays hidden when configuration is absent", async 
   );
   await page.goto("/portal/");
   await expect(page.getByRole("button", { name: "Log in", exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Sign in with Google" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Continue with Google" })).toHaveCount(0);
 });
 
 test("device approval presents the complete comparison code and takes one explicit action", async ({
@@ -156,20 +157,23 @@ test("device approval presents the complete comparison code and takes one explic
   await page.goto(`/portal/?token=${encodeURIComponent(token())}`);
   await page.locator("nav.sidebar-nav").waitFor();
   await page.goto("/portal/settings/devices");
-  const section = page.getByRole("region", { name: "Devices waiting for approval" });
+  const section = page.getByRole("region", { name: "Devices waiting for your OK" });
   const card = section.getByRole("article");
   await expect(card).toHaveCount(1);
-  // The card says one thing: who is waiting, the one sentence, the code as the gateway sent it.
+  // The card asks about the device: who is waiting, how it signed in, the question, and the code
+  // the gateway sent, in two groups of three.
+  const name = "Fictional phone with a long device name for comparison";
   await expect(card.locator(":scope > *")).toHaveText([
-    "Fictional phone with a long device name for comparison",
-    "Android app · Google",
-    "A device signed in to your Omnesis account and is waiting for your approval to pair to this gateway. Approve if the code below matches the code shown on the device.",
+    `${name} wants to connect`,
+    "Android app · signed in with Google",
+    `Does ${name} show this code?`,
     verificationCode,
-    /^\s*Approve\s*Deny\s*$/,
+    /^\s*Yes, approve\s*No, deny\s*$/,
   ]);
-  const approve = section.getByRole("button", { name: "Approve", exact: true });
+  await expect(card.locator(".cloud-pairing-code > span")).toHaveText(verificationCode.split(" "));
+  const approve = section.getByRole("button", { name: "Yes, approve", exact: true });
   await expect(approve).toBeEnabled();
-  await expect(section.getByRole("button")).toHaveText(["Approve", "Deny"]);
+  await expect(section.getByRole("button")).toHaveText(["Yes, approve", "No, deny"]);
   await expect(section.getByRole("checkbox")).toHaveCount(0);
   // The same space above the first line and below the last one.
   const space = await card.evaluate((node) => {
@@ -210,6 +214,7 @@ test("a request the gateway still lists as approved, denied or out of time is no
     expiresAt: Date.now() + 600_000,
     ...more,
   });
+  await controlPortalSignals(page);
   let items = [
     row("Fictional tablet"),
     row("Fictional laptop", { status: "approved" }),
@@ -223,11 +228,15 @@ test("a request the gateway still lists as approved, denied or out of time is no
   await page.goto(`/portal/?token=${encodeURIComponent(token())}`);
   await page.locator("nav.sidebar-nav").waitFor();
   await page.goto("/portal/settings/devices");
-  const section = page.getByRole("region", { name: "Devices waiting for approval" });
+  const section = page.getByRole("region", { name: "Devices waiting for your OK" });
   await expect(section.getByRole("article")).toHaveCount(1);
-  await expect(section.getByRole("heading", { level: 3 })).toHaveText(["Fictional tablet"]);
+  await expect(section.getByRole("heading", { level: 3 })).toHaveText([
+    "Fictional tablet wants to connect",
+  ]);
   await expect(section.getByText("000 111", { exact: true })).toBeVisible();
+  // Answered elsewhere: the gateway tells the open portal, which reads the list again.
   items = items.slice(1);
+  await sendPortalSignal(page, "devices");
   await expect(section).toHaveCount(0);
 });
 
@@ -243,6 +252,7 @@ test("a device waiting for approval is announced above every page, in the page f
     verificationCode: "000 111",
     expiresAt: Date.now() + 600_000,
   });
+  await controlPortalSignals(page);
   let items: Array<Record<string, unknown>> = [row("Fictional tablet"), row("Fictional laptop")];
   await page.route("**/admin/cloud-pairing/requests", (route) =>
     route.fulfill({ json: { items } }),
@@ -317,15 +327,21 @@ test("a device waiting for approval is announced above every page, in the page f
 
   // One request answered: the count goes, the strip stays.
   items = items.slice(1);
+  await sendPortalSignal(page, "devices");
   await expect(strip).toContainText(
     "A device is waiting for your approval to pair to this gateway.",
     { timeout: 15_000 },
   );
+  // One request left: the strip opens that request.
   await strip.getByRole("button", { name: "Review", exact: true }).click();
-  await expect(page).toHaveURL(/\/portal\/settings\/devices$/);
-  await expect(
-    page.getByRole("region", { name: "Devices waiting for approval" }).getByRole("article"),
-  ).toHaveCount(1);
+  await expect(page).toHaveURL(
+    new RegExp(`/portal/settings/devices\\?request=${items[0]!.requestId as string}$`),
+  );
+  const cards = page
+    .getByRole("region", { name: "Devices waiting for your OK" })
+    .getByRole("article");
+  await expect(cards).toHaveCount(1);
+  await expect(cards).toHaveClass(/cloud-pairing-focused/);
   await expect(page.locator(".cloud-pairing-notice")).toHaveCount(0);
 
   // Nothing waiting any more: no strip on any page.
@@ -460,7 +476,7 @@ test("without the flag the devices page asks for no device approvals", async ({ 
   await page.locator("nav.sidebar-nav").waitFor();
   await page.goto("/portal/settings/devices");
   await expect(page.getByRole("button", { name: "Pair device", exact: true })).toBeVisible();
-  await expect(page.getByRole("region", { name: "Devices waiting for approval" })).toHaveCount(0);
+  await expect(page.getByRole("region", { name: "Devices waiting for your OK" })).toHaveCount(0);
   expect(asked).toBe(false);
 });
 
@@ -484,9 +500,10 @@ test("remote approval cannot pair a browser until its user confirms the locally 
   await expect(page.getByText(verificationCode, { exact: true })).toBeVisible();
   expect(verificationCode).toMatch(/^[0-9]{3} [0-9]{3}$/);
   await expect(
-    page.getByText(
-      "Check that this code matches the one shown on your other device, then approve it there.",
-    ),
+    page.getByRole("heading", { name: "Waiting for your OK", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Make sure your phone shows this code.", { exact: true }),
   ).toBeVisible();
   await page.screenshot({
     path: test.info().outputPath("browser-waiting-desktop.png"),
@@ -510,7 +527,7 @@ test("a substituted gateway code fails closed even when a remote response says a
     page.getByRole("button", { name: "Codes match, pair this device", exact: true }),
   ).toHaveCount(0);
   expect(await page.evaluate(() => sessionStorage.getItem("omnesis.google-pairing"))).toBeNull();
-  await expect(page.getByRole("button", { name: "Sign in with Google" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Continue with Google" })).toBeVisible();
 });
 
 test("with account sign-in the login page offers the Omnesis account, with a passkey or Google", async ({
@@ -523,6 +540,8 @@ test("with account sign-in the login page offers the Omnesis account, with a pas
         webSignIn: true,
         accountSignIn: true,
         automaticEnrollment: true,
+        // The linked account has a passkey this gateway knows, so it is offered.
+        accountPasskey: true,
       },
     }),
   );
@@ -530,11 +549,22 @@ test("with account sign-in the login page offers the Omnesis account, with a pas
   await page.goto("/portal/");
   const signIn = page.getByRole("region", { name: "Omnesis account sign-in" });
   await expect(
-    signIn.getByRole("heading", { name: "Sign in with your Omnesis account", exact: true }),
+    signIn.getByRole("heading", { name: "Sign in to your gateway", exact: true }),
   ).toBeVisible();
-  await expect(signIn.getByRole("button", { name: "Sign in with Passkey" })).toBeVisible();
-  await expect(signIn.getByRole("button", { name: "Sign in with Google" })).toBeVisible();
-  // Token login stays the first option.
-  await expect(page.getByRole("button", { name: "Log in", exact: true })).toBeVisible();
+  await expect(signIn.getByRole("button", { name: "Continue with passkey" })).toBeVisible();
+  await expect(
+    signIn.getByText("Your device will ask for your face, fingerprint or screen lock.", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(signIn.getByRole("button", { name: "Continue with Google" })).toBeVisible();
+  await expect(
+    signIn.getByText("You'll approve this browser on your phone.", { exact: true }),
+  ).toBeVisible();
+  // Token login is still there, one quiet step away.
+  await expect(page.getByRole("button", { name: "Log in", exact: true })).toHaveCount(0);
   await page.screenshot({ path: test.info().outputPath("account-login.png"), fullPage: true });
+  await page.getByRole("button", { name: "Have a pairing code? Enter it", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Log in", exact: true })).toBeVisible();
+  await expect(page.locator(".login-input")).toBeVisible();
 });

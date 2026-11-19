@@ -6,7 +6,9 @@ import Security
 
 /// First contact with a proposed gateway: a certificate the relay proposes should also be
 /// publicly trusted and logged. A failure never stops pairing; the device asks for the
-/// human comparison instead.
+/// human comparison instead. A pass alone proves nothing about whose gateway it is: a hacked
+/// relay can list a gateway of its own with a valid certificate (F6), so it counts only for a
+/// gateway key this install already trusts.
 enum GatewayPublicCertificateCheck {
     /// DER of the embedded SCT list extension's OID, 1.3.6.1.4.1.11129.2.4.2.
     private static let sctExtensionOID = Data([0x06, 0x0A, 0x2B, 0x06, 0x01, 0x04, 0x01, 0xD6, 0x79, 0x02, 0x04, 0x02])

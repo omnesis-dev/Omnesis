@@ -52,6 +52,7 @@ const envSchema = z
     OMNESIS_RELAY_CARRIER_FAILURE_WINDOW_MS: boundedWindow.default(10 * 60_000),
     OMNESIS_RELAY_MAX_TRACKED_SOURCES: boundedCount(10_000).default(10_000),
     OMNESIS_RELAY_MAX_PENDING_CHALLENGES: boundedCount(100_000).default(1_000),
+    OMNESIS_RELAY_CHALLENGE_COOLDOWN_MS: boundedWindow.default(30_000),
     OMNESIS_RELAY_CHALLENGE_TTL_MS: z.coerce
       .number()
       .int()
@@ -99,6 +100,7 @@ export interface RelayConfig {
     maxTrackedSources: number;
     maxPendingChallenges: number;
     challengeTtlMs: number;
+    challengeCooldownMs: number;
   };
   apns: {
     keyPath: string;
@@ -135,6 +137,7 @@ export function loadRelayConfig(env: NodeJS.ProcessEnv = process.env): RelayConf
       maxTrackedSources: parsed.OMNESIS_RELAY_MAX_TRACKED_SOURCES,
       maxPendingChallenges: parsed.OMNESIS_RELAY_MAX_PENDING_CHALLENGES,
       challengeTtlMs: parsed.OMNESIS_RELAY_CHALLENGE_TTL_MS,
+      challengeCooldownMs: parsed.OMNESIS_RELAY_CHALLENGE_COOLDOWN_MS,
     },
     apns: {
       keyPath: parsed.OMNESIS_RELAY_APNS_KEY_PATH,

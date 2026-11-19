@@ -13,6 +13,8 @@ import {
   type ChunkUpsertInput,
 } from "../indexer/db.js";
 import { openSearchSnapshotHandle } from "./snapshot-handle.js";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 function randVec(seed: number): Float32Array {
   const v = new Float32Array(EMBEDDING_DIM);
@@ -53,7 +55,7 @@ let writer: Db;
 let path: string;
 
 beforeEach(() => {
-  path = `/tmp/omnesis-snapshot-${randomUUID()}.db`;
+  path = fixtureJoin(fixtureTmpdir(), `omnesis-snapshot-${randomUUID()}.db`);
   writer = createIndexDatabase(path);
   // Seed at least one row so the handle has something to read.
   upsertChunks(writer, [chunk({ id: "seed", documentId: "doc-seed", embedding: randVec(1) })]);

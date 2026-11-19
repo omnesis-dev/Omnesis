@@ -8,6 +8,7 @@ import { z } from "zod";
 import { gatewayIdSchema } from "./accounts.js";
 import { connectOrigin, relayOrigin, SESSION_HEADER, websocketUrl } from "./network.js";
 import { recordRelayedClient } from "./relay-client-address.js";
+import { OwnedCleanupLifecycle } from "./owned-cleanup-lifecycle.js";
 import type { ClientRequest, IncomingMessage } from "node:http";
 import type { Socket } from "node:net";
 
@@ -62,6 +63,7 @@ export class GatewayTunnel {
   private stopped = false;
   private readonly channels = new Set<WebSocket>();
   private readonly destinations = new Set<Duplex>();
+  private readonly streams = new Set<Duplex>();
   private readonly relay: URL;
   private readonly gatewayId: string;
   private readonly gateway: URL;
@@ -70,9 +72,15 @@ export class GatewayTunnel {
   private sessionAbort: AbortController | undefined;
   private invalidatedGeneration = -1;
   private readonly dialing = new Set<AbortController>();
+  private readonly onlineWaiters = new Set<() => void>();
   private watchdog: ReturnType<typeof setTimeout> | undefined;
   private readonly maxChannels: number;
   private readonly reconnectMs: number;
+  private readonly cleanup = new OwnedCleanupLifecycle(() => this.stop());
+  private sessionJoin: Promise<void> = Promise.resolve();
+  private connectionAttempt: Promise<void> | undefined;
+  private readonly connections = new Set<Promise<void>>();
+  private readonly resourceClosures = new Set<Promise<void>>();
   /**
    * Where the relay asked for the tunnel instead of its own address: the same
    * relay, reached without the proxy that fronts its pages.
@@ -105,6 +113,27 @@ export class GatewayTunnel {
     };
   }
 
+  /**
+   * Settles once the relay has accepted this tunnel, at once when it already has, or rejects when
+   * `signal` aborts first. Until then the relay drops public connections for this gateway.
+   */
+  online(signal: AbortSignal): Promise<void> {
+    if (this.connectionState === "online") return Promise.resolve();
+    if (signal.aborted) return Promise.reject(signal.reason);
+    return new Promise<void>((resolve, reject) => {
+      const accepted = (): void => {
+        signal.removeEventListener("abort", aborted);
+        resolve();
+      };
+      const aborted = (): void => {
+        this.onlineWaiters.delete(accepted);
+        reject(signal.reason);
+      };
+      this.onlineWaiters.add(accepted);
+      signal.addEventListener("abort", aborted, { once: true });
+    });
+  }
+
   start(): void {
     if (this.stopped || this.control || this.connecting) return;
     this.connectionState = "connecting";
@@ -112,7 +141,7 @@ export class GatewayTunnel {
     const generation = ++this.generation;
     const sessionAbort = new AbortController();
     this.sessionAbort = sessionAbort;
-    void Promise.resolve()
+    this.connectionAttempt = Promise.resolve()
       .then(() => this.acquireSession(sessionAbort))
       .then((session) => {
         if (this.stopped || generation !== this.generation) return;
@@ -131,6 +160,7 @@ export class GatewayTunnel {
           perMessageDeflate: false,
           maxPayload: 4096,
         });
+        this.retainClose(control);
         this.control = control;
         let watchdogMs = 90_000;
         let ready = false;
@@ -160,6 +190,8 @@ export class GatewayTunnel {
             this.lastError = undefined;
             watchdogMs = message.heartbeatMs * 3;
             heartbeat();
+            for (const accepted of this.onlineWaiters) accepted();
+            this.onlineWaiters.clear();
           }
           if (message.type === "open") {
             if (this.channels.size >= this.maxChannels) {
@@ -185,12 +217,19 @@ export class GatewayTunnel {
           for (const dial of this.dialing) dial.abort();
           for (const channel of this.channels) channel.terminate();
           for (const destination of this.destinations) destination.destroy();
+          for (const stream of this.streams) stream.destroy();
           this.scheduleReconnect();
         });
       })
-      .catch(() => {
+      .catch(async (error: unknown) => {
+        this.cleanup.observe(error);
         if (this.stopped || generation !== this.generation) return;
-        log.warn("Cloud relay session unavailable; retrying");
+        this.connectionState = "offline";
+        this.lastError = "tunnel-disconnected";
+        log.warn("Cloud relay session unavailable; waiting for acquisition cleanup before retry");
+        // Cancellation ends the caller's wait, not the credential operation.
+        // Never overlap another acquisition with an unjoined session source.
+        await this.sessionJoin;
         this.scheduleReconnect();
       })
       .finally(() => {
@@ -209,16 +248,18 @@ export class GatewayTunnel {
         reject(controller.signal.reason);
       };
       controller.signal.addEventListener("abort", aborted, { once: true });
-      Promise.resolve()
-        .then(() => {
-          controller.signal.throwIfAborted();
-          return this.options.session(controller.signal);
-        })
-        .then(resolve, reject)
-        .finally(() => {
-          clearTimeout(timer);
-          controller.signal.removeEventListener("abort", aborted);
-        });
+      const operation = this.cleanup.run(async () => {
+        controller.signal.throwIfAborted();
+        return this.options.session(controller.signal);
+      });
+      this.sessionJoin = operation.then(
+        () => {},
+        () => {},
+      );
+      operation.then(resolve, reject).finally(() => {
+        clearTimeout(timer);
+        controller.signal.removeEventListener("abort", aborted);
+      });
     });
   }
 
@@ -236,6 +277,7 @@ export class GatewayTunnel {
       perMessageDeflate: false,
       maxPayload: 1024 * 1024,
     });
+    this.retainClose(ws);
     ws.once("unexpected-response", (request, response) =>
       this.refusedHandshake(ws, request, response, generation),
     );
@@ -251,12 +293,24 @@ export class GatewayTunnel {
       this.channels.delete(ws);
     });
     ws.once("open", () => {
+      if (this.stopped || generation !== this.generation) {
+        ws.terminate();
+        return;
+      }
       const stream = createWebSocketStream(ws);
+      this.retainClose(stream);
+      this.streams.add(stream);
+      stream.once("close", () => this.streams.delete(stream));
       stream.on("error", () => {
         stream.destroy();
       });
-      void connectOrigin(this.gateway, undefined, dial.signal, true)
+      const connection = Promise.resolve()
+        .then(() => {
+          dial.signal.throwIfAborted();
+          return connectOrigin(this.gateway, undefined, dial.signal, true);
+        })
         .then((destination) => {
+          this.retainClose(destination);
           if (this.stopped || generation !== this.generation || ws.readyState !== WebSocket.OPEN) {
             destination.destroy();
             stream.destroy();
@@ -279,7 +333,11 @@ export class GatewayTunnel {
         })
         .catch(() => {
           stream.destroy();
+        })
+        .finally(() => {
+          this.connections.delete(connection);
         });
+      this.connections.add(connection);
     });
   }
 
@@ -300,8 +358,8 @@ export class GatewayTunnel {
         this.options.invalidateSession?.();
         this.control?.terminate();
       }
-    } catch {
-      log.warn("Cloud relay routing session invalidation failed");
+    } catch (error) {
+      if (!this.cleanup.observe(error)) log.warn("Cloud relay routing session invalidation failed");
     } finally {
       response.destroy();
       request.destroy();
@@ -330,6 +388,39 @@ export class GatewayTunnel {
     this.control?.terminate();
     for (const channel of this.channels) channel.terminate();
     for (const destination of this.destinations) destination.destroy();
+    for (const stream of this.streams) stream.destroy();
+  }
+
+  cleanupFailure(): unknown | undefined {
+    return this.cleanup.receipt();
+  }
+
+  close(): Promise<void> {
+    this.stop();
+    return this.cleanup.close(async () => {
+      await this.connectionAttempt;
+      await Promise.all([...this.connections]);
+      await Promise.all([...this.resourceClosures]);
+    });
+  }
+
+  private retainClose(resource: {
+    closed?: boolean;
+    readyState?: number;
+    once(event: "close", listener: () => void): unknown;
+  }): void {
+    if (
+      resource.closed === true ||
+      (resource.readyState !== undefined && resource.readyState === WebSocket.CLOSED)
+    )
+      return;
+    const proof = new Promise<void>((resolve) => {
+      resource.once("close", () => {
+        this.resourceClosures.delete(proof);
+        resolve();
+      });
+    });
+    this.resourceClosures.add(proof);
   }
 }
 

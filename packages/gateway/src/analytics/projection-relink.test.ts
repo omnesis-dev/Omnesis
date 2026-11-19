@@ -12,6 +12,8 @@ import {
 } from "../enrichment/temporal-annotations/storage.js";
 import { createTemporalProjectionRelinker } from "./projection-relink.js";
 import type { AnalyticsTableSchema } from "@omnesis/source-sdk";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 const accountA = "calendar:maya@example.com";
 const accountB = "calendar:maya.reeves@example.org";
@@ -133,7 +135,7 @@ async function projectionIds(): Promise<Map<string, string>> {
 }
 
 beforeEach(async () => {
-  path = `/tmp/omnesis-test-relink-${crypto.randomUUID()}.db`;
+  path = fixtureJoin(fixtureTmpdir(), `omnesis-test-relink-${crypto.randomUUID()}.db`);
   analytics = new AnalyticsDb(path);
   await analytics.open();
   sqlite = new Database(":memory:");

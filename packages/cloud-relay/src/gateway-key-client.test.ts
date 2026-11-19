@@ -1,13 +1,22 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { randomBytes, randomUUID, createPublicKey } from "node:crypto";
-import { mkdtemp, readFile, rm, stat, writeFile, mkdir, readdir } from "node:fs/promises";
+import {
+  randomBytes,
+  randomUUID,
+  createPublicKey,
+  generateKeyPairSync,
+  X509Certificate,
+} from "node:crypto";
+import { mkdtemp, readFile, rm, stat, writeFile, mkdir, readdir, symlink } from "node:fs/promises";
 import * as files from "node:fs/promises";
+import * as crypto from "node:crypto";
 import { tmpdir } from "node:os";
 import { once } from "node:events";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import * as core from "@omnesis/core";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { exposeOwnedFixtureRead } from "../test/owned-file-acl.js";
 import { tlsFiles, listen, until } from "../test/support.js";
 import {
   registerGatewayKey,
@@ -29,19 +38,26 @@ vi.mock("node:fs/promises", async (original) => {
   return { ...module, link: vi.fn(module.link) };
 });
 
+vi.mock("node:crypto", { spy: true });
+
 let directory: string;
 beforeEach(async () => {
+  core.clearSecretFileKeyCacheForTests();
   directory = await mkdtemp(join(tmpdir(), "omnesis-key-client-"));
+  if (process.platform === "win32") await core.ensurePrivateDirs([directory]);
 });
 afterEach(async () => {
   vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
+  core.clearSecretFileKeyCacheForTests();
   await rm(directory, { recursive: true, force: true });
 });
 async function fixture(
   extra: Parameters<typeof createCloudRelay>[0]["hostnameProof"] = async () => true,
 ) {
+  const tls = tlsFiles(directory, "gateway.example.test");
   const accounts = new RelayAccounts(":memory:");
   let relay = createCloudRelay({
     allowLoopbackEnrollment: true,
@@ -50,7 +66,6 @@ async function fixture(
     hostnameProof: extra,
   });
   const relayUrl = await listen(relay.server);
-  const tls = tlsFiles(directory, "gateway.example.test");
   const options = {
     relayUrl,
     sessionFile: join(directory, "session.json"),
@@ -102,9 +117,13 @@ test("a Google-free relay registers both key proofs, stores only public metadata
   const transport = vi.fn<typeof fetch>(async (url, init) => fetch(url, init));
   try {
     const session = await registerGatewayKey({ ...f.options, fetch: transport });
-    expect((await stat(f.options.sessionFile)).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") {
+      expect((await stat(f.options.sessionFile)).mode & 0o777).toBe(0o600);
+    }
     const ownerFile = `${f.options.sessionFile}.owner-key`;
-    expect((await stat(ownerFile)).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") {
+      expect((await stat(ownerFile)).mode & 0o777).toBe(0o600);
+    }
     expect(JSON.parse(await readFile(f.options.sessionFile, "utf8"))).toMatchObject({
       authentication: "gateway-key-v2",
       accountId: session.accountId,
@@ -138,10 +157,14 @@ test("a Google-free relay registers both key proofs, stores only public metadata
 test("local full-chain and CRLF files publish only the canonical public leaf", async () => {
   const f = await fixture();
   try {
-    const leaf = await readFile(f.options.certificateFile, "utf8");
-    await writeFile(f.options.certificateFile, (leaf + leaf).replaceAll("\n", "\r\n"));
+    const leaf = (await readFile(f.options.certificateFile, "utf8")).replace(/\r?\n/g, "\r\n");
+    const fullChain = leaf + leaf;
+    await writeFile(f.options.certificateFile, fullChain);
     const session = await registerGatewayKey(f.options);
-    expect(f.accounts.gatewayBinding(session.accountId)!.certificate).toBe(leaf);
+    expect(f.accounts.gatewayBinding(session.accountId)!.certificate).toBe(
+      new X509Certificate(leaf).toString(),
+    );
+    expect(await readFile(f.options.certificateFile, "utf8")).toBe(fullChain);
   } finally {
     await f.close();
   }
@@ -216,12 +239,18 @@ test("mismatched TLS files, unsupported owner keys and oversized inputs fail wit
     await writeFile(ownerPath, await readFile(f.options.privateKeyFile));
     await expect(registerGatewayKey(f.options)).rejects.toThrow("Ed25519 private key");
     await writeFile(ownerPath, "x".repeat(65_537));
-    await expect(registerGatewayKey(f.options)).rejects.toThrow("too large");
+    if (process.platform === "win32")
+      await expect(registerGatewayKey(f.options)).rejects.toMatchObject({ code: "EPRIVATE" });
+    else await expect(registerGatewayKey(f.options)).rejects.toThrow("too large");
     await rm(ownerPath);
     await writeFile(f.options.certificateFile, "x".repeat(65_537));
     await expect(registerGatewayKey(f.options)).rejects.toThrow("too large");
     const failed = join(directory, "publication-error");
-    vi.mocked(files.link).mockRejectedValueOnce(new Error("Synthetic publication failure"));
+    if (process.platform === "win32")
+      vi.spyOn(core, "writeWindowsPrivateFileAtomicStream").mockRejectedValueOnce(
+        new Error("Synthetic publication failure"),
+      );
+    else vi.mocked(files.link).mockRejectedValueOnce(new Error("Synthetic publication failure"));
     await expect(readOrCreateGatewayOwnerKey(failed)).rejects.toThrow(
       "Synthetic publication failure",
     );
@@ -341,18 +370,25 @@ test("offline owner preparation returns canonical public DNS details and shares 
 test("a certificate/key changed during delayed enrollment is re-registered before persisting a session, with at most one retry", async () => {
   const f = await fixture();
   let completions = 0;
+  let rotatedCertificate = "";
   const transport = vi.fn<typeof fetch>(async (url, init) => {
     const response = await fetch(url, init);
-    if (String(url).endsWith("/complete") && ++completions === 1)
-      tlsFiles(directory, "gateway.example.test");
+    if (String(url).endsWith("/complete") && ++completions === 1) {
+      const rotated = tlsFiles(directory, "gateway.example.test");
+      const certificate = await readFile(rotated.certFile, "utf8");
+      rotatedCertificate = certificate.replace(/\r?\n/g, "\r\n");
+      await writeFile(rotated.certFile, rotatedCertificate);
+    }
     return response;
   });
   try {
     const session = await registerGatewayKey({ ...f.options, fetch: transport });
     expect(transport).toHaveBeenCalledTimes(4);
+    expect(rotatedCertificate).toContain("\r\n");
     expect(f.accounts.gatewayBinding(session.accountId)!.certificate).toBe(
-      await readFile(f.options.certificateFile, "utf8"),
+      new X509Certificate(rotatedCertificate).toString(),
     );
+    expect(await readFile(f.options.certificateFile, "utf8")).toBe(rotatedCertificate);
     const original = await readFile(f.options.sessionFile, "utf8");
     const continuous = vi.fn<typeof fetch>(async (url, init) => {
       const response = await fetch(url, init);
@@ -651,3 +687,320 @@ test("optional missing enrollment artifacts stay optional and supplied invitatio
     await f.close();
   }
 });
+
+test("Windows owner creation uses bounded private reads and atomic create-only publication", async () => {
+  const path = join(directory, "owned-winner.pem");
+  const winner = generateKeyPairSync("ed25519").privateKey.export({ type: "pkcs8", format: "pem" });
+  const descriptor = Object.getOwnPropertyDescriptor(process, "platform")!;
+  const read = vi
+    .spyOn(core, "readWindowsPrivateFile")
+    .mockRejectedValueOnce(Object.assign(new Error("Invented absent owner"), { code: "ENOENT" }))
+    .mockResolvedValueOnce(Buffer.from(winner));
+  const publish = vi
+    .spyOn(core, "writeWindowsPrivateFileAtomicStream")
+    .mockImplementationOnce(async (target, source, length, options) => {
+      expect(target).toBe(path);
+      expect(options).toMatchObject({ replaceExisting: false, timeoutMs: 30_000 });
+      const chunks: Buffer[] = [];
+      for await (const chunk of source as AsyncIterable<Uint8Array>)
+        chunks.push(Buffer.from(chunk));
+      expect(Buffer.concat(chunks)).toHaveLength(length);
+      await writeFile(path, winner, { mode: 0o600 });
+      throw Object.assign(new Error("Invented concurrent winner"), { code: "EEXIST" });
+    });
+  vi.mocked(files.link).mockClear();
+  Object.defineProperty(process, "platform", { ...descriptor, value: "win32" });
+  try {
+    const selected = await readOrCreateGatewayOwnerKey(path);
+    expect(createPublicKey(selected).export({ type: "spki", format: "pem" })).toBe(
+      createPublicKey(winner).export({ type: "spki", format: "pem" }),
+    );
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(read).toHaveBeenCalledWith(path, 65_536);
+    expect(publish).toHaveBeenCalledOnce();
+    expect(files.link).not.toHaveBeenCalled();
+    expect(await readFile(path, "utf8")).toBe(winner);
+  } finally {
+    Object.defineProperty(process, "platform", descriptor);
+  }
+});
+
+test.each(["EACCES", "EIO"])(
+  "uncertain recovery artifact metadata %s cannot mint or register another owner",
+  async (code) => {
+    const f = await fixture();
+    const failure = Object.assign(new Error("Invented receipt metadata failure"), { code });
+    const transport = vi.fn<typeof fetch>();
+    try {
+      if (process.platform === "win32")
+        vi.spyOn(core, "readWindowsRegularFilePrefix").mockRejectedValueOnce(failure);
+      else vi.spyOn(files, "lstat").mockRejectedValueOnce(failure);
+      await expect(registerGatewayKey({ ...f.options, fetch: transport })).rejects.toBe(failure);
+      expect(transport).not.toHaveBeenCalled();
+      await expect(stat(`${f.options.sessionFile}.owner-key`)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      await expect(stat(f.options.sessionFile)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await f.close();
+    }
+  },
+);
+
+test("a recovery artifact below a non-directory ancestor refuses registration without minting a key", async () => {
+  const f = await fixture();
+  const obstruction = join(directory, "owned-receipt-obstruction");
+  const transport = vi.fn<typeof fetch>();
+  try {
+    await writeFile(obstruction, "invented receipt path obstruction");
+    await expect(
+      registerGatewayKey({
+        ...f.options,
+        recoveryReceiptFile: join(obstruction, "receipt.json"),
+        fetch: transport,
+      }),
+    ).rejects.toThrow();
+    expect(transport).not.toHaveBeenCalled();
+    await expect(stat(`${f.options.sessionFile}.owner-key`)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    expect(await readFile(obstruction, "utf8")).toBe("invented receipt path obstruction");
+  } finally {
+    await f.close();
+  }
+});
+
+test("an existing recovery artifact blocks new owner creation without parsing its bytes", async () => {
+  const sessionFile = join(directory, "artifact-session");
+  const ownerPath = `${sessionFile}.owner-key`;
+  const receipt = `${sessionFile}.recovery.json`;
+  await readOrCreateGatewayOwnerKey(ownerPath);
+  const original = await readFile(ownerPath, "utf8");
+  await writeFile(receipt, "invented non-JSON receipt bytes");
+  const gatewayId = randomUUID();
+  expect(await prepareGatewayOwner({ sessionFile, gatewayId })).toMatchObject({ gatewayId });
+  expect(await readFile(ownerPath, "utf8")).toBe(original);
+  expect(await readFile(receipt, "utf8")).toBe("invented non-JSON receipt bytes");
+  await rm(ownerPath);
+  await expect(prepareGatewayOwner({ sessionFile, gatewayId })).rejects.toThrow(
+    "restore the original key",
+  );
+  await expect(stat(ownerPath)).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+test.skipIf(process.platform !== "win32")(
+  "Windows atomic owner publication preserves a winner that appears after the missing read",
+  async () => {
+    const path = join(directory, "winner", "owner.pem");
+    await core.ensurePrivateDirs([dirname(path)]);
+    const winner = generateKeyPairSync("ed25519").privateKey.export({
+      type: "pkcs8",
+      format: "pem",
+    });
+    vi.spyOn(core, "readWindowsPrivateFile").mockImplementationOnce(async () => {
+      await core.createWindowsPrivateFile(path, Buffer.from(winner));
+      throw Object.assign(new Error("Invented stale missing result"), { code: "ENOENT" });
+    });
+    const selected = await readOrCreateGatewayOwnerKey(path);
+    expect(createPublicKey(selected).export({ type: "spki", format: "pem" })).toBe(
+      createPublicKey(winner).export({ type: "spki", format: "pem" }),
+    );
+    expect(await readFile(path, "utf8")).toBe(winner);
+    expect(await readdir(dirname(path))).toEqual(["owner.pem"]);
+  },
+);
+
+test.skipIf(process.platform !== "win32")(
+  "Windows enrollment accepts a public certificate but refuses an unsafe private TLS key",
+  async () => {
+    const f = await fixture();
+    const certificateExposure = await exposeOwnedFixtureRead(f.options.certificateFile);
+    let keyExposure: Awaited<ReturnType<typeof exposeOwnedFixtureRead>> | undefined;
+    try {
+      expect(core.inspectWindowsPrivatePathSync(f.options.certificateFile, "file").private).toBe(
+        false,
+      );
+      const session = await registerGatewayKey(f.options);
+      expect(f.accounts.gatewayBinding(session.accountId)).toBeDefined();
+      const saved = await readFile(f.options.sessionFile, "utf8");
+      const key = await readFile(f.options.privateKeyFile, "utf8");
+      keyExposure = await exposeOwnedFixtureRead(f.options.privateKeyFile);
+      const transport = vi.fn<typeof fetch>();
+      await expect(registerGatewayKey({ ...f.options, fetch: transport })).rejects.toMatchObject({
+        code: "EPRIVATE",
+      });
+      expect(transport).not.toHaveBeenCalled();
+      expect(await readFile(f.options.sessionFile, "utf8")).toBe(saved);
+      expect(await readFile(f.options.privateKeyFile, "utf8")).toBe(key);
+      expect(await keyExposure.snapshot()).toBe(keyExposure.exposed);
+      expect(await certificateExposure.snapshot()).toBe(certificateExposure.exposed);
+      await keyExposure.restore();
+      keyExposure = undefined;
+      await expect(registerGatewayKey(f.options)).resolves.toMatchObject({
+        accountId: session.accountId,
+      });
+    } finally {
+      try {
+        await keyExposure?.restore();
+        await certificateExposure.restore();
+      } finally {
+        await f.close();
+      }
+    }
+  },
+);
+
+test("an unsafe or dangling recovery artifact cannot authorize a new owner", async () => {
+  const f = await fixture();
+  const transport = vi.fn<typeof fetch>();
+  try {
+    let recoveryReceiptFile: string;
+    if (process.platform === "win32") {
+      const target = join(directory, "owned-empty-receipt-target");
+      const alias = join(directory, "owned-receipt-junction");
+      await mkdir(target);
+      await symlink(target, alias, "junction");
+      recoveryReceiptFile = join(alias, "missing-receipt.json");
+    } else {
+      recoveryReceiptFile = `${f.options.sessionFile}.recovery.json`;
+      await symlink(join(directory, "missing-receipt-target"), recoveryReceiptFile);
+    }
+    await expect(
+      registerGatewayKey({ ...f.options, recoveryReceiptFile, fetch: transport }),
+    ).rejects.toThrow();
+    expect(transport).not.toHaveBeenCalled();
+    await expect(stat(`${f.options.sessionFile}.owner-key`)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    await expect(stat(f.options.sessionFile)).rejects.toMatchObject({ code: "ENOENT" });
+  } finally {
+    await f.close();
+  }
+});
+
+test("registers with a config-scoped encrypted TLS key and refuses an envelope without its scope", async () => {
+  const f = await fixture();
+  vi.stubEnv("OMNESIS_SECRET_STORE", "file");
+  try {
+    await core.ensureInstallRootKey({ backend: "file", configDir: directory });
+    await core.primeSecretFileKeyCache({ backend: "file", configDir: directory });
+    const key = await readFile(f.options.privateKeyFile, "utf8");
+    await core.writeSecretTextFile(f.options.privateKeyFile, key, { configDir: directory });
+    const transport = vi.fn<typeof fetch>();
+    await expect(registerGatewayKey({ ...f.options, fetch: transport })).rejects.toThrow(
+      "requires its configuration directory",
+    );
+    expect(transport).not.toHaveBeenCalled();
+    await expect(stat(`${f.options.sessionFile}.owner-key`)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    const session = await registerGatewayKey({ ...f.options, configDir: directory });
+    expect(session.token).toMatch(/^ey/);
+  } finally {
+    await f.close();
+  }
+});
+
+test.each([
+  ["ENOENT", "own", false],
+  ["ENOENT", "own", true],
+  ["ENOENT", "cause", false],
+  ["ENOENT", "cause", true],
+  ["EEXIST", "own", false],
+  ["EEXIST", "own", true],
+  ["EEXIST", "cause", false],
+  ["EEXIST", "cause", true],
+] as const)(
+  "Windows identity refuses %s with %s cleanup uncertainty (payload present: %s)",
+  async (code, placement, payload) => {
+    const path = join(directory, "uncertain-identity.pem");
+    const winner = generateKeyPairSync("ed25519").privateKey.export({
+      type: "pkcs8",
+      format: "pem",
+    });
+    await core.atomicWriteFile(path, winner, { mode: 0o600 });
+    const before = await stat(path, { bigint: true });
+    const marker = { cleanupFailure: payload ? new Error("Invented unjoined helper") : undefined };
+    const failure = Object.assign(
+      new Error("Invented uncertain identity operation"),
+      { code },
+      placement === "own"
+        ? marker
+        : { cause: Object.assign(new Error("Invented inner receipt"), marker) },
+    );
+    const missing = Object.assign(new Error("Invented missing identity"), { code: "ENOENT" });
+    const read = vi
+      .spyOn(core, "readWindowsPrivateFile")
+      .mockRejectedValueOnce(code === "ENOENT" ? failure : missing)
+      .mockResolvedValueOnce(Buffer.from(winner));
+    const publish = vi.spyOn(core, "writeWindowsPrivateFileAtomicStream");
+    if (code === "EEXIST") publish.mockRejectedValueOnce(failure);
+    else publish.mockResolvedValueOnce(undefined);
+    const descriptor = Object.getOwnPropertyDescriptor(process, "platform")!;
+    Object.defineProperty(process, "platform", { ...descriptor, value: "win32" });
+    try {
+      const operation = readOrCreateGatewayOwnerKey(path);
+      await expect(operation).rejects.toBe(failure);
+      expect(read).toHaveBeenCalledExactlyOnceWith(path, 65_536);
+      if (code === "ENOENT") expect(publish).not.toHaveBeenCalled();
+      else expect(publish).toHaveBeenCalledOnce();
+      expect(await readFile(path, "utf8")).toBe(winner);
+      const after = await stat(path, { bigint: true });
+      expect([after.dev, after.ino]).toEqual([before.dev, before.ino]);
+    } finally {
+      Object.defineProperty(process, "platform", descriptor);
+    }
+  },
+);
+
+test("Windows recovery presence errors cannot authorize a replacement owner", async () => {
+  const path = join(directory, "refused-recovery-session.json");
+  const failure = Object.assign(new Error("Invented metadata refusal"), { code: "EACCES" });
+  const read = vi.spyOn(core, "readWindowsRegularFilePrefix").mockRejectedValueOnce(failure);
+  const publish = vi.spyOn(core, "writeWindowsPrivateFileAtomicStream");
+  const descriptor = Object.getOwnPropertyDescriptor(process, "platform")!;
+  Object.defineProperty(process, "platform", { ...descriptor, value: "win32" });
+  try {
+    await expect(prepareGatewayOwner({ sessionFile: path, gatewayId: randomUUID() })).rejects.toBe(
+      failure,
+    );
+    expect(read).toHaveBeenCalledExactlyOnceWith(`${path}.recovery.json`, 0);
+    expect(publish).not.toHaveBeenCalled();
+    expect(await readdir(directory)).toEqual([]);
+  } finally {
+    Object.defineProperty(process, "platform", descriptor);
+  }
+});
+
+test.each([null, "interrupted", {}, { code: "EPERM" }])(
+  "Windows owner publication preserves a non-winner failure %j without rereading",
+  async (failure) => {
+    const path = join(directory, "refused-owner.pem");
+    const pair = generateKeyPairSync("ed25519");
+    const pem = pair.privateKey.export({ type: "pkcs8", format: "pem" });
+    Object.defineProperty(pair.privateKey, "export", {
+      configurable: true,
+      value: () => Buffer.from(pem),
+    });
+    vi.mocked(crypto.generateKeyPairSync).mockReturnValueOnce(pair);
+    const read = vi
+      .spyOn(core, "readWindowsPrivateFile")
+      .mockRejectedValueOnce(
+        Object.assign(new Error("Invented missing owner"), { code: "ENOENT" }),
+      );
+    const publish = vi
+      .spyOn(core, "writeWindowsPrivateFileAtomicStream")
+      .mockRejectedValueOnce(failure);
+    const descriptor = Object.getOwnPropertyDescriptor(process, "platform")!;
+    Object.defineProperty(process, "platform", { ...descriptor, value: "win32" });
+    try {
+      await expect(readOrCreateGatewayOwnerKey(path)).rejects.toBe(failure);
+      expect(read).toHaveBeenCalledExactlyOnceWith(path, 65_536);
+      expect(publish).toHaveBeenCalledOnce();
+      expect(publish.mock.calls[0]![2]).toBe(Buffer.byteLength(pem));
+      expect(await readdir(directory)).toEqual([]);
+    } finally {
+      Object.defineProperty(process, "platform", descriptor);
+    }
+  },
+);

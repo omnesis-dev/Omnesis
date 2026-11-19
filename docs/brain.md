@@ -195,7 +195,12 @@ it does not become another operational owner of their state.
 The `decision` role scores urgency, discovery relevance, dependency impact and
 proactive review. Its ordered-level answers are normalized to 0–1. Missing or
 invalid judgements take the conservative path; they do not establish that
-content is irrelevant or verified. Maintenance tiers are configurable under
+content is irrelevant or verified. For urgency that path is the routine tier:
+work without a verdict never outranks judged work. It is marked
+`awaiting_urgency` (shown as "Awaiting urgency verdict" in pending maintenance)
+and judged again while it waits once the decision model answers; after a
+failed retry the planner waits `soonDelay` before asking again. If no verdict
+arrives, it runs when its routine delay ends. Maintenance tiers are configurable under
 `brain.knowledge`:
 
 | Setting                | Default | Purpose                                        |
@@ -205,7 +210,7 @@ content is irrelevant or verified. Maintenance tiers are configurable under
 | `soonDelay`            | `1h`    | Delay for soon work                            |
 | `routineDelay`         | `6h`    | Delay for routine work                         |
 | `rootMaxChars`         | 8000    | Hard limit for the root wiki                   |
-| `maxSeeds`             | 64      | Admission bound per maintenance pass           |
+| `maxSeeds`             | 64      | Seeds per batch, packed routine sources too    |
 | `maxFrontierNodes`     | 32      | Maximum offered frontier size                  |
 | `maxFrontierChars`     | 65536   | Maximum JSON characters per frontier response  |
 | `maxVisitedPerSeed`    | 256     | Bounded affected-region traversal              |
@@ -225,6 +230,16 @@ inputs to the planner, which can coalesce the newly discovered overlap. That han
 ends the current model turn; it does not repeatedly retry an already contested write.
 Routing hints carry source revisions and do not become factual support links.
 
+Unrelated routine source changes are packed: once due, groups made only of
+fresh source work (no charged failure) at the routine tier, ready and outside
+every region an active batch holds, share one batch, up to `maxSeeds` sources
+and `maxVisitedPerSeed` region nodes, so one run's fixed prompt covers several
+sources instead of one each. Immediate and soon work, node work, retries and
+work not yet due keep batches of their own. A pack is an ordinary batch: its
+frontier offers sources in bounded chunks, a context handoff continues it, and
+it completes only when every source in it settles. A failed pack charges only
+the sources its run was offered, and each is then retried alone.
+
 A synthesis run asks `knowledge_next_frontier` for work. The engine checks input
 versions, runs relevance gates, and offers the next breadth-first frontier.
 The agent writes through validated tools; the engine records changed,
@@ -234,6 +249,14 @@ letting it overwrite a newer revision. Interrupted work remains durable.
 The first frontier is gated before starting the agent: a fully skipped batch
 does not consume a synthesis turn. Discovery checks judge bounded source content once;
 work with existing repair or discovery obligations bypasses this skip decision.
+When the assigned decision model fails to answer that check before the agent
+turn of a routine batch, the batch waits instead of failing open: its run is
+deferred, without spending an attempt, and the model is asked again after
+`soonDelay` (one question, not one per source). The wait lasts at most
+`routineDelay` from the first failed judgement of the outage; after that, and
+always for immediate and soon batches, for checks made during an agent turn,
+and when no decision model is assigned, the gate fails open as before. The
+outage is tracked in memory, so a restart asks again.
 Sources too large to judge in full also retain the interpretation path. Skipped
 history remains eligible for bounded reconsideration during organization.
 
@@ -714,6 +737,16 @@ The Brain can start on partial imports without waiting for every collector.
 Ordinary arrivals, edits, and late evidence stay reactive regardless of their
 event dates. Clients that do not send inventory provenance retain this reactive
 behavior; dates alone never establish that an arrival was historical inventory.
+A rewrite is the exception: when a resync or migration rewrites a stored
+document the Brain has never read (no coverage, no completed or batched work,
+nothing citing it) and both its `source_created_at` and its
+`source_updated_at` lie before `recentWindowDays`, intake acknowledges the
+change without queueing reactive work or asking for urgency. Historical
+admission reads it under the horizon and its caps. A document the Brain has
+read, a first arrival, and an edit its provider dates within the window stay
+reactive. Each pass also withdraws pending `change` work that matches this rule
+(left by a rewrite before it applied), in bounded batches; batched work and
+work carrying a candidate decision finish.
 Bootstrap status reports each observed inventory's import state and separate
 recent, history, and undated revision counts, considered/gated/pending outcomes,
 and observed source-date bounds. These are scoped coverage milestones, not a
@@ -794,7 +827,9 @@ time budget stops new admissions; a slow sibling alone does not prevent refill.
 Active runs finish or abort before the scheduler invocation returns;
 each queue row is admitted at most once in that invocation. Budget
 checks stop new admissions; already admitted work can finish and accrue spend.
-User feedback and new-data runs keep the highest queue priority. Within maintenance,
+User feedback and new-data runs keep the highest queue priority. The day's morning
+brief follows them, ahead of all maintenance, so a large urgent maintenance
+backlog cannot hold it back. Within maintenance,
 the bound batch's immediate and soon tiers precede routine historical work. Root
 maintenance and joint organization reviews share a preferred slot, at most once
 per four distinct synthesis admissions. That slot precedes immediate and soon

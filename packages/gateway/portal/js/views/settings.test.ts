@@ -37,6 +37,47 @@ describe("Settings header actions", () => {
     else globalThis.window = originalWindow;
   });
 
+  const attention = (devices: number, access: number) => ({
+    devices: { cloud: [], tailscale: [], count: devices },
+    access: { requests: [], count: access },
+    answers: { count: 0 },
+    watches: { count: 0 },
+  });
+
+  test("marks the Devices tab while devices wait for approval, with the count in words", async () => {
+    await act(async () => {
+      render(h(SettingsView, { tab: "config", attention: attention(2, 0) }), host);
+    });
+    const mark = host.querySelector(
+      '.config-tab .attention-icon[aria-label="2 devices are waiting for your approval to pair to this gateway."]',
+    );
+    expect(mark).not.toBeNull();
+    expect(mark?.closest("button")?.textContent).toContain("Devices");
+    expect(host.querySelectorAll(".config-tab .attention-icon")).toHaveLength(1);
+    await act(async () => {
+      render(h(SettingsView, { tab: "config", attention: attention(0, 0) }), host);
+    });
+    expect(host.querySelector(".config-tab .attention-icon")).toBeNull();
+  });
+
+  test("marks the Access tab while agents wait for approval, beside a Devices mark when both wait", async () => {
+    await act(async () => {
+      render(h(SettingsView, { tab: "config", attention: attention(1, 3) }), host);
+    });
+    const access = host.querySelector(
+      '.config-tab .attention-icon[aria-label="3 agents are waiting for your approval to connect."]',
+    );
+    expect(access?.closest("button")?.textContent).toContain("Access");
+    expect(host.querySelectorAll(".config-tab .attention-icon")).toHaveLength(2);
+  });
+
+  test("without an attention answer no tab is marked", async () => {
+    await act(async () => {
+      render(h(SettingsView, { tab: "config" }), host);
+    });
+    expect(host.querySelector(".config-tab .attention-icon")).toBeNull();
+  });
+
   test("marks the Models tab while another settings page is open and clears on recovery", async () => {
     await act(async () => {
       render(h(SettingsView, { tab: "config", modelHealth: { warnings: [{ role: "agent" }] } }), host);
@@ -52,13 +93,59 @@ describe("Settings header actions", () => {
     expect(host.querySelector(".warning-triangle")).toBeNull();
   });
 
-  test("the cloud relay adds its tab and scoping class only when the gateway enables it", async () => {
-    await act(async () => { render(h(SettingsView, { tab: "account" }), host); });
-    expect(host.querySelector(".settings-view")?.getAttribute("class")).toBe("settings-view");
-    expect([...host.querySelectorAll(".config-tab")].map((tab) => tab.textContent)).not.toContain("Omnesis account");
-    await act(async () => { render(h(SettingsView, { tab: "account", cloudRelay: true }), host); });
-    expect(host.querySelector(".settings-view")?.getAttribute("class")).toBe("settings-view relay-on");
-    expect([...host.querySelectorAll(".config-tab")].map((tab) => tab.textContent)).toContain("Omnesis account");
+  test("every gateway has the Connectivity tab, last, and the pages behind it that need no feature", async () => {
+    const labels = () => [...host.querySelectorAll(".config-tab")].map((tab) => tab.textContent?.trim());
+    for (const flags of [{}, { cloudRelay: true }, { tailscaleEmbed: true }, { cloudRelay: true, tailscaleEmbed: true }]) {
+      await act(async () => { render(h(SettingsView, { tab: "connectivity", ...flags }), host); });
+      expect(host.querySelector(".settings-view")?.getAttribute("class")).toBe("settings-view");
+      expect(labels().at(-1)).toBe("Connectivity");
+      for (const detail of ["Omnesis account", "Omnesis relay", "Tailscale", "Tailscale on this computer", "Your own domain", "MCP server"]) {
+        expect(labels()).not.toContain(detail);
+      }
+      expect(host.querySelector(".config-tab.active")?.textContent).toBe("Connectivity");
+      expect(host.querySelector(".remote-access-back")).toBeNull();
+    }
+    for (const tab of ["host-tailscale", "own-address", "mcp"]) {
+      await act(async () => { render(h(SettingsView, { tab }), host); });
+      expect(host.querySelector(".config-tab.active")?.textContent).toBe("Connectivity");
+      expect(host.querySelector(".remote-access-back")?.textContent).toBe("← Connectivity");
+    }
+  });
+
+  test("each detail page shows Connectivity as current, with the way back to it", async () => {
+    const pages = [
+      ["account", { cloudRelay: true }],
+      ["relay", { cloudRelay: true }],
+      ["tailscale", { tailscaleEmbed: true }],
+      ["host-tailscale", {}],
+      ["own-address", {}],
+      ["mcp", {}],
+    ] as const;
+    for (const [tab, flags] of pages) {
+      router.replaceRoute.mockClear();
+      await act(async () => { render(h(SettingsView, { tab, ...flags }), host); });
+      expect(host.querySelector(".config-tab.active")?.textContent).toBe("Connectivity");
+      const back = host.querySelector(".remote-access-back") as HTMLButtonElement;
+      expect(back.textContent).toBe("← Connectivity");
+      await act(async () => { back.click(); });
+      expect(router.replaceRoute).toHaveBeenCalledWith("/portal/settings/connectivity");
+      // The tab itself walks back up from its detail page too.
+      router.replaceRoute.mockClear();
+      const current = host.querySelector(".config-tab.active") as HTMLButtonElement;
+      await act(async () => { current.click(); });
+      expect(router.replaceRoute).toHaveBeenCalledWith("/portal/settings/connectivity");
+    }
+    // A page that needs a feature the gateway lacks lands on Config.
+    for (const [tab, flags] of [["tailscale", { cloudRelay: true }], ["account", { tailscaleEmbed: true }], ["relay", {}]] as const) {
+      await act(async () => { render(h(SettingsView, { tab, ...flags }), host); });
+      expect(host.querySelector(".config-tab.active")?.textContent).toBe("Config");
+      expect(host.querySelector(".remote-access-back")).toBeNull();
+    }
+    // On the Connectivity tab itself, re-selecting the tab stays put.
+    router.replaceRoute.mockClear();
+    await act(async () => { render(h(SettingsView, { tab: "connectivity" }), host); });
+    await act(async () => { (host.querySelector(".config-tab.active") as HTMLButtonElement).click(); });
+    expect(router.replaceRoute).not.toHaveBeenCalled();
   });
 
   test("renders logout in the settings header and invokes the app handler", async () => {
@@ -160,7 +247,7 @@ describe("Settings header actions", () => {
     const labels = [...host.querySelectorAll(".config-tab")].map((tab) => tab.textContent?.trim());
     expect(labels.slice(0, 2)).toEqual(["Config", "Omnesis Lab"]);
     expect(labels).not.toContain("Sweeps");
-    expect(host.querySelector(".config-tab.active")?.textContent).toBe("Omnesis account");
+    expect(host.querySelector(".config-tab.active")?.textContent).toBe("Connectivity");
     for (const tab of ["sweeps", "lab", "account"]) {
       await act(async () => {
         render(h(SettingsView, { ...flags, tab, labAvailable: false, cloudRelay: false }), host);

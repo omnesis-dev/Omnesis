@@ -28,6 +28,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import Database from "better-sqlite3";
 import { describe, test, expect, beforeAll, afterAll } from "vitest";
+import { e2eTsxCommand } from "./gateway-env.js";
 import { SyntheticE2EHarness } from "./synth-harness.js";
 import type { EventTrail } from "@omnesis/core";
 
@@ -218,9 +219,10 @@ describe("Trail graph — attachment + dedup + thread (default universe)", () =>
     delete cliEnv.NODE_TLS_REJECT_UNAUTHORIZED;
     delete cliEnv.NODE_EXTRA_CA_CERTS;
     delete cliEnv.OMNESIS_INSECURE_TLS;
+    const cli = e2eTsxCommand(CLI_ENTRY);
     const { stdout } = await execFileAsync(
-      "npx",
-      ["tsx", CLI_ENTRY, "trail", waDoc!.id, "--json"],
+      cli.command,
+      [...cli.args, "trail", waDoc!.id, "--json"],
       {
         cwd: REPO_ROOT,
         env: cliEnv,

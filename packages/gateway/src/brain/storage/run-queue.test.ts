@@ -33,7 +33,7 @@ import {
 import { getCognitionSpendDayTotal, listCognitionSpend } from "./spend.js";
 
 function testDbPath(): string {
-  return `/tmp/omnesis-test-${randomUUID()}.db`;
+  return fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
 }
 function cleanupDb(path: string): void {
   for (const suffix of ["", "-wal", "-shm", "-journal"]) {
@@ -52,6 +52,8 @@ function schedAt(hours: number): number {
 
 import { getRunAttribution } from "./run-attribution.js";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 describe("Brain run queue", () => {
   let path: string;
@@ -123,6 +125,42 @@ describe("Brain run queue", () => {
       "organization",
       "immediate",
       "soon",
+    ]);
+  });
+
+  test("the morning brief is claimed ahead of an urgent maintenance backlog", () => {
+    for (let index = 0; index < 64; index++) {
+      maintenanceRun(`backlog-${index}`);
+      db.prepare("UPDATE knowledge_batches SET tier=? WHERE run_id=?").run(
+        index % 2 ? "soon" : "immediate",
+        `backlog-${index}`,
+      );
+    }
+    enqueueCognitionRun(
+      db,
+      {
+        id: "source-review",
+        kind: "daily",
+        payload: { sourceId: "src_1", dateFrom: "2026-07-02", dateTo: "2026-07-03" },
+        dedupeKey: dailySourceRunDedupeKey("src_1", "2026-07-03"),
+      },
+      101,
+    );
+    enqueueCognitionRun(
+      db,
+      {
+        id: "brief",
+        kind: "daily",
+        payload: { digest: true, date: "2026-07-03" },
+        dedupeKey: digestRunDedupeKey("2026-07-03"),
+      },
+      101,
+    );
+    enqueueCognitionRun(db, { id: "data", kind: "data", payload: {} }, 101);
+    expect(claimDueCognitionRuns(db, { now: 102, limit: 3 }).map((run) => run.id)).toEqual([
+      "data",
+      "brief",
+      expect.stringMatching(/^backlog-/),
     ]);
   });
 

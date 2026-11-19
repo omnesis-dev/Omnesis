@@ -43,7 +43,7 @@ export function WaitingWork({ status, reason, tier }) {
       <tbody>${summary.waitingGroups.map((row) => html`<tr key=${JSON.stringify([row.reason, row.tier, row.readiness])}>
         <td><${MaintenancePills} tier=${row.tier} reasons=${[row.reason]} /></td>
         <td class="km-input-count">${row.count}</td>
-        <td class="km-readiness">${row.readiness === "pending_content" ? "Awaiting content" : row.readiness === "derivation" ? "Processing document" : row.readiness ? "Awaiting retry" : "Scheduled"}
+        <td class="km-readiness">${row.readiness === "pending_content" ? "Awaiting content" : row.readiness === "derivation" ? "Processing document" : row.readiness === "awaiting_urgency" ? "Awaiting urgency verdict" : row.readiness ? "Awaiting retry" : "Scheduled"}
           ${row.nextDueAt != null && html`<time datetime=${new Date(row.nextDueAt).toISOString()}>Eligible ${timestamp(row.nextDueAt)}</time>`}
         </td>
       </tr><tr class="km-work-explanation"><td colspan="3"><${PendingWorkDetails} key=${JSON.stringify([row.reason, row.tier, row.readiness])} group=${row} /></td></tr>`)}</tbody>

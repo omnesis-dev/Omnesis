@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import type { GatewayLock } from "@omnesis/core";
+import type { GatewayLock, OwnedProcessCleanup, OwnedProcessShutdownFence } from "@omnesis/core";
 import type { HostedProcessLauncher } from "../process-launcher/index.js";
 import type { TlsBundle } from "../tls.js";
 import type { StartupManager } from "./manager.js";
@@ -17,6 +17,10 @@ export interface GatewayBootContext {
   listener: StartupServer;
   startup: StartupManager;
   signal: AbortSignal;
+  ownedProcesses: OwnedProcessShutdownFence;
+  ownCleanup<T extends OwnedProcessCleanup>(participant: T): T;
+  abortStartup(): void;
+  fail(error: unknown): void;
   track<T>(operation: Promise<T>): Promise<T>;
   setShutdown(shutdown: (exitCode?: number) => Promise<void>): void;
 }

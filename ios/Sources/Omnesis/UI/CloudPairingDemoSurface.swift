@@ -55,8 +55,15 @@ struct CloudPairingDemoSurface: View {
                     .environment(AppStore.preview())
             case .devicesAdmin, .devicesReadOnly:
                 NavigationStack {
-                    GatewayPairingRequestsButton(scopes: scenario == .devicesAdmin ? ["read", "admin"] : ["read"], client: approvals)
-                        .navigationTitle("Device access")
+                    GatewayPairingRequestsButton(
+                        kinds: DeviceApprovalKinds(
+                            cloudRelayEnabled: true,
+                            tailscaleEmbed: false,
+                            scopes: scenario == .devicesAdmin ? ["read", "admin"] : ["read"]
+                        ),
+                        client: approvals
+                    )
+                    .navigationTitle("Device access")
                 }.environment(AppStore.preview())
             case .status:
                 ScrollView {
@@ -106,6 +113,8 @@ struct CloudPairingDemoSurface: View {
                 }
             }
         }
+        // Logs the scene's taps and cancels chosen ones when a UI test asks.
+        .automationTouchLog()
     }
 
     private func row(_ name: String, path: String?, revoked: Bool = false) -> DeviceRecord {

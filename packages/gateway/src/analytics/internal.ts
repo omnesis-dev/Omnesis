@@ -142,7 +142,10 @@ function utcInstantFromMicros(value: DuckDBTimestampTZValue): string {
  */
 export function convertDuckDBValue(val: unknown): unknown {
   if (val === null || val === undefined) return val;
-  if (typeof val === "bigint") return Number(val);
+  if (typeof val === "bigint") {
+    const number = Number(val);
+    return Number.isSafeInteger(number) ? number : String(val);
+  }
   if (typeof val !== "object") return val;
   if (val instanceof Date) return val.toISOString();
   if (val instanceof DuckDBTimestampTZValue) return utcInstantFromMicros(val);

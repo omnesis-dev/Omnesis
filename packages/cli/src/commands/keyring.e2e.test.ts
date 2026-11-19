@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { createRequire } from "node:module";
+import { pathToFileURL } from "node:url";
 import { execFile } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -14,6 +16,7 @@ import {
 } from "@omnesis/core";
 
 const execFileAsync = promisify(execFile);
+const TSX_ENTRY = pathToFileURL(createRequire(import.meta.url).resolve("tsx")).href;
 const REPO_ROOT = join(import.meta.dirname, "../../../..");
 const CLI_ENTRY = "packages/cli/src/index.ts";
 const CLI_TIMEOUT_MS = 30_000;
@@ -110,7 +113,7 @@ describe("keyring CLI process coverage", () => {
   test("no-keyring Linux state reports unavailable without blocking status", async () => {
     const configDir = tmp("omnesis-keyring-e2e-none-");
     const fake = fakeBinDir({
-      "secret-tool": "#!/bin/sh\nexit 127\n",
+      "secret-tool": "process.exit(127);\n",
     });
     const env = cliEnv(configDir, fake, { OMNESIS_SECRET_STORE: "secret-service" });
 
@@ -203,10 +206,29 @@ describe("keyring CLI process coverage", () => {
 function fakeBinDir(scripts: Record<string, string>): string {
   const dir = tmp("omnesis-keyring-e2e-bin-");
   for (const [name, content] of Object.entries(scripts)) {
-    const path = join(dir, name);
-    writeFileSync(path, content);
-    chmodSync(path, 0o755);
+    writeFileSync(join(dir, `${name}.cjs`), content);
   }
+  // Replace only the executable boundary, retaining the real secret-store
+  // protocols and CLI process. Node fixtures work without an OS shell.
+  writeFileSync(
+    join(dir, "fixture-loader.mjs"),
+    `
+import childProcess from 'node:child_process';
+import { syncBuiltinESMExports } from 'node:module';
+import { join } from 'node:path';
+const fixtures = new Set(${JSON.stringify(Object.keys(scripts))});
+const directory = ${JSON.stringify(dir)};
+for (const method of ['spawn', 'spawnSync']) {
+  const native = childProcess[method];
+  childProcess[method] = function(command, args, options) {
+    return fixtures.has(command)
+      ? native(process.execPath, [join(directory, command + '.cjs'), ...args], options)
+      : native(command, args, options);
+  };
+}
+syncBuiltinESMExports();
+`,
+  );
   return dir;
 }
 
@@ -221,7 +243,7 @@ function cliEnv(
     OMNESIS_CONFIG_DIR: configDir,
     NO_COLOR: "1",
     CI: "1",
-    PATH: fakeBin ? `${fakeBin}:${process.env.PATH ?? ""}` : process.env.PATH,
+    OMNESIS_KEYRING_TEST_FIXTURES: fakeBin ?? undefined,
   };
 }
 
@@ -238,12 +260,22 @@ async function runCli(args: string[], env: NodeJS.ProcessEnv): Promise<CliResult
 }
 
 async function execCli(args: string[], env: NodeJS.ProcessEnv): Promise<CliResult> {
-  const { stdout, stderr } = await execFileAsync("npx", ["tsx", CLI_ENTRY, ...args], {
-    cwd: REPO_ROOT,
-    env,
-    timeout: CLI_TIMEOUT_MS,
-    maxBuffer: 4 * 1024 * 1024,
-  });
+  const fixtureImports = env.OMNESIS_KEYRING_TEST_FIXTURES
+    ? [
+        "--import",
+        pathToFileURL(join(env.OMNESIS_KEYRING_TEST_FIXTURES, "fixture-loader.mjs")).href,
+      ]
+    : [];
+  const { stdout, stderr } = await execFileAsync(
+    process.execPath,
+    ["--import", TSX_ENTRY, ...fixtureImports, CLI_ENTRY, ...args],
+    {
+      cwd: REPO_ROOT,
+      env,
+      timeout: CLI_TIMEOUT_MS,
+      maxBuffer: 4 * 1024 * 1024,
+    },
+  );
   return { stdout, stderr, exitCode: 0 };
 }
 
@@ -257,97 +289,55 @@ function errToCliResult(err: unknown): CliResult {
 }
 
 function fakeSecurityScript(): string {
-  return `#!/bin/sh
-set -eu
-store="\${FAKE_SECRET_STORE:?}"
-cmd="\${1:-}"
-if [ "$cmd" = "-h" ]; then exit 0; fi
-account=""
-service=""
-value=""
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    -a) account="$2"; shift 2 ;;
-    -s) service="$2"; shift 2 ;;
-    -w)
-      if [ "$cmd" = "add-generic-password" ]; then value="$2"; shift 2; else shift 1; fi ;;
-    *) shift 1 ;;
-  esac
-done
-file="$store/$service.$account"
-case "$cmd" in
-  find-generic-password)
-    [ -f "$file" ] || exit 44
-    cat "$file"
-    ;;
-  add-generic-password)
-    mkdir -p "$store"
-    printf "%s" "$value" > "$file"
-    ;;
-  delete-generic-password)
-    rm -f "$file"
-    ;;
-  *)
-    exit 2
-    ;;
-esac
+  return `const fs = require('node:fs'), path = require('node:path');
+const [command, ...args] = process.argv.slice(2);
+if (command === '-h') process.exit(0);
+let account = '', service = '', value = '';
+for (let i = 0; i < args.length; i++) {
+  if (args[i] === '-a') account = args[++i];
+  else if (args[i] === '-s') service = args[++i];
+  else if (args[i] === '-w' && command === 'add-generic-password') value = args[++i];
+}
+const root = process.env.FAKE_SECRET_STORE;
+const file = path.join(root, service + '.' + account);
+if (command === 'find-generic-password') {
+  if (!fs.existsSync(file)) process.exit(44);
+  process.stdout.write(fs.readFileSync(file));
+} else if (command === 'add-generic-password') {
+  fs.mkdirSync(root, { recursive: true }); fs.writeFileSync(file, value);
+} else if (command === 'delete-generic-password') fs.rmSync(file, { force: true });
+else process.exit(2);
 `;
 }
 
 function fakeSecretToolScript(): string {
-  return `#!/bin/sh
-set -eu
-store="\${FAKE_SECRET_STORE:?}"
-cmd="\${1:-}"
-shift || true
-account=""
-service=""
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    --collection=login) shift 1 ;;
-    --label) shift 2 ;;
-    service) service="$2"; shift 2 ;;
-    account) account="$2"; shift 2 ;;
-    *) shift 1 ;;
-  esac
-done
-file="$store/$service.$account"
-case "$cmd" in
-  lookup)
-    if [ "$account" = "__omnesis_status_probe__" ]; then exit 0; fi
-    [ -f "$file" ] || exit 1
-    cat "$file"
-    ;;
-  store)
-    mkdir -p "$store"
-    cat > "$file"
-    ;;
-  clear)
-    rm -f "$file"
-    ;;
-  *)
-    exit 2
-    ;;
-esac
+  return `const fs = require('node:fs'), path = require('node:path');
+const [command, ...args] = process.argv.slice(2);
+let account = '', service = '';
+for (let i = 0; i < args.length; i++) {
+  if (args[i] === '--label') i++;
+  else if (args[i] === 'service') service = args[++i];
+  else if (args[i] === 'account') account = args[++i];
+}
+const root = process.env.FAKE_SECRET_STORE;
+const file = path.join(root, service + '.' + account);
+if (command === 'lookup') {
+  if (account === '__omnesis_status_probe__') process.exit(0);
+  if (!fs.existsSync(file)) process.exit(1);
+  process.stdout.write(fs.readFileSync(file));
+} else if (command === 'store') {
+  fs.mkdirSync(root, { recursive: true }); fs.writeFileSync(file, fs.readFileSync(0));
+} else if (command === 'clear') fs.rmSync(file, { force: true });
+else process.exit(2);
 `;
 }
 
 function fakeBusctlScript(): string {
-  return `#!/bin/sh
-set -eu
-args="$*"
-if echo "$args" | grep -q "Collections"; then
-  if [ "\${FAKE_SECRET_COLLECTIONS:-login}" = "login" ]; then
-    echo 'ao 1 "/org/freedesktop/secrets/collection/login"'
-  else
-    echo 'ao 1 "/org/freedesktop/secrets/collection/session"'
-  fi
-  exit 0
-fi
-if echo "$args" | grep -q "Locked"; then
-  if [ "\${FAKE_SECRET_LOGIN_LOCKED:-false}" = "true" ]; then echo "b true"; else echo "b false"; fi
-  exit 0
-fi
-exit 2
+  return `const args = process.argv.slice(2);
+if (args.includes('Collections')) {
+  const collection = process.env.FAKE_SECRET_COLLECTIONS === 'session' ? 'session' : 'login';
+  process.stdout.write('ao 1 "/org/freedesktop/secrets/collection/' + collection + '"');
+} else if (args.includes('Locked')) process.stdout.write('b ' + (process.env.FAKE_SECRET_LOGIN_LOCKED === 'true' ? 'true' : 'false'));
+else process.exit(2);
 `;
 }

@@ -18,6 +18,8 @@ import {
   oldestPendingDerivationMs,
 } from "./DocumentDerivation.js";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 type Db = Database.Database;
 
@@ -28,7 +30,7 @@ describe("document derivation", () => {
   let db: Db;
 
   beforeEach(() => {
-    dbPath = `/tmp/omnesis-test-${randomUUID()}.db`;
+    dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
     db = createDatabase(dbPath);
   });
 

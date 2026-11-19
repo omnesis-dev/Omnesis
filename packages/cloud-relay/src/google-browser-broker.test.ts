@@ -191,22 +191,31 @@ test("browser launch/callback checks cannot be bypassed with a result handle, an
   expect(() => f.broker.launch(pending.input.operationId, "bad")).toThrow("launch");
   const launched = f.broker.launch(pending.input.operationId, ticket),
     callback = f.providerCallback(launched.authorizeUrl);
-  expect(() => f.broker.launch(pending.input.operationId, ticket)).toThrow("launch");
+  // Another browser can't take the operation over, and looking at the link changes nothing (F43).
+  expect(() => f.broker.launch(pending.input.operationId, ticket)).toThrow("another browser");
+  expect(f.broker.peekLaunch(pending.input.operationId, ticket, "")).toEqual({ state: "taken" });
+  // The browser that pressed Continue may press it again and go back to Google.
+  expect(
+    f.broker.launch(pending.input.operationId, ticket, launched.cookie!.split(";")[0]!),
+  ).toEqual({ authorizeUrl: launched.authorizeUrl });
+  expect(
+    f.broker.peekLaunch(pending.input.operationId, ticket, launched.cookie!.split(";")[0]!),
+  ).toEqual({ state: "here", location: launched.authorizeUrl });
   for (const cookies of [
     "",
     "unrelated=x",
-    launched.cookie.replace(/=[^;]+;/, "=wrong;"),
-    launched.cookie + ";" + launched.cookie,
+    launched.cookie!.replace(/=[^;]+;/, "=wrong;"),
+    launched.cookie! + ";" + launched.cookie!,
   ])
     await expect(f.broker.callback(callback, cookies)).rejects.toThrow("browser state");
   const duplicate = new URL(callback);
   duplicate.searchParams.append("state", duplicate.searchParams.get("state")!);
-  await expect(f.broker.callback(duplicate, launched.cookie)).rejects.toThrow("callback");
+  await expect(f.broker.callback(duplicate, launched.cookie!)).rejects.toThrow("callback");
   const wrong = new URL(callback);
   wrong.searchParams.set("state", "wrong");
-  await expect(f.broker.callback(wrong, launched.cookie)).rejects.toThrow("callback");
-  const result = await f.broker.callback(callback, launched.cookie);
-  await expect(f.broker.callback(callback, launched.cookie)).rejects.toThrow("callback");
+  await expect(f.broker.callback(wrong, launched.cookie!)).rejects.toThrow("callback");
+  const result = await f.broker.callback(callback, launched.cookie!);
+  await expect(f.broker.callback(callback, launched.cookie!)).rejects.toThrow("callback");
   const redemption = {
     operationId: pending.input.operationId,
     result: new URL(result.redirectUrl).searchParams.get("brokerResult")!,

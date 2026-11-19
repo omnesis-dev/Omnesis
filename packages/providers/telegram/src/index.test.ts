@@ -37,10 +37,10 @@ import type { SourceInstance } from "@omnesis/source-sdk";
 describe("the Telegram descriptor", () => {
   const source = telegram.sources[0]!;
 
-  it("is one experimental, exclusive provider with the operator's own app credential", () => {
+  it("is one generally available, exclusive provider with the operator's own app credential", () => {
     expect(telegram.type).toBe("provider");
     expect(telegram.provider).toEqual({ id: "telegram", name: "Telegram" });
-    expect(telegram.experimental).toBe(true);
+    expect(telegram.experimental).toBeFalsy();
     expect(telegram.multiDevice).toEqual({ mode: "exclusive" });
     expect(telegram.authType).toBe("qr");
     expect(telegram.credentials).toBe(telegramCredentialsSpec);

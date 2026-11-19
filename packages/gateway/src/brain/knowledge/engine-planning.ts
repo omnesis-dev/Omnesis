@@ -17,13 +17,18 @@ import { knowledgeSourceReadiness } from "./engine-readiness.js";
 import {
   scheduleKnowledgeChange,
   planMaintenanceGroups,
+  packMaintenanceGroups,
   MaintenancePlanLimitError,
   type MaintenanceAdjacency,
   type MaintenanceGroup,
   type MaintenanceSeed,
 } from "./planner.js";
 import { KnowledgeStorageError } from "./types.js";
-import type { KnowledgeFrontierInput, KnowledgeWork } from "./work.js";
+import {
+  KNOWLEDGE_AWAITING_URGENCY,
+  type KnowledgeFrontierInput,
+  type KnowledgeWork,
+} from "./work.js";
 import type { KnowledgeEngineDeps } from "./engine.js";
 
 interface PlanningContext {
@@ -42,6 +47,13 @@ const target = (item: KnowledgeWork) =>
 
 /** Planning and late admission share the same durable component reservations. */
 export class KnowledgeBatchPlanner {
+  /**
+   * When work awaiting an urgency verdict is next judged again. A judgement
+   * that comes back empty means the decision model is still unavailable, so
+   * the rest waits a soon delay instead of asking it again every tick. In
+   * memory: a restart asks once more.
+   */
+  private urgencyRetryAt = 0;
   constructor(private readonly context: PlanningContext) {}
   async plan(): Promise<number> {
     const cfg = this.context.deps.getSettings().knowledge;
@@ -57,14 +69,22 @@ export class KnowledgeBatchPlanner {
       work = await reads.knowledgePlanningWork(workWindow);
     }
     // Classify only settled evidence, before deciding whether its tier is due.
-    // Held work starts in the latest tier so an urgency verdict can promote it.
+    // Held work starts in the latest tier so an urgency verdict can promote it;
+    // so does work scheduled while no verdict was available, judged again
+    // while the decision model answers.
+    const rejudge =
+      !!this.context.deps.decisions.getDecision?.() &&
+      this.context.deps.clock() >= this.urgencyRetryAt;
     for (const item of work
       .filter(
         (item) =>
           item.subjectKind === "source" &&
-          ["pending_content", "derivation"].includes(item.lastError ?? ""),
+          (["pending_content", "derivation"].includes(item.lastError ?? "") ||
+            (rejudge && item.lastError === KNOWLEDGE_AWAITING_URGENCY)),
       )
       .slice(0, cfg.discoveryBatchSize)) {
+      const awaiting = item.lastError === KNOWLEDGE_AWAITING_URGENCY;
+      if (awaiting && this.context.deps.clock() < this.urgencyRetryAt) continue;
       if (!knowledgeSourceReadiness(this.context.deps, item.subjectId, item.inputChangedAt).ready)
         continue;
       const now = this.context.deps.clock();
@@ -118,6 +138,11 @@ export class KnowledgeBatchPlanner {
             : {}),
         },
       );
+      if (awaiting && score === null) {
+        // Still no verdict: the work keeps its routine schedule and its mark.
+        this.urgencyRetryAt = now + cfg.soonDelayMs;
+        continue;
+      }
       try {
         await this.context.deps.writeGate["knowledge.enqueue"](
           {
@@ -126,6 +151,7 @@ export class KnowledgeBatchPlanner {
             ...(decisionId
               ? { urgencyDecision: { id: decisionId, anchorAt: item.createdAt } }
               : {}),
+            ...(score === null ? { readinessReason: KNOWLEDGE_AWAITING_URGENCY } : {}),
           },
           now,
         );
@@ -170,9 +196,39 @@ export class KnowledgeBatchPlanner {
     }
     const initialRoot = this.context.initialRoot();
     let enqueued = 0;
-    for (const group of groups)
-      if (await this.admit(group, group.seeds.slice(0, cfg.maxSeeds), byId, initialRoot))
-        enqueued++;
+    // Unrelated routine source changes share a run, up to `maxSeeds` sources
+    // and one seed's region bound, instead of paying a run's fixed prompt
+    // each. Urgent tiers, node work, retries (excluded above), work not yet
+    // due or ready, and regions an active batch holds keep their own batches.
+    const reserved = this.context.deps.db.prepare(
+      "SELECT 1 FROM knowledge_batch_regions r JOIN knowledge_batches b ON b.id=r.batch_id WHERE r.node_id=? AND b.status NOT IN ('completed','abandoned') LIMIT 1",
+    );
+    const now = this.context.deps.clock();
+    const packed = packMaintenanceGroups(
+      groups,
+      (group) =>
+        group.tier === "routine" &&
+        group.dueAt <= now &&
+        group.seeds.every((seed) => {
+          const item = byId.get(seed.id)!;
+          return (
+            item.subjectKind === "source" &&
+            item.failures === 0 &&
+            knowledgeSourceReadiness(this.context.deps, item.subjectId, item.inputChangedAt).ready
+          );
+        }) &&
+        !group.nodes.some((node) => reserved.get(node)),
+      { maxSeeds: cfg.maxSeeds, maxNodes: cfg.maxVisitedPerSeed },
+    );
+    for (const group of packed) {
+      if (!(await this.admit(group, group.seeds.slice(0, cfg.maxSeeds), byId, initialRoot)))
+        continue;
+      enqueued++;
+      if (!groups.includes(group))
+        this.context.deps.log.info(
+          `Packed ${group.seeds.length} unrelated routine source changes into one maintenance batch`,
+        );
+    }
     for (const item of work) {
       if (item.failures === 0 || item.dueAt > this.context.deps.clock()) continue;
       let solo: ReturnType<typeof planMaintenanceGroups>[number] | undefined;

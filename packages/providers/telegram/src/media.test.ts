@@ -340,13 +340,15 @@ describe("the media lifecycle", () => {
       { extractAttachment: echoExtractor() },
     );
     r.sim.floodWait("download", 300);
+    // The sync reads the clock while it runs, so the earliest retry it can record is this second plus the wait.
+    const beforeSync = Math.floor(Date.now() / 1000);
     const boot = await syncAll(r.source, null);
     expect(downloads(r)).toBe(1);
     const archive = r.provider.getArchive();
     expect(archive.mediaFloodUntil()).toBeGreaterThan(Date.now() / 1000 + 250);
     const flooded = archive.getMessages(CHAT.id, [1]).get(1)!;
     expect(flooded.mediaState).toBe("pending");
-    expect(flooded.mediaNextAttempt).toBeGreaterThanOrEqual(Math.floor(Date.now() / 1000) + 300);
+    expect(flooded.mediaNextAttempt).toBeGreaterThanOrEqual(beforeSync + 300);
     // The other download was not even tried, and is not counted against it.
     expect(archive.getMessages(CHAT.id, [2]).get(2)).toMatchObject({
       mediaState: "pending",

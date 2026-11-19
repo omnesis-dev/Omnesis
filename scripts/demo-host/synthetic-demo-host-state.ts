@@ -1,21 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import {
-  closeSync,
-  constants,
-  fstatSync,
-  fsyncSync,
-  lstatSync,
-  mkdirSync,
-  openSync,
-  readSync,
-  renameSync,
-  unlinkSync,
-  writeFileSync,
-} from "node:fs";
+import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { randomUUID } from "node:crypto";
+import { atomicWriteFileSync, readWindowsPrivateFileSync } from "@omnesis/core";
+import { secureWindowsPrivatePathSync } from "@omnesis/platform/windows-private-file";
 import { z } from "zod";
 
 const MAX_PAIRING_BYTES = 64 * 1024;
@@ -45,10 +34,12 @@ function requireDirectory(path: string, create = false): void {
   const stat = statIfPresent(path);
   if (!stat && create) {
     mkdirSync(path, { mode: 0o700 });
+    if (process.platform === "win32") secureWindowsPrivatePathSync(path, "directory");
     return;
   }
   if (!stat?.isDirectory() || stat.isSymbolicLink())
     throw new Error("Demo host state requires owned directories without symlinks");
+  if (create && process.platform === "win32") secureWindowsPrivatePathSync(path, "directory");
 }
 
 function requirePairingLeaf(path: string): void {
@@ -63,8 +54,30 @@ function parsePairing(value: unknown): DemoPairingState {
   return parsed.data;
 }
 
+function parsePairingJson(bytes: Buffer): DemoPairingState {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(bytes.toString("utf8")) as unknown;
+  } catch {
+    throw new Error("Invalid demo pairing JSON");
+  }
+  return parsePairing(raw);
+}
+
 function readPairing(path: string): DemoPairingState | undefined {
   requirePairingLeaf(path);
+  if (process.platform === "win32") {
+    let bytes: Buffer;
+    try {
+      bytes = readWindowsPrivateFileSync(path, MAX_PAIRING_BYTES);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+      throw new Error("Demo pairing state must be a bounded private regular file", {
+        cause: error,
+      });
+    }
+    return parsePairingJson(bytes);
+  }
   let fd: number;
   try {
     fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
@@ -84,13 +97,7 @@ function readPairing(path: string): DemoPairingState | undefined {
       length += count;
     }
     if (length !== stat.size) throw new Error("Demo pairing state changed while reading");
-    let raw: unknown;
-    try {
-      raw = JSON.parse(data.subarray(0, length).toString("utf8")) as unknown;
-    } catch {
-      throw new Error("Invalid demo pairing JSON");
-    }
-    return parsePairing(raw);
+    return parsePairingJson(data.subarray(0, length));
   } finally {
     closeSync(fd);
   }
@@ -128,26 +135,8 @@ export function prepareDemoHostStates(
           encoded = JSON.stringify(parsed);
         if (Buffer.byteLength(encoded) > MAX_PAIRING_BYTES)
           throw new Error("Demo pairing state exceeds its byte limit");
-        const temporary = join(dir, `.pairing-${randomUUID()}.tmp`);
-        const fd = openSync(
-          temporary,
-          constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
-          0o600,
-        );
-        try {
-          try {
-            if (!fstatSync(fd).isFile())
-              throw new Error("Demo pairing temporary state must be a regular file");
-            writeFileSync(fd, encoded);
-            fsyncSync(fd);
-          } finally {
-            closeSync(fd);
-          }
-          requirePairingLeaf(path);
-          renameSync(temporary, path);
-        } finally {
-          if (statIfPresent(temporary)) unlinkSync(temporary);
-        }
+        requirePairingLeaf(path);
+        atomicWriteFileSync(path, encoded, { mode: 0o600 });
         return parsed;
       },
     });

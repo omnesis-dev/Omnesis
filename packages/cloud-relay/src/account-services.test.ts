@@ -31,6 +31,7 @@ test("fresh provider login migrates only independently available gateway associa
       sessions,
       configuration: {},
       admission: new LoginAdmission(),
+      ownerAdmission: new LoginAdmission(),
       google: {
         verify: async () => ({
           issuer: "https://accounts.google.com",
@@ -53,6 +54,8 @@ test("fresh provider login migrates only independently available gateway associa
       currentOwner: () => undefined,
       deleteAccount: () => {},
       deleteGateway: () => {},
+      removeGateway: () => {},
+      gatewayOnline: () => false,
       authenticateOwner: async () => {
         throw new RelayError(401, "Synthetic unauthorized owner");
       },
@@ -179,11 +182,14 @@ test("legacy account admission skips revoked, spent and untrusted registrations 
       sessions,
       configuration: {},
       admission: new LoginAdmission(),
+      ownerAdmission: new LoginAdmission(),
       google: { verify: async () => identity },
       gatewayAccounts: () => [],
       gatewayBinding: () => undefined,
       deleteAccount: () => {},
       deleteGateway: () => {},
+      removeGateway: () => {},
+      gatewayOnline: () => false,
       currentOwner: (id) => {
         if (id === first.ownerAccountId) {
           if (mode === "revoked") throw new RelayError(403, "Revoked registration");

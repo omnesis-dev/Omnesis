@@ -7,6 +7,9 @@ public struct AccountGatewayChoice: Codable, Sendable, Equatable, Identifiable {
     public let gatewayId: String
     public let publicOrigin: String
     public let displayName: String?
+    /// The relay holds a live tunnel for this gateway right now. A display hint only: it never
+    /// changes what can be chosen.
+    public let online: Bool
     public var id: String {
         gatewayId
     }
@@ -111,6 +114,7 @@ public actor AccountCloudPairingClient {
     private let gatewayFactory: any CloudPairingLeafTransportFactory
     private let loadDeviceKey: @Sendable () throws -> any DeviceEnrollmentSigning
     private let checksPublicCertificate: Bool
+    private let trustedGatewayKeys: @Sendable () -> Set<String>
     private let now: @Sendable () -> TimeInterval
     private let verifier: String
     private var stage = Stage.new
@@ -138,6 +142,7 @@ public actor AccountCloudPairingClient {
         gatewayFactory: any CloudPairingLeafTransportFactory = CloudPairingHTTPFactory(),
         deviceKey: @escaping @Sendable () throws -> any DeviceEnrollmentSigning = { try DeviceEnrollmentKey.loadOrCreate() },
         checksPublicCertificate: Bool = true,
+        trustedGatewayKeys: @escaping @Sendable () -> Set<String> = { [] },
         now: @escaping @Sendable () -> TimeInterval = { Date().timeIntervalSince1970 }
     ) throws {
         origin = try Self.exactOrigin(relayOrigin.absoluteString)
@@ -146,6 +151,7 @@ public actor AccountCloudPairingClient {
         self.gatewayFactory = gatewayFactory
         loadDeviceKey = deviceKey
         self.checksPublicCertificate = checksPublicCertificate
+        self.trustedGatewayKeys = trustedGatewayKeys
         self.now = now
         let bytes = try cloudSecureRandomBytes()
         let base64 = bytes.base64EncodedString()
@@ -234,6 +240,7 @@ public actor AccountCloudPairingClient {
         guard Self.opaque(value.ceremonyId), options.rpId == origin.host, Self.opaque(options.challenge),
               options.userVerification == "required", Self.opaque(value.salt),
               value.issuedAt.range(of: "^[1-9][0-9]{9,10}$", options: .regularExpression) != nil,
+              Self.fresh(value.issuedAt, now: now()),
               try options.challenge == DeviceEnrollmentContract.passkeyProofChallenge(
                   salt: value.salt,
                   issuedAt: value.issuedAt,
@@ -282,10 +289,16 @@ public actor AccountCloudPairingClient {
         discovery = session
         var all: [AccountGatewayChoice] = [], cursor: String?
         repeat {
-            let page: Directory = try await request(
-                "/_relay/v3/gateways" + (cursor.map { "?after=\($0)" } ?? ""),
-                bearer: session.discoveryToken
-            )
+            let page: Directory
+            do {
+                page = try await request(
+                    "/_relay/v3/gateways" + (cursor.map { "?after=\($0)" } ?? ""),
+                    bearer: session.discoveryToken
+                )
+            } catch is DecodingError {
+                // An entry missing a required field, such as `online`, is as malformed as one with a bad identifier.
+                throw AccountPairingError.response
+            }
             guard page.gateways.count <= 50 else { throw AccountPairingError.response }
             for choice in page.gateways {
                 guard Self.uuid(choice.gatewayId), try Self.exactOrigin(choice.publicOrigin).absoluteString == choice.publicOrigin,
@@ -409,6 +422,15 @@ public actor AccountCloudPairingClient {
         return try JSONDecoder().decode(T.self, from: data)
     }
 
+    /// The relay picks the time the passkey signs over. One far from this device's clock would let a
+    /// signature made now pass as fresh later, so it must be within a minute either way.
+    private static func fresh(_ issuedAt: String, now: TimeInterval) -> Bool {
+        guard let seconds = TimeInterval(issuedAt) else { return false }
+        return abs(seconds - now) <= passkeyClockSkew
+    }
+
+    static let passkeyClockSkew: TimeInterval = 60
+
     private static func opaque(_ value: String) -> Bool {
         value.range(of: "^[A-Za-z0-9_-]{43}$", options: .regularExpression) != nil
     }
@@ -509,7 +531,7 @@ extension AccountCloudPairingClient {
             challenge: issued,
             devicePublicKey: deviceKey.publicKey
         )
-        let requireApproval = needsApproval(pinned, origin: value.origin)
+        let requireApproval = needsApproval(pinned, value)
         struct DeviceKey: Encodable { let publicKey: String
             let challenge: String
             let signature: String
@@ -555,10 +577,20 @@ extension AccountCloudPairingClient {
         }
     }
 
-    /// Unverifiable first contact falls back to the human comparison; it never stops pairing.
-    private func needsApproval(_ pinned: any CloudPairingTransport, origin: URL) -> Bool {
+    /// Whether this device cannot tell, without the relay, that it reached the owner's own gateway
+    /// (F6). Unverifiable first contact falls back to the human comparison; it never stops pairing.
+    ///
+    /// The relay chooses which gateway a sign-in is sent to. A hacked relay can list a gateway of its
+    /// own, under any name with a valid public certificate, including a name of its own under the
+    /// relay's domain, and that gateway would approve this device. Nothing in the sign-in names the
+    /// owner's gateway, so a valid certificate proves only that the address is the one listed. Only a
+    /// key this install already trusts does: then the gateway decides as usual. Otherwise the device
+    /// asks to be held, and a person compares the code on a device they already use.
+    private func needsApproval(_ pinned: any CloudPairingTransport, _ value: CloudPairingConfirmation) -> Bool {
+        let trusted = Set(trustedGatewayKeys().map { $0.lowercased() })
+        guard trusted.contains(value.spkiFingerprint.lowercased()) else { return true }
         guard checksPublicCertificate else { return false }
-        guard let host = origin.host, let reporter = pinned as? any CloudPairingPublicCertificateReporting else { return true }
+        guard let host = value.origin.host, let reporter = pinned as? any CloudPairingPublicCertificateReporting else { return true }
         return !reporter.publicCertificateVerified(host: host)
     }
 
@@ -578,4 +610,70 @@ extension AccountCloudPairingClient {
         .notConnectedToInternet, .networkConnectionLost, .timedOut, .cannotConnectToHost,
         .cannotFindHost, .dnsLookupFailed, .secureConnectionFailed,
     ]
+}
+
+// MARK: - Approving a held request on the gateway's own page
+
+extension AccountCloudPairingClient {
+    /// The page on which the owner approves this held request with their passkey, when the gateway
+    /// offers one. A sign-in made in this app presents the relay's own origin, so the gateway holds
+    /// it; only an assertion made on the gateway's own page can approve it.
+    ///
+    /// The gateway says where that page is, over the connection pinned to its key, and whether
+    /// approving there can work at all: `passkeyApproval` is true only once the owner confirmed a
+    /// passkey on the gateway and no security lock is on. An owner with no confirmed passkey (a
+    /// Google-only account) would only be refused there, and a gateway that predates the field
+    /// says nothing, so both leave approval to a device the owner already uses. The page is used
+    /// only when it is that same gateway's origin, under the relay's passkey domain and never the
+    /// relay's own host. The poll still decides when the device is approved.
+    ///
+    /// Only a gateway this device verified without the relay offers its page (F6). A gateway the relay
+    /// merely listed could be a stand-in serving its own page, where approving and comparing the code
+    /// prove nothing, so the owner approves on a device they already use instead.
+    public func approvalPage() async throws -> URL? {
+        try checkOpen()
+        guard stage == .pairing, let value = pending, !value.approved, !value.joinedAutomatically,
+              value.gatewayVerified, let gateway else { return nil }
+        struct Passkey: Decodable { let rpId: String
+            let origin: String
+        }
+        struct Config: Decodable { let gatewayPasskey: Passkey?
+            let passkeyApproval: Bool?
+        }
+        let data = try await gateway.requestData(
+            url: value.origin.appendingPathComponent("devices/account/config"),
+            method: "GET",
+            body: nil,
+            bearer: nil,
+            form: false
+        )
+        try checkOpen()
+        guard data.count <= 65536 else { throw AccountPairingError.response }
+        let config = try JSONDecoder().decode(Config.self, from: data)
+        guard config.passkeyApproval == true, let advertised = config.gatewayPasskey else { return nil }
+        return Self.approvalPage(
+            origin: advertised.origin,
+            rpId: advertised.rpId,
+            gateway: value.origin,
+            relay: origin,
+            requestId: value.challenge.requestId
+        )
+    }
+
+    /// `${origin}/portal/approve#<requestId>`, when `origin` is the pinned gateway's own and a name
+    /// under the relay's host, which is the RP ID the owner's passkey belongs to.
+    static func approvalPage(origin advertised: String, rpId: String, gateway: URL, relay: URL, requestId: String) -> URL? {
+        guard let page = try? exactOrigin(advertised), let host = page.host?.lowercased(),
+              let relayHost = relay.host?.lowercased(), rpId.lowercased() == relayHost,
+              host.hasSuffix("." + relayHost), host == gateway.host?.lowercased(),
+              (page.port ?? 443) == (gateway.port ?? 443), gateway.scheme == "https", uuid(requestId)
+        else { return nil }
+        var parts = URLComponents()
+        parts.scheme = "https"
+        parts.host = host
+        parts.port = page.port
+        parts.path = "/portal/approve"
+        parts.fragment = requestId
+        return parts.url
+    }
 }

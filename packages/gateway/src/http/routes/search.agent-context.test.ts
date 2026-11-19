@@ -19,6 +19,8 @@ import type { SearchPort, SearchPortInput } from "@omnesis/agent";
 import type { AppEnv, AuthContext } from "./types.js";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 const PATH = "/admin/search/agent-context";
 const provenance: SearchProvenance = {
@@ -48,7 +50,7 @@ const hit = {
 let db: Database.Database;
 let dbPath: string;
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-test-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
   db = createDatabase(dbPath);
 });
 afterEach(() => {

@@ -7,6 +7,8 @@
         "scripts/release/*.mjs",
         "scripts/site/*.mjs",
         "scripts/install-e2e/cli-trace.cjs",
+        "scripts/tailnet-helper/*.mjs",
+        "scripts/tailnet-test/*.mjs",
         "scripts/blog/*.{mjs,ts}",
         "bench/*.ts",
         "evals/universes/*/_build/*.mjs",
@@ -59,7 +61,8 @@
         "portal/vendor/*.js",
         "scripts/*.mjs"
       ],
-      "project": ["src/**/*.ts", "portal/js/**/*.js", "portal/vendor/**/*.js"]
+      "project": ["src/**/*.ts", "portal/js/**/*.js", "portal/vendor/**/*.js"],
+      "ignoreDependencies": ["snowball-stemmers"]
     },
     "packages/collector": {
       "entry": [
@@ -171,13 +174,17 @@
         "src/chrome/content.ts",
         "src/**/*.test.ts"
       ]
+    },
+    "packages/platform": {
+      "entry": ["src/**/*.test.ts"]
     }
   },
   "ignore": [
     "website/**",
     ".claude/**",
     "integrations/**",
-    "extension/scripts/test-manifest.d.mts"
+    "extension/scripts/test-manifest.d.mts",
+    "scripts/lib/check-process.d.mts"
   ],
   "rules": {
     "files": "error",

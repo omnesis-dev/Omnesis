@@ -3,19 +3,19 @@
 
 /** Real third-party loader checks for the nightly harness conformance lanes. */
 
-import { execFile, spawn, type ChildProcess } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, rmSync } from "node:fs";
 import { createServer } from "node:net";
-import { dirname, isAbsolute, join } from "node:path";
-import { promisify } from "node:util";
+import { delimiter, dirname, isAbsolute, join } from "node:path";
 
-import { FORWARDED_TOOL_NAMES } from "@omnesis/agent-integration";
+import { FORWARDED_TOOL_NAMES, resolveHarnessCommand } from "@omnesis/agent-integration";
+import { ownedProcessCleanupReceipt, windowsEnvironmentValue } from "@omnesis/core";
+import { execE2EBufferedCommand } from "./e2e-buffered-command.js";
+import { runEnrollmentTerminal } from "./enrollment-terminal-fixture.js";
 
 import { gatewayBootBudgetMs } from "./gateway-env.js";
 import { killSubprocessGroup, registerSubprocessGroup } from "./subprocess-reaper.js";
 import type { ManagedHarness } from "./managed-integration-enrollment.js";
-
-const execFileAsync = promisify(execFile);
 
 const ANSWER_AND_WATCH_TOOLS = [
   "omnesis_answer",
@@ -53,9 +53,14 @@ export async function assertHarnessRuntimeConformance(
 
 async function assertOpenClawConformance(options: HarnessRuntimeConformanceOptions): Promise<void> {
   const executable = join(options.repositoryRoot, "node_modules", ".bin", "openclaw");
-  const inspectionResult = await execFileAsync(
+  const inspectionCommand = resolveHarnessCommand(
     executable,
     ["plugins", "inspect", "omnesis-integration", "--runtime", "--json"],
+    { env: options.environment },
+  );
+  const inspectionResult = await execE2EBufferedCommand(
+    inspectionCommand.command,
+    inspectionCommand.args,
     {
       cwd: options.repositoryRoot,
       env: options.environment,
@@ -85,10 +90,9 @@ async function assertOpenClawConformance(options: HarnessRuntimeConformanceOptio
   const marker = join(options.home, "omnesis", "integration.sqlite");
   rmSync(marker, { force: true });
   const port = await unusedPort();
-  await startHarnessAndWait({
-    label: "OpenClaw",
-    command: executable,
-    args: [
+  const gatewayCommand = resolveHarnessCommand(
+    executable,
+    [
       "gateway",
       "run",
       "--port",
@@ -99,6 +103,12 @@ async function assertOpenClawConformance(options: HarnessRuntimeConformanceOptio
       "--bind",
       "loopback",
     ],
+    { env: options.environment },
+  );
+  await startHarnessAndWait({
+    label: "OpenClaw",
+    command: gatewayCommand.command,
+    args: gatewayCommand.args,
     cwd: options.repositoryRoot,
     env: options.environment,
     ready: (output) =>
@@ -122,12 +132,16 @@ async function assertHermesConformance(options: HarnessRuntimeConformanceOptions
   // Plugin Doctor is Hermes's public, runtime-backed compatibility boundary:
   // it uses the real scanner, manifest parser, importer and registries while
   // blocking network access. Run the CLI first so its exit contract is covered.
-  const doctor = await execFileAsync(executable, ["plugins", "doctor", pluginDir, "--ci"], {
-    cwd: options.repositoryRoot,
-    env: options.environment,
-    timeout: 30_000,
-    maxBuffer: 2 * 1024 * 1024,
-  });
+  const doctor = await execE2EBufferedCommand(
+    executable,
+    ["plugins", "doctor", pluginDir, "--ci"],
+    {
+      cwd: options.repositoryRoot,
+      env: options.environment,
+      timeout: 30_000,
+      maxBuffer: 2 * 1024 * 1024,
+    },
+  );
   const doctorOutput = `${doctor.stdout}\n${doctor.stderr}`;
   if (doctorOutput.includes("WARN:") || !doctorOutput.includes("registrations: 3 tool(s)")) {
     throw new Error(`Hermes Plugin Doctor did not accept the exact contract:\n${doctorOutput}`);
@@ -141,7 +155,7 @@ async function assertHermesConformance(options: HarnessRuntimeConformanceOptions
     "report = doctor_plugin(sys.argv[1])",
     "print(json.dumps({'ok': report.ok, 'findings': [[item.level, item.message] for item in report.findings], 'tools': list(report.registered_tools)}))",
   ].join("; ");
-  const reportResult = await execFileAsync(python, ["-c", reportScript, pluginDir], {
+  const reportResult = await execE2EBufferedCommand(python, ["-c", reportScript, pluginDir], {
     cwd: options.repositoryRoot,
     env: options.environment,
     timeout: 30_000,
@@ -237,7 +251,7 @@ async function unusedPort(): Promise<number> {
   return address.port;
 }
 
-async function startHarnessAndWait(options: {
+interface HarnessStartupOptions {
   label: string;
   command: string;
   args: readonly string[];
@@ -247,7 +261,12 @@ async function startHarnessAndWait(options: {
   initialSignal?: NodeJS.Signals;
   requireCleanExit?: boolean;
   settleMs?: number;
-}): Promise<string> {
+}
+
+async function startHarnessAndWait(options: HarnessStartupOptions): Promise<string> {
+  if (process.platform === "win32" && options.initialSignal === "SIGINT") {
+    return startHarnessInWindowsTerminal(options);
+  }
   const chunks: string[] = [];
   const child = spawn(options.command, options.args, {
     cwd: options.cwd,
@@ -255,7 +274,6 @@ async function startHarnessAndWait(options: {
     stdio: ["ignore", "pipe", "pipe"],
     detached: process.platform !== "win32",
   });
-  registerSubprocessGroup(child);
   const capture = (chunk: unknown): void => {
     chunks.push(String(chunk));
     if (chunks.length > 300) chunks.splice(0, chunks.length - 300);
@@ -263,7 +281,9 @@ async function startHarnessAndWait(options: {
   child.stdout?.on("data", capture);
   child.stderr?.on("data", capture);
   let primaryError: unknown;
+  let failed = false;
   try {
+    await registerSubprocessGroup(child);
     await waitForReady(options.label, child, () => chunks.join("").slice(-40_000), options.ready);
     await new Promise<void>((resolve) => setTimeout(resolve, options.settleMs ?? 250));
     const settledOutput = chunks.join("").slice(-40_000);
@@ -274,16 +294,25 @@ async function startHarnessAndWait(options: {
       throw new Error(`${options.label} exited immediately after startup:\n${chunks.join("")}`);
     }
   } catch (error) {
+    failed = true;
     primaryError = error;
   } finally {
     try {
       await killSubprocessGroup(child, { initialSignal: options.initialSignal });
     } catch (cleanupError) {
-      primaryError ??= cleanupError;
+      const receipt = ownedProcessCleanupReceipt(cleanupError);
+      primaryError = Object.assign(
+        new AggregateError(
+          [...(failed ? [primaryError] : []), cleanupError],
+          "Harness closure is unconfirmed",
+        ),
+        { cleanupFailure: receipt ? receipt.failure : cleanupError },
+      );
+      failed = true;
     }
   }
   const output = chunks.join("");
-  if (primaryError) throw primaryError;
+  if (failed) throw primaryError;
   if (options.requireCleanExit && child.exitCode !== 0) {
     throw new Error(
       `${options.label} did not stop cleanly (exit ${child.exitCode}, signal ${child.signalCode}):\n${output}`,
@@ -292,9 +321,71 @@ async function startHarnessAndWait(options: {
   return output;
 }
 
+/** A console Ctrl+C lets Python run its shutdown handlers on Windows. */
+async function startHarnessInWindowsTerminal(options: HarnessStartupOptions): Promise<string> {
+  const terminal = runEnrollmentTerminal(options.command, options.args, {
+    cwd: options.cwd,
+    env: options.env,
+  });
+  const status = {
+    get exitCode() {
+      return terminal.proc.exitCode;
+    },
+    signalCode: null,
+  };
+  let failed = false;
+  let primaryError: unknown;
+  try {
+    await waitForReady(options.label, status, terminal.stdout, options.ready);
+    await new Promise<void>((resolve) => setTimeout(resolve, options.settleMs ?? 250));
+    if (status.exitCode !== null || !options.ready(terminal.stdout())) {
+      throw new Error(`${options.label} did not remain ready after startup:\n${terminal.stdout()}`);
+    }
+    await terminal.interrupt();
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      await Promise.race([
+        terminal.exit,
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error(`${options.label} did not stop after Ctrl+C`)),
+            5_000,
+          );
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+    if (options.requireCleanExit && status.exitCode !== 0) {
+      throw new Error(
+        `${options.label} did not stop cleanly (exit ${status.exitCode}):\n${terminal.stdout()}`,
+      );
+    }
+  } catch (error) {
+    failed = true;
+    primaryError = error;
+  } finally {
+    try {
+      await terminal.kill();
+    } catch (cleanupError) {
+      const receipt = ownedProcessCleanupReceipt(cleanupError);
+      primaryError = Object.assign(
+        new AggregateError(
+          [...(failed ? [primaryError] : []), cleanupError],
+          "Harness terminal closure is unconfirmed",
+        ),
+        { cleanupFailure: receipt ? receipt.failure : cleanupError },
+      );
+      failed = true;
+    }
+  }
+  if (failed) throw primaryError;
+  return terminal.stdout();
+}
+
 async function waitForReady(
   label: string,
-  child: ChildProcess,
+  child: Pick<ChildProcess, "exitCode" | "signalCode">,
   output: () => string,
   ready: (output: string) => boolean,
 ): Promise<void> {
@@ -328,7 +419,7 @@ export function isolatedHarnessEnvironment(options: {
       ? dirname(requiredAbsoluteExecutable("OMNESIS_HERMES_BIN"))
       : join(options.repositoryRoot, "node_modules", ".bin");
   const environment: NodeJS.ProcessEnv = {
-    PATH: `${harnessBin}:${inheritedPath}`,
+    PATH: `${harnessBin}${delimiter}${inheritedPath}`,
     HOME: options.osHome,
     TMPDIR: options.tempDir,
     TZ: "UTC",
@@ -336,6 +427,17 @@ export function isolatedHarnessEnvironment(options: {
     CI: "1",
     NO_COLOR: "1",
   };
+  if (process.platform === "win32") {
+    for (const name of ["SystemRoot", "WINDIR", "ComSpec", "PATHEXT"]) {
+      const value = windowsEnvironmentValue(name);
+      if (value !== undefined) environment[name] = value;
+    }
+    environment.USERPROFILE = options.osHome;
+    environment.APPDATA = join(options.osHome, "AppData", "Roaming");
+    environment.LOCALAPPDATA = join(options.osHome, "AppData", "Local");
+    environment.TEMP = options.tempDir;
+    environment.TMP = options.tempDir;
+  }
   if (options.harness === "openclaw") {
     environment.OPENCLAW_STATE_DIR = options.home;
     environment.OPENCLAW_CONFIG_PATH = join(options.home, "openclaw.json");
@@ -353,6 +455,8 @@ export function isolatedHarnessEnvironment(options: {
     environment.HERMES_STARTUP_WARMUP_TIMEOUT = "0";
     environment.HERMES_PLUGINS_DEBUG = "1";
     environment.PYTHONUNBUFFERED = "1";
+    environment.PYTHONUTF8 = "1";
+    environment.PYTHONIOENCODING = "utf-8";
     environment.TIRITH_ENABLED = "0";
   }
   return environment;

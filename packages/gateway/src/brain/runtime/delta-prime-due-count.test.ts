@@ -19,6 +19,8 @@ import { resolveBrainSettings, type ResolvedBrainSettings } from "../config.js";
 import { readDueSoonDeltaPrime } from "./delta-prime.js";
 import type Database from "better-sqlite3";
 import type { OpenLoopState } from "../storage/types.js";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 const NOW = Date.parse("2026-07-02T10:00:00.000Z");
 const DAY = 86_400_000;
@@ -53,7 +55,7 @@ function loop(
 const count = (c = cfg()) => readDueSoonDeltaPrime(db, { now: NOW, cfg: c }).dueLoopCount;
 
 beforeEach(() => {
-  path = `/tmp/omnesis-test-${randomUUID()}.db`;
+  path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
   db = createDatabase(path);
 });
 afterEach(() => {

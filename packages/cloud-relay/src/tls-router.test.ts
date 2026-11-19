@@ -10,6 +10,7 @@ import { createServer, request } from "node:https";
 import { PassThrough } from "node:stream";
 import { afterAll, beforeAll, expect, test } from "vitest";
 import { tlsFiles, until } from "../test/support.js";
+import { addIpv6Loopback } from "../test/loopback-peers.js";
 import { createTlsRouter } from "./tls-router.js";
 import { connectOrigin } from "./network.js";
 import { certificateFingerprint } from "./gateway-binding.js";
@@ -119,11 +120,30 @@ test("even another trusted certificate for the same hostname cannot replace a pi
   await bind(attacker);
   try {
     // Trust both roots: CA trust alone would accept the substitution.
-    const origin = new URL(`https://localhost:${port(attacker)}`);
-    const accepted = await connectOrigin(origin, cert + otherCert);
+    // The endpoint is IPv4-only. Keep the certificate's real hostname for
+    // identity checks and dial the exact listener rather than another service
+    // that could own the same port on IPv6 loopback.
+    const origin = new URL(`https://${host}:${port(attacker)}`);
+    const accepted = await connectOrigin(
+      origin,
+      cert + otherCert,
+      undefined,
+      false,
+      undefined,
+      "127.0.0.1",
+    );
+    expect("remoteAddress" in accepted && accepted.remoteAddress).toBe("127.0.0.1");
+    expect("servername" in accepted && accepted.servername).toBe(host);
     accepted.destroy();
     await expect(
-      connectOrigin(origin, cert + otherCert, undefined, false, certificateFingerprint(cert)),
+      connectOrigin(
+        origin,
+        cert + otherCert,
+        undefined,
+        false,
+        certificateFingerprint(cert),
+        "127.0.0.1",
+      ),
     ).rejects.toThrow("pin mismatch");
     expect(requests).toBe(0);
   } finally {
@@ -182,6 +202,58 @@ test("bounds idle peers, rejects plaintext and oversize inputs, and drains socke
     expect(opens).toBe(0);
   } finally {
     if (router.server.listening) await router.close();
+  }
+});
+
+test("data admission preserves room for a new client and returns slots on close", async () => {
+  const router = createTlsRouter({
+    accountForHostname: () => undefined,
+    open: async () => new PassThrough(),
+    maxConnections: 4,
+  });
+  await bind(router.server);
+  const clients: Socket[] = [];
+  let ipv6: Awaited<ReturnType<typeof addIpv6Loopback>> | undefined;
+  const open = async (host: string) => {
+    const socket = connect({ port: port(router.server), host });
+    socket.on("error", () => undefined);
+    socket.resume();
+    clients.push(socket);
+    await once(socket, "connect");
+    return socket;
+  };
+  try {
+    ipv6 = await addIpv6Loopback(router.server);
+    const first = await open("127.0.0.1");
+    const second = await open("127.0.0.1");
+    const third = await open("127.0.0.1");
+    await until(() => router.snapshot().dataConnections === 3);
+    const refused = await open("127.0.0.1");
+    await until(() => refused.destroyed);
+    expect(first.destroyed).toBe(false);
+    const other = await open("::1");
+    await until(() => router.snapshot().dataConnections === 4);
+    first.destroy();
+    await until(() => router.snapshot().dataConnections === 3);
+    const repeated = await open("::1");
+    await until(() => repeated.destroyed);
+    expect(other.destroyed).toBe(false);
+    second.destroy();
+    third.destroy();
+    await until(() => router.snapshot().dataConnections === 1);
+    await open("::1");
+    await open("::1");
+    await until(() => router.snapshot().dataConnections === 3);
+    const repeatedAgain = await open("::1");
+    await until(() => repeatedAgain.destroyed);
+    // Closing every connection releases the client's bucket as well as its slots.
+    await open("127.0.0.1");
+    await until(() => router.snapshot().dataConnections === 4);
+    expect(other.destroyed).toBe(false);
+  } finally {
+    for (const socket of clients) socket.destroy();
+    await ipv6?.close();
+    await router.close();
   }
 });
 

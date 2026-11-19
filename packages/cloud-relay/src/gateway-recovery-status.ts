@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { ownedProcessCleanupReceipt } from "@omnesis/core";
 import { readPrivateJson } from "./google-credentials.js";
 import { recoveryReceiptSchema } from "./recovery-contract.js";
 import { prepareGatewayRecoveryRequest } from "./gateway-key-client.js";
@@ -29,6 +30,7 @@ export async function gatewayRecoveryReceiptStatus(
       options.recoveryReceiptFile ?? `${options.sessionFile}.recovery.json`,
     );
   } catch (error) {
+    if (ownedProcessCleanupReceipt(error) !== undefined) throw error;
     return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT"
       ? { receipt: "missing" }
       : { receipt: "invalid" };
@@ -52,7 +54,8 @@ export async function gatewayRecoveryReceiptStatus(
       receipt: actual.expiresAt <= now ? "expired" : "present",
       expiresAt: new Date(actual.expiresAt * 1000).toISOString(),
     };
-  } catch {
+  } catch (error) {
+    if (ownedProcessCleanupReceipt(error) !== undefined) throw error;
     return { receipt: "invalid" };
   }
 }

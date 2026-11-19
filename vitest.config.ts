@@ -31,10 +31,13 @@ export default defineConfig({
     // under vitest from scripts/.
     include: [
       "evals/briefs/src/**/*.test.ts",
+      "evals/search/src/**/*.test.ts",
       "evals/universes/**/_build/*.test.mjs",
       "extension/src/**/*.test.ts",
       "extension/scripts/**/*.test.mjs",
       "packages/**/*.test.ts",
+      "packages/tailnet-helper/*.test.mjs",
+      "scripts/tailnet-helper/**/*.test.mjs",
       "skills/**/*.test.ts",
       "scripts/demo-host/**/*.test.ts",
       "scripts/release/**/*.test.mjs",
@@ -58,6 +61,9 @@ export default defineConfig({
       "scripts/check-parity.test.mjs",
       "scripts/record-replay-scenario.test.mjs",
       "scripts/lib/brain-cassette.test.mjs",
+      "scripts/lib/patched-files.test.mjs",
+      "scripts/lib/check-process.test.mjs",
+      "scripts/lib/retained-fixture-command.test.mjs",
       "scripts/lib/decision-cassette.test.mjs",
       "scripts/lib/decision-agreement.test.mjs",
       "scripts/website-docs.test.mjs",

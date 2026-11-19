@@ -131,7 +131,9 @@ export class ChatAudioTranscriber implements TranscribeCapability {
     this.apiKey = opts.apiKey;
     this.allowRemoteInference = opts.allowRemoteInference === true;
     this.fetchFn = opts.fetchFn ?? fetchAllowingSlowResponse;
-    this.decodeAudio = opts.decodeAudio ?? ((bytes) => decodeToPcm16kMono(bytes));
+    this.decodeAudio =
+      opts.decodeAudio ??
+      ((bytes, _mime, options) => decodeToPcm16kMono(bytes, { signal: options?.signal }));
     this.maxChunkSamples = chunkSamples(opts.maxChunkSeconds ?? DEFAULT_CHAT_AUDIO_CHUNK_SECONDS);
   }
 
@@ -140,7 +142,7 @@ export class ChatAudioTranscriber implements TranscribeCapability {
     mimeType: string,
     opts?: Parameters<TranscribeCapability["transcribe"]>[2],
   ): Promise<TranscriptionResult> {
-    const pcm = await this.decodeAudio(audio, mimeType);
+    const pcm = await this.decodeAudio(audio, mimeType, { signal: opts?.signal });
     const durationSec = pcm.length / PCM_SAMPLE_RATE;
     if (pcm.length === 0) return { text: "", durationSec: 0 };
 

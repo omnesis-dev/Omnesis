@@ -123,6 +123,7 @@ export {
   resetMemberCursor,
   resetSiblingMemberCursors,
   resetAllMemberCursors,
+  resetSourceCursors,
   beginSyncAttempt,
   revokeSyncAttempt,
   setSyncState,

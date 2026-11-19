@@ -23,10 +23,14 @@ internal object AccountPairingDefaults {
                         BuildConfig.GOOGLE_WEB_CLIENT_ID,
                         setOf(BuildConfig.GOOGLE_WEB_CLIENT_ID, BuildConfig.GOOGLE_ANDROID_CLIENT_ID),
                         publicCertificateCheck = if (BuildConfig.CLOUD_RELAY_PUBLIC_CERT_CHECK) PublicCertificateCheck()::accepts else null,
+                        trustedGatewayKeys = { setOfNotNull(session.pinnedGatewayKey()) },
                     ),
                 )
             },
             applyPairing = { session.pairFromEnrollment(it) },
+            gatewayPasskey = { context ->
+                PasskeyCredentialToken.gatewaySigner(context, URI(BuildConfig.CLOUD_RELAY_URL).host) { GoogleCredentialToken.createManager(context) }
+            },
         )
     }
 }

@@ -19,6 +19,8 @@ import { listLiveAnnotationsForDoc } from "./storage/annotations.js";
 import { listLivePersonAnnotationsForPerson } from "./storage/person-annotations.js";
 import type Database from "better-sqlite3";
 import type { ConversationRecord } from "../agent/conversation-store.js";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 const log = createLogger("test:interactive-memory");
 const quote = "I prefer meetings in the morning.";
@@ -30,7 +32,7 @@ let path: string;
 beforeEach(() => {
   vi.stubEnv("OMNESIS_EXPERIMENTAL", "0");
   vi.stubEnv("OMNESIS_SYNTHETIC", "0");
-  path = `/tmp/omnesis-test-${randomUUID()}.db`;
+  path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
   db = createDatabase(path);
   db.prepare(
     `INSERT INTO documents (id, provider_id, source_id, external_id, title, content, content_hash,

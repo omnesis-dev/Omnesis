@@ -26,12 +26,18 @@ final class CloudPairingInteractionUITests: XCTestCase {
         app = nil
     }
 
-    private func launch(_ scenario: String) {
+    /// Launches the Demo scene for `scenario`. `cancellingTouches` lists the
+    /// ordinals of the touches the app cancels, counting from 1, the way the
+    /// system's gesture gate sometimes does (`DEMO_CANCEL_TOUCHES`).
+    private func launch(_ scenario: String, cancellingTouches: String? = nil) {
         app?.terminate()
         app = XCUIApplication()
         app.launchEnvironment["DEMO_PLAIN_GLASS"] = "1"
         app.launchEnvironment["DEMO_RESET_PAIRING"] = "1"
         app.launchEnvironment["DEMO_CLOUD_PAIRING"] = scenario
+        // Logs where each tap lands and how it ends; see `AutomationTouchLog`.
+        app.launchEnvironment["DEMO_TOUCH_LOG"] = "1"
+        if let cancellingTouches { app.launchEnvironment["DEMO_CANCEL_TOUCHES"] = cancellingTouches }
         app.launch()
         XCTAssertTrue(app.staticTexts["cloud.fixture.receipt"].waitForExistence(timeout: 15), "The isolated fixture did not load")
         if scenario.hasPrefix("google") { XCTAssertTrue(app.buttons["Sign in with Google"].waitForExistence(timeout: 15)) }
@@ -79,12 +85,12 @@ final class CloudPairingInteractionUITests: XCTestCase {
         XCTAssertFalse(app.switches["pairingApproval.compare"].exists)
         XCTAssertTrue(approve.isEnabled)
         approve.tap()
-        XCTAssertTrue(app.staticTexts["No pending pairing requests."].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["No devices are waiting for your OK."].waitForExistence(timeout: 5))
         XCTAssertEqual(app.staticTexts["cloud.fixture.receipt"].label, "Device approved")
         launch("approval")
         XCTAssertTrue(app.buttons["pairingApproval.deny"].waitForExistence(timeout: 5))
         app.buttons["pairingApproval.deny"].tap()
-        XCTAssertTrue(app.staticTexts["No pending pairing requests."].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["No devices are waiting for your OK."].waitForExistence(timeout: 5))
         XCTAssertEqual(app.staticTexts["cloud.fixture.receipt"].label, "Device rejected")
     }
 
@@ -93,14 +99,14 @@ final class CloudPairingInteractionUITests: XCTestCase {
         XCTAssertTrue(app.buttons["Retry"].waitForExistence(timeout: 5))
         app.buttons["Retry"].tap()
         XCTAssertTrue(app.buttons["pairingApproval.approve"].waitForExistence(timeout: 5))
-        app.navigationBars["Pairing requests"].buttons["Refresh"].tap()
+        app.navigationBars["Waiting for your OK"].buttons["Refresh"].tap()
         XCTAssertTrue(app.buttons["pairingApproval.approve"].exists)
         launch("devices-read-only")
         XCTAssertFalse(app.buttons["devices.pairingRequests"].exists)
         launch("devices-admin")
         app.buttons["devices.pairingRequests"].tap()
         XCTAssertTrue(app.buttons["pairingApproval.approve"].waitForExistence(timeout: 5))
-        app.navigationBars["Pairing requests"].buttons["Done"].tap()
+        app.navigationBars["Waiting for your OK"].buttons["Done"].tap()
         XCTAssertTrue(app.buttons["devices.pairingRequests"].waitForExistence(timeout: 5))
     }
 
@@ -123,7 +129,7 @@ final class CloudPairingInteractionUITests: XCTestCase {
         // An expired request is still listed, marked so; one already decided is not listed at all.
         for (scenario, shown) in [
             ("approval-expired", "Expired"),
-            ("approval-completed", "No pending pairing requests."),
+            ("approval-completed", "No devices are waiting for your OK."),
         ] {
             launch(scenario)
             XCTAssertTrue(app.staticTexts[shown].waitForExistence(timeout: 5))
@@ -156,11 +162,35 @@ final class CloudPairingInteractionUITests: XCTestCase {
         let missing = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Missing row")).firstMatch
         XCTAssertTrue(missing.label.contains("Active now"))
         launch("settings")
+        showEachSettingsPath()
+    }
+
+    /// The Settings steps when the system takes the first tap on "Show
+    /// reconnecting" away, as its gesture gate sometimes does on a simulator:
+    /// the button shows its pressed state and the row still says Remote. The
+    /// step notices and taps again.
+    func testSettingsConnectionStatusSurvivesACancelledTap() {
+        // Touch 1 is the tap on "Show relay" and touch 2 the first tap on
+        // "Show reconnecting".
+        launch("settings", cancellingTouches: "2")
+        showEachSettingsPath()
+    }
+
+    /// Switches the settings scene from the local path to the relay, then to
+    /// reconnecting, and checks that Settings names each one. A button only
+    /// sets the scene's path, so tapping it again after a cancelled tap does
+    /// nothing a single tap would not.
+    private func showEachSettingsPath() {
         XCTAssertTrue(app.staticTexts["Gateway connection: Local"].waitForExistence(timeout: 5))
-        app.buttons["Show relay"].tap()
-        XCTAssertTrue(app.staticTexts["Gateway connection: Remote"].waitForExistence(timeout: 5))
-        app.buttons["Show reconnecting"].tap()
-        XCTAssertTrue(app.staticTexts["Gateway connection: Reconnecting"].waitForExistence(timeout: 5))
+        for (button, path) in [("Show relay", "Remote"), ("Show reconnecting", "Reconnecting")] {
+            retap(
+                until: app.staticTexts["Gateway connection: \(path)"],
+                has: "exists == true",
+                or: "tapping \"\(button)\" never made Settings say \(path)"
+            ) {
+                app.buttons[button].tap()
+            }
+        }
     }
 
     func testOptionalGoogleOverlayAndMenuActionsPresentTheSameSheet() {

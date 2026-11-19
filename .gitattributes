@@ -1,3 +1,8 @@
+# Keep checked-out source and generated-asset inputs stable across platforms.
+* text=auto eol=lf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
 scripts/pii-scan.mjs text diff
 
 # Generated PDF objects retain byte offsets and are reviewed as binary assets.

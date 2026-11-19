@@ -90,7 +90,7 @@ export function associateKnowledgeUrgency(
       anchorAt: link.anchorAt,
       proposed,
       applied: { tier: work.tier, dueAt: work.dueAt },
-      fallbackSoon: row.score === null,
+      awaitingVerdict: row.score === null,
       explicitOverride: false,
     }),
     link.id,

@@ -21,13 +21,15 @@ import { initializeOrAssertSourceMemberConfigContract } from "./data/repositorie
 import { reconcileConfig } from "./config-reconcile.js";
 import { directWriteGate, type WriteGate } from "./write-gate.js";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 let db: Db;
 let dbPath: string;
 let w: WriteGate;
 
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-reconcile-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-reconcile-${randomUUID()}.db`);
   db = createDatabase(dbPath);
   w = directWriteGate(db);
 });

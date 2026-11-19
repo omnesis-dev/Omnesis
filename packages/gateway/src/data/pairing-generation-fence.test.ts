@@ -12,12 +12,14 @@ import {
   STALE_PAIRING_WRITE_ERROR,
   withPairingGenerationFence,
 } from "./pairing-generation-fence.js";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 let dbPath: string;
 let db: ReturnType<typeof createDatabase>;
 
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-pairing-fence-test-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-pairing-fence-test-${randomUUID()}.db`);
   db = createDatabase(dbPath);
 });
 

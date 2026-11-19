@@ -54,6 +54,7 @@ export interface SourceAdoptionFs {
 export interface SourceAdoptionDeps {
   run: SourceAdoptionRunner;
   fs?: SourceAdoptionFs;
+  platform?: NodeJS.Platform;
   nonce?: () => string;
   log(message: string): void;
 }
@@ -61,7 +62,7 @@ export interface SourceAdoptionDeps {
 export const nodeSourceAdoptionFs: SourceAdoptionFs = {
   identity: (path) => {
     try {
-      const stat = lstatSync(path);
+      const stat = lstatSync(path, { bigint: true });
       return {
         kind: stat.isSymbolicLink()
           ? "symlink"
@@ -116,6 +117,25 @@ function outputLines(output: string): string[] {
 
 function identityKey(identity: SourceAdoptionPathIdentity): string {
   return `${identity.kind}:${identity.device}:${identity.inode}`;
+}
+
+/** Windows Git can expand a short path without changing the selected directory. */
+function sameDirectory(
+  reported: string,
+  expected: string,
+  identity: SourceAdoptionPathIdentity,
+  fs: SourceAdoptionFs,
+  platform: NodeJS.Platform,
+): boolean {
+  const path = resolve(reported);
+  if (path === expected) return true;
+  if (platform !== "win32") return false;
+  const candidate = fs.identity(path);
+  return (
+    candidate?.kind === "directory" &&
+    identity.kind === "directory" &&
+    identityKey(candidate) === identityKey(identity)
+  );
 }
 
 function gitSpec(rootDir: string, args: string[]): CommandSpec {
@@ -261,6 +281,7 @@ async function inspectLocalCheckout(
   expectedMarker?: string,
 ): Promise<LocalCheckoutSnapshot> {
   const fs = deps.fs ?? nodeSourceAdoptionFs;
+  const platform = deps.platform ?? process.platform;
   const root = fs.identity(rootDir);
   if (!root || root.kind !== "directory") {
     refusal("the detected repository root is not a real directory.");
@@ -303,7 +324,7 @@ async function inspectLocalCheckout(
   );
   if (topLevelResult.code !== 0) failure("Git could not locate the repository root.");
   const topLevel = exactlyOne(outputLines(topLevelResult.stdout), "Git's repository root");
-  if (!isAbsolute(topLevel) || resolve(topLevel) !== rootDir) {
+  if (!isAbsolute(topLevel) || !sameDirectory(topLevel, rootDir, root, fs, platform)) {
     refusal("the running CLI is not rooted at Git's exact top-level checkout.");
   }
 
@@ -331,7 +352,7 @@ async function inspectLocalCheckout(
     outputLines(absoluteGitDirResult.stdout),
     "Git's metadata directory",
   );
-  if (resolve(absoluteGitDir) !== gitDir) {
+  if (!isAbsolute(absoluteGitDir) || !sameDirectory(absoluteGitDir, gitDir, git, fs, platform)) {
     refusal("Git metadata is not contained in this standalone checkout.");
   }
 
@@ -346,7 +367,7 @@ async function inspectLocalCheckout(
     outputLines(commonGitDirResult.stdout),
     "Git's shared metadata directory",
   );
-  if (resolve(rootDir, commonGitDir) !== gitDir) {
+  if (!sameDirectory(resolve(rootDir, commonGitDir), gitDir, git, fs, platform)) {
     refusal("linked worktrees cannot be adopted because they share Git configuration.");
   }
 

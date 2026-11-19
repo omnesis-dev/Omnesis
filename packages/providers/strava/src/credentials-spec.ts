@@ -62,13 +62,13 @@ export const stravaCredentialsSpec: ProviderCredentialsSpec = {
         kind: "instruction",
         title: "Fill in the form",
         body:
-          "Application Name: anything (e.g. `Omnesis`).\n" +
-          "Category: pick anything (e.g. `Other`).\n" +
+          "Application Name: anything (e.g. Omnesis).\n" +
+          "Category: pick anything (e.g. Other).\n" +
           "Website: any URL (e.g. `https://omnesis.dev`).\n" +
           "**Authorization Callback Domain** — this one matters. If your gateway has a " +
-          "public address (`gateway.publicBaseUrl`), enter its host name, e.g. " +
-          "`omnesis.example.com`; otherwise enter `localhost`. No scheme, no port, no path. " +
-          "Strava accepts `localhost` whatever you enter here, so a sign-in without a public " +
+          "public address (gateway.publicBaseUrl), enter its host name, e.g. " +
+          "`omnesis.example.com`; otherwise enter localhost. No scheme, no port, no path. " +
+          "Strava accepts localhost whatever you enter here, so a sign-in without a public " +
           "address keeps working.\n\n" +
           "Tick the agreement and click **Create**.",
       },

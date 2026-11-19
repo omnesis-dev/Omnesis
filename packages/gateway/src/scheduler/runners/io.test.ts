@@ -13,6 +13,9 @@
  *   - Unknown op surfaces as TaskExecutionError.
  */
 
+import { Worker } from "node:worker_threads";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
@@ -23,7 +26,7 @@ import { IoTaskRunner } from "./io.js";
 import type { Task, TaskOutcome } from "../types.js";
 
 function testDbPath(): string {
-  return `/tmp/omnesis-test-${randomUUID()}.db`;
+  return join(tmpdir(), `omnesis-test-${randomUUID()}.db`);
 }
 
 function cleanupDb(path: string): void {
@@ -41,6 +44,7 @@ describe("IoTaskRunner — end-to-end with Scheduler", () => {
   let dbPath: string;
   let scheduler: Scheduler;
   let runner: IoTaskRunner;
+  let workers: Worker[];
 
   beforeEach(async () => {
     dbPath = testDbPath();
@@ -49,7 +53,13 @@ describe("IoTaskRunner — end-to-end with Scheduler", () => {
     const db = createDatabase(dbPath);
     db.close();
 
+    workers = [];
     runner = new IoTaskRunner({
+      createWorker: (url, options) => {
+        const worker = new Worker(url, options);
+        workers.push(worker);
+        return worker;
+      },
       gatewayDbPath: dbPath,
       heartbeatIntervalMs: 1_000,
       heartbeatWarnGapMs: 10_000,
@@ -64,6 +74,14 @@ describe("IoTaskRunner — end-to-end with Scheduler", () => {
   afterEach(async () => {
     await scheduler.dispose();
     cleanupDb(dbPath);
+  });
+
+  test("disposal joins real worker exit and concurrent callers share completion", async () => {
+    const stopped = runner.dispose();
+    expect(runner.dispose()).toBe(stopped);
+    await stopped;
+    expect(workers.every((worker) => worker.threadId === -1)).toBe(true);
+    await expect(runner.start()).rejects.toThrow(/disposed/);
   });
 
   test("dispatches `io.echo` and resolves with arg", async () => {

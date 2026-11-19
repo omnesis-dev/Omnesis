@@ -60,6 +60,8 @@ import type { DecisionCapability, DecisionRequest, ToolResult } from "@omnesis/c
 import type { SearchPort, ToolHandle } from "@omnesis/agent";
 import type { ClaimedCognitionRun } from "../storage/types.js";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 type Db = Database.Database;
 
@@ -140,7 +142,7 @@ describe("record check", () => {
   let seq: number;
 
   beforeEach(() => {
-    path = `/tmp/omnesis-test-${randomUUID()}.db`;
+    path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
     db = createDatabase(path);
     seq = 0;
   });

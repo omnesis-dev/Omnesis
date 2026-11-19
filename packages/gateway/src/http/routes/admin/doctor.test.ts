@@ -24,6 +24,8 @@ import { createToken } from "../../../data/repositories/TokenRepository.js";
 import { DeviceDoctorService } from "../../services/DeviceDoctorService.js";
 import { directWriteGate } from "../../../write-gate.js";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 type Db = Database.Database;
 
@@ -37,7 +39,7 @@ function mintToken(scopes: readonly import("@omnesis/types").Scope[]): string {
 }
 
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-doctor-route-test-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-doctor-route-test-${randomUUID()}.db`);
   db = createDatabase(dbPath);
   app = createServer(db, dbPath);
 });

@@ -72,7 +72,8 @@ describe("CognitionRunDriver", () => {
     dir = mkdtempSync(join(tmpdir(), "omnesis-run-driver-"));
     transcripts = new FsCognitionTranscriptStore(join(dir, "t"));
   });
-  afterEach(() => {
+  afterEach(async () => {
+    await transcripts.close();
     rmSync(dir, { recursive: true, force: true });
   });
 
@@ -174,6 +175,23 @@ describe("CognitionRunDriver", () => {
     expect(await driver.execute(claimed())).toMatchObject({
       ok: false,
       deferredUntil: 20000,
+      modelId: null,
+      usage: null,
+    });
+  });
+
+  test("holds work waiting for the decision model until the time it names", async () => {
+    const driver = makeDriver({
+      preflight: async () =>
+        knowledgeFrontierPreflight({ done: false, items: [], heldUntil: 3_605_000 }),
+      resolveBackend: () => {
+        throw new Error("must not resolve");
+      },
+    });
+    expect(await driver.execute(claimed())).toMatchObject({
+      ok: false,
+      deferredUntil: 3_605_000,
+      errorMessage: "Maintenance is waiting for the decision model",
       modelId: null,
       usage: null,
     });

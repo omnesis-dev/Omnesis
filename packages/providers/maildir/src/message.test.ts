@@ -75,20 +75,25 @@ describe("scanMessage", () => {
     expect(scanned.dateMs).toBe(1_700_000_000_000);
   });
 
-  test("a named pipe is refused at once rather than waited on", async () => {
-    const pipe = join(dir, "pipe");
-    execFileSync("mkfifo", [pipe]);
-    await expect(scanMessage(pipe, "INBOX", "x", () => 0)).rejects.toMatchObject({
-      code: "ENOTREGULAR",
-    });
-    await expect(parseMessageFile(pipe)).rejects.toMatchObject({ code: "ENOTREGULAR" });
-  });
+  test.runIf(process.platform !== "win32")(
+    "a POSIX named pipe is refused at once rather than waited on",
+    async () => {
+      const pipe = join(dir, "pipe");
+      execFileSync("mkfifo", [pipe]);
+      await expect(scanMessage(pipe, "INBOX", "x", () => 0)).rejects.toMatchObject({
+        code: "ENOTREGULAR",
+      });
+      await expect(parseMessageFile(pipe)).rejects.toMatchObject({ code: "ENOTREGULAR" });
+    },
+  );
 
   test("a symbolic link is not followed", async () => {
     const target = write("target", "Subject: x\n\nbody");
     const link = join(dir, "link");
     symlinkSync(target, link);
-    await expect(parseMessageFile(link)).rejects.toMatchObject({ code: "ELOOP" });
+    await expect(parseMessageFile(link)).rejects.toMatchObject({
+      code: process.platform === "win32" ? "EACCES" : "ELOOP",
+    });
   });
 
   test("a file that is not there is an error the caller classifies", async () => {

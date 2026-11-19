@@ -27,10 +27,19 @@
  */
 
 import { spawn as nodeSpawn } from "node:child_process";
+import { createRequire } from "node:module";
+import { pathToFileURL } from "node:url";
 import { lstatSync, readFileSync, realpathSync, rmSync, existsSync } from "node:fs";
 import { constants as osConstants } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
-import { assertNever, atomicWriteFileSync, UPDATE_LOCK_ENV, type UpdateLock } from "@omnesis/core";
+import {
+  assertNever,
+  beginUpdateLockChildJoin,
+  atomicWriteFileSync,
+  spawnWindowsJob,
+  UPDATE_LOCK_ENV,
+  type UpdateLock,
+} from "@omnesis/core";
 import { c, CliError, EXIT_FAILURE } from "../utils.js";
 import {
   assertImageTag,
@@ -48,6 +57,7 @@ import {
   type InstallMethod,
   type UpdateStep,
 } from "./detect.js";
+import { UpdateProcessCleanupUncertainError } from "./process-cleanup.js";
 import type { UpdateInterruptionRouter, UpdateSignal } from "./interruption.js";
 
 /**
@@ -540,6 +550,8 @@ export interface ContinuationCommandContext {
   execPath: string;
   /** The global package's CLI entry as installed now. */
   packageEntry(): string | null;
+  /** Resolve tsx from the checkout that will run the continuation. */
+  sourceLoader?(rootDir: string): string;
   /** Whether a terminal is attached, which a container run must be told. */
   interactive: boolean;
 }
@@ -555,12 +567,19 @@ export interface ContinuationCommandContext {
  */
 export function installedCliCommand(
   install: { method: "source"; rootDir: string } | { method: "npm-global" },
-  ctx: Pick<ContinuationCommandContext, "execPath" | "packageEntry">,
+  ctx: Pick<ContinuationCommandContext, "execPath" | "packageEntry" | "sourceLoader">,
 ): CommandSpec | null {
   if (install.method === "source") {
+    const loader = ctx.sourceLoader
+      ? ctx.sourceLoader(install.rootDir)
+      : createRequire(pathToFileURL(join(install.rootDir, "package.json"))).resolve("tsx");
     return {
-      command: join(install.rootDir, "node_modules", ".bin", "tsx"),
-      args: [join(install.rootDir, "packages", "cli", "src", "index.ts")],
+      command: ctx.execPath,
+      args: [
+        "--import",
+        pathToFileURL(loader).href,
+        join(install.rootDir, "packages", "cli", "src", "index.ts"),
+      ],
     };
   }
   const entry = ctx.packageEntry();
@@ -648,24 +667,49 @@ export async function launchContinuation(opts: {
   command: CommandSpec | null;
   relay: SignalRelay;
   spawn?: typeof nodeSpawn;
+  /** Retained owned-job seam for portable lifecycle regressions. */
+  spawnJob?: typeof spawnWindowsJob;
 }): Promise<ContinuationOutcome> {
   const { configDir, doc, command, relay } = opts;
   if (!command) {
     return { accepted: false, code: 1, signal: null, detail: "its CLI could not be found" };
   }
   const spawnProcess = opts.spawn ?? nodeSpawn;
+  const windowsJob = opts.spawnJob !== undefined || (process.platform === "win32" && !opts.spawn);
+  let uncertain = false;
+  let scope: ReturnType<typeof beginUpdateLockChildJoin> | undefined;
+  let activeJob: ReturnType<typeof spawnWindowsJob> | undefined;
+  let joined = false;
   try {
+    if (windowsJob) scope = beginUpdateLockChildJoin(configDir, doc.lockId);
     writeContinuation(configDir, doc);
     const exit = await new Promise<{ code: number; signal: NodeJS.Signals | null }>(
       (resolve, reject) => {
-        const child = spawnProcess(command.command, command.args, {
-          stdio: "inherit",
+        const childOptions = {
           env: { ...process.env, ...command.env },
           ...(command.cwd ? { cwd: command.cwd } : {}),
-        });
+        };
+        const child = windowsJob
+          ? (activeJob = (opts.spawnJob ?? spawnWindowsJob)(
+              command.command,
+              command.args,
+              childOptions,
+            ))
+          : spawnProcess(command.command, command.args, { ...childOptions, stdio: "inherit" });
+        let creationError: unknown;
+        if ("jobReady" in child) {
+          child.stdout?.pipe(process.stdout, { end: false });
+          child.stderr?.pipe(process.stderr, { end: false });
+          // The continuing CLI is unattended. Closing its binary input also lets
+          // the helper's stdin forwarder finish when the job exits.
+          child.stdin?.end();
+          (child.jobReady as Promise<void>).catch((error: unknown) => {
+            creationError = error;
+          });
+        }
         relay.deliver = (signal) => {
           try {
-            child.kill(signal);
+            child.kill(windowsJob ? "SIGKILL" : signal);
           } catch {
             // The child already exited.
           }
@@ -678,13 +722,29 @@ export async function launchContinuation(opts: {
           running = true;
         });
         child.on("error", (err) => {
-          if (!running) reject(err);
+          if (windowsJob) creationError ??= err;
+          else if (!running) reject(err);
         });
         child.once("close", (code, signal) => {
-          resolve({
-            code: code ?? (signal ? 128 + (osConstants.signals[signal] ?? 0) : 1),
-            signal,
-          });
+          void (async () => {
+            if (activeJob) {
+              try {
+                await activeJob.jobClosed;
+                scope!.joined();
+                joined = true;
+              } catch (cleanupError) {
+                throw new UpdateProcessCleanupUncertainError(creationError, cleanupError);
+              }
+            }
+            if (creationError) {
+              reject(creationError);
+              return;
+            }
+            resolve({
+              code: code ?? (signal ? 128 + (osConstants.signals[signal] ?? 0) : 1),
+              signal,
+            });
+          })().catch(reject);
         });
       },
     );
@@ -700,16 +760,33 @@ export async function launchContinuation(opts: {
           }),
     };
   } catch (err) {
+    let failure = err;
+    if (scope && !joined && !(failure instanceof UpdateProcessCleanupUncertainError)) {
+      try {
+        if (activeJob) {
+          activeJob.kill("SIGKILL");
+          await activeJob.jobClosed;
+        }
+        scope.joined();
+        joined = true;
+      } catch (cleanupError) {
+        failure = new UpdateProcessCleanupUncertainError(err, cleanupError);
+      }
+    }
+    if (failure instanceof UpdateProcessCleanupUncertainError) {
+      uncertain = true;
+      throw failure;
+    }
     return {
       accepted: false,
       code: 1,
       signal: null,
-      detail: err instanceof Error ? err.message : String(err),
+      detail: failure instanceof Error ? failure.message : String(failure),
     };
   } finally {
     relay.deliver = undefined;
     try {
-      removeContinuation(configDir);
+      if (!uncertain) removeContinuation(configDir);
     } catch {
       // A leftover offer is inert: a later run's has another id.
     }
@@ -777,6 +854,7 @@ export async function handOverAfterApply(opts: {
   try {
     outcome = await opts.continueAfterApply(opts.offer, relay);
   } catch (err) {
+    if (err instanceof UpdateProcessCleanupUncertainError) throw err;
     outcome = {
       accepted: false,
       code: EXIT_FAILURE,

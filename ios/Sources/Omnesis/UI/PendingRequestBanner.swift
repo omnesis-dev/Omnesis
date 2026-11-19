@@ -114,7 +114,7 @@ struct PairingRequestBanner: View {
             title: offer.text,
             actionTitle: PairingRequestBannerOffer.actionTitle,
             reviewLabel: offer.text,
-            reviewHint: "Opens Pairing requests",
+            reviewHint: "Opens the devices waiting for your OK",
             dismissLabel: "Dismiss pairing request",
             onReview: onReview,
             onDismiss: onDismiss

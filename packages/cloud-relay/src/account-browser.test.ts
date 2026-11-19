@@ -11,7 +11,7 @@ const signedOut = { authenticated: false, googleAvailable: true, canCreateAccoun
 const authenticated = {
   authenticated: true,
   googleAvailable: true,
-  gateways: [{ gatewayId: "fixture", publicOrigin: "https://gateway.example.test" }],
+  gateways: [{ gatewayId: "fixture", publicOrigin: "https://gateway.example.test", online: true }],
   credentials: {
     federated: [] as unknown[],
     passkeys: [
@@ -671,7 +671,10 @@ test("the create view gives way once the person is signed in or was refused", as
   ready.session({ ...authenticated, pending: { ...pending, needsProof: false } });
   installAccountUI();
   await ready.wait("This adds the gateway to your Omnesis account");
-  expect(ready.document.querySelector("h1")?.textContent).toBe("Sign in to your Omnesis account");
+  // Signed in, the page names the one step left.
+  expect(ready.document.querySelector("h1")?.textContent).toBe(
+    "Connect this gateway to your Omnesis account",
+  );
   expect(ready.button("Create with Google")).toBeUndefined();
   await press(ready, "Connect this gateway");
   await vi.waitFor(() => expect(ready.location.assign).toHaveBeenCalledWith(handoffAddress));
@@ -1169,6 +1172,93 @@ test("a failed Google redirect explains the failure without exposing provider de
   );
   expect(f.document.body.textContent).not.toContain("private-provider-detail");
   expect(f.button("Sign in with Passkey").disabled).toBe(false);
+});
+
+test("back from a Google start the browser didn't vouch for, the page asks for one more press", async () => {
+  const again = "To continue with Google, press the Google button again.";
+  const f = setup();
+  f.location.search = `${signupOperation}&failed=again`;
+  f.session({
+    ...signedOut,
+    pending: { purpose: "gateway-signup", gatewayName: "Fictional gateway", needsProof: true },
+  });
+  installAccountUI();
+  await vi.waitFor(() => expect(f.status()).toBe(again));
+  expect(f.alert()).toBe("");
+  await press(f, "Sign in with Google");
+  await vi.waitFor(() =>
+    expect(f.location.assign).toHaveBeenCalledWith(
+      `https://relay.example.test/_relay/web/start${signupOperation}`,
+    ),
+  );
+  // A new passkey that was waiting for Google is still waiting for it.
+  const endorsing = setup();
+  endorsing.location.search = `?endorse=${parked}&failed=again`;
+  endorsing.session(authenticated);
+  installAccountUI();
+  await endorsing.wait("Confirm it's you to finish");
+  expect(endorsing.status()).toBe(again);
+  expect(endorsing.endorsed("register/confirm")).toEqual([]);
+});
+
+test("a sign-in the gateway's page already chose is the page's one step", async () => {
+  const operation = "b1fba1ce-2398-4c2c-a66b-9044433d1a02",
+    pairing = { purpose: "device-enrollment", hostname: "gateway.example.test", needsProof: true };
+  const shown = (f: Page) =>
+    [...f.document.querySelectorAll("button")].map((button) => button.textContent);
+  const open = async (pending: object, session: object = signedOut) => {
+    const f = setup();
+    f.location.search = `?operation=${operation}`;
+    f.session({ ...session, pending });
+    installAccountUI();
+    await f.wait("gateway.example.test");
+    await vi.waitFor(() => expect(f.document.querySelector("h1")).not.toBeNull());
+    return f;
+  };
+
+  // "Continue with Google" on the gateway: Google alone, then the same round trip as before.
+  const google = await open({ ...pairing, method: "google" });
+  expect(google.document.querySelector("h1")?.textContent).toBe("Continue with Google");
+  expect(google.document.getElementById("account-root")!.textContent).toContain(
+    "Sign in to this gateway with the Google account you use for Omnesis.",
+  );
+  expect(shown(google)).toEqual(["Continue with Google"]);
+  expect(google.button("Continue with Google").className).not.toBe("secondary");
+  await press(google, "Continue with Google");
+  expect(google.location.assign).toHaveBeenCalledWith(
+    `https://relay.example.test/_relay/web/start?operation=${operation}`,
+  );
+
+  // A passkey hop offers the passkey alone.
+  const passkey = await open({ ...pairing, method: "passkey" });
+  expect(passkey.document.querySelector("h1")?.textContent).toBe("Continue with your passkey");
+  expect(shown(passkey)).toEqual(["Continue with passkey"]);
+  await press(passkey, "Continue with passkey");
+  await vi.waitFor(() => expect(passkey.credentials.get).toHaveBeenCalledOnce());
+
+  // Google that this service can't offer is no dead end: the page offers what it has.
+  const unavailable = await open(
+    { ...pairing, method: "google" },
+    { ...signedOut, googleAvailable: false },
+  );
+  expect(unavailable.document.querySelector("h1")?.textContent).toBe("Pair this browser");
+  expect(shown(unavailable)).toEqual(["Sign in with Passkey"]);
+
+  // Signed in, the page goes on exactly as before.
+  const done = await open({ ...pairing, method: "google", needsProof: false }, authenticated);
+  expect(done.document.querySelector("h1")?.textContent).toBe("Pair this browser");
+
+  // Creating an account offers only the chosen sign-in too.
+  const link = { purpose: "owner-link", hostname: "gateway.example.test", needsProof: true };
+  const creating = await open({ ...link, intent: "create", method: "passkey" });
+  expect(creating.document.querySelector("h1")?.textContent).toBe("Create your Omnesis account");
+  expect(shown(creating)).toEqual(["Create with a passkey", "I already have an account"]);
+  expect(creating.document.querySelector(".note")).toBeNull();
+  const creatingGoogle = await open({ ...link, intent: "create", method: "google" });
+  expect(shown(creatingGoogle)).toEqual(["Create with Google", "I already have an account"]);
+  // A refusal says why, whatever was chosen.
+  const denied = await open({ ...link, method: "google", denied: { reason: "capacity" } });
+  expect(denied.document.querySelector("h1")?.textContent).toBe("Sign in to your Omnesis account");
 });
 
 test("the plain sign-in page never offers to create an account, whatever the relay would allow", async () => {
@@ -2003,17 +2093,51 @@ test("a confirmation that lapses while the page is open asks again instead of fa
   expect(ended.document.querySelector(".confirm")).toBeNull();
 });
 
-test("a sign-in the relay refuses says the passkey may belong to no account", async () => {
+test("a sign-in the relay refuses for another reason keeps the generic message", async () => {
   const f = setup();
   f.session(signedOut);
   installAccountUI();
   await f.wait("Sign in with Passkey");
   f.request.mockResolvedValueOnce(new Response("{}", { status: 401 }));
   f.button("Sign in with Passkey").click();
-  await vi.waitFor(() => expect(f.alert()).toContain("That didn't sign you in."));
-  expect(f.alert()).toContain("create an account from your gateway's settings");
-  expect(f.alert()).not.toContain("manage sign-in methods");
+  await vi.waitFor(() =>
+    expect(f.alert()).toBe("That didn't sign you in. Try again, or use another sign-in method."),
+  );
   expect(f.button("Sign in with Passkey").disabled).toBe(false);
+});
+
+test("a passkey whose account is gone says so, and only a deleted account's is forgotten", async () => {
+  for (const [reason, googleAvailable, forgotten] of [
+    ["deleted-passkey", true, true],
+    ["unknown-passkey", true, false],
+    ["deleted-passkey", false, true],
+  ] as const) {
+    const f = setup();
+    const signal = vi.fn(async () => {});
+    Object.assign(f.window.PublicKeyCredential, { signalUnknownCredential: signal });
+    f.session({ ...signedOut, googleAvailable });
+    installAccountUI();
+    await f.wait("Sign in with Passkey");
+    // The relay names the passkey only on the step that checks it.
+    f.request.mockImplementationOnce(async () =>
+      Response.json({ ceremonyId: "fixture-ceremony", options: f.options }),
+    );
+    f.request.mockResolvedValueOnce(Response.json({ error: reason }, { status: 401 }));
+    f.button("Sign in with Passkey").click();
+    await vi.waitFor(() =>
+      expect(f.alert()).toBe(
+        "That passkey is for an Omnesis account that no longer exists. " +
+          (googleAvailable
+            ? "Choose another passkey, or continue with Google."
+            : "Choose another passkey."),
+      ),
+    );
+    // A passkey the relay never had may belong to a live account elsewhere: the browser keeps it.
+    expect(signal.mock.calls).toEqual(
+      forgotten ? [[{ rpId: "relay.example.test", credentialId: "AQID" }]] : [],
+    );
+    expect(f.button("Sign in with Passkey").disabled).toBe(false);
+  }
 });
 
 const mine = "a".repeat(64);
@@ -2292,6 +2416,8 @@ test("signing out and deleting sit behind one button that works from the keyboar
     ["Delete account", "menuitem", "danger"],
   ]);
   expect(buttons(f, "#account-root > section")).toEqual([
+    "",
+    "Unlink from account",
     "Remove",
     "Remove",
     "Add a passkey",
@@ -2397,6 +2523,7 @@ test("the connect page explains refusals and lets the user try again", async () 
   for (const [response, text] of [
     [() => new Response("", { status: 404 }), "didn't work"],
     [() => new Response("", { status: 429 }), "Too many tries"],
+    [() => new Response("", { status: 409 }), "already used in another browser"],
     [() => Response.json({ location: "https://foreign.example.test/" }), "went wrong"],
     [
       () => {
@@ -2428,4 +2555,396 @@ test("the connect script stays self-contained when served as one function", asyn
       TypeError,
     }),
   ).not.toThrow();
+});
+
+// ── Gateways: whether each is online, and unlinking one ──────────────────────
+
+const home = {
+  gatewayId: "00000000-0000-4000-8000-000000000001",
+  publicOrigin: "https://g-home.example.test",
+  displayName: "Fictional home",
+  online: true,
+};
+const cabin = {
+  gatewayId: "00000000-0000-4000-8000-000000000002",
+  publicOrigin: "https://g-cabin.example.test",
+  displayName: "Fictional cabin",
+  online: false,
+};
+const twoGateways = { ...authenticated, accountId: mine, gateways: [home, cabin] };
+const unlinkLines = [
+  "Nothing on the gateway is deleted. Its data stays where it is.",
+  "It can no longer be reached from outside your home network, and new devices can no longer join it by signing in. Devices you already paired keep working on your home network.",
+  "To use it from outside your home network again, connect it again from its settings.",
+];
+const unlinks = (f: Page) => f.posted("/api/gateways/unlink");
+/** Each gateway row: its name, address and whether it is online, as text. */
+const rows = (f: Page) =>
+  [...f.document.querySelectorAll(".gateway-item")].map((row) => ({
+    text: [...row.querySelectorAll(".row-title, .row-meta, .presence")].map(
+      (part) => part.textContent,
+    ),
+    online: row.querySelector(".presence")!.className === "presence online",
+    action: row.querySelector(".more-button")!.getAttribute("aria-label"),
+  }));
+/** The "…" menu on a gateway's row, by the gateway's name. */
+const rowMenu = (f: Page, name: string) => {
+  const trigger = [...f.document.querySelectorAll(".gateway-item .more-button")].find(
+    (button) => button.getAttribute("aria-label") === `More actions for “${name}”`,
+  ) as unknown as HTMLButtonElement;
+  const wrapper = trigger.parentElement!;
+  return {
+    trigger,
+    list: wrapper.querySelector('[role="menu"]') as unknown as HTMLElement,
+    item: wrapper.querySelector('[role="menuitem"]') as unknown as HTMLButtonElement,
+  };
+};
+async function askToUnlink(session: object, name = "Fictional home") {
+  const f = setup();
+  f.session(session);
+  installAccountUI();
+  await f.wait("Fictional cabin");
+  await vi.waitFor(() => expect(rowMenu(f, name).trigger.disabled).toBe(false));
+  rowMenu(f, name).trigger.click();
+  rowMenu(f, name).item.click();
+  await f.wait("from your account?");
+  return f;
+}
+
+test("each gateway says whether it is online, with a dot and the word, and the list is read again when the tab comes back", async () => {
+  const f = setup();
+  f.session(twoGateways);
+  installAccountUI();
+  await f.wait("Fictional cabin");
+  expect(rows(f)).toEqual([
+    {
+      text: ["Fictional home", "g-home.example.test", "Online"],
+      online: true,
+      action: "More actions for “Fictional home”",
+    },
+    {
+      text: ["Fictional cabin", "g-cabin.example.test", "Offline"],
+      online: false,
+      action: "More actions for “Fictional cabin”",
+    },
+  ]);
+  // The portal link is unchanged: the row still opens the gateway.
+  expect(f.document.querySelector(".gateway-item a")!.getAttribute("href")).toBe(
+    "https://g-home.example.test/portal/",
+  );
+  const sessions = () =>
+    f.request.mock.calls.filter(([url]) => String(url).includes("/api/session")).length;
+  await vi.waitFor(() => expect(idle(f.document)).toBe(true));
+  const read = sessions();
+  // Nothing polls while the tab stays as it is.
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  expect(sessions()).toBe(read);
+  // Hidden, then shown again: the relay is asked once more, and the dots follow.
+  f.session({
+    ...twoGateways,
+    gateways: [
+      { ...home, online: false },
+      { ...cabin, online: true },
+    ],
+  });
+  Object.defineProperty(f.document, "visibilityState", { value: "hidden", configurable: true });
+  f.document.dispatchEvent(new f.window.Event("visibilitychange"));
+  expect(sessions()).toBe(read);
+  Object.defineProperty(f.document, "visibilityState", { value: "visible", configurable: true });
+  f.document.dispatchEvent(new f.window.Event("visibilitychange"));
+  await vi.waitFor(() =>
+    expect(rows(f).map((row) => [row.text[0], row.online])).toEqual([
+      ["Fictional home", false],
+      ["Fictional cabin", true],
+    ]),
+  );
+  expect(sessions()).toBe(read + 1);
+  expect(f.alert()).toBe("");
+});
+
+test("unlinking a gateway asks in the page, says nothing on the gateway is deleted, and unlinks only after the press", async () => {
+  const f = await askToUnlink(twoGateways);
+  const panel = f.document.querySelector(".unlink")!;
+  // The question sits under the gateway it is about.
+  expect(panel.previousElementSibling!.textContent).toContain("Fictional home");
+  expect(panel.querySelector("h3")!.textContent).toBe("Unlink “Fictional home” from your account?");
+  expect([...panel.querySelectorAll("p")].map((line) => line.textContent)).toEqual(unlinkLines);
+  expect(buttons(f, ".unlink")).toEqual(["Unlink gateway", "Cancel"]);
+  expect(f.button("Unlink gateway").className).toBe("danger");
+  expect(unlinks(f)).toEqual([]);
+  // Cancelling leaves the gateway where it was.
+  await press(f, "Cancel");
+  await vi.waitFor(() => expect(f.document.querySelector(".unlink")).toBeNull());
+  expect(unlinks(f)).toEqual([]);
+
+  const g = await askToUnlink(twoGateways);
+  await vi.waitFor(() => expect(g.button("Unlink gateway").disabled).toBe(false));
+  g.request.mockResolvedValueOnce(Response.json({ ok: true }));
+  g.session({ ...twoGateways, gateways: [cabin] });
+  g.button("Unlink gateway").click();
+  await vi.waitFor(() =>
+    expect(g.status()).toBe("“Fictional home” was unlinked from your account."),
+  );
+  expect(unlinks(g)).toEqual([{ accountId: mine, gatewayId: home.gatewayId }]);
+  expect(g.document.querySelector(".unlink")).toBeNull();
+  expect(rows(g).map((row) => row.text[0])).toEqual(["Fictional cabin"]);
+  // The message stands under the gateways, where the person is looking.
+  expect(g.document.querySelector('[role="status"]')!.closest("section")!.textContent).toContain(
+    "Your gateways",
+  );
+  expect(g.alert()).toBe("");
+});
+
+test("unlinking the last, offline gateway says it learns of it when it is back, and leaves an empty list", async () => {
+  const f = await askToUnlink({ ...twoGateways, gateways: [cabin, home] }, "Fictional cabin");
+  await vi.waitFor(() => expect(f.button("Unlink gateway").disabled).toBe(false));
+  f.request.mockResolvedValueOnce(Response.json({ ok: true }));
+  f.session({ ...twoGateways, gateways: [] });
+  f.button("Unlink gateway").click();
+  await vi.waitFor(() =>
+    expect(f.status()).toBe(
+      "“Fictional cabin” was unlinked from your account. It shows as not connected the next time it comes online.",
+    ),
+  );
+  expect(f.document.querySelectorAll(".gateway-item")).toHaveLength(0);
+  expect(f.document.getElementById("account-root")!.textContent).toContain(
+    "No gateways are connected to your Omnesis account. Connect one from its settings.",
+  );
+});
+
+test("a stale sign-in confirms with the passkey, which unlinks at once, and another account's passkey unlinks nothing", async () => {
+  const account = { ...twoGateways, credentialsRequireSignIn: true };
+  const f = await askToUnlink(account);
+  const panel = () => f.document.querySelector(".unlink")!;
+  expect([...panel().querySelectorAll("p")].map((line) => line.textContent)).toEqual([
+    ...unlinkLines,
+    "Unlinking needs a fresh confirmation, so that someone else using this browser can't unlink your gateways. Confirming with your passkey unlinks it right away.",
+  ]);
+  expect(buttons(f, ".unlink")).toEqual(["Confirm with passkey", "Cancel"]);
+  // A cancelled passkey prompt keeps the question open and unlinks nothing.
+  f.credentials.get.mockRejectedValueOnce(named("NotAllowedError"));
+  await press(f, "Confirm with passkey");
+  await vi.waitFor(() => expect(f.alert()).toContain("No passkey was used."));
+  expect(buttons(f, ".unlink")).toEqual(["Confirm with passkey", "Cancel"]);
+  expect(unlinks(f)).toEqual([]);
+
+  f.afterCeremony({ ...twoGateways });
+  await vi.waitFor(() => expect(f.button("Confirm with passkey").disabled).toBe(false));
+  f.button("Confirm with passkey").click();
+  await vi.waitFor(() => expect(unlinks(f)).toHaveLength(1));
+  expect(unlinks(f)).toEqual([{ accountId: mine, gatewayId: home.gatewayId }]);
+
+  const other = await askToUnlink(account);
+  other.afterCeremony({ ...twoGateways, accountId: "b".repeat(64) });
+  await press(other, "Confirm with passkey");
+  await vi.waitFor(() =>
+    expect(other.status()).toBe(
+      "You confirmed with a different Omnesis account. Nothing was unlinked.",
+    ),
+  );
+  expect(other.document.querySelector(".unlink")).toBeNull();
+  expect(unlinks(other)).toEqual([]);
+});
+
+test("an account without a passkey is never asked for one: Google confirms, and unlinking is a press away on return", async () => {
+  const googleOnly = {
+    ...twoGateways,
+    credentialsRequireSignIn: true,
+    credentials: { federated: [google], passkeys: [] },
+  };
+  const f = await askToUnlink(googleOnly);
+  expect(
+    [...f.document.querySelectorAll(".unlink button")].map((button) => [
+      button.textContent,
+      button.className,
+    ]),
+  ).toEqual([
+    ["Confirm with Google", ""],
+    ["Cancel", "secondary"],
+  ]);
+  expect(f.document.querySelector(".unlink")!.textContent).not.toContain("passkey");
+  await press(f, "Confirm with Google");
+  expect(f.location.assign).toHaveBeenCalledExactlyOnceWith(
+    "https://relay.example.test/_relay/web/start?then=unlink-gateway",
+  );
+  expect(f.credentials.get).not.toHaveBeenCalled();
+  expect(unlinks(f)).toEqual([]);
+
+  // Back from Google with a fresh sign-in: the page says so, and nothing is unlinked yet.
+  const back = setup();
+  back.location.search = "?then=unlink-gateway";
+  back.session({ ...googleOnly, credentialsRequireSignIn: false });
+  installAccountUI();
+  await vi.waitFor(() => expect(back.status()).toBe("Confirmed. You can unlink it now."));
+  expect(back.document.querySelector('[role="status"]')!.closest("section")!.textContent).toContain(
+    "Your gateways",
+  );
+  expect(back.history.replaceState).toHaveBeenCalledWith(null, "", "/_relay/account");
+  expect(unlinks(back)).toEqual([]);
+  // Still stale, the return says nothing.
+  const lapsed = setup();
+  lapsed.location.search = "?then=unlink-gateway";
+  lapsed.session(googleOnly);
+  installAccountUI();
+  await lapsed.wait("Fictional cabin");
+  await vi.waitFor(() => expect(idle(lapsed.document)).toBe(true));
+  expect(lapsed.status()).toBe("");
+});
+
+test("a confirmation that lapses asks again, a gateway already gone is said plainly, and a refusal keeps the question", async () => {
+  const f = await askToUnlink(twoGateways);
+  // The fresh sign-in lapsed while the panel was open.
+  await vi.waitFor(() => expect(f.button("Unlink gateway").disabled).toBe(false));
+  f.session({ ...twoGateways, credentialsRequireSignIn: true });
+  f.request.mockResolvedValueOnce(new Response("{}", { status: 401 }));
+  f.button("Unlink gateway").click();
+  await vi.waitFor(() => expect(buttons(f, ".unlink")).toEqual(["Confirm with passkey", "Cancel"]));
+  await vi.waitFor(() => expect(idle(f.document)).toBe(true));
+  expect(f.alert()).toBe("");
+
+  const gone = await askToUnlink(twoGateways);
+  await vi.waitFor(() => expect(gone.button("Unlink gateway").disabled).toBe(false));
+  gone.request.mockResolvedValueOnce(new Response("{}", { status: 404 }));
+  gone.session({ ...twoGateways, gateways: [cabin] });
+  gone.button("Unlink gateway").click();
+  await vi.waitFor(() => expect(gone.status()).toBe("That gateway is no longer in your account."));
+  expect(gone.document.querySelector(".unlink")).toBeNull();
+  expect(gone.alert()).toBe("");
+
+  const refused = await askToUnlink(twoGateways);
+  await vi.waitFor(() => expect(refused.button("Unlink gateway").disabled).toBe(false));
+  refused.request.mockResolvedValueOnce(new Response("{}", { status: 503 }));
+  refused.button("Unlink gateway").click();
+  await vi.waitFor(() =>
+    expect(refused.alert()).toBe("The gateway could not be unlinked. Please try again."),
+  );
+  expect(buttons(refused, ".unlink")).toEqual(["Unlink gateway", "Cancel"]);
+
+  // Unlinked from another browser meanwhile, the question goes with the gateway.
+  const elsewhere = await askToUnlink(twoGateways);
+  elsewhere.session({ ...twoGateways, gateways: [cabin] });
+  Object.defineProperty(elsewhere.document, "visibilityState", {
+    value: "visible",
+    configurable: true,
+  });
+  await vi.waitFor(() => expect(idle(elsewhere.document)).toBe(true));
+  elsewhere.document.dispatchEvent(new elsewhere.window.Event("visibilitychange"));
+  await vi.waitFor(() => expect(elsewhere.document.querySelector(".unlink")).toBeNull());
+  expect(unlinks(elsewhere)).toEqual([]);
+});
+
+test("a passkey confirmation for a gateway unlinked meanwhile says so instead of failing", async () => {
+  const f = await askToUnlink({ ...twoGateways, credentialsRequireSignIn: true });
+  // Unlinked from another browser while the passkey prompt was open.
+  f.afterCeremony({ ...twoGateways, gateways: [cabin] });
+  await press(f, "Confirm with passkey");
+  await vi.waitFor(() => expect(f.status()).toBe("That gateway is no longer in your account."));
+  expect(unlinks(f)).toEqual([]);
+  expect(f.alert()).toBe("");
+  expect(f.document.querySelector(".unlink")).toBeNull();
+});
+
+test("a refresh from returning to the tab that lands during an unlink draws nothing over its result", async () => {
+  const f = await askToUnlink(twoGateways);
+  await vi.waitFor(() => expect(f.button("Unlink gateway").disabled).toBe(false));
+  // The person returns to the tab; the relay is slow to answer that read.
+  let answer!: (response: Response) => void;
+  f.request.mockImplementationOnce(() => new Promise<Response>((resolve) => (answer = resolve)));
+  Object.defineProperty(f.document, "visibilityState", { value: "visible", configurable: true });
+  f.document.dispatchEvent(new f.window.Event("visibilitychange"));
+  await vi.waitFor(() => expect(answer).toBeDefined());
+  // Meanwhile they press Unlink, which finishes first.
+  f.request.mockResolvedValueOnce(Response.json({ ok: true }));
+  f.session({ ...twoGateways, gateways: [cabin] });
+  f.button("Unlink gateway").click();
+  await vi.waitFor(() =>
+    expect(f.status()).toBe("“Fictional home” was unlinked from your account."),
+  );
+  // The late answer still lists the gateway; it is dropped.
+  answer(Response.json(twoGateways));
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  expect(rows(f).map((row) => row.text[0])).toEqual(["Fictional cabin"]);
+  expect(f.status()).toBe("“Fictional home” was unlinked from your account.");
+});
+
+test("an unnamed gateway is unlinked by its address's placeholder name, the message survives a refresh, and a refresh that fails changes nothing", async () => {
+  const unnamed = { ...home, displayName: undefined };
+  const f = await askToUnlink({ ...twoGateways, gateways: [unnamed, cabin] }, "Gateway");
+  expect(f.document.querySelector(".unlink h3")!.textContent).toBe(
+    "Unlink “Gateway” from your account?",
+  );
+  await vi.waitFor(() => expect(f.button("Unlink gateway").disabled).toBe(false));
+  f.request.mockResolvedValueOnce(Response.json({ ok: true }));
+  f.session({ ...twoGateways, gateways: [cabin] });
+  f.button("Unlink gateway").click();
+  await vi.waitFor(() => expect(f.status()).toBe("“Gateway” was unlinked from your account."));
+  await vi.waitFor(() => expect(idle(f.document)).toBe(true));
+  const inGateways = () =>
+    f.document.querySelector('[role="status"]')!.closest("section")!.querySelector("h2")!
+      .textContent;
+  Object.defineProperty(f.document, "visibilityState", { value: "visible", configurable: true });
+  // Read again on return to the tab, the message stays where it was.
+  f.document.dispatchEvent(new f.window.Event("visibilitychange"));
+  await vi.waitFor(() =>
+    expect(
+      f.request.mock.calls.filter(([url]) => String(url).includes("/api/session")).length,
+    ).toBeGreaterThan(2),
+  );
+  await vi.waitFor(() => expect(inGateways()).toBe("Your gateways"));
+  expect(f.status()).toBe("“Gateway” was unlinked from your account.");
+  // A read that fails says nothing and leaves the page as it was.
+  f.request.mockRejectedValueOnce(new TypeError("Fixture network down"));
+  f.document.dispatchEvent(new f.window.Event("visibilitychange"));
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  expect(f.alert()).toBe("");
+  expect(rows(f).map((row) => row.text[0])).toEqual(["Fictional cabin"]);
+});
+
+test("each gateway's actions sit behind its own \u201c…\u201d menu, apart from the link, and work from the keyboard", async () => {
+  const f = setup();
+  f.session(twoGateways);
+  installAccountUI();
+  await f.wait("Fictional cabin");
+  await vi.waitFor(() => expect(idle(f.document)).toBe(true));
+  const focused = focuses(f);
+  const homeMenu = rowMenu(f, "Fictional home"),
+    cabinMenu = rowMenu(f, "Fictional cabin"),
+    account = more(f);
+  // Beside the link, never inside it, so opening the menu never opens the gateway.
+  expect(homeMenu.trigger.closest("a")).toBeNull();
+  expect(homeMenu.trigger.closest(".gateway-item")!.querySelector("a.gateway")).not.toBeNull();
+  expect(homeMenu.trigger.getAttribute("aria-haspopup")).toBe("menu");
+  expect(homeMenu.trigger.textContent).toBe("");
+  expect(homeMenu.list.hidden).toBe(true);
+  expect(
+    [...homeMenu.list.querySelectorAll('[role="menuitem"]')].map((item) => item.textContent),
+  ).toEqual(["Unlink from account"]);
+  // One menu open at a time: opening a row's closes the account's, and the other way round.
+  account.trigger.click();
+  homeMenu.trigger.click();
+  expect(account.list.hidden).toBe(true);
+  expect(homeMenu.list.hidden).toBe(false);
+  expect(homeMenu.trigger.getAttribute("aria-expanded")).toBe("true");
+  expect(focused.at(-1)).toBe(homeMenu.item);
+  cabinMenu.trigger.click();
+  expect(homeMenu.list.hidden).toBe(true);
+  expect(cabinMenu.list.hidden).toBe(false);
+  // Escape closes it and hands the focus back to its button.
+  key(f, cabinMenu.item, "Escape");
+  expect(cabinMenu.list.hidden).toBe(true);
+  expect(focused.at(-1)).toBe(cabinMenu.trigger);
+  // A press elsewhere closes it.
+  homeMenu.trigger.click();
+  f.document.querySelector("h1")!.dispatchEvent(new f.window.Event("click", { bubbles: true }));
+  expect(homeMenu.list.hidden).toBe(true);
+  expect(unlinks(f)).toEqual([]);
+  // Choosing the one entry asks in the page; cancelling returns to the menu's button.
+  homeMenu.trigger.click();
+  homeMenu.item.click();
+  await f.wait("Unlink “Fictional home” from your account?");
+  await press(f, "Cancel");
+  await vi.waitFor(() => expect(f.document.querySelector(".unlink")).toBeNull());
+  expect(focused.at(-1)).toBe(rowMenu(f, "Fictional home").trigger);
+  expect(unlinks(f)).toEqual([]);
+  expect(f.location.assign).not.toHaveBeenCalled();
 });

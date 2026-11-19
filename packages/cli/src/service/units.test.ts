@@ -13,6 +13,7 @@ import {
   launchdPlistPath,
   systemdUnitName,
   systemdUnitPath,
+  systemdWritablePaths,
   MIN_LOAD_CREDENTIAL_SYSTEMD,
   loadCredentialSupportWarning,
   parseSystemdVersion,
@@ -36,6 +37,14 @@ function spec(overrides: Partial<ServiceSpec> = {}): ServiceSpec {
 }
 
 describe("unit naming", () => {
+  it("keeps literal backslashes in a launchd target's home and log directory", () => {
+    const home = "/home/invented\\archive";
+    expect(darwinLogsDir(home)).toBe(`${home}/Library/Logs/Omnesis`);
+    expect(launchdLogPaths(`${home}/logs`, "collector")).toEqual({
+      out: `${home}/logs/dev.omnesis.collector.log`,
+      err: `${home}/logs/dev.omnesis.collector.err.log`,
+    });
+  });
   it("launchd label without instance", () => {
     expect(launchdLabel("gateway")).toBe("dev.omnesis.gateway");
     expect(launchdLabel("collector")).toBe("dev.omnesis.collector");
@@ -85,6 +94,12 @@ describe("buildServiceSpec", () => {
     homeDir: HOME,
     nodeBinDir: "/opt/node/bin",
   };
+
+  it("renders Linux target log paths with POSIX home semantics", () => {
+    expect(buildServiceSpec({ ...base, homeDir: "/home/invented\\archive" }).logsDir).toBe(
+      "/home/invented\\archive/.local/state/omnesis/logs",
+    );
+  });
 
   it("bakes OMNESIS_CONFIG_DIR and a PATH containing the node bin dir", () => {
     const s = buildServiceSpec(base);
@@ -344,6 +359,12 @@ describe("generateSystemdUnit", () => {
     expect(unit).toContain(
       "ReadWritePaths=/home/maya/.config/omnesis /home/maya/Library/Logs/Omnesis /srv/omnesis /srv/omnesis/index /srv/omnesis/analytics /var/log/omnesis",
     );
+  });
+
+  it("treats a backslash in a Linux database basename as data when finding its writable parent", () => {
+    expect(
+      systemdWritablePaths(spec({ env: { OMNESIS_DB_PATH: "/srv/archive/store\\one.sqlite" } })),
+    ).toEqual(["/home/maya/.config/omnesis", "/home/maya/Library/Logs/Omnesis", "/srv/archive"]);
   });
 
   it("mentions the instance in the description", () => {

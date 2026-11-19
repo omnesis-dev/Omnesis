@@ -10,12 +10,21 @@ import {
   X509Certificate,
   type KeyObject,
 } from "node:crypto";
-import { createReadStream, existsSync } from "node:fs";
-import { mkdir, link, rm } from "node:fs/promises";
+import { createReadStream } from "node:fs";
+import { mkdir, link, rm, lstat } from "node:fs/promises";
 import { dirname } from "node:path";
-import { atomicWriteFile, atomicWriteFileSync } from "@omnesis/core";
-import { z } from "zod";
+import { Readable } from "node:stream";
 import {
+  atomicWriteFile,
+  atomicWriteFileSync,
+  readWindowsPrivateFile,
+  readWindowsRegularFilePrefix,
+  writeWindowsPrivateFileAtomicStream,
+} from "@omnesis/core";
+import { z } from "zod";
+import { isJoinedPrivateFileError } from "./private-file-errors.js";
+import {
+  GATEWAY_REMOVED,
   keyChallengeSchema,
   keyAuthenticationTranscript,
   gatewayKeyAccount,
@@ -26,10 +35,13 @@ import {
 } from "./gateway-key-auth.js";
 import { readBoundedJson, readPrivateJson } from "./google-credentials.js";
 import { bindingOrigin } from "./gateway-binding.js";
+import { readGatewayTlsPrivateKey } from "./gateway-private-key.js";
 import { challengeIsFresh, relayOrigin } from "./network.js";
 import { gatewayRecoveryDraft, readGatewayRecoveryReceipt } from "./gateway-recovery.js";
 
 export interface GatewayKeySessionOptions {
+  /** Actual gateway configuration root for an encrypted, path-scoped TLS key. */
+  configDir?: string;
   relayUrl: string;
   sessionFile: string;
   gatewayId: string;
@@ -50,11 +62,12 @@ const sessionSchema = z.object({
 type Session = z.infer<typeof sessionSchema>;
 /**
  * The relay answered a gateway it had registered before, with both keys proven, that it holds no
- * registration for it: its Omnesis account was deleted. Only this answer means that; a relay that
- * is unreachable or failing says something else.
+ * registration for it: its Omnesis account was deleted, or its owner unlinked it on the account
+ * page (`removed`). Only this answer means that; a relay that is unreachable or failing says
+ * something else.
  */
 export class GatewayUnregistered extends Error {
-  constructor() {
+  constructor(readonly removed = false) {
     super("The relay no longer has a registration for this gateway");
   }
 }
@@ -76,6 +89,24 @@ async function readKeyText(path: string): Promise<string> {
   return Buffer.concat(chunks).toString("utf8");
 }
 
+async function readPrivateKeyText(path: string): Promise<string> {
+  return process.platform === "win32"
+    ? (await readWindowsPrivateFile(path, 65_536)).toString("utf8")
+    : readKeyText(path);
+}
+
+/** Probe presence without interpreting a recovery artifact or collapsing denied metadata into absence. */
+async function hasRecoveryArtifact(path: string): Promise<boolean> {
+  try {
+    if (process.platform === "win32") await readWindowsRegularFilePrefix(path, 0);
+    else await lstat(path);
+    return true;
+  } catch (error) {
+    if (isJoinedPrivateFileError(error, "ENOENT")) return false;
+    throw error;
+  }
+}
+
 /** Exclusive publication keeps a concurrent registration from replacing the stable owner identity. */
 export async function readOrCreateGatewayOwnerKey(
   path: string,
@@ -83,15 +114,9 @@ export async function readOrCreateGatewayOwnerKey(
 ): Promise<KeyObject> {
   let material: string;
   try {
-    material = await readKeyText(path);
+    material = await readPrivateKeyText(path);
   } catch (error) {
-    if (!(
-      typeof error === "object" &&
-      error !== null &&
-      "code" in error &&
-      error.code === "ENOENT"
-    ))
-      throw error;
+    if (!isJoinedPrivateFileError(error, "ENOENT")) throw error;
     if (!allowCreate) {
       // Keep private identity paths out of recursively rendered error causes.
       // eslint-disable-next-line preserve-caught-error
@@ -99,24 +124,36 @@ export async function readOrCreateGatewayOwnerKey(
     }
     const key = generateKeyPairSync("ed25519").privateKey.export({ type: "pkcs8", format: "pem" });
     await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-    const temporary = `${path}.${randomUUID()}.tmp`;
-    try {
-      await atomicWriteFile(temporary, key, { mode: 0o600 });
+    if (process.platform === "win32") {
+      const bytes = typeof key === "string" ? Buffer.from(key) : key;
       try {
-        await link(temporary, path);
+        await writeWindowsPrivateFileAtomicStream(path, Readable.from([bytes]), bytes.byteLength, {
+          replaceExisting: false,
+          timeoutMs: 30_000,
+        });
       } catch (error) {
-        if (!(
-          typeof error === "object" &&
-          error !== null &&
-          "code" in error &&
-          error.code === "EEXIST"
-        ))
-          throw error;
+        if (!isJoinedPrivateFileError(error, "EEXIST")) throw error;
       }
-    } finally {
-      await rm(temporary, { force: true });
+    } else {
+      const temporary = `${path}.${randomUUID()}.tmp`;
+      try {
+        await atomicWriteFile(temporary, key, { mode: 0o600 });
+        try {
+          await link(temporary, path);
+        } catch (error) {
+          if (!(
+            typeof error === "object" &&
+            error !== null &&
+            "code" in error &&
+            error.code === "EEXIST"
+          ))
+            throw error;
+        }
+      } finally {
+        await rm(temporary, { force: true });
+      }
     }
-    material = await readKeyText(path);
+    material = await readPrivateKeyText(path);
   }
   const key = createPrivateKey(material);
   if (key.asymmetricKeyType !== "ed25519")
@@ -127,9 +164,9 @@ export async function readOrCreateGatewayOwnerKey(
 async function readOwnerIdentity(
   options: Pick<GatewayKeySessionOptions, "sessionFile" | "ownerKeyFile" | "recoveryReceiptFile">,
 ): Promise<{ owner: KeyObject; enrolled: boolean }> {
-  let allowCreate = !existsSync(
+  let allowCreate = !(await hasRecoveryArtifact(
     options.recoveryReceiptFile ?? `${options.sessionFile}.recovery.json`,
-  );
+  ));
   try {
     const stored = await readPrivateJson(options.sessionFile);
     allowCreate &&= !(
@@ -139,13 +176,7 @@ async function readOwnerIdentity(
       stored.authentication === "gateway-key-v2"
     );
   } catch (error) {
-    if (!(
-      typeof error === "object" &&
-      error !== null &&
-      "code" in error &&
-      error.code === "ENOENT"
-    ))
-      throw error;
+    if (!isJoinedPrivateFileError(error, "ENOENT")) throw error;
   }
   const owner = await readOrCreateGatewayOwnerKey(
     options.ownerKeyFile ?? `${options.sessionFile}.owner-key`,
@@ -208,7 +239,9 @@ export async function prepareGatewayRecoveryRequest(
 async function readMaterial(options: GatewayKeySessionOptions): Promise<Material> {
   options.signal?.throwIfAborted();
   const certificate = await readKeyText(options.certificateFile);
-  const tls = createPrivateKey(await readKeyText(options.privateKeyFile));
+  const tls = createPrivateKey(
+    await readGatewayTlsPrivateKey(options.privateKeyFile, options.configDir),
+  );
   const leaf = new X509Certificate(certificate);
   if (publicKeyFingerprint(createPublicKey(tls)) !== publicKeyFingerprint(leaf.publicKey))
     throw new Error("Gateway TLS certificate and private key do not match");
@@ -241,7 +274,17 @@ async function exchange(
         ? AbortSignal.any([options.signal, AbortSignal.timeout(15_000)])
         : AbortSignal.timeout(15_000),
     });
-    if (response.status === 410 && material.enrolled) throw new GatewayUnregistered();
+    if (response.status === 410 && material.enrolled) {
+      let removed = false;
+      try {
+        removed = z
+          .object({ error: z.literal(GATEWAY_REMOVED) })
+          .safeParse(await readBoundedJson(response)).success;
+      } catch {
+        // A refusal with no readable reason is the account's deletion.
+      }
+      throw new GatewayUnregistered(removed);
+    }
     if (!response.ok) throw new Error("Gateway key registration refused");
     const value = await readBoundedJson(response);
     options.signal?.throwIfAborted();
@@ -254,13 +297,7 @@ async function exchange(
         .object({ enrollmentToken: z.string().min(1).max(4096) })
         .parse(await readPrivateJson(options.enrollmentTokenFile)).enrollmentToken;
     } catch (error) {
-      if (!(
-        typeof error === "object" &&
-        error !== null &&
-        "code" in error &&
-        error.code === "ENOENT"
-      ))
-        throw error;
+      if (!isJoinedPrivateFileError(error, "ENOENT")) throw error;
     }
   }
   const recoveryReceipt = await readGatewayRecoveryReceipt(options, material.registration);

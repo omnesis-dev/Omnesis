@@ -62,6 +62,7 @@ beforeEach(() => {
     knowledgeDueReviews: vi.fn(() => Promise.resolve([])),
     knowledgeStaleWork: vi.fn(() => Promise.resolve([])),
     knowledgeHasExcludedWork: vi.fn(() => Promise.resolve(false)),
+    knowledgeHasRewrittenHistoryWork: vi.fn(() => Promise.resolve(false)),
     knowledgeArcs: vi.fn(() => Promise.resolve([])),
     knowledgeDiscoveryBacklog: vi.fn(() => Promise.resolve([])),
     knowledgePlanningWork: vi.fn(() => Promise.resolve([])),

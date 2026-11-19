@@ -23,6 +23,8 @@
  * a few chunks.
  */
 
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
 import Database from "better-sqlite3";
@@ -39,7 +41,7 @@ const WORKER_URL = new URL("../workers/writer-worker.ts", import.meta.url);
 const LOADER_URL = new URL("../workers/register-tsx.mjs", import.meta.url).href;
 
 function testDbPath(): string {
-  return `/tmp/omnesis-preempt-${randomUUID()}.db`;
+  return join(tmpdir(), `omnesis-preempt-${randomUUID()}.db`);
 }
 
 function cleanupDb(path: string): void {

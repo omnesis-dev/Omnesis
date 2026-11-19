@@ -12,9 +12,11 @@ import {
   createPrivateKey,
   createPublicKey,
 } from "node:crypto";
-import { acquireGatewayLock, atomicWriteFile } from "@omnesis/core";
+import { acquireGatewayLock, atomicWriteFile, ownedProcessCleanupReceipt } from "@omnesis/core";
+import { isJoinedPrivateFileError } from "./private-file-errors.js";
 import { publicKeyFingerprint } from "./gateway-key-auth.js";
 import { bindingOrigin, validateCertificateDates } from "./gateway-binding.js";
+import { readPrivateInput, identityArtifactPresent } from "./private-inputs.js";
 
 async function privateKey(
   path: string,
@@ -22,29 +24,17 @@ async function privateKey(
   generate: boolean,
 ): Promise<Buffer> {
   try {
-    return await readFile(path);
+    return await readPrivateInput(path);
   } catch (error) {
-    if (
-      !generate ||
-      !(typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT")
-    )
-      throw error;
-    try {
-      await readFile(certificateFile);
+    if (!generate || !isJoinedPrivateFileError(error, "ENOENT")) throw error;
+    if (await identityArtifactPresent(certificateFile)) {
       // Keep private material paths out of recursively rendered error causes.
       // eslint-disable-next-line preserve-caught-error
       throw new Error("Public ACME private key is missing; restore the original key");
-    } catch (error) {
-      if (!(
-        typeof error === "object" &&
-        error !== null &&
-        "code" in error &&
-        error.code === "ENOENT"
-      ))
-        throw error;
     }
     await mkdir(dirname(path), { recursive: true, mode: 0o700 });
     const temporary = `${path}.${randomUUID()}.tmp`;
+    let publicationFailure: unknown;
     try {
       const generated = generateKeyPairSync("ec", { namedCurve: "prime256v1" }).privateKey.export({
         type: "pkcs8",
@@ -62,10 +52,14 @@ async function privateKey(
         ))
           throw error;
       }
+    } catch (error) {
+      publicationFailure = error;
+      throw error;
     } finally {
-      await rm(temporary, { force: true });
+      if (ownedProcessCleanupReceipt(publicationFailure) === undefined)
+        await rm(temporary, { force: true });
     }
-    return readFile(path);
+    return readPrivateInput(path);
   }
 }
 
@@ -145,7 +139,7 @@ export async function ensureAcmeBootstrap(options: {
       { signal: options.signal, timeout: 15_000, maxBuffer: 65_536 },
     );
     await chmod(temporary, 0o600);
-    if (!(await readFile(options.privateKeyFile)).equals(key))
+    if (!(await readPrivateInput(options.privateKeyFile)).equals(key))
       throw new Error("Gateway key changed during public certificate bootstrap");
     options.signal.throwIfAborted();
     if (previous === undefined) await link(temporary, options.certificateFile);

@@ -19,6 +19,8 @@ import { createServer } from "../../server.js";
 import { createToken } from "../../data/repositories/TokenRepository.js";
 import { createDevice } from "../../data/repositories/DeviceRepository.js";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 type Db = Database.Database;
 
@@ -52,7 +54,7 @@ function rebuild(body: unknown, opts: { token?: string } = {}) {
 }
 
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-indexer-http-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-indexer-http-${randomUUID()}.db`);
   db = createDatabase(dbPath);
   ADMIN_TOKEN = mintToken([SCOPE_ADMIN]);
   READ_TOKEN = mintToken([SCOPE_READ]);

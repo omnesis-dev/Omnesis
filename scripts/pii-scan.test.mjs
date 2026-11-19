@@ -4,7 +4,7 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { copyFileSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { describe, it, expect } from "vitest";
 import {
   scanText,
@@ -416,6 +416,24 @@ describe("a file's own licence header in a staged diff", () => {
     expect(
       isOwnCopyrightHeaderLine("scripts/pii-scan.test.mjs", "// Copyright (c) 2026 Adrien Conrath"),
     ).toBe(true);
+  });
+  it.each(["\n", "\r\n"])("recognizes a file's own header with newline %j", (newline) => {
+    const root = mkdtempSync(join(tmpdir(), "copyright-newlines-"));
+    const path = join(root, "fixture.ts");
+    const copyright = "// Copyright (c) 2026 Robin Vale";
+    try {
+      writeFileSync(
+        path,
+        `// SPDX-License-Identifier: AGPL-3.0-or-later${newline}${copyright}${newline}`,
+      );
+      const local = relative(join(import.meta.dirname, ".."), path);
+      expect(isOwnCopyrightHeaderLine(local, copyright)).toBe(true);
+      expect(isOwnCopyrightHeaderLine(path, copyright)).toBe(true);
+      expect(isOwnCopyrightHeaderLine(local, copyright + "\r")).toBe(true);
+      expect(isOwnCopyrightHeaderLine(local, "// Copyright (c) 2026 Other Person")).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
   it("does not exempt a name dressed up as a copyright line further down a file", () => {
     expect(

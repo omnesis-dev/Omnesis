@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { createReadStream } from "node:fs";
 import { mkdir, writeFile, unlink } from "node:fs/promises";
 import { dirname } from "node:path";
-import { atomicWriteFile } from "@omnesis/core";
+import { Readable } from "node:stream";
+import { atomicWriteFile, writeWindowsPrivateFileAtomicStream } from "@omnesis/core";
 import { z } from "zod";
 import {
   createRecoveryAuthority,
@@ -14,6 +14,7 @@ import {
 import { readPrivateJson } from "./google-credentials.js";
 import { recoveryPolicyDigest } from "./recovery-contract.js";
 import { assertRecoveryArtifactDestination } from "./recovery-artifact-paths.js";
+import { readBoundedPrivateText } from "./private-inputs.js";
 
 /** All paths are explicit offline operator inputs; the tool never contacts a relay, Google, DNS or a CA. */
 export interface RecoveryAuthorityToolOptions {
@@ -23,15 +24,8 @@ export interface RecoveryAuthorityToolOptions {
   outputFile?: string;
   protectedPaths?: readonly string[];
 }
-async function readSigningKey(path: string): Promise<string> {
-  const parts: Buffer[] = [];
-  let size = 0;
-  for await (const chunk of createReadStream(path)) {
-    size += chunk.length;
-    if (size > 4096) throw new Error("Recovery signing key file is too large");
-    parts.push(Buffer.from(chunk));
-  }
-  return Buffer.concat(parts).toString("utf8");
+function readSigningKey(path: string): Promise<string> {
+  return readBoundedPrivateText(path, 4096, "Recovery signing key file is too large");
 }
 export async function runRecoveryAuthorityTool(
   command: "create" | "receipt" | "policy" | "digest",
@@ -44,7 +38,20 @@ export async function runRecoveryAuthorityTool(
     await mkdir(dirname(options.privateKeyFile), { recursive: true, mode: 0o700 });
     await mkdir(dirname(publicFile), { recursive: true, mode: 0o700 });
     // Exclusive creation never silently replaces an established recovery authority.
-    await writeFile(options.privateKeyFile, keys.privateKey, { flag: "wx", mode: 0o600 });
+    if (process.platform === "win32") {
+      const bytes = Buffer.from(keys.privateKey);
+      await writeWindowsPrivateFileAtomicStream(
+        options.privateKeyFile,
+        Readable.from([bytes]),
+        bytes.byteLength,
+        {
+          replaceExisting: false,
+          timeoutMs: 30_000,
+        },
+      );
+    } else {
+      await writeFile(options.privateKeyFile, keys.privateKey, { flag: "wx", mode: 0o600 });
+    }
     try {
       await writeFile(publicFile, keys.publicKey, { flag: "wx", mode: 0o600 });
     } catch (error) {

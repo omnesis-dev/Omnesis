@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, test, expect, afterEach } from "vitest";
 import {
   resolvePatterns,
@@ -139,11 +141,11 @@ describe("buildResultUrl", () => {
 });
 
 describe("defaultGatewayUrl", () => {
-  const dir = "/Users/maya/.config/omnesis-collector";
+  const dir = join(tmpdir(), "omnesis-fictional-collector");
   const files =
     (...names: string[]) =>
     (path: string) =>
-      names.some((name) => path === `${dir}/${name}`);
+      names.some((name) => path === join(dir, name));
   const paired = () => "https://studio.example.ts.net:7600";
 
   // `omnesis-collector status` once dialled https://localhost:7600 and asked

@@ -15,6 +15,8 @@ import { insertTemporalAnnotation } from "../../enrichment/temporal-annotations/
 import type { StatusCache } from "../services/StatusCache.js";
 import type { DocumentInput } from "@omnesis/types";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 describe("GET /temporal/window", () => {
   let db: Database.Database;
@@ -25,7 +27,7 @@ describe("GET /temporal/window", () => {
   let token: string;
 
   beforeEach(() => {
-    dbPath = `/tmp/omnesis-test-${randomUUID()}.db`;
+    dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
     db = createDatabase(dbPath);
     const device = createDevice(db, { name: `test-${randomUUID()}`, kind: "cli" });
     token = createToken(db, device.id, [SCOPE_ADMIN]).token;

@@ -29,6 +29,8 @@ import {
 import type { Db } from "../data/types.js";
 import type { NotificationMessage } from "@omnesis/core/push";
 import type { DeviceId } from "@omnesis/types";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 const BASE_TIME = 1_800_000_000_000;
 
@@ -36,7 +38,7 @@ let dbPath: string;
 let db: ReturnType<typeof createDatabase>;
 
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-notification-queue-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-notification-queue-${randomUUID()}.db`);
   db = createDatabase(dbPath);
 });
 

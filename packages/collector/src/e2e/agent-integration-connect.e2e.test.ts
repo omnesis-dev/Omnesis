@@ -8,12 +8,14 @@ import { globSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
+import { inspectWindowsPrivatePathSync } from "@omnesis/core";
 import { loadIntegrationCredentials } from "@omnesis/agent-integration";
 import Database from "better-sqlite3";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 
 import { createSubscription } from "@omnesis/gateway/src/subscriptions/store-mutations.js";
 
+import { prepareHermesCommandFixture } from "./hermes-command-fixture.js";
 import { enrollManagedIntegration } from "./managed-integration-enrollment.js";
 import { SyntheticE2EHarness } from "./synth-harness.js";
 
@@ -92,7 +94,7 @@ describe("managed agent integration enrollment — spawned gateway", () => {
     const cliConfig = mkdtempSync(join(tmpdir(), "omnesis-openclaw-reconnect-cli-e2e-"));
     const fakeBin = mkdtempSync(join(tmpdir(), "omnesis-openclaw-reconnect-bin-e2e-"));
     try {
-      prepareHarnessHome("openclaw", home, fakeBin);
+      const connectEnv = prepareHarnessHome("openclaw", home, fakeBin);
       const enroll = () =>
         enrollManagedIntegration({
           harness: "openclaw",
@@ -102,6 +104,7 @@ describe("managed agent integration enrollment — spawned gateway", () => {
           gatewayDbPath: harness.getDbPath(),
           home,
           fakeBin,
+          connectEnv,
           cliConfigDir: cliConfig,
           // The portal card's code: unbound, so only the machine's own saved
           // credential can land it on the existing device.
@@ -231,7 +234,7 @@ describe("managed agent integration enrollment — spawned gateway", () => {
     const fakeBin = mkdtempSync(join(tmpdir(), `omnesis-${harnessName}-bin-e2e-`));
     let primaryError: unknown;
     try {
-      prepareHarnessHome(harnessName, home, fakeBin);
+      const connectEnv = prepareHarnessHome(harnessName, home, fakeBin);
       const enrollment = await enrollManagedIntegration({
         harness: harnessName,
         repositoryRoot,
@@ -240,6 +243,7 @@ describe("managed agent integration enrollment — spawned gateway", () => {
         gatewayDbPath: harness.getDbPath(),
         home,
         fakeBin,
+        connectEnv,
         cliConfigDir: cliConfig,
         createPairingCode: async () => {
           const pairing = await harness.gatewayJson<{ pairingCode: string }>(
@@ -259,7 +263,9 @@ describe("managed agent integration enrollment — spawned gateway", () => {
 
       const credentialsPath = join(home, "omnesis", "integration.json");
       const credentials = loadIntegrationCredentials(credentialsPath);
-      expect(statSync(credentialsPath).mode & 0o777).toBe(0o600);
+      if (process.platform === "win32")
+        expect(inspectWindowsPrivatePathSync(credentialsPath, "file").private).toBe(true);
+      else expect(statSync(credentialsPath).mode & 0o777).toBe(0o600);
       expect(credentials.oauth.tokens).toMatchObject({
         access_token: expect.stringMatching(/^omn_oat_/u),
         refresh_token: expect.stringMatching(/^omn_ort_/u),
@@ -320,7 +326,7 @@ describe("managed agent integration enrollment — spawned gateway", () => {
     const cliConfig = mkdtempSync(join(tmpdir(), `omnesis-${harnessName}-forwarded-cli-e2e-`));
     const fakeBin = mkdtempSync(join(tmpdir(), `omnesis-${harnessName}-forwarded-bin-e2e-`));
     try {
-      prepareHarnessHome(harnessName, home, fakeBin);
+      const connectEnv = prepareHarnessHome(harnessName, home, fakeBin);
       const enrollment = await enrollManagedIntegration({
         harness: harnessName,
         repositoryRoot,
@@ -329,6 +335,7 @@ describe("managed agent integration enrollment — spawned gateway", () => {
         gatewayDbPath: harness.getDbPath(),
         home,
         fakeBin,
+        connectEnv,
         cliConfigDir: cliConfig,
         capabilities: ["answer", "direct", "notes"],
         createPairingCode: async () =>
@@ -435,7 +442,7 @@ describe("managed agent integration enrollment — spawned gateway", () => {
       return { tools, results: results.map((outcome) => outcome.details?.structuredContent) };
     }
     const result = await run(
-      "python3",
+      process.platform === "win32" ? "python" : "python3",
       [resolve(repositoryRoot, "packages/agent-integration/test/hermes_gateway_probe.py")],
       {
         cwd: repositoryRoot,
@@ -464,20 +471,16 @@ describe("managed agent integration enrollment — spawned gateway", () => {
     harnessName: "openclaw" | "hermes",
     home: string,
     fakeBin: string,
-  ): void {
+  ): NodeJS.ProcessEnv {
     for (const opener of ["open", "xdg-open"]) {
       writeFileSync(join(fakeBin, opener), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
     }
     if (harnessName === "openclaw") {
       writeFileSync(join(home, "openclaw.json"), "{}\n");
-      return;
+      return {};
     }
     writeFileSync(join(home, "config.yaml"), "display:\n  background_process_notifications: all\n");
-    writeFileSync(
-      join(fakeBin, "hermes"),
-      '#!/bin/sh\n[ "$1" = plugins ] && [ "$2" = enable ] && [ "$3" = --no-allow-tool-override ] && [ "$4" = omnesis-integration ] || exit 64\ntouch "$HERMES_HOME/.omnesis-hermes-enabled-e2e"\n',
-      { mode: 0o755 },
-    );
+    return prepareHermesCommandFixture(fakeBin);
   }
 
   function accessIdentity(requestId: string) {
@@ -571,7 +574,7 @@ describe("managed agent integration enrollment — spawned gateway", () => {
       return parsed.details?.response as { answer?: string };
     }
     const result = await run(
-      "python3",
+      process.platform === "win32" ? "python" : "python3",
       [resolve(repositoryRoot, "packages/agent-integration/test/hermes_gateway_probe.py")],
       {
         cwd: repositoryRoot,

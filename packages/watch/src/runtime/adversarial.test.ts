@@ -10,10 +10,10 @@
  * and the engine quietly does not deliver.
  */
 
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { watchDslSchema } from "../dsl/schema.js";
 import { AnalyticsDatabase } from "../universe/analytics.js";
@@ -29,16 +29,25 @@ const ontology = loadOntology();
 const SELF = "0a1b2c3d-0000-4000-8000-000000000001";
 const ALICE = "b3f2a9d4-0000-4000-8000-000000000002";
 const temps: string[] = [];
+const stores = new Set<WatchStateStore>();
 
 afterEach(() => {
+  for (const store of stores) store.close();
+  stores.clear();
   for (const dir of temps.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
+
+function openStore(path: string): WatchStateStore {
+  const store = new WatchStateStore(path);
+  stores.add(store);
+  return store;
+}
 
 function tempStore(): { store: WatchStateStore; path: string } {
   const dir = mkdtempSync(join(tmpdir(), "watch-v2-"));
   temps.push(dir);
   const path = join(dir, "watch.db");
-  return { store: new WatchStateStore(path), path };
+  return { store: openStore(path), path };
 }
 
 function email(seq: number, thread: string, day: number, fromSelf = false): JournalEvent {
@@ -267,7 +276,7 @@ describe("resuming across a crash", () => {
     // replayed prefix from double-counting.
     const { store, path } = tempStore();
     await run(SIMPLE_WAIT, journal.slice(0, 2), store);
-    const resumed = await run(SIMPLE_WAIT, journal, new WatchStateStore(path));
+    const resumed = await run(SIMPLE_WAIT, journal, openStore(path));
 
     expect(resumed.firings.map((f) => f.payload.doc)).toEqual(
       continuous.firings.map((f) => f.payload.doc),
@@ -282,14 +291,14 @@ describe("resuming across a crash", () => {
       // durable record the watch is judged on. The crash point must not matter.
       const whole = tempStore();
       await run(SIMPLE_WAIT, journal, whole.store);
-      const continuous = new WatchStateStore(whole.path);
+      const continuous = openStore(whole.path);
       const expected = continuous.firings("resume-across-a-crash").map((f) => f.payload);
       continuous.close();
 
       const split = tempStore();
       await run(SIMPLE_WAIT, journal.slice(0, at), split.store);
-      await run(SIMPLE_WAIT, journal, new WatchStateStore(split.path));
-      const after = new WatchStateStore(split.path);
+      await run(SIMPLE_WAIT, journal, openStore(split.path));
+      const after = openStore(split.path);
       try {
         expect(after.firings("resume-across-a-crash").map((f) => f.payload)).toEqual(expected);
       } finally {
@@ -304,8 +313,8 @@ describe("resuming across a crash", () => {
     // the second — a legitimate firing — would be discarded as a duplicate.
     const { store, path } = tempStore();
     await run(SIMPLE_WAIT, journal.slice(0, 2), store);
-    const first = new WatchStateStore(path).takeTimerSeq("resume-across-a-crash");
-    const second = new WatchStateStore(path).takeTimerSeq("resume-across-a-crash");
+    const first = openStore(path).takeTimerSeq("resume-across-a-crash");
+    const second = openStore(path).takeTimerSeq("resume-across-a-crash");
     expect(second).toBeLessThan(first);
   });
 
@@ -313,9 +322,14 @@ describe("resuming across a crash", () => {
     // With no store injected the engine owns one, and must close it. An
     // injected store belongs to the caller and is left open on purpose, which
     // is why asserting on an injected one proved nothing.
-    const trace = await run(SIMPLE_WAIT, journal);
-    expect(trace.firings.length).toBeGreaterThan(0);
-    expect(existsSync(join(tmpdir(), "definitely-not-created"))).toBe(false);
+    const close = vi.spyOn(WatchStateStore.prototype, "close");
+    try {
+      const trace = await run(SIMPLE_WAIT, journal);
+      expect(trace.firings.length).toBeGreaterThan(0);
+      expect(close).toHaveBeenCalledOnce();
+    } finally {
+      close.mockRestore();
+    }
   });
 });
 
@@ -361,7 +375,7 @@ describe("a stateful SQL node", () => {
       [email(1, "A", 1), email(2, "B", 2), email(3, "C", 30), email(4, "D", 40)],
       store,
     );
-    const reopened = new WatchStateStore(path);
+    const reopened = openStore(path);
     try {
       // Four arms; three ran to their deadlines and the last is still counting
       // down when the journal ends. Only that one may still hold a cell.
@@ -476,7 +490,7 @@ describe("an event whose dispatch fails", () => {
 
     // The cursor must not have advanced past the event that failed — a
     // half-applied event marked consumed is one nothing can ever finish.
-    const reopened = new WatchStateStore(path);
+    const reopened = openStore(path);
     try {
       expect(reopened.cursor("broken-query")).toBe(0);
     } finally {

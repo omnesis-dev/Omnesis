@@ -44,11 +44,14 @@ import { join } from "node:path";
 
 import {
   createLogger,
+  ensurePrivateDirs,
   isCertificateIpAddress,
   localMdnsHostname,
   safeNetworkInterfaces,
 } from "@omnesis/core";
 
+import { tlsIssuerCleanupFailure } from "./tls-lifecycle/issuer-cleanup.js";
+import { readTlsPrivateKey, writeTlsMaterial } from "./tls-lifecycle/persistence.js";
 import { processLauncher } from "./process-launcher/index.js";
 
 /** Longest `openssl req` may take to generate the key and sign the certificate. */
@@ -139,7 +142,7 @@ export async function resolveTlsBundle(opts: ResolveTlsBundleOpts): Promise<TlsB
   // without the self-signed-cert browser warning.
   if (envCertPath && envKeyPath) {
     const cert = readFileSync(envCertPath, "utf8");
-    const key = readFileSync(envKeyPath, "utf8");
+    const key = await readTlsPrivateKey(envKeyPath, configDir);
     assertPairBelongsTogether(cert, key, envCertPath, envKeyPath);
     return {
       cert,
@@ -155,7 +158,7 @@ export async function resolveTlsBundle(opts: ResolveTlsBundleOpts): Promise<TlsB
 
   if (existsSync(certPath) && existsSync(keyPath)) {
     const cert = readFileSync(certPath, "utf8");
-    const key = readFileSync(keyPath, "utf8");
+    const key = await readTlsPrivateKey(keyPath, configDir);
     if (pairBelongsTogether(cert, key)) {
       // Kept even when it misses a name OMNESIS_TLS_EXTRA_NAMES now asks for:
       // phones and collectors pin its fingerprint, and a new one would break
@@ -177,9 +180,10 @@ export async function resolveTlsBundle(opts: ResolveTlsBundleOpts): Promise<TlsB
 
   // Generate a fresh bundle and persist it.
   mkdirSync(tlsDir, { recursive: true, mode: 0o700 });
+  if (process.platform === "win32") await ensurePrivateDirs([tlsDir]);
   const generated = await generateSelfSigned({ extraNames: envExtraNames, signal: opts.signal });
-  writeFileSync(certPath, generated.cert, { mode: 0o600 });
-  writeFileSync(keyPath, generated.key, { mode: 0o600 });
+  opts.signal?.throwIfAborted();
+  await writeTlsMaterial(certPath, keyPath, generated, configDir);
   // mkdirSync's mode is masked by umask on some platforms; force it.
   try {
     chmodSync(tlsDir, 0o700);
@@ -241,8 +245,10 @@ export async function generateSelfSigned(
   const keyPath = join(tmpDir, "key.pem");
   const certPath = join(tmpDir, "cert.pem");
   const cnfPath = join(tmpDir, "openssl.cnf");
+  let cleanupConfirmed = true;
 
   try {
+    if (process.platform === "win32") await ensurePrivateDirs([tmpDir]);
     const hostLocal = localMdnsHostname(hostname());
 
     // Enumerate every non-internal network address the host currently
@@ -329,6 +335,8 @@ subjectAltName = ${sanList}
         ...(opts.signal ? { signal: opts.signal } : {}),
       },
     );
+    const cleanup = tlsIssuerCleanupFailure(run, tmpDir);
+    if (cleanup) throw cleanup;
     if (run.failure || run.exitCode !== 0) {
       const why =
         run.failure === "spawn"
@@ -346,7 +354,7 @@ subjectAltName = ${sanList}
       );
     }
 
-    let keyPem = readFileSync(keyPath, "utf8");
+    let keyPem = await readTlsPrivateKey(keyPath, tmpDir);
     const certPem = readFileSync(certPath, "utf8");
 
     // Normalize the key to PKCS#8 PEM. Older openssl emits "BEGIN PRIVATE
@@ -361,7 +369,14 @@ subjectAltName = ${sanList}
       key: keyPem,
       fingerprintSha256: fingerprintFromCertPem(certPem),
     };
+  } catch (error) {
+    const cleanup = tlsIssuerCleanupFailure(error, tmpDir);
+    if (cleanup) {
+      cleanupConfirmed = false;
+      throw cleanup;
+    }
+    throw error;
   } finally {
-    rmSync(tmpDir, { recursive: true, force: true });
+    if (cleanupConfirmed) rmSync(tmpDir, { recursive: true, force: true });
   }
 }

@@ -34,6 +34,7 @@
 import { availableParallelism } from "node:os";
 import { createLogger, parseDuration } from "@omnesis/core";
 import {
+  CONFIG_DEFAULTS,
   isSafeHttpsOrigin,
   isSafeMcpResourceUrl,
   isSafePublicBaseUrl,
@@ -70,6 +71,8 @@ export interface ResolvedRuntimeSettings {
   indexerBetweenPageSleepMs: number;
   /** Catch-up pacing for a backlogged scan (`indexer.catchUp`). */
   indexerCatchUp: { enabled: boolean; maxPageSize: number; minSleepMs: number };
+  /** Keyword-index rebuild pacing (`indexer.lexicalRebuild`). */
+  lexicalRebuild: { batchSize: number; pauseMs: number };
   /** Whether to run `reindexMissing` at gateway boot. */
   reindexMissingAtBoot: boolean;
   /** Chunker max chunk length, characters. */
@@ -168,19 +171,8 @@ export interface ResolvedRuntimeSettings {
   sessionTtlMs: number;
   /** Minimum interval between active portal-session refresh writes, ms. */
   sessionRefreshThrottleMs: number;
-  /**
-   * Externally-reachable HTTPS base URL of this gateway (no trailing slash),
-   * or `undefined` when unset. MCP OAuth derives its canonical issuer and
-   * resource origin from it; remote MCP access is disabled without it. OAuth
-   * / aggregator sources also build `${publicBaseUrl}/oauth/callback`; when
-   * unset they fall back to the local-only `localhost:3003` callback. See
-   * `gateway.publicBaseUrl` in the config schema.
-   */
-  publicBaseUrl: string | undefined;
   /** Exact HTTPS origins the installer proved use platform-trusted TLS. */
   pairingSystemTrustOrigins: readonly string[];
-  /** Exact OAuth protected-resource identifiers served by this gateway. */
-  mcpResourceUrls: readonly string[];
   // ── Backfill periodic tasks (gateway.backfill.* in config) ──
   //
   // Flat field-per-knob shape: each `*Ms` / `*Size` field flows into
@@ -282,6 +274,8 @@ const DEFAULTS = {
   catchUpEnabled: true,
   catchUpMaxPageSize: 1000,
   catchUpMinSleep: "10ms",
+  lexicalRebuildBatchSize: CONFIG_DEFAULTS.indexer.lexicalRebuild.batchSize,
+  lexicalRebuildPause: CONFIG_DEFAULTS.indexer.lexicalRebuild.pause,
   reindexMissingAtBoot: false,
   // Gateway-process timing budgets — moved out of inline magic
   // numbers (ws.ts, auth-flows.ts, DeviceRepository.ts pairing,
@@ -465,7 +459,6 @@ export function resolveRuntimeSettings(config: OmnesisConfig | undefined): Resol
     cores: availableParallelism(),
   });
   const timings = config?.gateway?.timings;
-  const publicBaseUrl = resolvePublicBaseUrl(config);
   // Slow-request keeps a back-compat env override
   // (`OMNESIS_SLOW_REQUEST_MS`) — env wants ms, the schema wants a
   // duration string, so resolve them separately. A 0 in env disables
@@ -577,6 +570,10 @@ export function resolveRuntimeSettings(config: OmnesisConfig | undefined): Resol
       maxPageSize: indexer?.catchUp?.maxPageSize ?? DEFAULTS.catchUpMaxPageSize,
       minSleepMs: parseDuration(indexer?.catchUp?.minBetweenPageSleep ?? DEFAULTS.catchUpMinSleep),
     },
+    lexicalRebuild: {
+      batchSize: indexer?.lexicalRebuild?.batchSize ?? DEFAULTS.lexicalRebuildBatchSize,
+      pauseMs: parseDuration(indexer?.lexicalRebuild?.pause ?? DEFAULTS.lexicalRebuildPause),
+    },
     reindexMissingAtBoot: indexer?.reindexMissingAtBoot ?? DEFAULTS.reindexMissingAtBoot,
     chunkerChunkSize: indexer?.chunker?.chunkSize ?? DEFAULTS.chunkerChunkSize,
     chunkerOverlap: indexer?.chunker?.overlap ?? DEFAULTS.chunkerOverlap,
@@ -595,9 +592,7 @@ export function resolveRuntimeSettings(config: OmnesisConfig | undefined): Resol
     sessionRefreshThrottleMs: parseDuration(
       timings?.sessionRefreshThrottle ?? DEFAULTS.sessionRefreshThrottle,
     ),
-    publicBaseUrl,
     pairingSystemTrustOrigins: resolvePairingSystemTrustOrigins(),
-    mcpResourceUrls: resolveMcpResourceUrls(config, publicBaseUrl),
     ...resolveBackfill(config),
   };
 }
@@ -610,6 +605,43 @@ function resolvePairingSystemTrustOrigins(): readonly string[] {
     "Ignoring invalid OMNESIS_PAIRING_SYSTEM_TRUST_ORIGIN: expected one exact HTTPS origin without credentials, a path, query parameters, a fragment, or a trailing slash",
   );
   return [];
+}
+
+/**
+ * The gateway's public address as `config` and the environment give it.
+ * Unlike the rest of the runtime settings it is not resolved once at start:
+ * `PublicAddress` (public-address.ts) resolves it again whenever the config
+ * changes, so a saved address takes effect at once.
+ */
+export interface ResolvedPublicAddress {
+  /**
+   * Externally-reachable HTTPS base URL of this gateway (no trailing slash),
+   * or `undefined` when unset. MCP OAuth derives its canonical issuer and
+   * resource origin from it; remote MCP access is disabled without it. OAuth
+   * / aggregator sources also build `${publicBaseUrl}/oauth/callback`; when
+   * unset they fall back to the local-only `localhost:3003` callback. See
+   * `gateway.publicBaseUrl` in the config schema.
+   */
+  publicBaseUrl: string | undefined;
+  /** Exact OAuth protected-resource identifiers served by this gateway. */
+  mcpResourceUrls: readonly string[];
+  /** `OMNESIS_PUBLIC_BASE_URL` sets the address, so the config's has no effect. */
+  fromEnvironment: boolean;
+}
+
+/**
+ * Resolves the public address. Throws when `gateway.mcpResourceUrls` cannot
+ * be served with it: without a public base URL, or with two resources on one
+ * origin.
+ */
+export function resolvePublicAddress(config: OmnesisConfig | undefined): ResolvedPublicAddress {
+  const fromEnv = resolvePublicBaseUrlFromEnv();
+  const publicBaseUrl = fromEnv ?? resolveConfiguredPublicBaseUrl(config);
+  return {
+    publicBaseUrl,
+    mcpResourceUrls: resolveMcpResourceUrls(config, publicBaseUrl),
+    fromEnvironment: fromEnv !== undefined,
+  };
 }
 
 function resolveMcpResourceUrls(
@@ -644,24 +676,23 @@ function resolveMcpResourceUrls(
 }
 
 /**
- * Resolve the gateway's externally-reachable HTTPS base URL. Env
- * (`OMNESIS_PUBLIC_BASE_URL`) wins over `gateway.publicBaseUrl` in config.
- * An env value is held to the same shape the config schema enforces
- * (valid HTTPS, no credentials/query/fragment); a malformed value is rejected
+ * `OMNESIS_PUBLIC_BASE_URL`, which wins over `gateway.publicBaseUrl` in
+ * config. It is held to the same shape the config schema enforces (valid
+ * HTTPS, no credentials/query/fragment); a malformed value is rejected
  * without echoing it into logs, since it may itself contain credentials.
  */
-function resolvePublicBaseUrl(config: OmnesisConfig | undefined): string | undefined {
+function resolvePublicBaseUrlFromEnv(): string | undefined {
   const fromEnv = envString("OMNESIS_PUBLIC_BASE_URL");
-  if (fromEnv !== undefined) {
-    const trimmed = fromEnv.replace(/\/+$/, "");
-    if (!isSafePublicBaseUrl(trimmed)) {
-      log.warn(
-        "Ignoring invalid OMNESIS_PUBLIC_BASE_URL: expected HTTPS without credentials, query parameters, or a fragment — falling back to config / localhost callback",
-      );
-    } else {
-      return trimmed;
-    }
-  }
+  if (fromEnv === undefined) return undefined;
+  const trimmed = fromEnv.replace(/\/+$/, "");
+  if (isSafePublicBaseUrl(trimmed)) return trimmed;
+  log.warn(
+    "Ignoring invalid OMNESIS_PUBLIC_BASE_URL: expected HTTPS without credentials, query parameters, or a fragment — falling back to config / localhost callback",
+  );
+  return undefined;
+}
+
+function resolveConfiguredPublicBaseUrl(config: OmnesisConfig | undefined): string | undefined {
   const configured = config?.gateway?.publicBaseUrl;
   if (configured === undefined || isSafePublicBaseUrl(configured)) return configured;
   log.warn(
@@ -739,6 +770,7 @@ export function announceRuntimeSettings(s: ResolvedRuntimeSettings): void {
       `embedConcurrency=${s.embedConcurrency}, pageSize=${s.indexerPageSize}, ` +
       `betweenPageSleep=${s.indexerBetweenPageSleepMs}ms, ` +
       `catchUp=${s.indexerCatchUp.enabled ? `on(maxPage=${s.indexerCatchUp.maxPageSize},minSleep=${s.indexerCatchUp.minSleepMs}ms)` : "off"}, ` +
+      `lexicalRebuild={batch=${s.lexicalRebuild.batchSize},pause=${s.lexicalRebuild.pauseMs}ms}, ` +
       `chunker={size=${s.chunkerChunkSize},overlap=${s.chunkerOverlap}}, ` +
       `embedder={ctx=${s.embedderContextSize},timeout=${s.embedderTimeoutMs}ms,maxInput=${s.embedderMaxInputChars}}; ` +
       `timings: slowRequest=${s.slowRequestMs}ms, ` +
@@ -749,7 +781,6 @@ export function announceRuntimeSettings(s: ResolvedRuntimeSettings): void {
       `pairingTtl=${s.pairingTtlMs}ms, ` +
       `sessionTtl=${s.sessionTtlMs}ms, ` +
       `sessionRefreshThrottle=${s.sessionRefreshThrottleMs}ms; ` +
-      `publicBaseUrl=${s.publicBaseUrl ?? "(unset — loopback OAuth/callback fallback only)"}; ` +
       `backfill: ` +
       `links={interval=${s.linkBackfillIntervalMs}ms,idle=${s.linkIdleDelayMs}ms}, ` +
       `linkReconcile={interval=${s.linkReconcileIntervalMs}ms,batch=${s.linkReconcileBatchSize}}, ` +

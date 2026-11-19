@@ -4,6 +4,7 @@
 
 import { randomUUID } from "node:crypto";
 import { defineCommand, runMain } from "citty";
+import { defaultCorpusDbPath } from "../paths.js";
 import { CorpusReader, DEFAULT_INCLUDE_TYPES } from "../corpus/reader.js";
 import { DupeStore, defaultDupeDbPath } from "../store/repository.js";
 import {
@@ -15,8 +16,7 @@ import {
 } from "../algo/index.js";
 import { NearDupeRunner } from "./runner.js";
 
-const HOME = process.env.HOME ?? "";
-const DEFAULT_OMNESIS_DB = `${HOME}/.config/omnesis/omnesis.db`;
+const DEFAULT_OMNESIS_DB = defaultCorpusDbPath();
 
 const run = defineCommand({
   meta: {

@@ -6,6 +6,7 @@ import { createPrivateKey, createPublicKey, sign, X509Certificate } from "node:c
 import { z } from "zod";
 import { challengeIsFresh, relayOrigin } from "./network.js";
 import { readBoundedJson } from "./google-credentials.js";
+import { readGatewayTlsPrivateKey } from "./gateway-private-key.js";
 import {
   readOrCreateGatewayOwnerKey,
   type GatewayKeySessionOptions,
@@ -55,7 +56,13 @@ export function independentDnsPresenter(options: {
       gateway.ownerKeyFile ?? `${gateway.sessionFile}.owner-key`,
       false,
     );
-    const tls = createPrivateKey(await keyText(gateway.privateKeyFile));
+    const tls = createPrivateKey(
+      await readGatewayTlsPrivateKey(
+        gateway.privateKeyFile,
+        gateway.configDir,
+        "Gateway DNS signing material is too large",
+      ),
+    );
     const leaf = new X509Certificate(await keyText(gateway.certificateFile));
     if (publicKeyFingerprint(createPublicKey(tls)) !== publicKeyFingerprint(leaf.publicKey))
       throw new Error("Gateway DNS certificate and key do not match");

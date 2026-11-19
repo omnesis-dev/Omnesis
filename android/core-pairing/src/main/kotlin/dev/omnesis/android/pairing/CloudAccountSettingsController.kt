@@ -55,6 +55,7 @@ class CloudAccountSettingsController {
     val state = mutable.asStateFlow()
     private var generation = 0
     private var reading = false
+    private var verificationOpened = false
 
     suspend fun refresh(client: CloudRelayManaging) {
         if (reading || mutable.value.busy != null) return
@@ -63,7 +64,11 @@ class CloudAccountSettingsController {
         try {
             val status = client.cloudRelayStatus()
             if (attempt == generation) {
-                mutable.value = mutable.value.copy(status = status, loading = false, absent = false, unreachable = false, loadError = null)
+                val nextUrl = if (status.connect?.verification == null && cloudAccountPhase(status) == CloudAccountPhase.Waiting) cloudAccountConnectUrl(status.connect) else null
+                val continueSignIn = verificationOpened && nextUrl != null
+                if (continueSignIn || cloudAccountPhase(status) != CloudAccountPhase.Waiting) verificationOpened = false
+                mutable.value = mutable.value.copy(status = status, loading = false, absent = false, unreachable = false, loadError = null,
+                    launchUrl = if (continueSignIn) nextUrl else mutable.value.launchUrl)
             }
         } catch (cancelled: CancellationException) {
             throw cancelled
@@ -81,15 +86,18 @@ class CloudAccountSettingsController {
     }
 
     suspend fun connect(client: CloudRelayManaging, intent: String) {
+        if (mutable.value.busy != null) return
+        verificationOpened = false
         mutable.value = mutable.value.copy(connectIntent = intent)
         val status = change("connect") { client.connectCloudRelay(intent) } ?: return
-        val address = cloudAccountHttpsUrl(status.connect?.authorizeUrl)
+        val address = cloudAccountConnectUrl(status.connect)
         if (cloudAccountPhase(status) == CloudAccountPhase.Waiting && address != null) {
             mutable.value = mutable.value.copy(launchUrl = address)
         }
     }
 
     suspend fun cancelConnect(client: CloudRelayManaging) {
+        verificationOpened = false
         change("connect/cancel") { client.cancelCloudRelayConnect() }
     }
 
@@ -103,10 +111,14 @@ class CloudAccountSettingsController {
         change("enrollment") { client.setCloudRelayEnrollmentPolicy(policy) }
     }
 
-    fun launched() { mutable.value = mutable.value.copy(launchUrl = null) }
+    fun launched() {
+        verificationOpened = mutable.value.status?.connect?.verification != null
+        mutable.value = mutable.value.copy(launchUrl = null)
+    }
 
     fun clear() {
         generation++
+        verificationOpened = false
         mutable.value = State()
     }
 

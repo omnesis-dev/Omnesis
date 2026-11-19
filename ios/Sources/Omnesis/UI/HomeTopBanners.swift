@@ -22,10 +22,10 @@ struct HomeTopBanners: View {
     let onOpenSettings: (SettingsDestination) -> Void
 
     /// What restarts the pairing-request reads: the app coming to the front, a different
-    /// pairing or scopes, and a notification or decision asking for a fresh read.
+    /// pairing, scopes or gateway status, and a notification or decision asking for a fresh read.
     private struct PairingWatch: Equatable {
         let active: Bool
-        let eligible: Bool
+        let kinds: DeviceApprovalKinds
         let deviceId: String?
         let nudge: Int
     }
@@ -34,8 +34,12 @@ struct HomeTopBanners: View {
         Date().timeIntervalSince1970 * 1000
     }
 
-    private var canListPairingRequests: Bool {
-        PendingPairingRequests.eligible(cloudRelayEnabled: CloudRelayFeature.enabled, scopes: store.pairing?.scopes)
+    private var approvalKinds: DeviceApprovalKinds {
+        DeviceApprovalKinds(
+            cloudRelayEnabled: CloudRelayFeature.enabled,
+            tailscaleEmbed: store.statusSnapshot?.tailscaleEmbed == true,
+            scopes: store.pairing?.scopes
+        )
     }
 
     var body: some View {
@@ -47,14 +51,24 @@ struct HomeTopBanners: View {
                     onDismiss: { accessBannerState.dismiss(store.pendingAccessRequests, nowMillis: Int64(nowMillis)) }
                 )
             }
-            if let offer = pairingBannerState.offer(from: pairingRequests.requests, nowMillis: nowMillis) {
+            if let offer = pairingBannerState.offer(
+                from: pairingRequests.requests,
+                tailscale: pairingRequests.tailscaleRequests,
+                nowMillis: nowMillis
+            ) {
                 PairingRequestBanner(
                     offer: offer,
                     onReview: {
                         pairingRequests.requestOpen()
                         onOpenSettings(.devices)
                     },
-                    onDismiss: { pairingBannerState.dismiss(pairingRequests.requests, nowMillis: nowMillis) }
+                    onDismiss: {
+                        pairingBannerState.dismiss(
+                            pairingRequests.requests,
+                            tailscale: pairingRequests.tailscaleRequests,
+                            nowMillis: nowMillis
+                        )
+                    }
                 )
             }
             let showNotificationWarning = NotificationWarningDismissal.shouldShowWarning(
@@ -80,23 +94,25 @@ struct HomeTopBanners: View {
         }
         .task(id: PairingWatch(
             active: scenePhase == .active,
-            eligible: canListPairingRequests,
+            kinds: approvalKinds,
             deviceId: store.pairing?.deviceId,
             nudge: pairingRequests.refreshRequests
         )) { await watchPairingRequests() }
     }
 
-    /// Reads the waiting pairing requests while the app is in front, and again every
+    /// Reads the devices waiting for approval while the app is in front, and again every
     /// `pollInterval`: a request made while this phone was offline for its notification
-    /// still reaches the banner. A phone that may not list them asks nothing.
+    /// still reaches the banner. Only the kinds this build and gateway offer are asked; a
+    /// phone offered neither asks nothing.
     private func watchPairingRequests() async {
-        guard canListPairingRequests else {
+        let kinds = approvalKinds
+        guard kinds.any else {
             pairingRequests.clear()
             return
         }
         guard scenePhase == .active else { return }
         while !Task.isCancelled {
-            await pairingRequests.refresh(client: store.admin)
+            await pairingRequests.refresh(kinds: kinds, client: store.admin)
             do {
                 try await Task.sleep(for: PendingPairingRequests.pollInterval)
             } catch {
@@ -110,7 +126,7 @@ struct HomeTopBanners: View {
 @available(iOS 17.0, *)
 @MainActor
 private func homeTopBannersPreview() -> some View {
-    PendingPairingRequests.shared.seedForPreview(PreviewMocks.pairingRequestsWithTrust.rows)
+    PendingPairingRequests.shared.seedForPreview(PreviewMocks.pairingRequestsWithTrust.rows, tailscale: PreviewMocks.tailscaleJoinRows)
     return VStack(spacing: 0) {
         HomeTopBanners(onReviewAccess: { _ in }, onOpenSettings: { _ in })
         Spacer()

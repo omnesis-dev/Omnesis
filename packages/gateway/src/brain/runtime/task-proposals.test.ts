@@ -35,6 +35,8 @@ import type {
   ToolResult,
 } from "@omnesis/core";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 type Db = Database.Database;
 
@@ -163,7 +165,7 @@ describe("open_loop_update / open_loop_delete on the user's own tasks", () => {
   }
 
   beforeEach(() => {
-    path = `/tmp/omnesis-test-${randomUUID()}.db`;
+    path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
     db = createDatabase(path);
     nowMs = Date.parse("2026-07-02T10:00:00.000Z");
     const writeGate = directWriteGate(db);
@@ -428,7 +430,7 @@ describe("open_loop_update applies a verified change to the user's own task", ()
     });
 
   beforeEach(() => {
-    path = `/tmp/omnesis-test-${randomUUID()}.db`;
+    path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
     db = createDatabase(path);
     upsertDocuments(db, [
       {

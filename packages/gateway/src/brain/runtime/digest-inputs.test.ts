@@ -26,6 +26,8 @@ import {
 import type { DigestHorizon } from "./digest-horizon.js";
 import type { TemporalItem } from "@omnesis/core";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 const NOW = Date.parse("2026-07-02T10:00:00.000Z");
 const DAY = 86_400_000;
@@ -80,7 +82,7 @@ function insertDoc(externalId: string, title: string): string {
 const settings = () => resolveBrainSettings();
 
 beforeEach(() => {
-  path = `/tmp/omnesis-test-${randomUUID()}.db`;
+  path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
   db = createDatabase(path);
 });
 afterEach(() => {

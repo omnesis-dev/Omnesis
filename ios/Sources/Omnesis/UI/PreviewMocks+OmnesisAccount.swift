@@ -27,6 +27,14 @@ extension PreviewMocks {
             + #""connect":{"state":"registering"}"#
     )
 
+    static let cloudRelayVerification: CloudRelayStatus = {
+        let expires = Int(Date().timeIntervalSince1970 * 1000) + 300_000
+        return cloudRelayStatus(
+            #""enabled":false,"serviceConfigured":true,"connect":{"state":"waiting","verification":{"#
+                + #""url":"https://dns.example.test/_dns/v2/enroll?ticket=fictional","expiresAt":\#(expires)}}"#
+        )
+    }()
+
     static let cloudRelayFailed = cloudRelayStatus(
         #""enabled":false,"serviceConfigured":true,"enrollment":{"state":"unconfigured"},"tunnel":{"state":"disabled"},"#
             + #""connect":{"state":"failed","error":"account-link-failed"}"#

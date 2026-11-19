@@ -3,13 +3,14 @@
 
 import { mkdtempSync, writeFileSync, mkdirSync, rmSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { describe, test, expect, afterEach } from "vitest";
 import definition, { discoverProfiles } from "./index.js";
 
 let tmpDirs: string[] = [];
 
 function makeTmpDir(prefix: string): string {
-  const dir = mkdtempSync(`/tmp/${prefix}-`);
+  const dir = mkdtempSync(join(tmpdir(), `${prefix}-`));
   tmpDirs.push(dir);
   return dir;
 }

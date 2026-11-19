@@ -2,7 +2,11 @@
 // Copyright (c) 2026 Adrien Conrath
 
 // First, so a sign-in handed over in the URL fragment leaves the address bar before anything reads it.
-import { takeAccountSignIn } from "./lib/cloud-pairing-handoff.js";
+import {
+  redeemPortalHandoff,
+  takeAccountSignIn,
+  takePortalHandoff,
+} from "./lib/cloud-pairing-handoff.js";
 import { html, render } from "htm/preact";
 import { Component } from "preact";
 import { useState, useEffect, useLayoutEffect, useRef } from "preact/hooks";
@@ -23,8 +27,6 @@ import {
   apiFetch,
   getStatus,
   getTaskCounts,
-  listPrivacyApprovals,
-  listSubscriptionApprovals,
 } from "./api.js";
 import { clearOmnesisStorage } from "./lib/storage.js";
 import { getTheme, toggleTheme } from "./lib/theme.js";
@@ -41,7 +43,10 @@ import { TestInstanceCard } from "./components/test-instance-card.js";
 import { countLabel, localDay, supportsTaskConversations } from "./lib/tasks-model.js";
 import { onTaskCounts } from "./lib/task-counts.js";
 import { CloudPairingLogin } from "./components/cloud-pairing-login.js";
-import { CloudPairingBanner } from "./components/cloud-pairing-banner.js";
+import { WaitingDevicesBanner } from "./components/waiting-devices-banner.js";
+import { AttentionIcon } from "./components/attention-icon.js";
+import { navAttention } from "./lib/attention.js";
+import { useAttention } from "./lib/use-attention.js";
 
 const DocumentView = lazy(() => import("./views/document.js").then((m) => m.DocumentView));
 const PeopleView = lazy(() => import("./views/people.js").then((m) => m.PeopleView));
@@ -66,9 +71,6 @@ const CONVERSATION_POLL_MS = 60_000;
 // Fallback pace for re-marking a conversation on screen, used until /status
 // reports the window the gateway actually enforces.
 const DEFAULT_SEEN_REFRESH_MS = 45_000;
-// How often a visible tab re-counts the decisions waiting on the operator. An
-// approval expires, so the count has to move without the operator navigating.
-const PRIVACY_PENDING_POLL_MS = 60_000;
 // `/status` is cache-backed and this keeps a release found by the gateway
 // visible without requiring the operator to reload the portal.
 const RELEASE_STATUS_POLL_MS = 60_000;
@@ -117,11 +119,15 @@ if (typeof window !== "undefined") {
   });
 }
 
-// Sign-in appears only when the gateway advertises the optional cloud relay.
+// Sign-in appears only when the gateway advertises the optional cloud relay. With Omnesis account
+// sign-in on offer, it comes first and the token or pairing-code form waits behind a quiet link.
 function LoginView({ reason, cloudRelay = false } = {}) {
   const [token, setToken] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [accountSignIn, setAccountSignIn] = useState(false);
+  const [showForm, setShowForm] = useState(false);
+  const collapsed = cloudRelay && accountSignIn && !showForm;
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -148,8 +154,8 @@ function LoginView({ reason, cloudRelay = false } = {}) {
         <h1 class="login-title">Omnesis</h1>
         ${reason
           ? html`<p class="login-subtitle login-reason">${reason}</p>`
-          : html`<p class="login-subtitle">Enter an API token or a pairing code to continue</p>`}
-        <form onSubmit=${handleSubmit}>
+          : !collapsed && html`<p class="login-subtitle">Enter an API token or a pairing code to continue</p>`}
+        ${!collapsed && html`<form onSubmit=${handleSubmit}>
           <input
             type="password"
             class="login-input"
@@ -164,12 +170,16 @@ function LoginView({ reason, cloudRelay = false } = {}) {
           <button type="submit" class="login-button" disabled=${loading || !token.trim()}>
             ${loading ? "Authenticating..." : "Log in"}
           </button>
-        </form>
-        ${cloudRelay && html`<${CloudPairingLogin} />`}
-        <p class="login-hint">
-          Your default token is in <code>~/.config/omnesis/token</code>, or run
-          ${" "}<code>omnesis devices pair</code> with <code>kind=portal</code> for a one-shot code.
-        </p>
+        </form>`}
+        ${cloudRelay && html`<${CloudPairingLogin} onReady=${() => setAccountSignIn(true)} />`}
+        ${collapsed
+          ? html`<button type="button" class="cloud-pairing-quiet" onClick=${() => setShowForm(true)}>
+              Have a pairing code? Enter it
+            </button>`
+          : html`<p class="login-hint">
+              Your default token is in <code>~/.config/omnesis/token</code>, or run
+              ${" "}<code>omnesis devices pair</code> with <code>kind=portal</code> for a one-shot code.
+            </p>`}
       </div>
     </div>
   `;
@@ -298,6 +308,8 @@ function App() {
   const [labAvailable, setLabAvailable] = useState(false);
   const [lab, setLab] = useState({ brain: false, tasks: false, watches: false });
   const [cloudRelay, setCloudRelay] = useState(false);
+  // Whether the gateway has its own Tailscale device: its installation includes the helper program.
+  const [tailscaleEmbed, setTailscaleEmbed] = useState(false);
 
   // Whether the gateway runs in developer mode (OMNESIS_DEV_MODE=1). Separate
   // from experimental; reveals the floating developer-annotation button. Stays
@@ -321,33 +333,10 @@ function App() {
   // its own.
   const [seenRefreshMs, setSeenRefreshMs] = useState(DEFAULT_SEEN_REFRESH_MS);
 
-  // Decisions waiting on the operator, badged on the nav item where each is
-  // decided: a held answer on Privacy, and — only where watches exist at all —
-  // a request for a standing watch on Watches. Each count stands on its own,
-  // so one endpoint failing cannot hide the other's waiting decisions.
-  const [pendingDecisions, setPendingDecisions] = useState({ privacy: 0, watches: 0 });
-
-  async function refreshPendingDecisions() {
-    const [answers, watches] = await Promise.allSettled([
-      listPrivacyApprovals({ status: "pending", limit: 1 }),
-      lab.watches
-        ? listSubscriptionApprovals({ status: "pending", limit: 1 })
-        : Promise.resolve(null),
-    ]);
-    // A gateway without the privacy boundary answers 503. A badge is not
-    // worth surfacing an error over; a failed count keeps its last value and
-    // the next tick retries.
-    setPendingDecisions((current) => ({
-      privacy: answers.status === "fulfilled" ? answers.value?.totalCount ?? 0 : current.privacy,
-      watches: watches.status === "fulfilled" ? watches.value?.totalCount ?? 0 : current.watches,
-    }));
-  }
-
-  // Count once on arrival — polling alone would leave a waiting decision
-  // unbadged for a whole interval — and again when /status resolves, since
-  // whether watch requests count at all depends on what it reports.
-  useEffect(() => { refreshPendingDecisions(); }, [lab.watches]);
-  useVisiblePoll(refreshPendingDecisions, PRIVACY_PENDING_POLL_MS);
+  // What waits for the owner's decision — devices, agent access, held
+  // answers, watch requests — kept current by the gateway's signals: the strip
+  // on every page and every attention mark show this one answer.
+  const attention = useAttention({ cloudRelay, tailscaleEmbed, watches: lab.watches });
 
   // Today's open tasks, shown on the Tasks nav item as "Tasks (n)". Read
   // from `/tasks/counts` on arrival, on every navigation and on an interval;
@@ -390,6 +379,7 @@ function App() {
       setLabAvailable(status?.labAvailable === true);
       setLab({ brain: status?.lab?.brain === true, tasks: status?.lab?.tasks === true, watches: status?.lab?.watches === true });
       setCloudRelay(status?.cloudRelay === true);
+      setTailscaleEmbed(status?.tailscaleEmbed === true);
       setDeveloper(status?.developer === true);
       setDemo(status?.demo === true);
       setTestInstance(status?.testInstance ?? null);
@@ -668,9 +658,10 @@ function App() {
             // composer (and clicking it while already on the hero resets
             // to a brand-new empty session).
             const isActive = route.view === item.view && !(item.isNewConvo && activeConvoId);
-            const pending = pendingDecisions[item.view] ?? 0;
             const modelWarning = item.view === "settings" && modelHealth.warnings.length > 0;
-            const href = modelWarning ? "/portal/settings/models" : item.href;
+            // A decision waiting expires, so it leads where its item goes, ahead of a model problem.
+            const waiting = navAttention(item.view, attention);
+            const href = waiting?.href ?? (modelWarning ? "/portal/settings/models" : item.href);
             return html`
               <a
                 key=${item.view}
@@ -689,10 +680,7 @@ function App() {
                   >${item.view === "tasks" ? countLabel(item.label, openTasksToday) : item.label}</span
                 >
                 ${modelWarning && html`<${WarningTriangle} label="Models need attention" />`}
-                ${pending > 0
-                  ? html`<span class="sidebar-badge" aria-hidden="true">${pending > 99 ? "99+" : pending}</span
-                      ><span class="sr-only">${pending} ${pending === 1 ? "decision" : "decisions"} waiting for you. </span>`
-                  : null}
+                ${waiting && html`<${AttentionIcon} label=${waiting.label} />`}
               </a>
             `;
           })}
@@ -803,9 +791,10 @@ function App() {
       </aside>
 
       <main class="app-main">
-        ${cloudRelay && html`<${CloudPairingBanner}
+        <${WaitingDevicesBanner}
+          devices=${attention.devices}
           paused=${route.view === "settings" && route.tab === "devices"}
-        />`}
+        />
         ${route.view === "document"
           ? html`<${DocumentView} id=${route.id} />`
           : route.view === "people"
@@ -830,6 +819,8 @@ function App() {
               policyId=${route.policyId}
               completeAccessInPortal=${route.completeAccessInPortal}
               cloudRelay=${cloudRelay}
+              tailscaleEmbed=${tailscaleEmbed}
+              attention=${attention}
               experimental=${experimental}
               lab=${lab}
               labAvailable=${labAvailable}
@@ -852,6 +843,7 @@ function App() {
               taskId=${route.taskId}
               directTab=${route.directTab ?? false}
               directSessionId=${route.directSessionId ?? null}
+              waitingAnswers=${attention.answers.count}
             />`
           : route.view === "watches" && lab.watches
           ? html`<${WatchesView}
@@ -894,14 +886,30 @@ async function consumeUrlToken() {
 // Authenticate before rendering. Source metadata loads after the shell mounts.
 async function init() {
   await consumeUrlToken();
-  const session = await checkSession();
+  let session = await checkSession();
+  // A signed-in portal on another address opened this one: sign in with what it handed over.
+  // Only the cloud relay mints one, and a browser already signed in here doesn't need it.
+  const handoff = takePortalHandoff();
+  let handoffReason;
+  if (handoff && !session.authenticated && session.cloudRelay === true) {
+    if (await redeemPortalHandoff(handoff)) session = await checkSession();
+    else
+      handoffReason =
+        "That link expired or was already used. Go back to the page you came from and open it again, or sign in below.";
+  }
 
   // Only the cloud relay's sign-in view can use a handed-over sign-in; anywhere else it is dropped.
   if (session.authenticated || session.cloudRelay !== true) takeAccountSignIn();
+  // Approving a device with a passkey needs no portal login: the passkey is the credential.
+  if (session.cloudRelay === true && window.location.pathname === "/portal/approve") {
+    const { ApproveView } = await import("./views/approve.js");
+    render(html`<${ErrorBoundary}><${ApproveView} /></${ErrorBoundary}>`, document.getElementById("app"));
+    return;
+  }
   if (session.authenticated) {
     render(html`<${ErrorBoundary}><${App} /></${ErrorBoundary}>`, document.getElementById("app"));
   } else {
-    render(html`<${ErrorBoundary}><${LoginView} cloudRelay=${session.cloudRelay === true} /></${ErrorBoundary}>`, document.getElementById("app"));
+    render(html`<${ErrorBoundary}><${LoginView} reason=${handoffReason} cloudRelay=${session.cloudRelay === true} /></${ErrorBoundary}>`, document.getElementById("app"));
   }
 }
 

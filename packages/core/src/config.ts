@@ -7,6 +7,7 @@ import { DEFAULT_CONFIG_DIR } from "./utils.js";
 import { createLogger } from "./logger.js";
 import { ensurePrivateDirSync } from "./security-files.js";
 import { readSecretTextFileSync, writeSecretTextFileSync } from "./secret-file.js";
+import { ownedProcessCleanupReceipt } from "./owned-process-cleanup.js";
 import { parseSourceId } from "./ids.js";
 import type { SourceId, SourceType, AccountId } from "./ids.js";
 
@@ -284,7 +285,8 @@ export function readTokenFile(configDir?: string): string | null {
   try {
     const content = (readSecretTextFileSync(tokenPath, { configDir: dir }) ?? "").trim();
     return content || null;
-  } catch {
+  } catch (error) {
+    if (ownedProcessCleanupReceipt(error) !== undefined) throw error;
     return null;
   }
 }
@@ -314,7 +316,8 @@ export function readCollectorTokenFile(configDir?: string): string | null {
   try {
     const content = (readSecretTextFileSync(tokenPath, { configDir: dir }) ?? "").trim();
     return content || null;
-  } catch {
+  } catch (error) {
+    if (ownedProcessCleanupReceipt(error) !== undefined) throw error;
     return null;
   }
 }

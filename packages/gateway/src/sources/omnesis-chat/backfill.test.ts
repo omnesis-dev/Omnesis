@@ -14,12 +14,13 @@ import { runConversationBackfill } from "./backfill.js";
 import { findConversationDocId, OMNESIS_CHAT_SOURCE_ID } from "./index.js";
 import type { ConversationRecord } from "../../agent/conversation-store.js";
 import type Database from "better-sqlite3";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 function tempDbPath(): string {
-  return `/tmp/omnesis-chat-backfill-test-${randomUUID()}.db`;
+  return join(fixtureTmpdir(), `omnesis-chat-backfill-test-${randomUUID()}.db`);
 }
 function tempDir(): string {
-  const p = `/tmp/omnesis-chat-backfill-dir-${randomUUID()}`;
+  const p = join(fixtureTmpdir(), `omnesis-chat-backfill-dir-${randomUUID()}`);
   mkdirSync(p, { recursive: true });
   return p;
 }

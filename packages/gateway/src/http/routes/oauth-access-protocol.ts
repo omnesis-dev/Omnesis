@@ -11,16 +11,17 @@ import type { ClientMetadataDocumentResolver } from "../../access/client-metadat
 import type { RouteApp } from "./types.js";
 import type { CertificateProbe } from "../../access/served-by-gateway.js";
 import type { AgentCertificateTrust } from "../../tls-lifecycle/agent-trust.js";
+import type { McpAddresses } from "../../remote-access/mcp-addresses.js";
 
 /** Compose focused OAuth protocol collaborators behind the stable access façade. */
 export function mountOAuthAccessProtocolRoutes(
   app: RouteApp,
   access: AccessService,
   options: {
-    publicBaseUrl?: string;
+    /** The gateway's public address, read on every request so a saved one applies at once. */
+    publicAddress?: import("../../public-address.js").PublicAddressSource;
     /** Actual same-machine gateway origin advertised for local-only setup. */
     loopbackBaseUrl?: string;
-    mcpResourceUrls?: readonly string[];
     additionalOAuthIssuerUrls?: import("../../access/oauth-urls.js").OAuthIssuerSource;
     authorizationNotifier?: Pick<AccessAuthorizationNotifier, "targetDeviceIds" | "wakeQueued">;
     clientMetadataResolver?: Pick<ClientMetadataDocumentResolver, "resolve">;
@@ -36,6 +37,9 @@ export function mountOAuthAccessProtocolRoutes(
     probeCertificate?: CertificateProbe;
     /** See `mountOAuthAuthorizationRoutes`. */
     agentCertificateTrust?: () => AgentCertificateTrust;
+    /** See `mountOAuthAuthorizationRoutes`. */
+    mcpAddresses?: Pick<McpAddresses, "answersAt" | "settle" | "hostReach">;
+    pendingCertificateOrigins?: () => Promise<ReadonlySet<string>>;
   } = {},
 ): void {
   mountOAuthMetadataRoutes(app, access, options);

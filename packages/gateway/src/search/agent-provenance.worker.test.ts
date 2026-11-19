@@ -35,6 +35,8 @@ import {
   type ProvenanceCorpus,
 } from "./__fixtures__/provenance-corpus.js";
 import type { SearchResultItem } from "./types.js";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 const WORKER_URL = new URL("../workers/io-worker.ts", import.meta.url);
 const LOADER_URL = new URL("../workers/register-tsx.mjs", import.meta.url).href;
@@ -53,7 +55,7 @@ afterEach(async () => {
 });
 
 function tempPath(): string {
-  const path = `/tmp/omnesis-test-${randomUUID()}.db`;
+  const path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
   paths.push(path);
   return path;
 }

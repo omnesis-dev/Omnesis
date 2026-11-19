@@ -9,6 +9,42 @@
  * allow-list is what keeps a hostile tree out of the corpus.
  */
 
+import { posix, win32 } from "node:path";
+
+const SENSITIVE_DIRECTORY_NAMES = new Set([".config", "library", ".ssh", ".aws", ".gnupg"]);
+const WINDOWS_SENSITIVE_DIRECTORY_NAMES = new Set([
+  "appdata",
+  "application data",
+  "local settings",
+  "programdata",
+  "windows",
+  "program files",
+  "program files (x86)",
+  "system volume information",
+  "$recycle.bin",
+]);
+
+/** Protect absolute config/system locations even when selected as a root or reached by an alias. */
+export function isProtectedAbsolutePath(
+  path: string,
+  options: { platform?: NodeJS.Platform; env?: NodeJS.ProcessEnv } = {},
+): boolean {
+  const platform = options.platform ?? process.platform;
+  const api = platform === "win32" ? win32 : posix;
+  const parts = path.split(platform === "win32" ? /[\\/]/u : "/");
+  if (parts.some((part) => SENSITIVE_DIRECTORY_NAMES.has(part.toLowerCase()))) return true;
+  if (platform !== "win32") return false;
+  if (parts.some((part) => WINDOWS_SENSITIVE_DIRECTORY_NAMES.has(part.toLowerCase()))) return true;
+  const env = options.env ?? process.env;
+  for (const variable of ["LOCALAPPDATA", "APPDATA", "PROGRAMDATA", "WINDIR", "SystemRoot"]) {
+    const directory = env[variable];
+    if (!directory || !api.isAbsolute(directory)) continue;
+    const rel = api.relative(directory, path);
+    if (rel !== ".." && !rel.startsWith(`..${api.sep}`) && !api.isAbsolute(rel)) return true;
+  }
+  return false;
+}
+
 /** Extension (lowercase, no dot) → canonical MIME type the pipeline can extract. */
 export const ALLOWED_EXTENSIONS: Record<string, string> = {
   // Plain text: read directly, never sent through the extraction pipeline.
@@ -76,6 +112,7 @@ const MEDIA_EXTENSIONS = new Set(["mp4", "mov", "mp3", "wav", "m4a", "flac", "og
 
 /** Directory names refused anywhere in the tree, case-insensitive. */
 const REFUSED_DIR_NAMES = new Set([
+  ...SENSITIVE_DIRECTORY_NAMES,
   "node_modules",
   ".git",
   ".svn",
@@ -187,12 +224,16 @@ export function icloudPlaceholderTarget(basename: string): string {
 }
 
 /** True when any path segment of a root-relative path is refused. */
-export function isRefusedPath(relativePath: string): boolean {
+export function isRefusedPath(
+  relativePath: string,
+  platform: NodeJS.Platform = process.platform,
+): boolean {
   const segments = relativePath.split("/");
   for (const segment of segments) {
     const lower = segment.toLowerCase();
     if (segment.startsWith(".")) return true;
     if (REFUSED_DIR_NAMES.has(lower)) return true;
+    if (platform === "win32" && WINDOWS_SENSITIVE_DIRECTORY_NAMES.has(lower)) return true;
     if (SECRET_DIR_NAMES.has(lower)) return true;
     // macOS application bundles are directories that look like files.
     if (lower.endsWith(".app")) return true;

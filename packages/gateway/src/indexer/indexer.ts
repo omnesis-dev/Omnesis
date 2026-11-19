@@ -331,6 +331,11 @@ export class Indexer {
         );
         allEmbeddings = null;
       }
+      // A stop quiesces the embedder, which fails the chunks it had not
+      // started. Write nothing and leave the scan cursor where it was: the
+      // page stays pending for the next worker instead of being recorded as
+      // failed document by document.
+      if (!allEmbeddings && this.stopping) return;
 
       type WritePayload = {
         documentId: string;
@@ -900,6 +905,8 @@ export class Indexer {
         if (allEmbeddings && allEmbeddings.length !== allInputs.length) {
           allEmbeddings = null;
         }
+        // A stop cut the batch short: leave these documents pending.
+        if (!allEmbeddings && this.stopping) break;
 
         // Phase 3: distribute embeddings back, prepare write payloads,
         // and batch-write to DB.

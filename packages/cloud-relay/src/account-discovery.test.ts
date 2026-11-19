@@ -46,8 +46,15 @@ test("unconfigured authority, unsupported gateway identities and unavailable rec
       accounts: () => ["owner"],
       binding: () => binding,
       name: () => undefined,
+      online: () => true,
     });
     const discovery = new AccountDiscovery({ authentication, directory, assertCurrent() {} });
+    // The apps' chooser shows whether each gateway is online; the directory says it.
+    expect(await discovery.list(token.discoveryToken, new URLSearchParams())).toEqual({
+      gateways: [
+        { gatewayId: binding.gatewayId, publicOrigin: binding.publicOrigin, online: true },
+      ],
+    });
     expect(() => discovery.jwks()).toThrow("unavailable");
     const query = new URLSearchParams({ gatewayId: binding.gatewayId });
     await expect(discovery.select(token.discoveryToken, query)).rejects.toThrow("unavailable");

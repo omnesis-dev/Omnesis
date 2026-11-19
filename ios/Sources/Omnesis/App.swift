@@ -141,6 +141,7 @@ public struct OmnesisApp: App {
             }
         #if DEBUG
             .demoUIScale()
+            .automationTouchLog()
         #endif
     }
 
@@ -2586,8 +2587,8 @@ public final class AppStore {
         try await adminCoord.removeSource(sourceId: sourceId)
     }
 
-    public func resync(sourceId: String) async throws {
-        try await adminCoord.resync(sourceId: sourceId)
+    public func resync(sourceId: String, mode: SourceResyncMode) async throws {
+        try await adminCoord.resync(sourceId: sourceId, mode: mode)
     }
 
     /// Groups the source list by type for display — mirrors how the

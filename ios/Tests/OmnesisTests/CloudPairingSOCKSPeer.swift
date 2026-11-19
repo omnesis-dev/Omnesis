@@ -18,9 +18,16 @@ final class CloudPairingSOCKSPeer {
         let certificateDER: String
     }
 
+    /// The peer exited or printed something other than its ports; carries its stderr.
+    struct StartupFailure: Error, CustomStringConvertible {
+        let description: String
+    }
+
     let info: Info
     private let process: Process
     private let input = Pipe()
+    private let errorLog = FileManager.default.temporaryDirectory
+        .appendingPathComponent("omnesis-socks-peer-\(UUID().uuidString).log")
 
     init(ignoreFirstHello: Bool = false, ignoreFirstPongs: Bool = false, refuseDirectDiscovery: Bool = false) throws {
         process = Process()
@@ -37,7 +44,8 @@ final class CloudPairingSOCKSPeer {
         ]
         process.standardInput = input
         process.standardOutput = output
-        process.standardError = FileHandle.nullDevice
+        FileManager.default.createFile(atPath: errorLog.path, contents: nil)
+        process.standardError = try FileHandle(forWritingTo: errorLog)
         try process.run()
         var line = Data()
         while let byte = try output.fileHandleForReading.read(upToCount: 1), !byte.isEmpty, byte != Data([10]) {
@@ -46,20 +54,24 @@ final class CloudPairingSOCKSPeer {
         do { info = try JSONDecoder().decode(Info.self, from: line) } catch {
             if process.isRunning { process.terminate() }
             process.waitUntilExit()
-            throw error
+            let stderr = (try? String(contentsOf: errorLog, encoding: .utf8)) ?? ""
+            try? FileManager.default.removeItem(at: errorLog)
+            throw StartupFailure(description: "SOCKS test peer did not report its ports "
+                + "(exit status \(process.terminationStatus), \(error)); stderr: \(stderr.suffix(4000))")
         }
     }
 
     func stop() {
         if process.isRunning { process.terminate() }
         process.waitUntilExit()
+        try? FileManager.default.removeItem(at: errorLog)
     }
 
     private static let server = #"""
     import base64, hashlib, json, os, select, signal, socket, ssl, struct, subprocess, sys, tempfile, threading
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
     def watch_parent():
-        while sys.stdin.buffer.read(1): pass
+        while os.read(0, 1): pass
         os.kill(os.getpid(), signal.SIGTERM)
     threading.Thread(target=watch_parent,daemon=True).start()
     def exact(conn, size):
@@ -256,8 +268,11 @@ final class CloudPairingSOCKSPeer {
             out.write('[req]\ndistinguished_name=dn\nprompt=no\nx509_extensions=ext\n[dn]\nCN=gateway.example.test\n'
                 '[ext]\nsubjectAltName=DNS:gateway.example.test,DNS:localhost,IP:127.0.0.1\n'
                 'basicConstraints=critical,CA:FALSE\nextendedKeyUsage=serverAuth\n')
+        # A loaded CI runner can take several seconds per openssl call; the
+        # deadline only has to catch one that hangs.
+        openssl_deadline = 60
         subprocess.run(['openssl','req','-new','-x509','-newkey','rsa:2048','-nodes','-days','1',
-            '-keyout',key,'-out',cert,'-config',config],check=True,timeout=8,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+            '-keyout',key,'-out',cert,'-config',config],check=True,timeout=openssl_deadline,stdout=subprocess.DEVNULL)
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         context.load_cert_chain(cert,key)
         context.set_servername_callback(lambda conn,name,_: setattr(conn,'canonical_sni',name))
@@ -276,9 +291,9 @@ final class CloudPairingSOCKSPeer {
             threading.Thread(target=accept_targets,args=(secondary,context,'secondary',stats_path),daemon=True).start()
             with open(cert) as source: der=ssl.PEM_cert_to_DER_cert(source.read())
             public_key = subprocess.run(['openssl','x509','-in',cert,'-pubkey','-noout'],
-                check=True,capture_output=True,timeout=5).stdout
+                check=True,capture_output=True,timeout=openssl_deadline).stdout
             spki = subprocess.run(['openssl','pkey','-pubin','-outform','DER'],input=public_key,
-                check=True,capture_output=True,timeout=5).stdout
+                check=True,capture_output=True,timeout=openssl_deadline).stdout
             print(json.dumps({'plainPort':plain.getsockname()[1],'proxyPort':proxy.getsockname()[1],'targetPort':target.getsockname()[1],
                 'secondTargetPort':secondary.getsockname()[1],'resetPort':reset.getsockname()[1],
                 'statsPath':stats_path,'spkiFingerprint':hashlib.sha256(spki).hexdigest(),

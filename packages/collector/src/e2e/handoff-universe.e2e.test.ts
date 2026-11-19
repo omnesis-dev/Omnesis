@@ -254,6 +254,51 @@ describe("handoff universe — one device syncs at a time", () => {
     expect(syncStateRows().map((r) => r.device_id)).toEqual([""]);
   }, 90_000);
 
+  test("an in-place resync resets the one shared cursor; the lease holder reads the account again onto the same records", async () => {
+    const recordIds = (): string[] => {
+      const db = new Database(harness.getDbPath(), { readonly: true });
+      try {
+        return db
+          .prepare<[string], { id: string }>(
+            "SELECT id FROM documents WHERE source_id = ? ORDER BY id",
+          )
+          .all(GMAIL)
+          .map((row) => row.id);
+      } finally {
+        db.close();
+      }
+    };
+    const before = recordIds();
+    expect(before).toHaveLength(FIXTURE_COUNT);
+    expect(await leaseHolder()).toBe(owner.deviceId);
+
+    const reset = await harness.gatewayJson<{ ok: boolean; mode: string; scope: string }>(
+      `/admin/sources/${encodeURIComponent(GMAIL)}/resync`,
+      { method: "POST", body: JSON.stringify({ mode: "in-place" }) },
+    );
+
+    expect(reset).toMatchObject({ ok: true, mode: "in-place", scope: "source" });
+    // Still one row, shared by both members, with no cursor on it; no record moved.
+    expect(syncStateRows()).toEqual([{ device_id: "", last_synced_at: null }]);
+    expect((await cursorAs(owner)).cursor).toBeNull();
+    expect((await cursorAs(member)).cursor).toBeNull();
+    expect(recordIds()).toEqual(before);
+    // The reset is not a way around the lease: the member is still turned away.
+    await owner.gateway.claimSyncLease(GMAIL as never);
+    await skippedTick(member);
+    expect(syncStateRows()).toEqual([{ device_id: "", last_synced_at: null }]);
+
+    // The holder's next tick starts from the beginning and reads everything.
+    const stats = await completedTick(owner);
+    expect(stats.documents).toBe(FIXTURE_COUNT);
+    expect(recordIds()).toEqual(before);
+    expect(await leaseHolder()).toBe(owner.deviceId);
+    const rows = syncStateRows();
+    expect(rows.map((r) => r.device_id)).toEqual([""]);
+    expect(rows[0]!.last_synced_at).not.toBeNull();
+    expect((await cursorAs(member)).cursor).toEqual({ offset: FIXTURE_COUNT });
+  }, 90_000);
+
   test("a detached member leaves the owner syncing; rejoined, its tick is skipped while the owner holds the lease", async () => {
     const detached = await harness.gatewayJson<{ members: string[]; source: SourceRow }>(
       `/admin/sources/${encodeURIComponent(GMAIL)}/members/${member.deviceId}`,

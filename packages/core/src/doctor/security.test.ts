@@ -3,24 +3,116 @@
 
 import {
   chmodSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
+  readFileSync,
   rmSync,
   statSync,
   renameSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { ensurePrivateDirSync } from "../security-files.js";
+import { atomicWriteFileSync } from "../atomic-write.js";
+import {
+  ownedWindowsFixtureOperation,
+  snapshotWindowsFixtureAcl,
+  windowsFixtureCleanupMustWait,
+} from "../../test/security-fixture-acl.js";
+import {
+  inspectWindowsPrivatePathSync,
+  secureWindowsPrivatePathSync,
+} from "../windows-private-file.js";
 import { createRecoveryEnvelope, generateRecoveryCode } from "../recovery-envelope.js";
 import {
   collectSecurityData,
   HOST_DISK_ENCRYPTION_FILE,
   type SecurityCommandRunner,
 } from "./security.js";
+
+const unreadablePaths = vi.hoisted(() => new Set<string>());
+
+// Inject read failures at the filesystem boundary even when the runner can bypass ACLs.
+vi.mock("node:fs", async (importOriginal) => {
+  const fs = await importOriginal<typeof import("node:fs")>();
+  const { relative, isAbsolute, sep } = await import("node:path");
+  function checkRead(path: unknown): void {
+    if (typeof path !== "string") return;
+    for (const root of unreadablePaths) {
+      const suffix = relative(root, path);
+      if (
+        suffix === "" ||
+        (suffix !== ".." && !suffix.startsWith(`..${sep}`) && !isAbsolute(suffix))
+      ) {
+        throw Object.assign(new Error(`Fixture path is unreadable: ${path}`), {
+          code: "EACCES",
+          path,
+        });
+      }
+    }
+  }
+  return {
+    ...fs,
+    readFileSync: ((...args: Parameters<typeof fs.readFileSync>) => {
+      checkRead(args[0]);
+      return fs.readFileSync(...args);
+    }) as typeof fs.readFileSync,
+    statSync: ((...args: Parameters<typeof fs.statSync>) => {
+      checkRead(args[0]);
+      return fs.statSync(...args);
+    }) as typeof fs.statSync,
+  };
+});
+
+// Execute-bit policy and POSIX Codex link exceptions have no Windows ACL equivalent.
+const posixTest = test.skipIf(process.platform === "win32");
+let fixtureSid: string | undefined;
+function setFixtureMode(path: string, mode: number): void {
+  if (process.platform !== "win32") {
+    chmodSync(path, mode);
+    return;
+  }
+  const system32 = join(process.env.SystemRoot!, "System32");
+  const acl = (args: string[]): void => {
+    const result = spawnSync(join(system32, "icacls.exe"), [path, ...args, "/Q"], {
+      encoding: "utf8",
+    });
+    if (result.status !== 0) throw new Error(`Fixture ACL change failed: ${result.stderr}`);
+  };
+  if (mode === 0) {
+    if (!fixtureSid) {
+      const identity = spawnSync(join(system32, "whoami.exe"), ["/user", "/fo", "csv", "/nh"], {
+        encoding: "utf8",
+      });
+      const matches = identity.stdout?.match(/S-1-[0-9-]+/gu);
+      if (identity.status !== 0 || matches?.length !== 1)
+        throw new Error("Fixture owner SID unavailable");
+      fixtureSid = matches[0];
+    }
+    acl(["/deny", `*${fixtureSid}:(RD)`]);
+  } else if ((mode & 0o077) !== 0) acl(["/grant", "*S-1-1-0:(RD)"]);
+  else {
+    if (fixtureSid) acl(["/remove:d", `*${fixtureSid}`]);
+    ownedWindowsFixtureOperation(path, () =>
+      secureWindowsPrivatePathSync(path, statSync(path).isDirectory() ? "directory" : "file"),
+    );
+  }
+}
+function expectMode(path: string, mode: number): void {
+  if (process.platform !== "win32") expect(statSync(path).mode & 0o777).toBe(mode);
+  else
+    expect(
+      ownedWindowsFixtureOperation(path, () =>
+        inspectWindowsPrivatePathSync(path, statSync(path).isDirectory() ? "directory" : "file"),
+      ).private,
+    ).toBe((mode & 0o077) === 0);
+}
 
 /** Every directory in a tree, root first — what a fixture has to make 0700. */
 function walkDirs(root: string): string[] {
@@ -42,11 +134,14 @@ const dirs: string[] = [];
 function tmp(prefix: string): string {
   const dir = mkdtempSync(join(tmpdir(), prefix));
   dirs.push(dir);
+  if (process.platform === "win32")
+    ownedWindowsFixtureOperation(dir, () => ensurePrivateDirSync(dir));
   return dir;
 }
 
 afterEach(() => {
-  for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  for (const dir of dirs.splice(0))
+    if (!windowsFixtureCleanupMustWait(dir)) rmSync(dir, { recursive: true, force: true });
 });
 
 function runner(stdout: string, code = 0): SecurityCommandRunner {
@@ -83,7 +178,7 @@ describe("collectSecurityData — permissions", () => {
   test("reports owner-only files and directories as ok", async () => {
     const configDir = tmp("omnesis-security-ok-");
     writeFileSync(join(configDir, "token"), "omn_test\n", { mode: 0o600 });
-    chmodSync(configDir, 0o700);
+    setFixtureMode(configDir, 0o700);
 
     const data = await collectSecurityData({
       configDir,
@@ -98,14 +193,25 @@ describe("collectSecurityData — permissions", () => {
     expect(data.diskEncryption.status).toBe("on");
   });
 
-  test("fixPermissions repairs file and directory modes", async () => {
+  test("fixPermissions repairs exposed files and directories", async () => {
     const configDir = tmp("omnesis-security-fix-");
     const providerDir = join(configDir, "provider-auth");
     mkdirSync(providerDir);
-    writeFileSync(join(providerDir, "tokens.json"), "{}\n");
-    chmodSync(configDir, 0o755);
-    chmodSync(providerDir, 0o755);
-    chmodSync(join(providerDir, "tokens.json"), 0o644);
+    const tokenPath = join(providerDir, "tokens.json");
+    writeFileSync(tokenPath, "{}\n");
+    if (process.platform === "win32")
+      expect(
+        ownedWindowsFixtureOperation(tokenPath, () =>
+          inspectWindowsPrivatePathSync(tokenPath, "file"),
+        ).private,
+      ).toBe(true);
+    setFixtureMode(configDir, 0o755);
+    setFixtureMode(providerDir, 0o755);
+    setFixtureMode(tokenPath, 0o644);
+    const exposedAcl =
+      process.platform === "win32" ? await snapshotWindowsFixtureAcl(tokenPath) : undefined;
+    const exposedBytes = readFileSync(tokenPath);
+    const exposedIdentity = lstatSync(tokenPath, { bigint: true });
 
     const data = await collectSecurityData({
       configDir,
@@ -116,13 +222,26 @@ describe("collectSecurityData — permissions", () => {
     });
 
     expect(data.permissionEntries.filter((entry) => entry.fixed).length).toBeGreaterThanOrEqual(2);
-    expect(statSync(configDir).mode & 0o777).toBe(0o700);
-    expect(statSync(providerDir).mode & 0o777).toBe(0o700);
-    expect(statSync(join(providerDir, "tokens.json")).mode & 0o777).toBe(0o600);
+    expectMode(configDir, 0o700);
+    expectMode(providerDir, 0o700);
+    if (process.platform === "win32") {
+      expectMode(tokenPath, 0o644);
+      expect(
+        data.permissionEntries.find((entry) => entry.relativePath === "provider-auth/tokens.json"),
+      ).toMatchObject({ kind: "file", ok: false, fixed: false });
+      expect(await snapshotWindowsFixtureAcl(tokenPath)).toEqual(exposedAcl);
+      expect(readFileSync(tokenPath)).toEqual(exposedBytes);
+      const current = lstatSync(tokenPath, { bigint: true });
+      expect([current.dev, current.ino, current.birthtimeNs]).toEqual([
+        exposedIdentity.dev,
+        exposedIdentity.ino,
+        exposedIdentity.birthtimeNs,
+      ]);
+    } else expectMode(tokenPath, 0o600);
     expect(data.diskEncryption.status).toBe("off");
   });
 
-  test("fixPermissions preserves only the pinned Codex runtime executables", async () => {
+  posixTest("fixPermissions preserves only the pinned Codex runtime executables", async () => {
     const configDir = tmp("omnesis-security-codex-runtime-");
     const wrapper = join(
       configDir,
@@ -159,7 +278,7 @@ describe("collectSecurityData — permissions", () => {
     expect(statSync(unrecognizedGeneration).mode & 0o777).toBe(0o600);
   });
 
-  test.each([
+  posixTest.each([
     "codex-home",
     "codex-home-pool/0",
     "codex-home-pool/inference/1",
@@ -204,54 +323,57 @@ describe("collectSecurityData — permissions", () => {
     expect((await inspect(false)).permissionEntries).toEqual([]);
   });
 
-  test("keeps credentials and paths outside managed plugin roots non-executable and removes special bits", async () => {
-    const configDir = tmp("omnesis-security-plugin-boundary-");
-    const ordinary = [
-      "codex-home/auth.json",
-      "codex-home/config.toml",
-      "codex-home/installation_id",
-      "codex-home/.tmp/unrelated/script",
-      "codex-home/.tmp/plugins/unrelated/script",
-      "codex-home/.tmp/plugins/.git/config",
-      "codex-home/plugins/config.json",
-      "codex-home-pool/inference/0/auth.json",
-      "codex-home-pool/nested-1/0/config.toml",
-      "codex-home-pool/other/0/.tmp/plugins/plugins/example/tool",
-      "codex-home-pool/inference/no/.tmp/plugins/plugins/example/tool",
-      "provider-auth/token",
-      "codex-home\\.tmp\\plugins\\plugins\\example\\tool",
-    ];
-    for (const relative of ordinary) {
-      const path = join(configDir, relative);
-      mkdirSync(dirname(path), { recursive: true });
-      writeFileSync(path, "synthetic fixture\n");
-      chmodSync(path, 0o700);
-    }
-    const special = join(configDir, "codex-home/.tmp/plugins/plugins/example/bin/tool");
-    mkdirSync(dirname(special), { recursive: true });
-    writeFileSync(special, "synthetic fixture\n");
-    chmodSync(special, 0o4700);
-    for (const dir of walkDirs(configDir)) chmodSync(dir, 0o700);
-    await collectSecurityData({
-      configDir,
-      fixPermissions: true,
-      platform: "linux",
-      homeDir: tmp("omnesis-home-"),
-      runCommand: runner("/dev/mapper/cryptroot ext4 rw"),
-    });
-    for (const relative of ordinary)
-      expect(statSync(join(configDir, relative)).mode & 0o7777).toBe(0o600);
-    expect(statSync(special).mode & 0o7777).toBe(0o700);
-  });
+  posixTest(
+    "keeps credentials and paths outside managed plugin roots non-executable and removes special bits",
+    async () => {
+      const configDir = tmp("omnesis-security-plugin-boundary-");
+      const ordinary = [
+        "codex-home/auth.json",
+        "codex-home/config.toml",
+        "codex-home/installation_id",
+        "codex-home/.tmp/unrelated/script",
+        "codex-home/.tmp/plugins/unrelated/script",
+        "codex-home/.tmp/plugins/.git/config",
+        "codex-home/plugins/config.json",
+        "codex-home-pool/inference/0/auth.json",
+        "codex-home-pool/nested-1/0/config.toml",
+        "codex-home-pool/other/0/.tmp/plugins/plugins/example/tool",
+        "codex-home-pool/inference/no/.tmp/plugins/plugins/example/tool",
+        "provider-auth/token",
+        "codex-home\\.tmp\\plugins\\plugins\\example\\tool",
+      ];
+      for (const relative of ordinary) {
+        const path = join(configDir, relative);
+        mkdirSync(dirname(path), { recursive: true });
+        writeFileSync(path, "synthetic fixture\n");
+        chmodSync(path, 0o700);
+      }
+      const special = join(configDir, "codex-home/.tmp/plugins/plugins/example/bin/tool");
+      mkdirSync(dirname(special), { recursive: true });
+      writeFileSync(special, "synthetic fixture\n");
+      chmodSync(special, 0o4700);
+      for (const dir of walkDirs(configDir)) chmodSync(dir, 0o700);
+      await collectSecurityData({
+        configDir,
+        fixPermissions: true,
+        platform: "linux",
+        homeDir: tmp("omnesis-home-"),
+        runCommand: runner("/dev/mapper/cryptroot ext4 rw"),
+      });
+      for (const relative of ordinary)
+        expect(statSync(join(configDir, relative)).mode & 0o7777).toBe(0o600);
+      expect(statSync(special).mode & 0o7777).toBe(0o700);
+    },
+  );
 
   test("reports symlinks as unsafe and does not chmod through them", async () => {
     const configDir = tmp("omnesis-security-symlink-");
     const outside = tmp("omnesis-security-outside-");
     const target = join(outside, "token-copy");
     writeFileSync(target, "secret\n", { mode: 0o644 });
-    chmodSync(target, 0o644);
+    setFixtureMode(target, 0o644);
     symlinkSync(target, join(configDir, "token-link"));
-    chmodSync(configDir, 0o700);
+    setFixtureMode(configDir, 0o700);
 
     const data = await collectSecurityData({
       configDir,
@@ -265,10 +387,10 @@ describe("collectSecurityData — permissions", () => {
     expect(link?.kind).toBe("symlink");
     expect(link?.ok).toBe(false);
     expect(link?.fixed).toBe(false);
-    expect(statSync(target).mode & 0o777).toBe(0o644);
+    expectMode(target, 0o644);
   });
 
-  test("allows Codex argv0 helper symlinks under the runtime temp directory", async () => {
+  posixTest("allows Codex argv0 helper symlinks under the runtime temp directory", async () => {
     const configDir = tmp("omnesis-security-codex-link-");
     const outside = tmp("omnesis-security-codex-bin-");
     const target = join(outside, "codex");
@@ -295,7 +417,7 @@ describe("collectSecurityData — permissions", () => {
     expect(statSync(target).mode & 0o777).toBe(0o755);
   });
 
-  test.each(["0", "inference/0", "nested-1/0"])(
+  posixTest.each(["0", "inference/0", "nested-1/0"])(
     "allows %s pooled Codex member helpers and its shared-login link",
     async (memberPath) => {
       // A pooled runtime gives every member an isolated home under an index, and
@@ -348,7 +470,7 @@ describe("collectSecurityData — permissions", () => {
       writeFileSync(elsewhere, "{}\n", { mode: 0o600 });
       mkdirSync(member, { recursive: true });
       symlinkSync(elsewhere, join(member, "auth.json"));
-      for (const dir of walkDirs(configDir)) chmodSync(dir, 0o700);
+      for (const dir of walkDirs(configDir)) setFixtureMode(dir, 0o700);
 
       const data = await collectSecurityData({
         configDir,
@@ -359,7 +481,7 @@ describe("collectSecurityData — permissions", () => {
       });
 
       expect(data.permissionEntries.map((e) => e.relativePath)).toEqual([
-        join("codex-home-pool", memberPath, "auth.json"),
+        join("codex-home-pool", memberPath, "auth.json").replaceAll("\\", "/"),
       ]);
       expect(data.permissionEntries[0]?.kind).toBe("symlink");
       expect(data.permissionEntries[0]?.fixed, "the scan chmodded through a symlink").toBe(false);
@@ -376,8 +498,8 @@ describe("collectSecurityData — permissions", () => {
     mkdirSync(home, { recursive: true });
     symlinkSync(auth, join(home, "auth.json.link"));
     renameSync(join(home, "auth.json.link"), auth);
-    chmodSync(configDir, 0o700);
-    chmodSync(home, 0o700);
+    setFixtureMode(configDir, 0o700);
+    setFixtureMode(home, 0o700);
 
     const data = await collectSecurityData({
       configDir,
@@ -388,11 +510,11 @@ describe("collectSecurityData — permissions", () => {
     });
 
     expect(data.permissionEntries.map((e) => e.relativePath)).toEqual([
-      join("codex-home", "auth.json"),
+      join("codex-home", "auth.json").replaceAll("\\", "/"),
     ]);
   });
 
-  test("does not read a filename as the path it spells", async () => {
+  posixTest("does not read a filename as the path it spells", async () => {
     // A backslash is a legal character in a POSIX filename. Split on both
     // separators, a single flat entry whose *name* contains them is read as the
     // directories it never had — one link, sitting in the open, wearing the
@@ -439,7 +561,7 @@ describe("collectSecurityData — permissions", () => {
       mkdirSync(join(configDir, dirname(relative)), { recursive: true });
       symlinkSync(target, join(configDir, relative));
     }
-    for (const dir of walkDirs(configDir)) chmodSync(dir, 0o700);
+    for (const dir of walkDirs(configDir)) setFixtureMode(dir, 0o700);
 
     const data = await collectSecurityData({
       configDir,
@@ -449,7 +571,9 @@ describe("collectSecurityData — permissions", () => {
       runCommand: runner("/dev/mapper/cryptroot ext4 rw"),
     });
 
-    expect(data.permissionEntries.map((e) => e.relativePath).sort()).toEqual([...rejected].sort());
+    expect(data.permissionEntries.map((e) => e.relativePath).sort()).toEqual(
+      rejected.map((path) => path.replaceAll("\\", "/")).sort(),
+    );
   });
 
   test("continues scanning after a large safe subtree", async () => {
@@ -458,9 +582,9 @@ describe("collectSecurityData — permissions", () => {
     const badDir = join(configDir, "z-bad");
     mkdirSync(safeDir);
     mkdirSync(badDir);
-    chmodSync(configDir, 0o700);
-    chmodSync(safeDir, 0o700);
-    chmodSync(badDir, 0o755);
+    setFixtureMode(configDir, 0o700);
+    setFixtureMode(safeDir, 0o700);
+    setFixtureMode(badDir, 0o755);
     for (let i = 0; i < 5_050; i += 1) {
       writeFileSync(join(safeDir, `safe-${String(i).padStart(4, "0")}.txt`), "\n", {
         mode: 0o600,
@@ -476,7 +600,7 @@ describe("collectSecurityData — permissions", () => {
     });
 
     expect(data.permissionScanTruncated).toBe(false);
-    expect(data.permissionEntries.map((entry) => entry.relativePath)).toContain("z-bad");
+    expect(data.permissionEntries.map((entry) => entry.relativePath)).toEqual(["z-bad"]);
   });
 });
 
@@ -664,14 +788,15 @@ describe("collectSecurityData — gateway isolation", () => {
   });
 
   test("an existing but unreadable system unit is assumed dedicated-user", async () => {
-    // Root can read anything, so the unreadable-file branch is untestable there.
-    if (typeof process.getuid === "function" && process.getuid() === 0) return;
     const { homeDir, unitPath } = writeSystemUnit("DynamicUser=yes\n");
-    chmodSync(unitPath, 0o000);
-
-    const data = await collect(homeDir, unitPath);
-    expect(data.gatewayIsolation.status).toBe("dedicated-user");
-    expect(data.gatewayIsolation.detail).toContain("not readable without root");
+    unreadablePaths.add(unitPath);
+    try {
+      const data = await collect(homeDir, unitPath);
+      expect(data.gatewayIsolation.status).toBe("dedicated-user");
+      expect(data.gatewayIsolation.detail).toContain("not readable without root");
+    } finally {
+      unreadablePaths.delete(unitPath);
+    }
   });
 });
 
@@ -979,8 +1104,6 @@ describe("keyring wiring", () => {
 });
 
 describe("unreadable key material", () => {
-  // Root ignores the mode bits this fixture relies on.
-  const asUnprivilegedUser = (process.getuid?.() ?? 0) !== 0;
   let savedBackend: string | undefined;
 
   beforeEach(() => {
@@ -996,38 +1119,51 @@ describe("unreadable key material", () => {
   // store lives outside it reads the root key fine and only trips on the
   // wrapped keys and markers underneath the same unreadable directory.
   for (const backend of ["file", "secret-service"] as const) {
-    test.skipIf(!asUnprivilegedUser)(
-      `reports the keyring as unreadable instead of abandoning the report (${backend})`,
-      async () => {
-        process.env.OMNESIS_SECRET_STORE = backend;
-        // The condition an operator runs the doctor to diagnose: it must not
-        // throw the report away, and must not describe the install as unarmed,
-        // which is what every underlying reading answers on its own.
-        const configDir = tmp("omnesis-doctor-unreadable-");
-        const keyring = join(configDir, "keyring");
-        mkdirSync(keyring, { recursive: true });
-        writeFileSync(
-          join(keyring, "storage-encryption-required"),
-          "omnesis.storage-encryption.required.v1\n",
+    test(`reports the keyring as unreadable instead of abandoning the report (${backend})`, async () => {
+      process.env.OMNESIS_SECRET_STORE = backend;
+      // The condition an operator runs the doctor to diagnose: it must not
+      // throw the report away, and must not describe the install as unarmed,
+      // which is what every underlying reading answers on its own.
+      const configDir = tmp("omnesis-doctor-unreadable-");
+      const keyring = join(configDir, "keyring");
+      mkdirSync(keyring, { recursive: true });
+      const marker = join(keyring, "storage-encryption-required");
+      const markerBytes = "omnesis.storage-encryption.required.v1\n";
+      if (process.platform === "win32") {
+        ownedWindowsFixtureOperation(keyring, () => ensurePrivateDirSync(keyring));
+        ownedWindowsFixtureOperation(marker, () =>
+          atomicWriteFileSync(marker, markerBytes, { mode: 0o600 }),
         );
-        chmodSync(keyring, 0o000);
-        try {
-          const data = await collectSecurityData({
-            configDir,
-            fixPermissions: false,
-            platform: "linux",
-            homeDir: tmp("omnesis-doctor-home-"),
-            runCommand: async () => ({ code: 1, stdout: "", stderr: "" }),
-          });
-          expect(data.keyringAccess).toMatchObject({ readable: false });
-          // Not reported as a plain "off" install — that is the misreading.
-          expect(data.databaseEncryption.status).toBe("blocked");
-          expect(data.keyring.valid).toBe(false);
-        } finally {
-          chmodSync(keyring, 0o700);
+      } else {
+        writeFileSync(marker, markerBytes);
+      }
+      unreadablePaths.add(keyring);
+      try {
+        // Deny metadata and reads: both backends know the marker path.
+        for (const read of [() => statSync(marker), () => readFileSync(marker)]) {
+          let error: unknown;
+          try {
+            read();
+          } catch (caught) {
+            error = caught;
+          }
+          expect(error).toMatchObject({ code: expect.stringMatching(/^(EACCES|EPERM)$/u) });
         }
-      },
-    );
+        const data = await collectSecurityData({
+          configDir,
+          fixPermissions: false,
+          platform: "linux",
+          homeDir: tmp("omnesis-doctor-home-"),
+          runCommand: async () => ({ code: 1, stdout: "", stderr: "" }),
+        });
+        expect(data.keyringAccess).toMatchObject({ readable: false });
+        // Not reported as a plain "off" install — that is the misreading.
+        expect(data.databaseEncryption.status).toBe("blocked");
+        expect(data.keyring.valid).toBe(false);
+      } finally {
+        unreadablePaths.delete(keyring);
+      }
+    });
   }
 
   test("a readable install reports its keyring as readable", async () => {
@@ -1046,7 +1182,7 @@ describe("unreadable key material", () => {
 describe("collectSecurityData — in a container", () => {
   function container(record: string | null) {
     const configDir = tmp("omnesis-security-container-");
-    chmodSync(configDir, 0o700);
+    setFixtureMode(configDir, 0o700);
     if (record !== null) writeFileSync(join(configDir, HOST_DISK_ENCRYPTION_FILE), record);
     // A container's own mount never decides it, and no unit is looked for.
     const asked: string[] = [];

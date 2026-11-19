@@ -1,0 +1,42 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Adrien Conrath
+
+// The gateway's own Tailscale device, as the owner manages it from Settings →
+// Tailscale. Every route exists only when the gateway has the device (its
+// installation includes the helper program), which `/status` advertises as
+// `tailscaleEmbed: true`; the portal calls none of them otherwise.
+
+import { adminJsonRequest } from "./admin-request.js";
+
+const tailscaleRequest = adminJsonRequest("/admin/tailscale", "Tailscale settings");
+
+export const getTailscale = (signal) => tailscaleRequest("GET", "", { signal });
+export const setTailscaleEnabled = (enabled, signal) =>
+  tailscaleRequest("POST", "/enable", { body: { enabled }, signal });
+export const tailscaleSignIn = (signal) => tailscaleRequest("POST", "/sign-in", { signal });
+export const tailscaleSignOut = (signal) => tailscaleRequest("POST", "/sign-out", { signal });
+export const updateTailscaleSettings = (patch, signal) =>
+  tailscaleRequest("PATCH", "/settings", { body: patch, signal });
+export const tailscaleJoinRequests = (signal) => tailscaleRequest("GET", "/join-requests", { signal });
+export const decideTailscaleJoin = (id, approve, signal) =>
+  tailscaleRequest("POST", `/join-requests/${encodeURIComponent(id)}/decision`, {
+    body: { approve },
+    signal,
+  });
+
+/** The admin console pages an owner is sent to; Tailscale's own, not the gateway's. */
+export const TAILSCALE_ADMIN = {
+  machines: "https://login.tailscale.com/admin/machines",
+  dns: "https://login.tailscale.com/admin/dns",
+};
+
+/** An https link the page may open, or null for anything else the helper reported. */
+export function tailscaleHttpsUrl(value) {
+  if (typeof value !== "string" || value.length > 2048) return null;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && !url.username && !url.password ? url.href : null;
+  } catch {
+    return null;
+  }
+}

@@ -28,6 +28,7 @@ import {
 } from "@omnesis/agent";
 import {
   createLogger,
+  ownedProcessCleanupReceipt,
   resolveModelDisplay,
   experimentalVisible,
   CLOUD_EGRESS_DISABLED_REASON,
@@ -663,6 +664,8 @@ export interface AgentLifecycleDeps {
   }>;
   /** Best-effort generic push notification for a newly held answer. */
   notifyPrivacyApproval?: (approvalId: string) => Promise<void>;
+  /** Every newly held answer, as it is held; see AnswerService's `onApprovalHeld`. */
+  onPrivacyApprovalHeld?: () => void;
   /** Best-effort push delivery for a turn that outlived its `notifyAfterMs` budget. */
   notifyAgentAnswer?: (notification: AgentAnswerNotification) => Promise<void>;
   /** Best-effort push for a conversation that just became unread. */
@@ -938,6 +941,7 @@ export class AgentLifecycle {
       reviewer: this.privacyReviewer,
       policyStore: this.privacyPolicyStore,
       notifyApproval: this.deps.notifyPrivacyApproval,
+      onApprovalHeld: this.deps.onPrivacyApprovalHeld,
     });
   }
 
@@ -1350,7 +1354,8 @@ export class AgentLifecycle {
     if (previousService) {
       try {
         await previousService.dispose();
-      } catch {
+      } catch (error) {
+        if (ownedProcessCleanupReceipt(error)) throw error;
         /* best-effort */
       }
     }

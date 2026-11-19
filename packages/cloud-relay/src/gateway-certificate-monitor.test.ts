@@ -1,17 +1,19 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { mkdtemp, rm, readdir, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, readdir, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, afterEach, expect, test, vi } from "vitest";
 import { GatewayCertificateMonitor } from "./gateway-certificate-monitor.js";
+import * as credentials from "./google-credentials.js";
 import type { CertificateMonitorOptions, CertificateMonitorStatus } from "./certificate-monitor.js";
 let directory: string;
 beforeEach(async () => {
   directory = await mkdtemp(join(tmpdir(), "gateway-ct-"));
 });
 afterEach(async () => {
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
   await rm(directory, { recursive: true, force: true });
 });
@@ -55,6 +57,41 @@ test("unset enables the monitor, since automatic enrollment relies on it", async
   expect(monitor.status()).toMatchObject({ enabled: true, state: "observing" });
   await monitor.close();
 });
+
+test("a pending monitor recheck retains a marked journal failure instead of admitting another check", async () => {
+  const watcher = port();
+  watcher.status.mockReturnValue({ ...watcher.status(), state: "pending" });
+  const marker = Object.assign(new Error("invented journal publication uncertainty"), {
+    cleanupFailure: undefined,
+  });
+  const monitor = new GatewayCertificateMonitor({
+    env: {},
+    configDir: directory,
+    identity: () => known,
+    create: async () => watcher,
+  });
+  try {
+    monitor.start();
+    await vi.waitFor(() => expect(watcher.check).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(monitor.cleanupFailure()).toBeUndefined());
+    watcher.check.mockRejectedValueOnce(marker);
+    monitor.start();
+    await vi.waitFor(() => expect(monitor.cleanupFailure()).toBe(marker));
+    expect(monitor.status()).toMatchObject({
+      state: "unavailable",
+      lastError: "ct-provider-unavailable",
+    });
+    monitor.start();
+    expect(watcher.check).toHaveBeenCalledTimes(2);
+    const closing = monitor.close();
+    expect(monitor.close()).toBe(closing);
+    await expect(closing).rejects.toMatchObject({ cleanupFailure: undefined, cause: marker });
+    expect(monitor.cleanupFailure()).toBe(marker);
+  } finally {
+    // A synthetic marker models the producer boundary; there is no Native helper to abandon.
+    await monitor.close().catch(() => {});
+  }
+});
 test("unconfigured and unknown-key gateways remain pending, then known identity starts one lazy monitor", async () => {
   let identity: typeof known | undefined;
   const watcher = port(),
@@ -86,8 +123,16 @@ test("unconfigured and unknown-key gateways remain pending, then known identity 
 });
 test("default production factory reads only dedicated CT credentials and persists public evidence without endpoint or secret status fields", async () => {
   const file = join(directory, "ct-key.json");
-  await writeFile(file, JSON.stringify({ apiKey: "ct-test-token" }));
-  const transport = vi.fn<typeof fetch>().mockResolvedValue(Response.json([]));
+  await credentials.savePrivateJson(file, { apiKey: "ct-test-token" });
+  const save = vi.spyOn(credentials, "savePrivateJson");
+  let requested!: () => void;
+  const request = new Promise<void>((resolve) => {
+    requested = resolve;
+  });
+  const transport = vi.fn<typeof fetch>(() => {
+    requested();
+    return Promise.resolve(Response.json([]));
+  });
   vi.stubGlobal("fetch", transport);
   const monitor = new GatewayCertificateMonitor({
     env: {
@@ -97,19 +142,25 @@ test("default production factory reads only dedicated CT credentials and persist
     configDir: directory,
     identity: () => known,
   });
-  expect(monitor.status().state).toBe("pending");
-  await vi.waitFor(() => expect(monitor.status().state).toBe("observing"));
-  expect(transport).toHaveBeenCalledOnce();
-  expect(transport.mock.calls[0][1]!.headers).toMatchObject({
-    authorization: "Bearer ct-test-token",
-  });
-  const status = JSON.stringify(monitor.status());
-  for (const privateValue of [file, "ct-test-token", "api.certspotter.com"])
-    expect(status).not.toContain(privateValue);
-  expect(
-    JSON.parse(await readFile(join(directory, "cloud-relay/certificate-incidents.json"), "utf8")),
-  ).toMatchObject({ hostname: "gateway.example.test", incidents: [] });
-  await monitor.close();
+  try {
+    expect(monitor.status().state).toBe("pending");
+    await request;
+    await vi.waitFor(() => expect(save).toHaveBeenCalledOnce());
+    await save.mock.results[0]!.value;
+    await vi.waitFor(() => expect(monitor.status().state).toBe("observing"));
+    expect(transport).toHaveBeenCalledOnce();
+    expect(transport.mock.calls[0][1]!.headers).toMatchObject({
+      authorization: "Bearer ct-test-token",
+    });
+    const status = JSON.stringify(monitor.status());
+    for (const privateValue of [file, "ct-test-token", "api.certspotter.com"])
+      expect(status).not.toContain(privateValue);
+    expect(
+      JSON.parse(await readFile(join(directory, "cloud-relay/certificate-incidents.json"), "utf8")),
+    ).toMatchObject({ hostname: "gateway.example.test", incidents: [] });
+  } finally {
+    await monitor.close();
+  }
 });
 test("closing a suspended lazy factory cannot create a late orphan poller", async () => {
   const watcher = port();
@@ -126,10 +177,15 @@ test("closing a suspended lazy factory cannot create a late orphan poller", asyn
   monitor.start();
   await vi.waitFor(() => expect(create).toHaveBeenCalledOnce());
   monitor.status();
-  await monitor.close();
+  let closed = false;
+  const closing = monitor.close();
+  void closing.then(() => {
+    closed = true;
+  });
+  await Promise.resolve();
+  expect(closed).toBe(false);
   release(watcher);
-  await Promise.resolve();
-  await Promise.resolve();
+  await closing;
   expect(watcher.check).not.toHaveBeenCalled();
   expect(monitor.status().state).toBe("disabled");
 });
@@ -355,4 +411,151 @@ test("an operator-chosen provider address is used as a base path and must be pla
     expect(create).not.toHaveBeenCalled();
     await monitor.close();
   }
+});
+
+test("F44: a stand-in for the main CT service gets a crt.sh fallback only when one is named too", async () => {
+  const transport = vi
+    .fn<typeof fetch>()
+    .mockImplementation(async (input) =>
+      new URL(String(input)).hostname === "ct-mirror.example.test"
+        ? new Response("", { status: 503 })
+        : Response.json([]),
+    );
+  vi.stubGlobal("fetch", transport);
+  for (const [env, fallback] of [
+    [{ OMNESIS_CLOUD_RELAY_CERTSPOTTER_URL: "https://ct-mirror.example.test" }, undefined],
+    [
+      {
+        OMNESIS_CLOUD_RELAY_CERTSPOTTER_URL: "https://ct-mirror.example.test",
+        OMNESIS_CLOUD_RELAY_CRTSH_URL: "https://crt-mirror.example.test/search",
+      },
+      "https://crt-mirror.example.test/search/",
+    ],
+  ] as const) {
+    transport.mockClear();
+    const monitor = new GatewayCertificateMonitor({
+      env,
+      configDir: directory,
+      identity: () => known,
+    });
+    monitor.start();
+    await vi.waitFor(() => expect(monitor.status().lastAttemptAt).toBeDefined());
+    const asked = transport.mock.calls.map(([url]) => String(url).split("?")[0]);
+    if (fallback) {
+      await vi.waitFor(() => expect(monitor.status().state).not.toBe("pending"));
+      expect(transport.mock.calls.map(([url]) => String(url).split("?")[0])).toContain(fallback);
+      expect(monitor.status()).toMatchObject({ lastScanProvider: "crtsh" });
+    } else {
+      await vi.waitFor(() => expect(monitor.status().state).toBe("unavailable"));
+      expect(asked.every((url) => url.startsWith("https://ct-mirror.example.test/"))).toBe(true);
+    }
+    await monitor.close();
+  }
+});
+
+const ACCOUNT = "https://acme-v02.api.letsencrypt.org/acme/acct/42";
+function caaMonitor(issue: () => string[] | undefined, overrides: Record<string, unknown> = {}) {
+  const drift = vi.fn(async (_digest: string) => {});
+  const monitor = new GatewayCertificateMonitor({
+    configDir: directory,
+    env: { OMNESIS_CLOUD_RELAY_CERTIFICATE_MONITOR_ENABLED: "1" },
+    identity: () => undefined,
+    caa: async () => ({ hostname: "gateway.example.test", accountUri: ACCOUNT }),
+    onCaaDrift: drift,
+    caaLookup: async () => issue(),
+    ...overrides,
+  });
+  return { monitor, drift };
+}
+
+test("CAA drift raises the incident hold", async () => {
+  let issue: string[] | undefined = [
+    `letsencrypt.org; validationmethods=dns-01; accounturi=${ACCOUNT}`,
+  ];
+  const { monitor, drift } = caaMonitor(() => issue);
+  await monitor.checkCaa();
+  expect(drift).not.toHaveBeenCalled();
+  // Rewritten to another account, or removed: both are drift, each with its own evidence.
+  issue = ["letsencrypt.org; accounturi=https://acme-v02.api.letsencrypt.org/acme/acct/666"];
+  await monitor.checkCaa();
+  issue = [];
+  await monitor.checkCaa();
+  expect(drift.mock.calls.map(([digest]) => digest)).toEqual([
+    expect.stringMatching(/^[a-f0-9]{64}$/),
+    expect.stringMatching(/^[a-f0-9]{64}$/),
+  ]);
+  expect(new Set(drift.mock.calls.map(([digest]) => digest)).size).toBe(2);
+  // A lookup DNS couldn't answer is not drift.
+  issue = undefined;
+  await monitor.checkCaa();
+  expect(drift).toHaveBeenCalledTimes(2);
+  await monitor.close();
+});
+
+test("the CAA check runs at the monitor's interval only while the monitor runs", async () => {
+  const timers: { callback: () => void; ms: number }[] = [];
+  vi.spyOn(globalThis, "setInterval").mockImplementation(((callback: () => void, ms: number) => {
+    timers.push({ callback, ms });
+    return { unref() {} };
+  }) as never);
+  const cleared = vi.spyOn(globalThis, "clearInterval").mockImplementation(() => {});
+  const { monitor, drift } = caaMonitor(() => []);
+  monitor.start();
+  monitor.start();
+  expect(timers.map(({ ms }) => ms)).toEqual([900_000]);
+  timers[0]!.callback();
+  await vi.waitFor(() => expect(drift).toHaveBeenCalledOnce());
+  await monitor.close();
+  expect(cleared).toHaveBeenCalled();
+  await monitor.checkCaa();
+  expect(drift).toHaveBeenCalledOnce();
+  const configured = caaMonitor(() => [], {
+    env: {
+      OMNESIS_CLOUD_RELAY_CERTIFICATE_MONITOR_ENABLED: "1",
+      OMNESIS_CLOUD_RELAY_CERTIFICATE_MONITOR_INTERVAL_MS: "120000",
+    },
+  });
+  configured.monitor.start();
+  expect(timers.at(-1)!.ms).toBe(120_000);
+  await configured.monitor.close();
+  const disabled = caaMonitor(() => [], {
+    env: { OMNESIS_CLOUD_RELAY_CERTIFICATE_MONITOR_ENABLED: "0" },
+  });
+  disabled.monitor.start();
+  await disabled.monitor.checkCaa();
+  expect(timers).toHaveLength(2);
+  expect(disabled.drift).not.toHaveBeenCalled();
+});
+
+test("no published CAA record, or a failing check, raises nothing", async () => {
+  const none = caaMonitor(() => [], { caa: async () => undefined });
+  await none.monitor.checkCaa();
+  expect(none.drift).not.toHaveBeenCalled();
+  const failing = caaMonitor(() => [], {
+    caa: async () => {
+      throw new Error("unreadable");
+    },
+  });
+  await failing.monitor.checkCaa();
+  expect(failing.drift).not.toHaveBeenCalled();
+  const silent = caaMonitor(() => [], { onCaaDrift: undefined });
+  await silent.monitor.checkCaa();
+  const unconfigured = new GatewayCertificateMonitor({
+    configDir: directory,
+    env: {},
+    identity: () => undefined,
+  });
+  await unconfigured.checkCaa();
+  unconfigured.start();
+  await unconfigured.close();
+});
+
+test("the CAA check reads DNS itself when no lookup is given", async () => {
+  const caa = await import("./acme-caa.js");
+  const lookups = vi.spyOn(caa, "lookupCaa").mockResolvedValue([]);
+  const { monitor, drift } = caaMonitor(() => [], { caaLookup: undefined });
+  await monitor.checkCaa();
+  expect(lookups).toHaveBeenCalledWith("gateway.example.test", expect.any(AbortSignal));
+  expect(drift).toHaveBeenCalledOnce();
+  await monitor.close();
 });

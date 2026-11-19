@@ -25,6 +25,8 @@ import { createServer } from "../../../server.js";
 import { createDevice } from "../../../data/repositories/DeviceRepository.js";
 import { createToken } from "../../../data/repositories/TokenRepository.js";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 type Db = Database.Database;
 
@@ -74,7 +76,7 @@ function post(token: string, entries: unknown): Promise<Response> {
 }
 
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-doc-profiles-test-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-doc-profiles-test-${randomUUID()}.db`);
   db = createDatabase(dbPath);
   app = createServer(db);
 });

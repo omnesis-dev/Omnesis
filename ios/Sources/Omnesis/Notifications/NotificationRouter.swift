@@ -82,9 +82,15 @@ public enum PushTarget: Equatable, Sendable {
     /// A generic MCP authorization request. It carries no request identifier
     /// or code: tapping it may only open the trusted short-code entry sheet.
     case accessAuthorization
-    case pairingRequests
-    /// A device joined this gateway by signing in. Opens the device list, where it can be removed.
+    /// Devices waiting for the owner's OK. A notification for one request names it, so the list
+    /// opens with that request first; the gateway's list is still what the owner decides on.
+    case pairingRequests(requestId: String? = nil)
+    /// A device joined this gateway on its own, by signing in or through Tailscale. Opens
+    /// the device list, where it can be removed.
     case deviceJoined
+    /// Devices wait to join this gateway through Tailscale. Opens the device list with
+    /// Waiting for your OK over it; the push names none of them.
+    case tailscaleJoinRequests
     /// A finished agent turn whose answer outlived its spoken budget
     /// (a Siri ask handed off to the push channel) — deep-links into
     /// that conversation on the Agent surface.
@@ -114,7 +120,8 @@ public enum PushTarget: Equatable, Sendable {
 extension PushTarget {
     /// Targets whose destination is Settings → Devices.
     var opensDevices: Bool {
-        self == .pairingRequests || self == .deviceJoined
+        if case .pairingRequests = self { return true }
+        return self == .deviceJoined || self == .tailscaleJoinRequests
     }
 
     /// Short kind label safe for `.public` log interpolation — the case
@@ -126,6 +133,7 @@ extension PushTarget {
         case .accessAuthorization: "access-authorization"
         case .pairingRequests: "device-pairing"
         case .deviceJoined: "device-joined"
+        case .tailscaleJoinRequests: "tailscale-join"
         case .agentAnswer: "agent-answer"
         case .watchFiring: "watch-firing"
         case .watch: "watch"
@@ -149,6 +157,10 @@ extension PushTarget {
         guard let omnesis = userInfo["omnesis"] as? [String: Any] else { return nil }
         let kind = omnesis["kind"] as? String
         if kind == "device-joined" { return cloudRelayEnabled ? .deviceJoined : nil }
+        // The Tailscale kinds carry nothing to act on, and only a gateway with its
+        // own Tailscale device sends them, so every build routes them.
+        if kind == "tailscale-join" { return .tailscaleJoinRequests }
+        if kind == "tailscale-joined" { return .deviceJoined }
         if let targetId = omnesis["targetId"] as? String, !targetId.isEmpty {
             switch kind {
             case "privacy-approval":
@@ -162,7 +174,7 @@ extension PushTarget {
             case "access-authorization":
                 return targetId == "access" ? .accessAuthorization : nil
             case "device-pairing":
-                return cloudRelayEnabled && targetId == "pairing" ? .pairingRequests : nil
+                return cloudRelayEnabled && targetId == "pairing" ? .pairingRequests(requestId: pairingRequestId(omnesis)) : nil
             default: break
             }
         }
@@ -297,5 +309,14 @@ func validPrivacyApprovalId(_ value: String) -> Bool {
         default:
             false
         }
+    }
+}
+
+extension PushTarget {
+    /// The request a pairing notification names, as `requestId` beside its kind. Only an id in
+    /// the gateway's own shape is kept: the list it opens still comes from the gateway.
+    static func pairingRequestId(_ payload: [String: Any]) -> String? {
+        guard let id = payload["requestId"] as? String, UUID(uuidString: id) != nil else { return nil }
+        return id
     }
 }

@@ -649,24 +649,6 @@ a:hover { text-decoration: underline; }
 }
 .sidebar-item:hover .sidebar-icon { color: var(--text-secondary); }
 .sidebar-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* How many decisions are waiting on the Privacy page. Decorative — the
-   adjacent .sr-only sentence carries the count into the link's accessible
-   name, where it reads as a sentence rather than a bare numeral. The label
-   above takes the remaining width, so the pill sits hard against the right
-   edge without needing a margin of its own. */
-.sidebar-badge {
-  flex-shrink: 0;
-  min-width: 18px;
-  padding: 0 5px;
-  border-radius: 9px;
-  background: var(--accent);
-  color: var(--bg-primary);
-  font-size: 11px;
-  font-weight: 600;
-  line-height: 18px;
-  text-align: center;
-  font-variant-numeric: tabular-nums;
-}
 /* Generic "Experimental" pill, shared by any surface that gates on
    experimental mode (experimental capability model cards, the Watches and
    Privacy views). */
@@ -868,6 +850,30 @@ a:hover { text-decoration: underline; }
   cursor: pointer;
 }
 .access-copy-button:hover { background: var(--bg-tertiary); color: var(--text-primary); }
+/* A choice of MCP addresses is the address field itself: the shown address opens the list, and the copy button sits beside it. */
+.access-mcp-picker:focus-within { border-color: var(--accent); }
+.access-mcp-picker select {
+  appearance: none;
+  -webkit-appearance: none;
+  min-width: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 11px 34px 11px 12px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 0;
+  outline: none;
+  background: transparent url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M3 4.5 6 7.5 9 4.5' fill='none' stroke='%238b949e' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat right 12px center;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.access-mcp-picker select:hover { background-color: var(--bg-secondary); }
+.access-mcp-picker option { background: var(--bg-primary); color: var(--text-primary); }
 .access-agent-setup { display: grid; gap: 10px; }
 .access-agent-setup-label { color: var(--text-secondary); font-size: 12px; }
 .backend-opt-grid.access-agent-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
@@ -3169,9 +3175,7 @@ a:hover { text-decoration: underline; }
   font-style: normal;
 }
 
-/* Indexer "warming up" / "failed" banner on the Search view. Styled to
-   match the search-error banner's tone language (warming = amber,
-   failed = red). */
+/* Indexer status banner on the Search view. */
 .indexer-warming-card {
   margin: 16px 0;
   padding: 14px 16px;
@@ -3187,6 +3191,13 @@ a:hover { text-decoration: underline; }
   background: rgba(248, 81, 73, 0.08);
   border-color: rgba(248, 81, 73, 0.35);
   border-left: 3px solid var(--danger);
+}
+.indexer-warming-card.indexer-warming-info {
+  background: var(--bg-secondary);
+  border-color: var(--border);
+}
+.indexer-warming-info a {
+  text-decoration: underline;
 }
 .indexer-warming-header {
   display: flex;
@@ -9384,6 +9395,78 @@ div.source-activity-popover-link:hover {
   color: var(--text-muted);
 }
 
+/* Resync dialog — the two modes as radio cards under the optional scope list. */
+.confirm-modal.resync-modal { width: 500px; }
+.resync-section-label {
+  margin: 10px 0 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.resync-mode-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 6px 0 12px;
+}
+.resync-mode {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.resync-mode:hover { border-color: var(--text-muted); }
+.resync-mode.selected {
+  border-color: var(--accent, #58a6ff);
+  background: rgba(88, 166, 255, 0.08);
+}
+.resync-mode-dot {
+  flex-shrink: 0;
+  width: 12px;
+  height: 12px;
+  margin-top: 3px;
+  border: 1.5px solid var(--text-muted);
+  border-radius: 50%;
+}
+.resync-mode.selected .resync-mode-dot {
+  border-color: var(--accent, #58a6ff);
+  background: radial-gradient(circle, var(--accent, #58a6ff) 0 3px, transparent 3.5px);
+}
+.resync-mode-text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.resync-mode-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+.resync-mode-body,
+.resync-mode-note {
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+.resync-mode-note { color: var(--warning, #d29922); }
+.confirm-modal-body.resync-single-mode { margin-bottom: 12px; }
+.resync-footnote {
+  margin-bottom: 18px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
 .sources-actions-col,
 .portal-table-actions-col { width: 1%; }
 .sources-actions-v2 {
@@ -9630,6 +9713,7 @@ div.source-activity-popover-link:hover {
   background: var(--bg-secondary);
   z-index: 1;
 }
+.add-source-modal:has(.add-source-picker) { max-width: 780px; }
 .add-source-header h3 {
   margin: 0;
   font-size: 15px;
@@ -10214,6 +10298,7 @@ div.source-activity-popover-link:hover {
    grid the flag is carried by the "Experimental" section heading instead. */
 .add-source-experimental {
   display: inline-block;
+  margin-inline-start: 6px;
   border-radius: 999px;
   padding: 1px 7px;
   font-size: 10px;
@@ -10243,6 +10328,13 @@ div.source-activity-popover-link:hover {
 }
 
 /* Forms (params / discover / done) */
+.add-source-form .form-group label {
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: normal;
+  text-transform: none;
+  color: var(--text-primary);
+}
 
 .add-source-form { display: flex; flex-direction: column; gap: 14px; }
 .add-source-step-hint {
@@ -13239,6 +13331,11 @@ div.source-activity-popover-link:hover {
   border-top: 1px solid var(--border);
 }
 .creds-wizard-section { margin-bottom: 16px; }
+.setup-markdown { overflow-wrap: anywhere; }
+.setup-markdown p { margin: 0 0 8px; }
+.setup-markdown > :last-child { margin-bottom: 0; }
+.setup-markdown ul, .setup-markdown ol { margin: 0 0 8px; padding-left: 20px; }
+.setup-markdown code { white-space: pre-wrap; }
 .creds-wizard-intro { font-size: 14px; line-height: 1.5; margin: 0 0 12px 0; }
 .creds-wizard-why {
   font-size: 13px;
@@ -13260,7 +13357,6 @@ div.source-activity-popover-link:hover {
 .creds-wizard-step-title { margin: 0 0 12px 0; font-size: 15px; font-weight: 600; }
 .creds-wizard-step-body { font-size: 13px; line-height: 1.5; }
 .creds-wizard-step-body p { margin: 0 0 8px 0; }
-.creds-wizard-step-body p:empty { height: 8px; }
 .creds-wizard-link {
   display: inline-block;
   margin-top: 8px;
@@ -16563,6 +16659,35 @@ details[open] > .agent-tool-error-summary .agent-tool-error-chevron { transform:
   text-decoration: underline;
 }
 
+/* Separate source action: the title keeps opening the indexed document. */
+.graph-debug-event-source {
+  display: inline-flex;
+  flex: 0 0 24px;
+  width: 24px;
+  height: 24px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  color: var(--text-secondary);
+  text-decoration: none;
+}
+
+/* The title's font bounds sit above the center of its line box. */
+.graph-debug-event-source svg {
+  transform: translateY(-1px);
+}
+
+.graph-debug-event-source:hover,
+.graph-debug-event-source:focus-visible {
+  color: var(--accent);
+  background: var(--bg-hover);
+}
+
+.graph-debug-event-source:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 /* Tier 2 — the people line. */
 .graph-debug-event-people {
   margin: 3px 0 0;
@@ -19256,6 +19381,10 @@ summary.decision-card-head {
   flex-shrink: 0;
 }
 .config-tab .warning-triangle { margin-left: 5px; }
+/* Something waiting for the owner's decision, beside a sidebar item or a tab. */
+.attention-icon { color: var(--accent); display: inline-flex; vertical-align: middle; flex-shrink: 0; }
+/* A tab's mark sits on the label's line without growing it, so a marked tab's label stays level with its neighbours. */
+.config-tab .attention-icon { margin: -2px 0 -2px 5px; }
 .model-health-warnings { display: grid; gap: 12px; margin-bottom: 20px; }
 .model-health-warning {
   display: flex;
@@ -19303,6 +19432,121 @@ summary.decision-card-head {
 .settings-view > .config-tabs { overflow-x: auto; min-width: 0; }
 .settings-view > .config-tabs .config-tab { flex-shrink: 0; white-space: nowrap; }
 
+/* Settings → Connectivity: a summary of what is on, the pages behind it, and a
+   guided setup on the access wizard's frame (.access-request--page,
+   .access-wizard-*). Every selector is namespaced .remote-access-*; nothing
+   else renders one. The relay's and the Tailscale device's own pieces it
+   embeds are adjusted inside their fenced blocks below. */
+.remote-access-view { max-width: 760px; min-width: 0; padding-bottom: 32px; color: var(--text-primary); }
+.remote-access-view code { font-family: var(--font-mono); font-size: 12px; overflow-wrap: anywhere; }
+.remote-access-view :is(button, a, input):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.remote-access-view .access-wizard-copy h3:focus { outline: none; }
+.remote-access-back { margin: 0 0 14px; }
+/* With Connectivity, Settings has more tabs than a narrow screen fits: its tab bar scrolls sideways. */
+.settings-view { min-width: 0; }
+.settings-view > .config-tabs { overflow-x: auto; min-width: 0; }
+.settings-view > .config-tabs .config-tab { flex-shrink: 0; white-space: nowrap; }
+.remote-access-loading,
+.remote-access-muted { margin: 0; font-size: 13px; line-height: 1.55; color: var(--text-secondary); }
+.remote-access-ports { display: grid; gap: 2px; margin: 0; padding-left: 22px; font-size: 13px; line-height: 1.55; color: var(--text-secondary); overflow-wrap: anywhere; }
+.remote-access-load-error { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; padding: 10px 12px; border: 1px solid var(--danger); border-radius: var(--radius-lg); color: var(--danger); font-size: 13px; line-height: 1.5; }
+.remote-access-problem { margin: 0; padding: 2px 0 2px 12px; border-left: 2px solid var(--warning); font-size: 13px; line-height: 1.55; color: var(--text-primary); overflow-wrap: anywhere; }
+.remote-access-ok { margin: 0; font-size: 13px; line-height: 1.55; color: var(--text-primary); overflow-wrap: anywhere; }
+.remote-access-ok > span:first-child { color: var(--success); font-weight: 600; }
+.remote-access-link { padding: 0; border: 0; background: none; color: var(--text-link); font: inherit; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.remote-access-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
+.remote-access-actions .btn-primary,
+.remote-access-actions .btn-secondary { white-space: nowrap; }
+
+/* One way in, or one answer: a card with its control in a narrow first column. */
+.remote-access-options,
+.remote-access-choices { display: grid; gap: 10px; min-width: 0; margin: 0; padding: 0; border: 0; }
+.remote-access-option,
+.remote-access-choice { min-width: 0; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-secondary); }
+:is(.remote-access-option, .remote-access-choice).is-on { border-color: color-mix(in srgb, var(--accent) 30%, var(--border)); background: color-mix(in srgb, var(--accent) 4%, var(--bg-secondary)); }
+.remote-access-option-head,
+.remote-access-choice { display: grid; grid-template-columns: 16px minmax(0, 1fr); gap: 12px; align-items: start; padding: 12px 14px; cursor: pointer; }
+.remote-access-option-head input,
+.remote-access-choice input { width: 16px; height: 16px; margin: 2px 0 0; accent-color: var(--accent); }
+.remote-access-option.is-disabled .remote-access-option-head { cursor: default; }
+.remote-access-option.is-disabled .remote-access-option-text strong { color: var(--text-muted); }
+.remote-access-option-text { display: grid; gap: 3px; min-width: 0; }
+.remote-access-option-text strong { font-size: 13.5px; font-weight: 600; color: var(--text-primary); }
+.remote-access-option-text small { font-size: 12.5px; line-height: 1.5; color: var(--text-secondary); }
+.remote-access-option-text .remote-access-step-up { color: var(--accent); }
+.remote-access-option-body { display: grid; gap: 12px; min-width: 0; margin: 0 14px 14px 42px; }
+.remote-access-option > .remote-access-option-body { padding: 12px 14px; border: 1px dashed var(--border); border-radius: 8px; }
+.remote-access-first { margin-top: 12px; }
+.remote-access-first legend { margin-bottom: 8px; padding: 0; font-size: 13px; font-weight: 600; color: var(--text-primary); }
+.remote-access-check { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-primary); cursor: pointer; }
+.remote-access-check input { accent-color: var(--accent); }
+
+/* The owner's own address and what the gateway found about it. */
+.remote-access-address label { display: block; margin-bottom: 6px; font-size: 13px; font-weight: 500; color: var(--text-primary); }
+.remote-access-address-row { display: flex; gap: 8px; }
+.remote-access-address-row input { flex: 1 1 auto; min-width: 0; min-height: 36px; padding: 7px 10px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--bg-primary); color: var(--text-primary); font-family: var(--font-mono); font-size: 13px; }
+.remote-access-address-row input:focus { outline: none; border-color: var(--accent); }
+.remote-access-checks { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.remote-access-checks li { display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 10px; font-size: 12.5px; line-height: 1.5; color: var(--text-secondary); overflow-wrap: anywhere; }
+.remote-access-checks strong { margin-right: 4px; font-weight: 600; color: var(--text-primary); }
+.remote-access-check-mark { display: grid; width: 18px; height: 18px; place-items: center; border: 1px solid var(--border); border-radius: 50%; font-size: 10px; font-weight: 700; color: var(--text-muted); }
+.remote-access-checks .is-ok .remote-access-check-mark { border-color: var(--success); background: var(--success); color: #fff; }
+.remote-access-checks .is-failed .remote-access-check-mark { border-color: var(--danger); background: var(--danger); color: #fff; }
+.remote-access-command { display: grid; gap: 8px; min-width: 0; font-size: 13px; line-height: 1.55; }
+
+/* The summary once setup is done. */
+.remote-access-summary { display: grid; gap: 0; }
+.remote-access-summary > .access-wizard-copy { margin-bottom: 8px; }
+.remote-access-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 14px 0; border-bottom: 1px solid var(--border); }
+.remote-access-summary > .access-wizard-copy + .remote-access-row { border-top: 1px solid var(--border); }
+.remote-access-row-text { min-width: 0; }
+.remote-access-row h4 { margin: 0 0 4px; font-size: 14px; font-weight: 600; color: var(--text-primary); }
+.remote-access-row p { margin: 0; font-size: 13px; line-height: 1.55; color: var(--text-secondary); overflow-wrap: anywhere; }
+.remote-access-manage { flex: none; white-space: nowrap; }
+.remote-access-actions > .btn-ghost { margin-right: auto; }
+/* A way in the owner runs themselves, on its own page: the setup's panel as a card. */
+.remote-access-page-body { display: grid; gap: 12px; min-width: 0; margin-top: 16px; padding: 16px 18px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-secondary); }
+.remote-access-page-body p { margin: 0; }
+.remote-access-more { margin: 0; font-size: 13px; }
+.remote-access-summary > .remote-access-buttons { margin-top: 16px; }
+.remote-access-items { display: grid; gap: 8px; margin: 6px 0 0; padding: 0; list-style: none; }
+.remote-access-item { display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; gap: 10px; align-items: start; }
+.remote-access-item-action { padding: 2px 4px; border: 0; background: none; color: var(--text-link); font: inherit; font-size: 12.5px; cursor: pointer; }
+.remote-access-item-action:hover { text-decoration: underline; text-underline-offset: 3px; }
+.remote-access-mark { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; border-radius: 50%; font-size: 12px; font-weight: 700; line-height: 1; }
+.remote-access-item.is-on .remote-access-mark { background: color-mix(in srgb, var(--success, #3fb950) 18%, transparent); color: var(--success, #3fb950); }
+.remote-access-item.is-off .remote-access-mark { background: var(--bg-tertiary); color: var(--text-muted); }
+.remote-access-item.is-warn .remote-access-mark { background: color-mix(in srgb, var(--warning, #d29922) 18%, transparent); color: var(--warning, #d29922); }
+.remote-access-item-text { display: grid; gap: 1px; min-width: 0; }
+.remote-access-item-title { font-size: 13.5px; color: var(--text-primary); }
+.remote-access-item.is-off .remote-access-item-title { color: var(--text-secondary); }
+.remote-access-item-detail { font-size: 12.5px; line-height: 1.5; color: var(--text-secondary); overflow-wrap: anywhere; }
+.remote-access-row-text { flex: 1; }
+.remote-access-row .remote-access-choices { margin-top: 10px; }
+/* The summary's answer for new devices: short choices side by side, quiet until one is picked. */
+.remote-access-choices.is-compact { display: flex; flex-wrap: wrap; gap: 8px; }
+.remote-access-choices.is-compact > p { flex-basis: 100%; }
+.remote-access-choices.is-compact .remote-access-choice { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 999px; background: transparent; }
+.remote-access-choices.is-compact .remote-access-choice input { margin: 0; width: 14px; height: 14px; }
+.remote-access-choices.is-compact .remote-access-option-text strong { font-size: 13px; font-weight: 500; }
+.remote-access-choices.is-compact .remote-access-choice.is-on { background: color-mix(in srgb, var(--accent) 6%, transparent); }
+.remote-access-choices > .remote-access-choice-detail { margin: 0; font-size: 12.5px; line-height: 1.5; color: var(--text-secondary); }
+/* Where MCP answers on each address away from home: a card per address with its choices. */
+.remote-access-mcp { display: grid; gap: 10px; min-width: 0; }
+.remote-access-mcp-row { display: grid; gap: 8px; min-width: 0; margin: 0; padding: 12px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-secondary); }
+.remote-access-mcp-row.is-on { border-color: color-mix(in srgb, var(--accent) 30%, var(--border)); }
+.remote-access-mcp-row > legend { float: left; width: 100%; padding: 0; }
+.remote-access-mcp-row > legend + * { clear: both; }
+.remote-access-mcp-row > small { font-size: 12.5px; line-height: 1.5; color: var(--text-secondary); }
+.remote-access-mcp > .remote-access-choice-detail { margin: 0; font-size: 12.5px; line-height: 1.5; color: var(--text-secondary); }
+
+@media (max-width: 760px) {
+  .remote-access-option-body { margin-left: 14px; }
+  .remote-access-row { flex-direction: column; gap: 8px; }
+  .remote-access-address-row { flex-wrap: wrap; }
+  .remote-access-address-row input { flex-basis: 100%; min-height: 44px; }
+}
+
 /* cloud-relay:start
    Everything for the optional cloud relay (OMNESIS_CLOUD_RELAY_ENABLED=1)
    lives between these markers. Every selector is namespaced (.relay-*,
@@ -19310,11 +19554,6 @@ summary.decision-card-head {
    under .relay-on, a class the portal adds only when the flag is on, so with
    the flag off nothing here can match. js/stylesheet-cloud-relay.test.ts
    enforces it. */
-
-/* Pages that gain an Omnesis account tab or relay rows when the flag is on. */
-.settings-view.relay-on { min-width: 0; }
-.settings-view.relay-on > .config-tabs { overflow-x: auto; min-width: 0; }
-.settings-view.relay-on > .config-tabs .config-tab { flex-shrink: 0; white-space: nowrap; }
 
 /* Settings → Omnesis account: one headline, flat rows, one box for problems. */
 .relay-view { max-width: 880px; min-width: 0; padding-bottom: 32px; color: var(--text-primary); }
@@ -19340,10 +19579,7 @@ summary.decision-card-head {
 .relay-dot { display: block; width: 10px; height: 10px; border-radius: 50%; background: var(--text-muted); }
 .relay-dot-ok { background: var(--success); box-shadow: 0 0 0 3px color-mix(in srgb, var(--success) 22%, transparent); }
 .relay-dot-warning { background: var(--warning); }
-.relay-dot-danger { background: var(--danger); }
-.relay-dot-progress { background: var(--accent); animation: relay-pulse 1.4s ease-in-out infinite; }
 @keyframes relay-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
-@media (prefers-reduced-motion: reduce) { .relay-dot-progress { animation: none; } }
 
 .relay-view .btn-primary, .relay-view .btn-secondary { min-height: 36px; padding: 8px 16px; font-size: 13px; white-space: nowrap; }
 .relay-view .btn-secondary.google-sign-in-button { padding: 7px 12px; }
@@ -19354,7 +19590,7 @@ summary.decision-card-head {
 .relay-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; }
 .relay-link { display: inline-block; font-size: 13px; }
 .relay-view a.relay-secondary-link { display: inline-flex; align-items: center; color: var(--text-primary); text-decoration: none; }
-.relay-view .btn-secondary.relay-danger { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 45%, var(--border)); }
+:is(.relay-view, .remote-access-actions) .btn-secondary.relay-danger { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 45%, var(--border)); }
 
 /* A tooltip for keyboard focus; a pointer gets the button's own title. */
 .relay-tip-anchor { position: relative; display: inline-flex; }
@@ -19398,6 +19634,18 @@ summary.decision-card-head {
 .relay-confirm .relay-actions { margin-top: 12px; }
 .relay-section > .relay-confirm { margin-top: 10px; }
 .relay-strong { font-weight: 500; }
+/* Finish setting up: the checklist that ends connecting an account. */
+.relay-setup { padding: 4px 0 28px; }
+.relay-setup-steps { list-style: none; margin: 14px 0 0; padding: 0; max-width: 64ch; }
+.relay-setup-step { display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 12px; padding: 10px 0; border-top: 1px solid var(--border); }
+.relay-setup-step:first-child { border-top: none; }
+.relay-setup-mark { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 50%; border: 1px solid var(--border); font-size: 12px; font-weight: 600; color: var(--text-primary); }
+.relay-setup-done .relay-setup-mark { border-color: var(--success, var(--accent)); color: var(--success, var(--accent)); }
+.relay-setup-detail { margin-left: 10px; font-weight: 400; color: var(--text-secondary); overflow-wrap: anywhere; }
+.relay-setup-body .relay-hint { margin-top: 4px !important; font-size: 13px; color: var(--text-secondary); }
+.relay-setup-body .relay-actions { margin-top: 12px; align-items: center; }
+.relay-setup-reminder .relay-quiet { padding: 0; min-height: 0; }
+.cloud-pairing-quiet { margin-top: 16px; padding: 0; background: none; border: 0; color: var(--text-secondary); font-size: 13px; text-decoration: underline; cursor: pointer; }
 .relay-sign-ins { margin-top: 16px; }
 .relay-sign-in-list { list-style: none; margin: 6px 0 0; padding: 0; }
 .relay-sign-in { display: flex; flex-direction: column; gap: 2px; padding: 7px 0; border-top: 1px solid var(--border); }
@@ -19413,12 +19661,6 @@ summary.decision-card-head {
 .relay-section > .relay-rows { margin-top: 6px; }
 .relay-section > .relay-hint { margin-top: 4px !important; }
 .relay-section-title { margin: 0; font-size: 15px; font-weight: 600; letter-spacing: -0.005em; }
-.relay-options { margin-top: 6px; }
-.relay-option { display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 12px; padding: 7px 0; cursor: pointer; }
-.relay-option input { margin: 3px 0 0; accent-color: var(--accent); width: 15px; height: 15px; }
-.relay-option-title { display: block; font-size: 14px; font-weight: 500; color: var(--text-primary); }
-.relay-option-text { display: block; margin-top: 2px; max-width: 64ch; font-size: 13px; line-height: 1.55; color: var(--text-secondary); }
-.relay-option:has(input:disabled) { cursor: default; }
 
 /* Loading. */
 .relay-skeleton-line { display: block; height: 12px; width: 52ch; max-width: 100%; margin-top: 10px; border-radius: var(--radius-sm); background: var(--bg-tertiary); animation: relay-pulse 1.4s ease-in-out infinite; }
@@ -19457,6 +19699,7 @@ summary.decision-card-head {
 
 /* Account sign-in and device approval. */
 .cloud-pairing-requests { margin: 24px 0; }
+.cloud-pairing-requests:empty { display: none; }
 .cloud-pairing-request { margin-top: 12px; padding: 18px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--bg-secondary); }
 .cloud-pairing-request h3 { margin: 0 0 4px; font-size: 14px; }
 .cloud-pairing-request p { margin: 0 0 8px; font-size: 13px; line-height: 1.55; }
@@ -19471,6 +19714,23 @@ summary.decision-card-head {
 .cloud-pairing-trust small { display: block; color: var(--text-secondary); font-size: 12px; }
 .cloud-pairing-revoked { margin: 12px 0 0; padding: 10px 14px; border-radius: 8px; font-size: 13px; color: var(--text-primary); border: 1px solid color-mix(in srgb, var(--warning) 45%, var(--border)); background: color-mix(in srgb, var(--warning) 8%, transparent); }
 .cloud-pairing-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
+.cloud-pairing-request p.cloud-pairing-question { margin: 16px 0 0; font-size: 14px; font-weight: 600; color: var(--text-primary); }
+/* A six-digit code reads as two groups of three. */
+.cloud-pairing-code > span + span { margin-left: 0.35em; }
+.cloud-pairing-email { display: block; margin: 2px 0; font-size: 15px; font-weight: 600; color: var(--text-primary); overflow-wrap: anywhere; }
+/* The request a notification opened. */
+.cloud-pairing-request.cloud-pairing-focused { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.cloud-pairing-denied { margin-top: 12px; padding: 14px 18px; border-radius: var(--radius-lg); font-size: 13px; line-height: 1.55; color: var(--text-primary); border: 1px solid color-mix(in srgb, var(--warning) 45%, var(--border)); background: color-mix(in srgb, var(--warning) 8%, transparent); }
+.cloud-pairing-denied p { margin: 0; }
+.cloud-pairing-denied .cloud-pairing-actions { margin-top: 12px; }
+/* The note before a passkey prompt the button didn't announce. It sits above the page, at the
+   bottom on a phone, until the person continues or cancels. */
+.relay-step-up-sheet { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: flex-end; justify-content: center; padding: 16px; background: color-mix(in srgb, var(--bg-primary, #000) 40%, transparent); }
+.relay-step-up-card { width: 100%; max-width: 420px; padding: 18px 20px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--bg-secondary); box-shadow: 0 8px 28px rgba(0, 0, 0, 0.25); }
+.relay-step-up-title { margin: 0 0 6px; font-size: 15px; font-weight: 600; color: var(--text-primary); }
+.relay-step-up-text { margin: 0; font-size: 13px; line-height: 1.55; color: var(--text-secondary); }
+.relay-step-up-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 16px; }
+@media (min-width: 601px) { .relay-step-up-sheet { align-items: center; } }
 /* The waiting strip above every page. It is part of the page flow, so it never covers content. */
 .cloud-pairing-notice { flex: none; }
 .cloud-pairing-notice .access-pending-client { color: var(--text-primary); font-size: 13px; }
@@ -19486,4 +19746,134 @@ summary.decision-card-head {
 .google-sign-in-button img { flex: none; object-fit: contain; }
 :is(.login-button, .btn-secondary).google-sign-in-button:hover:not(:disabled) { background: #f2f2f2; color: #1f1f1f; }
 
+/* The relay's own pieces inside Settings → Remote access's setup. */
+.relay-view.remote-access-relay { display: grid; gap: 14px; max-width: none; padding-bottom: 0; }
+.relay-view.remote-access-relay:empty { display: none; }
+.relay-view.remote-access-relay .relay-hero-action { margin-top: 0; }
+.relay-view.remote-access-relay .relay-elsewhere { margin-top: 8px; }
+.relay-view.remote-access-relay .relay-setup { padding-bottom: 0; }
+
 /* cloud-relay:end */
+
+/* tailscale-embed:start
+   Settings → Tailscale, the gateway's own Tailscale device, which
+   a gateway without its helper program lacks. Every selector is
+   namespaced .tailscale-*, so on such a gateway nothing here can match.
+   js/stylesheet-tailscale-embed.test.ts enforces it. */
+
+.tailscale-view { max-width: 820px; min-width: 0; padding: 12px 0 32px; color: var(--text-primary); }
+.tailscale-view p { margin: 0; }
+.tailscale-view a { color: var(--text-link); text-decoration: none; }
+.tailscale-view a:hover { text-decoration: underline; }
+.tailscale-view :is(button, a, summary, input):focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: var(--radius-sm); }
+.tailscale-view .btn-primary, .tailscale-view .btn-secondary { min-height: 36px; padding: 8px 16px; font-size: 13px; white-space: nowrap; }
+
+.tailscale-header { max-width: 660px; margin-bottom: 20px; }
+.tailscale-title-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
+.tailscale-header h2 { margin: 8px 0; font-size: 24px; font-weight: 500; letter-spacing: -.025em; }
+.tailscale-header > p { color: var(--text-secondary); line-height: 1.6; font-size: 14px; }
+
+.tailscale-pill { display: inline-flex; align-items: center; gap: 7px; padding: 3px 10px; border: 1px solid color-mix(in srgb, currentColor 45%, var(--border)); border-radius: 999px; font-size: 12px; font-weight: 500; line-height: 1.4; white-space: nowrap; }
+.tailscale-pill-dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.tailscale-pill-muted { color: var(--text-secondary); }
+.tailscale-pill-progress { color: var(--accent); }
+.tailscale-pill-progress .tailscale-pill-dot { animation: tailscale-pulse 1.4s ease-in-out infinite; }
+.tailscale-pill-warning { color: var(--warning); }
+.tailscale-pill-ok { color: var(--success); }
+.tailscale-pill-danger { color: var(--danger); }
+@keyframes tailscale-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+@media (prefers-reduced-motion: reduce) { .tailscale-pill-progress .tailscale-pill-dot { animation: none; } }
+
+.tailscale-panel { padding: 20px 22px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--bg-secondary); }
+.tailscale-lede { max-width: 62ch; font-size: 14px; line-height: 1.6; color: var(--text-primary); }
+.tailscale-value { font-size: 14px; line-height: 1.5; color: var(--text-primary); overflow-wrap: anywhere; }
+.tailscale-muted { margin-left: 6px; color: var(--text-muted); font-size: 13px; }
+.tailscale-hint { font-size: 12px; line-height: 1.55; color: var(--text-muted); }
+.tailscale-waiting { display: flex; align-items: center; gap: 8px; }
+.tailscale-spinner { width: 12px; height: 12px; margin-right: 0; flex: none; border-width: 2px; }
+@media (prefers-reduced-motion: reduce) { .tailscale-spinner { animation-duration: 2.4s; } }
+.tailscale-notice { max-width: 66ch; padding: 2px 0 2px 12px; border-left: 2px solid var(--warning); font-size: 13px; line-height: 1.55; color: var(--text-primary); overflow-wrap: anywhere; }
+.tailscale-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 16px; }
+.tailscale-panel .tailscale-actions, .tailscale-section .tailscale-actions { margin-top: 16px; }
+.tailscale-actions + .tailscale-hint, .tailscale-panel > .tailscale-hint { margin-top: 10px; }
+.tailscale-view a.tailscale-button-link { display: inline-flex; align-items: center; text-decoration: none; }
+.tailscale-view a.btn-primary.tailscale-button-link { color: #fff; }
+.tailscale-view a.btn-secondary.tailscale-button-link { color: var(--text-primary); }
+.tailscale-quiet { min-height: 36px; padding: 6px 4px; background: none; border: 0; color: var(--text-secondary); font: inherit; font-size: 13px; cursor: pointer; white-space: nowrap; }
+.tailscale-quiet:hover:not(:disabled) { color: var(--text-primary); text-decoration: underline; text-underline-offset: 3px; }
+.tailscale-quiet:disabled { opacity: 0.5; cursor: default; }
+.tailscale-view .btn-secondary.tailscale-danger { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 45%, var(--border)); }
+
+/* Sign-in: the link beside a QR code for signing in on a phone. */
+.tailscale-sign-in { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 20px 32px; }
+.tailscale-sign-in-main { flex: 1 1 260px; min-width: 0; }
+.tailscale-qr { display: flex; flex-direction: column; align-items: center; gap: 8px; margin: -4px 0 0; }
+.tailscale-qr-canvas { display: block; width: 148px; height: 148px; border-radius: var(--radius-md); }
+.tailscale-qr figcaption { max-width: 160px; font-size: 12px; line-height: 1.45; color: var(--text-muted); text-align: center; }
+
+/* Label/value rows in the panel and sections. */
+.tailscale-rows { display: grid; gap: 14px; }
+.tailscale-section > .tailscale-rows { margin-top: 14px; }
+.tailscale-row { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 4px 20px; align-items: start; }
+.tailscale-row-label { padding-top: 9px; font-size: 13px; color: var(--text-secondary); }
+.tailscale-row-body { min-width: 0; }
+.tailscale-row-body > .tailscale-value:first-child { padding-top: 8px; }
+.tailscale-row-body > .tailscale-hint { margin-top: 6px; }
+.tailscale-row-action { margin-top: 6px !important; font-size: 13px; }
+
+.tailscale-copy { display: flex; gap: 8px; max-width: 560px; }
+.tailscale-copy-input, .tailscale-input { flex: 1 1 auto; min-width: 0; min-height: 36px; padding: 7px 10px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--bg-primary); color: var(--text-primary); font-family: var(--font-mono); font-size: 13px; }
+.tailscale-copy-input:focus, .tailscale-input:focus { outline: none; border-color: var(--accent); }
+.tailscale-view .btn-secondary.tailscale-copy-button { min-width: 76px; }
+
+.tailscale-details { margin-top: 10px; font-size: 12px; color: var(--text-secondary); }
+.tailscale-details summary { cursor: pointer; width: fit-content; }
+.tailscale-details pre { margin: 8px 0 0; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--bg-primary); color: var(--text-primary); font-family: var(--font-mono); font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* Public address, joining devices. */
+.tailscale-section { margin-top: 28px; padding-top: 24px; border-top: 1px solid var(--border); }
+.tailscale-panel + .tailscale-section { border-top: 0; padding-top: 4px; }
+.tailscale-section-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 16px; align-items: start; }
+.tailscale-section-title { margin: 0; font-size: 15px; font-weight: 600; letter-spacing: -.005em; }
+.tailscale-section-text { margin-top: 4px !important; max-width: 64ch; font-size: 13px; line-height: 1.6; color: var(--text-secondary); }
+.tailscale-section > .tailscale-value, .tailscale-section > .tailscale-hint, .tailscale-section > .tailscale-notice { margin-top: 14px; }
+.tailscale-section > .tailscale-row-action { margin-top: 6px !important; }
+
+
+
+
+/* The line saying what became of a join request answered on Settings → Devices. */
+.tailscale-join-notice { margin: 12px 0 0; font-size: 13px; color: var(--text-secondary); }
+
+/* The device's own settings, at the foot of the main card. */
+.tailscale-device { margin-top: 20px; padding-top: 18px; border-top: 1px solid var(--border); }
+.tailscale-device .tailscale-device-name { margin: 0; max-width: none; }
+.tailscale-device .tailscale-name-row { max-width: 560px; }
+.tailscale-field { margin-top: 16px; max-width: 560px; }
+.tailscale-field-label { display: block; margin-bottom: 6px; font-size: 13px; font-weight: 500; color: var(--text-primary); }
+.tailscale-name-row { display: flex; gap: 8px; }
+.tailscale-input[aria-invalid="true"] { border-color: var(--danger); }
+.tailscale-field-error { margin-top: 6px !important; font-size: 12px; color: var(--danger); }
+.tailscale-field > .tailscale-hint { margin-top: 6px; }
+.tailscale-device .tailscale-device-actions { margin-top: 16px; margin-left: 170px; }
+
+.tailscale-error { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; padding: 10px 12px; margin-bottom: 20px; color: var(--danger); border: 1px solid var(--danger); border-radius: var(--radius-lg); font-size: 13px; line-height: 1.5; }
+
+@media (max-width: 760px) {
+  .tailscale-panel { padding: 16px; }
+  .tailscale-row { grid-template-columns: minmax(0, 1fr); }
+  .tailscale-device .tailscale-device-actions { margin-left: 0; }
+  .tailscale-row-label { padding-top: 0; font-size: 12px; }
+  .tailscale-row-body > .tailscale-value:first-child { padding-top: 0; }
+  .tailscale-qr { align-items: flex-start; }
+  .tailscale-qr figcaption { text-align: left; }
+  .tailscale-view .btn-primary, .tailscale-view .btn-secondary, .tailscale-quiet { min-height: 44px; }
+  .tailscale-copy-input, .tailscale-input { min-height: 44px; }
+  .tailscale-copy { flex-wrap: wrap; }
+  .tailscale-copy-input { flex-basis: 100%; }
+}
+
+/* The device's sign-in and status inside Settings → Remote access's setup. */
+.tailscale-view.remote-access-tailscale { max-width: none; padding: 0; }
+
+/* tailscale-embed:end */

@@ -24,8 +24,9 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import * as encryption from "../sqlite-encryption.js";
 import { openEncryptedSqlite, type EncryptedSqliteDatabase } from "../sqlite-encryption.js";
 import { createJudgeEvidenceReader, openWatchStores } from "./engine-task.js";
 
@@ -159,4 +160,26 @@ describe("reading judge evidence", () => {
     ).toEqual(base.evidence);
     db.close();
   });
+});
+
+it("closes a newly opened handle when pragma setup fails before ownership transfers", () => {
+  const handle = openEncryptedSqlite(join(dir, "setup-failure.sqlite"));
+  const original = new Error("invented pragma failure");
+  const pragma = vi.spyOn(handle, "pragma").mockImplementation(() => {
+    throw original;
+  });
+  const open = vi.spyOn(encryption, "openEncryptedSqlite").mockReturnValueOnce(handle);
+  try {
+    expect(
+      openWatchStores({ journalPath: join(dir, "setup-failure.sqlite"), storageKey: null }),
+    ).toEqual({
+      ok: false,
+      reason: original.message,
+    });
+    expect(handle.open).toBe(false);
+  } finally {
+    pragma.mockRestore();
+    open.mockRestore();
+    handle.close();
+  }
 });

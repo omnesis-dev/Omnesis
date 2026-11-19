@@ -21,6 +21,8 @@ import type { WsEvent } from "@omnesis/core";
 import type { WriteGate } from "../../write-gate.js";
 import type { AuthFlowRegistry } from "../../auth-flows.js";
 import type { DeviceConnection } from "../../ws.js";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 const SRC = "apple-notes:local";
 const REMEDY = {
@@ -35,7 +37,7 @@ let db: ReturnType<typeof createDatabase>;
 let conn: DeviceConnection;
 
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-ws-remediation-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-ws-remediation-${randomUUID()}.db`);
   db = createDatabase(dbPath);
   const device = createDevice(db, { name: "Maya-Laptop", kind: "collector" });
   conn = { deviceId: device.id, scopes: [SCOPE_WRITE_ALL] };

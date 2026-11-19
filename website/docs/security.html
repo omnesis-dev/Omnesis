@@ -266,6 +266,11 @@
 
         <h3 id="passphrase">Headless machines: the passphrase backend</h3>
         <p>
+          A manually launched Windows runtime uses this backend too: automatic OS-keyring selection
+          supports macOS and Linux. Supply the same passphrase to the gateway, collector and CLI,
+          and keep it available when restarting them.
+        </p>
+        <p>
           A server or container with no desktop keyring uses the <code>passphrase</code> backend:
           set <code>OMNESIS_SECRET_STORE=passphrase</code> and supply a passphrase at every start.
           Keyring entries are then sealed on disk under a key derived from it, and the passphrase
@@ -365,8 +370,9 @@
           They are removed when the operation finishes, fails or is cancelled; a killed process can
           leave them until a later operation cleans up. Transcription decodes an MP4-family
           recording (such as an <code>.m4a</code> voice memo) from a copy in an owner-only temporary
-          folder, removed when decoding ends; a gateway killed mid-decode can leave it in the system
-          temporary directory. Deleting a file is not secure erasure.
+          folder, removed after the decoder has stopped; uncertain cleanup leaves it for review.
+          Private OCR working folders whose process completion was not confirmed are retained across
+          restarts for review. Deleting a file is not secure erasure.
         </p>
         <p>
           The source originals Omnesis reads, logs, filesystem snapshots and swap are outside
@@ -445,6 +451,18 @@
           restricts other files to owner read and write. The portal's
           <strong>Debug → System → Health</strong> page shows the same checks but cannot repair
           anything.
+        </p>
+
+        <p>
+          On Windows, permission repair can protect directory access and seal inheritance on a file
+          whose access rules are already private. It preserves those rules and does not read or
+          replace file contents. Existing files with broad access are refused: Windows cannot safely
+          replace them while excluding concurrent applications. Stop related processes, review
+          ownership and access rules, then recreate unsafe files privately before retrying.
+          Already-private files can remain open during the check. Access rules that refer to the
+          current object owner are evaluated against the verified owner; they do not grant access to
+          another account. This also recognizes private temporary directories created by Python
+          without rewriting their access rules.
         </p>
 
         <h2 id="hardened-gateway">Hardened gateway</h2>
@@ -634,6 +652,25 @@ installing it takes one command as root:
           provide, or the self-signed pair the gateway creates on first start. This section covers
           what happens afterwards: renewal, how a new certificate goes live, and what clients that
           pinned the old one need.
+        </p>
+        <p>
+          When the gateway creates or renews its direct TLS identity, its private key uses
+          secret-file encryption when an install root key is available. The gateway decrypts it
+          before loading TLS; certificates remain PEM files. Existing plaintext keys remain
+          readable. Keep the install root key and recovery code with your backup: gateway renewal
+          refuses to replace an encrypted private key with plaintext when that root key is
+          unavailable.
+        </p>
+
+        <p>
+          If stopping a TLS issuer cannot be confirmed, the served certificate stays in place and
+          further TLS mutations are blocked. Any issuer scratch is retained. During shutdown the
+          gateway keeps its process and lock for operator review; review the issuer process state
+          before restarting the gateway. The same shutdown hold applies to unconfirmed cleanup of
+          managed model runtimes, host security audits, public ACME renewal and relay management.
+          ACME and relay services stop automatic retries while their cleanup is unconfirmed. Cleanup
+          still in progress is awaited; if it later succeeds, a stop that already exceeded its
+          deadline retains the timeout result.
         </p>
 
         <h3 id="tls-renewal">Renewal and activation</h3>

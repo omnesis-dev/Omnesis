@@ -23,6 +23,8 @@ import {
 } from "../../brain/note-agent/storage.js";
 import type { OmnesisNotesRuntime } from "../../sources/omnesis-notes/index.js";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 let db: Database.Database;
 let dbPath: string;
@@ -31,7 +33,7 @@ let token: string;
 let runtime: OmnesisNotesRuntime | undefined;
 
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-test-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
   db = createDatabase(dbPath);
   const device = createDevice(db, { name: `test-${randomUUID()}`, kind: "cli" });
   token = createToken(db, device.id, [SCOPE_ADMIN, SCOPE_READ, SCOPE_WRITE_ALL]).token;

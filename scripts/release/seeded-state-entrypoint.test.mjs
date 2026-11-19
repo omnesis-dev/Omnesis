@@ -15,7 +15,8 @@ afterEach(() => {
   }
 });
 
-describe("seeded-state container entrypoint", () => {
+// The shell entrypoint is installed inside the Linux Docker image.
+describe.skipIf(process.platform === "win32")("seeded-state container entrypoint", () => {
   it("stops before installation when the schema-version probe fails", () => {
     const directory = mkdtempSync(join(tmpdir(), "omnesis-seeded-entrypoint-"));
     temporaryDirectories.push(directory);

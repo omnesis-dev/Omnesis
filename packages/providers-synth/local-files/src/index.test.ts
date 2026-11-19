@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { ProviderId, SourceId } from "@omnesis/types";
@@ -25,7 +25,10 @@ import source from "./index.js";
 let root: string;
 const instances: SourceInstance[] = [];
 beforeEach(() => {
-  root = mkdtempSync(join(tmpdir(), "synthetic-input-test-"));
+  // Windows Temp lives under protected AppData; materialized user files belong outside it.
+  root = mkdtempSync(
+    join(process.platform === "win32" ? homedir() : tmpdir(), "synthetic-input-test-"),
+  );
 });
 afterEach(async () => {
   for (const instance of instances.splice(0)) await instance.dispose?.();

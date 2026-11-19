@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { randomUUID } from "node:crypto";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type Database from "better-sqlite3";
 type Db = Database.Database;
 import {
@@ -14,17 +16,24 @@ import {
   type ChunkUpsertInput,
 } from "../indexer/db.js";
 import { bm25Search, type LexicalRanker } from "./bm25.js";
+import { lexicalVersion } from "./lexical-versions.js";
+
+const VERSION_0 = lexicalVersion(0)!;
 import { LexicalIndex } from "./lexical-index.js";
 import { closeTempDb } from "./test-utils.js";
 
 let db: Db;
+let directory: string;
 
 beforeEach(() => {
-  db = createIndexDatabase(`/tmp/omnesis-lexical-index-${randomUUID()}.db`);
+  directory = mkdtempSync(join(tmpdir(), "omnesis-lexical-index-"));
+  db = createIndexDatabase(join(directory, "index.db"));
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   closeTempDb(db);
+  rmSync(directory, { recursive: true, force: true });
 });
 
 function chunk(
@@ -306,6 +315,28 @@ describe("LexicalIndex", () => {
     expect(index.stats(db)!.chunkCount()).toBe(1);
   });
 
+  test("a scheduling pause exhausts the query budget without losing pending changes", () => {
+    upsertChunks(db, [chunk({ id: "c1", documentId: "d1", content: "budget review" })]);
+    const index = new LexicalIndex(LexicalIndex.build(db).data, {
+      changesBatch: 1,
+      changesBudgetMs: 25,
+    });
+    upsertChunks(db, [
+      chunk({ id: "c2", documentId: "d2", content: "budget review" }),
+      chunk({ id: "c3", documentId: "d3", content: "budget review" }),
+    ]);
+    const clock = vi.spyOn(Date, "now").mockReturnValue(1_026);
+    clock.mockImplementationOnce(() => 1_000);
+    expect(index.rank(db, "budget", 10)).toBeNull();
+    expect(index.follow(db, 25)).toBe(false);
+    expect(
+      index
+        .rank(db, "budget", 10)!
+        .map((row) => row.rowid)
+        .sort(),
+    ).toEqual([1, 2, 3]);
+  });
+
   test("past its time budget it declines, then resumes where it stopped", () => {
     upsertChunks(db, [chunk({ id: "c1", documentId: "d1", content: "budget review" })]);
     const index = new LexicalIndex(LexicalIndex.build(db).data, {
@@ -477,6 +508,10 @@ describe("LexicalIndex", () => {
   ])(
     "matches what FTS5 matches through a seeded stream of inserts, rewrites and deletes, compacting $compaction",
     ({ deltaCompactMinRetired }) => {
+      // Ranking parity is independent of host scheduling. Budget exhaustion
+      // has its own controlled-clock coverage.
+      const clock = Date.now();
+      vi.spyOn(Date, "now").mockReturnValue(clock);
       const vocabulary = [
         "budget",
         "review",
@@ -627,6 +662,7 @@ describe("bm25Search — rank-first", () => {
     seedCorpus(50);
     const calls: string[] = [];
     const declining: LexicalRanker = {
+      rules: VERSION_0,
       rank: (_db, q) => {
         calls.push(q);
         return null;
@@ -647,6 +683,7 @@ describe("bm25Search — rank-first", () => {
     const windows: number[] = [];
     // Ranks rowids that do not exist, so no window ever yields enough rows.
     const phantom: LexicalRanker = {
+      rules: VERSION_0,
       rank: (_db, _q, k) => {
         windows.push(k);
         return Array.from({ length: k }, (_, i) => ({ rowid: 1_000_000 + i, score: k - i }));
@@ -662,6 +699,7 @@ describe("bm25Search — rank-first", () => {
     seedCorpus(40);
     const windows: number[] = [];
     const recording: LexicalRanker = {
+      rules: VERSION_0,
       rank: (_db, _q, k) => {
         windows.push(k);
         return [];
@@ -674,6 +712,7 @@ describe("bm25Search — rank-first", () => {
   test("a ranker that throws hands the query to FTS5", () => {
     seedCorpus(40);
     const failing: LexicalRanker = {
+      rules: VERSION_0,
       rank: () => {
         throw new Error("simulated ranker failure");
       },

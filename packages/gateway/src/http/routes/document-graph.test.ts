@@ -10,6 +10,8 @@ import { createServer } from "../../server.js";
 import { createDevice } from "../../data/repositories/DeviceRepository.js";
 import { createToken } from "../../data/repositories/TokenRepository.js";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 type Db = Database.Database;
 
@@ -84,7 +86,7 @@ function seedLink(sourceDocId: string, linkType: string, targetDocId: string): v
 }
 
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-doc-graph-route-test-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-doc-graph-route-test-${randomUUID()}.db`);
   db = createDatabase(dbPath);
   token = mintToken([SCOPE_ADMIN, SCOPE_READ, SCOPE_WRITE_ALL]);
   app = createServer(db, dbPath);

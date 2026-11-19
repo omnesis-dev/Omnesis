@@ -14,6 +14,8 @@ import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import { createDatabase } from "../db.js";
 import { readDocumentNeighbourhood } from "./DocumentNeighbourhood.js";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 type Db = Database.Database;
 
@@ -24,7 +26,7 @@ describe("document neighbourhood", () => {
   let db: Db;
 
   beforeEach(() => {
-    dbPath = `/tmp/omnesis-test-${randomUUID()}.db`;
+    dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
     db = createDatabase(dbPath);
   });
 

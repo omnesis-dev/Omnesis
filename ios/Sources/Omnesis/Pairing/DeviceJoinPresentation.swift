@@ -25,14 +25,64 @@ public enum DeviceJoinPresentation {
 }
 
 /// The words for a device that signed in and waits for the owner. The Android app and the
-/// portal use the same ones.
+/// portal use the same ones: a question about the device, with a code the owner looks at.
 public enum PairingApprovalPresentation {
-    public static let explanation = "A device signed in to your Omnesis account and is waiting for your approval to pair "
-        + "to this gateway. Approve if the code below matches the code shown on the device."
+    public static let approve = "Yes, approve"
+    /// When approving from this phone asks for the owner's passkey on the gateway's page.
+    public static let approveWithFaceID = "Yes, approve with Face ID"
+    /// Remembering is never offered for a Google account the gateway was not connected with.
+    public static let otherGoogleAccount = "This isn't the Google account you connected with, so it can't be remembered."
+    public static let deny = "No, deny"
+    public static let title = "Waiting for your OK"
+    public static let empty = "No devices are waiting for your OK."
     /// On the waiting device itself, above its code.
-    public static let waitingDevice = "Check that this code matches the one shown on your other device, then approve it there."
-    public static let approve = "Approve"
-    public static let deny = "Deny"
-    public static let title = "Pairing requests"
-    public static let empty = "No pending pairing requests."
+    public static let waitingDevice = "Approve this device from a device you already use. Make sure it shows this same code."
+    /// Above the code of a device the owner removed before.
+    public static let revoked = "You removed this device before. Approve only if it's back in your hands."
+    /// What the owner can do right after denying a device they don't recognise.
+    public static let denied = "Denied. If you didn't try to connect a device, someone may know your Google password."
+    public static let askFirst = "Make new devices always ask me"
+    public static let askingFirst = "New devices now always ask you first."
+    public static let rememberDetail = "Next time you sign in with it in the Omnesis app, your device connects without asking."
+
+    /// The headline of one waiting device: its own name, which it chose, so only ever shown as a name.
+    public static func headline(_ name: String) -> String {
+        "\(name) wants to connect"
+    }
+
+    /// The question above the code, naming the device the owner should look at by its own name.
+    public static func question(name: String) -> String {
+        "Does \(name) show this code?"
+    }
+
+    /// "Remember this Google account" or "Remember this passkey": the sign-in, not the device.
+    public static func remember(signIn: String?) -> String {
+        signIn == "passkey" ? "Remember this passkey" : "Remember this Google account"
+    }
+}
+
+/// The waiting screen on the device that asks to connect: one state, one code, one way out.
+public enum PairingWaitingPresentation {
+    public static let title = "Waiting for your OK"
+    /// Approval happens on something the owner already has; this iPhone says where.
+    public static let fromAnotherDevice = "Approve this iPhone from a device you already use:"
+    public static let places = ["the Omnesis portal on your computer, or", "the Omnesis app on another phone."]
+    public static let codeLead = "It will show this code:"
+    /// When the gateway can approve with the owner's confirmed passkey on its own page.
+    public static let withFaceID = "Approve this iPhone with Face ID on your gateway's secure page. It will show this code:"
+    public static let approveWithFaceID = "Approve with Face ID"
+    /// Approved by a gateway this iPhone could not verify on its own: the person confirms the codes.
+    public static let approvedTitle = "Approved"
+    public static let compare = "Continue only if the device you approved on showed this same code."
+    public static let confirm = "Codes match, connect this iPhone"
+    public static let connecting = "Connecting…"
+    public static let approved = "Approved. Connecting this iPhone…"
+    public static let cancel = "Cancel"
+
+    /// "Expires in 4:32", or "Expired" once the gateway stopped waiting.
+    public static func expiry(remaining: TimeInterval) -> String {
+        let seconds = Int(remaining.rounded(.down))
+        guard seconds > 0 else { return "Expired. Cancel and sign in again." }
+        return String(format: "Expires in %d:%02d", seconds / 60, seconds % 60)
+    }
 }

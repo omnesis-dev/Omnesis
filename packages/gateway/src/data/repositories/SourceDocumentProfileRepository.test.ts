@@ -12,6 +12,8 @@ import {
   upsertSourceDocumentProfiles,
 } from "./SourceDocumentProfileRepository.js";
 import type { SourceDocumentProfileEntry } from "./SourceDocumentProfileRepository.js";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 let db: Database.Database;
 
@@ -107,7 +109,7 @@ describe("source document profile store", () => {
   });
 
   it("survives a fresh handle on the same file — the point of persisting it", () => {
-    const path = `/tmp/omnesis-test-${randomUUID()}.db`;
+    const path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
     const first = new Database(path);
     createSourceDocumentProfilesTable(first);
     upsertSourceDocumentProfiles(first, [mailbox], 1000);

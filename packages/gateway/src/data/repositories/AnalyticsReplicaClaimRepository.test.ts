@@ -26,6 +26,8 @@ import {
 } from "./AnalyticsReplicaClaimRepository.js";
 import { recordDeletionClaims } from "./ReplicaDeletionClaimRepository.js";
 import type { Db } from "../types.js";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 const TYPE = SourceType("apple-health");
 const TABLE = "hk_samples";
@@ -75,7 +77,7 @@ describe("the replica deletion ledger for analytics rows", () => {
     recordAnalyticsPresence(db, { sourceId, tableName: TABLE, deviceId, keyValues, now: 2_000 });
 
   beforeEach(() => {
-    dbPath = `/tmp/omnesis-test-${randomUUID()}.db`;
+    dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
     db = createDatabase(dbPath);
     phoneA = host("phone-a");
     phoneB = host("phone-b");

@@ -3,18 +3,25 @@
 
 import { z } from "zod";
 import {
+  ACCOUNT_BROWSER_METHODS,
   ACCOUNT_BROWSER_PATH,
   ACCOUNT_CREDENTIALS_EVIDENCE,
   type AccountBrowserOwner,
 } from "./account-browser-contract.js";
 import { RelayError } from "./tunnels.js";
+import { serveLaunch } from "./browser-launch.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { AccountBrowserBroker } from "./account-browser-broker.js";
 import type { LoginAdmission } from "./admission.js";
 
 const launch = z
-  .object({ operationId: z.string().uuid(), ticket: z.string().regex(/^[A-Za-z0-9_-]{43}$/) })
+  .object({
+    operationId: z.string().uuid(),
+    ticket: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
+    method: z.enum(ACCOUNT_BROWSER_METHODS).optional(),
+  })
   .strict();
+const restart = "To use this browser instead, go back to your gateway and start again.";
 const cancel = z.object({ operationId: z.string().uuid() }).strict();
 const empty = z.object({}).strict();
 
@@ -24,6 +31,7 @@ export class AccountBrowserHttp {
     private readonly options: {
       broker: AccountBrowserBroker;
       admission: LoginAdmission;
+      ownerAdmission: LoginAdmission;
       authenticateOwner(
         req: IncomingMessage,
       ): Promise<AccountBrowserOwner & { sessionExpiresAt: number }>;
@@ -42,21 +50,19 @@ export class AccountBrowserHttp {
     );
     if (req.url!.length > 4096) throw new RelayError(414, "Account browser URL is too large");
     if (url.pathname === ACCOUNT_BROWSER_PATH + "/begin") {
-      if (req.method !== "GET") throw new RelayError(405, "Method not allowed");
-      if (
-        url.searchParams.size !== 2 ||
-        url.searchParams.getAll("operationId").length !== 1 ||
-        url.searchParams.getAll("ticket").length !== 1
-      )
-        throw new RelayError(400, "Invalid account browser launch");
-      const input = launch.safeParse(Object.fromEntries(url.searchParams));
-      if (!input.success) throw new RelayError(400, "Invalid account browser launch");
-      return this.options.admission.run(async () => {
-        const result = this.options.broker.launch(input.data.operationId, input.data.ticket);
-        res.writeHead(303, { location: result.location, "set-cookie": result.cookie });
-        res.end();
-        return true;
-      }, req);
+      const { broker, admission } = this.options;
+      // Opening the link changes nothing; the Continue press binds the operation (F43).
+      return serveLaunch(req, res, url, {
+        admission,
+        origin: broker.origin,
+        path: ACCOUNT_BROWSER_PATH + "/begin",
+        names: { required: ["operationId", "ticket"], optional: ["method"] },
+        parse: (fields) => launch.safeParse(fields).data,
+        peek: (input, cookie) => broker.peekLaunch(input.operationId, input.ticket, cookie),
+        launch: (input, cookie) =>
+          broker.launch(input.operationId, input.ticket, cookie, input.method),
+        restart,
+      });
     }
     if (url.pathname === ACCOUNT_BROWSER_PATH + "/credentials") {
       if (req.method !== "GET") throw new RelayError(405, "Method not allowed");
@@ -84,10 +90,10 @@ export class AccountBrowserHttp {
       throw new RelayError(400, "Account browser operation does not accept query parameters");
     if (req.headers["content-type"]?.split(";")[0]?.trim().toLowerCase() !== "application/json")
       throw new RelayError(415, "JSON account browser request required");
-    return this.options.admission
-      .run(async () => {
-        const owner = await this.options.authenticateOwner(req),
-          body = await jsonBody(req);
+    try {
+      const owner = await this.options.authenticateOwner(req);
+      return await this.options.ownerAdmission.run(async () => {
+        const body = await jsonBody(req);
         let result: unknown;
         if (url.pathname === ACCOUNT_BROWSER_PATH + "/start")
           result = this.options.broker.start(owner, body);
@@ -107,11 +113,11 @@ export class AccountBrowserHttp {
         res.writeHead(200, { "content-type": "application/json" });
         res.end(JSON.stringify(result));
         return true;
-      }, req)
-      .catch((error: unknown) => {
-        req.resume();
-        throw error;
-      });
+      }, req);
+    } catch (error) {
+      req.resume();
+      throw error;
+    }
   }
 }
 

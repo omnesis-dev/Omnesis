@@ -18,6 +18,8 @@ import { TemporalQueryService } from "./temporal-query-service.js";
 import type { Db } from "../../data/types.js";
 import type { DocumentInput, ExtractedDate } from "@omnesis/types";
 import type { TemporalItem, TemporalQueryInput } from "@omnesis/core";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 function cleanup(path: string): void {
   for (const suffix of ["", "-wal", "-shm", "-journal"]) {
@@ -85,7 +87,7 @@ describe("temporal query — mention layer", () => {
   };
 
   beforeEach(() => {
-    path = `/tmp/omnesis-test-${randomUUID()}.db`;
+    path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
     db = createDatabase(path);
     service = new TemporalQueryService(db);
   });

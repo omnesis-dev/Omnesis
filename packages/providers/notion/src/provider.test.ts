@@ -7,6 +7,7 @@ import { createServer, get as httpGet } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { inspectWindowsPrivatePathSync } from "@omnesis/core";
 import { AuthFailure, isRetryable } from "@omnesis/source-sdk";
 import { fakeProviderHost } from "@omnesis/source-sdk/testing";
 import {
@@ -206,8 +207,8 @@ describe("Notion OAuth flow", () => {
   });
 });
 
-describe("saveTokens persistence — 0600 token file mode", () => {
-  test("writes tokens.json with mode 0600", async () => {
+describe("saveTokens private token persistence", () => {
+  test("writes tokens.json with owner-only access", async () => {
     const dir = await mkdtemp(join(tmpdir(), "omnesis-notion-tokens-"));
     tmpDirs.push(dir);
     const tokens: NotionTokens = {
@@ -220,7 +221,9 @@ describe("saveTokens persistence — 0600 token file mode", () => {
     await saveTokens("ws-1", tokens, dir);
     const tokensPath = join(dir, "notion", "ws-1", "tokens.json");
     const mode = (await stat(tokensPath)).mode & 0o777;
-    expect(mode).toBe(0o600);
+    if (process.platform === "win32")
+      expect(inspectWindowsPrivatePathSync(tokensPath, "file").private).toBe(true);
+    else expect(mode).toBe(0o600);
     expect(JSON.parse(await readFile(tokensPath, "utf8"))).toEqual(tokens);
   });
 });

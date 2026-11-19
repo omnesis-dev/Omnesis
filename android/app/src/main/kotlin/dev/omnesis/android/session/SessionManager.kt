@@ -25,6 +25,7 @@ import dev.omnesis.android.pairing.DeviceTokenRotator
 import dev.omnesis.android.pairing.KeystoreDeviceKeys
 import dev.omnesis.android.pairing.Pairing
 import dev.omnesis.android.pairing.PairingService
+import dev.omnesis.android.pairing.PairingTlsMode
 import dev.omnesis.android.pairing.PairedGatewayRoutes
 import dev.omnesis.android.pairing.GatewayDirectCandidateDiscovery
 import dev.omnesis.android.setup.PhoneSetupStep
@@ -337,6 +338,24 @@ class SessionManager @Inject constructor(
     val developerEnabled: StateFlow<Boolean> = _developerEnabled.asStateFlow()
 
     /**
+     * Whether the connected gateway runs its own Tailscale device and admits devices through it
+     * (`tailscaleEmbed` on `GET /status`), so an administrator's phone reviews its join requests.
+     * Starts `false`, is reset on every rebuild and follows each status read, so a phone never
+     * asks a gateway without the feature for join requests. A `tailscale-join` notification
+     * opened since this pairing also counts, in case the status has not said so yet.
+     */
+    private val _tailscaleEmbed = MutableStateFlow(false)
+    val tailscaleEmbed: StateFlow<Boolean> = _tailscaleEmbed.asStateFlow()
+    @Volatile private var tailscaleJoinNotified = false
+
+    /** A `tailscale-join` notification was opened: only a gateway with its own Tailscale device sends one. */
+    fun noteTailscaleJoinNotification() {
+        if (session == null) return
+        tailscaleJoinNotified = true
+        _tailscaleEmbed.value = true
+    }
+
+    /**
      * Whether the gateway enables the Tasks journal, from the same `/status` probe. Cleared on every rebuild for the same reason as
      * [experimentalEnabled]: a stale value from a prior pairing must not surface Tasks
      * against a gateway that lacks it.
@@ -427,6 +446,13 @@ class SessionManager @Inject constructor(
         rebuild()
         return pairing
     }
+
+    /**
+     * The gateway key this install is paired with under a strict key pin. It was learned without
+     * the relay, so a sign-in that reaches this same key can trust the gateway's own decision.
+     */
+    fun pinnedGatewayKey(): String? =
+        pairingService.current()?.takeIf { it.tlsMode == PairingTlsMode.PINNED_KEY_STRICT }?.spkiFingerprint
 
     fun updateGatewayUrl(url: String) {
         pairingService.updateGatewayURL(url)
@@ -556,6 +582,8 @@ class SessionManager @Inject constructor(
         _labAvailable.value = false
         _lab.value = dev.omnesis.android.transport.dto.LabFlags()
         _developerEnabled.value = false
+        tailscaleJoinNotified = false
+        _tailscaleEmbed.value = false
         _tasksAvailable.value = false
         _taskNoteCaptureAvailable.value = false
         _taskConversationsAvailable.value = false
@@ -922,6 +950,7 @@ class SessionManager @Inject constructor(
         _labAvailable.value = status.labAvailable
         _lab.value = status.effectiveLabFlags
         _developerEnabled.value = status.developer
+        _tailscaleEmbed.value = status.tailscaleEmbed || tailscaleJoinNotified
         val tasksWereAvailable = _tasksAvailable.value
         _tasksAvailable.value = status.tasksAvailable
         if (!_tasksAvailable.value) TaskWidgetUpdates.tasksDisabled(applicationContext)

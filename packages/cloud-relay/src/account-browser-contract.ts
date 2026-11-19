@@ -8,6 +8,12 @@ import { bindingOrigin } from "./gateway-binding.js";
 export const ACCOUNT_BROWSER_PROTOCOL = "omnesis-account-browser-v3" as const;
 export const ACCOUNT_BROWSER_PATH = "/_relay/v3/account-browser";
 /**
+ * A sign-in the gateway's page already chose, such as its "Continue with Google" button. It only
+ * decides which sign-in the account page offers; it trusts nothing.
+ */
+export const ACCOUNT_BROWSER_METHODS = ["google", "passkey"] as const;
+export type AccountBrowserMethod = (typeof ACCOUNT_BROWSER_METHODS)[number];
+/**
  * A gateway that reads passkeys' countersignatures in the credentials listing sends this header
  * with this value. Without it the relay leaves them out.
  */

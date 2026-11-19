@@ -27,6 +27,8 @@ import { directWriteGate } from "../../write-gate.js";
 import { DocumentService } from "./DocumentService.js";
 import { EventService } from "./EventService.js";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 const SOURCE = "gmail:maya.reeves@example.com";
 const PROVIDER = "google";
@@ -69,7 +71,7 @@ function storedCount(): number {
 }
 
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-test-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
   db = createDatabase(dbPath);
   documents = new DocumentService({
     db,

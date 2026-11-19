@@ -81,4 +81,26 @@ class GatewayErrorsTest {
             GatewayErrorKind.Server(503, "").icon,
         )
     }
+
+    /**
+     * Defect 6.2: a phone that joined by signing in is asked to step up once a passkey is confirmed.
+     * On main the approval sheet said "Gateway error" for the 428 and "Permission denied" (with a
+     * re-pair hint) for the security lock's 403. Both now say what to do.
+     */
+    @Test
+    fun `step-up refusals say what to do instead of a generic error`() {
+        val required = GatewayException.ServerError(428, "Confirm this action with your passkey on the gateway's own page first.", "STEP_UP_REQUIRED")
+        assertEquals(GatewayErrorKind.StepUp(StepUpRefusal.REQUIRED), gatewayErrorKind(required))
+        assertEquals("Confirm it's you", gatewayErrorKind(required).title())
+        assertEquals("This change needs your fingerprint on your gateway's page.", gatewayErrorKind(required).detail("approve devices"))
+        assertEquals("Open your gateway's page", StepUpRefusal.REQUIRED.action)
+        val locked = GatewayException.Forbidden("This action needs your passkey.", "STEP_UP_UNAVAILABLE")
+        assertEquals("Security lock is on", gatewayErrorKind(locked).title())
+        assertEquals("This change can only be made on the computer running Omnesis right now.", gatewayErrorKind(locked).detail("approve devices"))
+        assertEquals(null, StepUpRefusal.UNAVAILABLE.action)
+        assertEquals("Confirm it's you. This change needs your fingerprint on your gateway's page.", classifyGatewayError(required))
+        // Any other 403 or 428 stays what it was.
+        assertEquals(GatewayErrorKind.Forbidden, gatewayErrorKind(GatewayException.Forbidden("Forbidden", "FORBIDDEN")))
+        assertEquals(GatewayErrorKind.Server(428, "x"), gatewayErrorKind(GatewayException.ServerError(428, "x", "OTHER")))
+    }
 }

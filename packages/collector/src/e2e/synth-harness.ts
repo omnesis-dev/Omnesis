@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { ownedProcessCleanupReceipt } from "@omnesis/core";
+
 /**
  * E2E harness for the synthetic-providers framework.
  *
@@ -20,7 +22,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync } from "nod
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createServer, type AddressInfo } from "node:net";
-import { spawn, type ChildProcess } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
 import { createHash, generateKeyPairSync, randomBytes } from "node:crypto";
 import {
   type SourceOrProviderDefinition,
@@ -62,6 +64,11 @@ import { SyncEngine, type StatusChangeEvent } from "../sync-engine.js";
 import { setupSources } from "../source-instantiator.js";
 import { createAttachmentExtractor } from "../attachments/index.js";
 import { killSubprocessGroup, registerSubprocessGroup } from "./subprocess-reaper.js";
+import {
+  spawnE2ESubprocess,
+  e2eApplicationStatus,
+  e2eApplicationPid,
+} from "./e2e-owned-process.js";
 import { reportSetupFailures } from "./setup-failure-report.js";
 import {
   startFakeEmbedderServer,
@@ -447,10 +454,12 @@ export class SyntheticE2EHarness {
   private configDir: string;
   private dbPath: string;
   private gatewayProcess: ChildProcess | null = null;
+  private gatewayCleanupUnconfirmed = false;
+  private gatewayCleanupFailure: unknown;
 
   /** Test-only: the current gateway process-group leader PID. */
   get gatewayPid(): number | undefined {
-    return this.gatewayProcess?.pid;
+    return this.gatewayProcess ? e2eApplicationPid(this.gatewayProcess) : undefined;
   }
   /** The primary roster device's engine — the collector that hosts the polled sources. */
   private engine: SyncEngine | null = null;
@@ -1217,6 +1226,13 @@ export class SyntheticE2EHarness {
           whileStopped?: () => void | Promise<void>;
           gatewayMode?: SyntheticGatewayMode;
           labFeatures?: Partial<Record<"brain" | "tasks" | "watches", boolean>>;
+          /** Replaces the constructor's `extraGatewayEnv` for this and later starts. */
+          extraGatewayEnv?: SyntheticHarnessOptions["extraGatewayEnv"];
+          /**
+           * `"SIGKILL"` stops the gateway the way a crash or the kernel's OOM
+           * killer does, with no chance to clean up. Default: an orderly stop.
+           */
+          signal?: "SIGTERM" | "SIGKILL";
         }
       | (() => void | Promise<void>) = {},
   ): Promise<void> {
@@ -1234,13 +1250,14 @@ export class SyntheticE2EHarness {
     // gateway directly over HTTP after the restart, so the sync loop is not
     // needed again.
     for (const device of this.devices) device.engine.stopSyncLoop();
-    await this.killGatewaySubprocess();
+    await this.killGatewaySubprocess(options.signal);
     // Wait until the old gateway is truly unreachable before rebinding the port.
     // Otherwise startGateway's readiness probe can latch onto an instance that is
     // still answering mid-shutdown, and the caller would measure the OLD process
     // (the new one may even fail to bind the port behind it).
     await this.waitForGatewayDown();
     await options.whileStopped?.();
+    if (options.extraGatewayEnv) this.extraGatewayEnv = options.extraGatewayEnv;
     this.gatewayMode = gatewayMode;
     await this.startGateway();
     for (const [id, enabled] of Object.entries(options.labFeatures ?? {}))
@@ -1275,6 +1292,11 @@ export class SyntheticE2EHarness {
   }
 
   /** The raw response, for callers asserting on a non-2xx status or body. */
+  /** The spawned gateway's `index.db`, for a test that inspects it while the gateway is stopped. */
+  get indexDbPath(): string {
+    return join(this.configDir, "index.db");
+  }
+
   async gatewayFetch(path: string, init?: RequestInit): Promise<Response> {
     return gatewayFetch(this.endpoint(), path, init);
   }
@@ -1619,7 +1641,14 @@ export class SyntheticE2EHarness {
       device.ws?.disconnect();
       device.engine.stopSyncLoop();
     }
-    await this.killGatewaySubprocess();
+    let failed = false,
+      failure: unknown;
+    try {
+      await this.killGatewaySubprocess();
+    } catch (error) {
+      failed = true;
+      failure = error;
+    }
     if (this.fakeEmbedder) {
       try {
         await this.fakeEmbedder.close();
@@ -1636,6 +1665,7 @@ export class SyntheticE2EHarness {
       }
       this.fakeApns = null;
     }
+    if (failed) throw failure;
     try {
       rmSync(this.tempDir, { recursive: true, force: true });
     } catch {
@@ -1643,7 +1673,21 @@ export class SyntheticE2EHarness {
     }
   }
 
+  private async readGatewayToken(tokenPath: string): Promise<string> {
+    if (this.gatewayCleanupUnconfirmed) throw this.gatewayCleanupFailure;
+    try {
+      return (await readSecretTextFile(tokenPath, { configDir: this.configDir }))?.trim() ?? "";
+    } catch (error) {
+      if (ownedProcessCleanupReceipt(error) !== undefined) {
+        this.gatewayCleanupUnconfirmed = true;
+        this.gatewayCleanupFailure = error;
+      }
+      throw error;
+    }
+  }
+
   private async startGateway(): Promise<void> {
+    if (this.gatewayCleanupUnconfirmed) throw this.gatewayCleanupFailure;
     const env = syntheticGatewayEnv(
       {
         ...e2eGatewayEnv(),
@@ -1788,21 +1832,33 @@ export class SyntheticE2EHarness {
       writeFileSync(join(this.configDir, "omnesis.json"), JSON.stringify(omnesisJson, null, 2));
     }
 
-    const gatewayCommand = e2eTsxCommand("packages/gateway/src/index.ts");
-    this.gatewayProcess = spawn(gatewayCommand.command, gatewayCommand.args, {
-      env,
-      cwd: join(import.meta.dirname, "../../../.."),
-      stdio: ["ignore", "ignore", "ignore"],
-      detached: true,
-    });
-    // Reap this detached group even if the runner dies before stop() runs
-    // (e.g. `timeout` SIGTERMs the e2e run) — otherwise the gateway orphans.
-    registerSubprocessGroup(this.gatewayProcess);
-
     const startTime = Date.now();
     const timeout = gatewayBootBudgetMs();
+    const gatewayCommand = e2eTsxCommand("packages/gateway/src/index.ts");
+    try {
+      this.gatewayProcess = spawnE2ESubprocess(gatewayCommand.command, gatewayCommand.args, {
+        env,
+        cwd: join(import.meta.dirname, "../../../.."),
+        stdio: ["ignore", "ignore", "ignore", "ipc"],
+        detached: true,
+      });
+    } catch (error) {
+      if (ownedProcessCleanupReceipt(error) !== undefined) {
+        this.gatewayCleanupUnconfirmed = true;
+        this.gatewayCleanupFailure = error;
+      }
+      throw error;
+    }
+    // Reap this detached group even if the runner dies before stop() runs
+    // (e.g. `timeout` SIGTERMs the e2e run) — otherwise the gateway orphans.
+    await registerSubprocessGroup(this.gatewayProcess);
+
     const tokenPath = join(this.configDir, "token");
     while (Date.now() - startTime < timeout) {
+      if (this.gatewayProcess) {
+        const status = e2eApplicationStatus(this.gatewayProcess);
+        if (status.exitCode !== null || status.signalCode !== null) break;
+      }
       try {
         const health = await fetch(`${this.gatewayUrl}/health`);
         if (!health.ok) {
@@ -1819,9 +1875,9 @@ export class SyntheticE2EHarness {
         }
         let token: string;
         try {
-          token =
-            (await readSecretTextFile(tokenPath, { configDir: this.configDir }))?.trim() ?? "";
-        } catch {
+          token = await this.readGatewayToken(tokenPath);
+        } catch (error) {
+          if (this.gatewayCleanupUnconfirmed) throw error;
           await new Promise((r) => setTimeout(r, 100));
           continue;
         }
@@ -1837,6 +1893,7 @@ export class SyntheticE2EHarness {
           return;
         }
       } catch (error) {
+        if (this.gatewayCleanupUnconfirmed) throw this.gatewayCleanupFailure;
         if (error instanceof GatewayModeMismatchError) throw error;
         /* gateway not reachable yet */
       }
@@ -1847,21 +1904,43 @@ export class SyntheticE2EHarness {
     // expired is the harness giving up on a slow boot, and reads as a broken
     // suite unless the message says otherwise.
     const proc = this.gatewayProcess;
+    const status = proc ? e2eApplicationStatus(proc) : null;
     const fate =
-      proc?.exitCode !== null && proc?.exitCode !== undefined
-        ? `the gateway process exited with code ${proc.exitCode}`
-        : proc?.signalCode
-          ? `the gateway process was killed by ${proc.signalCode}`
+      status?.exitCode !== null && status?.exitCode !== undefined
+        ? `the gateway process exited with code ${status.exitCode}`
+        : status?.signalCode
+          ? `the gateway process was killed by ${status.signalCode}`
           : "the gateway process was still running — this is the harness giving up on a slow boot, not a gateway that failed";
     throw new Error(
       `The harness stopped waiting for the gateway after ${timeout}ms (the shared boot budget in scripts/lib/gateway-boot-budget.json): ${fate}.`,
     );
   }
 
-  private async killGatewaySubprocess(): Promise<void> {
+  private async killGatewaySubprocess(signal: "SIGTERM" | "SIGKILL" = "SIGTERM"): Promise<void> {
+    const held = this.gatewayCleanupUnconfirmed;
+    const heldFailure = this.gatewayCleanupFailure;
     const proc = this.gatewayProcess;
-    if (!proc) return;
-    await killSubprocessGroup(proc);
+    if (!proc) {
+      if (held) throw heldFailure;
+      return;
+    }
+    try {
+      await killSubprocessGroup(proc, { initialSignal: signal });
+    } catch (error) {
+      if (held)
+        throw Object.assign(
+          new AggregateError([heldFailure, error], "Independent gateway cleanup also failed", {
+            cause: heldFailure,
+          }),
+          { cleanupFailure: ownedProcessCleanupReceipt(heldFailure)?.failure },
+        );
+      if (ownedProcessCleanupReceipt(error) !== undefined) {
+        this.gatewayCleanupUnconfirmed = true;
+        this.gatewayCleanupFailure = error;
+      }
+      throw error;
+    }
+    if (held) throw heldFailure;
   }
 }
 

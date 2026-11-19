@@ -5,12 +5,13 @@
 import AuthenticationServices
 import SwiftUI
 
-/// Shows a relay page in the system's sign-in browser, which keeps the person's
-/// Omnesis account session and passkeys between visits.
+/// Shows a relay page, or the gateway's own page that approves a held device with
+/// a passkey, in the system's sign-in browser, which keeps the person's Omnesis
+/// account session and passkeys between visits.
 ///
 /// These pages never call back into the app: a sign-in ends on the relay's own
-/// page and the gateway's status moves on by itself, so the page stays up until
-/// the person closes it or `close()` is called.
+/// page, and an approval on the gateway's, and the gateway's status moves on by
+/// itself, so the page stays up until the person closes it or `close()` is called.
 @MainActor
 final class OmnesisAccountSystemBrowser: NSObject, OmnesisAccountBrowsing, ASWebAuthenticationPresentationContextProviding {
     private var session: ASWebAuthenticationSession?

@@ -5,6 +5,7 @@
 
 import { parentPort, workerData } from "node:worker_threads";
 import { collectSecurityData } from "./security.js";
+import { doctorSecurityWorkerError } from "./security-worker-protocol.js";
 import type {
   DoctorSecurityWorkerInput,
   DoctorSecurityWorkerMessage,
@@ -25,10 +26,6 @@ async function main(): Promise<void> {
   port.postMessage(message);
 }
 
-main().catch((err: unknown) => {
-  const message: DoctorSecurityWorkerMessage = {
-    type: "error",
-    error: err instanceof Error ? err.message : String(err),
-  };
-  port.postMessage(message);
-});
+void main()
+  .catch((error: unknown) => port.postMessage(doctorSecurityWorkerError(error)))
+  .finally(() => port.close());

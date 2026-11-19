@@ -12,3 +12,4 @@ docs
 !packages/**/README.md
 .claude
 packages/gateway/duckdb-extensions/v*
+packages/tailnet-helper/bin

@@ -20,7 +20,12 @@ import {
 import { verifyRoutingHostname } from "./hostname-proof.js";
 import { hostedGatewayHostname } from "./hosted-name.js";
 import { createTlsRouter } from "./tls-router.js";
-import { LoginAdmission, type LoginLimits } from "./admission.js";
+import {
+  DEFAULT_GATEWAY_LOGIN_LIMITS,
+  LoginAdmission,
+  withLoginDefaults,
+  type LoginLimits,
+} from "./admission.js";
 import { acceptProxyProtocol, type ProxyProtocolPeers } from "./proxy-protocol.js";
 import {
   GatewayKeyAuthentication,
@@ -58,6 +63,8 @@ export interface CloudRelayOptions {
   accounts: RelayAccounts;
   limits?: TunnelLimits;
   loginLimits?: LoginLimits;
+  /** Gateway key sign-ins and DNS challenges; unset values take DEFAULT_GATEWAY_LOGIN_LIMITS. */
+  gatewayLoginLimits?: Partial<LoginLimits>;
   tls?: { key: string; cert: string };
   relayDomain?: string;
   publicDataPort?: number;
@@ -108,6 +115,10 @@ export function createCloudRelay(options: CloudRelayOptions): {
   const metrics = options.metrics ?? new CloudRelayMetrics();
   const cdn = options.cdn;
   const loginAdmission = LoginAdmission.fromLimits(options.loginLimits);
+  const ownerAdmission = LoginAdmission.fromLimits(options.loginLimits);
+  const gatewayAdmission = LoginAdmission.fromLimits(
+    withLoginDefaults(options.gatewayLoginLimits, DEFAULT_GATEWAY_LOGIN_LIMITS),
+  );
   const googleBrowser = options.googleBrowser
     ? createGoogleBrowserRoutes(
         options.googleBrowser,
@@ -150,6 +161,7 @@ export function createCloudRelay(options: CloudRelayOptions): {
     accounts: gatewayAccounts,
     binding: gatewayBinding,
     name: (owner) => options.accounts.gatewayDisplayName(owner),
+    online: (owner) => broker.online(owner),
   });
   const linkedIdentity = (identity: string) =>
     gatewayAccounts(identity).some((owner) => owner !== identity);
@@ -159,7 +171,9 @@ export function createCloudRelay(options: CloudRelayOptions): {
       recovery ? recovery.accountForHostname(host) : options.accounts.accountForHostname(host),
     open: (account, signal, client) => broker.open(account, signal, client),
     maxConnections: options.limits?.maxStreams,
+    maxConnectionsPerClient: options.limits?.maxStreamsPerClient,
     helloTimeoutMs: options.limits?.connectTimeoutMs,
+    idleTimeoutMs: options.limits?.idleTimeoutMs,
   });
   const accountOwner = (account: string) => {
     const binding = gatewayBinding(account);
@@ -188,6 +202,7 @@ export function createCloudRelay(options: CloudRelayOptions): {
         sessions: options.sessions,
         google: options.webLogin?.identity,
         admission: loginAdmission,
+        ownerAdmission,
         gatewayAccounts,
         gatewayBinding,
         currentOwner: accountOwner,
@@ -201,6 +216,12 @@ export function createCloudRelay(options: CloudRelayOptions): {
           disconnect(owner);
           log.info("A gateway left its Omnesis account; its registration is removed");
         },
+        removeGateway: (owner) => {
+          options.accounts.deleteGateway(owner, { removedFromAccount: true });
+          disconnect(owner);
+          log.info("A gateway was unlinked on its account page; its registration is removed");
+        },
+        gatewayOnline: (owner) => broker.online(owner),
         assertCurrent: () => {
           if (options.recoveryPolicy) {
             try {
@@ -234,6 +255,7 @@ export function createCloudRelay(options: CloudRelayOptions): {
               complete: (token, nonce, context, request) =>
                 accountServices.completeGoogle(token, nonce, context, request),
               failed: (context) => accountServices.googleFailure(context),
+              retry: (req) => accountServices.googleRetry(req),
             },
           },
           loginAdmission,
@@ -414,7 +436,7 @@ export function createCloudRelay(options: CloudRelayOptions): {
           throw new RelayError(403, "A raw gateway owner-key session is required");
         if (req.method !== "POST" && req.method !== "DELETE")
           throw new RelayError(405, "Method not allowed");
-        return loginAdmission.run(async () => {
+        return gatewayAdmission.run(async () => {
           if (!req.headers["content-type"]?.startsWith("application/json"))
             throw new RelayError(415, "JSON required");
           const parts: Buffer[] = [];
@@ -458,7 +480,8 @@ export function createCloudRelay(options: CloudRelayOptions): {
       }
       if (req.url === "/_relay/v2/key/challenge" || req.url === "/_relay/v2/key/complete") {
         if (req.method !== "POST") throw new RelayError(405, "Method not allowed");
-        return loginAdmission.run(async () => {
+        // A gateway renewing its routing session: never behind people's sign-ins.
+        return gatewayAdmission.run(async () => {
           if (!req.headers["content-type"]?.startsWith("application/json"))
             throw new RelayError(415, "JSON required");
           const parts: Buffer[] = [];
@@ -508,7 +531,7 @@ export function createCloudRelay(options: CloudRelayOptions): {
             closeMigratedAccount: (account) => broker.closeAccount(account),
             legacyTransfers: options.legacyRoutes === true,
           }).catch((error: unknown) => {
-            // The response carries no reason, so this line is the operator's only clue.
+            // The response carries at most a one-word reason, so this line is the operator's clue.
             log.warn(`Gateway registration refused: ${String(error)}`);
             throw error;
           });
@@ -677,11 +700,13 @@ export function createCloudRelay(options: CloudRelayOptions): {
       throw new RelayError(404, "Use the gateway's end-to-end TLS origin");
     })().catch((error: unknown) => {
       if (res.destroyed || res.writableEnded) return;
+      const code = error instanceof RelayError ? error.code : undefined;
       if (!res.headersSent)
         res.writeHead(error instanceof RelayError ? error.status : 500, {
           "cache-control": "no-store",
+          ...(code ? { "content-type": "application/json" } : {}),
         });
-      res.end();
+      res.end(code ? JSON.stringify({ error: code }) : undefined);
     });
   });
 
@@ -758,9 +783,14 @@ export function createCloudRelay(options: CloudRelayOptions): {
   return {
     server,
     dataServer: router.server,
-    metrics: () =>
-      metrics.render({
-        ...loginAdmission.snapshot(),
+    metrics: () => {
+      const login = loginAdmission.snapshot();
+      const owner = accountServices ? ownerAdmission.snapshot() : undefined;
+      return metrics.render({
+        activeLogins: login.activeLogins + (owner?.activeLogins ?? 0),
+        loginAttempts: login.loginAttempts + (owner?.loginAttempts ?? 0),
+        maxConcurrentLogins: login.maxConcurrentLogins + (owner?.maxConcurrentLogins ?? 0),
+        maxLoginsPerMinute: login.maxLoginsPerMinute + (owner?.maxLoginsPerMinute ?? 0),
         ...broker.snapshot(),
         ...router.snapshot(),
         ...options.accounts.snapshot(),
@@ -768,7 +798,8 @@ export function createCloudRelay(options: CloudRelayOptions): {
         ...(options.acmeDns?.snapshot() ?? { dnsLeases: 0, dnsQueued: 0 }),
         recoveryExpiresAt: options.recoveryPolicy?.expiresAt ?? 0,
         recoveryEpoch: options.recoveryPolicy?.epoch ?? 0,
-      }),
+      });
+    },
     async close() {
       for (const front of fronts) front.close();
       cdn?.proxies.close?.();

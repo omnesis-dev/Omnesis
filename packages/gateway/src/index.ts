@@ -9,6 +9,7 @@ import {
   DEFAULT_CONFIG_DIR,
   ensurePrivateDirSync,
   GATEWAY_SHUTDOWN_BUDGET_MS,
+  installParentShutdownHandler,
 } from "@omnesis/core";
 import { HostedProcessLauncher, setProcessLauncher } from "./process-launcher/index.js";
 import { resolveTlsBundle } from "./tls.js";
@@ -16,6 +17,7 @@ import { startParentWatchdogFromEnv } from "./parent-watchdog.js";
 import { StartupManager } from "./startup/manager.js";
 import { StartupServer } from "./startup/server.js";
 import { StartupOperations } from "./startup/operations.js";
+import { StartupOwnership } from "./startup/shutdown.js";
 
 // Keep the application import below listen(): even the boot page must not wait
 // for the gateway's dependency graph, stores, or model services to evaluate.
@@ -27,25 +29,52 @@ const listener = new StartupServer(startup);
 const launcher = new HostedProcessLauncher();
 let runtimeShutdown: ((exitCode?: number) => Promise<void>) | undefined;
 let stopping = false;
+let bootTimeout: ReturnType<typeof setTimeout> | undefined;
+const ownership = new StartupOwnership({
+  drainOperations: () => operations.drain(),
+  onUncertain() {
+    process.exitCode = 1;
+    log.error(
+      "Owned process cleanup is unconfirmed; the gateway PID and lock are retained for review",
+    );
+  },
+  onCleanupFailure(error) {
+    log.warn(
+      `Startup owned-service cleanup failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  },
+});
+const ownedProcesses = ownership.fence;
+function abortStartup(): void {
+  controller.abort();
+  ownership.abort();
+}
+function armBootTimeout(): void {
+  bootTimeout ??= setTimeout(() => {
+    void ownedProcesses.finish(() => {
+      launcher.dispose();
+      process.exit(1);
+    });
+  }, GATEWAY_SHUTDOWN_BUDGET_MS);
+  bootTimeout.unref();
+}
 
 function stop(): void {
   if (stopping) return;
   stopping = true;
   startup.stop();
-  controller.abort();
+  abortStartup();
   if (runtimeShutdown) {
     void runtimeShutdown();
   } else {
-    launcher.dispose();
     if (listenerIsOpen()) void listener.shutdown.close(listener.server, 1_000);
-    // An initializing worker is awaited before boot unwinds. If a native call
-    // cannot return, the same bounded shutdown budget as the runtime applies.
-    const timeout = setTimeout(() => process.exit(1), GATEWAY_SHUTDOWN_BUDGET_MS);
-    timeout.unref();
+    ownership.closePartial();
+    armBootTimeout();
   }
 }
 process.on("SIGINT", stop);
 process.on("SIGTERM", stop);
+installParentShutdownHandler(stop);
 startParentWatchdogFromEnv(process.env, stop);
 
 let fatalPromise: Promise<never> | undefined;
@@ -62,22 +91,27 @@ async function finishFatal(error: unknown): Promise<never> {
       `Cannot start: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}`,
     );
   }
-  controller.abort();
-  const timeout = setTimeout(() => process.exit(1), GATEWAY_SHUTDOWN_BUDGET_MS);
-  timeout.unref();
+  ownership.captureFailure(error);
+  abortStartup();
+  if (!runtimeShutdown) {
+    ownership.closePartial();
+    armBootTimeout();
+  }
   if (listenerIsOpen()) void listener.shutdown.close(listener.server, 1_000);
   const drainingRuntime = runtimeShutdown?.(stopping ? 0 : 1);
-  if (!drainingRuntime) launcher.dispose();
   await operations.drain();
   if (drainingRuntime || runtimeShutdown) {
+    if (bootTimeout) clearTimeout(bootTimeout);
     await (drainingRuntime ?? runtimeShutdown!(stopping ? 0 : 1));
-    process.exit(stopping ? 0 : 1);
+    return await ownedProcesses.finish(() => process.exit(stopping ? 0 : 1));
   }
-  launcher.dispose();
   // Keep install ownership until process exit: partial runtime worker handles
   // may still exist, so releasing the lock here would admit another writer.
   if (listenerIsOpen()) await listener.shutdown.close(listener.server, 1_000);
-  process.exit(stopping ? 0 : 1);
+  return await ownedProcesses.finish(() => {
+    launcher.dispose();
+    process.exit(stopping ? 0 : 1);
+  });
 }
 function listenerIsOpen(): boolean {
   try {
@@ -87,7 +121,10 @@ function listenerIsOpen(): boolean {
   }
 }
 const reportFatal = (error: unknown): void => {
-  void fatal(error).catch(() => process.exit(1));
+  void fatal(error).catch((failure: unknown) => {
+    ownership.captureFailure(failure);
+    void ownedProcesses.finish(() => process.exit(1));
+  });
 };
 process.on("unhandledRejection", reportFatal);
 process.on("uncaughtException", reportFatal);
@@ -154,9 +191,16 @@ try {
       listener,
       startup,
       signal: controller.signal,
+      ownedProcesses,
+      ownCleanup(participant) {
+        return ownership.own(participant);
+      },
+      abortStartup,
+      fail: reportFatal,
       track: (operation) => operations.track(operation),
       setShutdown(shutdown) {
         runtimeShutdown = shutdown;
+        if (bootTimeout) clearTimeout(bootTimeout);
         if (stopping) void shutdown();
       },
     }),

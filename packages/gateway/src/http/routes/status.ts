@@ -55,6 +55,8 @@ type Db = Database.Database;
 const log = createLogger("gateway:http").child("routes:status");
 
 export interface StatusRoutesDeps {
+  /** Whether this installation has the gateway's own Tailscale device (its helper program). */
+  tailscaleEmbed?: boolean;
   getLabStatus?: () => { brain: boolean; tasks: boolean; watches: boolean };
   db: Db;
   dbPath?: string;
@@ -190,6 +192,7 @@ export function mountStatusRoutes(app: RouteApp, deps: StatusRoutesDeps): void {
       experimental: experimentalVisible(),
       // Present only with the opt-in, so a gateway without it answers as before.
       ...(cloudRelayEnabled() ? { cloudRelay: true } : {}),
+      ...(deps.tailscaleEmbed ? { tailscaleEmbed: true } : {}),
       capabilities: {
         sourceContract: SOURCE_CONTRACT_WIRE_RANGE,
         ...GENERAL_CAPABILITIES,
@@ -566,6 +569,7 @@ export function mountStatusRoutes(app: RouteApp, deps: StatusRoutesDeps): void {
       experimental: experimentalVisible(),
       // Present only with the opt-in, so a gateway without it answers as before.
       ...(cloudRelayEnabled() ? { cloudRelay: true } : {}),
+      ...(deps.tailscaleEmbed ? { tailscaleEmbed: true } : {}),
       // Gateway-wide developer mode (OMNESIS_DEV_MODE). Separate from
       // experimental. Clients read this to reveal the "developer annotations"
       // capture affordance (portal ⚑ button, mobile shake-to-annotate). Off by

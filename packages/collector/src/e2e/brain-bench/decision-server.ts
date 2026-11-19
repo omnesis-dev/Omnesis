@@ -116,6 +116,24 @@ function subjectOf(request: DecisionRequest): string | null {
     : null;
 }
 
+/**
+ * Answers only the knowledge urgency question, at `level` (an index into its
+ * criteria: 0 routine, 1 soon, 2 immediate); every other request gets a 503,
+ * which every other decision gate treats as an outage and fails open on, as
+ * it does without a decision model. For suites that need source changes
+ * processed promptly without exercising any other gate: work with no urgency
+ * verdict waits at routine priority.
+ */
+export function urgencyOnlyDecisionPolicy(level: 0 | 1 | 2 = 1): DecisionPolicy {
+  return (request): DecisionPolicyReply => {
+    const keys = Object.keys(request.questions);
+    if (keys.length !== 1 || keys[0] !== "urgency") {
+      return { httpError: 503, message: "scripted: only urgency is answered" };
+    }
+    return { urgency: { type: "score", score: level, confidence: 1 } };
+  };
+}
+
 export async function startDecisionServer(opts: DecisionServerOptions): Promise<DecisionServer> {
   const calls: DecisionServerCall[] = [];
   let refusal: { status: number; message: string } | null = null;

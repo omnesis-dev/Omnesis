@@ -77,12 +77,19 @@ public struct CloudRelayStatus: Decodable, Equatable, Sendable {
     /// Progress of connecting by sign-in. Present while one is under way or just ended.
     public struct Connect: Decodable, Equatable, Sendable {
         public let state: String?
+        public let verification: Verification?
         public let authorizeUrl: String?
         public let connectUrl: String?
         public let connectShortUrl: String?
         public let code: String?
         public let expiresAt: CloudRelayTimestamp?
         public let error: String?
+    }
+
+    /// An independent security check required before allocating a new gateway address.
+    public struct Verification: Decodable, Equatable, Sendable {
+        public let url: String?
+        public let expiresAt: CloudRelayTimestamp?
     }
 
     /// The local choice about new devices: `automatic` or `ask`.

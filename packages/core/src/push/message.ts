@@ -71,9 +71,24 @@ export const notificationMessageSchema = z.discriminatedUnion("kind", [
   // detail. A phone tap may only open the code-entry surface; authenticated
   // short-code lookup is the boundary that reveals the pending request.
   message("access-authorization", z.object({}).strict()),
-  message("device-pairing", z.object({}).strict()),
-  // The name is in the banner only: a tap opens Devices, and the row is found there.
-  message("device-joined", z.object({}).strict()),
+  // The request a tap opens, where its code is compared. Never an approve action. Optional so a
+  // queued notification from an older gateway still reads.
+  message(
+    "device-pairing",
+    z.object({ requestId: z.string().min(1).max(256).optional() }).strict(),
+  ),
+  // The device a tap opens, where it can be removed.
+  message("device-joined", z.object({ deviceId: z.string().min(1).max(256).optional() }).strict()),
+  // Carries no request id: a tap opens the list of waiting Tailscale join
+  // requests, which only an authenticated administrator can read.
+  message("tailscale-join", z.object({}).strict()),
+  // A collector joined through Tailscale with nobody approving it. Like
+  // device-joined, a tap opens the device, where it can be removed; it is a kind
+  // of its own because only clients of the Tailscale feature know it.
+  message(
+    "tailscale-joined",
+    z.object({ deviceId: z.string().min(1).max(256).optional() }).strict(),
+  ),
 ]);
 
 export type NotificationMessage = z.infer<typeof notificationMessageSchema>;
@@ -122,8 +137,28 @@ export const notificationRouteSchema = z.discriminatedUnion("kind", [
     .object({ kind: z.literal("privacy-approval"), approvalId: z.string().min(1).max(256) })
     .strict(),
   z.object({ kind: z.literal("access-authorization") }).strict(),
-  z.object({ kind: z.literal("device-pairing") }).strict(),
-  z.object({ kind: z.literal("device-joined") }).strict(),
+  z
+    .object({
+      kind: z.literal("device-pairing"),
+      /** The waiting request to open. */
+      requestId: z.string().min(1).max(256).optional(),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("device-joined"),
+      /** The device that joined, to open for removal. */
+      deviceId: z.string().min(1).max(256).optional(),
+    })
+    .strict(),
+  z.object({ kind: z.literal("tailscale-join") }).strict(),
+  z
+    .object({
+      kind: z.literal("tailscale-joined"),
+      /** The collector that joined through Tailscale, to open for removal. */
+      deviceId: z.string().min(1).max(256).optional(),
+    })
+    .strict(),
 ]);
 
 export type NotificationRoute = z.infer<typeof notificationRouteSchema>;
@@ -147,6 +182,8 @@ export const claimedNotificationSchema = z
       "access-authorization",
       "device-pairing",
       "device-joined",
+      "tailscale-join",
+      "tailscale-joined",
     ]),
     targetId: z.string().min(1).max(512),
     /** Device that owns the condition, when a reminder may be claimed elsewhere. */
@@ -186,6 +223,10 @@ export function notificationTargetId(message: NotificationMessage): string {
     case "device-pairing":
       return "pairing";
     case "device-joined":
+      return "devices";
+    case "tailscale-join":
+      return "tailscale-join";
+    case "tailscale-joined":
       return "devices";
     default:
       return assertNever(message);
@@ -229,9 +270,19 @@ export function notificationRoute(message: NotificationMessage): NotificationRou
     case "privacy-approval":
       return { kind: message.kind, approvalId: message.data.approvalId };
     case "access-authorization":
-    case "device-pairing":
-    case "device-joined":
+    case "tailscale-join":
       return { kind: message.kind };
+    case "device-pairing":
+      return {
+        kind: message.kind,
+        ...(message.data.requestId === undefined ? {} : { requestId: message.data.requestId }),
+      };
+    case "device-joined":
+    case "tailscale-joined":
+      return {
+        kind: message.kind,
+        ...(message.data.deviceId === undefined ? {} : { deviceId: message.data.deviceId }),
+      };
     default:
       return assertNever(message);
   }

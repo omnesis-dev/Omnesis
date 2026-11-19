@@ -29,60 +29,89 @@ function peer(address: string | undefined): unknown {
   return { incoming: { socket: { remoteAddress: address } } };
 }
 
+/** A proxy on another machine, believed only under OMNESIS_TRUST_PROXY. */
+const PROXY = peer("198.51.100.20");
+
 const previous = process.env.OMNESIS_TRUST_PROXY;
 afterEach(() => {
   if (previous === undefined) delete process.env.OMNESIS_TRUST_PROXY;
   else process.env.OMNESIS_TRUST_PROXY = previous;
 });
 
-describe("without a trusted proxy", () => {
-  test("forwarded headers are ignored and the socket peer is the client", () => {
+describe("without OMNESIS_TRUST_PROXY", () => {
+  test("a direct client's forwarded headers are ignored and its socket peer is the client", () => {
     delete process.env.OMNESIS_TRUST_PROXY;
     const h = headers({ "x-forwarded-for": "203.0.113.10", "x-real-ip": "203.0.113.11" });
-    expect(forwardedClientAddress(h)).toBeUndefined();
+    expect(forwardedClientAddress(h, peer("198.51.100.7"))).toBeUndefined();
     expect(clientAddress(h, peer("198.51.100.7"))).toBe("198.51.100.7");
+    expect(forwardedClientAddress(h, peer(undefined))).toBeUndefined();
     expect(clientAddress(h, peer(undefined))).toBe("unknown");
   });
 
-  test("a loopback socket is a loopback client whatever the headers say", () => {
+  test("a proxy on this computer is believed: its Internet clients are not loopback", () => {
     delete process.env.OMNESIS_TRUST_PROXY;
-    expect(
-      isLoopbackClient(headers({ "x-forwarded-for": "203.0.113.10" }), peer("127.0.0.1")),
-    ).toBe(true);
+    const funnel = headers({ "x-forwarded-for": "203.0.113.10" });
+    for (const address of ["127.0.0.1", "::1", "::ffff:127.0.0.1"]) {
+      expect(forwardedClientAddress(funnel, peer(address))).toBe("203.0.113.10");
+      expect(clientAddress(funnel, peer(address))).toBe("203.0.113.10");
+      expect(isLoopbackClient(funnel, peer(address))).toBe(false);
+    }
+    // Only the last entry, the one the proxy wrote, counts.
+    const spoofed = headers({ "x-forwarded-for": "127.0.0.1, 203.0.113.10" });
+    expect(isLoopbackClient(spoofed, peer("127.0.0.1"))).toBe(false);
+    expect(clientAddress(spoofed, peer("127.0.0.1"))).toBe("203.0.113.10");
+  });
+
+  test("a same-machine caller without forwarded headers stays loopback", () => {
+    delete process.env.OMNESIS_TRUST_PROXY;
+    expect(isLoopbackClient(headers({}), peer("127.0.0.1"))).toBe(true);
+    expect(clientAddress(headers({}), peer("127.0.0.1"))).toBe("127.0.0.1");
+    expect(isLoopbackClient(headers({ "x-forwarded-for": "127.0.0.1" }), peer("127.0.0.1"))).toBe(
+      true,
+    );
+  });
+
+  test("a direct client can never claim loopback through a header", () => {
+    delete process.env.OMNESIS_TRUST_PROXY;
     expect(
       isLoopbackClient(headers({ "x-forwarded-for": "127.0.0.1" }), peer("203.0.113.10")),
     ).toBe(false);
+    expect(isLoopbackClient(headers({ "x-real-ip": "127.0.0.1" }), peer("198.51.100.20"))).toBe(
+      false,
+    );
   });
 });
 
 describe("with OMNESIS_TRUST_PROXY=true", () => {
-  test("the flag reads 1, true, yes and on; anything else leaves the headers ignored", () => {
+  test("the flag reads 1, true, yes and on, and believes a proxy on another machine; anything else does not", () => {
     const h = headers({ "x-forwarded-for": "203.0.113.10" });
+    const remoteProxy = peer("198.51.100.20");
     for (const value of ["1", "true", "TRUE", " yes ", "on"]) {
       process.env.OMNESIS_TRUST_PROXY = value;
-      expect(forwardedClientAddress(h)).toBe("203.0.113.10");
+      expect(forwardedClientAddress(h, remoteProxy)).toBe("203.0.113.10");
     }
     for (const value of ["0", "false", "", "proxy"]) {
       process.env.OMNESIS_TRUST_PROXY = value;
-      expect(forwardedClientAddress(h)).toBeUndefined();
+      expect(forwardedClientAddress(h, remoteProxy)).toBeUndefined();
     }
   });
 
   test("the last X-Forwarded-For entry is the client: the proxy appended it", () => {
     process.env.OMNESIS_TRUST_PROXY = "true";
     const h = headers({ "x-forwarded-for": "127.0.0.1, 198.51.100.9 , 203.0.113.10" });
-    expect(forwardedClientAddress(h)).toBe("203.0.113.10");
+    expect(forwardedClientAddress(h, PROXY)).toBe("203.0.113.10");
     expect(clientAddress(h, peer("127.0.0.1"))).toBe("203.0.113.10");
   });
 
   test("a trailing entry keeps its whitespace off, IPv6 included, and X-Forwarded-For wins over X-Real-IP", () => {
     process.env.OMNESIS_TRUST_PROXY = "true";
     expect(
-      forwardedClientAddress(headers({ "x-forwarded-for": "203.0.113.10, 2001:db8::7 " })),
+      forwardedClientAddress(headers({ "x-forwarded-for": "203.0.113.10, 2001:db8::7 " }), PROXY),
     ).toBe("2001:db8::7");
     expect(
       forwardedClientAddress(
         headers({ "x-forwarded-for": "203.0.113.10", "x-real-ip": "203.0.113.12" }),
+        PROXY,
       ),
     ).toBe("203.0.113.10");
   });
@@ -96,11 +125,16 @@ describe("with OMNESIS_TRUST_PROXY=true", () => {
 
   test("X-Real-IP stands in when X-Forwarded-For is absent or empty", () => {
     process.env.OMNESIS_TRUST_PROXY = "true";
-    expect(forwardedClientAddress(headers({ "x-real-ip": "203.0.113.12" }))).toBe("203.0.113.12");
+    expect(forwardedClientAddress(headers({ "x-real-ip": "203.0.113.12" }), PROXY)).toBe(
+      "203.0.113.12",
+    );
     expect(
-      forwardedClientAddress(headers({ "x-forwarded-for": " , ", "x-real-ip": "203.0.113.12" })),
+      forwardedClientAddress(
+        headers({ "x-forwarded-for": " , ", "x-real-ip": "203.0.113.12" }),
+        PROXY,
+      ),
     ).toBe("203.0.113.12");
-    expect(forwardedClientAddress(headers({ "x-real-ip": "  " }))).toBeUndefined();
+    expect(forwardedClientAddress(headers({ "x-real-ip": "  " }), PROXY)).toBeUndefined();
   });
 
   test("a request without forwarded headers came straight from its socket peer", () => {
@@ -204,6 +238,18 @@ describe("a request through this gateway's relay tunnel", () => {
     relayed.set("127.0.0.1|40100", "198.51.100.30");
     const spoofed = headers({ "x-forwarded-for": "203.0.113.99" });
     expect(clientAddress(spoofed, tunnelled("127.0.0.1", 40100))).toBe("relay:198.51.100.30");
+  });
+
+  test("a tunnel socket's forwarded headers are the remote client's own, never believed", () => {
+    delete process.env.OMNESIS_TRUST_PROXY;
+    tunnelSockets.add("127.0.0.1|40103");
+    try {
+      const spoofed = headers({ "x-forwarded-for": "203.0.113.99" });
+      expect(forwardedClientAddress(spoofed, tunnelled("127.0.0.1", 40103))).toBeUndefined();
+      expect(clientAddress(spoofed, tunnelled("127.0.0.1", 40103))).toBe("127.0.0.1");
+    } finally {
+      tunnelSockets.delete("127.0.0.1|40103");
+    }
   });
 
   test("is looked up only for a loopback peer with a port, and grants no loopback exemption", () => {

@@ -27,7 +27,8 @@ import { setLabFlag } from "./lab/store.js";
 
 import { computeSnapshotAbsencePlan, createDatabase, getSyncState, getWipeEpoch } from "./db.js";
 import { LATEST_SCHEMA_VERSION } from "./data/migrations.js";
-import { createServer } from "./server.js";
+import { fixedPublicAddress } from "./public-address.js";
+import { createServer as createGatewayServer } from "./server.js";
 import { StatusCache } from "./http/services/StatusCache.js";
 import { STATUS_CACHE_READS } from "./http/services/status-cache-reads.js";
 import { ANALYTICS_REPLICA_READS } from "./http/services/analytics-replica-reads.js";
@@ -53,7 +54,9 @@ import { DEFAULT_SEARCH_PARAMS, DEFAULT_SEARCH_BOOSTS } from "./search/search-co
 import type { IComputeScheduler } from "./http/services/ports.js";
 import type Database from "better-sqlite3";
 type Db = Database.Database;
-import { unlinkSync, existsSync, rmSync, statSync } from "node:fs";
+import { unlinkSync, existsSync, mkdtempSync, rmSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import type { SearchPipeline } from "./search/pipeline.js";
 import type { McpHttpRuntime } from "./http/routes/mcp-streamable.js";
@@ -71,8 +74,16 @@ import { STALE_DEVICE_REVOCATION_IMPACT_ERROR } from "./access/agent-device-auth
 let db: Db;
 let app: ReturnType<typeof createServer>;
 let dbPath: string;
+let testDir: string;
 let TEST_TOKEN: string;
 let DECLARATION_TOKEN: string | null;
+const servers = new Set<ReturnType<typeof createGatewayServer>>();
+
+function createServer(...args: Parameters<typeof createGatewayServer>) {
+  const server = createGatewayServer(...args);
+  servers.add(server);
+  return server;
+}
 
 function deferred<T = void>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
@@ -148,7 +159,8 @@ function makeDocPayload(externalId = "msg-1", providerId = "google", sourceId = 
 }
 
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-server-test-${randomUUID()}.db`;
+  testDir = mkdtempSync(join(tmpdir(), "omnesis-server-test-"));
+  dbPath = join(testDir, `omnesis-server-test-${randomUUID()}.db`);
   db = createDatabase(dbPath);
   // Full-scope token used by the shared `req` helper.
   TEST_TOKEN = mintToken([SCOPE_ADMIN, SCOPE_READ, SCOPE_WRITE_ALL]).token;
@@ -156,10 +168,13 @@ beforeEach(() => {
   app = createServer(db);
 });
 
-afterEach(() => {
+afterEach(async () => {
   resetConnectedCollectorDeclarations();
+  await Promise.all([...servers].map((server) => server.close()));
+  servers.clear();
   db.close();
   cleanupDb(dbPath);
+  rmSync(testDir, { recursive: true, force: true });
 });
 
 test("the status cache's periodic refresh reads through the server's read ports", async () => {
@@ -190,7 +205,7 @@ test("transport admission rejects requests before route services run", async () 
 
 test("production server wires analytics adoption into an exclusive to partitioned PATCH", async () => {
   const { AnalyticsDb } = await import("./analytics-db.js");
-  const analyticsPath = `/tmp/omnesis-mode-transition-${randomUUID()}.duckdb`;
+  const analyticsPath = join(testDir, `omnesis-mode-transition-${randomUUID()}.duckdb`);
   const analyticsDb = new AnalyticsDb(analyticsPath);
   await analyticsDb.open();
   const owner = createDevice(db, {
@@ -254,12 +269,13 @@ test("production server wires analytics adoption into an exclusive to partitione
 
 describe("source settings mirrored to the config file", () => {
   test("a source edit does not copy an inherited maxAge into the source's own block", async () => {
-    const configDir = `/tmp/omnesis-source-mirror-${randomUUID()}`;
+    const configDir = join(testDir, `omnesis-source-mirror-${randomUUID()}`);
     const configStore = new ConfigStore({
       filePath: `${configDir}/omnesis.json`,
       watchDebounceMs: 40,
     });
     await configStore.load();
+    let mirrorApp: ReturnType<typeof createServer> | undefined;
     try {
       const owner = createDevice(db, {
         name: "mirror-host",
@@ -273,7 +289,7 @@ describe("source settings mirrored to the config file", () => {
         config: { maxAge: "2y", syncInterval: "5m" },
       });
       await configStore.put({ sources: { "notes-synth": { maxAge: "2y" } } });
-      const mirrorApp = createServer(db, undefined, { configStore });
+      mirrorApp = createServer(db, undefined, { configStore });
 
       const res = await mirrorApp.request(`/admin/sources/${encodeURIComponent(source.id)}`, {
         method: "PATCH",
@@ -289,6 +305,7 @@ describe("source settings mirrored to the config file", () => {
       await configStore.put({ sources: { [source.id]: own! } });
       expect(resolveSourceMaxAge(configStore.get(), source.id)).toBeUndefined();
     } finally {
+      await mirrorApp?.close();
       configStore.stop();
       rmSync(configDir, { recursive: true, force: true });
     }
@@ -298,8 +315,8 @@ describe("source settings mirrored to the config file", () => {
 describe("mode-transition config publication ordering", () => {
   async function raceFixture() {
     const { AnalyticsDb } = await import("./analytics-db.js");
-    const analyticsPath = `/tmp/omnesis-mode-config-race-${randomUUID()}.duckdb`;
-    const configDir = `/tmp/omnesis-mode-config-race-${randomUUID()}`;
+    const analyticsPath = join(testDir, `omnesis-mode-config-race-${randomUUID()}.duckdb`);
+    const configDir = join(testDir, `omnesis-mode-config-race-${randomUUID()}`);
     const analyticsDb = new AnalyticsDb(analyticsPath);
     await analyticsDb.open();
     const configStore = new ConfigStore({
@@ -357,6 +374,7 @@ describe("mode-transition config publication ordering", () => {
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       });
     const cleanup = async () => {
+      await raceApp.close();
       configStore.stop();
       await analyticsDb.close();
       rmSync(configDir, { recursive: true, force: true });
@@ -505,7 +523,7 @@ describe("generally available MCP", () => {
   test("constructs Direct in production mode", async () => {
     const previousExperimental = process.env.OMNESIS_EXPERIMENTAL;
     const previousSynthetic = process.env.OMNESIS_SYNTHETIC;
-    const analyticsPath = `/tmp/omnesis-mcp-ga-analytics-${randomUUID()}.db`;
+    const analyticsPath = join(testDir, `omnesis-mcp-ga-analytics-${randomUUID()}.db`);
     const { AnalyticsDb } = await import("./analytics-db.js");
     const analyticsDb = new AnalyticsDb(analyticsPath);
     let runtime: McpHttpRuntime | undefined;
@@ -539,8 +557,7 @@ describe("generally available MCP", () => {
           restore: () => {},
           size: () => 0,
         },
-        publicBaseUrl: "https://omnesis.test",
-        mcpResourceUrls: [privateResource],
+        publicAddress: fixedPublicAddress("https://omnesis.test", [privateResource]),
         onMcpHttpRuntime: (value) => {
           runtime = value;
         },
@@ -1077,7 +1094,7 @@ describe("auth middleware", () => {
     ).toEqual({ count: 0 });
 
     const { AnalyticsDb } = await import("./analytics-db.js");
-    const analyticsPath = `/tmp/omnesis-contract-analytics-${randomUUID()}.db`;
+    const analyticsPath = join(testDir, `omnesis-contract-analytics-${randomUUID()}.db`);
     const analyticsDb = new AnalyticsDb(analyticsPath);
     await analyticsDb.open();
     const withAnalytics = createServer(db, undefined, { analyticsDb });
@@ -1139,7 +1156,7 @@ describe("auth middleware", () => {
     const currentEpoch = await begin();
 
     const { AnalyticsDb } = await import("./analytics-db.js");
-    const analyticsPath = `/tmp/omnesis-analytics-test-${randomUUID()}.db`;
+    const analyticsPath = join(testDir, `omnesis-analytics-test-${randomUUID()}.db`);
     const analyticsDb = new AnalyticsDb(analyticsPath);
     await analyticsDb.open();
     const withAnalytics = createServer(db, undefined, { analyticsDb });
@@ -5269,7 +5286,7 @@ describe("sync state endpoints", () => {
 
     // POST /analytics/ingest — each phone's namesake rows land in its own stream.
     const { AnalyticsDb } = await import("./analytics-db.js");
-    const analyticsPath = `/tmp/omnesis-analytics-test-${randomUUID()}.db`;
+    const analyticsPath = join(testDir, `omnesis-analytics-test-${randomUUID()}.db`);
     const analyticsDb = new AnalyticsDb(analyticsPath);
     await analyticsDb.open();
     const withAnalytics = createServer(db, undefined, { analyticsDb });
@@ -5843,7 +5860,7 @@ describe("sync state endpoints", () => {
     addSourceMember(db, source.id, beta.id);
 
     const { AnalyticsDb } = await import("./analytics-db.js");
-    const analyticsPath = `/tmp/omnesis-analytics-test-${randomUUID()}.db`;
+    const analyticsPath = join(testDir, `omnesis-analytics-test-${randomUUID()}.db`);
     const analyticsDb = new AnalyticsDb(analyticsPath);
     await analyticsDb.open();
     const withAnalytics = createServer(db, undefined, { analyticsDb });
@@ -5949,7 +5966,7 @@ describe("sync state endpoints", () => {
     addSourceMember(db, source.id, beta.id);
 
     const { AnalyticsDb } = await import("./analytics-db.js");
-    const analyticsPath = `/tmp/omnesis-analytics-test-${randomUUID()}.db`;
+    const analyticsPath = join(testDir, `omnesis-analytics-test-${randomUUID()}.db`);
     const analyticsDb = new AnalyticsDb(analyticsPath);
     await analyticsDb.open();
     const withAnalytics = createServer(db, undefined, { analyticsDb });
@@ -6281,7 +6298,7 @@ describe("sync state endpoints", () => {
 
     // POST /analytics/ingest — the same DB behind a server with an analytics store.
     const { AnalyticsDb } = await import("./analytics-db.js");
-    const analyticsPath = `/tmp/omnesis-analytics-test-${randomUUID()}.db`;
+    const analyticsPath = join(testDir, `omnesis-analytics-test-${randomUUID()}.db`);
     const analyticsDb = new AnalyticsDb(analyticsPath);
     await analyticsDb.open();
     const withAnalytics = createServer(db, undefined, { analyticsDb });
@@ -8570,7 +8587,7 @@ describe("GET /sources/:sourceId/recent", () => {
 
   test("falls back to analytics table when source has no documents", async () => {
     const { AnalyticsDb } = await import("./analytics-db.js");
-    const analyticsPath = `/tmp/omnesis-analytics-test-${randomUUID()}.db`;
+    const analyticsPath = join(testDir, `omnesis-analytics-test-${randomUUID()}.db`);
     const analyticsDb = new AnalyticsDb(analyticsPath);
     await analyticsDb.open();
 
@@ -8642,7 +8659,7 @@ describe("GET /sources/:sourceId/recent", () => {
 
   test("matches analytics table by source type prefix", async () => {
     const { AnalyticsDb } = await import("./analytics-db.js");
-    const analyticsPath = `/tmp/omnesis-analytics-test-${randomUUID()}.db`;
+    const analyticsPath = join(testDir, `omnesis-analytics-test-${randomUUID()}.db`);
     const analyticsDb = new AnalyticsDb(analyticsPath);
     await analyticsDb.open();
 
@@ -8687,7 +8704,7 @@ describe("GET /sources/:sourceId/recent", () => {
 
   test("prefers documents over analytics when source has both", async () => {
     const { AnalyticsDb } = await import("./analytics-db.js");
-    const analyticsPath = `/tmp/omnesis-analytics-test-${randomUUID()}.db`;
+    const analyticsPath = join(testDir, `omnesis-analytics-test-${randomUUID()}.db`);
     const analyticsDb = new AnalyticsDb(analyticsPath);
     await analyticsDb.open();
 
@@ -8734,7 +8751,7 @@ describe("GET /sources/:sourceId/recent", () => {
 
   test("returns empty when analytics has no matching table", async () => {
     const { AnalyticsDb } = await import("./analytics-db.js");
-    const analyticsPath = `/tmp/omnesis-analytics-test-${randomUUID()}.db`;
+    const analyticsPath = join(testDir, `omnesis-analytics-test-${randomUUID()}.db`);
     const analyticsDb = new AnalyticsDb(analyticsPath);
     await analyticsDb.open();
 
@@ -8755,7 +8772,7 @@ describe("GET /sources/:sourceId/recent", () => {
 
   test("picks analytics table with highest record count among candidates", async () => {
     const { AnalyticsDb } = await import("./analytics-db.js");
-    const analyticsPath = `/tmp/omnesis-analytics-test-${randomUUID()}.db`;
+    const analyticsPath = join(testDir, `omnesis-analytics-test-${randomUUID()}.db`);
     const analyticsDb = new AnalyticsDb(analyticsPath);
     await analyticsDb.open();
 
@@ -9880,7 +9897,7 @@ describe("GET /status", () => {
     const { AnalyticsDb } = await import("./analytics-db.js");
     const { createSource } = await import("./data/repositories/SourceRepository.js");
     const { AccountId, SourceType } = await import("@omnesis/core");
-    const analyticsPath = `/tmp/omnesis-analytics-test-${randomUUID()}.db`;
+    const analyticsPath = join(testDir, `omnesis-analytics-test-${randomUUID()}.db`);
     const analyticsDb = new AnalyticsDb(analyticsPath);
     await analyticsDb.open();
 
@@ -9952,7 +9969,7 @@ describe("GET /status", () => {
     const { AnalyticsDb } = await import("./analytics-db.js");
     const { createSource } = await import("./data/repositories/SourceRepository.js");
     const { AccountId, SourceType } = await import("@omnesis/core");
-    const analyticsPath = `/tmp/omnesis-analytics-test-${randomUUID()}.db`;
+    const analyticsPath = join(testDir, `omnesis-analytics-test-${randomUUID()}.db`);
     const analyticsDb = new AnalyticsDb(analyticsPath);
     await analyticsDb.open();
 
@@ -10015,7 +10032,7 @@ describe("GET /status", () => {
     const { AnalyticsDb } = await import("./analytics-db.js");
     const { createSource } = await import("./data/repositories/SourceRepository.js");
     const { AccountId, SourceType } = await import("@omnesis/core");
-    const analyticsPath = `/tmp/omnesis-analytics-test-${randomUUID()}.db`;
+    const analyticsPath = join(testDir, `omnesis-analytics-test-${randomUUID()}.db`);
     const analyticsDb = new AnalyticsDb(analyticsPath);
     await analyticsDb.open();
 
@@ -10083,7 +10100,7 @@ describe("GET /status", () => {
     const { createSource } = await import("./data/repositories/SourceRepository.js");
     const { upsertDocuments } = await import("./db.js");
     const { AccountId, SourceType } = await import("@omnesis/core");
-    const analyticsPath = `/tmp/omnesis-analytics-test-${randomUUID()}.db`;
+    const analyticsPath = join(testDir, `omnesis-analytics-test-${randomUUID()}.db`);
     const analyticsDb = new AnalyticsDb(analyticsPath);
     await analyticsDb.open();
 
@@ -10409,7 +10426,8 @@ describe("admin config endpoints", () => {
     cfgApp = createServer(db, undefined, { configDir, configStore });
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await cfgApp.close();
     configStore.stop();
     rmSync(configDir, { recursive: true, force: true });
   });
@@ -10448,6 +10466,46 @@ describe("admin config endpoints", () => {
     expect(body.resolvedSearch.params.rrfK).toBe(17);
     // Untouched knobs keep their defaults rather than vanishing.
     expect(body.resolvedSearch.params.resultLimit).toBe(DEFAULT_SEARCH_PARAMS.resultLimit);
+  });
+
+  test("a public address saved through PATCH /admin/config applies at once", async () => {
+    const { PublicAddress } = await import("./public-address.js");
+    const liveApp = createServer(db, undefined, {
+      configDir,
+      configStore,
+      publicAddress: PublicAddress.following(configStore),
+    });
+    try {
+      const origin = "https://omnesis.example.org";
+      const discovery = () => liveApp.request(`${origin}/.well-known/oauth-authorization-server`);
+      expect((await discovery()).status).toBe(503);
+
+      const patched = await liveApp.request("/admin/config", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${cfgToken}` },
+        body: JSON.stringify({ gateway: { publicBaseUrl: origin } }),
+      });
+      expect(patched.status).toBe(200);
+
+      const server = await discovery();
+      expect(server.status).toBe(200);
+      expect((await server.json()).issuer).toBe(origin);
+      // An agent reaching MCP there is pointed at that address's sign-in, with no restart.
+      const challenge = await liveApp.request(`${origin}/mcp`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json, text/event-stream",
+        },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }),
+      });
+      expect(challenge.status).toBe(401);
+      expect(challenge.headers.get("WWW-Authenticate")).toContain(
+        `resource_metadata="${origin}/.well-known/oauth-protected-resource/mcp"`,
+      );
+    } finally {
+      await liveApp.close();
+    }
   });
 
   test("GET /admin/config returns empty config initially", async () => {
@@ -10501,34 +10559,38 @@ describe("admin config endpoints", () => {
         body: JSON.stringify(body),
       });
 
-    const refused = await vetReq({
-      inference: { assignments: { transcriber: "ollama/qwen3-asr" } },
-    });
-    expect(refused.status).toBe(400);
-    const refusal = (await refused.json()) as { error: string; code: string; detail: unknown };
-    expect(refusal.code).toBe("VALIDATION_ERROR");
-    expect(refusal.error).toBe(
-      'Backend "ollama" cannot transcribe with qwen3-asr: no transcription endpoint',
-    );
-    expect(refusal.detail).toEqual([
-      { path: "/inference/assignments/transcriber", message: refusal.error },
-    ]);
-    const unchanged = (await (await cfgReq("/admin/config")).json()) as { config: unknown };
-    expect(unchanged.config).toEqual({});
+    try {
+      const refused = await vetReq({
+        inference: { assignments: { transcriber: "ollama/qwen3-asr" } },
+      });
+      expect(refused.status).toBe(400);
+      const refusal = (await refused.json()) as { error: string; code: string; detail: unknown };
+      expect(refusal.code).toBe("VALIDATION_ERROR");
+      expect(refusal.error).toBe(
+        'Backend "ollama" cannot transcribe with qwen3-asr: no transcription endpoint',
+      );
+      expect(refusal.detail).toEqual([
+        { path: "/inference/assignments/transcriber", message: refusal.error },
+      ]);
+      const unchanged = (await (await cfgReq("/admin/config")).json()) as { config: unknown };
+      expect(unchanged.config).toEqual({});
 
-    // Every assignment the body sets is vetted; one the hook accepts is written.
-    const accepted = await vetReq({
-      inference: { assignments: { transcriber: "local/whisper-base", agent: null } },
-    });
-    expect(accepted.status).toBe(200);
-    expect(vetted).toEqual([
-      ["transcriber", "ollama/qwen3-asr"],
-      ["transcriber", "local/whisper-base"],
-      ["agent", null],
-    ]);
-    // A body that sets no assignment is not vetted at all.
-    expect((await vetReq({ indexer: { cycleInterval: "5m" } })).status).toBe(200);
-    expect(vetted).toHaveLength(3);
+      // Every assignment the body sets is vetted; one the hook accepts is written.
+      const accepted = await vetReq({
+        inference: { assignments: { transcriber: "local/whisper-base", agent: null } },
+      });
+      expect(accepted.status).toBe(200);
+      expect(vetted).toEqual([
+        ["transcriber", "ollama/qwen3-asr"],
+        ["transcriber", "local/whisper-base"],
+        ["agent", null],
+      ]);
+      // A body that sets no assignment is not vetted at all.
+      expect((await vetReq({ indexer: { cycleInterval: "5m" } })).status).toBe(200);
+      expect(vetted).toHaveLength(3);
+    } finally {
+      await vetApp.close();
+    }
   });
 
   test("PATCH /admin/config stores inference backend apiKey as a config secret reference", async () => {
@@ -11836,7 +11898,7 @@ describe("CORS middleware (wired in createServer)", () => {
   ): Promise<void> {
     const { ConfigStore, defaultConfigPath } = await import("./config-store.js");
     const { writeFileSync, mkdirSync } = await import("node:fs");
-    const dir = `/tmp/omnesis-cors-test-${randomUUID()}`;
+    const dir = join(testDir, `omnesis-cors-test-${randomUUID()}`);
     mkdirSync(dir, { recursive: true });
     const cfgPath = defaultConfigPath(dir);
     writeFileSync(
@@ -11849,6 +11911,7 @@ describe("CORS middleware (wired in createServer)", () => {
     try {
       await fn(corsApp);
     } finally {
+      await corsApp.close();
       store.stop();
       rmSync(dir, { recursive: true, force: true });
     }
@@ -12026,9 +12089,44 @@ describe("POST /admin/sources/:id/resync", () => {
       });
       return { status: res.status, body: (await res.json()) as Record<string, unknown> };
     };
+    /** Every document of a source as `external id @ stream → record id`. */
+    const recordIds = (sourceId: string): Record<string, string> =>
+      Object.fromEntries(
+        db
+          .prepare<[string], { id: string; external_id: string; stream_id: string }>(
+            "SELECT id, external_id, stream_id FROM documents WHERE source_id = ?",
+          )
+          .all(sourceId)
+          .map((row) => [`${row.external_id}@${row.stream_id}`, row.id]),
+      );
+    /** Claim a sync attempt on the caller's cursor row, the way a collector's tick does. */
+    const begin = async (as: typeof asAlpha, sourceId: string): Promise<number> =>
+      (
+        (await (
+          await as(`/sync-state/${encodeURIComponent(sourceId)}/begin`, {
+            method: "POST",
+            body: "{}",
+          })
+        ).json()) as { wipeEpoch: number }
+      ).wipeEpoch;
+    /** One page of a fresh sync attempt: claim the row, then push under that claim. */
+    const push = async (as: typeof asAlpha, sourceId: string, externalIds: string[]) =>
+      (await (
+        await as("/documents", {
+          method: "POST",
+          body: JSON.stringify({
+            documents: externalIds.map((id) => makeDocPayload(id, "synth", sourceId)),
+            writeEpochs: { [sourceId]: await begin(as, sourceId) },
+          }),
+        })
+      ).json()) as { ingested: number; suppressed?: string[] };
     return {
       alpha,
       beta,
+      admin,
+      recordIds,
+      begin,
+      push,
       online,
       sendCommand,
       asAlpha,
@@ -12055,6 +12153,7 @@ describe("POST /admin/sources/:id/resync", () => {
     expect(status).toBe(200);
     expect(body).toEqual({
       ok: true,
+      mode: "from-scratch",
       scope: "stream",
       deviceIds: [f.beta.id],
       restarting: [],
@@ -12081,7 +12180,15 @@ describe("POST /admin/sources/:id/resync", () => {
     const offline = await f.resync(source.id, { deviceId: f.alpha.id });
     expect(offline).toEqual({
       status: 200,
-      body: { ok: true, scope: "stream", deviceIds: [], restarting: [], skipped: [], disabled: [] },
+      body: {
+        ok: true,
+        mode: "from-scratch",
+        scope: "stream",
+        deviceIds: [],
+        restarting: [],
+        skipped: [],
+        disabled: [],
+      },
     });
     expect(f.sendCommand).not.toHaveBeenCalled();
     expect(await f.count(source.id)).toBe(0);
@@ -12098,8 +12205,11 @@ describe("POST /admin/sources/:id/resync", () => {
     const { status, body } = await f.resync(source.id, { deviceId: f.beta.id });
 
     expect(status).toBe(200);
+    // A caller that names no mode asks for a wipe; a replicated member has
+    // nothing of its own to wipe, so the answer says what was done instead.
     expect(body).toEqual({
       ok: true,
+      mode: "in-place",
       scope: "cursor",
       deviceIds: [f.beta.id],
       restarting: [],
@@ -12122,7 +12232,7 @@ describe("POST /admin/sources/:id/resync", () => {
     const { status, body } = await f.resync(source.id, {});
 
     expect(status).toBe(200);
-    expect(body).toMatchObject({ ok: true, scope: "source" });
+    expect(body).toMatchObject({ ok: true, mode: "from-scratch", scope: "source" });
     expect([...(body.deviceIds as string[])].sort()).toEqual([f.alpha.id, f.beta.id].sort());
     expect(await f.count(source.id)).toBe(0);
     expect((await f.syncState(f.asAlpha, source.id)).cursor).toBeNull();
@@ -12161,5 +12271,217 @@ describe("POST /admin/sources/:id/resync", () => {
       body: JSON.stringify({}),
     });
     expect(noWs.status).toBe(503);
+  });
+
+  test("a token without the admin scope cannot resync in either mode, and nothing is reset", async () => {
+    const f = await fixture();
+    const source = f.seed(EXCLUSIVE, false);
+    expect(await f.push(f.asAlpha, source.id, ["day-1"])).toMatchObject({ ingested: 1 });
+    const cursorPath = `/sync-state/${encodeURIComponent(source.id)}`;
+    await f.asAlpha(cursorPath, { method: "POST", body: JSON.stringify({ cursor: { page: 1 } }) });
+    const before = await f.syncState(f.asAlpha, source.id);
+
+    for (const mode of ["in-place", "from-scratch"]) {
+      const res = await f.asAlpha(`/admin/sources/${encodeURIComponent(source.id)}/resync`, {
+        method: "POST",
+        body: JSON.stringify({ mode }),
+      });
+      expect(res.status, mode).toBe(403);
+    }
+
+    expect(f.sendCommand).not.toHaveBeenCalled();
+    expect(await f.syncState(f.asAlpha, source.id)).toEqual(before);
+    expect(await f.count(source.id)).toBe(1);
+  });
+
+  test("in place, no device, one host: nothing is deleted, the cursor starts over, ids and the owner's deletions hold", async () => {
+    const f = await fixture();
+    const source = f.seed(EXCLUSIVE, false);
+    expect(await f.push(f.asAlpha, source.id, ["day-1", "day-2", "day-3"])).toMatchObject({
+      ingested: 3,
+    });
+    const cursorPath = `/sync-state/${encodeURIComponent(source.id)}`;
+    const begun = { wipeEpoch: await f.begin(f.asAlpha, source.id) };
+    expect(
+      await (
+        await f.asAlpha(cursorPath, {
+          method: "POST",
+          body: JSON.stringify({ cursor: { page: 1 }, writeEpoch: begun.wipeEpoch }),
+        })
+      ).json(),
+    ).toEqual({ ok: true });
+    // The owner deletes one item for good.
+    const doomed = f.recordIds(source.id)["day-2@"]!;
+    expect((await f.admin(`/documents/${doomed}`, { method: "DELETE" })).status).toBe(200);
+    const before = f.recordIds(source.id);
+    expect(Object.keys(before).sort()).toEqual(["day-1@", "day-3@"]);
+
+    const { status, body } = await f.resync(source.id, { mode: "in-place" });
+
+    expect(status).toBe(200);
+    expect(body).toEqual({
+      ok: true,
+      mode: "in-place",
+      scope: "source",
+      deviceIds: [f.alpha.id],
+      restarting: [],
+      skipped: [],
+      disabled: [],
+    });
+    expect(f.sendCommand).toHaveBeenCalledWith(f.alpha.id, "source.sync", {
+      sourceId: source.id,
+      restart: true,
+    });
+    // Before anything is read again: every record is still there, unchanged.
+    expect(f.recordIds(source.id)).toEqual(before);
+    const after = await f.syncState(f.asAlpha, source.id);
+    expect(after.cursor).toBeNull();
+    expect(after.wipeEpoch).toBeGreaterThan(begun.wipeEpoch);
+    expect(f.rowOf(source.id, "")).toEqual({ cursor: "{}", last_synced_at: null });
+    // The sync that was in flight cannot write its cursor back.
+    expect(
+      await (
+        await f.asAlpha(cursorPath, {
+          method: "POST",
+          body: JSON.stringify({ cursor: { page: 2 }, writeEpoch: begun.wipeEpoch }),
+        })
+      ).json(),
+    ).toEqual({ ok: false, rejected: true });
+
+    // The source is read again from the start: every item lands on the
+    // record it had, and the one the owner deleted is refused.
+    expect(await f.push(f.asAlpha, source.id, ["day-1", "day-2", "day-3"])).toEqual({
+      ingested: 2,
+      suppressed: ["day-2"],
+    });
+    expect(f.recordIds(source.id)).toEqual(before);
+  });
+
+  test("in place, no device, members on their own cursors: every member starts over and every stream stays", async () => {
+    const f = await fixture();
+    for (const type of [PARTITIONED, REPLICATED]) {
+      const source = f.seed(type);
+      await f.populate(source.id);
+      const before = f.recordIds(source.id);
+      const epochs = {
+        alpha: (await f.syncState(f.asAlpha, source.id)).wipeEpoch,
+        beta: (await f.syncState(f.asBeta, source.id)).wipeEpoch,
+      };
+
+      const { status, body } = await f.resync(source.id, { mode: "in-place" });
+
+      expect(status).toBe(200);
+      expect(body).toMatchObject({ ok: true, mode: "in-place", scope: "source" });
+      expect([...(body.deviceIds as string[])].sort()).toEqual([f.alpha.id, f.beta.id].sort());
+      expect(f.recordIds(source.id)).toEqual(before);
+      const alphaAfter = await f.syncState(f.asAlpha, source.id);
+      const betaAfter = await f.syncState(f.asBeta, source.id);
+      expect(alphaAfter.cursor).toBeNull();
+      expect(betaAfter.cursor).toBeNull();
+      expect(alphaAfter.wipeEpoch).toBeGreaterThan(epochs.alpha);
+      expect(betaAfter.wipeEpoch).toBeGreaterThan(epochs.beta);
+      // Each member re-reads its own slice onto the records it already has.
+      for (const member of [f.asAlpha, f.asBeta]) {
+        expect(await f.push(member, source.id, ["day-1", "day-2"])).toMatchObject({ ingested: 2 });
+      }
+      expect(f.recordIds(source.id)).toEqual(before);
+    }
+  });
+
+  test("in place, a device on a partitioned source: its cursor alone is reset and its stream stays", async () => {
+    const f = await fixture();
+    const source = f.seed(PARTITIONED);
+    await f.populate(source.id);
+    const before = f.recordIds(source.id);
+    expect(Object.keys(before)).toHaveLength(4);
+
+    const { status, body } = await f.resync(source.id, {
+      deviceId: f.beta.id,
+      mode: "in-place",
+    });
+
+    expect(status).toBe(200);
+    expect(body).toEqual({
+      ok: true,
+      mode: "in-place",
+      scope: "stream",
+      deviceIds: [f.beta.id],
+      restarting: [],
+      skipped: [],
+      disabled: [],
+    });
+    expect(f.recordIds(source.id)).toEqual(before);
+    expect((await f.syncState(f.asBeta, source.id)).cursor).toBeNull();
+    expect((await f.syncState(f.asAlpha, source.id)).cursor).toEqual({ page: 1 });
+  });
+
+  test("from scratch, named: the wipe a caller without a mode gets, and the owner's deletions are forgotten", async () => {
+    const f = await fixture();
+    const source = f.seed(EXCLUSIVE, false);
+    await f.push(f.asAlpha, source.id, ["day-1", "day-2"]);
+    const before = f.recordIds(source.id);
+    expect((await f.admin(`/documents/${before["day-2@"]}`, { method: "DELETE" })).status).toBe(
+      200,
+    );
+
+    const { status, body } = await f.resync(source.id, { mode: "from-scratch" });
+
+    expect(status).toBe(200);
+    expect(body).toMatchObject({ ok: true, mode: "from-scratch", scope: "source" });
+    expect(await f.count(source.id)).toBe(0);
+    // Everything comes back, the deleted item included, under new record ids.
+    expect(await f.push(f.asAlpha, source.id, ["day-1", "day-2"])).toMatchObject({ ingested: 2 });
+    const after = f.recordIds(source.id);
+    expect(Object.keys(after).sort()).toEqual(["day-1@", "day-2@"]);
+    expect(after["day-1@"]).not.toBe(before["day-1@"]);
+  });
+
+  test("a replicated member is resynced in place whichever mode is asked for; an unknown mode is refused", async () => {
+    const f = await fixture();
+    const source = f.seed(REPLICATED);
+    await f.populate(source.id);
+    const before = f.recordIds(source.id);
+
+    for (const mode of ["in-place", "from-scratch"]) {
+      const { status, body } = await f.resync(source.id, { deviceId: f.beta.id, mode });
+      expect(status).toBe(200);
+      expect(body).toMatchObject({ ok: true, mode: "in-place", scope: "cursor" });
+      expect(f.recordIds(source.id)).toEqual(before);
+    }
+
+    f.sendCommand.mockClear();
+    const refused = await f.resync(source.id, { mode: "sideways" });
+    expect(refused.status).toBe(400);
+    expect(f.sendCommand).not.toHaveBeenCalled();
+    expect(f.recordIds(source.id)).toEqual(before);
+  });
+
+  test("the source listing names the modes a resync offers, and none for a source that is only pushed to", async () => {
+    const f = await fixture();
+    const pulled = f.seed(EXCLUSIVE, false);
+    const { createSource } = await import("./data/repositories/SourceRepository.js");
+    const browser = createDevice(db, { name: `browser-${randomUUID()}`, kind: "browser" });
+    const pushed = createSource(db, {
+      type: SourceType("web"),
+      accountId: AccountId("local"),
+      deviceId: browser.id,
+    });
+
+    for (const mode of ["in-place", "from-scratch"]) {
+      expect(await f.resync(pushed.id, { mode })).toMatchObject({
+        status: 400,
+        body: { code: "RESYNC_PUSH_ONLY" },
+      });
+    }
+    // A resync that went through refreshes the listing's snapshot of sources.
+    expect((await f.resync(pulled.id, { mode: "in-place" })).status).toBe(200);
+    await vi.waitFor(async () => {
+      const listing = (await (await f.admin("/admin/sources")).json()) as {
+        items: Array<{ id: string; resyncModes: string[] }>;
+      };
+      const modesOf = (id: string) => listing.items.find((s) => s.id === id)?.resyncModes;
+      expect(modesOf(pulled.id)).toEqual(["in-place", "from-scratch"]);
+      expect(modesOf(pushed.id)).toEqual([]);
+    });
   });
 });

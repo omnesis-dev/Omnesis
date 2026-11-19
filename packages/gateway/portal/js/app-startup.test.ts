@@ -7,21 +7,31 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   authenticated: true,
+  cloudRelay: false,
+  handoff: null as string | null,
   metadataReady: false,
   mounts: 0,
   view: undefined as (() => ComponentChildren) | undefined,
   loadSourceMeta: vi.fn<() => Promise<void>>(),
+  redeemHandoff: vi.fn(async () => true),
 }));
 
+vi.mock("./lib/cloud-pairing-handoff.js", () => ({
+  takeAccountSignIn: vi.fn(),
+  takePortalHandoff: () => mocks.handoff,
+  redeemPortalHandoff: mocks.redeemHandoff,
+}));
+vi.mock("./views/search.js", () => ({ SearchView: () => null }));
 vi.mock("./api.js", () => ({
   apiFetch: vi.fn(async () => ({ ok: true, json: async () => ({ conversations: [], nextCursor: null }) })),
-  checkSession: vi.fn(async () => ({ authenticated: mocks.authenticated })),
+  checkSession: vi.fn(async () => ({ authenticated: mocks.authenticated, cloudRelay: mocks.cloudRelay })),
   getStatus: vi.fn(async () => ({ experimental: false, developer: false })),
   getHostFleetUpdate: vi.fn(async () => ({ plan: null, operation: null })),
   isAuthenticated: vi.fn(() => mocks.authenticated),
   login: vi.fn(),
   logout: vi.fn(),
   getTaskCounts: vi.fn(async () => ({ today: 0 })),
+  getPendingAccessRequests: vi.fn(async () => ({ pendingRequests: [] })),
   listPrivacyApprovals: vi.fn(async () => ({ totalCount: 0 })),
   listSubscriptionApprovals: vi.fn(async () => ({ totalCount: 0 })),
   startHostFleetUpdate: vi.fn(),
@@ -53,6 +63,12 @@ beforeEach(() => {
   vi.stubGlobal("window", parsed.window);
   host = parsed.document.querySelector("#app") as unknown as HTMLElement;
   mocks.authenticated = true;
+  mocks.cloudRelay = false;
+  mocks.handoff = null;
+  mocks.redeemHandoff.mockReset().mockImplementation(async () => {
+    mocks.authenticated = true;
+    return true;
+  });
   mocks.metadataReady = false;
   mocks.mounts = 0;
   const pending = new Promise<void>((resolve, reject) => {
@@ -92,6 +108,17 @@ test("renders the login screen without fetching or waiting for source metadata",
   await mount();
   await vi.waitFor(() => expect(host.querySelector(".login-card")).not.toBeNull());
   expect(mocks.loadSourceMeta).not.toHaveBeenCalled();
+});
+
+test("redeems a portal handoff before mounting the shell without waiting for metadata", async () => {
+  mocks.authenticated = false;
+  mocks.cloudRelay = true;
+  mocks.handoff = "fictional-preview-handoff";
+  await mount();
+  await vi.waitFor(() => expect(host.querySelector(".app-layout")).not.toBeNull());
+  expect(mocks.redeemHandoff).toHaveBeenCalledWith("fictional-preview-handoff");
+  await vi.waitFor(() => expect(mocks.loadSourceMeta).toHaveBeenCalledTimes(1));
+  expect(mocks.metadataReady).toBe(false);
 });
 
 test("renders the authenticated shell first, then refreshes labels without remounting or losing a draft", async () => {

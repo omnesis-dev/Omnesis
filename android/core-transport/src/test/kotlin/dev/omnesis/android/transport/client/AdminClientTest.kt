@@ -9,6 +9,7 @@ import dev.omnesis.android.transport.PermissionCapabilityState
 import dev.omnesis.android.transport.PermissionHealthSnapshot
 import dev.omnesis.android.transport.PermissionRepairAction
 import dev.omnesis.android.transport.PermissionRequirement
+import dev.omnesis.android.transport.ResyncStep
 import dev.omnesis.android.transport.SourceMultiDeviceMode
 import dev.omnesis.android.transport.activationFailureMessage
 import dev.omnesis.android.transport.dto.BackendConfig
@@ -20,6 +21,7 @@ import dev.omnesis.android.transport.dto.AccessSourceMode
 import dev.omnesis.android.transport.dto.InternalSource
 import dev.omnesis.android.transport.dto.OmnesisJson
 import dev.omnesis.android.transport.dto.ModelBehaviorValues
+import dev.omnesis.android.transport.dto.ResyncMode
 import dev.omnesis.android.transport.http.GatewayHttp
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonObject
@@ -56,6 +58,47 @@ class AdminClientTest {
         }
     }
 
+
+    @Test fun tailscale_join_requests_are_listed_and_decided_on_admin_routes() = runTest {
+        server.enqueue(MockResponse().setBody(
+            """{"requests":[{"id":"join-1","name":"maya-laptop","kind":"collector","machine":"maya-laptop","os":"macOS","login":"maya@example.com","requestedAt":"2026-11-14T18:00:00.000Z","expiresAt":"2026-11-14T18:10:00.000Z","futureField":1},""" +
+                """{"id":"join-2","name":"build-box","requestedAt":"2026-11-14T18:01:00.000Z","expiresAt":"2026-11-14T18:11:00.000Z"}]}""",
+        ))
+        val requests = client().tailscaleJoinRequests()
+        assertEquals(listOf("join-1", "join-2"), requests.map { it.id })
+        assertEquals("maya@example.com", requests[0].login)
+        assertEquals("collector", requests[0].kind)
+        assertNull(requests[1].machine)
+        server.takeRequest().also {
+            assertEquals("GET", it.method)
+            assertEquals("/admin/tailscale/join-requests", it.path)
+            assertEquals("Bearer tok", it.getHeader("Authorization"))
+            assertEquals("no-store", it.getHeader("Cache-Control"))
+        }
+
+        server.enqueue(MockResponse().setBody("""{"status":"approved"}"""))
+        assertEquals("approved", client().decideTailscaleJoin("join/1", true))
+        server.takeRequest().also {
+            assertEquals("POST", it.method)
+            // The id stays one path segment, whatever it holds.
+            assertEquals("/admin/tailscale/join-requests/join%2F1/decision", it.path)
+            assertEquals("""{"approve":true}""", it.body.readUtf8())
+        }
+        server.enqueue(MockResponse().setBody("""{"status":"denied"}"""))
+        assertEquals("denied", client().decideTailscaleJoin("join-2", false))
+        assertEquals("""{"approve":false}""", server.takeRequest().body.readUtf8())
+    }
+
+    @Test fun a_join_request_that_is_gone_is_not_found() = runTest {
+        server.enqueue(MockResponse().setResponseCode(404).setBody("""{"error":"join request not found","code":"NOT_FOUND"}"""))
+        val error = runCatching { client().decideTailscaleJoin("join-1", true) }.exceptionOrNull()
+        assertTrue(error.toString(), error is GatewayException.NotFound)
+    }
+
+    @Test fun no_waiting_join_requests_is_an_empty_list() = runTest {
+        server.enqueue(MockResponse().setBody("""{"requests":[]}"""))
+        assertTrue(client().tailscaleJoinRequests().isEmpty())
+    }
 
     private lateinit var server: MockWebServer
 
@@ -558,6 +601,43 @@ class AdminClientTest {
         assertEquals("POST", req.method)
         assertEquals("/documents/delete-all/source/notes:local", req.path)
         assertEquals("{}", req.body.readUtf8())
+    }
+
+    @Test
+    fun resync_source_posts_the_mode_to_the_resync_route() = runTest {
+        for (mode in ResyncMode.entries) {
+            server.enqueue(MockResponse().setBody("""{"ok":true,"mode":"${mode.wire}","scope":"source"}"""))
+            client().resyncSource("gmail:maya.reeves@example.org", mode)
+            val req = server.takeRequest()
+            assertEquals("POST", req.method)
+            assertEquals("/admin/sources/gmail:maya.reeves@example.org/resync", req.path)
+            assertEquals("""{"mode":"${mode.wire}"}""", req.body.readUtf8())
+        }
+    }
+
+    @Test
+    fun resync_steps_for_a_gateway_with_modes_send_one_request() = runTest {
+        server.enqueue(MockResponse().setBody("""{"ok":true}"""))
+        client().runResync("notes:local", listOf(ResyncStep.Resync(ResyncMode.IN_PLACE)))
+        assertEquals(1, server.requestCount)
+        assertEquals("/admin/sources/notes:local/resync", server.takeRequest().path)
+    }
+
+    @Test
+    fun resync_steps_for_an_older_gateway_delete_then_sync() = runTest {
+        server.enqueue(MockResponse().setBody("""{"deleted":3}"""))
+        server.enqueue(MockResponse().setBody("""{"ok":true}"""))
+        client().runResync("notes:local", listOf(ResyncStep.DeleteAll, ResyncStep.Sync))
+        assertEquals("/documents/delete-all/source/notes:local", server.takeRequest().path)
+        assertEquals("/admin/sources/notes:local/sync", server.takeRequest().path)
+    }
+
+    @Test
+    fun a_failed_delete_sends_no_sync() = runTest {
+        server.enqueue(MockResponse().setResponseCode(500).setBody("""{"error":"boom"}"""))
+        val failure = runCatching { client().runResync("notes:local", listOf(ResyncStep.DeleteAll, ResyncStep.Sync)) }
+        assertTrue(failure.isFailure)
+        assertEquals(1, server.requestCount)
     }
 
     @Test

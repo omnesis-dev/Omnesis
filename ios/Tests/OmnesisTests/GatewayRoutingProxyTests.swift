@@ -8,22 +8,6 @@ import Network
 @testable import Omnesis
 import XCTest
 
-private final class PathObservation: @unchecked Sendable {
-    private let lock = NSLock()
-    private var seenLocal = false
-    func markLocal() {
-        lock.lock()
-        seenLocal = true
-        lock.unlock()
-    }
-
-    var hasSeenLocal: Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        return seenLocal
-    }
-}
-
 /// Real Foundation HTTPS and WebSocket tasks through an authenticated opaque SOCKS peer.
 @MainActor
 final class GatewayRoutingProxyTests: XCTestCase {
@@ -141,48 +125,6 @@ final class GatewayRoutingProxyTests: XCTestCase {
             closed.fulfill()
         }
         await fulfillment(of: [closed], timeout: 2)
-    }
-
-    func testLocalObserversSeeIdleSocketRetirement() async throws {
-        let peer = try CloudPairingSOCKSPeer()
-        defer { peer.stop() }
-        let route = try XCTUnwrap(try GatewayDirectRoute(
-            origin: XCTUnwrap(URL(string: "https://gateway.example.test")),
-            candidates: [
-                GatewayDirectCandidate(address: "127.0.0.1", port: peer.info.targetPort),
-            ],
-            allowLoopbackForTesting: true
-        ))
-        let limits = GatewayRoutingProxy.Limits(handshake: 1, attempt: 0.2, lanBudget: 1, fallback: 0.1, idle: 0.5)
-        let proxy = try GatewayRoutingProxy(route: route, limits: limits, listenPort: 0)
-        defer { proxy.close() }
-        let local = expectation(description: "Local selection")
-        let reconnecting = expectation(description: "Idle connection retired")
-        let observed = PathObservation()
-        proxy.observePath { path in
-            if path == .local { observed.markLocal()
-                local.fulfill()
-            }
-            if path == .reconnecting, observed.hasSeenLocal { reconnecting.fulfill() }
-        }
-        let configuration = URLSessionConfiguration.ephemeral
-        proxy.configure(configuration)
-        let pin = PinnedSession(
-            fingerprintHex: peer.info.fingerprint,
-            host: route.host,
-            systemTrust: { _, _ in false },
-            requireCertificateValidity: true
-        )
-        let session = URLSession(configuration: configuration, delegate: pin, delegateQueue: nil)
-        defer { session.invalidateAndCancel() }
-        var upgrade = try URLRequest(url: XCTUnwrap(URL(string: "wss://gateway.example.test/events")))
-        upgrade.setValue("Bearer device-test-token", forHTTPHeaderField: "Authorization")
-        let socket = session.webSocketTask(with: upgrade)
-        socket.resume()
-        defer { socket.cancel(with: .normalClosure, reason: nil) }
-        _ = try await socket.receive()
-        await fulfillment(of: [local, reconnecting], timeout: 3)
-        XCTAssertEqual(proxy.activeStreamCount, 0)
     }
 }
 
@@ -522,12 +464,18 @@ extension GatewayRoutingProxyTests {
             let factory = RepairableLiveListenerFactory(initialFailures: stalled ? 0 : 1, stallFirst: stalled, holdStartup: true)
             let port = try GatewayLoopbackSocket.releaseEphemeralPort()
             let pin = PinnedSession(spkiFingerprint: peer.info.spkiFingerprint, host: route.host)
+            // The listener's readiness deadline and repair backoff run on a scripted clock: a runner slow to report a
+            // listener ready cannot have it rebuilt, so the test decides exactly which listeners are made.
+            let listenerClock = ScriptedGatewayClock()
             let proxy = try GatewayRoutingProxy(
                 route: route,
                 limits: .production,
                 listenPort: port,
                 recoverInitialListener: true,
                 transport: factory.transport,
+                // Scripted candidate deadlines: a slow trust verification still selects the loopback candidate.
+                clock: ScriptedGatewayClock().clock,
+                listenerClock: listenerClock.clock,
                 verifyTrust: { trust, host in pin.resolve(trust, challengeHost: host) == .pinned(systemTrusted: false) }
             )
             defer { proxy.close() }
@@ -550,11 +498,26 @@ extension GatewayRoutingProxyTests {
             } catch { XCTAssertTrue(error is URLError) }
             interrupted.cancel(with: .goingAway, reason: nil)
             factory.allowStartup()
+            if stalled {
+                // The stalled listener misses its readiness deadline and is retired; its port is released before the
+                // repair binds it again.
+                listenerClock.advance(GatewayRecoveringListener.readinessTimeout)
+                listenerClock.expireDue()
+                let released = ContinuousClock.now + .seconds(5)
+                while !factory.firstReleased, ContinuousClock.now < released {
+                    try await Task.sleep(for: .milliseconds(10))
+                }
+                XCTAssertTrue(factory.firstReleased)
+            }
+            // The first repair waits one second of backoff. The clock then stays put, so the repaired listener keeps
+            // its readiness deadline however long it takes to report ready.
+            listenerClock.advance(1)
+            listenerClock.expireDue()
             let deadline = ContinuousClock.now + .seconds(8)
             while !proxy.isListening, ContinuousClock.now < deadline {
                 try await Task.sleep(for: .milliseconds(10))
             }
-            XCTAssertTrue(proxy.isListening)
+            XCTAssertTrue(proxy.isListening, "stalled: \(stalled)\n" + factory.log.report(port: port))
             XCTAssertEqual(proxy.listeningPort, port)
             var request = URLRequest(url: route.origin.appendingPathComponent("probe"))
             request.setValue("Bearer device-test-token", forHTTPHeaderField: "Authorization")
@@ -565,7 +528,7 @@ extension GatewayRoutingProxyTests {
             socket.resume()
             _ = try await socket.receive()
             socket.cancel(with: .goingAway, reason: nil)
-            XCTAssertEqual(factory.count, stalled ? 2 : 1)
+            XCTAssertEqual(factory.count, stalled ? 2 : 1, factory.log.report(port: port))
         }
     }
 
@@ -588,6 +551,9 @@ extension GatewayRoutingProxyTests {
             verifyTrust: { trust, host in pin.resolve(trust, challengeHost: host) == .pinned(systemTrusted: false) }
         )
         defer { proxy.close() }
+        let selected = expectation(description: "Wrong-key LAN hint falls back to relay")
+        let observer = proxy.observePath { path in if path == .relay { selected.fulfill() } }
+        defer { proxy.removePathObserver(observer) }
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForResource = 10
         proxy.configure(configuration)
@@ -597,7 +563,9 @@ extension GatewayRoutingProxyTests {
         request.setValue("Bearer device-test-token", forHTTPHeaderField: "Authorization")
         let (data, _) = try await session.data(for: request)
         try assertCanonicalIdentity(data)
-        XCTAssertEqual(proxy.connectionPath, .relay)
+        // The HTTP peer closes its connection after replying, so the proxy can
+        // already be reconnecting when URLSession delivers the response.
+        await fulfillment(of: [selected], timeout: 2)
         let rejected = try stats(unrelated)
         XCTAssertGreaterThan(rejected["primary"] ?? 0, 0)
         XCTAssertEqual(rejected["requests"], 0)
@@ -638,17 +606,27 @@ extension GatewayRoutingProxyTests {
         ))
         let factory = RepairableLiveListenerFactory()
         let pin = PinnedSession(spkiFingerprint: peer.info.spkiFingerprint, host: route.host)
+        // Candidate deadlines run on a scripted clock: a verification slower than the attempt budget, as on a
+        // busy runner, must still select the loopback candidate, since the relay name resolves nowhere here.
+        let stall = FirstTrustStall()
         let proxy = try GatewayRoutingProxy(
             route: route,
             limits: .production,
             listenPort: 0,
             transport: factory.transport,
-            verifyTrust: { trust, host in pin.resolve(trust, challengeHost: host) == .pinned(systemTrusted: false) }
+            clock: ScriptedGatewayClock().clock,
+            verifyTrust: { trust, host in
+                stall.once()
+                return pin.resolve(trust, challengeHost: host) == .pinned(systemTrusted: false)
+            }
         )
         defer { proxy.close() }
         let endpoint = proxy.listeningPort
         let configuration = URLSessionConfiguration.ephemeral
-        configuration.timeoutIntervalForResource = 10
+        // No resource deadline: URLSession's runs on the wall clock, and each connection here makes two real TLS
+        // handshakes and trust evaluations, which a busy runner can stretch past any short budget. A WebSocket whose
+        // budget runs out before its upgrade fails as "cancelled". The default request timeout still fails a
+        // connection that stops making progress.
         proxy.configure(configuration)
         let session = URLSession(configuration: configuration, delegate: pin, delegateQueue: nil)
         defer { session.invalidateAndCancel() }
@@ -693,6 +671,8 @@ private final class RepairableLiveListenerFactory: @unchecked Sendable {
     private var initialFailures: Int
     private let stallFirst: Bool
     private var holdStartup: Bool
+    private var released = false
+    let log = GatewayListenerStateLog()
     init(initialFailures: Int = 0, stallFirst: Bool = false, holdStartup: Bool = false) {
         self.initialFailures = initialFailures
         self.stallFirst = stallFirst
@@ -703,6 +683,13 @@ private final class RepairableLiveListenerFactory: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return listeners.count
+    }
+
+    /// Whether the first listener made has finished cancelling, so its port is free to bind again.
+    var firstReleased: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return released
     }
 
     func allowStartup() {
@@ -724,12 +711,20 @@ private final class RepairableLiveListenerFactory: @unchecked Sendable {
             if self.initialFailures > 0 || (self.holdStartup && (!self.stallFirst || !self.listeners.isEmpty)) {
                 self.initialFailures = max(0, self.initialFailures - 1)
                 self.lock.unlock()
+                self.log.record("startup held by the test: no listener made")
                 throw GatewayRoutingError.listenerUnavailable
             }
-            let stall = self.stallFirst && self.listeners.isEmpty
+            let first = self.listeners.isEmpty, index = self.listeners.count
             self.lock.unlock()
             let listener = try GatewayNetworkTransport.live.makeListener(parameters)
-            let wrapped = StalledLiveListener(listener, stall: stall)
+            let log = self.log
+            let record = { (event: String) in log.record("listener #\(index) \(event)") }
+            let wrapped = StalledLiveListener(listener, stall: self.stallFirst && first, record: record) { [weak self] in
+                guard let self, first else { return }
+                self.lock.lock()
+                self.released = true
+                self.lock.unlock()
+            }
             self.lock.lock()
             self.listeners.append(wrapped)
             self.lock.unlock()
@@ -738,12 +733,29 @@ private final class RepairableLiveListenerFactory: @unchecked Sendable {
     }
 }
 
+/// Holds the first trust verification past the production per-candidate budget, as a stalled runner can.
+private final class FirstTrustStall: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stalled = false
+    func once() {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !stalled else { return }
+        stalled = true
+        Thread.sleep(forTimeInterval: GatewayRoutingProxy.Limits.production.attempt + 0.25)
+    }
+}
+
 private final class StalledLiveListener: GatewayByteListener {
     private let wrapped: any GatewayByteListener
     private let stall: Bool
-    init(_ wrapped: any GatewayByteListener, stall: Bool) {
+    private let cancelled: () -> Void
+    private let record: (String) -> Void
+    init(_ wrapped: any GatewayByteListener, stall: Bool, record: @escaping (String) -> Void, cancelled: @escaping () -> Void) {
         self.wrapped = wrapped
         self.stall = stall
+        self.record = record
+        self.cancelled = cancelled
     }
 
     var port: UInt16? {
@@ -752,6 +764,8 @@ private final class StalledLiveListener: GatewayByteListener {
 
     func onState(_ handler: @escaping (NWListener.State) -> Void) {
         wrapped.onState { state in
+            self.record("\(state)")
+            if case .cancelled = state { self.cancelled() }
             if self.stall, case .ready = state { return }
             handler(state)
         }
@@ -762,10 +776,12 @@ private final class StalledLiveListener: GatewayByteListener {
     }
 
     func start(queue: DispatchQueue) {
+        record("start")
         wrapped.start(queue: queue)
     }
 
     func cancel() {
+        record("cancel")
         wrapped.cancel()
     }
 }

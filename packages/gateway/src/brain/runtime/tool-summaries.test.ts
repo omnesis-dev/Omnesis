@@ -14,6 +14,8 @@ import { buildTaskTools } from "../tasks/tools.js";
 import { createOpenLoopMirror } from "./mirror.js";
 import { buildAnnotationTools, buildCognitionOwnTools } from "./tools.js";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 const NOW = Date.parse("2026-06-01T12:00:00Z");
 const log = createLogger("test:tool-summaries");
@@ -27,7 +29,7 @@ const emptySearch: SearchPort = {
 let db: Database.Database;
 let path: string;
 beforeEach(() => {
-  path = `/tmp/omnesis-test-${randomUUID()}.db`;
+  path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
   db = createDatabase(path);
   db.prepare(
     `INSERT INTO people(id,canonical_name,source,first_seen,last_seen,created_at,updated_at)

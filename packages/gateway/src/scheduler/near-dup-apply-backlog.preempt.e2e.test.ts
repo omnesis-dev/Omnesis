@@ -22,7 +22,6 @@
  * `OMNESIS_NEAR_DUP_BACKLOG_DOCS` sizes the corpus for a bench run.
  */
 
-import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
 import Database from "better-sqlite3";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
@@ -32,6 +31,7 @@ import { setActiveAlgoVersion } from "../near-dupes/meta.js";
 import { Scheduler } from "./scheduler.js";
 import { WriterTaskRunner } from "./runners/writer.js";
 import { writeGateFromScheduler } from "./write-ops.js";
+import { sqlitePerformanceDatabasePath } from "../../test/sqlite-performance-temp.js";
 import type { NearDupApplyBatch } from "../near-dupes/types.js";
 import type { WriteGate } from "../write-gate.js";
 import type { SyncCursor } from "@omnesis/source-sdk";
@@ -196,7 +196,7 @@ describe("nearDup.applyBatch on the writer against a drive-sized signed corpus",
   let nextBatch = 0;
 
   beforeAll(async () => {
-    dbPath = `/tmp/omnesis-test-${randomUUID()}.db`;
+    dbPath = sqlitePerformanceDatabasePath();
     seedCorpus(dbPath);
     scheduler = new Scheduler({ enablePreemption: true });
     scheduler.registerRunner(

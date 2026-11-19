@@ -5,6 +5,7 @@ import { describe, test, expect } from "vitest";
 import { computeContentHash } from "@omnesis/core";
 import { ProviderId, SourceId } from "@omnesis/types";
 import { normalizeFile } from "./normalizer.js";
+import { displayLocalFilePath } from "./paths.js";
 import type { LocalFileEntry } from "./types.js";
 
 const providerId = ProviderId("local-files:host");
@@ -55,4 +56,39 @@ describe("normalizeFile", () => {
     const { doc } = normalizeFile(entry(), "scanned text", { ocr: true }, providerId, sourceId);
     expect(doc.metadata.extra).toMatchObject({ ocr: true });
   });
+});
+
+test("Windows home-relative and other-drive paths render a file title rather than an absolute path", () => {
+  for (const [absolutePath, expected] of [
+    ["c:\\users\\Example\\Documents\\report.txt", "~/Documents/report.txt"],
+    ["D:\\Documents\\report.txt", "D:/Documents/report.txt"],
+  ]) {
+    const displayPath = displayLocalFilePath(absolutePath!, {
+      platform: "win32",
+      home: "C:\\Users\\Example",
+    });
+    expect(displayPath).toBe(expected);
+    const { doc } = normalizeFile(
+      entry({ absolutePath: absolutePath!, displayPath }),
+      "Fictional report",
+      undefined,
+      providerId,
+      sourceId,
+    );
+    expect(doc.title).toBe("report.txt");
+  }
+});
+
+test("POSIX display preserves a literal backslash filename", () => {
+  const path = "/home/example/Documents/alpha\\beta.txt";
+  const displayPath = displayLocalFilePath(path, { platform: "linux", home: "/home/example" });
+  expect(displayPath).toBe("~/Documents/alpha\\beta.txt");
+  const { doc } = normalizeFile(
+    entry({ absolutePath: path, displayPath }),
+    "Fictional note",
+    undefined,
+    providerId,
+    sourceId,
+  );
+  expect(doc.title).toBe("alpha\\beta.txt");
 });

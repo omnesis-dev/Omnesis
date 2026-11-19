@@ -6,9 +6,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { generateKeyPairSync } from "node:crypto";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import * as core from "@omnesis/core";
+import { markedFileError } from "../test/private-operation-fixture.js";
 import { tlsFiles } from "../test/support.js";
 import { expiredCertificate } from "../test/expired-certificate.js";
 import { fakeSignupRelay } from "../test/fake-signup-relay.js";
+import { brokerCall, brokerHarness, brokerOwner } from "../test/dns-broker-owner.js";
+import { GatewayGoogleWeb } from "./google-gateway-web.js";
 import { AccountEnrollmentAuthority } from "./account-enrollment-proof.js";
 import {
   GatewayCloudRelayManagement,
@@ -20,10 +24,28 @@ import { googleBrowserTrust } from "./google-browser-trust.js";
 import { hostedGatewayHostname } from "./hosted-name.js";
 import { GatewayAccountLink } from "./gateway-account-link.js";
 import { GatewayUnregistered, readOrCreateGatewayOwnerKey } from "./gateway-key-client.js";
+import * as privateCredentials from "./google-credentials.js";
 
 let directory: string, manager: GatewayCloudRelayManagement | undefined;
+/** Requests no test answered; any one fails the test, even when the gateway swallows the error. */
+let unanswered: string[] = [];
+/**
+ * The network a test sees unless it answers a request itself: the relay has no managed Google
+ * browser client, and every other request is refused. No test reaches a real service, whether
+ * through the gateway's `fetch` or the global one.
+ */
+const offline: typeof fetch = (request) => {
+  const url = request instanceof Request ? request.url : String(request);
+  if (url.includes("/_relay/v2/google/browser/config"))
+    return Promise.resolve(new Response(null, { status: 404 }));
+  unanswered.push(url);
+  return Promise.reject(new Error(`No test answers ${url}`));
+};
 beforeEach(async () => {
   directory = await mkdtemp(join(tmpdir(), "relay-management-"));
+  if (process.platform === "win32") await core.ensurePrivateDirs([directory]);
+  unanswered = [];
+  vi.stubGlobal("fetch", offline);
 });
 afterEach(async () => {
   await manager?.close();
@@ -31,6 +53,7 @@ afterEach(async () => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
   await rm(directory, { recursive: true, force: true });
+  expect(unanswered).toEqual([]);
 });
 function fixture(overrides: Partial<CloudRelayManagerOptions> = {}) {
   const close = vi.fn(async () => {}),
@@ -55,11 +78,7 @@ function fixture(overrides: Partial<CloudRelayManagerOptions> = {}) {
   const options = {
     configDir: directory,
     gatewayUrl: () => "https://localhost:12345",
-    fetch: vi.fn<typeof fetch>(async (url, init) =>
-      String(url).includes("/_relay/v2/google/browser/config")
-        ? new Response(null, { status: 404 })
-        : fetch(url, init),
-    ),
+    fetch: vi.fn<typeof fetch>(offline),
     activate: vi.fn(async () => {}),
     directCertificateCoversHostname: () => false,
     directIdentity: () => ({
@@ -74,6 +93,7 @@ function fixture(overrides: Partial<CloudRelayManagerOptions> = {}) {
     register,
     probe: vi.fn(async () => true),
     controller: vi.fn(async () => ({
+      cleanupFailure: () => undefined,
       close,
       renew,
       fingerprintSha256: () => "b".repeat(64),
@@ -81,7 +101,10 @@ function fixture(overrides: Partial<CloudRelayManagerOptions> = {}) {
     })),
     startTunnel: vi.fn(() => ({
       stop,
+      close: async () => {},
+      cleanupFailure: () => undefined,
       status: () => ({ state: "online" as const }),
+      online: async () => {},
     })) as unknown as CloudRelayManagerOptions["startTunnel"],
     ...overrides,
     // The monitor is on by default; only the test that opts in may reach a CT provider.
@@ -99,6 +122,161 @@ async function idle() {
   });
 }
 const input = { relayUrl: "https://relay.example.test", termsAccepted: true };
+async function pendingRelease(createdAt = Date.now()) {
+  const root = join(directory, "cloud-relay"),
+    file = join(root, "release.json"),
+    sessionFile = join(root, "session.json");
+  const bytes = JSON.stringify({
+    version: 1,
+    relayUrl: "https://relay.example.test",
+    gatewayId: "33333333-3333-4333-8333-333333333333",
+    publicOrigin: "https://gateway.example.test",
+    sessionFile,
+    ownerKeyFile: join(root, "owner.key"),
+    certificateFile: join(root, "public.pem"),
+    privateKeyFile: join(root, "public.key"),
+    createdAt,
+  });
+  await mkdir(root, { recursive: true, mode: 0o700 });
+  await core.atomicWriteFile(sessionFile, "{}", { mode: 0o600 });
+  await core.atomicWriteFile(file, bytes, { mode: 0o600 });
+  return { file, sessionFile, bytes };
+}
+
+test("close joins an owned release journal read and prevents cleanup after shutdown", async () => {
+  const f = fixture();
+  manager = await GatewayCloudRelayManagement.open(f.options);
+  const pending = await pendingRelease(Date.now() - 31 * 86400_000);
+  let entered!: () => void, finish!: () => void;
+  const reading = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const gate = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  const original = privateCredentials.readPrivateJson;
+  const read = vi.spyOn(privateCredentials, "readPrivateJson").mockImplementation(async (path) => {
+    if (path === pending.file) {
+      entered();
+      await gate;
+    }
+    return original(path);
+  });
+  let closing: Promise<void> | undefined;
+  let release: Promise<void> | undefined;
+  try {
+    manager.start();
+    await reading;
+    release = (manager as unknown as { releasing?: Promise<void> }).releasing;
+    let closed = false;
+    closing = manager.close().then(() => {
+      closed = true;
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(closed).toBe(false);
+    finish();
+    await closing;
+    expect(await readFile(pending.file, "utf8")).toBe(pending.bytes);
+    expect(await readFile(pending.sessionFile, "utf8")).toBe("{}");
+    expect(f.register).not.toHaveBeenCalled();
+    const calls = read.mock.calls.length;
+    manager.start();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(read).toHaveBeenCalledTimes(calls);
+    await rm(directory, { recursive: true });
+  } finally {
+    finish();
+    await release;
+    await closing;
+  }
+});
+
+test("close aborts a held remote release and waits for its owned completion", async () => {
+  let entered!: () => void, finish!: () => void;
+  const registered = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const drain = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  let signal: AbortSignal | undefined;
+  const register = vi.fn<NonNullable<CloudRelayManagerOptions["register"]>>(async (options) => {
+    signal = options.signal;
+    entered();
+    await drain;
+    signal?.throwIfAborted();
+    throw new Error("Invented release was not acknowledged");
+  });
+  const f = fixture({ register });
+  manager = await GatewayCloudRelayManagement.open(f.options);
+  const pending = await pendingRelease();
+  let closing: Promise<void> | undefined;
+  let release: Promise<void> | undefined;
+  try {
+    manager.start();
+    release = (manager as unknown as { releasing?: Promise<void> }).releasing;
+    await Promise.race([
+      registered,
+      release!.then(() => {
+        throw new Error("Release completed before registration began");
+      }),
+    ]);
+    let closed = false;
+    closing = manager.close().then(() => {
+      closed = true;
+    });
+    expect(signal?.aborted).toBe(true);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(closed).toBe(false);
+    finish();
+    await closing;
+    expect(await readFile(pending.file, "utf8")).toBe(pending.bytes);
+    expect(await readFile(pending.sessionFile, "utf8")).toBe("{}");
+    expect(register).toHaveBeenCalledOnce();
+  } finally {
+    finish();
+    await release;
+    await closing;
+  }
+});
+test.each(["EACCES", "EPRIVATE", "malformed"])(
+  "pending-release journal %s failure preserves the barrier to another registration",
+  async (failure) => {
+    const f = fixture();
+    manager = await GatewayCloudRelayManagement.open(f.options);
+    await manager.configure(input);
+    const releaseFile = join(directory, "cloud-relay", "release.json");
+    const pending =
+      failure === "malformed"
+        ? '{"version":1}'
+        : JSON.stringify({
+            version: 1,
+            relayUrl: "https://relay.example.test",
+            gatewayId: "22222222-2222-4222-8222-222222222222",
+            publicOrigin: "https://gateway.example.test",
+            sessionFile: join(directory, "cloud-relay", "session.json"),
+            ownerKeyFile: join(directory, "cloud-relay", "owner.key"),
+            certificateFile: join(directory, "cloud-relay", "public.pem"),
+            privateKeyFile: join(directory, "cloud-relay", "public.key"),
+            createdAt: Date.now(),
+          });
+    await core.atomicWriteFile(releaseFile, pending, { mode: 0o600 });
+    const read = privateCredentials.readPrivateJson;
+    if (failure !== "malformed") {
+      vi.spyOn(privateCredentials, "readPrivateJson").mockImplementation(async (path) => {
+        if (path === releaseFile)
+          throw Object.assign(new Error("Invented release journal refusal"), { code: failure });
+        return read(path);
+      });
+    }
+    // start() also reads the journal in a background task: refusal must be handled there.
+    manager.start();
+    await expect(manager.enable()).rejects.toMatchObject({ code: "relay-unreachable" });
+    expect(await readFile(releaseFile, "utf8")).toBe(pending);
+    expect(f.register).not.toHaveBeenCalled();
+    expect(await manager.status()).toMatchObject({ enabled: false });
+  },
+);
 test("unconfigured status and close create no files, network, owner keys or background jobs", async () => {
   const f = fixture();
   manager = await GatewayCloudRelayManagement.open(f.options);
@@ -350,8 +528,18 @@ test("disable aborts in-flight enrollment and no tunnel or renewal starts after 
   expect((await manager.status()).enabled).toBe(false);
 });
 test("malformed private configuration fails closed rather than minting another identity", async () => {
+  const f = fixture();
   await writeFile(join(directory, "cloud-relay"), "invalid");
-  await expect(GatewayCloudRelayManagement.open(fixture().options)).rejects.toThrow();
+  await expect(
+    GatewayCloudRelayManagement.open(f.options).then((opened) => {
+      manager = opened;
+      return opened;
+    }),
+  ).rejects.toThrow();
+  expect(f.prepare).not.toHaveBeenCalled();
+  expect(f.register).not.toHaveBeenCalled();
+  expect(await readFile(join(directory, "cloud-relay"), "utf8")).toBe("invalid");
+  expect(await readdir(directory)).toEqual(["cloud-relay"]);
 });
 test("existing environment gateway identity is adopted without preparing a second owner or changing TLS paths", async () => {
   const tls = tlsFiles(directory),
@@ -498,9 +686,13 @@ test("Google delegate remains independently optional and never bypasses configur
     }),
   ).rejects.toMatchObject({ code: "google-unavailable" });
   // Google configuration is not needed to remove a previously established directory alias.
-  const transport = vi.fn<typeof fetch>(async () => new Response(null, { status: 204 }));
-  vi.stubGlobal("fetch", transport);
+  const transport = vi.mocked(f.options.fetch);
+  transport.mockClear();
+  transport.mockImplementation(async () => new Response(null, { status: 204 }));
   await manager.googleUnlink();
+  expect(transport.mock.calls.map(([url]) => String(url))).toEqual([
+    "https://relay.example.test/_relay/v2/key/google-link",
+  ]);
   expect((await manager.status()).enabled).toBe(true);
 });
 test("disabled restart restores the existing hostname-specific context without renewal, and wrong-host material fails closed", async () => {
@@ -605,6 +797,64 @@ test("an address that was not reachable at the first check is checked again shor
   expect(probe).toHaveBeenCalledTimes(3);
   // Only the address was looked at again: the gateway did not register a second time.
   expect(f.register).toHaveBeenCalledTimes(registrations);
+});
+/**
+ * A tunnel the relay accepts only when the test says so. The relay drops a public connection for a
+ * gateway whose tunnel is not online, so the probe answers from the tunnel's state.
+ */
+function heldTunnel() {
+  let state: "connecting" | "online" = "connecting";
+  const waiting: Array<() => void> = [];
+  const tunnel = {
+    stop: vi.fn(),
+    close: async () => {},
+    cleanupFailure: () => undefined,
+    status: () => ({ state }),
+    online: vi.fn(
+      (signal: AbortSignal) =>
+        new Promise<void>((resolve, reject) => {
+          if (state === "online") return resolve();
+          waiting.push(resolve);
+          signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+        }),
+    ),
+  };
+  return {
+    startTunnel: vi.fn(() => tunnel) as unknown as CloudRelayManagerOptions["startTunnel"],
+    tunnel,
+    probe: vi.fn(async () => state === "online"),
+    goOnline() {
+      state = "online";
+      for (const resolve of waiting.splice(0)) resolve();
+    },
+  };
+}
+test("the public address is looked at once the tunnel is online, not before", async () => {
+  const held = heldTunnel();
+  // No recheck comes to the rescue: only the first look can make the address ready.
+  const f = fixture({ startTunnel: held.startTunnel, probe: held.probe, probeRetryMs: 3600_000 });
+  manager = await GatewayCloudRelayManagement.open(f.options);
+  await manager.configure(input);
+  await manager.enable();
+  // The launch has reached its look at the address: it is waiting for the tunnel, or has probed.
+  await vi.waitFor(() =>
+    expect(held.tunnel.online.mock.calls.length + held.probe.mock.calls.length).toBeGreaterThan(0),
+  );
+  held.goOnline();
+  await vi.waitFor(async () => expect((await manager!.status()).publicMcp.ready).toBe(true));
+  expect(held.probe).toHaveBeenCalledOnce();
+});
+test("a tunnel that does not come online delays the first look by one recheck interval at most", async () => {
+  const held = heldTunnel();
+  const f = fixture({ startTunnel: held.startTunnel, probe: held.probe, probeRetryMs: 1 });
+  manager = await GatewayCloudRelayManagement.open(f.options);
+  await manager.configure(input);
+  await manager.enable();
+  await vi.waitFor(() => expect(held.probe).toHaveBeenCalledTimes(21));
+  expect((await manager.status()).publicMcp).toMatchObject({
+    ready: false,
+    lastError: "public-endpoint-unreachable",
+  });
 });
 test("rechecks of an unreachable address stop after a while and leave it to the hourly refresh", async () => {
   const probe = vi.fn(async () => false);
@@ -811,24 +1061,35 @@ test("portal cannot select the relay and rejection happens before discovery or o
   );
 });
 test("new setup uses distribution default without a request URL and restart preserves the selected installation", async () => {
-  const f = fixture({ env: {} });
+  // The distribution's relay brings the official DNS broker, answered here by one in memory.
+  const broker = await brokerHarness({
+    origin: "https://dns.omnesis.app",
+    relayDomain: "relay.omnesis.app",
+    fallback: offline,
+  });
+  const f = fixture({ env: {}, fetch: broker.fetch });
   manager = await GatewayCloudRelayManagement.open(f.options);
   expect(await manager.status()).toMatchObject({
     serviceConfigured: true,
     config: { relayUrl: "https://relay.omnesis.app" },
   });
-  await manager.configure({ termsAccepted: true });
+  const { gatewayId } = await manager.configure({ termsAccepted: true });
   expect(f.discover).toHaveBeenCalledWith(
     "https://relay.omnesis.app",
-    expect.any(String),
+    gatewayId,
     expect.any(AbortSignal),
     f.options.fetch,
   );
+  const name = `name:${hostedGatewayHostname(gatewayId!, "relay.omnesis.app")}`;
+  expect(broker.calls).toEqual(["/_dns/v2/health", "/_dns/v2/challenge", "/_dns/v2/complete"]);
+  expect(broker.store.values.get(name)).toMatchObject({ gatewayId });
   await manager.close();
   manager = await GatewayCloudRelayManagement.open(f.options);
-  expect((await manager.configure({ termsAccepted: true })).config.relayUrl).toBe(
-    "https://relay.omnesis.app",
-  );
+  const restarted = await manager.configure({ termsAccepted: true });
+  expect(restarted.config.relayUrl).toBe("https://relay.omnesis.app");
+  expect(restarted.gatewayId).toBe(gatewayId);
+  // The restarted gateway claims its name again, which the broker already binds to it.
+  expect([...broker.store.values.keys()].filter((key) => key.startsWith("name:"))).toEqual([name]);
 });
 test("invalid operator service disables configuration with an actionable static failure", async () => {
   const f = fixture({ env: { OMNESIS_CLOUD_RELAY_URL: "invalid" } });
@@ -919,6 +1180,7 @@ test("manager exposes only optional local recovery receipt health without keys, 
 
 test("optional certificate observer starts after configuration readiness and shutdown drains cloud work even if observer close refuses", async () => {
   const observer = {
+    cleanupFailure: () => undefined,
     start: vi.fn(),
     status: vi.fn(() => ({
       enabled: true,
@@ -947,9 +1209,18 @@ test("optional certificate observer starts after configuration readiness and shu
   const stopped = f.stop.mock.calls.length,
     closed = f.close.mock.calls.length;
   observer.close.mockRejectedValueOnce(new CloudRelayManagementFailure(503, "relay-unreachable"));
-  await expect(manager.close()).rejects.toMatchObject({ code: "relay-unreachable" });
-  expect(f.stop).toHaveBeenCalledTimes(stopped + 1);
-  expect(f.close).toHaveBeenCalledTimes(closed + 1);
+  const closing = manager.close();
+  try {
+    expect(manager.close()).toBe(closing);
+    await expect(closing).rejects.toMatchObject({ code: "relay-unreachable" });
+    expect(f.stop).toHaveBeenCalledTimes(stopped + 1);
+    expect(f.close).toHaveBeenCalledTimes(closed + 1);
+  } finally {
+    // Only the joined ordinary refusal releases the fixture. Any unconfirmed native
+    // work must still prevent the suite teardown from deleting its files.
+    if (core.ownedProcessCleanupReceipt(manager.cleanupFailure()) === undefined)
+      manager = undefined;
+  }
 });
 
 test("opted-in default observer sends nothing before setup or local public-key readiness, then initializes independently without portal polling", async () => {
@@ -1312,6 +1583,7 @@ test("account linking is offered only while the optional service is ready and th
   vi.mocked(f.options.controller!).mockImplementationOnce(async () => {
     await held;
     return {
+      cleanupFailure: () => undefined,
       close: f.close,
       renew: f.renew,
       fingerprintSha256: () => "b".repeat(64),
@@ -1421,8 +1693,8 @@ test(
       GatewayAccountLink["passkeyConfirmation"]
     >;
     const options = vi
-      .spyOn(GatewayAccountLink.prototype, "passkeyConfirmation")
-      .mockReturnValue(ceremony);
+      .spyOn(GatewayAccountLink.prototype, "passkeyConfirmationOptions")
+      .mockResolvedValue(ceremony);
     const confirm = vi.spyOn(GatewayAccountLink.prototype, "confirmPasskey").mockResolvedValue();
     expect(await manager.passkeyConfirmation()).toBe(ceremony);
     const confirmed = await manager.confirmPasskey({ type: "gateway-passkey" });
@@ -1635,12 +1907,12 @@ test("connecting again after a registration that failed registers the gateway ag
 });
 
 /** What the manager handed the tunnel to call when the relay says it no longer has this gateway. */
-function relayForgot(f: ReturnType<typeof fixture>): () => void {
+function relayForgot(f: ReturnType<typeof fixture>): (removed?: boolean) => void {
   const start = f.options.startTunnel as unknown as { mock: { calls: unknown[][] } };
-  return start.mock.calls.at(-1)![2] as () => void;
+  return start.mock.calls.at(-1)![2] as (removed?: boolean) => void;
 }
-async function forgotten() {
-  await vi.waitFor(async () => expect((await manager!.status()).notice).toBe("account-deleted"), {
+async function forgotten(notice: "account-deleted" | "gateway-removed" = "account-deleted") {
+  await vi.waitFor(async () => expect((await manager!.status()).notice).toBe(notice), {
     timeout: 10_000,
   });
   return manager!.status();
@@ -1773,6 +2045,48 @@ test(
     });
   },
 );
+test("a gateway unlinked on its account page leaves its account the same way, and says it was unlinked", async () => {
+  const f = await connectedGateway({ probeRetryMs: 1 });
+  // Found by its next registration, such as when it starts again after being offline.
+  f.register.mockRejectedValueOnce(new GatewayUnregistered(true));
+  await manager!.reconnect();
+  const after = await forgotten("gateway-removed");
+  expect(after).toMatchObject(disconnected);
+  expect(after.connect).toBeUndefined();
+  expect(manager!.verifiedAccountId()).toBeUndefined();
+  expect(manager!.isExposing()).toBe(false);
+  expect((await readdir(f.relayDirectory)).sort()).toEqual(RETAINED);
+  // Nothing is tried again.
+  const registrations = f.register.mock.calls.length;
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  expect(f.register).toHaveBeenCalledTimes(registrations);
+  // Its owner connects it again from scratch, and the notice goes.
+  f.relay.poll({ status: "approved" });
+  expect(await manager!.connect({ termsAccepted: true })).not.toHaveProperty("notice");
+  expect(await settled("done")).toMatchObject({ enabled: true, account: { linked: true } });
+});
+test("a running gateway's tunnel learning it was unlinked on its account page leaves the account at once", async () => {
+  const f = await connectedGateway();
+  relayForgot(f)(true);
+  expect(await forgotten("gateway-removed")).toMatchObject(disconnected);
+  expect(f.stop).toHaveBeenCalledOnce();
+});
+test("an answer that says the gateway was unlinked wins over one that could not say why, while leaving", async () => {
+  const f = await connectedGateway();
+  relayForgot(f)(false);
+  relayForgot(f)(true);
+  expect(await forgotten("gateway-removed")).toMatchObject(disconnected);
+});
+test("an answer that says the gateway was unlinked wins over one that could not say why, after leaving", async () => {
+  const g = await connectedGateway();
+  relayForgot(g)(false);
+  await forgotten("account-deleted");
+  relayForgot(g)(true);
+  expect((await manager!.status()).notice).toBe("gateway-removed");
+  // And never the other way round.
+  relayForgot(g)(false);
+  expect((await manager!.status()).notice).toBe("gateway-removed");
+});
 test("the tunnel learning that the relay forgot the gateway ends a connection under way, once", async () => {
   const f = await connecting();
   manager = await GatewayCloudRelayManagement.open(f.options);
@@ -1925,10 +2239,11 @@ test("a disconnected gateway the relay never drops is given up after a month, an
   manager = await GatewayCloudRelayManagement.open(forgetful.options);
   manager.start();
   await gone();
-  // A record that cannot be read cannot be acted on, and does not hold the gateway back.
+  // Unknown release state cannot authorize another registration.
   await writeFile(file, "{");
   manager.start();
-  await gone();
+  await manager.close();
+  expect(await readFile(file, "utf8")).toBe("{");
 });
 test("a gateway named by its environment leaves the same way, with the operator's certificate untouched", async () => {
   const tls = tlsFiles(directory),
@@ -2103,4 +2418,705 @@ test("by default the gateway asks its relay's public signup path through its own
   await manager.refreshSignupAccess();
   expect(fetch).toHaveBeenCalledTimes(1);
   expect((await manager.status()).signup).toEqual({ inviteOnly: true, requestAccessUrl });
+});
+
+test("a delivered release retry cannot restart work during or after close", async () => {
+  let retry: (() => void) | undefined;
+  const schedule = globalThis.setTimeout;
+  vi.spyOn(globalThis, "setTimeout").mockImplementation((callback, delay, ...args) => {
+    if (delay === 60_001) retry = () => callback(...args);
+    return schedule(callback, delay, ...args);
+  });
+  let entered!: () => void, finish!: () => void;
+  const active = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const held = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  const register = vi
+    .fn<NonNullable<CloudRelayManagerOptions["register"]>>()
+    .mockRejectedValueOnce(new Error("Invented temporary relay refusal"))
+    .mockImplementationOnce(async (options) => {
+      entered();
+      await held;
+      options.signal?.throwIfAborted();
+      throw new Error("Invented joined interrupted release");
+    });
+  const f = fixture({ register, releaseRetryMs: 60_001 });
+  manager = await GatewayCloudRelayManagement.open(f.options);
+  const pending = await pendingRelease();
+  const read = vi.spyOn(privateCredentials, "readPrivateJson");
+  let closing: Promise<void> | undefined;
+  try {
+    manager.start();
+    await vi.waitFor(() => expect(retry).toBeTypeOf("function"));
+    retry!();
+    await active;
+    closing = manager.close();
+    const reads = read.mock.calls.length;
+    retry!();
+    expect(read).toHaveBeenCalledTimes(reads);
+    expect(register).toHaveBeenCalledTimes(2);
+    finish();
+    await closing;
+    retry!();
+    await Promise.resolve();
+    expect(read).toHaveBeenCalledTimes(reads);
+    expect(register).toHaveBeenCalledTimes(2);
+    expect(await readFile(pending.file, "utf8")).toBe(pending.bytes);
+    expect(await readFile(pending.sessionFile, "utf8")).toBe("{}");
+  } finally {
+    finish();
+    await closing;
+  }
+});
+
+test.each(["own", "cause"] as const)(
+  "marked management absence cannot adopt enabled legacy configuration (%s)",
+  async (placement) => {
+    const tls = tlsFiles(directory),
+      failure = markedFileError("ENOENT", placement);
+    const f = fixture({
+      env: {
+        OMNESIS_CLOUD_RELAY_URL: "https://relay.example.test",
+        OMNESIS_CLOUD_RELAY_GATEWAY_ID: "00000000-0000-4000-8000-000000000001",
+        OMNESIS_PUBLIC_BASE_URL: "https://gateway.example.test",
+        OMNESIS_TLS_CERT: tls.certFile,
+        OMNESIS_TLS_KEY: tls.keyFile,
+        OMNESIS_CLOUD_RELAY_SESSION_FILE: join(directory, "legacy-session"),
+      },
+    });
+    const original = privateCredentials.readPrivateJson;
+    vi.spyOn(privateCredentials, "readPrivateJson").mockImplementation((path) =>
+      path === join(directory, "cloud-relay", "management.json")
+        ? Promise.reject(failure)
+        : original(path),
+    );
+    await expect(
+      (async () => {
+        manager = await GatewayCloudRelayManagement.open(f.options);
+        return manager.hasSavedConfiguration();
+      })(),
+    ).rejects.toBe(failure);
+    expect(f.options.startTunnel).not.toHaveBeenCalled();
+    expect(f.register).not.toHaveBeenCalled();
+  },
+);
+
+test.each(["own", "cause"] as const)(
+  "marked account metadata absence cannot select the legacy Google authority (%s)",
+  async (placement) => {
+    const tls = tlsFiles(directory),
+      failure = markedFileError("ENOENT", placement);
+    const f = fixture({
+      env: {
+        OMNESIS_CLOUD_RELAY_URL: "https://relay.example.test",
+        OMNESIS_CLOUD_RELAY_GATEWAY_ID: "00000000-0000-4000-8000-000000000001",
+        OMNESIS_PUBLIC_BASE_URL: "https://gateway.example.test",
+        OMNESIS_TLS_CERT: tls.certFile,
+        OMNESIS_TLS_KEY: tls.keyFile,
+        OMNESIS_CLOUD_RELAY_SESSION_FILE: join(directory, "legacy-session"),
+      },
+    });
+    const original = privateCredentials.readPrivateJson;
+    vi.spyOn(privateCredentials, "readPrivateJson").mockImplementation((path) =>
+      path === join(directory, "cloud-relay", "account-link.json")
+        ? Promise.reject(failure)
+        : original(path),
+    );
+    const google = vi.spyOn(GatewayGoogleWeb.prototype, "start").mockResolvedValue({
+      authorizeUrl: "https://accounts.example.test/start",
+      cookie: "invented-cookie",
+    });
+    await expect(
+      (async () => {
+        manager = await GatewayCloudRelayManagement.open(f.options);
+        return manager.googleLink({ requestOrigin: "https://gateway.example.test" });
+      })(),
+    ).rejects.toBe(failure);
+    expect(google).not.toHaveBeenCalled();
+  },
+);
+
+function brokerEnvironment(origin: string) {
+  return {
+    OMNESIS_CLOUD_RELAY_URL: "https://relay.example.test",
+    OMNESIS_ACME_DNS_PROVIDER: "broker",
+    OMNESIS_ACME_DNS_BROKER_URL: origin,
+  };
+}
+const hostedDiscovery = async (_url: string, gatewayId: string) => ({
+  protocol: 2 as const,
+  gatewayId,
+  publicOrigin: `https://${hostedGatewayHostname(gatewayId, "relay.example.test")}`,
+  invitationRequired: false,
+  dnsChallenges: true,
+});
+
+test("F3: a relay that knows a gateway's id cannot claim its name at the broker before the gateway does", async () => {
+  const harness = await brokerHarness({
+    fallback: async () => new Response(null, { status: 404 }),
+  });
+  const f = fixture({ env: brokerEnvironment(harness.origin), fetch: harness.fetch });
+  const races: unknown[] = [];
+  f.discover.mockImplementation(async (url, gatewayId) => {
+    // The relay learns the id here, and at once tries to take the name with a key of its own.
+    races.push(
+      await brokerCall(
+        (request) => harness.broker.handle(request),
+        brokerOwner("relay.example.test", gatewayId),
+        { type: "claim" },
+      ),
+    );
+    return hostedDiscovery(url, gatewayId);
+  });
+  manager = await GatewayCloudRelayManagement.open(f.options);
+  const status = await manager.configure(input);
+  expect(races).toEqual([{ status: 409, body: { error: "name-taken" } }]);
+  const owner = await readOrCreateGatewayOwnerKey(
+    join(directory, "cloud-relay", "owner.key"),
+    false,
+  );
+  const { createPublicKey } = await import("node:crypto");
+  expect(
+    harness.store.values.get(
+      `name:${hostedGatewayHostname(status.gatewayId!, "relay.example.test")}`,
+    ),
+  ).toMatchObject({
+    gatewayId: status.gatewayId,
+    ownerPublicKey: createPublicKey(owner)
+      .export({ type: "spki", format: "der" })
+      .toString("base64url"),
+  });
+});
+
+test("a name the broker binds to another key costs a new gateway a redraw, and a saved one its configure", async () => {
+  const harness = await brokerHarness({
+    fallback: async () => new Response(null, { status: 404 }),
+  });
+  let taken = 2;
+  const transport = vi.fn<typeof fetch>(async (input, init) =>
+    String(input).endsWith("/_dns/v2/complete") && taken-- > 0
+      ? new Response(JSON.stringify({ error: "name-taken" }), { status: 409 })
+      : harness.fetch(input, init),
+  );
+  const f = fixture({ env: brokerEnvironment(harness.origin), fetch: transport });
+  f.discover.mockImplementation(hostedDiscovery);
+  manager = await GatewayCloudRelayManagement.open(f.options);
+  const status = await manager.configure(input);
+  const claims = [...harness.store.values.keys()].filter((key) => key.startsWith("name:"));
+  expect(claims).toEqual([
+    `name:${hostedGatewayHostname(status.gatewayId!, "relay.example.test")}`,
+  ]);
+  expect(f.discover).toHaveBeenCalledExactlyOnceWith(
+    expect.anything(),
+    status.gatewayId,
+    expect.anything(),
+    expect.anything(),
+  );
+  taken = 1;
+  await expect(manager.configure(input)).rejects.toMatchObject({ code: "relay-unreachable" });
+  taken = 5;
+  await manager.close();
+  await rm(join(directory, "cloud-relay"), { recursive: true, force: true });
+  manager = await GatewayCloudRelayManagement.open(f.options);
+  f.discover.mockClear();
+  await expect(manager.configure(input)).rejects.toMatchObject({ code: "relay-unreachable" });
+  expect(f.discover).not.toHaveBeenCalled();
+});
+
+test("new official setup fails closed without disclosing its gateway id when the broker is unavailable", async () => {
+  for (const reply of [undefined, { protocol: "unexpected-broker" }]) {
+    const transport = vi.fn<typeof fetch>(async () => {
+      if (!reply) throw new TypeError("fetch failed");
+      return Response.json(reply);
+    });
+    const f = fixture({ env: {}, fetch: transport });
+    manager = await GatewayCloudRelayManagement.open(f.options);
+    await expect(
+      manager.configure({ relayUrl: "https://relay.omnesis.app", termsAccepted: true }),
+    ).rejects.toMatchObject({ code: "relay-unreachable" });
+    expect(transport.mock.calls.map(([url]) => String(url))).toEqual([
+      "https://dns.omnesis.app/_dns/v2/health",
+    ]);
+    expect(f.discover).not.toHaveBeenCalled();
+    expect(f.prepare).not.toHaveBeenCalled();
+    expect(manager.hasSavedConfiguration()).toBe(false);
+    await manager.close();
+    manager = undefined;
+  }
+});
+
+test("a broker the operator requires must answer, and a custom domain never asks it", async () => {
+  const harness = await brokerHarness({
+    fallback: async () => new Response(null, { status: 404 }),
+  });
+  const down = fixture({
+    env: brokerEnvironment(harness.origin),
+    fetch: async () => new Response(null, { status: 503 }),
+  });
+  manager = await GatewayCloudRelayManagement.open(down.options);
+  await expect(manager.configure(input)).rejects.toMatchObject({ code: "relay-unreachable" });
+  expect(down.discover).not.toHaveBeenCalled();
+  await manager.close();
+  const custom = fixture({ env: brokerEnvironment(harness.origin), fetch: harness.fetch });
+  manager = await GatewayCloudRelayManagement.open(custom.options);
+  await manager.configure({ ...input, publicOrigin: "https://gateway.example.test" });
+  expect(harness.calls).toEqual([]);
+  await manager.close();
+  const unset = fixture({
+    env: { ...brokerEnvironment(harness.origin), OMNESIS_ACME_DNS_BROKER_URL: undefined },
+  });
+  manager = await GatewayCloudRelayManagement.open(unset.options);
+  await expect(manager.configure(input)).rejects.toMatchObject({ code: "configuration-invalid" });
+});
+
+test("CAA drift raises the incident hold, which the owner acknowledges on the gateway", async () => {
+  const account = "https://acme-v02.api.letsencrypt.org/acme/acct/42";
+  let issue = [`letsencrypt.org; validationmethods=dns-01; accounturi=${account}`];
+  const held = vi.fn();
+  const f = fixture({
+    env: {
+      OMNESIS_CLOUD_RELAY_URL: "https://relay.example.test",
+      OMNESIS_CLOUD_RELAY_CERTIFICATE_MONITOR_ENABLED: "1",
+    },
+    caaLookup: async () => issue,
+    onIncidentHold: held,
+  });
+  f.options.controller = vi.fn(async () => ({
+    cleanupFailure: () => undefined,
+    close: f.close,
+    renew: f.renew,
+    fingerprintSha256: () => "b".repeat(64),
+    spkiFingerprintSha256: () => "c".repeat(64),
+    expectedCaa: async () => account,
+  }));
+  // Certificate transparency, the monitor's other side, lists no issuance.
+  vi.stubGlobal(
+    "fetch",
+    vi.fn<typeof fetch>(async () => Response.json([])),
+  );
+  manager = await GatewayCloudRelayManagement.open(f.options);
+  const monitor = (manager as unknown as { monitor: { checkCaa(): Promise<void> } }).monitor;
+  // Before the gateway publishes anything, there is nothing to drift from.
+  await monitor.checkCaa();
+  await manager.configure(input);
+  await manager.enable();
+  await idle();
+  await monitor.checkCaa();
+  expect((await manager.status()).incidentHold).toBeUndefined();
+  // Someone with write access to the zone points the name at another ACME account.
+  issue = ["letsencrypt.org; accounturi=https://acme-v02.api.letsencrypt.org/acme/acct/666"];
+  await monitor.checkCaa();
+  expect((await manager.status()).incidentHold).toMatchObject({
+    certificates: [expect.stringMatching(/^[a-f0-9]{64}$/)],
+  });
+  expect(held).toHaveBeenCalledOnce();
+  await manager.acknowledgeIncidentHold();
+  // The same records don't hold again once acknowledged; different ones do.
+  await monitor.checkCaa();
+  expect((await manager.status()).incidentHold).toBeUndefined();
+  issue = [];
+  await monitor.checkCaa();
+  expect((await manager.status()).incidentHold).toBeDefined();
+  expect(held).toHaveBeenCalledTimes(2);
+});
+
+test("the portal's account refresh reads the account at once, one read at a time, and at most once per interval", async () => {
+  await connectedGateway({ accountRefreshMs: 60_000 });
+  let finish!: () => void;
+  const refresh = vi
+    .spyOn(GatewayAccountLink.prototype, "refresh")
+    .mockImplementation(() => new Promise<void>((resolve) => (finish = resolve)));
+  const before = (await manager!.status()).revision;
+  // Two tabs opening the page together share one read, and both wait for it.
+  const first = manager!.refreshAccount(),
+    second = manager!.refreshAccount();
+  await vi.waitFor(() => expect(refresh).toHaveBeenCalledOnce());
+  finish();
+  const [a, b] = await Promise.all([first, second]);
+  expect(a.revision).toBeGreaterThan(before);
+  expect(b.revision).toBe(a.revision);
+  expect(a.account?.linked).toBe(true);
+  // Inside the interval the page gets the status it has, and the relay is not asked again.
+  for (let i = 0; i < 5; i++) await manager!.refreshAccount();
+  expect(refresh).toHaveBeenCalledOnce();
+  // The read is the periodic check-in's own, bounded by a signal that ends when the gateway does.
+  const signal = refresh.mock.calls[0]![0]!;
+  expect(signal).toBeInstanceOf(AbortSignal);
+  expect(signal.aborted).toBe(false);
+});
+test("a refresh asked for inside the interval reads once more when it ends, and closing cancels that", async () => {
+  await connectedGateway({ accountRefreshMs: 500 });
+  const refresh = vi.spyOn(GatewayAccountLink.prototype, "refresh").mockResolvedValue();
+  await manager!.refreshAccount();
+  expect(refresh).toHaveBeenCalledOnce();
+  // Back from the relay's account page soon after opening this one: still noticed.
+  await manager!.refreshAccount();
+  await manager!.refreshAccount();
+  expect(refresh).toHaveBeenCalledOnce();
+  await vi.waitFor(() => expect(refresh).toHaveBeenCalledTimes(2), { timeout: 2000 });
+  // Only one read was queued, however many calls asked for it.
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  expect(refresh).toHaveBeenCalledTimes(2);
+  // A read queued when the gateway shuts down never runs.
+  await manager!.refreshAccount();
+  await manager!.close();
+  manager = undefined;
+  await new Promise((resolve) => setTimeout(resolve, 700));
+  expect(refresh).toHaveBeenCalledTimes(2);
+});
+test("closing aborts an accepted account refresh and waits for its completion", async () => {
+  await connectedGateway();
+  let finish!: () => void;
+  const refresh = vi
+    .spyOn(GatewayAccountLink.prototype, "refresh")
+    .mockImplementation(() => new Promise<void>((resolve) => (finish = resolve)));
+  const reading = manager!.refreshAccount().then(
+    () => undefined,
+    (error: unknown) => error,
+  );
+  await vi.waitFor(() => expect(refresh).toHaveBeenCalledOnce());
+  let closed = false;
+  const closing = manager!.close().then(() => {
+    closed = true;
+  });
+  let result: unknown;
+  try {
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(refresh.mock.calls[0]![0]!.aborted).toBe(true);
+    expect(closed).toBe(false);
+  } finally {
+    finish();
+    [result] = await Promise.all([reading, closing]);
+  }
+  // The accepted work is drained, but shutdown refuses its subsequent status read.
+  expect(result).toMatchObject({ status: 409, code: "configuration-invalid" });
+});
+
+test("a queued account refresh retains cleanup uncertainty and closes admission", async () => {
+  await connectedGateway({ accountRefreshMs: 100 });
+  const now = Date.now();
+  const clock = vi.spyOn(Date, "now").mockReturnValue(now);
+  // This synthetic receipt owns no actual native operation.
+  const failure = Object.assign(new Error("invented account cleanup failure"), {
+    cleanupFailure: undefined,
+  });
+  const refresh = vi
+    .spyOn(GatewayAccountLink.prototype, "refresh")
+    .mockResolvedValueOnce()
+    .mockRejectedValueOnce(failure);
+  await manager!.refreshAccount();
+  await manager!.refreshAccount();
+  clock.mockReturnValue(now + 100);
+  await vi.waitFor(() => expect(manager!.cleanupFailure()).toBe(failure), { timeout: 3_000 });
+  expect(refresh).toHaveBeenCalledTimes(2);
+  await expect(manager!.refreshAccount()).rejects.toBe(failure);
+  await expect(manager!.close()).rejects.toSatisfy(
+    (error: unknown) => core.ownedProcessCleanupReceipt(error)?.pending === false,
+  );
+  manager = undefined;
+});
+
+test("an account refresh on a gateway with no linked account asks the relay nothing", async () => {
+  const refresh = vi.spyOn(GatewayAccountLink.prototype, "refresh");
+  const f = fixture();
+  manager = await GatewayCloudRelayManagement.open(f.options);
+  expect(await manager.refreshAccount()).toMatchObject({ enabled: false });
+  await manager.configure(input);
+  await manager.enable();
+  await idle();
+  refresh.mockClear();
+  expect((await manager.refreshAccount()).account?.linked).not.toBe(true);
+  expect(refresh).not.toHaveBeenCalled();
+  expect(f.options.fetch).not.toHaveBeenCalledWith(
+    expect.stringContaining("/_relay/v3/account-browser"),
+    expect.anything(),
+  );
+});
+test("by default the portal's account refresh reads at most once every fifteen seconds", async () => {
+  await connectedGateway();
+  const refresh = vi.spyOn(GatewayAccountLink.prototype, "refresh").mockResolvedValue();
+  const now = Date.now();
+  const clock = vi.spyOn(Date, "now").mockReturnValue(now);
+  await manager!.refreshAccount();
+  clock.mockReturnValue(now + 14_000);
+  await manager!.refreshAccount();
+  expect(refresh).toHaveBeenCalledOnce();
+  clock.mockReturnValue(now + 15_000);
+  await manager!.refreshAccount();
+  expect(refresh).toHaveBeenCalledTimes(2);
+});
+
+async function connectingWithDnsCheck() {
+  const relay = fakeSignupRelay();
+  const broker = await brokerHarness({ fallback: relay.fetch });
+  const verification = {
+    url: `${broker.origin}/_dns/v2/enroll?ticket=fictional`,
+    expiresAt: Date.now() + 60_000,
+  };
+  let verified = false;
+  let refusal: { status: number; code: string } | undefined;
+  const claims: { gatewayId: string; ownerPublicKey: string }[] = [];
+  let hold: (() => Promise<void>) | undefined;
+  const f = await connecting(relay, {
+    env: {
+      OMNESIS_CLOUD_RELAY_ENABLED: "1",
+      OMNESIS_CLOUD_RELAY_URL: "https://relay.example.test",
+      OMNESIS_ACME_DNS_PROVIDER: "broker",
+      OMNESIS_ACME_DNS_BROKER_URL: broker.origin,
+    },
+    fetch: async (input, init) => {
+      if (String(input) === `${broker.origin}/_dns/v2/challenge`) {
+        claims.push(JSON.parse(String(init?.body)));
+        const pending = hold;
+        hold = undefined;
+        await pending?.();
+        if (refusal) return Response.json({ error: refusal.code }, { status: refusal.status });
+        if (!verified)
+          return Response.json(
+            { error: "browser-verification-required", verification },
+            { status: 428 },
+          );
+      }
+      return broker.fetch(input, init);
+    },
+    discover: vi.fn(async (_url: string, gatewayId: string) => ({
+      protocol: 2 as const,
+      gatewayId,
+      publicOrigin: `https://${hostedGatewayHostname(gatewayId, "relay.example.test")}`,
+      invitationRequired: false,
+      dnsChallenges: true,
+    })),
+  });
+  return {
+    ...f,
+    verification,
+    claims,
+    refuse: (status: number, code: string) => {
+      refusal = { status, code };
+    },
+    verify: () => {
+      verified = true;
+    },
+    holdNext: (value: () => Promise<void>) => {
+      hold = value;
+    },
+  };
+}
+
+test("first cloud connect exposes an independent DNS check without disclosing the gateway id to the relay", async () => {
+  const f = await connectingWithDnsCheck();
+  manager = await GatewayCloudRelayManagement.open(f.options);
+  const waiting = await manager.connect({ termsAccepted: true });
+  expect(waiting.connect).toEqual({ state: "waiting", verification: f.verification });
+  expect(waiting.configured).toBe(false);
+  // A repeated connect during the browser check joins the existing attempt.
+  expect((await manager.connect({ termsAccepted: true })).connect).toEqual(waiting.connect);
+  expect(f.claims).toHaveLength(1);
+  expect(f.options.discover).not.toHaveBeenCalled();
+  expect(f.relay.started()).toBeUndefined();
+  expect(f.claims).toHaveLength(1);
+  f.verify();
+  await vi.waitFor(async () => expect((await manager!.status()).connect?.code).toBe("ABCD-EF23"), {
+    timeout: 5000,
+  });
+  expect((await manager.status()).connect).not.toHaveProperty("verification");
+  expect(f.options.discover).toHaveBeenCalledOnce();
+  expect(
+    f.claims.every(
+      (claim) =>
+        claim.gatewayId === f.claims[0]!.gatewayId &&
+        claim.ownerPublicKey === f.claims[0]!.ownerPublicKey,
+    ),
+  ).toBe(true);
+});
+
+test("cancelling a delayed DNS check joins its setup before a retry and cannot overwrite that retry", async () => {
+  const f = await connectingWithDnsCheck();
+  manager = await GatewayCloudRelayManagement.open(f.options);
+  await manager.connect({ termsAccepted: true });
+  let entered!: () => void;
+  const checking = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  f.holdNext(async () => {
+    entered();
+    await held;
+  });
+  await checking;
+  const cancelling = manager.cancelConnect();
+  release();
+  expect((await cancelling).connect).toBeUndefined();
+  const retry = await manager.connect({ termsAccepted: true });
+  expect(retry.connect).toEqual({ state: "waiting", verification: f.verification });
+  expect(f.relay.started()).toBeUndefined();
+  f.verify();
+  await vi.waitFor(async () => expect((await manager!.status()).connect?.code).toBe("ABCD-EF23"), {
+    timeout: 5000,
+  });
+  expect((await manager.status()).connect?.state).toBe("waiting");
+  expect(f.claims.every((claim) => claim.gatewayId === f.claims[0]!.gatewayId)).toBe(true);
+});
+
+test("advanced configure reports a required browser check and reuses its gateway id after verification", async () => {
+  const f = await connectingWithDnsCheck();
+  manager = await GatewayCloudRelayManagement.open(f.options);
+  await expect(manager.configure({ termsAccepted: true })).rejects.toMatchObject({
+    code: "dns-verification-required",
+  });
+  expect((await manager.status()).connect?.verification).toEqual(f.verification);
+  f.verify();
+  const configured = await manager.configure({ termsAccepted: true });
+  expect(configured.configured).toBe(true);
+  expect(configured.connect).toBeUndefined();
+  expect(f.claims.map((claim) => claim.gatewayId)).toEqual([
+    f.claims[0]!.gatewayId,
+    f.claims[0]!.gatewayId,
+  ]);
+});
+
+for (const [status, code] of [
+  [507, "dns-capacity"],
+  [429, "dns-allocation-rate"],
+  [503, "enrollment-refused"],
+] as const) {
+  test(`a pending DNS check reports ${code} and keeps the gateway private when admission fails`, async () => {
+    const f = await connectingWithDnsCheck();
+    manager = await GatewayCloudRelayManagement.open(f.options);
+    await manager.connect({ termsAccepted: true });
+    f.refuse(status, code);
+    await vi.waitFor(
+      async () =>
+        expect((await manager!.status()).connect).toEqual({ state: "failed", error: code }),
+      { timeout: 5000 },
+    );
+    expect(f.options.discover).not.toHaveBeenCalled();
+    expect(f.relay.started()).toBeUndefined();
+    expect((await manager.status()).configured).toBe(false);
+  });
+}
+
+test("a DNS security check that exceeds the setup lifetime expires without contacting the relay", async () => {
+  const f = await connectingWithDnsCheck();
+  const expired = new AbortController();
+  const timeout = AbortSignal.timeout.bind(AbortSignal);
+  vi.spyOn(AbortSignal, "timeout").mockImplementation((ms) =>
+    ms === 10 * 60_000 ? expired.signal : timeout(ms),
+  );
+  manager = await GatewayCloudRelayManagement.open(f.options);
+  await manager.connect({ termsAccepted: true });
+  expired.abort(new DOMException("Timed out", "TimeoutError"));
+  await vi.waitFor(async () =>
+    expect((await manager!.status()).connect).toEqual({ state: "failed", error: "expired" }),
+  );
+  expect(f.options.discover).not.toHaveBeenCalled();
+  expect((await manager.status()).configured).toBe(false);
+});
+
+for (const [status, code] of [
+  [507, "dns-capacity"],
+  [429, "dns-allocation-rate"],
+] as const) {
+  test(`advanced setup surfaces ${code} before sending a gateway identity to the relay`, async () => {
+    const f = await connectingWithDnsCheck();
+    f.refuse(status, code);
+    manager = await GatewayCloudRelayManagement.open(f.options);
+    await expect(manager.configure({ termsAccepted: true })).rejects.toMatchObject({ code });
+    expect(f.options.discover).not.toHaveBeenCalled();
+    expect((await manager.status()).configured).toBe(false);
+  });
+}
+
+test("disconnecting and reconnecting owns the new setup even when the previous sign-in transport ignores abort", async () => {
+  const relay = fakeSignupRelay();
+  const gate = () => {
+    let resolve!: () => void;
+    const promise = new Promise<void>((done) => {
+      resolve = done;
+    });
+    return { promise, resolve };
+  };
+  const firstRelease = gate(),
+    secondRelease = gate();
+  let starts = 0;
+  const f = await connecting(relay, {
+    fetch: async (input, init) => {
+      if (String(input).endsWith("/signup/start")) {
+        const attempt = ++starts;
+        if (attempt === 1) {
+          await firstRelease.promise;
+        }
+        if (attempt === 2) {
+          await secondRelease.promise;
+        }
+      }
+      return relay.fetch(input, init);
+    },
+  });
+  manager = await GatewayCloudRelayManagement.open(f.options);
+  await manager.configure({ termsAccepted: true });
+  const previous = manager.connect({ termsAccepted: true });
+  try {
+    await vi.waitFor(() => expect(starts).toBe(1));
+    await manager.accountUnlink();
+    const current = manager.connect({ termsAccepted: true });
+    await vi.waitFor(() => expect(starts).toBe(2));
+    firstRelease.resolve();
+    await previous;
+    // The old catch cannot publish a failed/idle state, and its finally cannot clear
+    // the new preparation: another click must still join that same second attempt.
+    expect((await manager.connect({ termsAccepted: true })).connect).toEqual({ state: "waiting" });
+    expect(starts).toBe(2);
+    secondRelease.resolve();
+    expect((await current).connect?.code).toBe("ABCD-EF23");
+    expect(starts).toBe(2);
+  } finally {
+    firstRelease.resolve();
+    secondRelease.resolve();
+  }
+});
+
+test("cancelling and failed sign-in setup drain safely in either microtask order", async () => {
+  // An HTTP failure and a user's cancellation can land in adjacent microtasks.
+  // Vary their ordering without inspecting or replacing the manager's private promises.
+  for (let turns = 0; turns < 25; turns++) {
+    const relay = fakeSignupRelay();
+    let entered!: () => void, reject!: (error: Error) => void;
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const transport = new Promise<never>((_resolve, fail) => {
+      reject = fail;
+    });
+    const f = await connecting(relay, {
+      fetch: async (input, init) => {
+        if (String(input).endsWith("/signup/start")) {
+          entered();
+          return transport;
+        }
+        return relay.fetch(input, init);
+      },
+    });
+    manager = await GatewayCloudRelayManagement.open(f.options);
+    await manager.configure({ termsAccepted: true });
+    const preparing = manager.connect({ termsAccepted: true }).catch(() => undefined);
+    await started;
+    reject(new Error("fixture sign-in service unavailable"));
+    for (let turn = 0; turn < turns; turn++) await Promise.resolve();
+    await manager.cancelConnect();
+    await preparing;
+    expect(
+      (await manager.status()).connect,
+      `cancellation after ${turns} microtasks`,
+    ).toBeUndefined();
+    expect((await manager.status()).configured).toBe(true);
+    await manager.close();
+    manager = undefined;
+  }
 });

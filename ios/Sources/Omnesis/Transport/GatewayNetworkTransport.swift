@@ -104,6 +104,8 @@ protocol GatewayDeadline: AnyObject {
 /// suspended app. `verify` therefore proves the endpoint with a loopback connection.
 final class GatewayRecoveringListener {
     static let probeTimeout: TimeInterval = 2
+    /// How long an opening listener may take to report ready before it is rebuilt.
+    static let readinessTimeout: TimeInterval = 2
     /// Spelled out because app extensions compile this file without the app's `AppLog`.
     private static let log = Logger(subsystem: "dev.omnesis.ios", category: "transport.route")
 
@@ -250,7 +252,7 @@ final class GatewayRecoveringListener {
                 }
                 accepted(connection)
             }
-            deadline(after: 2, lease: lease) { [weak self] in self?.fault() }
+            deadline(after: Self.readinessTimeout, lease: lease) { [weak self] in self?.fault() }
             next.start(queue: queue)
         } catch { fault() }
     }

@@ -46,6 +46,7 @@ const config = {
   accountSignIn: true,
   automaticEnrollment: true,
   gatewaySpkiFingerprint: SPKI,
+  accountPasskey: true,
 };
 const norm = (value: string | null | undefined) => (value ?? "").replace(/\s+/g, " ");
 let host: HTMLElement;
@@ -183,7 +184,7 @@ test("a handed-over sign-in the gateway holds shows the comparison code and poll
     await settle();
     expect(norm(host.textContent)).toContain(code);
   });
-  expect(norm(host.textContent)).toContain("Check that this code matches the one shown on your other device, then approve it there.");
+  expect(norm(host.textContent)).toContain("Approve this browser on a device you already use.");
   await vi.waitFor(() =>
     expect(transport.mock.calls.map(([path]) => path)).toContain("/devices/account/poll"),
   );
@@ -230,7 +231,7 @@ test("a handed-over sign-in that cannot be used fails safely and leaves the norm
     for (const response of failure.responses ?? []) transport.mockResolvedValueOnce(response);
     await show();
     await alerted(failure.message);
-    expect(host.querySelector("button")?.textContent).toContain("Sign in with Passkey");
+    expect(host.querySelector("button")?.textContent).toContain("Continue with passkey");
     expect(api.login).not.toHaveBeenCalled();
     expect(api.setPortalDeviceName).not.toHaveBeenCalled();
     render(null, host);

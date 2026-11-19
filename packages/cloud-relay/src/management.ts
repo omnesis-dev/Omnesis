@@ -5,6 +5,9 @@ export type CloudRelayManagementError =
   | "relay-service-unavailable"
   | "relay-service-mismatch"
   | "configuration-invalid"
+  | "dns-verification-required"
+  | "dns-capacity"
+  | "dns-allocation-rate"
   | "relay-unreachable"
   | "invitation-required"
   | "enrollment-refused"
@@ -21,7 +24,8 @@ export type CloudRelayManagementError =
   | "certificate-renewal-failed"
   | "public-endpoint-unreachable"
   | "passkey-origin-unavailable"
-  | "passkey-not-confirmed";
+  | "passkey-not-confirmed"
+  | "passkey-not-on-account";
 
 export interface CloudRelayNetworkIdentity {
   id: "direct" | "cloud";
@@ -90,13 +94,22 @@ export interface CloudRelayManagementStatus {
   /** Progress of connecting by sign-in. Present while a connection is under way or just ended. */
   connect?: {
     state: "idle" | "waiting" | "registering" | "linking" | "done" | "failed";
+    /** An independent DNS broker check before this gateway obtains its public name. */
+    verification?: { url: string; expiresAt: number };
     authorizeUrl?: string;
     connectUrl?: string;
     /** For display only: the relay's short address for the same connect page. */
     connectShortUrl?: string;
     code?: string;
     expiresAt?: number;
-    error?: "not-allowed" | "capacity" | "expired" | "enrollment-refused" | "account-link-failed";
+    error?:
+      | "not-allowed"
+      | "capacity"
+      | "expired"
+      | "enrollment-refused"
+      | "account-link-failed"
+      | "dns-capacity"
+      | "dns-allocation-rate";
   };
   /**
    * The certificate monitor saw a certificate for this gateway's name with a key the gateway
@@ -107,6 +120,8 @@ export interface CloudRelayManagementStatus {
   /** Local choices about new devices. These are never sent to the relay. */
   deviceEnrollment?: {
     policy: "automatic" | "ask";
+    /** Linked, and no sign-in confirmed here yet: every new device waits for a person. */
+    confirmationNeeded: boolean;
     trustedSignIns: {
       type: "google" | "passkey";
       id: string;
@@ -126,10 +141,11 @@ export interface CloudRelayManagementStatus {
     confirmOrigin?: string;
   };
   /**
-   * The relay no longer has this gateway because its Omnesis account was deleted, so the gateway
-   * went back to not being connected. Shown until it connects again or restarts.
+   * The relay no longer has this gateway, so it went back to not being connected: its Omnesis
+   * account was deleted, or it was unlinked on the account page (`gateway-removed`). Shown until
+   * it connects again or restarts.
    */
-  notice?: "account-deleted";
+  notice?: "account-deleted" | "gateway-removed";
   /**
    * The relay's accounts need approval, and this is where to ask for it. Present only before this
    * gateway is linked to an account, once the relay has said so.
@@ -174,6 +190,11 @@ export interface CloudRelayManagement {
   /** Lifts an incident hold. Callers must refuse a request that came through the relay. */
   acknowledgeIncidentHold?(): Promise<CloudRelayManagementStatus>;
   removeTrustedSignIn?(id: string): Promise<CloudRelayManagementStatus>;
+  /**
+   * Reads the account's sign-ins again now, as the periodic check-in does: the owner is looking at
+   * the account page, perhaps just back from changing the account. Throttled; adds no trust.
+   */
+  refreshAccount?(): Promise<CloudRelayManagementStatus>;
   /** Starts confirming a passkey on the gateway's own page (`pin-passkey`). */
   passkeyConfirmation?(): Promise<import("./gateway-account-link.js").GatewayPasskeyCeremony>;
   /** Finishes it with the `gateway-passkey` assertion the page made. */

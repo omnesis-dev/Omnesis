@@ -29,6 +29,8 @@ import {
   type BriefNoteCapture,
 } from "./brief-reactions.js";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 const NOW = Date.parse("2026-07-02T07:00:00.000Z");
 const DAY = "2026-07-02";
@@ -45,7 +47,7 @@ describe("brief item reactions", () => {
   let react: ReturnType<typeof createBriefItemReactor>;
 
   beforeEach(() => {
-    path = `/tmp/omnesis-test-${randomUUID()}.db`;
+    path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
     db = createDatabase(path);
     now = NOW;
     enabled = true;

@@ -326,6 +326,7 @@ test("an account is created only by an explicit choice while connecting a gatewa
     googleSubject = "fictional-first-owner";
     const creating = await home.start("create");
     await first.goto(creating.authorizeUrl);
+    await first.getByRole("button", { name: "Continue", exact: true }).click();
     await expect(heading(first, "Create your Omnesis account")).toBeVisible();
     await expect(
       first.getByText(
@@ -362,9 +363,12 @@ test("an account is created only by an explicit choice while connecting a gatewa
     const signingIn = await cabin.start("existing");
     const returning = await person();
     await returning.goto(signingIn.authorizeUrl);
+    await returning.getByRole("button", { name: "Continue", exact: true }).click();
     await expect(heading(returning, "Sign in to your Omnesis account")).toBeVisible();
     await expect(
-      returning.getByText("Sign in to connect this gateway to your account.", { exact: true }),
+      returning.getByText("Sign in to connect this gateway to your Omnesis account.", {
+        exact: true,
+      }),
     ).toBeVisible();
     for (const name of ["Create with Google", "Create with a passkey"])
       await expect(button(returning, name)).toHaveCount(0);
@@ -380,6 +384,7 @@ test("an account is created only by an explicit choice while connecting a gatewa
     const stranger = await person();
     googleSubject = "fictional-newcomer";
     await stranger.goto(mistaken.authorizeUrl);
+    await stranger.getByRole("button", { name: "Continue", exact: true }).click();
     await button(stranger, "Sign in with Google").click();
     await expect(stranger.getByRole("alert")).toHaveText(`${NO_ACCOUNT} You can create one below.`);
     // Back on the same request, still on its sign-in view, with nothing created or approved.
@@ -419,6 +424,7 @@ test("an account is created only by an explicit choice while connecting a gatewa
     const successor = await person();
     googleSubject = "fictional-successor";
     await successor.goto(again.authorizeUrl);
+    await successor.getByRole("button", { name: "Continue", exact: true }).click();
     await button(successor, "Create with Google").click();
     await allSet(successor);
     const thirdAccount = await studio.finish(again);

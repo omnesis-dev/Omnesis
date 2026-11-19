@@ -7,9 +7,11 @@ import { join } from "node:path";
 import { request as httpsRequest } from "node:https";
 import { createSecureContext, type TLSSocket } from "node:tls";
 import { X509Certificate, createHash } from "node:crypto";
-import type { AddressInfo } from "node:net";
+import { Socket, type AddressInfo } from "node:net";
+import { IncomingMessage } from "node:http";
+import { PassThrough } from "node:stream";
 import WebSocket, { WebSocketServer } from "ws";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { resolveTlsBundle } from "../tls.js";
 import { StartupManager } from "./manager.js";
 import { StartupServer, STARTUP_STATUS_PATH } from "./server.js";
@@ -209,6 +211,48 @@ describe("startup HTTPS dispatcher", () => {
     } finally {
       for (const client of clients) client.terminate();
       wss.close();
+      await f.close();
+    }
+  });
+
+  it("gates alternate-listener upgrades until activation and closes admission during shutdown", async () => {
+    const f = await fixture();
+    const accept = vi.fn();
+    const attempt = () => {
+      const peer = new Socket();
+      const request = new IncomingMessage(peer);
+      const socket = new PassThrough();
+      let response = "";
+      socket.on("data", (chunk: Buffer) => {
+        response += chunk.toString();
+      });
+      try {
+        // The alternate listener invokes the application's handler only inside
+        // this callback, matching the embedded Tailscale upgrade bridge.
+        f.listener.admitUpgrade(request, socket, accept);
+        return response;
+      } finally {
+        peer.destroy();
+        socket.destroy();
+      }
+    };
+    try {
+      expect(attempt()).toMatch(/^HTTP\/1\.1 503 /);
+      expect(accept).not.toHaveBeenCalled();
+      f.listener.activate(
+        () => new Response("normal"),
+        () => {},
+      );
+      expect(attempt()).toBe("");
+      expect(accept).toHaveBeenCalledOnce();
+      const closing = f.close();
+      // Admission closes synchronously, before the listener drain settles.
+      expect(attempt()).toMatch(/^HTTP\/1\.1 503 /);
+      expect(accept).toHaveBeenCalledOnce();
+      await closing;
+      expect(attempt()).toMatch(/^HTTP\/1\.1 503 /);
+      expect(accept).toHaveBeenCalledOnce();
+    } finally {
       await f.close();
     }
   });

@@ -1746,12 +1746,18 @@ function displayName(u: Pick<TgUser, "firstName" | "lastName" | "username">): st
 }
 
 /** The doctor's view of both of an account's local stores. */
-export function inspectTelegramStores(
+export async function inspectTelegramStores(
   stateDir: string,
   configDir: string,
-): LocalStoreProbeResult[] {
+  signal?: AbortSignal,
+): Promise<LocalStoreProbeResult[]> {
   return [
-    inspectProtectedStore(join(stateDir, ARCHIVE_FILE), ARCHIVE_LABEL, configDir),
-    inspectProtectedStore(join(stateDir, "mtcute.db"), "Telegram connection cache", configDir),
+    await inspectProtectedStore(join(stateDir, ARCHIVE_FILE), ARCHIVE_LABEL, configDir, signal),
+    await inspectProtectedStore(
+      join(stateDir, "mtcute.db"),
+      "Telegram connection cache",
+      configDir,
+      signal,
+    ),
   ];
 }

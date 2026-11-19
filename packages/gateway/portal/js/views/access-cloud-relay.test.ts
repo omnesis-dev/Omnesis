@@ -128,7 +128,10 @@ describe("Access page with the cloud relay", () => {
       .map((entry) => entry.getAttribute("data-agent"));
   const notice = () => host.querySelector(".access-agent-public")!;
   const noticeParagraphs = () => [...notice().querySelectorAll("p")].map((entry) => entry.textContent?.trim());
-  const shownAddress = () => host.querySelector(".access-connect-step .access-mcp-resource code")?.textContent;
+  // The address is picked where it is shown: the drop-down when there is a choice, else plain text.
+  const shownAddress = () =>
+    host.querySelector<HTMLSelectElement>("#access-mcp-address")?.value ??
+    host.querySelector(".access-connect-step .access-mcp-resource code")?.textContent;
   const addressSelect = () => host.querySelector<HTMLSelectElement>("#access-mcp-address");
   const addressOptions = () => [...(addressSelect()?.querySelectorAll("option") ?? [])].map((option) => option.textContent);
   async function pick(resource: string) {
@@ -152,11 +155,11 @@ describe("Access page with the cloud relay", () => {
         const steps = await select(id);
         expect(noticeParagraphs()).toEqual([
           `${needs}, so the address above must be reachable from the Internet${id === "chatgpt" ? " on port 443" : ""}.`,
-          "Publish the gateway with Tailscale Funnel or use a domain of your own.",
+          "Publish the gateway with Tailscale on this computer or a domain of your own, in Settings, Connectivity.",
         ]);
         expect(notice().classList.contains("is-warning")).toBe(false);
         expect(steps.textContent).toContain("the address above");
-        expect(steps.textContent).not.toMatch(/Omnesis account|Omnesis address|Settings, Account|from the list/u);
+        expect(steps.textContent).not.toMatch(/Omnesis account|Omnesis address|from the list/u);
         await select(id);
       }
     });
@@ -165,7 +168,7 @@ describe("Access page with the cloud relay", () => {
       api.getAccessOverview.mockResolvedValue(overview(LOCAL, { loopbackOnly: true }, []));
       await mount();
       expect(host.querySelector(".access-oauth-blocker")?.textContent?.replace(/\s+/gu, " ")).toContain(
-        "Config tab. This can be a private network address; ChatGPT and Claude apps need an Internet-reachable address.",
+        "Settings, Connectivity. This can be a private network address. ChatGPT, Claude apps and Grok bot need an Internet-reachable address: publish the gateway with Tailscale on this computer or a domain of your own.",
       );
       expect(host.querySelector(".access-connect-dialog")?.textContent).toContain(
         "This localhost address works only for agents running on the gateway’s machine. Hosted clients cannot reach it.",
@@ -178,11 +181,11 @@ describe("Access page with the cloud relay", () => {
       expect(relayApi.relayManagement).not.toHaveBeenCalled();
       expect(addressSelect()).toBeNull();
       expect(shownAddress()).toBe(TAILNET);
-      expect(warned()).toEqual(["chatgpt", "claude-apps"]);
+      expect(warned()).toEqual(["chatgpt", "claude-apps", "grok-bot"]);
       await select("claude-apps");
       expect(noticeParagraphs()).toEqual([
         "This address is private. Claude connects from Anthropic's servers, so it cannot reach this gateway until you publish it.",
-        "Publish the gateway with Tailscale Funnel or use a domain of your own.",
+        "Publish the gateway with Tailscale on this computer or a domain of your own, in Settings, Connectivity.",
       ]);
       // The managed integrations keep their own choice of address.
       await select("claude-apps");
@@ -223,13 +226,13 @@ describe("Access page with the cloud relay", () => {
       await select("claude-apps");
       expect(noticeParagraphs()).toEqual([
         "Remote access is turned off. Claude connects from Anthropic's servers, so it cannot reach this address right now.",
-        "Turn it on in Settings, Account.",
+        "Turn it on in Settings, Connectivity.",
       ]);
       await select("claude-apps");
       const steps = await select("claude-code");
       expect(noticeParagraphs()).toEqual([
         "Remote access is turned off. This address does not answer right now.",
-        "Turn it on in Settings, Account.",
+        "Turn it on in Settings, Connectivity.",
       ]);
       expect(steps.textContent).not.toMatch(/certificate/u);
       expect(commands()).toEqual([]);
@@ -240,16 +243,16 @@ describe("Access page with the cloud relay", () => {
       api.getAccessOverview.mockResolvedValue(overview(TAILNET, {}, []));
       await mount({ cloudRelay: true });
       expect(addressSelect()).toBeNull();
-      expect(warned()).toEqual(["chatgpt", "claude-apps"]);
+      expect(warned()).toEqual(["chatgpt", "claude-apps", "grok-bot"]);
       await select("claude-apps");
       expect(noticeParagraphs()).toEqual([
         "This address is private. Claude connects from Anthropic's servers, so it cannot reach this gateway until you publish it.",
-        "Publish the gateway with Tailscale Funnel or use a domain of your own.",
-        "Or connect this gateway to an Omnesis account in Settings, Account to give it a public address.",
+        "Publish the gateway with Tailscale on this computer or a domain of your own, in Settings, Connectivity.",
+        "Or connect this gateway to an Omnesis account in Settings, Connectivity to give it a public address.",
       ]);
       expect([...notice().querySelectorAll("a")].map((link) => link.getAttribute("href"))).toEqual([
-        "https://omnesis.dev/docs/connect#tailscale-funnel",
-        "https://omnesis.dev/docs/setup#public-domain",
+        "/portal/settings/host-tailscale",
+        "/portal/settings/own-address",
         "/portal/settings/account",
       ]);
     });
@@ -264,10 +267,10 @@ describe("Access page with the cloud relay", () => {
       await mount({ cloudRelay: true });
       const element = addressSelect()!;
       expect(element.tagName).toBe("SELECT");
-      expect(element.closest("label")?.querySelector("span")?.textContent).toBe("Address");
+      expect(element.getAttribute("aria-label")).toBe("MCP server address");
       expect(addressOptions()).toEqual([
-        `Your public address: ${OWN}`,
-        `Omnesis address (remote access): ${RELAY}`,
+        `${OWN}`,
+        `${RELAY}`,
       ]);
       expect(element.querySelector("option[selected]")?.getAttribute("value")).toBe(OWN);
       expect(shownAddress()).toBe(OWN);
@@ -333,11 +336,11 @@ describe("Access page with the cloud relay", () => {
       api.getAccessOverview.mockResolvedValue(overview(LOCAL, { loopbackOnly: true }));
       await mount({ cloudRelay: true });
       expect(host.querySelector(".access-oauth-blocker")?.textContent?.replace(/\s+/gu, " ")).toContain(
-        "Config tab. This can be a private network address. ChatGPT and Claude apps can use this gateway's Omnesis address.",
+        "Settings, Connectivity. This can be a private network address. ChatGPT, Claude apps and Grok bot can use this gateway's Omnesis address.",
       );
       expect(addressOptions()).toEqual([
-        `This machine only: ${LOCAL}`,
-        `Omnesis address (remote access): ${RELAY}`,
+        `${LOCAL}`,
+        `${RELAY}`,
       ]);
       expect(shownAddress()).toBe(RELAY);
       expect(warned()).toEqual([]);
@@ -346,7 +349,7 @@ describe("Access page with the cloud relay", () => {
         "Claude connects from Anthropic's servers, and this address is reachable from the Internet.",
       ]);
       await pick(LOCAL);
-      expect(warned()).toEqual(["chatgpt", "claude-apps"]);
+      expect(warned()).toEqual(["chatgpt", "claude-apps", "grok-bot"]);
       expect(noticeParagraphs()).toEqual([
         "This address is private. Claude connects from Anthropic's servers, so it cannot reach this gateway until you publish it.",
         "Pick another address from the list above.",
@@ -358,18 +361,18 @@ describe("Access page with the cloud relay", () => {
     });
 
     test.each([
-      ["turned off", OFF, "turned off", "Remote access is turned off.", "Turn it on in Settings, Account."],
-      ["still being checked", CHECKING, "being checked", "This gateway's Omnesis address is still being checked.", "This takes up to a minute. Follow it in Settings, Account."],
-    ])("%s: the option is marked, not selected, and both hosted apps say so with a link to the account settings", async (_name, status, marker, headline, action) => {
+      ["turned off", OFF, "turned off", "Remote access is turned off.", "Turn it on in Settings, Connectivity."],
+      ["still being checked", CHECKING, "being checked", "This gateway's Omnesis address is still being checked.", "This takes up to a minute. Follow it in Settings, Connectivity."],
+    ])("%s: the option is not selected, and both hosted apps say so with a link to the relay page", async (_name, status, marker, headline, action) => {
       relayApi.relayManagement.mockResolvedValue(status);
       api.getAccessOverview.mockResolvedValue(overview(TAILNET));
       await mount({ cloudRelay: true });
       expect(addressOptions()).toEqual([
-        `This network only: ${TAILNET}`,
-        `Omnesis address (${marker}): ${RELAY}`,
+        `${TAILNET}`,
+        `${RELAY}`,
       ]);
       expect(shownAddress()).toBe(TAILNET);
-      expect(warned()).toEqual(["chatgpt", "claude-apps"]);
+      expect(warned()).toEqual(["chatgpt", "claude-apps", "grok-bot"]);
       for (const [id, , needs] of HOSTED) {
         const steps = await select(id);
         expect(noticeParagraphs()).toEqual([
@@ -378,8 +381,8 @@ describe("Access page with the cloud relay", () => {
         ]);
         expect(steps.textContent).not.toMatch(/Funnel|domain of your own/u);
         const link = notice().querySelector("a")!;
-        expect(link.textContent).toBe("Settings, Account");
-        expect(link.getAttribute("href")).toBe("/portal/settings/account");
+        expect(link.textContent).toBe("Settings, Connectivity");
+        expect(link.getAttribute("href")).toBe("/portal/settings/relay");
         await select(id);
       }
       // Still selectable: selecting it says what is wrong with it, for every agent.
@@ -403,7 +406,7 @@ describe("Access page with the cloud relay", () => {
       await act(async () => {
         notice().querySelector("a")!.dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
       });
-      expect(router.navigate).toHaveBeenCalledWith("/portal/settings/account");
+      expect(router.navigate).toHaveBeenCalledWith("/portal/settings/relay");
     });
 
     test("an open dialog follows the check and moves to the Omnesis address once it answers", async () => {
@@ -425,7 +428,7 @@ describe("Access page with the cloud relay", () => {
     relayApi.relayManagement.mockResolvedValue(OFF);
     api.getAccessOverview.mockResolvedValue(overview(OWN));
     await mount({ cloudRelay: true });
-    expect(addressOptions()[1]).toBe(`Omnesis address (turned off): ${RELAY}`);
+    expect(addressOptions()[1]).toBe(`${RELAY}`);
     expect(shownAddress()).toBe(OWN);
     expect(warned()).toEqual([]);
     await select("claude-apps");
@@ -435,7 +438,7 @@ describe("Access page with the cloud relay", () => {
     await pick(RELAY);
     expect(noticeParagraphs()).toEqual([
       "Remote access is turned off. Claude connects from Anthropic's servers, so it cannot reach this address right now.",
-      "Turn it on in Settings, Account.",
+      "Turn it on in Settings, Connectivity.",
       "Or pick another address from the list above.",
     ]);
   });
@@ -449,7 +452,7 @@ describe("Access page with the cloud relay", () => {
     await select("claude-apps");
     expect(noticeParagraphs()).toEqual([
       "This address is private. Claude connects from Anthropic's servers, so it cannot reach this gateway until you publish it.",
-      "Publish the gateway with Tailscale Funnel or use a domain of your own.",
+      "Publish the gateway with Tailscale on this computer or a domain of your own, in Settings, Connectivity.",
     ]);
   });
 });

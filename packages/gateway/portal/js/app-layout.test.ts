@@ -6,9 +6,10 @@ import { parseHTML } from "linkedom";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test, vi } from "vitest";
 
 const {
-  clearOmnesisStorage, getStatus, listPrivacyApprovals, listSubscriptionApprovals, logout, reload, toggleTheme,
+  clearOmnesisStorage, getPendingAccessRequests, getStatus, listPrivacyApprovals, listSubscriptionApprovals, logout, reload, toggleTheme,
 } = vi.hoisted(() => ({
   clearOmnesisStorage: vi.fn(),
+  getPendingAccessRequests: vi.fn(async (): Promise<Record<string, unknown>> => ({ pendingRequests: [] })),
   getStatus: vi.fn(async (): Promise<Record<string, unknown>> => ({ experimental: false, developer: false })),
   listPrivacyApprovals: vi.fn(async () => ({ totalCount: 3 })),
   listSubscriptionApprovals: vi.fn(async () => ({ totalCount: 0 })),
@@ -23,6 +24,7 @@ vi.mock("./api.js", () => ({
     json: async () => ({ conversations: [], nextCursor: null }),
   })),
   checkSession: vi.fn(async () => ({ authenticated: true })),
+  getPendingAccessRequests,
   getStatus,
   getHostFleetUpdate: vi.fn(async () => ({ plan: null, operation: null })),
   isAuthenticated: vi.fn(() => true),
@@ -33,6 +35,11 @@ vi.mock("./api.js", () => ({
   startHostFleetUpdate: vi.fn(),
 }));
 vi.mock("./lib/format.js", () => ({ loadSourceMeta: vi.fn(async () => {}) }));
+const joins = vi.hoisted(() => ({ tailscaleJoinRequests: vi.fn(async () => ({ requests: [] as unknown[] })) }));
+vi.mock("./lib/tailscale-api.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  ...joins,
+}));
 vi.mock("./lib/router.js", () => ({
   navigate: vi.fn(),
   onRouteChange: vi.fn(() => () => {}),
@@ -134,20 +141,18 @@ describe("portal Settings actions", () => {
     expect(host.querySelector(".app-sidebar")?.textContent).not.toContain("Watches");
   });
 
-  test("badges Audit with the decisions waiting, and says so in words", () => {
-    const badge = host.querySelector(".sidebar-badge");
-    expect(badge?.textContent).toBe("3");
-    // The numeral is decorative; the sentence beside it is what a screen
-    // reader meets inside the link's accessible name.
-    expect(badge?.getAttribute("aria-hidden")).toBe("true");
+  test("marks Audit while answers wait for review, with the count in words", () => {
     const privacyItem = [...host.querySelectorAll(".sidebar-item")]
       .find((item) => item.textContent?.includes("Audit"));
-    expect(privacyItem?.querySelector(".sr-only")?.textContent)
-      .toContain("3 decisions waiting for you");
+    const mark = privacyItem?.querySelector(".attention-icon");
+    // The sentence is the mark's accessible name, so it is part of the link's.
+    expect(mark?.getAttribute("role")).toBe("img");
+    expect(mark?.getAttribute("aria-label")).toBe("3 answers are waiting for your review.");
+    expect(privacyItem?.getAttribute("href")).toBe("/portal/audit");
   });
 });
 
-describe("decisions waiting, badged on the nav item where each is decided", () => {
+describe("decisions waiting, marked on the nav item where each is decided", () => {
   let host: HTMLElement;
   let originalDocument: typeof globalThis.document | undefined;
   let originalWindow: typeof globalThis.window | undefined;
@@ -157,6 +162,7 @@ describe("decisions waiting, badged on the nav item where each is decided", () =
     getStatus.mockReset().mockResolvedValue({ experimental: false, developer: false });
     listPrivacyApprovals.mockReset().mockResolvedValue({ totalCount: 0 });
     listSubscriptionApprovals.mockReset().mockResolvedValue({ totalCount: 0 });
+    getPendingAccessRequests.mockReset().mockResolvedValue({ pendingRequests: [] });
     originalDocument = globalThis.document;
     originalWindow = globalThis.window;
     const parsed = parseHTML("<html><body><div id='app'></div></body></html>");
@@ -208,6 +214,40 @@ describe("decisions waiting, badged on the nav item where each is decided", () =
     expect(itemNamed("Settings")?.getAttribute("href")).toBe("/portal/settings");
   });
 
+  test("flags Settings and its route with devices waiting for approval, and clears when none wait", async () => {
+    const waiting = {
+      id: "j1",
+      name: "studio-mac",
+      kind: "collector",
+      machine: "studio-mac",
+      login: "maya@example.com",
+      requestedAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 600_000).toISOString(),
+    };
+    joins.tailscaleJoinRequests.mockResolvedValue({ requests: [waiting] });
+    getStatus.mockResolvedValue({ experimental: false, developer: false, tailscaleEmbed: true } as never);
+    await mount();
+    await vi.waitFor(() => expect(itemNamed("Settings")?.querySelector(".attention-icon")).not.toBeNull());
+    const settings = itemNamed("Settings");
+    expect(
+      settings?.querySelector('[aria-label="A device is waiting for your approval to pair to this gateway."]'),
+    ).not.toBeNull();
+    expect(settings?.getAttribute("href")).toBe("/portal/settings/devices");
+    // The next read finds nothing waiting: the mark and the shortcut go.
+    joins.tailscaleJoinRequests.mockResolvedValue({ requests: [] });
+    await act(async () => { document.dispatchEvent(new window.Event("visibilitychange")); });
+    await vi.waitFor(() => expect(itemNamed("Settings")?.querySelector(".attention-icon")).toBeNull());
+    expect(itemNamed("Settings")?.getAttribute("href")).toBe("/portal/settings");
+  });
+
+  test("without either way for devices to ask, nothing is read for them", async () => {
+    joins.tailscaleJoinRequests.mockClear();
+    getStatus.mockResolvedValue({ experimental: false, developer: false } as never);
+    await mount();
+    expect(joins.tailscaleJoinRequests).not.toHaveBeenCalled();
+    expect(itemNamed("Settings")?.querySelector(".attention-icon")).toBeNull();
+  });
+
   test("refreshes authoritative status after Models reads instead of accepting an old overview", async () => {
     getStatus.mockResolvedValue({
       experimental: false, developer: false,
@@ -220,10 +260,35 @@ describe("decisions waiting, badged on the nav item where each is decided", () =
     await vi.waitFor(() => expect(itemNamed("Settings")?.querySelector(".warning-triangle")).toBeNull());
   });
 
-  test("nothing waiting, nothing badged", async () => {
+  test("nothing waiting, nothing marked", async () => {
     listPrivacyApprovals.mockResolvedValue({ totalCount: 0 });
     await mount();
-    expect(host.querySelector(".sidebar-badge")).toBeNull();
+    expect(host.querySelector(".attention-icon")).toBeNull();
+  });
+
+  test("agents waiting for access mark Settings, which then opens Access", async () => {
+    getPendingAccessRequests.mockResolvedValue({
+      pendingRequests: [{ id: "r1", clientName: "Fictional planner", expiresAt: Date.now() + 300_000 }],
+    });
+    await mount();
+    await vi.waitFor(() => expect(itemNamed("Settings")?.querySelector(".attention-icon")).not.toBeNull());
+    expect(itemNamed("Settings")?.querySelector(".attention-icon")?.getAttribute("aria-label"))
+      .toBe("An agent is waiting for your approval to connect.");
+    expect(itemNamed("Settings")?.getAttribute("href")).toBe("/portal/settings/access");
+  });
+
+  test("a waiting decision leads Settings ahead of a model problem, which keeps its triangle", async () => {
+    getStatus.mockResolvedValue({
+      experimental: false, developer: false,
+      modelHealth: { warnings: [{ role: "agent" }] },
+    } as never);
+    getPendingAccessRequests.mockResolvedValue({
+      pendingRequests: [{ id: "r1", clientName: "Fictional planner", expiresAt: Date.now() + 300_000 }],
+    });
+    await mount();
+    await vi.waitFor(() => expect(itemNamed("Settings")?.querySelector(".attention-icon")).not.toBeNull());
+    expect(itemNamed("Settings")?.querySelector(".warning-triangle")).not.toBeNull();
+    expect(itemNamed("Settings")?.getAttribute("href")).toBe("/portal/settings/access");
   });
 
   test("normal gateways have no test card", async () => {
@@ -325,34 +390,35 @@ describe("decisions waiting, badged on the nav item where each is decided", () =
     expect(host.querySelector(".app-sidebar")?.textContent).not.toMatch(/unavailable|error/i);
   });
 
-  test("one decision reads in the singular", async () => {
+  const markOn = (label: string) => itemNamed(label)?.querySelector(".attention-icon")?.getAttribute("aria-label");
+
+  test("one answer reads in the singular", async () => {
     listPrivacyApprovals.mockResolvedValue({ totalCount: 1 });
     await mount();
-    await vi.waitFor(() =>
-      expect(itemNamed("Audit")?.querySelector(".sr-only")?.textContent).toContain("1 decision waiting for you"));
+    await vi.waitFor(() => expect(markOn("Audit")).toBe("An answer is waiting for your review."));
   });
 
-  test("the pill caps at 99+ while the sentence keeps the true count", async () => {
+  test("the mark's sentence carries the true count, however many", async () => {
     listPrivacyApprovals.mockResolvedValue({ totalCount: 140 });
     await mount();
-    await vi.waitFor(() => expect(itemNamed("Audit")?.querySelector(".sidebar-badge")?.textContent).toBe("99+"));
-    expect(itemNamed("Audit")?.querySelector(".sr-only")?.textContent).toContain("140 decisions waiting for you");
+    await vi.waitFor(() => expect(markOn("Audit")).toBe("140 answers are waiting for your review."));
   });
 
-  test("a gateway without the privacy boundary shows no badge and no error", async () => {
+  test("a gateway without the privacy boundary shows no mark and no error", async () => {
     listPrivacyApprovals.mockRejectedValue({ status: 503 });
     await mount();
-    expect(host.querySelector(".sidebar-badge")).toBeNull();
+    expect(host.querySelector(".attention-icon")).toBeNull();
     expect(host.querySelector(".app-sidebar")?.textContent).not.toMatch(/503|error/i);
   });
 
-  test("watch requests badge Watches, not Audit, and only in experimental mode", async () => {
+  test("watch requests mark Watches, not Audit, and only where watches are on", async () => {
     getStatus.mockResolvedValue({ experimental: true, developer: false, lab: { brain: false, tasks: false, watches: true } });
     listPrivacyApprovals.mockResolvedValue({ totalCount: 2 });
     listSubscriptionApprovals.mockResolvedValue({ totalCount: 5 });
     await mount();
-    await vi.waitFor(() => expect(itemNamed("Watches")?.querySelector(".sidebar-badge")?.textContent).toBe("5"));
-    await vi.waitFor(() => expect(itemNamed("Audit")?.querySelector(".sidebar-badge")?.textContent).toBe("2"));
+    await vi.waitFor(() => expect(markOn("Watches")).toBe("5 watch requests are waiting for your approval."));
+    await vi.waitFor(() => expect(markOn("Audit")).toBe("2 answers are waiting for your review."));
+    expect(itemNamed("Watches")?.getAttribute("href")).toBe("/portal/watches");
   });
 
   test("one endpoint failing cannot hide the other's waiting decisions", async () => {
@@ -360,8 +426,8 @@ describe("decisions waiting, badged on the nav item where each is decided", () =
     listPrivacyApprovals.mockResolvedValue({ totalCount: 3 });
     listSubscriptionApprovals.mockRejectedValue({ status: 503 });
     await mount();
-    await vi.waitFor(() => expect(itemNamed("Audit")?.querySelector(".sidebar-badge")?.textContent).toBe("3"));
-    expect(itemNamed("Watches")?.querySelector(".sidebar-badge")).toBeNull();
+    await vi.waitFor(() => expect(markOn("Audit")).toBe("3 answers are waiting for your review."));
+    expect(markOn("Watches")).toBeUndefined();
   });
   test("experimental mode alone does not offer Tasks or Watches", async () => {
     getStatus.mockResolvedValue({ experimental: true, tasks: { available: true }, lab: { brain: false, tasks: false, watches: false } });

@@ -4,6 +4,7 @@
 package dev.omnesis.android.pairing
 
 import dev.omnesis.android.transport.dto.CloudRelayStatus
+import dev.omnesis.android.transport.dto.CloudRelayConnect
 import dev.omnesis.android.transport.dto.relayEpochMillis
 import kotlinx.serialization.json.JsonElement
 import java.net.URI
@@ -74,6 +75,8 @@ private val errorTexts = mapOf(
     "hostname-required" to "This relay needs a public gateway hostname. Enter its HTTPS origin in custom domain settings.",
     "ca-terms-required" to "Accept the configured certificate authority’s terms before enabling public certificates.",
     "operation-in-progress" to "Another change is in progress. Wait for it to finish and try again.",
+    "dns-capacity" to "New gateway setup is temporarily at capacity. Try again later. Existing gateways keep working.",
+    "dns-allocation-rate" to "Too many gateways were set up recently. Wait before trying again. Existing gateways keep working.",
     "google-unavailable" to "Google sign-in is unavailable. Remote access and QR pairing work without it.",
     "google-link-failed" to "Couldn't connect with Google. Try again. Gateway access is unchanged.",
     "relay-service-unavailable" to "Omnesis account setup is unavailable. Ask the installation administrator to configure the relay service.",
@@ -119,6 +122,14 @@ fun cloudAccountHttpsUrl(value: String?): String? {
     if (value == null || value.length > 2048) return null
     val uri = runCatching { URI(value) }.getOrNull() ?: return null
     return value.takeIf { uri.scheme.equals("https", ignoreCase = true) && !uri.host.isNullOrEmpty() && uri.rawUserInfo == null }
+}
+
+/** Security verification takes precedence over account sign-in; an expired or invalid link is never opened. */
+fun cloudAccountConnectUrl(connect: CloudRelayConnect?, now: Long = System.currentTimeMillis()): String? {
+    val verification = connect?.verification ?: return cloudAccountHttpsUrl(connect?.authorizeUrl)
+    val expiry = relayEpochMillis(verification.expiresAt) ?: return null
+    if (expiry <= now || expiry - now > 660_000) return null
+    return cloudAccountHttpsUrl(verification.url)
 }
 
 /** An already checked HTTPS address without its scheme, so it reads like something to type. */

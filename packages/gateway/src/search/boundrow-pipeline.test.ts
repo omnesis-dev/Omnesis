@@ -8,12 +8,14 @@ import { createIndexDatabase, EMBEDDING_DIM, upsertChunks } from "../indexer/db.
 import { canonicalRowKey, type BoundRowResolver } from "../analytics/bound-documents.js";
 import { SearchPipeline } from "./pipeline.js";
 import { closeTempDb } from "./test-utils.js";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 const openDbs: Database.Database[] = [];
 afterAll(() => openDbs.forEach(closeTempDb));
 
 function indexWithStravaDoc() {
-  const dbPath = `/tmp/omnesis-boundrow-idx-${randomUUID()}.db`;
+  const dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-boundrow-idx-${randomUUID()}.db`);
   const db = createIndexDatabase(dbPath);
   openDbs.push(db);
   upsertChunks(db, [
@@ -34,7 +36,7 @@ function indexWithStravaDoc() {
 
 /** Gateway DB carrying the columns hydration reads: metadata + external_id. */
 function gatewayDbWithDoc() {
-  const db = new Database(`/tmp/omnesis-boundrow-gw-${randomUUID()}.db`);
+  const db = new Database(fixtureJoin(fixtureTmpdir(), `omnesis-boundrow-gw-${randomUUID()}.db`));
   openDbs.push(db);
   db.exec(
     `CREATE TABLE documents (id TEXT PRIMARY KEY, external_id TEXT, source_id TEXT, metadata TEXT, stream_id TEXT NOT NULL DEFAULT '')`,

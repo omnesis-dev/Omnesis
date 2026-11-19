@@ -130,8 +130,16 @@ export interface DeliverOptions {
 }
 
 /** The file name a message in `cur` carries for a set of flags. */
-export function maildirFileName(uniq: string, subdir: "new" | "cur", flags = ""): string {
-  return subdir === "new" ? uniq : `${uniq}:2,${[...flags].sort().join("")}`;
+export function maildirFileName(
+  uniq: string,
+  subdir: "new" | "cur",
+  flags = "",
+  platform = process.platform,
+): string {
+  // Windows mail tools use ! where the filesystem forbids a colon. The
+  // production reader accepts both spellings without changing message IDs.
+  const separator = platform === "win32" ? "!" : ":";
+  return subdir === "new" ? uniq : `${uniq}${separator}2,${[...flags].sort().join("")}`;
 }
 
 /** Deliver one message into a mailbox, returning its path. */

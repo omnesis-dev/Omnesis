@@ -2,9 +2,12 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { mkdtemp, readFile, readdir, rm, stat, writeFile, mkdir } from "node:fs/promises";
+import * as files from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import * as core from "@omnesis/core";
+import { exposeOwnedFixtureRead } from "../test/owned-file-acl.js";
 import { readOrCreateDeviceKey } from "./device-key-file.js";
 import { parseDevicePublicKey } from "./device-enrollment.js";
 
@@ -23,11 +26,95 @@ vi.mock(import("node:fs/promises"), async (original) => {
 let directory = "";
 beforeEach(async () => {
   directory = await mkdtemp(join(tmpdir(), "device-key-file-"));
+  if (process.platform === "win32") await core.ensurePrivateDirs([directory]);
 });
 afterEach(async () => {
+  vi.restoreAllMocks();
   failLink.code = undefined;
   await rm(directory, { recursive: true, force: true });
 });
+
+test("Windows device creation uses held bounded reads and atomic create-only publication", async () => {
+  const path = join(directory, "device.key");
+  const { generateKeyPairSync } = await import("node:crypto");
+  const winner = generateKeyPairSync("ec", { namedCurve: "prime256v1" }).privateKey.export({
+    type: "pkcs8",
+    format: "pem",
+  });
+  const read = vi
+    .spyOn(core, "readWindowsPrivateFile")
+    .mockRejectedValueOnce(Object.assign(new Error("Invented missing key"), { code: "ENOENT" }))
+    .mockResolvedValueOnce(Buffer.from(winner));
+  const publish = vi
+    .spyOn(core, "writeWindowsPrivateFileAtomicStream")
+    .mockImplementationOnce(async (target, source, length, options) => {
+      expect(target).toBe(path);
+      expect(options).toMatchObject({ replaceExisting: false, timeoutMs: 30_000 });
+      const chunks: Buffer[] = [];
+      for await (const chunk of source as AsyncIterable<Uint8Array>)
+        chunks.push(Buffer.from(chunk));
+      const staged = Buffer.concat(chunks);
+      expect(staged).toHaveLength(length);
+      expect(staged.toString()).toContain("PRIVATE KEY");
+      await writeFile(path, winner, { mode: 0o600 });
+      throw Object.assign(new Error("Invented concurrent winner"), { code: "EEXIST" });
+    });
+  const descriptor = Object.getOwnPropertyDescriptor(process, "platform")!;
+  Object.defineProperty(process, "platform", { ...descriptor, value: "win32" });
+  try {
+    const key = await readOrCreateDeviceKey(path);
+    expect(key.privateKey.export({ type: "pkcs8", format: "pem" })).toEqual(winner);
+    expect(read.mock.calls).toEqual([
+      [path, 65_536],
+      [path, 65_536],
+    ]);
+    expect(publish).toHaveBeenCalledOnce();
+    expect(await readdir(directory)).toEqual(["device.key"]);
+  } finally {
+    Object.defineProperty(process, "platform", descriptor);
+  }
+});
+
+test("a Windows private-read refusal never creates or replaces a device identity", async () => {
+  const path = join(directory, "refused.key");
+  const read = vi
+    .spyOn(core, "readWindowsPrivateFile")
+    .mockRejectedValue(
+      Object.assign(new Error("Invented unsafe private key"), { code: "EPRIVATE" }),
+    );
+  const publish = vi.spyOn(core, "writeWindowsPrivateFileAtomicStream");
+  const descriptor = Object.getOwnPropertyDescriptor(process, "platform")!;
+  Object.defineProperty(process, "platform", { ...descriptor, value: "win32" });
+  try {
+    await expect(readOrCreateDeviceKey(path)).rejects.toThrow("device key could not be read");
+    expect(read).toHaveBeenCalledWith(path, 65_536);
+    expect(publish).not.toHaveBeenCalled();
+    expect(await readdir(directory)).toEqual([]);
+  } finally {
+    Object.defineProperty(process, "platform", descriptor);
+  }
+});
+
+// Windows stages and joins writes inside its native atomic publisher instead of a JS FileHandle.
+test.skipIf(process.platform === "win32")(
+  "a failed POSIX staging write removes the partial secret",
+  async () => {
+    const open = files.open;
+    vi.spyOn(files, "open").mockImplementationOnce(async (...args) => {
+      const file = await open(...args);
+      const write = file.writeFile.bind(file);
+      vi.spyOn(file, "writeFile").mockImplementationOnce(async () => {
+        await write("invented partial private key");
+        throw new Error("Invented interrupted private-key write");
+      });
+      return file;
+    });
+    await expect(readOrCreateDeviceKey(join(directory, "device.key"))).rejects.toThrow(
+      "Invented interrupted private-key write",
+    );
+    expect(await readdir(directory)).toEqual([]);
+  },
+);
 
 test("the first use creates one private P-256 key that later uses read back", async () => {
   const path = join(directory, "nested", "device.json.key");
@@ -35,8 +122,12 @@ test("the first use creates one private P-256 key that later uses read back", as
   expect(parseDevicePublicKey(created.publicKey).asymmetricKeyDetails?.namedCurve).toBe(
     "prime256v1",
   );
-  expect((await stat(path)).mode & 0o777).toBe(0o600);
-  expect((await stat(join(directory, "nested"))).mode & 0o777).toBe(0o700);
+  if (process.platform !== "win32") {
+    expect((await stat(path)).mode & 0o777).toBe(0o600);
+    expect((await stat(join(directory, "nested"))).mode & 0o777).toBe(0o700);
+  } else {
+    expect(core.inspectWindowsPrivatePathSync(path, "file").private).toBe(true);
+  }
   const again = await readOrCreateDeviceKey(path);
   expect(again.publicKey).toBe(created.publicKey);
 });
@@ -65,9 +156,123 @@ test("an unreadable key is never replaced and a path that cannot hold one fails"
 });
 
 test("a filesystem that refuses to publish the key fails without leaving a staged copy", async () => {
-  failLink.code = "EPERM";
+  if (process.platform === "win32") {
+    vi.spyOn(core, "writeWindowsPrivateFileAtomicStream").mockRejectedValueOnce(
+      Object.assign(new Error("link refused"), { code: "EPERM" }),
+    );
+  } else {
+    failLink.code = "EPERM";
+  }
   await expect(readOrCreateDeviceKey(join(directory, "device.key"))).rejects.toThrow(
     "link refused",
   );
   expect(await readdir(directory)).toEqual([]);
 });
+
+test.skipIf(process.platform !== "win32")(
+  "Windows refuses an existing device key with a public read grant",
+  async () => {
+    const path = join(directory, "device.key");
+    await readOrCreateDeviceKey(path);
+    const previous = await readFile(path, "utf8");
+    const exposure = await exposeOwnedFixtureRead(path);
+    try {
+      expect(core.inspectWindowsPrivatePathSync(path, "file").private).toBe(false);
+      await expect(readOrCreateDeviceKey(path)).rejects.toThrow("device key could not be read");
+      expect(await readFile(path, "utf8")).toBe(previous);
+      expect(await readdir(directory)).toEqual(["device.key"]);
+      expect(await exposure.snapshot()).toBe(exposure.exposed);
+    } finally {
+      await exposure.restore();
+    }
+    expect((await readOrCreateDeviceKey(path)).publicKey).toBeTruthy();
+    expect(await readFile(path, "utf8")).toBe(previous);
+  },
+);
+
+test.each([
+  ["ENOENT", "own", false],
+  ["ENOENT", "own", true],
+  ["ENOENT", "cause", false],
+  ["ENOENT", "cause", true],
+  ["EEXIST", "own", false],
+  ["EEXIST", "own", true],
+  ["EEXIST", "cause", false],
+  ["EEXIST", "cause", true],
+] as const)(
+  "Windows identity refuses %s with %s cleanup uncertainty (payload present: %s)",
+  async (code, placement, payload) => {
+    const { generateKeyPairSync } = await import("node:crypto");
+    const path = join(directory, "uncertain-identity.pem");
+    const winner = generateKeyPairSync("ec", { namedCurve: "prime256v1" }).privateKey.export({
+      type: "pkcs8",
+      format: "pem",
+    });
+    await core.atomicWriteFile(path, winner, { mode: 0o600 });
+    const before = await stat(path, { bigint: true });
+    const marker = { cleanupFailure: payload ? new Error("Invented unjoined helper") : undefined };
+    const failure = Object.assign(
+      new Error("Invented uncertain identity operation"),
+      { code },
+      placement === "own"
+        ? marker
+        : { cause: Object.assign(new Error("Invented inner receipt"), marker) },
+    );
+    const missing = Object.assign(new Error("Invented missing identity"), { code: "ENOENT" });
+    const read = vi
+      .spyOn(core, "readWindowsPrivateFile")
+      .mockRejectedValueOnce(code === "ENOENT" ? failure : missing)
+      .mockResolvedValueOnce(Buffer.from(winner));
+    const publish = vi.spyOn(core, "writeWindowsPrivateFileAtomicStream");
+    if (code === "EEXIST") publish.mockRejectedValueOnce(failure);
+    else publish.mockResolvedValueOnce(undefined);
+    const descriptor = Object.getOwnPropertyDescriptor(process, "platform")!;
+    Object.defineProperty(process, "platform", { ...descriptor, value: "win32" });
+    try {
+      const operation = readOrCreateDeviceKey(path);
+      if (code === "ENOENT") await expect(operation).rejects.toMatchObject({ cause: failure });
+      else await expect(operation).rejects.toBe(failure);
+      expect(read).toHaveBeenCalledExactlyOnceWith(path, 65_536);
+      if (code === "ENOENT") expect(publish).not.toHaveBeenCalled();
+      else expect(publish).toHaveBeenCalledOnce();
+      expect(await readFile(path, "utf8")).toBe(winner);
+      const after = await stat(path, { bigint: true });
+      expect([after.dev, after.ino]).toEqual([before.dev, before.ino]);
+    } finally {
+      Object.defineProperty(process, "platform", descriptor);
+    }
+  },
+);
+
+test.each([null, "interrupted", {}, { code: "EPERM" }])(
+  "Windows device publication refuses non-winner failure %j without rereading or leaving a key",
+  async (failure) => {
+    const path = join(directory, "publication-refused.key");
+    const read = vi
+      .spyOn(core, "readWindowsPrivateFile")
+      .mockRejectedValueOnce(Object.assign(new Error("Invented absent key"), { code: "ENOENT" }));
+    const publish = vi
+      .spyOn(core, "writeWindowsPrivateFileAtomicStream")
+      .mockRejectedValueOnce(failure);
+    const descriptor = Object.getOwnPropertyDescriptor(process, "platform")!;
+    Object.defineProperty(process, "platform", { ...descriptor, value: "win32" });
+    try {
+      await expect(readOrCreateDeviceKey(path)).rejects.toBe(failure);
+      expect(read).toHaveBeenCalledTimes(1);
+      expect(publish).toHaveBeenCalledOnce();
+      expect(await readdir(directory)).toEqual([]);
+    } finally {
+      Object.defineProperty(process, "platform", descriptor);
+    }
+  },
+);
+
+test.skipIf(process.platform === "win32")(
+  "a refused POSIX staging open creates no key or cleanup target",
+  async () => {
+    const failure = new Error("Invented staging open refusal");
+    vi.spyOn(files, "open").mockRejectedValueOnce(failure);
+    await expect(readOrCreateDeviceKey(join(directory, "open-refused.key"))).rejects.toBe(failure);
+    expect(await readdir(directory)).toEqual([]);
+  },
+);

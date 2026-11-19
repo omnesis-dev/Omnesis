@@ -44,6 +44,7 @@ function fixture(options: { maxPending?: number; authority?: boolean } = {}) {
     accounts: (identity) => (identity === account.accountId ? ["owner"] : ["other"]),
     binding: (name) => (name === "owner" ? binding : other),
     name: () => undefined,
+    online: () => true,
   });
   const assertCurrent = vi.fn(),
     assertAccount = vi.fn();

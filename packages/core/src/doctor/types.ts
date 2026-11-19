@@ -168,6 +168,10 @@ export interface SecurityRecoveryEscrowStatus {
 export interface SecurityData {
   configDir: string;
   fixPermissions: boolean;
+  /** ACL evidence on Windows; omitted by older or POSIX collectors. */
+  permissionModel?: "windows-acl";
+  /** Number of paths with native ACL evidence, including safe entries omitted from findings. */
+  permissionScanCount?: number;
   permissionEntries: SecurityPermissionEntry[];
   permissionScanTruncated: boolean;
   diskEncryption: SecurityDiskEncryptionStatus;

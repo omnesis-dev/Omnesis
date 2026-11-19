@@ -16,6 +16,8 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { ensureInstallRootKey } from "./secret-store.js";
 import {
   clearSecretFileKeyCacheForTests,
+  decodeSecretTextFileValue,
+  decodeSecretTextFileValueSync,
   isEncryptedSecretFile,
   markSecretFileEncryptionRequired,
   migrateSecretTextFile,
@@ -87,6 +89,45 @@ describe("secret-file encryption", () => {
     expect(readSecretTextFileSync(path, { backend: "file", configDir: dir })).toBe(
       "collector-token",
     );
+  });
+
+  test("decodes already verified bytes without reopening their old path", async () => {
+    const opts = { backend: "file" as const, configDir: dir, scope: "fixture:logical-secret" };
+    await ensureInstallRootKey(opts);
+    await writeSecretTextFile(path, "invented verified value", opts);
+    const raw = readFileSync(path, "utf8");
+    rmSync(path);
+    const moved = join(dir, "new-name.secret");
+    expect(await decodeSecretTextFileValue(moved, raw, opts)).toBe("invented verified value");
+    expect(decodeSecretTextFileValueSync(moved, raw, opts)).toBe("invented verified value");
+    expect(() =>
+      decodeSecretTextFileValueSync(moved, raw, { ...opts, scope: "fixture:other" }),
+    ).toThrow(/scope mismatch/);
+    expect(existsSync(path)).toBe(false);
+    expect(existsSync(moved)).toBe(false);
+  });
+
+  test("moving an encrypted logical secret cannot downgrade it when its root key is unavailable", async () => {
+    await ensureInstallRootKey({ backend: "file", configDir: dir });
+    await writeSecretTextFile(path, "invented encrypted value", {
+      backend: "file",
+      configDir: dir,
+    });
+    const raw = readFileSync(path, "utf8");
+    const otherDir = join(dir, "other-install");
+    const opts = { backend: "file" as const, configDir: otherDir };
+    clearSecretFileKeyCacheForTests();
+    const syncPath = join(otherDir, "sync.secret"),
+      asyncPath = join(otherDir, "async.secret");
+    expect(() => writeSecretTextFileSync(syncPath, "replacement", opts, raw)).toThrow(
+      /Refusing to write Omnesis secret file/,
+    );
+    await expect(writeSecretTextFile(asyncPath, "replacement", opts, raw)).rejects.toThrow(
+      /Refusing to write Omnesis secret file/,
+    );
+    expect(existsSync(syncPath)).toBe(false);
+    expect(existsSync(asyncPath)).toBe(false);
+    expect(readFileSync(path, "utf8")).toBe(raw);
   });
 
   test("does not rewrite an encrypted file as plaintext when the root key is unavailable", async () => {

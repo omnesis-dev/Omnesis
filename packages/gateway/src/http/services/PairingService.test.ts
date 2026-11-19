@@ -28,6 +28,8 @@ import { DeviceWsServer } from "../../ws.js";
 import { createSubscription } from "../../subscriptions/store-mutations.js";
 import { PairingService, type PairingServiceDeps } from "./PairingService.js";
 import type { CreateSubscriptionMutation } from "../../subscriptions/store-types.js";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 const openClawCapabilities: DeviceCapability = {
   suggestedName: "fictional-openclaw",
@@ -46,7 +48,7 @@ let db: ReturnType<typeof createDatabase>;
 beforeEach(() => {
   // How a device joined is read back only with the cloud relay opt-in.
   vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
-  dbPath = `/tmp/omnesis-pairing-service-test-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-pairing-service-test-${randomUUID()}.db`);
   db = createDatabase(dbPath);
 });
 

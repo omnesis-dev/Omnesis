@@ -19,7 +19,8 @@ export async function cloudPairingRequests() {
   return response.json();
 }
 
-export async function decideCloudPairing(requestId, approve, trustSignIn) {
+/** `stepUpAnnounced`: the button already said the passkey comes next, so no note before it. */
+export async function decideCloudPairing(requestId, approve, trustSignIn, { stepUpAnnounced } = {}) {
   const response = await apiFetch("/admin/cloud-pairing/decision", {
     method: "POST",
     body: JSON.stringify({
@@ -27,9 +28,21 @@ export async function decideCloudPairing(requestId, approve, trustSignIn) {
       approve,
       ...(trustSignIn === undefined ? {} : { trustSignIn }),
     }),
+    ...(stepUpAnnounced ? { stepUpAnnounced: true } : {}),
   });
   if (!response.ok) {
     throw new Error("Couldn't update this request. It may have expired; refresh and try again.");
   }
+  return response.json();
+}
+
+/** "Make new devices always ask me": only makes the gateway stricter, so it asks for no passkey. */
+export async function askBeforeEveryNewDevice() {
+  const response = await apiFetch("/admin/cloud-relay/enrollment", {
+    method: "PUT",
+    body: JSON.stringify({ policy: "ask" }),
+  });
+  if (!response.ok)
+    throw new Error("Couldn't change this. Try again in Settings → Connectivity.");
   return response.json();
 }

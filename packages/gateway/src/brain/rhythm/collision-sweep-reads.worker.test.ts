@@ -27,6 +27,8 @@ import {
   seedSmallFixture,
 } from "./collision-sweep-test-utils.js";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 const WORKER_URL = new URL("../../workers/io-worker.ts", import.meta.url);
 const LOADER_URL = new URL("../../workers/register-tsx.mjs", import.meta.url).href;
@@ -45,10 +47,11 @@ describe.each(Object.keys(FIXTURES))("the %s fixture on the io worker", (name) =
   let worker: CollisionSweepReads;
   let direct: CollisionSweepReads;
 
+  // A cold TypeScript worker load can exceed Vitest's default hook budget.
   beforeAll(async () => {
-    dbPath = `/tmp/omnesis-test-${randomUUID()}.db`;
+    dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
     db = createDatabase(dbPath) as unknown as Database.Database;
-    FIXTURES[name]!(db);
+    db.transaction(FIXTURES[name]!)(db);
     direct = directReadPort(COLLISION_SWEEP_READS, db);
     scheduler = new Scheduler({ enablePreemption: false });
     scheduler.registerRunner(
@@ -62,7 +65,7 @@ describe.each(Object.keys(FIXTURES))("the %s fixture on the io worker", (name) =
     );
     await scheduler.start();
     worker = ioGateFromScheduler(scheduler);
-  });
+  }, 30_000);
 
   afterAll(async () => {
     await scheduler.dispose();

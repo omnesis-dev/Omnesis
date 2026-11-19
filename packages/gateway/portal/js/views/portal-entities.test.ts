@@ -17,11 +17,12 @@
  */
 
 import { readFileSync, readdirSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
-const VIEWS = new URL(".", import.meta.url).pathname;
+const VIEWS = fileURLToPath(new URL(".", import.meta.url));
 const LIB = join(VIEWS, "..", "lib");
 
 /** Files whose purpose is to emit entities, not to render them. */
@@ -41,7 +42,7 @@ describe("portal templates carry no HTML entities", () => {
   it("uses real characters, because htm does not decode entities", () => {
     const offenders: string[] = [];
     for (const file of [...jsFiles(VIEWS), ...jsFiles(LIB)]) {
-      const name = file.split("/").pop()!;
+      const name = basename(file);
       if (ESCAPERS.has(name)) continue;
       readFileSync(file, "utf8")
         .split("\n")

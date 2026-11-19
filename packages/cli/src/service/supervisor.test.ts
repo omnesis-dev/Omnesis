@@ -12,7 +12,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, posix } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { CliError } from "@omnesis/cli-shared";
 import {
@@ -34,6 +34,7 @@ import {
   generateLaunchdPlist,
   launchdLogPaths,
   systemdWritablePaths,
+  systemdEscapeArg,
 } from "./units.js";
 import type { GatewayLockHolder } from "@omnesis/core";
 import type { ServiceSpec } from "./types.js";
@@ -105,7 +106,7 @@ describe("SystemdSupervisor", () => {
     expect(readFileSync(unitPath, "utf8")).toContain(
       "ExecStart=/usr/local/bin/omnesis gateway serve",
     );
-    expect(statSync(unitPath).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") expect(statSync(unitPath).mode & 0o777).toBe(0o600);
     expect(calls).toEqual([
       ["systemctl", "--user", "daemon-reload"],
       ["systemctl", "--user", "enable", "--now", "omnesis-gateway.service"],
@@ -133,7 +134,7 @@ describe("SystemdSupervisor", () => {
     const listed = unit.split("\n").find((line) => line.startsWith("ReadWritePaths="));
     expect(listed).toBeTruthy();
     for (const path of writable) {
-      expect(listed).toContain(path);
+      expect(listed).toContain(systemdEscapeArg(path));
       expect(existsSync(path), `${path} must exist before the unit starts`).toBe(true);
     }
   });
@@ -487,15 +488,22 @@ describe("LaunchdSupervisor", () => {
     expect(existsSync(plistPath)).toBe(true);
     expect(existsSync(darwinLogsDir(home))).toBe(true);
     expect(readFileSync(plistPath, "utf8")).toContain("<string>dev.omnesis.gateway</string>");
-    expect(statSync(plistPath).mode & 0o777).toBe(0o600);
-    expect(statSync(darwinLogsDir(home)).mode & 0o777).toBe(0o700);
+    if (process.platform !== "win32") expect(statSync(plistPath).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32")
+      expect(statSync(darwinLogsDir(home)).mode & 0o777).toBe(0o700);
     expect(calls).toEqual([
       ["launchctl", "bootout", "gui/501/dev.omnesis.gateway"],
       ["launchctl", "print", "gui/501/dev.omnesis.gateway"],
-      ["launchctl", "bootstrap", "gui/501", plistPath],
+      [
+        "launchctl",
+        "bootstrap",
+        "gui/501",
+        posix.join(home, "Library", "LaunchAgents", "dev.omnesis.gateway.plist"),
+      ],
       // RunAtLoad spawns are not reliable outside a real GUI login context
-      // (SSH installs leave the job pended) — install always kickstarts.
-      ["launchctl", "kickstart", "-k", "gui/501/dev.omnesis.gateway"],
+      // (SSH installs leave the job pended) — install always kickstarts, and
+      // without -k, which would kill the instance bootstrap just spawned.
+      ["launchctl", "kickstart", "gui/501/dev.omnesis.gateway"],
     ]);
   });
 
@@ -578,10 +586,10 @@ describe("LaunchdSupervisor", () => {
     expect(calls).toEqual([
       ["launchctl", "print", "gui/501/dev.omnesis.gateway"],
       ["launchctl", "bootstrap", "gui/501", sup.unitPath("gateway")],
-      ["launchctl", "kickstart", "-k", "gui/501/dev.omnesis.gateway"],
+      ["launchctl", "kickstart", "gui/501/dev.omnesis.gateway"],
       ["launchctl", "print", "gui/501/dev.omnesis.gateway"],
       ["launchctl", "bootstrap", "gui/501", sup.unitPath("gateway")],
-      ["launchctl", "kickstart", "-k", "gui/501/dev.omnesis.gateway"],
+      ["launchctl", "kickstart", "gui/501/dev.omnesis.gateway"],
     ]);
   });
 
@@ -627,8 +635,135 @@ describe("LaunchdSupervisor", () => {
       ["launchctl", "bootout", "gui/501/dev.omnesis.gateway"],
       ["launchctl", "print", "gui/501/dev.omnesis.gateway"],
       ["launchctl", "bootstrap", "gui/501", sup.unitPath("gateway")],
-      ["launchctl", "kickstart", "-k", "gui/501/dev.omnesis.gateway"],
+      ["launchctl", "kickstart", "gui/501/dev.omnesis.gateway"],
     ]);
+  });
+
+  describe("starting a job bootstrap just registered", () => {
+    /**
+     * A launchctl that behaves as launchd did on a hosted macOS runner:
+     * `bootstrap` spawns the RunAtLoad instance, and a kickstart sent at once
+     * is refused with "Operation not permitted" — always for `-k` (the kill
+     * of that instance), and for a plain kickstart as many times as
+     * `refusePlain` says. `spawn` is the state the RunAtLoad spawn reaches.
+     */
+    function refusingLaunchctl(opts: {
+      spawn: "running" | "spawn scheduled";
+      refusePlain: number;
+      printsUntilRunning?: number;
+      startConfirmTimeoutMs?: number;
+    }) {
+      const calls: string[][] = [];
+      let loaded = false;
+      let refusePlain = opts.refusePlain;
+      let printsUntilRunning = opts.printsUntilRunning ?? 0;
+      let state: string = opts.spawn;
+      const EPERM = {
+        code: 1,
+        stdout: "",
+        stderr: 'Could not kickstart service "dev.omnesis.gateway": 1: Operation not permitted',
+      };
+      const ok = { code: 0, stdout: "", stderr: "" };
+      const exec: ExecRunner = (cmd, args) => {
+        calls.push([cmd, ...args]);
+        switch (args[0]) {
+          case "bootout":
+            loaded = false;
+            return Promise.resolve(ok);
+          case "bootstrap":
+            loaded = true;
+            state = printsUntilRunning > 0 ? "xpcproxy" : opts.spawn;
+            return Promise.resolve(ok);
+          case "print": {
+            if (!loaded) return Promise.resolve({ code: 113, stdout: "", stderr: "not found" });
+            if (state === "xpcproxy" && --printsUntilRunning <= 0) state = opts.spawn;
+            const pid = state === "running" ? "pid = 4242\n" : "";
+            return Promise.resolve({ code: 0, stdout: `state = ${state}\n${pid}`, stderr: "" });
+          }
+          case "kickstart":
+            if (args[1] === "-k") return Promise.resolve(EPERM);
+            if (refusePlain > 0) {
+              refusePlain -= 1;
+              return Promise.resolve(EPERM);
+            }
+            state = "running";
+            return Promise.resolve(ok);
+          default:
+            return Promise.resolve(ok);
+        }
+      };
+      const home = makeHome();
+      const sup = new LaunchdSupervisor({
+        exec,
+        stream: makeStream().stream,
+        home,
+        uid: 501,
+        sleep: () => Promise.resolve(),
+        ...(opts.startConfirmTimeoutMs !== undefined
+          ? { startConfirmTimeoutMs: opts.startConfirmTimeoutMs }
+          : {}),
+      });
+      return { home, sup, calls };
+    }
+
+    it("install never kills the instance bootstrap spawned", async () => {
+      const { home, sup, calls } = refusingLaunchctl({ spawn: "running", refusePlain: 0 });
+      await sup.install(spec(home));
+      expect(calls.filter((call) => call[1] === "kickstart")).toEqual([
+        ["launchctl", "kickstart", "gui/501/dev.omnesis.gateway"],
+      ]);
+    });
+
+    it("install succeeds when the kickstart is refused but the job is running", async () => {
+      const { home, sup, calls } = refusingLaunchctl({ spawn: "running", refusePlain: 1 });
+      await expect(sup.install(spec(home))).resolves.toBeUndefined();
+      expect(calls.slice(-2)).toEqual([
+        ["launchctl", "kickstart", "gui/501/dev.omnesis.gateway"],
+        ["launchctl", "print", "gui/501/dev.omnesis.gateway"],
+      ]);
+    });
+
+    it("install waits for a job launchd is still spawning to report running", async () => {
+      const { home, sup, calls } = refusingLaunchctl({
+        spawn: "running",
+        refusePlain: 1,
+        printsUntilRunning: 3,
+      });
+      await expect(sup.install(spec(home))).resolves.toBeUndefined();
+      const afterKickstart = calls.slice(calls.findIndex((call) => call[1] === "kickstart"));
+      expect(afterKickstart.map((call) => call[1])).toEqual([
+        "kickstart",
+        "print",
+        "print",
+        "print",
+      ]);
+    });
+
+    it("install reports a refused kickstart that leaves the job not running", async () => {
+      const { home, sup } = refusingLaunchctl({
+        spawn: "spawn scheduled",
+        refusePlain: 1,
+        startConfirmTimeoutMs: 0,
+      });
+      await expect(sup.install(spec(home))).rejects.toThrow(
+        /launchctl kickstart failed \(1\): .*Operation not permitted/,
+      );
+    });
+
+    it("reload and start of an unloaded job start it the same way", async () => {
+      const { home, sup, calls } = refusingLaunchctl({ spawn: "running", refusePlain: 0 });
+      await sup.install(spec(home));
+      await sup.reload("gateway");
+      await sup.stop("gateway");
+      await sup.start("gateway");
+      expect(calls.filter((call) => call[1] === "kickstart" && call[2] === "-k")).toEqual([]);
+    });
+
+    it("a refused restart of a registered job is a failure even while it runs", async () => {
+      const { home, sup } = refusingLaunchctl({ spawn: "running", refusePlain: 0 });
+      await sup.install(spec(home));
+      await expect(sup.restart("gateway")).rejects.toThrow(/launchctl kickstart failed \(1\)/);
+    });
   });
 
   describe("a gateway the job left behind", () => {

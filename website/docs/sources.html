@@ -300,14 +300,13 @@
               <tr>
                 <td>
                   Telegram Messages<br /><span class="pill">any collector</span>
-                  <span class="pill">QR sign-in</span> <span class="pill">experimental</span>
+                  <span class="pill">QR sign-in</span>
                 </td>
                 <td>
-                  <strong>Experimental</strong> — offered only when the gateway and collector run
-                  with <code>OMNESIS_EXPERIMENTAL=1</code>. Your chats as conversational documents,
-                  one per chat per day, through a Telegram API app you create yourself. Voice notes
-                  are transcribed when a transcriber model is assigned, and photo and document text
-                  is extracted. See <a href="#telegram">Telegram</a>.
+                  Your chats as conversational documents, one per chat per day, through a Telegram
+                  API app you create yourself. Voice notes are transcribed when a transcriber model
+                  is assigned, and photo and document text is extracted. See
+                  <a href="#telegram">Telegram</a>.
                 </td>
               </tr>
               <tr>
@@ -334,13 +333,12 @@
               <tr>
                 <td>
                   Discord<br /><span class="pill">any collector</span>
-                  <span class="pill">Bot token</span> <span class="pill">Experimental</span>
+                  <span class="pill">Bot token</span>
                 </td>
                 <td>
                   Each channel's day as one conversation document, across the servers a bot of yours
-                  belongs to, threads and forum posts included; posters feed the people graph.
-                  Offered only when the Gateway runs with
-                  <code>OMNESIS_EXPERIMENTAL=1</code> — see <a href="#discord">Discord</a>.
+                  belongs to, threads and forum posts included; posters feed the people graph. See
+                  <a href="#discord">Discord</a>.
                 </td>
               </tr>
             </tbody>
@@ -348,11 +346,6 @@
         </div>
 
         <h3 id="discord">Discord</h3>
-        <p>
-          Discord is <strong>experimental</strong>: it appears in the source picker only when the
-          Gateway runs with <code>OMNESIS_EXPERIMENTAL=1</code>, and its behavior may change between
-          releases.
-        </p>
         <p>
           Discord hands message history to bots only — an ordinary account may not be automated, and
           no OAuth2 scope reads messages. So you create an application in Discord's Developer
@@ -473,7 +466,9 @@
             and unsent messages, messages marked deleted, and any folder matching the
             <em>Exclude folders</em> setting, which takes folder names such as
             <code>[Gmail]/All Mail</code>; <code>*</code> matches within a folder name and
-            <code>**</code> across folders.
+            <code>**</code> across folders. Symbolic links are skipped. On Windows, message paths
+            through a junction or symbolic link are refused; choose the actual folder rather than a
+            linked path.
           </li>
           <li>
             <strong>A folder it cannot read.</strong> An unreadable folder, or a Maildir that is not
@@ -525,18 +520,15 @@
           <li>
             <strong>Recovery.</strong> A wrong password or key fails the import with a clear message
             rather than a partial result. A backup in an unrecognized or unsupported format is
-            refused by name instead of crashing. Cancelling stops the import and deletes its
-            decrypted working files; messages already imported stay, and running the import again
-            adds the rest without duplicating them.
+            refused by name instead of crashing. Cancelling stops new import batches and deletes
+            decrypted working files once the worker has stopped. If cleanup cannot be confirmed,
+            Omnesis keeps those files private and logs the failure for investigation. Messages
+            already imported stay, and running the import again adds the rest without duplicating
+            them.
           </li>
         </ul>
 
         <h3 id="telegram">Telegram</h3>
-        <div class="callout warn">
-          <strong>Experimental.</strong> The Telegram source is unstable and offered in
-          <strong>Add source</strong> only when the gateway and the collector run with
-          <code>OMNESIS_EXPERIMENTAL=1</code>; see <a href="experimental">Experimental</a>.
-        </div>
         <p>
           Telegram Messages archives your own Telegram account — signed in as you, not as a bot —
           into Omnesis. It reads your chats through the Telegram API with a developer app that you
@@ -691,7 +683,9 @@
                 </td>
                 <td>
                   Markdown notes as documents, with frontmatter, tags, and wikilinks. Vaults with
-                  the same folder name on one collector remain separate sources.
+                  the same folder name on one collector remain separate sources. Links outside the
+                  selected vault are not indexed. If the vault path is redirected to another folder,
+                  restore the original folder or update the source's vault path before syncing.
                 </td>
               </tr>
               <tr>
@@ -968,26 +962,24 @@
               <tr>
                 <td>
                   Immich<br /><span class="pill">any collector</span>
-                  <span class="pill">API key</span> <span class="pill">experimental</span>
+                  <span class="pill">API key</span>
                 </td>
                 <td>
-                  <strong>Experimental</strong> — offered only when the gateway and collector run
-                  with <code>OMNESIS_EXPERIMENTAL=1</code>. One document per photo or video in a
-                  self-hosted Immich library — when and where it was taken, the people Immich
-                  recognised and you named, its albums, description and camera — with a link back to
-                  the asset. Never the images. See <a href="#immich">Immich</a>.
+                  One document per photo or video in a self-hosted Immich library — when and where
+                  it was taken, the people Immich recognised and you named, its albums, description
+                  and camera — with a link back to the asset. Never the images. See
+                  <a href="#immich">Immich</a>.
                 </td>
               </tr>
               <tr>
                 <td>
                   Paperless-ngx<br /><span class="pill">any collector</span>
-                  <span class="pill">API token</span> <span class="pill">Experimental</span>
+                  <span class="pill">API token</span>
                 </td>
                 <td>
                   Archived documents from a self-hosted Paperless-ngx, with their OCR text, notes,
                   correspondent, document type, tags and custom fields; custom field values are
-                  queryable in SQL. Offered only when the Gateway runs with
-                  <code>OMNESIS_EXPERIMENTAL=1</code> — see <a href="#paperless">Paperless-ngx</a>.
+                  queryable in SQL. See <a href="#paperless">Paperless-ngx</a>.
                 </td>
               </tr>
             </tbody>
@@ -1020,14 +1012,16 @@
           <li>
             <strong>Folders you name.</strong> There are no default folders. Name each one when you
             add the source; each machine that joins it names its own. An <em>Exclude</em> setting
-            takes glob patterns to skip inside those folders.
+            takes glob patterns to skip inside those folders, using <code>*</code>, <code>**</code>,
+            <code>?</code> and <code>{a,b}</code>.
           </li>
           <li>
             <strong>What it refuses.</strong> System and configuration folders such as
             <code>Library</code> and <code>.config</code>, build and dependency folders, and files
             that look like keys or secrets are never read, even inside a chosen folder. Git working
             trees and Obsidian vaults are skipped whole — the Obsidian source indexes vaults — and
-            naming one as a folder is refused at setup with the reason.
+            naming one as a folder is refused at setup with the reason. Protected configuration
+            locations are also refused when selected directly or reached through an alias.
           </li>
           <li>
             <strong>Files it cannot read.</strong> A damaged PDF keeps the text of the pages that
@@ -1047,11 +1041,6 @@
         </ul>
 
         <h3 id="immich">Immich</h3>
-        <div class="callout warn">
-          <strong>Experimental.</strong> The Immich source is unstable and offered in
-          <strong>Add source</strong> only when the gateway and the collector run with
-          <code>OMNESIS_EXPERIMENTAL=1</code>; see <a href="experimental">Experimental</a>.
-        </div>
         <p>
           Immich indexes one Immich user's photo and video library from a server you run, version
           3.0 or later. It reads text and metadata only: the capture time and place, the people
@@ -1118,11 +1107,6 @@
         </ul>
 
         <h3 id="paperless">Paperless-ngx</h3>
-        <p>
-          Paperless-ngx is <strong>experimental</strong>: it appears in the source picker only when
-          the Gateway runs with <code>OMNESIS_EXPERIMENTAL=1</code>, and its behavior may change
-          between releases.
-        </p>
         <p>
           Paperless-ngx indexes the documents a self-hosted
           <a href="https://docs.paperless-ngx.com/">Paperless-ngx</a> instance has archived; it
@@ -1216,9 +1200,10 @@
                 </td>
                 <td>
                   Visit, daily-rollup, and search-term analytics tables, plus a daily browsing
-                  summary document. Reads Chrome, Brave, Edge, and Vivaldi on any collector, plus
-                  Safari and Arc on a macOS collector. Omnesis reads private copies of the browser
-                  databases and never modifies the originals.
+                  summary document. Reads Chrome, Brave, Edge, and Vivaldi on macOS, Linux, and
+                  Windows collectors. Arc history is read on macOS and from its packaged Windows
+                  profile; Safari requires a macOS collector. Omnesis reads private copies of the
+                  browser databases and never modifies the originals.
                 </td>
               </tr>
               <tr>
@@ -1401,7 +1386,9 @@
                   allows a new app 1,000 reads a day, so the source is added with a 30-minute sync
                   interval, and for an account with many activities a first sync or a resync can
                   take several days to fetch every activity's details, while new activities keep
-                  being listed.
+                  being listed. Strava activity and athlete IDs retain their full 64-bit precision.
+                  When upgrading, update the collector hosting Strava as well as the gateway;
+                  existing accounts and sync progress are kept without reconnecting or resyncing.
                 </td>
               </tr>
               <tr>
@@ -1875,16 +1862,25 @@
                 </td>
               </tr>
               <tr>
-                <td>Rebuild</td>
+                <td>Resync</td>
                 <td>
-                  <strong>Resync</strong>, or <code>omnesis sources resync &lt;id&gt;</code>.<br />
-                  Deletes everything the source has indexed and syncs it again from scratch. Use it
-                  only when the indexed data must be rebuilt, or after widening the source's
-                  <code>maxAge</code> to fetch the older history (see
-                  <a href="operating#configuration">Configuration</a>). The CLI asks first; pass
-                  <code>--yes</code> in scripts. Pages captured by the browser extension cannot be
-                  resynced, because the gateway has nowhere to fetch them again from. A phone source
-                  is resynced from the CLI only; the phone sends its data again.
+                  <strong>Resync…</strong>, or <code>omnesis sources resync &lt;id&gt;</code>.<br />
+                  Reads the source again from the start, in one of two ways.
+                  <strong>In place</strong>, the default, deletes nothing: each item updates the
+                  record already indexed, so records keep their place, items you deleted one by one
+                  stay deleted, and search keeps working meanwhile. Use it to pick up anything a
+                  sync missed, or after widening the source's <code>maxAge</code> to fetch the older
+                  history (see <a href="operating#configuration">Configuration</a>). Because it
+                  never deletes, it does not clear duplicate or stray records.
+                  <strong>From scratch</strong>, <code>--from-scratch</code> in the CLI, deletes
+                  everything the source has indexed and then imports it again: search for the source
+                  is empty until it finishes, and items you had deleted one by one come back. Use it
+                  when the indexed data must be rebuilt. The CLI asks before a from-scratch resync;
+                  pass <code>--yes</code> in scripts. <strong>Resync</strong> on a source's page in
+                  the mobile apps offers the same two ways, in place selected. Pages captured by the
+                  browser extension cannot be resynced, because the gateway has nowhere to fetch
+                  them again from. A phone source has no Resync in the portal: resync it from the
+                  CLI or the mobile apps, and the phone sends its data again.
                 </td>
               </tr>
               <tr>
@@ -2114,10 +2110,12 @@
           with the same outcome.
         </p>
         <p>
-          <code>omnesis sources resync &lt;id&gt; --device &lt;device&gt;</code> re-syncs one member
-          of a shared or per-device source and leaves the others alone. On a per-device source, that
-          member's data is deleted and synced again; on a shared source, only that member's sync
-          progress starts over, because the data is shared.
+          <code>omnesis sources resync &lt;id&gt; --device &lt;device&gt;</code>, or picking the
+          device in the portal's Resync dialog, re-syncs one member of a shared or per-device source
+          and leaves the others alone. In place, that member's sync progress starts over and nothing
+          is deleted. From scratch applies to a per-device source only: that member's data is
+          deleted and synced again. A member of a shared source is always resynced in place, because
+          the data is shared; resync the whole source to rebuild it from scratch.
         </p>
         <p>
           If shared members disagree about whether an item was deleted — one reports it gone while

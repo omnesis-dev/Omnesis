@@ -119,6 +119,9 @@ jobs:
         run: |
           [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
           test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+      - name: Keep this job off production Omnesis services
+        id: production-network
+        run: $GITHUB_WORKSPACE/scripts/ci/production-network.sh isolate
       - name: Set up Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -204,6 +207,10 @@ jobs:
         if: ${{ inputs.scope == 'full' || inputs.projects == 'all' || contains(format(',{0},', inputs.projects), ',@omnesis/extension,') }}
         run: npm --prefix extension run package:store
 
+      - name: Check nothing tried to reach production Omnesis services
+        if: ${{ always() && steps.production-network.outcome == 'success' }}
+        run: $GITHUB_WORKSPACE/scripts/ci/production-network.sh verify
+
   # ------------------------------------------------------------------
   # unit — every `*.test.ts` except `*.e2e.test.ts`, plus the gateway-spawning
   # script smoke tests and the OpenClaw and Hermes adapter suites (`unit-all`).
@@ -229,6 +236,9 @@ jobs:
         run: |
           [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
           test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+      - name: Keep this job off production Omnesis services
+        id: production-network
+        run: $GITHUB_WORKSPACE/scripts/ci/production-network.sh isolate
       - name: Set up Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -237,6 +247,19 @@ jobs:
 
       - name: Install dependencies
         run: scripts/ci/npm-ci.sh
+
+      - name: Set up Go
+        # The Tailscale helper program (packages/tailnet-helper) is Go; its
+        # unit tests run inside the unit lane.
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: packages/tailnet-helper/go.mod
+          cache-dependency-path: packages/tailnet-helper/go.sum
+
+      - name: Verify real Go-to-Node private transport
+        env:
+          GOMAXPROCS: "2"
+        run: node --import tsx scripts/ci/tailnet-transport.mjs
 
       - name: lane [linux-unit]
         if: ${{ inputs.scope == 'full' || inputs.projects == 'all' }}
@@ -272,6 +295,10 @@ jobs:
           esac
           exec node scripts/run-check.mjs smoke
 
+      - name: Check nothing tried to reach production Omnesis services
+        if: ${{ always() && steps.production-network.outcome == 'success' }}
+        run: $GITHUB_WORKSPACE/scripts/ci/production-network.sh verify
+
   # ------------------------------------------------------------------
   # e2e — the spawned-gateway suites, sharded across runners.
   #
@@ -306,6 +333,9 @@ jobs:
         run: |
           [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
           test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+      - name: Keep this job off production Omnesis services
+        id: production-network
+        run: $GITHUB_WORKSPACE/scripts/ci/production-network.sh isolate
       - name: Set up Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -323,6 +353,22 @@ jobs:
         # `playwright`), so the browser revision always matches the library that
         # asks for it; `--with-deps` adds Chromium's system libraries.
         run: npm exec --workspace packages/collector -- playwright install --with-deps chromium
+
+      - name: Set up Go
+        # tailscale-embed.e2e.test.ts runs a private tailnet: headscale, and
+        # Tailscale's own daemon, CLI and relay server built at the version the
+        # helper pins, plus the helper itself. Go is a required dependency of
+        # that suite: it fails, not skips, without it in CI.
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: packages/tailnet-helper/go.mod
+          cache-dependency-path: packages/tailnet-helper/go.sum
+
+      - name: Restore the test tailnet tools
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/omnesis-tailnet-tools
+          key: tailnet-tools-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('packages/tailnet-helper/go.mod', 'scripts/tailnet-test/tools.mjs') }}
 
       - name: lane [linux-e2e]
         # Spawned-gateway suites under packages/*/src/**/*.e2e.test.ts.
@@ -342,6 +388,10 @@ jobs:
           SHARD: ${{ matrix.shard }}
           TOTAL: ${{ matrix.total }}
           FILES: ${{ matrix.files }}
+
+      - name: Check nothing tried to reach production Omnesis services
+        if: ${{ always() && steps.production-network.outcome == 'success' }}
+        run: $GITHUB_WORKSPACE/scripts/ci/production-network.sh verify
 
   # ------------------------------------------------------------------
   # e2e-embedder — the semantic search suites against a real embedding model.
@@ -369,6 +419,9 @@ jobs:
         run: |
           [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
           test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+      - name: Keep this job off production Omnesis services
+        id: production-network
+        run: $GITHUB_WORKSPACE/scripts/ci/production-network.sh isolate
       - name: Set up Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -401,6 +454,10 @@ jobs:
         if: failure()
         run: docker logs omnesis-test-embedder-8001 2>&1 | tail -80 || true
 
+      - name: Check nothing tried to reach production Omnesis services
+        if: ${{ always() && steps.production-network.outcome == 'success' }}
+        run: $GITHUB_WORKSPACE/scripts/ci/production-network.sh verify
+
   # ------------------------------------------------------------------
   # node-macos — cross-platform validation on macOS (arm64). Installs
   # dependencies (so the native modules — better-sqlite3, duckdb — are
@@ -416,9 +473,17 @@ jobs:
     needs: privacy
     if: ${{ inputs.run_macos }}
     runs-on: macos-latest
-    timeout-minutes: 120
+    # Include dependency preparation and post-job cache saves around the full
+    # unit suite; individual test and command budgets remain unchanged.
+    timeout-minutes: 150
 
     steps:
+      # A hosted Mac has 3 vCPUs. Left on, Spotlight indexes the fresh
+      # checkout, node_modules and every file the tests write, taking CPU from
+      # the unit workers for the whole lane.
+      - name: Turn off Spotlight indexing
+        run: sudo mdutil -a -i off
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.target_sha }}
@@ -430,11 +495,22 @@ jobs:
         run: |
           [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
           test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+      - name: Keep this job off production Omnesis services
+        id: production-network
+        run: $GITHUB_WORKSPACE/scripts/ci/production-network.sh isolate
       - name: Set up Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"
           cache: npm
+
+      - name: Select OpenSSL 3 for certificate fixtures
+        # macOS also supplies LibreSSL, whose x509 command lacks the fixture's extension-copy flag.
+        run: |
+          openssl_bin="$(brew --prefix openssl@3)/bin"
+          test -x "$openssl_bin/openssl"
+          "$openssl_bin/openssl" version
+          echo "$openssl_bin" >> "$GITHUB_PATH"
 
       - name: Install dependencies
         run: scripts/ci/npm-ci.sh
@@ -457,6 +533,13 @@ jobs:
         env:
           TZ: UTC
 
+      - name: Set up Go
+        # The Tailscale helper's Go unit tests run inside the unit lane.
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: packages/tailnet-helper/go.mod
+          cache-dependency-path: packages/tailnet-helper/go.sum
+
       - name: lane [macos-unit]
         # `test:unit` minus `test:unit:smoke` and `test:openclaw`, the two that
         # spawn a real gateway. Both run on Linux for the same target.
@@ -466,6 +549,10 @@ jobs:
 
       - name: lane [hermes]
         run: python3 -B packages/agent-integration/hermes/test_adapter.py
+
+      - name: Check nothing tried to reach production Omnesis services
+        if: ${{ always() && steps.production-network.outcome == 'success' }}
+        run: $GITHUB_WORKSPACE/scripts/ci/production-network.sh verify
 
   # ------------------------------------------------------------------
   # portal-e2e — Playwright DOM tests against a real gateway booted
@@ -493,6 +580,9 @@ jobs:
         run: |
           [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
           test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+      - name: Keep this job off production Omnesis services
+        id: production-network
+        run: $GITHUB_WORKSPACE/scripts/ci/production-network.sh isolate
       - name: Set up Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -509,3 +599,7 @@ jobs:
         run: exec node scripts/run-check.mjs portal
         env:
           TZ: UTC
+
+      - name: Check nothing tried to reach production Omnesis services
+        if: ${{ always() && steps.production-network.outcome == 'success' }}
+        run: $GITHUB_WORKSPACE/scripts/ci/production-network.sh verify

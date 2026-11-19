@@ -47,7 +47,7 @@ export class StartupServer {
     await new Promise<void>((resolve, reject) => {
       const server = serve(
         {
-          fetch: (request, env) => this.shutdown.guard(() => this.fetch(request, env)),
+          fetch: (request, env) => this.handle(request, env),
           port: options.port,
           hostname: options.hostname,
           createServer,
@@ -91,6 +91,26 @@ export class StartupServer {
       "HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\nRetry-After: 1\r\nContent-Length: 0\r\n\r\n",
     );
   };
+
+  /** Alternate listeners must pass upgrades through the same admission boundary
+   * as HTTP. A private socket must not expose app routes before activation or
+   * let a second upgrade listener run after the shutdown listener rejects it. */
+  admitUpgrade(request: IncomingMessage, socket: Duplex, accept: () => void): void {
+    if (!this.application) {
+      this.rejectUpgrade(request, socket);
+      return;
+    }
+    const admission = this.shutdown.guard(() => {
+      accept();
+      return true;
+    });
+    if (admission instanceof Response) this.rejectUpgrade(request, socket);
+  }
+
+  /** Alternate trusted listeners use this same readiness and shutdown gate. */
+  handle(request: Request, env: HttpBindings | Http2Bindings): Response | Promise<Response> {
+    return this.shutdown.guard(() => this.fetch(request, env));
+  }
 
   private fetch(request: Request, env: HttpBindings | Http2Bindings): Response | Promise<Response> {
     const path = new URL(request.url).pathname;

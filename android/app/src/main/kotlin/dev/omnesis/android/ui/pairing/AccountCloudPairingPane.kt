@@ -8,18 +8,28 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Key
+import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Dns
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Keyboard
 import androidx.compose.material.icons.outlined.QrCodeScanner
+import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.Warning
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -41,6 +51,7 @@ import dev.omnesis.android.designsystem.components.OmSpinner
 import dev.omnesis.android.designsystem.theme.OmTheme
 import dev.omnesis.android.designsystem.theme.OmnesisTheme
 import dev.omnesis.android.pairing.AccountGatewayChoice
+import kotlinx.coroutines.delay
 import java.net.URI
 
 @Composable
@@ -54,6 +65,7 @@ fun AccountCloudPairingPane(
     onPair: () -> Unit,
     onScan: () -> Unit = {},
     onManual: () -> Unit = {},
+    onCancel: () -> Unit = {},
 ) {
     val colors = OmTheme.colors
     Column(Modifier.fillMaxSize().background(colors.bgPrimary).verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(24.dp)) {
@@ -88,9 +100,10 @@ fun AccountCloudPairingPane(
                 }
             }
             else -> {
+                val waiting = (state.phase == AccountPairingPhase.Comparing || state.phase == AccountPairingPhase.Pairing) && !state.joined
                 if (state.phase == AccountPairingPhase.Choosing) SectionHeader("Choose a gateway", "Your Omnesis account has more than one. Pick the one this device joins.")
-                else SectionHeader(ACCOUNT_PAIRING_TITLE, ACCOUNT_PAIRING_DETAIL)
-                Progress(state, onChoose, onPair)
+                else if (!waiting) SectionHeader(ACCOUNT_PAIRING_TITLE, ACCOUNT_PAIRING_DETAIL)
+                Progress(state, onChoose, onPair, onCancel)
                 state.error?.let { Text(it, color = colors.danger, modifier = Modifier.testTag("account-pairing-error")) }
             }
         }
@@ -98,7 +111,7 @@ fun AccountCloudPairingPane(
 }
 
 @Composable
-private fun Progress(state: AccountPairingState, onChoose: (String) -> Unit, onPair: () -> Unit) {
+private fun Progress(state: AccountPairingState, onChoose: (String) -> Unit, onPair: () -> Unit, onCancel: () -> Unit) {
     val colors = OmTheme.colors
     when (state.phase) {
         AccountPairingPhase.Idle, AccountPairingPhase.Failed -> Unit
@@ -116,17 +129,7 @@ private fun Progress(state: AccountPairingState, onChoose: (String) -> Unit, onP
         AccountPairingPhase.Pairing, AccountPairingPhase.Comparing -> if (state.joined) {
             Working("Connecting this device…")
         } else {
-            state.host?.let { Text(it, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace, color = colors.textSecondary) }
-            Text(PAIRING_CODE_CHECK_TEXT, color = colors.textSecondary)
-            state.code?.let { VerificationCode(it, Modifier.testTag("pairing.account.code")) }
-            Text(if (state.approved) "Approved by your gateway." else "Waiting for approval on a trusted device…", color = colors.textSecondary)
-            Button(
-                onClick = onPair,
-                enabled = state.approved && state.phase != AccountPairingPhase.Pairing,
-                modifier = Modifier.fillMaxWidth().testTag("pairing.account.confirm"),
-            ) {
-                Text(if (state.phase == AccountPairingPhase.Pairing) "Pairing…" else "Codes match, pair this device")
-            }
+            WaitingForOk(state, onPair, onCancel)
         }
     }
 }
@@ -144,12 +147,13 @@ private fun Working(text: String) {
  * and wrapped when it does not. It assumes nothing about the code's length or grouping.
  */
 @Composable
-internal fun VerificationCode(code: String, modifier: Modifier = Modifier, align: TextAlign = TextAlign.Start) {
+internal fun VerificationCode(code: String, modifier: Modifier = Modifier, align: TextAlign = TextAlign.Start, large: Boolean = false) {
     // Read character by character, so TalkBack never turns a group into a word or a number.
     val spoken = code.filter(Char::isLetterOrDigit).toList().joinToString(" ")
     Text(
         code,
-        style = MaterialTheme.typography.headlineSmall.copy(fontFamily = FontFamily.Monospace, fontWeight = FontWeight.SemiBold),
+        style = (if (large) MaterialTheme.typography.headlineLarge else MaterialTheme.typography.headlineSmall)
+            .copy(fontFamily = FontFamily.Monospace, fontWeight = FontWeight.SemiBold),
         color = OmTheme.colors.textPrimary,
         textAlign = align,
         modifier = modifier.semantics { contentDescription = "Verification code $spoken" },
@@ -201,13 +205,101 @@ private fun GatewayRow(gateway: AccountGatewayChoice, onClick: () -> Unit) {
             // A gateway linked before names existed has none; its address stays on the second line.
             Text(gateway.displayName?.trim().takeUnless { it.isNullOrEmpty() } ?: "Gateway", style = MaterialTheme.typography.titleMedium, color = colors.textPrimary, maxLines = 2, overflow = TextOverflow.Ellipsis)
             MiddleEllipsisText(host, style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace), color = colors.textSecondary, modifier = Modifier.fillMaxWidth())
+            GatewayPresence(gateway.online)
         }
         Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, contentDescription = null, tint = colors.textMuted, modifier = Modifier.size(18.dp))
     }
 }
 
-/** What the new device says above its code while it waits. */
-internal const val PAIRING_CODE_CHECK_TEXT = "Check that this code matches the one shown on your other device, then approve it there."
+/**
+ * Whether the relay holds this gateway's tunnel right now. The word is always shown, so the state never
+ * rests on colour alone; the dot carries no semantics, so it is not read aloud. A hint only: an offline
+ * gateway can still be chosen.
+ */
+@Composable
+private fun GatewayPresence(online: Boolean) {
+    val colors = OmTheme.colors
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        Box(Modifier.size(8.dp).clip(CircleShape).background(if (online) colors.success else colors.textMuted))
+        Text(if (online) "Online" else "Offline", style = MaterialTheme.typography.bodySmall, color = colors.textSecondary, maxLines = 1)
+    }
+}
+
+/**
+ * This phone signed in and the gateway holds it until the owner says yes. One state: where to
+ * approve, the code that place will show, how long it waits, and a way out. An approval from a
+ * gateway this phone verified continues on its own; an unverified one asks this person to
+ * confirm the codes matched.
+ */
+@Composable
+private fun WaitingForOk(state: AccountPairingState, onPair: () -> Unit, onCancel: () -> Unit) {
+    val colors = OmTheme.colors
+    val pairing = state.phase == AccountPairingPhase.Pairing
+    Column(Modifier.fillMaxWidth().testTag("pairing.account.waitingForOk"), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        Icon(if (state.approved) Icons.Outlined.CheckCircle else Icons.Outlined.Schedule, contentDescription = null, tint = colors.accent, modifier = Modifier.size(36.dp))
+        Text(if (state.approved) "Approved" else PAIRING_WAITING_TITLE, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, color = colors.textPrimary, modifier = Modifier.semantics { heading() })
+        when {
+            state.approved && state.continues -> Text(PAIRING_WAITING_APPROVED, color = colors.textPrimary)
+            state.approved -> Text(PAIRING_WAITING_COMPARE, color = colors.textPrimary)
+            else -> Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(PAIRING_WAITING_FROM_ANOTHER_DEVICE, color = colors.textPrimary)
+                for (place in PAIRING_WAITING_PLACES) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("•", color = colors.textPrimary)
+                    Text(place, color = colors.textPrimary)
+                }
+                Text(PAIRING_WAITING_CODE_LEAD, color = colors.textPrimary)
+            }
+        }
+        state.code?.let { VerificationCode(it, Modifier.fillMaxWidth().testTag("pairing.account.code"), TextAlign.Center, large = true) }
+        if (!state.approved) state.expiresAt?.let { ExpiryCountdown(it) }
+        if (!state.continues && (state.approved || pairing)) Button(
+            onClick = onPair,
+            enabled = !pairing,
+            modifier = Modifier.fillMaxWidth().testTag("pairing.account.confirm"),
+        ) {
+            Text(if (pairing) "Connecting…" else PAIRING_WAITING_CONFIRM)
+        }
+        if (!pairing) TextButton(onClick = onCancel, modifier = Modifier.fillMaxWidth().testTag("pairing.account.cancel")) {
+            Text("Cancel", color = colors.accent)
+        }
+    }
+}
+
+/** The clock the countdown reads; screenshots fix it so the golden shows one moment. */
+internal val LocalPairingClock = staticCompositionLocalOf<() -> Long> { System::currentTimeMillis }
+
+@Composable
+private fun ExpiryCountdown(expiresAt: Long) {
+    val clock = LocalPairingClock.current
+    var now by remember { mutableLongStateOf(clock()) }
+    // A ticking loop never idles, so a screenshot renders the first moment only.
+    if (!LocalInspectionMode.current) LaunchedEffect(expiresAt) { while (true) { delay(1000); now = clock() } }
+    Text(
+        pairingExpiryText(expiresAt - now),
+        style = MaterialTheme.typography.bodySmall,
+        color = OmTheme.colors.textSecondary,
+        textAlign = TextAlign.Center,
+        modifier = Modifier.fillMaxWidth().testTag("pairing.account.expiry"),
+    )
+}
+
+/** "Expires in 4:32", or a way on once the gateway stopped waiting. */
+internal fun pairingExpiryText(remainingMillis: Long): String {
+    val seconds = remainingMillis / 1000
+    if (seconds <= 0) return "Expired. Cancel and sign in again."
+    return "Expires in %d:%02d".format(seconds / 60, seconds % 60)
+}
+
+/** What the legacy Google pairing says above its code while it waits. */
+internal const val PAIRING_CODE_CHECK_TEXT = "Approve this device from a device you already use. Make sure it shows this same code."
+
+internal const val PAIRING_WAITING_TITLE = "Waiting for your OK"
+internal const val PAIRING_WAITING_FROM_ANOTHER_DEVICE = "Approve this phone from a device you already use:"
+internal val PAIRING_WAITING_PLACES = listOf("the Omnesis portal on your computer, or", "the Omnesis app on another phone.")
+internal const val PAIRING_WAITING_CODE_LEAD = "It will show this code:"
+internal const val PAIRING_WAITING_COMPARE = "Continue only if the device you approved on showed this same code."
+internal const val PAIRING_WAITING_CONFIRM = "Codes match, connect this phone"
+internal const val PAIRING_WAITING_APPROVED = "Approved. Connecting this phone…"
 
 internal const val ACCOUNT_PAIRING_TITLE = "Pair using your Omnesis Account"
 internal const val ACCOUNT_PAIRING_DETAIL =
@@ -224,11 +316,15 @@ private fun SectionHeader(title: String, detail: String) {
     }
 }
 
+/** The moment previews and screenshots render at, four and a half minutes before a request expires. */
+const val PREVIEW_PAIRING_NOW = 1_800_000_000_000L
+
 fun accountPairingPreviewState(phase: AccountPairingPhase): AccountPairingState = AccountPairingState(
     phase = phase,
-    gateways = listOf(AccountGatewayChoice("00000000-0000-4000-8000-000000000001", "https://home.example.test", "Fictional home"), AccountGatewayChoice("00000000-0000-4000-8000-000000000002", "https://studio.example.test", "Fictional studio gateway with a long display name")),
+    gateways = listOf(AccountGatewayChoice("00000000-0000-4000-8000-000000000001", "https://home.example.test", "Fictional home", online = true), AccountGatewayChoice("00000000-0000-4000-8000-000000000002", "https://studio.example.test", "Fictional studio gateway with a long display name", online = false)),
     code = "465 774", host = "home.example.test",
     approved = phase == AccountPairingPhase.Pairing,
+    expiresAt = if (phase == AccountPairingPhase.Comparing) PREVIEW_PAIRING_NOW + 272_000 else null,
     error = if (phase == AccountPairingPhase.Failed) "This Omnesis account has no gateway yet. Connect your gateway to it first, or pair directly with a QR code." else null,
 )
 @Preview @Composable private fun AccountSignInPreview() { OmnesisTheme { AccountCloudPairingPane(accountPairingPreviewState(AccountPairingPhase.Idle), true, true, {}, {}, {}, {}) } }

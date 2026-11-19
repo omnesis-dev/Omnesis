@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { pathToFileURL } from "node:url";
+import { execFileSync } from "node:child_process";
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
+
 import {
   realpathSync,
   existsSync,
@@ -15,7 +20,14 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { UPDATE_LOCK_ENV } from "@omnesis/core";
+import {
+  UPDATE_LOCK_ENV,
+  acquireUpdateLock,
+  type UpdateLock,
+  type spawnWindowsJob,
+} from "@omnesis/core";
+import { inspectWindowsPrivatePathSync } from "@omnesis/platform/windows-private-file";
+import { UpdateProcessCleanupUncertainError } from "./process-cleanup.js";
 import { UpdateInterruptionRouter } from "./interruption.js";
 import {
   CONTAINER_OWN_ENV,
@@ -49,6 +61,10 @@ import {
   type HostRoles,
 } from "./detect.js";
 
+const SOURCE_ROOT = join(tmpdir(), "omnesis-installed-source");
+const SOURCE_LOADER = join(SOURCE_ROOT, "node_modules", "tsx", "dist", "loader.mjs");
+const PACKAGE_ENTRY = join(tmpdir(), "omnesis-installed-package", "dist", "index.js");
+
 const TARGET_COMMIT = "1122334455667788990011223344556677889900";
 const PREVIOUS_COMMIT = "9f1c2ab3d4e5f60718293a4b5c6d7e8f90a1b2c3";
 const OFFER_ID = "3f1b0c6e-8a2d-4e5f-9b7c-1d2e3f4a5b6c";
@@ -62,7 +78,7 @@ function offer(over: Partial<UpdateContinuation> = {}): UpdateContinuation {
     state: "offered",
     subject: {
       method: "source",
-      rootDir: "/opt/omnesis",
+      rootDir: SOURCE_ROOT,
       edge: false,
       target: "v0.5.0",
       targetCommit: TARGET_COMMIT,
@@ -79,6 +95,12 @@ function offer(over: Partial<UpdateContinuation> = {}): UpdateContinuation {
 }
 
 const dirs: string[] = [];
+const heldLocks: UpdateLock[] = [];
+function runtimeOffer(configDir: string): UpdateContinuation {
+  const lock = acquireUpdateLock(configDir, { owner: "invented continuation fixture" });
+  heldLocks.push(lock);
+  return offer({ lockId: lock.id });
+}
 function tempDir(): string {
   // macOS hands back /var/folders/…, a symlink to /private/var/folders/…, and
   // the code under test resolves symlinks — as it must, since npm reaches a
@@ -89,6 +111,7 @@ function tempDir(): string {
   return dir;
 }
 afterEach(() => {
+  for (const lock of heldLocks.splice(0)) lock.release();
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
@@ -164,7 +187,7 @@ describe("what the continuing build rebuilds from an offer", () => {
     const subject = offer().subject;
     const plan = applyPlanForSubject(subject, { NODE_OPTIONS: "--max-old-space-size=2048" });
     expect(plan.rollback).toEqual(
-      sourceUpdateSpecs("/opt/omnesis", PREVIOUS_COMMIT, {
+      sourceUpdateSpecs(SOURCE_ROOT, PREVIOUS_COMMIT, {
         NODE_OPTIONS: "--max-old-space-size=2048",
       }),
     );
@@ -252,13 +275,13 @@ describe("reading an offer", () => {
 
   test("an offer is only for the installation it describes", () => {
     const source = offer().subject;
-    expect(planForSubject({ method: "source", rootDir: "/opt/omnesis" }, source)).toEqual({
+    expect(planForSubject({ method: "source", rootDir: SOURCE_ROOT }, source)).toEqual({
       kind: "source",
-      rootDir: "/opt/omnesis",
+      rootDir: SOURCE_ROOT,
     });
-    expect(() => planForSubject({ method: "source", rootDir: "/opt/other" }, source)).toThrow(
-      ContinuationRefused,
-    );
+    expect(() =>
+      planForSubject({ method: "source", rootDir: join(tmpdir(), "omnesis-other-source") }, source),
+    ).toThrow(ContinuationRefused);
     expect(() => planForSubject({ method: "npm-global" }, source)).toThrow(ContinuationRefused);
     expect(
       planForSubject(
@@ -334,7 +357,11 @@ describe("taking an offer", () => {
   test("the offer is written owner-only, and a symlink in its place is no offer", () => {
     const configDir = tempDir();
     writeContinuation(configDir, offer());
-    expect(statSync(continuationPath(configDir)).mode & 0o777).toBe(0o600);
+    if (process.platform === "win32") {
+      expect(inspectWindowsPrivatePathSync(continuationPath(configDir), "file").private).toBe(true);
+    } else {
+      expect(statSync(continuationPath(configDir)).mode & 0o777).toBe(0o600);
+    }
 
     const elsewhere = tempDir();
     writeContinuation(elsewhere, offer());
@@ -396,30 +423,72 @@ describe("finding the installed build", () => {
 
   const ctx = (over: Partial<ContinuationCommandContext> = {}): ContinuationCommandContext => ({
     env: {},
-    execPath: "/usr/bin/node",
-    packageEntry: () => "/usr/lib/node_modules/omnesis/dist/index.js",
+    execPath: process.execPath,
+    packageEntry: () => PACKAGE_ENTRY,
+    sourceLoader: () => SOURCE_LOADER,
     interactive: true,
     ...over,
   });
 
   test("the installed CLI is reached by path: a checkout's tsx entry, a package's manifest entry", () => {
-    expect(installedCliCommand({ method: "source", rootDir: "/opt/omnesis" }, ctx())).toEqual({
-      command: "/opt/omnesis/node_modules/.bin/tsx",
-      args: ["/opt/omnesis/packages/cli/src/index.ts"],
+    expect(installedCliCommand({ method: "source", rootDir: SOURCE_ROOT }, ctx())).toEqual({
+      command: process.execPath,
+      args: [
+        "--import",
+        pathToFileURL(SOURCE_LOADER).href,
+        join(SOURCE_ROOT, "packages", "cli", "src", "index.ts"),
+      ],
     });
     expect(installedCliCommand({ method: "npm-global" }, ctx())).toEqual({
-      command: "/usr/bin/node",
-      args: ["/usr/lib/node_modules/omnesis/dist/index.js"],
+      command: process.execPath,
+      args: [PACKAGE_ENTRY],
     });
     expect(installedCliCommand({ method: "npm-global" }, ctx({ packageEntry: () => null }))).toBe(
       null,
     );
   });
 
+  test("a source continuation resolves and executes the target checkout's loader", () => {
+    const root = join(tempDir(), "target checkout #");
+    const loaderDir = join(root, "node_modules", "tsx");
+    const sourceDir = join(root, "packages", "cli", "src");
+    mkdirSync(loaderDir, { recursive: true });
+    mkdirSync(sourceDir, { recursive: true });
+    writeFileSync(join(root, "package.json"), "{}");
+    writeFileSync(
+      join(loaderDir, "package.json"),
+      JSON.stringify({ name: "tsx", exports: "./loader.mjs" }),
+    );
+    writeFileSync(
+      join(loaderDir, "loader.mjs"),
+      "globalThis.targetLoaderMarker = 'installed target';",
+    );
+    writeFileSync(
+      join(sourceDir, "index.ts"),
+      "process.stdout.write(globalThis.targetLoaderMarker);",
+    );
+    const command = installedCliCommand(
+      { method: "source", rootDir: root },
+      { execPath: process.execPath, packageEntry: () => null },
+    )!;
+    expect(command.command).toBe(process.execPath);
+    expect(command.args[1]).toContain("%23");
+    expect(execFileSync(command.command, command.args, { encoding: "utf8" })).toBe(
+      "installed target",
+    );
+  });
+
   test("a checkout runs its own tsx entry, with the lock id to adopt", () => {
     expect(continuationCommand(offer().subject, OFFER_ID, LOCK_ID, ctx())).toEqual({
-      command: "/opt/omnesis/node_modules/.bin/tsx",
-      args: ["/opt/omnesis/packages/cli/src/index.ts", "update", "continue-after-apply", OFFER_ID],
+      command: process.execPath,
+      args: [
+        "--import",
+        pathToFileURL(SOURCE_LOADER).href,
+        join(SOURCE_ROOT, "packages", "cli", "src", "index.ts"),
+        "update",
+        "continue-after-apply",
+        OFFER_ID,
+      ],
       env: { OMNESIS_UPDATE_LOCK_ID: LOCK_ID },
     });
   });
@@ -427,13 +496,8 @@ describe("finding the installed build", () => {
   test("a package runs the entry its manifest names, or nothing when there is none", () => {
     const subject = { method: "npm-global" as const, target: "0.5.0", previous: "0.4.10" };
     expect(continuationCommand(subject, OFFER_ID, LOCK_ID, ctx())).toEqual({
-      command: "/usr/bin/node",
-      args: [
-        "/usr/lib/node_modules/omnesis/dist/index.js",
-        "update",
-        "continue-after-apply",
-        OFFER_ID,
-      ],
+      command: process.execPath,
+      args: [PACKAGE_ENTRY, "update", "continue-after-apply", OFFER_ID],
       env: { OMNESIS_UPDATE_LOCK_ID: LOCK_ID },
     });
     expect(continuationCommand(subject, OFFER_ID, LOCK_ID, ctx({ packageEntry: () => null }))).toBe(
@@ -498,7 +562,7 @@ describe("finding the installed build", () => {
   });
 });
 
-describe.skipIf(process.platform === "win32")("running the installed build on an offer", () => {
+describe("running the installed build on an offer", () => {
   test("a build that accepts reports its own exit status, with the lock id it was handed", async () => {
     const configDir = tempDir();
     const seen = join(configDir, "seen-lock");
@@ -511,25 +575,28 @@ describe.skipIf(process.platform === "win32")("running the installed build on an
       fs.writeFileSync(seen, process.env.OMNESIS_UPDATE_LOCK_ID ?? "");
       process.exit(4);
     `;
+    const doc = runtimeOffer(configDir);
     const outcome = await launchContinuation({
       configDir,
-      doc: offer(),
+      doc,
       relay: {},
       command: {
         command: process.execPath,
         args: ["-e", script, continuationPath(configDir), seen],
-        env: { OMNESIS_UPDATE_LOCK_ID: LOCK_ID },
+        env: { OMNESIS_UPDATE_LOCK_ID: doc.lockId },
       },
     });
     expect(outcome).toEqual({ accepted: true, code: 4, signal: null });
-    expect(readFileSync(seen, "utf8")).toBe(LOCK_ID);
+    expect(readFileSync(seen, "utf8")).toBe(doc.lockId);
     // The offer never outlives the run that made it.
     expect(existsSync(continuationPath(configDir))).toBe(false);
   });
 
-  test("a build that accepts and is then killed reports the kill, as accepted", async () => {
-    const configDir = tempDir();
-    const script = `
+  test.skipIf(process.platform === "win32")(
+    "a build that accepts and is then killed reports the kill, as accepted",
+    async () => {
+      const configDir = tempDir();
+      const script = `
       const fs = require("node:fs");
       const path = process.argv[1];
       const doc = JSON.parse(fs.readFileSync(path, "utf8"));
@@ -537,21 +604,22 @@ describe.skipIf(process.platform === "win32")("running the installed build on an
       fs.writeFileSync(path, JSON.stringify(doc));
       process.kill(process.pid, "SIGKILL");
     `;
-    const outcome = await launchContinuation({
-      configDir,
-      doc: offer(),
-      relay: {},
-      command: { command: process.execPath, args: ["-e", script, continuationPath(configDir)] },
-    });
-    expect(outcome).toEqual({ accepted: true, code: 137, signal: "SIGKILL" });
-    expect(existsSync(continuationPath(configDir))).toBe(false);
-  });
+      const outcome = await launchContinuation({
+        configDir,
+        doc: runtimeOffer(configDir),
+        relay: {},
+        command: { command: process.execPath, args: ["-e", script, continuationPath(configDir)] },
+      });
+      expect(outcome).toEqual({ accepted: true, code: 137, signal: "SIGKILL" });
+      expect(existsSync(continuationPath(configDir))).toBe(false);
+    },
+  );
 
   test("a build that exits without accepting leaves the offer untaken", async () => {
     const configDir = tempDir();
     const outcome = await launchContinuation({
       configDir,
-      doc: offer(),
+      doc: runtimeOffer(configDir),
       relay: {},
       command: { command: process.execPath, args: ["-e", "process.exit(3)"] },
     });
@@ -567,13 +635,55 @@ describe.skipIf(process.platform === "win32")("running the installed build on an
     await expect(
       launchContinuation({
         configDir,
-        doc: offer(),
+        doc: runtimeOffer(configDir),
         relay: {},
         command: { command: join(configDir, "no-such-cli"), args: [] },
       }),
     ).resolves.toMatchObject({ accepted: false, code: 1 });
     expect(existsSync(continuationPath(configDir))).toBe(false);
   });
+
+  test.runIf(process.platform === "win32")(
+    "cancellation stops the accepted build's descendants after its wrapper exits",
+    async () => {
+      const configDir = tempDir();
+      const ready = join(configDir, "descendant.pid");
+      const relay: SignalRelay = {};
+      const descendant = `require("node:fs").writeFileSync(process.argv[1], String(process.pid)); setInterval(() => {}, 1000)`;
+      const wrapper = `
+      const fs = require("node:fs");
+      const [offer, marker, descendant] = process.argv.slice(1);
+      const doc = JSON.parse(fs.readFileSync(offer, "utf8"));
+      doc.state = "accepted";
+      fs.writeFileSync(offer, JSON.stringify(doc));
+      require("node:child_process").spawn(process.execPath, ["-e", descendant, marker], { stdio: "inherit", detached: true }).unref();
+    `;
+      const run = launchContinuation({
+        configDir,
+        doc: runtimeOffer(configDir),
+        relay,
+        command: {
+          command: process.execPath,
+          args: ["-e", wrapper, continuationPath(configDir), ready, descendant],
+        },
+      });
+      try {
+        await vi.waitFor(() => expect(existsSync(ready)).toBe(true), { timeout: 30_000 });
+        const pid = Number(readFileSync(ready, "utf8"));
+        expect(pid).toBeGreaterThan(0);
+        process.kill(pid, 0);
+        relay.deliver?.("SIGTERM");
+        expect(await run).toMatchObject({ accepted: true });
+        await vi.waitFor(() => expect(() => process.kill(pid, 0)).toThrow(), { timeout: 10_000 });
+        expect(relay.deliver).toBeUndefined();
+        expect(existsSync(continuationPath(configDir))).toBe(false);
+      } finally {
+        relay.deliver?.("SIGTERM");
+        await run;
+      }
+    },
+    60_000,
+  );
 
   test("a signal this process receives reaches the build while it runs", async () => {
     const configDir = tempDir();
@@ -585,13 +695,22 @@ describe.skipIf(process.platform === "win32")("running the installed build on an
     const relay: SignalRelay = {};
     const run = launchContinuation({
       configDir,
-      doc: offer(),
+      doc: runtimeOffer(configDir),
       relay,
       command: { command: process.execPath, args: ["-e", script, ready] },
     });
-    await vi.waitFor(() => expect(existsSync(ready)).toBe(true));
+    await vi.waitFor(() => expect(existsSync(ready)).toBe(true), {
+      timeout: process.platform === "win32" ? 30_000 : 1000,
+    });
     relay.deliver?.("SIGTERM");
-    await expect(run).resolves.toMatchObject({ accepted: false, code: 143, signal: "SIGTERM" });
+    if (process.platform === "win32") {
+      // Windows terminates the job owner; it does not deliver POSIX signals.
+      await expect(run).resolves.toMatchObject({ accepted: false });
+      const outcome = await run;
+      expect(outcome.code).not.toBe(0);
+    } else {
+      await expect(run).resolves.toMatchObject({ accepted: false, code: 143, signal: "SIGTERM" });
+    }
     expect(relay.deliver).toBeUndefined();
   });
 });
@@ -716,5 +835,78 @@ describe("handing over after the apply", () => {
     } finally {
       spy.mockRestore();
     }
+  });
+});
+
+describe("unconfirmed continuation cleanup", () => {
+  test.each(["accepted", "offered", "unreadable"] as const)(
+    "%s receipt cannot authorize parent fallback or lock reclamation",
+    async (receipt) => {
+      const configDir = tempDir();
+      const doc = runtimeOffer(configDir);
+      const cleanupError = new Error("invented helper crash without join");
+      const primaryError = new Error("invented target creation failure");
+      const child = Object.assign(new EventEmitter(), {
+        pid: 12345,
+        stdin: new PassThrough(),
+        stdout: new PassThrough(),
+        stderr: new PassThrough(),
+        kill: vi.fn(() => true),
+        jobReady: Promise.reject(primaryError),
+        jobClosed: Promise.reject(cleanupError),
+      });
+      void child.jobReady.catch(() => {});
+      void child.jobClosed.catch(() => {});
+      const spawnJob = vi.fn(() => {
+        queueMicrotask(() => {
+          if (receipt === "accepted") writeContinuation(configDir, { ...doc, state: "accepted" });
+          if (receipt === "unreadable") writeFileSync(continuationPath(configDir), "{broken");
+          child.emit("spawn");
+          child.emit("close", 1, null);
+        });
+        return child as unknown as ReturnType<typeof spawnWindowsJob>;
+      });
+      const relay: SignalRelay = {};
+      const result = launchContinuation({
+        configDir,
+        doc,
+        relay,
+        spawnJob,
+        command: { command: process.execPath, args: [] },
+      });
+      await expect(result).rejects.toBeInstanceOf(UpdateProcessCleanupUncertainError);
+      await expect(result).rejects.toMatchObject({
+        cause: expect.objectContaining({ errors: [primaryError, cleanupError] }),
+      });
+      expect(existsSync(continuationPath(configDir))).toBe(true);
+      expect(relay.deliver).toBeUndefined();
+      // The parent cannot retire its host transaction while the child's state
+      // is unknown, even if the offer was absent or undecodable.
+      heldLocks.at(-1)!.release();
+      expect(() => acquireUpdateLock(configDir, { owner: "invented competing update" })).toThrow();
+    },
+  );
+
+  test("handover propagates uncertainty without another hold/reclaim or fallback", async () => {
+    const error = new UpdateProcessCleanupUncertainError(
+      new Error("invented abort"),
+      new Error("invented unjoined tree"),
+    );
+    const held = { setStep: vi.fn(), reclaim: vi.fn(() => true) };
+    const router = new UpdateInterruptionRouter(() => {
+      throw new Error("unexpected signal");
+    });
+    await expect(
+      handOverAfterApply({
+        offer: offer(),
+        continueAfterApply: () => Promise.reject(error),
+        interruptions: router,
+        lock: held,
+        targetLabel: "v0.5.0",
+      }),
+    ).rejects.toBe(error);
+    expect(held.setStep).toHaveBeenCalledTimes(1);
+    expect(held.reclaim).not.toHaveBeenCalled();
+    router.claim(() => {})();
   });
 });

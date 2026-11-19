@@ -5,6 +5,10 @@ package dev.omnesis.android.access
 
 import dev.omnesis.android.BuildConfig
 import dev.omnesis.android.transport.dto.GatewayPairingApprovalRequest
+import dev.omnesis.android.transport.dto.TailscaleJoinApproving
+import dev.omnesis.android.transport.dto.TailscaleJoinRequest
+import java.util.concurrent.atomic.AtomicLong
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -13,17 +17,17 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * What the main screen's banner shows while devices that signed in wait for approval: one
- * banner however many wait, with the count in its words.
+ * What the main screen's banner shows while devices wait for approval, however they asked (by
+ * signing in, or through Tailscale): one banner however many wait, with the count in its words.
  */
 data class PairingRequestBannerOffer(val count: Int) {
     val text: String
-        get() = if (count > 1) "$count devices are waiting for your approval to pair to this gateway." else ONE
+        get() = if (count > 1) "$count new devices are waiting for your OK." else ONE
 
     companion object {
-        const val ONE = "A device is waiting for your approval to pair to this gateway."
+        const val ONE = "A new device is waiting for your OK."
 
-        /** The banner's action, which opens Pairing requests. */
+        /** The banner's action, which opens the approvals sheet. */
         const val ACTION = "Review"
     }
 }
@@ -33,34 +37,44 @@ fun pairingRequestsStillWaiting(requests: List<GatewayPairingApprovalRequest>, n
     requests.filter { it.status == "pending" && it.expiresAt > nowMillis }
 
 /**
- * The sign-in pairing requests the gateway last listed, and the banner they earn. Dismissing
- * hides the banner for exactly the set waiting at that moment; a request arriving, decided or
- * expiring brings it back. Nothing is stored.
+ * The pairing requests the gateway last listed, of both kinds, and the banner they earn.
+ * Dismissing hides the banner for exactly the set waiting at that moment; a request arriving,
+ * decided or expiring brings it back. Nothing is stored.
  */
 data class PairingPendingRequestsState(
+    /** Devices that signed in with the Omnesis account. */
     val requests: List<GatewayPairingApprovalRequest> = emptyList(),
+    /** Devices on the owner's Tailscale network that asked to join. */
+    val tailscale: List<TailscaleJoinRequest> = emptyList(),
     private val dismissedIds: Set<String>? = null,
     private val clock: () -> Long = System::currentTimeMillis,
 ) {
-    private val waiting: List<GatewayPairingApprovalRequest> get() = pairingRequestsStillWaiting(requests, clock())
+    /** The ids of every request still waiting, each kind in its own namespace. */
+    private val waitingIds: Set<String>
+        get() {
+            val now = clock()
+            return pairingRequestsStillWaiting(requests, now).mapTo(mutableSetOf()) { "sign-in:${it.requestId}" } +
+                tailscale.filterNot { it.expired(now) }.map { "tailscale:${it.id}" }
+        }
 
     val banner: PairingRequestBannerOffer?
         get() {
-            val live = waiting
-            if (live.isEmpty() || live.ids() == dismissedIds) return null
+            val live = waitingIds
+            if (live.isEmpty() || live == dismissedIds) return null
             return PairingRequestBannerOffer(live.size)
         }
 
     fun replaced(requests: List<GatewayPairingApprovalRequest>) = copy(requests = requests)
 
-    fun dismissed() = copy(dismissedIds = waiting.ids())
+    fun replacedTailscale(requests: List<TailscaleJoinRequest>) = copy(tailscale = requests)
 
-    private fun List<GatewayPairingApprovalRequest>.ids(): Set<String> = mapTo(mutableSetOf()) { it.requestId }
+    fun dismissed() = copy(dismissedIds = waitingIds)
 }
 
 /**
- * Only an administrator's phone in a build with the Omnesis account asks the gateway; any
- * other phone holds an empty list and never sends a request.
+ * Only an administrator's phone asks the gateway: for sign-in requests in a build with the
+ * Omnesis account, and for Tailscale joins while the gateway advertises them. Any other phone
+ * holds empty lists and never sends a request.
  */
 @Singleton
 class PairingPendingRequests(clock: () -> Long) {
@@ -69,9 +83,39 @@ class PairingPendingRequests(clock: () -> Long) {
     private val _state = MutableStateFlow(PairingPendingRequestsState(clock = clock))
     val state: StateFlow<PairingPendingRequestsState> = _state.asStateFlow()
 
+    /** Only the latest Tailscale read or listing lands. */
+    private val tailscaleGeneration = AtomicLong()
+
     fun replace(requests: List<GatewayPairingApprovalRequest>) = _state.update { it.replaced(requests) }
 
     fun dismiss() = _state.update { it.dismissed() }
+
+    /**
+     * Read the waiting Tailscale joins with [client]: null for a phone that may not ask or a
+     * gateway that does not advertise them, which asks nothing and holds none. A failed read,
+     * a 404 included, shows nothing rather than a request that may be gone.
+     */
+    suspend fun refreshTailscale(client: TailscaleJoinApproving?) {
+        val generation = tailscaleGeneration.incrementAndGet()
+        val requests = if (client == null) {
+            emptyList()
+        } else {
+            try {
+                client.tailscaleJoinRequests()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                emptyList()
+            }
+        }
+        if (generation == tailscaleGeneration.get()) _state.update { it.replacedTailscale(requests) }
+    }
+
+    /** What the approvals sheet last listed is what the banner counts, over any read under way. */
+    fun tailscaleListed(requests: List<TailscaleJoinRequest>) {
+        tailscaleGeneration.incrementAndGet()
+        _state.update { it.replacedTailscale(requests) }
+    }
 
     companion object {
         /** How often the banner asks again while the app is in front. */
@@ -79,15 +123,19 @@ class PairingPendingRequests(clock: () -> Long) {
 
         private val _refreshRequests = MutableStateFlow(0)
 
-        /** Bumped to ask for a fresh read now: a pairing notification arrived on this phone. */
+        /** Bumped to ask for a fresh read now: a pairing or Tailscale join notification arrived on this phone. */
         val refreshRequests: StateFlow<Int> = _refreshRequests.asStateFlow()
 
         fun requestRefresh() = _refreshRequests.update { it + 1 }
 
-        /** Whether the main screen reads the waiting requests at all: only a build with cloud connectivity does. */
-        fun polls(cloudEnabled: Boolean = BuildConfig.CLOUD_RELAY_ENABLED): Boolean = cloudEnabled
+        /**
+         * Whether the main screen reads waiting requests at all: a build with cloud connectivity,
+         * or a gateway that advertises Tailscale joins. Otherwise the loop never starts.
+         */
+        fun polls(cloudEnabled: Boolean = BuildConfig.CLOUD_RELAY_ENABLED, tailscaleEmbed: Boolean): Boolean =
+            cloudEnabled || tailscaleEmbed
 
-        /** Whether this phone may list pairing requests at all. */
+        /** Whether this phone may list sign-in pairing requests at all. */
         fun eligible(cloudEnabled: Boolean, scopes: Collection<String>?): Boolean = cloudEnabled && scopes?.contains("admin") == true
     }
 }

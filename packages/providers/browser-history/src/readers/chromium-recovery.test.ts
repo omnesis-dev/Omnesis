@@ -46,7 +46,11 @@ it("reads committed history through a hot rollback journal without modifying its
     engine: "chromium",
   });
   try {
-    expect(child.signal).toBe("SIGKILL");
+    expect(child.error).toBeUndefined();
+    if (process.platform === "win32") {
+      expect(child.signal).toBeNull();
+      expect(child.status).toBeGreaterThan(0);
+    } else expect(child.signal).toBe("SIGKILL");
     expect(existsSync(path + "-journal")).toBe(true);
     const before = [readFileSync(path), readFileSync(path + "-journal")];
     expect(before[1].subarray(0, 8).toString("hex")).toBe("d9d505f920a163d7");

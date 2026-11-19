@@ -31,6 +31,8 @@ import { createToken } from "./data/repositories/TokenRepository.js";
 import type Database from "better-sqlite3";
 import type { ToolCaller } from "@omnesis/agent";
 import type { AgentRoutesDeps } from "./http/routes/agent.js";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 type Db = Database.Database;
 
@@ -96,7 +98,7 @@ async function openSession(app: ReturnType<typeof createServer>, token: string) 
 }
 
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-test-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
   db = createDatabase(dbPath);
   seenCaller = undefined;
 });

@@ -17,6 +17,8 @@ import { createOpenLoop } from "../storage/open-loops.js";
 import { createObservation, transitionObservation } from "../storage/observations.js";
 import { findCollisionCandidates } from "./collision-candidates.js";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 const NOW = Date.parse("2026-07-02T10:00:00.000Z");
 const DAY = 86_400_000;
@@ -42,7 +44,7 @@ const candidates = () =>
   );
 
 beforeEach(() => {
-  path = `/tmp/omnesis-test-${randomUUID()}.db`;
+  path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
   db = createDatabase(path);
   // Two loops due on the same day collide on the deadline-day key.
   loop("loop_a", "2026-07-10");

@@ -15,6 +15,7 @@ import {
   Socket,
   type AddressInfo,
 } from "node:net";
+import { createWindowsPrivateFile, ensurePrivateFileSync } from "@omnesis/core";
 import {
   createRelayClientProxy,
   certificateFingerprint,
@@ -125,15 +126,19 @@ describe("native cloud tunnel with real gateway, collector sync engine and CLI",
       "-extfile",
       gatewayExtensionsFile,
     ]);
+    if (process.platform === "win32") ensurePrivateFileSync(gatewayKeyFile);
     gatewayAuthorityCertificate = await readFile(authorityCertFile, "utf8");
     gatewayCertificate = await readFile(gatewayCertFile, "utf8");
-    await writeFile(keyFile, randomBytes(32));
+    if (process.platform === "win32") await createWindowsPrivateFile(keyFile, randomBytes(32));
+    else await writeFile(keyFile, randomBytes(32));
     relay = await startRelayProcess({
       OMNESIS_CLOUD_RELAY_KEY_FILE: keyFile,
       OMNESIS_SYNTHETIC: "1",
       OMNESIS_CLOUD_RELAY_DB: join(directory, "accounts.sqlite"),
       OMNESIS_CLOUD_RELAY_PORT: "0",
       OMNESIS_CLOUD_RELAY_DOMAIN: "relay.example.test",
+      // Every client here reaches the data listener from one loopback address.
+      OMNESIS_CLOUD_RELAY_MAX_STREAMS_PER_CLIENT_PER_GATEWAY: "16",
     });
     const sessionFile = join(directory, "session.json");
     wireServer = createTcpServer((client) => {
@@ -158,8 +163,13 @@ describe("native cloud tunnel with real gateway, collector sync engine and CLI",
     await once(wireServer, "listening");
     publicOrigin = `https://${gatewayHostname}:${(wireServer.address() as AddressInfo).port}`;
     const registration = e2eTsxCommand("packages/cloud-relay/src/main.ts");
+    const osEnvironment = Object.fromEntries(
+      Object.entries(process.env).filter(([name]) => !name.toUpperCase().startsWith("OMNESIS_")),
+    );
     await execFileAsync(registration.command, [...registration.args, "register-key"], {
       env: e2eGatewayEnv({
+        ...osEnvironment,
+        OMNESIS_CONFIG_DIR: directory,
         OMNESIS_CLOUD_RELAY_ENABLED: "1",
         OMNESIS_CLOUD_RELAY_URL: relay.url,
         OMNESIS_CLOUD_RELAY_SESSION_FILE: sessionFile,

@@ -10,6 +10,7 @@ import { afterAll, afterEach, beforeAll, expect, test, vi } from "vitest";
 import { recoveryFixture } from "../test/recovery-fixture.js";
 import { fixtureBrowser, registeredPasskey, signInOnOperation } from "../test/operation-sign-in.js";
 import { tlsFiles, listen } from "../test/support.js";
+import { openLaunch } from "../test/browser-launch.js";
 import { createCloudRelay } from "./server.js";
 import { RelayAccounts } from "./accounts.js";
 import { RelaySessions, accountId } from "./identity.js";
@@ -33,6 +34,7 @@ afterEach(async () => {
 async function fixture(
   google = false,
   recoveryPolicy?: Parameters<typeof createCloudRelay>[0]["recoveryPolicy"],
+  loginLimits?: Parameters<typeof createCloudRelay>[0]["loginLimits"],
 ) {
   const accounts = new RelayAccounts(":memory:"),
     sessions = new RelaySessions(randomBytes(32));
@@ -68,6 +70,7 @@ async function fixture(
     controlOrigin: origin,
     accountSignIn: { enrollmentAuthority: authority },
     recoveryPolicy,
+    loginLimits,
     ...(google
       ? {
           webLogin: {
@@ -113,7 +116,8 @@ async function fixture(
       body: JSON.stringify(body),
       redirect: "manual",
     });
-  const begin = async (purpose: "owner-link" | "device-enrollment" = "owner-link") => {
+  /** A gateway's signed request, not yet opened in a browser. */
+  const start = async (purpose: "owner-link" | "device-enrollment" = "owner-link") => {
     const now = Math.floor(Date.now() / 1000),
       redemptionSecret = randomBytes(32).toString("base64url");
     const unsigned = {
@@ -139,9 +143,12 @@ async function fixture(
       ).toString("base64url"),
     });
     expect(started.status).toBe(200);
-    const intent = await started.json(),
+    return { unsigned, redemptionSecret, intent: await started.json() };
+  };
+  const begin = async (purpose: "owner-link" | "device-enrollment" = "owner-link") => {
+    const { unsigned, redemptionSecret, intent } = await start(purpose),
       launchUrl = new URL(intent.authorizeUrl);
-    const launch = await fetch(url + launchUrl.pathname + launchUrl.search, { redirect: "manual" });
+    const launch = await openLaunch(url + launchUrl.pathname + launchUrl.search, origin);
     expect(launch.status).toBe(303);
     const operationCookie = launch.headers.getSetCookie()[0]!.split(";")[0]!;
     const page = await fetch(url + launch.headers.get("location"), {
@@ -162,7 +169,7 @@ async function fixture(
       cookie: `${operationCookie}; ${browser}; __Host-omnesis-account=${account.token}`,
     };
   };
-  return { accounts, account, owner, ownerHeaders, relay, url, post, begin, sessions };
+  return { accounts, account, owner, ownerHeaders, relay, url, post, start, begin, sessions };
 }
 
 test("a gateway owner starts a browser-bound intent and the signed-in user explicitly confirms its account association", async () => {
@@ -212,6 +219,47 @@ test("a gateway owner starts a browser-bound intent and the signed-in user expli
   ).toBe(410);
 });
 
+test("the sign-in the gateway's page chose reaches the account page, from a fixed set only", async () => {
+  const f = await fixture(true),
+    { unsigned, intent } = await f.start("device-enrollment"),
+    launchUrl = new URL(intent.authorizeUrl);
+  let cookie = "";
+  const open = (extra: string) =>
+    openLaunch(f.url + launchUrl.pathname + launchUrl.search + extra, origin, cookie);
+  const described = async (launch: Response) => {
+    expect(launch.status).toBe(303);
+    // The page's address names only the operation: the choice is kept with it.
+    expect(launch.headers.get("location")).toBe(
+      `/_relay/account?operation=${unsigned.operationId}`,
+    );
+    cookie ||= launch.headers.getSetCookie()[0]!.split(";")[0]!;
+    return (
+      await (
+        await fetch(f.url + `/_relay/account/api/session?operation=${unsigned.operationId}`, {
+          headers: { cookie },
+        })
+      ).json()
+    ).pending;
+  };
+  for (const extra of [
+    "&method=password",
+    "&method=Google",
+    "&method=",
+    "&method=google&method=google",
+    "&method=google&extra=1",
+  ])
+    expect((await open(extra)).status, extra).toBe(400);
+  expect(await described(await open("&method=google"))).toMatchObject({
+    purpose: "device-enrollment",
+    method: "google",
+  });
+  // The same browser opening it again goes straight back to its page, with its choice kept.
+  expect(await described(await open("&method=passkey"))).toMatchObject({ method: "google" });
+  // Another browser can't open it at all.
+  cookie = "";
+  expect((await open("")).status).toBe(409);
+});
+
 test("owner-control and browser confirmation boundaries refuse ambient sessions, invalid launches and oversized input", async () => {
   const f = await fixture(),
     value = await f.begin(),
@@ -257,7 +305,7 @@ test("owner-control and browser confirmation boundaries refuse ambient sessions,
     `?operationId=${value.unsigned.operationId}&operationId=${value.unsigned.operationId}&ticket=bad`,
   ])
     expect((await fetch(f.url + path + "begin" + query, { redirect: "manual" })).status).toBe(400);
-  expect((await f.post("begin", {})).status).toBe(405);
+  expect((await f.post("begin", {})).status).toBe(403);
   expect((await fetch(f.url + path + `begin?oversized=${"x".repeat(4096)}`)).status).toBe(414);
   expect((await f.post("cancel", {})).status).toBe(400);
   expect((await f.post("cancel", { operationId: value.unsigned.operationId })).status).toBe(200);
@@ -408,7 +456,7 @@ test("signing in where nothing can create an account creates none: the plain pag
     })
   ).json();
   const authorize = new URL(started.authorizeUrl);
-  const launch = await fetch(f.url + authorize.pathname + authorize.search, { redirect: "manual" });
+  const launch = await openLaunch(f.url + authorize.pathname + authorize.search, origin);
   expect(launch.status).toBe(303);
   const desktop = launch.headers.getSetCookie()[0]!.split(";")[0]!;
   const before = f.accounts.identities.snapshot();
@@ -631,4 +679,55 @@ test("account discovery enforces the independent recovery policy before returnin
   expect((await request()).status).toBe(200);
   vi.useFakeTimers({ toFake: ["Date"], now: (recovery.policy().expiresAt + 1) * 1000 });
   expect((await request()).status).toBe(503);
+});
+
+test("F43: a link scanner fetching a gateway sign-in link, before or after the person, can neither bind it nor break it", async () => {
+  const f = await fixture();
+  for (const scannerFirst of [true, false]) {
+    const { unsigned, intent } = await f.start("device-enrollment"),
+      link = new URL(intent.authorizeUrl),
+      at = f.url + link.pathname + link.search;
+    const scan = () => fetch(at, { redirect: "manual" });
+    if (scannerFirst) {
+      const early = await scan();
+      expect(early.status).toBe(200);
+      expect(early.headers.getSetCookie()).toEqual([]);
+    }
+    const launch = await openLaunch(at, origin);
+    expect(launch.status).toBe(303);
+    const cookie = launch.headers.getSetCookie()[0]!.split(";")[0]!;
+    const late = await scan();
+    expect(late.status).toBe(409);
+    expect(late.headers.getSetCookie()).toEqual([]);
+    const session = await fetch(
+      f.url + `/_relay/account/api/session?operation=${unsigned.operationId}`,
+      { headers: { cookie } },
+    );
+    expect(await session.json()).toMatchObject({ pending: { purpose: "device-enrollment" } });
+  }
+});
+
+test("verified gateway owners can link while public sign-in is at its limit", async () => {
+  const f = await fixture(false, undefined, { maxConcurrent: 1, maxPerMinute: 1 });
+  const signIn = () =>
+    fetch(f.url + "/_relay/v3/desktop/start", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+  expect((await signIn()).status).toBe(400);
+  expect((await signIn()).status).toBe(429);
+  const unverified = await fetch(f.url + "/_relay/v3/account-browser/start", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: "{}",
+  });
+  expect(unverified.status).toBe(401);
+  const launch = await fetch(f.url + "/_relay/v3/account-browser/begin", {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: "",
+  });
+  expect(launch.status).toBe(429);
+  await expect(f.start()).resolves.toBeDefined();
 });

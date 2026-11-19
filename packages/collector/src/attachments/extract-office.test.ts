@@ -2,7 +2,6 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { spawnSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
 import { describe, test, expect } from "vitest";
 import JSZip from "jszip";
 import { extractOfficeText } from "./extract-office.js";
@@ -386,7 +385,7 @@ describe("extractOfficeText — DOCX", () => {
           }
           process.stdout.write(JSON.stringify(result));
         `,
-        fileURLToPath(new URL("./extract-office.ts", import.meta.url)),
+        new URL("./extract-office.ts", import.meta.url).href,
       ],
       { input: Buffer.from(data).toString("base64"), encoding: "utf8", timeout: 30_000 },
     );

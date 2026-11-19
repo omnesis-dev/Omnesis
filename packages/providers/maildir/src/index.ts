@@ -109,7 +109,7 @@ export default defineSource({
       required: true,
       placeholder: "~/Mail/example",
       mustExist: "directory",
-      help: "The folder your mail tool writes one account's mail to. It, or a folder inside it such as INBOX, holds cur and new directories. For Thunderbird, the account's folder in the profile, such as Mail/Local Folders or ImapMail/<server>.",
+      help: "The folder your mail tool writes one account's mail to. It, or a folder inside it such as INBOX, holds cur and new directories. For Thunderbird, the account's folder in the profile, such as `Mail/Local Folders` or `ImapMail/<server>`.",
     }),
     exclude: configSchema.list(configSchema.string({ label: "Folder pattern" }), {
       label: "Exclude folders",

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { existsSync, unlinkSync } from "node:fs";
+import { existsSync, unlinkSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import Database from "better-sqlite3";
@@ -13,6 +13,8 @@ import {
   getUrlIdPatterns,
   invalidateUrlIdPatternCache,
 } from "./UrlPatternRepository.js";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 type Db = Database.Database;
 
@@ -128,10 +130,10 @@ describe("cached URL pattern staleness on a worker read handle", () => {
   let reader: Db;
 
   beforeEach(() => {
-    file = `/tmp/omnesis-test-${randomUUID()}.db`;
-    writer = new Database(file);
-    runSchemaSetup(writer);
-    runMigrations(writer);
+    file = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
+    // Reuse this test's migrated schema and exercise cross-connection reads on disk.
+    writeFileSync(file, db.serialize(), { flag: "wx" });
+    writer = new Database(file, { fileMustExist: true });
     reader = new Database(file, { readonly: true, fileMustExist: true });
     invalidateUrlIdPatternCache();
   });

@@ -137,6 +137,7 @@ describe("CI lane scope", { timeout: 30_000 }, () => {
     ["a workflow", ".github/workflows/ci.yml"],
     ["a root toolchain config", "tsconfig.base.json"],
     ["the core package", "packages/core/src/index.ts"],
+    ["the platform package", "packages/platform/src/windows-job.ts"],
     ["the planner", "scripts/nx/bundles.mjs"],
     ["the check runner", "scripts/run-e2e.mjs"],
     ["an unsupported path", "unknown-root-file.txt"],

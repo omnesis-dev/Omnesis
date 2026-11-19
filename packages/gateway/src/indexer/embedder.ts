@@ -29,7 +29,7 @@ import {
   type EmbedderEncoding,
   type EmbedderPrefixes,
 } from "./embedder-prefixes.js";
-import type { LlamaEmbedding, LlamaEmbeddingContext, LlamaModel } from "node-llama-cpp";
+import type { LlamaEmbedding, LlamaEmbeddingContext, LlamaModel, Token } from "node-llama-cpp";
 import type { Embedder } from "./types.js";
 
 const log = createLogger("indexer:embedder");
@@ -39,8 +39,11 @@ const log = createLogger("indexer:embedder");
 // Production callers (the indexer worker) override these via opts:
 //   - contextSize: nomic-embed-text-v1.5 supports up to 8192 tokens; the
 //     chunker targets 2048 chars (~512 tokens). Keep headroom for the
-//     occasional large chunk without ballooning per-context KV cache.
-//   - maxInputChars: hard truncation bound, ~2048 tokens at 3 chars/token.
+//     occasional large chunk without ballooning per-context KV cache. It is
+//     an upper bound: a model trained on a shorter window gets that window
+//     instead (see `embeddingWindow`).
+//   - maxInputChars: a cheap character cut taken before tokenizing; the
+//     token-exact cut to the model's window happens in `fitToWindow`.
 //   - timeoutMs: per-native-call wall-clock ceiling. A stalled GGUF
 //     inference is the recurring root cause of full-gateway hangs (the
 //     slot's busy chain never resolves and queued calls pile up). The
@@ -49,6 +52,9 @@ const log = createLogger("indexer:embedder");
 const DEFAULT_CONTEXT_SIZE = 2048;
 const DEFAULT_MAX_INPUT_CHARS = 2048 * 3;
 const DEFAULT_EMBED_TIMEOUT_MS = 30_000;
+
+/** Why a queued input failed: the embedder started shutting down first. */
+const EMBEDDER_CLOSING = "embedder is shutting down";
 
 // Concurrency is configured at boot and passed to the embedder's
 // constructor via `opts.concurrency`. The indexer worker receives the
@@ -63,6 +69,8 @@ interface EmbeddingSlot {
   ctx: LlamaEmbeddingContext;
   /** Promise chain so a second call on the same slot waits for the first. */
   busy: Promise<void>;
+  /** Set when the embedder shuts down: inputs still queued here fail. */
+  closed: boolean;
 }
 
 export class LlamaCppEmbedder implements Embedder {
@@ -72,6 +80,12 @@ export class LlamaCppEmbedder implements Embedder {
   private concurrency: number;
   private timeoutMs: number;
   private maxInputChars: number;
+  /**
+   * Longest token sequence, special tokens excluded, that one native call
+   * accepts. Set once the model loads; until then (and in tests that inject
+   * fake slots) inputs pass through as text.
+   */
+  private maxInputTokens: number | undefined;
   /**
    * Task-specific text prefixes prepended at embed-time. Resolved at boot
    * from the embedder's encoding: a `text-prefix` encoding maps to
@@ -85,6 +99,8 @@ export class LlamaCppEmbedder implements Embedder {
   private outputDim: number | undefined;
   private onLoadProgress: ((progress: number) => void) | undefined;
   private loadPromise: Promise<void> | null = null;
+  /** Native calls that have started and not yet settled. */
+  private readonly running = new Set<Promise<unknown>>();
 
   constructor(
     private modelPath: string,
@@ -156,18 +172,34 @@ export class LlamaCppEmbedder implements Embedder {
     });
 
     const createCtx = this.model.createEmbeddingContext.bind(this.model);
+    const window = embeddingWindow(this.contextSize, this.model.trainContextSize);
+    if (window < this.contextSize) {
+      log.info(
+        `Embedding model was trained on ${window} tokens; using a ${window}-token ` +
+          `context instead of ${this.contextSize} and truncating longer inputs`,
+      );
+    }
 
     // Allocate contexts serially — node-llama-cpp's allocator isn't
     // safe under concurrent creation and a single context init stalls
     // for <100ms anyway. After this, inference runs fully parallel.
+    //
+    // The batch holds the whole window. node-llama-cpp's default batch is
+    // 512 tokens, and it evaluates a longer input in several batches. An
+    // encoder (BERT, nomic-bert) attends in both directions and pools only
+    // the batch it last evaluated, so a 520-token chunk came back as the
+    // embedding of its last 8 tokens. One batch per input costs a few MB.
     for (let i = 0; i < this.concurrency; i++) {
-      const ctx = await createCtx({ contextSize: this.contextSize });
-      this.slots.push({ ctx, busy: Promise.resolve() });
+      const ctx = await createCtx({ contextSize: window, batchSize: window });
+      this.slots.push({ ctx, busy: Promise.resolve(), closed: false });
     }
+    // node-llama-cpp rejects an input whose length, including the special
+    // tokens it adds (BOS/CLS and EOS/SEP), reaches the context size.
+    this.maxInputTokens = window - 1 - this.slots[0].ctx.calculateInputLength("");
 
     log.info(
       `Embedding model loaded in ${Date.now() - startMs}ms ` +
-        `(context size: ${this.contextSize}, pool: ${this.concurrency})`,
+        `(context size: ${window}, pool: ${this.concurrency})`,
     );
   }
 
@@ -176,10 +208,9 @@ export class LlamaCppEmbedder implements Embedder {
     if (texts.length === 0) return [];
 
     // Fan out across the indexer slots (1..N-1), leaving slot 0 free
-    // for embedQuery. Each slot's `busy` promise acts as a per-slot
-    // lock — chaining work onto it serialises native calls that share
-    // a single EmbeddingContext while still letting the pool run in
-    // parallel across slots.
+    // for embedQuery. Each consumer queues one input at a time on its slot,
+    // so a query sharing slot 0 can run between inputs instead of waiting
+    // behind a whole indexing page. Other slots continue independently.
     //
     // Document-side prefix is applied here before the slot dispatch so
     // truncation in `runOnSlot` measures against the post-prefix
@@ -187,14 +218,14 @@ export class LlamaCppEmbedder implements Embedder {
     // outlier inputs.
     const docPrefix = this.prefixes.document;
     const results = new Array<Float32Array>(texts.length);
-    const tasks = texts.map((text, i) =>
-      this.runOnSlot(
-        pickIndexerSlotIndex(this.slots.length, i),
-        docPrefix ? docPrefix + text : text,
-        i,
-        results,
-      ),
-    );
+    const consumers = Math.min(texts.length, Math.max(1, this.slots.length - 1));
+    const tasks = Array.from({ length: consumers }, async (_, consumer) => {
+      const slot = pickIndexerSlotIndex(this.slots.length, consumer);
+      for (let i = consumer; i < texts.length; i += consumers) {
+        const text = texts[i];
+        await this.runOnSlot(slot, docPrefix ? docPrefix + text : text, i, results);
+      }
+    });
     await Promise.all(tasks);
     return results;
   }
@@ -218,12 +249,27 @@ export class LlamaCppEmbedder implements Embedder {
     const timeoutMs = this.timeoutMs;
     const maxInputChars = this.maxInputChars;
     const next = slot.busy.then(async () => {
-      const input = rawText.length > maxInputChars ? rawText.slice(0, maxInputChars) : rawText;
-      const r = await embedWithTimeout(slot.ctx, input, timeoutMs);
+      if (slot.closed) throw new Error(EMBEDDER_CLOSING);
+      const text = rawText.length > maxInputChars ? rawText.slice(0, maxInputChars) : rawText;
+      const r = await embedWithTimeout(slot.ctx, this.fitToWindow(text), timeoutMs, this.running);
       results[resultIdx] = this.truncate(new Float32Array(r.vector));
     });
     slot.busy = next.catch(() => {}); // keep chain alive even on failures
     return next;
+  }
+
+  /**
+   * Cut `text` to the model's token window. A model reads at most the window
+   * it was trained on: a BERT-style embedder past its position table aborts
+   * the whole process inside ggml (`GGML_ASSERT(i01 >= 0 && i01 < ne01)`).
+   * Keeping the first tokens matches what sentence-transformers does, and
+   * keeps a long chunk's vector instead of halving the text until it fits.
+   */
+  private fitToWindow(text: string): string | Token[] {
+    const max = this.maxInputTokens;
+    if (max === undefined || !this.model) return text;
+    const tokens = this.model.tokenize(text);
+    return tokens.length > max ? tokens.slice(0, max) : text;
   }
 
   async embedQuery(query: string): Promise<Float32Array> {
@@ -237,7 +283,21 @@ export class LlamaCppEmbedder implements Embedder {
     return results[0];
   }
 
+  /**
+   * Start no further native call and wait for the ones already running.
+   * Inputs still queued on a slot fail (a transient error, so the indexer
+   * leaves their documents pending). Disposing a context, or terminating the
+   * worker thread, while llama.cpp is still evaluating on it aborts the whole
+   * process ("terminate called after throwing an instance of 'Napi::Error'"),
+   * so shutdown waits here first.
+   */
+  async quiesce(): Promise<void> {
+    for (const slot of this.slots) slot.closed = true;
+    await Promise.allSettled([...this.running]);
+  }
+
   async dispose(): Promise<void> {
+    await this.quiesce();
     for (const slot of this.slots) {
       try {
         await slot.ctx.dispose();
@@ -246,6 +306,7 @@ export class LlamaCppEmbedder implements Embedder {
       }
     }
     this.slots = [];
+    this.maxInputTokens = undefined;
     if (this.model) {
       await this.model.dispose();
       this.model = null;
@@ -284,6 +345,18 @@ export function pickIndexerSlotIndex(poolSize: number, taskIndex: number): numbe
 }
 
 /**
+ * The context size for an embedding model: the configured size, capped at
+ * the window the model was trained on. A BERT-style model has one learned
+ * position embedding per trained position, so a longer context lets a long
+ * input index past the table. A model that reports no training window keeps
+ * the configured size.
+ */
+export function embeddingWindow(configured: number, trainContextSize: number | undefined): number {
+  if (!trainContextSize || trainContextSize <= 0) return configured;
+  return Math.min(configured, trainContextSize);
+}
+
+/**
  * Race the native getEmbeddingFor call against a wall-clock timeout.
  * If the native call wedges (observed with very large inputs) the slot
  * still gets freed so the rest of the indexer keeps moving. The native
@@ -292,15 +365,24 @@ export function pickIndexerSlotIndex(poolSize: number, taskIndex: number): numbe
  */
 function embedWithTimeout(
   ctx: LlamaEmbeddingContext,
-  input: string,
+  input: string | Token[],
   timeoutMs: number,
+  running: Set<Promise<unknown>>,
 ): Promise<LlamaEmbedding> {
+  const size = typeof input === "string" ? `${input.length} chars` : `${input.length} tokens`;
   const timeout = new Promise<never>((_, reject) => {
     setTimeout(
-      () =>
-        reject(new Error(`embedding timed out after ${timeoutMs}ms (input ${input.length} chars)`)),
+      () => reject(new Error(`embedding timed out after ${timeoutMs}ms (input ${size})`)),
       timeoutMs,
     );
   });
-  return Promise.race([ctx.getEmbeddingFor(input), timeout]);
+  // Track the native call itself, not the race: after a timeout it keeps
+  // running, and shutdown must still wait for it.
+  const native = ctx.getEmbeddingFor(input);
+  running.add(native);
+  const settle = (): void => {
+    running.delete(native);
+  };
+  native.then(settle, settle);
+  return Promise.race([native, timeout]);
 }

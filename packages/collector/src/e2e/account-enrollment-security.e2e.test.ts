@@ -7,7 +7,6 @@
  * Node pairing client. Each block boots its own world.
  */
 
-import { spawn } from "node:child_process";
 import { createHash, generateKeyPairSync, randomBytes, randomUUID, sign } from "node:crypto";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { request as httpsRequest } from "node:https";
@@ -23,6 +22,7 @@ import {
   tlsSpkiFingerprint,
 } from "@omnesis/cloud-relay";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { closeEnrollmentFixture } from "./enrollment-fixture-cleanup.js";
 import {
   EnrollmentGateway,
   EnrollmentWorld,
@@ -43,7 +43,7 @@ import {
   type PasskeySession,
 } from "./account-enrollment-harness.js";
 import { e2eGatewayEnv, e2eTsxCommand, gatewayBootBudgetMs } from "./gateway-env.js";
-import { registerSubprocessGroup } from "./subprocess-reaper.js";
+import { runEnrollmentTerminal } from "./enrollment-terminal-fixture.js";
 
 // ── Section 1: desktop sign-in proves the same machine (loopback) ───────────
 // ── Section 3: passkey pins come from the relay's credential list ───────────
@@ -101,8 +101,6 @@ function selfMadePasskey(relayOrigin: string) {
   };
 }
 
-const shellQuote = (value: string) => `'${value.replaceAll("'", `'\\''`)}'`;
-
 describe.skipIf(!browserReady)(
   "a desktop sign-in joins on its own only from the machine it finished on",
   () => {
@@ -112,6 +110,7 @@ describe.skipIf(!browserReady)(
     let gateway: EnrollmentGateway;
     /** The owner's browser, holding the passkey the gateway pinned when it was linked. */
     let owner: PasskeySession;
+    const terminalRuns: ReturnType<typeof runEnrollmentTerminal>[] = [];
     const priorCaFile = process.env.OMNESIS_CLOUD_RELAY_GATEWAY_CA_FILE;
     const priorEnabled = process.env.OMNESIS_CLOUD_RELAY_ENABLED;
 
@@ -184,38 +183,54 @@ describe.skipIf(!browserReady)(
       const linked = await connectGatewayBySignIn(gateway, owner, "create");
       if (linked.connect?.state !== "done" || !linked.account.linked)
         throw new Error(`Gateway did not link: ${JSON.stringify(linked.connect)}`);
-      // Every hold below is caused by where the sign-in finished, not by the owner's setting:
-      // nothing is chosen here, and a linked gateway joins trusted sign-ins by default.
+      // Nothing is chosen here: the policy is the automatic default throughout. A sign-in made on
+      // the relay's page is held whatever the setting; each test checks what else holds.
       if (linked.deviceEnrollment.policy !== "automatic")
         throw new Error(`Expected the automatic default: ${linked.deviceEnrollment.policy}`);
     }, gatewayBootBudgetMs() + 120_000);
 
     afterAll(async () => {
       try {
-        await browser?.close();
-        await gateway?.close();
-        await world?.close();
+        await closeEnrollmentFixture(world ? directory : undefined, [
+          ...terminalRuns.map((run) => async () => {
+            await run.kill();
+            if (!run.closed()) {
+              throw Object.assign(new Error("Enrollment terminal closure is unconfirmed"), {
+                cleanupFailure: undefined,
+              });
+            }
+          }),
+          () => browser?.close(),
+          () => gateway?.close(),
+          () => world?.close(),
+        ]);
       } finally {
         if (priorCaFile === undefined) delete process.env.OMNESIS_CLOUD_RELAY_GATEWAY_CA_FILE;
         else process.env.OMNESIS_CLOUD_RELAY_GATEWAY_CA_FILE = priorCaFile;
         if (priorEnabled === undefined) delete process.env.OMNESIS_CLOUD_RELAY_ENABLED;
         else process.env.OMNESIS_CLOUD_RELAY_ENABLED = priorEnabled;
-        if (directory) await rm(directory, { recursive: true, force: true });
       }
     }, 60_000);
 
-    test("on the machine where the sign-in finished, the browser hands the CLI its completion over loopback and it joins at once", async () => {
-      // The link pinned the owner's passkey from the relay's page, and says so.
+    test("TM-01: on the machine where the sign-in finished, the browser hands the CLI its completion over loopback, but a sign-in made on the relay's page is held, never joined on its own", async () => {
+      // The link pinned the owner's passkey from the relay's page, and says so: a suggestion.
       expect((await gateway.status()).deviceEnrollment.trustedSignIns).toEqual([
-        expect.objectContaining({ type: "passkey", source: "link-page" }),
+        expect.objectContaining({ type: "passkey", source: "link-page", confirmed: false }),
       ]);
-      const pairing = await startPairing({ name: "Fictional local CLI" });
+      const name = "Fictional local CLI";
+      const pairing = await startPairing({ name });
       await signInOnThisMachine(owner, await pairing.launchUrl);
       expect(owner.page.url()).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/omnesis\/callback\?/);
+      // The completion released the proof, so the request names the passkey sign-in...
+      const held = await heldRequest(name);
+      expect(held).toMatchObject({ signIn: "passkey", canTrustSignIn: false });
+      await waitFor(() => pairing.comparisons.length === 1, "the comparison code");
+      expect(pairing.comparisons).toEqual([held.verificationCode]);
+      // ...and only the owner's approval lets it in.
+      await gateway.decide(held.requestId, true);
       const joined = await pairing.result;
-      expect(pairing.comparisons).toEqual([]);
       expect((await joinedRow(joined.deviceId))?.enrollment).toMatchObject({
-        method: "automatic",
+        method: "approved",
         signIn: "passkey",
       });
     }, 180_000);
@@ -267,54 +282,35 @@ describe.skipIf(!browserReady)(
       expect((await joinedRow(joined.deviceId))?.enrollment).toMatchObject({ method: "approved" });
     }, 180_000);
 
-    test("over SSH the real CLI says approval is needed, prints the comparison code, waits, and joins once approved", async () => {
+    test("over SSH the real CLI requires owner approval and a typed comparison code before joining", async () => {
       const configDir = join(directory, "ssh-cli");
       await mkdir(configDir, { recursive: true, mode: 0o700 });
       await gateway.pace(2);
       const cli = e2eTsxCommand("packages/cli/src/index.ts");
       const name = "Fictional remote terminal";
-      const command = [cli.command, ...cli.args, "cloud", "pair", "--kind", "cli", "--name", name]
-        .map(shellQuote)
-        .join(" ");
       const launchesBefore = (await launchedUrls(world)).length;
-      // `script` gives the CLI a terminal, as an SSH session does; no desktop browser opens.
-      const proc = spawn("script", ["-qfec", command, "/dev/null"], {
-        cwd: REPO_ROOT,
-        env: {
-          ...e2eGatewayEnv(),
-          ...world.clientEnv(),
-          PATH: `${world.noBrowserBin}:${process.env.PATH ?? ""}`,
-          OMNESIS_LOG_LEVEL: "error",
-          OMNESIS_GATEWAY_URL: undefined,
-          OMNESIS_TOKEN: undefined,
-          OMNESIS_CONFIG_DIR: configDir,
-          OMNESIS_CLOUD_RELAY_ENABLED: "1",
-          OMNESIS_CLOUD_RELAY_URL: world.relayOrigin,
-          OMNESIS_CLOUD_RELAY_GATEWAY_CA_FILE: world.pki.caCertFile,
+      const run = runEnrollmentTerminal(
+        cli.command,
+        [...cli.args, "cloud", "pair", "--kind", "cli", "--name", name],
+        {
+          cwd: REPO_ROOT,
+          env: {
+            ...e2eGatewayEnv(),
+            ...world.clientEnv(),
+            OMNESIS_LOG_LEVEL: "error",
+            OMNESIS_GATEWAY_URL: undefined,
+            OMNESIS_TOKEN: undefined,
+            OMNESIS_CONFIG_DIR: configDir,
+            OMNESIS_CLOUD_RELAY_ENABLED: "1",
+            OMNESIS_CLOUD_RELAY_URL: world.relayOrigin,
+            OMNESIS_CLOUD_RELAY_GATEWAY_CA_FILE: world.pki.caCertFile,
+          },
         },
-        detached: true,
-        stdio: ["pipe", "pipe", "pipe"],
-      });
-      registerSubprocessGroup(proc);
-      let output = "",
-        closed = false;
-      proc.stdout!.on("data", (chunk: Buffer) => (output += chunk.toString()));
-      proc.stderr!.on("data", (chunk: Buffer) => (output += chunk.toString()));
-      const exit = new Promise<number | null>((resolve) =>
-        proc.once("close", (code) => {
-          closed = true;
-          resolve(code);
-        }),
       );
+      terminalRuns.push(run);
       try {
-        const printed = await printedConnectCode({
-          proc,
-          stdout: () => output,
-          stderr: () => output,
-          exit,
-          closed: () => closed,
-        });
-        expect(output).toContain(
+        const printed = await printedConnectCode(run);
+        expect(run.stdout()).toContain(
           "Signing in on another device needs your approval on your phone or another paired device",
         );
         // Printing the connect code precedes the asynchronous browser launch.
@@ -328,20 +324,24 @@ describe.skipIf(!browserReady)(
         await signInForDevice(owner, printed);
         const held = await heldRequest(name);
         const shown = await waitFor(
-          () => /Check that it shows this code: ([0-9]{3} [0-9]{3})/.exec(output)?.[1],
+          () => /Compare ([0-9]{3} [0-9]{3}) on the gateway/.exec(run.stdout())?.[1],
           "the CLI to print its comparison code",
         );
         expect(shown).toBe(held.verificationCode);
-        await waitFor(() => output.includes("Waiting for approval…"), "the CLI to say it waits");
-        // Nothing is typed: the CLI is still running, and the approval alone lets it finish.
-        expect(closed).toBe(false);
-        expect(output).not.toContain("Code shown on the trusted device");
+        await waitFor(
+          () => run.stdout().includes("Code shown on the trusted device:"),
+          "the CLI to ask for the comparison code",
+        );
+        // Owner approval cannot replace the independent comparison on this terminal.
+        expect(run.closed()).toBe(false);
         await gateway.decide(held.requestId, true);
-        expect(await exit).toBe(0);
+        expect(run.closed()).toBe(false);
+        await run.write(`${held.verificationCode}\r`);
+        expect(await run.exit).toBe(0);
       } catch (error) {
-        throw new Error(`CLI pairing over a terminal failed:\n${output}`, { cause: error });
+        throw new Error(`CLI pairing over a terminal failed:\n${run.stdout()}`, { cause: error });
       } finally {
-        if (!closed) proc.kill();
+        await run.kill();
       }
       const row = (await gateway.devices()).find((device) => device.name === name);
       expect(row).toMatchObject({ kind: "cli", enrollment: { method: "approved" } });
@@ -409,9 +409,10 @@ describe.skipIf(!browserReady)(
       expect(held).toMatchObject({ signIn: "passkey", canTrustSignIn: false });
       const pinned = (await gateway.status()).deviceEnrollment.trustedSignIns;
       await gateway.decide(held.requestId, true, true);
-      const after = (await gateway.status()).deviceEnrollment.trustedSignIns;
-      expect(after).toEqual(pinned);
-      expect(after.some((pin) => pin.id === forged.id)).toBe(false);
+      const after = (await gateway.status()).deviceEnrollment;
+      expect(after.trustedSignIns).toEqual(pinned);
+      expect(after.trustedSignIns.some((pin) => pin.id === forged.id)).toBe(false);
+      expect(after.confirmedSignIns).toEqual([]);
     }, 120_000);
   },
 );
@@ -477,12 +478,10 @@ describe("one client cannot use up the rate limits of another", () => {
   }, gatewayBootBudgetMs() + 60_000);
 
   afterAll(async () => {
-    try {
-      await gateway?.close();
-      await world?.close();
-    } finally {
-      if (directory) await rm(directory, { recursive: true, force: true });
-    }
+    await closeEnrollmentFixture(world ? directory : undefined, [
+      () => gateway?.close(),
+      () => world?.close(),
+    ]);
   }, 60_000);
 
   test("the gateway counts each relayed client apart: one exhausting its pairing calls leaves another's alone", async () => {

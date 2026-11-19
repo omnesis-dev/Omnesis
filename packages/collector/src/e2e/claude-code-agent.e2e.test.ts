@@ -3,9 +3,10 @@
 
 import "./synth-env.js";
 
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { pathToFileURL } from "node:url";
 
 import { afterAll, describe, expect, test } from "vitest";
 
@@ -37,7 +38,7 @@ describe("Claude Code agent backend — spawned gateway E2E", () => {
   });
 
   test("runs the main Omnesis agent through the Claude Code CLI with only Omnesis tools", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "omnesis-claude-code-e2e-tool-"));
+    const dir = mkdtempSync(join(tmpdir(), "omnesis claude-code 'literal' e2e-tool-"));
     tempDirs.push(dir);
     const recordPath = join(dir, "fake-claude.jsonl");
     const restoreEnv = applyClaudeCodeEnv(recordPath, "tool");
@@ -149,7 +150,7 @@ function applyClaudeCodeEnv(recordPath: string, scenario: string): () => void {
 
   // The gateway passes the CLI only an allowlisted environment, so the fake's
   // own settings travel in a launcher script instead.
-  const launcher = join(dirname(recordPath), "claude");
+  const launcher = join(dirname(recordPath), "claude.mjs");
   const fakeEnv = {
     OMNESIS_FAKE_CLAUDE_RECORD: recordPath,
     OMNESIS_FAKE_CLAUDE_SCENARIO: scenario,
@@ -161,13 +162,15 @@ function applyClaudeCodeEnv(recordPath: string, scenario: string): () => void {
   writeFileSync(
     launcher,
     [
-      "#!/bin/sh",
-      ...Object.entries(fakeEnv).map(([key, value]) => `export ${key}='${value}'`),
-      `exec '${process.execPath}' '${fakeClaudePath}' "$@"`,
+      "#!/usr/bin/env node",
+      ...Object.entries(fakeEnv).map(
+        ([key, value]) => `process.env[${JSON.stringify(key)}] = ${JSON.stringify(value)};`,
+      ),
+      `await import(${JSON.stringify(pathToFileURL(fakeClaudePath).href)});`,
       "",
     ].join("\n"),
+    { mode: 0o755 },
   );
-  chmodSync(launcher, 0o755);
   process.env.OMNESIS_CLAUDE_CODE_COMMAND = launcher;
   process.env.ANTHROPIC_API_KEY = "must-not-leak";
   process.env.OMNESIS_PRIVATE_TOKEN = "must-not-leak";

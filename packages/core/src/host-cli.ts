@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { delimiter, dirname } from "node:path";
+import { posix } from "node:path";
 
 /** Homebrew's bin directories: Apple Silicon's prefix, then Intel's. */
 const HOMEBREW_BIN_DIRS = ["/opt/homebrew/bin", "/usr/local/bin"];
@@ -18,9 +18,9 @@ export function homebrewCliPaths(
   pathEnv: string = process.env.PATH ?? "",
 ): string[] {
   if (platform !== "darwin") return [];
-  const onPath = new Set(pathEnv.split(delimiter));
+  const onPath = new Set(pathEnv.split(":"));
   return HOMEBREW_BIN_DIRS.map((dir) => `${dir}/${name}`).filter(
-    (file) => !onPath.has(dirname(file)),
+    (file) => !onPath.has(posix.dirname(file)),
   );
 }
 

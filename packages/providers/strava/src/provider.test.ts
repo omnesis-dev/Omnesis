@@ -151,49 +151,50 @@ describe("Strava OAuth flow", () => {
     ).toMatchObject({ kind: "ignored", status: 400 });
   });
 
-  test("public callback mode uses flowId as state and exchanges the delivered code", async () => {
-    const configDir = await makeConfigDir();
-    const fetchMock = vi.fn(async (_url: string, init: RequestInit) => ({
-      ok: true,
-      json: async () => ({
-        access_token: "strava-access",
-        refresh_token: "strava-refresh",
-        expires_at: 1_900_000_000,
-        expires_in: 3600,
-        token_type: "Bearer",
-        athlete: { id: 4242 },
-      }),
-      text: async () => "",
-      status: 200,
-    }));
-    vi.stubGlobal("fetch", fetchMock);
+  test.each([4242, "9223372036854775807"])(
+    "public callback preserves athlete %s when exchanging the code",
+    async (athleteId) => {
+      const configDir = await makeConfigDir();
+      const fetchMock = vi.fn(async (_url: string, init: RequestInit) =>
+        Response.json({
+          access_token: "strava-access",
+          refresh_token: "strava-refresh",
+          expires_at: 1_900_000_000,
+          expires_in: 3600,
+          token_type: "Bearer",
+          athlete: { id: Number(athleteId), id_str: String(athleteId) },
+        }),
+      );
+      vi.stubGlobal("fetch", fetchMock);
 
-    const authUrls: string[] = [];
-    const accountId = await authFlow({
-      configDir,
-      callbacks: {
-        publicBaseUrl: "https://gateway.example.com/",
-        flowId: "flow-1",
-        onAuthUrl: (url) => authUrls.push(url),
-        receiveCode: async () => "delivered-code",
-      },
-    });
+      const authUrls: string[] = [];
+      const accountId = await authFlow({
+        configDir,
+        callbacks: {
+          publicBaseUrl: "https://gateway.example.com/",
+          flowId: "flow-1",
+          onAuthUrl: (url) => authUrls.push(url),
+          receiveCode: async () => "delivered-code",
+        },
+      });
 
-    expect(String(accountId)).toBe("4242");
-    const authUrl = new URL(authUrls[0]!);
-    expect(authUrl.searchParams.get("state")).toBe("flow-1");
-    expect(authUrl.searchParams.get("redirect_uri")).toBe(
-      "https://gateway.example.com/oauth/callback",
-    );
+      expect(String(accountId)).toBe(String(athleteId));
+      const authUrl = new URL(authUrls[0]!);
+      expect(authUrl.searchParams.get("state")).toBe("flow-1");
+      expect(authUrl.searchParams.get("redirect_uri")).toBe(
+        "https://gateway.example.com/oauth/callback",
+      );
 
-    const [, init] = fetchMock.mock.calls[0]!;
-    expect(JSON.parse(String(init.body))).toMatchObject({ code: "delivered-code" });
+      const [, init] = fetchMock.mock.calls[0]!;
+      expect(JSON.parse(String(init.body))).toMatchObject({ code: "delivered-code" });
 
-    const saved = JSON.parse(
-      await readFile(join(configDir, "strava", "4242", "tokens.json"), "utf-8"),
-    );
-    expect(saved.access_token).toBe("strava-access");
-  });
+      const saved = JSON.parse(
+        await readFile(join(configDir, "strava", String(athleteId), "tokens.json"), "utf-8"),
+      );
+      expect(saved.access_token).toBe("strava-access");
+      expect(saved.athlete_id).toBe(athleteId);
+    },
+  );
 
   test("public callback mode requires receiveCode", async () => {
     const configDir = await makeConfigDir();

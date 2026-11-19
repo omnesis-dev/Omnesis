@@ -13,7 +13,7 @@ import {
 } from "./device-enrollment.js";
 import { GatewaySignInVerifier } from "./gateway-sign-in-proof.js";
 import { OmnesisAccounts } from "./omnesis-accounts.js";
-import { Passkeys } from "./passkeys.js";
+import { Passkeys, UnknownPasskey } from "./passkeys.js";
 
 const origin = "https://relay.example.test";
 const browser = () => randomBytes(32).toString("base64url");
@@ -531,9 +531,13 @@ test("real assertion verification rejects substituted identity, signatures, RP, 
         response.id = authenticator.id;
         response.rawId = authenticator.id;
       }
-      await expect(
+      // A passkey the relay has no record of is named, so the page can tell the browser to forget
+      // it; every other refusal stays the same generic one.
+      const refused = expect(
         service.finishAuthentication(login.ceremonyId, binding, response),
-      ).rejects.toThrow("did not complete");
+      ).rejects;
+      if (attack === "unknown") await refused.toBeInstanceOf(UnknownPasskey);
+      else await refused.toThrow("did not complete");
     }
     expect(accounts.passkey(authenticator.id)!.revision).toBe(1);
   } finally {

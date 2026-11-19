@@ -12,6 +12,7 @@ import {
   email,
   preserveCurrentOwner,
   waitFor,
+  urgencyOnlyDecisionPolicy,
 } from "./brain-bench/index.js";
 import { knowledgePuppet } from "./brain-bench/knowledge-puppet.js";
 import { startFakeEmbedderServer, type FakeEmbedderServer } from "./fake-embedder.js";
@@ -27,6 +28,9 @@ afterAll(async () => {
 it("reconsiders a joint decision once actual index publication fills its late search gap", async () => {
   embedder = await startFakeEmbedderServer({ initiallyUnavailable: true });
   bench = await BrainBench.start({
+    // Work without an urgency verdict waits at routine priority; these
+    // changes are judged soon so they are processed within the test.
+    decision: { policy: urgencyOnlyDecisionPolicy() },
     experimental: true,
     syncSources: false,
     entailment: "accept-all",

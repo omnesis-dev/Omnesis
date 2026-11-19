@@ -150,11 +150,11 @@ test("starts Google only after saving an isolated private browser challenge, wit
   // The older Google-only pairing has no Omnesis account to name.
   expect(host.querySelector("h2")).toBeNull();
   expect(host.querySelector("section")?.getAttribute("aria-label")).toBe("Google sign-in");
-  const mark = button("Sign in with Google").querySelector("img");
+  const mark = button("Continue with Google").querySelector("img");
   expect(mark?.getAttribute("src")).toBe("/portal/img/google-sign-in-mark.png");
   expect(mark?.getAttribute("alt")).toBe("");
   expect(mark?.getAttribute("aria-hidden")).toBe("true");
-  await act(async () => button("Sign in with Google").click());
+  await act(async () => button("Continue with Google").click());
   await vi.waitFor(async () => {
     await act(async () => {
       await Promise.resolve();
@@ -180,7 +180,7 @@ test("a failed start or unsafe authorization destination never navigates away", 
   ]) {
     transport.mockResolvedValueOnce(response);
     await show();
-    await act(async () => button("Sign in with Google").click());
+    await act(async () => button("Continue with Google").click());
     await vi.waitFor(async () => {
       await act(async () => {
         await Promise.resolve();
@@ -200,7 +200,7 @@ test("a callback without this tab's private challenge fails closed", async () =>
 });
 test("Google approval alone cannot log in; explicit local comparison is required before consuming a pairing code", async () => {
   const pending = await returned();
-  expect(norm(host.textContent)).toContain("domain administrator remains part of that trust");
+  expect(norm(host.textContent)).not.toContain("domain administrator");
   expect(norm(host.textContent)).toContain("Approved by your gateway");
   expect(host.querySelector('input[type="checkbox"]')).toBeNull();
   expect(button("pair this device").disabled).toBe(false);
@@ -262,7 +262,7 @@ test("pending and denied requests cannot log in and cancellation removes the pri
   expect(button("pair this device").disabled).toBe(true);
   await act(async () => button("Cancel").click());
   expect(storage.has(GOOGLE_PAIRING_STORAGE_KEY)).toBe(false);
-  expect(button("Sign in with Google")).not.toBeNull();
+  expect(button("Continue with Google")).not.toBeNull();
   render(null, host);
   location.href = "https://gateway.example.test/portal/";
   await returned("denied");
@@ -288,7 +288,7 @@ test("does not start duplicate authorizations while the first request is in flig
       }),
   );
   await show();
-  await act(async () => button("Sign in with Google").click());
+  await act(async () => button("Continue with Google").click());
   await act(async () => button("Opening Google").click());
   expect(transport).toHaveBeenCalledOnce();
   release(new Response("refused", { status: 429 }));
@@ -310,7 +310,7 @@ test("visibility polling with no request sends nothing, and an outstanding reque
   });
   expect(norm(host.textContent)).toContain("pairing request expired");
   expect(storage.has(GOOGLE_PAIRING_STORAGE_KEY)).toBe(false);
-  expect(button("Sign in with Google")).not.toBeNull();
+  expect(button("Continue with Google")).not.toBeNull();
 });
 test("unmounting while the code is worked out from the gateway's answer cannot revive the abandoned request", async () => {
   const pending = newCloudPairing("Fictional browser", config.gatewayFingerprint);
@@ -390,7 +390,7 @@ test("polling is single-flight and a cancelled response cannot approve or overwr
       }),
     ),
   );
-  await act(async () => button("Sign in with Google").click());
+  await act(async () => button("Continue with Google").click());
   await vi.waitFor(async () => {
     await act(async () => {
       await Promise.resolve();
@@ -427,7 +427,7 @@ test("unmount aborts in-flight sign-in and polling, and late failures cannot upd
         fail = reject;
       }),
   );
-  await act(async () => button("Sign in with Google").click());
+  await act(async () => button("Continue with Google").click());
   const authorizationSignal = transport.mock.calls[0]![1]!.signal!;
   render(null, host);
   expect(authorizationSignal.aborted).toBe(true);
@@ -475,7 +475,7 @@ test("a late authorization response after unmount cannot save a challenge or nav
       }),
   );
   await show();
-  await act(async () => button("Sign in with Google").click());
+  await act(async () => button("Continue with Google").click());
   render(null, host);
   release(
     new Response(
@@ -517,7 +517,7 @@ test("an old request's late answer cannot restore it over a new Google authoriza
       }),
     ),
   );
-  await act(async () => button("Sign in with Google").click());
+  await act(async () => button("Continue with Google").click());
   await vi.waitFor(async () => {
     await act(async () => {
       await Promise.resolve();
@@ -554,15 +554,26 @@ test("managed Google login uses the trusted relay launch and preserves its priva
   api.cloudPairingConfig.mockResolvedValueOnce({ ...config, authorizationRelayOrigin: relay });
   transport.mockResolvedValue(new Response(JSON.stringify({ authorizationUrl })));
   await show();
-  await act(async () => button("Sign in with Google").click());
+  await act(async () => button("Continue with Google").click());
   await vi.waitFor(() => expect(location.assign).toHaveBeenCalledExactlyOnceWith(authorizationUrl));
   expect(storage.has(GOOGLE_PAIRING_STORAGE_KEY)).toBe(true);
+});
+
+test("an account without a passkey is offered Google alone, saying the browser will wait for approval", async () => {
+  api.cloudPairingConfig.mockResolvedValueOnce({ ...config, accountSignIn: true });
+  await show();
+  expect(host.querySelector("h2")?.textContent).toBe("Sign in to your gateway");
+  expect([...host.querySelectorAll("button")].map((item) => norm(item.textContent).trim())).toEqual([
+    "Continue with Google",
+  ]);
+  expect(norm(host.textContent)).toContain("You'll approve this browser on your phone.");
 });
 
 test("neutral account sign-in offers Google and passkey choices and uses only the configured account authority", async () => {
   api.cloudPairingConfig.mockResolvedValueOnce({
     ...config,
     accountSignIn: true,
+    accountPasskey: true,
     authorizationRelayOrigin: "https://relay.example.test",
   });
   const destination =
@@ -570,11 +581,15 @@ test("neutral account sign-in offers Google and passkey choices and uses only th
     "a".repeat(43);
   transport.mockResolvedValue(new Response(JSON.stringify({ authorizationUrl: destination })));
   await show();
-  expect(host.querySelector("h2")?.textContent).toBe("Sign in with your Omnesis account");
+  expect(host.querySelector("h2")?.textContent).toBe("Sign in to your gateway");
   expect(host.querySelector("section")?.getAttribute("aria-label")).toBe("Omnesis account sign-in");
-  expect(button("Sign in with Google").querySelector("img")).not.toBeNull();
-  await act(async () => button("Sign in with Passkey").click());
-  await vi.waitFor(() => expect(location.assign).toHaveBeenCalledWith(destination));
+  expect(button("Continue with Google").querySelector("img")).not.toBeNull();
+  // Away from the gateway's own page, the passkey signs in on the account page, which then offers only
+  // the passkey; Google likewise offers only Google there.
+  await act(async () => button("Continue with passkey").click());
+  await vi.waitFor(() =>
+    expect(location.assign).toHaveBeenCalledWith(`${destination}&method=passkey`),
+  );
   expect(transport.mock.calls[0]![0]).toBe("/devices/account/authorize");
   expect(storage.has(GOOGLE_PAIRING_STORAGE_KEY)).toBe(true);
 });
@@ -652,9 +667,14 @@ test("with automatic enrollment, sign-in starts with this browser's device key a
     "a".repeat(43);
   transport.mockResolvedValue(new Response(JSON.stringify({ authorizationUrl: destination })));
   await show();
-  expect(norm(host.textContent)).toContain("joins right away or waits for your approval");
-  await act(async () => button("Sign in with Google").click());
-  await vi.waitFor(() => expect(location.assign).toHaveBeenCalledWith(destination));
+  expect(norm(host.textContent)).toContain(
+    "You'll approve this browser on your phone.",
+  );
+  await act(async () => button("Continue with Google").click());
+  // The account page then offers only Google: the choice was made here.
+  await vi.waitFor(() =>
+    expect(location.assign).toHaveBeenCalledWith(`${destination}&method=google`),
+  );
   const body = JSON.parse(transport.mock.calls[0]![1]!.body as string);
   expect(body.devicePublicKey).toBe(key.publicKey);
   expect(JSON.parse(storage.get(GOOGLE_PAIRING_STORAGE_KEY)!)).toMatchObject({
@@ -681,7 +701,7 @@ test("a browser that cannot keep a key, or a gateway without a TLS key fingerpri
       ),
     );
     await show();
-    await act(async () => button("Sign in with Google").click());
+    await act(async () => button("Continue with Google").click());
     await vi.waitFor(() => expect(location.assign).toHaveBeenCalled());
     expect(JSON.parse(transport.mock.calls.at(-1)![1]!.body as string)).not.toHaveProperty(
       "devicePublicKey",
@@ -772,7 +792,7 @@ test("a held request falls back to the comparison screen and keeps polling for a
     });
     expect(norm(host.textContent)).toContain(code);
   });
-  expect(norm(host.textContent)).toContain("Check that this code matches the one shown on your other device, then approve it there.");
+  expect(norm(host.textContent)).toContain("Approve this browser on a device you already use.");
   expect(host.textContent).not.toContain("Google sign-in alone");
   await vi.waitFor(() =>
     expect(transport.mock.calls.map(([path]) => path)).toContain("/devices/account/poll"),
@@ -969,7 +989,7 @@ test("every failure in the browser join stops safely with a readable error and f
     expect(host.querySelector('[role="alert"]')?.textContent).toContain(item.message);
     expect(storage.has(GOOGLE_PAIRING_STORAGE_KEY)).toBe(false);
     expect(location.reload).not.toHaveBeenCalled();
-    expect(button("Sign in with Google")).toBeDefined();
+    expect(button("Continue with Google")).toBeDefined();
     render(null, host);
   }
 });

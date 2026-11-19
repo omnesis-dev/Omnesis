@@ -18,7 +18,6 @@ import {
 } from "node:crypto";
 import {
   createReadStream,
-  createWriteStream,
   existsSync,
   closeSync,
   openSync,
@@ -26,10 +25,10 @@ import {
   renameSync,
   statSync,
   unlinkSync,
-  writeFileSync,
+  linkSync,
 } from "node:fs";
 import { open, readFile } from "node:fs/promises";
-import { Transform, type TransformCallback } from "node:stream";
+import { PassThrough, Readable, Transform, type TransformCallback } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import {
   installRootKeyBytes,
@@ -38,6 +37,7 @@ import {
 } from "./secret-store.js";
 import { secretFileEncryptionRequired } from "./secret-file.js";
 import { ensurePrivateFileSync } from "./security-files.js";
+import { writeWindowsPrivateFileAtomicStream } from "./windows-private-file.js";
 
 const MAGIC = Buffer.from("omnesis.encrypted-artifact.v1\n", "utf8");
 const TAG_BYTES = 16;
@@ -117,6 +117,40 @@ class AppendArtifactEnvelopeTransform extends Transform {
   }
 }
 
+async function publishWindowsArtifact(
+  path: string,
+  length: number,
+  produce: (body: PassThrough) => Promise<void>,
+  replaceExisting = true,
+): Promise<void> {
+  const body = new PassThrough();
+  let failed = false;
+  let failure: unknown;
+  const observe = (operation: Promise<void>): Promise<void> =>
+    operation.catch((error: unknown) => {
+      if (!failed) {
+        failed = true;
+        failure = error;
+      }
+      // Either side may fail before the writer begins consuming. Cancel the
+      // shared stream so its peer cannot remain blocked behind backpressure.
+      body.destroy();
+      throw error;
+    });
+  const publishing = observe(
+    writeWindowsPrivateFileAtomicStream(path, body, length, { replaceExisting }),
+  );
+  const producing = observe(
+    Promise.resolve().then(() => {
+      if (failed) throw failure;
+      return produce(body);
+    }),
+  );
+  // A failed producer must join the native writer and its cleanup before returning.
+  await Promise.allSettled([producing, publishing]);
+  if (failed) throw failure;
+}
+
 export async function encryptArtifactFileInPlace(
   path: string,
   opts: EncryptArtifactFileOptions,
@@ -133,6 +167,7 @@ export async function encryptArtifactFileInPlace(
 
   const outputPath = `${path}${ENCRYPTED_ARTIFACT_SUFFIX}`;
   const tmpPath = `${outputPath}.tmp-${process.pid}-${randomBytes(6).toString("hex")}`;
+  let scratchCreated = false;
   const salt = randomBytes(16);
   const iv = randomBytes(12);
   const header: EncryptedArtifactHeaderV1 = {
@@ -151,12 +186,31 @@ export async function encryptArtifactFileInPlace(
   cipher.setAAD(headerBytes);
 
   try {
-    await pipeline(
-      createReadStream(path),
-      cipher,
-      new AppendArtifactEnvelopeTransform(prefix, () => cipher.getAuthTag()),
-      createWriteStream(tmpPath, { mode: 0o600 }),
-    );
+    if (process.platform === "win32") {
+      const length = statSync(path).size + prefix.length + TAG_BYTES;
+      await publishWindowsArtifact(outputPath, length, (body) =>
+        pipeline(
+          createReadStream(path),
+          cipher,
+          new AppendArtifactEnvelopeTransform(prefix, () => cipher.getAuthTag()),
+          body,
+        ),
+      );
+      unlinkSync(path);
+      return { encrypted: true, path: outputPath, bytes: statSync(outputPath).size };
+    }
+    const scratch = await open(tmpPath, "wx", 0o600);
+    scratchCreated = true;
+    try {
+      await pipeline(
+        createReadStream(path),
+        cipher,
+        new AppendArtifactEnvelopeTransform(prefix, () => cipher.getAuthTag()),
+        scratch.createWriteStream(),
+      );
+    } finally {
+      await scratch.close();
+    }
     ensurePrivateFileSync(tmpPath);
     try {
       unlinkSync(outputPath);
@@ -168,10 +222,12 @@ export async function encryptArtifactFileInPlace(
     unlinkSync(path);
     return { encrypted: true, path: outputPath, bytes: statSync(outputPath).size };
   } catch (err) {
-    try {
-      unlinkSync(tmpPath);
-    } catch {
-      /* best-effort cleanup */
+    if (process.platform !== "win32" && scratchCreated) {
+      try {
+        unlinkSync(tmpPath);
+      } catch {
+        /* best-effort cleanup */
+      }
     }
     throw err;
   } finally {
@@ -235,6 +291,7 @@ export async function decryptArtifactFileToFile(
   }
 
   const tmpPath = `${outputPath}.tmp-${process.pid}-${randomBytes(6).toString("hex")}`;
+  let scratchCreated = false;
   const key = deriveArtifactKey(
     rootKey,
     Buffer.from(envelope.header.salt, "base64url"),
@@ -247,27 +304,58 @@ export async function decryptArtifactFileToFile(
   decipher.setAuthTag(envelope.tag);
 
   try {
-    if (envelope.ciphertextEndInclusive >= envelope.ciphertextStart) {
-      await pipeline(
-        createReadStream(inputPath, {
-          start: envelope.ciphertextStart,
-          end: envelope.ciphertextEndInclusive,
-        }),
-        decipher,
-        createWriteStream(tmpPath, { mode: 0o600 }),
+    if (process.platform === "win32") {
+      const length = Math.max(0, envelope.ciphertextEndInclusive - envelope.ciphertextStart + 1);
+      await publishWindowsArtifact(
+        outputPath,
+        length,
+        (body) =>
+          pipeline(
+            length > 0
+              ? createReadStream(inputPath, {
+                  start: envelope.ciphertextStart,
+                  end: envelope.ciphertextEndInclusive,
+                })
+              : Readable.from([]),
+            decipher,
+            body,
+          ),
+        opts.force === true,
       );
-    } else {
-      writeFileSync(tmpPath, decipher.final(), { mode: 0o600 });
+      return { decrypted: true, path: outputPath, bytes: statSync(outputPath).size };
+    }
+    const scratch = await open(tmpPath, "wx", 0o600);
+    scratchCreated = true;
+    try {
+      if (envelope.ciphertextEndInclusive >= envelope.ciphertextStart) {
+        await pipeline(
+          createReadStream(inputPath, {
+            start: envelope.ciphertextStart,
+            end: envelope.ciphertextEndInclusive,
+          }),
+          decipher,
+          scratch.createWriteStream(),
+        );
+      } else await scratch.writeFile(decipher.final());
+    } finally {
+      await scratch.close();
     }
     ensurePrivateFileSync(tmpPath);
-    renameSync(tmpPath, outputPath);
+    if (opts.force) renameSync(tmpPath, outputPath);
+    else {
+      // Link publication is atomic and refuses a target created during decryption.
+      linkSync(tmpPath, outputPath);
+      unlinkSync(tmpPath);
+    }
     ensurePrivateFileSync(outputPath);
     return { decrypted: true, path: outputPath, bytes: statSync(outputPath).size };
   } catch (err) {
-    try {
-      unlinkSync(tmpPath);
-    } catch {
-      /* best-effort cleanup */
+    if (process.platform !== "win32" && scratchCreated) {
+      try {
+        unlinkSync(tmpPath);
+      } catch {
+        /* best-effort cleanup */
+      }
     }
     throw err;
   } finally {
