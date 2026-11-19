@@ -3,7 +3,7 @@
 
 import { expect, test } from "vitest";
 // @ts-expect-error — portal modules are plain JS.
-import { bytesBeforeMonthCutoff, storageSources, scheduledStorageCutoff, storageTrimStatus, visibleStorageTrimJobs } from "./storage-data.js";
+import { bytesBeforeMonthCutoff, storageSources, storageReconciliation, scheduledStorageCutoff, storageTrimStatus, visibleStorageTrimJobs } from "./storage-data.js";
 
 test("joins accounting by source and month and distributes only measured lexical allocation", () => {
   const rows = storageSources({
@@ -70,4 +70,68 @@ test("shows every active trim and only the latest terminal status per source", (
   expect(visibleStorageTrimJobs(jobs).map((job: {id: string}) => job.id)).toEqual(["active", "queued", "last"]);
   expect(storageTrimStatus({state: "completed", deleted: 100, cleanupPending: true})).toContain("Search cleanup continuing");
   expect(storageTrimStatus({state: "completed", deleted: 100, cleanupPending: true})).not.toContain("Trim completed");
+});
+
+test("reconciles complete physical stores against unchanged source estimates without double-counting files", () => {
+  const measuredAt = "2026-01-01T00:00:00.000Z";
+  const data = storageReconciliation({
+    physical: {measuredAt, totalBytes: 180, stores: [
+      {id: "documents", label: "Main database", bytes: 80, components: [{id: "database", label: "Database", bytes: 70}, {id: "write-log", label: "Write log", bytes: 10}]},
+      {id: "index", label: "Search index", bytes: 90, components: [{id: "database", label: "Database", bytes: 70}, {id: "graph", label: "Search graph", bytes: 20}]},
+      {id: "models", label: "Models", bytes: 10},
+    ]},
+    logical: {measuredAt, database: {tables: []}, sources: [{payloadBytes: 20}]},
+    index: {measuredAt, tables: [], lexicalBytes: 10, sources: [{embeddingBytes: 30, textBytes: 10}]},
+  });
+  expect(data.state).toBe("ready");
+  expect(data.rows.map((row: {sourceBytes: number; remainderBytes: number}) => [row.sourceBytes, row.remainderBytes])).toEqual([[20, 60], [50, 40], [0, 10]]);
+  expect(data).toMatchObject({physicalBytes: 180, sourceBytes: 70, remainderBytes: 110});
+});
+
+test("empty measured stores reconcile to zero rather than unknown", () => {
+  const measuredAt = "2026-01-01T00:00:00.000Z";
+  const result = storageReconciliation({physical: {measuredAt, totalBytes: 0, stores: []},
+    logical: {measuredAt, database: {tables: []}, sources: []}, index: {measuredAt, tables: [], lexicalBytes: 0, sources: []}});
+  expect(result).toMatchObject({state: "ready", physicalBytes: 0, sourceBytes: 0, remainderBytes: 0});
+});
+
+test("missing dbstat and missing accounting preserve partial knowledge without inventing overhead", () => {
+  const measuredAt = "2026-01-01T00:00:00.000Z";
+  const physical = {measuredAt, totalBytes: 200, stores: [{id: "documents", bytes: 100}, {id: "index", bytes: 100}]};
+  const data = storageReconciliation({physical, logical: {measuredAt, database: {tables: null}, sources: [{payloadBytes: 20}]},
+    index: {measuredAt, tables: null, lexicalBytes: null, sources: [{embeddingBytes: 30, textBytes: 10}]}});
+  expect(data.rows.map((row: {sourceBytes: number; remainderBytes: number | null; partial: boolean}) => [row.sourceBytes, row.remainderBytes, row.partial])).toEqual([[20, 80, false], [40, null, true]]);
+  expect(data).toMatchObject({state: "unavailable", sourceBytes: null, remainderBytes: null});
+  expect(storageReconciliation({physical}).rows[0]).toMatchObject({sourceBytes: null, remainderBytes: null});
+});
+
+test("compares source estimates to the whole store including write logs and preserves separately measured estimates", () => {
+  const measuredAt = "2026-01-01T00:00:00.000Z";
+  const logical = {measuredAt, database: {tables: []}, sources: [{payloadBytes: 50}]};
+  const index = {measuredAt, tables: [], lexicalBytes: 0, sources: []};
+  const base = {physical: {measuredAt, totalBytes: 110, stores: [{id: "documents", bytes: 100, components: [{id: "database", bytes: 40}, {id: "write-log", bytes: 60}]}, {id: "index", bytes: 10}]}, logical, index};
+  expect(storageReconciliation(base).rows[0]).toMatchObject({state: "ready", sourceBytes: 50, remainderBytes: 50});
+  expect(storageReconciliation({...base, logical: {...logical, sources: [{payloadBytes: 120}]}})).toMatchObject({state: "updating", remainderBytes: null});
+  expect(storageReconciliation({...base, physical: {...base.physical, stores: [{id: "documents", bytes: 100}, {id: "index", bytes: 10}]}, logical: {...logical, measuredAt: "2025-12-31T23:00:00.000Z"}}).rows[0]).toMatchObject({state: "ready", remainderBytes: 50});
+});
+
+test("invalid byte measurements never produce a known remainder or a fabricated zero", () => {
+  const logical = {database: {tables: []}, sources: [{payloadBytes: NaN}]};
+  const data = storageReconciliation({physical: {totalBytes: 10, stores: [{id: "documents", bytes: 10}]}, logical});
+  expect(data.rows[0]).toMatchObject({sourceBytes: null, remainderBytes: null, state: "unavailable"});
+  expect(data.remainderBytes).toBeNull();
+});
+
+test("empty full-text structures belong to other storage, while a fully trimmed source remains measured at zero", () => {
+  const index = {tables: [{name: "chunks_fts_config", bytes: 16}], lexicalBytes: 16, sources: []};
+  const logical = {database: {tables: null}, sources: [{sourceId: "notes:fictional", payloadBytes: 0, months: []}]};
+  const snapshot = {logical, index, physical: {totalBytes: 64, stores: [{id: "documents", bytes: 32}, {id: "index", bytes: 32}]}};
+  expect(storageReconciliation(snapshot)).toMatchObject({state: "ready", sourceBytes: 0, remainderBytes: 64});
+  expect(storageSources(snapshot)[0]).toMatchObject({documentBytes: 0, vectorBytes: 0, lexicalBytes: 0, lexicalPartial: false, bytes: 0});
+});
+
+test("source data whose physical store is temporarily absent is updating rather than silently omitted", () => {
+  const result = storageReconciliation({physical: {totalBytes: 0, stores: []},
+    logical: {sources: [{payloadBytes: 20}]}, index: {tables: [], lexicalBytes: 0, sources: []}});
+  expect(result).toMatchObject({state: "updating", sourceBytes: 20, remainderBytes: null});
 });

@@ -24,8 +24,27 @@ import type { DiskUsageSnapshot, DiskUsageStore } from "@omnesis/core/doctor";
 
 const log = createLogger("gateway").child("disk-usage");
 
-const SQLITE_SIDECARS = ["", "-wal", "-shm", "-journal"];
-const DUCKDB_SIDECARS = ["", ".wal", ".tmp", ".extensions"];
+const COMPONENT_LABELS = {
+  database: "Database file",
+  "write-log": "Write log",
+  coordination: "Coordination files",
+  graph: "Vector graph",
+  spill: "Spill files",
+  extensions: "Extensions",
+} as const;
+type ComponentId = keyof typeof COMPONENT_LABELS;
+const SQLITE_FILES = [
+  ["", "database"],
+  ["-wal", "write-log"],
+  ["-shm", "coordination"],
+  ["-journal", "write-log"],
+] as const;
+const DUCKDB_FILES = [
+  ["", "database"],
+  [".wal", "write-log"],
+  [".tmp", "spill"],
+  [".extensions", "extensions"],
+] as const;
 const NOTHING: ReadonlySet<string> = new Set();
 
 /** Where each part of the footprint lives, resolved the way the gateway resolved it. */
@@ -45,13 +64,16 @@ interface Part {
   id: string;
   label: string;
   /** Absolute paths claimed whole; a directory is counted recursively. */
-  paths: string[];
+  paths: { path: string; component?: ComponentId }[];
   /** Entries of the config dir claimed by name, for files with generated names. */
   configDirNames?: RegExp;
 }
 
-function withSuffixes(path: string, suffixes: readonly string[]): string[] {
-  return suffixes.map((suffix) => `${path}${suffix}`);
+function engineFiles(
+  path: string,
+  files: readonly (readonly [string, ComponentId])[],
+): Part["paths"] {
+  return files.map(([suffix, component]) => ({ path: `${path}${suffix}`, component }));
 }
 
 /** Display order, which is also claim order: a path belongs to the first part naming it. */
@@ -60,24 +82,24 @@ function partsFor(layout: DiskUsageLayout): Part[] {
     {
       id: "documents",
       label: "Main database",
-      paths: withSuffixes(layout.dbPath, SQLITE_SIDECARS),
+      paths: engineFiles(layout.dbPath, SQLITE_FILES),
     },
     {
       id: "index",
       label: "Search index",
-      paths: withSuffixes(layout.indexDbPath, SQLITE_SIDECARS),
+      paths: engineFiles(layout.indexDbPath, SQLITE_FILES),
       configDirNames: USEARCH_FILE_NAME,
     },
     {
       id: "analytics",
       label: "Analytics",
-      paths: withSuffixes(layout.analyticsDbPath, DUCKDB_SIDECARS),
+      paths: engineFiles(layout.analyticsDbPath, DUCKDB_FILES),
     },
-    { id: "watch", label: "Watches", paths: withSuffixes(layout.watchDbPath, SQLITE_SIDECARS) },
-    { id: "transcripts", label: "Agent transcripts", paths: [layout.transcriptsDir] },
-    { id: "conversations", label: "Conversations", paths: [layout.conversationsDir] },
-    { id: "models", label: "Models", paths: [layout.modelsDir] },
-    { id: "backups", label: "Backups", paths: [layout.backupsDir] },
+    { id: "watch", label: "Watches", paths: engineFiles(layout.watchDbPath, SQLITE_FILES) },
+    { id: "transcripts", label: "Agent transcripts", paths: [{ path: layout.transcriptsDir }] },
+    { id: "conversations", label: "Conversations", paths: [{ path: layout.conversationsDir }] },
+    { id: "models", label: "Models", paths: [{ path: layout.modelsDir }] },
+    { id: "backups", label: "Backups", paths: [{ path: layout.backupsDir }] },
   ];
 }
 
@@ -182,7 +204,9 @@ export async function measureDiskUsage(
   const parts = await Promise.all(
     partsFor(layout).map(async (part) => ({
       ...part,
-      paths: await Promise.all(part.paths.map(canonical)),
+      paths: await Promise.all(
+        part.paths.map(async (claim) => ({ ...claim, path: await canonical(claim.path) })),
+      ),
     })),
   );
 
@@ -196,17 +220,42 @@ export async function measureDiskUsage(
   for (const part of parts) {
     if (!part.configDirNames) continue;
     for (const name of configDirEntries) {
-      if (part.configDirNames.test(name)) part.paths.push(join(configDir, name));
+      if (part.configDirNames.test(name))
+        part.paths.push({ path: join(configDir, name), component: "graph" });
     }
   }
 
-  const claimed = new Set(parts.flatMap((part) => part.paths));
+  const claimed = new Set(parts.flatMap((part) => part.paths.map((claim) => claim.path)));
   const seen = new Set<string>();
   const stores: DiskUsageStore[] = [];
   for (const part of parts) {
     let bytes = 0;
-    for (const path of new Set(part.paths)) bytes += await sizeOf(path, NOTHING, seen, strict);
-    if (bytes > 0) stores.push({ id: part.id, label: part.label, bytes });
+    const components = new Map<ComponentId, number>();
+    const measuredPaths = new Set<string>();
+    for (const claim of part.paths) {
+      if (measuredPaths.has(claim.path)) continue;
+      measuredPaths.add(claim.path);
+      const measured = await sizeOf(claim.path, NOTHING, seen, strict);
+      bytes += measured;
+      if (claim.component && measured > 0)
+        components.set(claim.component, (components.get(claim.component) ?? 0) + measured);
+    }
+    if (bytes > 0) {
+      stores.push({
+        id: part.id,
+        label: part.label,
+        bytes,
+        ...(components.size > 0
+          ? {
+              components: [...components].map(([id, bytes]) => ({
+                id,
+                label: COMPONENT_LABELS[id],
+                bytes,
+              })),
+            }
+          : {}),
+      });
+    }
   }
 
   // Everything else in the config dir. Claimed paths are skipped rather than

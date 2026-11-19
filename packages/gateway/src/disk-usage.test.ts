@@ -32,7 +32,21 @@ function layout(overrides: Partial<DiskUsageLayout> = {}): DiskUsageLayout {
 }
 
 function bytesOf(snapshot: DiskUsageSnapshot): Record<string, number> {
+  for (const store of snapshot.stores) {
+    if (store.components)
+      expect(store.components.reduce((sum, component) => sum + component.bytes, 0)).toBe(
+        store.bytes,
+      );
+  }
   return Object.fromEntries(snapshot.stores.map((s) => [s.id, s.bytes]));
+}
+
+function componentsOf(snapshot: DiskUsageSnapshot, storeId: string): Record<string, number> {
+  return Object.fromEntries(
+    snapshot.stores
+      .find((store) => store.id === storeId)
+      ?.components?.map((c) => [c.id, c.bytes]) ?? [],
+  );
 }
 
 beforeEach(() => {
@@ -112,12 +126,37 @@ describe("measureDiskUsage", () => {
       "other",
     ]);
     expect(snapshot.stores[0]!.label).toBe("Main database");
+    expect(componentsOf(snapshot, "documents")).toEqual({
+      database: 1000,
+      "write-log": 100,
+      coordination: 10,
+    });
+    expect(componentsOf(snapshot, "index")).toEqual({
+      database: 2000,
+      "write-log": 200,
+      graph: 6500,
+    });
+    expect(componentsOf(snapshot, "analytics")).toEqual({
+      database: 4000,
+      "write-log": 40,
+      spill: 4,
+      extensions: 400,
+    });
+    expect(componentsOf(snapshot, "watch")).toEqual({ database: 50, "write-log": 5 });
+    for (const id of ["transcripts", "conversations", "models", "backups", "other"])
+      expect(snapshot.stores.find((store) => store.id === id)?.components).toBeUndefined();
+    expect(JSON.stringify(snapshot)).not.toContain(configDir);
   });
 
   test("omits empty parts and reports zero for a missing config dir", async () => {
     file(join(configDir, "omnesis.db"), 10);
     expect((await measureDiskUsage(layout())).stores).toEqual([
-      { id: "documents", label: "Main database", bytes: 10 },
+      {
+        id: "documents",
+        label: "Main database",
+        bytes: 10,
+        components: [{ id: "database", label: "Database file", bytes: 10 }],
+      },
     ]);
 
     const empty = await measureDiskUsage(layout({ configDir: join(root, "absent") }));
@@ -151,6 +190,45 @@ describe("measureDiskUsage", () => {
 
     // models/ is measured where it points; the stray link below the root is not followed.
     expect(bytesOf(snapshot)).toEqual({ documents: 100, models: 5000 });
+  });
+
+  test("groups journal and WAL once and omits missing or zero-byte components", async () => {
+    file(join(configDir, "omnesis.db"), 100);
+    file(join(configDir, "omnesis.db-wal"), 20);
+    file(join(configDir, "omnesis.db-journal"), 30);
+    file(join(configDir, "omnesis.db-shm"), 0);
+    const snapshot = await measureDiskUsage(layout(), () => new Date(), { strict: true });
+    expect(bytesOf(snapshot)).toEqual({ documents: 150 });
+    expect(snapshot.stores[0]!.components).toEqual([
+      { id: "database", label: "Database file", bytes: 100 },
+      { id: "write-log", label: "Write log", bytes: 50 },
+    ]);
+  });
+
+  test("component ownership follows the same deduplication for aliases and external stores", async () => {
+    const external = join(root, "external-store", "corpus.db");
+    file(external, 100);
+    symlinkSync(external, join(configDir, "omnesis.db"));
+    linkSync(external, join(configDir, "omnesis.db-wal"));
+    file(`${external}-wal`, 20);
+    file(join(configDir, "index.usearch.enc"), 30);
+    linkSync(join(configDir, "index.usearch.enc"), join(configDir, "index-2.usearch"));
+    const snapshot = await measureDiskUsage(layout({ indexDbPath: external }));
+    // The main store's root alias owns the shared database inode. Search owns
+    // only its separate write log and the first link to its graph inode.
+    expect(bytesOf(snapshot)).toEqual({ documents: 100, index: 50 });
+    expect(componentsOf(snapshot, "documents")).toEqual({ database: 100 });
+    expect(componentsOf(snapshot, "index")).toEqual({ "write-log": 20, graph: 30 });
+    expect(JSON.stringify(snapshot)).not.toContain(root);
+  });
+
+  test("a shared engine path belongs wholly to its first store", async () => {
+    const shared = join(configDir, "shared.db");
+    file(shared, 100);
+    file(`${shared}-wal`, 10);
+    const snapshot = await measureDiskUsage(layout({ dbPath: shared, indexDbPath: shared }));
+    expect(bytesOf(snapshot)).toEqual({ documents: 110 });
+    expect(componentsOf(snapshot, "documents")).toEqual({ database: 100, "write-log": 10 });
   });
 
   test("measures a config dir reached through a symlink", async () => {

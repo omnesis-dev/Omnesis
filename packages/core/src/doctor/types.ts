@@ -369,6 +369,8 @@ export interface DiskUsageStore {
   /** Display name, chosen by the gateway so every client says the same thing. */
   label: string;
   bytes: number;
+  /** Physical engine files within this store; when present their bytes sum to this store's bytes. */
+  components?: { id: string; label: string; bytes: number }[];
 }
 
 /**

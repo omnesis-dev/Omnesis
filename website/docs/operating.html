@@ -429,12 +429,19 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
         <h2 id="storage">Storage</h2>
         <p>
           Open <strong>Settings → Storage</strong> in the portal to see the gateway's measured
-          files, the capacity of each disk it uses, and estimated usage by source. Expand a source
-          to see a monthly and cumulative breakdown of the data currently stored, grouped by its
-          source date. Source totals include document payload, stored vectors, indexed text and a
-          share of the lexical index weighted by indexed text size. Shared database overhead, vector
-          graph files and analytics are excluded from the source estimates. Measurements refresh in
-          the background. Collector caches on other machines are outside this gateway view.
+          files, the capacity of each disk it uses, and estimated usage by source. The on-disk
+          breakdown relates each store's file size to the data shown in source totals and the
+          remaining storage. Expand a database store to see its database file, write logs and other
+          files, including vector graph files for the search index. Write logs can retain copies of
+          recently changed database pages.
+        </p>
+        <p>
+          Expand a source to see a monthly and cumulative breakdown of the data currently stored,
+          grouped by its source date. Source totals include document payload, stored vectors,
+          indexed text and a share of the lexical index weighted by indexed text size. Shared
+          database overhead, vector graph files and analytics are excluded from the source
+          estimates. Measurements refresh in the background. Collector caches on other machines are
+          outside this gateway view.
         </p>
         <p>
           Set an optional maximum gateway size in GiB. An empty field means there is no custom size
@@ -457,15 +464,15 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
           pauses until measurement succeeds again.
         </p>
         <p>
-          Choose <strong>Trim</strong> from a source row’s actions. Pick a date on its chart or
-          enter it directly, then confirm once to remove all eligible documents before that date.
-          Omnesis saves the request and works through it in bounded background batches, resuming
-          after a gateway restart. The source row reports progress and completion. Contacts and
-          documents with ambiguous dates are exempt; newer documents and other sources are
-          preserved. Originals in the connected service remain untouched. A one-off trim suppresses
-          those items locally so an ordinary sync does not immediately restore them. The orange area
-          under a source’s cumulative curve shows the portion scheduled for trimming. Charts update
-          as measurements refresh in the background.
+          Choose <strong>Trim</strong> from a source row’s actions. Enter a cutoff date and review
+          the shaded area on the chart, then confirm once to remove all eligible documents before
+          that date. Omnesis saves the request and works through it in bounded background batches,
+          resuming after a gateway restart. The source row reports progress, pending search cleanup
+          and completion. Contacts and documents with ambiguous dates are exempt; newer documents
+          and other sources are preserved. Originals in the connected service remain untouched. A
+          one-off trim suppresses those items locally so an ordinary sync does not immediately
+          restore them. The orange area under a source’s cumulative curve shows the portion
+          scheduled for trimming. Charts update as measurements refresh in the background.
         </p>
         <p>
           Choose <strong>Set rolling retention</strong> from the same source menu. Enter the number

@@ -54,7 +54,7 @@ export function storageSources(snapshot) {
   for (const policy of snapshot.retention ?? []) source(policy.sourceId);
   for (const job of snapshot.trimJobs ?? []) source(job.sourceId);
   const allocation = snapshot.index?.lexicalBytes;
-  const lexicalKnown = Number.isFinite(allocation) && (indexedText > 0 || allocation === 0);
+  const lexicalKnown = Number.isFinite(allocation) && allocation >= 0;
   const rows = [...sources.values()].map((row) => {
     let vector = 0, lexical = 0;
     const months = [...row.months.values()].map((month) => {
@@ -109,4 +109,44 @@ export function visibleStorageTrimJobs(jobs) {
   const terminal = jobs.filter((job) => !["queued", "running"].includes(job.state))
     .sort((left, right) => (right.updatedAt ?? right.createdAt ?? 0) - (left.updatedAt ?? left.createdAt ?? 0))[0];
   return terminal ? [...active, terminal] : active;
+}
+
+/** Compare independently measured files and source estimates without inventing a remainder. */
+export function storageReconciliation(snapshot) {
+  const known = (value) => Number.isFinite(value) && value >= 0;
+  const stores = snapshot.physical?.stores ?? [];
+  const logical = snapshot.logical;
+  const index = snapshot.index;
+  const documentsKnown = !!logical && Array.isArray(logical.sources)
+    && logical.sources.every((source) => known(source.payloadBytes));
+  const documentsComplete = documentsKnown;
+  const indexKnown = !!index && Array.isArray(index.sources)
+    && index.sources.every((source) => known(source.embeddingBytes) && known(source.textBytes));
+  const textBytes = indexKnown ? index.sources.reduce((sum, source) => sum + source.textBytes, 0) : 0;
+  const lexicalKnown = known(index?.lexicalBytes);
+  const indexComplete = indexKnown && Array.isArray(index.tables) && lexicalKnown;
+  const documentBytes = documentsKnown ? logical.sources.reduce((sum, source) => sum + source.payloadBytes, 0) : null;
+  // With no indexed text, no source receives a share of the empty FTS structures.
+  const indexBytes = indexKnown ? index.sources.reduce((sum, source) => sum + source.embeddingBytes + source.textBytes, lexicalKnown && textBytes > 0 ? index.lexicalBytes : 0) : null;
+  const rows = stores.map((store) => {
+    const attributed = store.id === "documents" || store.id === "index";
+    const sourceBytes = store.id === "documents" ? documentBytes : store.id === "index" ? indexBytes : 0;
+    const sourceComplete = store.id === "documents" ? documentsComplete : store.id === "index" ? indexComplete : true;
+    const components = Array.isArray(store.components) && store.components.every((part) => known(part.bytes))
+      && store.components.reduce((sum, part) => sum + part.bytes, 0) === store.bytes ? store.components : null;
+    const exceedsFiles = sourceBytes !== null && sourceBytes > store.bytes;
+    const state = !known(store.bytes) || !sourceComplete ? "unavailable"
+      : exceedsFiles ? "updating" : "ready";
+    return { ...store, components, attributed, sourceBytes, partial: !sourceComplete,
+      remainderBytes: state === "ready" ? store.bytes - sourceBytes : null, state };
+  });
+  const physicalBytes = known(snapshot.physical?.totalBytes) ? snapshot.physical.totalBytes : null;
+  const physicalMatches = physicalBytes !== null && rows.every((row) => known(row.bytes))
+    && rows.reduce((sum, row) => sum + row.bytes, 0) === physicalBytes;
+  const missingAttributedFiles = (documentBytes > 0 && !rows.some((row) => row.id === "documents"))
+    || (indexBytes > 0 && !rows.some((row) => row.id === "index"));
+  const complete = physicalMatches && documentsComplete && indexComplete && !missingAttributedFiles && rows.every((row) => row.state === "ready");
+  return { rows, physicalBytes, sourceBytes: documentsComplete && indexComplete ? documentBytes + indexBytes : null,
+    remainderBytes: complete ? physicalBytes - documentBytes - indexBytes : null,
+    state: complete ? "ready" : missingAttributedFiles || rows.some((row) => row.state === "updating") ? "updating" : "unavailable" };
 }

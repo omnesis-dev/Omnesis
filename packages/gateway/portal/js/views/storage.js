@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { getStorage, setStoragePolicy, refreshStorage } from "../api.js";
 import { sourceIcon, sourceLabel } from "../lib/format.js";
 import { RowActionMenu } from "../components/row-action-menu.js";
+import { StorageFootprint } from "./storage-footprint.js";
 import { StorageHistory } from "./storage-history.js";
 import { StorageRetentionDialog } from "./storage-retention-dialog.js";
 import { GIB, storageBytes, storageSources, scheduledStorageCutoff, storageTrimStatus, visibleStorageTrimJobs } from "./storage-data.js";
@@ -18,17 +19,18 @@ const PRESSURE_REASONS = {
 };
 const COLORS = ["#58a6ff", "#a78bfa", "#34d399", "#fbbf24", "#fb7185", "#22d3ee", "#c084fc", "#94a3b8"];
 
-function UsageChart({ entries, label }) {
+function UsageChart({ entries, label, renderLegend }) {
   const [hover, setHover] = useState(null);
   const [focus, setFocus] = useState(null);
   const active = hover ?? focus;
-  const slices = entries.filter((item) => item.bytes > 0);
+  const complete = entries.every((item) => Number.isFinite(item.bytes) && item.bytes >= 0);
+  const slices = entries.filter((item) => Number.isFinite(item.bytes) && item.bytes > 0);
   const total = slices.reduce((sum, item) => sum + item.bytes, 0);
   let offset = 0;
   return html`<div class="storage-chart-layout">
-    <svg class="storage-donut" viewBox="0 0 120 120" role="img" aria-label=${`${label}: ${storageBytes(total)}`} onPointerLeave=${() => setHover(null)}>
+    <svg class="storage-donut" viewBox="0 0 120 120" role="img" aria-label=${`${label}: ${storageBytes(complete ? total : null)}`} onPointerLeave=${() => setHover(null)}>
       <circle cx="60" cy="60" r="48" class="storage-donut-track" />
-      ${slices.map((item, i) => {
+      ${complete && slices.map((item, i) => {
         const share = item.bytes / total * 100;
         const start = offset;
         offset += share;
@@ -37,14 +39,14 @@ function UsageChart({ entries, label }) {
           transform="rotate(-90 60 60)" class=${active !== null && active !== i ? "storage-donut-muted" : ""}
           onPointerEnter=${() => setHover(i)}><title>${item.label}: ${storageBytes(item.bytes)}</title></circle>`;
       })}
-      <text x="60" y="60" text-anchor="middle" dominant-baseline="middle">${storageBytes(slices[active]?.bytes ?? total)}</text>
+      <text x="60" y="60" text-anchor="middle" dominant-baseline="middle">${storageBytes(complete ? (slices[active]?.bytes ?? total) : null)}</text>
     </svg>
-    <ul class="storage-legend" onPointerLeave=${() => setHover(null)}>
+    ${renderLegend ? renderLegend({ slices, active, setHover, setFocus, colors: COLORS }) : html`<ul class="storage-legend" onPointerLeave=${() => setHover(null)}>
       ${slices.map((item, i) => html`<li key=${item.id ?? item.label}><span tabindex="0" class=${active === i ? "storage-legend-active" : ""}
         onPointerEnter=${() => setHover(i)} onFocus=${() => setFocus(i)} onBlur=${() => setFocus(null)}>
         <span class="storage-swatch" style=${`background:${COLORS[i % COLORS.length]}`}></span><span>${item.label}</span><strong>${storageBytes(item.bytes)}</strong>
       </span></li>`)}
-    </ul>
+    </ul>`}
   </div>`;
 }
 
@@ -220,14 +222,15 @@ export function StorageView({ onChange } = {}) {
             ]} /></div>`)}
         </section>
         <section class="storage-panel"><h3>On disk</h3>
-          ${snapshot.physical ? html`<${UsageChart} label="Omnesis files" entries=${snapshot.physical.stores ?? []} />` : html`<p>File measurement is unavailable.</p>`}
+          ${snapshot.physical ? html`<${UsageChart} label="Omnesis files" entries=${snapshot.physical.stores ?? []}
+            renderLegend=${(chart) => html`<${StorageFootprint} snapshot=${snapshot} ...${chart} />`} />` : html`<p>File measurement is unavailable.</p>`}
         </section>
       </div>
       <section class="storage-panel">
         <h3>By source and time</h3>
         <p class="storage-note">Totals estimate stored documents, vector payload, indexed text and each source’s share of the lexical index. Shared database space, graph files and analytics are excluded. Measurements can lag recent changes.</p>
         ${rows.length ? html`<div class="storage-table-wrap"><table class="portal-table storage-source-table">
-          <thead><tr><th aria-label="History"></th><th scope="col">Source</th><th scope="col">Estimated total</th><th scope="col">Documents</th><th scope="col">Vectors</th><th scope="col">Lexical index</th><th aria-label="Actions"></th></tr></thead>
+          <thead><tr><th aria-label="History"></th><th scope="col">Source</th><th scope="col">Estimated total</th><th scope="col">Documents</th><th scope="col">Vectors</th><th scope="col">Indexed text & lexical index</th><th aria-label="Actions"></th></tr></thead>
           <tbody>${rows.map((row) => html`<${SourceStorageRow} key=${row.sourceId} row=${row}
             retentionDays=${policies.get(row.sourceId)} jobs=${(snapshot.trimJobs ?? []).filter((job) => job.sourceId === row.sourceId && job.kind !== "rolling")} now=${now}
             onOpen=${(mode, source) => {

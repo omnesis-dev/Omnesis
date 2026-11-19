@@ -134,7 +134,7 @@ test("a retention source with no remaining documents can still be selected and d
 test("updates cached accounting without a routine refresh button and labels lexical allocation and vector payload", async () => {
   api.getStorage.mockResolvedValue({ ...snapshot, index: { measuredAt: "2020-01-01T00:00:00Z", lexicalBytes: 1024, embeddingBytes: 2048, sources: [{ sourceId: "source-example", month: "2020-01", chunkCount: 2, textBytes: 128, embeddingBytes: 2048 }] } });
   await mount();
-  expect(host.textContent).toContain("Lexical index");
+  expect(host.textContent).toContain("Indexed text & lexical index");
   expect(host.textContent).toContain("Vectors");
   expect(host.textContent).toContain("Measurements can lag");
   expect(host.textContent).not.toContain("Refresh measurements");
@@ -315,4 +315,34 @@ test("protected-only history never appears scheduled for rolling trimming", asyn
   expect(host.querySelector(".storage-history-line")).not.toBeNull();
   expect(host.querySelector(".storage-history-scheduled-area")).toBeNull();
   expect(host.textContent).toContain("Protected documents are kept");
+});
+
+test("keeps file breakdown open across storage polling and shows reconciliation beside the physical pie", async () => {
+  vi.useFakeTimers();
+  try {
+    const measuredAt = "2026-01-01T00:00:00.000Z";
+    const complete = {...snapshot,
+      physical: {measuredAt, totalBytes: 100, stores: [{id: "documents", label: "Main database", bytes: 60, components: [{id: "database", label: "Database file", bytes: 50}, {id: "write-log", label: "Write log", bytes: 10}]}, {id: "index", label: "Search index", bytes: 40}]},
+      logical: {...snapshot.logical, measuredAt, sources: [{sourceId: "source-example", payloadBytes: 20, months: [{month: "2020-01", payloadBytes: 20}]}]},
+      index: {measuredAt, tables: [], lexicalBytes: 5, sources: [{sourceId: "source-example", month: "2020-01", embeddingBytes: 10, textBytes: 5}]},
+    };
+    api.getStorage.mockResolvedValue(complete);
+    await mount();
+    expect(host.querySelectorAll(".storage-donut")).toHaveLength(1);
+    const details = host.querySelector(".storage-file-details")!;
+    details.setAttribute("open", "");
+    expect(details.textContent).toContain("Write log");
+    const totals = [...host.querySelectorAll(".storage-reconciliation-table tfoot td")].map((cell) => cell.textContent);
+    expect(totals).toEqual(["100 B", "40 B", "60 B"]);
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+    expect(host.querySelector(".storage-file-details")?.hasAttribute("open")).toBe(true);
+    expect(host.querySelectorAll(".storage-reconciliation-table")).toHaveLength(1);
+  } finally { vi.useRealTimers(); }
+});
+
+test("invalid physical values never turn into a zero total or invalid pie geometry", async () => {
+  api.getStorage.mockResolvedValue({...snapshot, physical: {totalBytes: Infinity, stores: [{id: "documents", label: "Main database", bytes: Infinity}]}});
+  await mount();
+  expect(host.querySelector(".storage-donut text")?.textContent).toBe("Not measured");
+  expect(host.querySelector(".storage-donut")?.outerHTML).not.toContain("NaN");
 });
