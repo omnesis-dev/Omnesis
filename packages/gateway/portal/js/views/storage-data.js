@@ -13,6 +13,23 @@ export const GIB = 1024 ** 3;
 export const DAY_MS = 86_400_000;
 export const MAX_RETENTION_DAYS = 36_500;
 
+/** Each measurement can finish or fail while another still has useful cached data. */
+export function storageMeasurementStages(snapshot) {
+  return ["logical", "index"].map((key) => {
+    const value = snapshot[key];
+    const accounting = snapshot.accounting;
+    const status = accounting?.[key];
+    return {
+      key,
+      label: key === "logical" ? "Document storage" : "Search-index storage",
+      state: status?.state ?? (accounting?.error ? "failed" : accounting?.refreshing ? "refreshing" : value ? "ready" : "pending"),
+      measuredAt: status?.measuredAt ?? value?.measuredAt ?? null,
+      error: status?.error ?? (status ? null : accounting?.error) ?? null,
+      hasData: !!value,
+    };
+  });
+}
+
 export function diskHeadroom(pressure) {
   const { volumes, policy } = pressure ?? {};
   if (pressure?.state === "unknown" || !volumes?.length ||

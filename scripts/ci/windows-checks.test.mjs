@@ -33,7 +33,7 @@ describe("Windows CI coverage", () => {
     ])
       expect(FOCUSED_UNIT_FILES).toContain(file);
   });
-  test("keeps dotenv refusals, CI isolation and cleanup ownership in focused pull-request coverage", () => {
+  test("keeps dotenv refusals, CI isolation and read ownership in focused pull-request coverage", () => {
     for (const file of [
       "scripts/ci/production-network.test.mjs",
       "packages/config/src/dotenv-writer.test.ts",
@@ -41,6 +41,8 @@ describe("Windows CI coverage", () => {
       "packages/config/src/dotenv-bootstrap.test.ts",
       "packages/core/src/owned-process-cleanup.test.ts",
       "packages/core/src/update-lock-publication.test.ts",
+      "packages/gateway/src/storage/accounting-io.test.ts",
+      "packages/gateway/src/storage/physical-accounting.test.ts",
     ])
       expect(FOCUSED_UNIT_FILES).toContain(file);
   });

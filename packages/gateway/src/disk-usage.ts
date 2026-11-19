@@ -96,8 +96,8 @@ function partsFor(layout: DiskUsageLayout): Part[] {
       paths: engineFiles(layout.analyticsDbPath, DUCKDB_FILES),
     },
     { id: "watch", label: "Watches", paths: engineFiles(layout.watchDbPath, SQLITE_FILES) },
-    { id: "transcripts", label: "Agent transcripts", paths: [{ path: layout.transcriptsDir }] },
-    { id: "conversations", label: "Conversations", paths: [{ path: layout.conversationsDir }] },
+    { id: "transcripts", label: "Brain run logs", paths: [{ path: layout.transcriptsDir }] },
+    { id: "conversations", label: "Chat history", paths: [{ path: layout.conversationsDir }] },
     { id: "models", label: "Models", paths: [{ path: layout.modelsDir }] },
     { id: "backups", label: "Backups", paths: [{ path: layout.backupsDir }] },
   ];

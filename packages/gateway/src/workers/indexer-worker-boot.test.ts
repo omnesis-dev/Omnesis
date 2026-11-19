@@ -2153,12 +2153,14 @@ test("storage pressure gates initial indexing and recovery without restarting th
   });
   try {
     await proxy.whenReady();
-    const before = await proxy.storageAccounting();
-    expect(before.sources).toEqual([]);
+    const index = openIndexDb(paths.indexDbPath, { readonly: true });
+    expect(getIndexedDocumentCount(index)).toBe(0);
+    index.close();
     proxy.setStoragePressure(false, Date.now() + 60000);
     await waitForCycleRuns(proxy, 1);
-    const after = await proxy.storageAccounting();
-    expect(after.sources.reduce((sum, source) => sum + source.chunkCount, 0)).toBeGreaterThan(0);
+    const recovered = openIndexDb(paths.indexDbPath, { readonly: true });
+    expect(getIndexedDocumentCount(recovered)).toBeGreaterThan(0);
+    recovered.close();
   } finally {
     await proxy.dispose();
   }

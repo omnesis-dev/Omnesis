@@ -18,6 +18,7 @@
  * via `runWithPriority`.
  */
 
+import { STORAGE_INDEX_READS } from "../storage/reads.js";
 import { IO_READS } from "./io-read-ports.js";
 import { ioReadOpNames, ioReadPort, type ReadPort } from "./read-port.js";
 import type { KnowledgeSelectionReads } from "../brain/knowledge/selection-reads.js";
@@ -101,7 +102,8 @@ import type {
 
 import type { VocabularySettings, VocabularyDocument } from "../transcribe/vocabulary/types.js";
 
-export interface IoGate extends ReadPort<typeof IO_READS>, KnowledgeSelectionReads {
+export interface IoGate
+  extends ReadPort<typeof IO_READS>, ReadPort<typeof STORAGE_INDEX_READS>, KnowledgeSelectionReads {
   fetchTranscriptionVocabularyBatch(settings: VocabularySettings): Promise<VocabularyDocument[]>;
   getTranscriptionVocabulary(
     context: TranscriptionContext,
@@ -517,7 +519,7 @@ const COMPUTE_OP_DEFS: readonly IoOpDef[] = [
   // Every read port in `io-read-ports.ts`: the status cache's refresh, the
   // knowledge engine's planning window, batch recovery and payload capture,
   // and an analytics page's replica ledger reads.
-  ...ioReadOpNames(IO_READS).map((name): IoOpDef => ({
+  ...ioReadOpNames({ ...IO_READS, ...STORAGE_INDEX_READS }).map((name): IoOpDef => ({
     name,
     priority: "background",
     latencyBudgetMs: HEAVY_BUDGET_MS,
@@ -707,6 +709,7 @@ export function ioGateFromScheduler(scheduler: Scheduler): IoGate {
   };
   return {
     ...ioReadPort(IO_READS, call),
+    ...ioReadPort(STORAGE_INDEX_READS, call),
     echo: (value) => call("io.echo", [value]),
     fetchTranscriptionVocabularyBatch: (settings) =>
       call("io.fetchTranscriptionVocabularyBatch", [settings]),

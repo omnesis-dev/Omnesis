@@ -7,9 +7,10 @@ import { RowActionMenu } from "../components/row-action-menu.js";
 import { storageCleanupRows, storageCleanupTargetForStore, storageCleanupTarget, storageCleanupActive, storageCleanupStatus, storageCleanupProtectedReasons, visibleStorageCleanupJobs } from "./storage-cleanup-data.js";
 
 /** One file breakdown and one reconciliation, alongside the existing physical pie. */
-export function StorageFootprint({ snapshot, slices, active, setHover, setFocus, colors, onOpenCleanup, onCancelCleanup, cleanupBusy }) {
+export function StorageFootprint({ snapshot, slices, active, setHover, setFocus, colors, onOpenCleanup, onCancelCleanup, cleanupBusy, onRetry, retryDisabled }) {
   const data = storageReconciliation(snapshot);
   const cleanupJobs = snapshot.cleanupJobs ?? [];
+  const allocation = snapshot.accounting?.allocations;
   return html`<div class="storage-reconciliation">
     <div class="storage-reconciliation-scroll"><table class="storage-reconciliation-table">
       <caption class="sr-only">How Omnesis files relate to the source totals</caption>
@@ -48,6 +49,10 @@ export function StorageFootprint({ snapshot, slices, active, setHover, setFocus,
       <tfoot><tr><th scope="row">Total</th><td>${storageBytes(data.physicalBytes)}</td><td>${storageBytes(data.sourceBytes)}</td><td colspan=${onOpenCleanup ? 2 : 1}>${storageBytes(data.remainderBytes)}</td></tr></tfoot>
     </table></div>
     <p class="storage-note storage-reconciliation-explanation"><strong>On disk = In sources + Other storage.</strong> Other storage includes shared database space, reusable pages, write logs, search graphs and files outside sources. Estimates update separately, so recent changes can temporarily appear in Other storage. Expand a store to see its files.</p>
-    ${data.state !== "ready" && html`<p class="storage-note" role="status">${data.state === "updating" ? "Measurements are updating. Source estimates and files were measured separately, so their difference is not shown yet." : "Some measurements are unavailable. The source total and remaining storage will appear when the breakdown is complete."}</p>`}
+    ${allocation?.state === "failed" ? html`<p class="storage-alert" role="alert">File allocation details could not be measured${allocation.error ? `: ${allocation.error}` : "."} Available physical file sizes and source totals remain visible.
+      ${onRetry && html`<button class="btn-secondary" disabled=${retryDisabled} onClick=${onRetry}>Try again</button>`}
+    </p>` : ["pending", "refreshing"].includes(allocation?.state) ? html`<p class="storage-note" role="status">File allocation details are still being measured.${allocation.state === "refreshing" && Number.isFinite(allocation.progress?.scannedBytes) && allocation.progress.scannedBytes >= 0 ? ` ${storageBytes(allocation.progress.scannedBytes)} examined in the ${allocation.progress.store === "index" ? "search index" : "main database"}.` : ""} Available physical file sizes and source totals remain visible.</p>`
+      : data.state !== "ready" && html`<p class="storage-note" role="status">${data.state === "updating" ? "Measurements are updating. Source estimates and files were measured separately, so their difference is not shown yet." : "The full file-to-source breakdown is incomplete. Available source totals and history remain below; document and search-index measurement status is shown separately."}</p>`}
+    ${allocation?.measuredAt && !Number.isNaN(Date.parse(allocation.measuredAt)) && html`<p class="storage-note">File allocation details as of <time datetime=${allocation.measuredAt}>${new Date(allocation.measuredAt).toLocaleString()}</time>.</p>`}
   </div>`;
 }

@@ -2,12 +2,21 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import Database from "better-sqlite3";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createIndexDatabase } from "../indexer/db.js";
-import { readIndexStorageAccounting } from "./index-accounting.js";
+import { directReadPort } from "../scheduler/read-port.js";
+import {
+  measureIndexStorageAccounting,
+  storageIndexAccountingMetadata,
+  storageIndexAccountingPage,
+} from "./index-accounting.js";
+const readIndexStorageAccounting = (db: Database.Database) =>
+  measureIndexStorageAccounting(
+    directReadPort({ storageIndexAccountingMetadata, storageIndexAccountingPage }, db),
+  );
 
 describe("index storage accounting", () => {
-  it("measures lexical allocation separately from vectors and attributes UTF-8 payload by source and month", async () => {
+  it("attributes UTF-8 and vector payload by source and month independently from physical scans", async () => {
     const db = createIndexDatabase(":memory:");
     try {
       const insert = db.prepare(
@@ -41,10 +50,8 @@ describe("index storage accounting", () => {
         { sourceId: "source:a", month: "2031-02", chunkCount: 1, textBytes: 7, embeddingBytes: 32 },
         { sourceId: "source:b", month: "unknown", chunkCount: 1, textBytes: 6, embeddingBytes: 0 },
       ]);
-      if (measured.tables !== null) {
-        expect(measured.lexicalBytes).toBeGreaterThan(0);
-        expect(measured.tables.some((table) => table.name === "chunks")).toBe(true);
-      } else expect(measured.lexicalBytes).toBeNull();
+      expect(measured.tables).toBeNull();
+      expect(measured.lexicalBytes).toBeNull();
       db.prepare("DELETE FROM chunks WHERE source_id=?").run("source:a");
       const after = await readIndexStorageAccounting(db);
       expect(after.embeddingBytes).toBe(0);
@@ -85,4 +92,47 @@ describe("index storage accounting", () => {
     db.close();
     await expect(readIndexStorageAccounting(db)).rejects.toThrow();
   });
+});
+
+it("index pages seek under the initial ceiling and never run physical allocation", async () => {
+  const db = createIndexDatabase(":memory:");
+  try {
+    const insert = db.prepare(
+      "INSERT INTO chunks(id,document_id,chunk_index,content,source_id,title,embedding,source_created_at) VALUES(?,?,0,'café','invented-source','Entry',zeroblob(16),'2031-01-01T00:00:00Z')",
+    );
+    db.transaction(() => {
+      for (let i = 0; i < 1001; i++) insert.run("c" + i, "d" + i);
+    })();
+    const queries = vi.spyOn(db, "prepare");
+    const metadata = storageIndexAccountingMetadata(db);
+    storageIndexAccountingPage(db, 0, metadata.upperRowid);
+    const sql = queries.mock.calls
+      .map((args) => args[0])
+      .find((sql) => sql.includes("FROM chunks WHERE rowid"))!;
+    expect(queries.mock.calls.map((args) => args[0]).join(" ")).not.toMatch(/dbstat/);
+    queries.mockRestore();
+    const plans = db.prepare("EXPLAIN QUERY PLAN " + sql).all(0, metadata.upperRowid) as Array<{
+      detail: string;
+    }>;
+    expect(plans.map((p) => p.detail).join(" ")).toMatch(
+      /SEARCH chunks USING INTEGER PRIMARY KEY \(rowid>\? AND rowid<\?\)/i,
+    );
+    expect(plans.map((p) => p.detail).join(" ")).not.toMatch(/TEMP B-TREE/);
+    let pages = 0;
+    const result = await measureIndexStorageAccounting({
+      storageIndexAccountingMetadata: async () => metadata,
+      storageIndexAccountingPage: async (after, upper) => {
+        expect(db.inTransaction).toBe(false);
+        const page = storageIndexAccountingPage(db, after, upper);
+        insert.run("added" + pages, "added-doc" + pages);
+        pages++;
+        return page;
+      },
+    });
+    expect(pages).toBe(2);
+    expect(result.sources[0]!.chunkCount).toBe(1001);
+    expect(result.embeddingBytes).toBe(1001 * 16);
+  } finally {
+    db.close();
+  }
 });

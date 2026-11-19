@@ -73,6 +73,20 @@ afterEach(() => {
 });
 
 describe("measureDiskUsage", () => {
+  test("distinguishes Brain run logs from chat history", async () => {
+    const selected = layout();
+    file(join(selected.transcriptsDir, "run.jsonl"), 7);
+    file(join(selected.conversationsDir, "chat.jsonl"), 11);
+    const snapshot = await measureDiskUsage(selected);
+    expect(snapshot.stores.find((store) => store.id === "transcripts")).toMatchObject({
+      label: "Brain run logs",
+      bytes: 7,
+    });
+    expect(snapshot.stores.find((store) => store.id === "conversations")).toMatchObject({
+      label: "Chat history",
+      bytes: 11,
+    });
+  });
   test.each(["direct", "directory alias"])(
     "strict inventories reject a store path resolution failure through a %s path",
     async (kind) => {

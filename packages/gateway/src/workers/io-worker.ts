@@ -33,6 +33,7 @@ import { parentPort } from "node:worker_threads";
 
 import { assertNever } from "@omnesis/core";
 import { ioHandlers } from "../scheduler/io-handlers.js";
+import { ioIndexHandlers } from "../scheduler/io-index-handlers.js";
 import { ioJournalHandlers } from "../scheduler/io-journal-handlers.js";
 import { ioSqlHandlers } from "../scheduler/io-sql-handlers.js";
 import { openEncryptedSqlite } from "../sqlite-encryption.js";
@@ -101,6 +102,7 @@ function openReadConn(
 }
 
 const dispatch = ioHandlers as Record<string, (db: Db, ...args: unknown[]) => unknown>;
+const indexDispatch = ioIndexHandlers as Record<string, (db: Db, ...args: unknown[]) => unknown>;
 const journalDispatch = ioJournalHandlers as Record<
   string,
   (journal: Db, ...args: unknown[]) => unknown
@@ -119,6 +121,8 @@ let state: {
   shuttingDown: boolean;
   watchJournal: IoInit["watchJournal"];
   journalDb: Db | null;
+  indexStore: IoInit["indexStore"];
+  indexDb: Db | null;
   sqlDb: Db | null;
 } | null = null;
 
@@ -161,6 +165,16 @@ function sqlConn(): Db {
   return state.sqlDb;
 }
 
+function indexConn(): Db {
+  if (!state?.indexStore) throw new Error("Index accounting read store is not configured");
+  state.indexDb ??= openReadConn(
+    state.indexStore.path,
+    state.indexStore.keyHex,
+    state.cacheSizeBytes,
+  );
+  return state.indexDb;
+}
+
 async function handleInit(init: IoInit): Promise<void> {
   if (state) {
     log("warn", "io-worker", "init received twice — ignoring");
@@ -182,6 +196,8 @@ async function handleInit(init: IoInit): Promise<void> {
       shuttingDown: false,
       watchJournal: init.watchJournal,
       journalDb: null,
+      indexStore: init.indexStore,
+      indexDb: null,
       sqlDb: null,
     };
 
@@ -244,15 +260,18 @@ async function handleCall(
     });
     return;
   }
+  const indexHandler = indexDispatch[op];
   const journalHandler = journalDispatch[op];
   const sqlHandler = sqlDispatch[op];
-  const handler: ((...args: unknown[]) => unknown) | undefined = journalHandler
-    ? (...rest) => journalHandler(journalConn(), ...rest)
-    : sqlHandler
-      ? (...rest) => sqlHandler(sqlConn(), ...rest)
-      : dispatch[op]
-        ? (...rest) => dispatch[op]!(state!.db, ...rest)
-        : undefined;
+  const handler: ((...args: unknown[]) => unknown) | undefined = indexHandler
+    ? (...rest) => indexHandler(indexConn(), ...rest)
+    : journalHandler
+      ? (...rest) => journalHandler(journalConn(), ...rest)
+      : sqlHandler
+        ? (...rest) => sqlHandler(sqlConn(), ...rest)
+        : dispatch[op]
+          ? (...rest) => dispatch[op]!(state!.db, ...rest)
+          : undefined;
   if (!handler) {
     post({
       type: "result",
@@ -325,6 +344,11 @@ async function handleShutdown(): Promise<void> {
   }
   try {
     state.sqlDb?.close();
+  } catch {
+    /* best-effort */
+  }
+  try {
+    state.indexDb?.close();
   } catch {
     /* best-effort */
   }

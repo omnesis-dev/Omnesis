@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { afterEach, beforeEach, expect, test } from "vitest";
+import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { ProviderId, SourceId } from "@omnesis/types";
 import { createDatabase, upsertDocuments } from "../db.js";
 import { directReadPort } from "../scheduler/read-port.js";
@@ -164,4 +164,30 @@ test("protected contacts and ambiguous dates remain measured but are not schedul
       { month: "2020-01", documents: 2, trimmableDocuments: 1 },
     ],
   });
+});
+
+test("metadata never walks dbstat and payload paging seeks without materializing content bytes", () => {
+  const spy = vi.spyOn(db, "prepare");
+  const metadata = storageAccountingMetadata(db);
+  storageAccountingPage(db, 0, metadata.upperRowid);
+  const queries = spy.mock.calls.map((args) => args[0]);
+  spy.mockRestore();
+  expect(queries.join("\n")).not.toMatch(/dbstat/);
+  const sql = queries.find((sql) => sql.includes("FROM documents WHERE rowid"))!;
+  expect(sql).not.toMatch(/CAST/);
+  const plans = db.prepare("EXPLAIN QUERY PLAN " + sql).all(0, 100) as Array<{ detail: string }>;
+  expect(plans.map((p) => p.detail).join(" ")).toMatch(/INTEGER PRIMARY KEY/);
+  expect(plans.map((p) => p.detail).join(" ")).not.toMatch(/TEMP B-TREE/);
+  const cid = (db.pragma("table_info(documents)") as Array<{ name: string; cid: number }>).find(
+    (c) => c.name === "content",
+  )!.cid;
+  const instructions = db.prepare("EXPLAIN " + sql).all(0, 100) as Array<{
+    opcode: string;
+    p2: number;
+    p5: number;
+  }>;
+  expect(
+    instructions.filter((i) => i.opcode === "Column" && i.p2 === cid).map((i) => i.p5),
+  ).toEqual([192]);
+  expect(metadata.database.tables).toBeNull();
 });

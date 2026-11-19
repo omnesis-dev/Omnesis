@@ -464,6 +464,15 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
           recently changed database pages.
         </p>
         <p>
+          <strong>Brain run logs</strong> are the Brain's execution transcripts;
+          <strong>Chat history</strong> holds conversations with the built-in agent. Document and
+          search-index measurements run independently in the background. Document totals and history
+          appear as soon as they are measured, while index measurements can still be running. Each
+          measurement shows its status and last measurement time. A failed refresh keeps previous
+          measurements visible and offers a retry. Database allocation details are measured
+          separately; waiting for those details does not hide measured source totals or history.
+        </p>
+        <p>
           Expand a source to see a monthly and cumulative breakdown of the data currently stored,
           grouped by its source date. Source totals include document payload, stored vectors,
           indexed text and a share of the lexical index weighted by indexed text size. Shared

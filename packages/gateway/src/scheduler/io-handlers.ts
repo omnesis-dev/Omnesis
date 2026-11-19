@@ -157,6 +157,7 @@ import {
 import { ioReadHandlers } from "./read-port.js";
 import { IO_READS } from "./io-read-ports.js";
 import type { SearchResultItem } from "../search/types.js";
+import type { IoIndexHandlers } from "./io-index-handlers.js";
 import type { IoJournalHandlers } from "./io-journal-handlers.js";
 import type { IoSqlHandlers } from "./io-sql-handlers.js";
 import type { UrlCanonicalizerSpec, TranscriptionContext } from "@omnesis/core";
@@ -513,7 +514,7 @@ export const ioHandlers = {
     nearDupFileLikeDocsSince(db, builtAtSec, fileLikeDocTypes),
 } as const;
 
-export type IoHandlers = typeof ioHandlers & IoJournalHandlers & IoSqlHandlers;
+export type IoHandlers = typeof ioHandlers & IoJournalHandlers & IoSqlHandlers & IoIndexHandlers;
 export type IoOpName = keyof IoHandlers;
 
 export type IoArgs<K extends IoOpName> = IoHandlers[K] extends (db: Db, ...rest: infer A) => unknown
