@@ -17,11 +17,9 @@ export OMNESIS_SYNTH_UNIVERSE="${OMNESIS_SYNTH_UNIVERSE:-e2e-minimal}"
 export OMNESIS_EXPERIMENTAL=1
 
 URL="https://localhost:${OMNESIS_GATEWAY_PORT}"
-# The cloud opt-in mounts the device-key routes the enrollment suite drives. No
-# relay is named, and a test gateway (synth-gateway.sh marks it with
+# No relay is named, and a test gateway (synth-gateway.sh marks it with
 # OMNESIS_TEST_INSTANCE=1) never falls back to the production relay, so it has
 # no relay at all and nothing leaves the machine.
-export OMNESIS_CLOUD_RELAY_ENABLED=1
 unset OMNESIS_CLOUD_RELAY_URL
 CONFIG_FILE="/tmp/omnesis-android-e2e-config.json"
 
