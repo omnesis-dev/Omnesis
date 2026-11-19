@@ -9,6 +9,7 @@
 .storage-health, .storage-alert { border-left: 3px solid var(--highlight-border); padding: 8px 12px; }
 .storage-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; }
 .storage-chart-layout { display: flex; align-items: center; gap: 16px; margin: 12px 0; flex-wrap: wrap; }
+.storage-chart-layout:has(.storage-reconciliation) { align-items: flex-start; }
 .storage-donut { width: 116px; height: 116px; flex: 0 0 116px; }
 .storage-donut circle { fill: none; stroke-width: 17; pointer-events: visibleStroke; }
 .storage-donut .storage-donut-track { stroke: var(--bg-tertiary); pointer-events: none; }
