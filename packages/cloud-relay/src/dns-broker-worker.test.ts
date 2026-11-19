@@ -452,3 +452,21 @@ test("protected requests reuse their reservation and a name cannot reserve twice
   expect(pending.status).toBe(200);
   expect((await challenge(owner, { type: "txt-create", value: "b".repeat(43) })).status).toBe(429);
 });
+
+test("public mode validates independently configured admission budget overrides", async () => {
+  const options = {
+    PUBLIC_ADMISSION_ENABLED: "1",
+    PUBLIC_ADMISSION_KEY: Buffer.alloc(32, 9).toString("base64url"),
+    TURNSTILE_SITE_KEY: "fixture",
+    TURNSTILE_SECRET_KEY: "fixture-secret",
+  };
+  expect(() =>
+    durableObjects({ ...options, PUBLIC_ADMISSION_LIMITS_JSON: '{"totalPerDay":0}' }),
+  ).toThrow();
+  const objects = durableObjects({
+    ...options,
+    PUBLIC_ADMISSION_LIMITS_JSON: '{"totalPerDay":10}',
+  });
+  const response = await objects.handle(new Request("https://dns.example.test/_dns/v2/health"));
+  expect(await response.json()).toMatchObject({ publicAdmission: true });
+});

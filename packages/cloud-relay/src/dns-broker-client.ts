@@ -59,8 +59,8 @@ export class DnsBrokerAdmissionRefused extends Error {
 
 export interface DnsBrokerSelection {
   url: string;
-  /** Set by the operator: no fallback to the relay when the broker can't be reached. */
-  required: boolean;
+  /** A selected broker must authorize the hosted name; no fallback to the relay. */
+  required: true;
 }
 
 /**

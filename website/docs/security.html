@@ -645,24 +645,6 @@ installing it takes one command as root:
           root-owned release, keeping its port, state and passphrase.
         </p>
 
-        <h2 id="cloud-dns-admission">Cloud address security</h2>
-        <p>
-          When cloud relay is enabled with <code>OMNESIS_CLOUD_RELAY_ENABLED=1</code>, a separate
-          DNS broker binds each hosted gateway name to that gateway's owner key. The relay cannot
-          approve a different key for an existing name. New names require a browser security check,
-          verified by the broker rather than the relay, with limits on new allocations. A
-          self-generated owner key or a relay assertion alone does not grant unlimited DNS records.
-        </p>
-        <p>
-          Cloudflare Turnstile normally checks the browser automatically and may ask for a human
-          confirmation. This is an abuse check, not proof of the user's identity or a guarantee
-          against a distributed attack. Network and service limits still apply after a successful
-          check. Capacity is kept for existing gateways' certificate renewals; ordinary renewal does
-          not require a browser or operator approval. Setup steps and recovery from an expired check
-          are described in
-          <a href="setup#omnesis-account-setup">Optional Omnesis account setup</a>.
-        </p>
-
         <h2 id="tls">TLS certificate</h2>
         <p>
           The gateway always serves HTTPS, with the certificate chosen at

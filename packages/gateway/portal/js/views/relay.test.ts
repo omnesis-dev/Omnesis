@@ -1268,3 +1268,15 @@ test("an invalid security check URL remains visible as a recoverable setup error
   expect([...host.querySelectorAll("a")].some((a) => a.getAttribute("href")?.startsWith("javascript:"))).toBe(false);
   expect(button("Cancel")).toBeTruthy();
 });
+
+
+test("cancelling a browser check disables duplicate cancellation and tolerates a missing expiry", async () => {
+  state.busy = "connect/cancel";
+  state.status = { ...base(), connect: { state: "waiting", verification: {
+    url: "https://dns.example.test/_dns/v2/enroll?ticket=fictional",
+  } } };
+  await show();
+  expect(button("Cancelling…").disabled).toBe(true);
+  expect(text()).not.toContain("Complete by");
+  expect(link("Open security check")).toBeTruthy();
+});

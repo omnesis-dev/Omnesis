@@ -420,32 +420,6 @@
           </li>
         </ul>
 
-        <h3 id="omnesis-account-setup">Optional Omnesis account setup</h3>
-        <p>
-          With <code>OMNESIS_CLOUD_RELAY_ENABLED=1</code>, Settings → Connectivity offers an Omnesis
-          account and a public address for this gateway. During first setup, open
-          <strong>Open security check</strong> when offered. Cloudflare checks the browser
-          automatically when possible and may ask you to confirm you are human. Return to the portal
-          afterwards; setup continues to account sign-in by itself. The service does not require a
-          person at Omnesis to approve your gateway.
-        </p>
-        <p>
-          From the CLI, <code>omnesis cloud connect --accept-terms</code> prints the security-check
-          link, then waits for it to finish before printing the account sign-in instructions. The
-          link can be opened in a browser on another device. If it expires, cancel setup and connect
-          again. With the separate <code>cloud configure</code> command, a required check stops
-          configuration: use <code>omnesis cloud status</code> to read the link, complete it, then
-          retry configuration on the same running gateway.
-        </p>
-        <p>
-          New-gateway setup is limited to protect shared service capacity. Repeated setup may need
-          to wait, even after a successful security check. A capacity message means the service
-          cannot allocate another address yet; retry later. Existing registered gateways renew their
-          certificates without a browser check. See
-          <a href="security#cloud-dns-admission">Cloud address security</a> and the
-          <a href="/privacy#omnesis-account">privacy policy</a> for the information processed.
-        </p>
-
         <h3 id="away-from-home">Phones away from home</h3>
         <p>
           A phone paired to a LAN or <code>.local</code> address cannot reach the gateway once it

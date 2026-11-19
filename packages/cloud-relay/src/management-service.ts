@@ -646,9 +646,8 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
     });
   }
   /**
-   * Binds the gateway's hosted name to its owner key at the DNS broker. Skipped while the broker
-   * can't be reached, unless the operator requires it: until the broker serves the official
-   * relay, gateways connect as before.
+   * Binds the hosted name to its owner key at the independent broker before relay discovery.
+   * A selected broker must authorize setup; an unavailable broker cannot disclose the id to the relay.
    */
   private async claimHostedName(
     selection: DnsBrokerSelection,
@@ -656,7 +655,7 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
     gatewayId: string,
     caller?: AbortSignal,
     onVerification?: (verification: DnsBrokerVerification | undefined) => void,
-  ): Promise<"claimed" | "taken" | "skipped"> {
+  ): Promise<"claimed" | "taken"> {
     const client = dnsBrokerClient({
       brokerUrl: selection.url,
       relayUrl,
@@ -670,10 +669,8 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
     });
     const signal = caller ?? AbortSignal.timeout(15_000);
     try {
-      if (!(await this.admitted(() => client.health(signal)))) {
-        if (!selection.required) return "skipped";
+      if (!(await this.admitted(() => client.health(signal))))
         throw new Error("The DNS broker is unavailable");
-      }
       await this.admitted(() => client.claim(signal));
       if (!onVerification && this.connection.verification) {
         this.connection = { state: "idle" };

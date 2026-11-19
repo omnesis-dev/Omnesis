@@ -532,3 +532,163 @@ test("tickets cannot cross broker origins even if an operator reuses a signing k
   );
   expect(completed.status).toBe(401);
 });
+
+test("public completion requires a matching signed ticket and cannot be rebound to another owner", async () => {
+  const f = fixture();
+  const owner = brokerOwner();
+  await f.enroll(owner);
+  const challenge = (await (await f.start(owner)).json()) as BrokerChallenge;
+  expect(
+    (
+      await f.post("/_dns/v2/complete", {
+        challengeId: challenge.challengeId,
+        ownerSignature: owner.sign(challenge),
+      })
+    ).status,
+  ).toBe(401);
+  expect(
+    (
+      await f.post("/_dns/v2/complete", {
+        challengeId: crypto.randomUUID(),
+        ownerSignature: owner.sign(challenge),
+        ticket: challenge.ticket,
+      })
+    ).status,
+  ).toBe(401);
+  expect(
+    (
+      await f.post("/_dns/v2/complete", {
+        challengeId: challenge.challengeId,
+        ownerSignature: brokerOwner().sign(challenge),
+        ticket: challenge.ticket,
+      })
+    ).status,
+  ).toBe(401);
+  // The verifier may await the provider while another trusted import commits this name.
+  const waiting = brokerOwner();
+  const pending = await f.enrollment(waiting);
+  f.verify.mockImplementationOnce(async () => {
+    await f.store.put(`name:${waiting.hostname}`, {
+      gatewayId: waiting.gatewayId,
+      ownerPublicKey: brokerOwner().ownerPublicKey,
+      source: "import",
+      claimedAt: f.clock.now,
+    });
+    return true;
+  });
+  expect((await f.accept(pending.ticket)).status).toBe(409);
+  const late = await f.enrollment(brokerOwner());
+  f.verify.mockImplementationOnce(async () => {
+    f.clock.now = late.expiresAt;
+    return true;
+  });
+  expect((await f.accept(late.ticket)).status).toBe(401);
+});
+
+test("maintenance reconciles lease deadlines and replay deadlines through the metadata lock", async () => {
+  const f = fixture();
+  const owner = brokerOwner();
+  await f.enroll(owner);
+  await f.call(owner, { type: "caa", accountUri: ACCOUNT });
+  await f.call(owner, { type: "txt-create", value: "a".repeat(43) });
+  const schedule = vi.fn(async (_next: number | undefined) => {});
+  await f.broker.updateMaintenance(schedule);
+  expect(schedule).toHaveBeenLastCalledWith(f.clock.now + 60_000);
+  f.clock.now += 600_001;
+  await f.broker.updateMaintenance(schedule);
+  expect(schedule).toHaveBeenLastCalledWith(f.clock.now + 60_000);
+});
+
+test("public admission cannot coexist with manual approval or a missing provider capacity adapter", () => {
+  const f = fixture();
+  const options: DnsBrokerOptions = {
+    origin: ORIGIN,
+    relayDomain: "relay.example.test",
+    store: memoryStore(),
+    zone: f.zone,
+    approvedNewOwners: [],
+    publicAdmission: { secret: SECRET, siteKey: "fixture", verify: async () => true },
+  };
+  expect(() => new DnsBroker(options)).toThrow("no manual approval list");
+  const { capacity: _capacity, ...zone } = f.zone;
+  expect(() => new DnsBroker({ ...options, approvedNewOwners: undefined, zone })).toThrow(
+    "provider capacity",
+  );
+});
+
+test("a completion that expires after ticket verification is refused again inside the metadata transaction", async () => {
+  const f = fixture();
+  const owner = brokerOwner();
+  await f.enroll(owner);
+  const challenge = (await (await f.start(owner)).json()) as BrokerChallenge;
+  const before = f.clock.now;
+  let reads = 0;
+  Object.defineProperty(f.clock, "now", {
+    configurable: true,
+    get: () => (reads++ === 0 ? before : challenge.expiresAt),
+  });
+  const result = await f.post("/_dns/v2/complete", {
+    challengeId: challenge.challengeId,
+    ownerSignature: owner.sign(challenge),
+    ticket: challenge.ticket,
+  });
+  expect(result.status).toBe(401);
+  expect(await result.json()).toEqual({ error: "challenge-unknown" });
+  expect(await f.store.get(`used:${owner.hostname}`)).toBeUndefined();
+});
+
+test("maintenance chooses the earliest retained replay, budget and lease deadline in every combination", async () => {
+  const f = fixture();
+  const owner = brokerOwner();
+  await f.enroll(owner);
+  await f.call(owner, { type: "caa", accountUri: ACCOUNT });
+  f.clock.now += 90_000_000;
+  expect(await f.broker.expire()).toBeUndefined();
+  const lease = {
+    id: crypto.randomUUID(),
+    hostname: owner.hostname,
+    value: "a".repeat(43),
+    expiresAt: f.clock.now + 50,
+  };
+  await f.store.put(`lease:${lease.id}`, lease);
+  expect(await f.broker.expire()).toBe(lease.expiresAt);
+  const leaseSchedule = vi.fn(async (_next: number | undefined) => {});
+  await f.broker.updateMaintenance(leaseSchedule);
+  expect(leaseSchedule).toHaveBeenLastCalledWith(lease.expiresAt);
+  await f.store.put(`used:${owner.hostname}`, [
+    { id: crypto.randomUUID(), expiresAt: f.clock.now + 40 },
+  ]);
+  expect(await f.broker.expire()).toBe(f.clock.now + 40);
+  await f.store.put("budget:fixture", { count: 1, expiresAt: f.clock.now + 30 });
+  expect(await f.broker.expire()).toBe(f.clock.now + 30);
+  await f.store.delete(`lease:${lease.id}`);
+  expect(await f.broker.expire()).toBe(f.clock.now + 30);
+  await f.store.delete(`used:${owner.hostname}`);
+  expect(await f.broker.expire()).toBe(f.clock.now + 30);
+  const schedule = vi.fn(async (_next: number | undefined) => {});
+  await f.broker.updateMaintenance(schedule);
+  expect(schedule).toHaveBeenLastCalledWith(f.clock.now + 30);
+  await f.store.delete("budget:fixture");
+  await f.store.put(`used:${owner.hostname}`, [
+    { id: crypto.randomUUID(), expiresAt: f.clock.now + 40 },
+  ]);
+  await f.broker.updateMaintenance(schedule);
+  expect(schedule).toHaveBeenLastCalledWith(f.clock.now + 40);
+});
+
+test("failed registry initialization is handled and cannot admit requests against partial ownership state", async () => {
+  const f = fixture();
+  const store = memoryStore();
+  vi.spyOn(store, "get").mockRejectedValue(new Error("storage unavailable"));
+  const broker = new DnsBroker({
+    origin: ORIGIN,
+    relayDomain: "relay.example.test",
+    store,
+    zone: f.zone,
+    publicAdmission: { secret: SECRET, siteKey: "fixture", verify: async () => true },
+  });
+  const response = await broker.handle(new Request(`${ORIGIN}/_dns/v2/health`));
+  expect(response.status).toBe(500);
+  expect(await response.json()).toEqual({ error: "broker-failure" });
+  expect(store.values.size).toBe(0);
+});

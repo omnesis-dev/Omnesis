@@ -426,6 +426,9 @@ test("browser checks cannot redirect setup away from the independently configure
     `${g.origin}/_dns/v2/enroll?ticket=fictional#fragment`,
     `${g.origin}/elsewhere?ticket=fictional`,
     `${g.origin}/_dns/v2/enroll`,
+    `${g.origin}/_dns/v2/enroll?ticket=`,
+    g.origin.replace("https://", "https://user@") + "/_dns/v2/enroll?ticket=one",
+    g.origin.replace("https://", "https://:password@") + "/_dns/v2/enroll?ticket=one",
   ]) {
     const onVerificationRequired = vi.fn();
     const client = dnsBrokerClient({
@@ -501,4 +504,126 @@ test("provider capacity and allocation-rate refusals remain actionable without e
     await expect(client.claim(signal())).rejects.toBeInstanceOf(DnsBrokerAdmissionRefused);
     await expect(client.claim(signal())).rejects.toMatchObject({ code });
   }
+});
+
+test("unknown and malformed capacity responses never disclose provider response bodies", async () => {
+  const g = await gateway();
+  for (const body of [
+    "private provider diagnostic",
+    JSON.stringify({ error: "unknown-private-code" }),
+  ]) {
+    const client = dnsBrokerClient({
+      brokerUrl: g.origin,
+      relayUrl: "https://relay.example.test",
+      gatewayId: g.gatewayId,
+      owner: async () => g.owner.privateKey,
+      fetch: async (input, init) =>
+        String(input).endsWith("/challenge")
+          ? new Response(body, { status: 507 })
+          : g.fetch(input, init),
+    });
+    await expect(client.claim(signal())).rejects.toThrow(
+      "The DNS broker refused the gateway operation",
+    );
+  }
+});
+
+test("an interactive check expires without retaining its browser link or completing the claim", async () => {
+  const g = await gateway();
+  const now = Date.now();
+  const clock = vi.spyOn(Date, "now").mockReturnValue(now);
+  const verification = {
+    url: `${g.origin}/_dns/v2/enroll?ticket=fictional`,
+    expiresAt: now + 60_000,
+  };
+  const changes: unknown[] = [];
+  const client = dnsBrokerClient({
+    brokerUrl: g.origin,
+    relayUrl: "https://relay.example.test",
+    gatewayId: g.gatewayId,
+    owner: async () => g.owner.privateKey,
+    onVerificationRequired: (value) => {
+      changes.push(value);
+      if (value) clock.mockReturnValue(verification.expiresAt);
+    },
+    fetch: async (input, init) =>
+      String(input).endsWith("/challenge")
+        ? Response.json({ error: "browser-verification-required", verification }, { status: 428 })
+        : g.fetch(input, init),
+  });
+  await expect(client.claim(signal())).rejects.toThrow("DNS browser verification expired");
+  expect(changes).toEqual([verification, undefined]);
+  expect(g.calls.some((path) => path.endsWith("/complete"))).toBe(false);
+});
+
+test("expired and implausibly long browser checks fail before exposing a link", async () => {
+  const g = await gateway();
+  for (const offset of [-1, 12 * 60_000]) {
+    const onVerificationRequired = vi.fn();
+    const client = dnsBrokerClient({
+      brokerUrl: g.origin,
+      relayUrl: "https://relay.example.test",
+      gatewayId: g.gatewayId,
+      owner: async () => g.owner.privateKey,
+      onVerificationRequired,
+      fetch: async (input, init) =>
+        String(input).endsWith("/challenge")
+          ? Response.json(
+              {
+                error: "browser-verification-required",
+                verification: {
+                  url: `${g.origin}/_dns/v2/enroll?ticket=fictional`,
+                  expiresAt: Date.now() + offset,
+                },
+              },
+              { status: 428 },
+            )
+          : g.fetch(input, init),
+    });
+    await expect(client.claim(signal())).rejects.toThrow("destination was refused");
+    expect(onVerificationRequired).not.toHaveBeenCalled();
+  }
+});
+
+test("repeated pending responses retain the first live check and notify the UI only once", async () => {
+  const g = await gateway();
+  const changes: unknown[] = [];
+  const verification = {
+    url: `${g.origin}/_dns/v2/enroll?ticket=first`,
+    expiresAt: Date.now() + 60_000,
+  };
+  let pending = 0;
+  let completionTicket: unknown;
+  const client = dnsBrokerClient({
+    brokerUrl: g.origin,
+    relayUrl: "https://relay.example.test",
+    gatewayId: g.gatewayId,
+    owner: async () => g.owner.privateKey,
+    verificationPollMs: 1,
+    onVerificationRequired: (value) => changes.push(value),
+    fetch: async (input, init) => {
+      if (String(input).endsWith("/challenge")) {
+        if (pending++ < 3)
+          return Response.json(
+            {
+              error: "browser-verification-required",
+              verification: {
+                ...verification,
+                url: pending === 1 ? verification.url : `${g.origin}/_dns/v2/enroll?ticket=later`,
+              },
+            },
+            { status: 428 },
+          );
+        const response = await g.fetch(input, init);
+        return Response.json({ ...(await response.json()), ticket: "opaque-operation-ticket" });
+      }
+      if (String(input).endsWith("/complete"))
+        completionTicket = JSON.parse(String(init?.body)).ticket;
+      return g.fetch(input, init);
+    },
+  });
+  await client.claim(signal());
+  expect(changes).toEqual([verification, undefined]);
+  expect(pending).toBe(4);
+  expect(completionTicket).toBe("opaque-operation-ticket");
 });
