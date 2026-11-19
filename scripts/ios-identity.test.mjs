@@ -535,25 +535,47 @@ describe("hosted iOS simulator preparation", () => {
       expect(setup).toBeLessThan(steps.findIndex((step) => step.name?.startsWith("lane [")));
       expect(workflow.jobs[job].env?.[variable]).toBeUndefined();
     }
-    const journeys = parse(read(".github/workflows/mobile-journeys.yml")).jobs.ios.steps;
+    const mobile = parse(read(".github/workflows/mobile-journeys.yml")).jobs;
+    const journeys = mobile.ios.steps;
     expect(journeys.find((step) => step.name === "Prepare iPhone simulator").run).toContain(
       "OMNESIS_JOURNEY_IOS_UDID=$udid",
     );
     expect(read("scripts/run-mobile-journeys.sh")).toContain('udid="$OMNESIS_JOURNEY_IOS_UDID"');
-    const interactions = journeys.find(
-      (step) => step.name === "lane [ios-cloud-pairing-interactions]",
+    // The cloud pairing interaction tests need no gateway: they run in a job
+    // of their own, beside the journeys, under the same conditions.
+    expect(journeys.map((step) => step.name)).not.toContain(
+      "lane [ios-cloud-pairing-interactions]",
     );
-    expect(journeys.indexOf(interactions)).toBeGreaterThan(
-      journeys.findIndex((step) => step.name === "lane [ios-journeys]"),
-    );
+    const cloud = mobile["ios-cloud-pairing"];
+    expect(cloud.if).toBe(mobile.ios.if);
+    expect(cloud.needs).toBe(mobile.ios.needs);
+    expect(cloud["runs-on"]).toBe(mobile.ios["runs-on"]);
+    const steps = cloud.steps;
+    const index = (name) => steps.findIndex((step) => step.name === name);
+    expect(steps[index("Prepare iPhone simulator")].run).toContain("OMNESIS_IOS_UDID=$udid");
+    const generate = steps[index("Generate the project and resolve its packages")];
+    expect(generate.run).toContain("xcodegen generate");
+    expect(generate.run).toContain("scripts/ci/resolve-ios-packages.sh OmnesisDemoUITests");
+    const lane = index("lane [ios-cloud-pairing-interactions]");
+    expect(lane).toBeGreaterThan(index("Generate the project and resolve its packages"));
+    expect(lane).toBeGreaterThan(index("Prepare iPhone simulator"));
+    const interactions = steps[lane];
     expect(interactions.run).toContain("-scheme OmnesisDemoUITests");
     expect(interactions.run).toContain(
       "-only-testing:OmnesisDemoUITests/CloudPairingInteractionUITests",
     );
-    expect(interactions.run).toContain("platform=iOS Simulator,id=$OMNESIS_JOURNEY_IOS_UDID");
+    expect(interactions.run).toContain("platform=iOS Simulator,id=$OMNESIS_IOS_UDID");
+    expect(interactions.run).toContain("-disableAutomaticPackageResolution");
     expect(interactions.run).toContain("-enableCodeCoverage YES");
-    expect(interactions.run).toContain("${{ runner.temp }}/mobile-journeys/cloud-pairing.xcresult");
+    expect(interactions.run).toContain("${{ runner.temp }}/cloud-pairing/cloud-pairing.xcresult");
     expect(interactions.run).toContain("set -o pipefail");
+    const upload = steps[index("Upload cloud pairing artifacts")];
+    expect(upload.if).toBe("failure() || cancelled()");
+    expect(upload.with).toMatchObject({
+      name: "ios-cloud-pairing",
+      path: "${{ runner.temp }}/cloud-pairing/",
+    });
+    expect(index("Upload cloud pairing artifacts")).toBeGreaterThan(lane);
   });
 });
 
