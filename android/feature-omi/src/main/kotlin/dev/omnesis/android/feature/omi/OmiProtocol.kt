@@ -8,8 +8,10 @@ import java.util.UUID
 /**
  * The Omi pendant's GATT protocol, as its open-source firmware defines it
  * (github.com/BasedHardware/omi, `omi/firmware/omi/src`, MIT): the audio
- * service and its framing, the button, the haptic motor, the capture mute and
- * the battery. Nothing here touches Bluetooth; [OmiLink] does.
+ * service and its framing, the button, the haptic motor, the settings
+ * (capture mute, LED, microphone gain, charging), the clock, the battery,
+ * device information, the feature mask and the status of the pendant's own
+ * storage. Nothing here touches Bluetooth; [OmiLink] does.
  */
 object OmiProtocol {
     val AUDIO_SERVICE: UUID = UUID.fromString("19b10000-e8f2-537e-4f6c-d104768a1214")
@@ -44,7 +46,7 @@ object OmiProtocol {
     /** Microphone gain level, 0–8. */
     val MIC_GAIN: UUID = UUID.fromString("19b10012-e8f2-537e-4f6c-d104768a1214")
 
-    /** 1 while charging; also notified. */
+    /** 1 while charging. Read only: subscribing to its notifications dropped the link on firmware 3.0.21. */
     val CHARGING: UUID = UUID.fromString("19b10013-e8f2-537e-4f6c-d104768a1214")
 
     val TIME_SYNC_SERVICE: UUID = UUID.fromString("19b10030-e8f2-537e-4f6c-d104768a1214")
@@ -116,7 +118,7 @@ object OmiProtocol {
 /** The pendant's own storage, where it keeps audio while no phone receives it. */
 data class OmiStorage(val usedBytes: Long, val unreadPackets: Long, val freeBytes: Long, val clockSet: Boolean)
 
-/** Everything the pendant tells about itself, read when it links and when the details are opened. */
+/** Everything the pendant tells about itself, read when the details are opened. */
 data class OmiDetails(
     val name: String? = null,
     val address: String? = null,
@@ -132,7 +134,7 @@ data class OmiDetails(
     val rssi: Int? = null,
     val ledBrightness: Int? = null,
     val micGain: Int? = null,
-    val canMute: Boolean = false,
+    val canMute: Boolean = true,
     val features: List<String>? = null,
     val storage: OmiStorage? = null,
     /** Audio frames lost on the link since the current recording started. */

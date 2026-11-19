@@ -63,7 +63,15 @@ class FrameAudioRecorder(
     override fun start(): Boolean {
         if (streaming) return true
         val thisRun = ++run
-        onWorker { decoder = decoders(); audioEndMs = null }
+        val opened = onWorker {
+            decoder = decoders()
+            audioEndMs = null
+            interrupted = false
+        }
+        if (!opened) {
+            onWorker { releaseDecoder() }
+            return false
+        }
         streaming = true
         val sink = object : WearableAudio.FrameSink {
             override fun onFrame(frame: ByteArray, receivedAtMs: Long) {
@@ -74,8 +82,10 @@ class FrameAudioRecorder(
                 if (run != thisRun) return
                 post {
                     if (run != thisRun || !streaming) return@post
-                    interrupted = true
+                    // Only a chunk in progress was cut short.
+                    interrupted = current != null
                     endRun()
+                    interrupted = false
                     streaming = false
                     postToMain(Runnable { onInputLost() })
                 }
@@ -106,6 +116,18 @@ class FrameAudioRecorder(
     }
 
     private fun frame(frame: ByteArray, receivedAtMs: Long) {
+        try {
+            append(frame, receivedAtMs)
+        } catch (e: Exception) {
+            // The encoder failed: close what was written as interrupted and go on with the next frame.
+            Log.w(TAG, "Wearable audio could not be written: ${e.message}")
+            interrupted = current != null
+            closeCurrent()
+            interrupted = false
+        }
+    }
+
+    private fun append(frame: ByteArray, receivedAtMs: Long) {
         val pcm = try {
             decoder?.decode(frame) ?: return
         } catch (e: Exception) {
@@ -149,10 +171,13 @@ class FrameAudioRecorder(
         audioEndMs = time
     }
 
+    /** A number is taken only once its file is open, so one that fails to open leaves no hole. */
     private fun openChunk(atMs: Long): Open {
-        val seq = nextSeq++
+        val seq = nextSeq
         val file = File(directory, ChunkPolicy.fileName(seq))
-        return Open(seq, file, encoders.open(file), atMs).also { current = it }
+        val encoder = encoders.open(file)
+        nextSeq = seq + 1
+        return Open(seq, file, encoder, atMs).also { current = it }
     }
 
     private fun closeCurrent() {
@@ -164,7 +189,7 @@ class FrameAudioRecorder(
             Log.w(TAG, "Could not finish chunk ${open.seq}: ${e.message}")
             open.file.writeBytes(ByteArray(0))
         }
-        Log.i(TAG, "Wearable chunk ${open.seq}: ${open.endMs - open.startedAtMs} ms, ${open.file.length()} bytes${if (interrupted) ", interrupted" else ""}")
+        Log.d(TAG, "Wearable chunk ${open.seq}: ${open.endMs - open.startedAtMs} ms, ${open.file.length()} bytes${if (interrupted) ", interrupted" else ""}")
         onChunk(RecordedChunk(open.seq, open.startedAtMs, open.endMs - open.startedAtMs, open.file, interrupted))
         interrupted = false
     }
@@ -173,8 +198,8 @@ class FrameAudioRecorder(
     private fun fileGap(fromMs: Long, toMs: Long) {
         val seq = nextSeq++
         val file = File(directory, ChunkPolicy.fileName(seq)).apply { writeBytes(ByteArray(0)) }
-        Log.i(TAG, "Wearable sent nothing for ${toMs - fromMs} ms; filed as silence (chunk $seq)")
-        onChunk(RecordedChunk(seq, fromMs, toMs - fromMs, file, interrupted = false))
+        Log.d(TAG, "Wearable sent nothing for ${toMs - fromMs} ms; filed as silence (chunk $seq)")
+        onChunk(RecordedChunk(seq, fromMs, toMs - fromMs, file, interrupted = false, silence = true))
     }
 
     private fun endRun() {
@@ -191,13 +216,25 @@ class FrameAudioRecorder(
     /** Run on the worker without waiting; a callback that races [stop] is dropped. */
     private fun post(block: () -> Unit) {
         try {
-            worker.execute(block)
+            worker.execute { guarded(block) }
         } catch (_: java.util.concurrent.RejectedExecutionException) {
         }
     }
 
-    private fun onWorker(block: () -> Unit) {
-        worker.submit(block).get()
+    /** Run on the worker and wait; false when [block] failed. */
+    private fun onWorker(block: () -> Unit): Boolean = try {
+        worker.submit<Boolean> { guarded(block) }.get()
+    } catch (_: java.util.concurrent.RejectedExecutionException) {
+        false
+    }
+
+    /** A failure on the worker is logged, never thrown: on Android it would end the process. */
+    private fun guarded(block: () -> Unit): Boolean = try {
+        block()
+        true
+    } catch (e: Exception) {
+        Log.w(TAG, "Wearable audio worker: ${e.message}")
+        false
     }
 
     companion object {

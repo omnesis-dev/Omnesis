@@ -46,12 +46,15 @@ class MediaCodecAacChunkEncoder(private val file: File) : PcmChunkEncoder {
 
     override fun write(pcm: ShortArray, length: Int) {
         var at = 0
+        var waits = 0
         while (at < length) {
             val index = codec.dequeueInputBuffer(TIMEOUT_US)
             if (index < 0) {
+                check(++waits < MAX_WAITS) { "AAC encoder took no input" }
                 drain(endOfStream = false)
                 continue
             }
+            waits = 0
             val buffer = codec.getInputBuffer(index)!!.order(ByteOrder.LITTLE_ENDIAN)
             buffer.clear()
             val n = minOf(length - at, buffer.capacity() / 2)
@@ -67,9 +70,13 @@ class MediaCodecAacChunkEncoder(private val file: File) : PcmChunkEncoder {
         try {
             if (samples > 0) {
                 var index: Int
+                var waits = 0
                 do {
                     index = codec.dequeueInputBuffer(TIMEOUT_US)
-                    if (index < 0) drain(endOfStream = false)
+                    if (index < 0) {
+                        check(++waits < MAX_WAITS) { "AAC encoder took no end of stream" }
+                        drain(endOfStream = false)
+                    }
                 } while (index < 0)
                 codec.queueInputBuffer(index, 0, 0, presentationUs(), MediaCodec.BUFFER_FLAG_END_OF_STREAM)
                 drain(endOfStream = true)
@@ -86,8 +93,14 @@ class MediaCodecAacChunkEncoder(private val file: File) : PcmChunkEncoder {
     private fun presentationUs(): Long = samples * 1_000_000L / ChunkPolicy.SAMPLE_RATE_HZ
 
     private fun drain(endOfStream: Boolean) {
+        var waits = 0
         while (true) {
             val index = codec.dequeueOutputBuffer(info, if (endOfStream) TIMEOUT_US else 0)
+            if (index == MediaCodec.INFO_TRY_AGAIN_LATER && endOfStream) {
+                // Waiting for the end of stream, but not forever: the caller files what was written.
+                check(++waits < MAX_WAITS) { "AAC encoder never finished" }
+                continue
+            }
             when {
                 index == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
                     track = muxer.addTrack(codec.outputFormat)
@@ -111,5 +124,8 @@ class MediaCodecAacChunkEncoder(private val file: File) : PcmChunkEncoder {
 
     private companion object {
         const val TIMEOUT_US = 10_000L
+
+        /** Give up after this many empty waits of [TIMEOUT_US]: two seconds. */
+        const val MAX_WAITS = 200
     }
 }

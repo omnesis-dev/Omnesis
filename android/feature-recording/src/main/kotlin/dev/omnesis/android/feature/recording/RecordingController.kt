@@ -146,13 +146,16 @@ class RecordingController(
     /** The directory the recorder writes the session's chunk files into. */
     fun directoryFor(sessionId: String): File = files.sessionDir(sessionId)
 
-    /** The recorder stopped; [micLost] when it was the microphone, not the user. */
+    /**
+     * The recorder stopped; [micLost] when it was the input, not the user. A
+     * pause the user makes while already paused by a lost input becomes theirs.
+     */
     fun onPaused(micLost: Boolean = false) {
         _state.update { s ->
             val active = s as? RecordingState.Active ?: return@update s
             val since = active.runningSinceMs
             if (since == null) {
-                active.copy(micLost = active.micLost || micLost)
+                active.copy(micLost = micLost)
             } else {
                 active.copy(recordedMs = active.recordedMs + (clock() - since), runningSinceMs = null, micLost = micLost)
             }
@@ -273,7 +276,7 @@ class RecordingController(
                 sessionId = sessionId,
                 seq = chunk.seq,
                 startedAt = Instant.ofEpochMilli(chunk.startedAtMs).toString(),
-                durationMs = if (empty) 0 else chunk.durationMs,
+                durationMs = if (empty && !chunk.silence) 0 else chunk.durationMs,
                 silent = silent,
                 interrupted = chunk.interrupted,
                 file = if (silent) null else chunk.file,

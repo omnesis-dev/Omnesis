@@ -86,14 +86,20 @@ class MediaCodecOpusDecoder(
     }
 
     override fun decode(frame: ByteArray): ShortArray {
-        val index = codec.dequeueInputBuffer(TIMEOUT_US)
-        if (index >= 0) {
-            val buffer = codec.getInputBuffer(index)!!
-            buffer.clear()
-            buffer.put(frame)
-            codec.queueInputBuffer(index, 0, frame.size, frames++ * frameDurationUs, 0)
+        var out = ShortArray(0)
+        // A codec with no free input buffer is drained until it takes the frame.
+        repeat(MAX_INPUT_WAITS) {
+            val index = codec.dequeueInputBuffer(TIMEOUT_US)
+            if (index >= 0) {
+                val buffer = codec.getInputBuffer(index)!!
+                buffer.clear()
+                buffer.put(frame)
+                codec.queueInputBuffer(index, 0, frame.size, frames++ * frameDurationUs, 0)
+                return out + drain()
+            }
+            out += drain()
         }
-        return drain()
+        error("Opus decoder took no input")
     }
 
     private fun drain(): ShortArray {
@@ -127,6 +133,7 @@ class MediaCodecOpusDecoder(
     private companion object {
         const val DECODE_RATE = 48_000
         const val TIMEOUT_US = 10_000L
+        const val MAX_INPUT_WAITS = 20
 
         /** RFC 7845 identification header: version 1, mono, no pre-skip, family 0. */
         fun opusHead(inputRate: Int): ByteBuffer = ByteBuffer.allocate(19).order(ByteOrder.LITTLE_ENDIAN).apply {

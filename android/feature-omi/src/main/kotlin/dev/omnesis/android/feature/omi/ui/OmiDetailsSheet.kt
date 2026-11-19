@@ -49,7 +49,11 @@ fun OmiDetailsContent(status: OmiStatus, details: OmiDetails?, onFind: () -> Uni
         if (details == null) {
             Spacer(Modifier.height(OmSpacing.lg))
             Text(
-                "The pendant has not linked since the app started. Its details appear once it is connected.",
+                if (status is OmiStatus.Ready) {
+                    "Reading the pendant's details…"
+                } else {
+                    "The pendant's details appear once it is connected."
+                },
                 style = MaterialTheme.typography.bodyMedium,
                 color = c.textMuted,
             )
