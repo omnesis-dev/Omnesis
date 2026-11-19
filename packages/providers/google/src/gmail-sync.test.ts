@@ -256,6 +256,232 @@ describe("Gmail bootstrap after a refused page token", () => {
     expect(resumed.q).not.toContain("before:");
   });
 
+  test.each(["-321", "0", "123garbage", "9007199254740993", "8640000000000001"])(
+    "keeps malformed receipt %s out of the resume frontier without changing document dates",
+    async (internalDate) => {
+      const gmail = gmailFor(new Set(["2@top"]));
+      gmail.users.messages.get = vi.fn((params: { id: string }) => {
+        const message = mailbox.find((m) => m.id === params.id)!;
+        return Promise.resolve({
+          data: makeGmailMessage(params.id, {
+            internalDate: params.id === "m1" ? internalDate : String(message.receivedAt),
+            date: new Date(message.receivedAt).toUTCString(),
+          }),
+        });
+      });
+      const source = createGmailSource(gmail, {
+        dataCutoff: new Date(newest - 10 * DAY_MS).toISOString(),
+      });
+      const first = await source.sync(null);
+      expect(first.documents.map((d) => d.externalId)).toEqual(["m1", "m2"]);
+      expect(first.documents[0]!.sourceCreatedAt).toBe(
+        new Date(mailbox[0]!.receivedAt).toISOString(),
+      );
+      expect((first.cursor as GmailSyncCursor).oldestListedAt).toBe(
+        new Date(mailbox[1]!.receivedAt).toISOString(),
+      );
+      const rest = await walk(source, first.cursor as GmailSyncCursor);
+      expect(rest.seen).toEqual(["m2", "m3", "m4", "m5"]);
+      expect(rest.cursor.phase).toBe("incremental");
+      expect(rest.cursor.coverage).toBe("partial");
+    },
+  );
+
+  test("ignores a valid but pre-cutoff receipt while collecting the current page frontier", async () => {
+    const gmail = gmailFor(new Set());
+    const beforeCutoff = Date.UTC(1992, 3, 2);
+    gmail.users.messages.get = vi.fn((params: { id: string }) => {
+      const message = mailbox.find((m) => m.id === params.id)!;
+      return Promise.resolve({
+        data: makeGmailMessage(params.id, {
+          internalDate: String(params.id === "m1" ? beforeCutoff : message.receivedAt),
+          date: new Date(message.receivedAt).toUTCString(),
+        }),
+      });
+    });
+    const source = createGmailSource(gmail, {
+      dataCutoff: new Date(newest - 10 * DAY_MS).toISOString(),
+    });
+    const result = await source.sync(null);
+    expect(result.documents.map((d) => d.externalId)).toEqual(["m1", "m2"]);
+    expect(result.documents[0]!.sourceCreatedAt).toBe(
+      new Date(mailbox[0]!.receivedAt).toISOString(),
+    );
+    expect((result.cursor as GmailSyncCursor).oldestListedAt).toBe(
+      new Date(mailbox[1]!.receivedAt).toISOString(),
+    );
+  });
+
+  test("heals an installed pre-cutoff frontier while continuing its valid page token", async () => {
+    const gmail = gmailFor(new Set());
+    const source = createGmailSource(gmail, {
+      dataCutoff: new Date(newest - 10 * DAY_MS).toISOString(),
+    });
+    const startedAt = new Date(newest + DAY_MS).toISOString();
+    const result = await source.sync({
+      phase: "bootstrap",
+      pageToken: "2@top",
+      bootstrapHistoryId: "h-pinned",
+      bootstrapStartedAt: startedAt,
+      totalMessages: 5,
+      processedDocs: 2,
+      oldestListedAt: new Date(Date.UTC(1992, 3, 2)).toISOString(),
+    });
+    expect(gmail.users.messages.list).toHaveBeenCalledTimes(1);
+    expect(gmail.users.messages.list.mock.calls[0]![0]).toMatchObject({ pageToken: "2@top" });
+    expect(result.documents.map((d) => d.externalId)).toEqual(["m3", "m4"]);
+    expect(result.cursor).toMatchObject({
+      phase: "bootstrap",
+      oldestListedAt: new Date(mailbox[3]!.receivedAt).toISOString(),
+      bootstrapHistoryId: "h-pinned",
+      bootstrapStartedAt: startedAt,
+    });
+  });
+
+  test("restarts a poisoned installed frontier safely when its page token expires", async () => {
+    const gmail = gmailFor(new Set(["2@top"]));
+    const floor = newest - 10 * DAY_MS;
+    const startedAt = new Date(newest + DAY_MS).toISOString();
+    const source = createGmailSource(gmail, { dataCutoff: new Date(floor).toISOString() });
+    const first = await source.sync({
+      phase: "bootstrap",
+      pageToken: "2@top",
+      bootstrapHistoryId: "h-pinned",
+      bootstrapStartedAt: startedAt,
+      totalMessages: 5,
+      processedDocs: 2,
+      oldestListedAt: new Date(Date.UTC(1992, 3, 2)).toISOString(),
+    });
+    const resumed = gmail.users.messages.list.mock.calls[1]![0] as {
+      pageToken?: string;
+      q: string;
+    };
+    expect(resumed.pageToken).toBeUndefined();
+    expect(resumed.q).toContain("after:");
+    expect(resumed.q).not.toContain("before:");
+    expect(first.cursor).toMatchObject({
+      bootstrapHistoryId: "h-pinned",
+      bootstrapStartedAt: startedAt,
+    });
+    const rest = await walk(source, first.cursor as GmailSyncCursor);
+    expect([...first.documents.map((d) => d.externalId), ...rest.seen]).toEqual([
+      "m1",
+      "m2",
+      "m3",
+      "m4",
+      "m5",
+    ]);
+    expect(rest.cursor).toMatchObject({
+      phase: "incremental",
+      historyId: "h-pinned",
+      lastSyncAt: startedAt,
+      coverage: "partial",
+    });
+  });
+
+  test.each(["below", "equal", "invalid"])(
+    "replaces a token whose stored before bound is %s the query floor",
+    async (bound) => {
+      const gmail = gmailFor(new Set());
+      const floor = newest - 10 * DAY_MS;
+      const source = createGmailSource(gmail, { dataCutoff: new Date(floor).toISOString() });
+      const result = await source.sync({
+        phase: "bootstrap",
+        pageToken: "2@top",
+        bootstrapHistoryId: "h-pinned",
+        bootstrapStartedAt: new Date(newest + DAY_MS).toISOString(),
+        totalMessages: 5,
+        processedDocs: 9,
+        listBefore:
+          bound === "invalid"
+            ? "invalid"
+            : new Date(floor - (bound === "below" ? DAY_MS : 0)).toISOString(),
+        oldestListedAt: new Date(mailbox[1]!.receivedAt).toISOString(),
+      });
+      const params = gmail.users.messages.list.mock.calls[0]![0] as {
+        pageToken?: string;
+        q: string;
+      };
+      expect(params.pageToken).toBeUndefined();
+      expect(params.q).not.toContain("before:");
+      expect(result.documents.map((d) => d.externalId)).toEqual(["m1", "m2"]);
+      expect(result.cursor).toMatchObject({
+        phase: "bootstrap",
+        processedDocs: 2,
+        bootstrapHistoryId: "h-pinned",
+      });
+    },
+  );
+
+  test.each(["newest", "bound", "dated"])(
+    "does not count %s replay toward the unbounded runaway guard twice",
+    async (resume) => {
+      const gmail = gmailFor(new Set(["2@top"]));
+      const source = createGmailSource(gmail);
+      const result = await source.sync({
+        phase: "bootstrap",
+        pageToken: "2@top",
+        bootstrapHistoryId: "h-pinned",
+        totalMessages: 5,
+        processedDocs: 9,
+        ...(resume === "bound" ? { listBefore: new Date(newest + DAY_MS).toISOString() } : {}),
+        ...(resume === "dated"
+          ? { oldestListedAt: new Date(mailbox[1]!.receivedAt).toISOString() }
+          : {}),
+      });
+      expect(result.hasMore).toBe(true);
+      expect(result.cursor).toMatchObject({
+        phase: "bootstrap",
+        processedDocs: 2,
+        bootstrapHistoryId: "h-pinned",
+      });
+      const rest = await walk(source, result.cursor as GmailSyncCursor);
+      expect(rest.seen).toContain("m5");
+      expect(rest.cursor.phase).toBe("incremental");
+      expect(rest.cursor.coverage).toBe("complete");
+    },
+  );
+
+  test("preserves a valid frontier when a dated replay page has no usable receipts", async () => {
+    const gmail = gmailFor(new Set(["2@top"]));
+    gmail.users.messages.get = vi.fn((params: { id: string }) => {
+      const message = mailbox.find((m) => m.id === params.id)!;
+      return Promise.resolve({
+        data: makeGmailMessage(params.id, {
+          internalDate: "invalid",
+          date: new Date(message.receivedAt).toUTCString(),
+        }),
+      });
+    });
+    const oldestListedAt = new Date(mailbox[1]!.receivedAt).toISOString();
+    const result = await createGmailSource(gmail).sync({
+      phase: "bootstrap",
+      pageToken: "2@top",
+      bootstrapHistoryId: "h-1",
+      totalMessages: 5,
+      oldestListedAt,
+    });
+    expect(result.cursor).toMatchObject({ phase: "bootstrap", oldestListedAt });
+  });
+
+  test("falls back safely when adding the overlap would overflow the supported date range", async () => {
+    const gmail = gmailFor(new Set(["2@top"]));
+    const result = await createGmailSource(gmail).sync({
+      phase: "bootstrap",
+      pageToken: "2@top",
+      bootstrapHistoryId: "h-1",
+      totalMessages: 5,
+      oldestListedAt: new Date(8_640_000_000_000_000).toISOString(),
+    });
+    expect(result.hasMore).toBe(true);
+    expect((gmail.users.messages.list.mock.calls[1]![0] as { q: string }).q).not.toContain(
+      "before:",
+    );
+    expect((result.cursor as GmailSyncCursor).oldestListedAt).toBe(
+      new Date(mailbox[1]!.receivedAt).toISOString(),
+    );
+  });
+
   test("any other 400 still fails the sync", async () => {
     const gmail = gmailFor(new Set());
     gmail.users.messages.list = vi.fn(() =>
