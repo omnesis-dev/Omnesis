@@ -175,7 +175,8 @@ jobs:
     if: ${{ !cancelled() && (github.event_name == 'schedule' || (github.event_name == 'pull_request' && needs.changes.outputs.ios == 'true') || (github.event_name == 'workflow_dispatch' && inputs.platforms != 'android')) }}
     runs-on: macos-26
     # About 5 min of setup, then a clean build and eight UI tests: 8 to 21 min
-    # measured. The limit stops a hung simulator or xcodebuild from holding
+    # measured. A runner that fails to initialize costs about 3 min before its
+    # one retry. The limit stops a hung simulator or xcodebuild from holding
     # the runner.
     timeout-minutes: 45
     steps:
@@ -219,10 +220,13 @@ jobs:
       - name: lane [ios-cloud-pairing-interactions]
         # The bounded Demo simulator scene uses the production views and models.
         # These XCUI actions complement the real gateway and TLS journey tests.
+        # A UI test runner that fails to initialize before any test runs gets
+        # one more attempt; a test failure fails the step at once.
         run: |
-          set -o pipefail
           mkdir -p "${{ runner.temp }}/cloud-pairing"
-          xcodebuild test \
+          node scripts/ci/xcodebuild-ui-tests.mjs \
+            --log "${{ runner.temp }}/cloud-pairing/cloud-pairing-xcodebuild.log" -- \
+            test \
             -project ios/Omnesis.xcodeproj \
             -scheme OmnesisDemoUITests \
             -destination "platform=iOS Simulator,id=$OMNESIS_IOS_UDID" \
@@ -231,8 +235,7 @@ jobs:
             -derivedDataPath "${{ runner.temp }}/cloud-pairing-derived-data" \
             -enableCodeCoverage YES \
             -resultBundlePath "${{ runner.temp }}/cloud-pairing/cloud-pairing.xcresult" \
-            -only-testing:OmnesisDemoUITests/CloudPairingInteractionUITests \
-            2>&1 | tee "${{ runner.temp }}/cloud-pairing/cloud-pairing-xcodebuild.log"
+            -only-testing:OmnesisDemoUITests/CloudPairingInteractionUITests
 
       - name: Upload cloud pairing artifacts
         # The xcresult bundle (screenshots of every failure) and the xcodebuild

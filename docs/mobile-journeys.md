@@ -154,3 +154,8 @@ The lanes are not part of `full-validation`, so the README badge keeps
 reporting the full suite alone. On failure, the job uploads everything listed
 above as the `ios-journeys` or `android-journeys` artifact; the cloud pairing
 job uploads its xcresult bundle and xcodebuild log as `ios-cloud-pairing`.
+The cloud pairing job runs `xcodebuild` through `scripts/ci/xcodebuild-ui-tests.mjs`,
+which runs it once more only when XCTest's UI test runner failed to initialize
+before any test started (on a loaded simulator it can time out waiting for
+accessibility); the first attempt's result bundle is kept beside the second
+as `cloud-pairing-runner-not-initialized.xcresult`. A test failure is never retried.
