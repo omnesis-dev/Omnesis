@@ -50,6 +50,8 @@ struct AccountPairingWaitingView: View {
             }
             actions
         }
+        // A container of its own, so the buttons inside keep their own identifiers.
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("pairing.account.waitingForOK")
     }
 
