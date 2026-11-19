@@ -43,6 +43,7 @@ import { getDocumentCount } from "./helpers.js";
 import { authorizeMcpClient, revokeAccess, type AuthorizedMcpClient } from "./mcp-oauth-helper.js";
 import { lostAckProxy } from "./lost-ack-proxy.js";
 import { verifiedLoopbackFetch } from "./verified-tls-fetch.js";
+import { execCliWithDiagnostics } from "./cli-process.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -460,7 +461,7 @@ describe("native cloud tunnel with real gateway, collector sync engine and CLI",
       timeout: 20_000,
     });
     expect(JSON.parse(result.stdout).deviceId).toBe(paired.device.id);
-    const help = await execFileAsync(command.command, [...command.args, "--help"], {
+    const help = await execCliWithDiagnostics(command.command, [...command.args, "--help"], {
       env: { ...env, OMNESIS_CLOUD_RELAY_DEVICE_FILE: join(directory, "missing-device.json") },
       timeout: 20_000,
     });
@@ -484,7 +485,7 @@ describe("native cloud tunnel with real gateway, collector sync engine and CLI",
     expect(JSON.parse(defaultResult.stdout).deviceId).toBe(paired.device.id);
     await writeFile(defaultFile, "malformed old cloud bundle", { mode: 0o600 });
     for (const flag of ["--help", "-V"]) {
-      const info = await execFileAsync(command.command, [...command.args, flag], {
+      const info = await execCliWithDiagnostics(command.command, [...command.args, flag], {
         env: automatic,
         timeout: 20_000,
       });
