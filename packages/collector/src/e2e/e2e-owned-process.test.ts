@@ -2,8 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { promisify } from "node:util";
-import { once } from "node:events";
-import { EventEmitter } from "node:events";
+import { once, EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -45,6 +44,7 @@ afterEach(async () => {
       .map((child) => fixtureRoots.get(child)),
   );
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
   for (const root of roots.splice(0))
     if (!retained.has(root)) rmSync(root, { recursive: true, force: true });
   const failed = results.filter((result) => result.status === "rejected");
@@ -224,9 +224,11 @@ function start(program: string, hold?: Promise<void>, args: string[] = []) {
   const cwdContract = `import {statSync as ownedFixtureStat} from 'node:fs';import {dirname as ownedFixtureDir} from 'node:path';import {fileURLToPath as ownedFixtureURL} from 'node:url';const ownedFixtureActual=ownedFixtureStat(process.cwd(),{bigint:true}),ownedFixtureExpected=ownedFixtureStat(ownedFixtureDir(ownedFixtureURL(import.meta.url)),{bigint:true});if(ownedFixtureActual.dev!==ownedFixtureExpected.dev||ownedFixtureActual.ino!==ownedFixtureExpected.ino)process.exit(32);`;
   writeFileSync(file, cwdContract + program);
   const spawnE2E = createE2ESubprocessSpawner({ platform: "win32", spawnOwned: launcher(hold) });
+  // Nx's inherited FORCE_COLOR beside NO_COLOR adds a Node warning to byte-exact stderr.
+  const { FORCE_COLOR: _forceColor, ...env } = process.env;
   const child = spawnE2E(process.execPath, [file, ...args], {
     cwd: pathToFileURL(root + sep),
-    env: { ...process.env },
+    env,
     detached: true,
   }) as ChildProcessWithoutNullStreams;
   records.push(child);
@@ -300,6 +302,8 @@ test("synchronous owned preparation overrun never publishes target launch", asyn
 }, 30000);
 
 test("actual application PID and IPC shutdown stay distinct from the owned helper", async () => {
+  vi.stubEnv("FORCE_COLOR", "1");
+  vi.stubEnv("NO_COLOR", "1");
   const argv = ["", "literal $&", 'quote"value', "path\\with\\slashes", "invented-🛰️"];
   const child = start(
     `if(JSON.stringify(process.argv.slice(2))!==${JSON.stringify(JSON.stringify(argv))})process.exit(31);` +
