@@ -47,6 +47,7 @@ import {
   countRecordingChunks,
   readRecordingChunkAudio,
   sumRecordingChunkDurations,
+  listDismissedRecordingSuggestions,
   type FinishRecordingOutcome,
   type InsertRecordingChunkOutcome,
   type RecordingChunk,
@@ -54,6 +55,13 @@ import {
   type RecordingSession,
   type RecordingSpeakerMapping,
 } from "./storage.js";
+import { resolveGivenName } from "./suggestion-reads.js";
+import {
+  buildSuggestions,
+  type CalendarEventCandidate,
+  type RecordingSuggestion,
+  type SuggestionTurn,
+} from "./suggestions.js";
 import type { SpeakerIdentity } from "../sources/omnesis-recordings/index.js";
 import type { SeparatedVoices, VoiceSeparator, VoiceWindow } from "./voices/voices.js";
 import type {
@@ -97,6 +105,8 @@ export interface RecordingServiceDeps {
     | "rescheduleRecordingChunk"
     | "settleRecordingChunk"
     | "purgeRecordingAudio"
+    | "setRecordingTitle"
+    | "dismissRecordingSuggestion"
     | "markRecordingSessionProjected"
     | "assignRecordingVoices"
     | "setRecordingSpeaker"
@@ -127,6 +137,11 @@ export interface RecordingServiceDeps {
    * restart, and lowering it drops what is now past it.
    */
   keepAudioDays?: () => number;
+  /**
+   * Events on the owner's calendar overlapping `[from, toExclusive)`, with who
+   * was invited; absent, no calendar suggestion is made.
+   */
+  calendarEvents?: (from: string, toExclusive: string) => Promise<CalendarEventCandidate[]>;
   now?: () => Date;
 }
 
@@ -141,6 +156,14 @@ export interface RecordingSpeakerView extends SpeakerIdentity {
   /** The first few things they said. */
   samples: string[];
 }
+
+/** What a recording's suggestions are offered against: its window, and the suggestions. */
+export interface RecordingSuggestions {
+  suggestions: RecordingSuggestion[];
+}
+
+/** A recording with no end yet is looked up over at least this long. */
+const MIN_WINDOW_MS = 60_000;
 
 /** A session in the list of recent recordings. */
 export interface RecordingSummary {
@@ -416,6 +439,83 @@ export class RecordingTranscriptionService {
     if (!set) return "missing";
     this.kick();
     return "set";
+  }
+
+  /** Give a session the owner's title, or clear it (null); its document is written again. */
+  async setTitle(id: string, title: string | null): Promise<boolean> {
+    const set = await this.deps.writeGate.setRecordingTitle(id, title?.trim() || null);
+    if (set) this.kick();
+    return set;
+  }
+
+  /** Stop offering one suggestion for a session. False when the session does not exist. */
+  async dismissSuggestion(id: string, key: string): Promise<boolean> {
+    return this.deps.writeGate.dismissRecordingSuggestion(id, key, this.now().toISOString());
+  }
+
+  /**
+   * Who likely took part in a session and what it was, from the owner's
+   * calendar and from names heard in the transcript. Null when the session
+   * does not exist. A calendar that cannot be read leaves only the mentions.
+   */
+  async suggestions(id: string): Promise<RecordingSuggestions | null> {
+    const session = getRecordingSession(this.deps.readDb, id);
+    if (!session) return null;
+    const chunks = listRecordingChunks(this.deps.readDb, id);
+    const speakers = this.speakerIdentities(id);
+
+    const start = Date.parse(session.startedAt);
+    const recordedEnd = start + chunks.reduce((sum, c) => sum + c.durationMs, 0);
+    const declaredEnd = session.endedAt ? Date.parse(session.endedAt) : Number.NaN;
+    const end = Math.max(
+      Number.isFinite(declaredEnd) ? declaredEnd : recordedEnd,
+      start + MIN_WINDOW_MS,
+    );
+    let events: CalendarEventCandidate[] = [];
+    if (this.deps.calendarEvents) {
+      try {
+        events = await this.deps.calendarEvents(
+          new Date(start).toISOString(),
+          new Date(end).toISOString(),
+        );
+      } catch (err) {
+        log.warn(
+          `Recording ${id}: calendar not read for suggestions: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+    // The event that shares most of the recording's time comes first.
+    const overlap = (e: CalendarEventCandidate) =>
+      Math.min(end, Date.parse(e.end)) - Math.max(start, Date.parse(e.start));
+    events = events.filter((e) => overlap(e) > 0).sort((a, b) => overlap(b) - overlap(a));
+
+    const turns: SuggestionTurn[] = [];
+    for (const chunk of chunks) {
+      for (const turn of speakerTurns(chunk.segments ?? [], chunk.voices ?? [])) {
+        turns.push({
+          ...(turn.speaker !== undefined ? { speaker: turn.speaker } : {}),
+          text: turn.text,
+        });
+      }
+    }
+    const names = new Map<string, ReturnType<typeof resolveGivenName>>();
+    return {
+      suggestions: buildSuggestions({
+        title: session.title,
+        turns,
+        events,
+        namedSpeakers: new Set(
+          speakers.filter((s) => s.isSelf || s.personId || s.name).map((s) => s.speaker),
+        ),
+        mappedPeople: new Set(speakers.flatMap((s) => (s.personId ? [s.personId] : []))),
+        dismissed: listDismissedRecordingSuggestions(this.deps.readDb, id),
+        resolveName: (name) => {
+          const key = name.toLowerCase();
+          if (!names.has(key)) names.set(key, resolveGivenName(this.deps.readDb, name));
+          return names.get(key)!;
+        },
+      }),
+    };
   }
 
   /** Delete a session, its chunks and its document. False when it did not exist. */

@@ -1863,3 +1863,17 @@ export async function getRecordingChunkAudio(id, seq) {
   });
   return res.blob();
 }
+
+/**
+ * Who likely took part in a recording and what it was, from the owner's
+ * calendar and names heard in it: `{ suggestions }`. Nothing is applied.
+ */
+export const getRecordingSuggestions = (id) => request("GET", `${recordingPath(id)}/suggestions`);
+
+/** Stop offering one suggestion for a recording. */
+export const dismissRecordingSuggestion = (id, key) =>
+  request("POST", `${recordingPath(id)}/suggestions/dismiss`, { body: { key } });
+
+/** Give a recording the owner's title; null goes back to the date-based one. Answers its summary. */
+export const setRecordingTitle = (id, title) =>
+  request("PUT", `${recordingPath(id)}/title`, { body: { title } });

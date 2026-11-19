@@ -105,3 +105,13 @@ export const listRecordingsQuery = z
       .optional(),
   })
   .strict();
+
+// PUT /recordings/:id/title — the owner's title; null goes back to the date-based one.
+export const setRecordingTitleBody = z
+  .object({ title: z.string().trim().max(200).nullable() })
+  .strict();
+
+// POST /recordings/:id/suggestions/dismiss
+export const dismissRecordingSuggestionBody = z
+  .object({ key: z.string().min(1).max(300) })
+  .strict();
