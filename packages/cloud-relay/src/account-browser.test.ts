@@ -3013,12 +3013,57 @@ test("the invite page says plainly when an invite is missing, unusable or can't 
   }
 });
 
+test("the invite page checks again when only the link's fragment changes", async () => {
+  const f = inviteSetup();
+  let answerFirst!: (response: Response) => void;
+  f.request.mockImplementationOnce(
+    () => new Promise<Response>((resolve) => (answerFirst = resolve)),
+  );
+  f.request.mockImplementationOnce(async () => Response.json({ status: "used" }));
+  installInviteUI();
+  expect(f.status()).toBe("Checking your invite…");
+  // Another link pasted into the address bar: same page, new fragment, no reload.
+  const other = "b3RoZXI.Y2xhaW1z." + "t".repeat(86);
+  Object.assign(f.window.location, {
+    hash: `#${other}`,
+    href: `https://relay.example.test/invite#${other}`,
+  });
+  f.window.dispatchEvent(new f.window.Event("hashchange"));
+  await vi.waitFor(() => expect(f.status()).toContain("already used to create an account"));
+  expect(JSON.parse(String(f.request.mock.calls[1]![1]!.body))).toEqual({ invite: other });
+  expect(f.document.getElementById("invite-value")!.textContent).toContain(other);
+  // The first link's late answer doesn't replace the newer one.
+  answerFirst(Response.json({ status: "valid", expiresAt: Date.UTC(2026, 11, 24, 12) / 1000 }));
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  expect(f.status()).toContain("already used to create an account");
+  // Nor does an older check that fails after a newer one answered.
+  let failFirst!: (error: Error) => void;
+  f.request.mockImplementationOnce(
+    () => new Promise<Response>((_resolve, reject) => (failFirst = reject)),
+  );
+  f.request.mockImplementationOnce(async () => Response.json({ status: "expired" }));
+  for (const hash of [`#${inviteToken}`, `#${other}`]) {
+    Object.assign(f.window.location, { hash, href: `https://relay.example.test/invite${hash}` });
+    f.window.dispatchEvent(new f.window.Event("hashchange"));
+  }
+  await vi.waitFor(() => expect(f.status()).toContain("has expired"));
+  failFirst(new TypeError("offline"));
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  expect(f.status()).toContain("has expired");
+  // Clearing the fragment says there is no invite and hides the copy button.
+  Object.assign(f.window.location, { hash: "", href: "https://relay.example.test/invite" });
+  f.window.dispatchEvent(new f.window.Event("hashchange"));
+  expect(f.status()).toContain("has no invite in it");
+  expect(f.copy().hidden).toBe(true);
+  expect(f.request).toHaveBeenCalledTimes(4);
+});
+
 test("the invite script stays self-contained when served as one function", async () => {
   const f = inviteSetup();
   expect(() =>
     runInNewContext(`(${installInviteUI.toString()})();`, {
       document: f.document,
-      window: { location: { hash: `#${inviteToken}`, href: f.href } },
+      window: { location: { hash: `#${inviteToken}`, href: f.href }, addEventListener() {} },
       navigator: { clipboard: f.clipboard },
       fetch: f.request,
       JSON,

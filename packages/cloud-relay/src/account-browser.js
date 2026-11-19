@@ -1361,16 +1361,14 @@ export function installInviteUI() {
   const status = document.getElementById("invite-status");
   const value = document.getElementById("invite-value");
   const copy = document.getElementById("invite-copy");
-  const invite = window.location.hash.slice(1);
   const say = (text) => {
     status.textContent = text;
   };
-  if (!invite) {
-    say("This link has no invite in it. Ask whoever sent it for the whole link.");
-    return;
-  }
-  value.textContent = window.location.href;
-  copy.hidden = false;
+  const messages = {
+    invalid: "This invite isn't valid. Check that you copied the whole link.",
+    expired: "This invite has expired. Ask for a new one.",
+    used: "This invite was already used to create an account. Ask for a new one.",
+  };
   copy.addEventListener("click", async () => {
     try {
       await navigator.clipboard.writeText(window.location.href);
@@ -1379,27 +1377,45 @@ export function installInviteUI() {
       copy.textContent = "Select the invite above and copy it";
     }
   });
-  const messages = {
-    invalid: "This invite isn't valid. Check that you copied the whole link.",
-    expired: "This invite has expired. Ask for a new one.",
-    used: "This invite was already used to create an account. Ask for a new one.",
-  };
-  fetch("/_relay/v3/signup/invite", {
-    method: "POST",
-    credentials: "omit",
-    redirect: "error",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ invite }),
-  })
-    .then(async (response) => {
-      if (!response.ok) throw new Error();
-      const result = await response.json();
-      if (result.status === "valid") {
-        const until = new Date(result.expiresAt * 1000).toLocaleDateString(undefined, {
-          dateStyle: "long",
-        });
-        say(`This invite works until ${until}.`);
-      } else say(messages[result.status] ?? messages.invalid);
+  // Pasting another link into the address bar changes only the fragment, which reloads nothing,
+  // so the page checks again on every change and shows only the newest answer.
+  let latest = 0;
+  const check = () => {
+    const attempt = ++latest;
+    const invite = window.location.hash.slice(1);
+    copy.textContent = "Copy invite";
+    if (!invite) {
+      value.textContent = "";
+      copy.hidden = true;
+      say("This link has no invite in it. Ask whoever sent it for the whole link.");
+      return;
+    }
+    value.textContent = window.location.href;
+    copy.hidden = false;
+    say("Checking your invite…");
+    fetch("/_relay/v3/signup/invite", {
+      method: "POST",
+      credentials: "omit",
+      redirect: "error",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ invite }),
     })
-    .catch(() => say("We couldn't check this invite right now. You can still use it."));
+      .then(async (response) => {
+        if (!response.ok) throw new Error();
+        const result = await response.json();
+        if (attempt !== latest) return;
+        if (result.status === "valid") {
+          const until = new Date(result.expiresAt * 1000).toLocaleDateString(undefined, {
+            dateStyle: "long",
+          });
+          say(`This invite works until ${until}.`);
+        } else say(messages[result.status] ?? messages.invalid);
+      })
+      .catch(() => {
+        if (attempt === latest)
+          say("We couldn't check this invite right now. You can still use it.");
+      });
+  };
+  window.addEventListener("hashchange", check);
+  check();
 }

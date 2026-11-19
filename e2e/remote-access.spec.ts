@@ -246,7 +246,7 @@ test("with no account and no Tailscale device, Connectivity offers the account, 
   await expect(page.locator(".config-tab.active")).toHaveText("Connectivity");
   await expect(heading(page)).toHaveText("Connectivity");
   await expect(page.locator(".remote-access-item-title")).toHaveText([
-    "Omnesis accounts",
+    "No Omnesis account",
     "Omnesis relay",
     "Tailscale on this computer",
     "Your own domain or reverse proxy",
