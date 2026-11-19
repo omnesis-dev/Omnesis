@@ -93,6 +93,7 @@ export function tailnetCallerAddress(caller: TailnetCaller): string {
 export const PUBLIC_PATHS: readonly string[] = [
   "/mcp",
   "/mcp/",
+  "/.well-known/omnesis-startup",
   "/.well-known/oauth-protected-resource",
   "/.well-known/oauth-protected-resource/",
   "/.well-known/oauth-authorization-server",

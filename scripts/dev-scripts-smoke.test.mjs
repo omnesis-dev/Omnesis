@@ -2378,7 +2378,7 @@ describe("full-validation workflow topology", () => {
       join(repoRoot, "packages/gateway/src/workers/writer-worker.ts"),
       "utf8",
     );
-    const gatewaySource = readFileSync(join(repoRoot, "packages/gateway/src/index.ts"), "utf8");
+    const gatewaySource = readFileSync(join(repoRoot, "packages/gateway/src/runtime.ts"), "utf8");
     const searchReadyMarker = "HNSW read handle opened";
     const writerReadyMarker = "ready — owning writable handle";
     expect(gatewaySource).toContain(searchReadyMarker);

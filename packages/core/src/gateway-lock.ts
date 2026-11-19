@@ -36,6 +36,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
+import { setTimeout as waitForRetry } from "node:timers/promises";
 import { windowsPowerShellExecutable, windowsProcessStart } from "./windows-process-tree.js";
 
 export const GATEWAY_LOCK_FILE = "gateway.lock";
@@ -73,6 +74,8 @@ export interface GatewayLock {
 }
 
 export interface AcquireGatewayLockOptions {
+  /** Cancel a waiting starter without disturbing the current owner. */
+  signal?: AbortSignal;
   /** How long to wait for a live holder before giving up. Default 60 s. */
   waitMs?: number;
   /** Called once when a live holder is found, before waiting on it. */
@@ -106,6 +109,7 @@ export async function acquireGatewayLock(
   let announced = false;
 
   for (;;) {
+    opts.signal?.throwIfAborted();
     // A proven live holder needs no claim attempt. Keep the guard for the
     // transition from missing/stale to claimed, not every waiting poll.
     const visible = readHolder(path);
@@ -115,64 +119,76 @@ export async function acquireGatewayLock(
         opts.onWaiting?.(visible);
       }
       if (Date.now() >= deadline) throw new GatewayLockHeldError(visible, path);
-      await new Promise((resolve) => setTimeout(resolve, POLL_MS));
+      await waitForRetry(POLL_MS, undefined, { signal: opts.signal });
       continue;
     }
     let pendingLease: number | undefined;
     let attempt;
     try {
-      attempt = await withClaimGuard(path, pid, (births) => {
-        // flock's FD mode locks the inherited open-file description. The parent
-        // retains that description after the utility exits, so only closing our
-        // FD (including SIGKILL) releases ownership. No keeper process can die
-        // independently and leave a still-writing gateway without its lease.
-        if (process.platform === "linux" && opts.pid === undefined) {
-          const lease = takeLease(path);
-          if (lease === null) {
-            return {
-              claimed: false as const,
-              holder: readHolder(path) ?? {
-                pid: 1,
-                processStart: null,
-                hostname: "",
-                startedAt: "",
-                locking: "flock-v1" as const,
-              },
-            };
-          }
-          try {
-            const holder = readHolder(path);
-            // An older gateway does not hold the lifetime lease. Preserve its
-            // PID/host evidence instead of stealing its stores during upgrade.
-            if (holder && holder.locking !== "flock-v1" && isHolderAlive(holder, births)) {
-              closeSync(lease);
-              return { claimed: false as const, holder };
+      attempt = await withClaimGuard(
+        path,
+        pid,
+        (births) => {
+          // flock's FD mode locks the inherited open-file description. The parent
+          // retains that description after the utility exits, so only closing our
+          // FD (including SIGKILL) releases ownership. No keeper process can die
+          // independently and leave a still-writing gateway without its lease.
+          if (process.platform === "linux" && opts.pid === undefined) {
+            const lease = takeLease(path);
+            if (lease === null) {
+              return {
+                claimed: false as const,
+                holder: readHolder(path) ?? {
+                  pid: 1,
+                  processStart: null,
+                  hostname: "",
+                  startedAt: "",
+                  locking: "flock-v1" as const,
+                },
+              };
             }
-            retire(path, pid);
-            if (!tryClaim(path, pid, now, true, births))
-              throw new Error("Gateway claim changed while guarded");
-            pendingLease = lease;
-            return { claimed: true as const, lease };
-          } catch (error) {
-            closeSync(lease);
-            throw error;
+            try {
+              const holder = readHolder(path);
+              // An older gateway does not hold the lifetime lease. Preserve its
+              // PID/host evidence instead of stealing its stores during upgrade.
+              if (holder && holder.locking !== "flock-v1" && isHolderAlive(holder, births)) {
+                closeSync(lease);
+                return { claimed: false as const, holder };
+              }
+              retire(path, pid);
+              if (!tryClaim(path, pid, now, true, births))
+                throw new Error("Gateway claim changed while guarded");
+              pendingLease = lease;
+              return { claimed: true as const, lease };
+            } catch (error) {
+              closeSync(lease);
+              throw error;
+            }
           }
-        }
-        if (tryClaim(path, pid, now, false, births)) return { claimed: true as const };
-        const holder = readHolder(path);
-        if (!holder || !isHolderAlive(holder, births)) {
-          retire(path, pid);
-          return { claimed: tryClaim(path, pid, now, false, births) };
-        }
-        return { claimed: false as const, holder };
-      });
+          if (tryClaim(path, pid, now, false, births)) return { claimed: true as const };
+          const holder = readHolder(path);
+          if (!holder || !isHolderAlive(holder, births)) {
+            retire(path, pid);
+            return { claimed: tryClaim(path, pid, now, false, births) };
+          }
+          return { claimed: false as const, holder };
+        },
+        opts.signal,
+      );
     } catch (error) {
       // Ownership transfers only after the guard has exited successfully.
       // A failed guard must not leave a lease behind in a caller that retries.
       if (pendingLease !== undefined) closeSync(pendingLease);
       throw error;
     }
-    if (attempt.claimed) return handle(path, pid, "lease" in attempt ? attempt.lease : undefined);
+    if (attempt.claimed) {
+      const ownership = handle(path, pid, "lease" in attempt ? attempt.lease : undefined);
+      if (opts.signal?.aborted) {
+        ownership.release();
+        opts.signal.throwIfAborted();
+      }
+      return ownership;
+    }
     const holder = "holder" in attempt ? attempt.holder : readHolder(path);
     if (!holder) continue;
     if (!announced) {
@@ -180,7 +196,7 @@ export async function acquireGatewayLock(
       opts.onWaiting?.(holder);
     }
     if (Date.now() >= deadline) throw new GatewayLockHeldError(holder, path);
-    await new Promise((resolve) => setTimeout(resolve, POLL_MS));
+    await waitForRetry(POLL_MS, undefined, { signal: opts.signal });
   }
 }
 
@@ -194,6 +210,7 @@ async function withClaimGuard<T>(
   path: string,
   pid: number,
   operation: (births?: GuardBirths) => T,
+  signal?: AbortSignal,
 ): Promise<T> {
   const command =
     process.platform === "win32"
@@ -240,8 +257,13 @@ async function withClaimGuard<T>(
   let failure: unknown;
   let failed = false;
   let births: GuardBirths | undefined;
+  let abortListener: (() => void) | undefined;
   try {
     await new Promise<void>((resolve, reject) => {
+      abortListener = () =>
+        reject(signal?.reason ?? new DOMException("Gateway ownership cancelled", "AbortError"));
+      signal?.addEventListener("abort", abortListener, { once: true });
+      if (signal?.aborted) abortListener();
       keeper.once("error", reject);
       keeper.once("close", (code) =>
         reject(
@@ -286,12 +308,14 @@ async function withClaimGuard<T>(
         }
       });
     });
+    signal?.throwIfAborted();
     ready = true;
     result = operation(births);
   } catch (error) {
     failed = true;
     failure = error;
   }
+  if (abortListener) signal?.removeEventListener("abort", abortListener);
   keeper.stdin!.end();
   if (!ready && keeper.exitCode === null && keeper.signalCode === null) keeper.kill();
   const code = await new Promise<number | null>((resolve) => {

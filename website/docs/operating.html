@@ -230,6 +230,14 @@ collector    omnesis-collector.service                running        41283</pre>
           its own configuration directory.
         </p>
         <p>
+          During startup, the gateway serves a progress page as soon as its HTTPS certificate and
+          listener are ready. Open the portal or a saved link to see the current startup step,
+          completed steps, and database migration progress. The page opens your original destination
+          automatically when the required services are ready. API requests, including
+          <code>/health</code>, return <code>503</code> until then; a visible progress page does not
+          mean the API is ready. Search preparation can continue after the portal opens.
+        </p>
+        <p>
           During shutdown the gateway refuses new requests and disconnects WebSocket clients;
           requests already in flight get a short window to finish. Clients reconnect once it is
           back.

@@ -226,6 +226,45 @@ describe("self-signed nudge signal", () => {
 });
 
 describe("generateSelfSigned off the event loop", () => {
+  test("gateway shutdown cancels first-install certificate generation without persisting partial material", async () => {
+    const before = processLauncher();
+    const controller = new AbortController();
+    let entered!: () => void;
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    setProcessLauncher({
+      async run(_command, _args, options) {
+        expect(options.signal).toBe(controller.signal);
+        entered();
+        await new Promise<void>((resolve) =>
+          options.signal!.addEventListener("abort", () => resolve(), { once: true }),
+        );
+        return { exitCode: null, signal: "SIGTERM", stdout: new Uint8Array(), stderr: "" };
+      },
+    });
+    try {
+      const generation = resolveTlsBundle({ configDir, signal: controller.signal });
+      const rejected = expect(generation).rejects.toThrow("killed by SIGTERM");
+      await started;
+      controller.abort();
+      await rejected;
+      expect(existsSync(join(configDir, "tls", "cert.pem"))).toBe(false);
+      expect(existsSync(join(configDir, "tls", "key.pem"))).toBe(false);
+    } finally {
+      setProcessLauncher(before);
+    }
+  });
+
+  test("a pre-aborted boot does not start certificate preparation", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    await expect(resolveTlsBundle({ configDir, signal: controller.signal })).rejects.toMatchObject({
+      name: "AbortError",
+    });
+    expect(existsSync(join(configDir, "tls"))).toBe(false);
+  });
+
   test("runs openssl through the process launcher and lets the loop turn while it does", async () => {
     const before = processLauncher();
     const programs: string[] = [];

@@ -74,6 +74,8 @@ export interface TlsBundle {
 }
 
 export interface ResolveTlsBundleOpts {
+  /** Cancel first-install certificate generation during gateway shutdown. */
+  signal?: AbortSignal;
   configDir: string;
   envCertPath?: string;
   envKeyPath?: string;
@@ -131,6 +133,7 @@ export function tlsExtraHostNames(raw: string | undefined): string[] {
  *      (source=auto-generated).
  */
 export async function resolveTlsBundle(opts: ResolveTlsBundleOpts): Promise<TlsBundle> {
+  opts.signal?.throwIfAborted();
   const { configDir, envCertPath, envKeyPath, envExtraNames } = opts;
 
   // The installer (scripts/install.sh) auto-provisions a real cert here when
@@ -178,7 +181,8 @@ export async function resolveTlsBundle(opts: ResolveTlsBundleOpts): Promise<TlsB
   // Generate a fresh bundle and persist it.
   mkdirSync(tlsDir, { recursive: true, mode: 0o700 });
   if (process.platform === "win32") await ensurePrivateDirs([tlsDir]);
-  const generated = await generateSelfSigned({ extraNames: envExtraNames });
+  const generated = await generateSelfSigned({ extraNames: envExtraNames, signal: opts.signal });
+  opts.signal?.throwIfAborted();
   await writeTlsMaterial(certPath, keyPath, generated, configDir);
   // mkdirSync's mode is masked by umask on some platforms; force it.
   try {

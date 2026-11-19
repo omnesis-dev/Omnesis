@@ -1159,9 +1159,26 @@ export class PasskeyBrowser {
       options: VIRTUAL_AUTHENTICATOR,
     });
     const errors: string[] = [];
+    pageErrorLog.set(page, errors);
     page.on("pageerror", (error) => errors.push(error.message));
     const refusals: string[] = [];
     refusalLog.set(page, refusals);
+    const failed: string[] = [];
+    failedRequestLog.set(page, failed);
+    page.on("requestfailed", (request) => {
+      const url = new URL(request.url());
+      const path =
+        url.protocol === "http:" || url.protocol === "https:"
+          ? url.pathname.slice(0, 200)
+          : "(non-HTTP request)";
+      const reason =
+        request
+          .failure()
+          ?.errorText.match(/^net::[A-Z0-9_]+/)?.[0]
+          .slice(0, 80) ?? "request failed";
+      failed.push(`${request.method()} ${path} ${reason}`);
+      if (failed.length > 6) failed.shift();
+    });
     page.on("response", (response) => {
       if (response.status() < 400) return;
       const url = new URL(response.url());
@@ -1257,12 +1274,26 @@ export async function signedInAccount(world: EnrollmentWorld, session: PasskeySe
 }
 
 const refusalLog = new WeakMap<Page, string[]>();
+const pageErrorLog = new WeakMap<Page, string[]>();
+const failedRequestLog = new WeakMap<Page, string[]>();
 
-/** Text of every visible button and heading, and the page's refused requests, for a failure message. */
+/** Bounded browser diagnostics and visible page text for a failure message. */
 export async function pageSummary(page: Page): Promise<string> {
   const refused = (refusalLog.get(page) ?? []).slice(-6);
+  const errors = (pageErrorLog.get(page) ?? []).slice(-6).map((message) => message.slice(0, 200));
+  const failed = failedRequestLog.get(page) ?? [];
+  const documentState = await page
+    .evaluate(
+      () =>
+        `Document: ${document.readyState}; #app children: ${document.getElementById("app")?.childElementCount ?? "absent"}`,
+    )
+    .catch(() => "Document: unavailable");
   return (
-    (refused.length ? `Refused requests:\n${refused.join("\n")}\n` : "") + (await visibleText(page))
+    `${documentState}\n` +
+    (errors.length ? `Browser errors:\n${errors.join("\n")}\n` : "") +
+    (failed.length ? `Failed requests:\n${failed.join("\n")}\n` : "") +
+    (refused.length ? `Refused requests:\n${refused.join("\n")}\n` : "") +
+    (await visibleText(page))
   );
 }
 

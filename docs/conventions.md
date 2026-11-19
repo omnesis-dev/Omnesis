@@ -14,6 +14,23 @@ The doc has three layers:
 
 ## Layer 1 — Architectural patterns
 
+### Gateway startup keeps one listener and explicit ownership
+
+`packages/gateway/src/index.ts` is the small HTTPS bootstrap; `runtime.ts` assembles
+normal services only after the startup listener is open. `startup/manager.ts`
+tracks fixed, sanitized phases without reading stores. The listener changes its
+HTTP dispatcher and attaches WebSocket handling without rebinding the port or
+proxying requests, so peer identity, TLS and session semantics stay intact.
+Startup status is not API readiness: ordinary requests receive 503 until the
+normal application is ready, and the startup page reloads the original URL.
+
+Blocking database/schema and graph preparation belongs to startup workers, which
+must exit before ordinary readers/writers open those resources. Migration progress
+reports committed operations, never inferred percentages or uncommitted work.
+Independent scheduler pools start in bounded pairs after the writer; failed or
+cancelled initialization awaits siblings before disposing their resources.
+Keep the people-repair chain sequential and model new dependencies explicitly.
+
 ### Nx selects logical work; host dispatchers admit physical work
 
 Nx is the repository authority for workspace dependencies, affected projects,

@@ -274,7 +274,8 @@ for attempt in $(seq 1 30); do
 done
 [ "$(docker inspect -f '{{.State.Running}}' "$competitor")" = false ]
 [ "$(docker inspect -f '{{.State.ExitCode}}' "$competitor")" != 0 ]
-docker logs "$competitor" 2>&1 | grep -q 'already owns this configuration directory'
+docker logs "$competitor" >"$scratch/competitor.log" 2>&1
+grep -q 'already owns this configuration directory' "$scratch/competitor.log"
 docker rm "$competitor" >/dev/null
 docker exec "$name" curl -fsSk https://localhost:7600/health >/dev/null
 if [ "$role" = collector ]; then

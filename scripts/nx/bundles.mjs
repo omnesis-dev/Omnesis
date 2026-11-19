@@ -147,6 +147,8 @@ export const bundles = {
       "websocket.e2e.test.ts",
       "phone-region.e2e.test.ts",
       "scheduler-heartbeat.e2e.test.ts",
+      "gateway-startup.e2e.test.ts",
+      "gateway-lifecycle.e2e.test.ts",
       "packages/gateway/**/*.e2e.test.ts",
       "packages/cli/**/*.e2e.test.ts",
     ],

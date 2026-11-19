@@ -23,7 +23,7 @@
 import { existsSync, readdirSync, renameSync, rmSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { randomBytes } from "node:crypto";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createLogger, resolveSubprocessEntry, type SubprocessEntry } from "@omnesis/core";
 
 const log = createLogger("gateway:usearch").child("boot-guard");
@@ -100,8 +100,6 @@ export function quarantineCorruptUsearch(
   if (!existsSync(path)) return "absent";
 
   const nonce = randomBytes(16).toString("hex");
-  const begin = `${USEARCH_NATIVE_STAGE_PREFIX}:${nonce}:begin\n`;
-  const complete = `${begin}${USEARCH_NATIVE_STAGE_PREFIX}:${nonce}:complete\n`;
   const result = spawnSync(
     validator.command,
     [...validator.args, path, String(dimensions), nonce],
@@ -112,6 +110,89 @@ export function quarantineCorruptUsearch(
       encoding: "utf8",
     },
   );
+  return finishValidation(path, dimensions, result, nonce);
+}
+
+/** Async boot-worker path: abort owns the validator until its process and pipes close. */
+export async function quarantineCorruptUsearchAsync(
+  path: string,
+  dimensions: number,
+  signal?: AbortSignal,
+  validator: SubprocessEntry = resolveSubprocessEntry(
+    "./usearch-validate-subprocess.ts",
+    import.meta.url,
+  ),
+): Promise<UsearchGuardResult> {
+  signal?.throwIfAborted();
+  pruneQuarantinedCopies(path);
+  if (!existsSync(path)) return "absent";
+  const nonce = randomBytes(16).toString("hex");
+  const result = await new Promise<ValidationResult>((resolve) => {
+    const child = spawn(validator.command, [...validator.args, path, String(dimensions), nonce], {
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
+    });
+    const output = { stdout: [] as Buffer[], stderr: [] as Buffer[] };
+    const bytes = { stdout: 0, stderr: 0 };
+    let error: Error | undefined;
+    const receive = (stream: "stdout" | "stderr", chunk: Buffer): void => {
+      const remaining = Math.max(0, 65_536 - bytes[stream]);
+      if (remaining > 0) output[stream].push(chunk.subarray(0, remaining));
+      bytes[stream] += chunk.length;
+      if (bytes[stream] > 65_536) {
+        error = Object.assign(new Error("Truncated usearch validation output"), {
+          code: "ENOBUFS",
+        });
+        child.kill("SIGKILL");
+      }
+    };
+    child.stdout.on("data", (chunk: Buffer) => receive("stdout", chunk));
+    child.stderr.on("data", (chunk: Buffer) => receive("stderr", chunk));
+    child.once("error", (err) => {
+      error ??= err;
+    });
+    const abort = (): void => {
+      child.kill("SIGKILL");
+    };
+    signal?.addEventListener("abort", abort, { once: true });
+    if (signal?.aborted) abort();
+    const timer = setTimeout(() => {
+      error ??= new Error("usearch validation timed out");
+      child.kill("SIGKILL");
+    }, VALIDATE_TIMEOUT_MS);
+    timer.unref();
+    child.once("close", (status, exitSignal) => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", abort);
+      resolve({
+        status,
+        signal: exitSignal,
+        error,
+        stdout: Buffer.concat(output.stdout).toString("utf8"),
+        stderr: Buffer.concat(output.stderr).toString("utf8"),
+      });
+    });
+  });
+  signal?.throwIfAborted();
+  return finishValidation(path, dimensions, result, nonce);
+}
+
+interface ValidationResult {
+  status: number | null;
+  signal: NodeJS.Signals | null;
+  error?: Error;
+  stdout: string | null;
+  stderr: string | null;
+}
+
+function finishValidation(
+  path: string,
+  dimensions: number,
+  result: ValidationResult,
+  nonce: string,
+): UsearchGuardResult {
+  const begin = `${USEARCH_NATIVE_STAGE_PREFIX}:${nonce}:begin\n`;
+  const complete = `${begin}${USEARCH_NATIVE_STAGE_PREFIX}:${nonce}:complete\n`;
   if (result.error && "code" in result.error && result.error.code === "ENOBUFS") {
     throw new Error("Truncated usearch validation output; refusing in-process open");
   }
