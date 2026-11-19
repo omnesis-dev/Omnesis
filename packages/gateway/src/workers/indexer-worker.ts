@@ -24,7 +24,6 @@ import {
   DOCUMENT_PURGE_BATCH_SIZE,
   purgeDocumentIndexBatch,
 } from "../indexer/document-index-purge.js";
-import { readIndexStorageAccounting } from "../storage/index-accounting.js";
 type Db = Database.Database;
 import { existsSync } from "node:fs";
 import { parentPort } from "node:worker_threads";
@@ -75,7 +74,6 @@ import { computeRatePerSec, type IndexRateSample } from "./indexer-rate.js";
 import { shouldRunIndexCycle } from "./indexer-disk-guard.js";
 import { applyPendingPurges } from "./pending-source-purges.js";
 import { resolveIndexerCutoffMaxAge } from "./protocol.js";
-import type { IndexStorageAccounting } from "../storage/index-accounting.js";
 import type {
   IndexerCutoffMap,
   IndexerInit,
@@ -1862,24 +1860,6 @@ function handleResumeIndexing(): void {
   void runIndexCycle("wake");
 }
 
-let accountingInFlight: Promise<IndexStorageAccounting> | null = null;
-
-async function handleStorageAccounting(id: number): Promise<void> {
-  try {
-    if (!state || state.shuttingDown) throw new Error("Indexer is unavailable");
-    accountingInFlight ??= readIndexStorageAccounting(state.indexDb).finally(() => {
-      accountingInFlight = null;
-    });
-    post({ type: "storageAccountingResult", id, accounting: await accountingInFlight });
-  } catch (error) {
-    post({
-      type: "storageAccountingError",
-      id,
-      error: error instanceof Error ? error.message : String(error),
-    });
-  }
-}
-
 function handleUpdateCutoffs(cutoffs: IndexerCutoffMap): void {
   currentCutoffs = cutoffs;
   log(
@@ -1903,9 +1883,6 @@ parentPort.on("message", (msg: MainToIndexer) => {
       );
       break;
     }
-    case "storageAccounting":
-      void handleStorageAccounting(msg.id);
-      break;
     case "runReindexMissing":
       void handleRunReindexMissing(msg.id);
       break;

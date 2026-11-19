@@ -18,7 +18,6 @@
  */
 
 import { sourceSettingKeys } from "@omnesis/config";
-import type { IndexStorageAccounting } from "../storage/index-accounting.js";
 import type { EmbedderEncoding } from "../indexer/embedder-prefixes.js";
 import type { WalCheckpointRun } from "./wal-checkpoint.js";
 import type { SemanticSearchStatus } from "@omnesis/source-sdk";
@@ -179,7 +178,6 @@ export type MainToIndexer =
   | IndexerInit
   | { type: "embedQuery"; id: number; text: string; sentAtMs: number }
   | { type: "runReindexMissing"; id: number }
-  | { type: "storageAccounting"; id: number }
   // Remove all index data for a source (chunks, indexed_documents,
   // index_totals, HNSW vectors), serialized against indexing cycles inside
   // the worker so a source deletion can't race an in-flight backfill and
@@ -297,8 +295,6 @@ export type IndexerToMain =
   | { type: "embedQueryError"; id: number; error: string }
   | { type: "runReindexMissingResult"; id: number; indexed: number; errors: number }
   | { type: "runReindexMissingError"; id: number; error: string }
-  | { type: "storageAccountingResult"; id: number; accounting: IndexStorageAccounting }
-  | { type: "storageAccountingError"; id: number; error: string }
   | { type: "deleteSourceIndexResult"; id: number; deleted: number }
   | { type: "deleteSourceIndexError"; id: number; error: string }
   | {
@@ -445,6 +441,7 @@ export type IoInit = {
    * the workers start.
    */
   watchJournal?: { path: string; keyHex?: string };
+  indexStore?: { path: string; keyHex?: string };
 };
 
 // Compute call/result reuse the writer's shapes: same dispatch envelope

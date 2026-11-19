@@ -57,7 +57,7 @@ export function storageAccountingPage(
     .prepare<[number, number], StorageAccountingPageRow>(
       `SELECT rowid, source_id AS sourceId,
       COALESCE(strftime('%Y-%m', source_created_at), 'unknown') AS month,
-      length(CAST(content AS BLOB)) + length(CAST(title AS BLOB)) + length(CAST(metadata AS BLOB)) AS payloadBytes,
+      octet_length(content) + octet_length(title) + octet_length(metadata) AS payloadBytes,
       CASE WHEN COALESCE(json_extract(metadata, '$.documentType'), '') <> 'contact'
         AND (source_created_at = strftime('%Y-%m-%dT%H:%M:%fZ', source_created_at)
           OR source_created_at = strftime('%Y-%m-%dT%H:%M:%SZ', source_created_at))
@@ -67,7 +67,7 @@ export function storageAccountingPage(
     .all(afterRowid, upperRowid);
 }
 
-/** Metadata is independent from document scanning; unavailable dbstat remains explicitly unknown. */
+/** Cheap metadata never scans Btrees; physical table allocation is published independently. */
 export function storageAccountingMetadata(db: Database.Database): StorageAccountingMetadata {
   const sourceIds = db
     .prepare<[], { id: string }>("SELECT id FROM sources ORDER BY id")
@@ -79,21 +79,14 @@ export function storageAccountingMetadata(db: Database.Database): StorageAccount
   const pageSize = Number(db.pragma("page_size", { simple: true }));
   const pages = Number(db.pragma("page_count", { simple: true }));
   const freePages = Number(db.pragma("freelist_count", { simple: true }));
-  let tables: StorageTableUsage[] | null = null;
-  try {
-    tables = db
-      .prepare<[], StorageTableUsage>(
-        "SELECT name, SUM(pgsize) AS bytes FROM dbstat GROUP BY name ORDER BY bytes DESC, name",
-      )
-      .all();
-  } catch (error) {
-    if (!(error instanceof Error) || !/no such (table|module).*dbstat/i.test(error.message))
-      throw error;
-  }
   return {
     sourceIds,
     upperRowid,
-    database: { allocatedBytes: pageSize * pages, reusableBytes: pageSize * freePages, tables },
+    database: {
+      allocatedBytes: pageSize * pages,
+      reusableBytes: pageSize * freePages,
+      tables: null,
+    },
   };
 }
 

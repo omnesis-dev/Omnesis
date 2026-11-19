@@ -151,8 +151,141 @@ test("renders source identifiers as text rather than executable markup", async (
 test("unavailable accounting never claims the corpus is empty", async () => {
   api.getStorage.mockResolvedValue({ ...snapshot, logical: null });
   await mount();
-  expect(host.textContent).toContain("Source accounting is not available yet");
+  expect(host.textContent).toContain("Document storage measurement is queued");
   expect(host.textContent).not.toContain("No source documents are stored");
+});
+
+test("shows independent pending and measuring stages without claiming an empty corpus", async () => {
+  api.getStorage.mockResolvedValue({ ...snapshot, logical: null, index: null,
+    accounting: { refreshing: true, logical: {state: "refreshing"}, index: {state: "pending"} } });
+  await mount();
+  expect(host.textContent).toContain("Measuring document storage by source and month");
+  expect(host.textContent).toContain("Search-index storage measurement is queued");
+  expect(host.textContent).not.toContain("No source documents are stored");
+});
+
+test("keeps document totals and expandable monthly history while search-index measurement is pending", async () => {
+  api.getStorage.mockResolvedValue({ ...snapshot, index: null,
+    accounting: {refreshing: true, logical: {state: "ready", measuredAt: "2025-01-01T00:00:00Z"}, index: {state: "refreshing"}} });
+  await mount();
+  expect(host.textContent).toContain("Document storage measured");
+  expect(host.textContent).toContain("Measuring search-index storage");
+  const row = host.querySelector(".storage-source-row") as HTMLElement;
+  expect(row.textContent).toContain("100 B");
+  expect(row.textContent).toContain("partial");
+  await act(async () => { row.click(); });
+  expect(host.querySelector(".storage-expanded svg")).not.toBeNull();
+  expect(host.querySelector('time[datetime="2025-01-01T00:00:00Z"]')).not.toBeNull();
+});
+
+test("retains useful source measurements after index failure and retries explicitly", async () => {
+  api.getStorage.mockResolvedValue({ ...snapshot, index: null,
+    accounting: {refreshing: false, logical: {state: "ready"}, index: {state: "failed", error: "Index reader unavailable"}} });
+  await mount();
+  expect(host.querySelector('[role="alert"]')?.textContent).toContain("Search-index storage measurement failed: Index reader unavailable");
+  expect(host.querySelector(".storage-source-row")?.textContent).toContain("100 B");
+  expect(host.textContent).not.toContain("Some measurements are unavailable");
+  await click("Try again");
+  expect(api.refreshStorage).toHaveBeenCalledTimes(1);
+});
+
+test("labels retained document measurements when their refresh fails", async () => {
+  api.getStorage.mockResolvedValue({ ...snapshot,
+    accounting: {logical: {state: "failed", error: "Document reader unavailable", measuredAt: "2025-01-01T00:00:00Z"}, index: {state: "pending"}} });
+  await mount();
+  expect(host.textContent).toContain("Document storage measurement failed: Document reader unavailable");
+  expect(host.textContent).toContain("Previous measurements remain visible");
+  expect(host.querySelector(".storage-source-row")?.textContent).toContain("100 B");
+});
+
+test.each(["pending", "failed"])("keeps source measurements ready when file allocation details are %s", async (state) => {
+  api.getStorage.mockResolvedValue({ ...snapshot,
+    index: {lexicalBytes: null, sources: []},
+    accounting: {logical: {state: "ready"}, index: {state: "ready"}, allocations: {state, error: state === "failed" ? "Allocation reader unavailable" : null}} });
+  await mount();
+  expect(host.textContent).toContain("Document storage measured");
+  expect(host.textContent).toContain("Search-index storage measured");
+  expect(host.textContent).not.toContain("Document storage measurement failed");
+  expect(host.textContent).not.toContain("Search-index storage measurement failed");
+  expect(host.querySelector(".storage-source-row")?.textContent).toContain("100 B");
+  expect(host.textContent).toContain(state === "pending" ? "File allocation details are still being measured" : "File allocation details could not be measured: Allocation reader unavailable");
+  expect(host.textContent).toContain(state === "pending" ? "Lexical index allocation is still being measured" : "Lexical index allocation is unavailable");
+  if (state === "failed") {
+    await click("Try again");
+    expect(api.refreshStorage).toHaveBeenCalledOnce();
+  }
+});
+
+test("picks up document results before index completion through lightweight snapshot reads", async () => {
+  vi.useFakeTimers();
+  try {
+    api.getStorage.mockResolvedValueOnce({ ...snapshot, logical: null, index: null,
+      accounting: {refreshing: true, logical: {state: "refreshing"}, index: {state: "pending"}} });
+    await mount();
+    api.getStorage.mockResolvedValue({ ...snapshot, index: null,
+      accounting: {refreshing: true, logical: {state: "ready"}, index: {state: "refreshing"}} });
+    await act(async () => { await vi.advanceTimersByTimeAsync(2500); });
+    expect(host.querySelector(".storage-source-row")?.textContent).toContain("100 B");
+    expect(host.textContent).toContain("Measuring search-index storage");
+    api.getStorage.mockResolvedValue({ ...snapshot,
+      accounting: {refreshing: false, logical: {state: "ready"}, index: {state: "failed", error: "Index reader unavailable"}} });
+    await act(async () => { await vi.advanceTimersByTimeAsync(2500); });
+    expect(host.textContent).toContain("Index reader unavailable");
+    await act(async () => { await vi.advanceTimersByTimeAsync(2500); });
+    expect(api.getStorage).toHaveBeenCalledTimes(3);
+    expect(api.refreshStorage).not.toHaveBeenCalled();
+  } finally { vi.useRealTimers(); }
+});
+
+test("a failed explicit refresh reads independently published results and preserves the request error", async () => {
+  const initial = {...snapshot, accounting: {logical: {state: "failed", error: "Document reader unavailable"}, index: {state: "pending"}}};
+  const updated = {...snapshot, logical: {...snapshot.logical, sources: [{...snapshot.logical.sources[0], payloadBytes: 200}]},
+    accounting: {logical: {state: "ready"}, index: {state: "failed", error: "Search-index reader unavailable"}}};
+  api.getStorage.mockResolvedValueOnce(initial).mockResolvedValue(updated);
+  api.refreshStorage.mockRejectedValueOnce(new Error("Refresh request failed"));
+  await mount();
+  await click("Try again");
+  await act(async () => {});
+  expect(api.getStorage).toHaveBeenCalledTimes(2);
+  expect(host.querySelector(".storage-source-row")?.textContent).toContain("200 B");
+  expect(host.textContent).toContain("Document storage measured");
+  expect(host.textContent).toContain("Search-index reader unavailable");
+  expect(host.textContent).toContain("Refresh request failed");
+  const recovered = {...updated, index: {sources: [], lexicalBytes: 0}, accounting: {logical: {state: "ready"}, index: {state: "ready"}}};
+  api.refreshStorage.mockResolvedValueOnce(recovered);
+  await click("Try again");
+  expect(host.textContent).not.toContain("Refresh request failed");
+  expect(host.textContent).not.toContain("Search-index reader unavailable");
+  expect(host.querySelector(".storage-source-row")?.textContent).toContain("200 B");
+});
+
+test("a failed snapshot read after Retry retains old data and the original refresh error", async () => {
+  api.getStorage.mockResolvedValueOnce({...snapshot, accounting: {logical: {state: "failed", error: "Document reader unavailable"}}})
+    .mockRejectedValueOnce(new Error("Snapshot read failed"));
+  api.refreshStorage.mockRejectedValueOnce(new Error("Original refresh failure"));
+  await mount(); await click("Try again");
+  await act(async () => {});
+  expect(host.textContent).toContain("Original refresh failure");
+  expect(host.textContent).not.toContain("Snapshot read failed");
+  expect(host.querySelector(".storage-source-row")?.textContent).toContain("100 B");
+});
+
+test("allocation-only progress uses the normal polling cadence and keeps source stages ready", async () => {
+  vi.useFakeTimers();
+  try {
+    api.getStorage.mockResolvedValue({...snapshot, accounting: {refreshing: true,
+      logical: {state: "ready"}, index: {state: "ready"},
+      allocations: {state: "refreshing", progress: {store: "documents", scannedPages: 1024, completedTables: 2, scannedBytes: 4 * 1024 ** 2}}}});
+    await mount();
+    expect(host.textContent).toContain("4 MiB examined in the main database");
+    expect(host.textContent).toContain("Document storage measured");
+    expect(host.textContent).not.toContain("Measuring document storage");
+    await act(async () => { await vi.advanceTimersByTimeAsync(2500); });
+    expect(api.getStorage).toHaveBeenCalledTimes(1);
+    await act(async () => { await vi.advanceTimersByTimeAsync(27_500); });
+    expect(api.getStorage).toHaveBeenCalledTimes(2);
+    expect(api.refreshStorage).not.toHaveBeenCalled();
+  } finally { vi.useRealTimers(); }
 });
 test("explains that trimming may leave physical disk usage unchanged", async () => {
   await mount();

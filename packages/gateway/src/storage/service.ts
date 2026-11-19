@@ -21,6 +21,7 @@ import type { StorageRetentionService } from "./retention.js";
 import type { ConfigStore } from "../config-store.js";
 import type { DiskUsageSnapshot } from "@omnesis/core/doctor";
 import type { StoragePressureManager } from "./pressure.js";
+import type { StorageAccountingStatus } from "./accounting-status.js";
 
 export interface StorageServiceDeps {
   pressure: StoragePressureManager;
@@ -29,7 +30,7 @@ export interface StorageServiceDeps {
   index: () => import("./index-accounting.js").IndexStorageAccounting | null;
   refresh: () => Promise<void>;
   refreshIfStale?: () => void;
-  accountingStatus?: () => { refreshing: boolean; measuredAt: string | null; error: string | null };
+  accountingStatus?: () => StorageAccountingStatus;
   configStore?: ConfigStore;
   retention: StorageRetentionService;
   sourceExists: (sourceId: string) => boolean;

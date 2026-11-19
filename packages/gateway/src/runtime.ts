@@ -213,6 +213,8 @@ import { defaultMemoryLimitMiB as defaultAnalyticsMemoryLimitMiB } from "./analy
 import { startWatchV2 } from "./watch/host.js";
 import { resolveWatchJournal, watchJournalPath } from "./watch/journal-path.js";
 import { StorageRuntime } from "./storage/runtime.js";
+import { measureIndexStorageAccounting } from "./storage/index-accounting.js";
+import { StorageAllocationReader } from "./storage/allocation-reader.js";
 import { assertStorageVolumeGrowth } from "./storage/volumes.js";
 import { InsufficientStorageError } from "./http/errors.js";
 import {
@@ -376,6 +378,7 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
 
   const configDir = boot.configDir;
   const DB_PATH = process.env.OMNESIS_DB_PATH ?? join(configDir, "omnesis.db");
+  const indexDbPath = process.env.OMNESIS_INDEX_DB_PATH ?? join(configDir, "index.db");
   const PORT = boot.port;
   let storagePressureHandle: StoragePressureManager | undefined = undefined;
   function storageCanGrow(): boolean {
@@ -575,6 +578,10 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
       gatewayDbPath: DB_PATH,
       gatewayDbKeyHex: storageEncryption.mainDbKeyHex,
       concurrency: runtime.ioConcurrency,
+      indexStore: {
+        path: indexDbPath,
+        ...(storageEncryption.indexDbKeyHex ? { keyHex: storageEncryption.indexDbKeyHex } : {}),
+      },
       backgroundWorkerNice: runtime.backgroundWorkerNice,
       cacheSizeBytes: runtime.ioReadCacheSizeBytes,
       // The canonical path: the workers start before boot settles the journal,
@@ -915,7 +922,6 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
 
   phase("search");
   // Prepare the index on a worker before any search handle or indexer opens it.
-  const indexDbPath = process.env.OMNESIS_INDEX_DB_PATH ?? join(configDir, "index.db");
   const preparedIndex = await boot.track(
     initializeGatewayIndex(
       {
@@ -2710,6 +2716,18 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
     watchV2EngineHandle = watchV2Engine;
   }
 
+  const storageAllocationReader = new StorageAllocationReader({
+    gatewayStore: {
+      path: DB_PATH,
+      ...(storageEncryption.mainDbKeyHex ? { keyHex: storageEncryption.mainDbKeyHex } : {}),
+    },
+    indexStore: {
+      path: indexDbPath,
+      ...(storageEncryption.indexDbKeyHex ? { keyHex: storageEncryption.indexDbKeyHex } : {}),
+    },
+    backgroundWorkerNice: runtime.backgroundWorkerNice,
+    onProgress: (store, snapshot) => storageRuntime.observeAllocation(store, snapshot),
+  });
   const storageRuntime: StorageRuntime = new StorageRuntime({
     layout: {
       configDir,
@@ -2726,9 +2744,18 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
     scheduler,
     reads: ioGate,
     getMinFreeDiskMb: () => resolveRuntimeSettings(configStore.get()).minFreeDiskMb,
-    getIndexer: () => indexerLifecycle.indexerProxy,
+    measureIndex: () => measureIndexStorageAccounting(ioGate),
+    allocations: storageAllocationReader,
+    canMeasureAllocations: () => {
+      const { status } = indexerStatus.getReadiness();
+      return status !== "spawning" && status !== "loading-model";
+    },
     setStoragePressure: (blocked, validUntil) =>
       indexerLifecycle.setStoragePressure(blocked, validUntil),
+  });
+  const storageCleanup = boot.ownCleanup({
+    receipt: () => undefined,
+    settle: () => storageRuntime.dispose(),
   });
   const storagePressure: StoragePressureManager = storageRuntime.pressure;
   storagePressureHandle = storagePressure;
@@ -4276,6 +4303,9 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
         `Indexer flush-save on shutdown failed (may rebuild next boot): ${err instanceof Error ? err.message : String(err)}`,
       );
     }
+
+    // Release optional allocation snapshots before draining index/database owners.
+    await ownedProcessShutdown.join(storageCleanup);
 
     // Indexer next so any in-flight cycle finishes before we close
     // index.db. Scheduler.dispose() then drains in-flight writer/compute
