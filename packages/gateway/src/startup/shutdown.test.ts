@@ -79,7 +79,9 @@ describe("shared startup shutdown", () => {
       expect(error).toBe(failure);
       events.push("failure");
     });
-    const finish = vi.fn((code: number) => events.push(`finish:${code}`));
+    const finish = vi.fn((code: number) => {
+      events.push(`finish:${code}`);
+    });
     const onTimeout = vi.fn();
     const shutdown = createStartupShutdown({
       drain: () => gate.promise,
