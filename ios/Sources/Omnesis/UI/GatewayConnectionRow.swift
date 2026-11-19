@@ -11,21 +11,16 @@ import SwiftUI
 struct GatewayConnectionRow: View {
     let state: DeviceSocket.ConnectionState
     var path: GatewayConnectionPath?
-    var cloudRelayEnabled = CloudRelayFeature.enabled
 
     var body: some View {
         let status = GatewayConnectionStatus(state)
         VStack(alignment: .leading, spacing: 6) {
-            if cloudRelayEnabled {
-                HStack(alignment: .top) {
-                    heading(status)
-                    Spacer()
-                    if let indicator = GatewayConnectionStatus.pathIndicator(state: state, selected: path) {
-                        GatewayConnectionPill(path: indicator)
-                    }
-                }
-            } else {
+            HStack(alignment: .top) {
                 heading(status)
+                Spacer()
+                if let indicator = GatewayConnectionStatus.pathIndicator(state: state, selected: path) {
+                    GatewayConnectionPill(path: indicator)
+                }
             }
             if let explanation = status.explanation {
                 Text(explanation)

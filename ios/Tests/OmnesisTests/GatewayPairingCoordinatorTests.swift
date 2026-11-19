@@ -25,7 +25,7 @@ final class GatewayPairingCoordinatorTests: XCTestCase {
             PairingCredentialBundle(original, url: original.url, tlsMode: original.tlsMode, fingerprint: nil).encoded(),
             forKey: PairingCredentialBundle.key
         )
-        return PairingService(store: store, cloudRelayEnabled: true)
+        return PairingService(store: store)
     }
 
     func testFreshFactsUpdatePersistedAndObservableSnapshotsBeforePublishingWithoutRebuild() async throws {
@@ -90,7 +90,7 @@ final class GatewayPairingCoordinatorTests: XCTestCase {
     func testCurrentAsyncExchangePublishesItsCommittedPairingAndEndsRepairMode() async throws {
         let started = expectation(description: "Pair exchange started")
         let exchange = ControlledExchange(started: started)
-        let service = PairingService(store: InMemoryStore(), exchange: exchange, cloudRelayEnabled: true)
+        let service = PairingService(store: InMemoryStore(), exchange: exchange)
         let coordinator = PairingCoordinator(service: service)
         var errors: [String?] = []
         coordinator.setOnError { errors.append($0) }
@@ -112,7 +112,7 @@ final class GatewayPairingCoordinatorTests: XCTestCase {
         for cancel in [false, true] {
             let started = expectation(description: "Pair exchange reached suspension")
             let exchange = ControlledExchange(started: started)
-            let service = PairingService(store: InMemoryStore(), exchange: exchange, cloudRelayEnabled: true)
+            let service = PairingService(store: InMemoryStore(), exchange: exchange)
             let coordinator = PairingCoordinator(service: service)
             var errors: [String?] = []
             coordinator.setOnError { errors.append($0) }
@@ -135,7 +135,7 @@ final class GatewayPairingCoordinatorTests: XCTestCase {
         for replace in [false, true] {
             let started = expectation(description: "Old pair exchange reached suspension")
             let exchange = ControlledExchange(started: started)
-            let service = PairingService(store: InMemoryStore(), exchange: exchange, cloudRelayEnabled: true)
+            let service = PairingService(store: InMemoryStore(), exchange: exchange)
             let coordinator = PairingCoordinator(service: service)
             var errors: [String?] = []
             coordinator.setOnError { errors.append($0) }
@@ -165,7 +165,7 @@ final class GatewayPairingCoordinatorTests: XCTestCase {
     func testACompletedOlderExchangeCannotExitANewerRepairPresentation() async throws {
         let started = expectation(description: "Pair exchange reached suspension")
         let exchange = ControlledExchange(started: started)
-        let service = PairingService(store: InMemoryStore(), exchange: exchange, cloudRelayEnabled: true)
+        let service = PairingService(store: InMemoryStore(), exchange: exchange)
         let coordinator = PairingCoordinator(service: service)
         var errors: [String?] = []
         coordinator.setOnError { errors.append($0) }
@@ -192,7 +192,7 @@ final class GatewayPairingCoordinatorTests: XCTestCase {
                 PairingCredentialBundle(original, url: original.url, tlsMode: original.tlsMode, fingerprint: nil).encoded(),
                 forKey: PairingCredentialBundle.key
             )
-            let service = PairingService(store: vault, exchange: exchange, cloudRelayEnabled: true)
+            let service = PairingService(store: vault, exchange: exchange)
             let coordinator = PairingCoordinator(service: service)
             _ = coordinator.reload()
             var errors: [String?] = []

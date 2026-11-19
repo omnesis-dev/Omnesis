@@ -45,7 +45,7 @@ final class CloudRelaySetupVerificationTests: XCTestCase {
         let pending = try status(url: check, expiry: Date().addingTimeInterval(300).timeIntervalSince1970 * 1000)
         let gateway = VerificationGateway(reply: pending)
         let browser = VerificationBrowser()
-        let model = OmnesisAccountModel(enabled: true, browser: browser)
+        let model = OmnesisAccountModel(browser: browser)
         await model.connect(.create, client: gateway)
         XCTAssertEqual(browser.urls.map(\.absoluteString), [check])
         try await gateway.set(status(url: nil, expiry: 0))
@@ -64,7 +64,7 @@ final class CloudRelaySetupVerificationTests: XCTestCase {
     func testAStatusReadDoesNotOpenABrowserThePersonNeverOpened() async throws {
         let pending = try status(url: check, expiry: Date().addingTimeInterval(300).timeIntervalSince1970 * 1000)
         let browser = VerificationBrowser()
-        let model = OmnesisAccountModel(enabled: true, browser: browser, status: pending)
+        let model = OmnesisAccountModel(browser: browser, status: pending)
         let gateway = try VerificationGateway(reply: status(url: nil, expiry: 0, authorize: signIn))
         await model.load(client: gateway)
         XCTAssertTrue(browser.urls.isEmpty)

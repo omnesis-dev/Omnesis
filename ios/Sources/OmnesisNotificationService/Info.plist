@@ -2,8 +2,6 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<key>OmnesisCloudRelayEnabled</key>
-	<string>$(OMNESIS_CLOUD_RELAY_ENABLED)</string>
     <key>CFBundleDevelopmentRegion</key>
     <string>en</string>
     <key>CFBundleDisplayName</key>
@@ -22,6 +20,8 @@
     <string>$(CURRENT_PROJECT_VERSION)</string>
     <key>OmnesisKeychainAccessGroup</key>
     <string>$(AppIdentifierPrefix)$(OMNESIS_BUNDLE_ID).notifications</string>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>Omnesis connects directly to your paired gateway on your local network when available.</string>
     <key>NSExtension</key>
     <dict>
         <key>NSExtensionPointIdentifier</key>

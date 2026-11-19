@@ -23,22 +23,7 @@ enum PreviewMocks {
         })
     }
 
-    static let googleCloudPairingConfiguration = GoogleCloudPairingConfiguration(
-        clientId: "fictional-ios.apps.googleusercontent.com", relayOrigin: URL(string: "https://relay.example.test")!
-    )
-    static func googlePairingPanel(_ phase: GoogleCloudPairingCoordinator.Phase) -> GoogleCloudPairingPanel {
-        let hasCode = [.comparing, .waiting, .ready, .pairing].contains(phase)
-        return GoogleCloudPairingPanel(
-            phase: phase,
-            verificationCode: hasCode ? "465 774" : nil,
-            gatewayHost: hasCode ? "gateway.example.test" : nil,
-            error: phase == .failed ? CloudPairingError.refused : nil,
-
-            onSignIn: {},
-
-            onPair: {}
-        )
-    }
+    static let googleCloudPairingConfiguration = GoogleCloudPairingConfiguration(clientId: "fictional-ios.apps.googleusercontent.com")
 
     static let copyableMarkdownInline = "Address: `42 Example Street, Exampleville`. Reference: `000042`. **Keep** this [link](https://example.com)."
     static let copyableMarkdownBlock = "42 Example Street\nExampleville\n"
@@ -773,13 +758,6 @@ enum PreviewMocks {
         pairingCode: "7K3M-9QX2",
         expiresAt: Int64((Date().timeIntervalSince1970 + 540) * 1000)
     )
-
-    /// Fictional network identities for the pairing host picker.
-    static let networkIdentities: [NetworkIdentity] = [
-        NetworkIdentity(address: "192.0.2.42", label: "LAN (en0)", kind: "lan", offLan: false),
-        NetworkIdentity(address: "host.example", label: "mDNS (.local)", kind: "mdns", offLan: false),
-        NetworkIdentity(address: "198.51.100.7", label: "Tailscale (off-LAN)", kind: "tailscale", offLan: true),
-    ]
 
     static let pairingQrPayload =
         #"{"v":4,"gatewayUrl":"https://gateway.tail-fictional.ts.net:7600","pairingCode":"7K3M-9QX2","tls":{"mode":"system"}}"#

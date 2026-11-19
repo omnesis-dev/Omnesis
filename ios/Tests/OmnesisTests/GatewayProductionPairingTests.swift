@@ -14,7 +14,7 @@ final class GatewayProductionPairingTests: XCTestCase {
             OmnesisURLSession.reset()
         }
         let store = InMemoryStore()
-        let service = PairingService(store: store, cloudRelayEnabled: true)
+        let service = PairingService(store: store)
         let payload = PairingPayload.V4(
             gatewayUrl: "https://localhost:\(peer.info.targetPort)",
             pairingCode: "SYNTHETIC-CODE",
@@ -52,7 +52,7 @@ final class GatewayProductionPairingTests: XCTestCase {
             ),
         ]
         for (raw, mode) in payloads {
-            let service = PairingService(store: InMemoryStore(), cloudRelayEnabled: true)
+            let service = PairingService(store: InMemoryStore())
             let paired = try await service.pairAsync(raw: raw)
             XCTAssertEqual(paired.tlsMode, mode)
             XCTAssertEqual(paired.fingerprint, peer.info.fingerprint)
@@ -67,7 +67,7 @@ final class GatewayProductionPairingTests: XCTestCase {
         defer { peer.stop()
             OmnesisURLSession.reset()
         }
-        let service = PairingService(store: InMemoryStore(), cloudRelayEnabled: true)
+        let service = PairingService(store: InMemoryStore())
         let raw = try json([
             "v": 4,
             "gatewayUrl": "https://localhost:\(peer.info.targetPort)",

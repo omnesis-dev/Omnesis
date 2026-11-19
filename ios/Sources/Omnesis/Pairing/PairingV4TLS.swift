@@ -3,11 +3,6 @@
 
 import Foundation
 
-extension CodingUserInfoKey {
-    /// Set to `false` by the QR parser off the cloud build flag. Absent means allowed.
-    static let pairingStrictTLSAllowed = CodingUserInfoKey(rawValue: "omnesis.pairing.strictTLSAllowed")!
-}
-
 public enum PairingV4TLS: Codable, Equatable, Sendable {
     case system
     case pinnedLeaf(fingerprint: String)
@@ -27,14 +22,6 @@ public enum PairingV4TLS: Codable, Equatable, Sendable {
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let mode = try container.decode(Mode.self, forKey: .mode)
-        if mode == .pinnedLeafStrict || mode == .pinnedKeyStrict, decoder.userInfo[.pairingStrictTLSAllowed] as? Bool == false {
-            // The same refusal a build without these modes gives an unknown mode.
-            throw DecodingError.dataCorruptedError(
-                forKey: .mode,
-                in: container,
-                debugDescription: "Cannot initialize Mode from invalid String value \(mode.rawValue)"
-            )
-        }
         switch mode {
         case .system:
             self = .system

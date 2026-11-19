@@ -101,14 +101,14 @@ final class GatewayPairingGenerationTests: XCTestCase {
                 spkiFingerprint: pin
             )
             try store.set(bundle.encoded(), forKey: PairingCredentialBundle.key)
-            XCTAssertNil(try PairingService(store: store, cloudRelayEnabled: true).current())
+            XCTAssertNil(try PairingService(store: store).current())
         }
     }
 
     func testConcurrentPairingAttemptsUseOneStableInstallIdentityAndAtomicCredentials() async throws {
         let store = InMemoryStore()
         let exchange = IdentityExchange()
-        let service = PairingService(store: store, exchange: exchange, cloudRelayEnabled: true)
+        let service = PairingService(store: store, exchange: exchange)
         await withTaskGroup(of: Void.self) { group in
             for index in 0 ..< 32 {
                 group.addTask {
@@ -143,8 +143,7 @@ final class GatewayPairingGenerationTests: XCTestCase {
             store: InMemoryStore(),
             exchange: SyntheticExchange(),
             keyPinnedExchangeBuilder: { _, _ in nil },
-            directDiscovery: gate,
-            cloudRelayEnabled: true
+            directDiscovery: gate
         )
     }
 

@@ -188,18 +188,6 @@ targets:
       # carries no non-Apple encryption (see TESTFLIGHT.md § Export compliance).
       - package: SwiftASN1
       - package: SwiftDraw
-    # A cloud relay build adds its Info.plist entries here (the local network
-    # usage text, the sign-in callback scheme). The default build runs nothing, so its
-    # Info.plist carries neither.
-    postBuildScripts:
-      - name: Cloud relay Info.plist entries
-        script: |
-          if [ "$OMNESIS_CLOUD_RELAY_ENABLED" = 1 ]; then
-            /usr/bin/python3 "$SRCROOT/scripts/cloud-relay-info-plist.py" --callback-scheme
-          fi
-        inputFiles:
-          - $(TARGET_BUILD_DIR)/$(INFOPLIST_PATH)
-        basedOnDependencyAnalysis: false
     settings:
       configs:
         Release:
@@ -208,7 +196,8 @@ targets:
           # signing so local device development stays frictionless.
           CODE_SIGN_STYLE: Manual
           CODE_SIGN_IDENTITY: Apple Distribution
-          PROVISIONING_PROFILE_SPECIFIER: Omnesis App Store
+          # Carries the Associated Domains capability passkey sign-in needs.
+          PROVISIONING_PROFILE_SPECIFIER: Omnesis Cloud App Store
     # HealthKit is autolinked from `import HealthKit` in SampleReader /
     # HealthKitClient / BackgroundDelivery / AppleHealthSource. The
     # entitlements file + Info.plist usage description are what Apple
@@ -255,17 +244,6 @@ targets:
       - package: SwiftASN1
       - package: SwiftDraw
       - package: WebRTC
-    # Same build phase as production: a cloud relay build adds the local network
-    # usage text and the sign-in callback scheme. The default build runs nothing.
-    postBuildScripts:
-      - name: Cloud relay Info.plist entries
-        script: |
-          if [ "$OMNESIS_CLOUD_RELAY_ENABLED" = 1 ]; then
-            /usr/bin/python3 "$SRCROOT/scripts/cloud-relay-info-plist.py" --callback-scheme
-          fi
-        inputFiles:
-          - $(TARGET_BUILD_DIR)/$(INFOPLIST_PATH)
-        basedOnDependencyAnalysis: false
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: $(OMNESIS_BUNDLE_ID).demo
@@ -286,7 +264,7 @@ targets:
           # same distribution certificate.
           CODE_SIGN_STYLE: Manual
           CODE_SIGN_IDENTITY: Apple Distribution
-          PROVISIONING_PROFILE_SPECIFIER: Omnesis Demo App Store
+          PROVISIONING_PROFILE_SPECIFIER: Omnesis Cloud Demo App Store
 
   OmnesisNotificationService:
     type: app-extension
@@ -301,7 +279,6 @@ targets:
       # These files are deliberately dual-target members: app and extension
       # share one wire client, one Keychain posture and one TLS pinning path.
       - path: Sources/Omnesis/Notifications/NotificationClaimer.swift
-      - path: Sources/Omnesis/Pairing/CloudRelayFeature.swift
       - path: Sources/Omnesis/Pairing/GatewayTrustPolicy.swift
       - path: Sources/Omnesis/Pairing/Keychain.swift
       - path: Sources/Omnesis/Pairing/PairingCredentialBundle.swift
@@ -317,18 +294,6 @@ targets:
       - path: Sources/Omnesis/Transport/GatewayTLSNetworkConnection.swift
       - path: Sources/Omnesis/Transport/GatewayUnavailableProxy.swift
       - path: Sources/Omnesis/Transport/OmnesisURLSession.swift
-    # A cloud relay build adds its Info.plist entries here (the local network
-    # usage text). The default build runs nothing, so its
-    # Info.plist carries neither.
-    postBuildScripts:
-      - name: Cloud relay Info.plist entries
-        script: |
-          if [ "$OMNESIS_CLOUD_RELAY_ENABLED" = 1 ]; then
-            /usr/bin/python3 "$SRCROOT/scripts/cloud-relay-info-plist.py"
-          fi
-        inputFiles:
-          - $(TARGET_BUILD_DIR)/$(INFOPLIST_PATH)
-        basedOnDependencyAnalysis: false
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: $(OMNESIS_BUNDLE_ID).notification-service
@@ -387,18 +352,6 @@ targets:
       - path: Sources/Omnesis/Transport/GatewayTLSNetworkConnection.swift
       - path: Sources/Omnesis/Transport/GatewayUnavailableProxy.swift
       - path: Sources/Omnesis/Pairing/GatewayTrustPolicy.swift
-    # A cloud relay build adds its Info.plist entries here (the local network
-    # usage text). The default build runs nothing, so its
-    # Info.plist carries neither.
-    postBuildScripts:
-      - name: Cloud relay Info.plist entries
-        script: |
-          if [ "$OMNESIS_CLOUD_RELAY_ENABLED" = 1 ]; then
-            /usr/bin/python3 "$SRCROOT/scripts/cloud-relay-info-plist.py"
-          fi
-        inputFiles:
-          - $(TARGET_BUILD_DIR)/$(INFOPLIST_PATH)
-        basedOnDependencyAnalysis: false
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: $(OMNESIS_BUNDLE_ID).widgets
