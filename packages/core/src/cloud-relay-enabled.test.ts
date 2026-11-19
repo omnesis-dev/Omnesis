@@ -5,7 +5,7 @@ import { afterEach, expect, test, vi } from "vitest";
 import { cloudRelayEnabled } from "./cloud-relay-enabled.js";
 
 afterEach(() => vi.unstubAllEnvs());
-test("only the independent explicit opt-in enables cloud connectivity", () => {
+test("only the explicit opt-in lets the relay server start", () => {
   for (const experimental of [undefined, "0", "1"]) {
     for (const synthetic of [undefined, "0", "1"]) {
       for (const enabled of [undefined, "", "0", "true", "on", " 1", "1 ", "1"]) {

@@ -12868,11 +12868,15 @@
       "paths": ["packages/gateway/src/watch/authoring.test.ts"]
     },
     {
+      "value": "No Omnesis",
+      "paths": ["packages/gateway/portal/js/views/remote-access.test.ts"],
+      "reason": "The Connectivity row title \"No Omnesis account\", not a person."
+    },
+    {
       "value": "Your Omnesis",
       "paths": [
         "packages/cloud-relay/src/account-browser.test.ts",
         "packages/collector/src/e2e/account-deletion.e2e.test.ts",
-        "packages/collector/src/e2e/account-enrollment-flag-off.e2e.test.ts",
         "packages/gateway/portal/js/views/relay.test.ts"
       ],
       "reason": "Start of the CLI help line \"Your Omnesis account\", not a person."

@@ -4,7 +4,6 @@
 import { isIP } from "node:net";
 import {
   assertNever,
-  cloudRelayEnabled,
   buildPairingPayloadV2,
   buildPairingPayloadV3,
   buildPairingPayloadV4,
@@ -273,10 +272,10 @@ export class PairingQrService {
 
   /**
    * The gateway's Omnesis address for one request, its origin canonical; null
-   * when there is none, the cloud relay is off, or its status cannot be read.
+   * when it has none (it never connected to the relay) or its status cannot be read.
    */
   async relayAddress(): Promise<RelayPairingAddress | null> {
-    if (!cloudRelayEnabled() || !this.options.relayAddress) return null;
+    if (!this.options.relayAddress) return null;
     try {
       const relay = await this.options.relayAddress();
       return relay ? { origin: canonicalOrigin(relay.origin), ready: relay.ready } : null;
@@ -590,12 +589,6 @@ export class PairingQrService {
     const verdict = judgePairingAddress(input.gatewayUrl, this.judgeContext(platform, relay));
     if (!verdict.usable) throw new BadRequestError(verdict.reason);
 
-    // The strict modes are the cloud relay's; without it nothing may name them.
-    if (
-      !cloudRelayEnabled() &&
-      (input.trustMode === "pinned-leaf-strict" || input.trustMode === "pinned-key-strict")
-    )
-      throw new BadRequestError("unsupported TLS trust mode");
     // Relay pairing retains its verified key even when the origin also passes WebPKI.
     const strictPin =
       isRelay ||

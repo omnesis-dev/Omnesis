@@ -19547,13 +19547,8 @@ summary.decision-card-head {
   .remote-access-address-row input { flex-basis: 100%; min-height: 44px; }
 }
 
-/* cloud-relay:start
-   Everything for the optional cloud relay (OMNESIS_CLOUD_RELAY_ENABLED=1)
-   lives between these markers. Every selector is namespaced (.relay-*,
-   .cloud-pairing-*, .device-connection-*, .google-sign-in-button) or scoped
-   under .relay-on, a class the portal adds only when the flag is on, so with
-   the flag off nothing here can match. js/stylesheet-cloud-relay.test.ts
-   enforces it. */
+/* Omnesis account and relay: the account and relay pages, sign-in pairing,
+   device approval, and how each device joined and connects. */
 
 /* Settings → Omnesis account: one headline, flat rows, one box for problems. */
 .relay-view { max-width: 880px; min-width: 0; padding-bottom: 32px; color: var(--text-primary); }
@@ -19681,19 +19676,19 @@ summary.decision-card-head {
 /* Devices: how a device joined. */
 .relay-joined { color: var(--text-secondary); }
 
-/* Device rows gain a connection pill; let titles wrap on phones so it fits. */
+/* Device rows carry a connection pill; let titles wrap on phones so it fits. */
 .device-connection-pill { display: inline-flex; align-items: center; padding: 2px 7px; border: 1px solid var(--border); border-radius: 12px; font-size: 10px; line-height: 1.5; color: var(--text-secondary); font-weight: 500; }
 .device-connection-local { color: var(--success); }
 .device-connection-relay { color: var(--accent); }
 .device-connection-reconnecting { color: var(--warning); }
 @media (max-width: 760px) {
-  .devices-view.relay-on .devices-card-toggle { display: grid; grid-template-columns: 18px minmax(0, 1fr) 10px; gap: 8px; }
-  .devices-view.relay-on .devices-card-icon { grid-column: 1; grid-row: 1 / 3; }
-  .devices-view.relay-on .devices-card-main { grid-column: 2; grid-row: 1; }
-  .devices-view.relay-on .devices-card-status { grid-column: 2; grid-row: 2; }
-  .devices-view.relay-on .devices-card-chevron { grid-column: 3; grid-row: 1 / 3; }
-  .devices-view.relay-on .devices-card-titlerow { flex-wrap: wrap; row-gap: 5px; }
-  .devices-view.relay-on .devices-card-name { flex-basis: 100%; white-space: normal; overflow-wrap: anywhere; }
+  .devices-view .devices-card-toggle { display: grid; grid-template-columns: 18px minmax(0, 1fr) 10px; gap: 8px; }
+  .devices-view .devices-card-icon { grid-column: 1; grid-row: 1 / 3; }
+  .devices-view .devices-card-main { grid-column: 2; grid-row: 1; }
+  .devices-view .devices-card-status { grid-column: 2; grid-row: 2; }
+  .devices-view .devices-card-chevron { grid-column: 3; grid-row: 1 / 3; }
+  .devices-view .devices-card-titlerow { flex-wrap: wrap; row-gap: 5px; }
+  .devices-view .devices-card-name { flex-basis: 100%; white-space: normal; overflow-wrap: anywhere; }
   .device-connection-pill { flex-shrink: 0; }
 }
 
@@ -19752,8 +19747,6 @@ summary.decision-card-head {
 .relay-view.remote-access-relay .relay-hero-action { margin-top: 0; }
 .relay-view.remote-access-relay .relay-elsewhere { margin-top: 8px; }
 .relay-view.remote-access-relay .relay-setup { padding-bottom: 0; }
-
-/* cloud-relay:end */
 
 /* tailscale-embed:start
    Settings → Tailscale, the gateway's own Tailscale device, which

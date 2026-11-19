@@ -23,7 +23,7 @@
  */
 
 import { randomBytes } from "node:crypto";
-import { cloudRelayEnabled, createLogger } from "@omnesis/core";
+import { createLogger } from "@omnesis/core";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod";
 import { lookupSession } from "../../data/repositories/TokenRepository.js";
@@ -102,7 +102,6 @@ function unavailable(): HttpError {
 }
 
 export function mountPortalHandoffRoutes(app: RouteApp, deps: PortalHandoffDeps): void {
-  if (!cloudRelayEnabled()) return;
   const handoffs = new PortalHandoffs(deps.now);
   const ttlMs = deps.sessionTtlMs ?? 30 * 24 * 60 * 60 * 1000;
   const maxAgeS = Math.max(1, Math.floor(ttlMs / 1000));

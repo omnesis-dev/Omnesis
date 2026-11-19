@@ -129,9 +129,9 @@ export const NO_RELAY = Object.freeze({ state: "none" });
 /**
  * The gateway's relay-hosted public address, from `GET /admin/cloud-relay`:
  *
- * - `none`: the feature is off, its status is unknown, or this installation
- *   cannot connect to an account. Nothing about the relay is shown.
- * - `not-connected`: the feature is on and the gateway has no public address yet.
+ * - `none`: its status is unknown, or this installation cannot connect to an
+ *   account. Nothing about the relay is shown.
+ * - `not-connected`: the gateway can connect and has no public address yet.
  * - `ready`: `url` answers from the Internet.
  * - `checking`: connected, and the gateway is still confirming `url` answers.
  * - `off`: the gateway keeps `url`, with remote access turned off.
@@ -141,12 +141,11 @@ export const NO_RELAY = Object.freeze({ state: "none" });
  * An address the gateway does not list among the resources it authorizes is
  * never offered: a sign-in against it would be refused.
  *
- * @param {boolean} cloudRelay whether the gateway advertises the feature
  * @param {object | null} status the relay management status, when it was read
  * @param {{ resource: string, resources?: Array<{ resource: string }> } | null} oauth
  */
-export function relayPublicAddress(cloudRelay, status, oauth) {
-  if (!cloudRelay || !status) return NO_RELAY;
+export function relayPublicAddress(status, oauth) {
+  if (!status) return NO_RELAY;
   const url = httpsAddress(status.publicMcp?.url);
   if (!url) return status.serviceConfigured === true ? { state: "not-connected" } : NO_RELAY;
   const authorized = oauth?.resources?.length ? oauth.resources : [{ resource: oauth?.resource }];
@@ -544,16 +543,12 @@ const RELAY_POLL_OPEN_MS = 5_000;
 const RELAY_POLL_IDLE_MS = 30_000;
 
 /**
- * The relay management status, read only where the gateway advertises the
- * feature. A failed read keeps the last answer; before the first one it is null.
+ * The relay management status. A failed read keeps the last answer; before the
+ * first one it is null.
  */
-export function useRelayStatus(cloudRelay, watching = false) {
+export function useRelayStatus(watching = false) {
   const [status, setStatus] = useState(null);
   useEffect(() => {
-    if (!cloudRelay) {
-      setStatus(null);
-      return undefined;
-    }
     let current = true;
     const read = () => {
       relayManagement("")
@@ -573,7 +568,7 @@ export function useRelayStatus(cloudRelay, watching = false) {
       current = false;
       clearInterval(timer);
     };
-  }, [cloudRelay, watching]);
+  }, [watching]);
   return status;
 }
 

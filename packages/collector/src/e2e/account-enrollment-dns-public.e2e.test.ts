@@ -181,7 +181,6 @@ describe.skipIf(!ready)("public DNS enrollment", () => {
     const gateway = new E2EHarness({
       extraGatewayEnv: {
         ...world.clientEnv({ NODE_EXTRA_CA_CERTS: trustFile }),
-        OMNESIS_CLOUD_RELAY_ENABLED: "1",
         OMNESIS_CLOUD_RELAY_URL: world.relayOrigin,
         OMNESIS_ACME_DNS_PROVIDER: "broker",
         OMNESIS_ACME_DNS_BROKER_URL: brokerUrl,
@@ -318,7 +317,6 @@ describe.skipIf(!ready)("public DNS enrollment", () => {
       const person = await browser.session();
       await createUnlinkedAccount(world, person);
       const run = runCli(world, ["cloud", "connect", "--accept-terms"], {
-        OMNESIS_CLOUD_RELAY_ENABLED: "1",
         OMNESIS_CONFIG_DIR: join(directory, "cli-public"),
         OMNESIS_GATEWAY_URL: gateway.gatewayUrl,
         OMNESIS_TOKEN: gateway.apiKey,

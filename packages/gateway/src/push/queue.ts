@@ -2,7 +2,6 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { createHash, randomUUID } from "node:crypto";
-import { cloudRelayEnabled } from "@omnesis/core";
 import {
   claimedNotificationSchema,
   notificationMessageSchema,
@@ -738,14 +737,12 @@ export function claimNotification(
 
   const transaction = db.transaction((): ClaimedNotificationDelivery | null => {
     expireNotificationsInTransaction(db, input.now, input.deviceId);
-    // Pairing reminders exist only with the cloud relay opt-in.
-    if (cloudRelayEnabled())
-      suppressUnsupportedPairingReminders(
-        db,
-        input.deviceId,
-        input.now,
-        input.supportsPairingNotifications === true,
-      );
+    suppressUnsupportedPairingReminders(
+      db,
+      input.deviceId,
+      input.now,
+      input.supportsPairingNotifications === true,
+    );
     suppressUnsupportedTailscaleJoinReminders(
       db,
       input.deviceId,

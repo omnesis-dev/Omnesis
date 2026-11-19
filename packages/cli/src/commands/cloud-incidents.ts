@@ -9,11 +9,10 @@
 
 import { defineCommand } from "citty";
 import { CliError, EXIT_AUTH } from "@omnesis/cli-shared";
-import { manageCloud, requireCloudRelay } from "./cloud-management.js";
+import { manageCloud } from "./cloud-management.js";
 import { incidentLines, type CloudStatus } from "./cloud-status.js";
 
 export async function showIncidents(): Promise<void> {
-  requireCloudRelay();
   const { gatewayJson } = await import("../utils.js");
   const lines = incidentLines(await gatewayJson<CloudStatus>("/admin/cloud-relay"));
   process.stdout.write(

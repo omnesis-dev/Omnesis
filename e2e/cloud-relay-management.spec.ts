@@ -29,13 +29,13 @@ function initial() {
     can: { configure: true, enable: false, disable: false, reconnect: false, renew: false },
   };
 }
-/** The gateway under test runs without the flag; the portal sees it on, as an opted-in gateway reports. */
-async function relayOn(page: Page) {
+/** The portal as a stable gateway shows it, whatever mode the gateway under test runs in. */
+async function stableStatus(page: Page) {
   await page.route("**/status", async (route) => {
     const response = await route.fetch();
     await route.fulfill({
       response,
-      json: { ...(await response.json()), experimental: false, cloudRelay: true },
+      json: { ...(await response.json()), experimental: false },
     });
   });
 }
@@ -68,7 +68,7 @@ async function management(
   // The page asks the gateway to read the account when it opens and regains focus. That changes
   // nothing the page set, so it is counted apart from the actions.
   let refreshes = 0;
-  await relayOn(page);
+  await stableStatus(page);
   await page.route("**/admin/cloud-relay**", async (route) => {
     const operation = new URL(route.request().url()).pathname.split("/").slice(3).join("/");
     if (operation === "account/refresh") {
@@ -504,7 +504,7 @@ async function pathDevices(page: Page) {
 test("device pills distinguish reported local, relay and reconnecting paths while legacy devices retain ordinary presence", async ({
   page,
 }) => {
-  await relayOn(page);
+  await stableStatus(page);
   await pathDevices(page);
   await signIn(page);
   await page.goto("/portal/settings/devices");
@@ -535,16 +535,6 @@ test("device pills distinguish reported local, relay and reconnecting paths whil
     fullPage: true,
   });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-});
-
-test("without the flag the devices page shows no connection pills", async ({ page }) => {
-  await pathDevices(page);
-  await signIn(page);
-  await page.goto("/portal/settings/devices");
-  await page.getByRole("button", { name: /^Other devices/ }).click();
-  for (const name of PATH_DEVICES)
-    await expect(page.getByText(name, { exact: true })).toBeVisible();
-  await expect(page.locator(".device-connection-pill")).toHaveCount(0);
 });
 
 test("the account row offers the account page and a disconnect that asks first, says what happens and avoids conflicting Google actions", async ({

@@ -6,10 +6,13 @@ import { apiFetch } from "../api.js";
 /**
  * One relay management call. No operation reads status; an operation is a POST
  * unless a method is named (the enrollment policy is a PUT). `stepUpAnnounced`: the control
- * already said the passkey comes next, so no note is shown before it.
+ * already said the passkey comes next, so no note is shown before it. `signup`: a status read
+ * for a page that shows how to sign up, which lets the gateway ask the relay whether accounts
+ * are invite-only; any other status read never reaches the relay.
  */
 export async function relayManagement(operation, input, signal, method = "POST", options = {}) {
-  const response = await apiFetch(`/admin/cloud-relay${operation ? `/${operation}` : ""}`, {
+  const query = !operation && options.signup ? "?signup=1" : "";
+  const response = await apiFetch(`/admin/cloud-relay${operation ? `/${operation}` : ""}${query}`, {
     cache: "no-store",
     signal,
     ...(operation ? { method, body: JSON.stringify(input) } : {}),

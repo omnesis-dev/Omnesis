@@ -116,7 +116,7 @@ async function amend(route: Route, change: (body: Json) => Json) {
 }
 
 /** The in-memory gateway: the state each route answers from, and every change the page asked for. */
-async function remoteGateway(page: Page, flags: { cloudRelay: boolean; tailscaleEmbed: boolean }) {
+async function remoteGateway(page: Page, flags: { tailscaleEmbed: boolean }) {
   const state: Json = {
     remote: {
       setupCompletedAt: null,
@@ -228,16 +228,16 @@ async function remoteGateway(page: Page, flags: { cloudRelay: boolean; tailscale
 const heading = (page: Page) => page.locator(".remote-access-view .access-wizard-copy h3");
 const button = (page: Page, name: string) => page.getByRole("button", { name, exact: true });
 
-test("without the relay or Tailscale, Connectivity still offers this computer's Tailscale, a domain and MCP", async ({
+test("with no account and no Tailscale device, Connectivity offers the account, this computer's Tailscale, a domain and MCP", async ({
   page,
 }) => {
   const requested: string[] = [];
   page.on("request", (request) => {
-    if (/\/admin\/(cloud-relay|tailscale)/.test(request.url())) requested.push(request.url());
+    if (/\/admin\/tailscale/.test(request.url())) requested.push(request.url());
   });
-  // A gateway without the relay, and installed without the Tailscale helper program.
+  // A gateway that never linked an account, installed without the Tailscale helper program.
   await page.route("**/status", (route) =>
-    amend(route, (body) => ({ ...body, cloudRelay: false, tailscaleEmbed: false })),
+    amend(route, (body) => ({ ...body, tailscaleEmbed: false })),
   );
   await signIn(page);
   // The tab's earlier address leads to it.
@@ -246,18 +246,20 @@ test("without the relay or Tailscale, Connectivity still offers this computer's 
   await expect(page.locator(".config-tab.active")).toHaveText("Connectivity");
   await expect(heading(page)).toHaveText("Connectivity");
   await expect(page.locator(".remote-access-item-title")).toHaveText([
+    "Omnesis accounts",
+    "Omnesis relay",
     "Tailscale on this computer",
     "Your own domain or reverse proxy",
     "MCP server",
+    "Only with a pairing code",
   ]);
-  await expect(page.locator(".remote-access-summary")).not.toContainText("Omnesis account");
   expect(requested).toEqual([]);
 });
 
 test("the guided setup with both: account, connection, devices, then the summary and a review", async ({
   page,
 }) => {
-  const gateway = await remoteGateway(page, { cloudRelay: true, tailscaleEmbed: true });
+  const gateway = await remoteGateway(page, { tailscaleEmbed: true });
   await signIn(page);
   await page.goto("/portal/settings/connectivity");
   await expect(heading(page)).toHaveText("Connectivity");
@@ -341,7 +343,7 @@ test("the guided setup with both: account, connection, devices, then the summary
 test("my own setup: Tailscale on this computer refused with its command, and my own address checked", async ({
   page,
 }) => {
-  const gateway = await remoteGateway(page, { cloudRelay: false, tailscaleEmbed: true });
+  const gateway = await remoteGateway(page, { tailscaleEmbed: true });
   gateway.state.publish = {
     ok: false,
     reason:
@@ -351,7 +353,11 @@ test("my own setup: Tailscale on this computer refused with its command, and my 
   await signIn(page);
   await page.goto("/portal/settings/connectivity");
   await button(page, "Set up step by step").click();
-  await expect(page.locator(".access-wizard-steps button")).toHaveText(["1Remote connection"]);
+  await expect(page.locator(".access-wizard-steps button")).toHaveText([
+    "1Your Omnesis account",
+    "2Remote connection",
+  ]);
+  await button(page, "Skip for now").click();
   await page.locator("#remote-access-way-host").check();
   await expect(
     page.getByText("Found: this computer is on your Tailscale network as"),
@@ -397,7 +403,7 @@ test("my own setup: Tailscale on this computer refused with its command, and my 
 test("the MCP server: the setup's last step and its own page set how far each address answers", async ({
   page,
 }) => {
-  const gateway = await remoteGateway(page, { cloudRelay: false, tailscaleEmbed: true });
+  const gateway = await remoteGateway(page, { tailscaleEmbed: true });
   gateway.state.host = { ...gateway.state.host, servesGateway: true };
   gateway.state.remote.mcpAddresses = [
     {
@@ -415,9 +421,11 @@ test("the MCP server: the setup's last step and its own page set how far each ad
   );
   await button(page, "Run the setup again").click();
   await expect(page.locator(".access-wizard-steps button")).toHaveText([
-    "1Remote connection",
-    "2MCP server",
+    "1Your Omnesis account",
+    "2Remote connection",
+    "3MCP server",
   ]);
+  await button(page, "Skip for now").click();
   await button(page, "Continue").click();
   await expect(heading(page)).toHaveText("Where may agents reach your MCP server?");
   await expect(page.getByText("https://studio.example-net.ts.net/mcp")).toBeVisible();

@@ -2,7 +2,6 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { existsSync } from "node:fs";
-import { cloudRelayEnabled } from "@omnesis/core";
 
 /** Start only for explicitly configured paired native components, before URL constants freeze. */
 export async function initializePairedDeviceTransport(
@@ -25,7 +24,7 @@ export async function initializePairedDeviceTransport(
     args[0] === "help"
   )
     return;
-  if (!cloudRelayEnabled(env) || env.OMNESIS_GATEWAY_URL || env.OMNESIS_GATEWAY_REQUEST_URL) return;
+  if (env.OMNESIS_GATEWAY_URL || env.OMNESIS_GATEWAY_REQUEST_URL) return;
   const deviceFile =
     env.OMNESIS_CLOUD_RELAY_DEVICE_FILE ??
     (await (dependencies.findDefault ?? defaultCloudDeviceFile)(env, component));
@@ -58,9 +57,9 @@ function onExit(close: () => void): void {
   process.once("beforeExit", close);
 }
 
-/** The paired transport's endpoint. The variable means nothing without the cloud relay opt-in. */
+/** The paired transport's endpoint, which only `initializePairedDeviceTransport` sets. */
 export function pairedGatewayRequestUrl(env: NodeJS.ProcessEnv = process.env): string | undefined {
-  return cloudRelayEnabled(env) ? env.OMNESIS_GATEWAY_REQUEST_URL : undefined;
+  return env.OMNESIS_GATEWAY_REQUEST_URL || undefined;
 }
 
 /** Internal transport endpoints never become the logical gateway identity or a portal URL. */
@@ -75,12 +74,7 @@ export async function defaultCloudDeviceFile(
   env: NodeJS.ProcessEnv,
   component: "cli" | "collector",
 ): Promise<string | undefined> {
-  if (
-    !cloudRelayEnabled(env) ||
-    env.OMNESIS_GATEWAY_URL ||
-    env.OMNESIS_GATEWAY_REQUEST_URL ||
-    env.OMNESIS_TOKEN
-  )
+  if (env.OMNESIS_GATEWAY_URL || env.OMNESIS_GATEWAY_REQUEST_URL || env.OMNESIS_TOKEN)
     return undefined;
   const { cloudClientDefaults } = await import("./client-defaults.js");
   const config = cloudClientDefaults({ ...env, OMNESIS_CLOUD_RELAY_DEVICE_KIND: component });

@@ -802,7 +802,6 @@ export class EnrollmentGateway {
         { mode: 0o600 },
       );
       const relayEnv = {
-        OMNESIS_CLOUD_RELAY_ENABLED: "1",
         OMNESIS_CLOUD_RELAY_URL: world.relayOrigin,
         OMNESIS_CLOUD_RELAY_SESSION_FILE: gateway.sessionFile,
         OMNESIS_CLOUD_RELAY_OWNER_KEY_FILE: gateway.ownerKeyFile,

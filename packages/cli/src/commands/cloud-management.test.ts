@@ -48,13 +48,7 @@ afterEach(() => {
     else delete (process[stream] as { isTTY?: boolean }).isTTY;
   }
 });
-test("management refuses before reading invitations or accessing a default gateway unless explicitly enabled", async () => {
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "0");
-  await expect(manageCloud("status")).rejects.toThrow("OMNESIS_CLOUD_RELAY_ENABLED=1");
-  expect(gatewayJson).not.toHaveBeenCalled();
-});
 test("all controls use authenticated common admin API and print what they did with the status", async () => {
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
   const output = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
   for (const action of [
     "status",
@@ -82,7 +76,8 @@ test("all controls use authenticated common admin API and print what they did wi
       await runCommand(cloudManagementCommands[action] as CommandDef, { rawArgs: [] });
     }
     expect(gatewayJson).toHaveBeenCalledWith(
-      `/admin/cloud-relay${action === "status" ? "" : `/${action}`}`,
+      // Only status lets the gateway ask the relay whether accounts are invite-only.
+      `/admin/cloud-relay${action === "status" ? "?signup=1" : `/${action}`}`,
       action === "status" ? {} : { method: "POST", body: expect.any(String) },
     );
     // The version is read for context only, after the action.
@@ -98,7 +93,7 @@ test("all controls use authenticated common admin API and print what they did wi
   output.mockClear();
   await runCommand(cloudManagementCommands.status, { rawArgs: ["--json"] });
   expect(output.mock.calls).toEqual([['{\n  "enabled": false\n}\n']]);
-  expect(gatewayJson).toHaveBeenLastCalledWith("/admin/cloud-relay", {});
+  expect(gatewayJson).toHaveBeenLastCalledWith("/admin/cloud-relay?signup=1", {});
 });
 
 const FINGERPRINT = "f".repeat(64);
@@ -177,7 +172,6 @@ function troubled() {
   };
 }
 test("status prints everything the portal's old connection record showed, as plain text", async () => {
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
   const output = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
   gatewayJson.mockImplementation(async (path) =>
     path === "/health" ? { version: "9.8.7" } : troubled(),
@@ -208,7 +202,6 @@ test("status prints everything the portal's old connection record showed, as pla
   ]);
 });
 test("status of a gateway that reports almost nothing still prints every line, and a failed version read is not an error", async () => {
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
   const output = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
   gatewayJson.mockImplementation(async (path) => {
     if (path === "/health") throw new Error("offline");
@@ -228,7 +221,6 @@ test("status of a gateway that reports almost nothing still prints every line, a
   expect(formatCloudStatus({})).toContain("  Error codes:            none\n");
 });
 test("the page's remaining actions each have a command: unlink, policy, and listing or removing a trusted sign-in", async () => {
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
   const output = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
   const printed = () => output.mock.calls.map((call) => String(call[0])).join("");
   gatewayJson.mockImplementation(async (path) =>
@@ -257,6 +249,7 @@ test("the page's remaining actions each have a command: unlink, policy, and list
   expect(gatewayJson).not.toHaveBeenCalled();
   output.mockClear();
   await runCommand(cloudManagementCommands["trusted-sign-ins"], { rawArgs: [] });
+  // Listing sign-ins is a local read: it never lets the gateway ask the relay anything.
   expect(gatewayJson.mock.calls).toEqual([["/admin/cloud-relay"]]);
   expect(printed().split("\n")).toHaveLength(3);
   expect(printed()).toContain("google:fictional-subject  Google account");
@@ -300,7 +293,6 @@ test("the page's remaining actions each have a command: unlink, policy, and list
   expect(printed()).toContain("New devices join when you sign in to your Omnesis account");
 });
 test("trusted sign-ins say whether, and how, the owner confirmed each on this gateway", async () => {
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
   const output = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
   gatewayJson.mockImplementation(async () => ({
     deviceEnrollment: {
@@ -350,21 +342,7 @@ test("status says whether new devices can join yet: only once a sign-in is confi
     formatCloudStatus({ deviceEnrollment: { policy: "automatic", confirmationNeeded: false } }),
   ).toContain("  New devices:            join automatically with a sign-in confirmed here\n");
 });
-test("every new command refuses before any gateway call unless cloud relay is enabled", async () => {
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "0");
-  for (const [name, rawArgs] of [
-    ["unlink", []],
-    ["policy", ["ask"]],
-    ["trusted-sign-ins", []],
-    ["remove-sign-in", ["google:fictional-subject"]],
-  ] as const)
-    await expect(
-      runCommand(cloudManagementCommands[name] as CommandDef, { rawArgs: [...rawArgs] }),
-    ).rejects.toThrow("OMNESIS_CLOUD_RELAY_ENABLED=1");
-  expect(gatewayJson).not.toHaveBeenCalled();
-});
 test("enrollment reads bounded private invitation JSON, never a token in command history or output", async () => {
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
   const output = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
   const directory = await mkdtemp(join(tmpdir(), "cloud-management-cli-")),
     file = join(directory, "invitation.json");
@@ -401,7 +379,6 @@ test("enrollment reads bounded private invitation JSON, never a token in command
 });
 
 test("normal configure uses the gateway installation service without a relay argument", async () => {
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
   vi.spyOn(process.stdout, "write").mockImplementation(() => true);
   await runCommand(cloudManagementCommands.configure, { rawArgs: [] });
   expect(gatewayJson).toHaveBeenCalledWith("/admin/cloud-relay/configure", {
@@ -413,7 +390,7 @@ test("normal configure uses the gateway installation service without a relay arg
 /** Replies to the connect POST, then to each status poll, in order. */
 function gatewayReplies(...polls: unknown[]) {
   gatewayJson.mockImplementation(async (path: string) =>
-    path === "/admin/cloud-relay" || path.endsWith("/connect") ? polls.shift() : {},
+    path === "/admin/cloud-relay?signup=1" || path.endsWith("/connect") ? polls.shift() : {},
   );
 }
 const waiting = {
@@ -427,12 +404,7 @@ const waiting = {
 const done = { connect: { state: "done" }, deviceEnrollment: { policy: "automatic" } };
 const paths = () => gatewayJson.mock.calls.map(([path]) => path);
 
-test("connect refuses before any gateway call unless cloud relay is enabled, and needs accepted terms without a terminal", async () => {
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "0");
-  await expect(connectGateway({ acceptTerms: true })).rejects.toThrow(
-    "OMNESIS_CLOUD_RELAY_ENABLED=1",
-  );
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
+test("connect needs accepted terms without a terminal, and refuses before any gateway call", async () => {
   terminal(false);
   await expect(runCommand(cloudManagementCommands.connect, { rawArgs: [] })).rejects.toThrow(
     "--accept-terms",
@@ -441,7 +413,6 @@ test("connect refuses before any gateway call unless cloud relay is enabled, and
 });
 
 test("an interactive connect asks only for the terms, prints the code once while waiting, and leaves automatic joining as it is", async () => {
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
   const output = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
   terminal(true);
   answers.push("");
@@ -472,7 +443,6 @@ test("an interactive connect asks only for the terms, prints the code once while
 });
 
 test("connect prints the relay's short address in place of its own when the gateway reports one", async () => {
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
   const output = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
   terminal(false);
   gatewayReplies(
@@ -490,7 +460,6 @@ test("connect prints the relay's short address in place of its own when the gate
 });
 
 test("declining the terms changes nothing", async () => {
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
   terminal(true);
   answers.push("n");
   await expect(connectGateway({ acceptTerms: false })).rejects.toThrow("Connection cancelled");
@@ -498,7 +467,6 @@ test("declining the terms changes nothing", async () => {
 });
 
 test("--ask-first opts out of automatic joining; a flag that matches the gateway writes nothing, and an earlier choice is reported, not reset", async () => {
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
   const output = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
   terminal(false);
   for (const args of [
@@ -547,7 +515,6 @@ test("--ask-first opts out of automatic joining; a flag that matches the gateway
 });
 
 test("a failed or vanished connection reports why and sets no policy", async () => {
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
   vi.spyOn(process.stdout, "write").mockImplementation(() => true);
   terminal(false);
   gatewayReplies(waiting, { connect: { state: "failed", error: "signup-denied" } });
@@ -562,7 +529,6 @@ test("a failed or vanished connection reports why and sets no policy", async () 
 });
 
 test("on an invite-only relay connect says once where to request access, and a refusal points there", async () => {
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
   const output = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
   terminal(false);
   const signup = {
@@ -594,7 +560,6 @@ test("on an invite-only relay connect says once where to request access, and a r
 });
 
 test("status names an invite-only relay's request page", async () => {
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
   const output = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
   gatewayJson.mockImplementation(async (path) =>
     path === "/health"
@@ -618,7 +583,6 @@ test("status names an invite-only relay's request page", async () => {
 });
 
 test("connect prints the independent security check once, then continues to ordinary sign-in", async () => {
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
   const output = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
   const verification = {
     url: "https://dns.example.test/_dns/v2/enroll?ticket=fictional",
@@ -640,7 +604,6 @@ test("connect prints the independent security check once, then continues to ordi
 });
 
 test("connect refuses malformed browser check links without printing them", async () => {
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
   const output = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
   for (const url of [
     "javascript:alert(1)",

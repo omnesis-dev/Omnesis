@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { lstatSync } from "node:fs";
-import { cloudRelayEnabled, DEFAULT_CONFIG_DIR } from "@omnesis/core";
+import { DEFAULT_CONFIG_DIR } from "@omnesis/core";
 import { z } from "zod";
 import { isJoinedPrivateFileError } from "./private-file-errors.js";
 import { gatewayKeySessionSource, GatewayUnregistered } from "./gateway-key-client.js";
@@ -35,12 +35,7 @@ export function startGatewayCloudTunnel(
   unregistered?: (removed: boolean) => void,
 ): GatewayTunnel | undefined {
   // A relay URL alone only chooses the service; a gateway without an ID is connected from the portal.
-  if (
-    !cloudRelayEnabled(env) ||
-    !env.OMNESIS_CLOUD_RELAY_URL ||
-    !env.OMNESIS_CLOUD_RELAY_GATEWAY_ID
-  )
-    return undefined;
+  if (!env.OMNESIS_CLOUD_RELAY_URL || !env.OMNESIS_CLOUD_RELAY_GATEWAY_ID) return undefined;
   if (!env.OMNESIS_CLOUD_RELAY_SESSION_FILE) {
     throw new Error("Cloud relay requires a session file and stable gateway ID");
   }

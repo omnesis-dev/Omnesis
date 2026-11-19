@@ -401,8 +401,8 @@ cannot add a device. The gateway checks this in `gateway/src/http/step-up.ts`.
   it already carries `push:claim`. That scope only claims and confirms the
   device's own queued notifications, so the new token can do nothing its caller
   can't. Anything else sent to a guarded route needs the step-up.
-- Nothing changes without `OMNESIS_CLOUD_RELAY_ENABLED`, before the owner confirms
-  a passkey, or for a gateway with no account.
+- Nothing changes before the owner confirms a passkey, or for a gateway with no
+  account.
 
 The exchange:
 
@@ -948,10 +948,11 @@ With a join link configured, the relay also says so before anyone signs in:
 `GET /_relay/v3/signup/access` (public, no parameters) answers
 `{"signup":{"inviteOnly":true,"requestAccessUrl":"…"}}` under `allowlist`, and
 `{}` under any other policy or without a link. It is a separate path because
-gateways parse `/_relay/v2/config` strictly. A gateway with
-`OMNESIS_CLOUD_RELAY_ENABLED=1` that is not linked to an account reads it when
-its owner opens Settings → Omnesis account (or runs `omnesis cloud status` or
-`connect`), at most every ten minutes, and keeps it only if the link is an
+gateways parse `/_relay/v2/config` strictly. A gateway that is not linked to
+an account reads it when its owner opens Settings → Omnesis account or
+Connectivity (or runs `omnesis cloud status` or `connect`): those status reads
+carry `?signup=1`, and no other read of `GET /admin/cloud-relay` reaches the
+relay. It asks at most every ten minutes, and keeps it only if the link is an
 `https` URL without credentials of at most 2048 characters; unknown fields are
 ignored. The management status then carries `signup`, and the portal shows
 "Omnesis accounts are invite-only for now." with a Request access link and its

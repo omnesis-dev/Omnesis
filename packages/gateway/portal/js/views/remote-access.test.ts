@@ -162,10 +162,11 @@ function tailscaleConnected(joinPolicy = "ask"): Json {
     url: "https://omnesis.example-net.ts.net", node: { dnsName: "omnesis.example-net.ts.net" }, certificate: { source: "tailscale" },
   };
 }
+// The relay is on every gateway; the Tailscale device only where the installation has its helper.
 const FLAGS = {
-  relay: { cloudRelay: true, tailscaleEmbed: false },
-  tailscale: { cloudRelay: false, tailscaleEmbed: true },
-  both: { cloudRelay: true, tailscaleEmbed: true },
+  relay: { tailscaleEmbed: false },
+  tailscale: { tailscaleEmbed: true },
+  both: { tailscaleEmbed: true },
 };
 
 let host: HTMLElement;
@@ -314,7 +315,7 @@ const mcpRow = (id: string, over: Json = {}) => ({
 });
 
 describe("which readers run", () => {
-  test("relay only reads nothing of Tailscale; Tailscale only reads nothing of the relay", async () => {
+  test("the relay is always read; the Tailscale device only where the gateway has one", async () => {
     const relayApi = await import(
       // @ts-expect-error — portal modules are plain JS.
       "../lib/cloud-relay-api.js"
@@ -329,34 +330,35 @@ describe("which readers run", () => {
     render(null, host);
     vi.clearAllMocks();
     await mount(FLAGS.tailscale);
-    expect(relayApi.relayManagement).not.toHaveBeenCalled();
+    expect(relayApi.relayManagement).toHaveBeenCalled();
     expect(tailscaleApi.getTailscale).toHaveBeenCalled();
   });
 
-  test("neither feature reads either, and the page still offers this computer's Tailscale, a domain and MCP", async () => {
-    const relayApi = await import(
-      // @ts-expect-error — portal modules are plain JS.
-      "../lib/cloud-relay-api.js"
-    );
+  test("a gateway with no account and no device offers the account, this computer's Tailscale, a domain and MCP", async () => {
     const tailscaleApi = await import(
       // @ts-expect-error — portal modules are plain JS.
       "../lib/tailscale-api.js"
     );
-    await mount({ cloudRelay: false, tailscaleEmbed: false });
-    expect(relayApi.relayManagement).not.toHaveBeenCalled();
+    await mount(FLAGS.relay);
     expect(tailscaleApi.getTailscale).not.toHaveBeenCalled();
     expect(heading()).toBe("Connectivity");
     expect(items().map((li) => li.querySelector(".remote-access-item-title")?.textContent)).toEqual([
+      "No Omnesis account",
+      "Omnesis relay",
       "Tailscale on this computer",
       "Your own domain or reverse proxy",
       "MCP server",
+      "Only with a pairing code",
     ]);
-    expect(text()).not.toContain("Omnesis account");
-    expect(text()).not.toContain("New devices");
+    expect(mark("No Omnesis account")).toBe("off");
+    expect(mark("Omnesis relay")).toBe("off");
     await startSetup();
-    expect(steps()).toEqual(["1Remote connection"]);
+    expect(steps()).toEqual(["1Your Omnesis account", "2Remote connection"]);
+    expect(heading()).toBe("Do you want an Omnesis account?");
+    await click("Skip for now");
     expect(way("tailscale")).toBeNull();
-    expect(way("relay")).toBeNull();
+    // The relay waits for an account.
+    expect(way("relay")?.disabled).toBe(true);
     expect(way("host")).not.toBeNull();
     expect(way("domain")).not.toBeNull();
     expect(button("Finish")).toBeTruthy();
@@ -413,7 +415,7 @@ describe("the summary", () => {
 
   test("Tailscale on this computer serving only the tailnet says it is not public", async () => {
     gateway.host = { ...gateway.host, servesGateway: true, publicGateway: false };
-    await mount({ cloudRelay: false, tailscaleEmbed: false });
+    await mount(FLAGS.relay);
     expect(mark("Tailscale on this computer")).toBe("on");
     expect(detail("Tailscale on this computer")).toBe(`${HOST_URL}, on your Tailscale network only. Not public on the Internet.`);
   });
@@ -427,6 +429,7 @@ describe("the summary", () => {
     expect(detail("Your own domain or reverse proxy")).toBe("None.");
     // The setup does not start with the domain open either.
     await startSetup();
+    await click("Skip for now");
     expect(isChecked(way("domain"))).toBe(false);
     expect(isChecked(way("host"))).toBe(true);
   });
@@ -443,7 +446,7 @@ describe("the summary", () => {
   });
 });
 
-describe("relay only", () => {
+describe("without the gateway's own Tailscale device", () => {
   test("asks about the account, then the connection without the gateway's own Tailscale", async () => {
     await mount(FLAGS.relay);
     expect(button("Set up step by step")).toBeTruthy();
@@ -571,18 +574,20 @@ describe("relay only", () => {
   });
 });
 
-describe("Tailscale only", () => {
-  test("starts at the connection, signs in inline, and turns off after a confirmation", async () => {
+describe("with the gateway's own Tailscale device and no account", () => {
+  test("past the account, signs in inline, and turns off after a confirmation", async () => {
     await mount(FLAGS.tailscale);
     await startSetup();
-    expect(steps()).toEqual(["1Remote connection"]);
-    expect(way("relay")).toBeNull();
+    expect(steps()).toEqual(["1Your Omnesis account", "2Remote connection"]);
+    await click("Skip for now");
+    // The relay waits for an account.
+    expect(way("relay")?.disabled).toBe(true);
     await toggle("#remote-access-way-tailscale", true);
     expect(calls("tailscale")).toEqual([["tailscale", "enable", true]]);
     expect(link("Open sign-in page")?.getAttribute("href")).toBe("https://login.tailscale.com/a/fictional0");
     expect(qr.toCanvas).toHaveBeenCalledWith(expect.anything(), "https://login.tailscale.com/a/fictional0", expect.any(Object));
     // With the device on, new devices can ask to join from the tailnet.
-    expect(steps()).toEqual(["1Remote connection", "2New devices"]);
+    expect(steps().slice(1)).toEqual(["2Remote connection", "3New devices"]);
     gateway.tailscale = tailscaleConnected();
     await remount(FLAGS.tailscale);
     expect(text()).toContain("Connected as omnesis.example-net.ts.net, with a trusted certificate.");
@@ -604,6 +609,7 @@ describe("Tailscale only", () => {
     );
     await mount(FLAGS.tailscale);
     await startSetup();
+    await click("Skip for now");
     await toggle("#remote-access-way-tailscale", true);
     expect(host.querySelector(".remote-access-option [role='alert']")?.textContent).toContain("Tailscale can't start on this gateway.");
     expect(isChecked(way("tailscale"))).toBe(false);
@@ -730,7 +736,7 @@ describe("both", () => {
     gateway.host = { ...gateway.host, servesGateway: true, publicGateway: true };
     gateway.publish = { ok: true, url: HOST_URL };
     savedSetup("connection", { host: true });
-    await mount({ cloudRelay: false, tailscaleEmbed: false });
+    await mount(FLAGS.relay);
     expect(text()).toContain(`Serving this gateway at ${HOST_URL}, on your Tailscale network and to the Internet.`);
     expect(isChecked(host.querySelector(".remote-access-check input"))).toBe(true);
     // Nothing to apply while the box says what Tailscale does.
@@ -780,7 +786,7 @@ describe("both", () => {
 
   test("the setup goes on only once Tailscale on this computer does what its box says", async () => {
     savedSetup("connection", { host: true });
-    await mount({ cloudRelay: false, tailscaleEmbed: false });
+    await mount(FLAGS.relay);
     const next = () => host.querySelector(".remote-access-actions .btn-primary") as HTMLButtonElement;
     // Ticked but not set up: Finish waits.
     expect(next().disabled).toBe(true);
@@ -800,7 +806,7 @@ describe("both", () => {
     gateway.remote!.publicBaseUrl = { configured: HOST_URL, setByEnvironment: false, way: "host" };
     gateway.unpublish = { ok: false, reason: "This gateway is not allowed to change Tailscale on this computer.", command: "tailscale serve --https=443 off" };
     savedSetup("connection");
-    await mount({ cloudRelay: false, tailscaleEmbed: false });
+    await mount(FLAGS.relay);
     const next = () => host.querySelector(".remote-access-actions .btn-primary") as HTMLButtonElement;
     expect(isChecked(way("host"))).toBe(true);
     expect(next().disabled).toBe(false);
@@ -829,7 +835,7 @@ describe("both", () => {
   test("the setup waits while Tailscale on this computer is still being read", async () => {
     gateway.hangHost = true;
     savedSetup("connection", { host: true });
-    await mount({ cloudRelay: false, tailscaleEmbed: false });
+    await mount(FLAGS.relay);
     expect(text()).toContain("Looking for Tailscale on this computer");
     expect((host.querySelector(".remote-access-actions .btn-primary") as HTMLButtonElement).disabled).toBe(true);
   });
@@ -839,7 +845,7 @@ describe("both", () => {
     gateway.remote!.publicBaseUrl = { configured: HOST_URL, setByEnvironment: false, way: "host" };
     gateway.unpublish = { ok: false, reason: "This gateway is not allowed to change Tailscale on this computer.", command: "tailscale serve --https=443 off" };
     savedSetup("connection", { host: false });
-    await mount({ cloudRelay: false, tailscaleEmbed: false });
+    await mount(FLAGS.relay);
     await click("Stop serving this gateway");
     await confirmOnce("Stop serving");
     // Another tab saves the owner's own domain before the check.
@@ -854,7 +860,7 @@ describe("both", () => {
     gateway.remote!.publicBaseUrl = { configured: HOST_URL, setByEnvironment: false, way: "host" };
     gateway.failConfig = true;
     savedSetup("connection", { host: false });
-    await mount({ cloudRelay: false, tailscaleEmbed: false });
+    await mount(FLAGS.relay);
     await click("Stop serving this gateway");
     await confirmOnce("Stop serving");
     expect(calls("unpublish")).toEqual([["unpublish"]]);
@@ -866,7 +872,7 @@ describe("both", () => {
     gateway.host = { ...gateway.host, servesGateway: true, publicGateway: false };
     gateway.remote!.publicBaseUrl = { configured: "https://omnesis.example.org", setByEnvironment: false, way: null };
     savedSetup("connection", { host: false });
-    await mount({ cloudRelay: false, tailscaleEmbed: false });
+    await mount(FLAGS.relay);
     await click("Stop serving this gateway");
     await confirmOnce("Stop serving");
     expect(calls("unpublish")).toEqual([["unpublish"]]);
@@ -1045,7 +1051,8 @@ describe("the MCP server", () => {
     await mount(FLAGS.tailscale);
     expect(detail("MCP server")).toBe(["On", "Tailscale on this computer (your Tailscale network only)."].join(" "));
     await startSetup();
-    expect(steps()).toEqual(["1Remote connection", "2MCP server"]);
+    expect(steps()).toEqual(["1Your Omnesis account", "2Remote connection", "3MCP server"]);
+    await click("Skip for now");
     await click("Continue");
     expect(heading()).toBe("Where may agents reach your MCP server?");
     const choices = () => [...host.querySelectorAll('input[name="remote-access-mcp-host"]')] as HTMLInputElement[];
@@ -1072,6 +1079,7 @@ describe("the MCP server", () => {
     };
     await mount(FLAGS.tailscale);
     await startSetup();
+    await click("Skip for now");
     await click("Continue");
     await toggle('input[name="remote-access-mcp-host"][value="public"]', true);
     expect(host.querySelector(".remote-access-mcp .copy-block-code")?.textContent).toBe(
@@ -1089,6 +1097,7 @@ describe("the MCP server", () => {
     gateway.remote!.mcpAddresses = [mcpRow("tailnet", { url: "https://omnesis.example-net.ts.net", reach: "public", opening: true })];
     await mount(FLAGS.tailscale);
     await startSetup();
+    await click("Skip for now");
     await click("Continue");
     await click("Continue");
     expect(text()).toContain("Tailscale hasn't opened it yet");
@@ -1100,6 +1109,7 @@ describe("the MCP server", () => {
     gateway.remote!.mcpAddresses = [mcpRow("host", { url: `${HOST_URL}:10000` })];
     await mount(FLAGS.tailscale);
     await startSetup();
+    await click("Skip for now");
     await click("Continue");
     expect(text()).toContain(`${HOST_URL}:10000/mcp`);
     expect(text()).toContain("Some agents, such as ChatGPT, connect only on port 443 and may not reach it.");
@@ -1109,7 +1119,7 @@ describe("the MCP server", () => {
     await mount(FLAGS.tailscale);
     expect(detail("MCP server")).toBe("On this computer and your home network only, until an address away from home is set up.");
     await startSetup();
-    expect(steps()).toEqual(["1Remote connection"]);
+    expect(steps()).toEqual(["1Your Omnesis account", "2Remote connection"]);
   });
 });
 

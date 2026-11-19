@@ -45,12 +45,14 @@ export function useRelayManagement() {
       STEP_UP_OPERATIONS.has(operation) ? 130_000 : 10_000,
     );
     try {
+      // The account page and Connectivity's account step show how to sign up; a plain status
+      // read here asks for that too.
       const result = await relayManagement(
         operation,
         input,
         controller.signal,
         method,
-        ...(options ? [options] : []),
+        ...(options ? [options] : operation ? [] : [{ signup: true }]),
       );
       if (controller.signal.aborted) throw new Error("Request expired");
       // Replacement and unmount both abort this request before clearing it.

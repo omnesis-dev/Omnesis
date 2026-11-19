@@ -2,9 +2,10 @@
 
 This package implements Omnesis's outbound reverse tunnel, separately from the
 push-notification relay. It uses native WebSocket/TCP streams with no cloudflared
-or Tailscale dependency. Gateway integration and Google pairing require
-`OMNESIS_CLOUD_RELAY_ENABLED=1`. This is independent of `OMNESIS_EXPERIMENTAL`;
-experimental or synthetic mode alone never enables cloud relay features.
+or Tailscale dependency. Every gateway, CLI and collector includes the
+gateway integration and Google pairing; a gateway reaches a relay only once its
+owner connects it or a saved connection starts. The relay server process
+(`src/main.ts`) starts only with `OMNESIS_CLOUD_RELAY_ENABLED=1`.
 
 ## Encryption and trust
 
@@ -104,8 +105,7 @@ An account may have multiple linked gateways and multiple passkeys. Removing the
 last usable sign-in method is refused. Link an additional method while signed in;
 matching email addresses never merge accounts.
 
-With `OMNESIS_CLOUD_RELAY_ENABLED=1`, gateway settings offer account linking and
-unlinking. Native clients and `omnesis cloud pair --kind cli` or `--kind collector`
+Gateway settings offer account linking and unlinking. Native clients and `omnesis cloud pair --kind cli` or `--kind collector`
 let the user sign in, explicitly choose a gateway, and request enrollment. By
 default a trusted gateway device must approve the request, and the requesting
 device must confirm the comparison code. A gateway whose owner chose
@@ -275,8 +275,8 @@ web client secrets.
 The public deployment registry is separate from OAuth secrets. The official
 relay's public Google client IDs (owner-link client, device-enrollment client,
 native device audiences and Android presenters) are compiled into the gateway
-in `src/google-browser-trust.ts`, so a gateway with only
-`OMNESIS_CLOUD_RELAY_ENABLED=1` offers managed Google sign-in. They are not
+in `src/google-browser-trust.ts`, so every gateway offers managed Google
+sign-in. They are not
 configuration: no environment variable or portal setting changes them, and the
 relay's discovery response never adds to them. They only name which Google apps
 may present a token; the gateway still checks Google's signature, issuer,
@@ -368,7 +368,6 @@ request's Host header.
 On the gateway, configure its normal isolated/local state and TLS plus:
 
 ```sh
-export OMNESIS_CLOUD_RELAY_ENABLED=1
 export OMNESIS_CLOUD_RELAY_URL=https://control.relay.example.test
 export OMNESIS_PUBLIC_BASE_URL=https://gateway.example.test
 export OMNESIS_CLOUD_RELAY_GATEWAY_ID=00000000-0000-4000-8000-000000000001
@@ -646,7 +645,7 @@ contact Google, DNS, a certificate authority or a relay:
 | `omnesis cloud recovery-policy-digest`      | Print the canonical digest of a signed policy.                                                               |
 | `omnesis cloud recovery-rotate-session-key` | Replace only the relay session-signing secret; restart the relay to invalidate old sessions and invitations. |
 
-Set `OMNESIS_CLOUD_RELAY_ENABLED=1`. Offline signing uses
+Offline signing uses
 `OMNESIS_CLOUD_RELAY_RECOVERY_AUTHORITY_KEY_FILE`, with public output at
 `OMNESIS_CLOUD_RELAY_RECOVERY_PUBLIC_KEY_FILE` for authority creation. Signing
 and digest commands read `OMNESIS_CLOUD_RELAY_RECOVERY_INPUT_FILE`; signed
@@ -1030,8 +1029,7 @@ enabled only by a new pairing that explicitly selects that trust mode.
 
 ## Optional gateway-owned ACME certificates
 
-ACME is optional and requires `OMNESIS_CLOUD_RELAY_ENABLED=1`. With no
-`OMNESIS_ACME_DIRECTORY_URL`, it creates no files, certificate contexts, renewal
+ACME is optional. With no `OMNESIS_ACME_DIRECTORY_URL`, it creates no files, certificate contexts, renewal
 jobs, DNS requests or account keys. Existing direct/QR/Tailscale/Funnel paths
 continue independently of Google and the relay.
 

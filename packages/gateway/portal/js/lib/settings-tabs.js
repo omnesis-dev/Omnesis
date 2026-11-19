@@ -19,9 +19,9 @@
 // still parses its path and the view — which knows the mode — decides whether
 // to render it or fall back.
 //
-// `cloudRelay` and `tailscaleEmbed` mark a tab that only exists when the
-// gateway runs with that optional feature on; like experimental tabs, the
-// router keeps their keys and the view decides.
+// `tailscaleEmbed` marks a tab that only exists when the gateway's
+// installation can run its own Tailscale device; like experimental tabs, the
+// router keeps its key and the view decides.
 //
 // `parent` marks a detail page: it has its own path, but no tab of its own —
 // the tab bar shows its parent as the current tab.
@@ -43,8 +43,8 @@ const TABS = [
   { key: "policies", label: "Policies" },
   { key: "devices", label: "Devices" },
   { key: "connectivity", label: "Connectivity" },
-  { key: "account", label: "Omnesis account", cloudRelay: true, parent: "connectivity" },
-  { key: "relay", label: "Omnesis relay", cloudRelay: true, parent: "connectivity" },
+  { key: "account", label: "Omnesis account", parent: "connectivity" },
+  { key: "relay", label: "Omnesis relay", parent: "connectivity" },
   { key: "host-tailscale", label: "Tailscale on this computer", parent: "connectivity" },
   { key: "own-address", label: "Your own domain", parent: "connectivity" },
   { key: "mcp", label: "MCP server", parent: "connectivity" },
@@ -75,15 +75,15 @@ export function settingsTabParent(key) {
 }
 
 /** Whether a tab or detail page exists for the gateway's optional features. */
-export function settingsTabAvailable(key, { cloudRelay = false, tailscaleEmbed = false } = {}) {
+export function settingsTabAvailable(key, { tailscaleEmbed = false } = {}) {
   const tab = TABS.find((t) => t.key === key);
   if (!tab) return false;
-  return (!tab.cloudRelay || cloudRelay) && (!tab.tailscaleEmbed || tailscaleEmbed);
+  return !tab.tailscaleEmbed || tailscaleEmbed;
 }
 
 /** The tab set to render, in display order. */
-export function settingsTabs({ experimental = false, brain = experimental, labAvailable = false, cloudRelay = false, tailscaleEmbed = false } = {}) {
-  return TABS.filter((t) => !t.parent && (!t.experimental || experimental) && (t.key !== "sweeps" || brain) && (t.key !== "lab" || labAvailable) && settingsTabAvailable(t.key, { cloudRelay, tailscaleEmbed })).map(({ key, label }) => ({
+export function settingsTabs({ experimental = false, brain = experimental, labAvailable = false, tailscaleEmbed = false } = {}) {
+  return TABS.filter((t) => !t.parent && (!t.experimental || experimental) && (t.key !== "sweeps" || brain) && (t.key !== "lab" || labAvailable) && settingsTabAvailable(t.key, { tailscaleEmbed })).map(({ key, label }) => ({
     key,
     label,
   }));

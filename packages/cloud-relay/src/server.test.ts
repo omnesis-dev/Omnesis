@@ -453,10 +453,6 @@ describe("native client adapter", () => {
     } finally {
       await proxy.close();
     }
-    vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "0");
-    expect(() =>
-      createRelayClientProxy({ gatewayUrl: url, gatewayFingerprint: "a".repeat(64) }),
-    ).toThrow("OMNESIS_CLOUD_RELAY_ENABLED=1");
   });
 
   test("shutdown terminates an active streaming response", async () => {

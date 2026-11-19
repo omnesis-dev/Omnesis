@@ -62,7 +62,6 @@ export function SettingsView({
   experimental = false,
   lab = { brain: experimental },
   labAvailable = false,
-  cloudRelay = false,
   tailscaleEmbed = false,
   // What waits for the owner's decision (`useAttention`), marked on the Devices and Access tabs.
   attention = null,
@@ -77,7 +76,7 @@ export function SettingsView({
   const requested = SETTINGS_TAB_KEYS.includes(tab) ? tab : DEFAULT_SETTINGS_TAB;
   // A link into a disabled feature lands on the default tab.
   const page =
-    (!experimental && EXPERIMENTAL_SETTINGS_TABS.includes(requested)) || (requested === "sweeps" && !lab.brain) || (requested === "lab" && !labAvailable) || !settingsTabAvailable(requested, { cloudRelay, tailscaleEmbed })
+    (!experimental && EXPERIMENTAL_SETTINGS_TABS.includes(requested)) || (requested === "sweeps" && !lab.brain) || (requested === "lab" && !labAvailable) || !settingsTabAvailable(requested, { tailscaleEmbed })
       ? DEFAULT_SETTINGS_TAB
       : requested;
   // A detail page (the Omnesis account, the Tailscale device) shows its parent tab as current.
@@ -143,7 +142,7 @@ export function SettingsView({
         style="margin-bottom:16px;"
         active=${activeTab}
         onSelect=${switchTab}
-        tabs=${settingsTabs({ experimental, brain: lab.brain, labAvailable, cloudRelay, tailscaleEmbed }).map((item) => {
+        tabs=${settingsTabs({ experimental, brain: lab.brain, labAvailable, tailscaleEmbed }).map((item) => {
           if (item.key === "models" && modelHealth?.warnings?.length) {
             return { ...item, label: html`${item.label} <${WarningTriangle} label="Models need attention" />` };
           }
@@ -162,7 +161,7 @@ export function SettingsView({
       ${page === "own-address" && html`<${OwnAddressView} />`}
       ${page === "mcp" && html`<${McpView} />`}
       ${page === "tailscale" && html`<${TailscaleView} />`}
-      ${page === "connectivity" && html`<${RemoteAccessView} cloudRelay=${cloudRelay} tailscaleEmbed=${tailscaleEmbed} />`}
+      ${page === "connectivity" && html`<${RemoteAccessView} tailscaleEmbed=${tailscaleEmbed} />`}
       ${activeTab === "sweeps" && html`<${SweepsView} />`}
       ${activeTab === "access" && html`<${AccessView}
         authorizationId=${accessAuthorizationId ?? null}
@@ -170,11 +169,10 @@ export function SettingsView({
         newLevel=${accessNewLevel ?? false}
         connectOpen=${accessConnect ?? false}
         completeInPortal=${completeAccessInPortal ?? false}
-        cloudRelay=${cloudRelay}
         tailscaleEmbed=${tailscaleEmbed}
       />`}
       ${activeTab === "policies" && html`<${PoliciesView} policyId=${policyId ?? null} />`}
-      ${activeTab === "devices" && html`<${DevicesView} pairKindRequest=${pair ?? null} focusDeviceId=${device ?? null} cloudRelay=${cloudRelay} tailscaleEmbed=${tailscaleEmbed} />`}
+      ${activeTab === "devices" && html`<${DevicesView} pairKindRequest=${pair ?? null} focusDeviceId=${device ?? null} tailscaleEmbed=${tailscaleEmbed} />`}
     </div>
   `;
 }

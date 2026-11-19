@@ -41,19 +41,18 @@ describe("the omnesis command tree", () => {
     expect(Object.keys(alias.subCommands ?? {})).toEqual(Object.keys(brain.subCommands ?? {}));
   });
 
-  test.each(["0", "1"])("the cloud command exists only with the cloud opt-in %s", async (flag) => {
-    vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", flag);
-    vi.stubEnv("OMNESIS_EXPERIMENTAL", flag === "1" ? "0" : "1");
+  test.each(["0", "1"])("the cloud command is listed with experimental mode %s", async (flag) => {
+    vi.stubEnv("OMNESIS_EXPERIMENTAL", flag);
     // The tree is built when the module loads, as it is for each CLI run.
     const tree = await freshTree();
     const visible = new Set(Object.keys(tree.visibleSubCommands()));
     const registered = Object.keys(tree.SUB_COMMANDS);
-    expect(registered.includes("cloud")).toBe(flag === "1");
+    expect(registered.includes("cloud")).toBe(true);
     expect(registered.filter((name) => !visible.has(name))).toEqual([
       ...tree.HIDDEN_COMMAND_ALIASES,
       ...tree.HIDDEN_INTERNAL_COMMANDS,
     ]);
-    expect(visible.has("cloud")).toBe(flag === "1");
+    expect(visible.has("cloud")).toBe(true);
     expect(visible.has("watches")).toBe(true);
     expect(visible.has("subscriptions")).toBe(false);
     expect(visible.has("brain")).toBe(true);
@@ -63,7 +62,6 @@ describe("the omnesis command tree", () => {
 });
 
 test("the optional cloud command resolves without starting a gateway or requiring a Google identity", async () => {
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
   const entry = (await freshTree()).SUB_COMMANDS.cloud;
   expect(entry, "no command registered as `cloud`").toBeDefined();
   expect(

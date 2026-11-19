@@ -2,21 +2,12 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { defineCommand } from "citty";
-import { cloudRelayEnabled } from "@omnesis/core";
 import { CliError, EXIT_USER_ERROR } from "@omnesis/cli-shared";
 import { z } from "zod";
 import { formatPairingCode, pairingCodeSchema } from "@omnesis/cloud-relay";
 import { cloudManagementCommands } from "./cloud-management.js";
 import { cloudRecoveryCommands } from "./cloud-recovery.js";
 import { cloudIncidentCommands } from "./cloud-incidents.js";
-
-function requireCloudRelay(): void {
-  if (!cloudRelayEnabled())
-    throw new CliError(
-      "Omnesis account commands require OMNESIS_CLOUD_RELAY_ENABLED=1",
-      EXIT_USER_ERROR,
-    );
-}
 
 type CloudIdentityOperation =
   | "google-login"
@@ -44,7 +35,6 @@ export async function runCloudIdentityCommand(
   command: CloudIdentityOperation,
   options: { kind?: string; name?: string } = {},
 ): Promise<void> {
-  requireCloudRelay();
   try {
     const { runRelayCommand } = await import("@omnesis/cloud-relay/runtime");
     const env =
@@ -98,7 +88,6 @@ export async function decideCloudPairing(
   id?: string,
   code?: string,
 ): Promise<void> {
-  requireCloudRelay();
   const { gatewayJson } = await import("../utils.js");
   if (action === "list" || action === "approve") {
     const result = z

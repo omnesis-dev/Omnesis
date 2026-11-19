@@ -142,15 +142,7 @@ describe("deviceTlsTrust", () => {
     );
   });
 
-  test("the strict modes read as unreported without the cloud relay opt-in", () => {
-    vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "");
-    for (const mode of ["pinned-leaf-strict", "pinned-key-strict"])
-      expect(deviceTlsTrustMode({ tls: { mode } })).toBeNull();
-    expect(deviceTlsTrustMode({ tls: { mode: "pinned-leaf" } })).toBe("pinned-leaf");
-  });
-
   test("the reported mode narrows to the known ones; anything else reads as unreported", () => {
-    vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
     expect(deviceTlsTrustMode({ tls: { mode: "pinned-leaf-strict" } })).toBe("pinned-leaf-strict");
     expect(deviceTlsTrustMode({ tls: { mode: "pinned-leaf" } })).toBe("pinned-leaf");
     expect(deviceTlsTrustMode({ tls: { mode: "pinned-ca", extra: 1 } })).toBe("pinned-ca");
@@ -258,7 +250,6 @@ describe("deviceTlsTrust", () => {
 });
 
 test("stable public-key pins follow certificate renewal without masquerading as a leaf pin", () => {
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
   expect(deviceTlsTrustMode({ tls: { mode: "pinned-key-strict" } })).toBe("pinned-key-strict");
   expect(
     deviceTlsTrust(device({ tlsMode: "pinned-key-strict" }), snapshot({ renewsAt: RENEWS_AT })),

@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-// Settings → Omnesis account: the account link and remote access through the optional cloud relay. Only
-// rendered when the gateway runs with OMNESIS_CLOUD_RELAY_ENABLED=1.
+// Settings → Omnesis account: the account link and remote access through the Omnesis relay.
 //
 // The page leads with one state headline and at most one primary action, then
 // three short sections: the account, remote access and new devices. Anything
