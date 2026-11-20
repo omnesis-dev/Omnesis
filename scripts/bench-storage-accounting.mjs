@@ -9,6 +9,10 @@
  * performs an independent indexed read + tiny WAL write every 25 ms. Baseline
  * is the previous GROUP BY dbstat/CAST implementation in a background worker;
  * after uses the production bounded logical reads and paced physical scanner.
+ * Set OMNESIS_STORAGE_BENCH_COMPARISON=needed to hold the bounded payload
+ * algorithm constant and compare scanning both stores with scanning only the
+ * index. That mode checks parity of the used source/index results; unused main
+ * table attribution is intentionally excluded and page visits are reported.
  * This isolates SQL/scan costs; production scheduler IPC overhead is excluded.
  */
 import { mkdtempSync, rmSync, statSync } from "node:fs";
@@ -23,6 +27,9 @@ import { STORAGE_READS, STORAGE_INDEX_READS } from "../packages/gateway/src/stor
 import { directReadPort } from "../packages/gateway/src/scheduler/read-port.ts";
 import { scanStorageAllocation } from "../packages/gateway/src/storage/physical-accounting.ts";
 import { deprioritizeBackgroundWorker } from "../packages/gateway/src/workers/worker-priority.ts";
+const comparison = process.env.OMNESIS_STORAGE_BENCH_COMPARISON ?? "legacy";
+if (!["legacy", "needed"].includes(comparison)) throw Error("Unknown accounting comparison");
+const comparingNeededAllocations = comparison === "needed";
 const fixedNow = () => new Date("2032-01-01T00:00:00Z");
 const key = Buffer.alloc(32, 23);
 function open(path, readonly = false) {
@@ -70,8 +77,9 @@ if (!isMainThread) {
   const start = performance.now();
   const cpu = process.threadCpuUsage();
   let result;
+  let allocationWork;
   try {
-    if (phase === "before") {
+    if (phase === "before" && !comparingNeededAllocations) {
       const mainTables = main
         .prepare("SELECT name,SUM(pgsize) AS bytes FROM dbstat GROUP BY name ORDER BY name")
         .all();
@@ -170,21 +178,35 @@ if (!isMainThread) {
           },
         ),
       ]);
-      const mainAllocation = await scanStorageAllocation(
-        { path: mainPath, keyHex: key.toString("hex") },
-        {},
-        () => false,
-        () => {},
-      );
+      const mainAllocation =
+        !comparingNeededAllocations || phase === "before"
+          ? await scanStorageAllocation(
+              { path: mainPath, keyHex: key.toString("hex") },
+              {},
+              () => false,
+              () => {},
+            )
+          : null;
       const indexAllocation = await scanStorageAllocation(
         { path: indexPath, keyHex: key.toString("hex") },
         {},
         () => false,
         () => {},
       );
-      if (mainAllocation.state !== "ready" || indexAllocation.state !== "ready")
+      if ((mainAllocation && mainAllocation.state !== "ready") || indexAllocation.state !== "ready")
         throw Error("Benchmark allocation did not finish");
-      result = fingerprint(logical, idx, mainAllocation.tables, indexAllocation.tables);
+      allocationWork = {
+        mainPages: mainAllocation?.scannedPages ?? 0,
+        mainBytes: mainAllocation?.scannedBytes ?? 0,
+        indexPages: indexAllocation.scannedPages,
+        indexBytes: indexAllocation.scannedBytes,
+      };
+      result = fingerprint(
+        logical,
+        idx,
+        comparingNeededAllocations ? null : mainAllocation.tables,
+        indexAllocation.tables,
+      );
     }
     const used = process.threadCpuUsage(cpu);
     parentPort.postMessage({
@@ -192,6 +214,7 @@ if (!isMainThread) {
       durationMs: performance.now() - start,
       cpuMs: (used.user + used.system) / 1000,
       rssBytes: process.memoryUsage().rss,
+      allocationWork,
       result,
     });
   } finally {
@@ -270,6 +293,7 @@ if (!isMainThread) {
     console.log(
       JSON.stringify({
         fixture: {
+          comparison,
           documents: main.prepare("SELECT COUNT(*) AS n FROM documents").get().n,
           chunks: index.prepare("SELECT COUNT(*) AS n FROM chunks").get().n,
           sparseRowidUpperBound: main.prepare("SELECT MAX(rowid) AS n FROM documents").get().n,
@@ -340,6 +364,12 @@ if (!isMainThread) {
           // A successful sample owns its handles until natural worker exit.
           if (!exited) await worker.terminate();
         }
+        if (
+          comparingNeededAllocations &&
+          ((phase === "after" && output.allocationWork.mainPages !== 0) ||
+            (phase === "before" && output.allocationWork.mainPages === 0))
+        )
+          throw Error("Unexpected main-page attribution work");
         if (!expected) {
           expected = JSON.stringify(output.result);
           console.log(JSON.stringify({ exactParityBaseline: output.result }));
@@ -367,6 +397,14 @@ if (!isMainThread) {
           eventLoopWorstMs: delay.max / 1e6,
           maxWalBytes,
           probeWrites,
+          ...(comparingNeededAllocations
+            ? {
+                mainAllocationPages: output.allocationWork.mainPages,
+                mainAllocationBytes: output.allocationWork.mainBytes,
+                indexAllocationPages: output.allocationWork.indexPages,
+                indexAllocationBytes: output.allocationWork.indexBytes,
+              }
+            : {}),
         };
         summaries[phase].push(record);
         console.log(JSON.stringify({ phase, ...record }));
@@ -391,6 +429,14 @@ if (!isMainThread) {
         "eventLoopWorstMs",
         "rssBytes",
         "maxWalBytes",
+        ...(comparingNeededAllocations
+          ? [
+              "mainAllocationPages",
+              "mainAllocationBytes",
+              "indexAllocationPages",
+              "indexAllocationBytes",
+            ]
+          : []),
       ]) {
         const values = records.map((r) => r[field]).sort((a, b) => a - b);
         metrics[field] = { median: values[Math.floor(values.length / 2)], worst: values.at(-1) };
