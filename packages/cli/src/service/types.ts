@@ -21,6 +21,30 @@ export const COMPONENT_ARGV: Record<ServiceComponent, readonly string[]> = {
   collector: ["collector", "run"],
 };
 
+/** A launchd job's `ProcessType`: the resource class macOS runs it in. */
+type LaunchdProcessType = "Background" | "Standard" | "Adaptive" | "Interactive";
+
+/**
+ * The class each component's LaunchAgent runs in.
+ *
+ * The gateway is `Standard`, the class of an ordinary program: it answers the
+ * apps, the portal, search and agents while someone waits, and every write
+ * passes through its one writer thread. As a `Background` job it waits behind
+ * every program the user runs, and so does every request: its CPU drops to the
+ * lowest priority and its disk I/O is throttled while anything else uses the
+ * disk. The price is that its own background work, such as embedding a newly
+ * synced backlog, competes with the user's programs as an equal.
+ *
+ * The collector is `Background`. Its work is bulk sync that nobody waits on
+ * from moment to moment, so it yields CPU and disk to the user's programs and
+ * to the gateway. `Adaptive` would behave the same: launchd raises an Adaptive
+ * job only while an XPC client holds it busy, and the collector serves none.
+ */
+export const LAUNCHD_PROCESS_TYPE: Record<ServiceComponent, LaunchdProcessType> = {
+  gateway: "Standard",
+  collector: "Background",
+};
+
 /**
  * A systemd credential: the service manager reads `path` as root at start and
  * exposes a copy to that unit alone, under `$CREDENTIALS_DIRECTORY/<name>`.

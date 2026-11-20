@@ -126,6 +126,29 @@ describe("regenerateServiceDefinition applies what a release changed", () => {
     expect(regenerate("linux", installedBy0417)).toEqual({ kind: "changed", content: current });
   });
 
+  it("moves a gateway plist installed in the Background class to the Standard class", () => {
+    const current = install("darwin", { extraEnv: { OMNESIS_GATEWAY_PORT: "17600" } });
+    const installedAsBackground = current.replace(
+      "<key>ProcessType</key>\n    <string>Standard</string>",
+      "<key>ProcessType</key>\n    <string>Background</string>",
+    );
+    expect(installedAsBackground).not.toBe(current);
+    expect(regenerate("darwin", installedAsBackground)).toEqual({
+      kind: "changed",
+      content: current,
+    });
+  });
+
+  it("leaves a collector plist in the Background class as it is", () => {
+    const plist = install("darwin", {
+      component: "collector",
+      exec: COLLECTOR_EXEC,
+      extraEnv: { OMNESIS_GATEWAY_URL: "https://localhost:7600" },
+    });
+    expect(plist).toContain("<key>ProcessType</key>\n    <string>Background</string>");
+    expect(regenerate("darwin", plist, { component: "collector" })).toEqual({ kind: "unchanged" });
+  });
+
   describe("a collector plist installed beside its gateway without a gateway URL", () => {
     const plist = install("darwin", { component: "collector", exec: COLLECTOR_EXEC });
     const configEnv = () =>
