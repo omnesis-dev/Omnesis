@@ -99,7 +99,7 @@ function processStart(
       },
     );
   } catch (error) {
-    // See #1159 — distinguish owner-birth probe failures without exposing commands or output.
+    // Report only a fixed failure category; never the command or its output.
     unavailable?.(processStartFailure(error));
     return null;
   }

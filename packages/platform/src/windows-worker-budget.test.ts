@@ -179,10 +179,41 @@ describe("one Windows native initialization budget", () => {
       state.now += 16_000;
       return verified(request);
     });
-    expect(() => windowsWorkerInvocation("job", bootstrap)).toThrow(/initialization timed out/u);
-    expect(() => windowsWorkerInvocation("job", bootstrap)).toThrow(/initialization timed out/u);
+    const overrun =
+      "Windows native worker initialization timed out (owner 15000 ms, bootstrap 16000 ms, 30000 ms allowance)";
+    expect(() => windowsWorkerInvocation("job", bootstrap)).toThrow(overrun);
+    expect(() => windowsWorkerInvocation("job", bootstrap)).toThrow(overrun);
     expect(bootstrap).toHaveBeenCalledOnce();
     expect(state.data.size).toBe(0);
+  });
+
+  it("names the phase durations when the owner probe exhausts the whole allowance", async () => {
+    slowIdentity(35_000);
+    const { windowsWorkerInvocation } = await import("./windows-worker-cache.js");
+    const bootstrap = vi.fn(verified);
+    expect(() => windowsWorkerInvocation("job", bootstrap)).toThrow(
+      "Cannot verify Windows native worker owner (EPRIVATE:owner-birth:timeout:before-query; owner 30000 ms, 30000 ms allowance)",
+    );
+    expect(bootstrap).not.toHaveBeenCalled();
+  });
+
+  it("names the phase durations when bootstrap times out within the allowance", async () => {
+    slowIdentity(12_000);
+    const { windowsWorkerInvocation } = await import("./windows-worker-cache.js");
+    const bootstrap = vi.fn((_request: WindowsBootstrapRequest, remainingMs: number) => {
+      state.now += remainingMs;
+      return {
+        exitCode: null,
+        signal: null,
+        stderr: "",
+        stdout: Buffer.alloc(0),
+        failure: "timeout" as const,
+      };
+    });
+    expect(() => windowsWorkerInvocation("job", bootstrap)).toThrow(
+      "Cannot initialize the protected Windows native worker (timeout; owner 12000 ms, bootstrap 18000 ms, 30000 ms allowance)",
+    );
+    expect(bootstrap).toHaveBeenCalledOnce();
   });
 
   it("preserves pending cleanup authority even when bootstrap exhausts the deadline", async () => {

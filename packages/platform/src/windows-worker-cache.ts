@@ -135,16 +135,32 @@ export function windowsWorkerInvocation(
   if (initializationFailed) throw initializationFailure;
   if (verifiedExecutable === undefined) {
     try {
-      // See #1159 — owner verification and native bootstrap consume one initialization allowance.
+      // Owner verification and native bootstrap each start a Windows
+      // PowerShell, which a cold host can take over ten seconds to load. They
+      // consume one initialization allowance rather than separate sub-limits.
       const started = performance.now();
       const budgetMs = Math.min(opts.timeoutMs ?? 30_000, 30_000);
+      // Phase durations name which step consumed the allowance when it runs
+      // out; they carry no command, path or output.
+      const phases: { owner?: number; bootstrap?: number } = {};
+      const timing = () =>
+        [
+          phases.owner === undefined ? undefined : `owner ${Math.round(phases.owner)} ms`,
+          phases.bootstrap === undefined
+            ? undefined
+            : `bootstrap ${Math.round(phases.bootstrap)} ms`,
+        ]
+          .concat(`${budgetMs} ms allowance`)
+          .filter(Boolean)
+          .join(", ");
       const remaining = () => {
         const elapsedMs = performance.now() - started;
         const remainingMs = Math.floor(budgetMs - elapsedMs);
         if (!Number.isFinite(remainingMs) || remainingMs <= 0 || elapsedMs < 0)
-          throw Object.assign(new Error("Windows native worker initialization timed out"), {
-            code: "ETIMEDOUT",
-          });
+          throw Object.assign(
+            new Error(`Windows native worker initialization timed out (${timing()})`),
+            { code: "ETIMEDOUT" },
+          );
         return remainingMs;
       };
       const root = cacheRoot();
@@ -158,13 +174,16 @@ export function windowsWorkerInvocation(
       // nested bootstrap can start. Normalize year-1 .NET ticks to FILETIME's
       // 1601 epoch with exact integers, never Date/Number rounding.
       let failure: WindowsProcessStartFailure | undefined;
-      const ticks = windowsWorkerOwnerStart(remaining(), (reason) => {
+      const ownerBudget = remaining();
+      const ownerStarted = performance.now();
+      const ticks = windowsWorkerOwnerStart(ownerBudget, (reason) => {
         failure = reason;
       });
+      phases.owner = performance.now() - ownerStarted;
       if (ticks === null || BigInt(ticks) <= DOTNET_TO_FILETIME_TICKS)
         throw new Error(
           "Cannot verify Windows native worker owner" +
-            (failure ? ` (EPRIVATE:owner-birth:${failure})` : ""),
+            (failure ? ` (EPRIVATE:owner-birth:${failure}; ${timing()})` : ""),
         );
       const ownerBirth = (BigInt(ticks) - DOTNET_TO_FILETIME_TICKS).toString();
       const program = Buffer.from(WINDOWS_CACHE_BOOTSTRAP_SCRIPT, "utf8");
@@ -183,22 +202,24 @@ export function windowsWorkerInvocation(
         }),
         "utf8",
       );
-      const result = bootstrap(
-        {
-          invocation: {
-            command: windowsPowerShellExecutable(),
-            args: [
-              "-NoLogo",
-              "-NoProfile",
-              "-NonInteractive",
-              "-EncodedCommand",
-              Buffer.from(LOAD_PROGRAM, "utf16le").toString("base64"),
-            ],
-          },
-          input: Buffer.concat([frame(program), frame(metadata), source, COMMIT]),
+      const request: WindowsBootstrapRequest = {
+        invocation: {
+          command: windowsPowerShellExecutable(),
+          args: [
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-EncodedCommand",
+            Buffer.from(LOAD_PROGRAM, "utf16le").toString("base64"),
+          ],
         },
-        remaining(),
-      );
+        input: Buffer.concat([frame(program), frame(metadata), source, COMMIT]),
+      };
+      // Framing is charged before deciding whether bootstrap may start.
+      const bootstrapBudget = remaining();
+      const bootstrapStarted = performance.now();
+      const result = bootstrap(request, bootstrapBudget);
+      phases.bootstrap = performance.now() - bootstrapStarted;
       if (
         Object.hasOwn(result, "cleanupFailure") ||
         result.failure ||
@@ -215,7 +236,13 @@ export function windowsWorkerInvocation(
           ?.slice(0, 5)
           .map((line) => line.trim())
           .join(", ");
-        const details = [diagnostic, compilation].filter(Boolean).join("; ");
+        const details = [
+          diagnostic,
+          compilation,
+          result.failure === "timeout" ? `timeout; ${timing()}` : undefined,
+        ]
+          .filter(Boolean)
+          .join("; ");
         const error = new Error(
           "Cannot initialize the protected Windows native worker" +
             (details ? ` (${details})` : ""),
