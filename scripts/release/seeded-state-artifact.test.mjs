@@ -30,6 +30,7 @@ import {
   readStorageTrimPage,
   applyStorageTrimPage,
 } from "../../packages/gateway/src/storage/trim-job-store.js";
+import { startHistoryCleanupJob } from "../../packages/gateway/src/storage/history-cleanup-store.js";
 import { LATEST_SCHEMA_VERSION } from "../../packages/gateway/src/data/schema-version.js";
 import { createTranscriptionVocabularyTables } from "../../packages/gateway/src/transcribe/vocabulary/storage.js";
 import { createSourceFilterListTables } from "../../packages/gateway/src/data/repositories/SourceFilterListRepository.js";
@@ -498,7 +499,12 @@ describe("seeded-state artifacts", () => {
       page: readStorageTrimPage(source, job),
       now: Date.parse("2026-01-01T00:00:01.000Z"),
     });
+    startHistoryCleanupJob(source, {
+      request: { target: "conversations", before: "2023-01-01T00:00:00.000Z" },
+      now: Date.parse("2026-01-01T00:00:00.000Z"),
+    });
     const operational = [
+      "storage_cleanup_jobs",
       "storage_retention_bindings",
       "storage_source_incarnations",
       "storage_trim_job_cascades",

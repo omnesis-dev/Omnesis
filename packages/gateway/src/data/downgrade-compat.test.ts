@@ -359,12 +359,12 @@ describe("a downgrade across migrations that leave cursors alone", () => {
  * flag.
  */
 describe("the cursor-compatibility version", () => {
-  // 224 adds source-filter policy and Answer-proof state, and 225 the records'
+  // 225 adds source-filter policy and Answer-proof state, and 226 the records'
   // filter rows. Neither changes sync_state ownership, body cursor meaning or
   // required resume state.
   /** Every migration through this version has been decided on. */
-  // Storage authority and trim cursors do not change provider sync-state interpretation.
-  const REVIEWED_THROUGH = 225;
+  // Storage cleanup authority does not change provider sync-state interpretation.
+  const REVIEWED_THROUGH = 226;
   const FLAGGED = [131, 133, 134, 139, 141, 146, 178];
 
   test("every migration has been decided on", () => {

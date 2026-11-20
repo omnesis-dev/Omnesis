@@ -95,6 +95,7 @@ import { createScopePolicyStore } from "../access/scope-policy-store.js";
 import { createDocumentFilterValueTables } from "../access/filter-values.js";
 import { createAnswerScopeSchema } from "../privacy/answer-scope-schema.js";
 import { addStorageAuthority } from "./migration-219-storage-authority.js";
+import { addHistoryCleanup } from "./migration-220-history-cleanup.js";
 import { migrateV152AccessGrants } from "./migration-152-access-grants.js";
 import { migrateV153AccessPolicyFamilies } from "./migration-153-access-policy-families.js";
 import { markLinkStatsDirty } from "./DirtyMarks.js";
@@ -154,8 +155,8 @@ import { addSourceAccountDescriptor } from "./migration-172-source-account.js";
 import { addPersonAliasAssertions } from "./migration-173-alias-assertions.js";
 import { namespaceWhatsappLids } from "./migration-174-lid-namespace.js";
 import { addSourceFamilyMeta } from "./migration-175-source-family-meta.js";
-import { addSourceVersionDeclarations } from "./migration-220-source-version-declarations.js";
-import { addSourceFilterLists } from "./migration-221-source-filter-lists.js";
+import { addSourceVersionDeclarations } from "./migration-221-source-version-declarations.js";
+import { addSourceFilterLists } from "./migration-222-source-filter-lists.js";
 import { addDocumentPartitionKey } from "./migration-176-document-partition-key.js";
 import { addSourceWireContracts } from "./migration-177-source-wire-contract.js";
 import { addPendingSourcePages } from "./migration-178-pending-source-pages.js";
@@ -166,8 +167,8 @@ import { addCredentialApprovedAudience } from "./migration-183-credential-approv
 import { indexDocumentsBySourceExternalId } from "./migration-187-documents-source-external-index.js";
 import { indexDocumentsBySourceCreatedRevision } from "./migration-208-documents-source-created-revision-index.js";
 import { addAnnotationRecheckQueuedAt } from "./migration-213-annotation-recheck-queued.js";
-import { addSourceVersion } from "./migration-222-source-version.js";
-import { addInventoryFullRead } from "./migration-223-inventory-full-read.js";
+import { addSourceVersion } from "./migration-223-source-version.js";
+import { addInventoryFullRead } from "./migration-224-inventory-full-read.js";
 import { addDeviceEnrollment } from "./migration-214-device-enrollment.js";
 import { indexDocumentsByIdAndType } from "./migration-216-documents-id-type-index.js";
 import { addStickyDeviceRevocation } from "./migration-217-sticky-revocation.js";
@@ -5027,21 +5028,26 @@ export const MIGRATIONS: readonly Migration[] = [
   },
   {
     version: 220,
+    description: "persist bounded history cleanup commands and restart authority",
+    up: addHistoryCleanup,
+  },
+  {
+    version: 221,
     description: "record the source version of each published profile and a source's resync cost",
     up: addSourceVersionDeclarations,
   },
   {
-    version: 221,
+    version: 222,
     description: "store the lists collectors publish for a source's filterable fields",
     up: addSourceFilterLists,
   },
   {
-    version: 222,
+    version: 223,
     description: "record the source version on every document, cursor row and inventory",
     up: addSourceVersion,
   },
   {
-    version: 223,
+    version: 224,
     description: "record when an enumeration had read everything its source holds",
     up: addInventoryFullRead,
   },
@@ -5049,7 +5055,7 @@ export const MIGRATIONS: readonly Migration[] = [
     // Saved source filters, with the triggers that keep a gateway built
     // before them from widening a filtered level, and what a filtered Answer
     // read, checked again before the answer is released. New tables only.
-    version: 224,
+    version: 225,
     description: "store saved source filters and what a filtered Answer read",
     up(db) {
       createScopePolicyStore(db);
@@ -5060,7 +5066,7 @@ export const MIGRATIONS: readonly Migration[] = [
     // New tables and triggers only. The rows of the records already stored
     // are cut by the background pass, a bounded batch at a time, so an
     // upgrade does not hold the writer for a read of every record.
-    version: 225,
+    version: 226,
     description: "keep the filter details of every record as indexed rows",
     up: createDocumentFilterValueTables,
   },

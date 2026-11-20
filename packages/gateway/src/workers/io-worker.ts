@@ -225,7 +225,12 @@ async function handleInit(init: IoInit): Promise<void> {
   }
 }
 
-function handleCall(id: number, op: string, args: unknown[], enqueueMs: number): void {
+async function handleCall(
+  id: number,
+  op: string,
+  args: unknown[],
+  enqueueMs: number,
+): Promise<void> {
   // Stamp dequeue immediately on entering the handler so queueMs reflects
   // the time the message actually waited in the worker's FIFO. Computed
   // even on early-return failure paths so the slow-log/metrics see a
@@ -286,7 +291,7 @@ function handleCall(id: number, op: string, args: unknown[], enqueueMs: number):
   }
   const cpuBefore = process.cpuUsage();
   try {
-    const value = handler(...args);
+    const value = await handler(...args);
     const execMs = Date.now() - dequeueMs;
     const cpuDelta = process.cpuUsage(cpuBefore);
     post({
@@ -316,6 +321,10 @@ function handleCall(id: number, op: string, args: unknown[], enqueueMs: number):
   }
 }
 
+// The pool admits one call per worker. Retain its completion independently of
+// message delivery so shutdown cannot close a connection beneath an async read.
+let currentCall: Promise<void> | null = null;
+
 async function handleShutdown(): Promise<void> {
   if (!state) {
     post({ type: "shutdownComplete" });
@@ -326,6 +335,7 @@ async function handleShutdown(): Promise<void> {
   state.shuttingDown = true;
 
   clearInterval(state.heartbeatInterval);
+  await currentCall?.catch(() => {});
   try {
     state.db.close();
   } catch {
@@ -356,9 +366,26 @@ parentPort.on("message", (msg: MainToIo) => {
     case "init":
       void handleInit(msg);
       break;
-    case "call":
-      handleCall(msg.id, msg.op, msg.args, msg.enqueueMs);
+    case "call": {
+      const call = (currentCall ?? Promise.resolve()).then(() =>
+        handleCall(msg.id, msg.op, msg.args, msg.enqueueMs),
+      );
+      currentCall = call;
+      void call.then(
+        () => {
+          if (currentCall === call) currentCall = null;
+        },
+        (error: unknown) => {
+          if (currentCall === call) currentCall = null;
+          log(
+            "error",
+            "io-worker",
+            `call transport failed: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        },
+      );
       break;
+    }
     case "shutdown":
       void handleShutdown();
       break;

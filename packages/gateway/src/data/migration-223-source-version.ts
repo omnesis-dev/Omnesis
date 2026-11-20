@@ -79,7 +79,7 @@ export function createDocumentFilterIndexQueue(db: Db): void {
 }
 
 /**
- * Migration 222 — every document records the version of the source that wrote
+ * Migration 223 — every document records the version of the source that wrote
  * it.
  *
  * A source declares a version of its own output, starting at 1 and only ever

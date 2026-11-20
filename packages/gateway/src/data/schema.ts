@@ -37,6 +37,7 @@ import { createSubscriptionTables } from "../subscriptions/store-schema.js";
 import { createTranscriptionVocabularyTables } from "../transcribe/vocabulary/storage.js";
 import { createDocumentFilterValueTables } from "../access/filter-values.js";
 import { addStorageAuthority } from "./migration-219-storage-authority.js";
+import { addHistoryCleanup } from "./migration-220-history-cleanup.js";
 import { REVOKED_DEVICE_KEYS_TABLE } from "./migration-217-sticky-revocation.js";
 import { DEVICE_ENROLLMENT_PUBLIC_KEY_INDEX } from "./migration-214-device-enrollment.js";
 import { createSourceInventoryTables } from "./repositories/SourceInventoryRepository.js";
@@ -48,7 +49,7 @@ import { indexDocumentsBySourceCreatedRevision } from "./migration-208-documents
 import {
   createDocumentFilterIndexQueue,
   createSourceVersionCounts,
-} from "./migration-222-source-version.js";
+} from "./migration-223-source-version.js";
 import { addPendingSourcePages } from "./migration-178-pending-source-pages.js";
 import { addSourceWireContracts } from "./migration-177-source-wire-contract.js";
 import { installCollectorRosterRevision, installMutableListRevisions } from "./list-revisions.js";
@@ -1552,6 +1553,7 @@ function runSchemaSetupInTxn(db: Db): void {
   createDevAnnotationsTables(db);
   createLabTable(db);
   addStorageAuthority(db);
+  addHistoryCleanup(db);
   db.exec(REVOKED_DEVICE_KEYS_TABLE);
   // Which agent conversations hold something the operator has not seen.
   createConversationReadStateTables(db);

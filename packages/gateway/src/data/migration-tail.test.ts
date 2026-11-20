@@ -91,19 +91,21 @@ const WOUND_BACK = [
   218,
   // 219 installs source identity markers, policy bindings and trim jobs, dropped by windBack.
   219,
-  // 220 adds a profile's source version, dropped by windBack, and a family's
-  // resync cost, on a table windBack drops whole.
+  // 220 stores background cleanup jobs, dropped by windBack.
   220,
-  // 221 creates the published filter lists; windBack drops them before replay.
+  // 221 adds a profile's source version, dropped by windBack, and a family's
+  // resync cost, on a table windBack drops whole.
   221,
-  // 222 adds the source version columns, their counts and the queue, which undoSourceVersion drops.
+  // 222 creates the published filter lists; windBack drops them before replay.
   222,
-  // 223 adds an enumeration's full-read time, which undoSourceVersion drops.
+  // 223 adds the source version columns, their counts and the queue, which undoSourceVersion drops.
   223,
-  // 224 source authority and Answer proofs are removed by undoSourceFilters.
+  // 224 adds an enumeration's full-read time, which undoSourceVersion drops.
   224,
-  // 225 creates the records' filter rows and their triggers, which undoFilterValues drops.
+  // 225 source authority and Answer proofs are removed by undoSourceFilters.
   225,
+  // 226 creates the records' filter rows and their triggers, which undoFilterValues drops.
+  226,
 ];
 
 let dir: string;
@@ -139,7 +141,7 @@ function sourceFilterObjects(db: Db): ScopeTailObject[] {
     .all();
 }
 
-/** Undo migration 224: its tables, and the triggers it put on the access tables. */
+/** Undo migration 225: its tables, and the triggers it put on the access tables. */
 function undoSourceFilters(db: Db): void {
   const objects = sourceFilterObjects(db);
   const foreignKeys = db.pragma("foreign_keys", { simple: true });
@@ -348,7 +350,7 @@ function undoStickyRevocation(db: Db): void {
   db.exec("ALTER TABLE device_pairings DROP COLUMN enrollment_sign_in_id");
 }
 
-/** Undo migrations 222 and 223: the source version columns, their running counts, the queue and the full-read time. */
+/** Undo migrations 223 and 224: the source version columns, their running counts, the queue and the full-read time. */
 function undoSourceVersion(db: Db): void {
   db.exec("DROP TABLE IF EXISTS document_filter_index_queue");
   for (const trigger of ["insert", "delete", "move"])
@@ -368,7 +370,7 @@ function undoSourceVersion(db: Db): void {
   }
 }
 
-/** Undo migration 225: the filter rows of every record, their counts, queue and triggers. */
+/** Undo migration 226: the filter rows of every record, their counts, queue and triggers. */
 function undoFilterValues(db: Db): void {
   for (const { name } of db
     .prepare<[], { name: string }>(
@@ -389,6 +391,7 @@ function windBack(db: Db): void {
   db.exec("DROP TABLE source_filter_items");
   db.exec("DROP TABLE source_filter_lists");
   db.exec("ALTER TABLE source_document_profiles DROP COLUMN output_revision");
+  db.exec("DROP TABLE storage_cleanup_jobs");
   db.exec("DROP TABLE storage_trim_job_cascades");
   db.exec("DROP TABLE storage_trim_jobs");
   db.exec("DROP TABLE storage_retention_bindings");
@@ -792,6 +795,9 @@ describe("an install several versions behind, upgrading", () => {
     seedOlderInstall((old) => {
       expect(sourceFilterObjects(old)).toEqual([]);
       expect(
+        old.prepare("SELECT name FROM sqlite_master WHERE name='storage_cleanup_jobs'").get(),
+      ).toBeUndefined();
+      expect(
         old.prepare("SELECT name FROM sqlite_master WHERE name='knowledge_nodes'").get(),
       ).toBeUndefined();
       expect(old.prepare("SELECT name FROM pragma_table_info('documents')").all()).not.toEqual(
@@ -818,6 +824,17 @@ describe("an install several versions behind, upgrading", () => {
         .all()
         .map((row) => row.version);
       expect(recorded).toEqual(TAIL_VERSIONS);
+      expect(db.prepare("SELECT COUNT(*) AS n FROM storage_cleanup_jobs").get()).toEqual({ n: 0 });
+      expect(
+        db
+          .prepare(
+            "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='storage_cleanup_jobs' AND name NOT LIKE 'sqlite_%' ORDER BY name",
+          )
+          .all(),
+      ).toEqual([
+        { name: "idx_storage_cleanup_active_target" },
+        { name: "idx_storage_cleanup_recent" },
+      ]);
       expect(
         db.prepare("SELECT name FROM sqlite_master WHERE name='knowledge_nodes'").get(),
       ).toEqual({ name: "knowledge_nodes" });

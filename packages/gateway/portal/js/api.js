@@ -1869,3 +1869,6 @@ export const setStoragePolicy = (policy) => request("PATCH", "/admin/storage/pol
 export const startStorageTrim = (sourceId, before) => request("POST", "/admin/storage/trim/jobs", { body: { sourceId, before } });
 export const setStorageRetention = (sourceId, maxAgeDays) => request("PATCH", "/admin/storage/retention", { body: { sourceId, maxAgeDays } });
 export const refreshStorage = () => request("POST", "/admin/storage/refresh", { body: {} });
+export const getStorageCleanupJobs = () => request("GET", "/admin/storage/cleanup/jobs", { cache: "no-store" });
+export const startStorageCleanup = (body) => request("POST", "/admin/storage/cleanup/jobs", { body });
+export const cancelStorageCleanup = (id) => request("POST", `/admin/storage/cleanup/jobs/${encodeURIComponent(id)}/cancel`, { body: {} });

@@ -9,6 +9,13 @@ import {
   type StorageRetentionBindingResult,
 } from "./storage/retention-bindings.js";
 import {
+  startHistoryCleanupJob,
+  updateHistoryCleanupJob,
+  cancelHistoryCleanupJob,
+  type StartHistoryCleanupJob,
+  type UpdateHistoryCleanupJob,
+} from "./storage/history-cleanup-store.js";
+import {
   startStorageTrimJob,
   applyStorageTrimPage,
   failStorageTrimJob,
@@ -63,11 +70,6 @@ import {
   type TaskCommand,
   type TaskCommandResult,
 } from "./brain/storage/tasks.js";
-import type {
-  ProposedTaskChange,
-  ObservationClaim,
-  ObservationScores,
-} from "./brain/storage/types.js";
 import type { ConversationEvidenceProjection } from "./sources/omnesis-chat/evidence-projection.js";
 import {
   assertPersonProfileReceipt,
@@ -825,6 +827,12 @@ export interface WriteGate extends KnowledgeWriteGate {
   bindStorageRetentionPolicy(
     input: BindStorageRetentionPolicyInput,
   ): Promise<StorageRetentionBindingResult>;
+  startHistoryCleanupJob(input: StartHistoryCleanupJob): Promise<StoredHistoryCleanupJob>;
+  updateHistoryCleanupJob(input: UpdateHistoryCleanupJob): Promise<StoredHistoryCleanupJob | null>;
+  cancelHistoryCleanupJob(input: {
+    id: string;
+    now: number;
+  }): Promise<StoredHistoryCleanupJob | null>;
   startStorageTrimJob(input: StartStorageTrimJob): Promise<StoredStorageTrimJob | null>;
   applyStorageTrimPage(input: ApplyStorageTrimPage): Promise<AppliedStorageTrimPage>;
   failStorageTrimJob(input: FailStorageTrimJob): Promise<StoredStorageTrimJob | null>;
@@ -2397,6 +2405,12 @@ import {
   type WriterOpName,
   type WriterReturn,
 } from "./scheduler/writer-handlers.js";
+import type {
+  ProposedTaskChange,
+  ObservationClaim,
+  ObservationScores,
+} from "./brain/storage/types.js";
+import type { StoredHistoryCleanupJob } from "./storage/history-cleanup-types.js";
 import type { KnowledgeCanonicalFence } from "./brain/knowledge/canonical-fence.js";
 import type { AccountDescriptor, SourceSyncMeta, SyncCursor } from "@omnesis/source-sdk";
 import type Database from "better-sqlite3";
@@ -2518,6 +2532,9 @@ export function writeGateFromCall(call: WriterCallFn): WriteGate {
     reconcileStorageRetentionBindings: (input) =>
       call("storage.reconcileRetentionBindings", [input]),
     bindStorageRetentionPolicy: (input) => call("storage.bindRetentionPolicy", [input]),
+    startHistoryCleanupJob: (input) => call("storage.startHistoryCleanup", [input]),
+    updateHistoryCleanupJob: (input) => call("storage.updateHistoryCleanup", [input]),
+    cancelHistoryCleanupJob: (input) => call("storage.cancelHistoryCleanup", [input]),
     startStorageTrimJob: (input) => call("storage.startTrimJob", [input]),
     applyStorageTrimPage: (input) => call("storage.applyTrimPage", [input]),
     failStorageTrimJob: (input) => call("storage.failTrimJob", [input]),
@@ -3117,6 +3134,9 @@ export function directWriteGate(db: Db): WriteGate {
     reconcileStorageRetentionBindings: async (input) =>
       reconcileStorageRetentionBindings(db, input),
     bindStorageRetentionPolicy: async (input) => bindStorageRetentionPolicy(db, input),
+    startHistoryCleanupJob: async (input) => startHistoryCleanupJob(db, input),
+    updateHistoryCleanupJob: async (input) => updateHistoryCleanupJob(db, input),
+    cancelHistoryCleanupJob: async (input) => cancelHistoryCleanupJob(db, input),
     startStorageTrimJob: async (input) => startStorageTrimJob(db, input),
     applyStorageTrimPage: async (input) => applyStorageTrimPage(db, input),
     failStorageTrimJob: async (input) => failStorageTrimJob(db, input),
