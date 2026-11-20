@@ -4,7 +4,6 @@
 /** The production entrypoint must keep serving the startup page while a real
  * SQLite writer lock prevents schema initialization, then hand the same URL
  * over to the authenticated portal without a second listener. */
-import { spawn, type ChildProcess } from "node:child_process";
 import { readFileSync, existsSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { request as httpsRequest } from "node:https";
@@ -18,9 +17,17 @@ import { createDatabase } from "@omnesis/gateway/src/db.js";
 import { createDevice } from "@omnesis/gateway/src/data/repositories/DeviceRepository.js";
 import { createToken } from "@omnesis/gateway/src/data/repositories/TokenRepository.js";
 import { LATEST_SCHEMA_VERSION } from "@omnesis/gateway/src/data/schema-version.js";
-import type { StartupSnapshot } from "@omnesis/gateway/src/startup/manager.js";
+import {
+  e2eApplicationStatus,
+  e2eProcessExit,
+  e2eProcessOutput,
+  requestE2EProcessShutdown,
+  spawnE2ESubprocess,
+} from "./e2e-owned-process.js";
 import { e2eGatewayEnv, e2eTsxCommand, gatewayBootBudgetMs } from "./gateway-env.js";
 import { killSubprocessGroup, registerSubprocessGroup } from "./subprocess-reaper.js";
+import type { StartupSnapshot } from "@omnesis/gateway/src/startup/manager.js";
+import type { ChildProcess } from "node:child_process";
 
 const ROOT = join(import.meta.dirname, "../../../..");
 const BOOT_BUDGET = gatewayBootBudgetMs();
@@ -128,10 +135,11 @@ async function launch(dir: string, requestedPort?: number): Promise<GatewayProce
     Object.entries(process.env).filter(([name]) => !name.startsWith("OMNESIS_")),
   );
   const command = e2eTsxCommand("packages/gateway/src/index.ts");
-  const child = spawn(command.command, command.args, {
+  const child = spawnE2ESubprocess(command.command, command.args, {
     cwd: ROOT,
     detached: true,
-    stdio: ["ignore", "pipe", "pipe"],
+    // The parent channel is how Windows, which has no catchable SIGTERM, asks for a stop.
+    stdio: ["ignore", "pipe", "pipe", "ipc"],
     env: e2eGatewayEnv({
       ...inherited,
       OMNESIS_CONFIG_DIR: dir,
@@ -146,17 +154,29 @@ async function launch(dir: string, requestedPort?: number): Promise<GatewayProce
       OMNESIS_LOG_LEVEL: "info",
     }),
   });
-  registerSubprocessGroup(child);
   let output = "";
-  child.stdout?.on("data", (chunk: Buffer) => (output += String(chunk)));
-  child.stderr?.on("data", (chunk: Buffer) => (output += String(chunk)));
-  const exited = new Promise<number | null>((resolve, reject) => {
-    child.once("close", resolve);
-    child.once("error", reject);
-  });
-  const gateway = { child, port, exited, output: () => output };
+  const gateway = { child, port, exited: e2eProcessExit(child), output: () => output };
   gateways.push(gateway);
+  // A launch that fails surfaces through the test's own wait or exit assertion.
+  gateway.exited.catch(() => {});
+  const streams = e2eProcessOutput(child);
+  streams.stdout?.on("data", (chunk: Buffer) => (output += String(chunk)));
+  streams.stderr?.on("data", (chunk: Buffer) => (output += String(chunk)));
+  await registerSubprocessGroup(child);
   return gateway;
+}
+
+/**
+ * Ask the gateway to stop the way its platform's supervisor does: SIGTERM to `posixTarget` on
+ * POSIX, the parent shutdown channel on Windows. Both run the gateway's one coordinated stop.
+ */
+async function requestStop(gateway: GatewayProcess, posixTarget: number): Promise<void> {
+  if (process.platform !== "win32") {
+    process.kill(posixTarget, "SIGTERM");
+    return;
+  }
+  if (!(await requestE2EProcessShutdown(gateway.child)))
+    throw new Error("The gateway's parent shutdown channel is unavailable");
 }
 
 async function waitFor<T>(
@@ -166,7 +186,8 @@ async function waitFor<T>(
 ): Promise<T> {
   const deadline = Date.now() + BOOT_BUDGET;
   while (Date.now() < deadline) {
-    if (gateway.child.exitCode !== null || gateway.child.signalCode !== null) {
+    const status = e2eApplicationStatus(gateway.child);
+    if (status.exitCode !== null || status.signalCode !== null) {
       throw new Error(`Gateway exited while waiting for ${label}:\n${gateway.output()}`);
     }
     try {
@@ -341,7 +362,7 @@ describe("gateway startup through its production entrypoint", () => {
   );
 
   test(
-    "SIGTERM during database initialization exits without leaving ownership or a live listener",
+    "a stop during database initialization exits without leaving ownership or a live listener",
     async () => {
       const world = await fixture({ gate: true });
       const gateway = await launch(world.dir);
@@ -350,7 +371,7 @@ describe("gateway startup through its production entrypoint", () => {
         pid: number;
       };
       // Signal the actual gateway, not its tsx wrapper or unrelated services.
-      process.kill(owner.pid, "SIGTERM");
+      await requestStop(gateway, owner.pid);
       expect(await gateway.exited).toBe(0);
       await expect(exchange(gateway.port, PROGRESS_PATH)).rejects.toThrow();
       world.release();
@@ -375,7 +396,7 @@ describe("gateway startup through its production entrypoint", () => {
     BOOT_BUDGET,
   );
   test(
-    "SIGTERM cancels ownership waiting without later claiming the directory",
+    "a stop cancels ownership waiting without later claiming the directory",
     async () => {
       const world = await fixture();
       const port = await freePort();
@@ -389,7 +410,7 @@ describe("gateway startup through its production entrypoint", () => {
         );
         // The test owns the first lease. Signal only the waiting process group,
         // whose bootstrap has not yet opened a listener or database handle.
-        process.kill(-gateway.child.pid!, "SIGTERM");
+        await requestStop(gateway, -gateway.child.pid!);
         expect(await gateway.exited).toBe(0);
         expect(gateway.output()).not.toContain("Startup page listening");
         expect(gateway.output()).not.toContain("Analytics DB opened");
