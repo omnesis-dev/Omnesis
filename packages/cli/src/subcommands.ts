@@ -163,6 +163,10 @@ export const COMMANDS: Readonly<Record<string, CommandEntry>> = {
     description: "Manage data sources (admin scope)",
     load: () => import("./commands/sources-group.js").then((m) => m.sourcesCommand),
   },
+  storage: {
+    description: "Inspect storage, manage limits and reclaim old data (admin scope)",
+    load: () => import("./commands/storage.js").then((m) => m.storageCommand),
+  },
   creds: {
     description: "Manage provider OAuth credentials",
     load: () => import("./commands/creds.js").then((m) => m.credsCommand),

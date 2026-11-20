@@ -44,6 +44,10 @@ export class StorageRetentionService {
     return this.trimJobs.jobs();
   }
 
+  job(id: string): StorageTrimJob | null {
+    return this.trimJobs.job(id);
+  }
+
   sweep(
     policyInput: readonly StorageRetentionPolicy[] | (() => readonly StorageRetentionPolicy[]),
   ): Promise<{ deleted: number; hasMore: boolean }> {

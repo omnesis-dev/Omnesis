@@ -25,6 +25,7 @@
 
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   readdirSync,
   readFileSync,
@@ -36,6 +37,12 @@ import {
 import { opendir, readFile, unlink } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import Sqlite from "better-sqlite3";
+import { fileIdentity } from "../agent/conversation-retention.js";
+import type {
+  HistoryCleanupCandidate,
+  HistoryCleanupPage,
+  HistoryCleanupOutcome,
+} from "../storage/history-cleanup-types.js";
 import type { AgentContextAssessment } from "@omnesis/core";
 import type { CognitionRunKind, CognitionRunUsage } from "./storage/types.js";
 
@@ -374,6 +381,79 @@ export class FsCognitionTranscriptStore {
         // Ref transitions are committed per file around its unlink.
       }
       return { deleted, hasMore: !indexComplete || !exhausted };
+    });
+  }
+
+  /** A manual command owns an indexed cursor independently of the automatic sweep. */
+  async cleanupPage(cutoff: number, cursor: string | null): Promise<HistoryCleanupPage> {
+    return this.withIndexOperation(async (): Promise<HistoryCleanupPage> => {
+      if (!(await this.advanceIndexBatch()))
+        return { cursor, scanned: 0, protectedReasons: {}, done: false, progressed: true };
+      const boundary = cursor
+        ? (JSON.parse(cursor) as { finishedAt: number; fileName: string })
+        : { finishedAt: -1, fileName: "" };
+      const row = this.index()
+        .prepare<[number, number, string], { file_name: string; finished_at: number }>(
+          `SELECT file_name,finished_at FROM transcript_refs WHERE state='committed' AND finished_at<?
+        AND (finished_at,file_name)>(?,?) ORDER BY finished_at,file_name LIMIT 1`,
+        )
+        .get(cutoff, boundary.finishedAt, boundary.fileName);
+      if (!row) return { cursor, scanned: 0, protectedReasons: {}, done: true };
+      const next = JSON.stringify({ finishedAt: row.finished_at, fileName: row.file_name });
+      try {
+        const st = lstatSync(join(this.dir, row.file_name), { bigint: true });
+        if (!st.isFile())
+          return { cursor: next, scanned: 1, protectedReasons: { unsafe: 1 }, done: false };
+        return {
+          cursor: next,
+          scanned: 1,
+          protectedReasons: {},
+          done: false,
+          candidate: {
+            id: row.file_name,
+            identity: fileIdentity(st),
+            bytesEstimate: Number(st.size),
+          },
+        };
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        this.removeIndexedRefs([row.file_name]);
+        return {
+          cursor: next,
+          scanned: 1,
+          protectedReasons: { "already-removed": 1 },
+          done: false,
+        };
+      }
+    });
+  }
+
+  /** Reuse the archive's durable deleting state; no yield separates identity validation and unlink. */
+  async cleanupRemove(
+    candidate: HistoryCleanupCandidate,
+    cutoff: number,
+  ): Promise<HistoryCleanupOutcome> {
+    return this.withIndexOperation(async () => {
+      const ref = parseRef(candidate.id);
+      if (!ref || ref.finishedAt >= cutoff) return { state: "protected", reason: "unsafe" };
+      try {
+        const st = lstatSync(join(this.dir, candidate.id), { bigint: true });
+        if (!st.isFile()) return { state: "protected", reason: "unsafe" };
+        if (fileIdentity(st) !== candidate.identity)
+          return { state: "protected", reason: "changed" };
+        this.markIndexedRefState(candidate.id, "deleting");
+        unlinkSync(join(this.dir, candidate.id));
+        this.removeIndexedRefs([candidate.id]);
+        return { state: "removed", bytesEstimate: candidate.bytesEstimate };
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+          this.removeIndexedRefs([candidate.id]);
+          return { state: "protected", reason: "already-removed" };
+        }
+        if (existsSync(join(this.dir, candidate.id)))
+          this.markIndexedRefState(candidate.id, "committed");
+        throw error;
+      }
     });
   }
 

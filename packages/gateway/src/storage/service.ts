@@ -24,6 +24,7 @@ import type { StoragePressureManager } from "./pressure.js";
 import type { StorageAccountingStatus } from "./accounting-status.js";
 
 export interface StorageServiceDeps {
+  historyCleanup?: import("./history-cleanup-service.js").HistoryCleanupService;
   pressure: StoragePressureManager;
   physical: () => DiskUsageSnapshot | null;
   logical: () => import("./accounting.js").StorageAccounting | null;
@@ -106,8 +107,35 @@ export class StorageService {
         ({ sourceId, maxAgeDays }) => ({ sourceId, maxAgeDays }),
       ),
       trimJobs: this.deps.retention.jobs(),
+      cleanupJobs: this.deps.historyCleanup?.jobs() ?? [],
       accounting: this.deps.accountingStatus?.() ?? null,
     };
+  }
+
+  cleanupJobs() {
+    return { jobs: this.requireHistoryCleanup().jobs() };
+  }
+
+  job(id: string) {
+    const trim = this.deps.retention.job(id);
+    if (trim) return { kind: "trim" as const, job: trim };
+    const cleanup = this.deps.historyCleanup?.job(id);
+    if (cleanup) return { kind: "cleanup" as const, job: cleanup };
+    throw new NotFoundError("Storage job not found");
+  }
+
+  async startCleanup(request: import("./history-cleanup-types.js").HistoryCleanupRequest) {
+    return { job: await this.requireHistoryCleanup().start(request) };
+  }
+
+  async cancelCleanup(id: string) {
+    return { job: await this.requireHistoryCleanup().cancel(id) };
+  }
+
+  private requireHistoryCleanup() {
+    if (!this.deps.historyCleanup)
+      throw new ServiceUnavailableError("History cleanup is unavailable");
+    return this.deps.historyCleanup;
   }
 
   async refresh() {

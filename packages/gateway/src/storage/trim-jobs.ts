@@ -92,6 +92,11 @@ export class StorageTrimJobs {
     return listStorageTrimJobs(this.deps.db, true).map(publicJob);
   }
 
+  job(id: string): StorageTrimJob | null {
+    const job = readStorageTrimJob(this.deps.db, id);
+    return job ? publicJob(job) : null;
+  }
+
   async startTrim(sourceId: string, before: string): Promise<StorageTrimJob> {
     SourceId(sourceId);
     const date = new Date(before);

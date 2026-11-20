@@ -69,9 +69,11 @@ import {
   type ListedBackup,
   type SecretStoreBackend,
 } from "@omnesis/core";
+import { backupCleanupAdapter } from "../../storage/history-cleanup-backups.js";
 import { GATEWAY_VERSION } from "../../version.js";
 import { ConflictError, InsufficientStorageError, ServiceUnavailableError } from "../errors.js";
 import { WATCH_JOURNAL_FILENAME } from "../../watch/journal-path.js";
+import type { HistoryCleanupAdapter } from "../../storage/history-cleanup-types.js";
 import type { BackupWorkerInput, BackupWorkerMessage } from "../../workers/backup-protocol.js";
 
 const log = createLogger("gateway:backup");
@@ -189,6 +191,22 @@ export interface BackupServiceOptions {
 }
 
 export class BackupService {
+  private cleanupBusy = false;
+  createCleanupAdapter(): HistoryCleanupAdapter {
+    return backupCleanupAdapter({
+      backupsDir: this.backupsDir,
+      exclusive: async (operation) => {
+        if (this.current || this.cleanupBusy) return { state: "pending" };
+        this.cleanupBusy = true;
+        try {
+          return await operation();
+        } finally {
+          this.cleanupBusy = false;
+        }
+      },
+    });
+  }
+
   private readonly backupsDir: string;
   private readonly statfs: NonNullable<BackupServiceOptions["statfs"]>;
   private readonly now: () => Date;
@@ -215,6 +233,10 @@ export class BackupService {
     backupId: string;
     estimatedTotalBytes: number;
   } {
+    if (this.cleanupBusy)
+      throw new ConflictError(
+        "A backup is being removed. Retry when cleanup finishes in Settings → Storage.",
+      );
     if (this.current) {
       throw new ConflictError("A backup is already running — poll GET /admin/backup/status");
     }

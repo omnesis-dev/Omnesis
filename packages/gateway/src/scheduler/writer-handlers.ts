@@ -28,6 +28,13 @@ import {
   type BindStorageRetentionPolicyInput,
 } from "../storage/retention-bindings.js";
 import {
+  startHistoryCleanupJob,
+  updateHistoryCleanupJob,
+  cancelHistoryCleanupJob,
+  type StartHistoryCleanupJob,
+  type UpdateHistoryCleanupJob,
+} from "../storage/history-cleanup-store.js";
+import {
   startStorageTrimJob,
   applyStorageTrimPage,
   failStorageTrimJob,
@@ -810,6 +817,12 @@ export const writerHandlers = {
     reconcileStorageRetentionBindings(db, input),
   "storage.bindRetentionPolicy": (db: Db, input: BindStorageRetentionPolicyInput) =>
     bindStorageRetentionPolicy(db, input),
+  "storage.startHistoryCleanup": (db: Db, input: StartHistoryCleanupJob) =>
+    startHistoryCleanupJob(db, input),
+  "storage.updateHistoryCleanup": (db: Db, input: UpdateHistoryCleanupJob) =>
+    updateHistoryCleanupJob(db, input),
+  "storage.cancelHistoryCleanup": (db: Db, input: { id: string; now: number }) =>
+    cancelHistoryCleanupJob(db, input),
   "storage.startTrimJob": (db: Db, input: StartStorageTrimJob) => startStorageTrimJob(db, input),
   "storage.applyTrimPage": (db: Db, input: ApplyStorageTrimPage) => applyStorageTrimPage(db, input),
   "storage.failTrimJob": (db: Db, input: FailStorageTrimJob) => failStorageTrimJob(db, input),

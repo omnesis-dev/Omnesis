@@ -9,10 +9,14 @@ import { createLogger, type AnthropicCatalogEntry, type Manifest } from "@omnesi
 import { AnthropicBackend, HttpAgentBackend, type ChatBackend } from "@omnesis/agent";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
+import { ProviderId, SourceId } from "@omnesis/types";
 import { InferenceRegistry } from "../inference/registry.js";
 import { Scheduler } from "../scheduler/scheduler.js";
 import { MainTaskRunner } from "../scheduler/runners/main.js";
 import { createBackendReprobeTask } from "../scheduler/tasks/backend-reprobe.js";
+import { createDatabase, upsertDocuments } from "../db.js";
+import { createIndexDatabase } from "../indexer/db.js";
+import { directWriteGate } from "../write-gate.js";
 import {
   AgentLifecycle,
   PRIVACY_STATE_SWEEP_INTERVAL_MS,
@@ -20,6 +24,7 @@ import {
   resolveRoleBackend,
   type AgentLifecycleDeps,
 } from "./agent-lifecycle.js";
+import { readConversationCleanupCandidates } from "./conversation-retention.js";
 import { FsConversationStore } from "./conversation-store.js";
 import type { ResolvedSpecialist } from "./subagent-service.js";
 import type { OmnesisConfig } from "@omnesis/config";
@@ -136,6 +141,156 @@ describe("AgentLifecycle", () => {
       expirePrivacyApprovals,
     };
   }
+
+  test("manual cleanup resumes a bounded corpus/index cascade with the agent disabled", async () => {
+    const db = createDatabase(":memory:");
+    const indexDb = createIndexDatabase(":memory:");
+    const writeGate = directWriteGate(db);
+    const conversationStore = new FsConversationStore(join(configDir, "conversations"));
+    const record = {
+      id: "invented-pending",
+      callerId: "device:example",
+      model: "scripted",
+      backend: "scripted",
+      createdAt: "2030-01-01T00:00:00.000Z",
+      updatedAt: "2030-01-01T00:00:00.000Z",
+      title: "Invented history",
+      pinned: false,
+      messages: [],
+    };
+    await conversationStore.save(record);
+    upsertDocuments(db, [
+      {
+        providerId: ProviderId("system"),
+        sourceId: SourceId("omnesis-chat"),
+        externalId: record.id,
+        title: record.title,
+        content: "Invented conversation evidence",
+        contentHash: "invented",
+        metadata: {},
+        sourceCreatedAt: record.createdAt,
+        sourceUpdatedAt: record.updatedAt,
+      },
+    ]);
+    const docId = (
+      db.prepare("SELECT id FROM documents WHERE external_id=?").get(record.id) as { id: string }
+    ).id;
+    const insert = indexDb.prepare(
+      "INSERT INTO chunks(id,document_id,chunk_index,content,source_id,title,source_created_at) VALUES(?,?,?,'Invented history','omnesis-chat','Invented history','2030-01-01T00:00:00Z')",
+    );
+    for (let i = 0; i < 130; i++) insert.run("invented-chunk-" + i, docId, i);
+    const inspected = (
+      await readConversationCleanupCandidates(
+        [{ id: record.id, path: join(configDir, "conversations", record.id + ".json") }],
+        Date.parse("2032-01-01T00:00:00Z"),
+      )
+    )[0]!;
+    const candidate = {
+      id: record.id,
+      identity: inspected.candidate!.fileIdentity,
+      bytesEstimate: inspected.bytesEstimate,
+      detail: record.updatedAt,
+    };
+    const overrides = { db, indexDb, writeGate, conversationStore };
+    const first = makeLifecycle(disabledConfig(), overrides).lifecycle;
+    let recovered: AgentLifecycle | undefined;
+    try {
+      await first.bootAgent();
+      expect(first.routeDeps.agentService).toBeUndefined();
+      expect(
+        await first.cleanupConversation(candidate, Date.parse("2032-01-01T00:00:00Z")),
+      ).toEqual({ state: "pending" });
+      expect(await conversationStore.load(record.id)).not.toBeNull();
+      expect(
+        (indexDb.prepare("SELECT COUNT(*) AS n FROM chunks").get() as { n: number }).n,
+      ).toBeLessThan(130);
+      const remaining = indexDb.prepare("SELECT COUNT(*) AS n FROM chunks").get();
+      expect(await first.pruneConversations(Date.parse("2032-01-01T00:00:00Z"), 10)).toMatchObject({
+        deleted: 0,
+      });
+      expect(indexDb.prepare("SELECT COUNT(*) AS n FROM chunks").get()).toEqual(remaining);
+      expect(await conversationStore.load(record.id)).not.toBeNull();
+      await first.shutdown();
+      recovered = makeLifecycle(disabledConfig(), overrides).lifecycle;
+      expect(recovered.reserveHistoryCleanup(record.id)).toBe(true);
+      await recovered.bootAgent();
+      let result;
+      for (let n = 0; n < 10; n++) {
+        result = await recovered.cleanupConversation(candidate, Date.parse("2032-01-01T00:00:00Z"));
+        if (result.state !== "pending") break;
+      }
+      expect(result?.state).toBe("removed");
+      expect(db.prepare("SELECT id FROM documents WHERE id=?").get(docId)).toBeUndefined();
+      expect(indexDb.prepare("SELECT COUNT(*) AS n FROM chunks").get()).toEqual({ n: 0 });
+      expect(await conversationStore.load(record.id)).toBeNull();
+      recovered.releaseHistoryCleanup(record.id);
+    } finally {
+      await first.shutdown();
+      await recovered?.shutdown();
+      await conversationStore.close();
+      indexDb.close();
+      db.close();
+    }
+  });
+
+  test("recovered history ownership precedes boot admission and survives a model rebuild", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (_input, init) => {
+      expect(init?.method ?? "GET").toBe("GET");
+      return new Response(JSON.stringify({ data: [{ id: "example-model" }] }), { status: 200 });
+    };
+    const db = createDatabase(":memory:");
+    const indexDb = createIndexDatabase(":memory:");
+    const writeGate = directWriteGate(db);
+    const conversationStore = new FsConversationStore(join(configDir, "conversations"));
+    await conversationStore.save({
+      id: "invented-owner",
+      callerId: "device:example",
+      model: "scripted",
+      backend: "scripted",
+      createdAt: "2030-01-01T00:00:00.000Z",
+      updatedAt: "2030-01-01T00:00:00.000Z",
+      title: "Invented pending history",
+      pinned: false,
+      messages: [],
+    });
+    const { lifecycle, registry } = makeLifecycle(httpAgentConfig(), {
+      db,
+      indexDb,
+      writeGate,
+      conversationStore,
+    });
+    try {
+      expect(lifecycle.reserveHistoryCleanup("invented-owner")).toBe(true);
+      await registry.probeBackends();
+      await lifecycle.bootAgent();
+      const first = lifecycle.routeDeps.agentService!;
+      expect(first).toBeDefined();
+      await expect(
+        first.createSession("device:example", { resumeFromId: "invented-owner" }),
+      ).rejects.toMatchObject({ code: "session_busy" });
+      await expect(first.setConversationPinned("invented-owner", true)).rejects.toMatchObject({
+        code: "session_busy",
+      });
+      await lifecycle.applyAgentSwap();
+      const second = lifecycle.routeDeps.agentService!;
+      expect(second).not.toBe(first);
+      await expect(
+        second.createSession("device:example", { resumeFromId: "invented-owner" }),
+      ).rejects.toMatchObject({ code: "session_busy" });
+      await expect(second.setConversationPinned("invented-owner", true)).rejects.toMatchObject({
+        code: "session_busy",
+      });
+      lifecycle.releaseHistoryCleanup("invented-owner");
+      expect(await second.setConversationPinned("invented-owner", true)).toBe(true);
+    } finally {
+      globalThis.fetch = originalFetch;
+      await lifecycle.shutdown();
+      await conversationStore.close();
+      indexDb.close();
+      db.close();
+    }
+  });
 
   test("a captured note has its own complete tool runtime without an interactive assignment", async () => {
     const { lifecycle, attach } = makeLifecycle();
