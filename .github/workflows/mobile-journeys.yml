@@ -144,10 +144,14 @@ jobs:
           key: ios-packages-${{ runner.os }}-${{ hashFiles('ios/project.yml') }}
 
       - name: lane [ios-journeys]
+        # A step's processes run at utility QoS, beneath the simulator's, and
+        # the synthetic gateway then waits up to a minute for a core while
+        # the app's request times out. As an Interactive launchd job, the lane
+        # and the gateway it starts run at the simulator's own priority.
         env:
           OMNESIS_JOURNEY_ARTIFACTS: ${{ runner.temp }}/mobile-journeys
           OMNESIS_CONFIG_DIR: ${{ runner.temp }}/mobile-journeys-gateway
-        run: scripts/run-mobile-journeys.sh ios
+        run: scripts/ci/macos-interactive-job.sh scripts/run-mobile-journeys.sh ios
 
       - name: Upload journey artifacts
         # The screen recording, xcresult bundle (screenshots of every failure),
