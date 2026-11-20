@@ -15,6 +15,7 @@ import { once } from "node:events";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { hostedGatewayHostname } from "@omnesis/cloud-relay";
 import { runRelayCommand } from "@omnesis/cloud-relay/runtime";
 import { localAcmeAuthority } from "../../../cloud-relay/test/acme-authority.js";
 import { brokerCall, brokerOwner } from "../../../cloud-relay/test/dns-broker-owner.js";
@@ -132,11 +133,13 @@ describe.skipIf(!browserReady)("gateway names at the DNS broker", () => {
         await page.locator("nav.sidebar-nav").waitFor({ timeout: 30_000 });
         await page.goto(`${fresh.gatewayUrl}/portal/settings/account`);
         await page.getByRole("button", { name: "Create an account", exact: true }).click();
-        await expectText(page, "Sign in to your Omnesis account", 30_000);
+        await expectText(page, "Create your Omnesis account", 30_000);
         const waiting = await fresh.gatewayJson<
           CloudRelayStatus & { hostname?: string; gatewayId?: string }
         >("/admin/cloud-relay");
-        hostname = waiting.hostname;
+        // Offered nowhere before the relay registers the gateway; derived from its id here.
+        expect(waiting.hostname).toBeUndefined();
+        hostname = hostedGatewayHostname(waiting.gatewayId!, RELAY_DOMAIN);
         expect(hostname).toMatch(/^g-[a-z2-7]{8}\.relay\.example\.test$/);
 
         // The relay has now seen the gateway's id. With a key of its own it races for the name

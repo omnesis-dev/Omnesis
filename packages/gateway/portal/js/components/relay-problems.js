@@ -31,6 +31,7 @@ function reported(status) {
 export function relayProblems(status, phase) {
   const inHeadline = {
     failed: ["connect", "registration"],
+    unfinished: ["connect", "registration"],
     disconnected: ["tunnel"],
     unavailable: ["service"],
   }[phase];

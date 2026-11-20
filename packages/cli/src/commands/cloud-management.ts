@@ -23,6 +23,8 @@ const DONE = {
     "Remote access is off. This gateway keeps its address and stays in your Omnesis account.",
   reconnect: "Reconnecting remote access.",
   renew: "Certificate renewal started. Run `omnesis cloud status` in a minute to see the result.",
+  "start-over":
+    "The unfinished connection is discarded. This gateway is as if it had never connected: `omnesis cloud connect` starts from scratch.",
   "account/unlink":
     "This gateway is unlinked from your Omnesis account. It can no longer be reached from outside your home network, and devices can no longer join by signing in. Devices already paired keep working on your home network.",
   enrollment: "",
@@ -97,14 +99,19 @@ export async function listTrustedSignIns(): Promise<void> {
 
 interface ConnectStatus {
   config?: { acmeTermsUrl?: string };
+  account?: { linked?: boolean };
+  publicOrigin?: string;
+  publicMcp?: { url?: string };
   connect?: {
     state: "idle" | "waiting" | "registering" | "linking" | "done" | "failed";
+    step?: "registering" | "certificate" | "tunnel";
     verification?: { url: string; expiresAt: number };
     connectUrl?: string;
     connectShortUrl?: string;
     code?: string;
     expiresAt?: number;
     error?: string;
+    existingAccount?: boolean;
   };
   deviceEnrollment?: { policy: "automatic" | "ask" };
   signup?: CloudStatus["signup"];
@@ -119,46 +126,117 @@ async function ask(question: string): Promise<string> {
   }
 }
 
-/** One sign-in does what configure, enable and account linking otherwise do separately. */
+const ALREADY_LINKED =
+  "This gateway is already connected to an Omnesis account. To connect it to another, run `omnesis cloud unlink` first.";
+const CHOOSE_ACCOUNT =
+  "Choose how to connect: pass --existing to sign in to an Omnesis account you already have, or --invite '<link>' to create one with the invite link you were sent.";
+const EXISTING_ACCOUNT =
+  "You already had an Omnesis account, so this gateway is now linked to it. Your invite wasn't used.";
+
+/** The one line on the certificate authority's terms, when the gateway names them. */
+export function termsLine(status: { config?: { acmeTermsUrl?: string } }): string | undefined {
+  const url = httpsAddress(status.config?.acmeTermsUrl);
+  return url
+    ? `By connecting, you agree to Let's Encrypt's Subscriber Agreement: ${url}`
+    : undefined;
+}
+
+/** A printable HTTPS address from the gateway's status, or undefined. */
+function httpsAddress(value: unknown): string | undefined {
+  if (typeof value !== "string" || value.length > 2048 || /[^\x21-\x7e]/.test(value))
+    return undefined;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && !url.username && !url.password ? url.href : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The line for the step the gateway is on now, or undefined when it has none of its own. Steps
+ * an older gateway doesn't name are announced once, by their state.
+ */
+function progressLine(
+  status: ConnectStatus,
+  letsEncrypt: boolean,
+): [key: string, line: string] | undefined {
+  const connect = status.connect;
+  if (connect?.state === "registering") {
+    if (connect.step === "certificate")
+      return [
+        "certificate",
+        letsEncrypt
+          ? "Getting this gateway's certificate from Let's Encrypt. This usually takes under a minute…"
+          : "Getting this gateway's certificate. This usually takes under a minute…",
+      ];
+    if (connect.step === "tunnel") return ["tunnel", "Opening the connection…"];
+    return ["registering", "Registering this gateway with the Omnesis relay…"];
+  }
+  if (connect?.state === "linking")
+    return ["linking", "Linking this gateway to your Omnesis account…"];
+  return undefined;
+}
+
+/**
+ * One sign-in does what configure, enable and account linking otherwise do separately. Every
+ * question has a flag, so a script runs it unattended: `existing` signs in to an account the
+ * owner has, `invite` creates one with it. Connecting accepts the certificate terms it prints.
+ */
 export async function connectGateway(options: {
-  acceptTerms: boolean;
   policy?: "automatic" | "ask";
   /** An invite link or code: the person is creating a new Omnesis account with it. */
   invite?: string;
+  /** The person signs in to an Omnesis account they already have. */
+  existing?: boolean;
 }): Promise<void> {
   const { gatewayJson } = await import("../utils.js");
-  const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
-  if (!options.acceptTerms) {
-    if (!interactive)
-      throw new CliError(
-        "Pass --accept-terms to accept the certificate provider's terms",
-        EXIT_USER_ERROR,
-      );
-    process.stdout.write(
-      "Connecting issues a public certificate for this gateway from Let's Encrypt.\nTerms: https://letsencrypt.org/repository/\n",
+  if (options.invite && options.existing)
+    throw new CliError(
+      "Pass --existing or --invite, not both: an invite only creates a new account.",
+      EXIT_USER_ERROR,
     );
-    if (!["", "y", "yes"].includes(await ask("Accept the terms and continue? [Y/n] ")))
-      throw new CliError("Connection cancelled", EXIT_USER_ERROR);
+  const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
+  if (!options.invite && !options.existing && !interactive)
+    throw new CliError(CHOOSE_ACCOUNT, EXIT_USER_ERROR);
+  const read = () => gatewayJson<ConnectStatus>("/admin/cloud-relay?signup=1");
+  let status = await read();
+  if (status.account?.linked) throw new CliError(ALREADY_LINKED, EXIT_USER_ERROR);
+  let intent: "create" | "existing" = options.invite ? "create" : "existing";
+  if (!options.invite && !options.existing) {
+    const answer = await ask("Do you already have an Omnesis account? [y/N] ");
+    if (!["y", "yes"].includes(answer)) {
+      // The gateway has had the time the question took to learn whether accounts need an invite.
+      status = await read();
+      if (signupInviteOnly(status)) throw new CliError(INVITE_ONLY_LINE, EXIT_USER_ERROR);
+      intent = "create";
+    }
   }
-  let status: ConnectStatus;
+  const terms = termsLine(status);
+  if (terms) process.stdout.write(`${terms}\n`);
   try {
     status = (await gatewayJson("/admin/cloud-relay/connect", {
       method: "POST",
       body: JSON.stringify({
         termsAccepted: true,
-        ...(options.invite ? { intent: "create", invite: options.invite } : {}),
+        intent,
+        ...(options.invite ? { invite: options.invite } : {}),
       }),
     })) as ConnectStatus;
   } catch (error) {
     // The gateway checks the invite with the relay before anything else, and names a refusal.
     const refusal = Object.keys(INVITE_ERRORS).find((code) => String(error).includes(code));
     if (refusal) throw new CliError(INVITE_ERRORS[refusal]!.trim(), EXIT_USER_ERROR);
+    if (String(error).includes("already-connected"))
+      throw new CliError(ALREADY_LINKED, EXIT_USER_ERROR);
     throw error;
   }
   let announced = false;
+  let signedIn = false;
   let verificationAnnounced: string | undefined;
+  let step: string | undefined;
   // The gateway learns from its relay whether new accounts need an invite; said once, when it knows.
-  let inviteOnlyShown = Boolean(options.invite);
+  let inviteOnlyShown = Boolean(options.invite) || intent === "existing";
   while (status.connect && !["done", "failed", "idle"].includes(status.connect.state)) {
     if (status.connect.verification) {
       const url = dnsVerificationUrl(status.connect.verification.url);
@@ -174,15 +252,24 @@ export async function connectGateway(options: {
     if (status.connect.state === "waiting" && !announced && status.connect.connectUrl) {
       announced = true;
       process.stdout.write(
-        `\nOn any device, visit ${status.connect.connectShortUrl ?? status.connect.connectUrl}\nand enter ${status.connect.code}\n\nWaiting for you to sign in to your Omnesis account…\n`,
+        `\nOn any device, visit ${status.connect.connectShortUrl ?? status.connect.connectUrl}\nand enter ${status.connect.code}\n\n${intent === "create" ? "Waiting for you to create your Omnesis account…" : "Waiting for you to sign in to your Omnesis account…"}\n`,
       );
+    }
+    if (status.connect.state !== "waiting" && !signedIn) {
+      signedIn = true;
+      process.stdout.write("Signed in.\n");
+    }
+    const progress = progressLine(status, Boolean(terms));
+    if (progress && progress[0] !== step) {
+      step = progress[0];
+      process.stdout.write(`${progress[1]}\n`);
     }
     if (!inviteOnlyShown && signupInviteOnly(status)) {
       inviteOnlyShown = true;
       process.stdout.write(`${INVITE_ONLY_LINE}\n`);
     }
     await delay(2000);
-    status = (await gatewayJson("/admin/cloud-relay?signup=1")) as ConnectStatus;
+    status = await read();
   }
   if (status.connect?.state !== "done") {
     const error = status.connect?.error;
@@ -191,7 +278,17 @@ export async function connectGateway(options: {
       EXIT_USER_ERROR,
     );
   }
+  // A sign-in that finished between two looks still says it was seen.
+  if (announced && !signedIn) process.stdout.write("Signed in.\n");
   process.stdout.write("Connected to your Omnesis account.\n");
+  if (status.connect.existingAccount) process.stdout.write(`${EXISTING_ACCOUNT}\n`);
+  const origin = httpsAddress(status.publicOrigin);
+  if (origin) {
+    const mcp = httpsAddress(status.publicMcp?.url) ?? new URL("/mcp", origin).href;
+    process.stdout.write(
+      `\n  Address: ${origin.replace(/\/$/, "")}\n  Portal:  ${new URL("/portal/", origin).href}\n  MCP:     ${mcp}\n\n`,
+    );
+  }
   // Joining automatically is the gateway's default; a flag is the owner's own choice to change it.
   const current = status.deviceEnrollment?.policy;
   const policy = options.policy ?? current;
@@ -208,6 +305,20 @@ export async function connectGateway(options: {
   );
 }
 
+const START_OVER_REFUSED =
+  "This gateway has connected to the Omnesis relay, so there is no unfinished connection to discard. To leave your Omnesis account, run `omnesis cloud unlink`.";
+
+/** Discards a connection that never finished, then prints the status that resulted. */
+export async function startOver(): Promise<void> {
+  try {
+    await manageCloud("start-over");
+  } catch (error) {
+    if (String(error).includes("already-connected"))
+      throw new CliError(START_OVER_REFUSED, EXIT_USER_ERROR);
+    throw error;
+  }
+}
+
 const INVITE_ERRORS: Record<string, string> = {
   "invite-invalid": " The invite isn't valid: check that you copied the whole link.",
   "invite-expired": " The invite has expired: ask for a new one.",
@@ -218,10 +329,24 @@ export const cloudManagementCommands = {
   connect: defineCommand({
     meta: {
       name: "connect",
-      description: "Connect this gateway to your Omnesis account with one sign-in",
+      description:
+        "Connect this gateway to your Omnesis account with one sign-in. Without a terminal, pass --existing or --invite",
     },
     args: {
-      "accept-terms": { type: "boolean", default: false },
+      existing: {
+        type: "boolean",
+        default: false,
+        description: "Sign in to an Omnesis account you already have, without asking",
+      },
+      invite: {
+        type: "string",
+        description: "The invite link you were sent, to create a new Omnesis account",
+      },
+      "accept-terms": {
+        type: "boolean",
+        default: false,
+        description: "Accepted by connecting; kept so existing scripts keep working",
+      },
       "ask-first": {
         type: "boolean",
         default: false,
@@ -232,21 +357,25 @@ export const cloudManagementCommands = {
         default: false,
         description: "Let new devices join when you sign in to your Omnesis account (the default)",
       },
-      invite: {
-        type: "string",
-        description: "The invite link you were sent, to create a new Omnesis account",
-      },
     },
     run: ({ args }) =>
       connectGateway({
-        acceptTerms: args["accept-terms"],
         ...(args.invite ? { invite: args.invite } : {}),
+        ...(args.existing ? { existing: true } : {}),
         ...(args["ask-first"]
           ? { policy: "ask" as const }
           : args.automatic
             ? { policy: "automatic" as const }
             : {}),
       }),
+  }),
+  "start-over": defineCommand({
+    meta: {
+      name: "start-over",
+      description:
+        "Discard a connection that never finished: its reserved address, gateway ID and keys. Refused once the gateway has connected",
+    },
+    run: () => startOver(),
   }),
   status: defineCommand({
     meta: {

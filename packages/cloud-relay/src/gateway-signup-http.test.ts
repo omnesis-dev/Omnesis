@@ -40,6 +40,8 @@ import { InviteVerifier, invitePublicKeyValue, signInvite } from "./invites.js";
 import type Database from "better-sqlite3";
 import type { SignupConfiguration } from "./gateway-signup.js";
 
+/** What a gateway that understands `accountCreated` sends with its poll. */
+const CREATION_FEATURE = { "omnesis-signup-features": "account-created" };
 const origin = "https://relay.example.test",
   opaque = () => randomBytes(32).toString("base64url"),
   cleanup: (() => Promise<void>)[] = [],
@@ -399,7 +401,9 @@ test("an invited Google sign-up creates an account and connects, and its digest 
   expect(f.verify).toHaveBeenCalledWith(f.idToken, signIn.nonce);
   const signedIn = `${op.cookie}; ${signIn.cookie}`;
   expect((await f.api("continue", op.query, signedIn)).status).toBe(200);
-  const polled = await (await f.post("poll", op.redemption)).json();
+  // A gateway that asks is told this sign-in created the account.
+  const polled = await (await f.post("poll", op.redemption, CREATION_FEATURE)).json();
+  expect(polled.accountCreated).toBe(true);
   expect(polled.signInProof).toEqual({
     type: "google",
     idToken: f.idToken,
@@ -434,6 +438,21 @@ test("an invited Google sign-up creates an account and connects, and its digest 
   expect(await reused.response.json()).toEqual({ error: "invite-used" });
   const checked = await f.post("invite", { invite: value });
   expect(await checked.json()).toEqual({ status: "used" });
+  // Choosing to create again with a new invite, the same sign-in finds its account instead:
+  // the gateway is told so, and the new invite stays unused.
+  const unused = invite(),
+    again = await f.launched("create", unused);
+  const signInAgain = await f.google(again);
+  expect(
+    (await f.api("continue", again.query, `${again.cookie}; ${signInAgain.cookie}`)).status,
+  ).toBe(200);
+  expect(await (await f.post("poll", again.redemption, CREATION_FEATURE)).json()).toMatchObject({
+    status: "approved",
+    accountCreated: false,
+  });
+  expect(await (await f.post("invite", { invite: unused })).json()).toMatchObject({
+    status: "valid",
+  });
 });
 
 test("after deleting their account a person needs a new invite to create another", async () => {

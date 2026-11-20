@@ -27,7 +27,14 @@ const status: CloudRelayManagementStatus = {
   certificate: { state: "unconfigured" },
   publicMcp: { ready: false },
   google: { configured: false },
-  can: { configure: true, enable: false, disable: false, reconnect: false, renew: false },
+  can: {
+    configure: true,
+    enable: false,
+    disable: false,
+    reconnect: false,
+    renew: false,
+    startOver: false,
+  },
 };
 const bearer: AuthContext = {
   authMethod: "bearer",
@@ -416,6 +423,32 @@ test("connecting by sign-in, its cancellation, the enrollment policy and trusted
   ).toBe(403);
 });
 
+test("starting over reaches the service with an empty body and passes its refusal on", async () => {
+  service.startOver = vi.fn().mockResolvedValue(status);
+  const router = app();
+  expect((await router.request("/admin/cloud-relay/start-over", post({ x: 1 }))).status).toBe(400);
+  expect(service.startOver).not.toHaveBeenCalled();
+  expect((await router.request("/admin/cloud-relay/start-over", post())).status).toBe(200);
+  expect(service.startOver).toHaveBeenCalledOnce();
+  vi.mocked(service.startOver).mockRejectedValueOnce(
+    new CloudRelayManagementFailure(409, "already-connected"),
+  );
+  const refused = await router.request("/admin/cloud-relay/start-over", post());
+  expect(refused.status).toBe(409);
+  expect(await refused.json()).toEqual({
+    error: "Relay operation was refused.",
+    code: "already-connected",
+  });
+  expect(
+    (
+      await app({ ...bearer, scopes: [SCOPE_READ] }).request(
+        "/admin/cloud-relay/start-over",
+        post(),
+      )
+    ).status,
+  ).toBe(403);
+});
+
 test("removing a sign-in can also revoke the devices that joined with it, only after the sign-in is gone", async () => {
   const order: string[] = [];
   service.removeTrustedSignIn = vi.fn(async (id: string) => {
@@ -471,6 +504,7 @@ test("sign-in connection controls are explicitly unavailable when the service ha
   for (const [path, init] of [
     ["/admin/cloud-relay/connect", post({ termsAccepted: true })],
     ["/admin/cloud-relay/connect/cancel", post()],
+    ["/admin/cloud-relay/start-over", post()],
     ["/admin/cloud-relay/enrollment", { ...post({ policy: "ask" }), method: "PUT" }],
     ["/admin/cloud-relay/trusted-sign-ins/fictional-pin", { method: "DELETE" }],
     ["/admin/cloud-relay/passkeys/confirm/options", post()],

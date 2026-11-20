@@ -386,13 +386,17 @@ test("normal configure uses the gateway installation service without a relay arg
     body: JSON.stringify({ termsAccepted: false }),
   });
 });
-
-/** Replies to the connect POST, then to each status poll, in order. */
-function gatewayReplies(...polls: unknown[]) {
+/** Replies to the status reads and the connect POST, in the order the command makes them. */
+function gatewayReplies(...replies: unknown[]) {
   gatewayJson.mockImplementation(async (path: string) =>
-    path === "/admin/cloud-relay?signup=1" || path.endsWith("/connect") ? polls.shift() : {},
+    path === "/admin/cloud-relay?signup=1" || path.endsWith("/connect") ? replies.shift() : {},
   );
 }
+/** What a gateway that never connected reports before connecting starts. */
+const ready = {
+  config: { acmeTermsUrl: "https://letsencrypt.org/repository/" },
+  account: { linked: false },
+};
 const waiting = {
   connect: {
     state: "waiting",
@@ -401,183 +405,283 @@ const waiting = {
   },
 };
 // What a freshly linked gateway reports: nothing was chosen, so new devices join automatically.
-const done = { connect: { state: "done" }, deviceEnrollment: { policy: "automatic" } };
+const done = {
+  connect: { state: "done" },
+  deviceEnrollment: { policy: "automatic" },
+  publicOrigin: "https://g-fictional.relay.example.test",
+  publicMcp: { url: "https://g-fictional.relay.example.test/mcp" },
+};
 const paths = () => gatewayJson.mock.calls.map(([path]) => path);
+const connectBody = () =>
+  JSON.parse(
+    String(
+      (
+        gatewayJson.mock.calls.find(([path]) => path === "/admin/cloud-relay/connect")![1] as {
+          body: string;
+        }
+      ).body,
+    ),
+  ) as unknown;
+const printed = (output: { mock: { calls: unknown[][] } }) =>
+  output.mock.calls.map(([value]) => String(value)).join("");
 
-test("connect needs accepted terms without a terminal, and refuses before any gateway call", async () => {
+test("without a terminal, connect needs --existing or --invite and contacts no gateway without one", async () => {
   terminal(false);
-  await expect(runCommand(cloudManagementCommands.connect, { rawArgs: [] })).rejects.toThrow(
-    "--accept-terms",
-  );
+  for (const rawArgs of [[], ["--accept-terms"]])
+    await expect(runCommand(cloudManagementCommands.connect, { rawArgs })).rejects.toThrow(
+      "pass --existing to sign in to an Omnesis account you already have, or --invite '<link>' to create one",
+    );
+  await expect(
+    connectGateway({ existing: true, invite: "https://relay.example.test/invite#abc" }),
+  ).rejects.toThrow("Pass --existing or --invite, not both");
   expect(gatewayJson).not.toHaveBeenCalled();
 });
 
-test("an interactive connect asks only for the terms, prints the code once while waiting, and leaves automatic joining as it is", async () => {
+test("an interactive connect asks whether there is an account, states the certificate terms, and shows each step", async () => {
   const output = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
   terminal(true);
-  answers.push("");
+  answers.push("y");
   gatewayReplies(
-    { connect: { state: "registering" } },
+    ready,
     waiting,
     waiting,
+    { connect: { state: "registering", step: "registering" } },
+    { connect: { state: "registering", step: "certificate" } },
+    { connect: { state: "registering", step: "certificate" } },
+    { connect: { state: "registering", step: "tunnel" } },
     { connect: { state: "linking" } },
     done,
   );
   await runCommand(cloudManagementCommands.connect, { rawArgs: [] });
   expect(question.mock.calls.map(([prompt]) => prompt)).toEqual([
-    "Accept the terms and continue? [Y/n] ",
+    "Do you already have an Omnesis account? [y/N] ",
   ]);
-  expect(gatewayJson).toHaveBeenNthCalledWith(1, "/admin/cloud-relay/connect", {
-    method: "POST",
-    body: JSON.stringify({ termsAccepted: true }),
-  });
+  expect(connectBody()).toEqual({ termsAccepted: true, intent: "existing" });
   expect(paths()).not.toContain("/admin/cloud-relay/enrollment");
-  const printed = output.mock.calls.flat().join("");
-  expect(printed.match(/enter ABCD-EF23/g)).toHaveLength(1);
-  expect(printed).toContain("https://relay.example.test/_relay/connect");
-  expect(printed).toContain("Waiting for you to sign in to your Omnesis account");
-  expect(printed).toContain(
+  const text = printed(output);
+  expect(text).toContain(
+    "By connecting, you agree to Let's Encrypt's Subscriber Agreement: https://letsencrypt.org/repository/\n",
+  );
+  expect(text.match(/enter ABCD-EF23/g)).toHaveLength(1);
+  expect(text).toContain("https://relay.example.test/_relay/connect");
+  // One line per step, in order, each said once.
+  const steps = [
+    "Waiting for you to sign in to your Omnesis account…",
+    "Signed in.",
+    "Registering this gateway with the Omnesis relay…",
+    "Getting this gateway's certificate from Let's Encrypt. This usually takes under a minute…",
+    "Opening the connection…",
+    "Linking this gateway to your Omnesis account…",
+    "Connected to your Omnesis account.",
+  ];
+  for (const step of steps) expect(text.split(step), step).toHaveLength(2);
+  expect(steps.map((step) => text.indexOf(step))).toEqual(
+    steps.map((step) => text.indexOf(step)).sort((a, b) => a - b),
+  );
+  // Then where the gateway is now.
+  expect(text).toContain(
+    "  Address: https://g-fictional.relay.example.test\n  Portal:  https://g-fictional.relay.example.test/portal/\n  MCP:     https://g-fictional.relay.example.test/mcp\n",
+  );
+  expect(text).toContain(
     "New devices join when you sign in to your Omnesis account with a sign-in this gateway trusts.",
   );
-  expect(printed).toContain("choose Ask me first under Settings > Omnesis account");
+  expect(text).toContain("choose Ask me first under Settings > Omnesis account");
+});
+
+test("answering no on an invite-only relay says how to use an invite and starts nothing", async () => {
+  terminal(true);
+  for (const answer of ["", "n", "no"]) {
+    gatewayJson.mockClear();
+    answers.push(answer);
+    gatewayReplies(ready, { ...ready, signup: { inviteOnly: true } });
+    await expect(connectGateway({})).rejects.toThrow(INVITE_ONLY_LINE);
+    expect(paths()).toEqual(["/admin/cloud-relay?signup=1", "/admin/cloud-relay?signup=1"]);
+  }
+  // A relay that takes new accounts without an invite creates one.
+  vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+  answers.push("n");
+  gatewayReplies(ready, ready, waiting, done);
+  await connectGateway({});
+  expect(connectBody()).toEqual({ termsAccepted: true, intent: "create" });
+});
+
+test("--existing and --invite run unattended, and --accept-terms changes nothing", async () => {
+  vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+  terminal(false);
+  gatewayReplies(ready, waiting, done);
+  await runCommand(cloudManagementCommands.connect, { rawArgs: ["--existing", "--accept-terms"] });
+  expect(connectBody()).toEqual({ termsAccepted: true, intent: "existing" });
+  gatewayJson.mockClear();
+  gatewayReplies(ready, waiting, done);
+  const link = "https://relay.example.test/invite#fictional.invite.token";
+  await runCommand(cloudManagementCommands.connect, { rawArgs: ["--invite", link] });
+  expect(connectBody()).toEqual({ termsAccepted: true, intent: "create", invite: link });
+  expect(question).not.toHaveBeenCalled();
+});
+
+test("a gateway already linked to an account is told to unlink first, before connecting starts", async () => {
+  terminal(false);
+  gatewayReplies({ ...ready, account: { linked: true } });
+  await expect(connectGateway({ existing: true })).rejects.toThrow(
+    "This gateway is already connected to an Omnesis account. To connect it to another, run `omnesis cloud unlink` first.",
+  );
+  expect(paths()).toEqual(["/admin/cloud-relay?signup=1"]);
+  // A gateway linked meanwhile refuses the connect itself, in the same words.
+  gatewayJson.mockImplementation(async (path: string) => {
+    if (path.endsWith("/connect"))
+      throw new Error('Gateway 409 /admin/cloud-relay/connect: {"code":"already-connected"}');
+    return ready;
+  });
+  await expect(connectGateway({ existing: true })).rejects.toThrow(
+    "run `omnesis cloud unlink` first",
+  );
+});
+
+test("a chosen new account that already existed is said, with the invite left unused", async () => {
+  const output = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+  terminal(false);
+  gatewayReplies(ready, waiting, { ...done, connect: { state: "done", existingAccount: true } });
+  await connectGateway({ invite: "https://relay.example.test/invite#fictional.invite.token" });
+  expect(printed(output)).toContain(
+    "Connected to your Omnesis account.\nYou already had an Omnesis account, so this gateway is now linked to it. Your invite wasn't used.\n",
+  );
+  output.mockClear();
+  gatewayReplies(ready, waiting, done);
+  await connectGateway({ invite: "https://relay.example.test/invite#fictional.invite.token" });
+  expect(printed(output)).not.toContain("Your invite wasn't used");
 });
 
 test("connect prints the relay's short address in place of its own when the gateway reports one", async () => {
   const output = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
   terminal(false);
   gatewayReplies(
+    ready,
     {
       connect: { ...waiting.connect, connectShortUrl: "https://front.example.test/connect" },
     },
     done,
   );
-  await connectGateway({ acceptTerms: true });
-  const printed = output.mock.calls.flat().join("");
-  expect(printed).toContain(
+  await connectGateway({ existing: true });
+  const text = printed(output);
+  expect(text).toContain(
     "On any device, visit https://front.example.test/connect\nand enter ABCD-EF23",
   );
-  expect(printed).not.toContain("/_relay/connect");
-});
-
-test("declining the terms changes nothing", async () => {
-  terminal(true);
-  answers.push("n");
-  await expect(connectGateway({ acceptTerms: false })).rejects.toThrow("Connection cancelled");
-  expect(gatewayJson).not.toHaveBeenCalled();
+  expect(text).not.toContain("/_relay/connect");
 });
 
 test("--ask-first opts out of automatic joining; a flag that matches the gateway writes nothing, and an earlier choice is reported, not reset", async () => {
   const output = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
   terminal(false);
   for (const args of [
-    ["--accept-terms", "--ask-first"],
-    ["--accept-terms", "--ask-first", "--automatic"],
+    ["--existing", "--ask-first"],
+    ["--existing", "--ask-first", "--automatic"],
   ]) {
     gatewayJson.mockClear();
     output.mockClear();
-    gatewayReplies({ connect: { state: "waiting" } }, done);
+    gatewayReplies(ready, { connect: { state: "waiting" } }, done);
     await runCommand(cloudManagementCommands.connect, { rawArgs: args });
     expect(gatewayJson).toHaveBeenLastCalledWith("/admin/cloud-relay/enrollment", {
       method: "PUT",
       body: JSON.stringify({ policy: "ask" }),
     });
-    expect(output.mock.calls.flat().join("")).toContain("New devices will wait for your approval.");
+    expect(printed(output)).toContain("New devices will wait for your approval.");
   }
-  for (const args of [["--accept-terms"], ["--accept-terms", "--automatic"]]) {
+  for (const args of [["--existing"], ["--existing", "--automatic"]]) {
     gatewayJson.mockClear();
-    gatewayReplies(done);
+    gatewayReplies(ready, done);
     await runCommand(cloudManagementCommands.connect, { rawArgs: args });
-    expect(paths()).toEqual(["/admin/cloud-relay/connect"]);
+    expect(paths()).toEqual(["/admin/cloud-relay?signup=1", "/admin/cloud-relay/connect"]);
   }
   // A gateway whose owner already chose ask keeps it, and the CLI says so.
   const asking = { connect: { state: "done" }, deviceEnrollment: { policy: "ask" } };
   gatewayJson.mockClear();
   output.mockClear();
-  gatewayReplies(asking);
-  await connectGateway({ acceptTerms: true });
-  expect(paths()).toEqual(["/admin/cloud-relay/connect"]);
-  expect(output.mock.calls.flat().join("")).toContain("New devices will wait for your approval.");
+  gatewayReplies(ready, asking);
+  await connectGateway({ existing: true });
+  expect(paths()).not.toContain("/admin/cloud-relay/enrollment");
+  expect(printed(output)).toContain("New devices will wait for your approval.");
   gatewayJson.mockClear();
-  gatewayReplies(asking);
-  await connectGateway({ acceptTerms: true, policy: "automatic" });
+  gatewayReplies(ready, asking);
+  await connectGateway({ existing: true, policy: "automatic" });
   expect(gatewayJson).toHaveBeenLastCalledWith("/admin/cloud-relay/enrollment", {
     method: "PUT",
     body: JSON.stringify({ policy: "automatic" }),
   });
-  // A gateway that reports no enrollment state gets no claim about it.
+  // A gateway that reports no enrollment state or address gets no claim about either.
   gatewayJson.mockClear();
   output.mockClear();
-  gatewayReplies({ connect: { state: "done" } });
-  await connectGateway({ acceptTerms: true });
-  expect(paths()).toEqual(["/admin/cloud-relay/connect"]);
-  expect(output.mock.calls.flat().join("")).toBe("Connected to your Omnesis account.\n");
+  gatewayReplies({}, { connect: { state: "done" } });
+  await connectGateway({ existing: true });
+  expect(paths()).toEqual(["/admin/cloud-relay?signup=1", "/admin/cloud-relay/connect"]);
+  expect(printed(output)).toBe("Connected to your Omnesis account.\n");
   expect(question).not.toHaveBeenCalled();
 });
 
 test("a failed or vanished connection reports why and sets no policy", async () => {
   vi.spyOn(process.stdout, "write").mockImplementation(() => true);
   terminal(false);
-  gatewayReplies(waiting, { connect: { state: "failed", error: "signup-denied" } });
-  await expect(connectGateway({ acceptTerms: true, policy: "automatic" })).rejects.toThrow(
+  gatewayReplies(ready, waiting, { connect: { state: "failed", error: "signup-denied" } });
+  await expect(connectGateway({ existing: true, policy: "automatic" })).rejects.toThrow(
     "could not connect to your Omnesis account (signup-denied)",
   );
-  gatewayReplies({});
-  await expect(connectGateway({ acceptTerms: true, policy: "automatic" })).rejects.toThrow(
+  gatewayReplies(ready, {});
+  await expect(connectGateway({ existing: true, policy: "automatic" })).rejects.toThrow(
     "could not connect to your Omnesis account (unknown)",
   );
   expect(paths()).not.toContain("/admin/cloud-relay/enrollment");
 });
 
-test("on an invite-only relay connect says once that a new account needs an invite", async () => {
+test("creating an account on an invite-only relay without an invite says once that it needs one", async () => {
   const output = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
-  terminal(false);
+  terminal(true);
   const signup = { inviteOnly: true };
   const line = `${INVITE_ONLY_LINE}\n`;
-  gatewayReplies(waiting, { ...waiting, signup }, { ...waiting, signup }, { ...done, signup });
-  await connectGateway({ acceptTerms: true });
+  // The relay's answer arrived only once connecting started.
+  answers.push("n");
+  gatewayReplies(ready, ready, waiting, { ...waiting, signup }, { ...waiting, signup }, done);
+  await connectGateway({});
   expect(output.mock.calls.filter(([text]) => text === line)).toHaveLength(1);
-  // Someone who brought an invite needs no telling.
-  output.mockClear();
-  gatewayReplies({ ...waiting, signup }, { ...done, signup });
-  await connectGateway({ acceptTerms: true, invite: "https://relay.example.test/invite#abc" });
-  expect(output.mock.calls.filter(([text]) => text === line)).toHaveLength(0);
+  // Someone who brought an invite, or signs in to an account they have, needs no telling.
+  for (const options of [{ invite: "https://relay.example.test/invite#abc" }, { existing: true }]) {
+    output.mockClear();
+    gatewayReplies(ready, { ...waiting, signup }, { ...done, signup });
+    await connectGateway(options);
+    expect(output.mock.calls.filter(([text]) => text === line)).toHaveLength(0);
+  }
 });
 
-test("connect --invite creates an account with it, and names each way the invite can be refused", async () => {
+test("connect --invite names each way the invite can be refused", async () => {
   vi.spyOn(process.stdout, "write").mockImplementation(() => true);
   terminal(false);
   const link = "https://relay.example.test/invite#fictional.invite.token";
-  gatewayReplies(waiting, done);
-  await runCommand(cloudManagementCommands.connect, {
-    rawArgs: ["--accept-terms", "--invite", link],
-  });
-  expect(JSON.parse(String((gatewayJson.mock.calls[0]![1] as { body: string }).body))).toEqual({
-    termsAccepted: true,
-    intent: "create",
-    invite: link,
-  });
   for (const [code, words] of [
     ["invite-invalid", "The invite isn't valid: check that you copied the whole link."],
     ["invite-expired", "The invite has expired: ask for a new one."],
     ["invite-used", "The invite was already used to create an account: ask for a new one."],
   ] as const) {
     // Refused by the gateway's check before connecting starts…
-    gatewayJson.mockRejectedValueOnce(new Error(`Gateway answered 400: ${code}`));
-    await expect(connectGateway({ acceptTerms: true, invite: link })).rejects.toThrow(words);
+    gatewayJson.mockImplementation(async (path: string) => {
+      if (path.endsWith("/connect")) throw new Error(`Gateway answered 400: ${code}`);
+      return ready;
+    });
+    await expect(connectGateway({ invite: link })).rejects.toThrow(words);
     // …or by the relay when the sign-up started.
-    gatewayReplies(waiting, { connect: { state: "failed", error: code } });
-    await expect(connectGateway({ acceptTerms: true, invite: link })).rejects.toThrow(
+    gatewayReplies(ready, waiting, { connect: { state: "failed", error: code } });
+    await expect(connectGateway({ invite: link })).rejects.toThrow(
       `could not connect to your Omnesis account (${code}). Nothing changed on this gateway's existing access. ${words}`,
     );
   }
-  gatewayJson.mockRejectedValueOnce(new Error("Gateway answered 503"));
-  await expect(connectGateway({ acceptTerms: true, invite: link })).rejects.toThrow("503");
-  gatewayReplies(waiting, { connect: { state: "failed", error: "not-allowed" } });
-  await expect(connectGateway({ acceptTerms: true })).rejects.toThrow(
+  gatewayJson.mockImplementation(async (path: string) => {
+    if (path.endsWith("/connect")) throw new Error("Gateway answered 503");
+    return ready;
+  });
+  await expect(connectGateway({ invite: link })).rejects.toThrow("503");
+  gatewayReplies(ready, waiting, { connect: { state: "failed", error: "not-allowed" } });
+  await expect(connectGateway({ existing: true })).rejects.toThrow(
     "could not connect to your Omnesis account (not-allowed). Nothing changed on this gateway's existing access.",
   );
-  gatewayReplies(waiting, { connect: { state: "failed" } });
-  await expect(connectGateway({ acceptTerms: true })).rejects.toThrow("(unknown)");
+  gatewayReplies(ready, waiting, { connect: { state: "failed" } });
+  await expect(connectGateway({ existing: true })).rejects.toThrow("(unknown)");
 });
 
 test("status says when the relay creates new accounts only with an invite", async () => {
@@ -599,18 +703,20 @@ test("status says when the relay creates new accounts only with an invite", asyn
 
 test("connect prints the independent security check once, then continues to ordinary sign-in", async () => {
   const output = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+  terminal(false);
   const verification = {
     url: "https://dns.example.test/_dns/v2/enroll?ticket=fictional",
     expiresAt: Date.now() + 60_000,
   };
   gatewayReplies(
+    ready,
     { connect: { state: "waiting", verification } },
     { connect: { state: "waiting", verification } },
     waiting,
     done,
   );
-  await connectGateway({ acceptTerms: true });
-  const text = output.mock.calls.map(([value]) => String(value)).join("");
+  await connectGateway({ existing: true });
+  const text = printed(output);
   expect(text.split(verification.url)).toHaveLength(2);
   expect(text).toContain("No approval from Omnesis is needed");
   expect(text).toContain("ABCD-EF23");
@@ -620,17 +726,93 @@ test("connect prints the independent security check once, then continues to ordi
 
 test("connect refuses malformed browser check links without printing them", async () => {
   const output = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+  terminal(false);
   for (const url of [
     "javascript:alert(1)",
     "https://dns.example.test/not-enrollment?ticket=fictional",
     "https://dns.example.test/_dns/v2/enroll?ticket=one&ticket=two",
   ]) {
-    gatewayReplies({
+    gatewayReplies(ready, {
       connect: { state: "waiting", verification: { url, expiresAt: Date.now() + 60_000 } },
     });
-    await expect(connectGateway({ acceptTerms: true })).rejects.toThrow(
+    await expect(connectGateway({ existing: true })).rejects.toThrow(
       "security check link was refused",
     );
-    expect(output.mock.calls.map(([value]) => String(value)).join("")).not.toContain(url);
+    expect(printed(output)).not.toContain(url);
   }
+});
+
+test("start-over discards an unfinished connection, and a connected gateway is pointed to unlink", async () => {
+  const output = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+  gatewayJson.mockImplementation(async (path: string) =>
+    path === "/health" ? { version: "1.2.3" } : { enabled: false, configured: false },
+  );
+  await runCommand(cloudManagementCommands["start-over"], { rawArgs: [] });
+  expect(gatewayJson).toHaveBeenCalledWith("/admin/cloud-relay/start-over", {
+    method: "POST",
+    body: "{}",
+  });
+  expect(printed(output)).toContain(
+    "The unfinished connection is discarded. This gateway is as if it had never connected",
+  );
+  gatewayJson.mockImplementation(async () => {
+    throw new Error('Gateway 409 /admin/cloud-relay/start-over: {"code":"already-connected"}');
+  });
+  await expect(runCommand(cloudManagementCommands["start-over"], { rawArgs: [] })).rejects.toThrow(
+    "there is no unfinished connection to discard. To leave your Omnesis account, run `omnesis cloud unlink`.",
+  );
+});
+
+test("status says when connecting didn't finish, why, and both ways on", () => {
+  expect(formatCloudStatus({ unfinished: {} })).toContain(
+    "  Connecting:             didn't finish, it was interrupted. Run `omnesis cloud connect` to try again, or `omnesis cloud start-over` to discard it\n",
+  );
+  expect(formatCloudStatus({ unfinished: { error: "enrollment-refused" } })).toContain(
+    "didn't finish (enrollment-refused). Run `omnesis cloud connect`",
+  );
+  expect(formatCloudStatus({})).not.toContain("Connecting:");
+});
+
+test("another authority's certificate step names none, and an address the gateway reports badly is not printed", async () => {
+  const output = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+  terminal(false);
+  gatewayReplies(
+    { account: { linked: false } },
+    { connect: { state: "registering", step: "certificate" } },
+    { ...done, publicOrigin: "https://[not-an-address", publicMcp: undefined },
+  );
+  await connectGateway({ existing: true });
+  let text = printed(output);
+  expect(text).toContain("Getting this gateway's certificate. This usually takes under a minute…");
+  expect(text).not.toContain("Let's Encrypt");
+  expect(text).not.toContain("Address:");
+  // Without an MCP address of its own, the gateway's MCP path is at its address.
+  output.mockClear();
+  gatewayReplies(ready, {
+    ...done,
+    publicOrigin: "https://g-fictional.relay.example.test",
+    publicMcp: {},
+  });
+  await connectGateway({ existing: true });
+  text = printed(output);
+  expect(text).toContain("  MCP:     https://g-fictional.relay.example.test/mcp\n");
+  // Only an https address without credentials is printed.
+  for (const publicOrigin of [
+    "http://g-fictional.relay.example.test",
+    "https://user:secret@g-fictional.relay.example.test",
+  ]) {
+    output.mockClear();
+    gatewayReplies(ready, { ...done, publicOrigin, publicMcp: {} });
+    await connectGateway({ existing: true });
+    expect(printed(output)).not.toContain("Address:");
+  }
+});
+
+test("start-over passes any other failure on unchanged", async () => {
+  gatewayJson.mockImplementation(async () => {
+    throw new Error("Gateway 503 /admin/cloud-relay/start-over: unavailable");
+  });
+  await expect(runCommand(cloudManagementCommands["start-over"], { rawArgs: [] })).rejects.toThrow(
+    "Gateway 503",
+  );
 });

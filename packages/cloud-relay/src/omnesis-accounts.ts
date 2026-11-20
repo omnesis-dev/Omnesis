@@ -156,14 +156,19 @@ export class OmnesisAccounts {
 
   /** The caller must verify the provider proof before invoking sign-in or linking. Email is never an account key. */
   signInFederated(provider: string, subjectDigest: string, admission?: AccountAdmission): string {
-    return this.db.transaction(() => {
+    let created = false;
+    const account = this.db.transaction(() => {
       const existing = this.federatedAccount(provider, subjectDigest);
       if (existing !== undefined) return existing;
       const account = OmnesisAccounts.newId();
       this.create(account, admission);
       this.linkFederated(account, provider, subjectDigest);
+      created = true;
       return account;
     })();
+    // Told only once the account is committed.
+    if (created) admission?.created?.(account);
+    return account;
   }
 
   linkFederated(
@@ -245,6 +250,8 @@ export class OmnesisAccounts {
             JSON.stringify(passkeyCountersignatureSchema.parse(countersignature)),
           );
     })();
+    // Told only once the account is committed.
+    if (newAccount) admission?.created?.(account);
   }
 
   /**

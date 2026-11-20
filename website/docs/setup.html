@@ -425,7 +425,27 @@
             <strong>Settings → Connectivity → Omnesis account</strong>, or run
             <code>omnesis cloud connect --invite &lt;link&gt;</code>. Each invite creates one
             account and expires; signing in to an account you already have needs no invite. Opening
-            the link in a browser shows whether it still works.
+            the link in a browser shows whether it still works. If you chose to create an account
+            but sign in with one you already have, the gateway links to that account and the invite
+            stays unused.
+            <p>
+              Connecting gets a certificate for the gateway's address, from Let's Encrypt unless the
+              operator names another authority; connecting accepts its Subscriber Agreement, which
+              the page links to. From a terminal, <code>omnesis cloud connect</code> asks whether
+              you already have an account; <code>--existing</code> or
+              <code>--invite &lt;link&gt;</code> answers for a script. It prints each step and, once
+              connected, the gateway's address, portal and MCP links. A gateway already linked to an
+              account is unlinked first, with <code>omnesis cloud unlink</code>.
+            </p>
+            <p>
+              A connection that stops before it finishes leaves the gateway with an address it
+              reserved but can't be reached at, and that address is offered nowhere, not even to
+              agents. The page says why it stopped: <strong>Try again</strong> continues with the
+              same address, and <strong>Start over</strong>, or
+              <code>omnesis cloud start-over</code>, discards it so the gateway is as if it had
+              never connected. A gateway that has connected can't start over; unlinking is the way
+              out then.
+            </p>
           </li>
           <li>
             <strong>This gateway's own Tailscale device</strong> joins your tailnet as a device of

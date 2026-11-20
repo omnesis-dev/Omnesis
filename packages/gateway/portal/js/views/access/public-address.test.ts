@@ -137,6 +137,12 @@ describe("relayPublicAddress", () => {
     expect(relayPublicAddress(unconnected, oauth(TAILNET, []))).toEqual({ state: "not-connected" });
   });
 
+  test("a connection that never finished offers its reserved address nowhere", () => {
+    // The gateway reports no address until it has registered, so there is none to offer.
+    const unfinished = status({ enabled: false, unfinished: {}, enrollment: { state: "unconfigured" }, tunnel: { state: "disabled" }, publicMcp: { ready: false } });
+    expect(relayPublicAddress(unfinished, oauth(TAILNET, []))).toEqual({ state: "not-connected" });
+  });
+
   test("an installation that cannot connect to an account is offered nothing", () => {
     const unavailable = status({ enabled: false, serviceConfigured: false, publicMcp: { ready: false } });
     expect(relayPublicAddress(unavailable, oauth(TAILNET, []))).toEqual({ state: "none" });
