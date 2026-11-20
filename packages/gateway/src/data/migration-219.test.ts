@@ -20,8 +20,12 @@ it("migration219 preserves existing sources, binds their identity once, and pres
       CREATE TABLE snapshot_absence_cascade_outbox(id INTEGER PRIMARY KEY);
       INSERT INTO sources VALUES ('fictional-notes:one', 123);
       PRAGMA user_version = 218`);
-    expect(MIGRATIONS.find((migration) => migration.version === 219)?.up).toBe(addStorageAuthority);
-    runMigrations(db);
+    // The v218 fixture exercises this historical step; migration-tail tests
+    // replay the complete upgrade chain through the current schema.
+    const migrations = MIGRATIONS.filter((migration) => migration.version === 219);
+    expect(migrations).toHaveLength(1);
+    expect(migrations[0]?.up).toBe(addStorageAuthority);
+    runMigrations(db, { migrations });
     expect(db.pragma("user_version", { simple: true })).toBe(219);
     const sourceIncarnation = readStorageSourceIncarnation(db, "fictional-notes:one")!;
     const policy = { sourceId: "fictional-notes:one", maxAgeDays: 365, sourceIncarnation };
@@ -34,7 +38,7 @@ it("migration219 preserves existing sources, binds their identity once, and pres
       '2020-01-02T00:00:00.000Z','doc-second','2020-01-03T00:00:00.000Z','doc-last',1,3,5,2,1,2)`,
     ).run(policy.sourceId, sourceIncarnation);
     addStorageAuthority(db);
-    runMigrations(db);
+    runMigrations(db, { migrations });
     expect(readStorageSourceIncarnation(db, policy.sourceId)).toBe(sourceIncarnation);
     expect(readBoundStorageRetentionPolicies(db, [policy])).toEqual(bound);
     expect(
