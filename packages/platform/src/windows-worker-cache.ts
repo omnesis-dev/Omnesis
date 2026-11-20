@@ -8,6 +8,7 @@ import {
   windowsPowerShellExecutable,
   windowsProcessStart,
   windowsEnvironmentValue,
+  type WindowsProcessStartFailure,
 } from "./windows-powershell.js";
 import { WINDOWS_CACHE_BOOTSTRAP_SCRIPT } from "./native/windows-cache-bootstrap-source.js";
 import {
@@ -141,9 +142,15 @@ export function windowsWorkerInvocation(
       // Original Node receives these UTC ticks while still alive, before any
       // nested bootstrap can start. Normalize year-1 .NET ticks to FILETIME's
       // 1601 epoch with exact integers, never Date/Number rounding.
-      const ticks = windowsProcessStart(process.pid, opts.timeoutMs);
+      let failure: WindowsProcessStartFailure | undefined;
+      const ticks = windowsProcessStart(process.pid, opts.timeoutMs, (reason) => {
+        failure = reason;
+      });
       if (ticks === null || BigInt(ticks) <= DOTNET_TO_FILETIME_TICKS)
-        throw new Error("Cannot verify Windows native worker owner");
+        throw new Error(
+          "Cannot verify Windows native worker owner" +
+            (failure ? ` (EPRIVATE:owner-birth:${failure})` : ""),
+        );
       const ownerBirth = (BigInt(ticks) - DOTNET_TO_FILETIME_TICKS).toString();
       const program = Buffer.from(WINDOWS_CACHE_BOOTSTRAP_SCRIPT, "utf8");
       const source = Buffer.from(WINDOWS_WORKER_SOURCE, "utf8");

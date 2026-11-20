@@ -54,6 +54,63 @@ describe("Windows creation-time identity", () => {
   });
   afterEach(() => vi.unstubAllEnvs());
 
+  it.each([
+    [
+      Object.assign(new Error("invented private command"), { code: "ETIMEDOUT", status: null }),
+      "timeout",
+    ],
+    [Object.assign(new Error("invented private command"), { code: "ENOENT" }), "spawn"],
+    [
+      Object.assign(new Error("invented private command"), {
+        status: 7,
+        stderr: "invented secret",
+      }),
+      "exit:7",
+    ],
+    [Object.assign(new Error("invented private command"), { status: "invented secret" }), "spawn"],
+    [Object.assign(new Error("invented private command"), { status: -1 }), "spawn"],
+    [Object.assign(new Error("invented private command"), { status: 1.5 }), "spawn"],
+    [Object.assign(new Error("invented private command"), { status: 0x100000000 }), "spawn"],
+  ])("preserves a safe reason for an unavailable identity", async (error, reason) => {
+    const { windowsProcessStart } = await import("./windows-powershell.js");
+    commands.run.mockImplementation(() => {
+      throw error;
+    });
+    const unavailable = vi.fn();
+    expect(windowsProcessStart(process.pid, 10_000, unavailable)).toBeNull();
+    expect(unavailable).toHaveBeenCalledExactlyOnceWith(reason);
+  });
+
+  it("recognizes an actual Node timeout without exposing its command or captured output", async () => {
+    const real = await vi.importActual<typeof import("node:child_process")>("node:child_process");
+    const { windowsProcessStart } = await import("./windows-powershell.js");
+    commands.run.mockImplementation(() =>
+      real.execFileSync(
+        process.execPath,
+        ["-e", 'process.stdout.write("invented private output");setInterval(()=>{},1000)'],
+        {
+          timeout: 100,
+          stdio: ["ignore", "pipe", "pipe"],
+        },
+      ),
+    );
+    const unavailable = vi.fn();
+    expect(windowsProcessStart(process.pid, 10_000, unavailable)).toBeNull();
+    expect(unavailable).toHaveBeenCalledExactlyOnceWith("timeout");
+  });
+
+  it("distinguishes invalid output from an unresolvable trusted executable", async () => {
+    const { windowsProcessStart } = await import("./windows-powershell.js");
+    const unavailable = vi.fn();
+    commands.run.mockReturnValue("invented private output");
+    expect(windowsProcessStart(process.pid, 10_000, unavailable)).toBeNull();
+    expect(unavailable).toHaveBeenLastCalledWith("invalid-output");
+    vi.stubEnv("SystemRoot", "relative");
+    expect(windowsProcessStart(process.pid, 10_000, unavailable)).toBeNull();
+    expect(unavailable).toHaveBeenLastCalledWith("host-executable");
+    expect(commands.run).toHaveBeenCalledOnce();
+  });
+
   it("keeps exact ticks beyond Number precision and never caches another process", async () => {
     const { windowsProcessStart } = await import("./windows-powershell.js");
     commands.run

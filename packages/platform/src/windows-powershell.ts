@@ -26,13 +26,46 @@ export function windowsPowerShellExecutable(env: NodeJS.ProcessEnv = process.env
 
 let ownBirth: string | undefined;
 
+export type WindowsProcessStartFailure =
+  "invalid-pid" | "host-executable" | "timeout" | "spawn" | "invalid-output" | `exit:${number}`;
+
+function processStartFailure(error: unknown): WindowsProcessStartFailure {
+  if (error && typeof error === "object") {
+    if ("code" in error && error.code === "ETIMEDOUT") return "timeout";
+    if (
+      "status" in error &&
+      typeof error.status === "number" &&
+      Number.isSafeInteger(error.status) &&
+      error.status >= 0 &&
+      error.status <= 0xffffffff
+    )
+      return `exit:${error.status}`;
+  }
+  return "spawn";
+}
+
 /** Exact UTC creation ticks for durable ownership records; only this process is cached. */
-export function windowsProcessStart(pid: number, timeoutMs = 10_000): string | null {
-  if (!Number.isSafeInteger(pid) || pid <= 0) return null;
+export function windowsProcessStart(
+  pid: number,
+  timeoutMs = 10_000,
+  unavailable?: (reason: WindowsProcessStartFailure) => void,
+): string | null {
+  if (!Number.isSafeInteger(pid) || pid <= 0) {
+    unavailable?.("invalid-pid");
+    return null;
+  }
   if (pid === process.pid && ownBirth !== undefined) return ownBirth;
+  let executable: string;
   try {
-    const birth = execFileSync(
-      windowsPowerShellExecutable(),
+    executable = windowsPowerShellExecutable();
+  } catch {
+    unavailable?.("host-executable");
+    return null;
+  }
+  let output: string;
+  try {
+    output = execFileSync(
+      executable,
       [
         "-NoLogo",
         "-NoProfile",
@@ -47,11 +80,17 @@ export function windowsProcessStart(pid: number, timeoutMs = 10_000): string | n
         timeout: Math.max(1, Math.min(timeoutMs, 10_000)),
         stdio: ["ignore", "pipe", "ignore"],
       },
-    ).trim();
-    if (!/^[0-9]+$/u.test(birth)) return null;
-    if (pid === process.pid) ownBirth = birth;
-    return birth;
-  } catch {
+    );
+  } catch (error) {
+    // See #1159 — distinguish owner-birth probe failures without exposing commands or output.
+    unavailable?.(processStartFailure(error));
     return null;
   }
+  const birth = output.trim();
+  if (!/^[0-9]+$/u.test(birth)) {
+    unavailable?.("invalid-output");
+    return null;
+  }
+  if (pid === process.pid) ownBirth = birth;
+  return birth;
 }
