@@ -4,6 +4,9 @@
 package dev.omnesis.android.feature.recording
 
 import android.content.SharedPreferences
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 /** The recording mode's settings. */
 class RecordingSettings(private val prefs: SharedPreferences) {
@@ -21,10 +24,25 @@ class RecordingSettings(private val prefs: SharedPreferences) {
             prefs.edit().putString(KEY_INPUT, value?.name).apply()
         }
 
+    private val _alwaysOn = MutableStateFlow(prefs.getBoolean(KEY_ALWAYS_ON, false))
+
+    /**
+     * Whether a linked wearable captures all day: every conversation it hears
+     * is recorded as an episode of its own, and its button marks a moment
+     * instead of starting and stopping.
+     */
+    val alwaysOn: StateFlow<Boolean> = _alwaysOn.asStateFlow()
+
+    fun setAlwaysOn(on: Boolean) {
+        prefs.edit().putBoolean(KEY_ALWAYS_ON, on).apply()
+        _alwaysOn.value = on
+    }
+
     companion object {
         const val PREFS_NAME = "omnesis.recording"
         private const val KEY_WIFI_ONLY = "wifiOnly"
         private const val KEY_INPUT = "input"
+        private const val KEY_ALWAYS_ON = "alwaysOn"
         /** A session stops on its own after this long. */
         const val MAX_SESSION_MS = 4L * 60 * 60 * 1000
     }

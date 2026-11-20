@@ -30,12 +30,15 @@ import {
   listAbandonedRecordingSessions,
   listDueRecordingChunks,
   listRecordingChunks,
+  listRecordingMarks,
   listUnprojectedRecordingSessions,
   countRecordingChunks,
   readRecordingChunkAudio,
   type FinishRecordingOutcome,
   type InsertRecordingChunkOutcome,
   type RecordingChunk,
+  type RecordingMark,
+  type RecordingOrigin,
   type RecordingSession,
 } from "./storage.js";
 import type {
@@ -79,6 +82,7 @@ export interface RecordingServiceDeps {
     | "rescheduleRecordingChunk"
     | "settleRecordingChunk"
     | "markRecordingSessionProjected"
+    | "addRecordingMark"
   >;
   readDb: Database.Database;
   transcribe: (
@@ -96,6 +100,7 @@ export interface RecordingServiceDeps {
   buildDocument: (
     session: RecordingSession,
     chunks: readonly RecordingChunk[],
+    marks: readonly RecordingMark[],
   ) => DocumentInput | null;
   now?: () => Date;
 }
@@ -104,6 +109,8 @@ export interface RecordingServiceDeps {
 export interface StartRecordingInput {
   id: string;
   title?: string;
+  /** `explicit` when absent. */
+  origin?: RecordingOrigin;
   startedAt: string;
   startedTimeZoneId?: string;
   startedUtcOffsetSeconds?: number;
@@ -163,6 +170,7 @@ export class RecordingTranscriptionService {
       id: input.id,
       deviceId: input.deviceId ?? null,
       title: input.title?.trim() || null,
+      origin: input.origin ?? "explicit",
       startedAt: input.startedAt,
       startedTimeZoneId: input.startedTimeZoneId ?? null,
       startedUtcOffsetSeconds: input.startedUtcOffsetSeconds ?? null,
@@ -170,7 +178,11 @@ export class RecordingTranscriptionService {
       allowVocabulary: input.allowVocabulary,
       createdAt: this.now().toISOString(),
     });
-    if (created) log.info(`Opened recording ${input.id} (started ${input.startedAt})`);
+    if (created) {
+      log.info(
+        `Opened ${input.origin ?? "explicit"} recording ${input.id} (started ${input.startedAt})`,
+      );
+    }
     return { created };
   }
 
@@ -205,6 +217,17 @@ export class RecordingTranscriptionService {
       this.kick();
     }
     return outcome;
+  }
+
+  /**
+   * Record a moment the owner marked during session `sessionId`, whose audio
+   * was saved as note `noteId`. Idempotent; the session need not exist yet.
+   */
+  async mark(sessionId: string, noteId: string, markedAt: string): Promise<void> {
+    if (await this.deps.writeGate.addRecordingMark({ sessionId, noteId, markedAt })) {
+      log.info(`Marked a moment in recording ${sessionId} as note ${noteId}`);
+      this.kick();
+    }
   }
 
   status(id: string): RecordingStatus | null {
@@ -350,7 +373,8 @@ export class RecordingTranscriptionService {
     const session = getRecordingSession(this.deps.readDb, sessionId);
     if (!session) return;
     const chunks = listRecordingChunks(this.deps.readDb, sessionId);
-    const doc = this.deps.buildDocument(session, chunks);
+    const marks = listRecordingMarks(this.deps.readDb, sessionId);
+    const doc = this.deps.buildDocument(session, chunks, marks);
     if (doc) await this.deps.ingest([doc]);
     else await this.deps.deleteDocument(sessionId);
     // A delete that landed while the document was written must not leave

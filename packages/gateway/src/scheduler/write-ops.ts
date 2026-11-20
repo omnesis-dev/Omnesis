@@ -643,6 +643,7 @@ const WRITE_OP_DEFS: readonly WriteOpDef[] = [
   // A delete cascades over every chunk of the session (at most the seq cap,
   // most already without audio), so it gets the same longer budget.
   { name: "recordings.deleteSession", priority: "user", latencyBudgetMs: 2_000 },
+  { name: "recordings.addMark", priority: "user" },
   { name: "recordings.rescheduleChunk", priority: "background" },
   { name: "recordings.settleChunk", priority: "background" },
   { name: "recordings.markProjected", priority: "background" },

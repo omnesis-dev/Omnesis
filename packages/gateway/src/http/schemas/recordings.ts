@@ -37,6 +37,11 @@ export const startRecordingBody = z
     /** Client-generated, so a phone can record before it reaches the gateway. */
     id: recordingId,
     title: z.string().max(200).optional(),
+    /**
+     * `ambient` for an episode a wearable capturing all day opened on its
+     * own; `explicit` (the default) for a recording the owner started.
+     */
+    origin: z.enum(["explicit", "ambient"]).optional(),
     startedAt: isoDateTime,
     startedTimeZoneId: timeZone.optional(),
     startedUtcOffsetSeconds: z.number().int().min(-64_800).max(64_800).optional(),

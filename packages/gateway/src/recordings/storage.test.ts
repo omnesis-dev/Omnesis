@@ -11,8 +11,10 @@ import {
   finishRecordingSession,
   getRecordingSession,
   insertRecordingChunk,
+  insertRecordingMark,
   insertRecordingSession,
   listRecordingChunks,
+  listRecordingMarks,
   readRecordingChunkAudio,
   settleRecordingChunk,
 } from "./storage.js";
@@ -34,11 +36,12 @@ afterEach(() => {
   }
 });
 
-function session(id: string): boolean {
+function session(id: string, origin: "explicit" | "ambient" = "explicit"): boolean {
   return insertRecordingSession(db, {
     id,
     deviceId: null,
     title: null,
+    origin,
     startedAt: NOW,
     startedTimeZoneId: null,
     startedUtcOffsetSeconds: null,
@@ -105,11 +108,32 @@ describe("recording storage", () => {
     expect(plan.map((row) => row.detail).join(" ")).toContain("idx_recording_sessions_unprojected");
   });
 
-  test("deleting a session deletes its chunks", () => {
+  test("deleting a session deletes its chunks and marks", () => {
     session("s1");
     chunk("s1", 0, new Uint8Array([1]));
+    insertRecordingMark(db, { sessionId: "s1", noteId: "n1", markedAt: NOW });
     expect(deleteRecordingSession(db, "s1")).toBe(true);
     expect(listRecordingChunks(db, "s1")).toEqual([]);
+    expect(listRecordingMarks(db, "s1")).toEqual([]);
     expect(deleteRecordingSession(db, "s1")).toBe(false);
+  });
+
+  test("a session keeps how it began", () => {
+    session("s1");
+    session("s2", "ambient");
+    expect(getRecordingSession(db, "s1")?.origin).toBe("explicit");
+    expect(getRecordingSession(db, "s2")?.origin).toBe("ambient");
+  });
+
+  test("a mark is idempotent, may come before its session, and changes the session", () => {
+    const mark = { sessionId: "s1", noteId: "n1", markedAt: "2026-03-02T09:05:00.000Z" };
+    // The note can reach the gateway before the phone opens the session.
+    expect(insertRecordingMark(db, mark)).toBe(true);
+    session("s1");
+    const before = getRecordingSession(db, "s1")!.revision;
+    expect(insertRecordingMark(db, mark)).toBe(false);
+    expect(insertRecordingMark(db, { ...mark, noteId: "n0", markedAt: NOW })).toBe(true);
+    expect(getRecordingSession(db, "s1")!.revision).toBe(before + 1);
+    expect(listRecordingMarks(db, "s1").map((m) => m.noteId)).toEqual(["n0", "n1"]);
   });
 });

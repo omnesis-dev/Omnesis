@@ -63,3 +63,8 @@ interface WearableAudio {
         fun onLinkLost()
     }
 }
+
+/** Saves a marked moment's clip as a note of recording [recordingId], and owns the file from then on. */
+fun interface MarkedMomentSink {
+    suspend fun save(clip: MarkedClip, recordingId: String)
+}

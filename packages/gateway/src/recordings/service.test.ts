@@ -71,10 +71,15 @@ function advance(ms: number): void {
   now = new Date(now.getTime() + ms);
 }
 
-async function start(id = randomUUID(), title?: string): Promise<string> {
+async function start(
+  id = randomUUID(),
+  title?: string,
+  origin?: "explicit" | "ambient",
+): Promise<string> {
   await service.startSession({
     id,
     ...(title ? { title } : {}),
+    ...(origin ? { origin } : {}),
     startedAt: START,
     startedUtcOffsetSeconds: 3600,
     language: "en",
@@ -181,6 +186,29 @@ describe("RecordingTranscriptionService", () => {
       chunkCount: 2,
       chunks: { received: 2, transcribed: 2, pending: 0 },
     });
+  });
+
+  test("a marked moment is written into the episode, also after it was written", async () => {
+    const id = await start(undefined, undefined, "ambient");
+    transcripts.push({ text: "We should book the venue by Friday." });
+    await service.addChunk(chunk(id, 0));
+    await service.finish(id, 1, at(60_000));
+    await service.idle();
+    expect(docs.get(id)!.content).toContain("Conversation captured by a wearable");
+    expect(docs.get(id)!.metadata.extra).toEqual({ recordingOrigin: "ambient" });
+    expect(docs.get(id)!.content).not.toContain("★");
+
+    // The note's upload can land after the session's document was written.
+    const noteId = randomUUID();
+    await service.mark(id, noteId, at(45_000));
+    await service.mark(id, noteId, at(45_000));
+    await service.idle();
+    const doc = docs.get(id)!;
+    expect(doc.content.split("\n").slice(-2)).toEqual([
+      "[00:00:00] We should book the venue by Friday.",
+      "[00:00:45] ★ Marked moment, saved as a note",
+    ]);
+    expect(doc.metadata.extra).toEqual({ recordingOrigin: "ambient", markedMoments: 1 });
   });
 
   test("a retried start, chunk or finish changes nothing", async () => {

@@ -11,6 +11,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -27,6 +28,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -52,6 +54,7 @@ import dev.omnesis.android.feature.omi.OmiLink
 import dev.omnesis.android.feature.omi.OmiLinkService
 import dev.omnesis.android.feature.omi.OmiPairing
 import dev.omnesis.android.feature.omi.OmiStatus
+import dev.omnesis.android.feature.recording.RecordingSettings
 import dev.omnesis.android.feature.recording.ui.RecordingAvailability
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -66,6 +69,8 @@ data class OmiCardState(
     val status: OmiStatus = OmiStatus.NotPaired,
     val associating: Boolean = false,
     val error: String? = null,
+    /** The pendant captures all day, and a tap marks a moment. */
+    val alwaysOn: Boolean = false,
 )
 
 @HiltViewModel
@@ -73,6 +78,7 @@ class OmiViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
     private val link: OmiLink,
     private val pairing: OmiPairing,
+    private val settings: RecordingSettings,
     availability: RecordingAvailability,
 ) : ViewModel() {
     /** Whether the gateway takes recordings: the pendant is only offered when it does. */
@@ -81,8 +87,12 @@ class OmiViewModel @Inject constructor(
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
     private val local = MutableStateFlow(OmiCardState())
-    val state: StateFlow<OmiCardState> = combine(link.status, local) { status, l -> l.copy(status = status) }
-        .stateIn(viewModelScope, SharingStarted.Eagerly, OmiCardState(status = link.status.value))
+    val state: StateFlow<OmiCardState> = combine(link.status, settings.alwaysOn, local) { status, alwaysOn, l ->
+        l.copy(status = status, alwaysOn = alwaysOn)
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, OmiCardState(status = link.status.value, alwaysOn = settings.alwaysOn.value))
+
+    /** Turn all-day capture on or off; the link service starts or stops the episodes. */
+    fun setAlwaysOn(on: Boolean) = settings.setAlwaysOn(on)
 
     init {
         // The screen opening brings the link back after the app was stopped.
@@ -144,6 +154,7 @@ fun OmiCard(vm: OmiViewModel = hiltViewModel()) {
     }
     OmiCardContent(
         state = state,
+        onAlwaysOn = vm::setAlwaysOn,
         onAssociate = {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 permission.launch(Manifest.permission.BLUETOOTH_CONNECT)
@@ -161,7 +172,13 @@ fun OmiCard(vm: OmiViewModel = hiltViewModel()) {
 
 /** Stateless, for the screenshot tests. */
 @Composable
-fun OmiCardContent(state: OmiCardState, onAssociate: () -> Unit, onForget: () -> Unit, onDetails: () -> Unit = {}) {
+fun OmiCardContent(
+    state: OmiCardState,
+    onAssociate: () -> Unit,
+    onForget: () -> Unit,
+    onDetails: () -> Unit = {},
+    onAlwaysOn: (Boolean) -> Unit = {},
+) {
     val c = OmTheme.colors
     OmnesisCard(padding = OmSpacing.lg) {
         when (val status = state.status) {
@@ -188,10 +205,25 @@ fun OmiCardContent(state: OmiCardState, onAssociate: () -> Unit, onForget: () ->
                 StatusRow(status)
                 Spacer(Modifier.height(OmSpacing.xs))
                 Text(
-                    detail(status),
+                    detail(status, state.alwaysOn),
                     style = MaterialTheme.typography.bodySmall,
                     color = if (status is OmiStatus.Unsupported) c.danger else c.textMuted,
                 )
+                Spacer(Modifier.height(OmSpacing.md))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Capture all day", style = MaterialTheme.typography.bodyMedium, color = c.textPrimary)
+                        Text(
+                            "Every conversation the pendant hears is recorded, one recording per conversation. " +
+                                "A tap marks a moment: about 30 seconds before it and what follows, up to the next " +
+                                "pause, are saved as a note.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = c.textMuted,
+                        )
+                    }
+                    Spacer(Modifier.width(OmSpacing.sm))
+                    Switch(checked = state.alwaysOn, onCheckedChange = onAlwaysOn)
+                }
                 Spacer(Modifier.height(OmSpacing.sm))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     OutlinedButton(onClick = onDetails) { Text("Details") }
@@ -235,9 +267,10 @@ private fun StatusRow(status: OmiStatus, modifier: Modifier = Modifier) {
     }
 }
 
-private fun detail(status: OmiStatus): String = when (status) {
+private fun detail(status: OmiStatus, alwaysOn: Boolean): String = when (status) {
     is OmiStatus.Ready -> when {
         !status.encrypted -> "The link is not encrypted: pairing did not complete. Forget the pendant and link it again."
+        alwaysOn -> "Capturing all day. Tap the pendant to mark a moment."
         status.canMute -> "Tap the pendant to start or stop a recording. Between recordings its microphone is off."
         else ->
             "Tap the pendant to start or stop a recording. Its firmware cannot switch the microphone off: " +

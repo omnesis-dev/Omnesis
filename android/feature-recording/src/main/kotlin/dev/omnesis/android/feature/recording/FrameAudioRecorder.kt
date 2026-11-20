@@ -24,6 +24,9 @@ import java.util.concurrent.Executors
  * length, which the controller files as silent. A dropped link closes the
  * chunk as interrupted and reports [onInputLost]; [start] resumes.
  *
+ * With a [MomentClipper], [markMoment] also cuts the moment just heard out
+ * of the stream as a clip of its own.
+ *
  * Decoding and encoding run on one worker thread; the public methods are
  * called from the service's main thread and wait for the worker where the
  * chunk count must be final.
@@ -38,6 +41,8 @@ class FrameAudioRecorder(
     private val worker: ExecutorService = Executors.newSingleThreadExecutor { Thread(it, "omnesis-wearable-audio") },
     private val postToMain: (Runnable) -> Unit = Handler(Looper.getMainLooper())::post,
     private val clock: () -> Long = System::currentTimeMillis,
+    /** Cuts marked moments out of the stream; null when moments are not marked. Used on the worker only. */
+    private val clipper: MomentClipper? = null,
 ) : ChunkRecorder {
 
     private class Open(val seq: Int, val file: File, val encoder: PcmChunkEncoder, val startedAtMs: Long) {
@@ -115,6 +120,22 @@ class FrameAudioRecorder(
         worker.shutdown()
     }
 
+    /**
+     * Mark the moment just heard: a clip starts with the audio held from
+     * before now and runs until the speech pauses. False while not
+     * recording, without a clipper, or while the last mark's clip is open.
+     */
+    fun markMoment(): Boolean {
+        val c = clipper ?: return false
+        if (!streaming) return false
+        val at = clock()
+        return try {
+            worker.submit<Boolean> { streaming && c.mark(at) }.get()
+        } catch (_: Exception) {
+            false
+        }
+    }
+
     private fun frame(frame: ByteArray, receivedAtMs: Long) {
         try {
             append(frame, receivedAtMs)
@@ -142,6 +163,8 @@ class FrameAudioRecorder(
             end == null -> startsAt
             startsAt - end > GAP_CLOSE_MS -> {
                 closeCurrent()
+                // The wearable heard nothing: the marked moment, if any, ended here.
+                clipper?.finish()
                 fileGap(end, startsAt)
                 startsAt
             }
@@ -169,6 +192,7 @@ class FrameAudioRecorder(
             if (open.samples >= TARGET_SAMPLES) closeCurrent()
         }
         audioEndMs = time
+        clipper?.let { c -> guarded { c.offer(pcm, time) } }
     }
 
     /** A number is taken only once its file is open, so one that fails to open leaves no hole. */
@@ -203,6 +227,7 @@ class FrameAudioRecorder(
     }
 
     private fun endRun() {
+        clipper?.let { c -> guarded { c.reset() } }
         closeCurrent()
         releaseDecoder()
         audioEndMs = null

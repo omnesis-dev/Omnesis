@@ -19,18 +19,44 @@ class OmiButtonPolicyTest {
     private val state = MutableStateFlow<RecordingState>(RecordingState.Idle)
     private val calls = mutableListOf<String>()
     private var startAllowed = true
+    private val alwaysOn = MutableStateFlow(false)
+    private var markable = true
 
     private fun TestScope.policy() = OmiButtonPolicy(
         recording = state,
         startRecording = { calls += "start"; startAllowed },
         stopRecording = { calls += "stop" },
+        markMoment = { calls += "mark"; markable },
+        alwaysOn = alwaysOn,
         vibrate = { calls += it.name },
         scope = backgroundScope,
         startTimeoutMs = 5_000,
     )
 
-    private fun active(input: RecordingInput) =
-        RecordingState.Active("s", null, recordedMs = 0, runningSinceMs = 1, chunks = 0, input = input)
+    private fun active(input: RecordingInput, ambient: Boolean = false) =
+        RecordingState.Active("s", null, recordedMs = 0, runningSinceMs = 1, chunks = 0, input = input, ambient = ambient)
+
+    @Test fun capturingAllDayATapMarksTheMomentWithOnePulse() = runTest {
+        alwaysOn.value = true
+        state.value = active(RecordingInput.WEARABLE, ambient = true)
+        policy().onButton(OmiButton.TAP)
+        assertEquals(listOf("mark", "MARKED"), calls)
+    }
+
+    @Test fun capturingAllDayATapThatMarksNothingGivesTheLongPulseAndStartsNothing() = runTest {
+        alwaysOn.value = true
+        markable = false
+        // Between two episodes nothing records for a moment.
+        policy().onButton(OmiButton.TAP)
+        assertEquals(listOf("mark", "FAILED"), calls)
+    }
+
+    @Test fun capturingAllDayATapStillStopsARecordingTheOwnerStarted() = runTest {
+        alwaysOn.value = true
+        state.value = active(RecordingInput.PHONE)
+        policy().onButton(OmiButton.TAP)
+        assertEquals(listOf("stop", "STOPPED"), calls)
+    }
 
     @Test fun aTapStartsARecordingAndOnePulseConfirmsItRuns() = runTest {
         val policy = policy()

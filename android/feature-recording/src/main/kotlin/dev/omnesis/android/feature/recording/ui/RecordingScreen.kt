@@ -143,13 +143,18 @@ fun RecordingContent(
         verticalArrangement = Arrangement.spacedBy(OmSpacing.md),
         contentPadding = androidx.compose.foundation.layout.PaddingValues(OmSpacing.lg),
     ) {
-        item {
-            val recording = state.recording
-            when {
-                recording != null -> RecorderCard(recording, state.elapsedMs, state.wearableName, onPause, onResume, onStop)
-                state.availability == RecordingAvailability.Availability.AVAILABLE ->
+        val recording = state.recording
+        if (recording != null) {
+            item { RecorderCard(recording, state.elapsedMs, state.wearableName, onPause, onResume, onStop) }
+        }
+        // While a wearable captures all day, a recording can still be started: it takes the episode's place.
+        if (recording == null || recording.ambient) {
+            item {
+                if (state.availability == RecordingAvailability.Availability.AVAILABLE) {
                     StartCard(state, onTitleChange, onStart, onInputChange, onWifiOnlyChange)
-                else -> UnavailableCard(state.availability)
+                } else {
+                    UnavailableCard(state.availability)
+                }
             }
         }
         if (wearableCard != null && state.availability == RecordingAvailability.Availability.AVAILABLE) {
@@ -296,6 +301,7 @@ private fun RecorderCard(
             Text(
                 when {
                     recording.paused -> "Paused"
+                    recording.ambient -> "Capturing conversations with the ${wearableName ?: "wearable"}"
                     recording.input == RecordingInput.WEARABLE -> "Recording with the ${wearableName ?: "wearable"}"
                     else -> "Recording"
                 },
@@ -340,6 +346,17 @@ private fun RecorderCard(
                 modifier = Modifier.fillMaxWidth(),
             )
         }
+        if (recording.ambient) {
+            Spacer(Modifier.height(OmSpacing.sm))
+            Text(
+                "This conversation is kept until three minutes pass without speech; the next starts on its own. " +
+                    "Tap the ${wearableName ?: "wearable"} to mark a moment.",
+                style = MaterialTheme.typography.bodySmall,
+                color = c.textSecondary,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
         Spacer(Modifier.height(OmSpacing.xs))
         Text(
             "${recording.chunks} ${if (recording.chunks == 1) "part" else "parts"} saved · the screen can turn off",
@@ -366,7 +383,8 @@ private fun RecorderCard(
             ) {
                 Icon(Icons.Outlined.Stop, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(OmSpacing.xs))
-                Text("Stop")
+                // Stopping an episode turns all-day capture off: the next would open at once.
+                Text(if (recording.ambient) "Turn off" else "Stop")
             }
         }
     }

@@ -15,6 +15,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import { SCOPE_ADMIN, SCOPE_READ, type Scope } from "@omnesis/types";
 import { createDatabase } from "../../db.js";
+import { getRecordingSession } from "../../recordings/storage.js";
 import { createServer } from "../../server.js";
 import { createToken } from "../../data/repositories/TokenRepository.js";
 import { createDevice } from "../../data/repositories/DeviceRepository.js";
@@ -193,6 +194,13 @@ describe("recordings routes", () => {
     expect(documentContent(id)).toBeUndefined();
     expect((await request("GET", `/recordings/${id}`)).status).toBe(404);
     expect((await request("DELETE", `/recordings/${id}`)).status).toBe(404);
+  });
+
+  test("a wearable's automatic episode is opened as ambient; anything else is refused", async () => {
+    const id = randomUUID();
+    expect((await startRecording(id, { origin: "ambient" })).status).toBe(201);
+    expect(getRecordingSession(db, id)?.origin).toBe("ambient");
+    expect((await startRecording(randomUUID(), { origin: "always" })).status).toBe(400);
   });
 
   test("retries are idempotent", async () => {

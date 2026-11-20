@@ -7,6 +7,9 @@ import java.io.File
 import java.nio.file.Files
 import java.time.ZoneId
 import java.util.Locale
+import java.util.Collections
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -36,6 +39,61 @@ class RecordingControllerTest {
     )
 
     private fun chunkFile(name: String) = File(root, name).apply { writeBytes(byteArrayOf(1, 2, 3)) }
+
+    /** File chunk [seq] of [sessionId], a minute long from the session's start, with speech or not. */
+    private fun minute(sessionId: String, seq: Int, speech: Boolean) {
+        val file = chunkFile(ChunkPolicy.fileName(seq))
+        if (!speech) verdicts[file.name] = ChunkSpeech(SpeechVerdict.NoSpeech, speechAtEnd = false)
+        controller.chunkClosed(sessionId, RecordedChunk(seq, now + seq * 60_000L, 60_000, file, interrupted = false))
+    }
+
+    @Test fun anAmbientEpisodeIsOverAfterThreeMinutesWithoutSpeech() = runTest {
+        val over = Collections.synchronizedList(mutableListOf<String>())
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { controller.episodesOver.collect { over += it } }
+        val active = controller.begin(null, ambient = true)!!
+        assertTrue(active.ambient)
+        assertTrue(outbox.sessionsById[active.sessionId]!!.ambient)
+
+        minute(active.sessionId, 0, speech = true)
+        minute(active.sessionId, 1, speech = false)
+        minute(active.sessionId, 2, speech = true) // the conversation picks up again
+        minute(active.sessionId, 3, speech = false)
+        minute(active.sessionId, 4, speech = false)
+        controller.flush()
+        assertTrue(over.isEmpty())
+
+        minute(active.sessionId, 5, speech = false) // three quiet minutes since minute 2 ended
+        minute(active.sessionId, 6, speech = false)
+        controller.flush()
+        assertEquals(listOf(active.sessionId), over)
+    }
+
+    @Test fun anEpisodeThatNeverHeardSpeechIsOverToo() = runTest {
+        val over = Collections.synchronizedList(mutableListOf<String>())
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { controller.episodesOver.collect { over += it } }
+        val active = controller.begin(null, ambient = true)!!
+        (0..2).forEach { minute(active.sessionId, it, speech = false) }
+        controller.flush()
+        assertEquals(listOf(active.sessionId), over)
+    }
+
+    @Test fun aRecordingTheOwnerStartedIsNeverAnEpisode() = runTest {
+        val over = Collections.synchronizedList(mutableListOf<String>())
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { controller.episodesOver.collect { over += it } }
+        val active = controller.begin(null)!!
+        (0..5).forEach { minute(active.sessionId, it, speech = false) }
+        controller.flush()
+        assertTrue(over.isEmpty())
+        assertFalse(outbox.sessionsById[active.sessionId]!!.ambient)
+    }
+
+    @Test fun aMarkReachesTheRecorderOnlyWhileOneIsSet() {
+        assertFalse(controller.markMoment())
+        controller.setMarker { true }
+        assertTrue(controller.markMoment())
+        controller.setMarker(null)
+        assertFalse(controller.markMoment())
+    }
 
     @Test fun opensASessionWithTheDevicesTimeZoneAndLanguage() = runTest {
         val active = controller.begin("  Design sync  ")!!

@@ -82,6 +82,8 @@ data class PendingNote(
     val taskId: String? = null,
     /** Where the clock stood at capture; null for a zone the gateway would not accept. */
     val zone: CaptureZone? = null,
+    /** The recorded conversation a marked moment's audio was clipped from. */
+    val recordingId: String? = null,
 )
 
 /** A queued note warrants operator attention after one failed retry or five minutes. */
@@ -106,7 +108,7 @@ internal val PENDING_WARNING_AGE: Duration = Duration.ofMillis(PENDING_WARNING_A
  */
 class PendingNotesStore(context: Context) {
 
-    private val helper: SQLiteOpenHelper = object : SQLiteOpenHelper(context, DB_NAME, null, 6) {
+    private val helper: SQLiteOpenHelper = object : SQLiteOpenHelper(context, DB_NAME, null, 7) {
         override fun onCreate(db: SQLiteDatabase) {
             db.execSQL(
                 """CREATE TABLE $TABLE (
@@ -123,7 +125,8 @@ class PendingNotesStore(context: Context) {
                     $COL_LANGUAGE TEXT,
                     $COL_TASK_ID TEXT,
                     $COL_TIME_ZONE_ID TEXT,
-                    $COL_UTC_OFFSET_SECONDS INTEGER
+                    $COL_UTC_OFFSET_SECONDS INTEGER,
+                    $COL_RECORDING_ID TEXT
                 )""",
             )
         }
@@ -162,6 +165,9 @@ class PendingNotesStore(context: Context) {
                 db.execSQL("ALTER TABLE $TABLE ADD COLUMN $COL_TIME_ZONE_ID TEXT")
                 db.execSQL("ALTER TABLE $TABLE ADD COLUMN $COL_UTC_OFFSET_SECONDS INTEGER")
             }
+            if (oldVersion < 7) {
+                db.execSQL("ALTER TABLE $TABLE ADD COLUMN $COL_RECORDING_ID TEXT")
+            }
         }
     }
 
@@ -176,6 +182,7 @@ class PendingNotesStore(context: Context) {
         language: String? = null,
         taskId: String? = null,
         zone: CaptureZone? = null,
+        recordingId: String? = null,
     ): Unit =
         withContext(Dispatchers.IO) {
             val values = ContentValues().apply {
@@ -191,6 +198,7 @@ class PendingNotesStore(context: Context) {
                 put(COL_TASK_ID, taskId)
                 put(COL_TIME_ZONE_ID, zone?.id)
                 put(COL_UTC_OFFSET_SECONDS, zone?.utcOffsetSeconds)
+                put(COL_RECORDING_ID, recordingId)
             }
             helper.writableDatabase.insertOrThrow(TABLE, null, values)
             Unit
@@ -216,6 +224,7 @@ class PendingNotesStore(context: Context) {
                 COL_TASK_ID,
                 COL_TIME_ZONE_ID,
                 COL_UTC_OFFSET_SECONDS,
+                COL_RECORDING_ID,
             ),
             null,
             null,
@@ -237,6 +246,7 @@ class PendingNotesStore(context: Context) {
             val languageIdx = cursor.getColumnIndexOrThrow(COL_LANGUAGE)
             val zoneIdx = cursor.getColumnIndexOrThrow(COL_TIME_ZONE_ID)
             val offsetIdx = cursor.getColumnIndexOrThrow(COL_UTC_OFFSET_SECONDS)
+            val recordingIdx = cursor.getColumnIndexOrThrow(COL_RECORDING_ID)
             while (cursor.moveToNext()) {
                 rows += PendingNote(
                     id = cursor.getLong(idIdx),
@@ -259,6 +269,7 @@ class PendingNotesStore(context: Context) {
                     } else {
                         CaptureZone(cursor.getString(zoneIdx), cursor.getInt(offsetIdx))
                     },
+                    recordingId = if (cursor.isNull(recordingIdx)) null else cursor.getString(recordingIdx),
                 )
             }
         }
@@ -311,5 +322,6 @@ class PendingNotesStore(context: Context) {
         const val COL_TASK_ID = "task_id"
         const val COL_TIME_ZONE_ID = "captured_time_zone_id"
         const val COL_UTC_OFFSET_SECONDS = "captured_utc_offset_seconds"
+        const val COL_RECORDING_ID = "recording_id"
     }
 }

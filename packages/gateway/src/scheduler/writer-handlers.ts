@@ -528,8 +528,10 @@ import {
   settleRecordingChunk,
   markRecordingSessionProjected,
   deleteRecordingSession,
+  insertRecordingMark,
   type NewRecordingSession,
   type NewRecordingChunk,
+  type RecordingMark,
   type InsertRecordingChunkOutcome,
   type FinishRecordingOutcome,
 } from "../recordings/storage.js";
@@ -2060,6 +2062,7 @@ export const writerHandlers = {
   "recordings.markProjected": (db: Db, id: string, revision: number) =>
     markRecordingSessionProjected(db, id, revision),
   "recordings.deleteSession": (db: Db, id: string): boolean => deleteRecordingSession(db, id),
+  "recordings.addMark": (db: Db, mark: RecordingMark): boolean => insertRecordingMark(db, mark),
   "notes.applyTranscript": (db: Db, id: string, expected: string, text: string, nowIso: string) =>
     applyNoteEntryTranscript(db, id, expected, text, nowIso),
 

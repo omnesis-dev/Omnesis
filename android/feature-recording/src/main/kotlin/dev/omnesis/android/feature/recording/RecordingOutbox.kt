@@ -27,6 +27,12 @@ data class OutboxSession(
     val chunksFiled: Int = 0,
     /** ISO-8601 instant the latest filed chunk ends, or null before the first. */
     val filedUntil: String? = null,
+    /**
+     * An episode a wearable capturing all day opened on its own. It reaches
+     * the gateway only once it holds speech; one that ends without any is
+     * forgotten.
+     */
+    val ambient: Boolean = false,
 )
 
 /** One recorded chunk waiting for the gateway's acknowledgement. */

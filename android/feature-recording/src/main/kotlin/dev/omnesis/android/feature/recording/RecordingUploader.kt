@@ -31,6 +31,10 @@ interface RecordingsGateway {
  * so the session's start is sent again next time. Only a request the gateway
  * rejects as invalid (400, 409, 413) marks the session refused; its audio stays
  * on the phone until the owner deletes the recording.
+ *
+ * An ambient episode is held back until a chunk with speech is filed: until
+ * then it may still turn out to be silence, and one that does is forgotten
+ * here once recording stopped, without the gateway ever hearing of it.
  */
 class RecordingUploader(
     private val outbox: RecordingOutbox,
@@ -71,6 +75,10 @@ class RecordingUploader(
 
     /** Send what [session] still owes the gateway, calling [onSent] after each acknowledged call. */
     private suspend fun send(session: OutboxSession, onSent: () -> Unit) {
+        if (session.ambient && !session.created && outbox.pendingChunks(session.id).all { it.silent }) {
+            if (session.chunkCount != null) outbox.remove(session.id)
+            return
+        }
         if (!session.created) {
             gateway.start(session)
             outbox.setCreated(session.id, true)

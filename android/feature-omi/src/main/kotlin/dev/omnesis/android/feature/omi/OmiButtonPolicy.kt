@@ -17,6 +17,12 @@ import kotlinx.coroutines.withTimeoutOrNull
  * recording from the pendant, confirmed by one short pulse once it is really
  * running, or one long pulse if it did not start in [startTimeoutMs]. A tap
  * while a recording runs, from either input, stops it with two short pulses.
+ *
+ * While the pendant captures all day ([alwaysOn]) a tap marks the moment just
+ * heard instead, with one short pulse, or one long pulse when nothing could
+ * mark it (between two episodes, say); a recording the owner started still
+ * stops on a tap.
+ *
  * Every other event is ignored; a long press switches the pendant off in its
  * own firmware.
  */
@@ -25,6 +31,9 @@ class OmiButtonPolicy(
     /** False when the system refused to start the recording service. */
     private val startRecording: () -> Boolean,
     private val stopRecording: () -> Unit,
+    /** False when no running recording could mark the moment. */
+    private val markMoment: () -> Boolean,
+    private val alwaysOn: StateFlow<Boolean>,
     private val vibrate: (Haptic) -> Unit,
     private val scope: CoroutineScope,
     private val startTimeoutMs: Long = 10_000,
@@ -34,7 +43,12 @@ class OmiButtonPolicy(
     fun onButton(event: OmiButton) {
         if (event != OmiButton.TAP) return
         if (starting?.isActive == true) return
-        if (recording.value is RecordingState.Active) {
+        val current = recording.value
+        if (alwaysOn.value && (current as? RecordingState.Active)?.ambient != false) {
+            vibrate(if (markMoment()) Haptic.MARKED else Haptic.FAILED)
+            return
+        }
+        if (current is RecordingState.Active) {
             stopRecording()
             vibrate(Haptic.STOPPED)
             return

@@ -21,7 +21,7 @@ import kotlinx.coroutines.withContext
  */
 class SqliteRecordingOutbox(context: Context, name: String? = DB_NAME) : RecordingOutbox {
 
-    private val helper: SQLiteOpenHelper = object : SQLiteOpenHelper(context, name, null, 1) {
+    private val helper: SQLiteOpenHelper = object : SQLiteOpenHelper(context, name, null, 2) {
         override fun onConfigure(db: SQLiteDatabase) {
             db.setForeignKeyConstraintsEnabled(true)
         }
@@ -41,7 +41,8 @@ class SqliteRecordingOutbox(context: Context, name: String? = DB_NAME) : Recordi
                     finished INTEGER NOT NULL DEFAULT 0,
                     refusal TEXT,
                     chunks_filed INTEGER NOT NULL DEFAULT 0,
-                    filed_until TEXT
+                    filed_until TEXT,
+                    ambient INTEGER NOT NULL DEFAULT 0
                 )""",
             )
             db.execSQL(
@@ -59,7 +60,9 @@ class SqliteRecordingOutbox(context: Context, name: String? = DB_NAME) : Recordi
             )
         }
 
-        override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
+        override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+            if (oldVersion < 2) db.execSQL("ALTER TABLE sessions ADD COLUMN ambient INTEGER NOT NULL DEFAULT 0")
+        }
     }
 
     override suspend fun addSession(session: OutboxSession) = io {
@@ -80,6 +83,7 @@ class SqliteRecordingOutbox(context: Context, name: String? = DB_NAME) : Recordi
                 put("refusal", session.refusal)
                 put("chunks_filed", session.chunksFiled)
                 put("filed_until", session.filedUntil)
+                put("ambient", if (session.ambient) 1 else 0)
             },
             SQLiteDatabase.CONFLICT_IGNORE,
         )
@@ -196,6 +200,7 @@ class SqliteRecordingOutbox(context: Context, name: String? = DB_NAME) : Recordi
         refusal = str("refusal"),
         chunksFiled = int("chunks_filed") ?: 0,
         filedUntil = str("filed_until"),
+        ambient = int("ambient") == 1,
     )
 
     private fun Cursor.toChunk() = OutboxChunk(

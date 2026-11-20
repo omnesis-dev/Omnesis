@@ -9,12 +9,14 @@
  * line of its own, so a reader can tell a pause from a lost upload: a run of
  * silence, a stretch where recording was paused, the microphone taken by a
  * call, a chunk that could not be transcribed, and chunks that never arrived.
+ * A moment the owner marked is a line of its own after the transcript it
+ * falls in; the marked audio itself was saved as a note.
  *
- * Pure: the same session and chunks always render the same text.
+ * Pure: the same session, chunks and marks always render the same text.
  */
 
 // See #858 — planned: one line per transcriber segment instead of per chunk.
-import type { RecordingChunk, RecordingSession } from "../../recordings/storage.js";
+import type { RecordingChunk, RecordingMark, RecordingSession } from "../../recordings/storage.js";
 
 /** A pause between two chunks shorter than this is the recorder's own seam, not a gap. */
 const GAP_THRESHOLD_MS = 5_000;
@@ -65,14 +67,19 @@ export function recordingTitle(session: RecordingSession): string {
   return given && given.length > 0 ? given : `Conversation, ${localStart(session)}`;
 }
 
-/** Render a session from its stored chunks (any order; missing ones are named). */
+/** Render a session from its stored chunks (any order; missing ones are named) and marks. */
 export function renderRecording(
   session: RecordingSession,
   chunks: readonly RecordingChunk[],
+  marks: readonly RecordingMark[] = [],
 ): RenderedRecording {
   const start = Date.parse(session.startedAt);
   const sorted = [...chunks].sort((a, b) => a.seq - b.seq);
-  const lines: string[] = [];
+  /** Each line with the offset it is stamped with, in reading order. */
+  const lines: { atMs: number; text: string }[] = [];
+  const push = (atMs: number, text: string): void => {
+    lines.push({ atMs, text: `[${formatOffset(atMs)}] ${text}` });
+  };
   let cursorMs = 0;
   let silentRunMs = 0;
   let silentRunAt = 0;
@@ -81,7 +88,7 @@ export function renderRecording(
 
   const flushSilence = (): void => {
     if (silentRunMs >= GAP_THRESHOLD_MS) {
-      lines.push(`[${formatOffset(silentRunAt)}] — silence, ${formatSpan(silentRunMs)} —`);
+      push(silentRunAt, `— silence, ${formatSpan(silentRunMs)} —`);
     }
     silentRunMs = 0;
   };
@@ -91,14 +98,13 @@ export function renderRecording(
     if (chunk.seq > expectedSeq) {
       flushSilence();
       const missing = chunk.seq - expectedSeq;
-      lines.push(
-        `[${formatOffset(cursorMs)}] — ${missing === 1 ? "a part" : `${missing} parts`} of the recording did not arrive —`,
+      push(
+        cursorMs,
+        `— ${missing === 1 ? "a part" : `${missing} parts`} of the recording did not arrive —`,
       );
     } else if (offset - cursorMs >= GAP_THRESHOLD_MS) {
       flushSilence();
-      lines.push(
-        `[${formatOffset(cursorMs)}] — recording paused, ${formatSpan(offset - cursorMs)} —`,
-      );
+      push(cursorMs, `— recording paused, ${formatSpan(offset - cursorMs)} —`);
     }
     expectedSeq = chunk.seq + 1;
     cursorMs = Math.max(cursorMs, offset + chunk.durationMs);
@@ -107,7 +113,7 @@ export function renderRecording(
     // interruption is said before the chunk joins a silent run.
     if (chunk.interrupted) {
       flushSilence();
-      lines.push(`[${formatOffset(offset)}] — the microphone was interrupted —`);
+      push(offset, "— the microphone was interrupted —");
     }
     const text = chunk.status === "transcribed" ? (chunk.text ?? "").trim() : "";
     if (chunk.status === "silent" || (chunk.status === "transcribed" && text.length === 0)) {
@@ -117,18 +123,28 @@ export function renderRecording(
     }
     flushSilence();
     if (chunk.status === "failed") {
-      lines.push(`[${formatOffset(offset)}] — this part could not be transcribed —`);
+      push(offset, "— this part could not be transcribed —");
     } else if (chunk.status === "transcribed") {
       hasSpeech = true;
-      lines.push(`[${formatOffset(offset)}] ${text}`);
+      push(offset, text);
     }
   }
   flushSilence();
   if (session.chunkCount !== null && session.chunkCount > expectedSeq) {
     const missing = session.chunkCount - expectedSeq;
-    lines.push(
-      `[${formatOffset(cursorMs)}] — ${missing === 1 ? "a part" : `${missing} parts`} of the recording did not arrive —`,
+    push(
+      cursorMs,
+      `— ${missing === 1 ? "a part" : `${missing} parts`} of the recording did not arrive —`,
     );
+  }
+
+  // Each mark goes after every line stamped at or before it.
+  for (const mark of [...marks].sort((a, b) => a.markedAt.localeCompare(b.markedAt))) {
+    const atMs = Math.max(0, Date.parse(mark.markedAt) - start);
+    const index = lines.findIndex((line) => line.atMs > atMs);
+    const line = { atMs, text: `[${formatOffset(atMs)}] ★ Marked moment, saved as a note` };
+    if (index === -1) lines.push(line);
+    else lines.splice(index, 0, line);
   }
 
   const endMs = session.endedAt ? Date.parse(session.endedAt) - start : cursorMs;
@@ -137,11 +153,11 @@ export function renderRecording(
   const header = [
     `# ${title}`,
     "",
-    `Recorded conversation · ${localStart(session)} · ${formatSpan(durationMs)}`,
+    `${session.origin === "ambient" ? "Conversation captured by a wearable" : "Recorded conversation"} · ${localStart(session)} · ${formatSpan(durationMs)}`,
   ];
   return {
     title,
-    body: [...header, "", ...lines].join("\n").trimEnd(),
+    body: [...header, "", ...lines.map((line) => line.text)].join("\n").trimEnd(),
     durationSec: Math.round(durationMs / 1000),
     hasSpeech,
   };

@@ -2169,17 +2169,6 @@ export function createServer(
     });
     voiceNotes.start();
     opts.onVoiceNoteService?.(voiceNotes);
-    const getDictationStatus = opts.getDictationStatus;
-    mountVoiceNoteRoutes(app, {
-      service: voiceNotes,
-      // A recording that arrives while the Whisper runtime probe is still
-      // running waits for its answer rather than being refused on a "not yet".
-      getStatus: async () => {
-        await transcribeService.settledReadiness();
-        return getDictationStatus();
-      },
-    });
-
     // Recorded conversations (experimental): a phone uploads a long
     // recording in chunks and the gateway transcribes them as they arrive.
     // The queue runs whatever the mode, so sessions accepted before the mode
@@ -2198,6 +2187,26 @@ export function createServer(
       buildDocument: buildRecordingDocument,
     });
     recordings.start();
+
+    const getDictationStatus = opts.getDictationStatus;
+    mountVoiceNoteRoutes(app, {
+      service: voiceNotes,
+      // A recording that arrives while the Whisper runtime probe is still
+      // running waits for its answer rather than being refused on a "not yet".
+      getStatus: async () => {
+        await transcribeService.settledReadiness();
+        return getDictationStatus();
+      },
+      // A moment marked in a recorded conversation is recorded only while
+      // the feature is on, as its routes are.
+      ...(experimentalEnabled()
+        ? {
+            markRecording: (recordingId: string, noteId: string, markedAt: string) =>
+              recordings.mark(recordingId, noteId, markedAt),
+          }
+        : {}),
+    });
+
     // The source is listed only in experimental mode; its display identity
     // is seeded then, so the row never shows without its label and icon.
     if (experimentalEnabled()) {

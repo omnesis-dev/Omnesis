@@ -32,6 +32,8 @@ import kotlinx.serialization.Serializable
 data class StartRecordingBody(
     val id: String,
     val title: String? = null,
+    /** `ambient` for an episode a wearable opened on its own; absent for one the owner started. */
+    val origin: String? = null,
     val startedAt: String,
     val startedTimeZoneId: String? = null,
     val startedUtcOffsetSeconds: Int? = null,

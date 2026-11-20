@@ -105,6 +105,7 @@ export function mountRecordingRoutes(app: RouteApp, deps: RecordingRoutesDeps): 
     const { created } = await deps.service.startSession({
       id: body.id,
       title: body.title,
+      origin: body.origin,
       startedAt: new Date(body.startedAt).toISOString(),
       startedTimeZoneId: body.startedTimeZoneId,
       startedUtcOffsetSeconds: body.startedUtcOffsetSeconds,

@@ -65,6 +65,12 @@ class SqliteRecordingOutboxTest {
         assertNull(chunks[1].file)
     }
 
+    @Test fun keepsWhetherASessionIsAnAmbientEpisode() = runTest {
+        outbox.addSession(session("a"))
+        outbox.addSession(session("b").copy(ambient = true))
+        assertEquals(mapOf("a" to false, "b" to true), outbox.sessions().associate { it.id to it.ambient })
+    }
+
     @Test fun anAcknowledgedChunkLeavesWithItsFile() = runTest {
         outbox.addSession(session("a"))
         val file = audioFile()
