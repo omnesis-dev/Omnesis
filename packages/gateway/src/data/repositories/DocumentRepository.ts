@@ -1351,46 +1351,6 @@ export function getDocumentCount(db: Db, sourceId: string): number {
 }
 
 /** How many documents one source, or one stream of it, holds at a source version. */
-export interface SourceVersionCount {
-  sourceVersion: number;
-  count: number;
-}
-
-/**
- * How many documents a source holds at each source version, lowest first.
- * Version 0 is the documents stored without one.
- *
- * `streamId` narrows the count to one contributing device's stream of a
- * partitioned source; left out, every stream of the source is counted
- * together. Read from the running counts (`source_version_counts`), so it
- * costs a few rows whatever the source holds and is safe on any thread.
- */
-export function countDocumentsBySourceVersion(
-  db: Db,
-  sourceId: string,
-  streamId?: string,
-): SourceVersionCount[] {
-  if (streamId === undefined) {
-    return db
-      .prepare<[string], SourceVersionCount>(
-        `SELECT source_version AS sourceVersion, SUM(document_count) AS count
-           FROM source_version_counts
-          WHERE source_id = ?
-          GROUP BY source_version
-          ORDER BY source_version`,
-      )
-      .all(sourceId);
-  }
-  return db
-    .prepare<[string, string], SourceVersionCount>(
-      `SELECT source_version AS sourceVersion, document_count AS count
-         FROM source_version_counts
-        WHERE source_id = ? AND stream_id = ?
-        ORDER BY source_version`,
-    )
-    .all(sourceId, streamId);
-}
-
 /**
  * Per-source "what's the most recent thing that actually changed?" lookup.
  * Used by the Sources view's `Last activity` column to surface a document

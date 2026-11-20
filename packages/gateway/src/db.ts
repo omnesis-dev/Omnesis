@@ -43,8 +43,6 @@ export {
   deleteAllByStream,
   deleteAllByProvider,
   getDocumentCount,
-  countDocumentsBySourceVersion,
-  type SourceVersionCount,
   getLatestActivityBySource,
   getRecentDocuments,
   listDocuments,
@@ -69,6 +67,10 @@ export {
   type ReplicaOmissionArgs,
   type ReplicaVerdictOutcome,
 } from "./data/repositories/DocumentRepository.js";
+export {
+  countDocumentsBySourceVersion,
+  type SourceVersionCount,
+} from "./data/repositories/SourceVersionCountRepository.js";
 
 export {
   listClaimedExternalIds,

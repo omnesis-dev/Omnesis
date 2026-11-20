@@ -20,8 +20,8 @@ import { EventBus, type DocumentUpsertedEvent } from "../../events.js";
 import { EventService } from "../../http/services/EventService.js";
 import { runMigrations } from "../migrations.js";
 import { runSchemaSetup } from "../schema.js";
+import { countDocumentsBySourceVersion } from "./SourceVersionCountRepository.js";
 import {
-  countDocumentsBySourceVersion,
   deleteDocuments,
   fetchDocumentProjections,
   listDocumentsLightweight,

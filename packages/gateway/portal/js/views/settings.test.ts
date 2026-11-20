@@ -251,7 +251,6 @@ describe("Settings header actions", () => {
         newLevel: "accessNewLevel" in page ? page.accessNewLevel : false,
         connectOpen: false,
         completeInPortal: false,
-        cloudRelay: false,
         tailscaleEmbed: false,
       });
       expect(router.replaceRoute).not.toHaveBeenCalled();

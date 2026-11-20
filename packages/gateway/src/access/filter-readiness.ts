@@ -35,7 +35,7 @@ import {
   type FilterNoun,
   type MultiDeviceMode,
 } from "@omnesis/types";
-import { countDocumentsBySourceVersion } from "../data/repositories/DocumentRepository.js";
+import { countDocumentsBySourceVersion } from "../data/repositories/SourceVersionCountRepository.js";
 import { getSourceResyncCost } from "../data/repositories/SourceFamilyMetaRepository.js";
 import {
   listSourceFullReads,

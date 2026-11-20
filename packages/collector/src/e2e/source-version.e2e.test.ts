@@ -24,7 +24,7 @@
 import "./synth-env.js";
 import SqliteDatabase from "better-sqlite3";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
-import { countDocumentsBySourceVersion } from "@omnesis/gateway/src/data/repositories/DocumentRepository.js";
+import { countDocumentsBySourceVersion } from "@omnesis/gateway/src/data/repositories/SourceVersionCountRepository.js";
 import { loadSourceFixtureJson, loadUniverse } from "@omnesis/providers-synth-common";
 import { SyntheticE2EHarness, type HarnessDevice } from "./synth-harness.js";
 

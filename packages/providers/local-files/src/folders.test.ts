@@ -62,7 +62,12 @@ describe("local-files folders", () => {
 
   beforeEach(() => {
     // The scanner works on real paths: on macOS the temp directory is reached through a symlink.
-    tmpDir = realpathSync(mkdtempSync(join(tmpdir(), "local-files-folders-")));
+    // The source refuses the Windows temp directory as a protected location.
+    tmpDir = realpathSync(
+      mkdtempSync(
+        join(process.platform === "win32" ? homedir() : tmpdir(), "local-files-folders-"),
+      ),
+    );
     root = join(tmpDir, "Documents");
     mkdirSync(root, { recursive: true });
   });
@@ -138,9 +143,11 @@ describe("local-files folders", () => {
     const items = await collectFilterList(instance.filterLists![FIELD]!, {
       signal: new AbortController().signal,
     });
-    const home = homedir();
-    const expected =
-      root === home || root.startsWith(`${home}/`) ? `~${root.slice(home.length)}` : root;
+    // Labels are written with forward slashes on every platform.
+    const slashed = (path: string): string => path.replaceAll("\\", "/");
+    const home = slashed(homedir());
+    const at = slashed(root);
+    const expected = at === home || at.startsWith(`${home}/`) ? `~${at.slice(home.length)}` : at;
     expect(items).toEqual([{ id: id(root), label: expected }]);
   });
 
@@ -177,7 +184,8 @@ describe("local-files folders", () => {
 
   test("a file reached through a symlinked folder is filed where it really is", async () => {
     write("real/zqfilter-real.md", "Invented notes in the real folder.");
-    symlinkSync(join(root, "real"), join(root, "alias"));
+    // A junction needs no privilege on Windows; elsewhere the type is ignored.
+    symlinkSync(join(root, "real"), join(root, "alias"), "junction");
     const instance = await create();
     const result = await instance.sync(null);
 

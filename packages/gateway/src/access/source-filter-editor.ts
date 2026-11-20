@@ -23,7 +23,7 @@ import {
   type FilterRef,
   type SourceFilter,
 } from "@omnesis/types";
-import { countDocumentsBySourceVersion } from "../data/repositories/DocumentRepository.js";
+import { countDocumentsBySourceVersion } from "../data/repositories/SourceVersionCountRepository.js";
 import { KNOWLEDGE_READ_SOURCE_IDS } from "../agent/knowledge-read-policy.js";
 import { createCorpusAuthorization } from "./corpus-authorization.js";
 import { documentAccessGrant } from "./document-inclusion.js";
