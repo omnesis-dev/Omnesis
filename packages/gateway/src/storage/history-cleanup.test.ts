@@ -259,14 +259,22 @@ function record(id: string, pinned = false): ConversationRecord {
 }
 test("conversation scan verifies a complete pass, reports pinned/permanent protection and does not cap at 100", async () => {
   const f = fixture({});
-  const store = new FsConversationStore(join(f.root, "conversations"));
+  const conversationsDir = join(f.root, "conversations");
+  mkdirSync(conversationsDir, { recursive: true });
+  // A restored archive may have records without a summary index. Seed those
+  // files directly; publication is covered by the conversation-store tests.
+  const records: ConversationRecord[] = [
+    ...Array.from({ length: 125 }, (_, n) => record("invented-" + n)),
+    record("pinned", true),
+    {
+      ...record("morning"),
+      origin: { kind: "daily_brief", runId: "invented-run", briefs: [] },
+    },
+  ];
+  for (const rec of records)
+    writeFileSync(join(conversationsDir, `${rec.id}.json`), JSON.stringify(rec));
+  const store = new FsConversationStore(conversationsDir);
   closers.push(() => store.close());
-  for (let n = 0; n < 125; n++) await store.save(record("invented-" + n));
-  await store.save(record("pinned", true));
-  await store.save({
-    ...record("morning"),
-    origin: { kind: "daily_brief", runId: "invented-run", briefs: [] },
-  });
   const scan = store.createCleanupScanner();
   let job = startHistoryCleanupJob(f.db, { request: { target: "conversations", before }, now: 1 });
   let protectedReasons: Record<string, number> = {};
