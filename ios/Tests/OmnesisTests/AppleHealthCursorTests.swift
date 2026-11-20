@@ -149,6 +149,50 @@ final class AppleHealthCursorTests: XCTestCase {
         XCTAssertEqual(AppleHealthCursor.decode(from: cursor.encode()), cursor)
     }
 
+    /// Build 369 stored lanes uncompressed; a phone updating from it must
+    /// carry on from those anchors.
+    func testAPlainLanesCursorFromBuild369IsStillRead() {
+        var cursor = AppleHealthCursor()
+        cursor.beginPass(identifiers: types, now: now)
+        _ = drain(&cursor, fullPages: ["TypeA#0": 1])
+        var plain = cursor.encode()
+        XCTAssertNotNil(plain.removeValue(forKey: "lanesZ"))
+        plain["lanes"] = .object(cursor.lanesByIdentifier.mapValues { lanes in
+            .array(lanes.map { lane in
+                var obj: [String: JSONValue] = [:]
+                if let start = lane.window.start { obj["start"] = .int(Int64(start.timeIntervalSince1970)) }
+                if let end = lane.window.end { obj["end"] = .int(Int64(end.timeIntervalSince1970)) }
+                if let anchor = lane.anchor { obj["anchor"] = .string(anchor) }
+                return .object(obj)
+            })
+        })
+
+        XCTAssertEqual(AppleHealthCursor.decode(from: plain), cursor)
+    }
+
+    /// Saved after every page, so it must stay small with every type
+    /// enabled: four lanes a type, each anchor an archived `HKQueryAnchor`
+    /// of ~550 base64 characters, most of them repeats.
+    func testACursorWithEveryTypeEnabledStaysAFewKilobytes() throws {
+        let token = String(repeating: "d5cb1bf77bf8096e10c9690a23e5779c", count: 4)
+        let anchors = (0 ..< 42).map { row in
+            Data("bplist00-archived-HKQueryAnchor-rowid-\(1_000_000 + row * 7919)-clientToken-\(token)".utf8)
+                .base64EncodedString() + String(repeating: "A", count: 300)
+        }
+        var cursor = AppleHealthCursor()
+        let identifiers = (0 ..< 76).map { "HKQuantityTypeIdentifier\($0)" }
+        cursor.beginPass(identifiers: identifiers, now: now)
+        var index = 0
+        while let read = cursor.nextRead() {
+            cursor.complete(read, anchor: anchors[index % anchors.count], hasMore: false)
+            index += 1
+        }
+
+        let bytes = try JSONEncoder().encode(cursor.encode()).count
+        XCTAssertLessThan(bytes, 16 * 1024, "the cursor is \(bytes) bytes")
+        XCTAssertEqual(AppleHealthCursor.decode(from: cursor.encode()), cursor)
+    }
+
     func testDecodeEmptyCursorGivesDefaults() {
         let cursor = AppleHealthCursor.decode(from: nil)
         XCTAssertTrue(cursor.lanesByIdentifier.isEmpty)

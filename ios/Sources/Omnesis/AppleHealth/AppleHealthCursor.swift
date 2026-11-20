@@ -84,7 +84,8 @@ public struct HealthRead: Equatable, Sendable {
 ///
 /// Structure:
 ///   - `lanesByIdentifier` — per type, one `HealthLane` per recency tier
-///     (see `HealthRecency`), newest first.
+///     (see `HealthRecency`), newest first. Stored deflated (`lanesZ`);
+///     the plain `lanes` object is still read.
 ///   - `pending` — the reads the current pass still owes, one queue per
 ///     tier. A pass reads tier 0 of every type, round-robin a page at a
 ///     time, then tier 1, and so on: every type is brought up to date with
@@ -211,12 +212,18 @@ public struct AppleHealthCursor: Sendable, Equatable {
                 }
             }
         }
-        if case .object(let obj) = cursor["lanes"] {
+        // Compressed lanes first; the plain form is what build 369 wrote.
+        let lanes: JSONValue? = if case .string(let packed) = cursor["lanesZ"] {
+            unpack(packed)
+        } else {
+            cursor["lanes"]
+        }
+        if case .object(let obj) = lanes {
             for (identifier, value) in obj {
                 guard case .array(let rawLanes) = value else { continue }
-                let lanes = rawLanes.compactMap(decodeLane)
-                if lanes.count == rawLanes.count, lanes.count == HealthRecency.tierCount {
-                    typed.lanesByIdentifier[identifier] = lanes
+                let decoded = rawLanes.compactMap(decodeLane)
+                if decoded.count == rawLanes.count, decoded.count == HealthRecency.tierCount {
+                    typed.lanesByIdentifier[identifier] = decoded
                 }
             }
         }
@@ -238,12 +245,17 @@ public struct AppleHealthCursor: Sendable, Equatable {
     /// Encode back into the untyped `[String: JSONValue]` shape the
     /// gateway persists.
     public func encode() -> SyncCursor {
+        let lanes = JSONValue.object(lanesByIdentifier.mapValues { .array($0.map(Self.encodeLane)) })
         var dict: [String: JSONValue] = [
             "version": .int(2),
-            "lanes": .object(lanesByIdentifier.mapValues { .array($0.map(Self.encodeLane)) }),
             "pending": .array(pending.map { .array($0.map(JSONValue.string)) }),
             "passCount": .int(Int64(passCount)),
         ]
+        if let packed = Self.pack(lanes) {
+            dict["lanesZ"] = .string(packed)
+        } else {
+            dict["lanes"] = lanes
+        }
         if !anchorsByIdentifier.isEmpty {
             dict["anchorsByIdentifier"] = .object(anchorsByIdentifier.mapValues(JSONValue.string))
         }
@@ -251,6 +263,25 @@ public struct AppleHealthCursor: Sendable, Equatable {
             dict["lastCycleCompletedAt"] = .string(lastCycleCompletedAt)
         }
         return dict
+    }
+
+    /// The lanes, deflated and base64-encoded. The cursor is saved on the
+    /// gateway after every page, and its anchors — four per type, each an
+    /// archived `HKQueryAnchor` of several hundred bytes, mostly repeats of
+    /// one another — make it some 185 KB with every type enabled; deflated
+    /// it is a few KB.
+    private static func pack(_ lanes: JSONValue) -> String? {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        guard let json = try? encoder.encode(lanes),
+              let deflated = try? (json as NSData).compressed(using: .zlib) else { return nil }
+        return (deflated as Data).base64EncodedString()
+    }
+
+    private static func unpack(_ packed: String) -> JSONValue? {
+        guard let deflated = Data(base64Encoded: packed),
+              let json = try? (deflated as NSData).decompressed(using: .zlib) else { return nil }
+        return try? JSONDecoder().decode(JSONValue.self, from: json as Data)
     }
 
     private static func encodeLane(_ lane: HealthLane) -> JSONValue {

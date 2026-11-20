@@ -88,37 +88,78 @@ public struct AppleHealthSource: OmnesisSource {
             typed.beginPass(identifiers: catalog.map(\.identifier), now: now())
         }
         let entries = Dictionary(catalog.map { ($0.identifier, $0) }, uniquingKeysWith: { first, _ in first })
-        // Reads this OS cannot make (a type it does not know, a type no
-        // longer enabled) are dropped from the pass without a round-trip.
-        var next = typed.nextRead()
-        while let read = next, entries[read.identifier]?.sampleType == nil || typed.lane(for: read) == nil {
-            typed.skip(read)
-            next = typed.nextRead()
-        }
-        guard let read = next,
-              let entry = entries[read.identifier],
-              let sampleType = entry.sampleType,
-              let lane = typed.lane(for: read) else {
-            typed.closePass(at: now())
-            return emptyPage(typed, hasMore: false)
-        }
 
-        // Second defence: even when isProtectedDataAvailable was true at
-        // the top, a race is possible (user locks mid-query). Catch the
-        // specific HK "protected data inaccessible" error and bail out
-        // gracefully — same semantics as the gate above.
-        let page: HealthAnchoredPage
-        do {
-            page = try await reader.anchoredPage(
-                type: sampleType,
-                window: lane.window,
-                anchor: lane.anchor,
-                limit: pageLimit
-            )
-        } catch let err as NSError where err.domain == HKErrorDomain && err.code == HKError.errorDatabaseInaccessible.rawValue {
-            return emptyPage(typed, hasMore: false)
-        }
+        // Most lanes are caught up on most passes, and a read that finds
+        // nothing is a few milliseconds on the phone. Returning each of them
+        // as its own page would cost a cursor save on the gateway apiece —
+        // hundreds a pass — so they are folded into the next page that has
+        // something to deliver, up to a bound that keeps one call short.
+        var emptyReads = 0
+        while true {
+            // Reads this OS cannot make (a type it does not know, a type no
+            // longer enabled) are dropped from the pass without a query.
+            var next = typed.nextRead()
+            while let read = next, entries[read.identifier]?.sampleType == nil || typed.lane(for: read) == nil {
+                typed.skip(read)
+                next = typed.nextRead()
+            }
+            guard let read = next,
+                  let entry = entries[read.identifier],
+                  let sampleType = entry.sampleType,
+                  let lane = typed.lane(for: read) else {
+                typed.closePass(at: now())
+                return emptyPage(typed, hasMore: false)
+            }
 
+            // Second defence: even when isProtectedDataAvailable was true at
+            // the top, a race is possible (user locks mid-query). Catch the
+            // specific HK "protected data inaccessible" error and bail out
+            // gracefully — same semantics as the gate above.
+            let page: HealthAnchoredPage
+            do {
+                page = try await reader.anchoredPage(
+                    type: sampleType,
+                    window: lane.window,
+                    anchor: lane.anchor,
+                    limit: pageLimit
+                )
+            } catch let err as NSError where err.domain == HKErrorDomain && err.code == HKError.errorDatabaseInaccessible.rawValue {
+                return emptyPage(typed, hasMore: false)
+            }
+
+            // HealthKit counts deleted objects toward the limit, so a page can
+            // be full of tombstones with few or no samples; it is the objects,
+            // not the samples, that say whether the lane has more.
+            let pageWasFull = page.samples.count + page.deletedIds.count >= pageLimit
+            typed.complete(read, anchor: page.anchor, hasMore: pageWasFull)
+
+            if page.samples.isEmpty, page.deletedIds.isEmpty {
+                emptyReads += 1
+                if emptyReads >= Self.maxEmptyReadsPerPage {
+                    let hasMore = typed.nextRead() != nil
+                    if !hasMore { typed.closePass(at: now()) }
+                    return emptyPage(typed, hasMore: hasMore)
+                }
+                continue
+            }
+            return await result(for: page, entry: entry, sampleType: sampleType, cursor: typed)
+        }
+    }
+
+    /// Lane reads that find nothing, folded into one call before it returns
+    /// an empty page anyway, so the collector can still check the wake's
+    /// remaining time between them.
+    static let maxEmptyReadsPerPage = 64
+
+    /// Turn a page with samples or deletions into the result for its table.
+    private func result(
+        for page: HealthAnchoredPage,
+        entry: TypeEntry,
+        sampleType: HKSampleType,
+        cursor: AppleHealthCursor
+    ) async
+        -> SyncResult {
+        var typed = cursor
         let built = buildRecordsAndDocuments(from: page.samples, entry: entry)
         var documents = built.documents
 
@@ -135,11 +176,6 @@ public struct AppleHealthSource: OmnesisSource {
             documents.append(contentsOf: nightDocuments)
         }
 
-        // HealthKit counts deleted objects toward the limit, so a page can be
-        // full of tombstones with few or no samples; it is the objects, not
-        // the samples, that say whether the lane has more.
-        let pageWasFull = page.samples.count + page.deletedIds.count >= pageLimit
-        typed.complete(read, anchor: page.anchor, hasMore: pageWasFull)
         let hasMore = typed.nextRead() != nil
         if !hasMore {
             typed.closePass(at: now())

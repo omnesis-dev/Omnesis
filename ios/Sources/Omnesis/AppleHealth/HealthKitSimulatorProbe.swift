@@ -33,7 +33,9 @@ enum HealthKitSimulatorProbe {
         let store = HKHealthStore()
         let types: Set<HKSampleType> = [heartRate, stepCount]
         do {
-            try await store.requestAuthorization(toShare: types, read: types)
+            // Write the two probe types; read the whole catalog, as a phone
+            // with every category enabled does.
+            try await store.requestAuthorization(toShare: types, read: TypeCatalog.allObjectTypes.union(types))
             try await clean(store)
         } catch {
             return [Check(name: "authorization", passed: false, detail: String(describing: error))]
@@ -43,6 +45,7 @@ enum HealthKitSimulatorProbe {
             checks += try await lanesAndDeletions(store)
             try await checks.append(legacyAnchorMigration(store))
             try await checks.append(anchorAfterTombstones(store))
+            try await checks.append(fullCatalogCursor())
             try await checks.append(wakeThroughCollector(store))
             try await checks.append(observerAwaitsSync(store))
         } catch {
@@ -93,6 +96,13 @@ enum HealthKitSimulatorProbe {
             name: "deletions-in-windowed-lanes",
             passed: second.deletedIds.contains(doomed.uuid.uuidString),
             detail: "\(second.deletedIds.count) deletions reported"
+        ))
+
+        let quiet = try await runPass(source, from: second.cursor)
+        checks.append(Check(
+            name: "quiet-pass",
+            passed: quiet.pages == 1 && quiet.ids.filter { seeded.all.contains($0) || added.contains($0) }.isEmpty,
+            detail: "\(quiet.pages) page(s) for a pass with nothing new"
         ))
 
         var cursor: SyncCursor?
@@ -177,6 +187,22 @@ enum HealthKitSimulatorProbe {
         )
     }
 
+    /// Every catalog type, as on a phone with every category enabled: the
+    /// cursor saved after each page stays a few KB, and a pass with nothing
+    /// new costs a handful of pages rather than one per lane.
+    private static func fullCatalogCursor() async throws -> Check {
+        let source = AppleHealthSource(client: HealthKitClient(), catalog: TypeCatalog.v1, pageLimit: 500)
+        let first = try await runPass(source, from: nil)
+        let quiet = try await runPass(source, from: first.cursor)
+        let bytes = try JSONEncoder().encode(quiet.cursor ?? [:]).count
+        let types = TypeCatalog.v1.filter { $0.sampleType != nil }.count
+        return Check(
+            name: "full-catalog-cursor",
+            passed: bytes < 16 * 1024 && quiet.pages <= 8,
+            detail: "\(types) types: cursor \(bytes) bytes; first pass \(first.pages) pages, quiet pass \(quiet.pages)"
+        )
+    }
+
     /// One bounded wake through the real collector, buffer and uploader: the
     /// last day of both types is delivered, and before any history.
     private static func wakeThroughCollector(_ store: HKHealthStore) async throws -> Check {
@@ -242,6 +268,7 @@ enum HealthKitSimulatorProbe {
     }
 
     private struct Pass {
+        var pages = 0
         var ids: [String] = []
         var deletedIds: [String] = []
         var cursor: SyncCursor?
@@ -300,6 +327,7 @@ enum HealthKitSimulatorProbe {
         var current = source.beginPass(cursor: cursor)
         for _ in 0 ..< maxPages {
             let page = try await source.sync(cursor: current)
+            pass.pages += 1
             pass.ids += page.records.compactMap { if case .string(let id) = $0["id"] { id } else { nil } }
             pass.deletedIds += page.deletedIds
             current = page.cursor

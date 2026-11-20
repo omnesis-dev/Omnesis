@@ -158,6 +158,36 @@ final class AppleHealthSourceTests: XCTestCase {
         XCTAssertEqual(pass.ids.count, all.count)
     }
 
+    /// A caught-up pass is hundreds of empty lane reads on a real phone;
+    /// each page costs a cursor save on the gateway, so empty reads must not
+    /// each become one.
+    func testAPassWithNothingNewTakesOnePage() async throws {
+        let store = seededStore().store
+        let health = source(store)
+        let first = try await runPass(health, from: nil)
+
+        let quiet = try await runPass(health, from: first.cursor)
+        XCTAssertEqual(quiet.pages.count, 1)
+        XCTAssertTrue(quiet.ids.isEmpty)
+
+        let fresh = store.add(FakeHealthStore.stepCount, start: now.addingTimeInterval(-120))
+        let next = try await runPass(health, from: quiet.cursor)
+        XCTAssertEqual(next.ids, [fresh.uuid.uuidString])
+        XCTAssertLessThanOrEqual(next.pages.count, 2, "empty reads fold into the page that has data")
+    }
+
+    func testEmptyReadsStillReturnRegularlySoTheWakeCanStop() async throws {
+        let store = FakeHealthStore()
+        let catalog = TypeCatalog.v1.filter { $0.sampleType != nil }
+        let health = AppleHealthSource(client: store, catalog: catalog, pageLimit: 4, now: { [now] in now })
+        let pass = try await runPass(health, from: nil)
+
+        let reads = catalog.count * HealthRecency.tierCount
+        let bound = (reads + AppleHealthSource.maxEmptyReadsPerPage - 1) / AppleHealthSource.maxEmptyReadsPerPage
+        XCTAssertEqual(pass.pages.count, bound, "\(reads) empty reads in pages of at most \(AppleHealthSource.maxEmptyReadsPerPage)")
+        XCTAssertEqual(store.anchoredReads, reads)
+    }
+
     func testALockedPhoneEndsThePassWithoutReading() async throws {
         let store = seededStore().store
         store.protectedDataAvailable = false
