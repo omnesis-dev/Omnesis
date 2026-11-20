@@ -19,11 +19,12 @@ import { randomUUID } from "node:crypto";
 import { SCOPE_WRITE_ALL } from "@omnesis/types";
 import { serve, type ServerType } from "@hono/node-server";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { createDatabase, type Db } from "../db.js";
+import { createDatabase } from "../db.js";
 import { createServer as createGatewayServer } from "../server.js";
 import { createDevice } from "../data/repositories/DeviceRepository.js";
 import { createToken } from "../data/repositories/TokenRepository.js";
 import { REQUEST_BODY_INCOMPLETE } from "./incomplete-body.js";
+import type { Db } from "../data/types.js";
 
 let db: Db;
 let testDir: string;
