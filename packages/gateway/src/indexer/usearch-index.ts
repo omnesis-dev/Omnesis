@@ -653,8 +653,11 @@ async function drainCooperatively<T>(
 ): Promise<T> {
   for (;;) {
     const step = steps.next();
-    if (step.done) return step.value;
+    // A completed step can still contain a long native count or checkpoint.
+    // Let queued capacity updates run before the caller checks its lease,
+    // including when an already complete graph never yielded a build page.
     await new Promise<void>((resolve) => setImmediate(resolve));
+    if (step.done) return step.value;
     if (betweenSteps) await betweenSteps();
   }
 }

@@ -2,10 +2,11 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { randomBytes, randomUUID } from "node:crypto";
+import { MessageChannel } from "node:worker_threads";
 import { readFileSync, existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   EMBEDDING_DIM,
@@ -186,6 +187,78 @@ describe("GraphKeeper", () => {
     keeper.stop();
     handle.release();
   });
+
+  it.each(["fresh", "blocked", "missing"] as const)(
+    "checks the %s capacity lease delivered after a slow native count before completing graph recovery",
+    async (update) => {
+      seed(0, 5);
+      const initial = start();
+      await initial.keeper.open();
+      initial.keeper.stop();
+      initial.handle.release();
+      states.length = 0;
+      const saved = readFileSync(path);
+      const leaseMs = 120_000;
+      let now = Date.now();
+      let validUntil = now + leaseMs;
+      let blocked = false;
+      const { keeper, handle } = start({ canGrow: () => !blocked && now < validUntil });
+      const prepare = db.prepare.bind(db);
+      let counts = 0;
+      let updates = 0;
+      const { port1, port2 } = new MessageChannel();
+      port1.on("message", () => {
+        updates++;
+        blocked = update === "blocked";
+        validUntil = now + leaseMs;
+      });
+      // Run the real SQLite/native graph paths. Only elapsed time and the queued
+      // capacity message are substituted, so the fixture needs no large payload.
+      const intercepted = vi.spyOn(db, "prepare").mockImplementation(((sql: string) => {
+        const statement = prepare(sql);
+        if (/SELECT count\(\*\) as cnt FROM chunks WHERE embedding IS NOT NULL/.test(sql)) {
+          const get = statement.get.bind(statement);
+          vi.spyOn(statement, "get").mockImplementation((...args: unknown[]) => {
+            const result = get(...args);
+            counts++;
+            now += leaseMs + 1;
+            if (update !== "missing") port2.postMessage("capacity updated");
+            return result;
+          });
+        }
+        return statement;
+      }) as typeof db.prepare);
+      try {
+        await keeper.open();
+        if (update === "fresh") {
+          // Repeatedly running the same cold count must not expire a fresh
+          // message again: one recovery attempt is enough for a complete graph.
+          for (let attempt = 0; attempt < 2 && states.at(-1)?.state !== "ready"; attempt++) {
+            await new Promise<void>((resolve) => setImmediate(resolve));
+            await keeper.resumeStorageWork();
+          }
+          expect(counts).toBe(1);
+          expect(states.at(-1)).toMatchObject({ state: "ready" });
+          expect(updates).toBe(1);
+        } else {
+          expect(states.at(-1)).toMatchObject({
+            state: "degraded",
+            reason: expect.stringContaining("Storage capacity"),
+          });
+          expect(readFileSync(path)).toEqual(saved);
+          expect(await keeper.resumeStorageWork()).toBe(false);
+          expect(counts).toBe(1);
+        }
+      } finally {
+        intercepted.mockRestore();
+        port1.close();
+        port2.close();
+        keeper.stop();
+        handle.release();
+        await new Promise<void>((resolve) => setImmediate(resolve));
+      }
+    },
+  );
 
   it("does not force a checkpoint when storage blocks a graph build mid-page", async () => {
     seed(0, 10);
