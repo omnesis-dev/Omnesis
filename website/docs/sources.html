@@ -289,7 +289,10 @@
                   whose audio cannot be decoded is not sent to the transcriber again until the
                   source is resynced. Message sync continues when media processing is disabled or
                   unavailable. Pending media stays in the local archive for later retries, within
-                  the source's date range. The add flow shows a QR code; scan it under WhatsApp
+                  the source's date range. Disappearing messages are archived like any other and
+                  stay after they disappear from the phones, because WhatsApp tells a linked device
+                  nothing when they expire; a message deleted for everyone or for you leaves the
+                  index. The add flow shows a QR code; scan it under WhatsApp
                   <strong>Settings → Linked Devices → Link a Device</strong>, and the collector
                   starts syncing without a restart. WhatsApp may unlink a device after roughly two
                   weeks without activity; run

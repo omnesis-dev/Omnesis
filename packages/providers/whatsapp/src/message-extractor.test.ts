@@ -22,6 +22,59 @@ function makeWAMessage(overrides: Partial<proto.IWebMessageInfo> = {}): proto.IW
 }
 
 describe("extractMessage", () => {
+  test("keeps a disappearing message, in either form WhatsApp sends it", () => {
+    // Older clients wrap it; newer ones send it plain with the chat's timer in contextInfo.
+    const wrapped = extractMessage(
+      makeWAMessage({
+        message: {
+          ephemeralMessage: {
+            message: {
+              extendedTextMessage: {
+                text: "Gate code is 4821",
+                contextInfo: { expiration: 86_400 },
+              },
+            },
+          },
+        },
+      }),
+    );
+    expect(wrapped).toMatchObject({ type: "text", text: "Gate code is 4821" });
+    const plain = extractMessage(
+      makeWAMessage({
+        message: {
+          extendedTextMessage: {
+            text: "Locker code is 7310",
+            contextInfo: { expiration: 604_800 },
+          },
+        },
+      }),
+    );
+    expect(plain).toMatchObject({ type: "text", text: "Locker code is 7310" });
+  });
+
+  test("keeps view-once media", () => {
+    for (const wrapper of ["viewOnceMessage", "viewOnceMessageV2"] as const) {
+      const msg = extractMessage(
+        makeWAMessage({
+          message: {
+            [wrapper]: {
+              message: { imageMessage: { caption: "Floor plan", mimetype: "image/jpeg" } },
+            },
+          },
+        }),
+      );
+      expect(msg).toMatchObject({ type: "image", text: "Floor plan" });
+    }
+  });
+
+  test("a chat's disappearing-timer change is not a message and deletes nothing", () => {
+    // protocolMessage type 3 = EPHEMERAL_SETTING.
+    const msg = extractMessage(
+      makeWAMessage({ message: { protocolMessage: { type: 3, ephemeralExpiration: 86_400 } } }),
+    );
+    expect(msg).toBeNull();
+  });
+
   test("extracts plain text message", () => {
     const msg = extractMessage(makeWAMessage());
     expect(msg).not.toBeNull();
