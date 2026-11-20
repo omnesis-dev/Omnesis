@@ -46,6 +46,7 @@ roborazzi {
 
 dependencies {
     implementation(project(":feature-recording"))
+    implementation(project(":feature-assist"))
     implementation(project(":core-designsystem"))
 
     implementation(libs.androidx.core.ktx)

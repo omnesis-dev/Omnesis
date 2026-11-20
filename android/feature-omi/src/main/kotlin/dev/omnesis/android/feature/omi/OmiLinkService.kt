@@ -21,20 +21,26 @@ import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
 import dagger.hilt.android.EntryPointAccessors
 import dagger.hilt.components.SingletonComponent
+import dev.omnesis.android.feature.assist.AssistRuntime
+import dev.omnesis.android.feature.assist.CommandFeedback
 import dev.omnesis.android.feature.recording.RecordingController
 import dev.omnesis.android.feature.recording.RecordingForegroundService
 import dev.omnesis.android.feature.recording.RecordingInput
+import dev.omnesis.android.feature.recording.SharedWearableAudio
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 
 /**
  * Keeps the link to the associated pendant while no recording runs, so its
  * button can start one: a foreground service of type connectedDevice with a
  * quiet notification of the pendant's state. The pendant's capture stays
- * muted meanwhile ([OmiLink]); only the link and the button are live.
+ * muted meanwhile ([OmiLink]); only the link and the button are live —
+ * unless voice commands are on, when the pendant's audio streams to the
+ * wake-word listener ([AssistRuntime]) on the phone, recorded nowhere.
  * Started from the Recordings screen, after an association, and by the
  * system when the pendant comes in range ([OmiPresenceService]).
  */
@@ -45,10 +51,13 @@ class OmiLinkService : Service() {
     interface Deps {
         fun omiLink(): OmiLink
         fun recordingController(): RecordingController
+        fun sharedAudio(): SharedWearableAudio
+        fun assistRuntime(): AssistRuntime
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private lateinit var link: OmiLink
+    private lateinit var assist: AssistRuntime
     private var started = false
 
     override fun onCreate() {
@@ -73,6 +82,23 @@ class OmiLinkService : Service() {
         )
         scope.launch { link.buttons.collect(policy::onButton) }
         scope.launch { link.status.collect { refreshNotification(it) } }
+
+        assist = deps.assistRuntime()
+        val commandAudio = deps.sharedAudio().view()
+        scope.launch {
+            combine(link.ready, assist.changes) { ready, _ -> ready }.collect { ready ->
+                assist.sync(commandAudio, ready) { feedback ->
+                    link.vibrate(
+                        when (feedback) {
+                            CommandFeedback.LISTENING -> Haptic.LISTENING
+                            CommandFeedback.DONE -> Haptic.DONE
+                            CommandFeedback.FAILED -> Haptic.FAILED
+                        },
+                    )
+                }
+                refreshNotification(link.status.value)
+            }
+        }
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -100,6 +126,7 @@ class OmiLinkService : Service() {
     }
 
     override fun onDestroy() {
+        if (::assist.isInitialized) assist.stop()
         scope.cancel()
         super.onDestroy()
     }
@@ -127,7 +154,13 @@ class OmiLinkService : Service() {
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_omi)
             .setContentTitle(statusLine(status))
-            .setContentText("Tap the pendant to start or stop a recording")
+            .setContentText(
+                if (::assist.isInitialized && assist.listening) {
+                    "Listening for ${assist.phrases.joinToString { "“$it”" }} · tap to start or stop a recording"
+                } else {
+                    "Tap the pendant to start or stop a recording"
+                },
+            )
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setShowWhen(false)

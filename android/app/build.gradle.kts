@@ -278,6 +278,7 @@ dependencies {
     implementation(project(":feature-photos"))
     implementation(project(":feature-recording"))
     implementation(project(":feature-omi"))
+    implementation(project(":feature-assist"))
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.work.runtime)
