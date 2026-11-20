@@ -1341,6 +1341,11 @@ describe("the home network's addresses for MCP agents", () => {
     ]);
   });
 
+  it("without the gateway's port it offers none, rather than guess the standard one", async () => {
+    const service = qr(undefined, undefined, null, { advertisedLocalName: "omnesis.local" });
+    expect(await service.homeNetworkOrigins()).toEqual([]);
+  });
+
   it("behind a Docker bridge lists the host's addresses at the port Docker publishes", async () => {
     const service = qr(undefined, undefined, null, {
       listenPort: 7600,
