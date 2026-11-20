@@ -24,6 +24,11 @@ public static class OmnesisProcessMetadata {
     public int exitStatus;public IntPtr peb;public UIntPtr affinity;public int priority;
     public UIntPtr pid,parentPid;
   }
+  // See #1143 — distinguish native refusals without exposing process metadata.
+  static Win32Exception Failure(string phase,int error) {
+    OmnesisPrivateFile.Stage+="-"+phase;
+    return new Win32Exception(error);
+  }
   [DllImport("kernel32.dll",SetLastError=true)] static extern SafeFileHandle CreateToolhelp32Snapshot(uint flags,uint pid);
   [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern bool Process32FirstW(SafeFileHandle snapshot,ref ProcessEntry entry);
   [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern bool Process32NextW(SafeFileHandle snapshot,ref ProcessEntry entry);
@@ -40,22 +45,22 @@ public static class OmnesisProcessMetadata {
     int error=Marshal.GetLastWin32Error();handle.Dispose();
     if(error==87 || error==1168) return null;
     // Inaccessible candidate processes are uncertain, not evidence of exit.
-    throw new Win32Exception(error);
+    throw Failure("open",error);
   }
   static bool Exited(SafeFileHandle handle) {
     uint state=WaitForSingleObject(handle,0);
-    if(state==0xffffffff) throw new Win32Exception(Marshal.GetLastWin32Error());
+    if(state==0xffffffff) throw Failure("wait",Marshal.GetLastWin32Error());
     return state==EXITED;
   }
   static long Birth(SafeFileHandle handle) {
     long created,exited,kernel,user;
-    if(!GetProcessTimes(handle,out created,out exited,out kernel,out user)) throw new Win32Exception(Marshal.GetLastWin32Error());
+    if(!GetProcessTimes(handle,out created,out exited,out kernel,out user)) throw Failure("birth",Marshal.GetLastWin32Error());
     return checked(created+FILETIME_EPOCH);
   }
   static Dictionary<uint,List<uint>> Candidates() {
     Dictionary<uint,List<uint>> children=new Dictionary<uint,List<uint>>();
     using(SafeFileHandle snapshot=CreateToolhelp32Snapshot(2,0)) {
-      if(snapshot.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
+      if(snapshot.IsInvalid) throw Failure("enumerate",Marshal.GetLastWin32Error());
       ProcessEntry entry=new ProcessEntry();entry.size=(uint)Marshal.SizeOf(typeof(ProcessEntry));
       bool next=Process32FirstW(snapshot,ref entry);int count=0;
       while(next) {
@@ -67,7 +72,7 @@ public static class OmnesisProcessMetadata {
         }
         next=Process32NextW(snapshot,ref entry);
       }
-      int error=Marshal.GetLastWin32Error();if(error!=18) throw new Win32Exception(error);
+      int error=Marshal.GetLastWin32Error();if(error!=18) throw Failure("enumerate",error);
     }
     return children;
   }
@@ -93,7 +98,7 @@ public static class OmnesisProcessMetadata {
         // Toolhelp only selects candidates. Its PPID is never paired with a
         // later PID's birth: query both fields on this same pinned object.
         int status=NtQueryInformationProcess(handle,0,out info,Marshal.SizeOf(typeof(BasicInformation)),out returned);
-        if(status<0) {if(Exited(handle)) continue;throw new Win32Exception((int)RtlNtStatusToDosError(status));}
+        if(status<0) {if(Exited(handle)) continue;throw Failure("query-"+unchecked((uint)status).ToString("X8",CultureInfo.InvariantCulture),(int)RtlNtStatusToDosError(status));}
         if(info.pid.ToUInt64()!=pid || info.parentPid.ToUInt64()>UInt32.MaxValue || returned!=Marshal.SizeOf(typeof(BasicInformation))) throw new InvalidDataException();
         Dictionary<string,object> row=new Dictionary<string,object>();row["pid"]=pid;row["parentPid"]=(uint)info.parentPid.ToUInt64();row["birth"]=birth.ToString(CultureInfo.InvariantCulture);
         observed.Add(new Observation {handle=handle,row=row});
