@@ -48,34 +48,38 @@ fi
   return { ...result, calls };
 }
 
-describe("installing Playwright's Chromium on a CI runner", () => {
-  test("installs the system packages, then the browser", () => {
-    const { status, calls } = run({ failures: 0 });
-    expect(status).toBe(0);
-    expect(calls).toEqual(["install-deps chromium", "install chromium"]);
-  });
+// The script runs only on the Linux runners; the fake command is a POSIX script.
+describe.skipIf(process.platform === "win32")(
+  "installing Playwright's Chromium on a CI runner",
+  () => {
+    test("installs the system packages, then the browser", () => {
+      const { status, calls } = run({ failures: 0 });
+      expect(status).toBe(0);
+      expect(calls).toEqual(["install-deps chromium", "install chromium"]);
+    });
 
-  test("tries the system packages again while a mirror is unreachable", () => {
-    const { status, calls, stderr } = run({ failures: 3 });
-    expect(status).toBe(0);
-    expect(calls).toEqual([...Array(4).fill("install-deps chromium"), "install chromium"]);
-    expect(stderr).toContain("(attempt 1 of 4); retrying in 0s");
-    expect(stderr).toContain("(attempt 3 of 4); retrying in 0s");
-  });
+    test("tries the system packages again while a mirror is unreachable", () => {
+      const { status, calls, stderr } = run({ failures: 3 });
+      expect(status).toBe(0);
+      expect(calls).toEqual([...Array(4).fill("install-deps chromium"), "install chromium"]);
+      expect(stderr).toContain("(attempt 1 of 4); retrying in 0s");
+      expect(stderr).toContain("(attempt 3 of 4); retrying in 0s");
+    });
 
-  test("gives up after the last attempt and never downloads the browser", () => {
-    const { status, calls, stderr } = run({ failures: 4 });
-    expect(status).toBe(1);
-    expect(calls).toEqual(Array(4).fill("install-deps chromium"));
-    expect(stderr).toContain("system packages failed 4 times");
-  });
+    test("gives up after the last attempt and never downloads the browser", () => {
+      const { status, calls, stderr } = run({ failures: 4 });
+      expect(status).toBe(1);
+      expect(calls).toEqual(Array(4).fill("install-deps chromium"));
+      expect(stderr).toContain("system packages failed 4 times");
+    });
 
-  test("the number of attempts is bounded by its setting", () => {
-    const { status, calls } = run({ failures: 9, env: { PLAYWRIGHT_DEPS_ATTEMPTS: "2" } });
-    expect(status).toBe(1);
-    expect(calls).toHaveLength(2);
-  });
-});
+    test("the number of attempts is bounded by its setting", () => {
+      const { status, calls } = run({ failures: 9, env: { PLAYWRIGHT_DEPS_ATTEMPTS: "2" } });
+      expect(status).toBe(1);
+      expect(calls).toHaveLength(2);
+    });
+  },
+);
 
 // Each job that installs Playwright's Chromium does it through the
 // script, so none fails on the first unreachable mirror.
