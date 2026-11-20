@@ -18,9 +18,10 @@ import { ioHandlers } from "./io-handlers.js";
 import { ioReadOpNames } from "./read-port.js";
 import { IO_READS } from "./io-read-ports.js";
 import { ioJournalHandlers } from "./io-journal-handlers.js";
+import { ioIndexHandlers } from "./io-index-handlers.js";
 import { ioSqlHandlers } from "./io-sql-handlers.js";
 
-const allHandlers = { ...ioHandlers, ...ioJournalHandlers, ...ioSqlHandlers };
+const allHandlers = { ...ioHandlers, ...ioJournalHandlers, ...ioSqlHandlers, ...ioIndexHandlers };
 
 describe("IoOps registry coverage", () => {
   test("every IoOps entry has a matching handler", () => {
@@ -39,7 +40,9 @@ describe("IoOps registry coverage", () => {
   });
 
   test("no op name is served from two handles", () => {
-    const tables = [ioHandlers, ioJournalHandlers, ioSqlHandlers].map((t) => Object.keys(t));
+    const tables = [ioHandlers, ioJournalHandlers, ioSqlHandlers, ioIndexHandlers].map((t) =>
+      Object.keys(t),
+    );
     const names = tables.flat();
     expect(new Set(names).size).toBe(names.length);
   });

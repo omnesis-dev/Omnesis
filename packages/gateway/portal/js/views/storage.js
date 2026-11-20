@@ -9,7 +9,7 @@ import { RowActionMenu } from "../components/row-action-menu.js";
 import { StorageFootprint } from "./storage-footprint.js";
 import { StorageHistory } from "./storage-history.js";
 import { StorageRetentionDialog } from "./storage-retention-dialog.js";
-import { GIB, storageBytes, storageSources, scheduledStorageCutoff, storageTrimStatus, visibleStorageTrimJobs } from "./storage-data.js";
+import { GIB, storageBytes, storageSources, storageMeasurementStages, scheduledStorageCutoff, storageTrimStatus, visibleStorageTrimJobs } from "./storage-data.js";
 
 const PRESSURE_REASONS = {
   quota: "Omnesis reached your storage limit.",
@@ -133,7 +133,10 @@ export function StorageView({ onChange } = {}) {
           setLimit(result.policy?.maxBytes ? String(result.policy.maxBytes / GIB) : "");
           initialized = true;
         }
-        const pending = result.trimJobs?.some((job) => job.cleanupPending || ["queued", "running"].includes(job.state));
+        const sourceMeasurementPending = result.accounting?.logical || result.accounting?.index
+          ? [result.accounting.logical, result.accounting.index].some((stage) => stage?.state === "refreshing")
+          : result.accounting?.refreshing;
+        const pending = sourceMeasurementPending || result.trimJobs?.some((job) => job.cleanupPending || ["queued", "running"].includes(job.state));
         timer = setTimeout(poll, pending ? 2500 : 30_000);
       } catch (err) {
         if (!active) return;
@@ -161,6 +164,10 @@ export function StorageView({ onChange } = {}) {
     setMeasuring(true);
     try {
       setSnapshot(await refreshStorage());
+    } catch (err) {
+      // Another measurement may have succeeded before the refresh rejected.
+      try { setSnapshot(await getStorage()); } catch { /* Keep the last useful snapshot. */ }
+      throw err;
     } finally {
       setMeasuring(false);
     }
@@ -184,18 +191,16 @@ export function StorageView({ onChange } = {}) {
   const pressure = snapshot?.pressure;
   const filesystems = pressure?.volumes ?? [];
   const rows = snapshot ? storageSources(snapshot) : [];
+  const stages = snapshot ? storageMeasurementStages(snapshot) : [];
   const policies = new Map(snapshot?.retention?.map((policy) => [policy.sourceId, policy.maxAgeDays]));
   return html`<section class="storage-view" aria-labelledby="storage-heading">
     <header class="storage-header"><h2 id="storage-heading">Storage</h2></header>
     ${error && html`<p class="storage-alert" role="alert">${error} ${html`<button class="btn-secondary" disabled=${busy} onClick=${() => snapshot ? action(refreshMeasurements) : setRetry((n) => n + 1)}>Try again</button>`}</p>`}
-    ${snapshot?.accounting?.error && !error && html`<p class="storage-alert" role="alert">Storage measurements could not be updated: ${snapshot.accounting.error}
-      <button class="btn-secondary" disabled=${busy || measuring} onClick=${() => action(refreshMeasurements)}>Try again</button>
-    </p>`}
     ${message && html`<div class="toast storage-toast" role="status">
       <span>${message}${measuring ? " Updating storage charts…" : ""}</span>
       <button type="button" class="btn-tiny" aria-label="Dismiss" onClick=${() => setMessage(null)}>×</button>
     </div>`}
-    ${(measuring || snapshot?.accounting?.refreshing) && !message && html`<p role="status">Updating storage charts…</p>`}
+    ${measuring && !message && html`<p role="status">Updating storage charts…</p>`}
     ${!snapshot && !error && html`<p role="status">Measuring storage…</p>`}
     ${snapshot && html`
       <form class="storage-limit-form" onSubmit=${savePolicy}>
@@ -223,12 +228,24 @@ export function StorageView({ onChange } = {}) {
         </section>
         <section class="storage-panel"><h3>On disk</h3>
           ${snapshot.physical ? html`<${UsageChart} label="Omnesis files" entries=${snapshot.physical.stores ?? []}
-            renderLegend=${(chart) => html`<${StorageFootprint} snapshot=${snapshot} ...${chart} />`} />` : html`<p>File measurement is unavailable.</p>`}
+            renderLegend=${(chart) => html`<${StorageFootprint} snapshot=${snapshot} ...${chart} onRetry=${() => action(refreshMeasurements)} retryDisabled=${busy || measuring} />`} />` : html`<p>File measurement is unavailable.</p>`}
         </section>
       </div>
       <section class="storage-panel">
         <h3>By source and time</h3>
         <p class="storage-note">Totals estimate stored documents, vector payload, indexed text and each source’s share of the lexical index. Shared database space, graph files and analytics are excluded. Measurements can lag recent changes.</p>
+        <div class="storage-measurement-status">
+          ${stages.map((stage) => html`<p key=${stage.key} class=${stage.state === "failed" ? "storage-alert" : "storage-note"} role=${stage.state === "failed" ? "alert" : "status"}>
+            ${stage.state === "failed" ? `${stage.label} measurement failed${stage.error ? `: ${stage.error}` : "."}`
+              : stage.state === "refreshing" ? `Measuring ${stage.label.toLowerCase()} by source and month…`
+              : stage.state === "pending" ? `${stage.label} measurement is queued.` : `${stage.label} measured.`}
+            ${stage.hasData && stage.state !== "ready" ? " Previous measurements remain visible." : ""}
+            ${stage.measuredAt && !Number.isNaN(Date.parse(stage.measuredAt)) && html`<span> As of <time datetime=${stage.measuredAt}>${new Date(stage.measuredAt).toLocaleString()}</time>.</span>`}
+            ${stage.state === "failed" && html` <button class="btn-secondary" disabled=${busy || measuring} onClick=${() => action(refreshMeasurements)}>Try again</button>`}
+          </p>`)}
+          ${snapshot.logical && !snapshot.index && html`<p class="storage-note">Document totals and history are available. Search-index storage will be added to source totals when measured.</p>`}
+          ${snapshot.index && !Number.isFinite(snapshot.index.lexicalBytes) && html`<p class="storage-note">${["pending", "refreshing"].includes(snapshot.accounting?.allocations?.state) ? "Lexical index allocation is still being measured." : "Lexical index allocation is unavailable."} Source totals include indexed text only in the lexical column.</p>`}
+        </div>
         ${rows.length ? html`<div class="storage-table-wrap"><table class="portal-table storage-source-table">
           <thead><tr><th aria-label="History"></th><th scope="col">Source</th><th scope="col">Estimated total</th><th scope="col">Documents</th><th scope="col">Vectors</th><th scope="col">Indexed text & lexical index</th><th aria-label="Actions"></th></tr></thead>
           <tbody>${rows.map((row) => html`<${SourceStorageRow} key=${row.sourceId} row=${row}
@@ -238,7 +255,7 @@ export function StorageView({ onChange } = {}) {
               setMessage(null);
               setDialog({mode, source});
             }} />`)}</tbody>
-        </table></div>` : html`<p>${snapshot.logical ? "No source documents are stored." : "Source accounting is not available yet."}</p>`}
+        </table></div>` : snapshot.logical && html`<p>No source documents are stored.</p>`}
       </section>
     `}
     ${dialog && html`<${StorageRetentionDialog} mode=${dialog.mode} source=${rows.find((row) => row.sourceId === dialog.source.sourceId) ?? dialog.source}

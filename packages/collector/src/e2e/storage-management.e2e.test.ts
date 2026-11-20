@@ -11,6 +11,7 @@ import { MultiCollectorHarness, type PairedCollector } from "./multi-collector-h
 const SOURCE = "notes-synth:storage-primary";
 const SIBLING = "notes-synth:storage-sibling";
 const ROLLING = "notes-synth:storage-rolling";
+const ACCOUNTING = "notes-synth:storage-accounting";
 const OLD = "2001-01-01T00:00:00.000Z";
 const RECENT = new Date().toISOString();
 const CUTOFF = "2010-01-01T00:00:00.000Z";
@@ -20,7 +21,19 @@ interface StorageSnapshot {
   pressure: { state: string; usageBytes: number | null };
   policy: { maxBytes: number | null };
   retention: Array<{ sourceId: string; maxAgeDays: number }>;
-  logical: { sources: Array<{ sourceId: string; documents: number }> } | null;
+  logical: {
+    sources: Array<{
+      sourceId: string;
+      documents: number;
+      payloadBytes: number;
+      months: Array<{ month: string; documents: number; payloadBytes: number }>;
+    }>;
+  } | null;
+  index: { embeddingBytes: number } | null;
+  accounting: {
+    logical: { state: string; measuredAt: string | null; error: string | null };
+    index: { state: string; measuredAt: string | null; error: string | null };
+  };
   trimJobs: Array<{ id: string; sourceId: string; before: string; state: string; deleted: number }>;
 }
 
@@ -292,5 +305,134 @@ describe("gateway storage admission and explicit retention", () => {
     expect(stored(ROLLING)).toContain("rolling-old");
     await push([document(SOURCE, "old")]);
     expect(stored(SOURCE)).not.toContain("old");
+  }, 90_000);
+});
+
+describe("independent storage accounting without an indexer", () => {
+  let harness: MultiCollectorHarness;
+  let collector: PairedCollector;
+  beforeAll(async () => {
+    harness = new MultiCollectorHarness({ extraGatewayEnv: { OMNESIS_INDEXER_ENABLED: "false" } });
+    await harness.start();
+    collector = await harness.addCollector({
+      name: "accounting-fixture",
+      hostableSourceTypes: ["notes-synth"],
+    });
+    const response = await fetch(`${harness.gatewayUrl}/devices/sources/bulk-upsert`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${collector.token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sources: [{ type: "notes-synth", accountId: "storage-accounting", enabled: true }],
+      }),
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ errors: [] });
+  }, 90_000);
+  afterAll(async () => {
+    await harness?.destroy();
+  }, 20_000);
+  const admin = <T>(path: string, body?: unknown, method = "POST") =>
+    harness.json<T>(path, body === undefined ? undefined : { method, body: JSON.stringify(body) });
+  function document(sourceId: string, externalId: string, date: string, content: string) {
+    return {
+      providerId: sourceId,
+      sourceId,
+      externalId,
+      title: "Invented accounting entry",
+      content,
+      contentHash: `sha256:${createHash("sha256").update(content).digest("hex")}`,
+      metadata: {},
+      sourceCreatedAt: date,
+      sourceUpdatedAt: date,
+    };
+  }
+  async function push(documents: ReturnType<typeof document>[]) {
+    const response = await fetch(`${harness.gatewayUrl}/documents`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${collector.token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ documents }),
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ ingested: documents.length });
+  }
+  function stored(sourceId: string): string[] {
+    const db = new Database(harness.getDbPath(), { readonly: true });
+    try {
+      return db
+        .prepare<[string], { external_id: string }>(
+          "SELECT external_id FROM documents WHERE source_id=? ORDER BY external_id",
+        )
+        .all(sourceId)
+        .map((row) => row.external_id);
+    } finally {
+      db.close();
+    }
+  }
+
+  test("source accounting works through read workers without an indexer and reflects trimming after restart", async () => {
+    async function measuredDocuments(expected: number): Promise<StorageSnapshot> {
+      let latest: StorageSnapshot | undefined;
+      // A scan already in flight owns its earlier high-water mark. A subsequent
+      // pass must see writes committed after that mark without restarting it.
+      await expect
+        .poll(
+          async () => {
+            latest = await admin<StorageSnapshot>("/admin/storage/refresh", {});
+            return latest.logical?.sources.find((row) => row.sourceId === ACCOUNTING)?.documents;
+          },
+          { timeout: 15_000, interval: 100 },
+        )
+        .toBe(expected);
+      return latest!;
+    }
+    await admin("/admin/storage/policy", { maxBytes: null }, "PATCH");
+    await push([
+      document(ACCOUNTING, "measurement-old", OLD, "Invented café entry"),
+      document(
+        ACCOUNTING,
+        "measurement-kept",
+        "2012-02-10T00:00:00.000Z",
+        "Invented archive entry",
+      ),
+      document(ACCOUNTING, "measurement-new", RECENT, "Invented recent entry"),
+    ]);
+    const measured = await measuredDocuments(3);
+    const source = measured.logical?.sources.find((row) => row.sourceId === ACCOUNTING);
+    expect(source).toMatchObject({ documents: 3, payloadBytes: expect.any(Number) });
+    expect(source!.payloadBytes).toBeGreaterThan(0);
+    expect(source!.months.map((month) => month.month)).toContain("2001-01");
+    // This harness has no model/indexer to answer an accounting RPC. The
+    // initialized index file must still be measurable through the real IO pool.
+    expect(measured.index).not.toBeNull();
+    expect(measured.accounting).toMatchObject({
+      logical: { state: "ready", error: null },
+      index: { state: "ready", error: null },
+    });
+    const job = await admin<StorageSnapshot["trimJobs"][number]>("/admin/storage/trim/jobs", {
+      sourceId: ACCOUNTING,
+      before: CUTOFF,
+    });
+    await expect
+      .poll(
+        async () => {
+          const snapshot = await admin<StorageSnapshot>("/admin/storage");
+          return snapshot.trimJobs.find((row) => row.id === job.id)?.state;
+        },
+        { timeout: 30_000, interval: 200 },
+      )
+      .toBe("completed");
+    const afterTrim = await measuredDocuments(2);
+    const kept = afterTrim.logical?.sources.find((row) => row.sourceId === ACCOUNTING);
+    expect(kept!.documents).toBe(2);
+    expect(kept!.months.map((month) => month.month)).not.toContain("2001-01");
+    expect(kept!.payloadBytes).toBeLessThan(source!.payloadBytes);
+    expect(stored(ACCOUNTING)).toEqual(["measurement-kept", "measurement-new"]);
+    await harness.restartGateway();
+    const restarted = await measuredDocuments(2);
+    expect(restarted.accounting.logical.state).toBe("ready");
+    expect(restarted.accounting.index.state).toBe("ready");
+    const restored = restarted.logical?.sources.find((row) => row.sourceId === ACCOUNTING);
+    expect(restored!.documents).toBe(2);
+    expect(restored!.months.map((month) => month.month)).not.toContain("2001-01");
   }, 90_000);
 });

@@ -102,6 +102,8 @@ export const FOCUSED_UNIT_FILES = [
   "scripts/ci/test-shell.test.mjs",
   "scripts/pii-scan.test.mjs",
   "packages/gateway/src/disk-usage-identity.test.ts",
+  "packages/gateway/src/storage/accounting-io.test.ts",
+  "packages/gateway/src/storage/physical-accounting.test.ts",
   "packages/gateway/src/workers/search-pool.respawn.test.ts",
   "packages/gateway/src/indexer/usearch-validation.test.ts",
   "packages/core/src/default-config-dir.test.ts",
