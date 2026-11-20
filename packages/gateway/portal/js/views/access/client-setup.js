@@ -9,12 +9,8 @@
 // OAuth flow, so nothing here carries a credential.
 
 import { AGENT_ICONS } from "./agent-brand.js";
-import {
-  DOCS,
-  addressChoices,
-  hostedClientAddress,
-  localClientAddress,
-} from "./public-address.js";
+import { DOCS, hostedClientAddress, localClientAddress } from "./public-address.js";
+import { awayChoices } from "./agent-location.js";
 
 export { isPrivateAddress, usesNonStandardPort } from "./public-address.js";
 
@@ -316,7 +312,8 @@ export function agentSetups(oauth, { harnessAddress, pairingCode, relay, tailsca
       docs: `${DOCS}/connect#harness-install`,
     },
   ];
-  const choices = addressChoices(oauth, relay, tailscale);
+  // Away from home the loopback address is no alternative: it is this computer's own.
+  const choices = awayChoices(oauth, relay, tailscale);
   const reachable = location === "away" ? agents : agents.filter((agent) => !agent.needsPublicAddress);
   return reachable.map((listed) => {
     // Addresses at home need no notice about the relay or publishing: the dialog says what they are.

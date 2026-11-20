@@ -40,6 +40,8 @@ vi.mock("qrcode", () => ({ default: { toCanvas: vi.fn().mockResolvedValue(undefi
 
 // @ts-expect-error — portal modules are plain JS.
 import { AccessView } from "./access.js";
+// @ts-expect-error — portal modules are plain JS.
+import { agentSetups } from "./access/client-setup.js";
 
 const LOCAL = "https://localhost:7600/mcp";
 const PLAIN = "http://localhost:7601/mcp";
@@ -346,4 +348,21 @@ describe("where the agent runs", () => {
       expect(commands()[0]).toContain(`--trust-fingerprint sha256:${FINGERPRINT}`);
     });
   });
+});
+
+test("away from home, the loopback address is never offered as another address to pick", () => {
+  const RELAY = "https://g-fictional.relay.example.test/mcp";
+  const oauth = {
+    resource: RELAY,
+    resources: [LOCAL, RELAY].map((resource) => ({ resource, servedByGateway: false, direct: false, publiclyTrusted: true })),
+  };
+  const relay = { state: "off", url: RELAY };
+  const codex = agentSetups(oauth, { relay, location: "away" }).find((agent: { id: string }) => agent.id === "codex");
+  const paragraphs = codex.addressNotice.notice.paragraphs.map((parts: unknown[]) =>
+    parts.map((part) => (typeof part === "string" ? part : (part as { strong?: string; text?: string }).strong ?? (part as { text?: string }).text)).join(""),
+  );
+  expect(paragraphs).toEqual([
+    "Remote access is turned off. This address does not answer right now.",
+    "Turn it on in Settings, Connectivity.",
+  ]);
 });
