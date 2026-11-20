@@ -27,7 +27,6 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import {
   EnrollmentGateway,
   EnrollmentWorld,
-  freePort,
   PasskeyBrowser,
   RELAY_HOST,
   assertionOn,
@@ -57,7 +56,6 @@ async function shot(page: Page, name: string): Promise<void> {
 describe.skipIf(!browserReady)("passkeys on the gateway's own page", () => {
   let directory: string;
   let world: EnrollmentWorld;
-  let metricsPort: number;
   let browser: PasskeyBrowser;
   let gateway: EnrollmentGateway;
   /** Holds the passkey of the account the gateway is linked to. */
@@ -79,7 +77,7 @@ describe.skipIf(!browserReady)("passkeys on the gateway's own page", () => {
   }
 
   async function relayMetrics(): Promise<{ slots: number; capacityRefusals: number }> {
-    const response = await fetch(`http://127.0.0.1:${metricsPort}/metrics`);
+    const response = await fetch(`http://127.0.0.1:${world.metricsPort}/metrics`);
     expect(response.status).toBe(200);
     const lines = (await response.text()).split("\n");
     const metric = (name: string, optional = false): number => {
@@ -101,11 +99,7 @@ describe.skipIf(!browserReady)("passkeys on the gateway's own page", () => {
 
   beforeAll(async () => {
     directory = await mkdtemp(join(tmpdir(), "omnesis-enroll-gateway-passkey-"));
-    metricsPort = await freePort();
-    world = await EnrollmentWorld.create(directory, {
-      signupPolicy: "open",
-      extraEnv: { OMNESIS_CLOUD_RELAY_METRICS_PORT: String(metricsPort) },
-    });
+    world = await EnrollmentWorld.create(directory, { signupPolicy: "open", metrics: true });
     process.env.OMNESIS_CLOUD_RELAY_GATEWAY_CA_FILE = world.pki.caCertFile;
     browser = await PasskeyBrowser.launch(world);
     gateway = await EnrollmentGateway.start(world, "home");
