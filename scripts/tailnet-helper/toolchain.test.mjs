@@ -98,9 +98,10 @@ describe("platforms and versions", () => {
   });
 
   test("Go runs with its caches in the checkout, its module files writable, and no toolchain of its own choosing", () => {
-    expect(goEnv("/checkout/.go")).toEqual({
-      GOPATH: "/checkout/.go/path",
-      GOCACHE: "/checkout/.go/build",
+    const cacheDir = join("checkout", ".go");
+    expect(goEnv(cacheDir)).toEqual({
+      GOPATH: join(cacheDir, "path"),
+      GOCACHE: join(cacheDir, "build"),
       GOFLAGS: "-modcacherw",
       GOTOOLCHAIN: "local",
       CGO_ENABLED: "0",
@@ -134,7 +135,10 @@ describe("downloading the pinned toolchain", () => {
       "https://go.dev/dl/go9.9.9.linux-amd64.tar.gz",
       expect.any(String),
     );
-    expect(spawnSync(go, [], { encoding: "utf8" }).stdout).toContain("go9.9.9");
+    // The unpacked archive's own `go`: a shell script, which only a POSIX system runs.
+    expect(readFileSync(go, "utf8")).toContain("go9.9.9");
+    if (process.platform !== "win32")
+      expect(spawnSync(go, [], { encoding: "utf8" }).stdout).toContain("go9.9.9");
     expect(existsSync(join(cacheDir, "toolchains", "go1.20.0"))).toBe(false);
     // The next build finds it where it was left.
     expect(await pinnedGo({ cacheDir, toolchain, key: "linux-amd64", download })).toBe(go);

@@ -30,7 +30,7 @@ afterEach(() => {
  * gateway that ran leaves in its config dir, then fails, so the script exits
  * through its cleanup without a simulator, an emulator or a real gateway.
  */
-function runJourneysWithFailingGateway({ keptProfile }) {
+function runJourneysWithFailingGateway({ keptProfile, configDirName = "gateway" }) {
   const sandbox = mkdtempSync(join(tmpdir(), "omnesis-journeys-artifacts-"));
   sandboxes.push(sandbox);
   const scripts = join(sandbox, "checkout", "scripts");
@@ -69,7 +69,7 @@ function runJourneysWithFailingGateway({ keptProfile }) {
     env: {
       PATH: process.env.PATH,
       HOME: home,
-      OMNESIS_CONFIG_DIR: join(sandbox, "gateway"),
+      OMNESIS_CONFIG_DIR: join(sandbox, configDirName),
       OMNESIS_GATEWAY_PORT: "17999",
       OMNESIS_JOURNEY_ARTIFACTS: artifacts,
     },
@@ -82,6 +82,17 @@ describe("scripts/run-mobile-journeys.sh artifacts", () => {
     const { result, artifacts } = runJourneysWithFailingGateway({ keptProfile: true });
     expect(result.status).toBe(1);
     expect(readdirSync(join(artifacts, "gateway-logs"))).toContain("gateway.log");
+    expect(readdirSync(join(artifacts, "gateway-logs/stall-profiles"))).toEqual([
+      "profile-2026-01-01T00-00-00-000Z.json",
+    ]);
+  });
+
+  it("keeps the stall profiles when the config directory's path holds pattern characters", () => {
+    const { result, artifacts } = runJourneysWithFailingGateway({
+      keptProfile: true,
+      configDirName: "gateway [copy]",
+    });
+    expect(result.status).toBe(1);
     expect(readdirSync(join(artifacts, "gateway-logs/stall-profiles"))).toEqual([
       "profile-2026-01-01T00-00-00-000Z.json",
     ]);
