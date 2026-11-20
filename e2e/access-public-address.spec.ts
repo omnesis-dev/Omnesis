@@ -97,7 +97,10 @@ const addressSelect = (page: Page) => page.locator("select#access-mcp-address");
 const agentCard = (page: Page, id: string) => page.locator(`button[data-agent='${id}']`);
 const commands = (page: Page) => page.locator(".access-agent-steps .access-agent-command code");
 
-test("a gateway with no relay has one address, and a hosted app is told to publish the gateway", async ({
+const location = (page: Page, id: "machine" | "home" | "away") =>
+  page.locator(`input[name='access-agent-location'][value='${id}']`);
+
+test("a gateway with no address away from home opens on this computer, and hosted apps are sent to Somewhere else", async ({
   page,
 }) => {
   const relayQuestions: string[] = [];
@@ -107,17 +110,16 @@ test("a gateway with no relay has one address, and a hosted app is told to publi
       relayQuestions.push(url.href);
   });
   await openConnectDialog(page);
+  await expect(location(page, "machine")).toBeChecked();
   await expect(page.locator("#access-mcp-address")).toHaveCount(0);
   expect(new URL((await shownAddress(page).textContent())!).hostname).toBe("localhost");
-  for (const [id, , needs] of HOSTED) {
-    await agentCard(page, id).click();
-    await expect(notice(page).locator("p")).toHaveText([
-      `This address is private. ${needs}, so it cannot reach this gateway until you publish it.`,
-      "Publish the gateway with Tailscale on this computer or a domain of your own, in Settings, Connectivity.",
-    ]);
-    await expect(agentCard(page, id).locator(".access-agent-warning")).toBeVisible();
-    await agentCard(page, id).click();
-  }
+  // Hosted apps can never reach this computer's address, so they are not offered here.
+  for (const [id] of HOSTED) await expect(agentCard(page, id)).toHaveCount(0);
+  await page.getByRole("button", { name: "Set them up under Somewhere else" }).click();
+  await expect(location(page, "away")).toBeChecked();
+  await expect(page.locator(".access-connect-dialog")).toContainText(
+    "This gateway has no address away from home yet.",
+  );
   const dialog = page.locator(".access-connect-dialog");
   await expect(dialog).not.toContainText("Omnesis account");
   await expect(dialog).not.toContainText("Omnesis address");
@@ -201,52 +203,42 @@ test("a ready relay address beside the localhost address: the dialog starts on t
 }) => {
   await connectedGateway(page, READY, "keep");
   await openConnectDialog(page);
-  const select = addressSelect(page);
-  await expect(select.locator("option")).toHaveText([/^https:\/\/localhost:/u, RELAY]);
-  await expect(select).toHaveValue(RELAY);
+  // The relay is the one address away from home; the localhost one is this computer's.
+  await expect(location(page, "away")).toBeChecked();
+  await expect(addressSelect(page)).toHaveCount(0);
+  await expect(shownAddress(page)).toHaveText(RELAY);
   await agentCard(page, "chatgpt").click();
   await expect(notice(page).locator("p")).toHaveText([
     "ChatGPT connects from OpenAI's servers, and this address is reachable from the Internet.",
   ]);
-  await select.selectOption({ index: 0 });
-  await expect(notice(page).locator("p")).toHaveText([
-    "This address is private. ChatGPT connects from OpenAI's servers, so it cannot reach this gateway until you publish it.",
-    "Pick another address from the list above.",
-  ]);
+  await location(page, "machine").check();
+  expect(new URL((await shownAddress(page).textContent())!).hostname).toBe("localhost");
+  await expect(agentCard(page, "chatgpt")).toHaveCount(0);
 });
 
-test("a relay address with remote access turned off is not picked, says so and leads to the relay's page", async ({
+test("a relay address with remote access turned off says so, and leads to the relay's page", async ({
   page,
 }) => {
   await connectedGateway(page, OFF, "keep");
   await openConnectDialog(page);
-  const select = addressSelect(page);
-  await expect(select.locator("option").nth(1)).toHaveText(RELAY);
-  await expect(select).not.toHaveValue(RELAY);
+  await expect(location(page, "away")).toBeChecked();
+  await expect(shownAddress(page)).toHaveText(RELAY);
   for (const [id, , needs] of HOSTED) {
     await expect(agentCard(page, id).locator(".access-agent-warning")).toBeVisible();
     await agentCard(page, id).click();
     await expect(notice(page).locator("p")).toHaveText([
-      `This address is private. ${needs}, so it cannot reach this gateway until you publish it.`,
-      "This gateway has an Omnesis address. Remote access is turned off. Turn it on in Settings, Connectivity.",
+      `Remote access is turned off. ${needs}, so it cannot reach this address right now.`,
+      "Turn it on in Settings, Connectivity.",
     ]);
+    await expect(notice(page)).toHaveClass(/is-warning/u);
     await expect(page.locator(".access-agent-steps")).not.toContainText("Funnel");
     await agentCard(page, id).click();
   }
-  await select.selectOption(RELAY);
-  await agentCard(page, "claude-apps").click();
-  await expect(notice(page).locator("p")).toHaveText([
-    "Remote access is turned off. Claude connects from Anthropic's servers, so it cannot reach this address right now.",
-    "Turn it on in Settings, Connectivity.",
-  ]);
-  await expect(notice(page)).toHaveClass(/is-warning/u);
-  // An agent on the owner's network is told the same, and has the localhost address to fall back on.
-  await agentCard(page, "claude-apps").click();
+  // An agent on the owner's network is told the same.
   await agentCard(page, "codex").click();
   await expect(notice(page).locator("p")).toHaveText([
     "Remote access is turned off. This address does not answer right now.",
     "Turn it on in Settings, Connectivity.",
-    "Or pick another address from the list above.",
   ]);
   await expect(commands(page)).toHaveCount(0);
   await notice(page).getByRole("link", { name: "Settings, Connectivity" }).click();

@@ -21,6 +21,7 @@ import type { HostTailscaleService } from "../../remote-access/host-tailscale.js
 import type { DeviceId, TokenId } from "@omnesis/types";
 import type { GatewayEnrollment } from "@omnesis/cloud-relay";
 import type { AppEnv } from "./types.js";
+import type { LocalMcpState } from "../../local-mcp-listener.js";
 
 let dir: string;
 beforeEach(() => {
@@ -38,6 +39,8 @@ function app({
   device = false,
   relay = true,
   publicAddress = fixedPublicAddress(configured ?? undefined) as PublicAddressSource,
+  home = null as string[] | null,
+  localMcp = undefined as LocalMcpState | undefined,
 } = {}) {
   const host = {
     status: vi.fn(async () =>
@@ -121,10 +124,12 @@ function app({
           }
         : {}),
       host: hostAccess,
+      ...(home ? { home: { origins: () => Promise.resolve(home) } } : {}),
     }),
     hostAccess,
     publicAddress,
     tailscaleEmbed: device,
+    ...(localMcp ? { localMcp: () => localMcp } : {}),
   });
   const send = (
     method: string,
@@ -225,7 +230,63 @@ describe("remote access routes", () => {
           available: true,
         },
       ],
+      localMcp: { state: "off" },
     });
+  });
+
+  test("agents on the home network sign in only once the owner allows it, which asks for the step-up", async () => {
+    const { send } = app({
+      stepUp: true,
+      home: ["https://omnesis.local:7600", "https://192.168.0.20:7600"],
+      localMcp: { state: "listening", port: 7601, url: "http://localhost:7601" },
+    });
+    const state = await (await send("GET", "/admin/remote-access")).json();
+    expect(state.mcpAddresses[0]).toEqual({
+      id: "home",
+      url: "https://omnesis.local:7600",
+      urls: ["https://omnesis.local:7600", "https://192.168.0.20:7600"],
+      reach: "off",
+      choices: ["off", "on"],
+      available: true,
+    });
+    expect(state.localMcp).toEqual({
+      state: "listening",
+      port: 7601,
+      url: "http://localhost:7601",
+    });
+    // Allowing it lets agents sign in where they could not: the passkey comes first.
+    const viaRelay = { "x-omnesis-cloud-relay": "1" };
+    const refused = await send("PATCH", "/admin/remote-access", { mcp: { home: "on" } }, viaRelay);
+    expect(refused.status).toBe(428);
+    // Narrowing never asks.
+    expect(
+      (await send("PATCH", "/admin/remote-access", { mcp: { home: "off" } }, viaRelay)).status,
+    ).toBe(200);
+    expect((await (await send("GET", "/admin/remote-access")).json()).mcpAddresses[0].reach).toBe(
+      "off",
+    );
+  });
+
+  test("the home network is turned on and off, and off writes nothing back", async () => {
+    const { send, settings } = app({ home: ["https://omnesis.local:7600"] });
+    const on = await (await send("PATCH", "/admin/remote-access", { mcp: { home: "on" } })).json();
+    expect(on.mcpAddresses[0]).toMatchObject({ id: "home", reach: "on" });
+    expect(settings.get().mcp).toEqual({ home: true });
+    const off = await (
+      await send("PATCH", "/admin/remote-access", { mcp: { home: "off" } })
+    ).json();
+    expect(off.mcpAddresses[0]).toMatchObject({ id: "home", reach: "off" });
+    expect(settings.get().mcp).toEqual({});
+    expect((await send("PATCH", "/admin/remote-access", { mcp: { home: "public" } })).status).toBe(
+      400,
+    );
+  });
+
+  test("a gateway that listens on this machine alone offers no home-network choice", async () => {
+    const { send } = app();
+    const state = await (await send("GET", "/admin/remote-access")).json();
+    expect(state.mcpAddresses.map((row: { id: string }) => row.id)).not.toContain("home");
+    expect((await send("PATCH", "/admin/remote-access", { mcp: { home: "on" } })).status).toBe(400);
   });
 
   test("the setup records its order and when it was finished, and refuses an empty or unknown change", async () => {

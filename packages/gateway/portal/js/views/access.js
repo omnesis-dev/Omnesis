@@ -649,8 +649,8 @@ export function AccessView({
       ${overviewReady && leadsWithLocalAddress(overview.oauth)
         ? html`<div class="access-oauth-blocker" role="status">
             <strong>Local agents can connect.</strong>
-            <span>Use Connect an agent for clients running on the gateway’s machine.
-              To connect from another machine, give the gateway an address in${" "}
+            <span>Use Connect an agent for clients running on the gateway’s machine or, once you allow it there, on your home network.
+              To connect from anywhere else, give the gateway an address in${" "}
               <a href=${connectivityHref} onClick=${(event) => { event.preventDefault(); navigate(connectivityHref); }}>Settings, Connectivity</a>.${" "}
               ${hostedHint
                 ? html`This can be a private network address. ${hostedHint.map((part) => typeof part === "string"
@@ -702,7 +702,13 @@ export function AccessView({
             }}
           />`}
 
-      ${connectVisible && html`<${ConnectAgentDialog} oauth=${overview.oauth} relay=${relay} tailscale=${tailscale} onClose=${closeConnect} />`}
+      ${connectVisible && html`<${ConnectAgentDialog}
+        oauth=${overview.oauth}
+        relay=${relay}
+        tailscale=${tailscale}
+        onClose=${closeConnect}
+        onRefresh=${() => refresh({ background: true })}
+      />`}
 
       ${movingEntry && html`<${MoveConnectionDialog}
         key=${movingEntry.grant.id}

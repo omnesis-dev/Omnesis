@@ -37,11 +37,9 @@ const remote = (over: Record<string, unknown> = {}) => ({
 });
 
 describe("the setup's steps and progress", () => {
-  test("the account is always asked, new devices only while one can ask, MCP only with an address away", () => {
-    expect(setupSteps()).toEqual(["account", "connection"]);
-    expect(setupSteps({ devices: true, mcp: true })).toEqual(["account", "connection", "devices", "mcp"]);
-    expect(setupSteps({ devices: true })).toEqual(["account", "connection", "devices"]);
-    expect(setupSteps({ mcp: true })).toEqual(["account", "connection", "mcp"]);
+  test("the account and the MCP server are always asked, new devices only while one can ask", () => {
+    expect(setupSteps()).toEqual(["account", "connection", "mcp"]);
+    expect(setupSteps({ devices: true })).toEqual(["account", "connection", "devices", "mcp"]);
   });
 
   test("a saved flow comes back only when well formed for these steps", () => {

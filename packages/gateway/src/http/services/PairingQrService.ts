@@ -332,6 +332,35 @@ export class PairingQrService {
   }
 
   /**
+   * The gateway's addresses on the home network, at the port devices there
+   * reach it on: the `.local` name first, since it outlives the address the
+   * router hands out, then the host's LAN addresses and the names it was
+   * given that only a local network resolves. Nothing on Tailscale, and
+   * behind a Docker bridge nothing only Docker's own network knows. The MCP
+   * server's home-network choice offers these to agents.
+   */
+  async homeNetworkOrigins(): Promise<string[]> {
+    const discovered = await this.options.discoverIdentities();
+    const view = this.networkView(discovered, "");
+    if (!view.port) return [];
+    const local = (host: string) => {
+      const kind = classifyPairingHost(normalizeHost(host));
+      return kind === "local-address" || kind === "local-name";
+    };
+    const hosts = [
+      ...(view.advertisedLocalName ? [view.advertisedLocalName] : []),
+      ...view.identities
+        .filter((identity) => identity.kind === "mdns" && view.recorded)
+        .map((identity) => identity.address),
+      ...view.identities
+        .filter((identity) => identity.kind === "lan")
+        .map((identity) => identity.address),
+      ...view.hostNames,
+    ].filter(local);
+    return [...new Set(hosts.map((host) => originAt(host, view.port)))];
+  }
+
+  /**
    * The host's view of the network for one request. A gateway in a container
    * is behind a Docker bridge when its host's launcher recorded the host's
    * network (`hostNetwork`), or, for an install whose launcher predates that,

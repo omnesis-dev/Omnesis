@@ -5,7 +5,7 @@
  * The owner's remote-access choices that belong to no single way in, kept in
  * `<config>/remote-access.json`: whether the guided setup was finished, which
  * way in a device tries first when both the gateway's own Tailscale device and
- * the Omnesis relay can answer, which addresses away from home answer MCP,
+ * the Omnesis relay can answer, which addresses answer MCP,
  * and what Tailscale on this computer lets the Internet reach. Nothing is
  * written until the owner makes a choice, so a gateway that never opens the
  * setup has no such file.
@@ -23,14 +23,17 @@ export const remoteAccessFirstSchema = z.enum(["tailscale", "relay"]);
 export type RemoteAccessFirst = z.infer<typeof remoteAccessFirstSchema>;
 
 /**
- * Whether MCP answers on each address away from home (see
- * mcp-addresses.ts). Only a choice the owner made is stored: an address
- * missing here answers MCP, so a file written before this choice existed, or
- * none at all, leaves every address on. The public address of the gateway's
- * own Tailscale device is that device's setting and is not kept here.
+ * Whether MCP answers on each address (see mcp-addresses.ts). Only a choice
+ * the owner made is stored: an address away from home missing here answers
+ * MCP, so a file written before this choice existed, or none at all, leaves
+ * every one on, while the home network stays off until it is `true`. The
+ * public address of the gateway's own Tailscale device is that device's
+ * setting and is not kept here.
  */
 const mcpAddressChoicesSchema = z
   .object({
+    /** Agents on the home network may sign in through the gateway's addresses there. */
+    home: z.literal(true).optional(),
     /** The Omnesis relay address. */
     relay: z.boolean().optional(),
     /** The gateway's own Tailscale device, on the owner's Tailscale network. */

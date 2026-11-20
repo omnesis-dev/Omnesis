@@ -647,11 +647,32 @@ installing it takes one command as root:
 
         <h2 id="tls">TLS certificate</h2>
         <p>
-          The gateway always serves HTTPS, with the certificate chosen at
+          The gateway serves HTTPS, with the certificate chosen at
           <a href="setup#certificates">setup</a>: a Tailscale certificate, an mkcert one, one you
           provide, or the self-signed pair the gateway creates on first start. This section covers
           what happens afterwards: renewal, how a new certificate goes live, and what clients that
           pinned the old one need.
+        </p>
+        <p>
+          The one exception is the MCP address for agents on the gateway's own computer,
+          <code>http://localhost:7601/mcp</code> by default (see
+          <a href="connect#this-computer">an agent on the gateway's computer</a>). It is plain HTTP
+          on <code>127.0.0.1</code> and <code>::1</code> only, which nothing off the computer can
+          reach and whose traffic never leaves it. It serves the MCP endpoint, the OAuth routes and
+          discovery documents an MCP client uses and the sign-in page's static files, and nothing
+          else: no portal page, no device API. It answers only a request that names a loopback host,
+          so a web page that points its own name at <code>127.0.0.1</code> gets nothing, and its MCP
+          endpoint refuses any request a browser sends with an <code>Origin</code>. Every connection
+          through it still needs your approval. Turn it off with
+          <code>gateway.localMcp.enabled</code>.
+        </p>
+        <p>
+          Agents on your home network sign in only once you allow it (see
+          <a href="connect#home-network">an agent on your home network</a>). The gateway already
+          listens on your network for your devices; allowing it lets an MCP client there start a
+          sign-in, which you still approve. Only a request straight from a private network
+          qualifies, never one through the relay, Tailscale or Funnel, and turning it off again ends
+          the access of every agent that signed in that way.
         </p>
         <p>
           When the gateway creates or renews its direct TLS identity, its private key uses

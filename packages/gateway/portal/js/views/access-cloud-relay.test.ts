@@ -173,9 +173,11 @@ describe("Access page with the cloud relay", () => {
       expect(host.querySelector(".access-oauth-blocker")?.textContent?.replace(/\s+/gu, " ")).toContain(
         "Settings, Connectivity. This can be a private network address. ChatGPT, Claude apps and Grok bot need an Internet-reachable address. Connecting this gateway to an Omnesis account in Settings, Connectivity gives it one.",
       );
+      // With no address away from home the dialog opens on this computer, where hosted apps are not offered.
       expect(host.querySelector(".access-connect-dialog")?.textContent).toContain(
-        "This localhost address works only for agents running on the gateway’s machine. Hosted clients cannot reach it.",
+        "Paste it into Claude Code, Codex, or another agent on this computer.",
       );
+      expect(host.querySelector("button[data-agent='chatgpt']")).toBeNull();
     });
 
   });
@@ -324,24 +326,20 @@ describe("Access page with the cloud relay", () => {
       expect(host.querySelector(".access-oauth-blocker")?.textContent?.replace(/\s+/gu, " ")).toContain(
         "Settings, Connectivity. This can be a private network address. ChatGPT, Claude apps and Grok bot can use this gateway's Omnesis address.",
       );
-      expect(addressOptions()).toEqual([
-        `${LOCAL}`,
-        `${RELAY}`,
-      ]);
+      // The loopback address is this computer's, not a choice away from home.
+      expect(addressSelect()).toBeNull();
       expect(shownAddress()).toBe(RELAY);
       expect(warned()).toEqual([]);
       await select("claude-apps");
       expect(noticeParagraphs()).toEqual([
         "Claude connects from Anthropic's servers, and this address is reachable from the Internet.",
       ]);
-      await pick(LOCAL);
-      expect(warned()).toEqual(["chatgpt", "claude-apps", "grok-bot"]);
-      expect(noticeParagraphs()).toEqual([
-        "This address is private. Claude connects from Anthropic's servers, so it cannot reach this gateway until you publish it.",
-        "Pick another address from the list above.",
-      ]);
-      expect(notice().querySelectorAll("a").length).toBe(0);
       await select("claude-apps");
+      const machine = host.querySelector<HTMLInputElement>("input[name='access-agent-location'][value='machine']")!;
+      await act(async () => { machine.dispatchEvent(new window.Event("change", { bubbles: true })); });
+      expect(shownAddress()).toBe(LOCAL);
+      // Hosted apps can never reach it, so they are not offered there.
+      expect(host.querySelector("button[data-agent='claude-apps']")).toBeNull();
       await select("claude-code");
       expect(commands().every((command) => command.includes(LOCAL))).toBe(true);
     });

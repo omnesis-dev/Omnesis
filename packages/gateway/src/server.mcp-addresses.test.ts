@@ -266,11 +266,20 @@ describe("upgrading leaves every connected agent working", () => {
       for (const origin of origins) {
         expect(await listTools(send, origin, tokens[origin]!), origin).toContain("run_sql");
       }
+      // Every address answers as before; the home network is a new choice, off until chosen.
       expect(reachById(await (await adminRequest("GET")).json())).toEqual({
+        home: "off",
         relay: "public",
         tailnet: "private",
         host: "private",
         domain: "on",
+      });
+      // A request on the home network is answered as it always was: an address the
+      // configuration does not name has no MCP resource there.
+      const lan = await send("https://192.168.0.20:7600/mcp", initialize("no-token"));
+      expect(lan.status).toBe(404);
+      expect(await lan.json()).toEqual({
+        error: "This MCP resource URL is not configured on the gateway.",
       });
       // Discovery lists what it listed before the choices existed, in the same order.
       expect(await listedResources(send)).toEqual({

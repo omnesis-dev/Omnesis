@@ -418,9 +418,12 @@ describe("AccessView", () => {
     await mount();
     expect(host.querySelector(".access-oauth-blocker")?.textContent).toContain("Local agents can connect");
     await act(async () => { connectButton()!.click(); });
-    expect(host.querySelector(".access-connect-dialog")?.textContent).toContain("only for agents running on the gateway’s machine");
+    // No address away from home: the dialog opens on this computer, without the hosted apps.
+    expect(host.querySelector("input[name='access-agent-location'][value='machine']")?.hasAttribute("checked")).toBe(true);
+    expect(host.querySelector(".access-connect-dialog")?.textContent).toContain("another agent on this computer");
     expect(host.querySelector(".access-mcp-resource code")?.textContent).toBe("https://localhost:17600/mcp");
     expect(host.querySelector("button[data-agent='claude-code']")).not.toBeNull();
+    expect(host.querySelector("button[data-agent='chatgpt']")).toBeNull();
   });
 
   test("keeps the connect dialog shut on a gateway without OAuth, however it was asked for", async () => {
@@ -1762,7 +1765,7 @@ describe("AccessView", () => {
     await act(async () => { card().click(); });
     await vi.waitFor(() => expect(host.querySelector(".access-agent-steps")).not.toBeNull());
     expect(host.querySelector(".access-agent-command")).toBeNull();
-    const notice = host.querySelector(".access-agent-public")!;
+    const notice = host.querySelector(".access-agent-steps .access-agent-public")!;
     expect(notice.textContent).toMatch(/This gateway's certificate is not publicly trusted\./u);
     expect([...notice.querySelectorAll("a")].map((link) => link.getAttribute("href"))).toEqual([
       "https://omnesis.dev/docs/setup#certificates",

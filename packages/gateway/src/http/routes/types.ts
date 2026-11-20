@@ -59,6 +59,11 @@ export type AppEnv = {
     wsClientIp: string;
     /** Set wherever step-up is mounted; see `step-up.ts`. */
     stepUps: StepUps | undefined;
+    /**
+     * The request may sign in through the home-network address it used; set by
+     * `homeSignInMiddleware` (see `remote-access/mcp-addresses.ts`).
+     */
+    homeSignIn: boolean | undefined;
   };
 };
 

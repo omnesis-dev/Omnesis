@@ -813,6 +813,26 @@ a:hover { text-decoration: underline; }
 .access-connect-step > div { display: grid; gap: 8px; min-width: 0; }
 .access-connect-step h3 { margin: 0; color: var(--text-primary); font-size: 13px; font-weight: 600; }
 .access-connect-step p { margin: 0; color: var(--text-secondary); font-size: 12px; line-height: 1.5; }
+/* Where the agent runs: three choices that decide the address the dialog gives. */
+.access-location-picker { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; min-width: 0; margin: 0; padding: 0; border: 0; }
+.access-location-picker > legend { grid-column: 1 / -1; float: left; width: 100%; padding: 0; margin-bottom: 6px; color: var(--text-primary); font-size: 12.5px; font-weight: 600; }
+.access-location-option { display: grid; grid-template-columns: 14px minmax(0, 1fr); gap: 8px; align-items: start; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-secondary); cursor: pointer; min-width: 0; }
+.access-location-option.is-on { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); background: color-mix(in srgb, var(--accent) 5%, var(--bg-secondary)); }
+.access-location-option input { width: 14px; height: 14px; margin: 2px 0 0; accent-color: var(--accent); }
+.access-location-option > span { display: grid; gap: 2px; min-width: 0; }
+.access-location-option strong { color: var(--text-primary); font-size: 12.5px; font-weight: 600; }
+.access-location-option small { color: var(--text-secondary); font-size: 11.5px; line-height: 1.45; }
+.access-connect-step .access-agent-public p { color: var(--text-secondary); }
+.access-link-button { padding: 0; border: 0; background: none; color: var(--text-link); font: inherit; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.access-agent-elsewhere { font-size: 12px; }
+.access-agent-download { display: inline-block; margin-right: 4px; padding: 4px 10px; font-size: 12px; text-decoration: none; }
+.access-home-allow { display: grid; gap: 8px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-secondary); }
+.access-home-allow strong { color: var(--text-primary); }
+.access-home-allow ul { margin: 0; padding-left: 18px; display: grid; gap: 4px; color: var(--text-secondary); font-size: 12px; line-height: 1.5; }
+.access-home-allow-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; font-size: 12px; }
+@media (max-width: 640px) {
+  .access-location-picker { grid-template-columns: minmax(0, 1fr); }
+}
 .access-connect-step form {
   display: flex;
   align-items: flex-end;
@@ -910,6 +930,7 @@ a:hover { text-decoration: underline; }
 .access-agent-pairing { display: grid; gap: 8px; }
 .access-agent-headless { display: grid; gap: 8px; }
 .access-agent-trust { display: grid; gap: 8px; }
+.access-agent-trust-label { color: var(--text-primary); font-size: 12.5px; font-weight: 600; }
 .access-agent-headless strong { color: var(--text-primary); }
 .access-agent-pairing small { color: var(--text-secondary); font-size: 12px; line-height: 1.5; }
 .access-agent-pair-action { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
@@ -19730,6 +19751,10 @@ summary.decision-card-head {
 .remote-access-mcp-row > legend + * { clear: both; }
 .remote-access-mcp-row > small { font-size: 12.5px; line-height: 1.5; color: var(--text-secondary); }
 .remote-access-mcp > .remote-access-choice-detail { margin: 0; font-size: 12.5px; line-height: 1.5; color: var(--text-secondary); }
+.remote-access-mcp-group { margin: 6px 0 0; color: var(--text-secondary); font-size: 11.5px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
+.remote-access-mcp-group:first-child { margin-top: 0; }
+.remote-access-warnings { margin: 0; padding-left: 18px; display: grid; gap: 4px; color: var(--text-secondary); font-size: 12.5px; line-height: 1.5; }
+.remote-access-mcp-row > .remote-access-problem { color: var(--warning); }
 
 @media (max-width: 760px) {
   .remote-access-option-body { margin-left: 14px; }

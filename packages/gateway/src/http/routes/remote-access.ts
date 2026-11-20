@@ -12,9 +12,10 @@
  * routes (cloud-relay.ts, tailscale.ts); the portal's guided setup calls them
  * directly, so their step-ups and checks apply unchanged.
  *
- * `mcpAddresses` lists each address away from home with where MCP answers
- * there (see mcp-addresses.ts); PATCH `{ mcp: { <id>: <reach> } }` changes
- * it. Letting MCP answer further loosens the gateway, so it asks for a step-up
+ * `mcpAddresses` lists each address with where MCP answers there (see
+ * mcp-addresses.ts); PATCH `{ mcp: { <id>: <reach> } }` changes it.
+ * `localMcp` says where the plain-HTTP address for agents on this computer
+ * stands (see local-mcp-listener.ts); it is configuration, not a choice here. Letting MCP answer further loosens the gateway, so it asks for a step-up
  * where the gateway requires one; narrowing it never does. The Tailscale
  * device's public address is that device's own setting, written through the
  * same service call as PATCH /admin/tailscale/settings. Putting MCP on the
@@ -45,6 +46,7 @@ import { requireStepUp } from "../step-up.js";
 import { validateJson } from "../validate.js";
 import type { PublicAddressSource } from "../../public-address.js";
 import type { HostAccess } from "../../remote-access/host-access.js";
+import type { LocalMcpState } from "../../local-mcp-listener.js";
 import type { RouteApp } from "./types.js";
 
 const mcpReach = z.enum(MCP_REACHES);
@@ -79,6 +81,8 @@ export interface RemoteAccessRouteOptions {
   mcpAddresses: McpAddresses;
   /** Whether this installation has the gateway's own Tailscale device. */
   tailscaleEmbed: boolean;
+  /** Where the plain-HTTP MCP address for agents on this computer stands. */
+  localMcp?: () => LocalMcpState;
 }
 
 export function mountRemoteAccessRoutes(app: RouteApp, options: RemoteAccessRouteOptions): void {
@@ -131,6 +135,8 @@ export function mountRemoteAccessRoutes(app: RouteApp, options: RemoteAccessRout
         way,
       },
       mcpAddresses,
+      // The address for agents on this computer: not a choice here, but where it stands.
+      localMcp: options.localMcp?.() ?? { state: "off" },
     };
   };
 

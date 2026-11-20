@@ -395,13 +395,24 @@
 
         <h3 id="connectivity">Settings → Connectivity</h3>
         <p>
-          The portal's <strong>Settings → Connectivity</strong> tab lists how devices reach the
-          gateway away from home, one line each, with what is on and the address it uses. Each line
-          opens its own page to set that way up or change it, and
+          The portal's <strong>Settings → Connectivity</strong> tab lists how devices and agents
+          reach the gateway, at home and away, one line each, with what is on and the address it
+          uses. Each line opens its own page to set that way up or change it, and
           <strong>Set up step by step</strong> walks through the same choices one question at a
-          time. At home, devices always connect directly.
+          time; its last step, the MCP server, is all someone who uses Omnesis only at home needs,
+          with no account and no remote connection. At home, devices always connect directly.
         </p>
         <ul>
+          <li>
+            <strong>At home</strong> says how agents on the gateway's computer and on your home
+            network connect to its MCP server. Agents on the gateway's computer use
+            <code>http://localhost:7601/mcp</code>, which needs no certificate; when it cannot
+            start, for example because another program holds its port, the line says why and which
+            setting moves it. Agents on other computers at home can sign in once you allow it under
+            <strong>MCP server</strong>; your devices pair over the home network either way (see
+            <a href="connect#this-computer">an agent on the gateway's computer</a> and
+            <a href="connect#home-network">an agent on your home network</a>).
+          </li>
           <li>
             <strong>Omnesis account</strong> links the gateway to an account on the Omnesis relay.
             Your phones and computers then find the gateway by signing in to the account, with a
@@ -459,9 +470,10 @@
             then saves it as <code>gateway.publicBaseUrl</code>.
           </li>
           <li>
-            <strong>MCP server</strong> lists the addresses away from home and sets where the MCP
-            server answers at each: off, on your Tailscale network, or on the Internet too (see
-            <a href="connect#mcp-per-address">MCP on each address</a>).
+            <strong>MCP server</strong> shows the address for agents on the gateway's computer,
+            whether agents on your home network may sign in, and, for each address away from home,
+            where the MCP server answers: off, on your Tailscale network, or on the Internet too
+            (see <a href="connect#mcp-per-address">MCP on each address</a>).
           </li>
         </ul>
 

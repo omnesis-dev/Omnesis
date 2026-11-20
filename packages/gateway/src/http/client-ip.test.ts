@@ -7,6 +7,8 @@ import {
   arrivedThroughRelayTunnel,
   clientAddress,
   forwardedClientAddress,
+  fromHomeNetwork,
+  isHomeNetworkIp,
   isLoopbackClient,
   isRelayedRequest,
   markRelayRequestExposure,
@@ -324,5 +326,48 @@ describe("whether a request came through the relay", () => {
     expect(arrivedThroughRelayTunnel({})).toBe(false);
     expect(arrivedThroughRelay(headers({ "x-omnesis-cloud-relay": "1" }), undefined)).toBe(true);
     expect(arrivedThroughRelayTunnel(socket("198.51.100.20", 40200))).toBe(false);
+  });
+});
+
+describe("the home network", () => {
+  test("loopback, private and link-local addresses are on it; Tailscale and public ones are not", () => {
+    for (const ip of [
+      "127.0.0.1",
+      "::1",
+      "::ffff:127.0.0.1",
+      "10.1.2.3",
+      "172.17.0.1",
+      "192.168.0.20",
+      "::ffff:192.168.0.20",
+      "169.254.10.1",
+      "fd12:3456::1",
+      "fe80::1%eth0",
+    ])
+      expect(isHomeNetworkIp(ip), ip).toBe(true);
+    for (const ip of [
+      "100.101.102.103",
+      "fd7a:115c:a1e0::1",
+      "203.0.113.7",
+      "2001:db8::1",
+      "172.32.0.1",
+    ])
+      expect(isHomeNetworkIp(ip), ip).toBe(false);
+  });
+
+  test("a request is from it when its peer is, and so is any client a trusted proxy reports", () => {
+    expect(fromHomeNetwork(headers({}), peer("192.168.0.31"))).toBe(true);
+    expect(fromHomeNetwork(headers({}), peer("203.0.113.7"))).toBe(false);
+    // A proxy on this machine forwarding from the Internet is not the home network.
+    expect(fromHomeNetwork(headers({ "x-forwarded-for": "203.0.113.7" }), peer("127.0.0.1"))).toBe(
+      false,
+    );
+    expect(fromHomeNetwork(headers({ "x-forwarded-for": "192.168.0.31" }), peer("127.0.0.1"))).toBe(
+      true,
+    );
+    // An untrusted peer's forwarded header is not read at all.
+    expect(
+      fromHomeNetwork(headers({ "x-forwarded-for": "192.168.0.31" }), peer("203.0.113.7")),
+    ).toBe(false);
+    expect(fromHomeNetwork(headers({}), peer(undefined))).toBe(false);
   });
 });

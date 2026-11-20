@@ -113,21 +113,30 @@ describe("Access page with the gateway's Tailscale device", () => {
   const addressSelect = () => host.querySelector<HTMLSelectElement>("#access-mcp-address");
   const addressOptions = () => [...(addressSelect()?.querySelectorAll("option") ?? [])].map((option) => option.textContent);
   const shownAddress = () => host.querySelector(".access-connect-step .access-mcp-resource code")?.textContent;
+  async function runOn(location: "machine" | "home" | "away") {
+    const radio = host.querySelector<HTMLInputElement>(`input[name='access-agent-location'][value='${location}']`)!;
+    await act(async () => { radio.dispatchEvent(new window.Event("change", { bubbles: true })); });
+  }
 
   test("flag off: the device is never read and its address is no choice", async () => {
     api.getAccessOverview.mockResolvedValue(overview(LOCAL, { loopbackOnly: true }, [DEVICE]));
     await mount();
     expect(tailscaleApi.getTailscale).not.toHaveBeenCalled();
     expect(addressSelect()).toBeNull();
+    expect(shownAddress()).toBe(DEVICE);
+    // The loopback address is this computer's, under its own answer.
+    await runOn("machine");
     expect(shownAddress()).toBe(LOCAL);
   });
 
-  test("the device alone gives a choice, starting on its public address", async () => {
+  test("the device alone is the address away from home, and the loopback one is this computer's", async () => {
     api.getAccessOverview.mockResolvedValue(overview(LOCAL, { loopbackOnly: true }, [DEVICE]));
     await mount({ tailscaleEmbed: true });
     expect(tailscaleApi.getTailscale).toHaveBeenCalled();
-    expect(addressOptions()).toEqual([`${LOCAL}`, `${DEVICE}`]);
-    expect(addressSelect()?.value).toBe(DEVICE);
+    expect(addressSelect()).toBeNull();
+    expect(shownAddress()).toBe(DEVICE);
+    await runOn("machine");
+    expect(shownAddress()).toBe(LOCAL);
   });
 
   test("the owner's address, the relay's and the device's are all offered together", async () => {
@@ -145,7 +154,9 @@ describe("Access page with the gateway's Tailscale device", () => {
     tailscaleApi.getTailscale.mockResolvedValue(device("off"));
     api.getAccessOverview.mockResolvedValue(overview(LOCAL, { loopbackOnly: true }, [DEVICE]));
     await mount({ tailscaleEmbed: true });
-    expect(addressOptions()).toEqual([`${LOCAL}`, `${DEVICE}`]);
-    expect(addressSelect()?.value).toBe(LOCAL);
+    expect(shownAddress()).toBe(DEVICE);
+    // A hosted app is told this address stays on the Tailscale network.
+    const chatgpt = host.querySelector<HTMLButtonElement>("button[data-agent='chatgpt']")!;
+    expect(chatgpt.querySelector(".access-agent-warning")).not.toBeNull();
   });
 });
