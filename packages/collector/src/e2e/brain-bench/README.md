@@ -203,10 +203,13 @@ automatically unless the plan sets it.
 
 ### The note agent and the interactive agent
 
-The note agent's turn on a quick-capture note runs on the same `background-agent` seam but
+The note agent's turn on a quick-capture note runs on the ordinary `agent` seam,
 outside the cognition queue, so its prompt carries no run envelope. `readRunContext` reads
 it from its note block: kind and flavour `note`, `subject` = the note text, `detail` = the
 capture day. Match it with `{ flavour: "note", promptContains: "…" }`.
+Resolve relative schedules inside a function plan using `context.detail`, rather
+than the bench startup date. Explicit capture timestamps at weekday and month
+boundaries keep these scenarios deterministic when a suite crosses midnight.
 
 A conversation turn — a reply in the Morning brief thread or an ordinary conversation —
 runs on the interactive `agent` role. `BrainBench.start({ agent: { behaviors } })` starts the
