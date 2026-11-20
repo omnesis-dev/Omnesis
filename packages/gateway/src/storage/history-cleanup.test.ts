@@ -7,6 +7,7 @@ import {
   mkdirSync,
   writeFileSync,
   existsSync,
+  lstatSync,
   symlinkSync,
   renameSync,
   unlinkSync,
@@ -232,6 +233,49 @@ function backup(root: string, name: string, startedAt: string, encrypted = false
   );
   return dir;
 }
+test.each([
+  ["2031-01-01T00-00-00", "2031-01-01T00:00:00.000Z"],
+  ["2030-01-01T00-00-00-2", "2030-01-01T00:00:00.000Z"],
+])(
+  "newest-backup protection rejects a stale catalog when %s completes",
+  async (name, startedAt) => {
+    const f = fixture({});
+    const dir = join(f.root, "backups");
+    mkdirSync(dir);
+    mkdirSync(join(dir, ".storage-cleanup"), { mode: 0o700 });
+    const previousNewest = backup(dir, "2030-01-01T00-00-00", "2030-01-01T00:00:00.000Z");
+    const completing = join(dir, name);
+    mkdirSync(completing);
+    writeFileSync(join(completing, "snapshot.db"), "Invented backup bytes");
+    const adapter = backupCleanupAdapter({
+      backupsDir: dir,
+      exclusive: (operation) => operation(),
+    });
+    const job = startHistoryCleanupJob(f.db, { request: { target: "backups", before }, now: 1 });
+    const catalog = await adapter.next(job);
+    expect(catalog).toMatchObject({ done: false, progressed: true, resetProtected: true });
+    expect(catalog.candidate).toBeUndefined();
+    const rootMtime = lstatSync(dir, { bigint: true }).mtimeNs;
+    // Completing an existing archive changes its own directory, not the catalog root.
+    backup(dir, name, startedAt);
+    expect(lstatSync(dir, { bigint: true }).mtimeNs).toBe(rootMtime);
+    const service = new HistoryCleanupService({
+      db: f.db,
+      writes: f.writes,
+      adapters: { backups: adapter },
+    });
+    closers.push(() => service.dispose());
+    const done = await drain(service, job.id);
+    expect(existsSync(completing)).toBe(true);
+    expect(existsSync(previousNewest)).toBe(true);
+    expect(done).toMatchObject({
+      state: "completed",
+      removed: 0,
+      protectedReasons: { newest: 1, changed: 1 },
+    });
+  },
+);
+
 test("backup cleanup preserves newest and incomplete archives, supports encrypted catalogs and explicit newest opt-out", async () => {
   const f = fixture({});
   const dir = join(f.root, "backups");

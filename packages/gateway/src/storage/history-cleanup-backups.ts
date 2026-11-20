@@ -24,6 +24,11 @@ interface BackupEntry {
   inode: string;
   digest: string;
 }
+function isNewerBackup(left: BackupEntry, right: BackupEntry): boolean {
+  return (
+    left.startedAt > right.startedAt || (left.startedAt === right.startedAt && left.id > right.id)
+  );
+}
 function canonical(value: string): boolean {
   const n = Date.parse(value);
   return Number.isFinite(n) && new Date(n).toISOString() === value;
@@ -153,12 +158,7 @@ export function backupCleanupAdapter(options: BackupCleanupOptions): HistoryClea
           continue;
         }
         if (scan.phase === "catalog") {
-          if (
-            !scan.newest ||
-            backup.startedAt > scan.newest.startedAt ||
-            (backup.startedAt === scan.newest.startedAt && backup.id > scan.newest.id)
-          )
-            scan.newest = backup;
+          if (!scan.newest || isNewerBackup(backup, scan.newest)) scan.newest = backup;
           continue;
         }
         if (Date.parse(backup.startedAt) >= Date.parse(job.before)) continue;
@@ -221,11 +221,11 @@ async function removeBackup(
       return { state: "protected", reason: "changed" };
     if (job.keepNewest !== false) {
       try {
-        if (
-          !authority.newestId ||
-          authority.newestId === candidate.id ||
-          !(await readEntry(root, authority.newestId))
-        )
+        if (!authority.newestId) return { state: "protected", reason: "changed" };
+        const retained = await readEntry(root, authority.newestId);
+        // An archive may have finished after the catalog pass. The retained
+        // witness must still be strictly newer than the selected candidate.
+        if (!retained || !isNewerBackup(retained, current))
           return { state: "protected", reason: "changed" };
       } catch {
         return { state: "protected", reason: "changed" };
