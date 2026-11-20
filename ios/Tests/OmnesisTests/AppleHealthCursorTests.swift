@@ -42,8 +42,11 @@ final class AppleHealthCursorTests: XCTestCase {
         let order = drain(&cursor, fullPages: ["TypeA#0": 2])
 
         let recent = order.filter { $0.tier == 0 }.map(\.identifier)
-        XCTAssertEqual(recent, ["TypeA", "TypeB", "TypeC", "TypeA", "TypeA"],
-                       "a deep type must not hold the others' recent data back")
+        XCTAssertEqual(
+            recent,
+            ["TypeA", "TypeB", "TypeC", "TypeA", "TypeA"],
+            "a deep type must not hold the others' recent data back"
+        )
         XCTAssertEqual(order.prefix(5).map(\.tier), [0, 0, 0, 0, 0])
     }
 
@@ -91,8 +94,11 @@ final class AppleHealthCursorTests: XCTestCase {
 
         _ = drain(&cursor)
         cursor.beginPass(identifiers: types, now: now)
-        XCTAssertEqual(cursor.pending.dropFirst().map(\.count), Array(repeating: types.count, count: HealthRecency.tierCount - 1),
-                       "once the backlog is done, the next pass polls every older lane again")
+        XCTAssertEqual(
+            cursor.pending.dropFirst().map(\.count),
+            Array(repeating: types.count, count: HealthRecency.tierCount - 1),
+            "once the backlog is done, the next pass polls every older lane again"
+        )
     }
 
     func testPassesRotateWhichTypeGoesFirst() {
@@ -105,7 +111,7 @@ final class AppleHealthCursorTests: XCTestCase {
         XCTAssertEqual(Set(firsts), Set(types), "a short wake must not always favour the same type")
     }
 
-    func testLaneWindowsPartitionTheTimeline() throws {
+    func testLaneWindowsPartitionTheTimeline() {
         let lanes = HealthRecency.lanes(at: now, startingFrom: nil)
         XCTAssertEqual(lanes.count, HealthRecency.tierCount)
         XCTAssertNil(lanes.first?.window.end, "the newest lane stays open for new samples")

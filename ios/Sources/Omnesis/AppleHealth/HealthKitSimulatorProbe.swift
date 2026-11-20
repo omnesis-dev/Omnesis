@@ -363,7 +363,9 @@ enum HealthKitSimulatorProbe {
                 }
             }
             let response = HTTPURLResponse(
-                url: url, statusCode: status, httpVersion: "HTTP/1.1",
+                url: url,
+                statusCode: status,
+                httpVersion: "HTTP/1.1",
                 headerFields: ["Content-Type": "application/json"]
             )
             return (Data(body.utf8), response ?? URLResponse())

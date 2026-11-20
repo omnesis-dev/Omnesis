@@ -96,9 +96,14 @@ final class CollectorWakeTests: XCTestCase {
 
     /// The gateway: answers cursor reads and writes, records every ingest,
     /// and lets a test decide how each ingest goes and what it costs.
-    final class FakeGateway: URLSessionLike, @unchecked Sendable {
-        enum IngestAnswer { case accept, unavailable, cutOff }
+    enum IngestAnswer { case accept, unavailable, cutOff }
 
+    /// The body of a cursor write.
+    struct SavedCursor: Decodable {
+        let cursor: SyncCursor
+    }
+
+    final class FakeGateway: URLSessionLike, @unchecked Sendable {
         private let lock = NSLock()
         private(set) var ingestedIds: [String] = []
         private(set) var ingestedSources: [String] = []
@@ -120,11 +125,10 @@ final class CollectorWakeTests: XCTestCase {
                 let stored = lock.withLock { cursors[url.path] }
                 guard let stored else { return respond(url, 404, "") }
                 let body = try JSONEncoder().encode(["cursor": stored])
-                return respond(url, 200, String(decoding: body, as: UTF8.self))
+                return respond(url, 200, String(bytes: body, encoding: .utf8) ?? "")
             }
             if url.path.hasPrefix("/sync-state/") {
-                struct Saved: Decodable { let cursor: SyncCursor }
-                let saved = try JSONDecoder().decode(Saved.self, from: request.httpBody ?? Data()).cursor
+                let saved = try JSONDecoder().decode(SavedCursor.self, from: request.httpBody ?? Data()).cursor
                 lock.withLock {
                     cursors[url.path] = saved
                     savedCursors.append(saved)
@@ -154,7 +158,9 @@ final class CollectorWakeTests: XCTestCase {
 
         private func respond(_ url: URL, _ status: Int, _ body: String) -> (Data, URLResponse) {
             let response = HTTPURLResponse(
-                url: url, statusCode: status, httpVersion: "HTTP/1.1",
+                url: url,
+                statusCode: status,
+                httpVersion: "HTTP/1.1",
                 headerFields: ["Content-Type": "application/json"]
             )!
             return (Data(body.utf8), response)
@@ -190,7 +196,7 @@ final class CollectorWakeTests: XCTestCase {
         func sync(cursor: SyncCursor?) async throws -> SyncResult {
             if let readGate { await readGate.block() }
             clock?.advance(by: readCost)
-            let page: Int = if case .int(let next) = cursor?["next"] { Int(next) } else { 0 }
+            let page = if case .int(let next) = cursor?["next"] { Int(next) } else { 0 }
             guard page < pageCount else {
                 return SyncResult(records: [], tableName: "paged_rows", cursor: cursor ?? [:], hasMore: false)
             }
@@ -244,7 +250,7 @@ final class CollectorWakeTests: XCTestCase {
         let work = Task { await core.sync(sourceId: source.id, budget: budget) }
         let summary = await awaitWithinBudget(work, budget: budget)
 
-        XCTAssertNotNil(summary ?? nil, "the wake waited for the sync rather than the clock")
+        XCTAssertNotNil(summary.flatMap { $0 }, "the wake waited for the sync rather than the clock")
         XCTAssertEqual(session.deliveredCount, 12, "every row read was uploaded before the wake ended")
         let queued = try await buffer.count()
         XCTAssertEqual(queued, 0)
@@ -393,8 +399,10 @@ final class CollectorWakeTests: XCTestCase {
         session.answer = { _ in .cutOff }
         let source = PagedSource(pageCount: 1)
         let config = OfflineBuffer.Config(
-            maxSizeBytes: 100_000, warningSizeBytes: 50000,
-            quarantineAfterAttempts: 1, quarantineGrace: 0
+            maxSizeBytes: 100_000,
+            warningSizeBytes: 50000,
+            quarantineAfterAttempts: 1,
+            quarantineGrace: 0
         )
         let (core, buffer) = try makeCore([source], gateway: session, bufferConfig: config)
 

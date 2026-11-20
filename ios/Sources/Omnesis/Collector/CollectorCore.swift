@@ -333,17 +333,18 @@ public actor CollectorCore {
         resumeQuiescenceWaitersIfReady()
     }
 
-    /// One pass over `source`, under the budget recorded in `runs`.
-    ///
-    /// Reads and uploads alternate: after each page is buffered it is
-    /// delivered before the next is read, so a pass that runs out of time
-    /// ends with what it read already at the gateway, and reading can never
-    /// get ahead of delivery by more than one page. A page that the
-    /// buffer has no room for is not kept: its cursor does not advance and
-    /// the next pass reads it again. When delivery fails (no network) the
-    /// pass keeps capturing into the buffer, up to the source's share.
+    // One pass over `source`, under the budget recorded in `runs`.
+    //
+    // Reads and uploads alternate: after each page is buffered it is
+    // delivered before the next is read, so a pass that runs out of time
+    // ends with what it read already at the gateway, and reading can never
+    // get ahead of delivery by more than one page. A page that the
+    // buffer has no room for is not kept: its cursor does not advance and
+    // the next pass reads it again. When delivery fails (no network) the
+    // pass keeps capturing into the buffer, up to the source's share.
+    //
     // Sync state, cursor, buffer, and lifecycle publication must remain one ordered operation.
-    // swiftlint:disable:next function_body_length cyclomatic_complexity
+    // swiftlint:disable:next function_body_length
     private func executePass(source: any OmnesisSource) async -> SyncSummary {
         var summary: SyncSummary?
         defer { finishPass(source: source, summary: summary) }
@@ -503,6 +504,17 @@ public actor CollectorCore {
         return result
     }
 
+    private func resumeQuiescenceWaitersIfReady() {
+        guard runs.isEmpty, directDrains == 0, !acceptingSyncs else { return }
+        let waiters = quiescenceWaiters
+        quiescenceWaiters.removeAll()
+        waiters.forEach { $0.resume() }
+    }
+}
+
+// MARK: - One pass's reading, buffering and delivery
+
+extension CollectorCore {
     /// What one pass has done so far.
     private struct PassTally {
         var batches = 0
@@ -595,12 +607,5 @@ public actor CollectorCore {
         // without double-counting mixed pages such as workouts.
         pass.items += max(result.records.count, result.documents.count)
         return true
-    }
-
-    private func resumeQuiescenceWaitersIfReady() {
-        guard runs.isEmpty, directDrains == 0, !acceptingSyncs else { return }
-        let waiters = quiescenceWaiters
-        quiescenceWaiters.removeAll()
-        waiters.forEach { $0.resume() }
     }
 }

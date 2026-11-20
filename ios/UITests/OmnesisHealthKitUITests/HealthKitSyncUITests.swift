@@ -16,7 +16,7 @@ import XCTest
 /// Background delivery itself (iOS waking a suspended app) does not happen
 /// on the simulator; that part stays a device check.
 final class HealthKitSyncUITests: XCTestCase {
-    func testAppleHealthSyncAgainstRealHealthKit() throws {
+    func testAppleHealthSyncAgainstRealHealthKit() {
         let app = XCUIApplication()
         app.launchEnvironment["DEMO_HEALTHKIT_PROBE"] = "1"
         app.launch()

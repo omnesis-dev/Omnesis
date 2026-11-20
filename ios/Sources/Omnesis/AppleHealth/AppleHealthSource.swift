@@ -67,7 +67,6 @@ public struct AppleHealthSource: OmnesisSource {
         return typed.encode()
     }
 
-    // swiftlint:disable:next function_body_length
     public func sync(cursor: SyncCursor?) async throws -> SyncResult {
         var typed = AppleHealthCursor.decode(from: cursor)
 

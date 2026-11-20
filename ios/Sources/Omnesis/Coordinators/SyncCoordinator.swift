@@ -468,7 +468,8 @@ final class SyncCoordinator {
         let summary = await BackgroundTaskGuard.run(name: "omnesis.health-wake") { () -> CollectorCore.SyncSummary? in
             let budget = await BackgroundTaskGuard.remainingBudget()
             let work = Task { await core.sync(sourceId: sourceId, budget: budget) }
-            return await awaitWithinBudget(work, budget: budget) ?? nil
+            guard let finished = await awaitWithinBudget(work, budget: budget) else { return nil }
+            return finished
         }
         guard collectorGeneration == generation, self.core === core else { return }
         if let observed = summary?.blocked {

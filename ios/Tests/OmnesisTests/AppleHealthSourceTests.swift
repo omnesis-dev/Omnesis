@@ -48,8 +48,13 @@ final class AppleHealthSourceTests: XCTestCase {
 
     /// A phone with two years of history saved long ago, then a day of new
     /// samples — the order HealthKit's insertion sequence holds them in.
-    private func seededStore(into store: FakeHealthStore = FakeHealthStore())
-        -> (store: FakeHealthStore, recent: Set<String>, all: Set<String>) {
+    private struct Seeded {
+        let store: FakeHealthStore
+        let recent: Set<String>
+        let all: Set<String>
+    }
+
+    private func seededStore(into store: FakeHealthStore = FakeHealthStore()) -> Seeded {
         var recent: Set<String> = []
         var all: Set<String> = []
         for type in types {
@@ -65,11 +70,12 @@ final class AppleHealthSourceTests: XCTestCase {
                 all.insert(sample.uuid.uuidString)
             }
         }
-        return (store, recent, all)
+        return Seeded(store: store, recent: recent, all: all)
     }
 
     func testAFreshPairingReadsEveryTypesRecentSamplesBeforeAnyHistory() async throws {
-        let (store, recent, all) = seededStore()
+        let seeded = seededStore()
+        let (store, recent, all) = (seeded.store, seeded.recent, seeded.all)
         let pass = try await runPass(source(store), from: nil)
 
         let ids = pass.ids
@@ -82,7 +88,8 @@ final class AppleHealthSourceTests: XCTestCase {
     }
 
     func testAnInterruptedPassResumesWithoutRereadingOrSkippingAnything() async throws {
-        let (store, _, all) = seededStore()
+        let seeded = seededStore()
+        let (store, all) = (seeded.store, seeded.all)
         let health = source(store)
         var cursor: SyncCursor?
         var seen: [String] = []
@@ -98,7 +105,7 @@ final class AppleHealthSourceTests: XCTestCase {
     }
 
     func testLateArrivalsAndDeletionsInAnyRangeAreReadOnTheNextPass() async throws {
-        let (store, _, _) = seededStore()
+        let store = seededStore().store
         let health = source(store)
         let first = try await runPass(health, from: nil)
 
@@ -117,7 +124,8 @@ final class AppleHealthSourceTests: XCTestCase {
     }
 
     func testACursorFromTheSingleAnchorBuildMigratesWithoutRereading() async throws {
-        let (store, _, all) = seededStore()
+        let seeded = seededStore()
+        let (store, all) = (seeded.store, seeded.all)
         // An older build had read the first 25 samples with one anchor per type
         // (the fake's anchors are positions, so one anchor serves both).
         let legacy: SyncCursor = [
@@ -141,7 +149,8 @@ final class AppleHealthSourceTests: XCTestCase {
             let doomed = store.add(FakeHealthStore.heartRate, start: now.addingTimeInterval(-Double(hour) * 60))
             store.delete(doomed)
         }
-        let (_, recent, all) = seededStore(into: store)
+        let seeded = seededStore(into: store)
+        let (recent, all) = (seeded.recent, seeded.all)
         let pass = try await runPass(source(store), from: nil)
 
         XCTAssertEqual(Set(pass.ids.prefix(recent.count)), recent, "tombstones must not push recent samples to a later pass")
@@ -150,7 +159,7 @@ final class AppleHealthSourceTests: XCTestCase {
     }
 
     func testALockedPhoneEndsThePassWithoutReading() async throws {
-        let (store, _, _) = seededStore()
+        let store = seededStore().store
         store.protectedDataAvailable = false
         let pass = try await runPass(source(store), from: nil)
         XCTAssertEqual(pass.pages.count, 1)
@@ -159,8 +168,8 @@ final class AppleHealthSourceTests: XCTestCase {
     }
 }
 
-private extension JSONValue {
-    var stringValue: String? {
+extension JSONValue {
+    fileprivate var stringValue: String? {
         if case .string(let text) = self { text } else { nil }
     }
 }

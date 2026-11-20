@@ -392,8 +392,10 @@ final class UploaderTests: XCTestCase {
             let buf = OfflineBuffer(
                 directory: dir,
                 config: OfflineBuffer.Config(
-                    maxSizeBytes: 1_000_000, warningSizeBytes: 500_000,
-                    quarantineAfterAttempts: 1, quarantineGrace: 0
+                    maxSizeBytes: 1_000_000,
+                    warningSizeBytes: 500_000,
+                    quarantineAfterAttempts: 1,
+                    quarantineGrace: 0
                 )
             )
             _ = try await enqueueOne(buf)
