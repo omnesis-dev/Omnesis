@@ -44,6 +44,7 @@ describe("every job that runs Gradle restores the closest Gradle cache", () => {
       expect(java?.with?.cache, "setup-java's own cache has no fallback key").toBeUndefined();
       const cache = steps.find(isGradleCache);
       expect(cache, "no Gradle cache step").toBeTruthy();
+      expect(cache.with.key).toMatch(/hashFiles\('android\/\*\*\/\*\.gradle\*'/u);
       expect(cache.with.key.startsWith(cache.with["restore-keys"])).toBe(true);
       const gradle = steps.findIndex(runsGradle);
       if (gradle >= 0) expect(steps.indexOf(cache)).toBeLessThan(gradle);
