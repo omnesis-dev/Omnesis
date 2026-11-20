@@ -126,6 +126,7 @@
         "@omnesis/provider-pi",
         "@omnesis/provider-plaid",
         "@omnesis/provider-plaid-synth",
+        "@omnesis/provider-plaud",
         "@omnesis/provider-screen-time",
         "@omnesis/provider-screen-time-synth",
         "@omnesis/provider-strava",
