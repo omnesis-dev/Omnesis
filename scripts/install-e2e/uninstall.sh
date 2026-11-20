@@ -85,6 +85,17 @@ expect_gone() {
   [ -z "$left" ] || die "$what left behind:$left"
 }
 
+# The uninstall keeps a source checkout when `git status --porcelain` lists a
+# change or fails. When it kept this one, print what git listed and its exit
+# status, so the failure names the path.
+show_kept_checkout() {
+  [ -e "$SOURCE_DIR" ] || return 0
+  local listed status=0
+  listed="$(git -C "$SOURCE_DIR" status --porcelain 2>&1)" || status=$?
+  log "the checkout stayed; git -C $SOURCE_DIR status --porcelain exited $status and listed:" >&2
+  printf '%s\n' "$listed" | redact >&2
+}
+
 set -- --source-dir "$SOURCE_DIR" --no-model --no-tls --no-prompt
 if [ "$PLATFORM" != Darwin ]; then
   new_passphrase_file
@@ -141,6 +152,7 @@ redact <"$E2E_WORK/uninstall.json"
 ! supervised gateway || die "the supervisor still runs the gateway"
 ! supervised collector || die "the supervisor still runs the collector"
 ! gateway_answers || die "something still answers on $GATEWAY_URL"
+show_kept_checkout
 expect_gone "the uninstall" "$OMNESIS" "$SOURCE_DIR" "$HOME/.local/lib/omnesis"
 [ -s "$CONFIG_DIR/omnesis.db" ] || die "the uninstall did not keep the corpus"
 if [ -z "$(ls -A "$BIN_DIR" 2>/dev/null)" ]; then
@@ -166,6 +178,7 @@ group "omnesis uninstall --purge removes the data and keys too"
 redacted "$OMNESIS" uninstall --yes --purge || die "omnesis uninstall --purge failed"
 [ -z "$(registered_units)" ] || die "units are still registered after --purge"
 ! gateway_answers || die "something still answers on $GATEWAY_URL"
+show_kept_checkout
 expect_gone "uninstall --purge" "$OMNESIS" "$SOURCE_DIR" "$HOME/.local/lib/omnesis" "$CONFIG_DIR" "$LOG_DIR"
 if [ "$PLATFORM" = Darwin ]; then
   ! security find-generic-password -s dev.omnesis >/dev/null 2>&1 \
