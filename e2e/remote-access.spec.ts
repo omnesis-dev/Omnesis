@@ -246,6 +246,8 @@ test("with no account and no Tailscale device, Connectivity offers the account, 
   await expect(page.locator(".config-tab.active")).toHaveText("Connectivity");
   await expect(heading(page)).toHaveText("Connectivity");
   await expect(page.locator(".remote-access-item-title")).toHaveText([
+    "Agents on this computer",
+    "Agents on your home network",
     "Omnesis accounts",
     "Omnesis relay",
     "Tailscale on this computer",
@@ -311,6 +313,10 @@ test("the guided setup with both: account, connection, devices, then the summary
       ["relay", "enrollment", { policy: "automatic" }],
       ["tailscale", "/settings", { joinPolicy: "automatic" }],
     ]);
+  await button(page, "Continue").click();
+
+  // Step 4: the MCP server, at home and away, always the setup's last step.
+  await expect(heading(page)).toHaveText("Where may agents reach your MCP server?");
   await button(page, "Finish").click();
 
   await expect(heading(page)).toHaveText("Connectivity");
@@ -322,6 +328,7 @@ test("the guided setup with both: account, connection, devices, then the summary
   await button(page, "Run the setup again").click();
   await expect(heading(page)).toHaveText("This gateway is linked to your Omnesis account");
   await expect(button(page, "Unlink this gateway")).toBeVisible();
+  await button(page, "Continue").click();
   await button(page, "Continue").click();
   await button(page, "Continue").click();
   await button(page, "Finish").click();
@@ -356,6 +363,7 @@ test("my own setup: Tailscale on this computer refused with its command, and my 
   await expect(page.locator(".access-wizard-steps button")).toHaveText([
     "1Your Omnesis account",
     "2Remote connection",
+    "3MCP server",
   ]);
   await button(page, "Skip for now").click();
   await page.locator("#remote-access-way-host").check();
