@@ -78,10 +78,20 @@ function snapshotLifetimeFixture(): string {
     String.raw`
   static Dictionary<uint,SafeFileHandle> held=new Dictionary<uint,SafeFileHandle>();
   static bool parentExited,failCapture;
-  static Dictionary<uint,List<uint>> Candidates() {
-    return new Dictionary<uint,List<uint>> {{100,new List<uint>{101}}};
+  // 102 is listed under 100 but is older than it: an earlier holder of that
+  // PID created it. 104 is gone, so its listed child 105 cannot be adopted.
+  static Dictionary<uint,List<Candidate>> Candidates() {
+    return new Dictionary<uint,List<Candidate>> {
+      {100,new List<Candidate>{listed(101),listed(102)}},
+      {104,new List<Candidate>{listed(105)}},
+    };
+  }
+  static Candidate listed(uint pid) {
+    return new Candidate {pid=pid,created=638999999999999000L+(pid==102 ? 99 : pid)-FILETIME_EPOCH};
   }
   static SafeFileHandle Open(uint pid,uint access) {
+    if(pid==102 || pid==105) throw new Exception("non-descendant candidate opened");
+    if(pid==104) return null;
     if(pid==101 && held[100].IsClosed) throw new Exception("parent pin released during capture");
     SafeFileHandle handle=new SafeFileHandle(new IntPtr(pid),false);held.Add(pid,handle);return handle;
   }
@@ -101,7 +111,7 @@ function snapshotLifetimeFixture(): string {
   public static string Exercise(int mode) {
     held.Clear();parentExited=false;failCapture=mode==1;bool failed=false;
     try {
-      Snapshot(new uint[]{100},delegate(List<Dictionary<string,object>> rows) {
+      Snapshot(new uint[]{100,104},delegate(List<Dictionary<string,object>> rows) {
         if(held[100].IsClosed || held[101].IsClosed) throw new Exception("pin released before publication");
         if(rows.Count!=1 || (uint)rows[0]["pid"]!=101) throw new Exception("exited parent was published");
         if(mode==2) throw new Exception("publication failure");
@@ -121,7 +131,7 @@ function snapshotLifetimeFixture(): string {
 }
 
 it.runIf(process.platform === "win32")(
-  "retains the whole capture until publication, filters exited parents, and closes every handle on capture/publication failures",
+  "retains the whole capture until publication, filters exited parents, opens no older or orphaned candidate, and closes every handle on capture/publication failures",
   async () => {
     const result = await runWindowsJob(
       windowsPowerShellExecutable(),
@@ -150,7 +160,7 @@ function failurePhaseFixture(): string {
   );
   const helpers = WINDOWS_PROCESS_NATIVE_SOURCE.slice(
     WINDOWS_PROCESS_NATIVE_SOURCE.indexOf("  static SafeFileHandle Open("),
-    WINDOWS_PROCESS_NATIVE_SOURCE.indexOf("  static Dictionary<uint,List<uint>> Candidates("),
+    WINDOWS_PROCESS_NATIVE_SOURCE.indexOf("  static Dictionary<uint,List<Candidate>> Candidates("),
   );
   const capture = WINDOWS_PROCESS_NATIVE_SOURCE.slice(
     WINDOWS_PROCESS_NATIVE_SOURCE.indexOf("  sealed class Observation {"),
@@ -175,7 +185,7 @@ function failurePhaseFixture(): string {
     returned=Marshal.SizeOf(typeof(BasicInformation));return mode==3 ? unchecked((int)0xC000010A) : 0;
   }
   static uint RtlNtStatusToDosError(int status) {return 5;}
-  static Dictionary<uint,List<uint>> Candidates() {return new Dictionary<uint,List<uint>>();}
+  static Dictionary<uint,List<Candidate>> Candidates() {return new Dictionary<uint,List<Candidate>>();}
   public static string Exercise() {
     List<string> errors=new List<string>();
     for(mode=0;mode<4;mode++) {
@@ -213,4 +223,38 @@ it.runIf(process.platform === "win32")(
     );
   },
   60_000,
+);
+
+// Each session's csrss.exe records as its creator a session manager
+// instance that exited during boot, so its recorded parent PID is either free
+// or held by a younger process. Normal callers cannot query csrss.exe with
+// full rights. A snapshot rooted at that recorded PID, as happens when an
+// owned process receives the number, must neither open nor adopt it.
+it.runIf(process.platform === "win32")(
+  "opens no older process recorded under a root's reused PID",
+  async () => {
+    const listing = await runWindowsJob(
+      windowsPowerShellExecutable(),
+      [
+        "-NoLogo",
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        "$ErrorActionPreference='Stop'; ConvertTo-Json -Compress -InputObject @(Get-CimInstance Win32_Process -Filter \"Name='csrss.exe'\" | ForEach-Object { @{pid=[int]$_.ProcessId;parentPid=[int]$_.ParentProcessId} })",
+      ],
+      { timeoutMs: 60_000 },
+    );
+    expect(listing.failure).toBeUndefined();
+    expect(listing.exitCode).toBe(0);
+    const sessions = JSON.parse(Buffer.from(listing.stdout).toString("utf8")) as {
+      pid: number;
+      parentPid: number;
+    }[];
+    expect(sessions.length).toBeGreaterThan(0);
+    for (const session of sessions) {
+      const rows = await snapshotWindowsProcesses([session.parentPid]);
+      expect(rows.some((row) => row.pid === session.pid)).toBe(false);
+    }
+  },
+  120_000,
 );
