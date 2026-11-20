@@ -55,6 +55,8 @@ $tracking = $env:RUNNER_TRACKING_ID
 try {
   $env:RUNNER_TRACKING_ID = ''
   $sink = Start-Process -FilePath $python -ArgumentList @('-u', ('"'+$proxyFile+'"'), ('"'+$configFile+'"')) -PassThru -RedirectStandardOutput $ready -RedirectStandardError $errors
+  # Opening the handle now keeps the exit code readable if the proxy ends early.
+  $null = $sink.Handle
 } finally {
   if ($null -eq $tracking) { Remove-Item Env:RUNNER_TRACKING_ID -ErrorAction SilentlyContinue }
   else { $env:RUNNER_TRACKING_ID = $tracking }
