@@ -2,6 +2,12 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { describe, expect, it, vi } from "vitest";
+import Database from "better-sqlite3";
+import {
+  assertKnowledgeDiscoveryComplete,
+  requiredKnowledgeDiscoveryPhases,
+} from "@omnesis/gateway/src/brain/knowledge/discovery-completion.js";
+import { KNOWLEDGE_DISCOVERY_POLICY } from "@omnesis/gateway/src/brain/knowledge/discovery-policy.js";
 import { knowledgePuppet } from "./knowledge-puppet.js";
 import { type RunContext, type ToolStep, call } from "./puppet-plan.js";
 const ctx: RunContext = {
@@ -817,4 +823,107 @@ it("honors explicitly required interpretation even for an original cohort member
     },
   });
   expect(targets).toHaveBeenCalledOnce();
+});
+
+it("refreshes source review obligations when organization coverage changes after the offer", () => {
+  const plan = vi.fn(() => ({
+    calls: [call("observation_note", { summary: "Fictional confirmation" })],
+  }));
+  const next = knowledgePuppet({ maxRevisionConflictRetries: 2, plan });
+  const db = new Database(":memory:");
+  let requiredPhases: ReturnType<typeof requiredKnowledgeDiscoveryPhases>;
+  let refusal: { kind: "error"; code: unknown; message: string } | undefined;
+  try {
+    db.exec(
+      "CREATE TABLE knowledge_discovery_coverage(subject_id TEXT,input_revision TEXT,policy_version TEXT,phase TEXT,status TEXT,reconsider_at INTEGER)",
+    );
+    for (const phase of ["interpretation", "organization"])
+      db.prepare("INSERT INTO knowledge_discovery_coverage VALUES(?,?,?,?,?,NULL)").run(
+        "doc",
+        "v1",
+        KNOWLEDGE_DISCOVERY_POLICY,
+        phase,
+        "considered",
+      );
+    requiredPhases = requiredKnowledgeDiscoveryPhases(db, "doc", "v1", 100);
+    expect(requiredPhases).toEqual([]);
+    // Publication rearms organization after the offer, before completion.
+    db.exec("UPDATE knowledge_discovery_coverage SET reconsider_at=100 WHERE phase='organization'");
+    try {
+      assertKnowledgeDiscoveryComplete(db, "doc", "v1", [], 100);
+    } catch (error) {
+      if (!(error instanceof Error) || !("code" in error)) throw error;
+      refusal = { kind: "error", code: error.code, message: error.message };
+    }
+  } finally {
+    db.close();
+  }
+  expect(refusal).toBeDefined();
+  const offer = frontier([{ ...source, completionRequirements: { requiredPhases } }]);
+  const completion = next(ctx, [offer]);
+  expect(completion).toMatchObject({ name: "knowledge_discovery_complete", args: { phases: [] } });
+  if (completion?.kind !== "tool") throw new Error("Expected source completion");
+  // Search publication can rearm organization between the offer and commit.
+  const refused: ToolStep = {
+    name: completion.name,
+    args: completion.args,
+    result: refusal,
+  };
+  expect(next(ctx, [offer, refused])).toMatchObject({
+    kind: "tool",
+    name: "knowledge_next_frontier",
+  });
+  const refreshed = frontier([
+    { ...source, completionRequirements: { requiredPhases: ["organization"] } },
+  ]);
+  expect(next(ctx, [offer, refused, refreshed])).toMatchObject({
+    name: "knowledge_discovery_complete",
+    args: { phases: ["organization"], targets: [] },
+  });
+  expect(plan).not.toHaveBeenCalled();
+});
+
+it("bounds changed-coverage recovery and preserves explicit refusals and unreviewed interpretation", () => {
+  const offer = frontier([{ ...source, completionRequirements: { requiredPhases: [] } }]);
+  const refused: ToolStep = {
+    name: "knowledge_discovery_complete",
+    args: { id: source.id, inputFingerprint: source.inputFingerprint, phases: [] },
+    result: {
+      kind: "error",
+      code: "claim_invalid",
+      message:
+        "Source discovery is incomplete: organization still requires review. Complete the missing phases and include them in knowledge_discovery_complete; do not report a phase you have not reviewed.",
+    },
+  };
+  const next = knowledgePuppet({ maxRevisionConflictRetries: 1, plan: () => ({ calls: [] }) });
+  expect(next(ctx, [offer, refused])).toMatchObject({ name: "knowledge_next_frontier" });
+  expect(next(ctx, [offer, refused, offer, refused])).toMatchObject({
+    kind: "final",
+    text: expect.stringContaining("retry budget exhausted"),
+  });
+  const negative = knowledgePuppet({
+    maxRevisionConflictRetries: 2,
+    plan: () => ({ calls: [] }),
+    expectedRefusals: () => [{ tool: "knowledge_discovery_complete", code: "claim_invalid" }],
+  });
+  expect(negative(ctx, [offer, refused])).toMatchObject({ kind: "final" });
+  const interpretation = frontier([
+    { ...source, completionRequirements: { requiredPhases: ["interpretation"] } },
+  ]);
+  expect(next(ctx, [interpretation, refused])).toMatchObject({ kind: "final" });
+  expect(
+    next(ctx, [
+      offer,
+      { ...refused, args: { ...refused.args, inputFingerprint: "other-frontier" } },
+    ]),
+  ).toMatchObject({ kind: "final" });
+  expect(
+    next(ctx, [
+      offer,
+      {
+        ...refused,
+        result: { kind: "error", code: "claim_invalid", message: "A deliberate source refusal" },
+      },
+    ]),
+  ).toMatchObject({ kind: "final" });
 });

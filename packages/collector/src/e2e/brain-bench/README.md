@@ -96,12 +96,17 @@ through `fetch_many`. Temporal casualties arrive with the frontier; the helper
 reads further pages through `knowledge_temporal_context` before discovery can settle.
 Use `contentContains` to select distinct decisions for actual source revisions.
 Negative gate scenarios specify `expectedRefusals: [{ tool, code }]` on the exact
-source decision. The puppet continues only after those declared canonical-tool
-refusals; unexpected errors preserve unfinished work. Rejected `knowledge_save`,
-`knowledge_edit`, `knowledge_retire` or `knowledge_discovery_complete` calls always stop and
-never count as settlement; a successful `knowledge_edit` settles its node exactly as
-`knowledge_save` does, and a successful `knowledge_retire` of the offered page settles it too
-(the retired page leaves the next frontier).
+source decision. The puppet accepts exactly those declared canonical-tool refusals as
+expected scenario outcomes; unexpected errors preserve unfinished work. Rejected `knowledge_save`,
+`knowledge_edit`, `knowledge_retire` or `knowledge_discovery_complete` calls never count
+as successful settlement. Opt-in `maxRevisionConflictRetries` allows bounded frontier
+reacquisition after revision conflicts or when publication rearms organization review
+between an all-covered source offer and its completion. Already covered source
+interpretation is not replayed, and recovery does not override declared negative-path
+refusals.
+Other unexpected refusals end the turn with work unfinished. A successful
+`knowledge_edit` settles its node exactly as `knowledge_save` does, and a successful
+`knowledge_retire` of the offered page settles it too (the retired page leaves the frontier).
 
 `maintainNode` is an explicit scripted repair policy for existing owners/pages. It
 must call `knowledge_save` (or `knowledge_edit`) with the offered fingerprint, current revision and
