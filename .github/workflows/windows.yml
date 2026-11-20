@@ -28,7 +28,7 @@ on:
         description: Validation coverage (daily runs always include every lane)
         type: choice
         default: all
-        options: [all, unit, adapters, e2e, portal]
+        options: [all, unit, adapters, e2e, portal, owner-startup-proof]
       e2e_files:
         description: Optional JSON array of E2E paths for manual e2e diagnosis (1–16 files)
         type: string
@@ -49,6 +49,7 @@ env:
 
 jobs:
   windows:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.lane != 'owner-startup-proof' }}
     name: ${{ matrix.name }}
     runs-on: windows-latest
     timeout-minutes: ${{ matrix.lane == 'focused' && 40 || matrix.lane == 'adapters' && 60 || matrix.lane == 'unit' && 210 || 180 }}
@@ -230,6 +231,40 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+      - name: Check nothing tried to reach production Omnesis services
+        if: ${{ always() && steps.production-network.outcome == 'success' }}
+        shell: bash
+        run: $GITHUB_WORKSPACE/scripts/ci/production-network.sh verify
+
+  owner-startup-proof:
+    # See #1159 — measure one owner probe per fresh runner before native bootstrap.
+    name: Windows owner startup proof ${{ matrix.sample }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.lane == 'owner-startup-proof' }}
+    runs-on: windows-latest
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        sample: [1, 2, 3]
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Keep this job off production Omnesis services
+        id: production-network
+        shell: bash
+        run: $GITHUB_WORKSPACE/scripts/ci/production-network.sh isolate
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+      - name: Measure one owner probe before dependency installation
+        run: node scripts/ci/windows-owner-startup-proof.mjs
       - name: Check nothing tried to reach production Omnesis services
         if: ${{ always() && steps.production-network.outcome == 'success' }}
         shell: bash

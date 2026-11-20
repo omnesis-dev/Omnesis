@@ -68,7 +68,7 @@ describe("Windows CI coverage", () => {
     expect(config.on.workflow_dispatch.inputs.lane).toMatchObject({
       type: "choice",
       default: "all",
-      options: ["all", "unit", "adapters", "e2e", "portal"],
+      options: ["all", "unit", "adapters", "e2e", "portal", "owner-startup-proof"],
     });
     expect(matrix("workflow_dispatch", "unit").map(({ lane }) => lane)).toEqual([
       "unit",
@@ -96,6 +96,45 @@ describe("Windows CI coverage", () => {
     expect(matrix("schedule", "unit")).toEqual(matrix("schedule"));
     expect(matrix("pull_request", "portal")).toEqual(matrix("pull_request"));
     expect(config.jobs.windows.strategy["max-parallel"]).toBe(4);
+  });
+
+  test("isolates manual owner startup measurements to three fresh runners without installing dependencies", () => {
+    const config = workflow();
+    const normalEnabled = (event, lane) =>
+      runInNewContext(config.jobs.windows.if.slice(3, -2), {
+        github: { event_name: event },
+        inputs: { lane },
+      });
+    const proof = config.jobs["owner-startup-proof"];
+    const proofEnabled = (event, lane) =>
+      runInNewContext(proof.if.slice(3, -2), {
+        github: { event_name: event },
+        inputs: { lane },
+      });
+    expect(normalEnabled("workflow_dispatch", "owner-startup-proof")).toBe(false);
+    expect(proofEnabled("workflow_dispatch", "owner-startup-proof")).toBe(true);
+    for (const event of ["pull_request", "schedule"]) {
+      expect(normalEnabled(event, "owner-startup-proof")).toBe(true);
+      expect(proofEnabled(event, "owner-startup-proof")).toBe(false);
+    }
+    for (const lane of ["all", "unit", "adapters", "e2e", "portal"]) {
+      expect(normalEnabled("workflow_dispatch", lane)).toBe(true);
+      expect(proofEnabled("workflow_dispatch", lane)).toBe(false);
+    }
+    expect(proof["runs-on"]).toBe("windows-latest");
+    expect(proof.strategy).toEqual({
+      "fail-fast": false,
+      "max-parallel": 3,
+      matrix: { sample: [1, 2, 3] },
+    });
+    const commands = proof.steps.flatMap((step) => (step.run ? [step.run] : []));
+    expect(
+      commands.filter((command) => command.includes("windows-owner-startup-proof.mjs")),
+    ).toHaveLength(1);
+    expect(commands.join("\n")).not.toMatch(/npm-ci|npm install|windows-checks|bootstrapWindows/u);
+    expect(proof.steps.find((step) => step.id === "production-network")).toBeDefined();
+    expect(proof.steps.at(-1).run).toContain("production-network.sh verify");
+    expect(config.permissions).toEqual({ contents: "read" });
   });
 
   test("the complete unit lane configures real native ASR without expanding focused PR work", () => {
@@ -140,7 +179,7 @@ describe("Windows CI coverage", () => {
       });
     expect(enabled("schedule")).toBe(true);
     expect(enabled("workflow_dispatch")).toBe(true);
-    for (const lane of ["unit", "e2e", "portal"]) {
+    for (const lane of ["unit", "adapters", "e2e", "portal", "owner-startup-proof"]) {
       expect(enabled("workflow_dispatch", lane)).toBe(false);
       expect(enabled("schedule", lane)).toBe(true);
     }
