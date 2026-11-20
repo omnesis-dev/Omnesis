@@ -3,7 +3,7 @@
 
 import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { assertStorageVolumeGrowth, measureStorageVolumes } from "./volumes.js";
 
@@ -77,6 +77,6 @@ describe("live model volume admission", () => {
       if (path.endsWith("missing")) throw Object.assign(new Error("absent"), { code: "ENOENT" });
       return { blocks: 10000, bavail: 5000, bsize: 1 };
     });
-    expect(paths).toEqual(["/example/missing", "/example"]);
+    expect(paths).toEqual([resolve("/example/missing"), resolve("/example")]);
   });
 });

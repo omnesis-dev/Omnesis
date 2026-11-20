@@ -107,9 +107,12 @@ cleanup() {
   cp "$OMNESIS_CONFIG_DIR"/logs/*.log "$ARTIFACTS/gateway-logs/" 2>/dev/null || true
   # The flight recorder's summaries of what held the gateway's event loop; the
   # gateway log names each one it saved (docs/stall-investigation.md).
-  if compgen -G "$OMNESIS_CONFIG_DIR/diagnostics/stalls/profile-*.json" >/dev/null; then
+  # Only the file names are a pattern: the config directory is matched as written,
+  # whatever characters its path holds (a Windows path's backslashes, brackets).
+  local profiles=("$OMNESIS_CONFIG_DIR"/diagnostics/stalls/profile-*.json)
+  if [[ -e "${profiles[0]}" ]]; then
     mkdir -p "$ARTIFACTS/gateway-logs/stall-profiles"
-    cp "$OMNESIS_CONFIG_DIR"/diagnostics/stalls/profile-*.json "$ARTIFACTS/gateway-logs/stall-profiles/" 2>/dev/null || true
+    cp "${profiles[@]}" "$ARTIFACTS/gateway-logs/stall-profiles/" 2>/dev/null || true
   fi
   exit "$status"
 }
