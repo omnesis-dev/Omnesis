@@ -364,18 +364,20 @@ final class CollectorCoreTests: XCTestCase {
 
         let inFlight = Task { await core.sync(sourceId: "mock:rerun") }
         await probe.wait(for: 1)
-        let overlap = await core.sync(sourceId: "mock:rerun")
-        _ = await core.sync(sourceId: "mock:rerun")
-        _ = await core.sync(sourceId: "mock:rerun")
-
-        XCTAssertNil(overlap?.error, "an already-running sync must not become a user-facing failure")
-        XCTAssertEqual(overlap?.records, 0)
+        let overlaps = (0 ..< 3).map { _ in Task { await core.sync(sourceId: "mock:rerun") } }
+        for _ in 0 ..< 200 where await core.followUpWaiterCount(sourceId: "mock:rerun") < 3 {
+            try await Task.sleep(nanoseconds: 5_000_000)
+        }
+        let registered = await core.followUpWaiterCount(sourceId: "mock:rerun")
+        XCTAssertEqual(registered, 3, "calls made while a pass reads wait for one follow-up")
 
         await probe.releaseFirst()
         let firstResult = await inFlight.value
         XCTAssertNil(firstResult?.error)
-        for _ in 0 ..< 100 where await probe.callCount < 2 {
-            try await Task.sleep(nanoseconds: 10_000_000)
+        for overlap in overlaps {
+            let summary = await overlap.value
+            XCTAssertNotNil(summary, "each overlapping call returns with the follow-up pass")
+            XCTAssertNil(summary?.error, "an already-running sync must not become a user-facing failure")
         }
         await core.retireAndWait()
         let callCount = await probe.callCount
@@ -408,11 +410,15 @@ final class CollectorCoreTests: XCTestCase {
 
         let inFlight = Task { await core.sync(sourceId: "mock:rerun") }
         await probe.wait(for: 1)
-        _ = await core.sync(sourceId: "mock:rerun")
+        let overlap = Task { await core.sync(sourceId: "mock:rerun") }
+        for _ in 0 ..< 200 where await core.followUpWaiterCount(sourceId: "mock:rerun") < 1 {
+            try await Task.sleep(nanoseconds: 5_000_000)
+        }
         inFlight.cancel()
         await probe.releaseFirst()
         _ = await inFlight.value
-        try await Task.sleep(nanoseconds: 50_000_000)
+        let dropped = await overlap.value
+        XCTAssertNil(dropped, "a follow-up that never runs answers its caller with nothing")
         await core.retireAndWait()
 
         let callCount = await probe.callCount

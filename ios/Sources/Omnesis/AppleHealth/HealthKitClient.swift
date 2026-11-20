@@ -47,11 +47,13 @@ public final class HealthKitClient: Sendable {
         }
     }
 
-    /// Paged read of samples + deletions for `type` since `anchor`.
-    /// Returns up to `limit` additions. When `samples.count < limit`
-    /// and the buffer is empty, the anchor represents "caught up."
+    /// Paged read of samples + deletions for `type` since `anchor`,
+    /// limited to those matching `predicate` (which HealthKit applies to
+    /// deletions too). Returns up to `limit` additions. When
+    /// `samples.count < limit`, the anchor represents "caught up."
     public func runAnchoredQuery(
         type: HKSampleType,
+        predicate: NSPredicate? = nil,
         anchor: HKQueryAnchor?,
         limit: Int = 1000
     ) async throws
@@ -60,7 +62,7 @@ public final class HealthKitClient: Sendable {
             (cont: CheckedContinuation<(samples: [HKSample], deletions: [HKDeletedObject], newAnchor: HKQueryAnchor?), Error>) in
             let query = HKAnchoredObjectQuery(
                 type: type,
-                predicate: nil,
+                predicate: predicate,
                 anchor: anchor,
                 limit: limit
             ) { _, samples, deletions, newAnchor, error in

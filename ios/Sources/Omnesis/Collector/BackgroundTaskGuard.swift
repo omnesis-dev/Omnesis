@@ -74,5 +74,24 @@ public enum BackgroundTaskGuard {
         }
         return result
     }
+
+    /// The time this process has left before iOS suspends it, as a budget.
+    ///
+    /// Meaningful while a background task is open (inside `run`): iOS then
+    /// reports the seconds that task has left. In the foreground — or with a
+    /// grant too long to matter — the budget is unbounded.
+    public static func remainingBudget() async -> SyncBudget {
+        let remaining = await MainActor.run { () -> TimeInterval? in
+            let app = UIApplication.shared
+            guard app.applicationState == .background else { return nil }
+            return app.backgroundTimeRemaining
+        }
+        guard let remaining, remaining < unboundedThreshold else { return .unbounded }
+        return .seconds(max(0, remaining))
+    }
+
+    /// A grant at least this long is treated as no limit (iOS reports a
+    /// practically infinite value while the app is still active).
+    private static let unboundedThreshold: TimeInterval = 10 * 60
 }
 #endif

@@ -130,22 +130,85 @@ final class OfflineBufferTests: XCTestCase {
         XCTAssertNil(finalAge)
     }
 
-    func testEvictionWhenOverSizeLimit() async throws {
-        // A 1 KB cap. Each batch has records ~200 bytes of JSON.
-        let config = OfflineBuffer.Config(maxSizeBytes: 2048, warningSizeBytes: 1024)
+    func testAFullBufferRefusesTheNewBatchAndKeepsEveryQueuedOne() async throws {
+        let config = OfflineBuffer.Config(maxSizeBytes: 2048, warningSizeBytes: 1024, maxSourceShareBytes: 2048)
         let buf = OfflineBuffer(directory: directory, config: config)
 
-        // Push many small batches until we force eviction.
-        var totalEvicted = 0
+        var queued: [String] = []
+        var refused = 0
         for i in 0 ..< 50 {
             let id = String(format: "20260418T10000%04d-zzzz", i)
-            let evicted = try await buf.enqueue(makeBatch(id: id, recordCount: 5))
-            totalEvicted += evicted
+            do {
+                try await buf.enqueue(makeBatch(id: id, recordCount: 5))
+                queued.append(id)
+            } catch is OfflineBuffer.BufferFull {
+                refused += 1
+            }
         }
 
         let size = try await buf.totalSizeBytes()
         XCTAssertLessThanOrEqual(size, 2048, "Buffer should not exceed cap; was \(size)")
-        XCTAssertGreaterThan(totalEvicted, 0, "Expected at least some evictions under pressure")
+        XCTAssertGreaterThan(refused, 0, "A full buffer must refuse rather than make room")
+        let ids = try await buf.listIds()
+        XCTAssertEqual(ids, queued, "No queued batch may be dropped to admit a new one")
+    }
+
+    func testOneSourceFillingItsShareLeavesRoomForAnother() async throws {
+        let config = OfflineBuffer.Config(maxSizeBytes: 8000, warningSizeBytes: 4000, maxSourceShareBytes: 2000)
+        let buf = OfflineBuffer(directory: directory, config: config)
+        let busy = "busy-source:a"
+        let quiet = "quiet-source:b"
+
+        var busyRefused = false
+        for _ in 0 ..< 40 where !busyRefused {
+            do {
+                try await buf.enqueue(makeBatch(id: Batch.makeId(sourceId: busy), recordCount: 5, sourceId: busy))
+            } catch is OfflineBuffer.BufferFull {
+                busyRefused = true
+            }
+        }
+        XCTAssertTrue(busyRefused, "the busy source never reached its share")
+        let busyBytes = try await buf.queuedBytes(forSourceId: busy)
+        XCTAssertLessThanOrEqual(busyBytes, 2000)
+
+        let quietRoom = try await buf.hasRoom(forSourceId: quiet)
+        XCTAssertTrue(quietRoom, "a full share must not starve another source")
+        try await buf.enqueue(makeBatch(id: Batch.makeId(sourceId: quiet), recordCount: 5, sourceId: quiet))
+    }
+
+    func testASourcesFirstBatchIsAdmittedEvenWhenLargerThanItsShare() async throws {
+        let config = OfflineBuffer.Config(maxSizeBytes: 100_000, warningSizeBytes: 50000, maxSourceShareBytes: 200)
+        let buf = OfflineBuffer(directory: directory, config: config)
+        let source = "large-pages:a"
+        try await buf.enqueue(makeBatch(id: Batch.makeId(sourceId: source), recordCount: 20, sourceId: source))
+        do {
+            try await buf.enqueue(makeBatch(id: Batch.makeId(sourceId: source), recordCount: 1, sourceId: source))
+            XCTFail("a second batch past the share must be refused")
+        } catch is OfflineBuffer.BufferFull {}
+    }
+
+    func testSharesAreRebuiltFromFileNamesAndReleasedOnRemoval() async throws {
+        let config = OfflineBuffer.Config(maxSizeBytes: 100_000, warningSizeBytes: 50000, maxSourceShareBytes: 50000)
+        let source = "rebuilt:a"
+        let first = OfflineBuffer(directory: directory, config: config)
+        let id = Batch.makeId(sourceId: source)
+        try await first.enqueue(makeBatch(id: id, recordCount: 5, sourceId: source))
+        let queued = try await first.queuedBytes(forSourceId: source)
+        XCTAssertGreaterThan(queued, 0)
+
+        let second = OfflineBuffer(directory: directory, config: config)
+        let rebuilt = try await second.queuedBytes(forSourceId: source)
+        XCTAssertEqual(rebuilt, queued, "a cold start must account the share from the directory alone")
+        try await second.remove(id: id)
+        let released = try await second.queuedBytes(forSourceId: source)
+        XCTAssertEqual(released, 0)
+    }
+
+    func testSourceKeysRoundTripThroughBatchIds() {
+        let id = Batch.makeId(sourceId: "apple-health:local")
+        XCTAssertEqual(Batch.sourceKey(fromId: id), Batch.sourceKey(for: "apple-health:local"))
+        XCTAssertNotEqual(Batch.sourceKey(for: "apple-health:local"), Batch.sourceKey(for: "photos:local"))
+        XCTAssertEqual(Batch.sourceKey(fromId: "20260418T100000000-a1b2c3d4"), "", "older ids carry no key")
     }
 
     func testWarningThresholdCrossed() async throws {

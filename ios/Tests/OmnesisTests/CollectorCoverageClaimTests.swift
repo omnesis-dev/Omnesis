@@ -4,11 +4,10 @@
 @testable import Omnesis
 import XCTest
 
-/// The offline buffer drops its oldest batches to stay inside its size limit,
-/// and the gateway's cursor for the source has already moved past them. These
-/// cover the one thing that keeps that gap from being silent: the cycle that
-/// dropped anything publishes a `partial` coverage claim, and a cycle that
-/// dropped nothing publishes no coverage at all.
+/// A cycle's coverage claim and how it reaches the gateway. The offline
+/// buffer no longer drops queued pages (see `CollectorBackpressureTests`), so
+/// no cycle makes a claim today; these pin that a healthy cycle claims
+/// nothing and that a claim, when one is made, rides the sync status.
 final class CollectorCoverageClaimTests: XCTestCase {
     private var directory: URL!
 
@@ -82,7 +81,7 @@ final class CollectorCoverageClaimTests: XCTestCase {
         }
     }
 
-    /// A page fat enough that a handful of them overrun a small buffer cap.
+    /// A page of invented rows.
     private func page(rowCount: Int, cursorPage: Int, hasMore: Bool) -> SyncResult {
         let records: [[String: JSONValue]] = (0 ..< rowCount).map { row in
             [
@@ -124,21 +123,6 @@ final class CollectorCoverageClaimTests: XCTestCase {
 
     // MARK: - Tests
 
-    func testCycleThatDroppedBufferedPagesReportsPartialCoverage() async throws {
-        let pages = (0 ..< 8).map { page(rowCount: 8, cursorPage: $0, hasMore: $0 < 7) }
-        let recorder = try await runCycle(
-            pages: pages,
-            bufferConfig: OfflineBuffer.Config(maxSizeBytes: 4096, warningSizeBytes: 2048)
-        )
-
-        let coverage = await recorder.completedCoverage
-        guard let claim = try XCTUnwrap(coverage) else {
-            return XCTFail("A cycle that dropped buffered pages must claim coverage")
-        }
-        XCTAssertEqual(claim.coverage, .partial)
-        XCTAssertFalse(claim.detail.isEmpty)
-    }
-
     func testCycleThatKeptEveryPageReportsNoCoverageAtAll() async throws {
         let pages = (0 ..< 3).map { page(rowCount: 2, cursorPage: $0, hasMore: $0 < 2) }
         let recorder = try await runCycle(
@@ -152,28 +136,6 @@ final class CollectorCoverageClaimTests: XCTestCase {
             claim,
             "A healthy cycle claims nothing: `complete` would be a promise, and any line is a warning"
         )
-    }
-
-    func testCoverageDetailIsOperatorReadableAndLeaksNothing() async throws {
-        let pages = (0 ..< 8).map { page(rowCount: 8, cursorPage: $0, hasMore: $0 < 7) }
-        let recorder = try await runCycle(
-            pages: pages,
-            bufferConfig: OfflineBuffer.Config(maxSizeBytes: 4096, warningSizeBytes: 2048)
-        )
-        let coverage = await recorder.completedCoverage
-        let detail = try XCTUnwrap(XCTUnwrap(coverage)).detail
-
-        // Says what happened and what to do about it, in words an operator owns.
-        XCTAssertTrue(detail.contains("some history is missing"), detail)
-        XCTAssertTrue(detail.lowercased().contains("re-sync"), detail)
-        // Never the machinery: no file path, no source or device identifier,
-        // and none of the internal vocabulary for what the buffer did.
-        XCTAssertFalse(detail.contains("/"), detail)
-        XCTAssertFalse(detail.contains(directory.path), detail)
-        XCTAssertFalse(detail.contains("mock:coverage"), detail)
-        XCTAssertFalse(detail.lowercased().contains("evict"), detail)
-        XCTAssertFalse(detail.lowercased().contains("batch"), detail)
-        XCTAssertFalse(detail.lowercased().contains("buffer"), detail)
     }
 
     // MARK: - What reaches the gateway

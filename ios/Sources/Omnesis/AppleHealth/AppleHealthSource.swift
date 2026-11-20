@@ -11,26 +11,25 @@ public let appleHealthHostedSourceContract = HostedSourceContract(
 
 #if canImport(HealthKit)
 import HealthKit
-#if canImport(UIKit)
-import UIKit
-#endif
 
 /// `OmnesisSource` implementation for Apple Health.
 ///
-/// One `sync(cursor:)` call advances by one `TypeEntry`: it runs an
-/// anchored query for that type, emits a `SyncResult` with up to
-/// `pageLimit` records, and returns `hasMore = true` until all types
-/// in the catalog have been drained. When the full cycle completes,
-/// `hasMore = false`; the next sync (triggered by an HKObserverQuery
-/// or BG refresh) wraps back to cycle 0.
+/// A pass reads every enabled type newest-first: each `sync(cursor:)`
+/// call reads one page of one recency lane (see `HealthRecency` and
+/// `AppleHealthCursor`) — the last day of every type, round-robin, then
+/// the week before, the month before, and finally older history — and
+/// returns `hasMore = true` until every lane of every type is caught up.
+/// `beginPass(cursor:)` restarts that order at each collector pass, so a
+/// background wake always spends its first seconds on recent data and only
+/// what is left on backfill.
 ///
-/// Why rotate types this way (instead of all-in-one mega-sync):
-///   - Keeps each sync() call short enough to finish inside one
-///     `HKObserverQuery` background callback (~30 s budget).
+/// Why one page per call (instead of all-in-one mega-sync):
+///   - The collector checks the wake's remaining time between pages and
+///     delivers each page before reading the next.
 ///   - Each batch → `/analytics/ingest` POST is a single DuckDB
 ///     table's worth of rows (matches gateway API shape).
-///   - Progress is persisted per-page so a crash mid-cycle only loses
-///     the in-flight type's current page, not the whole cycle.
+///   - Progress is persisted per page, so an interrupted pass loses at
+///     most the page in flight.
 @available(iOS 17.0, *)
 public struct AppleHealthSource: OmnesisSource {
     public let id: String
@@ -42,23 +41,33 @@ public struct AppleHealthSource: OmnesisSource {
     /// in the per-record `account_id` analytics column.
     private static let accountId = "local"
 
-    private let client: HealthKitClient
+    private let reader: any HealthSampleReading
     private let catalog: [TypeEntry]
     private let pageLimit: Int
+    private let now: @Sendable () -> Date
 
     public init(
-        client: HealthKitClient = HealthKitClient(),
+        client: any HealthSampleReading = HealthKitClient(),
         catalog: [TypeEntry] = TypeCatalog.v1,
-        pageLimit: Int = 500
+        pageLimit: Int = 500,
+        now: @escaping @Sendable () -> Date = { Date() }
     ) {
         self.id = "apple-health:\(Self.accountId)"
         self.displayName = "Apple Health"
         self.analyticsSchemas = HealthSchemas.all
-        self.client = client
+        self.reader = client
         self.catalog = catalog
         self.pageLimit = pageLimit
+        self.now = now
     }
 
+    public func beginPass(cursor: SyncCursor?) -> SyncCursor? {
+        var typed = AppleHealthCursor.decode(from: cursor)
+        typed.beginPass(identifiers: catalog.map(\.identifier), now: now())
+        return typed.encode()
+    }
+
+    // swiftlint:disable:next function_body_length
     public func sync(cursor: SyncCursor?) async throws -> SyncResult {
         var typed = AppleHealthCursor.decode(from: cursor)
 
@@ -72,99 +81,84 @@ public struct AppleHealthSource: OmnesisSource {
         // the phone is idle + locked. End the sync cycle cleanly and
         // wait for `UIApplication.protectedDataDidBecomeAvailable` to
         // fire another sync (wired in AppStore).
-        #if canImport(UIKit)
-        let protectedAvailable = await MainActor.run { UIApplication.shared.isProtectedDataAvailable }
-        if !protectedAvailable {
-            return SyncResult(
-                records: [], tableName: "health_body",
-                schema: nil, cursor: typed.encode(), hasMore: false
-            )
-        }
-        #endif
-
-        let index = typed.cycleIndex % max(catalog.count, 1)
-        guard index < catalog.count else {
-            // Empty catalog — shouldn't happen in practice.
-            return SyncResult(
-                records: [], tableName: "health_body",
-                schema: nil, cursor: typed.encode(), hasMore: false
-            )
-        }
-        let entry = catalog[index]
-
-        guard let sampleType = entry.sampleType else {
-            // Skip unknown identifier.
-            typed.cycleIndex = index + 1
-            return SyncResult(
-                records: [], tableName: entry.category.tableName,
-                schema: HealthSchemas.schema(for: entry.category),
-                cursor: typed.encode(),
-                hasMore: typed.cycleIndex < catalog.count
-            )
+        guard await reader.isProtectedDataAvailable() else {
+            return emptyPage(typed, hasMore: false)
         }
 
-        let decodedAnchor: HKQueryAnchor? = if let encoded = typed.anchor(for: entry.identifier) {
-            AnchorCoder.decode(encoded)
-        } else {
-            nil
+        if !typed.isPassOpen {
+            typed.beginPass(identifiers: catalog.map(\.identifier), now: now())
+        }
+        let entries = Dictionary(catalog.map { ($0.identifier, $0) }, uniquingKeysWith: { first, _ in first })
+        // Reads this OS cannot make (a type it does not know, a type no
+        // longer enabled) are dropped from the pass without a round-trip.
+        var next = typed.nextRead()
+        while let read = next, entries[read.identifier]?.sampleType == nil || typed.lane(for: read) == nil {
+            typed.skip(read)
+            next = typed.nextRead()
+        }
+        guard let read = next,
+              let entry = entries[read.identifier],
+              let sampleType = entry.sampleType,
+              let lane = typed.lane(for: read) else {
+            typed.closePass(at: now())
+            return emptyPage(typed, hasMore: false)
         }
 
         // Second defence: even when isProtectedDataAvailable was true at
         // the top, a race is possible (user locks mid-query). Catch the
         // specific HK "protected data inaccessible" error and bail out
         // gracefully — same semantics as the gate above.
-        let queryResult: (samples: [HKSample], deletions: [HKDeletedObject], newAnchor: HKQueryAnchor?)
+        let page: HealthAnchoredPage
         do {
-            queryResult = try await client.runAnchoredQuery(
+            page = try await reader.anchoredPage(
                 type: sampleType,
-                anchor: decodedAnchor,
+                window: lane.window,
+                anchor: lane.anchor,
                 limit: pageLimit
             )
         } catch let err as NSError where err.domain == HKErrorDomain && err.code == HKError.errorDatabaseInaccessible.rawValue {
-            return SyncResult(
-                records: [], tableName: entry.category.tableName,
-                schema: HealthSchemas.schema(for: entry.category),
-                cursor: typed.encode(), hasMore: false
-            )
+            return emptyPage(typed, hasMore: false)
         }
-        let samples = queryResult.samples
-        let deletions = queryResult.deletions
-        let newAnchor = queryResult.newAnchor
 
-        let page = buildRecordsAndDocuments(from: samples, entry: entry)
-        var documents = page.documents
+        let built = buildRecordsAndDocuments(from: page.samples, entry: entry)
+        var documents = built.documents
 
         // Rebuild the full per-night document for every night this
         // page's sleep samples touched (see `SleepNightBucketer`). This
         // sits alongside the unchanged per-stage analytics rows above —
         // `health_sleep` itself gets no new columns or bound document.
-        if entry.category == .sleep, !page.normalizedSamples.isEmpty {
+        if entry.category == .sleep, !built.normalizedSamples.isEmpty {
             let nightDocuments = await rebuildTouchedSleepNights(
                 entry: entry,
                 sampleType: sampleType,
-                pageSamples: page.normalizedSamples
+                pageSamples: built.normalizedSamples
             )
             documents.append(contentsOf: nightDocuments)
         }
 
-        let deletedIds = deletions.map(\.uuid.uuidString)
-
-        if let newAnchor, let encoded = AnchorCoder.encode(newAnchor) {
-            typed.setAnchor(encoded, for: entry.identifier)
+        // HealthKit counts deleted objects toward the limit, so a page can be
+        // full of tombstones with few or no samples; it is the objects, not
+        // the samples, that say whether the lane has more.
+        let pageWasFull = page.samples.count + page.deletedIds.count >= pageLimit
+        typed.complete(read, anchor: page.anchor, hasMore: pageWasFull)
+        let hasMore = typed.nextRead() != nil
+        if !hasMore {
+            typed.closePass(at: now())
         }
 
-        let advanced = advanceCycle(cursor: typed, index: index, sampleCount: samples.count)
-        typed = advanced.cursor
-
         return SyncResult(
-            records: page.records,
+            records: built.records,
             tableName: entry.category.tableName,
             schema: HealthSchemas.schema(for: entry.category),
             cursor: typed.encode(),
-            hasMore: advanced.hasMore,
-            deletedIds: deletedIds,
+            hasMore: hasMore,
+            deletedIds: page.deletedIds,
             documents: documents
         )
+    }
+
+    private func emptyPage(_ cursor: AppleHealthCursor, hasMore: Bool) -> SyncResult {
+        SyncResult(records: [], tableName: "health_body", schema: nil, cursor: cursor.encode(), hasMore: hasMore)
     }
 
     /// One page's raw `HKSample`s converted into analytics rows +
@@ -203,28 +197,6 @@ public struct AppleHealthSource: OmnesisSource {
         return PageResult(records: records, documents: documents, normalizedSamples: normalizedSamples)
     }
 
-    /// Advances the rotation cursor after one page: stays on the
-    /// current type if it filled the page (more to read), otherwise
-    /// moves to the next type, wrapping — and recording
-    /// `lastCycleCompletedAt` — once the whole catalog has been drained.
-    private func advanceCycle(
-        cursor: AppleHealthCursor,
-        index: Int,
-        sampleCount: Int
-    )
-        -> (cursor: AppleHealthCursor, hasMore: Bool) {
-        var typed = cursor
-        let thisTypeHasMore = sampleCount >= pageLimit
-        typed.cycleIndex = thisTypeHasMore ? index : index + 1
-
-        guard typed.cycleIndex < catalog.count else {
-            typed.lastCycleCompletedAt = ISO8601DateFormatter().string(from: Date())
-            typed.cycleIndex = 0
-            return (typed, false)
-        }
-        return (typed, true)
-    }
-
     /// Rebuilds the night document for every distinct night this page's
     /// sleep samples started in. Each bucket is queried fresh via a
     /// plain `[noon, next noon)` range read (not the anchored/paged
@@ -259,10 +231,10 @@ public struct AppleHealthSource: OmnesisSource {
             // next sync that touches this night retries the rebuild.
             do {
                 guard let window = SleepNightBucketer.window(forBucket: bucket, calendar: calendar) else { continue }
-                let predicate = HKQuery.predicateForSamples(
-                    withStart: window.start, end: window.end, options: .strictStartDate
+                let rawSamples = try await reader.samples(
+                    type: sampleType,
+                    window: HealthSampleWindow(start: window.start, end: window.end)
                 )
-                let rawSamples = try await client.runSampleQuery(type: sampleType, predicate: predicate)
                 let nightSamples = rawSamples.compactMap { HKSampleExtractor.extract($0, entry: entry) }
                 guard let summary = SleepNightBucketer.summarize(bucketDate: bucket, samples: nightSamples) else {
                     continue

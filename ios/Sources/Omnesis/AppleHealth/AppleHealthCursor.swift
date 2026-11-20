@@ -3,35 +3,198 @@
 
 import Foundation
 
+/// Samples whose start date falls in `[start, end)`. A nil bound is open.
+public struct HealthSampleWindow: Equatable, Sendable {
+    public var start: Date?
+    public var end: Date?
+
+    public init(start: Date?, end: Date?) {
+        self.start = start
+        self.end = end
+    }
+
+    public func contains(_ date: Date) -> Bool {
+        if let start, date < start { return false }
+        if let end, date >= end { return false }
+        return true
+    }
+}
+
+/// One anchored read stream over a type: the samples in `window`, read in
+/// HealthKit's insertion order from `anchor` onwards.
+public struct HealthLane: Equatable, Sendable {
+    public var window: HealthSampleWindow
+    /// Encoded `HKQueryAnchor`, nil before the first read.
+    public var anchor: String?
+
+    public init(window: HealthSampleWindow, anchor: String?) {
+        self.window = window
+        self.anchor = anchor
+    }
+}
+
+/// How a type's samples are split so the newest arrive first.
+///
+/// HealthKit hands an anchored query its samples oldest-inserted first, so
+/// one anchor per type serves a new pairing years of history before last
+/// night's sleep. Instead each type gets one lane per recency tier — the last
+/// day, the week before it, the month before that, and everything older —
+/// with boundaries fixed when the lanes are made. The windows partition the
+/// timeline, so between them the lanes read every sample exactly once, and
+/// each keeps its own anchor so late arrivals in any range (a watch that
+/// syncs yesterday's data today, a backdated entry) are still picked up.
+public enum HealthRecency {
+    private static let day: TimeInterval = 24 * 60 * 60
+
+    /// Tier boundaries as ages, newest first.
+    public static let tierAges: [TimeInterval] = [1 * day, 7 * day, 30 * day]
+
+    public static var tierCount: Int {
+        tierAges.count + 1
+    }
+
+    /// Fresh lanes for one type, with boundaries measured back from `now`
+    /// (whole seconds, so they survive the cursor's encoding exactly).
+    ///
+    /// `anchor` seeds every lane. A type that a single anchor already read
+    /// part of passes that anchor here: every lane then starts where the old
+    /// read stopped, so nothing it delivered is read twice and nothing after
+    /// it is skipped.
+    public static func lanes(at now: Date, startingFrom anchor: String?) -> [HealthLane] {
+        let origin = Date(timeIntervalSince1970: now.timeIntervalSince1970.rounded(.down))
+        let bounds = tierAges.map { origin.addingTimeInterval(-$0) }
+        var lanes: [HealthLane] = []
+        var upper: Date?
+        for lower in bounds {
+            lanes.append(HealthLane(window: HealthSampleWindow(start: lower, end: upper), anchor: anchor))
+            upper = lower
+        }
+        lanes.append(HealthLane(window: HealthSampleWindow(start: nil, end: upper), anchor: anchor))
+        return lanes
+    }
+}
+
+/// One read the current pass still owes: `tier` of `identifier`.
+public struct HealthRead: Equatable, Sendable {
+    public let identifier: String
+    public let tier: Int
+}
+
 /// Serializable cursor passed between CollectorCore and AppleHealthSource.
 ///
 /// Structure:
-///   - `cycleIndex` — which position in `TypeCatalog.v1` we're on in
-///     the current rotation. When a rotation completes, we wrap back
-///     to 0 on the next observer-driven sync.
-///   - `anchorsByIdentifier` — per-type `HKQueryAnchor` encoded as
-///     base64 (via `NSKeyedArchiver`) under the identifier key.
-///   - `lastCycleCompletedAt` — ISO 8601 timestamp so we can display
-///     "last full scan N minutes ago" in the UI.
+///   - `lanesByIdentifier` — per type, one `HealthLane` per recency tier
+///     (see `HealthRecency`), newest first.
+///   - `pending` — the reads the current pass still owes, one queue per
+///     tier. A pass reads tier 0 of every type, round-robin a page at a
+///     time, then tier 1, and so on: every type is brought up to date with
+///     its recent samples before any time goes to history. A type whose
+///     page came back full goes to the back of its tier's queue. Each pass
+///     starts the newest tier afresh (`beginPass`), rotated so that a wake
+///     that runs out of time does not always favour the same types, and
+///     resumes the older tiers where the previous pass stopped.
+///   - `anchorsByIdentifier` — the single per-type anchor older builds kept.
+///     Read once, to seed that type's lanes, then dropped.
+///   - `lastCycleCompletedAt` — ISO 8601 time of the last complete pass.
 ///
 /// The cursor is persisted server-side via `/sync-state/:sourceId`
-/// (see `CursorStore`). Anchors survive app reinstalls if the gateway
-/// cursor survives — which is the intent, since HealthKit on the new
-/// iPhone has the same UUIDs (via iCloud sync) that the anchors refer to.
+/// (see `CursorStore`), per device for this replicated source: anchors are
+/// positions in this phone's own HealthKit database.
 public struct AppleHealthCursor: Sendable, Equatable {
-    public var cycleIndex: Int
+    public var lanesByIdentifier: [String: [HealthLane]]
+    public var pending: [[String]]
+    public var passCount: Int
     public var anchorsByIdentifier: [String: String]
     public var lastCycleCompletedAt: String?
 
     public init(
-        cycleIndex: Int = 0,
+        lanesByIdentifier: [String: [HealthLane]] = [:],
+        pending: [[String]] = [],
+        passCount: Int = 0,
         anchorsByIdentifier: [String: String] = [:],
         lastCycleCompletedAt: String? = nil
     ) {
-        self.cycleIndex = cycleIndex
+        self.lanesByIdentifier = lanesByIdentifier
+        self.pending = pending
+        self.passCount = passCount
         self.anchorsByIdentifier = anchorsByIdentifier
         self.lastCycleCompletedAt = lastCycleCompletedAt
     }
+
+    // MARK: - Passes
+
+    /// Open a pass over `identifiers` (the enabled catalog, in order):
+    /// make lanes for any type that has none, queue the newest tier of
+    /// every type afresh, and carry on with the older tiers where the last
+    /// pass stopped — or queue them all again once that backlog is done.
+    ///
+    /// Restarting only the newest tier is what keeps history moving: a wake
+    /// too short to get past re-reading every type's recent lane would
+    /// otherwise begin the same history read again and again.
+    public mutating func beginPass(identifiers: [String], now: Date) {
+        for identifier in identifiers where lanesByIdentifier[identifier] == nil {
+            let legacy = anchorsByIdentifier.removeValue(forKey: identifier)
+            lanesByIdentifier[identifier] = HealthRecency.lanes(at: now, startingFrom: legacy)
+        }
+        let rotation = identifiers.isEmpty ? 0 : passCount % identifiers.count
+        let order = Array(identifiers[rotation...] + identifiers[..<rotation])
+        var queues = Array(repeating: order, count: HealthRecency.tierCount)
+        let history = pending.dropFirst()
+        if pending.count == HealthRecency.tierCount, history.contains(where: { !$0.isEmpty }) {
+            queues.replaceSubrange(1..., with: history)
+        }
+        pending = queues
+        passCount += 1
+    }
+
+    public var isPassOpen: Bool {
+        pending.contains { !$0.isEmpty }
+    }
+
+    /// The next read the open pass owes, or nil when it is done.
+    public func nextRead() -> HealthRead? {
+        for (tier, queue) in pending.enumerated() {
+            if let identifier = queue.first {
+                return HealthRead(identifier: identifier, tier: tier)
+            }
+        }
+        return nil
+    }
+
+    public func lane(for read: HealthRead) -> HealthLane? {
+        guard let lanes = lanesByIdentifier[read.identifier], lanes.indices.contains(read.tier) else { return nil }
+        return lanes[read.tier]
+    }
+
+    /// Record a finished read: its lane moves to `anchor`, and the type goes
+    /// to the back of its tier's queue while it has more to give.
+    public mutating func complete(_ read: HealthRead, anchor: String?, hasMore: Bool) {
+        if let anchor, lanesByIdentifier[read.identifier]?.indices.contains(read.tier) == true {
+            lanesByIdentifier[read.identifier]?[read.tier].anchor = anchor
+        }
+        dequeue(read)
+        if hasMore {
+            pending[read.tier].append(read.identifier)
+        }
+    }
+
+    /// Drop a read the pass cannot make (a type this OS cannot query).
+    public mutating func skip(_ read: HealthRead) {
+        dequeue(read)
+    }
+
+    public mutating func closePass(at now: Date) {
+        pending = []
+        lastCycleCompletedAt = Self.timestamp.string(from: now)
+    }
+
+    private mutating func dequeue(_ read: HealthRead) {
+        guard pending.indices.contains(read.tier),
+              let index = pending[read.tier].firstIndex(of: read.identifier) else { return }
+        pending[read.tier].remove(at: index)
+    }
+
+    private static let timestamp = ISO8601DateFormatter()
 
     // MARK: - SyncCursor bridging
 
@@ -39,59 +202,71 @@ public struct AppleHealthCursor: Sendable, Equatable {
     /// cursor. Missing / malformed fields fall back to defaults.
     public static func decode(from cursor: SyncCursor?) -> AppleHealthCursor {
         guard let cursor else { return AppleHealthCursor() }
+        var typed = AppleHealthCursor()
 
-        var cycleIndex = 0
-        if case .int(let i) = cursor["cycleIndex"] {
-            cycleIndex = Int(i)
-        }
-
-        var anchors: [String: String] = [:]
         if case .object(let obj) = cursor["anchorsByIdentifier"] {
             for (key, value) in obj {
-                if case .string(let s) = value {
-                    anchors[key] = s
+                if case .string(let anchor) = value {
+                    typed.anchorsByIdentifier[key] = anchor
                 }
             }
         }
-
-        var lastCompleted: String?
-        if case .string(let s) = cursor["lastCycleCompletedAt"] {
-            lastCompleted = s
+        if case .object(let obj) = cursor["lanes"] {
+            for (identifier, value) in obj {
+                guard case .array(let rawLanes) = value else { continue }
+                let lanes = rawLanes.compactMap(decodeLane)
+                if lanes.count == rawLanes.count, lanes.count == HealthRecency.tierCount {
+                    typed.lanesByIdentifier[identifier] = lanes
+                }
+            }
         }
-
-        return AppleHealthCursor(
-            cycleIndex: cycleIndex,
-            anchorsByIdentifier: anchors,
-            lastCycleCompletedAt: lastCompleted
-        )
+        if case .array(let tiers) = cursor["pending"] {
+            typed.pending = tiers.map { tier in
+                guard case .array(let ids) = tier else { return [] }
+                return ids.compactMap { if case .string(let identifier) = $0 { identifier } else { nil } }
+            }
+        }
+        if case .int(let count) = cursor["passCount"] {
+            typed.passCount = Int(count)
+        }
+        if case .string(let completedAt) = cursor["lastCycleCompletedAt"] {
+            typed.lastCycleCompletedAt = completedAt
+        }
+        return typed
     }
 
     /// Encode back into the untyped `[String: JSONValue]` shape the
     /// gateway persists.
     public func encode() -> SyncCursor {
         var dict: [String: JSONValue] = [
-            "cycleIndex": .int(Int64(cycleIndex)),
-            "anchorsByIdentifier": .object(
-                anchorsByIdentifier.mapValues { JSONValue.string($0) }
-            ),
+            "version": .int(2),
+            "lanes": .object(lanesByIdentifier.mapValues { .array($0.map(Self.encodeLane)) }),
+            "pending": .array(pending.map { .array($0.map(JSONValue.string)) }),
+            "passCount": .int(Int64(passCount)),
         ]
+        if !anchorsByIdentifier.isEmpty {
+            dict["anchorsByIdentifier"] = .object(anchorsByIdentifier.mapValues(JSONValue.string))
+        }
         if let lastCycleCompletedAt {
             dict["lastCycleCompletedAt"] = .string(lastCycleCompletedAt)
         }
         return dict
     }
 
-    // MARK: - Helpers
-
-    public mutating func setAnchor(_ encoded: String?, for identifier: String) {
-        if let encoded {
-            anchorsByIdentifier[identifier] = encoded
-        } else {
-            anchorsByIdentifier.removeValue(forKey: identifier)
-        }
+    private static func encodeLane(_ lane: HealthLane) -> JSONValue {
+        var obj: [String: JSONValue] = [:]
+        if let start = lane.window.start { obj["start"] = .int(Int64(start.timeIntervalSince1970)) }
+        if let end = lane.window.end { obj["end"] = .int(Int64(end.timeIntervalSince1970)) }
+        if let anchor = lane.anchor { obj["anchor"] = .string(anchor) }
+        return .object(obj)
     }
 
-    public func anchor(for identifier: String) -> String? {
-        anchorsByIdentifier[identifier]
+    private static func decodeLane(_ value: JSONValue) -> HealthLane? {
+        guard case .object(let obj) = value else { return nil }
+        func date(_ key: String) -> Date? {
+            if case .int(let seconds) = obj[key] { Date(timeIntervalSince1970: TimeInterval(seconds)) } else { nil }
+        }
+        let anchor: String? = if case .string(let encoded) = obj["anchor"] { encoded } else { nil }
+        return HealthLane(window: HealthSampleWindow(start: date("start"), end: date("end")), anchor: anchor)
     }
 }

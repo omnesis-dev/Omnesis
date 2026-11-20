@@ -267,10 +267,21 @@ public protocol OmnesisSource: Sendable {
     /// its cursor advances. Source-local delivery marks must not advance in
     /// `sync` itself: a buffer failure must leave that page replayable.
     func didBuffer(_ result: SyncResult) async throws
+
+    /// Called once when a collector pass starts, with the cursor it loaded.
+    /// The returned cursor is what the pass's first `sync` receives. A source
+    /// that orders its reads within a pass resets that order here, so every
+    /// pass — and so every short background wake — starts with what matters
+    /// most rather than wherever an interrupted pass left off.
+    func beginPass(cursor: SyncCursor?) -> SyncCursor?
 }
 
 extension OmnesisSource {
     public func didBuffer(_: SyncResult) async throws {}
+
+    public func beginPass(cursor: SyncCursor?) -> SyncCursor? {
+        cursor
+    }
 
     public var multiDeviceMode: SourceMultiDeviceMode {
         .exclusive
@@ -340,7 +351,33 @@ public struct Batch: Codable, Equatable, Sendable {
     }
 
     /// Derive an id like `20260418T145023123-a1b2c3d4` that sorts
-    /// lexicographically in the order batches were produced.
+    /// lexicographically in the order batches were produced. With a
+    /// `sourceId`, the id ends in that source's key
+    /// (`20260418T145023123-a1b2c3d4-s0f1e2d3c`) so the offline buffer can
+    /// account each source's share from file names alone.
+    public static func makeId(now: Date = Date(), sourceId: String) -> String {
+        "\(makeId(now: now))-s\(sourceKey(for: sourceId))"
+    }
+
+    /// A short, stable key for a source id: 32-bit FNV-1a, hex.
+    public static func sourceKey(for sourceId: String) -> String {
+        var hash: UInt32 = 0x811C_9DC5
+        for byte in sourceId.utf8 {
+            hash ^= UInt32(byte)
+            hash = hash &* 0x0100_0193
+        }
+        return String(format: "%08x", hash)
+    }
+
+    /// The source key a batch id carries, or "" for an id without one
+    /// (batches queued by older builds, hand-made test ids).
+    public static func sourceKey(fromId id: String) -> String {
+        guard let marker = id.range(of: "-s", options: .backwards) else { return "" }
+        let key = id[marker.upperBound...]
+        guard key.count == 8, key.allSatisfy(\.isHexDigit) else { return "" }
+        return String(key)
+    }
+
     public static func makeId(now: Date = Date()) -> String {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(identifier: "UTC")!
