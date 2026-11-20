@@ -387,6 +387,9 @@ export const CONFIG_DEFAULTS = {
       enabled: true,
       hostname: "omnesis.local",
     },
+    localMcp: {
+      enabled: true,
+    },
     tls: {
       autoRenew: true,
       renewBeforeDays: 30,
@@ -560,6 +563,7 @@ export const NO_STATIC_DEFAULT_PATHS: readonly string[] = [
   "/gateway/analyticsMemoryLimitMb", // machine-dependent: clamp(memory budget / 4, 512 MiB, 4 GiB)
   "/gateway/analyticsThreads", // machine-dependent: clamp(cores / 2, 2, 8)
   "/gateway/mdns/serviceName", // defaults to the OS hostname in gateway boot code
+  "/gateway/localMcp/port", // the gateway's port plus one, in gateway boot code
   "/agent/subagentTreeTokenBudget", // unset = unbounded tree budget (a warning is logged)
   "/gateway/publicBaseUrl", // unset = loopback-only MCP OAuth + localhost source callback fallback
   "/gateway/pairingSystemTrustOrigins", // unset = installer-proven origin plus origin-shaped publicBaseUrl
@@ -611,6 +615,8 @@ const CONFIG_UNSET_DESCRIPTIONS: Readonly<Record<string, string>> = {
   "/gateway/mcpResourceUrls":
     "Only the canonical MCP resource derived from gateway.publicBaseUrl is trusted.",
   "/gateway/mdns/serviceName": "Uses the operating system hostname.",
+  "/gateway/localMcp/port":
+    "The gateway's port plus one (7601 with the default 7600), unless OMNESIS_LOCAL_MCP_PORT sets it.",
   "/agent/subagentTreeTokenBudget": "Unlimited; a warning is logged when sub-agents fan out.",
   "/brain/transcriptRetention": "Uses activityRetention.maxAge.",
   "/brain/bootstrap/activeHours/from": "No active-hours restriction is applied.",

@@ -2414,7 +2414,8 @@
         "packages/gateway/src/http/routes/oauth-access.test.ts",
         "packages/gateway/src/http/routes/remote-access.test.ts",
         "packages/gateway/src/local-mcp-listener.test.ts",
-        "packages/gateway/src/remote-access/mcp-addresses.test.ts"
+        "packages/gateway/src/remote-access/mcp-addresses.test.ts",
+        "packages/gateway/src/server.mcp-addresses.test.ts"
       ],
       "reason": "invented home-network address fixture for the RFC 1918 192.168/16 range"
     },

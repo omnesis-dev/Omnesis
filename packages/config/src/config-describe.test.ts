@@ -196,6 +196,8 @@ const EXPECTED_INVENTORY = [
   "/gateway/ioConcurrency [number]",
   "/gateway/ioReservedUserSlots [number]",
   "/gateway/journalMode [enum]",
+  "/gateway/localMcp/enabled [boolean]",
+  "/gateway/localMcp/port [number]",
   "/gateway/mcpResourceUrls [stringArray]",
   "/gateway/mdns/enabled [boolean]",
   "/gateway/mdns/hostname [string]",

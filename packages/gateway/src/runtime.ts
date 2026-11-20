@@ -4476,7 +4476,7 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
   // Never in a container, whose loopback is not the host's; a busy port is reported, not fatal.
   localMcp = inContainer
     ? LocalMcpListener.notStarted("container")
-    : configStore.get().gateway?.localMcp?.enabled === false
+    : !(configStore.get().gateway?.localMcp?.enabled ?? CONFIG_DEFAULTS.gateway.localMcp.enabled)
       ? LocalMcpListener.notStarted("off")
       : new LocalMcpListener({
           port: localMcpPort(configStore.get(), listenPort),
