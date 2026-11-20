@@ -144,14 +144,10 @@ export function windowsWorkerInvocation(
       // out; they carry no command, path or output.
       const phases: { owner?: number; bootstrap?: number } = {};
       const timing = () =>
-        [
-          phases.owner === undefined ? undefined : `owner ${Math.round(phases.owner)} ms`,
-          phases.bootstrap === undefined
-            ? undefined
-            : `bootstrap ${Math.round(phases.bootstrap)} ms`,
-        ]
+        Object.entries(phases)
+          .filter(([, ms]) => Number.isFinite(ms))
+          .map(([phase, ms]) => `${phase} ${Math.round(ms)} ms`)
           .concat(`${budgetMs} ms allowance`)
-          .filter(Boolean)
           .join(", ");
       const remaining = () => {
         const elapsedMs = performance.now() - started;
