@@ -34,13 +34,13 @@ import {
   listMergeCandidates,
 } from "../merge-candidates.js";
 import {
-  PILOT_ALGO,
-  pilotDocId,
-  pilotEmail,
-  pilotExternalId,
-  pilotPersonId,
-  seedPilotCorpus,
-} from "../scheduler/__fixtures__/pilot-corpus.js";
+  CORPUS_ALGO,
+  corpusDocId,
+  corpusEmail,
+  corpusExternalId,
+  corpusPersonId,
+  seedLargeCorpus,
+} from "../scheduler/__fixtures__/large-corpus.js";
 import { resolvePersonDocIds } from "../search/person-filter.js";
 import { likeSearchDocuments } from "../search/like-search.js";
 import { getSqliteCatalog } from "../sqlite-catalog.js";
@@ -98,8 +98,8 @@ function seeded(docs = 2_000): { db: Db; path: string } {
   const path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
   paths.push(path);
   const db = createDatabase(path) as unknown as Db;
-  setActiveAlgoVersion(db as never, PILOT_ALGO);
-  seedPilotCorpus(db, { docs, unresolvedDocs: 60, pendingCandidates: 120 });
+  setActiveAlgoVersion(db as never, CORPUS_ALGO);
+  seedLargeCorpus(db, { docs, unresolvedDocs: 60, pendingCandidates: 120 });
   return { db, path };
 }
 
@@ -370,43 +370,43 @@ function hotWriterOps(db: Db): Array<[string, () => unknown]> {
       return {
         providerId: "synth-mail",
         sourceId: "synth-mail-work",
-        externalId: update ? pilotExternalId(i) : `ext-new-${i}`,
+        externalId: update ? corpusExternalId(i) : `ext-new-${i}`,
         title: `Weekly sync ${i}`,
         content: `Status update ${i}`,
         contentHash: `hash-v2-${i}`,
         metadata: {
           documentType: "email",
-          people: [{ role: "sender" as const, emails: [pilotEmail(1 + (i % 40))] }],
+          people: [{ role: "sender" as const, emails: [corpusEmail(1 + (i % 40))] }],
           extra: { threadId: `thread-${i}` },
         },
         sourceCreatedAt: "2026-10-20T10:00:00Z",
         sourceUpdatedAt: "2026-10-20T10:00:00Z",
       };
     });
-  const nearDupDoc = pilotDocId(42);
+  const nearDupDoc = corpusDocId(42);
   const nearDupBatch: NearDupApplyBatch = {
-    algoVersion: PILOT_ALGO,
+    algoVersion: CORPUS_ALGO,
     processedInboxIds: [],
     signatureDeletes: [nearDupDoc],
     signatures: [
       {
         docId: nearDupDoc,
-        algoVersion: PILOT_ALGO,
+        algoVersion: CORPUS_ALGO,
         signature: Buffer.alloc(64, 3),
         shingleCount: 40,
       },
     ],
     bucketRows: Array.from({ length: 16 }, (_, b) => ({
-      algoVersion: PILOT_ALGO,
+      algoVersion: CORPUS_ALGO,
       bandIdx: b,
       bucketHash: b * 7,
       docId: nearDupDoc,
     })),
     edgeUpserts: [
       {
-        docA: pilotDocId(0),
+        docA: corpusDocId(0),
         docB: nearDupDoc,
-        algoVersion: PILOT_ALGO,
+        algoVersion: CORPUS_ALGO,
         jaccard: 0.9,
         pairUniqueDf2: 3,
         pairUniqueDf5: 6,
@@ -426,7 +426,7 @@ function hotWriterOps(db: Db): Array<[string, () => unknown]> {
             providerId: "synth-mail",
             sourceId: "synth-mail-work",
             documents: [...mailPage(40, 0, false), ...mailPage(40, 10, true)],
-            deletedExternalIds: [pilotExternalId(20), pilotExternalId(21)],
+            deletedExternalIds: [corpusExternalId(20), corpusExternalId(21)],
             hasMore: true,
             cursor: { page: 2 },
           } as unknown as Parameters<typeof upsertWithCursor>[1],
@@ -505,18 +505,18 @@ describe("hot writer query plans on an analyzed corpus", () => {
     paths.push(unanalyzedPath);
     const unanalyzed = createDatabase(unanalyzedPath) as unknown as Db;
     try {
-      seedPilotCorpus(unanalyzed, { docs: 600 });
-      expect(explain(unanalyzed, unpinned, [pilotDocId(6), PILOT_ALGO]).join("\n")).not.toMatch(
+      seedLargeCorpus(unanalyzed, { docs: 600 });
+      expect(explain(unanalyzed, unpinned, [corpusDocId(6), CORPUS_ALGO]).join("\n")).not.toMatch(
         /idx_near_dup_lsh_doc/,
       );
     } finally {
       unanalyzed.close();
     }
-    expect(explain(fresh, unpinned, [pilotDocId(6), PILOT_ALGO]).join("\n")).toMatch(
+    expect(explain(fresh, unpinned, [corpusDocId(6), CORPUS_ALGO]).join("\n")).toMatch(
       /SEARCH near_dup_lsh_buckets USING INDEX idx_near_dup_lsh_doc \(doc_id=\?\)/,
     );
     expect(
-      explain(fresh, BUCKET_DELETE_FOR_DOC_SQL, [pilotDocId(6), PILOT_ALGO]).join("\n"),
+      explain(fresh, BUCKET_DELETE_FOR_DOC_SQL, [corpusDocId(6), CORPUS_ALGO]).join("\n"),
     ).toMatch(/idx_near_dup_lsh_doc/);
   });
 });
@@ -567,22 +567,25 @@ function readPathOps(db: Db): Array<[string, () => unknown]> {
         }),
     ],
     ["list exclude", () => listDocuments(db, { excludeSourceIds: ["synth-mail-work"], limit: 50 })],
-    ["list after", () => listDocuments(db, { afterId: pilotDocId(100), limit: 50 })],
+    ["list after", () => listDocuments(db, { afterId: corpusDocId(100), limit: 50 })],
     ["people browse", () => searchPeople(db, "", 50)],
     ["people browse docs", () => searchPeople(db, "", 50, { sortBy: "documents" })],
     ["people query", () => searchPeople(db, "synth contact 1", 50)],
-    ["person", () => getPersonById(db, pilotPersonId(5))],
-    ["person docs self", () => getPersonDocuments(db, pilotPersonId(0), { limit: 50 })],
-    ["person docs canonical", () => getPersonDocuments(db, pilotPersonId(19), { limit: 50 })],
-    ["person docs rare", () => getPersonDocuments(db, pilotPersonId(250), { limit: 50 })],
+    ["person", () => getPersonById(db, corpusPersonId(5))],
+    ["person docs self", () => getPersonDocuments(db, corpusPersonId(0), { limit: 50 })],
+    ["person docs canonical", () => getPersonDocuments(db, corpusPersonId(19), { limit: 50 })],
+    ["person docs rare", () => getPersonDocuments(db, corpusPersonId(250), { limit: 50 })],
     [
       "person docs role",
-      () => getPersonDocuments(db, pilotPersonId(0), { role: "sender", limit: 50 }),
+      () => getPersonDocuments(db, corpusPersonId(0), { role: "sender", limit: 50 }),
     ],
-    ["doc people", () => getDocumentPeople(db, pilotDocId(42))],
-    ["docs people summary", () => getDocumentsPeopleSummary(db, [pilotDocId(42), pilotDocId(43)])],
+    ["doc people", () => getDocumentPeople(db, corpusDocId(42))],
+    [
+      "docs people summary",
+      () => getDocumentsPeopleSummary(db, [corpusDocId(42), corpusDocId(43)]),
+    ],
     ["people stats", () => getPeopleStats(db)],
-    ["person filter", () => resolvePersonDocIds(db, [pilotPersonId(19)], ["recipient"])],
+    ["person filter", () => resolvePersonDocIds(db, [corpusPersonId(19)], ["recipient"])],
     [
       "like search",
       () =>
@@ -610,7 +613,8 @@ function readPathOps(db: Db): Array<[string, () => unknown]> {
     ],
     [
       "annotations page",
-      () => listLiveAnnotationsForDoc(db, pilotDocId(42), { before: { createdAt: 9e12, id: "z" } }),
+      () =>
+        listLiveAnnotationsForDoc(db, corpusDocId(42), { before: { createdAt: 9e12, id: "z" } }),
     ],
     [
       "dependents page",
@@ -665,7 +669,7 @@ describe("read-path query plans on an analyzed corpus", () => {
 
   beforeAll(() => {
     ({ db, path } = seeded(CORPUS_DOCS));
-    setActiveAlgoVersion(db as never, PILOT_ALGO);
+    setActiveAlgoVersion(db as never, CORPUS_ALGO);
     captured = captureStatements(db, readPathOps(db));
     for (const entry of getSqliteCatalog(db))
       for (const sql of entry.exampleQueries ?? [])
@@ -715,14 +719,14 @@ describe("read-path query plans on an analyzed corpus", () => {
 describe("long-lived readers and a pass in slices", () => {
   test("a reader open across a sliced pass ends on the finished statistics", () => {
     const { db, path } = seeded(3_000);
-    setActiveAlgoVersion(db as never, PILOT_ALGO);
+    setActiveAlgoVersion(db as never, CORPUS_ALGO);
     const reader = new Database(path, { readonly: true });
     try {
       const unpinned = BUCKET_DELETE_FOR_DOC_SQL.replace(
         "DELETE FROM near_dup_lsh_buckets INDEXED BY idx_near_dup_lsh_doc",
         "SELECT 1 FROM near_dup_lsh_buckets",
       );
-      const probe = () => explain(reader, unpinned, [pilotDocId(6), PILOT_ALGO]).join(" | ");
+      const probe = () => explain(reader, unpinned, [corpusDocId(6), CORPUS_ALGO]).join(" | ");
       const loaded = () =>
         reader.prepare<[], { n: number }>("SELECT COUNT(*) AS n FROM people").get()!.n;
       loaded();
@@ -734,7 +738,9 @@ describe("long-lived readers and a pass in slices", () => {
       loaded();
       const restarted = new Database(path, { readonly: true });
       try {
-        expect(probe()).toBe(explain(restarted, unpinned, [pilotDocId(6), PILOT_ALGO]).join(" | "));
+        expect(probe()).toBe(
+          explain(restarted, unpinned, [corpusDocId(6), CORPUS_ALGO]).join(" | "),
+        );
         expect(probe()).toMatch(/idx_near_dup_lsh_doc/);
       } finally {
         restarted.close();

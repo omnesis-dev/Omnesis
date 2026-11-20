@@ -37,11 +37,11 @@ import { sqlitePerformanceDatabasePath } from "../../test/sqlite-performance-tem
 import { catalogRefreshTask } from "./tasks/backfill-tasks.js";
 import { sweepCollapsedCandidates } from "./tasks/backfill-helpers.js";
 import {
-  PILOT_ALGO,
-  pilotDocId,
-  seedPilotCorpus,
-  type PilotCorpus,
-} from "./__fixtures__/pilot-corpus.js";
+  CORPUS_ALGO,
+  corpusDocId,
+  seedLargeCorpus,
+  type LargeCorpus,
+} from "./__fixtures__/large-corpus.js";
 import type { BackfillTaskOptsInternal } from "./tasks/backfill.js";
 import type { TaskContext } from "./types.js";
 import type { WriteGate } from "../write-gate.js";
@@ -52,7 +52,7 @@ const WRITER_URL = new URL("../workers/writer-worker.ts", import.meta.url);
 const IO_URL = new URL("../workers/io-worker.ts", import.meta.url);
 const LOADER_URL = new URL("../workers/register-tsx.mjs", import.meta.url).href;
 
-/** Documents in the corpus — the pilot held about 640k; a fifth keeps the suite quick. */
+/** Documents in the corpus: enough to make a whole-table pass slow, few enough to keep the suite quick. */
 const DOCS = Number(process.env.OMNESIS_WRITER_MAINTENANCE_DOCS ?? 120_000);
 const UNRESOLVED_DOCS = 400;
 const PENDING_CANDIDATES = 3_000;
@@ -106,7 +106,7 @@ function cleanupDb(path: string): void {
 describe("writer maintenance against a large encrypted corpus", () => {
   const key = randomBytes(32);
   let dbPath: string;
-  let corpus: PilotCorpus;
+  let corpus: LargeCorpus;
   let scheduler: Scheduler;
   let gate: WriteGate;
   let io: IoGate;
@@ -117,8 +117,8 @@ describe("writer maintenance against a large encrypted corpus", () => {
     dbPath = sqlitePerformanceDatabasePath();
     const seed = createDatabase(dbPath, { encryptionKey: key }) as unknown as Database.Database;
     try {
-      setActiveAlgoVersion(seed as never, PILOT_ALGO);
-      corpus = seedPilotCorpus(seed, {
+      setActiveAlgoVersion(seed as never, CORPUS_ALGO);
+      corpus = seedLargeCorpus(seed, {
         docs: DOCS,
         unresolvedDocs: UNRESOLVED_DOCS,
         pendingCandidates: PENDING_CANDIDATES,
@@ -283,7 +283,7 @@ describe("writer maintenance against a large encrypted corpus", () => {
     const unpinned = BUCKET_DELETE_FOR_DOC_SQL.replace(" INDEXED BY idx_near_dup_lsh_doc", "");
     const plan = (db: Database.Database) =>
       (
-        db.prepare(`EXPLAIN QUERY PLAN ${unpinned}`).all(pilotDocId(6), PILOT_ALGO) as Array<{
+        db.prepare(`EXPLAIN QUERY PLAN ${unpinned}`).all(corpusDocId(6), CORPUS_ALGO) as Array<{
           detail: string;
         }>
       )
