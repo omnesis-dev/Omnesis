@@ -240,7 +240,10 @@ export function agentSetups(oauth, { harnessAddress, pairingCode, relay, tailsca
       // OpenSSL-based programs such as curl and Python take SSL_CERT_FILE as
       // the only authorities they trust, so it is kept to Codex's own command
       // rather than every shell.
-      certificateTrust: { variable: "SSL_CERT_FILE", kinds: ["mkcert", "self-signed"] },
+      // SSL_CERT_FILE may replace the authorities Codex trusts rather than add to them,
+      // which could cut it off from its own service (#168), so it is not offered for a
+      // computer other than the gateway's until that is shown not to happen.
+      certificateTrust: { variable: "SSL_CERT_FILE", kinds: ["mkcert", "self-signed"], gatewayComputerOnly: true },
       docs: `${DOCS}/connect#codex`,
     },
     {
@@ -327,7 +330,9 @@ export function agentSetups(oauth, { harnessAddress, pairingCode, relay, tailsca
     const blocked = { ...agent, blocked: true, commands: [], alternatives: false, note: [], headless: undefined };
     // An address that does not answer says nothing about the certificate behind it.
     if (addressNotice && !addressNotice.usable) return blocked;
-    const trustFile = untrustedCertificate ? agentTrustFile(agent, mainAddressCertificate(oauth)) : null;
+    const trustable = location !== "home" || !agent.certificateTrust?.gatewayComputerOnly;
+    const trustFile =
+      untrustedCertificate && trustable ? agentTrustFile(agent, mainAddressCertificate(oauth)) : null;
     if (agent.needsTrustedCertificate && untrustedCertificate && !trustFile) return blocked;
     if (!trustFile) return agent;
     const { variable } = agent.certificateTrust;

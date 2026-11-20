@@ -285,19 +285,29 @@ describe("where the agent runs", () => {
       expect(notice.textContent).toContain("Otherwise reach this gateway from away");
     });
 
-    test("Codex trusts the self-signed certificate it downloads, with the step written for that computer", async () => {
-      api.getAccessOverview.mockResolvedValue(overview());
-      await mount();
-      await runOn("home");
+    test("Codex is not offered a trust step for another computer: said plainly, with what works instead", async () => {
+      for (const certificate of [
+        { kind: "self-signed", trustFile: "/home/fictional/.config/omnesis/tls/cert.pem" },
+        { kind: "mkcert", trustFile: "/home/fictional/.local/share/mkcert/rootCA.pem" },
+      ]) {
+        api.getAccessOverview.mockResolvedValue(overview({ certificate }));
+        render(null, host);
+        await mount();
+        await runOn("home");
+        expect(warned("codex"), certificate.kind).toBe(true);
+        const steps = await select("codex");
+        const notice = steps.querySelector(".access-agent-public")!;
+        expect(notice.textContent).toContain("Codex can't connect over your home network.");
+        expect(notice.textContent).toContain("doesn't offer it for another computer yet");
+        expect(notice.textContent).not.toContain("mkcert");
+        expect(steps.querySelector(".access-agent-download")).toBeNull();
+        expect(commands()).toEqual([]);
+      }
+      // On the gateway's own computer it connects as is.
+      await runOn("machine");
+      await select("codex");
+      await select("codex");
       expect(warned("codex")).toBe(false);
-      const steps = await select("codex");
-      const download = steps.querySelector(".access-agent-download")!;
-      expect(download.getAttribute("href")).toBe("/portal/api/access/certificate");
-      expect(download.getAttribute("download")).toBe("omnesis-gateway.pem");
-      expect(commands()[0]).toBe('export SSL_CERT_FILE="$HOME/omnesis-gateway.pem"');
-      // Never the path on the gateway's own computer.
-      expect(steps.textContent).not.toContain("/home/fictional/");
-      expect(commands().some((command) => command?.includes(`codex mcp add omnesis --url ${HOME_NAME}`))).toBe(true);
     });
 
     test("an mkcert gateway: Claude Code trusts its authority, with no warning", async () => {

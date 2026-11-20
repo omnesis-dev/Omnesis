@@ -752,10 +752,12 @@
             approval, as everywhere.
           </li>
           <li>
-            The agent's computer has to trust the gateway's certificate. Download it from
-            <strong>Connect an agent</strong> and point the agent at it; Claude Code cannot trust
-            the gateway's own self-signed certificate (see
-            <a href="#trust-certificate">trust the gateway's certificate</a>).
+            The agent's computer has to trust the gateway's certificate. For Claude Code with a
+            <a href="setup#certificates">mkcert certificate</a>, download it from
+            <strong>Connect an agent</strong> and point Claude Code at it. Claude Code cannot trust
+            the gateway's own self-signed certificate, and Codex is not offered a certificate step
+            for another computer: its setting may replace the authorities it already trusts. For
+            either, run the agent on the gateway's computer or reach the gateway from away.
           </li>
           <li>
             An address in numbers can change when your router hands out a new one. The
@@ -1001,10 +1003,10 @@
           settings add to the authorities they already trust, so their own connections keep working.
           An agent on another computer needs a copy of the file there, with the same variable set to
           the copy's path: on the home network, <strong>Connect an agent</strong> offers it as a
-          download and writes the line for that computer. Copy only <code>rootCA.pem</code>, never
-          <code>rootCA-key.pem</code>. A Tailscale certificate covers the gateway's Tailscale name,
-          not its home-network addresses, so an agent there is in the self-signed row. An agent on
-          the gateway's own computer needs none of this at
+          download for Claude Code and writes the line for that computer. Copy only
+          <code>rootCA.pem</code>, never <code>rootCA-key.pem</code>. A Tailscale certificate covers
+          the gateway's Tailscale name, not its home-network addresses, so an agent there is in the
+          self-signed row. An agent on the gateway's own computer needs none of this at
           <a href="#this-computer"><code>http://localhost:7601/mcp</code></a
           >. The portal does not offer the setting for a certificate of your own that no public
           authority issued; set the variable to the authority that issued it.

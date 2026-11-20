@@ -169,15 +169,17 @@ function HomeTrustNotice({ agent, certificate, onLocation, machinePlain }) {
   return html`<div class="access-agent-public is-warning" role="alert">
     <p>
       <strong>${agent.name} can't connect over your home network.</strong>${" "}
-      ${selfSigned && !kinds.includes("self-signed")
-        ? `It can't trust a self-signed certificate, which is what this gateway serves there.`
-        : `It trusts only a certificate from an authority it knows, and the one this gateway serves there isn't.`}
+      ${agent.certificateTrust?.gatewayComputerOnly
+        ? `Its setting for trusting another certificate may replace the authorities it already trusts and cut it off from its own service, so Omnesis doesn't offer it for another computer yet.`
+        : selfSigned && !kinds.includes("self-signed")
+          ? `It can't trust a self-signed certificate, which is what this gateway serves there.`
+          : `It trusts only a certificate from an authority it knows, and the one this gateway serves there isn't.`}
     </p>
     <p>
       ${machinePlain &&
       html`If ${agent.name} can run on the computer this gateway runs on,${" "}
         <button type="button" class="access-link-button" onClick=${() => onLocation("machine")}>choose On this computer</button>:
-        that address needs no certificate.${" "}`}${selfSigned && kinds.includes("mkcert")
+        that address needs no certificate.${" "}`}${selfSigned && kinds.includes("mkcert") && !agent.certificateTrust?.gatewayComputerOnly
         ? html`${machinePlain ? "Or " : ""}<${ExternalLink} href=${PUBLISH_DOCS.certificates}>give the gateway an mkcert certificate<//>, which ${agent.name} trusts with one setting.${" "}`
         : ""}Otherwise reach this gateway from away, through an address set up in${" "}
       <a
