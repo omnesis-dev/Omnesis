@@ -32,7 +32,7 @@ import type { ChildProcess } from "node:child_process";
 import { once } from "node:events";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
-import { createServer, type AddressInfo } from "node:net";
+import { createServer, type AddressInfo, type Server } from "node:net";
 import { join } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import {
@@ -87,16 +87,32 @@ export function browserSuiteAvailable(suite: string): boolean {
   return false;
 }
 
+/**
+ * Distinct free loopback ports. Every probe listener stays open until all of them
+ * are chosen, so one call never returns a port twice. A port is only free when it
+ * is returned: any socket on the machine may take it before its user binds it.
+ */
+export async function freePorts(count: number): Promise<number[]> {
+  const servers: Server[] = [];
+  try {
+    for (let i = 0; i < count; i += 1) {
+      const server = createServer();
+      server.unref();
+      servers.push(server);
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+    }
+    return servers.map((server) => (server.address() as AddressInfo).port);
+  } finally {
+    await Promise.all(
+      servers.map((server) => new Promise<void>((resolve) => server.close(() => resolve()))),
+    );
+  }
+}
+
 export async function freePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const server = createServer();
-    server.unref();
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => {
-      const port = (server.address() as AddressInfo).port;
-      server.close(() => resolve(port));
-    });
-  });
+  const [port] = await freePorts(1);
+  return port!;
 }
 
 export async function waitFor<T>(
@@ -181,12 +197,32 @@ export interface WorldOptions {
   google?: boolean;
   /** More relay settings, applied last (for example lower per-client sign-in limits). */
   extraEnv?: NodeJS.ProcessEnv;
+  /** Also serve the relay's metrics, on a port the world chooses (`metricsPort`). */
+  metrics?: boolean;
+  /**
+   * Chooses the relay's listening ports (default `freePorts`). The harness's own
+   * test passes one that lets another listener take a chosen port first.
+   */
+  freePorts?: (count: number) => Promise<number[]>;
+}
+
+/** The ports a relay binds: its HTTPS control port, TLS passthrough port and metrics port. */
+interface RelayPorts {
+  relay: number;
+  data: number;
+  metrics?: number;
+}
+
+/** How many times a world starts its first relay, each time on newly chosen ports. */
+const RELAY_PORT_ATTEMPTS = 3;
+
+/** The relay exited during startup because one of its ports was already bound. */
+function relayPortTaken(error: unknown): boolean {
+  return error instanceof Error && /^Relay exited [^]*\(EADDRINUSE\)/.test(error.message);
 }
 
 export class EnrollmentWorld {
-  readonly relayPort: number;
-  readonly dataPort: number;
-  readonly relayOrigin: string;
+  private ports: RelayPorts = { relay: 0, data: 0 };
   readonly relayKeyFile: string;
   readonly accountKeyFile: string;
   /** The operator's invite key: the relay is given only its public half. */
@@ -212,14 +248,27 @@ export class EnrollmentWorld {
     readonly preload: string,
     readonly noBrowserPreload: string,
     readonly relayLeaf: Leaf,
-    ports: { relay: number; data: number },
     private options: WorldOptions,
   ) {
-    this.relayPort = ports.relay;
-    this.dataPort = ports.data;
-    this.relayOrigin = `https://${RELAY_HOST}:${ports.relay}`;
     this.relayKeyFile = join(directory, "relay-session.key");
     this.accountKeyFile = join(directory, "relay-account-authority.pem");
+  }
+
+  get relayPort(): number {
+    return this.ports.relay;
+  }
+
+  get dataPort(): number {
+    return this.ports.data;
+  }
+
+  /** The relay's metrics port, when the world was created with `metrics`. */
+  get metricsPort(): number | undefined {
+    return this.ports.metrics;
+  }
+
+  get relayOrigin(): string {
+    return `https://${RELAY_HOST}:${this.ports.relay}`;
   }
 
   static async create(directory: string, options: WorldOptions): Promise<EnrollmentWorld> {
@@ -237,7 +286,6 @@ export class EnrollmentWorld {
       await writeLoopbackDnsPreload(directory),
       await writeNoBrowserPreload(directory),
       relayLeaf,
-      { relay: await freePort(), data: await freePort() },
       options,
     );
     try {
@@ -258,7 +306,7 @@ export class EnrollmentWorld {
         JSON.stringify({ token: "fixture-relay-dns-token" }),
         { mode: 0o600 },
       );
-      await world.startRelay();
+      await world.startFirstRelay();
       return world;
     } catch (error) {
       await closeEnrollmentFixture(undefined, [
@@ -312,6 +360,29 @@ export class EnrollmentWorld {
     );
   }
 
+  /**
+   * Starts the world's first relay on newly chosen ports. The ports are probed
+   * free and released for the relay to bind, so another socket on the machine can
+   * take one in between, and the relay then exits with EADDRINUSE. Nothing has
+   * used the ports before this start, so only it is retried, on new ports; a
+   * restart keeps the ports that gateways and browsers already know.
+   */
+  private async startFirstRelay(): Promise<void> {
+    for (let attempt = 1; ; attempt += 1) {
+      const [relay, data, metrics] = await (this.options.freePorts ?? freePorts)(
+        this.options.metrics ? 3 : 2,
+      );
+      this.ports = { relay: relay!, data: data!, ...(this.options.metrics ? { metrics } : {}) };
+      try {
+        await this.startRelay();
+        return;
+      } catch (error) {
+        if (attempt >= RELAY_PORT_ATTEMPTS || !relayPortTaken(error)) throw error;
+        await this.stopRelay();
+      }
+    }
+  }
+
   async startRelay(options: Partial<WorldOptions> = {}): Promise<void> {
     this.options = { ...this.options, ...options };
     const command = e2eTsxCommand("packages/cloud-relay/src/main.ts");
@@ -328,6 +399,9 @@ export class EnrollmentWorld {
         OMNESIS_CLOUD_RELAY_PORT: String(this.relayPort),
         OMNESIS_CLOUD_RELAY_DATA_PORT: String(this.dataPort),
         OMNESIS_CLOUD_RELAY_PUBLIC_DATA_PORT: String(this.dataPort),
+        ...(this.metricsPort === undefined
+          ? {}
+          : { OMNESIS_CLOUD_RELAY_METRICS_PORT: String(this.metricsPort) }),
         OMNESIS_CLOUD_RELAY_DOMAIN: RELAY_HOST,
         OMNESIS_CLOUD_RELAY_PUBLIC_ORIGIN: this.relayOrigin,
         OMNESIS_CLOUD_RELAY_TLS_CERT_FILE: this.relayLeaf.certFile,
