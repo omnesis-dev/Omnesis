@@ -118,8 +118,8 @@ start_colima() {
     fi
     endgroup
     colima_diagnostics
-    [ "$attempt" -lt "$START_ATTEMPTS" ] || die "Colima did not start in $START_ATTEMPTS attempts; what it left is printed above"
-    log "Colima did not start; deleting the instance and starting it once more"
+    [ "$attempt" -lt "$START_ATTEMPTS" ] || die "Colima's VM failed to start in $START_ATTEMPTS attempts; what it left is printed above"
+    log "Colima's VM failed to start; deleting the instance and starting it once more"
     colima delete --force --data || true
     attempt=$((attempt + 1))
   done

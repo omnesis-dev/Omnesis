@@ -119,7 +119,7 @@ describe("colima-up.sh start", () => {
     const result = run("start");
     expect(result.status).not.toBe(0);
     expect(recorded().match(/^colima start /gmu)).toHaveLength(2);
-    expect(result.stderr).toContain("Colima did not start in 2 attempts");
+    expect(result.stderr).toContain("Colima's VM failed to start in 2 attempts");
   });
 
   it("refuses a Mac that cannot start a VM, and a machine that is not CI", () => {
