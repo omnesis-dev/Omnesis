@@ -772,3 +772,47 @@ test("status says when connecting didn't finish, why, and both ways on", () => {
   );
   expect(formatCloudStatus({})).not.toContain("Connecting:");
 });
+
+test("another authority's certificate step names none, and an address the gateway reports badly is not printed", async () => {
+  const output = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+  terminal(false);
+  gatewayReplies(
+    { account: { linked: false } },
+    { connect: { state: "registering", step: "certificate" } },
+    { ...done, publicOrigin: "https://[not-an-address", publicMcp: undefined },
+  );
+  await connectGateway({ existing: true });
+  let text = printed(output);
+  expect(text).toContain("Getting this gateway's certificate. This usually takes under a minute…");
+  expect(text).not.toContain("Let's Encrypt");
+  expect(text).not.toContain("Address:");
+  // Without an MCP address of its own, the gateway's MCP path is at its address.
+  output.mockClear();
+  gatewayReplies(ready, {
+    ...done,
+    publicOrigin: "https://g-fictional.relay.example.test",
+    publicMcp: {},
+  });
+  await connectGateway({ existing: true });
+  text = printed(output);
+  expect(text).toContain("  MCP:     https://g-fictional.relay.example.test/mcp\n");
+  // Only an https address without credentials is printed.
+  for (const publicOrigin of [
+    "http://g-fictional.relay.example.test",
+    "https://user:secret@g-fictional.relay.example.test",
+  ]) {
+    output.mockClear();
+    gatewayReplies(ready, { ...done, publicOrigin, publicMcp: {} });
+    await connectGateway({ existing: true });
+    expect(printed(output)).not.toContain("Address:");
+  }
+});
+
+test("start-over passes any other failure on unchanged", async () => {
+  gatewayJson.mockImplementation(async () => {
+    throw new Error("Gateway 503 /admin/cloud-relay/start-over: unavailable");
+  });
+  await expect(runCommand(cloudManagementCommands["start-over"], { rawArgs: [] })).rejects.toThrow(
+    "Gateway 503",
+  );
+});

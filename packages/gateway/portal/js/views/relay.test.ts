@@ -1334,3 +1334,20 @@ test("a chosen new account that already existed is said once connected, with the
   await show();
   expect(text()).not.toContain("Your invite wasn't used");
 });
+
+test("waiting after choosing to create an account names the button for it", async () => {
+  state.status = {
+    ...base(),
+    connect: {
+      state: "waiting",
+      intent: "create",
+      authorizeUrl: AUTHORIZE,
+      connectUrl: "https://relay.example.test/_relay/connect",
+      code: "H7KM-3QPX",
+    },
+  };
+  await show();
+  expect(headline()).toBe("Create your Omnesis account");
+  expect(link("Create your Omnesis account").getAttribute("href")).toBe(AUTHORIZE);
+  expect(link("Sign in to your Omnesis account")).toBeUndefined();
+});

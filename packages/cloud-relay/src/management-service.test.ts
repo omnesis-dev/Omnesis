@@ -3088,6 +3088,10 @@ for (const [status, code] of [
     expect(f.options.discover).not.toHaveBeenCalled();
     expect(f.relay.started()).toBeUndefined();
     expect((await manager.status()).configured).toBe(false);
+    // Nothing was saved, so starting over only ends the failed attempt.
+    const fresh = await manager.startOver();
+    expect(fresh.connect).toBeUndefined();
+    expect(fresh.configured).toBe(false);
   });
 }
 
@@ -3483,4 +3487,34 @@ test("starting over waits for a registration in flight, which may succeed", asyn
   // It registered, so there is nothing unfinished to discard.
   expect((await manager.status()).unfinished).toBeUndefined();
   await expect(manager.startOver()).rejects.toMatchObject({ code: "already-connected" });
+});
+
+test("a marker that can't be written leaves the registration standing, and a marked failure stops admission", async () => {
+  const original = privateCredentials.savePrivateJson;
+  let failure: unknown = new Error("disk full");
+  vi.spyOn(privateCredentials, "savePrivateJson").mockImplementation((path, value) =>
+    String(path).endsWith("registered.json") ? Promise.reject(failure) : original(path, value),
+  );
+  const f = fixture();
+  manager = await GatewayCloudRelayManagement.open(f.options);
+  await manager.configure(input);
+  await manager.enable();
+  await idle();
+  // Registered all the same: the address is offered, and its session says so after a restart.
+  expect(await manager.status()).toMatchObject({
+    enrollment: { state: "enrolled" },
+    publicOrigin: "https://gateway.example.test",
+  });
+  await manager.close();
+  failure = markedFileError("ENOENT", "own");
+  const marked = fixture();
+  await rm(join(directory, "cloud-relay"), { recursive: true, force: true });
+  manager = await GatewayCloudRelayManagement.open(marked.options);
+  await manager.configure(input);
+  // The launch may already have failed by the time enabling returns.
+  await manager.enable().catch(() => {});
+  await vi.waitFor(() => expect(manager!.cleanupFailure()).toBe(failure));
+  // Closing reports the same unfinished private operation.
+  await expect(manager.close()).rejects.toBeDefined();
+  manager = undefined;
 });

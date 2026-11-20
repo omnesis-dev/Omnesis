@@ -1702,7 +1702,6 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
       return this.control(async () => {
         await this.admitted(() => this.stopConnecting());
         await this.admitted(() => this.stop());
-        if (this.connected) throw new CloudRelayManagementFailure(409, "already-connected");
         const settings = this.settings;
         if (settings) {
           const e = this.environment();
