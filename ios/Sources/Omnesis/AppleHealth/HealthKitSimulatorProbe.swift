@@ -101,7 +101,7 @@ enum HealthKitSimulatorProbe {
         let quiet = try await runPass(source, from: second.cursor)
         checks.append(Check(
             name: "quiet-pass",
-            passed: quiet.pages == 1 && quiet.ids.filter { seeded.all.contains($0) || added.contains($0) }.isEmpty,
+            passed: quiet.pages == 1 && !quiet.ids.contains { seeded.all.contains($0) || added.contains($0) },
             detail: "\(quiet.pages) page(s) for a pass with nothing new"
         ))
 
