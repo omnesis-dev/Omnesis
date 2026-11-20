@@ -84,6 +84,31 @@ it("reports a bounded native error without exposing arbitrary worker output", as
   );
 });
 
+it.each(["open", "wait", "birth", "enumerate", "query-C000010A"])(
+  "retains the native %s failure phase while keeping snapshot errors fail-closed",
+  async (phase) => {
+    mocks.run.mockResolvedValue({
+      ...success(),
+      exitCode: 1,
+      stderr: `private-output EPRIVATE:process-snapshot-${phase}:5 private-output`,
+    });
+    await expect(snapshotWindowsProcesses([123])).rejects.toMatchObject({
+      message: `Owned Windows process operation EPRIVATE:process-snapshot-${phase}:5`,
+    });
+  },
+);
+
+it("never exposes unknown diagnostic phases or arbitrary worker output", async () => {
+  mocks.run.mockResolvedValue({
+    ...success(),
+    exitCode: 1,
+    stderr: "private-output EPRIVATE:process-snapshot-private-output:5 private-output",
+  });
+  await expect(snapshotWindowsProcesses([123])).rejects.toMatchObject({
+    message: "Owned Windows process operation failed",
+  });
+});
+
 it("does not bootstrap or launch native code for empty ownership sets", async () => {
   expect(await snapshotWindowsProcesses([])).toEqual([]);
   expect(snapshotWindowsProcessesSync([])).toEqual([]);
