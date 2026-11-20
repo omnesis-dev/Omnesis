@@ -41,9 +41,13 @@ A Fastmail IMAP connection hot-links Fastmail's first-party touch icon. An iClou
 
 Maildir is a storage format, not a product, so it has no mark to use. The source uses a generic [Lucide](https://lucide.dev) `inbox` glyph (ISC-licensed) tinted teal.
 
+### Plaud
+
+The Plaud source reads recordings through the unofficial API Plaud's own web app uses and makes no use of Plaud's marks. It uses a generic [Lucide](https://lucide.dev) `audio-lines` glyph (ISC-licensed) tinted slate.
+
 ## Lucide
 
-Several source packages bundle [Lucide](https://lucide.dev) icons (compass, hourglass, list-checks, message-square, contact-round, notebook-pen, calendar, phone-call, voicemail, globe, heart-pulse, footprints, image, map-pin, inbox). Lucide is licensed under the [ISC license](https://github.com/lucide-icons/lucide/blob/main/LICENSE).
+Several source packages bundle [Lucide](https://lucide.dev) icons (compass, hourglass, list-checks, message-square, contact-round, notebook-pen, calendar, phone-call, voicemail, globe, heart-pulse, footprints, image, map-pin, inbox, audio-lines). Lucide is licensed under the [ISC license](https://github.com/lucide-icons/lucide/blob/main/LICENSE).
 
 ## AI model provider marks
 

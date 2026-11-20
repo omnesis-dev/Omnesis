@@ -12577,6 +12577,21 @@
       "reason": "Public xcresulttool TestNodeType enum value, not a person's name."
     },
     {
+      "value": "Test Case",
+      "paths": ["scripts/ci/xcodebuild-ui-tests.test.mjs"],
+      "reason": "XCTest's own xcodebuild output line for a test case, not a person's name."
+    },
+    {
+      "value": "Error Domain",
+      "paths": ["scripts/ci/xcodebuild-ui-tests.test.mjs"],
+      "reason": "Part of an NSError description XCTest prints, not a person's name."
+    },
+    {
+      "value": "Underlying Error",
+      "paths": ["scripts/ci/xcodebuild-ui-tests.test.mjs"],
+      "reason": "Part of xcodebuild's error message for a test runner that failed to initialize, not a person's name."
+    },
+    {
       "value": "Expected Failure",
       "paths": ["scripts/ci/verify-ios-e2e-results.test.mjs"],
       "reason": "Public xcresulttool TestResult enum value, not a person's name."

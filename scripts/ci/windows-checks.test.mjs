@@ -235,6 +235,9 @@ describe("Windows CI coverage", () => {
     const [unit, e2e] = windowsCheckTasks("focused");
     expect(unit).toEqual(["scripts/run-check.mjs", "unit", ...FOCUSED_UNIT_FILES]);
     expect(e2e).toEqual(["scripts/run-check.mjs", "e2e", ...FOCUSED_E2E_FILES]);
+    expect(FOCUSED_UNIT_FILES).toContain(
+      "packages/source-sdk/src/local-agent-session-file-close.test.ts",
+    );
     expect(FOCUSED_E2E_FILES).toContain("packages/collector/src/e2e/synth-pipeline.e2e.test.ts");
     expect(FOCUSED_E2E_FILES).toContain("packages/collector/src/e2e/gateway-lifecycle.e2e.test.ts");
     for (const file of [

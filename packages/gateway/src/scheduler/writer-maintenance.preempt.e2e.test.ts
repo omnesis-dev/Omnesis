@@ -15,33 +15,44 @@
  * whole batch; each now gives the writer back once its time slice is spent.
  * Planner statistics are new writer work, analyzed one index at a time.
  *
- * For each op the suite holds one call to what it may cost: a short hold, an
- * unrelated write served promptly behind it, and the whole job done once the
- * calls are. `OMNESIS_WRITER_MAINTENANCE_DOCS` sizes the corpus for a bench.
+ * For each op the suite holds one call to what it may do, without a
+ * stopwatch: the work stays where it belongs (an io reader or the writer), a
+ * sliced call gives the writer back while it still has work so a write queued
+ * at its own priority finishes first, a call never runs past its unit budget,
+ * and the whole job is done once the calls are. A measured hold also measures
+ * the machine, its commits' fsyncs and the scheduling of two threads, so the
+ * holds and waits are printed for a bench and never asserted; the handlers'
+ * time slices are pinned with a fake clock in `writer-batch-slices.test.ts`
+ * and `cascade-order.test.ts`. `OMNESIS_WRITER_MAINTENANCE_DOCS` sizes the
+ * corpus for a bench.
  */
 
 import { randomBytes } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
 import { createLogger } from "@omnesis/core";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import {
+  KNOWLEDGE_CASCADE_NEXT_JOB_SQL,
+  KNOWLEDGE_CASCADE_NEXT_ROW_SQL,
+} from "../brain/knowledge/storage-invalidation.js";
 import { createDatabase, openReadOnlyDatabase } from "../db.js";
 import { runWithPriority } from "../priority.js";
 import { setActiveAlgoVersion } from "../near-dupes/meta.js";
 import { BUCKET_DELETE_FOR_DOC_SQL } from "../near-dupes/NearDupWriterOps.js";
+import { sqlitePerformanceDatabasePath } from "../../test/sqlite-performance-temp.js";
 import { Scheduler } from "./scheduler.js";
 import { WriterTaskRunner } from "./runners/writer.js";
 import { IoTaskRunner } from "./runners/io.js";
 import { writeGateFromScheduler } from "./write-ops.js";
 import { ioGateFromScheduler, type IoGate } from "./io-ops.js";
-import { sqlitePerformanceDatabasePath } from "../../test/sqlite-performance-temp.js";
 import { catalogRefreshTask } from "./tasks/backfill-tasks.js";
 import { sweepCollapsedCandidates } from "./tasks/backfill-helpers.js";
 import {
-  PILOT_ALGO,
-  pilotDocId,
-  seedPilotCorpus,
-  type PilotCorpus,
-} from "./__fixtures__/pilot-corpus.js";
+  CORPUS_ALGO,
+  corpusDocId,
+  seedLargeCorpus,
+  type LargeCorpus,
+} from "./__fixtures__/large-corpus.js";
 import type { BackfillTaskOptsInternal } from "./tasks/backfill.js";
 import type { TaskContext } from "./types.js";
 import type { WriteGate } from "../write-gate.js";
@@ -52,23 +63,25 @@ const WRITER_URL = new URL("../workers/writer-worker.ts", import.meta.url);
 const IO_URL = new URL("../workers/io-worker.ts", import.meta.url);
 const LOADER_URL = new URL("../workers/register-tsx.mjs", import.meta.url).href;
 
-/** Documents in the corpus — the pilot held about 640k; a fifth keeps the suite quick. */
+/** Documents in the corpus: enough to make a whole-table pass slow, few enough to keep the suite quick. */
 const DOCS = Number(process.env.OMNESIS_WRITER_MAINTENANCE_DOCS ?? 120_000);
 const UNRESOLVED_DOCS = 400;
 const PENDING_CANDIDATES = 3_000;
-/** The longest a single call may hold the writer. */
+/**
+ * The average hold a call aims for, printed beside each op's measured holds for
+ * a bench to compare. Not asserted: a shared runner has measured a 254 ms
+ * average and a 621 ms single hold from ops whose slicing was intact.
+ */
 const HOLD_BUDGET_MS = 250;
 /**
- * A ceiling on an unrelated write's end-to-end wait behind a call, for a write
- * left waiting for seconds. The wait is measured on the caller's side, so it
- * also pays the round trips to the writer thread, the checkpoints the writer
- * runs between ops and any stall of a shared runner: 516 ms has been seen with
- * the longest hold at 206 ms, so no budget near the hold stays green. What keeps
- * the write from waiting behind a call is asserted without a clock: the write
- * finishes while a sliced call still has work left, and the holds stay within
- * `expectHoldsWithinBudget`.
+ * The worst single hold a bench should see, printed beside the measured one.
+ * One statement can't be sliced, and a call that does not slice at all holds
+ * for seconds: the people backfill held 6.6 s as one call and planner
+ * statistics 1.1 s.
  */
-const WAIT_BUDGET_MS = 10 * HOLD_BUDGET_MS;
+const WORST_HOLD_MS = 4 * HOLD_BUDGET_MS;
+/** The cascade's step budget per call, the largest `knowledge.advanceCascade` accepts. */
+const CASCADE_STEPS = 1_000;
 
 /** Whether `op` has yet to settle, read after awaiting something queued behind it. */
 function stillRunning(op: unknown): () => boolean {
@@ -79,20 +92,6 @@ function stillRunning(op: unknown): () => boolean {
   void Promise.resolve(op).then(settled, settled);
   return () => running;
 }
-/**
- * The worst single hold a run may see. One statement can't be sliced, and on a
- * stalling runner one took 621 ms where 25 earlier runs never passed 235 ms, while
- * the op's total barely moved. So the average hold is held to `HOLD_BUDGET_MS`, and
- * the worst to this ceiling, which a call that does not slice still passes: the
- * people backfill held 6.6 s as one call and planner statistics 1.1 s.
- */
-const WORST_HOLD_MS = 4 * HOLD_BUDGET_MS;
-
-function expectHoldsWithinBudget(stats: { count: number; totalExecMs: number; max: number }): void {
-  expect(stats.totalExecMs / stats.count).toBeLessThan(HOLD_BUDGET_MS);
-  expect(stats.max).toBeLessThan(WORST_HOLD_MS);
-}
-
 const CURSOR: SyncCursor = {
   type: "incremental",
   lastSyncTime: "2026-01-05T09:00:00.000Z",
@@ -106,7 +105,7 @@ function cleanupDb(path: string): void {
 describe("writer maintenance against a large encrypted corpus", () => {
   const key = randomBytes(32);
   let dbPath: string;
-  let corpus: PilotCorpus;
+  let corpus: LargeCorpus;
   let scheduler: Scheduler;
   let gate: WriteGate;
   let io: IoGate;
@@ -117,8 +116,8 @@ describe("writer maintenance against a large encrypted corpus", () => {
     dbPath = sqlitePerformanceDatabasePath();
     const seed = createDatabase(dbPath, { encryptionKey: key }) as unknown as Database.Database;
     try {
-      setActiveAlgoVersion(seed as never, PILOT_ALGO);
-      corpus = seedPilotCorpus(seed, {
+      setActiveAlgoVersion(seed as never, CORPUS_ALGO);
+      corpus = seedLargeCorpus(seed, {
         docs: DOCS,
         unresolvedDocs: UNRESOLVED_DOCS,
         pendingCandidates: PENDING_CANDIDATES,
@@ -167,16 +166,26 @@ describe("writer maintenance against a large encrypted corpus", () => {
     return read.prepare<string[], { n: number }>(sql).get(...args)!.n;
   }
 
+  function explain(sql: string, ...args: unknown[]): string[] {
+    return read
+      .prepare<unknown[], { detail: string }>(`EXPLAIN QUERY PLAN ${sql}`)
+      .all(...args)
+      .map((row) => row.detail);
+  }
+
   function writerStats(name: string) {
     const stats = scheduler.snapshot(900).perTask.find((t) => t.name === name);
     expect(stats?.count).toBeGreaterThan(0);
     return stats!;
   }
 
-  function report(name: string, wallMs: number): void {
+  /** Print an op's measured holds, and the wait of the write queued behind it, for a bench. */
+  function report(name: string, wallMs: number, waitedMs?: number): void {
     const stats = writerStats(name);
+    const avgHold = stats.totalExecMs / stats.count;
+    const waited = waitedMs === undefined ? "" : ` wait=${waitedMs.toFixed(0)}ms`;
     process.stdout.write(
-      `[writer maintenance bench] docs=${DOCS} op=${name} calls=${stats.count} yields=${stats.yieldCount} p95Hold=${stats.p95.toFixed(0)}ms maxHold=${stats.max.toFixed(0)}ms totalHold=${stats.totalExecMs.toFixed(0)}ms wall=${wallMs.toFixed(0)}ms\n`,
+      `[writer maintenance bench] docs=${DOCS} op=${name} calls=${stats.count} yields=${stats.yieldCount} avgHold=${avgHold.toFixed(0)}ms (aim ${HOLD_BUDGET_MS}ms) p95Hold=${stats.p95.toFixed(0)}ms maxHold=${stats.max.toFixed(0)}ms (aim ${WORST_HOLD_MS}ms) totalHold=${stats.totalExecMs.toFixed(0)}ms wall=${wallMs.toFixed(0)}ms${waited}\n`,
     );
   }
 
@@ -207,9 +216,9 @@ describe("writer maintenance against a large encrypted corpus", () => {
     const refreshing = runWithPriority("background", () => task.run(undefined, {} as TaskContext));
     const waited = await waitBehind("user", 30);
     await refreshing;
-    report("catalog.upsertSqliteTableStats", performance.now() - started);
-    expect(waited).toBeLessThan(WAIT_BUDGET_MS);
-    expectHoldsWithinBudget(writerStats("catalog.upsertSqliteTableStats"));
+    report("catalog.upsertSqliteTableStats", performance.now() - started, waited);
+    // The writer's whole share of the refresh is one call storing finished rows.
+    expect(writerStats("catalog.upsertSqliteTableStats").count).toBe(1);
     expect(
       scheduler.snapshot(900).perTask.some((t) => t.name === "catalog.refreshSqliteTableStats"),
     ).toBe(false);
@@ -234,7 +243,6 @@ describe("writer maintenance against a large encrypted corpus", () => {
     report("people.acceptCollapsedMergeCandidates", performance.now() - started);
     expect(swept).toBe(corpus.collapsedCandidateIds.length);
     expect(accepted() - acceptedBefore).toBe(swept);
-    expectHoldsWithinBudget(writerStats("people.acceptCollapsedMergeCandidates"));
     expect(
       scheduler
         .snapshot(900)
@@ -251,39 +259,61 @@ describe("writer maintenance against a large encrypted corpus", () => {
     const waited = await waitBehind("background");
     expect(backfillRunning()).toBe(true);
     const result = await backfilling;
-    report("people.backfillManyPeople", performance.now() - started);
+    report("people.backfillManyPeople", performance.now() - started, waited);
     expect(result.processed).toBe(UNRESOLVED_DOCS);
     expect(count("SELECT COUNT(*) AS n FROM documents WHERE people_resolved_at IS NULL")).toBe(0);
-    expect(waited).toBeLessThan(WAIT_BUDGET_MS);
-    const stats = writerStats("people.backfillManyPeople");
-    expect(stats.yieldCount).toBeGreaterThan(0);
-    expectHoldsWithinBudget(stats);
+    expect(writerStats("people.backfillManyPeople").yieldCount).toBeGreaterThan(0);
   }, 600_000);
 
-  test("a full cascade step budget stays inside the hold and lets a same-priority write in", async () => {
-    const before = count("SELECT COUNT(*) AS n FROM knowledge_cascade_jobs");
-    expect(before).toBeGreaterThan(1_000);
+  test("a full cascade step budget stops within its steps and lets a same-priority write in", async () => {
+    const jobs = () => count("SELECT COUNT(*) AS n FROM knowledge_cascade_jobs");
+    const before = jobs();
+    expect(before).toBeGreaterThan(6 * CASCADE_STEPS);
+    // A call's hold is its steps times the cost of a step. A step picks its row
+    // from this backlog with index seeks only, so it costs the same however
+    // many jobs wait.
+    const firstJob = read
+      .prepare<[], { id: number }>("SELECT MIN(id) AS id FROM knowledge_cascade_jobs")
+      .get()!.id;
+    const plans = [
+      ...explain(KNOWLEDGE_CASCADE_NEXT_JOB_SQL, "purge"),
+      ...explain(KNOWLEDGE_CASCADE_NEXT_JOB_SQL, "invalidate"),
+      ...explain(KNOWLEDGE_CASCADE_NEXT_ROW_SQL, firstJob),
+    ];
+    expect(plans.length).toBeGreaterThan(0);
+    for (const detail of plans) {
+      expect(detail).toMatch(/^SEARCH /);
+      expect(detail).not.toMatch(/TEMP B-TREE/);
+    }
+    const advance = () =>
+      runWithPriority("background", () =>
+        gate["knowledge.advanceCascade"](CASCADE_STEPS, Date.now()),
+      );
     const started = performance.now();
-    const cascading = runWithPriority("background", () =>
-      gate["knowledge.advanceCascade"](1_000, Date.now()),
-    );
+    const cascading = advance();
     const waited = await waitBehind("background");
     expect((await cascading).pending).toBe(true);
-    for (let i = 0; i < 5; i++)
-      await runWithPriority("background", () =>
-        gate["knowledge.advanceCascade"](1_000, Date.now()),
-      );
-    report("knowledge.advanceCascade", performance.now() - started);
-    expect(before - count("SELECT COUNT(*) AS n FROM knowledge_cascade_jobs")).toBeGreaterThan(5);
-    expect(waited).toBeLessThan(WAIT_BUDGET_MS);
-    expectHoldsWithinBudget(writerStats("knowledge.advanceCascade"));
+    // Each job here is one invalidated source with no dependents, so it is
+    // finished in one step: a call that drains more jobs than its step budget
+    // ran past that budget.
+    const drained = [before - jobs()];
+    for (let i = 0; i < 5; i++) {
+      const pending = jobs();
+      expect((await advance()).pending).toBe(true);
+      drained.push(pending - jobs());
+    }
+    report("knowledge.advanceCascade", performance.now() - started, waited);
+    for (const steps of drained) {
+      expect(steps).toBeGreaterThan(0);
+      expect(steps).toBeLessThanOrEqual(CASCADE_STEPS);
+    }
   }, 600_000);
 
   test("planner statistics are analyzed one bounded unit at a time and change the plan", async () => {
     const unpinned = BUCKET_DELETE_FOR_DOC_SQL.replace(" INDEXED BY idx_near_dup_lsh_doc", "");
     const plan = (db: Database.Database) =>
       (
-        db.prepare(`EXPLAIN QUERY PLAN ${unpinned}`).all(pilotDocId(6), PILOT_ALGO) as Array<{
+        db.prepare(`EXPLAIN QUERY PLAN ${unpinned}`).all(corpusDocId(6), CORPUS_ALGO) as Array<{
           detail: string;
         }>
       )
@@ -297,12 +327,9 @@ describe("writer maintenance against a large encrypted corpus", () => {
     const waited = await waitBehind("background");
     expect(analyzeRunning()).toBe(true);
     const { analyzed } = await analyzing;
-    report("db.refreshPlannerStatistics", performance.now() - started);
+    report("db.refreshPlannerStatistics", performance.now() - started, waited);
     expect(analyzed).toBeGreaterThan(50);
-    expect(waited).toBeLessThan(WAIT_BUDGET_MS);
-    const stats = writerStats("db.refreshPlannerStatistics");
-    expect(stats.yieldCount).toBeGreaterThan(0);
-    expectHoldsWithinBudget(stats);
+    expect(writerStats("db.refreshPlannerStatistics").yieldCount).toBeGreaterThan(0);
     expect(count("SELECT COUNT(DISTINCT tbl) AS n FROM sqlite_stat1")).toBeGreaterThanOrEqual(15);
 
     const fresh = openReadOnlyDatabase(dbPath, { encryptionKey: key });

@@ -231,6 +231,7 @@ export const FOCUSED_UNIT_FILES = [
   "packages/source-sdk/src/node-path-boundary.test.ts",
   "packages/source-sdk/src/node-path-boundary-aliases.test.ts",
   "packages/source-sdk/src/local-agent-sessions.test.ts",
+  "packages/source-sdk/src/local-agent-session-file-close.test.ts",
   "packages/collector/src/e2e/gateway-env.test.ts",
   "packages/collector/src/e2e/subprocess-reaper.test.ts",
   "packages/collector/src/e2e/enrollment-browser-fixture.test.ts",

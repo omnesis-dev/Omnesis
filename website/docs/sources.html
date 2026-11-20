@@ -289,7 +289,10 @@
                   whose audio cannot be decoded is not sent to the transcriber again until the
                   source is resynced. Message sync continues when media processing is disabled or
                   unavailable. Pending media stays in the local archive for later retries, within
-                  the source's date range. The add flow shows a QR code; scan it under WhatsApp
+                  the source's date range. Disappearing messages are archived like any other and
+                  stay after they disappear from the phones, because WhatsApp tells a linked device
+                  nothing when they expire; a message deleted for everyone or for you leaves the
+                  index. The add flow shows a QR code; scan it under WhatsApp
                   <strong>Settings → Linked Devices → Link a Device</strong>, and the collector
                   starts syncing without a restart. WhatsApp may unlink a device after roughly two
                   weeks without activity; run
@@ -601,8 +604,17 @@
           </li>
           <li>
             <strong>Never archived.</strong> Secret chats, which Telegram keeps only on the two
-            devices in them; view-once photos and videos; messages under an auto-delete timer; and
-            stories.
+            devices in them, and stories.
+          </li>
+          <li>
+            <strong>Self-destructing messages.</strong> View-once photos and videos and messages
+            under an auto-delete timer are left out until you turn on
+            <em>Keep self-destructing messages</em> in the source's settings. With it on they are
+            archived as they arrive and stay in the index after their timer removes them from
+            Telegram; one deleted by hand before its timer runs still leaves the index, unless the
+            collector was offline until after the timer and learns of both at once. Turning it off
+            stops archiving new ones and keeps those already archived. Check
+            <a href="#telegram-terms">Telegram's terms</a> before turning it on.
           </li>
           <li>
             <strong>History.</strong> The whole history is read in the background, most recent chats
@@ -622,7 +634,7 @@
             it leaves your device list.
           </li>
         </ul>
-        <p>
+        <p id="telegram-terms">
           <strong>Telegram's terms.</strong> Using this source is subject to the
           <a href="https://telegram.org/tos">Telegram Terms of Service</a> and the
           <a href="https://core.telegram.org/api/terms">Telegram API Terms of Service</a>. It is
@@ -715,9 +727,68 @@
                   up deleted ones.
                 </td>
               </tr>
+              <tr>
+                <td>
+                  Plaud<br /><span class="pill">any collector</span>
+                  <span class="pill">experimental</span>
+                </td>
+                <td>
+                  Recordings from Plaud voice recorders, one conversation document each, with
+                  Plaud's summary. Offered only when the collector runs with
+                  <code>OMNESIS_EXPERIMENTAL=1</code>. See <a href="#plaud">Plaud</a>.
+                </td>
+              </tr>
             </tbody>
           </table>
         </div>
+
+        <h3 id="plaud">Plaud</h3>
+        <p>
+          Plaud reads the recordings a <a href="https://www.plaud.ai/">Plaud</a> recorder uploaded
+          to Plaud's cloud. It is experimental: it uses the API Plaud's own web app uses, which is
+          not published and can change without notice, and the collector offers it only with
+          <code>OMNESIS_EXPERIMENTAL=1</code>. It signs in the way Plaud's app does: you enter the
+          email address of your Plaud account, Plaud emails a one-time code, and you enter the code.
+          Accounts created with Google or Apple sign-in have no emailed code and cannot be
+          connected.
+        </p>
+        <div class="term">
+          <pre><span class="t-p">$ </span><span class="t-cmd">omnesis sources add plaud</span></pre>
+        </div>
+        <ul>
+          <li>
+            <strong>Transcripts.</strong> When a transcriber is assigned (Settings → Models), the
+            collector downloads each recording's audio, has the gateway transcribe it and discards
+            the audio. It keeps the transcript, encrypted with the rest of the account's sign-in, so
+            a renamed recording or a new Plaud summary does not transcribe the audio again. Plaud's
+            own transcript, with its speaker labels, stands in when no transcriber is available,
+            when a recording is larger than the transcriber accepts (25 MiB), or when the
+            transcriber cannot read it. A recording with neither shows that no transcript is
+            available yet and is read again once Plaud finishes its own.
+          </li>
+          <li>
+            <strong>Summaries and details.</strong> Plaud's summary, key points and action items
+            become a section of the document; the recorder's name, the length, Plaud's keywords and
+            its speaker labels are searchable details.
+          </li>
+          <li>
+            <strong>Changes and deletions.</strong> Each sync, every 30 minutes by default, lists
+            your recordings and reads the ones that are new or changed. Once a day the listing also
+            removes recordings you deleted or moved to Plaud's trash. Several Plaud accounts can be
+            connected, one per address.
+          </li>
+          <li>
+            <strong>Signing in again.</strong> Plaud renews the sign-in on its own until it expires;
+            then the source needs authentication, and
+            <code>omnesis sources reauth plaud:&lt;email&gt;</code> asks Plaud for a new code.
+          </li>
+        </ul>
+        <p>
+          <strong>Plaud's terms.</strong> Using this source is subject to the
+          <a href="https://www.plaud.ai/pages/plaud-terms-of-service">Plaud Terms of Service</a>. It
+          is your responsibility to read them before connecting the source and to follow them while
+          you use it.
+        </p>
 
         <h2 id="coding-agents">Coding agents</h2>
         <p>
@@ -1667,7 +1738,11 @@
           independently. Your browser may need to be signed out of the platform, or signed in to the
           account you want, for its account chooser to offer it. Sources that read one local store —
           the Apple sources, Things, Screen Time, Local Files, and the coding-agent sources — take
-          one account per machine, and show as already configured once set up on that collector.
+          one account per machine, and show as already configured once set up on that collector. The
+          portal's Sources page lists the accounts of one type under a single row that names the
+          type, counts its accounts, sums their documents, and tallies their states; click it to
+          show or hide each account. It opens on its own when one of its accounts needs attention,
+          such as an error or a sign-in to renew.
         </p>
 
         <h3 id="google-oauth-client">Google's OAuth client</h3>

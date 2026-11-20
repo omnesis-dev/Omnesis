@@ -5,6 +5,7 @@ import { dirname } from "node:path";
 import { createHash } from "node:crypto";
 import { createLogger } from "@omnesis/core";
 import { RowKeyError } from "@omnesis/source-sdk";
+import { sourceTypeOf } from "@omnesis/types";
 import { AnalyticsPageReceiptConflict } from "../../analytics/page-receipt-store.js";
 import { catalogOwnerIds } from "../../analytics/catalog-store.js";
 import { BadRequestError, ConflictError, InsufficientStorageError } from "../errors.js";
@@ -433,7 +434,12 @@ export class AnalyticsService {
     // silently reach a table holding every account's rows.
     return this.analyticsDb.executeQuery(sql, {
       limit,
-      ...(sourceId === undefined ? {} : { permittedSourceIds: new Set(catalogOwnerIds(sourceId)) }),
+      ...(sourceId === undefined
+        ? {}
+        : {
+            permittedSourceIds: new Set(catalogOwnerIds(sourceId)),
+            sharedSourceType: sourceTypeOf(sourceId),
+          }),
     });
   }
 

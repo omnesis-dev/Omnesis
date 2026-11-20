@@ -59,7 +59,9 @@ function bytes(result: WindowsJobResult): Buffer {
   const cleanupUncertain = Object.hasOwn(result, "cleanupFailure");
   if (result.failure || result.exitCode !== 0 || cleanupUncertain) {
     const code =
-      /EPRIVATE:process-(?:snapshot|kill):[0-9]+/u.exec(result.stderr)?.[0] ??
+      /EPRIVATE:process-(?:snapshot|kill)(?:-(?:open|wait|birth|enumerate|query-[0-9A-F]{8}))?:[0-9]{1,10}(?![0-9])/u.exec(
+        result.stderr,
+      )?.[0] ??
       result.failure ??
       "failed";
     const error = new Error(`Owned Windows process operation ${code}`);

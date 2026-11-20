@@ -76,6 +76,47 @@ function trackedTextFiles() {
     .filter((file) => !isVendored(file));
 }
 
+/**
+ * Every tracked file whose `.gitattributes` call it `text` (with or without an
+ * `eol`), with the line endings of its stored copy: `git ls-files --eol`
+ * reports the stored form as `i/lf`, `i/crlf`, `i/mixed`, `i/none` or `i/-text`.
+ */
+function explicitTextFiles() {
+  const listed = execFileSync("git", ["ls-files", "--eol", "-z"], {
+    cwd: ROOT,
+    encoding: "utf8",
+    maxBuffer: 64 * 1024 * 1024,
+  });
+  return listed
+    .split("\0")
+    .filter(Boolean)
+    .map((record) => {
+      const tab = record.indexOf("\t");
+      // `i/<stored> w/<checked out> attr/<text attribute> [eol=<lf|crlf>]`
+      const [stored, , attribute] = record.slice(0, tab).trim().split(/\s+/u);
+      return { file: record.slice(tab + 1), stored: stored.slice(2), attribute };
+    })
+    .filter(({ attribute }) => attribute === "attr/text");
+}
+
+describe("tracked files' line endings", () => {
+  // Git stores a `text` file with LF endings and converts the checked-out file
+  // to LF whenever it reads it back. A copy stored with CR LF reads back as
+  // different content, so `git status` reports the file modified whenever it
+  // compares contents instead of trusting the timestamps. It does that for a
+  // file written in the same second as the index, so a fresh clone shows a
+  // local change at random, and update and uninstall, which leave a checkout
+  // with local changes alone, then refuse it.
+  it("store every file the attributes declare text with LF endings", () => {
+    const files = explicitTextFiles();
+    expect(files.length).toBeGreaterThan(0);
+    const offenders = files
+      .filter(({ stored }) => stored === "crlf" || stored === "mixed")
+      .map(({ file, stored }) => `${file} (stored ${stored})`);
+    expect(offenders, "store them with LF endings: git add --renormalize <file>").toEqual([]);
+  });
+});
+
 describe("tracked source files", () => {
   const files = trackedTextFiles();
 

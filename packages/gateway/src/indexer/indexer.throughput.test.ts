@@ -296,19 +296,19 @@ describe("indexing scan throughput", () => {
   const bench = process.env.OMNESIS_INDEXER_BENCH === "1" ? test : test.skip;
 
   /**
-   * The pilot's shape, time-scaled by `SCALE` so it runs in minutes: a
+   * A slow-embedder install, time-scaled by `SCALE` so it runs in minutes: a
    * 10-document page and a 500 ms pause, one write transaction per document,
    * an embedder at ~20 chunks/s on its one indexing slot (50 ms a chunk), two
    * chunks a document. Every duration is divided by `SCALE`; rates are
-   * multiplied back, so the figures logged are at the pilot's real speed.
+   * multiplied back, so the figures logged are at that install's real speed.
    */
   bench(
-    "pilot-shaped backlog, time-scaled",
+    "slow-embedder backlog, time-scaled",
     async () => {
       const SCALE = Number(process.env.OMNESIS_INDEXER_BENCH_SCALE ?? 25);
       const TOTAL = Number(process.env.OMNESIS_INDEXER_BENCH_DOCS ?? 6000);
       const msPerChunk = 50 / SCALE;
-      const pilot: Pace = {
+      const slow: Pace = {
         pageSize: 10,
         sleepMs: 500 / SCALE,
         dbWriteBatchSize: 1,
@@ -321,38 +321,38 @@ describe("indexing scan throughput", () => {
         slots: number;
         user?: boolean;
       }> = [
-        { name: "re-walk, 95% indexed, fixed", share: 0.95, pace: pilot, slots: 1 },
+        { name: "re-walk, 95% indexed, fixed", share: 0.95, pace: slow, slots: 1 },
         {
           name: "re-walk, 95% indexed, catch-up",
           share: 0.95,
-          pace: { ...pilot, catchUp: true, minSleepMs: 10 / SCALE },
+          pace: { ...slow, catchUp: true, minSleepMs: 10 / SCALE },
           slots: 1,
         },
-        { name: "backlog, 52% indexed, fixed", share: 0.52, pace: pilot, slots: 1 },
+        { name: "backlog, 52% indexed, fixed", share: 0.52, pace: slow, slots: 1 },
         {
           name: "backlog, 52% indexed, catch-up",
           share: 0.52,
-          pace: { ...pilot, catchUp: true, minSleepMs: 10 / SCALE },
+          pace: { ...slow, catchUp: true, minSleepMs: 10 / SCALE },
           slots: 1,
         },
         {
           name: "backlog, 52% indexed, catch-up, user always active",
           share: 0.52,
-          pace: { ...pilot, catchUp: true, minSleepMs: 10 / SCALE },
+          pace: { ...slow, catchUp: true, minSleepMs: 10 / SCALE },
           slots: 1,
           user: true,
         },
         {
           name: "backlog, 52% indexed, catch-up, 3 indexing slots",
           share: 0.52,
-          pace: { ...pilot, catchUp: true, minSleepMs: 10 / SCALE },
+          pace: { ...slow, catchUp: true, minSleepMs: 10 / SCALE },
           slots: 3,
         },
-        { name: "backlog, 0% indexed, fixed", share: 0, pace: pilot, slots: 1 },
+        { name: "backlog, 0% indexed, fixed", share: 0, pace: slow, slots: 1 },
         {
           name: "backlog, 0% indexed, catch-up",
           share: 0,
-          pace: { ...pilot, catchUp: true, minSleepMs: 10 / SCALE },
+          pace: { ...slow, catchUp: true, minSleepMs: 10 / SCALE },
           slots: 1,
         },
       ];
@@ -368,7 +368,7 @@ describe("indexing scan throughput", () => {
         expect(getAllIndexedDocumentIds(indexDb).size).toBe(TOTAL);
         const realSec = (r.ms * SCALE) / 1000;
         log.info(
-          `bench: ${s.name}: ${TOTAL} scanned, ${pending} newly indexed in ${realSec.toFixed(0)}s at pilot speed — ${(TOTAL / realSec).toFixed(1)} scanned/s, ${(pending / realSec).toFixed(2)} indexed/s, ${r.pages.length} pages, max page ${Math.max(...r.pages)}`,
+          `bench: ${s.name}: ${TOTAL} scanned, ${pending} newly indexed in ${realSec.toFixed(0)}s at unscaled speed — ${(TOTAL / realSec).toFixed(1)} scanned/s, ${(pending / realSec).toFixed(2)} indexed/s, ${r.pages.length} pages, max page ${Math.max(...r.pages)}`,
         );
       }
     },

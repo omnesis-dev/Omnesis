@@ -68,6 +68,17 @@ describe("Nx change selection", () => {
     expect(bundleTestArgs("gateway-core", [startup, ownership])).toEqual([startup, ownership]);
   });
 
+  test("native process ownership changes include the bounded Windows exit probe", () => {
+    const probe = "packages/collector/src/e2e/windows-process-snapshot.e2e.test.ts";
+    for (const input of [
+      "packages/platform/src/native/windows-process-source.ts",
+      "packages/core/src/windows-process-tree.ts",
+    ]) {
+      expect(behavioralBundles([input])).toContain("gateway-core");
+    }
+    expect(bundleTestArgs("gateway-core", [probe])).toEqual([probe]);
+  });
+
   test("maps representative product areas to behavioral bundles", () => {
     expect(behavioralBundles(["packages/providers/google/src/index.ts"])).toEqual([
       "ingestion-providers",

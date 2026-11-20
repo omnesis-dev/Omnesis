@@ -588,7 +588,12 @@ describe("hosted iOS simulator preparation", () => {
     expect(interactions.run).toContain("-disableAutomaticPackageResolution");
     expect(interactions.run).toContain("-enableCodeCoverage YES");
     expect(interactions.run).toContain("${{ runner.temp }}/cloud-pairing/cloud-pairing.xcresult");
-    expect(interactions.run).toContain("set -o pipefail");
+    // The step's status is xcodebuild's, through the wrapper that retries
+    // only a UI test runner that never initialized.
+    expect(interactions.run).toMatch(
+      /^\s*node scripts\/ci\/xcodebuild-ui-tests\.mjs \\\n\s*--log "\$\{\{ runner\.temp \}\}\/cloud-pairing\/cloud-pairing-xcodebuild\.log" -- \\\n\s*test \\$/m,
+    );
+    expect(interactions.run).not.toContain("| tee");
     const upload = steps[index("Upload cloud pairing artifacts")];
     expect(upload.if).toBe("failure() || cancelled()");
     expect(upload.with).toMatchObject({

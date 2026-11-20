@@ -3,8 +3,7 @@
 
 /**
  * An invented corpus shaped like a large personal install, for writer hold
- * and query-plan tests: the table ratios of a gateway holding about 640k
- * documents (three people mentions per document, one person per ten
+ * and query-plan tests: the table ratios of a large install (three people mentions per document, one person per ten
  * documents, a sixth of documents signed for near-duplicates, a long tail of
  * small sources), scaled to `docs`.
  *
@@ -18,7 +17,7 @@
 import type Database from "better-sqlite3";
 type Db = Database.Database;
 
-export interface PilotCorpusOptions {
+export interface LargeCorpusOptions {
   docs: number;
   /** Documents left with `people_resolved_at IS NULL`, mentioning many people each. */
   unresolvedDocs?: number;
@@ -30,15 +29,15 @@ export interface PilotCorpusOptions {
   collapsedEvery?: number;
 }
 
-export interface PilotCorpus {
+export interface LargeCorpus {
   docs: number;
   people: number;
-  sources: readonly PilotSource[];
+  sources: readonly CorpusSource[];
   unresolvedDocIds: string[];
   collapsedCandidateIds: string[];
 }
 
-export interface PilotSource {
+export interface CorpusSource {
   providerId: string;
   sourceId: string;
   documentType: string;
@@ -46,7 +45,7 @@ export interface PilotSource {
 }
 
 /** Share of the corpus per source: three large ones and a long tail. */
-export const PILOT_SOURCES: readonly PilotSource[] = [
+export const CORPUS_SOURCES: readonly CorpusSource[] = [
   { providerId: "synth-mail", sourceId: "synth-mail-work", documentType: "email", share: 0.34 },
   { providerId: "synth-mail", sourceId: "synth-mail-home", documentType: "email", share: 0.14 },
   { providerId: "synth-chat", sourceId: "synth-chat", documentType: "message", share: 0.24 },
@@ -66,7 +65,7 @@ export const PILOT_SOURCES: readonly PilotSource[] = [
   { providerId: "synth-health", sourceId: "synth-health", documentType: "metric", share: 0.005 },
 ];
 
-export const PILOT_ALGO = "synth-algo-v1";
+export const CORPUS_ALGO = "synth-algo-v1";
 const BANDS = 16;
 const personName = (p: number): string => `synth contact ${p.toString(36)}`;
 
@@ -83,10 +82,10 @@ function scatteredId(prefix: string, n: number): string {
   return `${prefix}-${(h >>> 0).toString(16).padStart(8, "0")}-${n.toString(36)}`;
 }
 
-export const pilotDocId = (i: number): string => scatteredId("synth-doc", i);
-export const pilotPersonId = (i: number): string => scatteredId("synth-person", i);
-export const pilotEmail = (i: number): string => `${scatteredId("person", i)}@example.com`;
-export const pilotExternalId = (i: number): string => scatteredId("ext", i);
+export const corpusDocId = (i: number): string => scatteredId("synth-doc", i);
+export const corpusPersonId = (i: number): string => scatteredId("synth-person", i);
+export const corpusEmail = (i: number): string => `${scatteredId("person", i)}@example.com`;
+export const corpusExternalId = (i: number): string => scatteredId("ext", i);
 
 /** Deterministic, uneven: a few people are in most documents, most in a handful. */
 function mentionedPerson(doc: number, slot: number, people: number): number {
@@ -96,18 +95,18 @@ function mentionedPerson(doc: number, slot: number, people: number): number {
   return 1 + Math.floor(skew * skew * skew * (people - 1));
 }
 
-function sourceFor(i: number, docs: number): PilotSource {
+function sourceFor(i: number, docs: number): CorpusSource {
   let edge = 0;
-  for (const source of PILOT_SOURCES) {
+  for (const source of CORPUS_SOURCES) {
     edge += source.share * docs;
     if (i < edge) return source;
   }
-  return PILOT_SOURCES[0];
+  return CORPUS_SOURCES[0];
 }
 
 const iso = (ms: number): string => new Date(ms).toISOString();
 
-export function seedPilotCorpus(db: Db, options: PilotCorpusOptions): PilotCorpus {
+export function seedLargeCorpus(db: Db, options: LargeCorpusOptions): LargeCorpus {
   const docs = options.docs;
   const people = Math.max(50, Math.round(docs * 0.094));
   const unresolved = options.unresolvedDocs ?? 0;
@@ -170,11 +169,11 @@ export function seedPilotCorpus(db: Db, options: PilotCorpusOptions): PilotCorpu
   const unresolvedDocIds: string[] = [];
   const collapsedCandidateIds: string[] = [];
   db.transaction(() => {
-    for (const source of PILOT_SOURCES) insertSyncState.run(source.sourceId, iso(start + span));
+    for (const source of CORPUS_SOURCES) insertSyncState.run(source.sourceId, iso(start + span));
     for (let p = 0; p < people; p++) {
       const seen = iso(start + Math.floor((p / people) * span));
       insertPerson.run(
-        pilotPersonId(p),
+        corpusPersonId(p),
         personName(p),
         p === 0 ? 1 : 0,
         seen,
@@ -186,15 +185,15 @@ export function seedPilotCorpus(db: Db, options: PilotCorpusOptions): PilotCorpu
       );
       insertAlias.run(
         scatteredId("synth-alias-e", p),
-        pilotPersonId(p),
-        pilotEmail(p),
+        corpusPersonId(p),
+        corpusEmail(p),
         "email",
         seen,
       );
       if (p % 3 === 0)
         insertAlias.run(
           scatteredId("synth-alias-n", p),
-          pilotPersonId(p),
+          corpusPersonId(p),
           `${personName(p)} ${p}`,
           "name",
           seen,
@@ -202,7 +201,7 @@ export function seedPilotCorpus(db: Db, options: PilotCorpusOptions): PilotCorpu
       if (p % 10 === 0)
         insertAlias.run(
           scatteredId("synth-alias-p", p),
-          pilotPersonId(p),
+          corpusPersonId(p),
           `+15550100${(p % 1_000).toString().padStart(3, "0")}`,
           "phone",
           seen,
@@ -210,7 +209,7 @@ export function seedPilotCorpus(db: Db, options: PilotCorpusOptions): PilotCorpu
       if (p % 2 === 0)
         insertAlias.run(
           scatteredId("synth-alias-x", p),
-          pilotPersonId(p),
+          corpusPersonId(p),
           `${scatteredId("alt", p)}@example.org`,
           "email",
           seen,
@@ -219,10 +218,10 @@ export function seedPilotCorpus(db: Db, options: PilotCorpusOptions): PilotCorpu
     // One person in twenty-five is a merged duplicate of another, as rule
     // and contact merges leave behind on a live install.
     const merge = db.prepare("UPDATE people SET merged_into = ? WHERE id = ?");
-    for (let p = 24; p < people; p += 25) merge.run(pilotPersonId(p - 5), pilotPersonId(p));
+    for (let p = 24; p < people; p += 25) merge.run(corpusPersonId(p - 5), corpusPersonId(p));
     for (let i = 0; i < docs; i++) {
       const source = sourceFor(i, docs);
-      const id = pilotDocId(i);
+      const id = corpusDocId(i);
       const at = iso(start + Math.floor((i / docs) * span));
       const isUnresolved = i >= docs - unresolved;
       const mentions = isUnresolved ? 40 : 1 + (i % 5);
@@ -239,7 +238,7 @@ export function seedPilotCorpus(db: Db, options: PilotCorpusOptions): PilotCorpu
         documentType: source.documentType,
         people: persons.map((p, slot) => ({
           role: slot === 0 ? "sender" : "recipient",
-          emails: [pilotEmail(p)],
+          emails: [corpusEmail(p)],
         })),
         extra,
       });
@@ -248,7 +247,7 @@ export function seedPilotCorpus(db: Db, options: PilotCorpusOptions): PilotCorpu
         id,
         source.providerId,
         source.sourceId,
-        pilotExternalId(i),
+        corpusExternalId(i),
         `Quarterly planning note ${i}`,
         `Agenda item ${i % 97} for the review.`,
         `hash-${i}`,
@@ -268,20 +267,20 @@ export function seedPilotCorpus(db: Db, options: PilotCorpusOptions): PilotCorpu
         for (let slot = 0; slot < persons.length; slot++)
           insertDocPerson.run(
             id,
-            pilotPersonId(persons[slot]),
+            corpusPersonId(persons[slot]),
             slot === 0 ? "sender" : "recipient",
             source.sourceId,
           );
       if (i % 6 === 0) {
-        insertSig.run(id, PILOT_ALGO, signature);
+        insertSig.run(id, CORPUS_ALGO, signature);
         for (let b = 0; b < BANDS; b++)
           insertBucket.run(
-            PILOT_ALGO,
+            CORPUS_ALGO,
             b,
             (Math.imul(i + 1, 2654435761) ^ Math.imul(b + 1, 40503)) | 0,
             id,
           );
-        if (i % 42 === 6) insertEdge.run(pilotDocId(i - 6), id, PILOT_ALGO);
+        if (i % 42 === 6) insertEdge.run(corpusDocId(i - 6), id, CORPUS_ALGO);
       }
     }
     // The access ledger, three events to a millisecond so keyset pages tie.
@@ -299,14 +298,14 @@ export function seedPilotCorpus(db: Db, options: PilotCorpusOptions): PilotCorpu
         insertCandidate.run(
           id,
           "email",
-          pilotEmail(p),
+          corpusEmail(p),
           "email",
           `${scatteredId("alt", p)}@example.org`,
         );
         collapsedCandidateIds.push(id);
       } else {
         const p = 1 + (c % (people - 2));
-        insertCandidate.run(id, "email", pilotEmail(p), "email", pilotEmail(p + 1));
+        insertCandidate.run(id, "email", corpusEmail(p), "email", corpusEmail(p + 1));
       }
     }
     // The operator's decided history outnumbers what is still pending.
@@ -319,5 +318,5 @@ export function seedPilotCorpus(db: Db, options: PilotCorpusOptions): PilotCorpu
         iso(start + span - c * 60_000),
       );
   })();
-  return { docs, people, sources: PILOT_SOURCES, unresolvedDocIds, collapsedCandidateIds };
+  return { docs, people, sources: CORPUS_SOURCES, unresolvedDocIds, collapsedCandidateIds };
 }

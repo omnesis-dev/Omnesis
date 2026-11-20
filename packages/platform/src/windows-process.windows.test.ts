@@ -141,3 +141,76 @@ it.runIf(process.platform === "win32")(
   },
   60_000,
 );
+
+/** Reuse the production capture/helpers; substitute only the failing kernel calls. */
+function failurePhaseFixture(): string {
+  const declarations = WINDOWS_PROCESS_NATIVE_SOURCE.slice(
+    0,
+    WINDOWS_PROCESS_NATIVE_SOURCE.indexOf("  [DllImport("),
+  );
+  const helpers = WINDOWS_PROCESS_NATIVE_SOURCE.slice(
+    WINDOWS_PROCESS_NATIVE_SOURCE.indexOf("  static SafeFileHandle Open("),
+    WINDOWS_PROCESS_NATIVE_SOURCE.indexOf("  static Dictionary<uint,List<uint>> Candidates("),
+  );
+  const capture = WINDOWS_PROCESS_NATIVE_SOURCE.slice(
+    WINDOWS_PROCESS_NATIVE_SOURCE.indexOf("  sealed class Observation {"),
+    WINDOWS_PROCESS_NATIVE_SOURCE.indexOf("  public static void Kill("),
+  );
+  return (
+    declarations +
+    String.raw`
+  static int mode;
+  [DllImport("kernel32.dll",EntryPoint="SetLastError",SetLastError=true)] static extern void SetNativeError(uint error);
+  static SafeFileHandle OpenProcess(uint access,bool inherit,uint pid) {
+    SetNativeError(5);return new SafeFileHandle(mode==0 ? IntPtr.Zero : new IntPtr(100),false);
+  }
+  static uint WaitForSingleObject(SafeFileHandle handle,uint milliseconds) {
+    if(mode==1) {SetNativeError(5);return 0xffffffff;}return 258;
+  }
+  static bool GetProcessTimes(SafeFileHandle handle,out long created,out long exited,out long kernel,out long user) {
+    created=1;exited=kernel=user=0;if(mode==2) {SetNativeError(5);return false;}return true;
+  }
+  static int NtQueryInformationProcess(SafeFileHandle handle,int kind,out BasicInformation info,int size,out int returned) {
+    info=new BasicInformation();info.pid=new UIntPtr(100u);info.parentPid=new UIntPtr(1u);
+    returned=Marshal.SizeOf(typeof(BasicInformation));return mode==3 ? unchecked((int)0xC000010A) : 0;
+  }
+  static uint RtlNtStatusToDosError(int status) {return 5;}
+  static Dictionary<uint,List<uint>> Candidates() {return new Dictionary<uint,List<uint>>();}
+  public static string Exercise() {
+    List<string> errors=new List<string>();
+    for(mode=0;mode<4;mode++) {
+      try {Snapshot(new uint[]{100},delegate(List<Dictionary<string,object>> rows) {});throw new Exception("Expected native refusal");}
+      catch(Win32Exception error) {errors.Add(OmnesisPrivateFile.Stage+":"+error.NativeErrorCode.ToString(CultureInfo.InvariantCulture));}
+    }
+    return String.Join("|",errors.ToArray());
+  }
+` +
+    helpers +
+    capture +
+    "\n}\npublic static class OmnesisPrivateFile {public static string Stage;}"
+  );
+}
+
+it.runIf(process.platform === "win32")(
+  "identifies native refusal phases without weakening failures or exposing process metadata",
+  async () => {
+    const result = await runWindowsJob(
+      windowsPowerShellExecutable(),
+      [
+        "-NoLogo",
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        "$ErrorActionPreference='Stop'; $source=[Console]::In.ReadToEnd(); Add-Type -TypeDefinition $source; [Console]::Out.Write([OmnesisProcessMetadata]::Exercise())",
+      ],
+      { input: Buffer.from(failurePhaseFixture()), timeoutMs: 60_000 },
+    );
+    expect(result.failure).toBeUndefined();
+    expect(result.stderr).toBe("");
+    expect(result.exitCode).toBe(0);
+    expect(Buffer.from(result.stdout).toString("utf8")).toBe(
+      "process-snapshot-open:5|process-snapshot-wait:5|process-snapshot-birth:5|process-snapshot-query-C000010A:5",
+    );
+  },
+  60_000,
+);
