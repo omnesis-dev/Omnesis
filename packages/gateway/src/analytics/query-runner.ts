@@ -269,6 +269,11 @@ export class AnalyticsQueryRunner {
        * the built-in agent and the operator's own SQL view.
        */
       permittedSourceIds?: ReadonlySet<string>;
+      /**
+       * A source querying itself also reads its type's shared tables, which a
+       * sibling account may have created before this one first wrote.
+       */
+      sharedSourceType?: string;
     },
   ): Promise<{
     columns: string[];
@@ -321,6 +326,7 @@ export class AnalyticsQueryRunner {
     // `runDuckDb`, and the pool closes it however the query ends.
     deadline.assertRemaining("query preparation");
     const permittedSourceIds = opts?.permittedSourceIds;
+    const sharedSourceType = permittedSourceIds ? opts?.sharedSourceType : undefined;
     return this.pool.withSandboxStatement(
       querySql,
       async ({ conn, statement, parseTree }) => {
@@ -366,6 +372,9 @@ export class AnalyticsQueryRunner {
                 refs: extractSandboxTableRefs(parseTree),
                 catalog,
                 permittedSourceIds,
+                ...(sharedSourceType === undefined
+                  ? {}
+                  : { permittedTables: await this.catalog.sharedTablesOfType(sharedSourceType) }),
                 macroNames: await listNonInternalMacros(sandboxConn),
               });
             },

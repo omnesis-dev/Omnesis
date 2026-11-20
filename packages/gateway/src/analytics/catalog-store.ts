@@ -344,6 +344,26 @@ export class AnalyticsCatalogStore {
   }
 
   /**
+   * Tables a source type's accounts share: declared with an account
+   * discriminator and owned by that type, whether a sibling has claimed it
+   * yet or not. A new account reads these before its own first write.
+   */
+  async sharedTablesOfType(sourceType: string): Promise<Set<string>> {
+    return this.pool.withConn(async (p) => {
+      const reader = await p.conn.runAndReadAll(
+        "SELECT table_name, source_id, schema_json FROM _analytics_catalog",
+      );
+      const tables = new Set<string>();
+      for (const [table, owner, json] of reader.getRows() as unknown[][]) {
+        if (sourceTypeOf(String(owner)) !== sourceType) continue;
+        const schema = parseSchemaJson(String(json), String(table));
+        if (schema?.sharedDiscriminatorColumn) tables.add(String(table));
+      }
+      return tables;
+    });
+  }
+
+  /**
    * Each table's owner, size and newest date, without its schema. The status
    * cache reads this every two seconds; leaving out `schema_json` keeps that
    * from converting and parsing every table's schema on the event loop each

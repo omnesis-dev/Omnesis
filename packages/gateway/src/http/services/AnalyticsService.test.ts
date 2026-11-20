@@ -921,6 +921,7 @@ describe("AnalyticsService.sql — what a source may reach", () => {
     expect(executeQuery.mock.calls[0]?.[1]).toEqual({
       limit: 10,
       permittedSourceIds: new Set(["lunchflow:personal", "lunchflow"]),
+      sharedSourceType: "lunchflow",
     });
   });
 
