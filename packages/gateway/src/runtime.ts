@@ -4368,15 +4368,15 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
       const removed = purgeUsearchSidecars(configDir);
       if (removed > 0) log.info(`Secure storage purged ${removed} HNSW sidecar(s) on shutdown`);
     }
-    if (searchWorkerPool) {
-      try {
-        await searchWorkerPool.dispose();
-      } catch (err) {
-        log.error(
-          `searchWorkerPool.dispose threw: ${err instanceof Error ? err.message : String(err)}`,
-        );
-      }
-    }
+    // The search workers stop taking calls now, but a worker is stopped only
+    // once the call it is running returns (see SearchWorkerPool), so the rest
+    // of shutdown goes on meanwhile and the wait is joined before the lock is
+    // released. A call that never returns is bounded by the shutdown budget.
+    const searchWorkersStopped = searchWorkerPool?.dispose().catch((err: unknown) => {
+      log.error(
+        `searchWorkerPool.dispose threw: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    });
     try {
       await scheduler.dispose();
     } catch (err) {
@@ -4436,6 +4436,7 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
     }
     await inferenceRegistry.health.flush();
     processLauncherHost.dispose();
+    await searchWorkersStopped;
     // Unconfirmed owned processes retain their gateway's lease for explicit review.
     ownedProcessShutdown.releaseLock(gatewayLock);
   };

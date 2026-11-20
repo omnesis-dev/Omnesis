@@ -36,6 +36,16 @@
  * `initError` — before it ever reported ready: such a slot is not respawned,
  * and what becomes of the pool is the caller's to decide.
  *
+ * `dispose()` never terminates a worker that may be inside a native call. A
+ * thread terminated inside a usearch call aborts the whole process: the
+ * addon's next Node-API call fails, and node-addon-api's C++ exception for
+ * that failure cannot be handed to JavaScript, so `std::terminate` runs. The
+ * pool raises a shared flag that makes every worker refuse the calls it has
+ * not started, asks each worker to shut down, and stops a thread only after it
+ * has acknowledged, which it does as soon as the call it is running returns.
+ * There is no deadline after which the pool terminates anyway; the caller
+ * bounds how long it waits (the gateway, by its shutdown budget).
+ *
  * The pool also reads each query's temporal intent (`temporalIntent`), so the
  * date recognizer runs on the workers. A reading asked for while the pool is
  * still starting waits (for a bounded time) for its first worker instead of
@@ -167,6 +177,8 @@ export class SearchWorkerPool {
   private lexicalIndex: LexicalIndexData | undefined;
   /** `warmDateRecognizers()` was called: every worker, respawned ones too, is to be warmed. */
   private temporalWarmRequested = false;
+  /** Set to 1 by `dispose()`; every worker shares it (see `SearchInit.stopping`). */
+  private readonly stopping = new Int32Array(new SharedArrayBuffer(4));
   private readonly opts: Required<
     Omit<SearchWorkerPoolOptions, "indexDbKeyHex" | "cacheSizeBytes">
   > & {
@@ -384,6 +396,7 @@ export class SearchWorkerPool {
   dispose(): Promise<void> {
     if (this.disposePromise) return this.disposePromise;
     this.disposed = true;
+    Atomics.store(this.stopping, 0, 1);
     this.rejectFirstReady(new Error("search worker pool disposed"));
     this.disposePromise = this.shutdownWorkers();
     return this.disposePromise;
@@ -401,7 +414,11 @@ export class SearchWorkerPool {
           return shutdownWorker(
             worker,
             () => worker.postMessage({ type: "shutdown" } satisfies MainToSearch),
-            () => log.warn(`search worker ${slot.index} shutdown timed out — terminating`),
+            () =>
+              log.warn(
+                `search worker ${slot.index} shutdown is waiting for the call it is running to return`,
+              ),
+            { waitForNativeDrain: true },
           );
         }),
       );
@@ -473,6 +490,7 @@ export class SearchWorkerPool {
       configDir: this.opts.configDir,
       heartbeatIntervalMs: this.opts.heartbeatIntervalMs,
       backgroundWorkerNice: this.opts.backgroundWorkerNice,
+      stopping: this.stopping.buffer,
       ...(this.opts.indexDbKeyHex ? { indexDbKeyHex: this.opts.indexDbKeyHex } : {}),
       ...(this.opts.cacheSizeBytes != null ? { cacheSizeBytes: this.opts.cacheSizeBytes } : {}),
     };
