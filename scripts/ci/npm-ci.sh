@@ -24,6 +24,43 @@ attempt=1
 max_attempts="${NPM_CI_ATTEMPTS:-3}"
 retry_seconds="${NPM_CI_RETRY_SECONDS:-10}"
 
+# An attempt can also stop making progress without ever failing: one image
+# build sat in this install for 56 minutes, printing nothing, until the job's
+# limit cancelled it (#1185). npm's `fetch-timeout` ends a request whose
+# connection goes idle, but not one whose response keeps sending a byte now and
+# then, and npm stuck that way ignores a TERM. Each attempt therefore gets a
+# deadline, after which it counts as failed and the retry above starts a fresh
+# one.
+#
+# A normal install takes at most five minutes: across 40 passing runs of every
+# job that installs this way, a direct install took 18-293 s and the image
+# build's full workspace install 117-204 s. Fifteen minutes is three times the
+# slowest, still leaves npm's five-minute fetch timeout room to fire and retry
+# within one attempt, and lets a timed-out attempt and a retry finish inside an
+# hour-long job.
+#
+# `timeout` (or Homebrew's `gtimeout`) runs npm in a process group of its own
+# and signals the whole group, so install scripts and the compilers they start
+# end with it. A host with neither runs attempts unbounded, and 0 turns the
+# deadline off, for a build so slow, such as one under emulation, that no
+# measured normal time applies to it.
+attempt_seconds="${NPM_CI_ATTEMPT_TIMEOUT_SECONDS:-900}"
+case "$attempt_seconds" in
+  '' | *[!0-9]*)
+    echo "NPM_CI_ATTEMPT_TIMEOUT_SECONDS must be a whole number of seconds: $attempt_seconds" >&2
+    exit 2
+    ;;
+esac
+bound=
+if [ "$attempt_seconds" -gt 0 ]; then
+  for tool in timeout gtimeout; do
+    if command -v "$tool" >/dev/null 2>&1; then
+      bound="$tool"
+      break
+    fi
+  done
+fi
+
 # When an optional package fails to install, because its tarball could not be
 # fetched or its install script failed, npm removes it and still exits 0. The
 # only record is a "failed optional dependency <path>" line in npm's debug log.
@@ -66,9 +103,22 @@ names() {
 lacking_by_design="/node_modules/($may_lack)(/|\$)"
 lacking=
 
+# One `npm ci`, ended after $attempt_seconds where the host can bound it. The
+# KILL that follows 30 s later reaches a process that ignores the TERM.
+run_npm_ci() {
+  if [ -n "$bound" ]; then
+    "$bound" -k 30 "$attempt_seconds" npm ci --logs-dir "$logs" "$@"
+  else
+    npm ci --logs-dir "$logs" "$@"
+  fi
+}
+
 while :; do
   rm -f "$logs"/*
-  if npm ci --logs-dir "$logs" "$@"; then
+  started="$(date +%s)"
+  status=0
+  run_npm_ci "$@" || status=$?
+  if [ "$status" -eq 0 ]; then
     paths="$(dropped_paths)"
     if [ "${NPM_CI_REQUIRE_OPTIONAL:-0}" = 1 ]; then
       dropped="$(printf '%s\n' "$paths" | names)"
@@ -93,6 +143,17 @@ while :; do
     fi
   else
     problem="npm ci failed"
+    # `timeout` exits 124 when the deadline ended the command, 137 when the
+    # KILL had to; the elapsed time tells either apart from npm's own exit.
+    if [ -n "$bound" ] && { [ "$status" -eq 124 ] || [ "$status" -eq 137 ]; } &&
+      [ "$(($(date +%s) - started))" -ge "$attempt_seconds" ]; then
+      problem="npm ci did not finish within ${attempt_seconds}s"
+      # npm prints nothing while it fetches, unpacks and runs install scripts.
+      # Its debug log records each request and script as it completes, so its
+      # end shows the phase the attempt stopped in.
+      echo "$problem; the end of its debug log:" >&2
+      tail -n 40 "$logs"/*.log >&2 2>/dev/null || true
+    fi
     if [ "$attempt" -ge "$max_attempts" ]; then
       echo "npm ci failed after $attempt attempts" >&2
       exit 1

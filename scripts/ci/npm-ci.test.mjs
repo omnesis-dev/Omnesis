@@ -12,11 +12,12 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { parse } from "yaml";
 import { npmJavaScriptEntry } from "./npm-ci.mjs";
 import { npmCiFixture } from "../test-fixtures/npm-ci-fixture.mjs";
@@ -40,9 +41,11 @@ afterEach(() => {
  * but records two optional packages as failed in its debug log, the way npm
  * treats an optional package it could not fetch or build, "uncompiled" records
  * smart-whisper and the dependency nested under it the way npm does when its
- * native build fails, "both" records all four, and "fail" exits 1.
+ * native build fails, "both" records all four, "fail" exits 1, and "hang"
+ * starts a child, the way an install script would, and waits on it forever.
+ * `path` replaces the directories searched after the fake's own.
  */
-function runShell({ installs, args = [], env = {} }) {
+function runShell({ installs, args = [], env = {}, path = process.env.PATH }) {
   const dir = scratch();
   writeFileSync(
     join(dir, "npm"),
@@ -61,6 +64,11 @@ case "$kind" in
     echo "2 verbose reify failed optional dependency $PWD/node_modules/@scope/binding" >> "$log"
     echo "3 verbose reify failed optional dependency $PWD/node_modules/ffmpeg-static" >> "$log" ;;
   fail) exit 1 ;;
+  hang)
+    sleep 300 &
+    echo "$!" > "hung-$n"
+    wait
+    exit 0 ;;
 esac
 case "$kind" in
   uncompiled|both)
@@ -74,13 +82,20 @@ esac
   const result = spawnSync("sh", [SCRIPT, ...args], {
     cwd: dir,
     encoding: "utf8",
-    env: { ...process.env, PATH: `${dir}:${process.env.PATH}`, NPM_CI_RETRY_SECONDS: "0", ...env },
+    env: { ...process.env, PATH: `${dir}:${path}`, NPM_CI_RETRY_SECONDS: "0", ...env },
+    // Only a safety net: the wrapper under test bounds every attempt itself.
+    timeout: 60_000,
   });
+  expect(result.error).toBeUndefined();
   const [headers, legacy] = readFileSync(join(dir, "header-env"), "utf8").split("|");
   expect(existsSync(join(headers, "include", "node", "common.gypi"))).toBe(true);
   expect(legacy).toBe("");
   const calls = readFileSync(join(dir, "calls"), "utf8").trim().split("\n");
-  return { status: result.status, stderr: result.stderr, calls };
+  const hung = calls
+    .map((_, i) => join(dir, `hung-${i + 1}`))
+    .filter((file) => existsSync(file))
+    .map((file) => Number(readFileSync(file, "utf8")));
+  return { status: result.status, stderr: result.stderr, calls, hung };
 }
 
 const runtimes = [
@@ -198,6 +213,130 @@ describe.each(runtimes)("%s dependency bootstrap", (_name, run) => {
     const { status, calls } = await run({ installs: ["fail", "ok"] });
     expect(status).toBe(0);
     expect(calls).toHaveLength(2);
+  });
+});
+
+/** Whether a command is on this host's PATH. */
+const onPath = (name) => spawnSync("sh", ["-c", `command -v ${name}`]).status === 0;
+
+/** Wait until a process has exited and been reaped. */
+async function gone(pid) {
+  await vi.waitFor(
+    () => {
+      try {
+        process.kill(pid, 0);
+      } catch (error) {
+        if (error.code === "ESRCH") return;
+        throw error;
+      }
+      throw new Error(`process ${pid} is still running`);
+    },
+    { timeout: 10_000, interval: 50 },
+  );
+}
+
+// The deadline needs `timeout` (or `gtimeout`), which a stock macOS lacks; the
+// Docker build image and the Linux runners have it.
+describe.runIf(process.platform !== "win32" && (onPath("timeout") || onPath("gtimeout")))(
+  "POSIX shell attempt deadline",
+  () => {
+    const env = { NPM_CI_ATTEMPT_TIMEOUT_SECONDS: "1" };
+
+    test("ends an attempt that hangs, with its install scripts, and installs again", async () => {
+      const { status, calls, stderr, hung } = runShell({ installs: ["hang", "ok"], env });
+      expect(status).toBe(0);
+      expect(calls).toHaveLength(2);
+      expect(stderr).toContain("npm ci did not finish within 1s; the end of its debug log:");
+      expect(stderr).toContain("1 verbose cli ci");
+      expect(stderr).toContain("npm ci did not finish within 1s (attempt 1 of 3); retrying in 0s");
+      expect(stderr).not.toContain("npm ci failed");
+      expect(hung).toHaveLength(1);
+      await gone(hung[0]);
+    });
+
+    test("gives up when every attempt hangs", async () => {
+      const { status, calls, stderr, hung } = runShell({
+        installs: ["hang", "hang"],
+        env: { ...env, NPM_CI_ATTEMPTS: "2" },
+      });
+      expect(status).toBe(1);
+      expect(calls).toHaveLength(2);
+      expect(stderr.match(/npm ci did not finish within 1s; the end/gu)).toHaveLength(2);
+      expect(stderr).toContain("npm ci did not finish within 1s (attempt 1 of 2)");
+      expect(stderr).toContain("npm ci failed after 2 attempts");
+      expect(hung).toHaveLength(2);
+      for (const pid of hung) await gone(pid);
+    });
+
+    test("a failure inside the deadline is an ordinary failure", () => {
+      const { status, calls, stderr } = runShell({
+        installs: ["fail", "ok"],
+        env: { NPM_CI_ATTEMPT_TIMEOUT_SECONDS: "60" },
+      });
+      expect(status).toBe(0);
+      expect(calls).toHaveLength(2);
+      expect(stderr).toContain("npm ci failed (attempt 1 of 3)");
+      expect(stderr).not.toContain("did not finish");
+    });
+  },
+);
+
+describe.runIf(process.platform !== "win32")("POSIX shell without a deadline", () => {
+  /** A PATH holding only the commands the wrapper uses, so no `timeout`. */
+  function withoutTimeout() {
+    const bin = scratch();
+    for (const name of [
+      "sh",
+      "node",
+      "cat",
+      "date",
+      "grep",
+      "mktemp",
+      "rm",
+      "sed",
+      "sleep",
+      "sort",
+      "tail",
+      "tr",
+    ]) {
+      const found = spawnSync("sh", ["-c", `command -v ${name}`], {
+        encoding: "utf8",
+      }).stdout.trim();
+      symlinkSync(found, join(bin, name));
+    }
+    return bin;
+  }
+
+  test("installs unbounded on a host with no timeout command", () => {
+    const { status, calls, stderr } = runShell({
+      installs: ["fail", "ok"],
+      path: withoutTimeout(),
+    });
+    expect(status).toBe(0);
+    expect(calls).toHaveLength(2);
+    expect(stderr).toContain("npm ci failed (attempt 1 of 3)");
+  });
+
+  test("installs unbounded when the deadline is off", () => {
+    const { status, calls, stderr } = runShell({
+      installs: ["ok"],
+      env: { NPM_CI_ATTEMPT_TIMEOUT_SECONDS: "0" },
+    });
+    expect(status).toBe(0);
+    expect(calls).toHaveLength(1);
+    expect(stderr).toBe("");
+  });
+
+  test("refuses a deadline that is not a whole number of seconds", () => {
+    const result = spawnSync("sh", [SCRIPT], {
+      cwd: scratch(),
+      encoding: "utf8",
+      env: { ...process.env, NPM_CI_ATTEMPT_TIMEOUT_SECONDS: "15m" },
+    });
+    expect(result.status).toBe(2);
+    expect(result.stderr).toBe(
+      "NPM_CI_ATTEMPT_TIMEOUT_SECONDS must be a whole number of seconds: 15m\n",
+    );
   });
 });
 
@@ -391,6 +530,20 @@ describe("images that require their optional packages", () => {
     for (const step of pushes) expect(step.with["build-args"]).toBe("NPM_CI_REQUIRE_OPTIONAL=1");
     for (const step of steps.filter((s) => /docker buildx build/u.test(s.run ?? "")))
       expect(step.run).toContain("--build-arg NPM_CI_REQUIRE_OPTIONAL=1");
+  });
+
+  test("an emulated image build installs without the attempt deadline", () => {
+    const stages = readFileSync(join(root, "Dockerfile"), "utf8")
+      .split(/^FROM /mu)
+      .filter((text) => /sh scripts\/ci\/npm-ci\.sh/u.test(text));
+    expect(stages.length).toBeGreaterThan(0);
+    for (const stage of stages) {
+      expect(stage).toMatch(/^ARG BUILDPLATFORM$/mu);
+      expect(stage).toMatch(/^ARG TARGETPLATFORM$/mu);
+      expect(stage).toMatch(
+        /^RUN if \[ "\$TARGETPLATFORM" != "\$BUILDPLATFORM" \]; then export NPM_CI_ATTEMPT_TIMEOUT_SECONDS=0; fi \\$/mu,
+      );
+    }
   });
 
   test.each(["scripts/docker-e2e/Dockerfile", "scripts/docker-e2e/systemd/Dockerfile"])(

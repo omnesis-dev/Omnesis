@@ -33,7 +33,13 @@ COPY scripts/native-runtime-preflight.mjs scripts/native-vector-compat.mjs scrip
 # common.gypi another is still writing. The CI wrapper builds against the
 # image's own Node headers instead.
 COPY scripts/ci/npm-ci.sh scripts/ci/npm-ci.sh
-RUN sh scripts/ci/npm-ci.sh
+# The wrapper ends an install attempt that outlasts a deadline measured on
+# native builders. A build for another architecture runs it under emulation,
+# many times slower, so there its attempts stay unbounded.
+ARG BUILDPLATFORM
+ARG TARGETPLATFORM
+RUN if [ "$TARGETPLATFORM" != "$BUILDPLATFORM" ]; then export NPM_CI_ATTEMPT_TIMEOUT_SECONDS=0; fi \
+    && sh scripts/ci/npm-ci.sh
 
 FROM workspace-install AS runtime-build
 COPY scripts/release/ scripts/release/
@@ -71,10 +77,14 @@ COPY scripts/release/ scripts/release/
 # npm dropped without an error, such as DuckDB's platform binary or ffmpeg-static
 # (scripts/ci/npm-ci.sh).
 ARG NPM_CI_REQUIRE_OPTIONAL=0
+# As in the workspace install, an emulated build installs without a deadline.
+ARG BUILDPLATFORM
+ARG TARGETPLATFORM
 # The root prepare hook installs git hooks and the root postinstall runs
 # patch-package, a devDependency that `--omit=dev` leaves out. The native-runtime
 # compatibility preinstall remains, as do dependency lifecycle scripts.
-RUN npm pkg delete scripts.prepare scripts.postinstall \
+RUN if [ "$TARGETPLATFORM" != "$BUILDPLATFORM" ]; then export NPM_CI_ATTEMPT_TIMEOUT_SECONDS=0; fi \
+    && npm pkg delete scripts.prepare scripts.postinstall \
     && sh scripts/ci/npm-ci.sh --omit=dev --omit=peer \
        --workspace @omnesis/gateway \
        --workspace @omnesis/collector \
