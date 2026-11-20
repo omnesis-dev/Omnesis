@@ -61,6 +61,12 @@ export const GAP_SUSPECT_OUTAGE_S = 900;
 /** A deletion for a message not archived yet is kept this long, waiting for it. */
 export const PENDING_DELETION_TTL_DAYS = 30;
 
+/**
+ * A deletion of a kept self-destructing message this close before its timer
+ * is taken for the timer's own, allowing for clock skew with Telegram.
+ */
+export const EXPIRY_SKEW_S = 60;
+
 /** A flood wait longer than this is reported to the operator as an issue. */
 export const FLOOD_ISSUE_THRESHOLD_S = 600;
 

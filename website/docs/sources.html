@@ -604,8 +604,17 @@
           </li>
           <li>
             <strong>Never archived.</strong> Secret chats, which Telegram keeps only on the two
-            devices in them; view-once photos and videos; messages under an auto-delete timer; and
-            stories.
+            devices in them, and stories.
+          </li>
+          <li>
+            <strong>Self-destructing messages.</strong> View-once photos and videos and messages
+            under an auto-delete timer are left out until you turn on
+            <em>Keep self-destructing messages</em> in the source's settings. With it on they are
+            archived as they arrive and stay in the index after their timer removes them from
+            Telegram; one deleted by hand before its timer runs still leaves the index, unless the
+            collector was offline until after the timer and learns of both at once. Turning it off
+            stops archiving new ones and keeps those already archived. Check
+            <a href="#telegram-terms">Telegram's terms</a> before turning it on.
           </li>
           <li>
             <strong>History.</strong> The whole history is read in the background, most recent chats
@@ -625,7 +634,7 @@
             it leaves your device list.
           </li>
         </ul>
-        <p>
+        <p id="telegram-terms">
           <strong>Telegram's terms.</strong> Using this source is subject to the
           <a href="https://telegram.org/tos">Telegram Terms of Service</a> and the
           <a href="https://core.telegram.org/api/terms">Telegram API Terms of Service</a>. It is

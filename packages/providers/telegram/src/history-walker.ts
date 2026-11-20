@@ -65,11 +65,13 @@ import type { StoredChat, StoredMessage } from "./types.js";
 
 const log = createLogger("source:telegram-messages").child("walker");
 
-/** Which chats the operator wants archived. */
+/** Which chats the operator wants archived, and what of them. */
 export interface ChatPolicy {
   includeChannels: boolean;
   /** Marked chat ids or `@usernames`. */
   excludedChats: readonly string[];
+  /** Keep self-destructing messages and view-once media (`extractMessage`). */
+  keepSelfDestructing?: boolean;
 }
 
 /** Whether a chat is archived under `policy`. */
@@ -507,7 +509,7 @@ export class HistoryWalker {
       const missingIds = ids.filter((_, i) => !found[i]);
       const current = found
         .filter((m): m is TgMessage => !!m && m.chatId === chat.chatId)
-        .map(extractMessage)
+        .map((m) => extractMessage(m, this.policy))
         .filter((m): m is StoredMessage => m !== null);
       this.archive.commitPresence(chat.chatId, {
         missingIds,
@@ -556,7 +558,7 @@ export class HistoryWalker {
     return {
       messages: page.messages
         .filter((m) => cutoff === undefined || m.date >= cutoff)
-        .map(extractMessage)
+        .map((m) => extractMessage(m, this.policy))
         .filter((m): m is StoredMessage => m !== null),
       users: page.users,
       rawIds: page.messages.map((m) => m.id),
