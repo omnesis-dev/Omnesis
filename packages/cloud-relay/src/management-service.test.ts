@@ -3160,38 +3160,38 @@ test("disconnecting and reconnecting owns the new setup even when the previous s
 test("cancelling and failed sign-in setup drain safely in either microtask order", async () => {
   // An HTTP failure and a user's cancellation can land in adjacent microtasks.
   // Vary their ordering without inspecting or replacing the manager's private promises.
+  // One configured manager serves every ordering: each round leaves it ready for the next
+  // attempt, and opening and configuring a manager per round costs most of the time where
+  // every private file operation is a separate process.
+  let entered!: () => void, reject!: (error: Error) => void;
+  let started!: Promise<void>, transport!: Promise<never>;
+  const relay = fakeSignupRelay();
+  const f = await connecting(relay, {
+    fetch: async (input, init) => {
+      if (String(input).endsWith("/signup/start")) {
+        entered();
+        return transport;
+      }
+      return relay.fetch(input, init);
+    },
+  });
+  manager = await GatewayCloudRelayManagement.open(f.options);
+  await manager.configure({ termsAccepted: true });
   for (let turns = 0; turns < 25; turns++) {
-    const relay = fakeSignupRelay();
-    let entered!: () => void, reject!: (error: Error) => void;
-    const started = new Promise<void>((resolve) => {
+    started = new Promise<void>((resolve) => {
       entered = resolve;
     });
-    const transport = new Promise<never>((_resolve, fail) => {
+    transport = new Promise<never>((_resolve, fail) => {
       reject = fail;
     });
-    const f = await connecting(relay, {
-      fetch: async (input, init) => {
-        if (String(input).endsWith("/signup/start")) {
-          entered();
-          return transport;
-        }
-        return relay.fetch(input, init);
-      },
-    });
-    manager = await GatewayCloudRelayManagement.open(f.options);
-    await manager.configure({ termsAccepted: true });
     const preparing = manager.connect({ termsAccepted: true }).catch(() => undefined);
     await started;
     reject(new Error("fixture sign-in service unavailable"));
     for (let turn = 0; turn < turns; turn++) await Promise.resolve();
     await manager.cancelConnect();
     await preparing;
-    expect(
-      (await manager.status()).connect,
-      `cancellation after ${turns} microtasks`,
-    ).toBeUndefined();
-    expect((await manager.status()).configured).toBe(true);
-    await manager.close();
-    manager = undefined;
+    const status = await manager.status();
+    expect(status.connect, `cancellation after ${turns} microtasks`).toBeUndefined();
+    expect(status.configured).toBe(true);
   }
 });
