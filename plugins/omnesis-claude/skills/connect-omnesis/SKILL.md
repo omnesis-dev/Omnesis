@@ -19,7 +19,7 @@ If at least one family is present, do not repeat setup. Explain which capability
 
 ## Connect
 
-1. Ask the user to open their Omnesis Portal, go to **Settings → Access**, select **Connect an agent**, and copy the **MCP resource**. It is an HTTPS URL ending in `/mcp`. Use that exact value; never invent a hostname, IP address, port, or path. Claude Code runs on the user's machine, so an address reachable only on their tailnet or home network works, as long as the gateway lists it.
+1. Ask the user to open their Omnesis Portal, go to **Settings → Access**, select **Connect an agent**, answer where Claude Code runs, and copy the **MCP resource**. It ends in `/mcp`. Use that exact value; never invent a hostname, IP address, port, or path. On the gateway's own computer it is a plain `http://localhost:<port>/mcp` address, which needs no certificate; elsewhere it is an HTTPS URL. Claude Code runs on the user's machine, so an address reachable only on their tailnet or home network works, as long as the gateway lists it.
 2. If the plugin has no MCP URL yet, have the user run `/plugin configure omnesis@omnesis` and paste it there, or run `claude plugin install omnesis@omnesis --config omnesis_mcp_url=<MCP_RESOURCE>` in a terminal. Both also change it later.
 3. Have the user run `/mcp`, select **omnesis**, and choose **Authenticate**. Claude Code opens the Omnesis sign-in page in the browser.
 4. On that page, the user names the connection, chooses its access level, and approves it. When this Claude Code installation was connected before and is signing in again, choose **Replace a connection** and pick the old one, so it keeps its name and access level and the old sign-in stops working instead of a second connection appearing.
@@ -39,6 +39,6 @@ Chats on claude.ai, in the Claude desktop app, and in Cowork connect from Anthro
 
 ## Diagnose without weakening security
 
-- If sign-in fails or never starts, check that the exact MCP resource opens over browser-trusted HTTPS from the same machine. Do not disable TLS verification.
+- If sign-in fails or never starts, check that the exact MCP resource opens from the same machine: over browser-trusted HTTPS, or, on the gateway's own computer, the plain `http://localhost` address. Do not disable TLS verification. Claude Code cannot trust a gateway's self-signed certificate: on the gateway's own computer use the plain local address instead.
 - If sign-in succeeds but expected tools are absent, check the access level the connection uses under **Settings → Access**, ensure the corresponding gateway capability is operational, run `/mcp` to reconnect, and start a new conversation.
 - If the connection intentionally excludes a capability or source, explain that restriction. Never suggest another endpoint or Direct access as a way around an Answer policy decision.

@@ -2,8 +2,8 @@
 // Copyright (c) 2026 Adrien Conrath
 
 // Settings → Connectivity: what is on and what is not, one line each with a
-// tick or a dash — the account, every way in from away from home, and the
-// answer for new devices. Each line opens its own page to set it up or manage
+// tick or a dash — how agents connect at home, the account, every way in from
+// away from home, and the answer for new devices. Each line opens its own page to set it up or manage
 // it, the order and the answer for new devices change in place, and the
 // guided setup can be walked from here at will.
 
@@ -14,7 +14,8 @@ import { tailscalePhase } from "../tailscale.js";
 import { DevicesChoice, devicePolicies } from "./devices-step.js";
 import { FirstChoice } from "./connection-step.js";
 import { ACCOUNT_PAGE, AddressLink, HOST_TAILSCALE_PAGE, MCP_PAGE, OWN_ADDRESS_PAGE, RELAY_PAGE, TAILSCALE_PAGE } from "./manage.js";
-import { MCP_ADDRESS_LABELS, REACH_DETAILS, mcpRows } from "./mcp.js";
+import { MCP_ADDRESS_LABELS, REACH_DETAILS, homeRow, mcpRows } from "./mcp.js";
+import { Parts, homeNetworkLine, localMcpLine } from "./at-home.js";
 import { useHostTailscale } from "./own-setup.js";
 import { accountState, listSentence } from "./model.js";
 
@@ -100,13 +101,31 @@ export function Summary({ remote, setRemote, relay, tailscale, headingRef, onSta
   const tailscalePublic = tailscaleState?.public?.state === "on";
   const accountOn = accountMark === "on" || accountState(relayStatus) === "enrolled";
   const anything = accountOn || tailscaleOn || relayOn || hostServes || Boolean(ownAddress);
+  const thisComputer = localMcpLine(remote.localMcp);
+  const homeNetwork = homeNetworkLine(homeRow(remote));
   const joinWays = [policies.relayLinked && "devices signing in with your account", policies.tailscaleOn && "devices on your Tailscale network"].filter(Boolean);
 
   return html`<div class="remote-access-summary">
     <div class="access-wizard-copy">
       <h3 ref=${headingRef} tabIndex="-1">Connectivity</h3>
-      <p>What is on, and how your devices reach this gateway when they are away from home.</p>
+      <p>What is on, and how your devices and agents reach this gateway, at home and when you are away.</p>
     </div>
+    <${Row} title="At home">
+      <ul class="remote-access-items">
+        <${Item}
+          mark=${thisComputer.mark}
+          title="Agents on this computer"
+          detail=${html`<${Parts} parts=${thisComputer.detail} />`}
+          action=${html`<${ItemManage} href=${MCP_PAGE} label="Agents on this computer" onManage=${onManage} />`}
+        />
+        <${Item}
+          mark=${homeNetwork.mark}
+          title="Agents on your home network"
+          detail=${html`<${Parts} parts=${homeNetwork.detail} />`}
+          action=${html`<${ItemManage} href=${MCP_PAGE} label="Agents on your home network" on=${homeNetwork.mark === "on"} onManage=${onManage} />`}
+        />
+      </ul>
+    <//>
     ${relay &&
     html`<${Row} title="Omnesis account">
       <ul class="remote-access-items">
@@ -182,7 +201,7 @@ export function Summary({ remote, setRemote, relay, tailscale, headingRef, onSta
           mark=${mcpOn.length > 0 ? "on" : "off"}
           title="MCP server"
           detail=${mcp.length === 0
-            ? "On this computer and your home network only, until an address away from home is set up."
+            ? "No address away from home yet."
             : mcpOn.length > 0
               ? `On ${listSentence(
                   mcpOn.map((row) => {

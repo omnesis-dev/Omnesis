@@ -1328,3 +1328,31 @@ describe("the gateway's own tailnet device", () => {
     });
   });
 });
+
+describe("the home network's addresses for MCP agents", () => {
+  it("lists the advertised .local name first, then the LAN addresses, and nothing on Tailscale", async () => {
+    const service = qr(undefined, undefined, null, {
+      listenPort: 7600,
+      advertisedLocalName: "omnesis.local",
+    });
+    expect(await service.homeNetworkOrigins()).toEqual([
+      "https://omnesis.local:7600",
+      "https://192.168.1.20:7600",
+    ]);
+  });
+
+  it("behind a Docker bridge lists the host's addresses at the port Docker publishes", async () => {
+    const service = qr(undefined, undefined, null, {
+      listenPort: 7600,
+      inContainer: true,
+      identities: [{ address: "172.18.0.2", label: "LAN (eth0)", kind: "lan", offLan: false }],
+      hostNetwork: hostNetworkFromText(
+        "port 8443\nlocal-name studio-northstar.local\ninterface en0 192.168.1.81",
+      ),
+    });
+    expect(await service.homeNetworkOrigins()).toEqual([
+      "https://studio-northstar.local:8443",
+      "https://192.168.1.81:8443",
+    ]);
+  });
+});

@@ -300,6 +300,7 @@ const item = (title: string) => items().find((li) => li.querySelector(".remote-a
 const mark = (title: string) => item(title)?.className.replace("remote-access-item is-", "");
 const detail = (title: string) => item(title)?.querySelector(".remote-access-item-detail")?.textContent?.replace(/\s+/g, " ").trim();
 const MCP_CHOICES: Record<string, string[]> = {
+  home: ["off", "on"],
   relay: ["off", "public"],
   tailnet: ["off", "private", "public"],
   host: ["off", "private", "public"],
@@ -360,6 +361,8 @@ describe("which readers run", () => {
     expect(tailscaleApi.getTailscale).not.toHaveBeenCalled();
     expect(heading()).toBe("Connectivity");
     expect(items().map((li) => li.querySelector(".remote-access-item-title")?.textContent)).toEqual([
+      "Agents on this computer",
+      "Agents on your home network",
       "No Omnesis account",
       "Omnesis relay",
       "Tailscale on this computer",
@@ -370,7 +373,7 @@ describe("which readers run", () => {
     expect(mark("No Omnesis account")).toBe("off");
     expect(mark("Omnesis relay")).toBe("off");
     await startSetup();
-    expect(steps()).toEqual(["1Your Omnesis account", "2Remote connection"]);
+    expect(steps()).toEqual(["1Your Omnesis account", "2Remote connection", "3MCP server"]);
     expect(heading()).toBe("Do you want an Omnesis account?");
     await click("Skip for now");
     expect(way("tailscale")).toBeNull();
@@ -378,7 +381,8 @@ describe("which readers run", () => {
     expect(way("relay")?.disabled).toBe(true);
     expect(way("host")).not.toBeNull();
     expect(way("domain")).not.toBeNull();
-    expect(button("Finish")).toBeTruthy();
+    // The home network is still to choose, on the MCP server step.
+    expect(button("Continue")).toBeTruthy();
   });
 
   test("a failed load says so and tries again", async () => {
@@ -468,7 +472,7 @@ describe("without the gateway's own Tailscale device", () => {
     await mount(FLAGS.relay);
     expect(button("Set up step by step")).toBeTruthy();
     await startSetup();
-    expect(steps()).toEqual(["1Your Omnesis account", "2Remote connection"]);
+    expect(steps()).toEqual(["1Your Omnesis account", "2Remote connection", "3MCP server"]);
     expect(heading()).toBe("Do you want an Omnesis account?");
     // Everything to know before an account is one paragraph, and it says it can wait.
     const blurb = host.querySelector(".access-wizard-copy p")?.textContent?.replace(/\s+/g, " ") ?? "";
@@ -517,7 +521,7 @@ describe("without the gateway's own Tailscale device", () => {
     await remount(FLAGS.relay);
     expect(heading()).toBe("This gateway is linked to your Omnesis account");
     // With an account linked, new devices can ask to join, so that step is asked too.
-    expect(steps()).toEqual(["1Your Omnesis account", "2Remote connection", "3New devices"]);
+    expect(steps()).toEqual(["1Your Omnesis account", "2Remote connection", "3New devices", "4MCP server"]);
     await click("Continue");
     expect(heading()).toContain("How should your devices reach");
     expect(isChecked(way("domain"))).toBe(true);
@@ -592,7 +596,7 @@ describe("with the gateway's own Tailscale device and no account", () => {
   test("past the account, signs in inline, and turns off after a confirmation", async () => {
     await mount(FLAGS.tailscale);
     await startSetup();
-    expect(steps()).toEqual(["1Your Omnesis account", "2Remote connection"]);
+    expect(steps()).toEqual(["1Your Omnesis account", "2Remote connection", "3MCP server"]);
     await click("Skip for now");
     // The relay waits for an account.
     expect(way("relay")?.disabled).toBe(true);
@@ -601,7 +605,7 @@ describe("with the gateway's own Tailscale device and no account", () => {
     expect(link("Open sign-in page")?.getAttribute("href")).toBe("https://login.tailscale.com/a/fictional0");
     expect(qr.toCanvas).toHaveBeenCalledWith(expect.anything(), "https://login.tailscale.com/a/fictional0", expect.any(Object));
     // With the device on, new devices can ask to join from the tailnet.
-    expect(steps().slice(1)).toEqual(["2Remote connection", "3New devices"]);
+    expect(steps().slice(1)).toEqual(["2Remote connection", "3New devices", "4MCP server"]);
     gateway.tailscale = tailscaleConnected();
     await remount(FLAGS.tailscale);
     expect(text()).toContain("Connected as omnesis.example-net.ts.net, with a trusted certificate.");
@@ -983,6 +987,9 @@ describe("both", () => {
     await startSetup();
     expect(heading()).toBe("Do you want an Omnesis account?");
     await click("Skip for now");
+    await click("Continue");
+    // Someone who wants only local use finishes here, with no account and no remote connection.
+    expect(heading()).toBe("Where may agents reach your MCP server?");
     await click("Finish");
     expect(calls("remote")).toEqual([["remote", { setupCompleted: true }]]);
     expect(storage.has("omnesis.remote-access.setup")).toBe(false);
@@ -1029,6 +1036,7 @@ describe("both", () => {
     await click("Run the setup again");
     await click("Continue");
     await click("Continue");
+    await click("Continue");
     await click("Finish");
     expect(heading()).toBe("Connectivity");
     // A review completes nothing.
@@ -1073,7 +1081,9 @@ describe("the MCP server", () => {
     expect(choices().map((r) => r.value)).toEqual(["off", "private", "public"]);
     expect(choices().map((r) => isChecked(r))).toEqual([false, true, false]);
     expect(text()).toContain(`${HOST_URL}/mcp`);
-    expect(text()).toContain("Agents on this computer and on your home network can always connect.");
+    // At home comes first: this computer as it stands, and the home network's own choice.
+    expect(text()).toContain("At home");
+    expect(text()).toContain("This computer");
     await toggle('input[name="remote-access-mcp-host"][value="public"]', true);
     expect(calls("remote")).toEqual([["remote", { mcp: { host: "public" } }]]);
     expect(text()).toContain("This puts the MCP server on the Internet through");
@@ -1129,11 +1139,107 @@ describe("the MCP server", () => {
     expect(text()).toContain("Some agents, such as ChatGPT, connect only on port 443 and may not reach it.");
   });
 
-  test("without an address away from home, says agents at home still connect", async () => {
+  test("without an address away from home, the setup still ends on the MCP server for the home network", async () => {
     await mount(FLAGS.tailscale);
-    expect(detail("MCP server")).toBe("On this computer and your home network only, until an address away from home is set up.");
+    expect(detail("MCP server")).toBe("No address away from home yet.");
     await startSetup();
-    expect(steps()).toEqual(["1Your Omnesis account", "2Remote connection"]);
+    expect(steps()).toEqual(["1Your Omnesis account", "2Remote connection", "3MCP server"]);
+  });
+});
+
+describe("at home", () => {
+  const HOME = "https://omnesis.local:7600";
+  const homeRow = (over: Json = {}) =>
+    mcpRow("home", { url: HOME, urls: [HOME, "https://192.168.0.20:7600"], reach: "off", ...over });
+
+  test("agents on this computer: the plain address while it answers, never one that does not", async () => {
+    gateway.remote!.localMcp = { state: "listening", port: 7601, url: "http://localhost:7601" };
+    await mount(FLAGS.relay);
+    expect(mark("Agents on this computer")).toBe("on");
+    expect(detail("Agents on this computer")).toBe(
+      "Connect at http://localhost:7601/mcp, with no certificate step.",
+    );
+  });
+
+  test("a busy port says so, with the setting that moves it, and shows no address", async () => {
+    gateway.remote!.localMcp = { state: "port-in-use", port: 7601 };
+    await mount(FLAGS.relay);
+    expect(mark("Agents on this computer")).toBe("warn");
+    expect(detail("Agents on this computer")).toBe(
+      "Couldn't start: port 7601 is in use by another program. Set gateway.localMcp.port to a free port in Settings, Config, then restart the gateway.",
+    );
+    expect(detail("Agents on this computer")).not.toContain("http://");
+  });
+
+  test("turned off, or in a container, it says where agents on this computer go instead", async () => {
+    gateway.remote!.localMcp = { state: "off" };
+    await mount(FLAGS.relay);
+    expect(mark("Agents on this computer")).toBe("off");
+    expect(detail("Agents on this computer")).toContain("Turned off with gateway.localMcp.enabled");
+    gateway.remote!.localMcp = { state: "container" };
+    await remount(FLAGS.relay);
+    expect(detail("Agents on this computer")).toContain("runs in a container");
+  });
+
+  test("the home network: off until the owner allows it, then the address agents sign in at", async () => {
+    gateway.remote!.mcpAddresses = [homeRow()];
+    await mount(FLAGS.relay);
+    expect(mark("Agents on your home network")).toBe("off");
+    expect(detail("Agents on your home network")).toBe(
+      "Can't sign in until you allow it. Your phones and computers still pair here either way.",
+    );
+    gateway.remote!.mcpAddresses = [homeRow({ reach: "on" })];
+    await remount(FLAGS.relay);
+    expect(mark("Agents on your home network")).toBe("on");
+    expect(detail("Agents on your home network")).toBe(
+      "Can sign in at https://omnesis.local:7600/mcp. Your phones and computers still pair here either way.",
+    );
+    // The home network is no address away from home.
+    expect(detail("MCP server")).toBe("No address away from home yet.");
+  });
+
+  test("a gateway listening on this computer alone says other computers can't reach it", async () => {
+    await mount(FLAGS.relay);
+    expect(detail("Agents on your home network")).toBe(
+      "This gateway listens on this computer only, so other computers can't reach it.",
+    );
+  });
+
+  test("on the MCP server step, the warnings come before the choice, which is applied at once", async () => {
+    gateway.remote!.mcpAddresses = [homeRow()];
+    gateway.remote!.localMcp = { state: "listening", port: 7601, url: "http://localhost:7601" };
+    savedSetup("mcp");
+    await mount(FLAGS.relay);
+    expect(heading()).toBe("Where may agents reach your MCP server?");
+    expect(text()).toContain("This computer");
+    expect(text()).toContain("http://localhost:7601/mcp");
+    expect(text()).toContain("Before you allow it:");
+    expect(text()).toContain("A connection still needs your approval");
+    const choice = (value: string) => host.querySelector(`input[name="remote-access-mcp-home"][value="${value}"]`) as HTMLInputElement;
+    expect(isChecked(choice("off"))).toBe(true);
+    await toggle('input[name="remote-access-mcp-home"][value="on"]', true);
+    expect(calls("remote")).toEqual([["remote", { mcp: { home: "on" } }]]);
+    expect(text()).toContain("https://omnesis.local:7600/mcp");
+    expect(text()).toContain("https://192.168.0.20:7600/mcp");
+    expect(text()).toContain("Prefer the .local name");
+    expect(text()).not.toContain("Before you allow it:");
+  });
+
+  test("with no address of its own on the home network, it can't be turned on", async () => {
+    gateway.remote!.mcpAddresses = [homeRow({ available: false, url: null, urls: [] })];
+    savedSetup("mcp");
+    await mount(FLAGS.relay);
+    expect((host.querySelector('input[name="remote-access-mcp-home"][value="on"]') as HTMLInputElement).hasAttribute("disabled")).toBe(true);
+    expect(text()).toContain("found no address of its own on your home network");
+  });
+
+  test("a finished setup is not asked again after the MCP step became a step of its own", async () => {
+    gateway.remote!.setupCompletedAt = "2026-10-01T10:00:00Z";
+    gateway.remote!.mcpAddresses = [homeRow()];
+    await mount(FLAGS.relay);
+    expect(heading()).toBe("Connectivity");
+    expect(button("Run the setup again") ?? button("Set up step by step")).toBeTruthy();
+    expect(calls("remote")).toEqual([]);
   });
 });
 

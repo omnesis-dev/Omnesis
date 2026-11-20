@@ -12,17 +12,29 @@
 import { resolveOAuthUrls, type OAuthIssuerSource } from "../access/oauth-urls.js";
 import { FUNNEL_REQUEST_HEADER } from "../remote-access/host-access.js";
 import { tailnetCallerOfEnv } from "../tailscale-embed/caller.js";
-import { arrivedThroughRelay, isLoopbackClient } from "./client-ip.js";
+import { arrivedOnLocalMcp } from "../local-mcp-listener.js";
+import {
+  arrivedThroughRelay,
+  forwardedClientAddress,
+  isLoopbackClient,
+  isLoopbackIp,
+} from "./client-ip.js";
 import type { Context } from "hono";
 import type { AppEnv } from "./routes/types.js";
 
 /**
  * Whether a request came from the gateway's own machine: over loopback, with no
  * proxy on it reporting another client, and not through Tailscale Funnel, the
- * relay or the gateway's own tailnet device.
+ * relay or the gateway's own tailnet device. The listener for agents on this
+ * computer binds loopback alone and no tunnel dials it, so a request it
+ * accepted is local unless a proxy on it reports another client.
  */
 export function isLocalRequest(c: Context<AppEnv>): boolean {
   const header = (name: string) => c.req.header(name);
+  if (arrivedOnLocalMcp(c.env)) {
+    const forwarded = forwardedClientAddress(header, c.env);
+    return forwarded === undefined || isLoopbackIp(forwarded);
+  }
   return (
     isLoopbackClient(header, c.env) &&
     header(FUNNEL_REQUEST_HEADER) === undefined &&
@@ -40,5 +52,6 @@ export function resolveRequestOAuthUrls(
 ) {
   return resolveOAuthUrls(c.req.url, configuredBaseUrl, configuredResources, issuers, {
     local: isLocalRequest(c),
+    home: c.get("homeSignIn") === true,
   });
 }

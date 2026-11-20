@@ -14,8 +14,8 @@
 import { createLogger } from "@omnesis/core";
 import { tailnetCallerOfEnv } from "../tailscale-embed/caller.js";
 import { FUNNEL_REQUEST_HEADER } from "../remote-access/host-access.js";
-import { arrivedThroughRelayTunnel } from "./client-ip.js";
-import type { McpAddresses } from "../remote-access/mcp-addresses.js";
+import { isMcpClientPath, type McpAddresses } from "../remote-access/mcp-addresses.js";
+import { arrivedThroughRelay, arrivedThroughRelayTunnel, fromHomeNetwork } from "./client-ip.js";
 import type { MiddlewareHandler } from "hono";
 import type { AppEnv } from "./routes/types.js";
 
@@ -41,5 +41,33 @@ export function mcpAddressGate(
         : `${c.req.method} ${c.req.path} not served: MCP does not answer it on the ${refused} address`,
     );
     return c.notFound();
+  };
+}
+
+/**
+ * Marks a request for an MCP client's path that may sign in through the
+ * home-network address it used (`McpAddresses.homeSignIn`), which the OAuth
+ * routes and the MCP endpoint read through `resolveRequestOAuthUrls`. Being
+ * relayed is taken from the tunnel's socket or the relay's header: either one
+ * withholds the home-network address.
+ */
+export function homeSignInMiddleware(
+  addresses: Pick<McpAddresses, "homeSignIn">,
+): MiddlewareHandler<AppEnv> {
+  return async (c, next) => {
+    if (isMcpClientPath(c.req.path)) {
+      const header = (name: string) => c.req.header(name);
+      c.set(
+        "homeSignIn",
+        await addresses.homeSignIn({
+          url: c.req.url,
+          via: tailnetCallerOfEnv(c.env)?.via ?? null,
+          relayed: arrivedThroughRelay(header, c.env),
+          funnel: header(FUNNEL_REQUEST_HEADER) !== undefined,
+          fromHomeNetwork: fromHomeNetwork(header, c.env),
+        }),
+      );
+    }
+    return next();
   };
 }

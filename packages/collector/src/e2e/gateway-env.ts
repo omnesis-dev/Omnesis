@@ -24,6 +24,10 @@ const E2E_GATEWAY_DEFAULTS: Readonly<NodeJS.ProcessEnv> = {
   // The relay certificate monitor is on by default and queries a public CT
   // provider; a harness that tests it opts back in explicitly.
   OMNESIS_CLOUD_RELAY_CERTIFICATE_MONITOR_ENABLED: "0",
+  // The plain address for agents on the gateway's computer takes a port the
+  // system picks: its default, the gateway's port plus one, could be the port
+  // another test gateway has just been handed.
+  OMNESIS_LOCAL_MCP_PORT: "0",
 };
 
 const E2E_INTERNAL_DEFAULTS: Readonly<NodeJS.ProcessEnv> = {

@@ -10,7 +10,7 @@
 import { html } from "htm/preact";
 import { useState } from "preact/hooks";
 import { useRemoteAccess } from "../remote-access.js";
-import { McpChoice } from "./mcp.js";
+import { MCP_BLURB, McpChoice } from "./mcp.js";
 import { HostTailscale, OwnAddress } from "./own-setup.js";
 
 function Page({ title, blurb, children }) {
@@ -52,7 +52,7 @@ export function OwnAddressView() {
 export function McpView() {
   return html`<${Page}
     title="MCP server"
-    blurb="Agents like ChatGPT, Claude or Codex connect to an MCP address. Choose how far each address away from home offers it."
+    blurb=${MCP_BLURB}
   >
     ${(remote, setRemote) => html`<${McpChoice} remote=${remote} setRemote=${setRemote} />`}
   <//>`;

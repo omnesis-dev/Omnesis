@@ -31,6 +31,17 @@ export interface OAuthE2EGateway {
   gatewayUrl: string;
   apiKey: string;
   gatewayLogPath?: string;
+  /**
+   * The origin the MCP client uses — its endpoint, sign-in and token routes —
+   * when it is not `gatewayUrl`: the plain loopback address, or a home-network
+   * one. The portal is always driven at `gatewayUrl`.
+   */
+  mcpUrl?: string;
+}
+
+/** The origin an MCP client of `gateway` connects and signs in at. */
+function mcpOrigin(gateway: OAuthE2EGateway): string {
+  return gateway.mcpUrl ?? gateway.gatewayUrl;
 }
 
 export interface AuthorizedMcpClient {
@@ -439,7 +450,7 @@ export async function authorizeMcpClient(
       );
       callback = new URL(completed.redirectTo);
     } else {
-      const completed = await completeOAuthAuthorization(gateway.gatewayUrl, requestHandle);
+      const completed = await completeOAuthAuthorization(mcpOrigin(gateway), requestHandle);
       assertStatus(completed, 303, "complete authorization");
       callback = new URL(requiredHeader(completed, "location"));
     }
@@ -463,7 +474,7 @@ export async function authorizeMcpClient(
     if (!principal || !grant || !credential) {
       throw new Error("The approved principal, grant, and credential were not visible in Portal.");
     }
-    const transport = transportFor(gateway.gatewayUrl, provider);
+    const transport = transportFor(mcpOrigin(gateway), provider);
     const client = clientFor("omnesis-oauth-authorized");
     try {
       await client.connect(transport);
@@ -495,7 +506,7 @@ export async function beginMcpAuthorization(
   executionBinding?: { deviceToken: string; harness: "openclaw" | "hermes" },
   provider = new InMemoryOAuthClientProvider(),
 ): Promise<PendingMcpAuthorization> {
-  const firstTransport = transportFor(gateway.gatewayUrl, provider);
+  const firstTransport = transportFor(mcpOrigin(gateway), provider);
   const firstClient = clientFor("omnesis-oauth-bootstrap");
   let initialError: unknown;
   try {
@@ -533,7 +544,7 @@ export async function beginMcpAuthorization(
 
     const started = await fetch(provider.authorizationUrl, { redirect: "manual" });
     assertStatus(started, 303, "start authorization");
-    const consentUrl = new URL(requiredHeader(started, "location"), gateway.gatewayUrl);
+    const consentUrl = new URL(requiredHeader(started, "location"), provider.authorizationUrl);
     const requestHandle = consentUrl.searchParams.get("request");
     if (!requestHandle) throw new Error("The authorization response omitted its consent handle.");
     return {

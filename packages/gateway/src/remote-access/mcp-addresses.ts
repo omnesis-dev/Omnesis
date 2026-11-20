@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Which of the gateway's addresses away from home answer MCP, and how far. The
+ * Which of the gateway's addresses answer MCP, and how far. Away from home the
  * owner turns MCP off on an address, or keeps it to their Tailscale network,
  * and from then on a request reaching the gateway that way finds no MCP
  * endpoint and none of the OAuth routes an MCP client signs in through: they
@@ -12,6 +12,15 @@
  *
  * The addresses, in the order the owner sees them, with the choices each has:
  *
+ * - `home` (off, on): the gateway's own addresses on the home network — its
+ *   `.local` name and LAN addresses, as the gateway finds them for pairing.
+ *   Unlike the others it is off until the owner turns it on, and off refuses
+ *   nothing: a request there answers as it always did. On, an agent signs in
+ *   through the home-network address it used, which becomes its issuer and
+ *   `<origin>/mcp` its resource, provided the request came straight from a
+ *   private network and names one of those addresses (`homeSignIn`): a name
+ *   a client makes up, however local it looks, never becomes an issuer. Off
+ *   again, those resources stop being accepted.
  * - `relay` (off, public): the Omnesis relay address, recognised by the
  *   request arriving through the relay tunnel, or by its Host, since the
  *   gateway terminates TLS for that name. Until the gateway is connected it
@@ -60,7 +69,7 @@ const log = createLogger("gateway:remote-access:mcp");
 /** How long this computer's looked-up MagicDNS name is used before Tailscale is asked again. */
 const HOST_NAME_TTL_MS = 60_000;
 
-export const MCP_ADDRESS_IDS = ["relay", "tailnet", "host", "domain"] as const;
+export const MCP_ADDRESS_IDS = ["home", "relay", "tailnet", "host", "domain"] as const;
 export type McpAddressId = (typeof MCP_ADDRESS_IDS)[number];
 
 /**
@@ -73,6 +82,7 @@ export type McpReach = (typeof MCP_REACHES)[number];
 
 /** The choices each address offers, in the order the owner sees them. */
 export const MCP_CHOICES: Record<McpAddressId, readonly McpReach[]> = {
+  home: ["off", "on"],
   relay: ["off", "public"],
   tailnet: ["off", "private", "public"],
   host: ["off", "private", "public"],
@@ -84,6 +94,8 @@ export interface McpAddressRow {
   id: McpAddressId;
   /** The address's origin, once it is known. */
   url: string | null;
+  /** Every origin of the home-network address, its `.local` name first; `url` is the first. */
+  urls?: string[];
   /** Where MCP answers there now. */
   reach: McpReach;
   choices: readonly McpReach[];
@@ -129,6 +141,11 @@ export interface McpAddressesOptions {
     TailscaleEmbedService,
     "tailnetOrigin" | "settings" | "updateSettings" | "state"
   >;
+  /**
+   * The gateway's own addresses on the home network, when it listens beyond this machine:
+   * their origins, the `.local` name first.
+   */
+  home?: { origins: () => Promise<string[]> };
   /** Tailscale already on this computer, when the gateway listens on a port it can forward to. */
   host?: Pick<
     HostAccess,
@@ -189,6 +206,9 @@ function originOf(value: string | null | undefined): string | null {
   }
 }
 
+/** How long the home network's discovered addresses are used before they are looked up again. */
+const HOME_ORIGINS_TTL_MS = 30_000;
+
 /** What the relay management says about the relay right now. */
 export interface RelayState {
   origin: string | undefined;
@@ -226,7 +246,19 @@ interface HostLookup {
 /** Why a request was refused, for the log line. */
 export type McpRefusal = McpAddressId | "host-internet-api";
 
+/** What decides whether a request may sign in through the home-network address it used. */
+export interface HomeSignInRequest {
+  url: string;
+  via: TailnetArrival;
+  relayed: boolean;
+  funnel: boolean;
+  /** Its socket peer, and any client a trusted proxy reports, are on a private network. */
+  fromHomeNetwork: boolean;
+}
+
 export class McpAddresses {
+  private homeOrigins: { origins: string[]; at: number } | null = null;
+  private homeInFlight: Promise<string[]> | null = null;
   private hostLookup: HostLookup | null = null;
   private hostInFlight: Promise<HostLookup> | null = null;
   private readonly now: () => number;
@@ -241,6 +273,8 @@ export class McpAddresses {
   offered(): McpAddressId[] {
     return MCP_ADDRESS_IDS.filter((id) => {
       switch (id) {
+        case "home":
+          return !!this.options.home;
         case "relay":
           return true;
         case "tailnet":
@@ -257,14 +291,26 @@ export class McpAddresses {
 
   /** Every offered address with its choice, after asking Tailscale on this computer again. */
   async list(): Promise<McpAddressRow[]> {
-    const host = this.options.host ? await this.lookUpHost() : null;
-    const relay = await this.relayNow();
+    const [host, relay, home] = await Promise.all([
+      this.options.host ? this.lookUpHost() : null,
+      this.relayNow(),
+      this.options.home ? this.homeNetworkOrigins() : [],
+    ]);
     const tailnet = originOf(this.options.tailscale?.tailnetOrigin());
     const domain = this.options.publicBaseUrl()?.replace(/\/+$/u, "") || null;
     const domainIsOwn = !!domain && this.wayNamed(addressHostname(domain)) === null;
     return this.offered().map((id): McpAddressRow => {
       const choices = MCP_CHOICES[id];
       switch (id) {
+        case "home":
+          return {
+            id,
+            url: home[0] ?? null,
+            urls: home,
+            reach: this.answers(id) ? "on" : "off",
+            choices,
+            available: home.length > 0,
+          };
         case "relay":
           return {
             id,
@@ -346,7 +392,9 @@ export class McpAddresses {
       this.store("tailnet", tailnet !== "off");
       log.info(`MCP on the Tailscale device's address: ${tailnet}`);
     }
-    for (const [id, reach] of Object.entries(own) as Array<["relay" | "domain", McpReach]>) {
+    for (const [id, reach] of Object.entries(own) as Array<
+      ["home" | "relay" | "domain", McpReach]
+    >) {
       if (this.answers(id) === (reach !== "off")) continue;
       this.store(id, reach !== "off");
       log.info(`MCP on the ${id} address turned ${reach === "off" ? "off" : "on"}`);
@@ -414,6 +462,46 @@ export class McpAddresses {
   }
 
   /**
+   * The home network as an agent sees it: whether the owner lets agents there sign in, and
+   * the gateway's addresses there, its `.local` name first. Null where the gateway listens
+   * on this machine alone.
+   */
+  async homeNetwork(): Promise<{ allowed: boolean; origins: string[] } | null> {
+    if (!this.options.home) return null;
+    return { allowed: this.answers("home"), origins: await this.homeNetworkOrigins() };
+  }
+
+  /**
+   * Whether a request may sign in through the home-network address it used: the owner lets
+   * agents there sign in, it came straight from a private network — not through the relay,
+   * the gateway's tailnet device or Tailscale Funnel — and it names one of the gateway's
+   * own home-network addresses that is no other way in's.
+   */
+  async homeSignIn(request: HomeSignInRequest): Promise<boolean> {
+    if (!this.options.home || !this.answers("home")) return false;
+    if (request.relayed || request.funnel || request.via !== null || !request.fromHomeNetwork)
+      return false;
+    return this.isHomeHost(addressHostname(request.url), await this.homeNetworkOrigins());
+  }
+
+  /**
+   * Whether agents may still use a resource an agent signed in to on the home network: the
+   * owner still lets them, and it names one of the home-network addresses last found, which
+   * the sign-in that stored it looked up.
+   */
+  homeResource(resource: string): boolean {
+    if (!this.options.home || !this.answers("home")) return false;
+    return this.isHomeHost(addressHostname(resource), this.homeOrigins?.origins ?? []);
+  }
+
+  private isHomeHost(hostname: string | null, origins: readonly string[]): boolean {
+    if (!hostname || !origins.some((origin) => addressHostname(origin) === hostname)) return false;
+    return (
+      this.wayNamed(hostname) === null && hostname !== addressHostname(this.options.publicBaseUrl())
+    );
+  }
+
+  /**
    * This computer's Tailscale address as an OAuth issuer, while it serves the gateway and
    * MCP answers there. The gateway's public address wins when it is on the same origin.
    */
@@ -443,6 +531,8 @@ export class McpAddresses {
   /** Where MCP answers on an address now, as `loosens` compares it. */
   private wantedReach(id: McpAddressId): McpReach {
     switch (id) {
+      case "home":
+        return this.answers(id) ? "on" : "off";
       case "relay":
         return this.answers(id) ? "public" : "off";
       case "tailnet":
@@ -464,15 +554,45 @@ export class McpAddresses {
 
   private answers(id: McpAddressId): boolean {
     if (id === "host") return this.options.host?.mcpAnswersTailnet() ?? true;
+    if (id === "home") return this.options.settings.get().mcp?.home === true;
     return this.options.settings.get().mcp?.[id] !== false;
   }
 
-  /** Keep a choice: only an address turned off is written, so the default stays implicit. */
-  private store(id: "relay" | "tailnet" | "domain", on: boolean): void {
+  /**
+   * Keep a choice: only a departure from an address's default is written, so the default
+   * stays implicit — an address away from home turned off, the home network turned on.
+   */
+  private store(id: "home" | "relay" | "tailnet" | "domain", on: boolean): void {
     const choices = { ...this.options.settings.get().mcp };
-    if (on) delete choices[id];
+    if (id === "home") {
+      if (on) choices.home = true;
+      else delete choices.home;
+    } else if (on) delete choices[id];
     else choices[id] = false;
     this.options.settings.update({ mcp: choices });
+  }
+
+  /** The home network's addresses, looked up again once they are half a minute old. */
+  private homeNetworkOrigins(): Promise<string[]> {
+    const cached = this.homeOrigins;
+    if (cached && this.now() - cached.at < HOME_ORIGINS_TTL_MS)
+      return Promise.resolve(cached.origins);
+    this.homeInFlight ??= this.options
+      .home!.origins()
+      .catch((error: unknown) => {
+        log.warn(
+          `Could not list this gateway's home-network addresses: ${error instanceof Error ? error.message : String(error)}`,
+        );
+        return this.homeOrigins?.origins ?? [];
+      })
+      .then((origins) => {
+        this.homeOrigins = { origins, at: this.now() };
+        return origins;
+      })
+      .finally(() => {
+        this.homeInFlight = null;
+      });
+    return this.homeInFlight;
   }
 
   private publicWanted(): boolean {

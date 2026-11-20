@@ -12,7 +12,7 @@
 // for which way is tried first change in place. A guided setup that asks one
 // question per screen — the Omnesis account (with the relay), the remote
 // connection, what new devices may do (once one can ask to join) and where the
-// MCP server answers (once there is an address away from home) — is there for
+// MCP server answers, at home and away — is there for
 // whoever prefers it, started from the summary and run again at will. Every
 // answer is applied at once through the relay's and the Tailscale device's own
 // routes, with their step-ups and checks; this page keeps only where the owner
@@ -30,7 +30,7 @@ import { useTailscaleAdmin } from "../lib/use-tailscale-admin.js";
 import { AccountStep } from "./remote-access/account-step.js";
 import { ConnectionStep } from "./remote-access/connection-step.js";
 import { DevicesStep, devicePolicies } from "./remote-access/devices-step.js";
-import { McpStep, mcpRows } from "./remote-access/mcp.js";
+import { McpStep } from "./remote-access/mcp.js";
 import { Summary } from "./remote-access/summary.js";
 import {
   initialFlow,
@@ -64,10 +64,7 @@ function Feeds({ tailscaleEmbed, children }) {
 
 function Flow({ remote, setRemote, relay, tailscale, tailscaleEmbed }) {
   const policies = devicePolicies(relay, tailscale);
-  const steps = setupSteps({
-    devices: policies.relayLinked || policies.tailscaleOn,
-    mcp: mcpRows(remote).length > 0,
-  });
+  const steps = setupSteps({ devices: policies.relayLinked || policies.tailscaleOn });
   const [stored, setFlow] = useState(() => initialFlow(loadSetup(steps)));
   // A step that stops applying (step 3 once nothing can ask to join) gives way to the last one.
   const flow =
