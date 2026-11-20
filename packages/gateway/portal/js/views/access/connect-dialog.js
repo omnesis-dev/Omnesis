@@ -18,6 +18,7 @@ import { Modal } from "../../components/modal.js";
 import { navigate } from "../../lib/router.js";
 import { authorizationStatusNotice } from "./authorization.js";
 import {
+  CERTIFICATE_DOWNLOAD,
   PUBLISH_DOCS,
   agentSetups,
   harnessAddresses,
@@ -26,9 +27,22 @@ import {
   mainCertificatePending,
   servesUntrustedCertificate,
 } from "./client-setup.js";
-import { NO_RELAY, NO_TAILSCALE, addressChoices, leadsWithLocalAddress } from "./public-address.js";
+import { DOCS, NO_RELAY, NO_TAILSCALE } from "./public-address.js";
+import {
+  AGENT_LOCATIONS,
+  LOCATION_LABELS,
+  awayChoices,
+  homeAddresses,
+  initialLocation,
+  locationHarnessAddress,
+  locationOauth,
+  machineAddress,
+  machineProblem,
+} from "./agent-location.js";
 import { AgentIcon } from "./agent-brand.js";
-import { OWN_ADDRESS_PAGE } from "../remote-access/manage.js";
+import { CONNECTIVITY_PAGE, OWN_ADDRESS_PAGE } from "../remote-access/manage.js";
+import { HOME_NETWORK_WARNINGS } from "../remote-access/at-home.js";
+import { updateRemoteAccess } from "../../lib/remote-access-api.js";
 import { errorMessage } from "./shared.js";
 
 /**
@@ -53,15 +67,21 @@ function ExternalLink({ href, children }) {
   return html`<a href=${href} target="_blank" rel="noopener noreferrer">${children}</a>`;
 }
 
-/** A card's note: text parts, command names in code, and links. */
+/** A card's note: text parts, command names in code, links to the docs, and pages of the portal. */
 function NoteText({ parts }) {
-  return parts.map((part) =>
-    typeof part === "string"
-      ? part
-      : part.href
-        ? html`<${ExternalLink} href=${part.href}>${part.text}<//>`
-        : html`<code>${part.code}</code>`,
-  );
+  return parts.map((part) => {
+    if (typeof part === "string") return part;
+    if (part.href) return html`<${ExternalLink} href=${part.href}>${part.text}<//>`;
+    if (part.route)
+      return html`<a
+        href=${part.route}
+        onClick=${(event) => {
+          event.preventDefault();
+          navigate(part.route);
+        }}
+      >${part.text}</a>`;
+    return html`<code>${part.code}</code>`;
+  });
 }
 
 /**
@@ -117,10 +137,58 @@ function CertificatePendingNotice({ agent }) {
 function CertificateTrustStep({ agent }) {
   const step = agent.trustStep;
   return html`<div class="access-agent-trust">
-    <${AgentCommand} agent=${agent} command=${step} labelled />
+    ${step.download
+      ? html`<span class="access-agent-trust-label">${step.label}</span>
+          <p>
+            <a class="btn-secondary access-agent-download" href=${CERTIFICATE_DOWNLOAD} download=${step.download}>Download the certificate</a>
+            ${" "}Save it in your home folder as <code>${step.download}</code> on the computer ${agent.name} runs on, then:
+          </p>
+          ${step.authority &&
+          html`<p>
+            This is the mkcert authority of this gateway's computer: a computer that trusts it also trusts every other
+            certificate made with it there, so keep it to computers you own.
+          </p>`}
+          <${AgentCommand} agent=${agent} command=${step} />`
+      : html`<${AgentCommand} agent=${agent} command=${step} labelled />`}
     <p>
       Ensure <code>${step.variable}</code> is set where ${agent.name} runs.${" "}
       <${ExternalLink} href=${PUBLISH_DOCS.trust}>Trusting the gateway's certificate<//>.
+    </p>
+  </div>`;
+}
+
+/**
+ * For an agent on another computer at home that cannot trust the certificate
+ * this gateway serves there: said before anything else, with what works
+ * instead. Running the agent on this computer needs no certificate at all; an
+ * address away from home has one the agent trusts.
+ */
+function HomeTrustNotice({ agent, certificate, onLocation, machinePlain }) {
+  const kinds = agent.certificateTrust?.kinds ?? [];
+  const selfSigned = certificate?.kind === "self-signed";
+  return html`<div class="access-agent-public is-warning" role="alert">
+    <p>
+      <strong>${agent.name} can't connect over your home network.</strong>${" "}
+      ${agent.certificateTrust?.gatewayComputerOnly
+        ? `Its setting for trusting another certificate may replace the authorities it already trusts and cut it off from its own service, so Omnesis doesn't offer it for another computer yet.`
+        : selfSigned && !kinds.includes("self-signed")
+          ? `It can't trust a self-signed certificate, which is what this gateway serves there.`
+          : `It trusts only a certificate from an authority it knows, and the one this gateway serves there isn't.`}
+    </p>
+    <p>
+      ${machinePlain &&
+      html`If ${agent.name} can run on the computer this gateway runs on,${" "}
+        <button type="button" class="access-link-button" onClick=${() => onLocation("machine")}>choose On this computer</button>:
+        that address needs no certificate.${" "}`}${selfSigned && kinds.includes("mkcert") && !agent.certificateTrust?.gatewayComputerOnly
+        ? html`${machinePlain ? "Or " : ""}<${ExternalLink} href=${PUBLISH_DOCS.certificates}>give the gateway an mkcert certificate<//>, which ${agent.name} trusts with one setting.${" "}`
+        : ""}Otherwise reach this gateway from away, through an address set up in${" "}
+      <a
+        href=${CONNECTIVITY_PAGE}
+        onClick=${(event) => {
+          event.preventDefault();
+          navigate(CONNECTIVITY_PAGE);
+        }}
+      >Settings, Connectivity</a>.
     </p>
   </div>`;
 }
@@ -287,7 +355,7 @@ function AgentCommand({ agent, command, labelled }) {
  * picks it there (`addressSelectable`), a managed integration pairs against
  * that address and offers no second choice of its own.
  */
-function AgentSetupPicker({ oauth, relay, tailscale, addressSelectable }) {
+function AgentSetupPicker({ oauth, relay, tailscale, addressSelectable, location = "away", locationHarness = null, onLocation, machinePlain = false }) {
   const [selectedId, setSelectedId] = useState(null);
   const [commandIdx, setCommandIdx] = useState(0);
   const [addressIdx, setAddressIdx] = useState(0);
@@ -297,13 +365,19 @@ function AgentSetupPicker({ oauth, relay, tailscale, addressSelectable }) {
   // Bumped whenever the choice a code would be minted for changes, so a code
   // still being minted for an earlier choice is dropped when it arrives.
   const mintGeneration = useRef(0);
-  const everyAddress = harnessAddresses(oauth);
+  const everyAddress = location === "away" ? harnessAddresses(oauth) : locationHarness ? [locationHarness] : [];
   const selectedAddress = everyAddress.find(
     (address) => address.gatewayUrl === oauth.resource.replace(/\/mcp$/u, ""),
   );
   const addresses = addressSelectable && selectedAddress ? [selectedAddress] : everyAddress;
   const harnessAddress = addresses[Math.min(addressIdx, addresses.length - 1)];
-  const agents = agentSetups(oauth, { harnessAddress, pairingCode: pairing.code ?? undefined, relay, tailscale });
+  const agents = agentSetups(oauth, {
+    harnessAddress,
+    pairingCode: pairing.code ?? undefined,
+    relay,
+    tailscale,
+    location,
+  }).filter((agent) => !agent.pairs || harnessAddress);
   const selected = agents.find((agent) => agent.id === selectedId) ?? null;
   const pairsHarness = selected?.pairs ? selected.id : null;
 
@@ -364,6 +438,11 @@ function AgentSetupPicker({ oauth, relay, tailscale, addressSelectable }) {
 
   return html`<div class="access-agent-setup">
     <p class="access-agent-setup-label">Setup for common agents</p>
+    ${location !== "away" &&
+    html`<p class="access-agent-elsewhere">
+      ChatGPT, Claude apps and Grok bot connect from their own servers, which can't reach this address.${" "}
+      <button type="button" class="access-link-button" onClick=${() => onLocation("away")}>Set them up under Somewhere else</button>.
+    </p>`}
     <div class="backend-opt-grid access-agent-grid">
       ${agents.map(
         (agent) => html`<button
@@ -385,6 +464,7 @@ function AgentSetupPicker({ oauth, relay, tailscale, addressSelectable }) {
         </button>`,
       )}
     </div>
+
     ${selected &&
     html`<div class="access-agent-steps" id="access-agent-steps" data-agent=${selected.id}>
       ${selected.addressNotice && html`<${AddressNotice} agent=${selected} />`}
@@ -392,9 +472,11 @@ function AgentSetupPicker({ oauth, relay, tailscale, addressSelectable }) {
       selected.addressNotice?.usable !== false &&
       selected.needsTrustedCertificate &&
       servesUntrustedCertificate(oauth) &&
-      (mainCertificatePending(oauth)
-        ? html`<${CertificatePendingNotice} agent=${selected} />`
-        : html`<${TrustedCertificateNotice} agent=${selected} certificate=${mainAddressCertificate(oauth)} />`)}
+      (location === "home"
+        ? html`<${HomeTrustNotice} agent=${selected} certificate=${oauth.certificate} onLocation=${onLocation} machinePlain=${machinePlain} />`
+        : mainCertificatePending(oauth)
+          ? html`<${CertificatePendingNotice} agent=${selected} />`
+          : html`<${TrustedCertificateNotice} agent=${selected} certificate=${mainAddressCertificate(oauth)} />`)}
       ${selected.trustStep && html`<${CertificateTrustStep} agent=${selected} />`}
       ${selected.pairs &&
       html`<${HarnessPairing}
@@ -449,37 +531,119 @@ function ConnectStep({ number, title, caption, children }) {
     <span aria-hidden="true">${number}</span>
     <div>
       <h3>${title}</h3>
-      <p>${caption}</p>
+      ${caption && html`<p>${caption}</p>`}
       ${children}
     </div>
   </section>`;
 }
 
-/** What step 1 says about its address. A localhost address is no use to a hosted client. */
-function addressCaption(oauth, selectable) {
-  if (selectable) {
-    return "Pick the address the agent will use, then paste it into ChatGPT, Claude, Codex, or another OAuth-capable client.";
+/** The address an agent copies, picked from a list where there is more than one. */
+function AddressField({ options, value, onPick, label = "MCP server address" }) {
+  return html`<div class=${`access-mcp-resource${options.length > 1 ? " access-mcp-picker" : ""}`}>
+    ${options.length > 1
+      ? html`<select id="access-mcp-address" aria-label=${label} value=${value} onChange=${(event) => onPick(event.currentTarget.value)}>
+          ${options.map(
+            (option) => html`<option key=${option.resource} value=${option.resource} selected=${option.resource === value}>${option.resource}</option>`,
+          )}
+        </select>`
+      : html`<code>${value}</code>`}
+    <${CopyIconButton} text=${value} class="access-copy-button" title="Copy MCP resource" />
+  </div>`;
+}
+
+/** What the address under the question is for, by where the agent runs. */
+function addressCaption(location, selectable) {
+  if (selectable) return "Pick the address the agent will use, then paste it into the client.";
+  switch (location) {
+    case "machine":
+      return "Paste it into Claude Code, Codex, or another agent on this computer.";
+    case "home":
+      return "Paste it into Claude Code, Codex, or another agent on that computer.";
+    default:
+      return "Paste it into ChatGPT, Claude, Codex, or another OAuth-capable client.";
   }
-  return leadsWithLocalAddress(oauth)
-    ? "This localhost address works only for agents running on the gateway’s machine. Hosted clients cannot reach it."
-    : "Paste it into ChatGPT, Claude, Codex, or another OAuth-capable client.";
+}
+
+/** Where the agent runs: three choices, side by side where there is room. */
+function LocationPicker({ location, onLocation }) {
+  return html`<fieldset class="access-location-picker">
+    <legend>Where does the agent run?</legend>
+    ${AGENT_LOCATIONS.map(
+      (id) => html`<label key=${id} class=${`access-location-option${location === id ? " is-on" : ""}`}>
+        <input type="radio" name="access-agent-location" value=${id} checked=${location === id} onChange=${() => onLocation(id)} />
+        <span>
+          <strong>${LOCATION_LABELS[id].title}</strong>
+          <small>${LOCATION_LABELS[id].text}</small>
+        </span>
+      </label>`,
+    )}
+  </fieldset>`;
+}
+
+/** A note under an address: text parts, as `NoteText` reads them. */
+function AddressNote({ parts, warning = false }) {
+  return html`<div class=${`access-agent-public${warning ? " is-warning" : ""}`} role=${warning ? "alert" : null}>
+    <p><${NoteText} parts=${parts} /></p>
+  </div>`;
+}
+
+/**
+ * The home network while agents there may not sign in: what allowing it
+ * means, said before the owner chooses, and the switch itself. Allowing it may
+ * ask for the passkey, as on the MCP server page.
+ */
+function AllowHomeNetwork({ onAllowed }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const allow = async () => {
+    setBusy(true);
+    setError("");
+    try {
+      await updateRemoteAccess({ mcp: { home: "on" } });
+      await onAllowed();
+    } catch (cause) {
+      setError((cause?.stepUp === true && cause.message) || cause?.serverMessage || "Couldn't change that. Try again.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return html`<div class="access-home-allow">
+    <p><strong>Agents on your home network can't sign in yet.</strong> Before you allow it:</p>
+    <ul>
+      ${HOME_NETWORK_WARNINGS.map((warning) => html`<li key=${warning}>${warning}</li>`)}
+    </ul>
+    <div class="access-home-allow-actions">
+      <button type="button" class="btn-primary" disabled=${busy} onClick=${allow}>
+        ${busy ? "Allowing…" : "Allow agents on my home network"}
+      </button>
+      <${ExternalLink} href=${`${DOCS}/connect#home-network`}>Home network in the docs<//>
+    </div>
+    ${error && html`<p class="access-error" role="alert">${error}</p>`}
+  </div>`;
 }
 
 /**
  * `relay` is the gateway's relay-hosted address, from `relayPublicAddress`,
  * and `tailscale` its Tailscale device's address, from `tailscalePublicAddress`.
- * With it and more than one address the gateway authorizes, step 1 is a
- * choice between them, and the chosen address is the one every agent's setup
- * below is written for.
+ * The first question is where the agent runs; the address it gets, and every
+ * agent's setup below, follow from the answer (see `agent-location.js`).
+ * `onRefresh` reads the overview again, after the home network is allowed.
  */
-export function ConnectAgentDialog({ oauth: overviewOauth, relay = NO_RELAY, tailscale = NO_TAILSCALE, onClose }) {
-  const [pickedAddress, setPickedAddress] = useState(null);
-  const choices = addressChoices(overviewOauth, relay, tailscale);
-  const address =
-    choices.selectable && choices.options.some((option) => option.resource === pickedAddress)
-      ? pickedAddress
-      : choices.initial;
-  const oauth = address === overviewOauth.resource ? overviewOauth : { ...overviewOauth, resource: address };
+export function ConnectAgentDialog({ oauth: overviewOauth, relay = NO_RELAY, tailscale = NO_TAILSCALE, onClose, onRefresh = async () => {} }) {
+  const [location, setLocation] = useState(() => initialLocation(overviewOauth, relay, tailscale));
+  const [picked, setPicked] = useState({});
+  const machine = machineAddress(overviewOauth);
+  const home = homeAddresses(overviewOauth);
+  const away = awayChoices(overviewOauth, relay, tailscale);
+  const options = {
+    machine: machine.resource ? [{ resource: machine.resource }] : [],
+    home: home.allowed ? home.entries : [],
+    // Without the relay or a Tailscale address there is one address away from home, and no choice.
+    away: away.selectable ? away.options : away.initial ? [{ resource: away.initial }] : [],
+  }[location];
+  const fallback = location === "away" ? away.initial : (options[0]?.resource ?? null);
+  const address = options.some((option) => option.resource === picked[location]) ? picked[location] : fallback;
+  const oauth = address ? locationOauth(overviewOauth, location, address) : null;
   const [code, setCode] = useState("");
   const [lookingUp, setLookingUp] = useState(false);
   const [error, setError] = useState("");
@@ -522,37 +686,65 @@ export function ConnectAgentDialog({ oauth: overviewOauth, relay = NO_RELAY, tai
     onClose();
   }
 
+  const problem = location === "machine" ? machineProblem(machine) : null;
+  const addressBlock = (() => {
+    if (location === "home" && !home.offered)
+      return html`<${AddressNote}
+        warning
+        parts=${["This gateway listens on this computer only, so other computers can't reach it. Run the agent on this computer, or reach the gateway from away."]}
+      />`;
+    if (location === "home" && !home.allowed) return html`<${AllowHomeNetwork} onAllowed=${onRefresh} />`;
+    if (location === "home" && options.length === 0)
+      return html`<${AddressNote}
+        warning
+        parts=${["This gateway found no address of its own on your home network. Check that this computer is connected to it."]}
+      />`;
+    if (location === "away" && options.length === 0)
+      return html`<${AddressNote}
+        parts=${[
+          "This gateway has no address away from home yet. Set one up in ",
+          { route: CONNECTIVITY_PAGE, text: "Settings, Connectivity" },
+          ".",
+        ]}
+      />`;
+    if (!address) return html`<${AddressNote} warning parts=${["No address for this computer answers right now."]} />`;
+    return html`<p class="access-address-caption">${addressCaption(location, options.length > 1)}</p>
+      <${AddressField} options=${options} value=${address} onPick=${(value) => setPicked({ ...picked, [location]: value })} />
+      ${location === "machine" &&
+      (problem
+        ? html`<${AddressNote} warning parts=${problem} />`
+        : html`<${AddressNote} parts=${["Only programs on this computer can use this address, and it needs no certificate step."]} />`)}
+      ${location === "home" &&
+      html`<${AddressNote}
+        parts=${[
+          options.length > 1 ? "Prefer the .local name: an address in numbers can change when your router hands out a new one. " : "",
+          "Anyone on your network can reach this address; a connection still needs your approval.",
+        ]}
+      />`}
+`;
+  })();
+
   return html`<${Modal} open title="Connect an agent" onClose=${close}>
     <div class="access-connect-dialog">
-      <p class="access-explainer">An OAuth-capable MCP client connects in two steps.</p>
-      <${ConnectStep}
-        number="1"
-        title="Add this MCP server to the client"
-        caption=${addressCaption(oauth, choices.selectable)}
-      >
-        <div class="access-mcp-resource${choices.selectable ? " access-mcp-picker" : ""}">
-          ${choices.selectable
-            ? // The address is picked where it is shown and copied: one field, not a list above a copy of its choice.
-              html`<select
-                id="access-mcp-address"
-                aria-label="MCP server address"
-                value=${address}
-                onChange=${(event) => setPickedAddress(event.currentTarget.value)}
-              >
-                ${choices.options.map(
-                  (option) => html`<option key=${option.resource} value=${option.resource} selected=${option.resource === address}>${option.resource}</option>`,
-                )}
-              </select>`
-            : html`<code>${oauth.resource}</code>`}
-          <${CopyIconButton}
-            text=${oauth.resource}
-            class="access-copy-button"
-            title="Copy MCP resource"
-          />
-        </div>
-        <${AgentSetupPicker} oauth=${oauth} relay=${relay} tailscale=${tailscale} addressSelectable=${choices.selectable} />
+      <p class="access-explainer">MCP is how agents such as Claude Code or ChatGPT plug into this gateway. An agent connects in two steps, and you approve it.</p>
+      <${ConnectStep} number="1" title="Add this MCP server to the client">
+        <${LocationPicker} location=${location} onLocation=${setLocation} />
+        ${addressBlock}
+        ${oauth &&
+        html`<${AgentSetupPicker}
+          key=${location}
+          oauth=${oauth}
+          relay=${relay}
+          tailscale=${tailscale}
+          addressSelectable=${location === "away" && away.selectable}
+          location=${location}
+          locationHarness=${locationHarnessAddress(overviewOauth, location, address)}
+          onLocation=${setLocation}
+          machinePlain=${machine.plain}
+        />`}
       <//>
-      <${ConnectStep}
+      ${oauth &&
+      html`<${ConnectStep}
         number="2"
         title="If the sign-in page shows a code, enter it here"
         caption="When the agent's sign-in opens in a browser already signed in to this portal, you approve it there and can skip this step. Otherwise the sign-in page shows a short code: enter it here or on your phone."
@@ -574,7 +766,7 @@ export function ConnectAgentDialog({ oauth: overviewOauth, relay = NO_RELAY, tai
         </form>
         <p class="access-connect-status" role="status">${lookingUp ? "Checking the authorization code…" : ""}</p>
         ${error && html`<p class="access-error" role="alert">${error}</p>`}
-      <//>
+      <//>`}
       <div class="access-request-actions">
         <button type="button" class="btn-secondary" onClick=${close}>Close</button>
       </div>

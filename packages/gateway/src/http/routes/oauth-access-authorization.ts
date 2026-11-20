@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { randomBytes } from "node:crypto";
+import { randomBytes, X509Certificate } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { createLogger } from "@omnesis/core";
 import { buildPage, clampLimit, scopeSatisfies, SCOPE_ADMIN, tryDeviceId } from "@omnesis/types";
 import { resolveRequestOAuthUrls } from "../oauth-request.js";
@@ -68,6 +69,7 @@ import {
 import type { Context, MiddlewareHandler } from "hono";
 import type { AppEnv, RouteApp } from "./types.js";
 import type { AgentCertificateTrust } from "../../tls-lifecycle/agent-trust.js";
+import type { LocalMcpState } from "../../local-mcp-listener.js";
 import type { McpAddresses } from "../../remote-access/mcp-addresses.js";
 import type { AccessService } from "../../access/service.js";
 import type { AccessAuthorizationNotifier } from "../../access/authorization-notifier.js";
@@ -113,7 +115,12 @@ export function mountOAuthAuthorizationRoutes(
      * Which addresses away from home answer MCP. The access overview lists only those,
      * so a client is never pointed at an address that answers 404.
      */
-    mcpAddresses?: Pick<McpAddresses, "answersAt" | "settle" | "hostReach">;
+    mcpAddresses?: Pick<
+      McpAddresses,
+      "answersAt" | "settle" | "hostReach" | "homeResource" | "homeNetwork"
+    >;
+    /** Where the plain-HTTP address for agents on this computer stands. */
+    localMcp?: () => LocalMcpState;
     /**
      * The origins whose publicly trusted certificate is still being issued,
      * so the portal can say to wait rather than to set up another one.
@@ -155,6 +162,7 @@ export function mountOAuthAuthorizationRoutes(
       options.publicAddress?.baseUrl(),
       options.publicAddress?.mcpResourceUrls(),
       options.additionalOAuthIssuerUrls,
+      { home: options.mcpAddresses?.homeResource(resource) ?? false },
     );
 
   app.get("/oauth/authorize", noStore, scope.public(), async (c) => {
@@ -415,12 +423,31 @@ export function mountOAuthAuthorizationRoutes(
         ),
     );
   };
+  /**
+   * Where agents on this computer connect: the plain-HTTP loopback address while it
+   * answers, with what stands in its way otherwise, and the gateway's HTTPS loopback
+   * address, which a managed integration pairs against and which serves MCP whatever
+   * becomes of the other.
+   */
+  const thisComputer = () => {
+    const local = options.localMcp?.() ?? { state: "off" as const };
+    return {
+      state: local.state,
+      resource: local.state === "listening" ? `${local.url}/mcp` : null,
+      ...("port" in local ? { port: local.port } : {}),
+      gatewayUrl: options.loopbackBaseUrl ?? null,
+    };
+  };
   const accessOverview = async (requestUrl: string) => {
     await options.mcpAddresses?.settle();
     const publicBaseUrl = options.publicAddress?.baseUrl();
     const urls = overviewUrls(requestUrl, publicBaseUrl);
+    const home = (await options.mcpAddresses?.homeNetwork()) ?? null;
+    const homeResources = home?.origins.map((origin) => `${origin}/mcp`) ?? [];
     const [served, pending] = await Promise.all([
-      urls ? servedByGateway(urls.supportedResources) : new Map<string, ServedResource>(),
+      urls
+        ? servedByGateway([...urls.supportedResources, ...homeResources])
+        : new Map<string, ServedResource>(),
       urls && options.pendingCertificateOrigins
         ? options.pendingCertificateOrigins()
         : new Set<string>(),
@@ -446,6 +473,22 @@ export function mountOAuthAuthorizationRoutes(
             })),
             tlsFingerprintSha256: fingerprint() ?? null,
             certificate: options.agentCertificateTrust?.() ?? null,
+            thisComputer: thisComputer(),
+            // The gateway's addresses on the home network, whether agents there may sign in,
+            // and the certificate each presents, which decides what an agent must trust.
+            ...(home
+              ? {
+                  homeNetwork: {
+                    allowed: home.allowed,
+                    resources: homeResources.map((resource) => ({
+                      resource,
+                      servedByGateway: served.get(resource)?.servedByGateway ?? false,
+                      direct: served.get(resource)?.direct ?? false,
+                      publiclyTrusted: served.get(resource)?.publiclyTrusted ?? false,
+                    })),
+                  },
+                }
+              : {}),
           }
         : null,
     };
@@ -453,6 +496,24 @@ export function mountOAuthAuthorizationRoutes(
   app.get("/portal/api/access", noStore, scope.admin(), async (c) =>
     c.json(await accessOverview(c.req.url)),
   );
+  // The certificate an agent on another computer trusts this gateway's by, to save there:
+  // the file `agentCertificateTrust` names, already checked against the served certificate.
+  // Only the certificate itself is sent, re-encoded, so nothing else in the file can leave.
+  app.get("/portal/api/access/certificate", noStore, scope.admin(), (c) => {
+    const trust = options.agentCertificateTrust?.();
+    if (!trust?.trustFile)
+      throw new NotFoundError("This gateway has no certificate file to trust.");
+    let pem: string;
+    try {
+      pem = new X509Certificate(readFileSync(trust.trustFile)).toString();
+    } catch {
+      throw new NotFoundError("This gateway has no certificate file to trust.");
+    }
+    const name = trust.kind === "mkcert" ? "omnesis-gateway-ca.pem" : "omnesis-gateway.pem";
+    c.header("Content-Type", "application/x-pem-file");
+    c.header("Content-Disposition", `attachment; filename="${name}"`);
+    return c.body(pem);
+  });
   app.get("/admin/access", noStore, scope.admin(), async (c) =>
     c.json(await accessOverview(c.req.url)),
   );

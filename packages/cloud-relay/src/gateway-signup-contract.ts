@@ -63,6 +63,12 @@ export const gatewaySignupRedemption = z
   .object({ operationId: z.string().uuid(), redemptionSecret: opaque })
   .strict();
 export const gatewaySignupDenialReason = z.enum(["not-allowed", "capacity"]);
+/**
+ * A gateway that understands `accountCreated` asks for it with this header on its poll. Gateways
+ * that predate it parse the approval strictly, so the relay adds the field only when asked.
+ */
+export const GATEWAY_SIGNUP_FEATURES_HEADER = "omnesis-signup-features";
+export const GATEWAY_SIGNUP_ACCOUNT_CREATED = "account-created";
 export const gatewaySignupPollResult = z.discriminatedUnion("status", [
   z.object({ status: z.literal("pending"), expiresAt: seconds }).strict(),
   z
@@ -72,6 +78,11 @@ export const gatewaySignupPollResult = z.discriminatedUnion("status", [
       accountId: account,
       signInProof: signInProofSchema,
       credentialPublicKey: z.string().min(1).max(4096).optional(),
+      /**
+       * Whether this sign-in created the account, rather than signing in to one it already had.
+       * Absent from a relay that predates it, and sent only when the gateway asks.
+       */
+      accountCreated: z.boolean().optional(),
     })
     .strict(),
   z.object({ status: z.literal("denied"), reason: gatewaySignupDenialReason }).strict(),

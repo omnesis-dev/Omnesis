@@ -375,7 +375,8 @@ test("managed setup discovers hosted routing, enrolls without Google, obtains a 
   });
   try {
     const configured = await manager!.configure({ relayUrl, termsAccepted: true });
-    origin = configured.publicOrigin!;
+    // The address is offered only once the gateway has registered; the saved one names it now.
+    origin = configured.config.publicOrigin!;
     authority = await localAcmeAuthority(directory, new URL(origin).hostname, records);
     await manager!.configure({
       relayUrl,

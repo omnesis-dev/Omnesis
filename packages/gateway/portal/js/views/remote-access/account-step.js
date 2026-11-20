@@ -11,7 +11,12 @@ import { html } from "htm/preact";
 import { useState } from "preact/hooks";
 import { ConfirmModal } from "../../components/confirm-modal.js";
 import { FinishSetup, openOnGateway } from "../../components/gateway-passkey-confirm.js";
-import { relayError, relayInvite, relayInviteOnly } from "../../lib/cloud-relay-api.js";
+import {
+  relayError,
+  relayHttpsUrl,
+  relayInvite,
+  relayInviteOnly,
+} from "../../lib/cloud-relay-api.js";
 import {
   UNLINK_CONFIRM,
   Waiting,
@@ -45,6 +50,7 @@ const COPY = {
   },
   linking: { heading: "Connecting to your Omnesis account…", blurb: "Almost done." },
   failed: { heading: "Couldn't connect", blurb: "The connection could not be set up. Nothing on this gateway changed." },
+  unfinished: { heading: "Connecting didn't finish", blurb: "" },
   linked: {
     heading: "This gateway is linked to your Omnesis account",
     blurb: "Your apps find this gateway by signing in, and new devices can ask to join from anywhere.",
@@ -56,10 +62,48 @@ const COPY = {
   },
 };
 
-/** The invite the person is typing, kept by whichever view shows the account choice. */
+/**
+ * The invite the person is typing, and whether they chose to try an unfinished connection
+ * again, kept by whichever view shows the account choice.
+ */
 export function useInvite() {
   const [invite, setInvite] = useState("");
-  return { invite, setInvite };
+  const [retrying, setRetrying] = useState(false);
+  return { invite, setInvite, retrying, setRetrying };
+}
+
+/** Why connecting didn't finish, in one sentence. */
+export function unfinishedReason(status) {
+  const error = status?.unfinished?.error;
+  return error
+    ? relayError(error)
+    : "It stopped before the sign-in or the security check was completed.";
+}
+
+/** Why connecting didn't finish, and what each way on does. */
+function unfinishedBlurb(status) {
+  return `${unfinishedReason(status)} This gateway has reserved an address but can't be reached at it yet. Try again to continue with that address, or start over to discard it and begin from scratch.`;
+}
+
+/** What connecting agrees to, said once beside the buttons that connect. */
+function TermsLine({ status }) {
+  const url = relayHttpsUrl(status?.config?.acmeTermsUrl);
+  if (!url) return null;
+  return html`<p class="relay-hint relay-terms">
+    By connecting, you agree to${" "}
+    <a href=${url} target="_blank" rel="noopener noreferrer">Let's Encrypt's Subscriber Agreement</a>.
+  </p>`;
+}
+
+/**
+ * Said once the owner chose to create an account but signed in with one that already existed:
+ * the gateway is linked to that account, and the invite is still unused.
+ */
+export function ExistingAccountNotice({ status }) {
+  if (status?.connect?.state !== "done" || !status.connect.existingAccount) return null;
+  return html`<p role="status" class="relay-notice">
+    You already had an Omnesis account, so this gateway is now linked to it. Your invite wasn't used.
+  </p>`;
 }
 
 /** Where the invite link goes. Only creating an account needs it. */
@@ -93,33 +137,49 @@ function InviteField({ value, onInput, disabled }) {
  * its own way on; the account page shows them as its header until an account
  * is linked, so both offer exactly the same choice.
  */
-export function accountConnect(relay, { invite = "", setInvite = () => {} } = {}) {
+export function accountConnect(
+  relay,
+  { invite = "", setInvite = () => {}, retrying = false, setRetrying = () => {} } = {},
+) {
   const { status, busy, run } = relay;
   const state = accountState(status);
   const disabled = Boolean(busy) && busy !== "refresh";
   const inviteOnly = relayInviteOnly(status);
   const token = relayInvite(invite);
   // Creating an account is always the person's explicit choice, here and on the sign-in page.
-  const connect = (intent) =>
-    run("connect", {
+  const connect = (intent) => {
+    setRetrying(false);
+    return run("connect", {
       termsAccepted: true,
       intent,
       ...(intent === "create" && token ? { invite: token } : {}),
     });
+  };
+  // Editing the invite answers what it was refused for, so the refusal goes only then.
+  const editInvite = (value) => {
+    setInvite(value);
+    if (/^invite-/.test(relay.errorCode ?? "")) relay.clearError?.();
+  };
   // A refused invite brings back the choice, with the invite field to fix it.
   const inviteRefused =
     state === "failed" && /^invite-/.test(status.connect?.error ?? "");
-  const choosing = state === "none" || inviteRefused;
+  // Trying an unfinished connection again is the same choice: the sign-in decides the account.
+  const choosing = state === "none" || inviteRefused || (state === "unfinished" && retrying);
   const copy = state === "waiting" && status.connect?.verification ? {
     heading: "Verify this gateway's setup",
     blurb: "Open the security check to get this gateway's public address. Cloudflare usually checks automatically; it may ask you to confirm you're human. No approval from Omnesis is needed.",
+  } : state === "waiting" && status.connect?.intent === "create" ? {
+    heading: "Create your Omnesis account",
+    blurb: "Continue in the new tab to create your account and finish connecting. This page updates by itself.",
   } : COPY[state];
   const blurb =
     state === "unavailable" && status.serviceError
       ? relayError(status.serviceError)
       : state === "failed" && (status.connect?.error ?? status.enrollment?.error)
         ? relayError(status.connect?.error ?? status.enrollment?.error)
-        : copy.blurb;
+        : state === "unfinished"
+          ? unfinishedBlurb(status)
+          : copy.blurb;
   // Before any account, everything to know is one paragraph: what it does, what it never
   // sees, that new accounts need an invite, and that it can wait.
   const fullBlurb =
@@ -140,8 +200,23 @@ export function accountConnect(relay, { invite = "", setInvite = () => {} } = {}
     >
       ${busy === "connect" ? "Connecting…" : "Create an account"}
     </button>`;
+  const startOver = html`<button
+    type="button"
+    class="btn-secondary"
+    disabled=${disabled || !status?.can?.startOver}
+    title="Discard the address this gateway reserved and connect from the beginning"
+    onClick=${() => run("start-over", {})}
+  >
+    ${busy === "start-over" ? "Starting over…" : "Start over"}
+  </button>`;
   const buttons = {
     none: choice,
+    unfinished: retrying
+      ? choice
+      : html`${startOver}
+          <button type="button" class="btn-primary" disabled=${disabled} onClick=${() => setRetrying(true)}>
+            Try again
+          </button>`,
     failed: inviteRefused
       ? choice
       : html`<button type="button" class="btn-primary" disabled=${disabled} onClick=${() => connect()}>
@@ -158,7 +233,8 @@ export function accountConnect(relay, { invite = "", setInvite = () => {} } = {}
     ${choosing &&
     inviteOnly &&
     html`<p class="relay-private-badge">Private · invite only</p>
-      <${InviteField} value=${invite} onInput=${setInvite} disabled=${disabled} />`}
+      <${InviteField} value=${invite} onInput=${editInvite} disabled=${disabled} />`}
+    ${(choosing || state === "failed") && html`<${TermsLine} status=${status} />`}
     ${state === "waiting" && html`<${Waiting} connect=${status.connect} busy=${busy} run=${run} />`}`;
   return { state, heading: copy.heading, blurb: fullBlurb, body, buttons, disabled };
 }
@@ -216,6 +292,7 @@ export function AccountStep({
   const actions = {
     none: html`${skip} ${buttons}`,
     failed: html`${skip} ${buttons}`,
+    unfinished: html`${skip} ${buttons}`,
     enrolled: html`${buttons} ${manage} ${forward}`,
     linked: html`${unlink} ${manage} ${forward}`,
   }[state] ?? (["waiting", "registering", "linking", "loading"].includes(state) ? null : forward);
@@ -233,6 +310,7 @@ export function AccountStep({
   >
     <div class="relay-view remote-access-relay">
       ${body}
+      <${ExistingAccountNotice} status=${status} />
       ${checklist &&
       html`<${FinishSetup}
         enrollment=${enrollment}

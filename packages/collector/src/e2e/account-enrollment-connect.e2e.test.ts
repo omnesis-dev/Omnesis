@@ -22,7 +22,11 @@ import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
-import { authorizeAccountDesktop, pairAccountDevice } from "@omnesis/cloud-relay";
+import {
+  authorizeAccountDesktop,
+  hostedGatewayHostname,
+  pairAccountDevice,
+} from "@omnesis/cloud-relay";
 import { localAcmeAuthority } from "../../../cloud-relay/test/acme-authority.js";
 import { closeEnrollmentFixture } from "./enrollment-fixture-cleanup.js";
 import {
@@ -68,14 +72,20 @@ describe.skipIf(!browserReady)("connect a gateway by signing in", () => {
   const gateways: Gateway[] = [];
   /** A gateway linked to an account it created, and the browser holding that account's passkey. */
   let switched: { gateway: Gateway; session: PasskeySession; accountId: string };
+  /** An account made before the relay became invite-only, and the browser holding its passkey. */
+  let inviteOnly: { session: PasskeySession; accountId: string };
 
-  /** The real `omnesis cloud connect`, run against a gateway with its admin token and no terminal. */
-  function cloudConnect(gateway: Gateway, args: string[]) {
-    return runCli(world, ["cloud", "connect", "--accept-terms", ...args], {
-      OMNESIS_CONFIG_DIR: join(directory, `cli-${gateway.gatewayId}`),
-      OMNESIS_GATEWAY_URL: gateway.harness.gatewayUrl,
-      OMNESIS_TOKEN: gateway.harness.apiKey,
+  /** The real `omnesis cloud …`, run against a gateway with its admin token and no terminal. */
+  function cloud(harness: E2EHarness, args: string[]) {
+    return runCli(world, ["cloud", ...args], {
+      OMNESIS_CONFIG_DIR: join(directory, `cli-${harness.gatewayUrl.replace(/\W+/g, "-")}`),
+      OMNESIS_GATEWAY_URL: harness.gatewayUrl,
+      OMNESIS_TOKEN: harness.apiKey,
     });
+  }
+  /** The real `omnesis cloud connect`, unattended: every choice is a flag. */
+  function cloudConnect(gateway: Gateway, args: string[]) {
+    return cloud(gateway.harness, ["connect", ...args]);
   }
 
   async function printedGatewayCode(run: ReturnType<typeof cloudConnect>) {
@@ -170,7 +180,7 @@ describe.skipIf(!browserReady)("connect a gateway by signing in", () => {
         expect(await page.getByRole("button", { name: "Connect", exact: true }).count()).toBe(0);
         await page.getByRole("button", { name: "I already have one", exact: true }).waitFor();
         await page.getByRole("button", { name: "Create an account", exact: true }).click();
-        await expectText(page, "Sign in to your Omnesis account", 30_000);
+        await expectText(page, "Create your Omnesis account", 30_000);
 
         const waiting = await fresh.gatewayJson<CloudRelayStatus & { hostname?: string }>(
           "/admin/cloud-relay",
@@ -179,7 +189,10 @@ describe.skipIf(!browserReady)("connect a gateway by signing in", () => {
         expect(waiting.connect!.code).toMatch(/^[A-Z2-7]{4}-[A-Z2-7]{4}$/);
         expect(new URL(waiting.connect!.connectUrl!).origin).toBe(world.relayOrigin);
         await expectText(page, waiting.connect!.code!, 30_000);
-        hostname = waiting.hostname;
+        // The name it reserved is offered nowhere until the relay has registered the gateway.
+        expect(waiting.hostname).toBeUndefined();
+        expect(waiting.publicMcp.url).toBeUndefined();
+        hostname = hostedGatewayHostname(waiting.gatewayId!, new URL(world.relayOrigin).hostname);
         expect(hostname).toMatch(/^g-[a-z2-7]{8}\.relay\.example\.test$/);
 
         // A person types the code at the relay and lands on the page for creating an account,
@@ -460,7 +473,8 @@ describe.skipIf(!browserReady)("connect a gateway by signing in", () => {
 
       const gateway = await EnrollmentGateway.start(world, "invite-only");
       gateways.push(gateway);
-      const run = cloudConnect(gateway, ["--ask-first"]);
+      // `--accept-terms` is still accepted from older scripts, and changes nothing.
+      const run = cloudConnect(gateway, ["--existing", "--ask-first", "--accept-terms"]);
       const printed = await printedGatewayCode(run);
       await enterConnectCode(existing.session.page, printed.connectUrl, printed.code);
       // The CLI connects to an account the person already has: sign in, then connect.
@@ -470,8 +484,23 @@ describe.skipIf(!browserReady)("connect a gateway by signing in", () => {
       await clickFirst(existing.session.page, ["Sign in with Passkey"]);
       await connectThisGateway(existing.session.page);
       expect(await run.exit).toBe(0);
-      expect(run.stdout()).toContain("Connected to your Omnesis account.");
-      expect(run.stdout()).toContain("New devices will wait for your approval.");
+      // A line for each step it saw, in order, then where the gateway is.
+      const output = run.stdout();
+      const lines = [
+        "Waiting for you to sign in to your Omnesis account…",
+        "Signed in.",
+        "Connected to your Omnesis account.",
+        `  Address: ${gateway.publicOrigin}`,
+        `  Portal:  ${gateway.publicOrigin}/portal/`,
+        `  MCP:     ${gateway.publicOrigin}/mcp`,
+        "New devices will wait for your approval.",
+      ];
+      for (const line of lines) expect(output).toContain(line);
+      expect(lines.map((line) => output.indexOf(line))).toEqual(
+        lines.map((line) => output.indexOf(line)).sort((a, b) => a - b),
+      );
+      expect(output).not.toContain("Do you already have an Omnesis account?");
+      expect(output).not.toContain("Your invite wasn't used");
 
       const status = await gateway.status();
       expect(status.connect).toMatchObject({ state: "done" });
@@ -484,7 +513,159 @@ describe.skipIf(!browserReady)("connect a gateway by signing in", () => {
       expect((await signedInAccount(world, existing.session)).accountId).toBe(existing.accountId);
       // The first gateway's link survived the relay restart and policy change.
       expect((await gateways[0]!.status()).account.linked).toBe(true);
+
+      // Connecting a linked gateway again is refused before any sign-in starts.
+      const again = cloudConnect(gateway, ["--existing"]);
+      expect(await again.exit).not.toBe(0);
+      expect(again.stderr()).toContain(
+        "This gateway is already connected to an Omnesis account. To connect it to another, run `omnesis cloud unlink` first.",
+      );
+      expect(await gateway.status()).toMatchObject({
+        connect: { state: "done" },
+        account: { linked: true },
+      });
+      // The gateway refuses it as well, whatever asks.
+      const refused = await fetch(`${gateway.harness.gatewayUrl}/admin/cloud-relay/connect`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${gateway.harness.apiKey}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ termsAccepted: true, intent: "existing" }),
+      });
+      expect(refused.status).toBe(409);
+      expect(await refused.json()).toMatchObject({ code: "already-connected" });
+      inviteOnly = existing;
     },
     gatewayBootBudgetMs() + 180_000,
+  );
+
+  test(
+    "without a terminal, the CLI names both flags and starts nothing; a chosen new account that already existed is said, and the invite stays unused",
+    async () => {
+      const gateway = await EnrollmentGateway.start(world, "invite-existing");
+      gateways.push(gateway);
+      const before = await gateway.status();
+      const unattended = cloudConnect(gateway, []);
+      expect(await unattended.exit).not.toBe(0);
+      expect(unattended.stderr()).toContain("--existing");
+      expect(unattended.stderr()).toContain("--invite");
+      const after = await gateway.status();
+      expect(after.connect).toBeUndefined();
+      expect(after.gatewayId).toBe(before.gatewayId);
+
+      // The owner brings an invite to create an account, but signs in with the one they have.
+      const invite = world.invite();
+      const run = cloudConnect(gateway, ["--invite", invite]);
+      const printed = await printedGatewayCode(run);
+      expect(run.stdout()).toContain("Waiting for you to create your Omnesis account…");
+      const page = inviteOnly.session.page;
+      await enterConnectCode(page, printed.connectUrl, printed.code);
+      await page.getByRole("heading", { name: CREATE_ACCOUNT_HEADING, exact: true }).waitFor();
+      await clickFirst(page, ["I already have an account"]);
+      await page.getByRole("heading", { name: SIGN_IN_HEADING, exact: true }).waitFor();
+      await clickFirst(page, ["Sign in with Passkey"]);
+      await connectThisGateway(page);
+      expect(await run.exit).toBe(0);
+      expect(run.stdout()).toContain(
+        "Connected to your Omnesis account.\nYou already had an Omnesis account, so this gateway is now linked to it. Your invite wasn't used.\n",
+      );
+      expect((await gateway.status()).connect).toMatchObject({
+        state: "done",
+        intent: "create",
+        existingAccount: true,
+      });
+      expect((await signedInAccount(world, inviteOnly.session)).accountId).toBe(
+        inviteOnly.accountId,
+      );
+      // The invite can still create an account.
+      const checked = await fetch(`${world.relayOrigin}/_relay/v3/signup/invite`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ invite: invite.slice(invite.indexOf("#") + 1) }),
+      });
+      expect(await checked.json()).toMatchObject({ status: "valid" });
+    },
+    gatewayBootBudgetMs() + 180_000,
+  );
+
+  test(
+    "a connection that never finished offers its reserved address nowhere, and starting over returns the gateway to never connected",
+    async () => {
+      const fresh = new E2EHarness({
+        extraGatewayEnv: {
+          ...world.clientEnv(),
+          OMNESIS_CLOUD_RELAY_URL: world.relayOrigin,
+          // Never reached: a connection that stops before its sign-in asks for no certificate.
+          OMNESIS_ACME_DIRECTORY_URL: "https://127.0.0.1:9/directory",
+          OMNESIS_CLOUD_RELAY_CERTIFICATE_MONITOR_ENABLED: "0",
+        },
+      });
+      try {
+        await fresh.start();
+        const status = () => fresh.gatewayJson<CloudRelayStatus>("/admin/cloud-relay");
+        // The owner starts connecting and stops before signing in.
+        const run = cloud(fresh, ["connect", "--existing"]);
+        await printedGatewayCode(run);
+        run.proc.kill("SIGTERM");
+        await run.exit.catch(() => undefined);
+        const reserved = await status();
+        expect(reserved.connect).toMatchObject({ state: "waiting", intent: "existing" });
+        await fresh.gatewayJson("/admin/cloud-relay/connect/cancel", {
+          method: "POST",
+          body: "{}",
+        });
+        const unfinished = await status();
+        expect(unfinished).toMatchObject({
+          configured: true,
+          enabled: false,
+          gatewayId: reserved.gatewayId,
+          unfinished: {},
+          can: { startOver: true },
+        });
+        // Its reserved name is offered nowhere: not in the status, not to an agent.
+        expect(unfinished.hostname).toBeUndefined();
+        expect(unfinished.publicOrigin).toBeUndefined();
+        expect(unfinished.publicMcp.url).toBeUndefined();
+        const relayDomain = new URL(world.relayOrigin).hostname;
+        const offered = await fresh.gatewayJson<{
+          oauth: { resources: { resource: string }[] } | null;
+        }>("/admin/access");
+        for (const { resource } of offered.oauth?.resources ?? [])
+          expect(new URL(resource).hostname.endsWith(`.${relayDomain}`)).toBe(false);
+        const remote = await fresh.gatewayJson<{
+          mcpAddresses?: { id: string; url: string | null }[];
+        }>("/admin/remote-access");
+        expect(remote.mcpAddresses?.find((row) => row.id === "relay")?.url ?? null).toBeNull();
+        // `omnesis cloud status` says so, with both ways on.
+        const shown = cloud(fresh, ["status"]);
+        expect(await shown.exit).toBe(0);
+        expect(shown.stdout()).toContain(
+          "didn't finish, it was interrupted. Run `omnesis cloud connect` to try again, or `omnesis cloud start-over` to discard it",
+        );
+
+        const startOver = cloud(fresh, ["start-over"]);
+        expect(await startOver.exit).toBe(0);
+        expect(startOver.stdout()).toContain("The unfinished connection is discarded.");
+        const fromScratch = await status();
+        expect(fromScratch).toMatchObject({ configured: false, enabled: false });
+        expect(fromScratch.gatewayId).toBeUndefined();
+        expect(fromScratch.unfinished).toBeUndefined();
+        // Connecting again reserves a new name.
+        const next = await fresh.gatewayJson<CloudRelayStatus>("/admin/cloud-relay/connect", {
+          method: "POST",
+          body: JSON.stringify({ termsAccepted: true, intent: "existing" }),
+        });
+        expect(next.gatewayId).toBeDefined();
+        expect(next.gatewayId).not.toBe(reserved.gatewayId);
+        await fresh.gatewayJson("/admin/cloud-relay/connect/cancel", {
+          method: "POST",
+          body: "{}",
+        });
+      } finally {
+        await fresh.destroy();
+      }
+    },
+    gatewayBootBudgetMs() + 120_000,
   );
 });

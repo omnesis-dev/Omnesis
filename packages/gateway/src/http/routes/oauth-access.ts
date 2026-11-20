@@ -36,7 +36,12 @@ export function mountOAuthAccessRoutes(
     /** See `mountOAuthAuthorizationRoutes`. */
     agentCertificateTrust?: () => AgentCertificateTrust;
     /** See `mountOAuthAuthorizationRoutes`. */
-    mcpAddresses?: Pick<McpAddresses, "answersAt" | "settle" | "hostReach">;
+    mcpAddresses?: Pick<
+      McpAddresses,
+      "answersAt" | "settle" | "hostReach" | "homeResource" | "homeNetwork"
+    >;
+    /** See `mountOAuthAuthorizationRoutes`. */
+    localMcp?: () => import("../../local-mcp-listener.js").LocalMcpState;
     pendingCertificateOrigins?: () => Promise<ReadonlySet<string>>;
   } = {},
 ): void {

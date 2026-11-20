@@ -12,6 +12,8 @@ import { relayOrigin } from "./network.js";
 import { readOrCreateGatewayOwnerKey, type registerGatewayKey } from "./gateway-key-client.js";
 import {
   GATEWAY_SIGNUP_ACCESS_PATH,
+  GATEWAY_SIGNUP_ACCOUNT_CREATED,
+  GATEWAY_SIGNUP_FEATURES_HEADER,
   GATEWAY_SIGNUP_INVITE_PATH,
   GATEWAY_SIGNUP_PATH,
   GATEWAY_SIGNUP_PROTOCOL,
@@ -73,7 +75,13 @@ export class GatewaySignupClient {
     return { key, ownerPublicKey };
   }
 
-  private async post(path: string, body: unknown, signal: AbortSignal, token?: string) {
+  private async post(
+    path: string,
+    body: unknown,
+    signal: AbortSignal,
+    token?: string,
+    extraHeaders: Record<string, string> = {},
+  ) {
     const response = await (this.options.fetch ?? fetch)(new URL(path, this.origin), {
       method: "POST",
       redirect: "error",
@@ -81,6 +89,7 @@ export class GatewaySignupClient {
       headers: {
         "content-type": "application/json",
         ...(token ? { authorization: `Bearer ${token}` } : {}),
+        ...extraHeaders,
       },
       body: JSON.stringify(body),
     });
@@ -158,12 +167,15 @@ export class GatewaySignupClient {
     };
   }
 
+  /** Asks the relay to say whether the sign-in created the account, which an older relay ignores. */
   async poll(pending: GatewaySignupPending, signal: AbortSignal) {
     return gatewaySignupPollResult.parse(
       await this.post(
         `${GATEWAY_SIGNUP_PATH}/poll`,
         { operationId: pending.operationId, redemptionSecret: pending.redemptionSecret },
         signal,
+        undefined,
+        { [GATEWAY_SIGNUP_FEATURES_HEADER]: GATEWAY_SIGNUP_ACCOUNT_CREATED },
       ),
     );
   }

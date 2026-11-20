@@ -169,6 +169,40 @@ export function isRelayedRequest(header: HeaderReader, env: unknown): boolean {
 }
 
 /**
+ * Whether a client address is on this machine or a private network: loopback,
+ * RFC 1918 and link-local IPv4 (also IPv4-mapped), and IPv6 unique-local or
+ * link-local — never a Tailscale address, which is the tailnet's.
+ */
+export function isHomeNetworkIp(ip: string): boolean {
+  if (isLoopbackIp(ip)) return true;
+  const v4 = ip.startsWith("::ffff:") ? ip.slice("::ffff:".length) : ip;
+  const octets = /^(\d{1,3})\.(\d{1,3})\.\d{1,3}\.\d{1,3}$/u.exec(v4);
+  if (octets) {
+    const [a, b] = [Number(octets[1]), Number(octets[2])];
+    return (
+      a === 10 ||
+      (a === 172 && b >= 16 && b <= 31) ||
+      (a === 192 && b === 168) ||
+      (a === 169 && b === 254)
+    );
+  }
+  const v6 = ip.toLowerCase().split("%", 1)[0]!;
+  if (v6.startsWith("fd7a:115c:a1e0:")) return false;
+  return /^f[cd][0-9a-f]{0,2}:/u.test(v6) || /^fe[89ab][0-9a-f]?:/u.test(v6);
+}
+
+/**
+ * Whether a request's socket peer, and any client a trusted proxy in front
+ * reports, are on this machine or a private network.
+ */
+export function fromHomeNetwork(header: HeaderReader, env: unknown): boolean {
+  const peer = socketPeerAddress(env);
+  if (peer === undefined || !isHomeNetworkIp(peer)) return false;
+  const forwarded = forwardedClientAddress(header, env);
+  return forwarded === undefined || isHomeNetworkIp(forwarded);
+}
+
+/**
  * Whether an address is loopback: IPv4 `127.0.0.0/8`, IPv6 `::1`, and the
  * IPv4-mapped `::ffff:127.x` forms.
  */

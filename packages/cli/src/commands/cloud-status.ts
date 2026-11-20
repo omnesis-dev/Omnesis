@@ -176,6 +176,14 @@ export function formatCloudStatus(status: CloudStatus, version?: string): string
       : []),
     ["Error codes", errors(status).join(", ") || "none"],
     ...(status.notice ? [["Notice", plain(status.notice)] as [string, string]] : []),
+    ...(status.unfinished
+      ? [
+          [
+            "Connecting",
+            `didn't finish${status.unfinished.error ? ` (${plain(status.unfinished.error)})` : ", it was interrupted"}. Run \`omnesis cloud connect\` to try again, or \`omnesis cloud start-over\` to discard it`,
+          ] as [string, string],
+        ]
+      : []),
     ["Remote access", status.enabled ? "on" : "off"],
     [
       "Address",

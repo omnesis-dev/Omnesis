@@ -1766,6 +1766,26 @@ const gatewayMdns = z
   })
   .strict();
 
+const gatewayLocalMcp = z
+  .object({
+    enabled: z
+      .boolean()
+      .describe(
+        "Serve the MCP server over plain HTTP to programs on this computer only, at http://localhost:<port>/mcp, so a local agent needs no certificate step. It listens on 127.0.0.1 and ::1 and nowhere else, and never inside a container. Default true.",
+      )
+      .optional(),
+    port: z
+      .number()
+      .int()
+      .min(0)
+      .max(65_535)
+      .describe(
+        "The port of the address for agents on this computer. Defaults to the gateway's port plus one (7601 with the default 7600); OMNESIS_LOCAL_MCP_PORT, when set, wins over it. Takes effect on the next start.",
+      )
+      .optional(),
+  })
+  .strict();
+
 const gatewayTls = z
   .object({
     autoRenew: z
@@ -2143,6 +2163,13 @@ const gateway = z
      * hostname so the portal is reachable at `https://<hostname>:<port>`.
      */
     mdns: gatewayMdns.describe("LAN auto-discovery (mDNS / Bonjour).").optional(),
+    /**
+     * The MCP address for agents on the gateway's own machine: plain HTTP on
+     * loopback only, which the MCP authorization spec allows for loopback.
+     */
+    localMcp: gatewayLocalMcp
+      .describe("The MCP address for agents on this computer (loopback-only plain HTTP).")
+      .optional(),
     /**
      * The served certificate's lifecycle: whether the gateway renews the
      * material it minted itself, and how early.

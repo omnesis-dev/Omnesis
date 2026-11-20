@@ -1,28 +1,33 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-// Which of the gateway's addresses away from home answer its MCP server, and
-// how far. The last step of the Connectivity setup, the MCP server page behind
-// the summary, and the summary's own line all read `mcpAddresses` from
-// GET /admin/remote-access: one row per address, with where MCP answers there
-// now, the choices that address offers and whether that way in is set up. A
-// Tailscale address can keep MCP to the owner's Tailscale network or put it on
-// the Internet too; the relay and the owner's own domain are on or off. Letting
-// MCP answer further asks for the passkey where the gateway requires it;
-// narrowing it never does. Putting MCP on the Internet through Tailscale on this
-// computer runs Tailscale Funnel; when the gateway may not, the command to run
-// is shown with a check under it. Agents on this computer and the home network
-// always reach the MCP server.
+// Where the gateway's MCP server answers, at home and away. The last step of
+// the Connectivity setup, the MCP server page behind the summary, and the
+// summary's own lines all read GET /admin/remote-access: `localMcp`, where the
+// plain address for agents on this computer stands, and `mcpAddresses`, one
+// row per address with where MCP answers there now, the choices it offers and
+// whether that way in is set up.
+//
+// At home, agents on this computer always connect (see at-home.js), and the
+// owner chooses whether agents on the home network may sign in; it starts off.
+// Away from home, a Tailscale address can keep MCP to the owner's Tailscale
+// network or put it on the Internet too; the relay and the owner's own domain
+// are on or off. Letting MCP answer further asks for the passkey where the
+// gateway requires it; narrowing it never does. Putting MCP on the Internet
+// through Tailscale on this computer runs Tailscale Funnel; when the gateway
+// may not, the command to run is shown with a check under it.
 
 import { html } from "htm/preact";
 import { useState } from "preact/hooks";
 import { CopyBlock } from "../../components/copy-button.js";
 import { getRemoteAccess, updateRemoteAccess } from "../../lib/remote-access-api.js";
 import { PageLink, TAILSCALE_PAGE } from "./manage.js";
+import { HOME_NETWORK_WARNINGS, Parts, localMcpLine } from "./at-home.js";
 import { BackButton, StepFrame, nextLabel } from "./step-frame.js";
 
 /** How each address is named, in the setup's words. */
 export const MCP_ADDRESS_LABELS = {
+  home: "Your home network",
   relay: "Omnesis relay",
   tailnet: "This gateway's own Tailscale device",
   host: "Tailscale on this computer",
@@ -43,11 +48,72 @@ export const REACH_DETAILS = {
   public: "also on the Internet",
 };
 
-const ALWAYS = "Agents on this computer and on your home network can always connect.";
+/** What the MCP server's page and the setup's step say under their heading. */
+export const MCP_BLURB =
+  "Agents like Claude Code, Codex or ChatGPT connect to an MCP address. Agents on this computer always can; choose for your home network and for each address away from home.";
 
-/** The addresses that exist right now, in the gateway's order. */
+/** The addresses away from home that exist right now, in the gateway's order. */
 export function mcpRows(remote) {
-  return (remote?.mcpAddresses ?? []).filter((row) => row.available);
+  return (remote?.mcpAddresses ?? []).filter((row) => row.available && row.id !== "home");
+}
+
+/** The home network's row, or null where the gateway listens on this computer alone. */
+export function homeRow(remote) {
+  return (remote?.mcpAddresses ?? []).find((row) => row.id === "home") ?? null;
+}
+
+/** The address for agents on this computer: not a choice here, but where it stands. */
+function ThisComputer({ localMcp }) {
+  const line = localMcpLine(localMcp);
+  return html`<div class=${`remote-access-mcp-row${line.mark === "on" ? " is-on" : ""}`}>
+    <span class="remote-access-option-text"><strong>This computer</strong></span>
+    <small class=${line.mark === "warn" ? "remote-access-problem" : ""} role=${line.mark === "warn" ? "alert" : null}>
+      <${Parts} parts=${line.detail} />
+    </small>
+  </div>`;
+}
+
+/** Whether agents on the home network may sign in, with what that means before it is chosen. */
+function HomeNetwork({ row, reach, disabled, onChoose }) {
+  if (!row)
+    return html`<div class="remote-access-mcp-row">
+      <span class="remote-access-option-text"><strong>${MCP_ADDRESS_LABELS.home}</strong></span>
+      <small>This gateway listens on this computer only, so other computers can't reach it.</small>
+    </div>`;
+  const addresses = row.urls ?? (row.url ? [row.url] : []);
+  return html`<fieldset class=${`remote-access-mcp-row${reach === "off" ? "" : " is-on"}`}>
+    <legend class="remote-access-option-text">
+      <strong>${MCP_ADDRESS_LABELS.home}</strong>
+      ${reach === "on" && addresses.length > 0
+        ? addresses.map((url) => html`<small key=${url}><code>${endpoint(url)}</code></small>`)
+        : html`<small>Your devices pair here whatever you choose. This is whether agents on it may sign in.</small>`}
+    </legend>
+    <div class="remote-access-choices is-compact">
+      ${row.choices.map(
+        (choice) => html`<label key=${choice} class=${`remote-access-choice${reach === choice ? " is-on" : ""}`}>
+          <input
+            type="radio"
+            name="remote-access-mcp-home"
+            value=${choice}
+            checked=${reach === choice}
+            disabled=${disabled || (choice === "on" && !row.available)}
+            onChange=${() => onChoose(choice)}
+          />
+          <span class="remote-access-option-text"><strong>${choice === "on" ? "Agents may sign in" : "Off"}</strong></span>
+        </label>`,
+      )}
+    </div>
+    ${!row.available &&
+    html`<small>This gateway found no address of its own on your home network. Check that this computer is connected to it.</small>`}
+    ${reach === "off" && row.available
+      ? html`<small>Before you allow it:</small>
+          <ul class="remote-access-warnings">
+            ${HOME_NETWORK_WARNINGS.map((warning) => html`<li key=${warning}>${warning}</li>`)}
+          </ul>`
+      : reach === "on" && addresses.length > 1
+        ? html`<small>Prefer the .local name: an address in numbers can change when your router hands out a new one.</small>`
+        : null}
+  </fieldset>`;
 }
 
 /** The choice's name: the relay is reachable from the Internet anyway, so it is simply on. */
@@ -126,9 +192,18 @@ export function McpChoice({ remote, setRemote }) {
       setChecking(false);
     }
   };
-  if (rows.length === 0)
-    return html`<p class="remote-access-muted">No address away from home is set up yet. ${ALWAYS}</p>`;
+  const home = homeRow(remote);
   return html`<div class="remote-access-mcp">
+    <h4 class="remote-access-mcp-group">At home</h4>
+    <${ThisComputer} localMcp=${remote?.localMcp} />
+    <${HomeNetwork}
+      row=${home}
+      reach=${saving?.id === "home" ? saving.reach : home?.reach}
+      disabled=${Boolean(saving) || checking}
+      onChoose=${(reach) => choose("home", reach)}
+    />
+    <h4 class="remote-access-mcp-group">Away from home</h4>
+    ${rows.length === 0 && html`<p class="remote-access-muted">No address away from home is set up yet.</p>`}
     ${rows.map((row) => {
       const reach = saving?.id === row.id ? saving.reach : row.reach;
       return html`<fieldset key=${row.id} class=${`remote-access-mcp-row${reach === "off" ? "" : " is-on"}`}>
@@ -168,7 +243,6 @@ export function McpChoice({ remote, setRemote }) {
         </div>`}
       </fieldset>`;
     })}
-    <p class="remote-access-choice-detail">${ALWAYS}</p>
     ${error && html`<p class="remote-access-problem" role="alert">${error}</p>`}
   </div>`;
 }
@@ -179,7 +253,7 @@ export function McpStep({ flow, steps, headingRef, error, onStep, onNext, onCanc
     flow=${flow}
     steps=${steps}
     heading="Where may agents reach your MCP server?"
-    blurb="Agents like ChatGPT, Claude or Codex connect to an MCP address. Choose how far each address away from home offers it."
+    blurb=${MCP_BLURB}
     headingRef=${headingRef}
     error=${error}
     onStep=${onStep}

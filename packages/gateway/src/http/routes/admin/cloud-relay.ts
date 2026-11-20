@@ -124,6 +124,18 @@ export function mountCloudRelayManagementRoutes(
         return service.cancelConnect();
       }),
   );
+  // Discards a connection that never finished; refused once the gateway has connected.
+  app.post(
+    "/admin/cloud-relay/start-over",
+    scope.admin(),
+    bounded,
+    validateJson(cloudRelayActionBody),
+    async (c) =>
+      respond(c, async () => {
+        if (!service.startOver) throw new CloudRelayManagementFailure(503, "account-unavailable");
+        return service.startOver();
+      }),
+  );
   app.put(
     "/admin/cloud-relay/enrollment",
     scope.admin(),

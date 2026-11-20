@@ -766,7 +766,7 @@ describe.skipIf(!browserReady)("a relay cannot enroll devices on its own", () =>
     const signup = await startGatewaySignup(world, "existing");
     const link = signup.started.authorizeUrl;
     const page = session.page;
-    // The person opens "Open sign-in" (and presses Continue, where the page asks for it).
+    // The person opens the sign-in link (and presses Continue, where the page asks for it).
     await page.goto(link);
     await pressContinue(page, 3_000).catch(() => {});
     // A link scanner fetches the same URL seconds later: no cookies, no scripts.

@@ -29,17 +29,20 @@ export interface OAuthMetadataPaths {
 
 /**
  * Select an explicitly configured issuer, or the loopback origin a request names, and keep
- * each issuer's authorization resources separate. Any other request Host is never an issuer.
- * A loopback Host is an issuer when nothing is configured, or when the caller knows the
- * request came from the gateway's own machine (`local`): a Host alone cannot say so, since a
- * proxy or Tailscale passes on whatever Host the client sent.
+ * each issuer's authorization resources separate. Any other request Host is an issuer only
+ * on the caller's word. A loopback Host is an issuer when nothing is configured, or when the
+ * caller knows the request came from the gateway's own machine (`local`): a Host alone cannot
+ * say so, since a proxy or Tailscale passes on whatever Host the client sent. A home-network
+ * Host is an issuer when the caller has checked that the owner lets agents there sign in and
+ * that the request came straight from that network (`home`), unless the configuration names
+ * that origin, whose issuer it keeps.
  */
 export function resolveOAuthUrls(
   requestUrl: string,
   configuredBaseUrl?: string,
   configuredResources?: readonly string[],
   issuerSource: OAuthIssuerSource = [],
-  { local = false }: { local?: boolean } = {},
+  { local = false, home = false }: { local?: boolean; home?: boolean } = {},
 ): OAuthEndpointUrls | null {
   const additionalIssuers = typeof issuerSource === "function" ? issuerSource() : issuerSource;
   let requested: URL;
@@ -69,13 +72,26 @@ export function resolveOAuthUrls(
     (!primary || (local && !configuredOrigins(primary, configuredResources).has(requested.origin)))
       ? requested.origin
       : undefined;
+  const named = new Set([
+    ...configured.map((value) => new URL(value).origin),
+    ...(configuredResources ?? []).map((value) => new URL(value).origin),
+  ]);
+  const homeOrigin =
+    home && !isLoopbackHostname(requested.hostname) && !named.has(requested.origin)
+      ? requested.origin
+      : undefined;
   const issuer =
     extras.find((value) => new URL(value).host === requested.host) ??
     loopback ??
+    homeOrigin ??
     primary ??
     extras[0];
   if (!issuer) return null;
-  const bases = [...configured, ...(loopback ? [loopback] : [])];
+  const bases = [
+    ...configured,
+    ...(loopback ? [loopback] : []),
+    ...(homeOrigin ? [homeOrigin] : []),
+  ];
   const defaultIssuer = primary ?? extras[0] ?? issuer;
   const issuerOf = (resource: string): string =>
     bases.find((base) => new URL(base).origin === new URL(resource).origin) ?? defaultIssuer;
@@ -112,9 +128,15 @@ export function resolveOAuthResourceUrls(
   base?: string,
   resources?: readonly string[],
   additionalIssuers?: OAuthIssuerSource,
+  { home = false }: { home?: boolean } = {},
 ): OAuthEndpointUrls | null {
-  // A stored loopback resource was authorized for a request from the gateway's own machine.
-  const urls = resolveOAuthUrls(resource, base, resources, additionalIssuers, { local: true });
+  // A stored loopback resource was authorized for a request from the gateway's own machine,
+  // and a home-network one, which the caller says agents there may still use, for a request
+  // from that network.
+  const urls = resolveOAuthUrls(resource, base, resources, additionalIssuers, {
+    local: true,
+    home,
+  });
   return urls?.issuerResources.includes(resource) ? urls : null;
 }
 

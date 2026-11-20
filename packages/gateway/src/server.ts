@@ -25,6 +25,7 @@ import {
   type DeviceRecord,
 } from "@omnesis/types";
 import { resolveRequestOAuthUrls } from "./http/oauth-request.js";
+import { PairingQrService } from "./http/services/PairingQrService.js";
 import { mountTailscaleRoutes } from "./http/routes/tailscale.js";
 import { mountRemoteAccessRoutes } from "./http/routes/remote-access.js";
 import { AddressChecks } from "./remote-access/address-check.js";
@@ -32,10 +33,10 @@ import { HostAccess } from "./remote-access/host-access.js";
 import { HostTailscaleService } from "./remote-access/host-tailscale.js";
 import { RemoteAccessSettingsStore } from "./remote-access/settings.js";
 import { McpAddresses, relayStateFrom } from "./remote-access/mcp-addresses.js";
-import { mcpAddressGate } from "./http/mcp-address-gate.js";
+import { homeSignInMiddleware, mcpAddressGate } from "./http/mcp-address-gate.js";
 import { mountPortalSignalRoutes } from "./http/routes/portal-signals.js";
 import { PortalSignals } from "./portal-signals/hub.js";
-import { markRelayRequestExposure } from "./http/client-ip.js";
+import { isLoopbackIp, markRelayRequestExposure } from "./http/client-ip.js";
 
 import { labFeatureEnabled } from "./lab/store.js";
 import { LabService } from "./lab/service.js";
@@ -686,6 +687,8 @@ export function createServer(
     cloudRelayManagement?: import("@omnesis/cloud-relay").CloudRelayManagement;
     /** Who minted the served certificate and the file an agent on this machine trusts it by. */
     agentCertificateTrust?: () => AgentCertificateTrust;
+    /** Where the plain-HTTP MCP address for agents on this computer stands. */
+    localMcp?: () => import("./local-mcp-listener.js").LocalMcpState;
     /** HTTPS origins allowed in explicitly system-trusted V4 pairing payloads. */
     systemTrustPairingOrigins?: readonly string[] | (() => readonly string[]);
     /** Hosts the served certificate covers with a publicly trusted chain, at any port. */
@@ -776,10 +779,27 @@ export function createServer(
     hostTailscale && remoteAccessSettings
       ? new HostAccess(hostTailscale, remoteAccessSettings)
       : undefined;
-  // Which addresses away from home answer MCP; enforced wherever the owner's choices are kept.
+  // The gateway's own addresses on the home network, found as pairing finds them: none while it
+  // listens on this machine alone.
+  const bindsLoopbackOnly = (bind: string) => bind === "localhost" || isLoopbackIp(bind);
+  const homeNetwork =
+    opts?.port && !bindsLoopbackOnly(process.env.OMNESIS_BIND ?? "0.0.0.0")
+      ? new PairingQrService({
+          pairingKind: () => null,
+          discoverIdentities: async () =>
+            (await import("@omnesis/core")).discoverNetworkIdentities(),
+          listenPort: opts.port,
+          advertisedLocalName: opts.advertisedPairingHost,
+          hostNames: opts.pairingHostNames,
+          inContainer: opts.inContainer,
+          hostNetwork: opts.hostNetwork,
+        })
+      : undefined;
+  // Which addresses answer MCP, and how far; enforced wherever the owner's choices are kept.
   const mcpAddresses = remoteAccessSettings
     ? new McpAddresses({
         settings: remoteAccessSettings,
+        ...(homeNetwork ? { home: { origins: () => homeNetwork.homeNetworkOrigins() } } : {}),
         publicBaseUrl: () => opts?.publicAddress?.baseUrl(),
         ...(opts?.relayPublicOrigin ? { relayOrigin: opts.relayPublicOrigin } : {}),
         ...(opts?.cloudRelayManagement
@@ -826,7 +846,11 @@ export function createServer(
     corsMiddleware(() => opts?.configStore?.get().gateway?.cors),
   );
   // An address the owner turned MCP off on serves none of MCP's paths.
-  if (mcpAddresses) app.use("*", mcpAddressGate(mcpAddresses));
+  if (mcpAddresses) {
+    app.use("*", mcpAddressGate(mcpAddresses));
+    // Agents on the home network sign in through the address they used, once the owner allows it.
+    app.use("*", homeSignInMiddleware(mcpAddresses));
+  }
 
   // Centralized error mapping. Every route handler can either:
   //
@@ -1692,6 +1716,7 @@ export function createServer(
     listenPort: opts?.port,
     agentCertificateTrust: opts?.agentCertificateTrust,
     ...(mcpAddresses ? { mcpAddresses } : {}),
+    ...(opts?.localMcp ? { localMcp: opts.localMcp } : {}),
     ...(opts?.tailscaleEmbed || opts?.cloudRelayManagement
       ? {
           pendingCertificateOrigins: () =>
@@ -1926,6 +1951,7 @@ export function createServer(
       publicAddress: opts?.publicAddress,
       mcpAddresses,
       tailscaleEmbed: !!opts?.tailscaleEmbed,
+      ...(opts?.localMcp ? { localMcp: opts.localMcp } : {}),
     });
   }
   const localSpkiFingerprint = () =>

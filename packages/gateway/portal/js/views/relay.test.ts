@@ -130,6 +130,12 @@ describe("relayPhase", () => {
       [{ ...connected(), connect: { state: "registering" } }, "registering"],
       [{ ...base(), connect: { state: "linking" } }, "linking"],
       [{ ...base(), connect: { state: "failed" } }, "failed"],
+      // A connection that never finished outranks how it last failed, but not a refused invite.
+      [{ ...base(), unfinished: {} }, "unfinished"],
+      [{ ...base(), unfinished: {}, connect: { state: "failed", error: "expired" } }, "unfinished"],
+      [{ ...base(), unfinished: {}, enabled: true, enrollment: { state: "failed" } }, "unfinished"],
+      [{ ...base(), unfinished: {}, connect: { state: "waiting" } }, "waiting"],
+      [{ ...base(), unfinished: {}, connect: { state: "failed", error: "invite-used" } }, "failed"],
       [{ ...base(), serviceConfigured: false }, "unavailable"],
       [{ ...base(), serviceConfigured: undefined }, "unavailable"],
       [{ ...base(), enrollment: { state: "failed" } }, "failed"],
@@ -217,7 +223,7 @@ test("waiting: open sign-in in a new tab, or enter the code on another device, o
   };
   await show();
   expect(headline()).toBe("Sign in to your Omnesis account");
-  const open = link("Open sign-in");
+  const open = link("Sign in to your Omnesis account");
   expect(open.getAttribute("href")).toBe(AUTHORIZE);
   expect(open.getAttribute("target")).toBe("_blank");
   expect(text()).toContain("Or on another device, visit");
@@ -275,7 +281,7 @@ test("waiting never links to unsafe addresses or shows a malformed code", async 
     },
   };
   await show();
-  expect(link("Open sign-in")).toBeUndefined();
+  expect(link("Sign in to your Omnesis account")).toBeUndefined();
   expect(host.querySelector(".relay-code")).toBeNull();
   expect(button("Cancel")).toBeDefined();
   state.status = {
@@ -1297,4 +1303,51 @@ test("cancelling a browser check disables duplicate cancellation and tolerates a
   expect(button("Cancelling…").disabled).toBe(true);
   expect(text()).not.toContain("Complete by");
   expect(link("Open security check")).toBeTruthy();
+});
+
+test("a connection that never finished leads the account page, with both ways on and the details", async () => {
+  state.status = {
+    ...base(),
+    configured: true,
+    gatewayId: "gw-fictional",
+    unfinished: { error: "expired" },
+    connect: { state: "failed", error: "expired" },
+    can: { ...base().can, startOver: true },
+  };
+  await show();
+  expect(headline()).toBe("Connecting didn't finish");
+  expect(button("Start over")).toBeTruthy();
+  expect(button("Try again")).toBeTruthy();
+  // No address is offered for a gateway that never connected.
+  expect(text()).not.toContain("/mcp");
+  await click("Start over");
+  expect(state.run).toHaveBeenLastCalledWith("start-over", {});
+});
+
+test("a chosen new account that already existed is said once connected, with the invite unused", async () => {
+  state.status = connected({ connect: { state: "done", existingAccount: true } });
+  await show();
+  expect(text()).toContain(
+    "You already had an Omnesis account, so this gateway is now linked to it. Your invite wasn't used.",
+  );
+  state.status = connected({ connect: { state: "done" } });
+  await show();
+  expect(text()).not.toContain("Your invite wasn't used");
+});
+
+test("waiting after choosing to create an account names the button for it", async () => {
+  state.status = {
+    ...base(),
+    connect: {
+      state: "waiting",
+      intent: "create",
+      authorizeUrl: AUTHORIZE,
+      connectUrl: "https://relay.example.test/_relay/connect",
+      code: "H7KM-3QPX",
+    },
+  };
+  await show();
+  expect(headline()).toBe("Create your Omnesis account");
+  expect(link("Create your Omnesis account").getAttribute("href")).toBe(AUTHORIZE);
+  expect(link("Sign in to your Omnesis account")).toBeUndefined();
 });

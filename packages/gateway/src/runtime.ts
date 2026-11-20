@@ -104,6 +104,7 @@ import { generateSelfSigned, tlsExtraHostNames } from "./tls.js";
 import { readHostNetwork } from "./host-network.js";
 import { currentTlsMaterialPaths, partitionAddressedHosts } from "./tls-lifecycle/addressing.js";
 import { isLoopbackIp, reverseProxyTrusted } from "./http/client-ip.js";
+import { LocalMcpListener, localMcpPort } from "./local-mcp-listener.js";
 import { createHostMinter } from "./tls-lifecycle/minters.js";
 import { TlsLifecycleService } from "./tls-lifecycle/service.js";
 import { ownedProcessCleanupReceipt } from "./owned-process-cleanup.js";
@@ -2813,7 +2814,10 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
   const doctorCleanup = boot.ownCleanup(
     new OptionalServiceCleanup("Host security audit", () => doctorCleanupOwner),
   );
+  // The MCP address for agents on this computer, opened once the portal serves (below).
+  let localMcp = new LocalMcpListener(null, { state: "starting" });
   const app = createServer(db, DB_PATH, {
+    localMcp: () => localMcp.state(),
     portalSignals,
     onDoctorCleanupOwner: (owner) => {
       doctorCleanupOwner = owner;
@@ -4180,9 +4184,10 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
     wsServer.stop();
     collectorDescriptors.close();
     const httpDrain = httpShutdown.close(server, 5_000);
+    const localMcpDrain = localMcp.close(5_000);
     // The optional Tailscale owner drains its listener and joins its helper
     // alongside HTTP; its closure proof also participates in the shutdown fence.
-    const [httpDrained] = await Promise.all([httpDrain, realtimeService.dispose()]);
+    const [httpDrained] = await Promise.all([httpDrain, realtimeService.dispose(), localMcpDrain]);
     if (!httpDrained) log.warn("HTTP shutdown drain timed out; remaining connections closed");
     try {
       await app.close();
@@ -4489,6 +4494,7 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
       log.info("Shutting down...");
       // Stop ingress before an async relay or service cleanup can yield.
       void httpShutdown.close(server, 5_000);
+      void localMcp.close(5_000);
       wsServer.stop();
       deferredStartupTasks.stop();
       await doShutdown();
@@ -4507,6 +4513,19 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
   complete("services");
   phase("portal");
   boot.listener.activate((request, env) => app.fetch(request, env), injectWebSocket);
+  // Plain HTTP on loopback alone, so an agent on this computer needs no certificate step.
+  // Never in a container, whose loopback is not the host's; a busy port is reported, not fatal.
+  localMcp = inContainer
+    ? LocalMcpListener.notStarted("container")
+    : !(configStore.get().gateway?.localMcp?.enabled ?? CONFIG_DEFAULTS.gateway.localMcp.enabled)
+      ? LocalMcpListener.notStarted("off")
+      : new LocalMcpListener({
+          port: localMcpPort(configStore.get(), listenPort),
+          handle: (request, env) => boot.listener.handle(request, env),
+          portalOrigin: () => `https://localhost:${listenPort}`,
+          onServer: (localServer) => httpShutdown.attach(localServer),
+        });
+  await localMcp.start();
   complete("portal");
   if (!startup.ready()) throw new Error("Gateway portal prerequisites did not complete");
   log.info(`Listening on https://localhost:${listenPort}, db=${DB_PATH}`);

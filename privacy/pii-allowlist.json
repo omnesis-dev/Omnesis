@@ -2234,6 +2234,7 @@
         "packages/core/src/models/inference-url-policy.test.ts",
         "packages/core/src/pairing-address.test.ts",
         "packages/gateway/portal/js/views/models-decision.test.ts",
+        "packages/gateway/src/http/client-ip.test.ts",
         "packages/gateway/src/http/services/PairingQrService.test.ts",
         "packages/gateway/src/inference/registry.test.ts"
       ],
@@ -2329,6 +2330,7 @@
         "packages/core/src/host-network.test.ts",
         "packages/core/src/network-discovery.test.ts",
         "packages/core/src/network-discovery.ts",
+        "packages/gateway/src/http/client-ip.test.ts",
         "packages/gateway/src/mdns-advertiser.test.ts"
       ],
       "reason": "reviewed existing fixture"
@@ -2575,6 +2577,36 @@
       "value": "192.168.77.10",
       "paths": ["packages/collector/src/e2e/cloud-relay.e2e.test.ts"],
       "reason": "Invented private-address fixture."
+    },
+    {
+      "value": "192.168.0.20",
+      "paths": [
+        "packages/gateway/portal/js/views/access-agent-location.test.ts",
+        "packages/gateway/portal/js/views/remote-access.test.ts",
+        "packages/gateway/src/access/oauth-urls.test.ts",
+        "packages/gateway/src/http/client-ip.test.ts",
+        "packages/gateway/src/http/routes/oauth-access.test.ts",
+        "packages/gateway/src/http/routes/remote-access.test.ts",
+        "packages/gateway/src/local-mcp-listener.test.ts",
+        "packages/gateway/src/remote-access/mcp-addresses.test.ts",
+        "packages/gateway/src/server.mcp-addresses.test.ts"
+      ],
+      "reason": "invented home-network address fixture for the RFC 1918 192.168/16 range"
+    },
+    {
+      "value": "192.168.0.99",
+      "paths": ["packages/gateway/src/remote-access/mcp-addresses.test.ts"],
+      "reason": "invented home-network address fixture for the RFC 1918 192.168/16 range"
+    },
+    {
+      "value": "192.168.0.31",
+      "paths": ["packages/gateway/src/http/client-ip.test.ts"],
+      "reason": "invented home-network address fixture for the RFC 1918 192.168/16 range"
+    },
+    {
+      "value": "172.18.0.2",
+      "paths": ["packages/gateway/src/http/services/PairingQrService.test.ts"],
+      "reason": "invented Docker container address fixture"
     }
   ],
   "tailnetIps": [
@@ -2592,6 +2624,7 @@
         "packages/core/src/pairing-address.test.ts",
         "packages/gateway/portal/js/views/access/client-setup.test.ts",
         "packages/gateway/portal/js/views/devices.test.ts",
+        "packages/gateway/src/http/client-ip.test.ts",
         "packages/gateway/src/http/services/PairingQrService.test.ts",
         "packages/gateway/src/server.test.ts"
       ],
@@ -2682,7 +2715,10 @@
     },
     {
       "value": "fd7a:115c:a1e0::1",
-      "paths": ["packages/tailnet-helper/internal/protocol/testdata/wire.json"],
+      "paths": [
+        "packages/gateway/src/http/client-ip.test.ts",
+        "packages/tailnet-helper/internal/protocol/testdata/wire.json"
+      ],
       "reason": "Invented Tailscale ULA IPv6 fixture"
     },
     {
@@ -6908,6 +6944,8 @@
         "packages/core/src/doctor/checks.test.ts",
         "packages/gateway/portal/js/lib/backend-options.test.ts",
         "packages/gateway/portal/js/lib/cloud-inference.test.ts",
+        "packages/gateway/portal/js/views/access-agent-location.test.ts",
+        "packages/gateway/portal/js/views/access-cloud-relay.test.ts",
         "packages/gateway/portal/js/views/claude-code-ui.test.ts",
         "packages/gateway/portal/js/views/models-cloud-consent.test.ts",
         "packages/gateway/src/agent/agent-lifecycle.test.ts",
@@ -13113,8 +13151,19 @@
     },
     {
       "value": "Omnesis Relay",
-      "paths": ["packages/gateway/portal/js/views/relay.test.ts"],
+      "paths": [
+        "packages/gateway/portal/js/views/relay.test.ts",
+        "packages/gateway/portal/js/views/remote-access.test.ts"
+      ],
       "reason": "Product name in interface text asserted by a test, not a person's name."
+    },
+    {
+      "value": "Subscriber Agreement",
+      "paths": [
+        "packages/cli/src/commands/cloud-management.test.ts",
+        "packages/gateway/portal/js/views/remote-access.test.ts"
+      ],
+      "reason": "Name of the certificate authority's terms document asserted by a test, not a person."
     },
     {
       "value": "The Access",

@@ -37,6 +37,10 @@ test("the invite page and its script are served with a strict policy, and nothin
   const html = await page.text();
   expect(html).toContain('<script type="module" src="/invite/script.js">');
   expect(html).toContain("Settings, then Connectivity, then Omnesis account");
+  // The script shows one of the two states once it has read the fragment; neither shows before.
+  expect(html).toContain('<div id="invite-missing" hidden><h1>This link has no invite in it</h1>');
+  expect(html).toContain('<div id="invite-found"><h1>You\'re invited to Omnesis</h1>');
+  expect(html).toContain('<code id="invite-command"></code>');
   const script = await fetch(`${url}/invite/script.js`);
   expect(script.headers.get("content-type")).toBe("application/javascript; charset=utf-8");
   expect(await script.text()).toMatch(/^\(function installInviteUI\(\)/);

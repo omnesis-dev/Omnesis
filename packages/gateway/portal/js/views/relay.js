@@ -28,17 +28,21 @@ import {
   relayClock,
   relayHttpsUrl,
 } from "../lib/cloud-relay-api.js";
-import { AccountConnect } from "./remote-access/account-step.js";
+import { AccountConnect, ExistingAccountNotice } from "./remote-access/account-step.js";
 import { ACCOUNT_PAGE } from "./remote-access/manage.js";
 
 /**
  * The one state the page is in, from the gateway's status. Order matters: an
- * active connect outranks everything, then a failure, then the connection.
+ * active connect outranks everything; then a refused invite, which brings back
+ * the choice to fix it; then a connection that never finished; then any other
+ * failure, then the connection.
  */
 export function relayPhase(status) {
   if (!status) return "loading";
   const connect = status.connect?.state;
   if (connect === "waiting" || connect === "registering" || connect === "linking") return connect;
+  if (connect === "failed" && /^invite-/.test(status.connect?.error ?? "")) return "failed";
+  if (status.unfinished) return "unfinished";
   if (connect === "failed") return "failed";
   const enrolled = status.enrollment?.state === "enrolled";
   if (!enrolled && !status.enabled) {
@@ -153,6 +157,9 @@ export function Waiting({ connect, busy, run }) {
     </div>`;
   }
   const authorizeUrl = relayHttpsUrl(connect.authorizeUrl);
+  // Named for what the person chose: the relay's page opens on that choice.
+  const signInLabel =
+    connect.intent === "create" ? "Create your Omnesis account" : "Sign in to your Omnesis account";
   const connectUrl = relayHttpsUrl(connect.connectUrl);
   // The relay's short address is only shown; the link itself stays on the relay's own page.
   const shownUrl = relayHttpsUrl(connect.connectShortUrl) ?? connectUrl;
@@ -172,7 +179,7 @@ export function Waiting({ connect, busy, run }) {
           target="_blank"
           rel="noopener noreferrer"
         >
-          Open sign-in
+          ${signInLabel}
         </a>`
       }
       <button
@@ -627,7 +634,7 @@ export function usePasskeyHandoff({ phase, enrollment, setup, ready, later, open
  * reach this gateway from anywhere.
  */
 export function RelayView({ part = "account", open = openOnGateway, location = globalThis.location } = {}) {
-  const { status, error, busy, run, version } = useRelayManagement();
+  const { status, error, errorCode, clearError, busy, run, version } = useRelayManagement();
   // A sign-in added on the account page shows here within seconds, not at the hourly check-in.
   useAccountRefresh(() => void run());
   const [later, chooseLater] = useSetupLater(status?.gatewayId);
@@ -654,7 +661,12 @@ export function RelayView({ part = "account", open = openOnGateway, location = g
   const checklist = setup && !later && phase === "connected";
   const problems = relayProblems(status, phase);
   // A failed connect or a dropped connection is said in the headline; the details still help.
-  const troubled = problems.length > 0 || phase === "failed" || phase === "disconnected";
+  // A connection that was only interrupted has nothing to report beyond its headline.
+  const troubled =
+    problems.length > 0 ||
+    phase === "failed" ||
+    (phase === "unfinished" && Boolean(status.unfinished?.error)) ||
+    phase === "disconnected";
   const problemBox =
     troubled &&
     html`<${RelayProblems} messages=${problems} details=${relayDiagnostics(status, { phase, version })} />`;
@@ -704,9 +716,11 @@ export function RelayView({ part = "account", open = openOnGateway, location = g
             location=${location}
             onDismiss=${() => chooseLater(true)}
           />`
-        : !established && html`<${AccountConnect} relay=${{ status, busy, run, error }} />`
+        : !established &&
+          html`<${AccountConnect} relay=${{ status, busy, run, error, errorCode, clearError }} />`
     }
     ${pageError && html`<p role="alert" class="relay-notice">${error}</p>`}
+    <${ExistingAccountNotice} status=${status} />
     ${
       status.notice === "account-deleted" &&
       html`<p role="status" class="relay-notice">

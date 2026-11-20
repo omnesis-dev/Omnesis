@@ -9,12 +9,8 @@
 // OAuth flow, so nothing here carries a credential.
 
 import { AGENT_ICONS } from "./agent-brand.js";
-import {
-  DOCS,
-  addressChoices,
-  hostedClientAddress,
-  localClientAddress,
-} from "./public-address.js";
+import { DOCS, hostedClientAddress, localClientAddress } from "./public-address.js";
+import { awayChoices } from "./agent-location.js";
 
 export { isPrivateAddress, usesNonStandardPort } from "./public-address.js";
 
@@ -159,13 +155,20 @@ function harnessCommands(harness, oauth, address, pairingCode) {
  * - `pairs` marks the managed integrations, which pair the machine they run on
  *   as an agent device before signing in.
  *
+ * `location` is where the agent runs (see `agent-location.js`). On this
+ * computer or another one at home, the agents that connect from their
+ * vendor's servers are left out: they could never reach those addresses. On
+ * another computer at home the trust step names the file the owner downloads
+ * from the dialog and saves there, since the gateway's own copy is on another
+ * machine.
+ *
  * @param {{ resource: string, resources?: Array<{ resource: string, servedByGateway: boolean, direct: boolean, publiclyTrusted?: boolean, certificatePending?: boolean }>, tlsFingerprintSha256?: string | null, certificate?: { kind: string, trustFile: string | null } | null }} oauth
- * @param {{ harnessAddress?: { gatewayUrl: string, servedByGateway: boolean, direct: boolean }, pairingCode?: string, relay?: { state: string, url?: string }, tailscale?: { state: string, url?: string } }} [options]
+ * @param {{ harnessAddress?: { gatewayUrl: string, servedByGateway: boolean, direct: boolean }, pairingCode?: string, relay?: { state: string, url?: string }, tailscale?: { state: string, url?: string }, location?: "machine" | "home" | "away" }} [options]
  *   `oauth.resource` is the address selected in the dialog, `relay` the
  *   gateway's relay-hosted address, from `relayPublicAddress`, and `tailscale`
  *   its Tailscale device's address, from `tailscalePublicAddress`.
  */
-export function agentSetups(oauth, { harnessAddress, pairingCode, relay, tailscale } = {}) {
+export function agentSetups(oauth, { harnessAddress, pairingCode, relay, tailscale, location = "away" } = {}) {
   const url = shellQuote(oauth.resource);
   const address = harnessAddress ?? harnessAddresses(oauth)[0];
   const untrustedCertificate = servesUntrustedCertificate(oauth);
@@ -233,7 +236,10 @@ export function agentSetups(oauth, { harnessAddress, pairingCode, relay, tailsca
       // OpenSSL-based programs such as curl and Python take SSL_CERT_FILE as
       // the only authorities they trust, so it is kept to Codex's own command
       // rather than every shell.
-      certificateTrust: { variable: "SSL_CERT_FILE", kinds: ["mkcert", "self-signed"] },
+      // SSL_CERT_FILE may replace the authorities Codex trusts rather than add to them,
+      // which could cut it off from its own service (#168), so it is not offered for a
+      // computer other than the gateway's until that is shown not to happen.
+      certificateTrust: { variable: "SSL_CERT_FILE", kinds: ["mkcert", "self-signed"], gatewayComputerOnly: true },
       docs: `${DOCS}/connect#codex`,
     },
     {
@@ -306,19 +312,42 @@ export function agentSetups(oauth, { harnessAddress, pairingCode, relay, tailsca
       docs: `${DOCS}/connect#harness-install`,
     },
   ];
-  const choices = addressChoices(oauth, relay, tailscale);
-  return agents.map((listed) => {
-    const addressNotice = listed.needsPublicAddress
-      ? hostedClientAddress(listed, oauth.resource, relay, choices)
-      : localClientAddress(oauth.resource, relay, choices);
+  // Away from home the loopback address is no alternative: it is this computer's own.
+  const choices = awayChoices(oauth, relay, tailscale);
+  const reachable = location === "away" ? agents : agents.filter((agent) => !agent.needsPublicAddress);
+  return reachable.map((listed) => {
+    // Addresses at home need no notice about the relay or publishing: the dialog says what they are.
+    const addressNotice =
+      location !== "away"
+        ? null
+        : listed.needsPublicAddress
+          ? hostedClientAddress(listed, oauth.resource, relay, choices)
+          : localClientAddress(oauth.resource, relay, choices);
     const agent = addressNotice ? { ...listed, addressNotice } : listed;
     const blocked = { ...agent, blocked: true, commands: [], alternatives: false, note: [], headless: undefined };
     // An address that does not answer says nothing about the certificate behind it.
     if (addressNotice && !addressNotice.usable) return blocked;
-    const trustFile = untrustedCertificate ? agentTrustFile(agent, mainAddressCertificate(oauth)) : null;
+    const trustable = location !== "home" || !agent.certificateTrust?.gatewayComputerOnly;
+    const trustFile =
+      untrustedCertificate && trustable ? agentTrustFile(agent, mainAddressCertificate(oauth)) : null;
     if (agent.needsTrustedCertificate && untrustedCertificate && !trustFile) return blocked;
     if (!trustFile) return agent;
     const { variable } = agent.certificateTrust;
+    if (location === "home") {
+      const saved = downloadedTrustFile(oauth.certificate);
+      return {
+        ...agent,
+        trustStep: {
+          label: TRUST_STEP_LABEL,
+          value: `export ${variable}="$HOME/${saved}"`,
+          variable,
+          file: `~/${saved}`,
+          download: saved,
+          // mkcert's authority vouches for every certificate it makes, not this gateway's alone.
+          ...(oauth.certificate?.kind === "mkcert" ? { authority: true } : {}),
+        },
+      };
+    }
     return {
       ...agent,
       trustStep: {
@@ -329,4 +358,16 @@ export function agentSetups(oauth, { harnessAddress, pairingCode, relay, tailsca
       },
     };
   });
+}
+
+/** Where the dialog serves the gateway's trust file for an agent on another computer. */
+export const CERTIFICATE_DOWNLOAD = "/portal/api/access/certificate";
+
+/**
+ * The name the downloaded trust file has, which the trust step on another
+ * computer expects in the home folder: mkcert's authority, or the gateway's
+ * own certificate.
+ */
+export function downloadedTrustFile(certificate) {
+  return certificate?.kind === "mkcert" ? "omnesis-gateway-ca.pem" : "omnesis-gateway.pem";
 }

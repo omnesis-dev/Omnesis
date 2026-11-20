@@ -5,7 +5,7 @@ description: Configure the user's private Omnesis Gateway in the Codex CLI. Use 
 
 # Connect Omnesis to Codex
 
-Use the exact MCP resource copied from the **Connect an agent** dialog on the Omnesis Portal's **Settings → Access** page. It is an HTTPS URL ending in `/mcp`.
+Use the exact MCP resource copied from the **Connect an agent** dialog on the Omnesis Portal's **Settings → Access** page, after answering where Codex runs. It ends in `/mcp`: a plain `http://localhost:<port>/mcp` address on the gateway's own computer, which needs no certificate, and an HTTPS URL anywhere else.
 
 ```text
 codex mcp add omnesis --url <MCP_RESOURCE> --oauth-resource <MCP_RESOURCE>

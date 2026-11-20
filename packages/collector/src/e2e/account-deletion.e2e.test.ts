@@ -23,7 +23,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
-import { authorizeAccountDesktop, pairAccountDevice } from "@omnesis/cloud-relay";
+import {
+  authorizeAccountDesktop,
+  hostedGatewayHostname,
+  pairAccountDevice,
+} from "@omnesis/cloud-relay";
 import { localAcmeAuthority } from "../../../cloud-relay/test/acme-authority.js";
 import {
   EnrollmentGateway,
@@ -160,7 +164,7 @@ describe.skipIf(!browserReady)("leave an Omnesis account", () => {
         body: JSON.stringify({ termsAccepted: true, intent }),
       });
       expect(waiting.connect).toMatchObject({ state: "waiting" });
-      hostname = waiting.hostname;
+      hostname = hostedGatewayHostname(waiting.gatewayId!, new URL(world.relayOrigin).hostname);
       await enterConnectCode(person.page, waiting.connect!.connectUrl!, waiting.connect!.code!);
       if (intent === "create") await createAccountWithPasskey(person.page);
       else await clickFirst(person.page, ["Sign in with Passkey"]);

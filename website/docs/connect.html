@@ -598,10 +598,16 @@
           Any client that speaks Streamable HTTP MCP and completes OAuth can connect to
           <code>/mcp</code>; clients that cannot do both are not supported. The client discovers the
           gateway's OAuth metadata, signs in, and stores and refreshes its own tokens. It signs in
-          at an address the gateway knows as its own: <code>gateway.publicBaseUrl</code>, the
-          address of Tailscale on the gateway's computer while it serves the gateway, or, for a
-          client on the gateway's own machine, a loopback address. Where each client runs decides
-          which address it can use:
+          at an address the gateway knows as its own, and where the client runs decides which one:
+          on the gateway's own computer, the plain loopback address (<a href="#this-computer"
+            >this computer</a
+          >); on another computer at home, the gateway's home-network addresses, once you allow it
+          (<a href="#home-network">home network</a>); anywhere else,
+          <code>gateway.publicBaseUrl</code>, the Omnesis relay, or a Tailscale address (<a
+            href="#mcp-address"
+            >choose the address</a
+          >). <strong>Settings → Access → Connect an agent</strong> asks where the agent runs first
+          and gives the address and the setup that go with it.
         </p>
         <table>
           <thead>
@@ -615,14 +621,20 @@
           <tbody>
             <tr>
               <td>Claude Code</td>
-              <td>your machine</td>
-              <td>a configured HTTPS address its machine can reach</td>
+              <td>your computer</td>
+              <td>
+                <code>http://localhost:7601/mcp</code> on the gateway's computer; elsewhere an HTTPS
+                address its computer can reach
+              </td>
               <td><a href="#claude-code">Claude Code</a></td>
             </tr>
             <tr>
               <td>Codex</td>
-              <td>your machine</td>
-              <td>a configured HTTPS address its machine can reach</td>
+              <td>your computer</td>
+              <td>
+                <code>http://localhost:7601/mcp</code> on the gateway's computer; elsewhere an HTTPS
+                address its computer can reach
+              </td>
               <td><a href="#codex">Codex</a></td>
             </tr>
             <tr>
@@ -651,14 +663,17 @@
             </tr>
             <tr>
               <td>Antigravity CLI</td>
-              <td>your machine</td>
-              <td>a configured HTTPS address its machine can reach</td>
+              <td>your computer</td>
+              <td>
+                <code>http://localhost:7601/mcp</code> on the gateway's computer; elsewhere an HTTPS
+                address its computer can reach
+              </td>
               <td><a href="#antigravity">Antigravity</a></td>
             </tr>
             <tr>
               <td>OpenClaw, Hermes</td>
-              <td>your machine</td>
-              <td>a configured HTTPS address its machine can reach</td>
+              <td>your computer</td>
+              <td>an HTTPS address its computer can reach, on the gateway's computer too</td>
               <td><a href="#openclaw-hermes">OpenClaw and Hermes</a></td>
             </tr>
           </tbody>
@@ -714,6 +729,78 @@
           Dynamic Client Registration authenticate as public clients or with a client secret.
         </p>
 
+        <h3 id="this-computer">An agent on the gateway's computer</h3>
+        <p>
+          An agent on the computer the gateway runs on connects at
+          <code>http://localhost:7601/mcp</code>: plain HTTP, which the MCP authorization rules
+          allow only on loopback, so there is no certificate to trust and every agent connects as
+          is. It is the gateway's port plus one, and it listens on <code>127.0.0.1</code> and
+          <code>::1</code> alone, so nothing off the computer can reach it. It serves only the MCP
+          endpoint and the sign-in routes an MCP client uses; the portal's pages redirect to the
+          gateway's HTTPS address. For Claude Code:
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd"
+                >claude mcp add --transport http --scope user omnesis
+                http://localhost:7601/mcp</span
+              >
+            </p>
+          </div>
+        </div>
+        <p>
+          <code>gateway.localMcp.port</code>, or the <code>OMNESIS_LOCAL_MCP_PORT</code> environment
+          variable, which wins over it, moves it, and <code>gateway.localMcp.enabled</code> turns it
+          off; both take effect on the next start. When another program holds the port, the gateway
+          still starts, and <strong>Settings → Connectivity</strong> says so with the setting to
+          change. A gateway in a container does not offer it, since the container's loopback is not
+          the computer's. Agents on the gateway's computer can always also sign in at its HTTPS
+          loopback address, such as <code>https://localhost:7600/mcp</code>, after
+          <a href="#trust-certificate">trusting its certificate</a>.
+        </p>
+
+        <h3 id="home-network">An agent on your home network</h3>
+        <p>
+          An agent on another computer on the same network, such as a laptop running Codex, can sign
+          in at the gateway's home-network addresses — its <code>.local</code> name and its local IP
+          addresses, at the gateway's port — once you allow it under
+          <strong>Settings → Connectivity → MCP server → Your home network</strong>, or from
+          <strong>Connect an agent</strong>. It is off until you turn it on, and your devices pair
+          over the home network whatever you choose. Before you turn it on, know that:
+        </p>
+        <ul>
+          <li>
+            Any device on your network can reach the sign-in page. A connection still needs your
+            approval, as everywhere.
+          </li>
+          <li>
+            The agent's computer has to trust the gateway's certificate. For Claude Code with a
+            <a href="setup#certificates">mkcert certificate</a>, download it from
+            <strong>Connect an agent</strong> and point Claude Code at it. Claude Code cannot trust
+            the gateway's own self-signed certificate, and Codex is not offered a certificate step
+            for another computer: its setting may replace the authorities it already trusts. For
+            either, run the agent on the gateway's computer or reach the gateway from away.
+          </li>
+          <li>
+            An address in numbers can change when your router hands out a new one. The
+            <code>.local</code> name stays the same; prefer it where the agent's computer resolves
+            it.
+          </li>
+          <li>Hosted connectors such as ChatGPT and Claude apps cannot use it.</li>
+        </ul>
+        <p>
+          A home-network address signs agents in at itself: it is its own sign-in address, so a
+          token issued there is valid there only. Only a request that reaches the gateway straight
+          from a private network qualifies, never one through the relay, Tailscale or Funnel.
+          Turning it off again stops new sign-ins there, and the tokens agents received there stop
+          working. A home-network address already named in <code>gateway.publicBaseUrl</code> or
+          <code>gateway.mcpResourceUrls</code> keeps signing agents in exactly as configured,
+          whatever this choice.
+        </p>
+
         <h3 id="mcp-per-address">MCP on each address</h3>
         <p>
           The MCP server answers at every address the gateway has, as far as that address reaches.
@@ -726,7 +813,8 @@
           <code>404</code> for the MCP endpoint and the OAuth routes an MCP client signs in through,
           as a gateway without them would, and its discovery documents stop listing it; the portal
           and your devices' own connections at that address are unaffected. Agents on the gateway's
-          machine and on your home network always reach the MCP server.
+          computer always reach the MCP server; agents on your home network do once you allow it
+          (see <a href="#home-network">home network</a>).
         </p>
 
         <h3 id="tailscale-funnel">Publish the gateway with Tailscale Funnel</h3>
@@ -939,10 +1027,15 @@
           <code>curl</code> and Python, trust only the file <code>SSL_CERT_FILE</code> names, and
           exporting it everywhere would break their connections. For the agents themselves both
           settings add to the authorities they already trust, so their own connections keep working.
-          An agent on another machine needs a copy of the file there, with the same variable set to
-          the copy's path. Copy only <code>rootCA.pem</code>, never <code>rootCA-key.pem</code>. The
-          portal does not offer the setting for a certificate of your own that no public authority
-          issued; set the variable to the authority that issued it.
+          An agent on another computer needs a copy of the file there, with the same variable set to
+          the copy's path: on the home network, <strong>Connect an agent</strong> offers it as a
+          download for Claude Code and writes the line for that computer. Copy only
+          <code>rootCA.pem</code>, never <code>rootCA-key.pem</code>. A Tailscale certificate covers
+          the gateway's Tailscale name, not its home-network addresses, so an agent there is in the
+          self-signed row. An agent on the gateway's own computer needs none of this at
+          <a href="#this-computer"><code>http://localhost:7601/mcp</code></a
+          >. The portal does not offer the setting for a certificate of your own that no public
+          authority issued; set the variable to the authority that issued it.
         </p>
 
         <h3 id="claude-code">Claude Code</h3>
@@ -954,15 +1047,17 @@
           Claude Code accepts only a certificate issued by an authority it trusts. With a Tailscale
           certificate or one for a domain of your own it connects as is; with a mkcert certificate
           it needs the <a href="#trust-certificate">one-time trust setting</a> first. It cannot
-          connect to a gateway that serves its self-signed certificate at all: give the gateway a
-          Tailscale, domain or mkcert <a href="setup#certificates">certificate</a> first. OpenClaw
-          and Hermes verify a Tailscale or domain certificate by name and pin any other
-          certificate's fingerprint, so they connect either way.
+          connect over HTTPS to a gateway that serves its self-signed certificate at all: on the
+          gateway's own computer use <a href="#this-computer">the plain loopback address</a>, which
+          needs no certificate; elsewhere give the gateway a Tailscale, domain or mkcert
+          <a href="setup#certificates">certificate</a> first, or reach it through Tailscale or the
+          Omnesis relay. OpenClaw and Hermes verify a Tailscale or domain certificate by name and
+          pin any other certificate's fingerprint, so they connect either way.
         </p>
         <p>
           The Claude plugin declares the HTTP connection and adds skills that teach Claude how to
           use Answer, Direct, and Notes and how to set up or repair the connection. It asks for your
-          gateway's MCP URL (the HTTPS URL ending in <code>/mcp</code>), and it neither launches an
+          gateway's MCP URL (the URL ending in <code>/mcp</code>), and it neither launches an
           Omnesis process nor stores a gateway credential. <code>--sparse</code> checks out only the
           plugin instead of the whole repository:
         </p>

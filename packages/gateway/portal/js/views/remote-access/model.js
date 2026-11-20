@@ -20,17 +20,13 @@ export const STEP_LABELS = {
 /**
  * The steps the setup walks: the account; the connection; new devices only
  * while a device can ask to join (`devices`: an account is linked or the
- * gateway's own Tailscale device is on); and the MCP server last, only while
- * some address away from home exists to offer it on (`mcp`). A step with
+ * gateway's own Tailscale device is on); and the MCP server last, which always
+ * has a choice — the home network — so someone who wants only local use
+ * finishes there, with no account and no remote connection. A step with
  * nothing to choose is left out.
  */
-export function setupSteps({ devices = false, mcp = false } = {}) {
-  return [
-    "account",
-    "connection",
-    ...(devices ? ["devices"] : []),
-    ...(mcp ? ["mcp"] : []),
-  ];
+export function setupSteps({ devices = false } = {}) {
+  return ["account", "connection", ...(devices ? ["devices"] : []), "mcp"];
 }
 
 /** Where the setup's progress is kept while the page is away, in this browser tab only. */
@@ -97,7 +93,7 @@ export function startFlow(mode, steps, remote) {
 /**
  * What step 1 shows, from the relay's status: `loading`, `unavailable`, `none`
  * (no account yet), the connect phases `waiting`, `registering`, `linking` and
- * `failed`, `linked` (the status reports an Omnesis account link or a Google
+ * `failed`, `unfinished` (a connection that never finished), `linked` (the status reports an Omnesis account link or a Google
  * link), or `enrolled` (registered with the relay but linked to no account).
  */
 export function accountState(status) {

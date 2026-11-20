@@ -22,6 +22,11 @@ export interface AccountAdmission {
   /** The invite the account is created with; creating the account records it as used. */
   invite?: VerifiedInvite;
   /**
+   * Told the new account's id once it is created with this admission, so the sign-up can say
+   * whether its sign-in created the account or signed in to one that already existed.
+   */
+  created?(account: string): void;
+  /**
    * A gateway linked with Google before Omnesis accounts existed, carried into an account; it
    * needs no invite.
    */

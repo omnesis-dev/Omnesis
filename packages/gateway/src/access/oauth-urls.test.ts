@@ -408,3 +408,85 @@ test("narrowing an overview preserves its enabled primary resource when a second
     protectedResourceMetadata: `${direct}/.well-known/oauth-protected-resource/mcp`,
   });
 });
+
+describe("signing in on the home network", () => {
+  const home = "https://omnesis.local:7600";
+
+  test("a home-network request the caller vouches for signs in at the address it used", () => {
+    for (const configured of [undefined, "https://gateway.example.com"]) {
+      const urls = resolveOAuthUrls(`${home}/oauth/token`, configured, undefined, [], {
+        home: true,
+      });
+      expect(urls).toMatchObject({
+        issuer: home,
+        resource: `${home}/mcp`,
+        token: `${home}/oauth/token`,
+        issuerResources: [`${home}/mcp`],
+      });
+      // A configured public address keeps its own resource beside it.
+      if (configured) expect(urls?.supportedResources).toContain(`${configured}/mcp`);
+    }
+  });
+
+  test("without the caller's word a home-network Host is never an issuer, as before", () => {
+    expect(resolveOAuthUrls(`${home}/oauth/token`)).toBeNull();
+    expect(resolveOAuthUrls(`${home}/oauth/token`, "https://gateway.example.com")?.issuer).toBe(
+      "https://gateway.example.com",
+    );
+  });
+
+  test("an origin the configuration names keeps the issuer it was configured with", () => {
+    // A LAN resource listed in gateway.mcpResourceUrls signs in through the public address,
+    // whether or not the owner also allows the home network.
+    const lan = "https://192.168.0.20:7600";
+    for (const allowed of [false, true]) {
+      const urls = resolveOAuthUrls(
+        `${lan}/mcp`,
+        "https://gateway.example.com",
+        [`${lan}/mcp`],
+        [],
+        { home: allowed },
+      );
+      expect(urls?.issuer).toBe("https://gateway.example.com");
+      expect(resolveMcpRequestResource(`${lan}/mcp`, urls!.supportedResources)).toBe(`${lan}/mcp`);
+    }
+    // The same goes for the public address itself.
+    expect(
+      resolveOAuthUrls(`${home}/mcp`, home, undefined, [], { home: true })?.issuerResources,
+    ).toEqual([`${home}/mcp`]);
+  });
+
+  test("loopback stays the gateway's own machine's, whatever the caller says about home", () => {
+    expect(
+      resolveOAuthUrls("http://localhost:7601/oauth/token", undefined, undefined, [], {
+        home: true,
+      })?.issuer,
+    ).toBe("http://localhost:7601");
+  });
+
+  test("completion accepts a stored home-network resource only while the caller says it still may", () => {
+    expect(resolveOAuthResourceUrls(`${home}/mcp`)).toBeNull();
+    expect(
+      resolveOAuthResourceUrls(`${home}/mcp`, undefined, undefined, undefined, { home: true })
+        ?.issuer,
+    ).toBe(home);
+  });
+});
+
+test("a request on the plain-HTTP loopback address signs in there, beside a public address", () => {
+  const urls = resolveOAuthUrls(
+    "http://localhost:7601/oauth/token",
+    "https://gateway.example.com",
+    undefined,
+    [],
+    { local: true },
+  );
+  expect(urls).toMatchObject({
+    issuer: "http://localhost:7601",
+    resource: "http://localhost:7601/mcp",
+    issuerResources: ["http://localhost:7601/mcp"],
+  });
+  expect(resolveOAuthResourceUrls("http://localhost:7601/mcp")?.issuer).toBe(
+    "http://localhost:7601",
+  );
+});

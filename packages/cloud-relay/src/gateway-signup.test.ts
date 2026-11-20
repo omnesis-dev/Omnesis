@@ -824,3 +824,40 @@ test("a cancelled and restarted request never receives the earlier sign-in's res
   await expect(confirming).rejects.toThrow("replaced");
   expect(f.signup.poll(op.redemption)).toMatchObject({ status: "pending" });
 });
+
+test("a gateway that asks learns whether the sign-in created the account; one that doesn't gets the answer it parses", async () => {
+  const f = fixture(inviteOnly(), { maxPerOwner: 32 });
+  const approve = async (create: boolean) => {
+    const op = f.launched({}, "create", invite());
+    const admission = f.signup.creationAdmission(op.id, op.cookie)!;
+    // Creating the account tells the sign-up which account it made.
+    if (create) admission.created!(f.actor.accountId);
+    f.signIn(op);
+    await f.signup.confirm(op.id, op.cookie, f.actor);
+    return op;
+  };
+  const created = await approve(true);
+  expect(f.signup.poll(created.redemption, { reportCreation: true })).toMatchObject({
+    status: "approved",
+    accountCreated: true,
+  });
+  // The person chose to create one, but the sign-in already had an account: the invite is unused.
+  const existed = await approve(false);
+  expect(f.signup.poll(existed.redemption, { reportCreation: true })).toMatchObject({
+    status: "approved",
+    accountCreated: false,
+  });
+  // An account made by an earlier attempt is not this sign-in's.
+  const op = f.launched({}, "create", invite());
+  f.signup.creationAdmission(op.id, op.cookie)!.created!("e".repeat(64));
+  f.signIn(op);
+  await f.signup.confirm(op.id, op.cookie, f.actor);
+  expect(f.signup.poll(op.redemption, { reportCreation: true })).toMatchObject({
+    accountCreated: false,
+  });
+  // A gateway that predates the field parses the approval strictly, so it never sees it.
+  const older = await approve(true);
+  const answer = f.signup.poll(older.redemption);
+  expect(answer).not.toHaveProperty("accountCreated");
+  expect(gatewaySignupPollResult.parse(answer)).toEqual(answer);
+});

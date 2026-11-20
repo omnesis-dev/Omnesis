@@ -762,3 +762,102 @@ describe("this computer's Tailscale address as an OAuth issuer", () => {
     expect(policy.hostReach("https://studio.example-net.ts.net:8443/mcp")).toBe("public");
   });
 });
+
+describe("the home network", () => {
+  const HOME = ["https://omnesis.local:7600", "https://192.168.0.20:7600"];
+  const homeRequest = (
+    url: string,
+    over: Partial<Parameters<McpAddresses["homeSignIn"]>[0]> = {},
+  ) => ({
+    url,
+    via: null,
+    relayed: false,
+    funnel: false,
+    fromHomeNetwork: true,
+    ...over,
+  });
+
+  test("is offered only where the gateway listens beyond this machine, and starts off", async () => {
+    expect(addresses().policy.offered()).not.toContain("home");
+    const { policy, settings } = addresses({ home: { origins: () => Promise.resolve(HOME) } });
+    expect(policy.offered()[0]).toBe("home");
+    expect((await policy.list())[0]).toEqual({
+      id: "home",
+      url: HOME[0],
+      urls: HOME,
+      reach: "off",
+      choices: ["off", "on"],
+      available: true,
+    });
+    expect(await policy.homeNetwork()).toEqual({ allowed: false, origins: HOME });
+    // Off is the default: nothing is written until the owner chooses.
+    expect(settings.get().mcp).toBeUndefined();
+  });
+
+  test("without any address of its own on the home network the row is not available", async () => {
+    const { policy } = addresses({ home: { origins: () => Promise.resolve([]) } });
+    expect((await policy.list())[0]).toMatchObject({ id: "home", url: null, available: false });
+  });
+
+  test("turning it on is a loosening, and nothing about it ever refuses a request", async () => {
+    const { policy } = addresses({ home: { origins: () => Promise.resolve(HOME) } });
+    expect(policy.loosens({ home: "on" })).toBe(true);
+    expect(policy.loosens({ home: "off" })).toBe(false);
+    for (const allowed of ["off", "on"] as const) {
+      await policy.update({ home: allowed });
+      expect(await policy.refusal(request("https://omnesis.local:7600/mcp"))).toBeNull();
+      expect(await policy.refusal(request("https://192.168.0.20:7600/oauth/token"))).toBeNull();
+    }
+    expect(policy.loosens({ home: "on" })).toBe(false);
+  });
+
+  test("a request signs in on the home network only while it is on, straight from a private network", async () => {
+    const { policy } = addresses({ home: { origins: () => Promise.resolve(HOME) } });
+    const lan = "https://192.168.0.20:7600/oauth/token";
+    expect(await policy.homeSignIn(homeRequest(lan))).toBe(false);
+    expect(policy.homeResource("https://omnesis.local:7600/mcp")).toBe(false);
+    await policy.update({ home: "on" });
+    expect(await policy.homeSignIn(homeRequest(lan))).toBe(true);
+    // The port may differ, as behind Docker's published one: the name is what counts.
+    expect(await policy.homeSignIn(homeRequest("https://omnesis.local:8443/mcp"))).toBe(true);
+    expect(policy.homeResource("https://omnesis.local:7600/mcp")).toBe(true);
+    // Not through the relay, the tailnet device or Funnel, and not from outside.
+    expect(await policy.homeSignIn(homeRequest(lan, { relayed: true }))).toBe(false);
+    expect(await policy.homeSignIn(homeRequest(lan, { via: "tailnet" }))).toBe(false);
+    expect(await policy.homeSignIn(homeRequest(lan, { funnel: true }))).toBe(false);
+    expect(await policy.homeSignIn(homeRequest(lan, { fromHomeNetwork: false }))).toBe(false);
+    // A name the client makes up never becomes an issuer, however local it looks.
+    for (const made of [
+      "https://studio.lan:7600/mcp",
+      "https://attacker:7600/mcp",
+      "https://192.168.0.99:7600/mcp",
+      "https://localhost:7600/mcp",
+      "https://omnesis.example.org/mcp",
+    ])
+      expect(await policy.homeSignIn(homeRequest(made)), made).toBe(false);
+    await policy.update({ home: "off" });
+    expect(await policy.homeSignIn(homeRequest(lan))).toBe(false);
+    expect(policy.homeResource("https://192.168.0.20:7600/mcp")).toBe(false);
+  });
+
+  test("a home-network name that is the owner's own public address keeps its own issuer", async () => {
+    const { policy } = addresses({
+      home: { origins: () => Promise.resolve(HOME) },
+      publicBaseUrl: () => "https://omnesis.local:7600",
+    });
+    await policy.update({ home: "on" });
+    expect(await policy.homeSignIn(homeRequest("https://omnesis.local:7600/mcp"))).toBe(false);
+    expect(await policy.homeSignIn(homeRequest("https://192.168.0.20:7600/mcp"))).toBe(true);
+  });
+
+  test("its addresses are looked up again only once they are half a minute old", async () => {
+    const origins = vi.fn(() => Promise.resolve(HOME));
+    const { policy, advance } = addresses({ home: { origins } });
+    await policy.list();
+    await policy.homeNetwork();
+    expect(origins).toHaveBeenCalledTimes(1);
+    advance(30_000);
+    await policy.homeNetwork();
+    expect(origins).toHaveBeenCalledTimes(2);
+  });
+});

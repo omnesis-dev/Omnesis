@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { createHash, generateKeyPairSync, randomUUID, sign } from "node:crypto";
+import { createHash, generateKeyPairSync, randomUUID, sign, X509Certificate } from "node:crypto";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import Database from "better-sqlite3";
 import { Hono } from "hono";
@@ -22,6 +25,7 @@ import { commitPrivacyPolicy } from "../../privacy/policy-history.js";
 import { AccessAuthorizationNotifier } from "../../access/authorization-notifier.js";
 import { PushBroadcaster } from "../../push/broadcast.js";
 import { fixedPublicAddress } from "../../public-address.js";
+import { generateSelfSigned } from "../../tls.js";
 import { mountOAuthAccessRoutes } from "./oauth-access.js";
 import type { OAuthClientMetadataDocument } from "../../access/types.js";
 import type { Db } from "../../data/types.js";
@@ -190,7 +194,13 @@ describe("MCP OAuth access routes", () => {
       oauth && { ...oauth, resources: oauth.resources.map((entry) => entry.resource) };
     const switched = createTestApp({
       additionalOAuthIssuerUrls: [relay],
-      mcpAddresses: { answersAt, settle: async () => {}, hostReach: () => null },
+      mcpAddresses: {
+        answersAt,
+        settle: async () => {},
+        hostReach: () => null,
+        homeResource: () => false,
+        homeNetwork: () => Promise.resolve(null),
+      },
     });
     const plain = createTestApp({ additionalOAuthIssuerUrls: [relay] });
     // Every address on: exactly the overview of a gateway without the switches.
@@ -212,7 +222,13 @@ describe("MCP OAuth access routes", () => {
       publicBaseUrl: undefined,
       loopbackBaseUrl: "https://localhost:17600",
       additionalOAuthIssuerUrls: [relay],
-      mcpAddresses: { answersAt, settle: async () => {}, hostReach: () => null },
+      mcpAddresses: {
+        answersAt,
+        settle: async () => {},
+        hostReach: () => null,
+        homeResource: () => false,
+        homeNetwork: () => Promise.resolve(null),
+      },
     });
     expect(listed(await overview(local, "https://192.0.2.10:17600"))).toMatchObject({
       resource: "https://localhost:17600/mcp",
@@ -262,6 +278,7 @@ describe("MCP OAuth access routes", () => {
       ],
       tlsFingerprintSha256: fingerprint,
       certificate: { kind: "mkcert", trustFile: "/srv/mkcert/rootCA.pem" },
+      thisComputer: { state: "off", resource: null, gatewayUrl: null },
     });
 
     // A proxy that presents the same certificate on another port — Tailscale
@@ -317,6 +334,7 @@ describe("MCP OAuth access routes", () => {
       ],
       tlsFingerprintSha256: null,
       certificate: null,
+      thisComputer: { state: "off", resource: null, gatewayUrl: null },
     });
   });
 
@@ -2535,4 +2553,129 @@ test("management-configured cloud issuer becomes available without restarting th
     "https://unconfigured.example.test/.well-known/oauth-authorization-server",
   );
   expect((await attacker.json()).issuer).toBe("https://gateway.example.org");
+});
+
+describe("agents on this computer and on the home network", () => {
+  const HOME = "https://omnesis.local:7600";
+  const portal = { headers: { "X-Test-Portal": "yes" } };
+  const homeAddresses = (allowed: boolean) => ({
+    answersAt: () => true,
+    settle: async () => {},
+    hostReach: () => null,
+    homeResource: () => allowed,
+    homeNetwork: () => Promise.resolve({ allowed, origins: [HOME, "https://192.168.0.20:7600"] }),
+  });
+
+  test("the overview says where agents on this computer connect, and never an address that does not answer", async () => {
+    const listening = createTestApp({
+      loopbackBaseUrl: "https://localhost:7600",
+      localMcp: () => ({ state: "listening", port: 7601, url: "http://localhost:7601" }),
+    });
+    expect(
+      (await (await listening.request(`${ORIGIN}/admin/access`, portal)).json()).oauth.thisComputer,
+    ).toEqual({
+      state: "listening",
+      resource: "http://localhost:7601/mcp",
+      port: 7601,
+      gatewayUrl: "https://localhost:7600",
+    });
+    const busy = createTestApp({
+      loopbackBaseUrl: "https://localhost:7600",
+      localMcp: () => ({ state: "port-in-use", port: 7601 }),
+    });
+    expect(
+      (await (await busy.request(`${ORIGIN}/admin/access`, portal)).json()).oauth.thisComputer,
+    ).toEqual({
+      state: "port-in-use",
+      resource: null,
+      port: 7601,
+      gatewayUrl: "https://localhost:7600",
+    });
+  });
+
+  test("the overview lists the home network's addresses and whether agents there may sign in", async () => {
+    for (const allowed of [false, true]) {
+      const testApp = createTestApp({
+        mcpAddresses: homeAddresses(allowed),
+        tlsFingerprintSha256: () => "ab".repeat(32),
+        listenPort: 7600,
+        probeCertificate: async (resource) =>
+          resource.toString() === `${HOME}/mcp`
+            ? { fingerprint: "ab".repeat(32), publiclyTrusted: false }
+            : null,
+      });
+      const { oauth } = await (await testApp.request(`${ORIGIN}/admin/access`, portal)).json();
+      expect(oauth.homeNetwork).toEqual({
+        allowed,
+        resources: [
+          // The probe found the gateway's own self-signed certificate on its .local name.
+          { resource: `${HOME}/mcp`, servedByGateway: true, direct: true, publiclyTrusted: false },
+          {
+            resource: "https://192.168.0.20:7600/mcp",
+            servedByGateway: false,
+            direct: false,
+            publiclyTrusted: false,
+          },
+        ],
+      });
+      // The addresses away from home are unchanged by it.
+      expect(oauth.resources.map((entry: { resource: string }) => entry.resource)).toEqual([
+        RESOURCE,
+      ]);
+    }
+  });
+
+  test("discovery on a home-network address names it as its own issuer only for a request allowed to sign in there", async () => {
+    const testApp = new Hono<AppEnv>();
+    testApp.use("*", async (c, next) => {
+      c.set("homeSignIn", c.req.header("X-Test-Home") === "yes");
+      await next();
+    });
+    mountOAuthAccessRoutes(testApp, new AccessService(db, directWriteGate(db)), {
+      publicAddress: fixedPublicAddress(ORIGIN),
+    });
+    const metadata = (headers: Record<string, string>) =>
+      testApp.request(`${HOME}/.well-known/oauth-protected-resource/mcp`, { headers });
+    expect(await (await metadata({ "X-Test-Home": "yes" })).json()).toMatchObject({
+      resource: `${HOME}/mcp`,
+      authorization_servers: [HOME],
+    });
+    // Not allowed: the public address answers for it, as before.
+    const before = await metadata({});
+    expect(before.status === 404 || (await before.json()).resource !== `${HOME}/mcp`).toBe(true);
+  });
+
+  test("the certificate an agent on another computer trusts downloads as the certificate alone", async () => {
+    const generated = await generateSelfSigned();
+    const dir = mkdtempSync(join(tmpdir(), "omnesis-trust-"));
+    try {
+      const file = join(dir, "cert.pem");
+      // Anything else in the file — here the key — never leaves.
+      writeFileSync(file, `${generated.cert}\n${generated.key}`);
+      const testApp = createTestApp({
+        agentCertificateTrust: () => ({ kind: "self-signed", trustFile: file }),
+      });
+      const response = await testApp.request(`${ORIGIN}/portal/api/access/certificate`, portal);
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-disposition")).toBe(
+        'attachment; filename="omnesis-gateway.pem"',
+      );
+      const body = await response.text();
+      expect(body).toContain("BEGIN CERTIFICATE");
+      expect(body).not.toContain("PRIVATE KEY");
+      expect(new X509Certificate(body).fingerprint256).toBe(
+        new X509Certificate(generated.cert).fingerprint256,
+      );
+      // Only the owner downloads it, and a gateway with nothing to trust has nothing to give.
+      expect((await testApp.request(`${ORIGIN}/portal/api/access/certificate`)).status).toBe(401);
+      const none = createTestApp({
+        agentCertificateTrust: () => ({ kind: "tailscale", trustFile: null }),
+      });
+      expect((await none.request(`${ORIGIN}/portal/api/access/certificate`, portal)).status).toBe(
+        404,
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
