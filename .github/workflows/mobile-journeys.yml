@@ -285,8 +285,11 @@ jobs:
       # entries main's Android lane saves serve this job too. Without them every
       # run downloads Gradle itself and every dependency, and a slow
       # services.gradle.org or Maven repository fails the build before it starts.
+      # Restored only, never saved: a saved entry is never replaced, and one this
+      # job saved first would lack every module's unit-test dependencies, which
+      # the Android lane would then download from Maven Central on every run.
       - name: Restore Gradle caches
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.gradle/caches
