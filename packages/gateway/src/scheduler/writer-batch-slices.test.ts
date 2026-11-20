@@ -22,7 +22,7 @@ import { createDatabase } from "../db.js";
 import { COLLAPSED_ACCEPT_CHUNK } from "../merge-candidates.js";
 import { PreemptBuffer, PreemptToken } from "./preempt.js";
 import { writerYieldableHandlers } from "./writer-handlers.js";
-import { seedPilotCorpus, type PilotCorpus } from "./__fixtures__/pilot-corpus.js";
+import { seedLargeCorpus, type LargeCorpus } from "./__fixtures__/large-corpus.js";
 import type Database from "better-sqlite3";
 
 const UNRESOLVED_DOCS = 12;
@@ -31,12 +31,12 @@ const PENDING_CANDIDATES = 4 * COLLAPSED_ACCEPT_CHUNK;
 
 let path: string;
 let db: Database.Database;
-let corpus: PilotCorpus;
+let corpus: LargeCorpus;
 
 beforeEach(() => {
   path = join(tmpdir(), `omnesis-test-${randomUUID()}.db`);
   db = createDatabase(path) as unknown as Database.Database;
-  corpus = seedPilotCorpus(db, {
+  corpus = seedLargeCorpus(db, {
     docs: 2_000,
     unresolvedDocs: UNRESOLVED_DOCS,
     pendingCandidates: PENDING_CANDIDATES,
