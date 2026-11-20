@@ -55,7 +55,7 @@ export class StorageRuntime {
   private allocationInFlight: Promise<void> | null = null;
   private allocationAttemptAt = 0;
   private allocationForceRequested = false;
-  private readonly allocationSnapshots = new Map<AllocationStore, StorageAllocationSnapshot>();
+  private indexAllocationSnapshot: StorageAllocationSnapshot | null = null;
   private allocationStatus: NonNullable<StorageAccountingStatus["allocations"]> = {
     state: "pending",
     measuredAt: null,
@@ -206,11 +206,6 @@ export class StorageRuntime {
         measureStorageAccounting(this.deps.reads).then(
           (logical) => {
             if (this.disposed) return;
-            // A separate physical allocation scan may already have supplied tables.
-            logical.database.tables ??=
-              this.allocationSnapshots.get("documents")?.tables ??
-              this.logical?.database.tables ??
-              null;
             this.logical = logical;
             this.logicalStatus = { state: "ready", measuredAt: logical.measuredAt, error: null };
           },
@@ -230,8 +225,7 @@ export class StorageRuntime {
             (index) => {
               if (this.disposed) return;
               if (index) {
-                index.tables ??=
-                  this.allocationSnapshots.get("index")?.tables ?? this.index?.tables ?? null;
+                index.tables ??= this.indexAllocationSnapshot?.tables ?? this.index?.tables ?? null;
                 index.lexicalBytes ??=
                   index.tables?.reduce(
                     (bytes, table) =>
@@ -295,38 +289,28 @@ export class StorageRuntime {
     this.allocationForceRequested = false;
     this.allocationStatus = { ...this.allocationStatus, state: "refreshing", error: null };
     this.allocationInFlight = (async () => {
-      let complete = true;
-      for (const store of ["documents", "index"] as const) {
-        const snapshot = await this.deps.allocations!.measure(store, { force });
-        if (this.disposed) return;
-        this.allocationSnapshots.set(store, snapshot);
-        // Partial current trees are never substituted for a complete inventory.
-        if (snapshot.tables && snapshot.measuredAt) {
-          if (store === "documents" && this.logical) {
-            this.logical = {
-              ...this.logical,
-              database: { ...this.logical.database, tables: snapshot.tables },
-            };
-          }
-          if (store === "index" && this.index) {
-            this.index = {
-              ...this.index,
-              tables: snapshot.tables,
-              lexicalBytes: snapshot.tables.reduce(
-                (bytes, table) => bytes + (table.name.startsWith("chunks_fts") ? table.bytes : 0),
-                0,
-              ),
-            };
-          }
-        }
-        complete &&=
-          snapshot.state === "ready" && snapshot.tables !== null && snapshot.measuredAt !== null;
-      }
+      // Source totals use document payload and file sizes directly. Only the
+      // search index needs page attribution, to measure its lexical structures.
+      const snapshot = await this.deps.allocations!.measure("index", { force });
       if (this.disposed) return;
+      this.indexAllocationSnapshot = snapshot;
+      // Partial current trees never substitute for a complete inventory.
+      if (snapshot.tables && snapshot.measuredAt && this.index) {
+        this.index = {
+          ...this.index,
+          tables: snapshot.tables,
+          lexicalBytes: snapshot.tables.reduce(
+            (bytes, table) => bytes + (table.name.startsWith("chunks_fts") ? table.bytes : 0),
+            0,
+          ),
+        };
+      }
+      const complete =
+        snapshot.state === "ready" && snapshot.tables !== null && snapshot.measuredAt !== null;
       this.allocationStatus = complete
         ? {
             state: "ready",
-            measuredAt: this.allocationSnapshots.get("documents")!.measuredAt,
+            measuredAt: snapshot.measuredAt,
             error: null,
           }
         : {

@@ -256,11 +256,39 @@ function allocationSnapshot(name: string, bytes: number): StorageAllocationSnaps
   };
 }
 
-test("allocation waits for startup and publishes each completed store without blocking safety or source totals", async () => {
-  const documents = deferred<StorageAllocationSnapshot>();
+test("completed lexical allocation does not request unused main-database page attribution", async () => {
+  const allocations = {
+    measure: vi.fn(
+      async (store: string, _options?: { force?: boolean }): Promise<StorageAllocationSnapshot> => {
+        if (store !== "index")
+          return {
+            ...allocationSnapshot("documents", 100),
+            state: "partial",
+            tables: null,
+            measuredAt: null,
+            error: "Allocation snapshot WAL growth limit reached",
+          };
+        return allocationSnapshot("chunks_fts_data", 30);
+      },
+    ),
+    dispose: vi.fn(async () => {}),
+  };
+  const f = await fixture({ allocations });
+  f.runtime.start();
+  await f.runtime.pressure.refresh();
+  f.indexer.storageAccounting.mockResolvedValueOnce(indexInventory());
+  await f.runtime.refresh();
+  await tick(f.tasks.get("storage.allocations.tick")!);
+  expect(f.runtime.accountingStatus().allocations).toMatchObject({ state: "ready", error: null });
+  expect(f.runtime.logical!.database.tables).toBeNull();
+  expect(f.runtime.index!.lexicalBytes).toBe(30);
+  expect(allocations.measure).toHaveBeenCalledExactlyOnceWith("index", { force: true });
+});
+
+test("lexical allocation waits for startup without blocking safety or source totals", async () => {
   const index = deferred<StorageAllocationSnapshot>();
   const allocations = {
-    measure: vi.fn().mockReturnValueOnce(documents.promise).mockReturnValueOnce(index.promise),
+    measure: vi.fn().mockReturnValueOnce(index.promise),
     dispose: vi.fn(async () => {}),
   };
   const canMeasureAllocations = vi.fn(() => false);
@@ -277,14 +305,14 @@ test("allocation waits for startup and publishes each completed store without bl
   canMeasureAllocations.mockReturnValue(true);
   const measuring = tick(allocationTick);
   await vi.waitFor(() =>
-    expect(allocations.measure).toHaveBeenCalledWith("documents", { force: true }),
+    expect(allocations.measure).toHaveBeenCalledWith("index", { force: true }),
   );
   expect(f.runtime.accountingStatus()).toMatchObject({
     logical: { state: "ready" },
     index: { state: "ready" },
     allocations: { state: "refreshing" },
   });
-  f.runtime.observeAllocation("documents", {
+  f.runtime.observeAllocation("index", {
     state: "running",
     measuredAt: null,
     tables: null,
@@ -294,7 +322,7 @@ test("allocation waits for startup and publishes each completed store without bl
     error: null,
   });
   expect(f.runtime.accountingStatus().allocations?.progress).toEqual({
-    store: "documents",
+    store: "index",
     scannedPages: 7,
     scannedBytes: 28_672,
     completedTables: 1,
@@ -303,11 +331,7 @@ test("allocation waits for startup and publishes each completed store without bl
   await f.configStore.patch({ gateway: { storage: { maxBytes: 1 } } });
   await tick(f.tasks.get("storage.capacity.tick")!);
   expect(f.runtime.pressure.snapshot().state).toBe("blocked");
-  documents.resolve(allocationSnapshot("documents", 100));
-  await vi.waitFor(() =>
-    expect(allocations.measure).toHaveBeenCalledWith("index", { force: true }),
-  );
-  expect(f.runtime.logical!.database.tables).toEqual([{ name: "documents", bytes: 100 }]);
+  expect(f.runtime.logical!.database.tables).toBeNull();
   expect(f.runtime.index!.tables).toBeNull();
   index.resolve(allocationSnapshot("chunks_fts_data", 30));
   await measuring;
@@ -322,12 +346,11 @@ test("partial allocation retains complete tables and cannot replace source measu
   f.runtime.start();
   await f.runtime.pressure.refresh();
   f.indexer.storageAccounting.mockResolvedValueOnce(indexInventory());
-  allocations.measure.mockResolvedValueOnce(allocationSnapshot("documents", 100));
   allocations.measure.mockResolvedValueOnce(allocationSnapshot("chunks_fts_data", 30));
   await f.runtime.refresh();
   const allocationTick = f.tasks.get("storage.allocations.tick")!;
   await tick(allocationTick);
-  const tables = f.runtime.logical!.database.tables;
+  const tables = f.runtime.index!.tables;
   const partial: StorageAllocationSnapshot = {
     state: "partial",
     measuredAt: null,
@@ -336,11 +359,11 @@ test("partial allocation retains complete tables and cannot replace source measu
     scannedPages: 2,
     error: "snapshot cap",
   };
-  allocations.measure.mockResolvedValueOnce(partial).mockResolvedValueOnce(partial);
+  allocations.measure.mockResolvedValueOnce(partial);
   const now = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 11 * 60_000);
   try {
     await tick(allocationTick);
-    expect(f.runtime.logical!.database.tables).toBe(tables);
+    expect(f.runtime.index!.tables).toBe(tables);
     expect(f.runtime.index!.lexicalBytes).toBe(30);
     expect(f.runtime.accountingStatus()).toMatchObject({
       error: null,
@@ -350,14 +373,13 @@ test("partial allocation retains complete tables and cannot replace source measu
     });
     // A capped read backs off rather than repeatedly taking another snapshot.
     await tick(allocationTick);
-    expect(allocations.measure).toHaveBeenCalledTimes(4);
-    allocations.measure.mockResolvedValueOnce(allocationSnapshot("documents", 200));
+    expect(allocations.measure).toHaveBeenCalledTimes(2);
     allocations.measure.mockResolvedValueOnce(allocationSnapshot("chunks_fts_data", 40));
     f.indexer.storageAccounting.mockResolvedValueOnce(indexInventory());
     // An explicit operator retry bypasses terminal backoff, never an active scan.
     await f.runtime.refresh();
     await tick(allocationTick);
-    expect(allocations.measure).toHaveBeenCalledTimes(6);
+    expect(allocations.measure).toHaveBeenCalledTimes(3);
     expect(allocations.measure.mock.lastCall).toEqual(["index", { force: true }]);
     expect(f.runtime.index!.lexicalBytes).toBe(40);
     expect(f.runtime.accountingStatus().allocations?.state).toBe("ready");
@@ -372,7 +394,7 @@ test("disposal cancels its allocation owner once and suppresses late publication
   const allocations = {
     measure: vi.fn(() => pending.promise),
     dispose: vi.fn(async () => {
-      pending.resolve(allocationSnapshot("documents", 100));
+      pending.resolve(allocationSnapshot("chunks_fts_data", 100));
     }),
   };
   const f = await fixture({ allocations });
@@ -387,6 +409,7 @@ test("disposal cancels its allocation owner once and suppresses late publication
   await measuring;
   expect(allocations.dispose).toHaveBeenCalledTimes(1);
   expect(f.runtime.logical!.database.tables).toBeNull();
+  expect(f.runtime.index!.tables).toBeNull();
   const calls = f.accounting.mock.calls.length;
   await tick(allocationTick);
   await f.runtime.refresh();
