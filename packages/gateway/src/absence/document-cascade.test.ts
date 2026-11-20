@@ -3,6 +3,8 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { ProviderId, SourceId, type DocumentInput } from "@omnesis/types";
 import {
@@ -16,10 +18,9 @@ import {
   acknowledgeAbsenceCascade,
   listPendingAbsenceCascades,
 } from "../data/repositories/AbsenceRepository.js";
+import { IndexCleanupPendingError, settleIndexCleanup } from "../indexer/index-write-gate.js";
 import { finishDocumentCascade } from "./document-cascade.js";
 import type Database from "better-sqlite3";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 const PROVIDER = ProviderId("notes-synth");
 const SOURCE = SourceId("notes-synth:local");
@@ -177,4 +178,31 @@ describe("sync tombstone cascade outbox", () => {
       expect(cognition).toHaveBeenCalledTimes(failedArm === "cognition" ? 2 : 1);
     },
   );
+
+  test("index cleanup still pending never hides a cognition failure", async () => {
+    upsertDocuments(db, [document("remove-me")]);
+    const cascade = deletePage(1).tombstoneCascade!;
+    const cognitionFailure = new Error("cognition unavailable");
+    const ops = {
+      deleteIndex: async () => {
+        throw new IndexCleanupPendingError(1);
+      },
+      cascadeCognition: async (): Promise<void> => {
+        throw cognitionFailure;
+      },
+      acknowledge: async (id: number, part: "index" | "cognition") => {
+        acknowledgeAbsenceCascade(db, id, part);
+      },
+    };
+
+    await expect(settleIndexCleanup(finishDocumentCascade(cascade, ops))).rejects.toBe(
+      cognitionFailure,
+    );
+    expect(pending()).toMatchObject([{ id: cascade.id, indexDone: false, cognitionDone: false }]);
+
+    // With cognition done, pending index cleanup alone settles and stays queued.
+    ops.cascadeCognition = async () => {};
+    expect(await settleIndexCleanup(finishDocumentCascade(pending()[0]!, ops))).toBe(1);
+    expect(pending()).toMatchObject([{ id: cascade.id, indexDone: false, cognitionDone: true }]);
+  });
 });

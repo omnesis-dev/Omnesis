@@ -77,8 +77,32 @@ export interface IndexWriteGate {
 
 /** A durable purge is still draining; callers must keep their cleanup outbox pending. */
 export class IndexCleanupPendingError extends Error {
-  constructor() {
+  /** The chunks this call did remove before the purge was left to the index writer. */
+  readonly deletedChunks: number;
+  constructor(deletedChunks = 0) {
     super("Search cleanup is continuing in the background.");
+    this.deletedChunks = deletedChunks;
+  }
+}
+
+/**
+ * Await the index cleanup of a document delete that has already committed,
+ * such as a request deleting documents, and resolve while it is still pending.
+ *
+ * Every purge is recorded in index.db before its first batch runs. From then
+ * on search hides the document's chunks, and the index writer finishes the
+ * purge after an in-flight indexing cycle or over later batches. "Pending"
+ * therefore means the cleanup is durably owned, not that it failed. Any other
+ * failure is passed on. A cleanup outbox must see the pending error itself, to
+ * leave its entry open: `finishDocumentCascade` does, so its result can be
+ * settled here afterwards.
+ */
+export async function settleIndexCleanup(cleanup: Promise<number>): Promise<number> {
+  try {
+    return await cleanup;
+  } catch (error) {
+    if (error instanceof IndexCleanupPendingError) return error.deletedChunks;
+    throw error;
   }
 }
 
@@ -181,7 +205,7 @@ export function workerCoordinatedIndexWriteGate(
           pending ||= !result.complete;
         }
       }
-      if (pending) throw new IndexCleanupPendingError();
+      if (pending) throw new IndexCleanupPendingError(deleted);
       return deleted;
     },
     async deleteIndexBySource(sourceId) {
