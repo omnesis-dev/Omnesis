@@ -57,8 +57,12 @@ function armEmbedGate(): { release: () => void; reached: Promise<void> } {
 // resume continues from where it left off rather than re-embedding from zero.
 let embedTextCount = 0;
 
+const httpEmbedderInstances: FakeHttpEmbedder[] = [];
+
 class FakeHttpEmbedder {
-  constructor(public readonly opts: { outputDim?: number }) {}
+  constructor(public readonly opts: { outputDim?: number; allowRemoteInference?: boolean }) {
+    httpEmbedderInstances.push(this);
+  }
   async embed(texts: string[]): Promise<Float32Array[]> {
     embedTextCount += texts.length;
     if (pendingEmbedGate) {
@@ -449,6 +453,7 @@ function usearchFileCount(dir: string): number {
 
 beforeEach(() => {
   proxyInstances.length = 0;
+  httpEmbedderInstances.length = 0;
   buildWorkerInstances.length = 0;
   nextProxyReadyError = null;
   nextProxyReadyGate = null;
@@ -1270,33 +1275,76 @@ describe("IndexerLifecycle", () => {
     }
   });
 
+  /** A complete active generation 1 over a small corpus at dim 32. */
+  function seedActiveGeneration(dir: string): ReturnType<typeof createIndexDatabase> {
+    const idxDb = createIndexDatabase(join(dir, "index.db"));
+    const chunks: ChunkUpsertInput[] = [];
+    for (let i = 1; i <= 4; i++) {
+      const emb = new Float32Array(32);
+      emb[i % 32] = 1;
+      chunks.push({
+        id: `c-${i}`,
+        documentId: `d-${i}`,
+        chunkIndex: 0,
+        content: `body ${i}`,
+        embedding: emb,
+        sourceId: "s",
+        title: `T${i}`,
+        sourceCreatedAt: "2026-01-01T00:00:00.000Z",
+      });
+    }
+    upsertChunks(idxDb, chunks);
+    setIndexEmbedModel(idxDb, "old-embedder", 32);
+    migrateAdoptInPlaceVersion(idxDb);
+    const w = new UsearchWriteHandle(usearchPathForVersion(dir, 1), 32);
+    w.backfillFromDb(idxDb);
+    w.close();
+    expect(getActiveIndexVersion(idxDb)).toBe(1);
+    return idxDb;
+  }
+
+  test("a graceful swap to an HTTP embedder on the local network carries the remote-inference permission", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "omnesis-graceful-swap-remote-"));
+    try {
+      const idxDb = seedActiveGeneration(dir);
+      const { deps, resolve } = makeDeps({
+        indexDb: idxDb,
+        indexDbPath: join(dir, "index.db"),
+        configDir: dir,
+      });
+      resolve.mockImplementation((role: string) =>
+        role === "embedder"
+          ? {
+              kind: "http",
+              url: "http://192.0.2.10:11434",
+              model: "remote-embed",
+              backendKey: "lan-box",
+              allowRemoteInference: true,
+            }
+          : { kind: "disabled" },
+      );
+      const lifecycle = new IndexerLifecycle(deps);
+      await lifecycle.startIndexer();
+      httpEmbedderInstances.length = 0;
+
+      await lifecycle.applyEmbedSwap();
+
+      expect(getActiveIndexVersion(idxDb)).toBe(2);
+      // The build client and the query bridge across the flip are both swap-made.
+      expect(httpEmbedderInstances.length).toBeGreaterThanOrEqual(2);
+      for (const embedder of httpEmbedderInstances) {
+        expect(embedder.opts.allowRemoteInference).toBe(true);
+      }
+      idxDb.close();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test("a dimension-changing HTTP swap with an active generation goes through the graceful build + flip (no wipe)", async () => {
     const dir = mkdtempSync(join(tmpdir(), "omnesis-graceful-swap-"));
     try {
-      // Seed a complete active generation 1 over a small corpus at dim 32.
-      const idxDb = createIndexDatabase(join(dir, "index.db"));
-      const chunks: ChunkUpsertInput[] = [];
-      for (let i = 1; i <= 4; i++) {
-        const emb = new Float32Array(32);
-        emb[i % 32] = 1;
-        chunks.push({
-          id: `c-${i}`,
-          documentId: `d-${i}`,
-          chunkIndex: 0,
-          content: `body ${i}`,
-          embedding: emb,
-          sourceId: "s",
-          title: `T${i}`,
-          sourceCreatedAt: "2026-01-01T00:00:00.000Z",
-        });
-      }
-      upsertChunks(idxDb, chunks);
-      setIndexEmbedModel(idxDb, "old-embedder", 32);
-      migrateAdoptInPlaceVersion(idxDb);
-      const w = new UsearchWriteHandle(usearchPathForVersion(dir, 1), 32);
-      w.backfillFromDb(idxDb);
-      w.close();
-      expect(getActiveIndexVersion(idxDb)).toBe(1);
+      const idxDb = seedActiveGeneration(dir);
 
       // The probe reports dim 64 — a dimension-changing swap.
       const { deps } = makeDeps({
