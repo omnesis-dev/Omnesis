@@ -44,12 +44,19 @@
 
 import type Database from "better-sqlite3";
 type Db = Database.Database;
-import { queryWords, type CorpusStats, type LexicalRanker, type RankedChunk } from "./bm25.js";
+import {
+  queryWords,
+  type CorpusStats,
+  type LexicalFilter,
+  type LexicalRanker,
+  type RankedChunk,
+} from "./bm25.js";
 import {
   B,
   binarySearch,
   buildLexicalIndexData,
   K1,
+  type ChunkAttributes,
   type LexicalIndexData,
   type LexicalIndexSource,
 } from "./lexical-index-data.js";
@@ -110,6 +117,7 @@ export class LexicalIndex implements LexicalRanker {
         norms: [],
         dead: [],
         sizes: [],
+        attrs: [],
         byRowid: new Map(),
         live: 0,
         postingCount: 0,
@@ -164,7 +172,7 @@ export class LexicalIndex implements LexicalRanker {
     db: Db,
     query: string,
     k: number,
-    opts?: { prefixLastToken?: boolean },
+    opts?: { prefixLastToken?: boolean; filter?: LexicalFilter },
   ): RankedChunk[] | null {
     const trimmed = query.trim();
     // Quoted phrases need positions, which this index does not keep.
@@ -194,10 +202,15 @@ export class LexicalIndex implements LexicalRanker {
       if (stem && stem !== prefix) phrases.push(stem);
     }
     if (!this.syncChanges(db)) return null;
-    return this.score(phrases, prefix, k);
+    return this.score(phrases, prefix, k, opts?.filter);
   }
 
-  private score(phrases: readonly string[], prefix: string, k: number): RankedChunk[] {
+  private score(
+    phrases: readonly string[],
+    prefix: string,
+    k: number,
+    filter?: LexicalFilter,
+  ): RankedChunk[] {
     const { masked, maskedCount, delta } = this.live;
     const touched = this.touched;
     const acc = this.accumulator;
@@ -213,6 +226,11 @@ export class LexicalIndex implements LexicalRanker {
     const bm25 = (w: number, f: number, norm: number) => w * ((f * (K1 + 1)) / (f + norm));
     const liveDeltaDocs = (list: DeltaPostings | undefined) =>
       list ? list.docs.reduce((c, d) => c + (delta.dead[d] ? 0 : 1), 0) : 0;
+    // The filter only decides which chunks are scored. Document frequencies
+    // stay corpus-wide, as FTS5's are under a filtered join.
+    const keep =
+      filter && this.data.attributes ? compileFilter(filter, this.data.attributes) : null;
+    const keepDelta = keep ? (d: number) => keep.delta(delta.attrs[d]) : null;
 
     // Each query token is one FTS5 phrase, summed in query order; a repeated
     // token counts again, as in FTS5.
@@ -223,14 +241,23 @@ export class LexicalIndex implements LexicalRanker {
       const end = t < 0 ? 0 : postingStart[t + 1];
       if (end === start && !extra) continue;
       const w = idf(end - start + liveDeltaDocs(extra));
-      for (let p = start; p < end; p++) {
-        const d = postingDoc[p];
-        if (masked[d]) continue;
-        if (acc[d] === 0) touched[touchedCount++] = d;
-        acc[d] += bm25(w, postingFreq[p], lengthNorm[d]);
+      if (keep) {
+        for (let p = start; p < end; p++) {
+          const d = postingDoc[p];
+          if (masked[d] || !keep.built(d)) continue;
+          if (acc[d] === 0) touched[touchedCount++] = d;
+          acc[d] += bm25(w, postingFreq[p], lengthNorm[d]);
+        }
+      } else {
+        for (let p = start; p < end; p++) {
+          const d = postingDoc[p];
+          if (masked[d]) continue;
+          if (acc[d] === 0) touched[touchedCount++] = d;
+          acc[d] += bm25(w, postingFreq[p], lengthNorm[d]);
+        }
       }
       extra?.docs.forEach((d, i) => {
-        if (delta.dead[d]) return;
+        if (delta.dead[d] || (keepDelta && !keepDelta(d))) return;
         deltaAcc.set(d, (deltaAcc.get(d) ?? 0) + bm25(w, extra.freqs[i], delta.norms[d]));
       });
     }
@@ -258,10 +285,12 @@ export class LexicalIndex implements LexicalRanker {
       for (const d of prefixDocs) {
         const f = freqs[d];
         freqs[d] = 0;
+        if (keep && !keep.built(d)) continue;
         if (acc[d] === 0) touched[touchedCount++] = d;
         acc[d] += bm25(w, f, lengthNorm[d]);
       }
       for (const [d, f] of deltaFreqs) {
+        if (keepDelta && !keepDelta(d)) continue;
         deltaAcc.set(d, (deltaAcc.get(d) ?? 0) + bm25(w, f, delta.norms[d]));
       }
     }
@@ -297,8 +326,19 @@ export class LexicalIndex implements LexicalRanker {
     const read = db.prepare<[number, number], { seq: number; chunk_rowid: number }>(
       "SELECT seq, chunk_rowid FROM chunks_fts_changes WHERE seq > ? ORDER BY seq LIMIT ?",
     );
-    const fetch = db.prepare<[string], { rowid: number; content: string; title: string }>(
-      "SELECT rowid, content, title FROM chunks WHERE rowid IN (SELECT value FROM json_each(?))",
+    const fetch = db.prepare<
+      [string],
+      {
+        rowid: number;
+        content: string;
+        title: string;
+        source_id: string;
+        document_type: string | null;
+        source_created_at: string;
+      }
+    >(
+      `SELECT rowid, content, title, source_id, document_type, source_created_at
+         FROM chunks WHERE rowid IN (SELECT value FROM json_each(?))`,
     );
     const { changesBatch, maxDeltaPostings, deltaCompactMinRetired } = this.limits;
     for (let batches = 0; ; batches++) {
@@ -314,13 +354,24 @@ export class LexicalIndex implements LexicalRanker {
       }
       const rowids = [...new Set(changes.map((c) => c.chunk_rowid))];
       for (const rowid of rowids) this.forget(rowid);
-      const rows = fetch.all(JSON.stringify(rowids)).map((r) => ({
+      const fetched = fetch.all(JSON.stringify(rowids));
+      const attrsOf = new Map(
+        fetched.map((r) => [
+          r.rowid,
+          {
+            source: r.source_id,
+            type: r.document_type,
+            created: this.encoder.encode(r.source_created_at),
+          },
+        ]),
+      );
+      const rows = fetched.map((r) => ({
         rowid: r.rowid,
         content: analyze(this.rules, r.content ?? ""),
         title: analyze(this.rules, r.title ?? ""),
       }));
       for (const chunk of fts5Tokenizer(db, this.rules.tokenize).chunks(rows)) {
-        this.addToDelta(chunk);
+        this.addToDelta(chunk, attrsOf.get(chunk.rowid) ?? UNKNOWN_ATTRS);
       }
       live.lastSeq = changes[changes.length - 1].seq;
       const delta = live.delta;
@@ -358,13 +409,17 @@ export class LexicalIndex implements LexicalRanker {
     }
   }
 
-  private addToDelta(chunk: { rowid: number; length: number; freqs: Map<string, number> }): void {
+  private addToDelta(
+    chunk: { rowid: number; length: number; freqs: Map<string, number> },
+    attrs: DeltaAttrs,
+  ): void {
     const delta = this.live.delta;
     const d = delta.rowids.length;
     delta.rowids.push(chunk.rowid);
     delta.norms.push(K1 * (1 - B + (B * chunk.length) / this.data.avgLength));
     delta.dead.push(false);
     delta.sizes.push(chunk.freqs.size);
+    delta.attrs.push(attrs);
     delta.byRowid.set(chunk.rowid, d);
     delta.live++;
     for (const [term, f] of chunk.freqs) {
@@ -387,6 +442,7 @@ export class LexicalIndex implements LexicalRanker {
     const rowids: number[] = [];
     const norms: number[] = [];
     const sizes: number[] = [];
+    const attrs: DeltaAttrs[] = [];
     for (let d = 0; d < delta.rowids.length; d++) {
       if (delta.dead[d]) continue;
       renumbered[d] = rowids.length;
@@ -394,6 +450,7 @@ export class LexicalIndex implements LexicalRanker {
       rowids.push(delta.rowids[d]);
       norms.push(delta.norms[d]);
       sizes.push(delta.sizes[d]);
+      attrs.push(delta.attrs[d]);
     }
     for (const [term, list] of delta.postings) {
       const docs: number[] = [];
@@ -409,6 +466,7 @@ export class LexicalIndex implements LexicalRanker {
     delta.rowids = rowids;
     delta.norms = norms;
     delta.sizes = sizes;
+    delta.attrs = attrs;
     delta.dead = new Array<boolean>(rowids.length).fill(false);
     delta.postingCount = delta.livePostings;
   }
@@ -507,6 +565,8 @@ interface Delta {
   dead: boolean[];
   /** Postings each delta doc holds. */
   sizes: number[];
+  /** Each delta doc's filter columns, read with its text. */
+  attrs: DeltaAttrs[];
   /** chunk rowid → its current delta doc. */
   byRowid: Map<number, number>;
   /** Delta docs not dead. */
@@ -521,6 +581,88 @@ interface Delta {
 interface DeltaPostings {
   docs: number[];
   freqs: number[];
+}
+
+/** A delta chunk's filter columns; `created` is `source_created_at` as UTF-8 bytes. */
+interface DeltaAttrs {
+  source: string | null;
+  type: string | null;
+  created: Uint8Array | null;
+}
+
+/** For a chunk whose row was gone when its change was read; no filter keeps it. */
+const UNKNOWN_ATTRS: DeltaAttrs = { source: null, type: null, created: null };
+
+interface CompiledFilter {
+  /** Whether built chunk `d` passes. */
+  built(d: number): boolean;
+  /** Whether a delta chunk passes. */
+  delta(attrs: DeltaAttrs): boolean;
+}
+
+/**
+ * Resolve a filter against the built arrays once per query: allowed source and
+ * type ids, and the date bounds as an inclusive range of date ranks.
+ */
+function compileFilter(filter: LexicalFilter, a: ChunkAttributes): CompiledFilter {
+  const include = filter.sourceIds ? new Set(filter.sourceIds) : null;
+  const exclude = filter.excludeSourceIds ? new Set(filter.excludeSourceIds) : null;
+  const sourcePasses = (name: string | null): boolean =>
+    name !== null && (!include || include.has(name)) && (!exclude || !exclude.has(name));
+  const types = filter.documentTypes ? new Set(filter.documentTypes) : null;
+  const typePasses = (name: string | null): boolean => !types || (name !== null && types.has(name));
+
+  const sourceOk =
+    include || exclude ? Uint8Array.from(a.sourceNames, (n) => (sourcePasses(n) ? 1 : 0)) : null;
+  const typeOk = types ? Uint8Array.from(a.typeNames, (n) => (typePasses(n) ? 1 : 0)) : null;
+
+  const encoder = new TextEncoder();
+  const from = filter.dateFrom !== undefined ? encoder.encode(filter.dateFrom) : null;
+  const to = filter.dateTo !== undefined ? encoder.encode(filter.dateTo) : null;
+  const dates = a.createdStart.length - 1;
+  const compareRank = (rank: number, key: Uint8Array): number =>
+    compareBytes(a.createdBytes, a.createdStart[rank], a.createdStart[rank + 1], key);
+  // First rank whose date is >= `from`; last rank whose date is <= `to`.
+  const lo = from ? firstRank(dates, (r) => compareRank(r, from) >= 0) : 0;
+  const hi = to ? firstRank(dates, (r) => compareRank(r, to) > 0) - 1 : dates - 1;
+  const dated = from !== null || to !== null;
+
+  const { source, type, created } = a;
+  return {
+    built: (d) =>
+      (!sourceOk || sourceOk[source[d]] === 1) &&
+      (!typeOk || typeOk[type[d]] === 1) &&
+      (!dated || (created[d] >= lo && created[d] <= hi)),
+    delta: (attrs) =>
+      (!(include || exclude) || sourcePasses(attrs.source)) &&
+      typePasses(attrs.type) &&
+      (!dated ||
+        (attrs.created !== null &&
+          (!from || compareBytes(attrs.created, 0, attrs.created.length, from) >= 0) &&
+          (!to || compareBytes(attrs.created, 0, attrs.created.length, to) <= 0))),
+  };
+}
+
+/** The first `r` in `[0, n)` where `pred` holds, given `pred` is monotone; `n` when none. */
+function firstRank(n: number, pred: (r: number) => boolean): number {
+  let lo = 0;
+  let hi = n;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (pred(mid)) hi = mid;
+    else lo = mid + 1;
+  }
+  return lo;
+}
+
+/** `bytes[start..end)` against `key`, as SQLite's BINARY collation compares TEXT. */
+function compareBytes(bytes: Uint8Array, start: number, end: number, key: Uint8Array): number {
+  const n = Math.min(end - start, key.length);
+  for (let i = 0; i < n; i++) {
+    const diff = bytes[start + i] - key[i];
+    if (diff !== 0) return diff;
+  }
+  return end - start - key.length;
 }
 
 function topK(

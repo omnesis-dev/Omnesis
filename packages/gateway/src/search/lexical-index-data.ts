@@ -49,10 +49,32 @@ export interface LexicalIndexData {
   postingDoc: Uint32Array;
   /** Posting → column-weighted term frequency, capped at 65,535. */
   postingFreq: Uint16Array;
+  /** The chunks' filter columns, or undefined when the build could not read all of them. */
+  attributes?: ChunkAttributes;
+}
+
+/**
+ * Each built chunk's `source_id`, `document_type` and `source_created_at`, so a
+ * ranker can apply the BM25 lane's metadata filter while it scores instead of
+ * joining every match to `chunks`. Sources and types index small name lists. A
+ * date is its rank among the distinct values in SQLite's BINARY order, kept as
+ * UTF-8 bytes, so a bound compares exactly as `source_created_at >= ?` does.
+ */
+export interface ChunkAttributes {
+  sourceNames: string[];
+  source: Uint16Array | Uint32Array;
+  typeNames: (string | null)[];
+  type: Uint16Array | Uint32Array;
+  /** Distinct date i's UTF-8 bytes are `createdBytes[createdStart[i] .. createdStart[i + 1])`. */
+  createdBytes: Uint8Array;
+  createdStart: Uint32Array;
+  /** dense doc index → rank of its `source_created_at`. */
+  created: Uint32Array;
 }
 
 /** Bytes held by an index's arrays. */
 export function lexicalIndexBytes(d: LexicalIndexData): number {
+  const a = d.attributes;
   return [
     d.rowids,
     d.lengthNorm,
@@ -61,7 +83,8 @@ export function lexicalIndexBytes(d: LexicalIndexData): number {
     d.postingStart,
     d.postingDoc,
     d.postingFreq,
-  ].reduce((sum, a) => sum + a.byteLength, 0);
+    ...(a ? [a.source, a.type, a.createdBytes, a.createdStart, a.created] : []),
+  ].reduce((sum, arr) => sum + arr.byteLength, 0);
 }
 
 /**
@@ -160,6 +183,7 @@ export function buildLexicalIndexData(
     flushPosting();
     termStart.push(termBytes.length);
     postingStart.push(postingDoc.length);
+    const attributes = readChunkAttributes(db, docCount, denseOf, shared);
 
     return {
       version: rules.version,
@@ -174,10 +198,123 @@ export function buildLexicalIndexData(
       postingStart: postingStart.finish(shared),
       postingDoc: postingDoc.finish(shared),
       postingFreq: postingFreq.finish(shared),
+      ...(attributes ? { attributes } : {}),
     };
   } finally {
     if (ownTransaction) db.exec("COMMIT");
   }
+}
+
+/**
+ * Read every built chunk's filter columns from the single-column indexes on
+ * `chunks`, never the table, whose rows carry content and embeddings. Undefined
+ * when an index is missing, a value is not text, or a built chunk is absent from
+ * any of them; the ranker then scores unfiltered and the SQL join filters.
+ */
+function readChunkAttributes(
+  db: Db,
+  docCount: number,
+  denseOf: (rowid: number) => number,
+  shared: boolean,
+): ChunkAttributes | undefined {
+  try {
+    const source = readNamed(db, "source_id", "idx_chunks_source", docCount, denseOf, false);
+    const type = readNamed(db, "document_type", "idx_chunks_type", docCount, denseOf, true);
+    const created = readCreatedRanks(db, docCount, denseOf, shared);
+    if (!source || !type || !created) return undefined;
+    return {
+      sourceNames: source.names as string[],
+      source: narrow(source.values, source.names.length, shared),
+      typeNames: type.names,
+      type: narrow(type.values, type.names.length, shared),
+      ...created,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+function readNamed(
+  db: Db,
+  column: "source_id" | "document_type",
+  index: string,
+  docCount: number,
+  denseOf: (rowid: number) => number,
+  nullable: boolean,
+): { names: (string | null)[]; values: Uint32Array } | undefined {
+  const values = new Uint32Array(docCount);
+  const seen = new Uint8Array(docCount);
+  const ids = new Map<string | null, number>();
+  const names: (string | null)[] = [];
+  let covered = 0;
+  for (const [rowid, value] of db
+    .prepare<[], [number, unknown]>(`SELECT rowid, ${column} FROM chunks INDEXED BY ${index}`)
+    .raw()
+    .iterate()) {
+    const d = denseOf(rowid);
+    if (d < 0) continue;
+    if (!(typeof value === "string" || (nullable && value === null))) return undefined;
+    let id = ids.get(value);
+    if (id === undefined) {
+      id = names.length;
+      ids.set(value, id);
+      names.push(value);
+    }
+    values[d] = id;
+    if (!seen[d]) {
+      seen[d] = 1;
+      covered++;
+    }
+  }
+  return covered === docCount ? { names, values } : undefined;
+}
+
+function readCreatedRanks(
+  db: Db,
+  docCount: number,
+  denseOf: (rowid: number) => number,
+  shared: boolean,
+): Pick<ChunkAttributes, "createdBytes" | "createdStart" | "created"> | undefined {
+  const created = alloc(Uint32Array, docCount, shared);
+  const seen = new Uint8Array(docCount);
+  const bytes = new Growable(Uint8Array, 1 << 20, Number.MAX_SAFE_INTEGER, false);
+  const starts = new Growable(Uint32Array, 1 << 16, docCount + 1, false);
+  const encoder = new TextEncoder();
+  let last: string | null = null;
+  let covered = 0;
+  for (const [rowid, value] of db
+    .prepare<[], [number, unknown]>(
+      "SELECT rowid, source_created_at FROM chunks INDEXED BY idx_chunks_date ORDER BY source_created_at",
+    )
+    .raw()
+    .iterate()) {
+    const d = denseOf(rowid);
+    if (d < 0) continue;
+    if (typeof value !== "string") return undefined;
+    if (value !== last) {
+      starts.push(bytes.length);
+      bytes.pushAll(encoder.encode(value));
+      last = value;
+    }
+    created[d] = starts.length - 1;
+    if (!seen[d]) {
+      seen[d] = 1;
+      covered++;
+    }
+  }
+  if (covered !== docCount) return undefined;
+  starts.push(bytes.length);
+  return { createdBytes: bytes.finish(shared), createdStart: starts.finish(shared), created };
+}
+
+/** `values` in the narrowest array that holds `count` distinct ids. */
+function narrow(values: Uint32Array, count: number, shared: boolean): Uint16Array | Uint32Array {
+  const out =
+    count <= 0xffff
+      ? alloc(Uint16Array, values.length, shared)
+      : alloc(Uint32Array, values.length, shared);
+  out.set(values);
+  return out;
 }
 
 /**
