@@ -82,6 +82,7 @@ test.each([
       if (mode === "break") return false;
       if (mode === "throw") throw failure;
       if (mode === "abort") controller.abort(failure);
+      return undefined;
     },
     { signal: controller.signal },
   );
