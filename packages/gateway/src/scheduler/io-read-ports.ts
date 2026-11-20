@@ -4,6 +4,7 @@
 import { SOURCE_FILTER_READS } from "../access/source-filter-editor.js";
 import { FILTER_VALUE_READS } from "../access/filter-values.js";
 import { ANSWER_HISTORY_READS } from "../privacy/context-reads.js";
+import { STORAGE_READS } from "../storage/reads.js";
 import { STATUS_CACHE_READS } from "../http/services/status-cache-reads.js";
 import { ANALYTICS_REPLICA_READS } from "../http/services/analytics-replica-reads.js";
 import { KNOWLEDGE_ENGINE_READS } from "../brain/knowledge/selection-reads.js";
@@ -15,6 +16,7 @@ import { mergeReadPorts } from "./read-port.js";
  * `io-ops.ts` register this whole set, so a new port is one argument here.
  */
 export const IO_READS = mergeReadPorts(
+  STORAGE_READS,
   STATUS_CACHE_READS,
   SOURCE_FILTER_READS,
   FILTER_VALUE_READS,

@@ -279,6 +279,8 @@ export async function readJsonLines(
   }
   const terminalNewline = endsWithNewline(filePath, fd, stat.size);
   const file = createReadStream(filePath, { fd, autoClose: true, signal: options.signal });
+  // Destruction starts asynchronous close; callers may replace the file as soon as we return.
+  const fileClosed = new Promise<void>((resolve) => file.once("close", resolve));
   const decoded: Readable = filePath.endsWith(".gz")
     ? file.pipe(createGunzip())
     : filePath.endsWith(".zst")
@@ -353,10 +355,14 @@ export async function readJsonLines(
       if (visit(value) === false) break;
     }
   } finally {
-    await lines.return(undefined);
-    input.destroy();
-    decoded.destroy();
-    file.destroy();
+    try {
+      await lines.return(undefined);
+    } finally {
+      input.destroy();
+      decoded.destroy();
+      file.destroy();
+      await fileClosed;
+    }
   }
 
   const trailingPartial =

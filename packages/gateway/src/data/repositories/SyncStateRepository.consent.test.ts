@@ -14,6 +14,8 @@
 
 import { randomUUID } from "node:crypto";
 import { unlinkSync, existsSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import { createDatabase } from "../../db.js";
 import { setSyncState, getSyncState } from "./SyncStateRepository.js";
@@ -23,7 +25,7 @@ let db: ReturnType<typeof createDatabase>;
 const SRC = "plaid:item-abc";
 
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-syncstate-consent-test-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-syncstate-consent-test-${randomUUID()}.db`);
   db = createDatabase(dbPath);
 });
 

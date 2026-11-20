@@ -3,6 +3,8 @@
 
 import { randomUUID } from "node:crypto";
 import { rmSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { createLogger, type EntailCapability } from "@omnesis/core";
 import { createDatabase } from "../../db.js";
@@ -23,7 +25,7 @@ let db: Database.Database;
 let path: string;
 
 beforeEach(() => {
-  path = `/tmp/omnesis-test-${randomUUID()}.db`;
+  path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
   db = createDatabase(path);
   db.prepare(
     `INSERT INTO people(id,canonical_name,source,first_seen,last_seen,created_at,updated_at)

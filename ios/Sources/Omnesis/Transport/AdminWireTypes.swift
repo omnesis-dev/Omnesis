@@ -302,28 +302,6 @@ public struct PendingPairing: Decodable, Equatable, Sendable {
     }
 }
 
-/// One row of `/admin/network-identities`. Mirrors `NetworkIdentity` in
-/// `@omnesis/core/network-discovery.ts` — an address the gateway is
-/// reachable at, with a human label and an off-LAN flag the pairing UI
-/// flags as the recommended pick when the user is traveling.
-public struct NetworkIdentity: Decodable, Equatable, Sendable, Identifiable {
-    public var id: String {
-        address
-    }
-
-    public let address: String
-    public let label: String
-    public let kind: String
-    public let offLan: Bool
-
-    public init(address: String, label: String, kind: String, offLan: Bool) {
-        self.address = address
-        self.label = label
-        self.kind = kind
-        self.offLan = offLan
-    }
-}
-
 /// One row of `/admin/sync/status`. Mirrors `DisplaySyncStatus` in
 /// packages/gateway/src/sync-status.ts — the gateway pre-maps state into
 /// idle / syncing / synced / error / disabled, and `lastSyncAt` is an

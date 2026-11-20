@@ -6,6 +6,7 @@ import { mkdtemp, readFile, rm, writeFile, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, afterEach, expect, test, vi } from "vitest";
+import { ensurePrivateDirs } from "@omnesis/core";
 import { tlsFiles } from "../test/support.js";
 import { runRelayCommand, startRelayDaemon } from "./runtime.js";
 import { RelaySessions } from "./identity.js";
@@ -16,6 +17,7 @@ import * as googleLink from "./gateway-google-link.js";
 let directory: string;
 beforeEach(async () => {
   directory = await mkdtemp(join(tmpdir(), "omnesis-key-runtime-"));
+  if (process.platform === "win32") await ensurePrivateDirs([directory]);
 });
 afterEach(async () => {
   vi.restoreAllMocks();
@@ -34,7 +36,9 @@ test("offline invitation command writes a private UUID/recipient bound token and
     OMNESIS_CLOUD_RELAY_GATEWAY_ID: uuid,
     OMNESIS_CLOUD_RELAY_PUBLIC_ORIGIN: "https://relay.example.test",
   });
-  expect((await stat(tokenFile)).mode & 0o777).toBe(0o600);
+  if (process.platform !== "win32") {
+    expect((await stat(tokenFile)).mode & 0o777).toBe(0o600);
+  }
   const { enrollmentToken } = JSON.parse(await readFile(tokenFile, "utf8"));
   await new RelaySessions(key).verifyEnrollmentInvitation(
     enrollmentToken,
@@ -49,6 +53,8 @@ test("register-key runtime carries only explicit configuration to the key client
     .mockResolvedValue({ token: "private", accountId: "a".repeat(64), expiresAt: 4_000_000_000 });
   const uuid = randomUUID();
   const env = {
+    OMNESIS_CONFIG_DIR: directory,
+    OMNESIS_CLOUD_RELAY_RECOVERY_RECEIPT_FILE: join(directory, "recovery.json"),
     OMNESIS_CLOUD_RELAY_URL: "https://relay.example.test",
     OMNESIS_CLOUD_RELAY_SESSION_FILE: "/synthetic/session",
     OMNESIS_CLOUD_RELAY_GATEWAY_ID: uuid,
@@ -60,6 +66,8 @@ test("register-key runtime carries only explicit configuration to the key client
   };
   await runRelayCommand("register-key", env);
   expect(register).toHaveBeenCalledExactlyOnceWith({
+    configDir: directory,
+    recoveryReceiptFile: join(directory, "recovery.json"),
     relayUrl: env.OMNESIS_CLOUD_RELAY_URL,
     sessionFile: env.OMNESIS_CLOUD_RELAY_SESSION_FILE,
     gatewayId: uuid,
@@ -142,6 +150,8 @@ test("prepare-owner emits only machine-readable public enrollment details before
       value: expect.stringContaining(gatewayId),
     },
   });
-  expect((await stat(`${sessionFile}.owner-key`)).mode & 0o777).toBe(0o600);
+  if (process.platform !== "win32") {
+    expect((await stat(`${sessionFile}.owner-key`)).mode & 0o777).toBe(0o600);
+  }
   expect(String(stdout.mock.calls[0][0])).not.toContain("PRIVATE KEY");
 });

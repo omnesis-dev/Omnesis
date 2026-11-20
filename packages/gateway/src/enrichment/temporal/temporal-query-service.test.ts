@@ -3,6 +3,8 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createDatabase } from "../../db.js";
 import { AnalyticsDb } from "../../analytics-db.js";
@@ -60,8 +62,8 @@ describe("TemporalQueryService", () => {
   let emailProjectionId: string;
 
   beforeEach(async () => {
-    sqlitePath = `/tmp/omnesis-test-${randomUUID()}.db`;
-    duckPath = `/tmp/omnesis-test-${randomUUID()}.duckdb`;
+    sqlitePath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
+    duckPath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.duckdb`);
     db = createDatabase(sqlitePath);
     analytics = new AnalyticsDb(duckPath);
     await analytics.open();

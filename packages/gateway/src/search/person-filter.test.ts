@@ -16,6 +16,8 @@ import Database from "better-sqlite3";
 type Db = Database.Database;
 import { resolvePersonDocIds } from "./person-filter.js";
 import { parseQuery } from "./query-parser.js";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 let db: Db;
 let dbPath: string;
@@ -25,7 +27,7 @@ let dbPath: string;
  * `resolvePersonDocIds` reads. Same shape used by the pipeline tests.
  */
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-person-filter-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-person-filter-${randomUUID()}.db`);
   db = new Database(dbPath);
   db.pragma("journal_mode = WAL");
   db.exec(`

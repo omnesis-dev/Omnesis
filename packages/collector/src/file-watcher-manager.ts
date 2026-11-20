@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { watch, existsSync, statSync } from "node:fs";
-import { dirname, basename } from "node:path";
+import { dirname, basename, join } from "node:path";
 import { createLogger, toErrorMessage } from "@omnesis/core";
 import { DEFAULT_WATCH_DEBOUNCE_MS, DEFAULT_FILE_POLL_INTERVAL_MS } from "./tunables.js";
 import type { FSWatcher } from "node:fs";
@@ -179,7 +179,7 @@ export class FileWatcherManager {
       }
 
       for (const fileName of fileNames) {
-        polledFiles.push(`${dir}/${fileName}`);
+        polledFiles.push(join(dir, fileName));
       }
     }
 

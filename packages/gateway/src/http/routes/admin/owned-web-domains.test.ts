@@ -14,6 +14,8 @@
 
 import { unlinkSync, existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import { SCOPE_READ, SCOPE_WRITE_ALL, writeScope, SourceType } from "@omnesis/types";
 import { createDatabase } from "../../../db.js";
@@ -41,7 +43,7 @@ function mintToken(scopes: readonly import("@omnesis/types").Scope[]): string {
 }
 
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-owned-domains-test-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-owned-domains-test-${randomUUID()}.db`);
   db = createDatabase(dbPath);
   app = createServer(db);
   resetOwnedWebDomains();

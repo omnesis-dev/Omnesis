@@ -3,6 +3,8 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { describe, test, expect, beforeEach, afterEach, vi } from "vitest";
 type Db = Database.Database;
 
@@ -27,7 +29,7 @@ import { browserNoteRevision, browserNoteContext, browserNoteUserText } from "./
 import type Database from "better-sqlite3";
 
 function testDbPath(): string {
-  return `/tmp/omnesis-test-${randomUUID()}.db`;
+  return fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
 }
 function cleanupDb(path: string): void {
   for (const suffix of ["", "-wal", "-shm", "-journal"]) {

@@ -14,6 +14,7 @@ import {
 import {
   createLogger,
   parseDuration,
+  ownedProcessCleanupReceipt,
   type HostNetwork,
   type WsRequestPayload,
 } from "@omnesis/core";
@@ -23,9 +24,11 @@ import {
   type DeviceId,
   type DeviceRecord,
 } from "@omnesis/types";
+import { resolveRequestOAuthUrls } from "./http/oauth-request.js";
 import { mountTailscaleRoutes } from "./http/routes/tailscale.js";
 import { mountRemoteAccessRoutes } from "./http/routes/remote-access.js";
 import { AddressChecks } from "./remote-access/address-check.js";
+import { HostAccess } from "./remote-access/host-access.js";
 import { HostTailscaleService } from "./remote-access/host-tailscale.js";
 import { RemoteAccessSettingsStore } from "./remote-access/settings.js";
 import { McpAddresses, relayStateFrom } from "./remote-access/mcp-addresses.js";
@@ -43,6 +46,10 @@ import { httpActivityName, withActivity } from "./observability/main-activity.js
 type Db = Database.Database;
 import { join } from "node:path";
 import { isTokenActive, lookupToken, lookupSession } from "./data/repositories/TokenRepository.js";
+import { finishDocumentCascade } from "./absence/document-cascade.js";
+import { StorageRetentionService } from "./storage/retention.js";
+import { StorageService } from "./storage/service.js";
+import { mountStorageRoutes } from "./http/routes/storage.js";
 import { getDevice, isRevokedDeviceKey } from "./data/repositories/DeviceRepository.js";
 import {
   CLIENT_VERSION_PARAM,
@@ -181,7 +188,7 @@ import { mountLegacyMcpCutoverRoute } from "./http/routes/legacy-mcp-cutover.js"
 import { AccessService } from "./access/service.js";
 import { resolveDeviceAnswerScope } from "./access/device-answer-scope.js";
 import { pendingCertificateOrigins } from "./access/certificate-pending.js";
-import { resolveMcpRequestResource, resolveOAuthUrls } from "./access/oauth-urls.js";
+import { resolveMcpRequestResource } from "./access/oauth-urls.js";
 import { mountSubscriptionRoutes } from "./http/routes/subscriptions.js";
 import { mountNotificationRoutes } from "./http/routes/notifications.js";
 import { mountMobilePermissionHealthRoute } from "./http/routes/mobile-permission-health.js";
@@ -200,6 +207,8 @@ import {
   sessionCookieName,
 } from "./http/cookies.js";
 import type { SourceFilterReads } from "./http/services/SourceFilterService.js";
+import type { StorageAccounting } from "./storage/accounting.js";
+import type { StoragePressureManager } from "./storage/pressure.js";
 import type { SemanticSearchStatus } from "@omnesis/source-sdk";
 import type { DiskUsageSnapshot } from "@omnesis/core/doctor";
 import type { TlsLifecyclePort } from "./http/routes/admin/internals.js";
@@ -379,6 +388,8 @@ export function createServer(
     wsServer?: DeviceWsServer;
     /** Shared fleet-doctor coordinator. Production passes the WS lifecycle singleton. */
     deviceDoctorService?: DeviceDoctorService;
+    /** Transfers doctor cleanup ownership to the enclosing process shutdown fence. */
+    onDoctorCleanupOwner?: (owner: Pick<DoctorService, "cleanupFailure" | "close">) => void;
     /**
      * Each connected collector's source descriptors. Production passes the
      * instance the WS lifecycle prefetches into; without one, the routes fill
@@ -426,6 +437,16 @@ export function createServer(
        * worker owns the handle, so the caller can safely use the direct path.
        */
       deleteSourceIndex?: (sourceId: string) => Promise<number> | undefined;
+      deleteDocumentIndexBatch?: (
+        id: string,
+        limit: number,
+        sourceDeleted: boolean,
+      ) => Promise<import("./indexer/db.js").DocumentIndexDeleteBatchResult> | undefined;
+      deleteDocumentsIndexBatch?: (
+        ids: readonly string[],
+        limit: number,
+        sourceDeleted: boolean,
+      ) => Promise<import("./indexer/db.js").DocumentIndexDeleteBatchResult> | undefined;
       /** Latest docs/sec indexing throughput, or null when unknown. */
       getIndexRate?: () => number | null;
     };
@@ -617,6 +638,15 @@ export function createServer(
      * doctor. Optional so test gateways need not walk a config dir.
      */
     getDiskUsage?: () => DiskUsageSnapshot | null;
+    storagePressure?: StoragePressureManager;
+    storageReads?: import("./storage/reads.js").StorageReads;
+    assertStorageCanGrow?: () => void;
+    getStorageLogical?: () => StorageAccounting | null;
+    getStorageIndex?: () => import("./storage/index-accounting.js").IndexStorageAccounting | null;
+    onStorageService?: (service: StorageService) => void;
+    refreshStorageIfStale?: () => void;
+    getStorageAccountingStatus?: () => import("./storage/accounting-status.js").StorageAccountingStatus;
+    refreshStorage?: () => Promise<void>;
     /**
      * Called after a model-provider credential file is written or
      * cleared. The gateway uses this to rebuild the affected provider in
@@ -697,9 +727,9 @@ export function createServer(
     }) => void;
     /** A device joined with nobody approving it; see `PairingServiceDeps`. */
     onDeviceJoined?: import("./http/services/PairingService.js").PairingServiceDeps["onDeviceJoined"];
-    /** The gateway's own tailnet device; present only with OMNESIS_TAILSCALE_EMBED_ENABLED=1. */
+    /** The gateway's own tailnet device; present when the installation has its helper program. */
     tailscaleEmbed?: import("./tailscale-embed/service.js").TailscaleEmbedService;
-    /** The Omnesis relay origin the gateway is enrolled under; only with the relay opt-in. */
+    /** The Omnesis relay origin the gateway is enrolled under, once it has one. */
     relayPublicOrigin?: () => string | undefined;
     cloudIdentity?: {
       identity: import("@omnesis/cloud-relay").IdentityProvider;
@@ -741,6 +771,11 @@ export function createServer(
     : undefined;
   // Tailscale already on this computer forwards to the port the gateway listens on.
   const hostTailscale = opts?.port ? new HostTailscaleService(opts.port) : undefined;
+  // What it lets the Internet reach through Funnel, under the owner's choices.
+  const hostAccess =
+    hostTailscale && remoteAccessSettings
+      ? new HostAccess(hostTailscale, remoteAccessSettings)
+      : undefined;
   // Which addresses away from home answer MCP; enforced wherever the owner's choices are kept.
   const mcpAddresses = remoteAccessSettings
     ? new McpAddresses({
@@ -751,9 +786,19 @@ export function createServer(
           ? { relayState: relayStateFrom(opts.cloudRelayManagement) }
           : {}),
         ...(opts?.tailscaleEmbed ? { tailscale: opts.tailscaleEmbed } : {}),
-        ...(hostTailscale ? { hostTailscale } : {}),
+        ...(hostAccess ? { host: hostAccess } : {}),
       })
     : undefined;
+  // Agents sign in through every way in's own address: the relay's and the Tailscale device's
+  // from the caller, this computer's Tailscale address while it serves the gateway.
+  const oauthIssuers: import("./access/oauth-urls.js").OAuthIssuerSource | undefined = mcpAddresses
+    ? () => [
+        ...(typeof opts?.additionalOAuthIssuerUrls === "function"
+          ? opts.additionalOAuthIssuerUrls()
+          : (opts?.additionalOAuthIssuerUrls ?? [])),
+        ...mcpAddresses.hostIssuer(),
+      ]
+    : opts?.additionalOAuthIssuerUrls;
   app.use("*", async (c, next) => {
     let release: (() => void) | undefined;
     if (opts?.cloudRelayExposure?.()) {
@@ -889,8 +934,13 @@ export function createServer(
   // backfill, so it routes through the worker (serialized, owning the usearch
   // handle) when one is running, falling back to the direct path otherwise.
   const indexWriteGate: IndexWriteGate | undefined = opts?.indexDb
-    ? workerCoordinatedIndexWriteGate(opts.indexDb, (sourceId) =>
-        opts?.indexerControl?.deleteSourceIndex?.(sourceId),
+    ? workerCoordinatedIndexWriteGate(
+        opts.indexDb,
+        (sourceId) => opts?.indexerControl?.deleteSourceIndex?.(sourceId),
+        (id, limit, sourceDeleted) =>
+          opts?.indexerControl?.deleteDocumentIndexBatch?.(id, limit, sourceDeleted),
+        (ids, limit, sourceDeleted) =>
+          opts?.indexerControl?.deleteDocumentsIndexBatch?.(ids, limit, sourceDeleted),
       )
     : undefined;
 
@@ -930,6 +980,7 @@ export function createServer(
     // Low-disk ingestion guard. Inert unless both the DB path and a
     // threshold are wired (production always wires both; most tests omit).
     gatewayDbPath: dbPath,
+    assertStorageCanGrow: opts?.assertStorageCanGrow,
     minFreeDiskBytes:
       opts?.minFreeDiskMb !== undefined ? opts.minFreeDiskMb * 1024 * 1024 : undefined,
   });
@@ -985,11 +1036,12 @@ export function createServer(
           recordPresence: (args) => w.recordAnalyticsPresence(args),
           recordRestorerOmissions: (args) => w.recordAnalyticsRestorerOmissions(args),
         },
-        opts?.minFreeDiskMb === undefined || dbPath === undefined
+        !opts?.assertStorageCanGrow && (opts?.minFreeDiskMb === undefined || dbPath === undefined)
           ? undefined
           : {
-              dbPath,
-              minFreeBytes: opts.minFreeDiskMb * 1024 * 1024,
+              dbPath: dbPath ?? ".",
+              minFreeBytes: (opts?.minFreeDiskMb ?? 0) * 1024 * 1024,
+              assertStorageCanGrow: opts?.assertStorageCanGrow,
             },
       )
     : null;
@@ -1097,11 +1149,11 @@ export function createServer(
     const authHeader = c.req.header("Authorization");
     if (authHeader?.startsWith("Bearer ")) {
       const rawToken = authHeader.slice(7);
-      const oauthUrls = resolveOAuthUrls(
-        c.req.url,
+      const oauthUrls = resolveRequestOAuthUrls(
+        c,
         opts?.publicAddress?.baseUrl(),
         opts?.publicAddress?.mcpResourceUrls(),
-        opts?.additionalOAuthIssuerUrls,
+        oauthIssuers,
       );
       const principal =
         c.req.path === "/mcp" && oauthUrls
@@ -1489,6 +1541,43 @@ export function createServer(
     await agentDeps.agentService?.refreshLabFeatures();
   });
   mountLabRoutes(app, labService);
+  if (opts?.storagePressure) {
+    const retention = new StorageRetentionService({
+      db,
+      writeGate: w,
+      sourceWriteEpochFence,
+      reads: opts.storageReads,
+      captureAuthority: opts.configStore
+        ? () => opts.configStore!.captureRevisionFence()
+        : undefined,
+      finishCascade: async (cascade) => {
+        await finishDocumentCascade(cascade, {
+          deleteIndex: indexWriteGate
+            ? (ids) => indexWriteGate.deleteChunksByDocuments(ids)
+            : undefined,
+          cascadeCognition: (ids) => cascadeCognitiveStateThroughGate(db, w, ids),
+          acknowledge: (id, part) => w.acknowledgeAbsenceCascade(id, part),
+        });
+      },
+    });
+    const storage = new StorageService({
+      pressure: opts.storagePressure,
+      physical: opts.getDiskUsage ?? (() => null),
+      logical: opts.getStorageLogical ?? (() => null),
+      index: opts.getStorageIndex ?? (() => null),
+      refresh: opts.refreshStorage ?? (() => Promise.resolve()),
+      refreshIfStale: opts.refreshStorageIfStale,
+      accountingStatus: opts.getStorageAccountingStatus,
+      configStore: opts.configStore,
+      retention,
+      sourceWriteEpochFence,
+      sourceExists: (sourceId) => getSource(db, SourceId(sourceId)) !== null,
+      db,
+      writeGate: w,
+    });
+    mountStorageRoutes(app, storage);
+    opts.onStorageService?.(storage);
+  }
 
   const watchRouting = new WatchRoutingService({
     getConfig: () => opts?.configStore?.get() ?? opts?.config,
@@ -1505,6 +1594,7 @@ export function createServer(
 
   // Status block 1: /health, /config, /admin/config*, /status
   mountStatusRoutes(app, {
+    tailscaleEmbed: !!opts?.tailscaleEmbed,
     getLabStatus: () => labService.flags(),
     db,
     dbPath,
@@ -1525,6 +1615,7 @@ export function createServer(
     getTranscriptionVocabularyEnabled: () =>
       opts?.transcriptionVocabularyService?.enabled() ?? false,
     getDiskUsage: opts?.getDiskUsage,
+    getStoragePressure: () => opts?.storagePressure?.snapshot() ?? null,
     vetAssignment: opts?.vetAssignment,
   });
 
@@ -1589,7 +1680,7 @@ export function createServer(
   mountOAuthAccessRoutes(app, accessService, {
     publicAddress: opts?.publicAddress,
     ...(opts?.port ? { loopbackBaseUrl: `https://localhost:${opts.port}` } : {}),
-    additionalOAuthIssuerUrls: opts?.additionalOAuthIssuerUrls,
+    additionalOAuthIssuerUrls: oauthIssuers,
     authorizationNotifier: opts?.accessAuthorizationNotifier,
     // A request arrived or was decided: wake the expiry sweep and the portals.
     onAuthorizationPending: () => {
@@ -1738,6 +1829,7 @@ export function createServer(
         }
       : {}),
   });
+  opts?.onDoctorCleanupOwner?.(doctorService);
   const deviceDoctorService =
     opts?.deviceDoctorService ??
     new DeviceDoctorService({
@@ -1830,9 +1922,10 @@ export function createServer(
     mountRemoteAccessRoutes(app, {
       settings: remoteAccessSettings,
       checks: new AddressChecks(),
-      ...(hostTailscale ? { hostTailscale } : {}),
+      ...(hostAccess ? { hostAccess } : {}),
       publicAddress: opts?.publicAddress,
       mcpAddresses,
+      tailscaleEmbed: !!opts?.tailscaleEmbed,
     });
   }
   const localSpkiFingerprint = () =>
@@ -1982,7 +2075,7 @@ export function createServer(
       );
     },
     publicAddress: opts?.publicAddress,
-    additionalOAuthIssuerUrls: opts?.additionalOAuthIssuerUrls,
+    additionalOAuthIssuerUrls: oauthIssuers,
     recordMcpToolInvocation: (input) => accessService.recordMcpToolInvocation(input),
     recordDirectAuditEvent: async (input) => {
       await w.appendDirectAuditEvent(input);
@@ -2223,7 +2316,7 @@ export function createServer(
 
   // /admin/brain/* — the operator inspection surface the `omnesis
   // briefs` CLI drives (same live feature gate: 404 unless active).
-  mountBrainAdminRoutes(app, {
+  const brainAdmin = mountBrainAdminRoutes(app, {
     db,
     writeGate: w,
     getStatus: opts?.getBriefsStatus,
@@ -2257,7 +2350,7 @@ export function createServer(
   });
 
   // /sql, /analytics/*, /sqlite/*, /analytics/activity/:table.
-  mountAnalyticsRoutes(app, {
+  const analyticsRoutes = mountAnalyticsRoutes(app, {
     db,
     analyticsService,
     sourceService,
@@ -2284,5 +2377,29 @@ export function createServer(
     );
   }
 
-  return app;
+  let closePromise: Promise<void> | undefined;
+  return Object.assign(app, {
+    close: () =>
+      (closePromise ??= (async () => {
+        const results = await Promise.allSettled([
+          Promise.resolve().then(() => brainAdmin.close()),
+          Promise.resolve().then(() => analyticsRoutes.close()),
+          ...(opts?.onDoctorCleanupOwner
+            ? []
+            : [Promise.resolve().then(() => doctorService.close())]),
+        ]);
+        const failures = results.flatMap((result) =>
+          result.status === "rejected" ? [result.reason] : [],
+        );
+        if (failures.length) {
+          const marked = failures.find((error) => ownedProcessCleanupReceipt(error) !== undefined);
+          const error = new AggregateError(failures, "Gateway route cleanup failed", {
+            cause: marked ?? failures[0],
+          });
+          const receipt = ownedProcessCleanupReceipt(marked);
+          if (receipt) Object.assign(error, { cleanupFailure: receipt.failure });
+          throw error;
+        }
+      })()),
+  });
 }

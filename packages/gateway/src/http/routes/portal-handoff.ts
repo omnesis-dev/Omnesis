@@ -7,7 +7,7 @@
  * address. Instead of a link to a login page, the portal there asks for a one-use handoff and opens
  * the gateway's own page with it in the URL fragment, which no server ever receives.
  *
- * Only with the cloud relay opt-in, and only while the gateway has an origin of its own (linked,
+ * Only while the gateway has an origin of its own on the Omnesis relay (linked,
  * and no certificate incident: while one is open, a page on that name may not be the gateway's).
  * A handoff:
  *
@@ -23,7 +23,7 @@
  */
 
 import { randomBytes } from "node:crypto";
-import { cloudRelayEnabled, createLogger } from "@omnesis/core";
+import { createLogger } from "@omnesis/core";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod";
 import { lookupSession } from "../../data/repositories/TokenRepository.js";
@@ -102,7 +102,6 @@ function unavailable(): HttpError {
 }
 
 export function mountPortalHandoffRoutes(app: RouteApp, deps: PortalHandoffDeps): void {
-  if (!cloudRelayEnabled()) return;
   const handoffs = new PortalHandoffs(deps.now);
   const ttlMs = deps.sessionTtlMs ?? 30 * 24 * 60 * 60 * 1000;
   const maxAgeS = Math.max(1, Math.floor(ttlMs / 1000));

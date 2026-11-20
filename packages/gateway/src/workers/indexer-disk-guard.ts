@@ -34,7 +34,12 @@ export function shouldRunIndexCycle(
     path: string,
     minFreeBytes: number,
   ) => { ok: boolean; freeBytes: number } = hasFreeDiskSpace,
+  pressure?: { blocked: boolean; validUntil: number } | null,
+  now = Date.now(),
 ): IndexCycleDiskDecision {
+  if (pressure && (pressure.blocked || now >= pressure.validUntil)) {
+    return { shouldRun: false, freeBytes: Infinity };
+  }
   if (minFreeMb <= 0) return { shouldRun: true, freeBytes: Infinity };
   const { ok, freeBytes } = check(indexDbPath, minFreeMb * 1024 * 1024);
   return { shouldRun: ok, freeBytes };

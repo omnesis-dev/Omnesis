@@ -48,7 +48,6 @@ class TailscalePairingScreenshotTest {
                 ),
                 onBack = {}, onShowScanner = {}, onShowManual = {}, onQrCode = {},
                 onUrlChange = {}, onCodeChange = {}, onFingerprintChange = {}, onToggleAdvanced = {}, onPair = {},
-                cloudFeatures = false,
             )
         }
 

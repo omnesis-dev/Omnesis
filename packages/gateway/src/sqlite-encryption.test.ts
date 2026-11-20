@@ -180,6 +180,28 @@ describe("migratePlaintextSqliteFile crash-safety", () => {
     expect(encryptTempCount(path)).toBe(0);
   });
 
+  test("a failed file flush preserves the plaintext database and removes the unpublished copy", () => {
+    const path = tmpDbPath();
+    const plain = new Database(path);
+    plain.exec("CREATE TABLE items (value TEXT NOT NULL)");
+    plain.prepare("INSERT INTO items (value) VALUES (?)").run("retained fixture row");
+    plain.close();
+    const original = readFileSync(path);
+    const failure = Object.assign(new Error("scripted file flush failure"), { code: "EIO" });
+    vi.spyOn(fs, "fsyncSync").mockImplementationOnce(() => {
+      throw failure;
+    });
+    vi.mocked(fs.renameSync).mockClear();
+
+    expect(() => migratePlaintextSqliteFile(path, key())).toThrow(failure);
+    expect(readFileSync(path)).toEqual(original);
+    expect(encryptTempCount(path)).toBe(0);
+    expect(fs.renameSync).not.toHaveBeenCalled();
+    const retained = new Database(path, { readonly: true });
+    expect(retained.prepare("SELECT value FROM items").pluck().get()).toBe("retained fixture row");
+    retained.close();
+  });
+
   test("reclaims a temp file orphaned by a prior interrupted attempt", () => {
     const path = tmpDbPath();
     const plain = new Database(path);

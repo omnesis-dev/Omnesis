@@ -45,13 +45,11 @@ describe.skipIf(!browserReady)(
     /** Holds the passkey of the account the gateway is linked to, confirmed on its page. */
     let owner: PasskeySession;
     const priorCaFile = process.env.OMNESIS_CLOUD_RELAY_GATEWAY_CA_FILE;
-    const priorEnabled = process.env.OMNESIS_CLOUD_RELAY_ENABLED;
 
     beforeAll(async () => {
       directory = await mkdtemp(join(tmpdir(), "omnesis-enroll-step-up-"));
       world = await EnrollmentWorld.create(directory, { signupPolicy: "open" });
       process.env.OMNESIS_CLOUD_RELAY_GATEWAY_CA_FILE = world.pki.caCertFile;
-      process.env.OMNESIS_CLOUD_RELAY_ENABLED = "1";
       browser = await PasskeyBrowser.launch(world);
       gateway = await EnrollmentGateway.start(world, "home");
       owner = await browser.session();
@@ -71,8 +69,6 @@ describe.skipIf(!browserReady)(
       } finally {
         if (priorCaFile === undefined) delete process.env.OMNESIS_CLOUD_RELAY_GATEWAY_CA_FILE;
         else process.env.OMNESIS_CLOUD_RELAY_GATEWAY_CA_FILE = priorCaFile;
-        if (priorEnabled === undefined) delete process.env.OMNESIS_CLOUD_RELAY_ENABLED;
-        else process.env.OMNESIS_CLOUD_RELAY_ENABLED = priorEnabled;
         if (directory) await rm(directory, { recursive: true, force: true });
       }
     }, 60_000);

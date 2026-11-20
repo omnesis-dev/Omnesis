@@ -1,18 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import {
-  readFileSync,
-  writeFileSync,
-  existsSync,
-  mkdirSync,
-  renameSync,
-  watch,
-  type FSWatcher,
-} from "node:fs";
+import { readFileSync, existsSync, mkdirSync, watch, type FSWatcher } from "node:fs";
 import { dirname, basename, join } from "node:path";
-import { createHash, randomBytes } from "node:crypto";
+import { createHash } from "node:crypto";
 import {
+  atomicWriteFile,
   createLogger,
   newerSettingsPath,
   restoreNewerSettings,
@@ -20,6 +13,8 @@ import {
 } from "@omnesis/core";
 import {
   applyMergePatch,
+  legacyStorageRetentionBindingsFromInput,
+  type LegacyStorageRetentionBinding,
   diffConfigPaths,
   type ConfigValidationError,
   type OmnesisConfig,
@@ -27,6 +22,37 @@ import {
 } from "@omnesis/config";
 
 const log = createLogger("gateway:config");
+
+function mergeLegacyStorageBindings(
+  pending: readonly LegacyStorageRetentionBinding[],
+  incoming: readonly LegacyStorageRetentionBinding[],
+): LegacyStorageRetentionBinding[] {
+  const bySource = new Map(incoming.map((binding) => [binding.sourceId, binding]));
+  for (const binding of pending) bySource.set(binding.sourceId, binding);
+  return [...bySource.values()];
+}
+
+/** Keep pre-upgrade source authority on disk until SQLite has durably recorded it. */
+function retainLegacyStorageInput(
+  config: OmnesisConfig,
+  legacy: readonly LegacyStorageRetentionBinding[],
+): unknown {
+  const policies = config.gateway?.storage?.retention;
+  if (legacy.length === 0 || policies === undefined) return config;
+  return {
+    ...config,
+    gateway: {
+      ...config.gateway,
+      storage: {
+        ...config.gateway?.storage,
+        retention: policies.map((policy) => {
+          const binding = legacy.find((row) => row.sourceId === policy.sourceId);
+          return binding ? { ...policy, sourceCreatedAt: binding.sourceCreatedAt } : policy;
+        }),
+      },
+    },
+  };
+}
 
 /**
  * Thrown by {@link ConfigStore.load} when the config file exists but cannot be
@@ -75,6 +101,12 @@ export interface ConfigStatus {
   lastError: ConfigLoadError | null;
 }
 
+/** Shared with a worker so queued operations can reject authority revoked by a later config edit. */
+export interface ConfigRevisionFence {
+  buffer: SharedArrayBuffer;
+  revision: number;
+}
+
 export type ConfigChangeListener = (
   before: OmnesisConfig,
   after: OmnesisConfig,
@@ -120,7 +152,12 @@ export class ConfigStore {
 
   private current: OmnesisConfig = {};
   private rawText = "";
+  private observedDiskHash: string | null = null;
+  private legacyStorageBindings: LegacyStorageRetentionBinding[] = [];
   private version = 0;
+  private readonly revisionFence = new Int32Array(
+    new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT),
+  );
   private lastLoadedAt = 0;
   private lastWrittenAt: number | null = null;
   private lastError: ConfigLoadError | null = null;
@@ -161,6 +198,42 @@ export class ConfigStore {
 
   getRaw(): string {
     return this.rawText;
+  }
+
+  /** Pending upgrade metadata stays available until its SQLite binding is acknowledged. */
+  takeLegacyStorageRetentionBindings(): readonly LegacyStorageRetentionBinding[] {
+    return this.legacyStorageBindings.map((binding) => ({ ...binding }));
+  }
+
+  /** Normalize disk only after the matching config's binding transaction committed. */
+  async finishLegacyStorageRetentionUpgrade(expected: ConfigRevisionFence): Promise<boolean> {
+    return this.acquire(async () => {
+      if (
+        expected.buffer !== this.revisionFence.buffer ||
+        Atomics.load(this.revisionFence, 0) !== expected.revision
+      )
+        return false;
+      if (this.legacyStorageBindings.length === 0) return true;
+      // The watcher is debounced: do not normalize over an external edit
+      // that has reached disk but has not yet advanced the in-memory fence.
+      if (
+        !existsSync(this.filePath) ||
+        hashContent(readFileSync(this.filePath, "utf8")) !== this.observedDiskHash
+      )
+        return false;
+      const serialized = JSON.stringify(this.current, null, 2) + "\n";
+      await atomicWriteFile(this.filePath, serialized, { mode: 0o600, ensureDir: true });
+      this.rawText = serialized;
+      this.lastWrittenHash = hashContent(serialized);
+      this.observedDiskHash = this.lastWrittenHash;
+      this.legacyStorageBindings = [];
+      this.lastWrittenAt = Date.now();
+      return true;
+    });
+  }
+
+  captureRevisionFence(): ConfigRevisionFence {
+    return { buffer: this.revisionFence.buffer, revision: Atomics.load(this.revisionFence, 0) };
   }
 
   getStatus(): ConfigStatus {
@@ -204,6 +277,11 @@ export class ConfigStore {
 
   // ── internals ────────────────────────────────────────────────────────────
 
+  private advanceVersion(): void {
+    this.version += 1;
+    Atomics.add(this.revisionFence, 0, 1);
+  }
+
   private restoreNewerSettings(release: string): void {
     const copy = newerSettingsPath(this.filePath);
     try {
@@ -245,7 +323,7 @@ export class ConfigStore {
     }
   }
 
-  private validateAndCommit(candidate: unknown): ConfigMutationResult {
+  private async validateAndCommit(candidate: unknown): Promise<ConfigMutationResult> {
     const validation = validateConfig(candidate);
     if (!validation.ok) {
       return { ok: false, errors: validation.errors };
@@ -273,27 +351,26 @@ export class ConfigStore {
     }
     // Write file atomically, remember the hash so the upcoming watcher event
     // for our own write is ignored.
-    const serialized = JSON.stringify(after, null, 2) + "\n";
-    this.writeFileAtomic(serialized);
+    const legacyBindings = mergeLegacyStorageBindings(
+      this.legacyStorageBindings,
+      legacyStorageRetentionBindingsFromInput(candidate),
+    );
+    const serialized =
+      JSON.stringify(retainLegacyStorageInput(after, legacyBindings), null, 2) + "\n";
+    await atomicWriteFile(this.filePath, serialized, { mode: 0o600, ensureDir: true });
+    this.legacyStorageBindings = legacyBindings;
     this.current = after;
-    this.rawText = serialized;
-    this.version += 1;
+    this.rawText = JSON.stringify(after, null, 2) + "\n";
+    this.advanceVersion();
     this.lastLoadedAt = Date.now();
     this.lastWrittenAt = this.lastLoadedAt;
     this.lastError = null;
     this.lastWrittenHash = hashContent(serialized);
+    this.observedDiskHash = this.lastWrittenHash;
     this.notify(before, after, changedPaths).catch((err) => {
       log.warn(`Change listener threw: ${err instanceof Error ? err.message : String(err)}`);
     });
     return { ok: true, version: this.version, config: after, changedPaths };
-  }
-
-  private writeFileAtomic(text: string): void {
-    const dir = dirname(this.filePath);
-    mkdirSync(dir, { recursive: true });
-    const tmp = `${this.filePath}.tmp.${randomBytes(6).toString("hex")}`;
-    writeFileSync(tmp, text, { mode: 0o600 });
-    renameSync(tmp, this.filePath);
   }
 
   private readAndApply(ctx: { source: "boot" | "watcher" }): void {
@@ -307,7 +384,7 @@ export class ConfigStore {
       if (ctx.source === "watcher") {
         const changed = diffConfigPaths(before, this.current);
         if (changed.length > 0) {
-          this.version += 1;
+          this.advanceVersion();
           this.notify(before, this.current, changed).catch((err) => {
             log.warn(`Change listener threw: ${err instanceof Error ? err.message : String(err)}`);
           });
@@ -368,6 +445,7 @@ export class ConfigStore {
     // by an older build can carry a since-removed key, and rejecting it
     // wholesale would drop the whole config to defaults. Strip + warn instead.
     // Interactive mutations (validateAndCommit) stay strict so typos are caught.
+    const legacyStorageBindings = legacyStorageRetentionBindingsFromInput(parsed);
     const validation = validateConfig(parsed, { stripUnknownKeys: true });
     if (!validation.ok) {
       const summary = validation.errors.map((e) => `${e.path || "/"}: ${e.message}`).join("; ");
@@ -404,17 +482,24 @@ export class ConfigStore {
     const before = this.current;
     const after = validation.config;
     const changedPaths = diffConfigPaths(before, after);
+    this.legacyStorageBindings = mergeLegacyStorageBindings(
+      this.legacyStorageBindings,
+      legacyStorageBindings,
+    );
+    this.observedDiskHash = hashContent(rawText);
     this.current = after;
     // Keep the cached raw text consistent with the parsed config. When keys
     // were stripped, the on-disk text still carries them, so re-serialize the
     // cleaned config — otherwise getRaw() would expose keys get() has dropped,
     // and a raw-read → edit → strict PUT round-trip would reject them.
     this.rawText =
-      validation.strippedKeys.length > 0 ? JSON.stringify(after, null, 2) + "\n" : rawText;
+      validation.strippedKeys.length > 0 || legacyStorageBindings.length > 0
+        ? JSON.stringify(after, null, 2) + "\n"
+        : rawText;
     this.lastLoadedAt = Date.now();
     this.lastError = null;
     if (ctx.source === "boot" || changedPaths.length > 0) {
-      this.version += 1;
+      this.advanceVersion();
     }
     if (ctx.source === "watcher" && changedPaths.length > 0) {
       this.notify(before, after, changedPaths).catch((err) => {
@@ -449,7 +534,15 @@ export class ConfigStore {
         if (this.watcherDebounceTimer) clearTimeout(this.watcherDebounceTimer);
         this.watcherDebounceTimer = setTimeout(() => {
           this.watcherDebounceTimer = null;
-          this.readAndApply({ source: "watcher" });
+          // A native atomic publication may finish before its async writer joins.
+          // Reload only after that mutation commits its in-memory state and hash.
+          void this.acquire(() => Promise.resolve(this.readAndApply({ source: "watcher" }))).catch(
+            (err) => {
+              log.warn(
+                `Config watcher reload failed: ${err instanceof Error ? err.message : String(err)}`,
+              );
+            },
+          );
         }, this.watchDebounceMs);
       });
       log.info(`Watching config at ${this.filePath}`);

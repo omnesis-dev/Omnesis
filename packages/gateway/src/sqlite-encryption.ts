@@ -14,7 +14,6 @@ import {
   closeSync,
   copyFileSync,
   existsSync,
-  fsyncSync,
   openSync,
   readdirSync,
   readSync,
@@ -24,7 +23,7 @@ import {
 } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import Database from "better-sqlite3-multiple-ciphers";
-import { storageKeyHex } from "@omnesis/core";
+import { fsyncDirSync, fsyncFileSync, storageKeyHex } from "@omnesis/core";
 
 export type EncryptedSqliteDatabase = Database.Database;
 
@@ -154,28 +153,11 @@ export function cleanStaleEncryptTemps(path: string): void {
 }
 
 export function fsyncFile(path: string): void {
-  const fd = openSync(path, "r");
-  try {
-    fsyncSync(fd);
-  } finally {
-    closeSync(fd);
-  }
+  fsyncFileSync(path);
 }
 
 export function fsyncDir(dir: string): void {
-  let fd: number;
-  try {
-    fd = openSync(dir, "r");
-  } catch {
-    return; // best-effort: directory fsync is unsupported on some platforms
-  }
-  try {
-    fsyncSync(fd);
-  } catch {
-    // best-effort durability of the rename; ignore if the platform rejects it
-  } finally {
-    closeSync(fd);
-  }
+  fsyncDirSync(dir);
 }
 
 export function sqliteFileLooksPlaintext(path: string): boolean {

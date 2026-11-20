@@ -111,7 +111,7 @@ cd ios && xcodegen generate && open Omnesis.xcodeproj
 
 Cloning the source does not grant signing rights to the official `dev.omnesis.ios` App ID. If your Apple team is not authorized for it, register your own base identifier under your team and use the ignored local override. An authorized official-team developer can keep the default identity and set only their team. A simulator build does not need your Apple team or a provisioning profile; a physical phone build does.
 
-1. Join the Apple Developer Program for physical-device capabilities. In Certificates, Identifiers & Profiles, create an explicit App ID for your base identifier (for example, `com.example.myomnesis`). Prepare matching identifiers for the app's embedded notification service (`.notification-service`), widgets (`.widgets`), Watch app (`.watchkitapp`) and Watch complications (`.watchkitapp.widgets`). The optional demo app uses `.demo` and needs its own App ID if you build it. Enable the capabilities each target requests in Xcode: the phone app needs HealthKit, Push Notifications and Time Sensitive Notifications; the demo needs HealthKit and Push Notifications. The notification service must share the app's Keychain access group. The task widget extension shares a dedicated device-only Keychain group (`.task-widgets`) with the phone app for its gateway credential and task snapshots; enable that group on both identifiers. The Watch and Watch complications targets do not hold pairing credentials. Apple may require capability or provisioning changes in the Developer portal before Xcode can sign these targets.
+1. Join the Apple Developer Program for physical-device capabilities. In Certificates, Identifiers & Profiles, create an explicit App ID for your base identifier (for example, `com.example.myomnesis`). Prepare matching identifiers for the app's embedded notification service (`.notification-service`), widgets (`.widgets`), Watch app (`.watchkitapp`) and Watch complications (`.watchkitapp.widgets`). The optional demo app uses `.demo` and needs its own App ID if you build it. Enable the capabilities each target requests in Xcode: the phone app needs HealthKit, Push Notifications, Time Sensitive Notifications and Associated Domains; the demo needs HealthKit, Push Notifications and Associated Domains. The notification service must share the app's Keychain access group. The task widget extension shares a dedicated device-only Keychain group (`.task-widgets`) with the phone app for its gateway credential and task snapshots; enable that group on both identifiers. The Watch and Watch complications targets do not hold pairing credentials. Apple may require capability or provisioning changes in the Developer portal before Xcode can sign these targets.
 2. Copy `Local.xcconfig.example` to `Local.xcconfig` and set `OMNESIS_BUNDLE_ID` to the base identifier and `DEVELOPMENT_TEAM` to your 10-character Team ID (shown in Apple Developer account membership details). `Local.xcconfig` is ignored by Git. The tracked `Config.xcconfig` supplies the official default, then includes your local file so your override wins. The generated app, demo, embedded extensions, Watch companion reference and Keychain groups derive from the same base. Do not edit tracked identifiers to personalize a build.
 3. Run `xcodegen generate` from `ios/` and open `Omnesis.xcodeproj`. Select the `Omnesis` scheme and your connected iPhone. In Signing & Capabilities, confirm every target uses your team and the expected identifier. For a local Debug build, use automatic signing and let Xcode create development provisioning profiles; sign in to your Apple account in Xcode if prompted. If you just enabled a capability, refresh or regenerate the affected profile and build again. Run with ⌘R to install. The Release configuration carries official distribution profile names, so an independent distribution archive requires your own profiles and export configuration.
 4. Pair the installed app with your gateway using `omnesis devices pair --kind ios`. Grant notification permission when prompted. The app obtains and registers its APNs device token automatically; do not copy a carrier token by hand.
@@ -156,27 +156,35 @@ iOS does not reveal whether individual HealthKit read permissions were denied, s
 
 Per-category toggles persist via `HealthSettings` (UserDefaults-backed). Disabled categories are filtered out of the `AppleHealthSource` catalog rotation on the fly — no re-pair needed.
 
-## Optional Google pairing through the experimental relay
+## Signing in with the cloud account
 
-QR and manual pairing work without Google. To offer Google sign-in in a build,
-configure these public values in the ignored `Local.xcconfig`:
+Every build offers **Sign in with cloud account** on the pairing screen, beside
+scanning a QR code and entering a code manually. The button opens a second screen
+with the two ways to sign in: Google or a passkey. QR and manual pairing work
+without an account.
+
+`Config.xcconfig` carries the official app's public sign-in identifiers: the relay
+(`OMNESIS_CLOUD_RELAY_URL`), the iOS Google OAuth client (`OMNESIS_GOOGLE_CLIENT_ID`)
+and its callback scheme (`OMNESIS_GOOGLE_CALLBACK_SCHEME`, the reversed client ID),
+and the passkey domain (`OMNESIS_CLOUD_RELAY_RP_ID`). The app's Info.plist registers
+the callback scheme and explains local network use, and its entitlements carry
+`webcredentials:` for the passkey domain, so the app's provisioning profile needs the
+Associated Domains capability. Client secrets do not belong in the app.
+
+A build under another identity overrides these in the ignored `Local.xcconfig`:
 
 ```xcconfig
-OMNESIS_CLOUD_RELAY_ENABLED = 1
 OMNESIS_GOOGLE_CLIENT_ID = fictional-ios.apps.googleusercontent.com
 OMNESIS_GOOGLE_CALLBACK_SCHEME = com.googleusercontent.apps.fictional-ios
 OMNESIS_CLOUD_RELAY_URL = https:/$()/relay.example.test
+OMNESIS_CLOUD_RELAY_RP_ID = relay.example.test
 ```
 
-With the flag on, a build phase (`scripts/cloud-relay-info-plist.py`) adds the
-local network usage text and registers the callback scheme in the built
-`Info.plist` of the production app, the demo app and the extensions. A default
-build declares neither.
-
-Use an **iOS** OAuth client registered for the app's bundle identifier. The
-callback scheme is its reversed client ID; the `$()` spelling prevents xcconfig
-from interpreting the URL's slashes as a comment. The gateway and relay must
-allow the iOS client ID. Client secrets do not belong in the app.
+Use an **iOS** OAuth client registered for the app's bundle identifier; the `$()`
+spelling prevents xcconfig from interpreting the URL's slashes as a comment. The
+gateway and relay must allow the iOS client ID, and passkeys work only when the
+relay's domain lists the app's team and bundle identifier in its
+`apple-app-site-association` file.
 
 The system browser uses PKCE, state and a request-bound nonce. The app verifies
 Google's signature directly, discovers an untrusted gateway candidate, and shows
@@ -199,7 +207,7 @@ authenticates it. Connections through the relay always require a current one.
 Existing exact certificate pins retain their original behavior and are not
 silently reinterpreted as public-key pins.
 
-With the same flag on, Settings lists **Omnesis account** when the paired gateway
+Settings lists **Omnesis account** when the paired gateway
 offers one (`GET /admin/cloud-relay` answers; a 404 keeps the row away). The
 screen mirrors the portal's page of that name: connect the gateway by signing
 in, manage the account or disconnect the gateway from it, the remote address
@@ -207,5 +215,4 @@ with its on/off switch, and the choice for new devices. Anything wrong is said
 in one box whose **Copy details** button copies a plain-text block without
 secrets. Custom
 addresses, certificate directories, invitation files and linking an already
-registered gateway to an account stay in the portal. A build without the flag
-never asks the gateway and shows no row.
+registered gateway to an account stay in the portal.

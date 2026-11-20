@@ -18,6 +18,7 @@
  * via `runWithPriority`.
  */
 
+import { STORAGE_INDEX_READS } from "../storage/reads.js";
 import { IO_READS } from "./io-read-ports.js";
 import { ioReadOpNames, ioReadPort, type ReadPort } from "./read-port.js";
 import type { KnowledgeSelectionReads } from "../brain/knowledge/selection-reads.js";
@@ -72,6 +73,7 @@ import type {
   MergeCandidateVisibility,
   TokenClassificationCandidate,
 } from "../merge-candidates.js";
+import type { MergeRuleGroupsOptions, MergeRuleGroupsPage } from "../domain/merge/rule-groups.js";
 import type { LinkExtractionDocRow } from "../domain/LinkExtraction-cpu.js";
 import type { ExtractedLinkBatchEntry } from "../domain/LinkExtraction.js";
 import type { DateExtractionDocRow } from "../enrichment/dates/extractor.js";
@@ -99,7 +101,8 @@ import type {
 
 import type { VocabularySettings, VocabularyDocument } from "../transcribe/vocabulary/types.js";
 
-export interface IoGate extends ReadPort<typeof IO_READS>, KnowledgeSelectionReads {
+export interface IoGate
+  extends ReadPort<typeof IO_READS>, ReadPort<typeof STORAGE_INDEX_READS>, KnowledgeSelectionReads {
   fetchTranscriptionVocabularyBatch(settings: VocabularySettings): Promise<VocabularyDocument[]>;
   getTranscriptionVocabulary(
     context: TranscriptionContext,
@@ -219,6 +222,12 @@ export interface IoGate extends ReadPort<typeof IO_READS>, KnowledgeSelectionRea
   mergeCandidateVisibility(opts: {
     status: "pending" | "accepted" | "denied";
   }): Promise<MergeCandidateVisibility[]>;
+  /**
+   * One page of the People → Rules page for GET /people/merge-rule-groups.
+   * Grouping resolves the winner of every active rule, so the read grows with
+   * the rule table. Read-only.
+   */
+  mergeRuleGroups(opts: MergeRuleGroupsOptions): Promise<MergeRuleGroupsPage>;
   /**
    * Legacy `content LIKE '%q%'` document search (GET /documents/search) — an
    * unindexed leading-wildcard full-table scan. Low-traffic legacy path.
@@ -515,7 +524,7 @@ const COMPUTE_OP_DEFS: readonly IoOpDef[] = [
   // and an analytics page's replica ledger reads.
   // A filtered search's result check and the owner's filter screens are
   // waited on by a person, so they run ahead of background reads.
-  ...ioReadOpNames(IO_READS).map((name): IoOpDef => ({
+  ...ioReadOpNames({ ...IO_READS, ...STORAGE_INDEX_READS }).map((name): IoOpDef => ({
     name,
     priority: USER_IO_READS.has(name) ? "user" : "background",
     latencyBudgetMs: HEAVY_BUDGET_MS,
@@ -586,6 +595,7 @@ const COMPUTE_OP_DEFS: readonly IoOpDef[] = [
   { name: "io.messageCounts", priority: "user", latencyBudgetMs: HEAVY_BUDGET_MS },
   { name: "io.enrichedMergeCandidates", priority: "user", latencyBudgetMs: HEAVY_BUDGET_MS },
   { name: "io.mergeCandidateVisibility", priority: "user", latencyBudgetMs: HEAVY_BUDGET_MS },
+  { name: "io.mergeRuleGroups", priority: "user", latencyBudgetMs: HEAVY_BUDGET_MS },
   { name: "io.likeSearchDocuments", priority: "user", latencyBudgetMs: HEAVY_BUDGET_MS },
   // User by default for search and the interactive agent; background runs
   // enqueue it under their own priority.
@@ -703,6 +713,7 @@ export function ioGateFromScheduler(scheduler: Scheduler): IoGate {
   };
   return {
     ...ioReadPort(IO_READS, call),
+    ...ioReadPort(STORAGE_INDEX_READS, call),
     echo: (value) => call("io.echo", [value]),
     fetchTranscriptionVocabularyBatch: (settings) =>
       call("io.fetchTranscriptionVocabularyBatch", [settings]),
@@ -740,6 +751,7 @@ export function ioGateFromScheduler(scheduler: Scheduler): IoGate {
     messageCounts: (query) => call("io.messageCounts", [query]),
     enrichedMergeCandidates: (opts) => call("io.enrichedMergeCandidates", [opts]),
     mergeCandidateVisibility: (opts) => call("io.mergeCandidateVisibility", [opts]),
+    mergeRuleGroups: (opts) => call("io.mergeRuleGroups", [opts]),
     likeSearchDocuments: (args) => call("io.likeSearchDocuments", [args]),
     temporalStoreWindow: (request) => call("io.temporalStoreWindow", [request]),
     knowledgeDocumentsReadable: (refs) => call("io.knowledgeDocumentsReadable", [[...refs]]),

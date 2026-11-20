@@ -41,6 +41,12 @@ export interface StoredMessage {
   /** A service message's action, e.g. `message_pinned`. */
   service?: string;
   media?: MediaDescriptor;
+  /**
+   * Unix seconds at which the chat's auto-delete timer removes this message
+   * from Telegram. Present only when the operator keeps self-destructing
+   * messages; a deletion from then on is the timer's and is not applied.
+   */
+  expiresAt?: number;
   /** Where the media lifecycle stands; absent for media Omnesis never downloads. */
   mediaState?: MediaState;
   /** Unix seconds before which the next media attempt waits. */

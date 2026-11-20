@@ -8,12 +8,12 @@
  * imported module that freezes an env value at import time see the merged
  * environment.
  */
-import { loadDotEnv } from "@omnesis/config";
+import { loadBootstrapDotEnv } from "@omnesis/config/dotenv-bootstrap";
 
 /**
  * The keys `.env` supplied at boot. A later re-read of the file can then tell
  * a key it dropped from one the real environment set, which `process.env`
  * alone cannot.
  */
-export const dotEnvKeysAtBoot: ReadonlySet<string> = new Set(loadDotEnv()?.keys ?? []);
+export const dotEnvKeysAtBoot: ReadonlySet<string> = new Set(loadBootstrapDotEnv()?.keys ?? []);
 if (typeof process.umask === "function") process.umask(0o077);

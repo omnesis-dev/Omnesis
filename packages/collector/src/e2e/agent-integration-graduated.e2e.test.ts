@@ -30,6 +30,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 
+import { inspectWindowsPrivatePathSync } from "@omnesis/core";
 import Database from "better-sqlite3";
 import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 import { marked, type Tokens } from "marked";
@@ -135,7 +136,9 @@ describe("managed agent integration on a gateway without Watches", () => {
     // Nothing about this ceremony needed experimental mode. The device is
     // paired as an agent, and the operator's approval produced a credential
     // bound to it.
-    expect(statSync(credentialsPath).mode & 0o777).toBe(0o600);
+    if (process.platform === "win32")
+      expect(inspectWindowsPrivatePathSync(credentialsPath, "file").private).toBe(true);
+    else expect(statSync(credentialsPath).mode & 0o777).toBe(0o600);
     const credentials = readCredentials();
     expect(credentials.oauth.tokens).toMatchObject({
       access_token: expect.stringMatching(/^omn_oat_/u),

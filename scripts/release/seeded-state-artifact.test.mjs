@@ -14,10 +14,22 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
+import { inspectWindowsPrivatePathSync } from "@omnesis/core";
 import { afterEach, describe, expect, it } from "vitest";
 import { createBriefsStorageTables } from "../../packages/gateway/src/brain/storage/schema.js";
 import { runSchemaSetup } from "../../packages/gateway/src/data/schema.js";
-import { createDatabase } from "../../packages/gateway/src/db.js";
+import { createDatabase, upsertDocuments } from "../../packages/gateway/src/db.js";
+import { createDevice } from "../../packages/gateway/src/data/repositories/DeviceRepository.js";
+import { createSource } from "../../packages/gateway/src/data/repositories/SourceRepository.js";
+import {
+  bindStorageRetentionPolicy,
+  readStorageSourceIncarnation,
+} from "../../packages/gateway/src/storage/retention-bindings.js";
+import {
+  startStorageTrimJob,
+  readStorageTrimPage,
+  applyStorageTrimPage,
+} from "../../packages/gateway/src/storage/trim-job-store.js";
 import { LATEST_SCHEMA_VERSION } from "../../packages/gateway/src/data/schema-version.js";
 import { createTranscriptionVocabularyTables } from "../../packages/gateway/src/transcribe/vocabulary/storage.js";
 import { createSourceFilterListTables } from "../../packages/gateway/src/data/repositories/SourceFilterListRepository.js";
@@ -37,7 +49,14 @@ import {
 } from "../seeded-state/artifact.mjs";
 
 const temporaryDirectories = [];
+const openedDatabases = [];
+function openFixtureDatabase(...args) {
+  const database = new Database(...args);
+  openedDatabases.push(database);
+  return database;
+}
 afterEach(() => {
+  for (const database of openedDatabases.splice(0)) if (database.open) database.close();
   for (const directory of temporaryDirectories.splice(0)) {
     rmSync(directory, { recursive: true, force: true });
   }
@@ -49,7 +68,7 @@ function fixture() {
   const sourcePath = join(root, "source.db");
   const seedPath = join(root, "seed.json");
   writeFileSync(seedPath, '{"universe":"fictional-minimal"}\n');
-  const source = new Database(sourcePath);
+  const source = openFixtureDatabase(sourcePath);
   source.exec(`
     CREATE TABLE documents (id TEXT PRIMARY KEY, title TEXT NOT NULL);
     CREATE INDEX documents_title ON documents(title);
@@ -154,7 +173,7 @@ describe("seeded-state artifacts", () => {
 
   it("preserves transcription vocabulary and its contribution ledger together", () => {
     const paths = fixture();
-    const source = new Database(paths.sourcePath);
+    const source = openFixtureDatabase(paths.sourcePath);
     createTranscriptionVocabularyTables(source);
     source.exec(`
       INSERT INTO transcription_vocabulary_terms (
@@ -192,7 +211,7 @@ describe("seeded-state artifacts", () => {
       },
       paths.artifact,
     );
-    const output = new Database(join(paths.artifact, "omnesis.db"), { readonly: true });
+    const output = openFixtureDatabase(join(paths.artifact, "omnesis.db"), { readonly: true });
     expect(
       output.prepare("SELECT text, document_count FROM transcription_vocabulary_terms").get(),
     ).toEqual({ text: "Quorvex", document_count: 1 });
@@ -293,7 +312,7 @@ describe("seeded-state artifacts", () => {
 
   it("preserves voice accounting schema without copying installation call records", () => {
     const paths = fixture();
-    const source = new Database(paths.sourcePath);
+    const source = openFixtureDatabase(paths.sourcePath);
     createLiveVoiceUsageTable(source);
     recordLiveVoiceUsage(source, {
       callId: "00000000-0000-4000-8000-000000000001",
@@ -311,18 +330,18 @@ describe("seeded-state artifacts", () => {
       },
       paths.artifact,
     );
-    const output = new Database(join(paths.artifact, "omnesis.db"), { readonly: true });
+    const output = openFixtureDatabase(join(paths.artifact, "omnesis.db"), { readonly: true });
     expect(output.prepare("SELECT COUNT(*) FROM live_voice_usage").pluck().get()).toBe(0);
     expect(output.prepare("PRAGMA table_info(live_voice_usage)").all()).toEqual(schema);
     output.close();
-    const original = new Database(paths.sourcePath, { readonly: true });
+    const original = openFixtureDatabase(paths.sourcePath, { readonly: true });
     expect(original.prepare("SELECT seconds FROM live_voice_usage").pluck().get()).toBe(42);
     original.close();
   });
 
   it("preserves standalone morning brief references with their documents and sent messages", () => {
     const paths = fixture();
-    const source = new Database(paths.sourcePath);
+    const source = openFixtureDatabase(paths.sourcePath);
     createBriefsStorageTables(source);
     source.exec(`
       INSERT INTO morning_briefs(day,run_id,conversation_id,message_id,item_count,sent_at)
@@ -355,7 +374,7 @@ describe("seeded-state artifacts", () => {
       paths.artifact,
     );
     installSeededStateArtifact(paths.artifact, paths.state, installOptions(paths));
-    const installed = new Database(join(paths.state, "omnesis.db"), { readonly: true });
+    const installed = openFixtureDatabase(join(paths.state, "omnesis.db"), { readonly: true });
     expect(
       installed
         .prepare(
@@ -432,10 +451,113 @@ describe("seeded-state artifacts", () => {
     output.close();
   });
 
+  it("copies source data without trim authority and creates fresh identities on first boot", () => {
+    const paths = fixture();
+    const sourcePath = join(paths.root, "storage-seed.db");
+    const source = createDatabase(sourcePath);
+    const device = createDevice(source, { name: "Invented seed collector", kind: "collector" });
+    const account = createSource(source, {
+      type: "fictional-notes",
+      accountId: "seed",
+      deviceId: device.id,
+    });
+    const incarnation = readStorageSourceIncarnation(source, account.id);
+    for (const [externalId, date] of [
+      ["old", "2020-01-01T00:00:00.000Z"],
+      ["kept", "2026-01-01T00:00:00.000Z"],
+    ]) {
+      upsertDocuments(source, [
+        {
+          providerId: "fictional-provider",
+          sourceId: account.id,
+          externalId,
+          title: "Invented seed entry",
+          content: "Fictional reference",
+          contentHash: externalId,
+          metadata: {},
+          sourceCreatedAt: date,
+          sourceUpdatedAt: date,
+        },
+      ]);
+    }
+    bindStorageRetentionPolicy(source, {
+      sourceId: account.id,
+      maxAgeDays: 365,
+      sourceIncarnation: incarnation,
+    });
+    const job = startStorageTrimJob(source, {
+      sourceId: account.id,
+      sourceIncarnation: incarnation,
+      kind: "manual",
+      before: "2023-01-01T00:00:00.000Z",
+      now: Date.parse("2026-01-01T00:00:00.000Z"),
+    });
+    applyStorageTrimPage(source, {
+      jobId: job.id,
+      revision: job.revision,
+      page: readStorageTrimPage(source, job),
+      now: Date.parse("2026-01-01T00:00:01.000Z"),
+    });
+    const operational = [
+      "storage_retention_bindings",
+      "storage_source_incarnations",
+      "storage_trim_job_cascades",
+      "storage_trim_jobs",
+    ];
+    for (const table of operational) {
+      expect(source.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get().n).toBe(1);
+      expect(seededStateTableSpec(table, [])).toBeNull();
+      expect(() =>
+        createSeededStateArtifact(
+          spec(paths, ["documents", table]),
+          join(paths.root, `refused-${table}`),
+        ),
+      ).toThrow(/cannot be exported/u);
+    }
+    const devices = seededStateTableSpec(
+      "devices",
+      source.prepare("SELECT name FROM pragma_table_info('devices')").pluck().all(),
+    );
+    source.close();
+    createSeededStateArtifact(
+      {
+        ...spec(paths),
+        schemaVersion: LATEST_SCHEMA_VERSION,
+        databases: [
+          { source: sourcePath, target: "omnesis.db", tables: [devices, "sources", "documents"] },
+        ],
+        expected: { rowCounts: { "omnesis.db": { devices: 1, sources: 1, documents: 1 } } },
+      },
+      paths.artifact,
+    );
+    installSeededStateArtifact(
+      paths.artifact,
+      paths.state,
+      installOptions(paths, { maxSchemaVersion: LATEST_SCHEMA_VERSION }),
+    );
+    const installedPath = join(paths.state, "omnesis.db");
+    const installed = new Database(installedPath, { readonly: true });
+    for (const table of operational)
+      expect(installed.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get().n).toBe(0);
+    installed.close();
+    const booted = createDatabase(installedPath);
+    try {
+      expect(readStorageSourceIncarnation(booted, account.id)).toEqual(expect.any(String));
+      expect(readStorageSourceIncarnation(booted, account.id)).not.toBe(incarnation);
+      for (const table of operational.filter((table) => table !== "storage_source_incarnations"))
+        expect(booted.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get().n).toBe(0);
+      expect(booted.prepare("SELECT external_id FROM documents").all()).toEqual([
+        { external_id: "kept" },
+      ]);
+    } finally {
+      booted.close();
+    }
+  });
+
   it("preserves pending synthesis privacy fences but clears guards and decision receipts", () => {
     const paths = fixture();
     rmSync(paths.sourcePath);
-    const source = new Database(paths.sourcePath);
+    const source = openFixtureDatabase(paths.sourcePath);
     runSchemaSetup(source);
     source.exec(`
       INSERT INTO knowledge_source_revisions(document_id,content_hash,deleted,updated_at) VALUES ('deleted-source', 'old-hash', 1, 100);
@@ -480,7 +602,7 @@ describe("seeded-state artifacts", () => {
       },
       paths.artifact,
     );
-    const output = new Database(join(paths.artifact, "omnesis.db"), { readonly: true });
+    const output = openFixtureDatabase(join(paths.artifact, "omnesis.db"), { readonly: true });
     for (const table of retained)
       expect(output.prepare(`SELECT COUNT(*) FROM ${table}`).pluck().get()).toBe(1);
     for (const table of cleared)
@@ -496,7 +618,7 @@ describe("seeded-state artifacts", () => {
     const seedPath = join(root, "seed.json");
     const artifact = join(root, "artifact");
     writeFileSync(seedPath, '{"universe":"fictional-absence"}\n');
-    const source = new Database(sourcePath);
+    const source = openFixtureDatabase(sourcePath);
     runSchemaSetup(source);
     source.exec(`
       INSERT INTO documents (
@@ -585,7 +707,7 @@ describe("seeded-state artifacts", () => {
       artifact,
     );
 
-    const output = new Database(join(artifact, "omnesis.db"), { readonly: true });
+    const output = openFixtureDatabase(join(artifact, "omnesis.db"), { readonly: true });
     for (const table of absenceTables) {
       expect(output.prepare(`SELECT COUNT(*) FROM ${table}`).pluck().get()).toBe(0);
     }
@@ -629,7 +751,7 @@ describe("seeded-state artifacts", () => {
     const seedPath = join(root, "seed.json");
     const artifact = join(root, "artifact");
     writeFileSync(seedPath, '{"universe":"fictional-member-config"}\n');
-    const source = new Database(sourcePath);
+    const source = openFixtureDatabase(sourcePath);
     runSchemaSetup(source);
     source.exec(`
       INSERT INTO devices (id, name, kind, paired_at)
@@ -675,7 +797,7 @@ describe("seeded-state artifacts", () => {
       artifact,
     );
 
-    const output = new Database(join(artifact, "omnesis.db"), { readonly: true });
+    const output = openFixtureDatabase(join(artifact, "omnesis.db"), { readonly: true });
     expect(output.prepare("SELECT * FROM source_devices").get()).toEqual({
       source_id: "claude-code:local",
       device_id: "00000000-0000-4000-8000-000000000001",
@@ -769,7 +891,7 @@ describe("seeded-state artifacts", () => {
 
   it("omits the complete FTS5 table family and retains canonical chunks", () => {
     const paths = fixture();
-    const source = new Database(paths.sourcePath);
+    const source = openFixtureDatabase(paths.sourcePath);
     source.exec(`
       CREATE TABLE chunks (content TEXT NOT NULL, title TEXT NOT NULL);
       CREATE VIRTUAL TABLE chunks_fts USING fts5(
@@ -810,7 +932,7 @@ describe("seeded-state artifacts", () => {
     const artifactSpec = spec(paths, exportTables);
     artifactSpec.expected.rowCounts["omnesis.db"] = { chunks: 1 };
     createSeededStateArtifact(artifactSpec, paths.artifact);
-    const output = new Database(join(paths.artifact, "omnesis.db"), { readonly: true });
+    const output = openFixtureDatabase(join(paths.artifact, "omnesis.db"), { readonly: true });
     expect(output.prepare("SELECT COUNT(*) FROM chunks").pluck().get()).toBe(1);
     expect(
       output.prepare("SELECT name FROM sqlite_schema WHERE name LIKE 'chunks_fts%'").pluck().all(),
@@ -821,7 +943,7 @@ describe("seeded-state artifacts", () => {
   it("copies only explicitly allowlisted tables and preserves supporting schema", () => {
     const paths = fixture();
     const manifest = createSeededStateArtifact(spec(paths), paths.artifact);
-    const output = new Database(join(paths.artifact, "omnesis.db"), { readonly: true });
+    const output = openFixtureDatabase(join(paths.artifact, "omnesis.db"), { readonly: true });
 
     expect(manifest.databases[0].rowCounts).toEqual({ documents: 1 });
     expect(output.prepare("SELECT title FROM documents").pluck().get()).toBe(
@@ -840,9 +962,10 @@ describe("seeded-state artifacts", () => {
     expect(output.prepare("SELECT COUNT(*) FROM tokens").pluck().get()).toBe(0);
     expect(manifest.databases[0].rowCounts.tokens).toBeUndefined();
     expect(output.pragma("user_version", { simple: true })).toBe(17);
-    expect(statSync(paths.artifact).mode & 0o777).toBe(0o755);
-    expect(statSync(join(paths.artifact, SEEDED_STATE_MANIFEST)).mode & 0o777).toBe(0o444);
-    expect(statSync(join(paths.artifact, "omnesis.db")).mode & 0o777).toBe(0o444);
+    expect(statSync(paths.artifact).isDirectory()).toBe(true);
+    if (process.platform !== "win32") expect(statSync(paths.artifact).mode & 0o777).toBe(0o755);
+    expect(statSync(join(paths.artifact, SEEDED_STATE_MANIFEST)).mode & 0o222).toBe(0);
+    expect(statSync(join(paths.artifact, "omnesis.db")).mode & 0o222).toBe(0);
     output.close();
   });
 
@@ -868,7 +991,7 @@ describe("seeded-state artifacts", () => {
       ]),
       projected.artifact,
     );
-    const output = new Database(join(projected.artifact, "omnesis.db"), { readonly: true });
+    const output = openFixtureDatabase(join(projected.artifact, "omnesis.db"), { readonly: true });
     const device = output.prepare("SELECT * FROM devices").get();
     expect(output.prepare("SELECT COUNT(*) FROM devices").pluck().get()).toBe(1);
     expect(device.name).toBe("Fictional collector");
@@ -923,8 +1046,18 @@ describe("seeded-state artifacts", () => {
     expect(readFileSync(join(paths.state, SEEDED_STATE_MARKER), "utf8")).toBe(
       `${options.expectedManifestSha256}\n`,
     );
-    expect(statSync(paths.state).mode & 0o777).toBe(0o700);
-    expect(statSync(join(paths.state, "omnesis.db")).mode & 0o777).toBe(0o600);
+    if (process.platform === "win32") {
+      expect(inspectWindowsPrivatePathSync(paths.state, "directory").private).toBe(true);
+      expect(inspectWindowsPrivatePathSync(join(paths.state, "omnesis.db"), "file").private).toBe(
+        true,
+      );
+      expect(
+        inspectWindowsPrivatePathSync(join(paths.state, SEEDED_STATE_MARKER), "file").private,
+      ).toBe(true);
+    } else {
+      expect(statSync(paths.state).mode & 0o777).toBe(0o700);
+      expect(statSync(join(paths.state, "omnesis.db")).mode & 0o777).toBe(0o600);
+    }
 
     const occupied = join(paths.root, "occupied");
     mkdirSync(occupied);

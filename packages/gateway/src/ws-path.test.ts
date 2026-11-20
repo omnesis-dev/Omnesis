@@ -3,7 +3,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { expect, test, vi } from "vitest";
 import { makeCommand, makeEvent, PROTOCOL_VERSION } from "@omnesis/core";
 import { SCOPE_ADMIN, SCOPE_READ } from "@omnesis/types";
 import { createDatabase } from "./db.js";
@@ -12,68 +12,6 @@ import { createToken } from "./data/repositories/TokenRepository.js";
 import { directWriteGate } from "./write-gate.js";
 import { createServer } from "./server.js";
 import { DeviceWsServer } from "./ws.js";
-
-beforeEach(() => vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1"));
-afterEach(() => vi.unstubAllEnvs());
-
-test("without the cloud relay opt-in no path is recorded, listed or treated as a known event", async () => {
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "");
-  const dir = mkdtempSync(join(tmpdir(), "omnesis-path-off-"));
-  const path = join(dir, "gateway.sqlite");
-  const db = createDatabase(path);
-  const device = createDevice(db, { name: "Fictional paired CLI", kind: "cli" });
-  const token = createToken(db, device.id, [SCOPE_READ]);
-  const admin = createToken(db, device.id, [SCOPE_ADMIN]);
-  const gate = directWriteGate(db);
-  const touch = vi.spyOn(gate, "touchDevice");
-  const events = vi.fn();
-  const server = new DeviceWsServer({ db, writeGate: gate, onDeviceEvent: events });
-  const app = createServer(db, path, { wsServer: server });
-  const socket = { send: vi.fn(), close: vi.fn() };
-  try {
-    server.onOpen(socket, "fictional-peer", {
-      tokenId: token.id,
-      deviceId: device.id,
-      scopes: [SCOPE_READ],
-      connectionPath: "relay",
-    });
-    server.onMessage(
-      socket,
-      JSON.stringify(makeCommand("hello", { protocolVersion: PROTOCOL_VERSION })),
-    );
-    await vi.waitFor(() => expect(server.isConnected(device.id)).toBe(true));
-    const touches = touch.mock.calls.length;
-    const event = makeEvent("connection.path", { path: "local" });
-    server.onMessage(socket, JSON.stringify(event));
-    // The event takes the path of any other event: a touch and the gateway's handler.
-    expect(touch.mock.calls.length).toBe(touches + 1);
-    expect(events).toHaveBeenCalledWith(
-      expect.objectContaining({ deviceId: device.id }),
-      expect.objectContaining({ type: "connection.path" }),
-    );
-    expect(server.connectionPath(device.id)).toBeUndefined();
-    expect(
-      (
-        await app.request("/whoami", {
-          headers: { authorization: `Bearer ${token.token}`, "x-omnesis-connection-path": "local" },
-        })
-      ).status,
-    ).toBe(200);
-    const listing = await app.request("/admin/devices", {
-      headers: { authorization: `Bearer ${admin.token}` },
-    });
-    const row = (await listing.json()).items.find((item: { id: string }) => item.id === device.id);
-    expect(row).not.toHaveProperty("connectionPath");
-    // The observations were dropped, not merely hidden.
-    vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
-    expect(server.connectionPath(device.id)).toBeUndefined();
-  } finally {
-    server.onClose(socket);
-    server.stop();
-    db.close();
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
 
 test("advisory path updates require an authenticated session, cannot target other devices, and never change scopes", async () => {
   const dir = mkdtempSync(join(tmpdir(), "omnesis-path-ws-"));

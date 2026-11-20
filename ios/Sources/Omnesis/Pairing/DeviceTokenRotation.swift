@@ -37,7 +37,6 @@ struct DeviceTokenRotator: Sendable {
     static let interval: TimeInterval = 30 * 24 * 60 * 60
     static let retryInterval: TimeInterval = 24 * 60 * 60
 
-    var enabled = CloudRelayFeature.enabled
     var store: any PairingStore = DeviceEnrollmentKey.sharedStore()
     var deviceKey: @Sendable () throws -> any DeviceEnrollmentSigning = { try DeviceEnrollmentKey.loadOrCreate() }
     var makeTransport: @Sendable (_ spkiFingerprint: String, _ host: String) -> any CloudPairingTransport = { spki, host in
@@ -49,7 +48,7 @@ struct DeviceTokenRotator: Sendable {
 
     /// True once the new token is stored in place of the old one.
     func rotateIfDue(pairing: Pairing) async -> Bool {
-        guard enabled, pairing.tlsMode == .pinnedKeyStrict, let spki = pairing.spkiFingerprint, let host = pairing.url.host,
+        guard pairing.tlsMode == .pinnedKeyStrict, let spki = pairing.spkiFingerprint, let host = pairing.url.host,
               var record = DeviceEnrollmentRecord.load(store), record.origin == pairing.url.absoluteString,
               record.spkiFingerprint == spki, isDue(record) else { return false }
         record.attemptedAt = now()
@@ -141,9 +140,8 @@ extension AppStore {
         await rotateDeviceTokenIfDue()
     }
 
-    /// Off the cloud build flag this returns before touching the Keychain.
     func rotateDeviceTokenIfDue() async {
-        guard CloudRelayFeature.enabled, let pairing else { return }
+        guard let pairing else { return }
         let service = pairingCoord.service
         let rotator = DeviceTokenRotator(replaceToken: { token, tokenId in
             try service.replaceToken(expected: pairing, token: token, tokenId: tokenId)

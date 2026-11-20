@@ -38,13 +38,9 @@ struct DevicesView: View {
     @State private var tailscaleNotified = false
     @State private var repairTarget: DeviceRecord?
 
-    /// Every sign-in enrollment surface below sits behind the cloud build flag.
-    private let cloudRelayEnabled: Bool
-
     /// The kinds of waiting device this phone reviews from Waiting for your OK.
     private var approvalKinds: DeviceApprovalKinds {
         DeviceApprovalKinds(
-            cloudRelayEnabled: cloudRelayEnabled,
             tailscaleEmbed: store.statusSnapshot?.tailscaleEmbed == true || tailscaleNotified,
             scopes: store.pairing?.scopes
         )
@@ -56,7 +52,6 @@ struct DevicesView: View {
 
     init() {
         self.isPreview = false
-        self.cloudRelayEnabled = CloudRelayFeature.enabled
     }
 
     #if DEBUG
@@ -66,15 +61,13 @@ struct DevicesView: View {
         previewDevices: [DeviceRecord],
         previewTokens: [String: [TokenRecord]] = [:],
         previewLoading: Bool = false,
-        previewError: Error? = nil,
-        previewCloudRelayEnabled: Bool = false
+        previewError: Error? = nil
     ) {
         self._devices = State(initialValue: previewDevices)
         self._tokensByDevice = State(initialValue: previewTokens)
         self._loading = State(initialValue: previewLoading)
         self._loadError = State(initialValue: previewError)
         self.isPreview = true
-        self.cloudRelayEnabled = previewCloudRelayEnabled
     }
     #endif
 
@@ -113,12 +106,12 @@ struct DevicesView: View {
             .task { await load() }
             .task(id: PendingPairingRequests.shared.openRequests) { await openRequestedPairingRequests() }
             .sheet(isPresented: $showPairSheet) {
-                PairDeviceView(cloudRelayEnabled: cloudRelayEnabled)
+                PairDeviceView()
                     .environment(store)
                     .onDisappear { Task { await load() } }
             }
             .sheet(item: $repairTarget) { device in
-                PairDeviceView(repairTarget: device, cloudRelayEnabled: cloudRelayEnabled)
+                PairDeviceView(repairTarget: device)
                     .environment(store)
                     .onDisappear { Task { await load() } }
             }
@@ -144,8 +137,7 @@ struct DevicesView: View {
                 onRevokeToken: { tokenId, deviceId in try await revokeToken(tokenId, deviceId: deviceId) },
                 onRevokeDevice: { device in try await revokeDevice(device) },
                 onForgetDevice: { device in try await forgetDevice(device) },
-                onRepairDevice: { device in repairTarget = device },
-                cloudRelayEnabled: cloudRelayEnabled
+                onRepairDevice: { device in repairTarget = device }
             )
         }
     }
@@ -265,7 +257,6 @@ struct DevicesList: View {
     /// Forget a revoked device for good; returns the banner text or throws.
     var onForgetDevice: (DeviceRecord) async throws -> String = { _ in "" }
     var onRepairDevice: (DeviceRecord) -> Void = { _ in }
-    var cloudRelayEnabled = CloudRelayFeature.enabled
 
     @State private var notice: Notice?
     /// Other paired devices are collapsed by default to keep the list compact.
@@ -315,7 +306,6 @@ struct DevicesList: View {
         onRevokeDevice: @escaping (DeviceRecord) async throws -> String = { _ in "" },
         onForgetDevice: @escaping (DeviceRecord) async throws -> String = { _ in "" },
         onRepairDevice: @escaping (DeviceRecord) -> Void = { _ in },
-        cloudRelayEnabled: Bool = CloudRelayFeature.enabled,
         startOtherExpanded: Bool = false,
         seededFailure: SeededFailure? = nil
     ) {
@@ -327,7 +317,6 @@ struct DevicesList: View {
         self.onRevokeDevice = onRevokeDevice
         self.onForgetDevice = onForgetDevice
         self.onRepairDevice = onRepairDevice
-        self.cloudRelayEnabled = cloudRelayEnabled
         self._showOther = State(initialValue: startOtherExpanded)
         self._notice = State(
             initialValue: seededFailure.map { Notice(ok: false, text: $0.text, deviceId: $0.deviceId) }
@@ -429,8 +418,7 @@ struct DevicesList: View {
             onRevokeToken: { tokenId in
                 revokeTokenConfirm = TokenRef(tokenId: tokenId, deviceId: device.id)
             },
-            mutationsDisabled: busy,
-            cloudRelayEnabled: cloudRelayEnabled
+            mutationsDisabled: busy
         )
     }
 
@@ -703,8 +691,7 @@ struct GatewayPairingRequestsButton: View {
     NavigationStack {
         DevicesView(
             previewDevices: PreviewMocks.devicesWithSignInJoins,
-            previewTokens: PreviewMocks.deviceTokens,
-            previewCloudRelayEnabled: true
+            previewTokens: PreviewMocks.deviceTokens
         )
     }
     .environment(AppStore.preview())

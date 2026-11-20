@@ -10,6 +10,8 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { describe, expect, test, beforeEach, afterEach } from "vitest";
 
 import { SCOPE_WRITE_ALL, SCOPE_READ, type Scope } from "@omnesis/types";
@@ -58,7 +60,7 @@ function post(
 const enc = (s: string) => new TextEncoder().encode(s);
 
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-ocr-http-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-ocr-http-${randomUUID()}.db`);
   db = createDatabase(dbPath);
   WRITE_TOKEN = mintToken([SCOPE_WRITE_ALL]);
   READ_TOKEN = mintToken([SCOPE_READ]);

@@ -33,32 +33,41 @@ function plain(value: unknown, fallback = "unknown"): string {
     : fallback;
 }
 
-/**
- * Where to ask for an account when the relay's accounts are invite-only. The gateway checked it;
- * it is checked again here because it is printed for a person to open.
- */
-export function requestAccessUrl(status: { signup?: unknown } | undefined): string | undefined {
+/** Whether the gateway's relay creates new accounts only with an invite. */
+export function signupInviteOnly(status: { signup?: unknown } | undefined): boolean {
   const signup: unknown = status?.signup;
-  if (!signup || typeof signup !== "object") return undefined;
-  const { inviteOnly, requestAccessUrl: value } = signup as Record<string, unknown>;
-  if (inviteOnly !== true || typeof value !== "string" || value.length > 2048) return undefined;
+  return Boolean(
+    signup &&
+    typeof signup === "object" &&
+    (signup as { inviteOnly?: unknown }).inviteOnly === true,
+  );
+}
+
+/** A printable HTTPS security-check URL; no terminal controls or arbitrary navigation. */
+export function dnsVerificationUrl(value: unknown): string | undefined {
+  if (typeof value !== "string" || value.length > 16_384) return undefined;
   try {
     const url = new URL(value);
-    return url.protocol === "https:" &&
-      !url.username &&
-      !url.password &&
-      /^[\x21-\x7e]+$/.test(url.href)
-      ? url.href
-      : undefined;
+    if (
+      url.protocol !== "https:" ||
+      url.username ||
+      url.password ||
+      url.hash ||
+      url.pathname !== "/_dns/v2/enroll" ||
+      url.searchParams.getAll("ticket").length !== 1 ||
+      !url.searchParams.get("ticket") ||
+      [...url.searchParams.keys()].some((key) => key !== "ticket")
+    )
+      return undefined;
+    return url.href;
   } catch {
     return undefined;
   }
 }
 
 /** One line for a person about to create an account on an invite-only relay. */
-export function inviteOnlyLine(url: string): string {
-  return `Omnesis accounts are invite-only for now. Request access at ${url} (you can create your account once it's approved).`;
-}
+export const INVITE_ONLY_LINE =
+  "Omnesis accounts are invite-only for now. To create one, pass the invite link you were sent: omnesis cloud connect --invite <link>. An account you already have needs no invite.";
 
 const SIGN_IN_SOURCES: Record<string, string> = {
   "link-page": "signed in on the Omnesis account page",
@@ -157,6 +166,14 @@ export function formatCloudStatus(status: CloudStatus, version?: string): string
   const signIns = trustedSignInLines(status);
   const rows: [string, string][] = [
     ["Gateway version", plain(version)],
+    ...(dnsVerificationUrl(status.connect?.verification?.url)
+      ? [
+          ["Security check", dnsVerificationUrl(status.connect?.verification?.url)!] as [
+            string,
+            string,
+          ],
+        ]
+      : []),
     ["Error codes", errors(status).join(", ") || "none"],
     ...(status.notice ? [["Notice", plain(status.notice)] as [string, string]] : []),
     ["Remote access", status.enabled ? "on" : "off"],
@@ -215,13 +232,8 @@ export function formatCloudStatus(status: CloudStatus, version?: string): string
           : "not reported",
     ],
     ["Trusted sign-ins", String(signIns.length)],
-    ...(requestAccessUrl(status)
-      ? [
-          ["Sign-up", `invite-only, request access at ${requestAccessUrl(status)}`] as [
-            string,
-            string,
-          ],
-        ]
+    ...(signupInviteOnly(status)
+      ? [["Sign-up", "invite-only: a new account needs an invite link"] as [string, string]]
       : []),
     ...signIns.map((line): [string, string] => ["", line]),
     ...(status.recovery

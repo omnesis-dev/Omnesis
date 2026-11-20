@@ -9,8 +9,6 @@ import {
   createLogger,
   devModeEnabled,
   experimentalVisible,
-  cloudRelayEnabled,
-  tailscaleEmbedEnabled,
   experimentalEnabled,
   materializeConfigSecrets,
   CAPABILITY_ROLES,
@@ -56,6 +54,8 @@ type Db = Database.Database;
 const log = createLogger("gateway:http").child("routes:status");
 
 export interface StatusRoutesDeps {
+  /** Whether this installation has the gateway's own Tailscale device (its helper program). */
+  tailscaleEmbed?: boolean;
   getLabStatus?: () => { brain: boolean; tasks: boolean; watches: boolean };
   db: Db;
   dbPath?: string;
@@ -111,6 +111,7 @@ export interface StatusRoutesDeps {
    * reports `diskUsage: null` and clients fall back to `dbSizeBytes`.
    */
   getDiskUsage?: () => DiskUsageSnapshot | null;
+  getStoragePressure?: () => import("../../storage/pressure.js").StoragePressureSnapshot | null;
 }
 
 /**
@@ -192,9 +193,7 @@ export function mountStatusRoutes(app: RouteApp, deps: StatusRoutesDeps): void {
       status: "ok",
       version: GATEWAY_VERSION,
       experimental: experimentalVisible(),
-      // Present only with the opt-in, so a gateway without it answers as before.
-      ...(cloudRelayEnabled() ? { cloudRelay: true } : {}),
-      ...(tailscaleEmbedEnabled() ? { tailscaleEmbed: true } : {}),
+      ...(deps.tailscaleEmbed ? { tailscaleEmbed: true } : {}),
       capabilities: {
         sourceContract: SOURCE_CONTRACT_WIRE_RANGE,
         ...GENERAL_CAPABILITIES,
@@ -558,6 +557,7 @@ export function mountStatusRoutes(app: RouteApp, deps: StatusRoutesDeps): void {
       // `diskUsage`, which is the whole footprint with its breakdown.
       dbSizeBytes,
       diskUsage: getDiskUsage?.() ?? null,
+      storagePressure: deps.getStoragePressure?.() ?? null,
       uptime: Math.floor(process.uptime()),
       configHealth,
       modelHealth: deps.getModelHealth?.() ?? { warnings: [] },
@@ -569,9 +569,7 @@ export function mountStatusRoutes(app: RouteApp, deps: StatusRoutesDeps): void {
       // read this to decide whether to surface experimental features —
       // experimental sources, Watches, Briefs, and other gated tools. Off by default.
       experimental: experimentalVisible(),
-      // Present only with the opt-in, so a gateway without it answers as before.
-      ...(cloudRelayEnabled() ? { cloudRelay: true } : {}),
-      ...(tailscaleEmbedEnabled() ? { tailscaleEmbed: true } : {}),
+      ...(deps.tailscaleEmbed ? { tailscaleEmbed: true } : {}),
       // Gateway-wide developer mode (OMNESIS_DEV_MODE). Separate from
       // experimental. Clients read this to reveal the "developer annotations"
       // capture affordance (portal ⚑ button, mobile shake-to-annotate). Off by

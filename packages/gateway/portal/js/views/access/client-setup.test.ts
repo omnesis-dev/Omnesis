@@ -132,7 +132,7 @@ describe("agentSetups", () => {
     const needsPublic = agentSetups({ resource: RESOURCE })
       .filter((entry) => entry.needsPublicAddress)
       .map((entry) => entry.id);
-    expect(needsPublic).toEqual(["chatgpt", "claude-apps"]);
+    expect(needsPublic).toEqual(["chatgpt", "claude-apps", "grok-bot"]);
     expect(agent("chatgpt").commands).toEqual([]);
     expect(agent("claude-apps").commands).toEqual([]);
   });

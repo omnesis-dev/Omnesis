@@ -4,18 +4,18 @@
 /**
  * The gateway's own tailnet device: the owner's controls (admin routes) and
  * the routes a collector on the owner's tailnet uses to join without a
- * pairing code. None of them exist without OMNESIS_TAILSCALE_EMBED_ENABLED=1.
+ * pairing code. None of them exist on an installation without the helper program.
  *
  * Every owner action that loosens the gateway asks for a step-up where the
  * gateway requires one (see step-up.ts): turning the device on or signing it
  * in (whoever completes the sign-in chooses the tailnet), opening the public
  * address, joining automatically, and approving a request. Turning it off,
  * signing it out, asking first, switching joining off and denying never do.
- * Step-up applies only where the cloud relay opt-in and a confirmed passkey
- * make the gateway require it; otherwise these guards pass every request.
+ * Step-up applies only once the owner confirmed a passkey on a linked Omnesis
+ * account; otherwise these guards pass every request.
  */
 
-import { assertNever, tailscaleEmbedEnabled, tailscaleJoinPolicySchema } from "@omnesis/core";
+import { assertNever, tailscaleJoinPolicySchema } from "@omnesis/core";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod";
 import { IpRateLimiter } from "../../rate-limit.js";
@@ -79,7 +79,7 @@ function tooMany(c: Context<AppEnv>, error: string, retryAfter: string) {
 }
 
 export function mountTailscaleRoutes(app: RouteApp, service?: TailscaleEmbedService): void {
-  if (!tailscaleEmbedEnabled() || !service) return;
+  if (!service) return;
   const bounded = bodyLimit({ maxSize: 16_384 });
   const noStore: Parameters<RouteApp["use"]>[1] = async (c, next) => {
     c.header("Cache-Control", "no-store");

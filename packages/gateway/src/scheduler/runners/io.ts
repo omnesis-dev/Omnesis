@@ -19,6 +19,7 @@ import { Worker } from "node:worker_threads";
 import { createLogger } from "@omnesis/core";
 import { TaskExecutionError } from "../types.js";
 import { DEFAULT_BACKGROUND_WORKER_NICE } from "../../workers/worker-priority.js";
+import { shutdownWorker } from "../../workers/shutdown-worker.js";
 import type { TaskRunner } from "../runner.js";
 import type { Task, TaskContext, TaskOutcome } from "../types.js";
 import type { IoInit, IoToMain, MainToIo } from "../../workers/protocol.js";
@@ -42,6 +43,7 @@ export interface IoTaskRunnerOptions {
   cacheSizeBytes?: number;
   /** The watch journal the `ioJournalHandlers` ops read, when the install has one. */
   watchJournal?: { path: string; keyHex?: string };
+  indexStore?: { path: string; keyHex?: string };
   /** Test seam: override worker construction. Defaults to `new Worker`. */
   createWorker?: IoWorkerFactory;
 }
@@ -75,7 +77,6 @@ interface WorkerSlot {
   worker: Worker;
   lastHeartbeat: number;
   heartbeatCheck: ReturnType<typeof setInterval> | null;
-  shutdownResolve: (() => void) | null;
   unresponsiveSince: number | null;
   /** Id of the call this worker is currently processing, or null if idle. */
   currentId: number | null;
@@ -97,16 +98,23 @@ export class IoTaskRunner implements TaskRunner {
   /** Calls submitted while every worker was busy — drained as slots free. */
   private waiting: QueuedCall[] = [];
   private disposed = false;
+  private disposePromise: Promise<void> | null = null;
   private readonly createWorker: IoWorkerFactory;
   private readonly opts: Required<
     Omit<
       IoTaskRunnerOptions,
-      "concurrency" | "gatewayDbKeyHex" | "cacheSizeBytes" | "createWorker" | "watchJournal"
+      | "concurrency"
+      | "gatewayDbKeyHex"
+      | "cacheSizeBytes"
+      | "createWorker"
+      | "watchJournal"
+      | "indexStore"
     >
   > & {
     gatewayDbKeyHex: string | undefined;
     cacheSizeBytes: number | undefined;
     watchJournal: { path: string; keyHex?: string } | undefined;
+    indexStore: { path: string; keyHex?: string } | undefined;
   };
 
   constructor(opts: IoTaskRunnerOptions) {
@@ -122,14 +130,17 @@ export class IoTaskRunner implements TaskRunner {
       backgroundWorkerNice: opts.backgroundWorkerNice ?? DEFAULT_BACKGROUND_WORKER_NICE,
       cacheSizeBytes: opts.cacheSizeBytes,
       watchJournal: opts.watchJournal,
+      indexStore: opts.indexStore,
     };
     this.readyPromise = new Promise<void>((resolve, reject) => {
       this.resolveReady = resolve;
       this.rejectReady = reject;
     });
+    void this.readyPromise.catch(() => {});
   }
 
   async start(): Promise<void> {
+    if (this.disposed) throw new Error("io task runner disposed");
     if (this.slots.length > 0) return this.readyPromise;
 
     for (let i = 0; i < this.concurrency; i++) {
@@ -141,7 +152,6 @@ export class IoTaskRunner implements TaskRunner {
         worker,
         lastHeartbeat: 0,
         heartbeatCheck: null,
-        shutdownResolve: null,
         unresponsiveSince: null,
         currentId: null,
         dead: false,
@@ -161,7 +171,6 @@ export class IoTaskRunner implements TaskRunner {
         }
         slot.dead = true;
         this.rejectInflightForWorker(slot, new Error(`io worker exited code=${code}`));
-        slot.shutdownResolve?.();
         this.drainWaiting();
       });
 
@@ -173,6 +182,7 @@ export class IoTaskRunner implements TaskRunner {
         ...(this.opts.gatewayDbKeyHex ? { gatewayDbKeyHex: this.opts.gatewayDbKeyHex } : {}),
         ...(this.opts.cacheSizeBytes != null ? { cacheSizeBytes: this.opts.cacheSizeBytes } : {}),
         ...(this.opts.watchJournal ? { watchJournal: this.opts.watchJournal } : {}),
+        ...(this.opts.indexStore ? { indexStore: this.opts.indexStore } : {}),
       };
       worker.postMessage(init);
 
@@ -193,31 +203,32 @@ export class IoTaskRunner implements TaskRunner {
     await this.readyPromise;
   }
 
-  async dispose(): Promise<void> {
-    if (this.disposed) return;
+  dispose(): Promise<void> {
+    if (this.disposePromise) return this.disposePromise;
     this.disposed = true;
+    this.rejectReady(new Error("io task runner disposed"));
+    this.disposePromise = this.shutdownWorkers();
+    return this.disposePromise;
+  }
 
-    const shutdowns = this.slots.map((slot) => {
-      if (slot.heartbeatCheck) clearInterval(slot.heartbeatCheck);
-      const p = new Promise<void>((resolve) => {
-        slot.shutdownResolve = resolve;
-      });
-      slot.worker.postMessage({ type: "shutdown" } satisfies MainToIo);
-      const fallback = setTimeout(() => {
-        log.warn(`io worker ${slot.index} shutdown timed out — terminating`);
-        try {
-          slot.worker.terminate();
-        } catch {
-          /* best-effort */
-        }
-        slot.shutdownResolve?.();
-      }, 5_000);
-      fallback.unref?.();
-      return p.then(() => clearTimeout(fallback));
-    });
-
-    await Promise.all(shutdowns);
-    this.rejectAllInflight(new Error("io workers shut down"));
+  private async shutdownWorkers(): Promise<void> {
+    try {
+      const outcomes = await Promise.allSettled(
+        this.slots.map((slot) => {
+          if (slot.heartbeatCheck) clearInterval(slot.heartbeatCheck);
+          const worker = slot.worker;
+          return shutdownWorker(
+            worker,
+            () => worker.postMessage({ type: "shutdown" } satisfies MainToIo),
+            () => log.warn(`io worker ${slot.index} shutdown timed out — terminating`),
+          );
+        }),
+      );
+      const failure = outcomes.find((result) => result.status === "rejected");
+      if (failure?.status === "rejected") throw failure.reason;
+    } finally {
+      this.rejectAllInflight(new Error("io workers shut down"));
+    }
   }
 
   async exec<TArgs, TResult>(
@@ -322,7 +333,6 @@ export class IoTaskRunner implements TaskRunner {
         break;
       }
       case "shutdownComplete":
-        slot.shutdownResolve?.();
         break;
     }
   }

@@ -232,6 +232,12 @@ describe("AppleIMessageSource", () => {
   let testDb: Db;
   let provider: AppleProvider;
   let source: AppleIMessageSource;
+  const instances = new Set<AppleIMessageSource>();
+  function createSource(...args: ConstructorParameters<typeof AppleIMessageSource>) {
+    const instance = new AppleIMessageSource(...args);
+    instances.add(instance);
+    return instance;
+  }
 
   beforeEach(async () => {
     tmpDir = mkdtempSync(join(tmpdir(), "apple-imessage-test-"));
@@ -252,7 +258,7 @@ describe("AppleIMessageSource", () => {
     });
     await provider.initialize();
     await provider.authenticate();
-    source = new AppleIMessageSource(provider, {
+    source = createSource(provider, {
       sourceId: "apple-imessage:test@icloud.com",
       providerId: "apple:test@icloud.com",
     });
@@ -260,6 +266,8 @@ describe("AppleIMessageSource", () => {
 
   afterEach(async () => {
     vi.useRealTimers();
+    for (const instance of instances) instance.dispose();
+    instances.clear();
     testDb.close();
     await provider.disconnect();
     rmSync(tmpDir, { recursive: true, force: true });
@@ -429,7 +437,7 @@ describe("AppleIMessageSource", () => {
       pages: 1,
       truncated: false,
     });
-    const firstSource = new AppleIMessageSource(provider, {
+    const firstSource = createSource(provider, {
       sourceId: "apple-imessage:test@icloud.example",
       providerId: "apple:test@icloud.example",
       attachmentConfig: resolveAttachmentConfig({ extractAttachments: true }),
@@ -438,7 +446,7 @@ describe("AppleIMessageSource", () => {
     try {
       await replicaProvider.initialize();
       await replicaProvider.authenticate();
-      const replicaSource = new AppleIMessageSource(replicaProvider, {
+      const replicaSource = createSource(replicaProvider, {
         sourceId: "apple-imessage:test@icloud.example",
         providerId: "apple:test@icloud.example",
         attachmentConfig: resolveAttachmentConfig({ extractAttachments: true }),
@@ -520,6 +528,31 @@ describe("AppleIMessageSource", () => {
     expect(r2.documents[0].content).toContain("Second");
   });
 
+  async function removeChatFixtureForReplacement(path: string): Promise<void> {
+    if (process.platform === "win32") {
+      // Windows refuses replacement while SQLite retains its reader. Verify
+      // the refused operation preserves that reader and all original rows,
+      // then release ownership before exercising replacement/recovery.
+      const retained = provider.getIMessageDb();
+      expect(retained).not.toBeNull();
+      const rows = retained!.prepare("SELECT ROWID, text FROM message ORDER BY ROWID").all();
+      let refusal: unknown;
+      try {
+        rmSync(path, { force: true });
+      } catch (error) {
+        refusal = error;
+      }
+      expect(refusal).toMatchObject({ code: expect.stringMatching(/^(?:EPERM|EBUSY|EACCES)$/) });
+      expect(retained!.open).toBe(true);
+      expect(retained!.prepare("SELECT ROWID, text FROM message ORDER BY ROWID").all()).toEqual(
+        rows,
+      );
+      await provider.disconnect();
+      expect(retained!.open).toBe(false);
+    }
+    rmSync(path, { force: true });
+  }
+
   test("re-bootstraps when chat.db is rebuilt and ROWIDs regress", async () => {
     const dbPath = join(tmpDir, "chat.db");
     insertMessage(testDb, 5, 1, {
@@ -532,7 +565,7 @@ describe("AppleIMessageSource", () => {
     expect((first.cursor as { lastRowId: number }).lastRowId).toBe(5);
 
     testDb.close();
-    rmSync(dbPath, { force: true });
+    await removeChatFixtureForReplacement(dbPath);
     testDb = createTestDb(dbPath);
     insertHandle(testDb, 1, "+14085550123");
     insertHandle(testDb, 2, "friend@example.com");
@@ -566,7 +599,7 @@ describe("AppleIMessageSource", () => {
     expect((first.cursor as { lastRowId: number }).lastRowId).toBe(5);
 
     testDb.close();
-    rmSync(dbPath, { force: true });
+    await removeChatFixtureForReplacement(dbPath);
     testDb = createTestDb(dbPath);
     insertHandle(testDb, 1, "+14085550123");
     insertChat(testDb, 1, "+14085550123", { style: 43, handleIds: [1] });
@@ -651,7 +684,7 @@ describe("AppleIMessageSource", () => {
       insertAudioMessage(audioPath, { uti: "com.apple.coreaudio-format" });
 
       const transcribeAudio = vi.fn(async () => ({ text: "Back by six", durationSec: 7 }));
-      const src = new AppleIMessageSource(provider, {
+      const src = createSource(provider, {
         sourceId: "apple-imessage:test@icloud.com",
         providerId: "apple:test@icloud.com",
         transcribeAudio,
@@ -672,7 +705,7 @@ describe("AppleIMessageSource", () => {
       insertAudioMessage(audioPath);
 
       const transcribeAudio = vi.fn(async () => ({ text: "Running ten late", durationSec: 42 }));
-      const src = new AppleIMessageSource(provider, {
+      const src = createSource(provider, {
         sourceId: "apple-imessage:test@icloud.com",
         providerId: "apple:test@icloud.com",
         transcribeAudio,
@@ -698,7 +731,7 @@ describe("AppleIMessageSource", () => {
       insertAudioMessage(audioPath);
       testDb.prepare("UPDATE message SET is_from_me = 1 WHERE ROWID = 1").run();
       const transcribeAudio = vi.fn(async () => ({ text: "captured speech" }));
-      const src = new AppleIMessageSource(provider, {
+      const src = createSource(provider, {
         sourceId: "apple-imessage:fixture@example.org",
         providerId: "apple:fixture@example.org",
         transcribeAudio,
@@ -733,7 +766,7 @@ describe("AppleIMessageSource", () => {
       const transcribeAudio = vi.fn(async () => ({ text: "cached words", durationSec: 10 }));
 
       // First instance transcribes and persists to the sidecar under tmpDir.
-      const first = new AppleIMessageSource(provider, {
+      const first = createSource(provider, {
         sourceId: "apple-imessage:test@icloud.com",
         providerId: "apple:test@icloud.com",
         transcribeAudio,
@@ -746,7 +779,7 @@ describe("AppleIMessageSource", () => {
 
       // A fresh instance sharing the same configDir hits the sidecar — no
       // second transcriber call, same rendered transcript.
-      const second = new AppleIMessageSource(provider, {
+      const second = createSource(provider, {
         sourceId: "apple-imessage:test@icloud.com",
         providerId: "apple:test@icloud.com",
         transcribeAudio,
@@ -766,7 +799,7 @@ describe("AppleIMessageSource", () => {
       const transcribeAudio = vi.fn<() => Promise<{ text: string; durationSec: number } | null>>(
         async () => null,
       );
-      const src = new AppleIMessageSource(provider, {
+      const src = createSource(provider, {
         sourceId: "apple-imessage:test@icloud.com",
         providerId: "apple:test@icloud.com",
         transcribeAudio,
@@ -821,7 +854,7 @@ describe("AppleIMessageSource", () => {
       const transcribeAudio = vi.fn(async () => {
         throw new SyncError("transient", "transcription backend unavailable");
       });
-      const src = new AppleIMessageSource(provider, {
+      const src = createSource(provider, {
         sourceId: "apple-imessage:test@icloud.com",
         providerId: "apple:test@icloud.com",
         transcribeAudio,
@@ -863,7 +896,7 @@ describe("AppleIMessageSource", () => {
       const transcribeAudio = vi.fn<AudioTranscribeFn>(async () => {
         throw new AudioUnreadableError();
       });
-      const src = new AppleIMessageSource(provider, {
+      const src = createSource(provider, {
         sourceId: "apple-imessage:test@icloud.com",
         providerId: "apple:test@icloud.com",
         transcribeAudio,
@@ -926,7 +959,7 @@ describe("AppleIMessageSource", () => {
         text: "arrived at last",
         durationSec: 5,
       }));
-      const src = new AppleIMessageSource(provider, {
+      const src = createSource(provider, {
         sourceId: "apple-imessage:test@icloud.com",
         providerId: "apple:test@icloud.com",
         transcribeAudio,
@@ -973,7 +1006,7 @@ describe("AppleIMessageSource", () => {
       insertAudioMessage(audioPath);
       truncateSync(audioPath, MAX_TRANSCRIBE_AUDIO_BYTES + 1);
       const transcribeAudio = vi.fn<AudioTranscribeFn>(async () => ({ text: "never" }));
-      const src = new AppleIMessageSource(provider, {
+      const src = createSource(provider, {
         sourceId: "apple-imessage:test@icloud.com",
         providerId: "apple:test@icloud.com",
         transcribeAudio,
@@ -1018,7 +1051,7 @@ describe("AppleIMessageSource", () => {
       const transcribeAudio = vi.fn<AudioTranscribeFn>(async () => {
         throw new AudioRejectedError("too-large", "too large");
       });
-      const src = new AppleIMessageSource(provider, {
+      const src = createSource(provider, {
         sourceId: "apple-imessage:test@icloud.com",
         providerId: "apple:test@icloud.com",
         transcribeAudio,
@@ -1048,7 +1081,7 @@ describe("AppleIMessageSource", () => {
       const transcribeAudio = vi.fn<AudioTranscribeFn>(async () => {
         throw new AudioRejectedError("refused", "the gateway refused the audio (400)");
       });
-      const src = new AppleIMessageSource(provider, {
+      const src = createSource(provider, {
         sourceId: "apple-imessage:test@icloud.com",
         providerId: "apple:test@icloud.com",
         transcribeAudio,
@@ -1073,7 +1106,7 @@ describe("AppleIMessageSource", () => {
       const transcribeAudio = vi.fn<AudioTranscribeFn>(async () => {
         throw new AudioUnreadableError();
       });
-      const src = new AppleIMessageSource(provider, {
+      const src = createSource(provider, {
         sourceId: "apple-imessage:test@icloud.com",
         providerId: "apple:test@icloud.com",
         transcribeAudio,
@@ -1102,7 +1135,7 @@ describe("AppleIMessageSource", () => {
         date: DATE_2024_03_08_11AM,
       });
       const transcribeAudio = vi.fn(async () => null);
-      const src = new AppleIMessageSource(provider, {
+      const src = createSource(provider, {
         sourceId: "apple-imessage:test@icloud.com",
         providerId: "apple:test@icloud.com",
         transcribeAudio,
@@ -1130,7 +1163,7 @@ describe("AppleIMessageSource", () => {
       // A fresh clip that fails, then the whole chat gone: once the clip is
       // due, the day it named is no longer in the snapshot and is forgotten.
       insertAudioMessage(join(tmpDir, "clip-2.caf"));
-      const again = new AppleIMessageSource(provider, {
+      const again = createSource(provider, {
         sourceId: "apple-imessage:test@icloud.com",
         providerId: "apple:test@icloud.com",
         transcribeAudio,
@@ -1168,7 +1201,7 @@ describe("AppleIMessageSource", () => {
         transferName: "Audio Message.caf",
         totalBytes: 16,
       });
-      const src = new AppleIMessageSource(provider, {
+      const src = createSource(provider, {
         sourceId: "apple-imessage:test@icloud.com",
         providerId: "apple:test@icloud.com",
         transcribeAudio,
@@ -1198,7 +1231,7 @@ describe("AppleIMessageSource", () => {
         text: "should not run for audio",
         truncated: false,
       }));
-      const src = new AppleIMessageSource(provider, {
+      const src = createSource(provider, {
         sourceId: "apple-imessage:test@icloud.com",
         providerId: "apple:test@icloud.com",
         attachmentConfig: resolveAttachmentConfig(undefined, { defaultEnabled: true }),
@@ -1517,7 +1550,7 @@ describe("AppleIMessageSource", () => {
     });
 
     function createAttSource(extractFn?: AttachmentExtractFn) {
-      return new AppleIMessageSource(provider, {
+      return createSource(provider, {
         sourceId: "apple-imessage:test@icloud.com",
         providerId: "apple:test@icloud.com",
         attachmentConfig: resolveAttachmentConfig({ extractAttachments: true }),
@@ -1978,7 +2011,7 @@ describe("AppleIMessageSource", () => {
         date: DATE_2024_03_09_10AM,
       });
 
-      const cutoffSource = new AppleIMessageSource(provider, {
+      const cutoffSource = createSource(provider, {
         sourceId: "apple-imessage:test@icloud.com",
         providerId: "apple:test@icloud.com",
         dataCutoff: "2024-03-09T00:00:00Z",
@@ -2019,7 +2052,7 @@ describe("AppleIMessageSource", () => {
         date: DATE_2024_03_08_11AM,
       });
 
-      const cutoffSource = new AppleIMessageSource(provider, {
+      const cutoffSource = createSource(provider, {
         sourceId: "apple-imessage:test@icloud.com",
         providerId: "apple:test@icloud.com",
         dataCutoff: "2024-03-09T00:00:00Z",
@@ -2048,7 +2081,7 @@ describe("AppleIMessageSource", () => {
         date: DATE_2024_03_09_10AM,
       });
 
-      const cutoffSource = new AppleIMessageSource(provider, {
+      const cutoffSource = createSource(provider, {
         sourceId: "apple-imessage:test@icloud.com",
         providerId: "apple:test@icloud.com",
         dataCutoff: "2024-03-09T00:00:00Z",
@@ -2075,7 +2108,7 @@ describe("AppleIMessageSource", () => {
         date: DATE_2024_03_08_10AM,
       });
 
-      const cutoffSource = new AppleIMessageSource(provider, {
+      const cutoffSource = createSource(provider, {
         sourceId: "apple-imessage:test@icloud.com",
         providerId: "apple:test@icloud.com",
         dataCutoff: "2024-03-09T00:00:00Z",

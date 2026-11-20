@@ -8,8 +8,8 @@
  * whatever the page held. The pause exists so the scan's reads and index
  * writes leave gaps for the rest of the gateway — the writer's commits and
  * checkpoints on omnesis.db, interactive search on index.db, and the CPU an
- * interactive request needs. At a fixed ten documents and half a second it
- * also capped the scan at twenty documents a second, including the pages
+ * interactive request needs. At a fixed pace it also capped the scan at
+ * `pageSize / betweenPageSleep` documents a second, including the pages
  * where every document was already indexed and nothing but a hash comparison
  * was done.
  *

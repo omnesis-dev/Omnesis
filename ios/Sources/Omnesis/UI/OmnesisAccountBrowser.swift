@@ -59,8 +59,8 @@ extension OmnesisAccountModel {
     }
 }
 
-/// The Settings row that opens the Omnesis account screen. It is absent in a build
-/// without cloud connectivity and on a gateway that offers no Omnesis account.
+/// The Settings row that opens the Omnesis account screen. It is absent on a gateway
+/// that offers no Omnesis account.
 @available(iOS 17.0, *)
 struct OmnesisAccountSettingsLink: View {
     let model: OmnesisAccountModel
@@ -82,7 +82,7 @@ struct OmnesisAccountSettingsLink: View {
         Form {
             Section("Gateway") {
                 Label("Configure Devices", systemImage: "laptopcomputer.and.iphone")
-                OmnesisAccountSettingsLink(model: OmnesisAccountModel(enabled: true, status: PreviewMocks.cloudRelayConnected))
+                OmnesisAccountSettingsLink(model: OmnesisAccountModel(status: PreviewMocks.cloudRelayConnected))
             }
             .listRowBackground(Theme.bgSecondary)
         }

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 //
-// The gateway's own Tailscale device must be purely additive: with
-// OMNESIS_TAILSCALE_EMBED_ENABLED unset, no screen may change. Its CSS lives in
+// The gateway's own Tailscale device must be purely additive: on a gateway
+// without it, no screen may change. Its CSS lives in
 // one fenced block of style.css, and every selector there must name an element
 // only the Tailscale page renders. A bare `.btn-primary` rule in that block
 // would restyle every page; this test refuses it.

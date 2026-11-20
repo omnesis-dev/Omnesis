@@ -18,6 +18,7 @@
  *   shutdown → shutdownComplete (main side calls worker.terminate())
  */
 
+import { assertNever } from "@omnesis/core";
 import Database from "better-sqlite3";
 import {
   buildFilterCopyBatch,
@@ -27,6 +28,10 @@ import {
   writeFilterCopyBatch,
 } from "../indexer/filter-copy.js";
 import { registerFilterSqlFunctions } from "../access/filter-people.js";
+import {
+  DOCUMENT_PURGE_BATCH_SIZE,
+  purgeDocumentIndexBatch,
+} from "../indexer/document-index-purge.js";
 type Db = Database.Database;
 import { existsSync } from "node:fs";
 import { parentPort } from "node:worker_threads";
@@ -223,7 +228,7 @@ const RATE_HISTORY_MAX_SAMPLES = 200;
 const PENDING_VECTOR_DELETE_BATCH = 512;
 /** How often a graph in memory checks it still has headroom. */
 const GRAPH_GUARD_INTERVAL_MS = 15_000;
-const PENDING_DOCUMENT_PURGE_BATCH = 1;
+const PENDING_DOCUMENT_PURGE_BATCH = DOCUMENT_PURGE_BATCH_SIZE;
 const rateHistory: IndexRateSample[] = [];
 /** Latest user-activity signal from the gateway; see the `pressure` message. */
 let userActive = false;
@@ -239,7 +244,7 @@ type DeferredSourceDelete = {
 };
 type DeferredDocumentDelete = {
   id: number;
-  documentId: string;
+  documentId: string | readonly string[];
   limit: number;
   sourceDeleted: boolean;
 };
@@ -355,9 +360,17 @@ const DISK_SKIP_LOG_THROTTLE_MS = 60_000;
  * the configured floor so the cycle should be skipped. Skipped docs stay
  * pending and the next wake retries once disk frees.
  */
+// Capacity messages are buffered before init, unlike model-swap pause state.
+let storagePressure: { blocked: boolean; validUntil: number } | null = null;
+
 function diskOkForCycle(): boolean {
   if (!state) return false;
-  const { shouldRun, freeBytes } = shouldRunIndexCycle(state.indexDbPath, state.minFreeDiskMb);
+  const { shouldRun, freeBytes } = shouldRunIndexCycle(
+    state.indexDbPath,
+    state.minFreeDiskMb,
+    undefined,
+    storagePressure,
+  );
   if (!shouldRun) {
     const now = Date.now();
     if (now - state.lastDiskSkipLogAt > DISK_SKIP_LOG_THROTTLE_MS) {
@@ -366,7 +379,9 @@ function diskOkForCycle(): boolean {
       log(
         "warn",
         "indexer-worker",
-        `indexing paused: ${freeMb}MB free < ${state.minFreeDiskMb}MB minimum on the index.db volume — skipping cycle`,
+        storagePressure && (storagePressure.blocked || now >= storagePressure.validUntil)
+          ? "indexing paused: gateway storage capacity is blocked or unverified — skipping cycle"
+          : `indexing paused: ${freeMb}MB free < ${state.minFreeDiskMb}MB minimum on the index.db volume — skipping cycle`,
       );
     }
   }
@@ -485,28 +500,14 @@ function drainPendingDocumentPurges(): string | null {
     sourceDeletedOnly: true,
   });
   if (pending.length === 0) return null;
-  const completed: string[] = [];
   try {
-    for (const item of pending) {
-      const result = deleteChunksByDocumentBatch(
-        state.indexDb,
-        item.documentId,
-        64,
-        item.sourceDeleted,
-        { usearch: state.usearchHandle },
-      );
-      if (item.sourceDeleted && result.complete) completed.push(item.documentId);
-    }
-    if (completed.length === 0) return null;
-    const preparedVectorDeletes = preparePendingVectorDeletes(
-      state.indexDb,
-      state.usearchHandle,
-      PENDING_VECTOR_DELETE_BATCH,
+    purgeDocumentIndexBatch(
+      state,
+      pending.map((item) => item.documentId),
+      64,
+      true,
+      false,
     );
-    state.usearchHandle?.save();
-    refreshIndexStats(state.indexDb);
-    completePendingVectorDeletes(state.indexDb, preparedVectorDeletes);
-    completeDocumentIndexPurges(state.indexDb, completed);
     return null;
   } catch (err) {
     const message = `re-applying document-index retention deletion failed: ${
@@ -658,6 +659,7 @@ async function buildEmbedder(init: IndexerInit): Promise<import("../indexer/type
     embed: (texts) => observe(() => embedder.embed(texts)),
     embedQuery: (text) => observe(() => embedder.embedQuery(text)),
     dispose: () => embedder.dispose(),
+    ...(embedder.quiesce ? { quiesce: () => embedder.quiesce!() } : {}),
   };
 }
 
@@ -687,7 +689,38 @@ async function buildRawEmbedder(
   });
 }
 
+let storageWaitWake: (() => void) | null = null;
+
+async function awaitStorageForSemanticBoot(init: IndexerInit): Promise<boolean> {
+  while (
+    !shutdownRequested &&
+    !shouldRunIndexCycle(init.indexDbPath, init.minFreeDiskMb, undefined, storagePressure).shouldRun
+  ) {
+    post({
+      type: "vectorIndex",
+      state: "degraded",
+      reason: "Storage capacity is low or unverified; semantic indexing startup is paused.",
+    });
+    post({ type: "heartbeat", ts: Date.now() });
+    await new Promise<void>((resolve) => {
+      const wake = () => {
+        clearTimeout(timer);
+        storageWaitWake = null;
+        resolve();
+      };
+      const timer = setTimeout(wake, 30_000);
+      storageWaitWake = wake;
+    });
+  }
+  return !shutdownRequested;
+}
+let initialization: Promise<void> | null = null;
+let initializingEmbedder: import("../indexer/types.js").Embedder | null = null;
+let shutdownRequested = false;
+const queryWork = new Set<Promise<void>>();
+
 async function handleInit(init: IndexerInit): Promise<void> {
+  storagePressure = init.storagePressure ?? storagePressure;
   if (state) {
     log("warn", "indexer-worker", "init received twice — ignoring");
     return;
@@ -698,6 +731,16 @@ async function handleInit(init: IndexerInit): Promise<void> {
     const indexDb = openIndexWriteConn(init.indexDbPath, init.indexDbKeyHex);
     registerFilterSqlFunctions(gatewayDb);
     registerFilterSqlFunctions(indexDb);
+    // Cleanup must remain reachable while graph startup is parked for storage.
+    startupIndexResources = { indexDb, usearchHandle: undefined };
+    flushDeferredSourceDeletes();
+    flushDeferredDocumentDeletes();
+    if (!init.lexicalOnly && !(await awaitStorageForSemanticBoot(init))) {
+      indexDb.close();
+      gatewayDb.close();
+      startupIndexResources = null;
+      return;
+    }
     // Detect a model swap that bypassed the runtime config-change path
     // (env-override edits while the gateway is down, same-name file
     // replaced with a different dim, fresh installs whose stamp is
@@ -730,6 +773,7 @@ async function handleInit(init: IndexerInit): Promise<void> {
       // The embedder is built here and reused below; the warm-up is paid once
       // either way.
       warmupEmbedder = await buildEmbedder(init);
+      initializingEmbedder = warmupEmbedder;
       post({ type: "bootProgress", stage: "warmup", progress: 0 });
       await warmupEmbedder.embed(["warmup"]);
       post({ type: "bootProgress", stage: "warmup", progress: 1 });
@@ -776,6 +820,9 @@ async function handleInit(init: IndexerInit): Promise<void> {
         graphFileExisted,
         indexDbKey: init.indexDbKeyHex ? Buffer.from(init.indexDbKeyHex, "hex") : null,
         budget: init.memoryBudget ?? null,
+        canGrow: () =>
+          shouldRunIndexCycle(init.indexDbPath, init.minFreeDiskMb, undefined, storagePressure)
+            .shouldRun,
         pageSize: init.usearchBackfillPageSize,
         checkpointIntervalMs: init.usearchCheckpointIntervalMs,
         ...(backfillHold ? { betweenPages: () => waitForBackfillRelease(backfillHold) } : {}),
@@ -813,12 +860,16 @@ async function handleInit(init: IndexerInit): Promise<void> {
     const source = new DirectDocumentSource(gatewayDb);
     const chunker = new DocumentChunker(init.chunkerChunkSize, init.chunkerOverlap);
     const embedder = init.lexicalOnly ? null : (warmupEmbedder ?? (await buildEmbedder(init)));
+    initializingEmbedder = embedder;
     currentCutoffs = init.cutoffs;
     const walProbe = indexDb.prepare<[], { log: number; checkpointed: number }>(
       "PRAGMA wal_checkpoint(NOOP)",
     );
     const indexer = new Indexer(indexDb, source, chunker, embedder, {
       getCutoff: (doc) => resolveCutoff(doc.sourceId),
+      canGrow: () =>
+        storagePressure === null ||
+        (!storagePressure.blocked && Date.now() < storagePressure.validUntil),
       pageSize: init.indexerPageSize,
       betweenPageSleepMs: init.indexerBetweenPageSleepMs,
       dbWriteBatchSize: init.dbWriteBatchSize,
@@ -925,6 +976,8 @@ async function handleInit(init: IndexerInit): Promise<void> {
       lastDiskSkipLogAt: 0,
     };
     startupIndexResources = null;
+    initializingEmbedder = null;
+    if (shutdownRequested) return;
 
     // A prior worker may have stopped after acknowledging a source deletion
     // but before its trailing purge became durable. Replay that persisted
@@ -988,6 +1041,7 @@ async function handleInit(init: IndexerInit): Promise<void> {
       // low disk — the periodic timers below still arm, so it retries
       // once disk frees and `lastCycleHadWork` stays false (idle cadence).
       if (diskOkForCycle()) {
+        if (graphKeeper && !(await graphKeeper.resumeStorageWork())) return;
         const startMs = Date.now();
         postJobUpdate("indexer.cycle", "started", { trigger: "boot" });
         let result;
@@ -1211,9 +1265,10 @@ async function handleInit(init: IndexerInit): Promise<void> {
     // Release a model the early mismatch warm-up loaded; nothing else holds it
     // once init fails. Guarded on the live state so a failure that lands after
     // the worker adopted the embedder cannot dispose the one it is using.
-    if (warmupEmbedder && state?.embedder !== warmupEmbedder) {
+    if (initializingEmbedder && state?.embedder !== initializingEmbedder) {
       try {
-        await warmupEmbedder.dispose?.();
+        await initializingEmbedder.dispose();
+        initializingEmbedder = null;
       } catch {
         /* disposal is best-effort on an already-failed boot */
       }
@@ -1255,6 +1310,7 @@ async function runIndexCycle(trigger: "timer" | "wake"): Promise<void> {
   postJobUpdate("indexer.cycle", "started", { trigger });
   const result = await runExclusive(async () => {
     try {
+      if (graphKeeper && !(await graphKeeper.resumeStorageWork())) return;
       const preCyclePurgeError = drainPendingSourcePurges();
       if (preCyclePurgeError) {
         throw new Error(`source purge failed: ${preCyclePurgeError}`);
@@ -1364,6 +1420,7 @@ async function runReindexMissingCycle(
   let outcome: ReindexMissingCycleOutcome = { status: "busy" };
   await runExclusive(async () => {
     try {
+      if (graphKeeper && !(await graphKeeper.resumeStorageWork())) return;
       const preCyclePurgeError = drainPendingSourcePurges();
       if (preCyclePurgeError) {
         throw new Error(`source purge failed: ${preCyclePurgeError}`);
@@ -1521,8 +1578,12 @@ async function handleEmbedQuery(id: number, text: string, sentAtMs: number): Pro
   //     Metal/CPU work.
   const recvAtMs = Date.now();
   const ipcInMs = recvAtMs - sentAtMs;
-  if (!state?.embedder) {
-    post({ type: "embedQueryError", id, error: "embedder not ready" });
+  if (shutdownRequested || !state?.embedder) {
+    post({
+      type: "embedQueryError",
+      id,
+      error: shutdownRequested ? "indexer shutting down" : "embedder not ready",
+    });
     return;
   }
   try {
@@ -1655,7 +1716,7 @@ function handleDeleteSourceIndex(id: number, sourceId: string): void {
 
 function handleDeleteDocumentIndexBatch(
   id: number,
-  documentId: string,
+  documentId: string | readonly string[],
   limit: number,
   sourceDeleted: boolean,
 ): void {
@@ -1665,60 +1726,51 @@ function handleDeleteDocumentIndexBatch(
     return;
   }
   try {
-    enqueueDocumentIndexPurge(resources.indexDb, documentId, sourceDeleted);
-    const result = deleteChunksByDocumentBatch(
-      resources.indexDb,
-      documentId,
+    const result = purgeDocumentIndexBatch(
+      resources,
+      typeof documentId === "string" ? [documentId] : documentId,
       limit,
       sourceDeleted,
-      {
-        usearch: resources.usearchHandle,
-      },
+      !!state?.inFlightWork,
     );
-    // A job that read this document before the message arrived can write it
-    // back afterwards. Keep the durable purge pending and make retention retry
-    // rather than unlinking the transcript on a premature "complete".
-    if (state?.inFlightWork) {
-      post({
-        type: "deleteDocumentIndexBatchResult",
-        id,
-        ...result,
-        complete: false,
-      });
-      return;
-    }
-    if (sourceDeleted && result.complete) {
-      const preparedVectorDeletes = preparePendingVectorDeletes(
-        resources.indexDb,
-        resources.usearchHandle,
-        PENDING_VECTOR_DELETE_BATCH,
-      );
-      resources.usearchHandle?.save();
-      refreshIndexStats(resources.indexDb);
-      completePendingVectorDeletes(resources.indexDb, preparedVectorDeletes);
-      completeDocumentIndexPurges(resources.indexDb, [documentId]);
-    }
     post({ type: "deleteDocumentIndexBatchResult", id, ...result });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    log(
-      "error",
-      "indexer-worker",
-      `document-index batch deletion for ${documentId} failed: ${message}`,
-    );
+    log("error", "indexer-worker", `document-index batch deletion failed: ${message}`);
     post({ type: "deleteDocumentIndexBatchError", id, error: message });
   }
 }
 
 async function handleShutdown(): Promise<void> {
+  if (shutdownRequested) return;
+  shutdownRequested = true;
+  storageWaitWake?.();
+  // Initialization owns native warmup before publishing state. It must finish
+  // before disposal; a JS embedding timeout does not stop the C++ operation.
+  if (state) {
+    state.shuttingDown = true;
+    state.indexer.stop();
+  }
+  await initialization;
   // The guard saves and releases the graph on its own timer; it must not fire
   // into databases this shutdown is about to close.
   graphKeeper?.stop();
   if (!state) {
+    try {
+      await initializingEmbedder?.dispose();
+      initializingEmbedder = null;
+    } catch (error) {
+      log(
+        "error",
+        "indexer-worker",
+        `native cleanup failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return;
+    }
     post({ type: "shutdownComplete" });
+    parentPort!.close();
     return;
   }
-  if (state.shuttingDown) return;
   state.shuttingDown = true;
 
   if (state.cycleTimer) clearTimeout(state.cycleTimer);
@@ -1727,6 +1779,11 @@ async function handleShutdown(): Promise<void> {
   if (state.lexicalTimer) clearTimeout(state.lexicalTimer);
   clearInterval(state.heartbeatInterval);
   state.indexer.stop();
+  // The indexer checks for a stop between pages, and one page is a single
+  // embed call over all of its chunks. Stop the local embedder starting more
+  // native calls, so the cycle ends once the calls already running finish.
+  // Its queued chunks fail as transient, and their documents stay pending.
+  void state.embedder?.quiesce?.();
 
   if (state.inFlightWork) {
     try {
@@ -1735,6 +1792,8 @@ async function handleShutdown(): Promise<void> {
       /* already logged */
     }
   }
+
+  await Promise.allSettled(queryWork);
 
   // Retry queued privacy cleanup before the last graph publication. When it
   // still fails, leave the prior snapshot untouched; the durable obligation
@@ -1752,8 +1811,15 @@ async function handleShutdown(): Promise<void> {
 
   try {
     await state.embedder?.dispose();
-  } catch {
-    /* best-effort */
+  } catch (error) {
+    log(
+      "error",
+      "indexer-worker",
+      `native cleanup failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    // An acknowledgement authorizes thread termination; failed native cleanup
+    // remains owned by the gateway process shutdown boundary.
+    return;
   }
   try {
     state.indexDb.close();
@@ -1766,8 +1832,8 @@ async function handleShutdown(): Promise<void> {
     /* best-effort */
   }
 
-  // Main-side proxy terminates the worker after shutdownComplete.
   post({ type: "shutdownComplete" });
+  parentPort!.close();
 }
 
 /**
@@ -1866,11 +1932,17 @@ function handleUpdateCutoffs(cutoffs: IndexerCutoffMap): void {
 parentPort.on("message", (msg: MainToIndexer) => {
   switch (msg.type) {
     case "init":
-      void handleInit(msg);
+      if (!initialization && !shutdownRequested) initialization = handleInit(msg);
       break;
-    case "embedQuery":
-      void handleEmbedQuery(msg.id, msg.text, msg.sentAtMs);
+    case "embedQuery": {
+      const operation = handleEmbedQuery(msg.id, msg.text, msg.sentAtMs);
+      queryWork.add(operation);
+      void operation.then(
+        () => queryWork.delete(operation),
+        () => queryWork.delete(operation),
+      );
       break;
+    }
     case "runReindexMissing":
       void handleRunReindexMissing(msg.id);
       break;
@@ -1882,6 +1954,11 @@ parentPort.on("message", (msg: MainToIndexer) => {
       break;
     case "wake":
       handleWake();
+      break;
+    case "storagePressure":
+      storagePressure = { blocked: msg.blocked, validUntil: msg.validUntil };
+      storageWaitWake?.();
+      if (!msg.blocked) handleWake();
       break;
     case "pressure":
       userActive = msg.userActive;
@@ -1904,5 +1981,7 @@ parentPort.on("message", (msg: MainToIndexer) => {
     case "shutdown":
       void handleShutdown();
       break;
+    default:
+      assertNever(msg);
   }
 });

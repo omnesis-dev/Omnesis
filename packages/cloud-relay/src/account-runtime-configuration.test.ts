@@ -4,10 +4,11 @@
 import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { randomBytes } from "node:crypto";
+import { generateKeyPairSync, randomBytes } from "node:crypto";
 import { afterEach, expect, test } from "vitest";
 import { accountRuntimeConfiguration } from "./account-runtime-configuration.js";
 import { localIdentityProvider } from "./identity.js";
+import { invitePublicKeyValue, signInvite } from "./invites.js";
 const dirs: string[] = [];
 afterEach(async () => {
   for (const dir of dirs.splice(0)) await rm(dir, { recursive: true, force: true });
@@ -17,56 +18,44 @@ async function fixture() {
   dirs.push(dir);
   return { dir, database: join(dir, "relay.db"), origin: "https://relay.example.test" };
 }
-test("account services do no filesystem work unless the independent cloud flag is enabled", async () => {
-  for (const value of [undefined, "0", "true"])
-    expect(
-      await accountRuntimeConfiguration({
-        env: {
-          OMNESIS_CLOUD_RELAY_ENABLED: value,
-          OMNESIS_CLOUD_RELAY_ACCOUNT_KEY_FILE: "/does-not-exist",
-        },
-        database: "/does-not-exist/state.db",
-      }),
-    ).toBeUndefined();
+test("a relay without a public origin has no account services and refuses their settings", async () => {
   const f = await fixture();
   expect(
     await accountRuntimeConfiguration({
       origin: undefined,
       database: "/does-not-exist/state.db",
-      env: { OMNESIS_CLOUD_RELAY_ENABLED: "1" },
+      env: {},
     }),
   ).toBeUndefined();
   for (const setting of [
     "OMNESIS_CLOUD_RELAY_ACCOUNT_KEY_FILE",
     "OMNESIS_CLOUD_RELAY_APP_ASSOCIATIONS_FILE",
     "OMNESIS_CLOUD_RELAY_CONNECT_SHORT_URL",
+    "OMNESIS_CLOUD_RELAY_SIGNUP_POLICY",
+    "OMNESIS_CLOUD_RELAY_INVITE_KEYS",
   ])
     await expect(
       accountRuntimeConfiguration({
         ...f,
         origin: undefined,
-        env: { OMNESIS_CLOUD_RELAY_ENABLED: "1", [setting]: "/does-not-exist" },
+        env: { [setting]: "/does-not-exist" },
       }),
     ).rejects.toThrow("public HTTPS");
   for (const origin of ["", " ", "http://foreign.example.test"])
-    await expect(
-      accountRuntimeConfiguration({
-        ...f,
-        origin,
-        env: { OMNESIS_CLOUD_RELAY_ENABLED: "1" },
-      }),
-    ).rejects.toThrow();
+    await expect(accountRuntimeConfiguration({ ...f, origin, env: {} })).rejects.toThrow();
 });
 test("account identity authority persists independently, with optional private app associations and native Google verification", async () => {
   const f = await fixture(),
     nativeGoogleIdentity = localIdentityProvider(randomBytes(32), "127.0.0.1"),
-    env = { OMNESIS_CLOUD_RELAY_ENABLED: "1" };
+    env = {};
   const first = (await accountRuntimeConfiguration({ ...f, env, nativeGoogleIdentity }))!;
   expect(first.nativeGoogleIdentity).toBe(nativeGoogleIdentity);
   expect(first.associations).toBeUndefined();
   const key = join(f.dir, "account-authority.pem"),
     bytes = await readFile(key);
-  expect((await stat(key)).mode & 0o777).toBe(0o600);
+  if (process.platform !== "win32") {
+    expect((await stat(key)).mode & 0o777).toBe(0o600);
+  }
   const second = (await accountRuntimeConfiguration({ ...f, env }))!;
   expect(second.enrollmentAuthority!.jwks()).toEqual(first.enrollmentAuthority!.jwks());
   expect(await readFile(key)).toEqual(bytes);
@@ -104,7 +93,7 @@ test("account identity authority persists independently, with optional private a
 
 test("a short connect address is absent unless set, and an invalid one stops startup naming the setting", async () => {
   const f = await fixture(),
-    env = { OMNESIS_CLOUD_RELAY_ENABLED: "1" };
+    env = {};
   expect(await accountRuntimeConfiguration({ ...f, env })).not.toHaveProperty("connectShortUrl");
   expect(
     (await accountRuntimeConfiguration({
@@ -126,117 +115,83 @@ test("a short connect address is absent unless set, and an invalid one stops sta
         env: { ...env, OMNESIS_CLOUD_RELAY_CONNECT_SHORT_URL: value },
       }),
     ).rejects.toThrow("OMNESIS_CLOUD_RELAY_CONNECT_SHORT_URL must be an https URL");
-  // Without the feature flag the setting is not even read.
-  expect(
-    await accountRuntimeConfiguration({
-      ...f,
-      env: { OMNESIS_CLOUD_RELAY_CONNECT_SHORT_URL: "not an address" },
-    }),
-  ).toBeUndefined();
 });
 
-test("the signup policy defaults to invitation, and an allowlist needs its file", async () => {
+test("invite keys make sign-up invite-only; without them it is closed unless chosen open", async () => {
   const f = await fixture(),
-    env = { OMNESIS_CLOUD_RELAY_ENABLED: "1" };
-  expect((await accountRuntimeConfiguration({ ...f, env }))!.signup).toEqual({
-    policy: "invitation",
-    allowlistFile: undefined,
+    first = generateKeyPairSync("ed25519"),
+    second = generateKeyPairSync("ed25519"),
+    key = invitePublicKeyValue(first.publicKey),
+    other = invitePublicKeyValue(second.publicKey);
+  const signup = async (env: NodeJS.ProcessEnv) =>
+    (await accountRuntimeConfiguration({ ...f, env }))!.signup!;
+  expect(await signup({})).toEqual({ policy: "closed" });
+  expect(await signup({ OMNESIS_CLOUD_RELAY_SIGNUP_POLICY: "open" })).toEqual({ policy: "open" });
+  expect(await signup({ OMNESIS_CLOUD_RELAY_SIGNUP_POLICY: "closed" })).toEqual({
+    policy: "closed",
   });
+  const invited = await signup({ OMNESIS_CLOUD_RELAY_INVITE_KEYS: ` ${key} , ${other}` });
+  expect(invited.policy).toBe("invite");
+  expect(invited.invites?.origin).toBe(f.origin);
+  // Either key's invites are accepted, so a key can be replaced without ending the other's.
+  const now = Math.floor(Date.now() / 1000);
   expect(
-    (await accountRuntimeConfiguration({
-      ...f,
-      env: {
+    await signup({
+      OMNESIS_CLOUD_RELAY_SIGNUP_POLICY: "invite",
+      OMNESIS_CLOUD_RELAY_INVITE_KEYS: key,
+    }),
+  ).toMatchObject({ policy: "invite" });
+  for (const { privateKey } of [first, second])
+    expect(
+      invited.invites!.verify(signInvite(privateKey, { origin: f.origin, expiresAt: now + 60 })),
+    ).toMatchObject({ expiresAt: now + 60 });
+  await expect(signup({ OMNESIS_CLOUD_RELAY_SIGNUP_POLICY: "invite" })).rejects.toThrow(
+    "requires OMNESIS_CLOUD_RELAY_INVITE_KEYS",
+  );
+  for (const policy of ["open", "closed"])
+    await expect(
+      signup({ OMNESIS_CLOUD_RELAY_SIGNUP_POLICY: policy, OMNESIS_CLOUD_RELAY_INVITE_KEYS: key }),
+    ).rejects.toThrow("requires the invite signup policy");
+  for (const keys of ["not-a-key", `${key},`, Array.from({ length: 9 }, () => key).join(",")])
+    await expect(signup({ OMNESIS_CLOUD_RELAY_INVITE_KEYS: keys })).rejects.toThrow(
+      "OMNESIS_CLOUD_RELAY_INVITE_KEYS must list one to eight",
+    );
+  await expect(signup({ OMNESIS_CLOUD_RELAY_SIGNUP_POLICY: "everyone" })).rejects.toThrow();
+  for (const policy of ["allowlist", "invitation"])
+    await expect(signup({ OMNESIS_CLOUD_RELAY_SIGNUP_POLICY: policy })).rejects.toThrow(
+      `OMNESIS_CLOUD_RELAY_SIGNUP_POLICY=${policy} is no longer supported`,
+    );
+  // Legacy routes link Google accounts that become Omnesis accounts without an invite.
+  for (const env of [
+    { OMNESIS_CLOUD_RELAY_INVITE_KEYS: key },
+    { OMNESIS_CLOUD_RELAY_SIGNUP_POLICY: "invite", OMNESIS_CLOUD_RELAY_INVITE_KEYS: key },
+  ])
+    await expect(signup({ ...env, OMNESIS_CLOUD_RELAY_LEGACY_ROUTES: "1" })).rejects.toThrow(
+      "cannot be combined with OMNESIS_CLOUD_RELAY_LEGACY_ROUTES=1",
+    );
+  for (const env of [
+    { OMNESIS_CLOUD_RELAY_SIGNUP_POLICY: "open" },
+    { OMNESIS_CLOUD_RELAY_INVITE_KEYS: key, OMNESIS_CLOUD_RELAY_LEGACY_ROUTES: "0" },
+    {},
+  ])
+    await expect(
+      signup({
         ...env,
-        OMNESIS_CLOUD_RELAY_SIGNUP_POLICY: "allowlist",
-        OMNESIS_CLOUD_RELAY_SIGNUP_ALLOWLIST_FILE: join(f.dir, "allowlist.json"),
-      },
-    }))!.signup,
-  ).toEqual({ policy: "allowlist", allowlistFile: join(f.dir, "allowlist.json") });
-  expect(
-    (await accountRuntimeConfiguration({
-      ...f,
-      env: { ...env, OMNESIS_CLOUD_RELAY_SIGNUP_POLICY: "open" },
-    }))!.signup?.policy,
-  ).toBe("open");
-  await expect(
-    accountRuntimeConfiguration({
-      ...f,
-      env: { ...env, OMNESIS_CLOUD_RELAY_SIGNUP_POLICY: "allowlist" },
-    }),
-  ).rejects.toThrow("ALLOWLIST_FILE");
-  await expect(
-    accountRuntimeConfiguration({
-      ...f,
-      env: { ...env, OMNESIS_CLOUD_RELAY_SIGNUP_POLICY: "everyone" },
-    }),
-  ).rejects.toThrow();
-  await expect(
-    accountRuntimeConfiguration({
-      ...f,
-      origin: undefined,
-      env: { ...env, OMNESIS_CLOUD_RELAY_SIGNUP_POLICY: "open" },
-    }),
-  ).rejects.toThrow("public HTTPS origin");
-  // Without the opt-in, a signup setting changes nothing and reads nothing.
-  expect(
-    await accountRuntimeConfiguration({
-      ...f,
-      env: { OMNESIS_CLOUD_RELAY_SIGNUP_POLICY: "open" },
-    }),
-  ).toBeUndefined();
+        OMNESIS_CLOUD_RELAY_LEGACY_ROUTES: env.OMNESIS_CLOUD_RELAY_LEGACY_ROUTES ?? "1",
+      }),
+    ).resolves.toBeDefined();
 });
 
-test("a google group is optional, needs its key and the allowlist policy, and is checked at startup", async () => {
-  const f = await fixture(),
-    { FakeGoogle } = await import("../test/fake-google.js"),
-    google = await FakeGoogle.start();
-  try {
-    const credentials = join(f.dir, "service-account.json");
-    await writeFile(credentials, JSON.stringify(google.serviceAccountKey()), { mode: 0o600 });
-    const env = {
-      OMNESIS_CLOUD_RELAY_ENABLED: "1",
-      OMNESIS_CLOUD_RELAY_SIGNUP_POLICY: "allowlist",
-      OMNESIS_CLOUD_RELAY_SIGNUP_GOOGLE_GROUP: "testers@example.com",
-      OMNESIS_CLOUD_RELAY_SIGNUP_GOOGLE_GROUP_CREDENTIALS_FILE: credentials,
-      OMNESIS_CLOUD_RELAY_SIGNUP_GOOGLE_GROUP_JOIN_URL: "https://groups.example.com/g/testers",
-    };
-    // The group alone may stand for the allowlist, and the link is kept for the refusal page.
-    const signup = (await accountRuntimeConfiguration({ ...f, env }))!.signup!;
-    expect(signup).toMatchObject({ policy: "allowlist", allowlistFile: undefined });
-    expect(signup.googleGroup?.joinUrl).toBe("https://groups.example.com/g/testers");
-    // Nothing was asked of Google to start.
-    expect(google.requests).toEqual([]);
-    const { OMNESIS_CLOUD_RELAY_SIGNUP_GOOGLE_GROUP_JOIN_URL: _, ...withoutLink } = env;
-    expect(
-      (await accountRuntimeConfiguration({ ...f, env: withoutLink }))!.signup!.googleGroup?.joinUrl,
-    ).toBeUndefined();
-    for (const [change, message] of [
-      [{ OMNESIS_CLOUD_RELAY_SIGNUP_GOOGLE_GROUP_CREDENTIALS_FILE: undefined }, "requires"],
-      [
-        { OMNESIS_CLOUD_RELAY_SIGNUP_GOOGLE_GROUP_CREDENTIALS_FILE: join(f.dir, "missing.json") },
-        "service account JSON key",
-      ],
-      [{ OMNESIS_CLOUD_RELAY_SIGNUP_GOOGLE_GROUP_JOIN_URL: "http://groups.example.com/" }, "https"],
-      [{ OMNESIS_CLOUD_RELAY_SIGNUP_GOOGLE_GROUP: "testers" }, "group's email address"],
-      [{ OMNESIS_CLOUD_RELAY_SIGNUP_POLICY: "open" }, "allowlist signup policy"],
-      [{ OMNESIS_CLOUD_RELAY_SIGNUP_POLICY: undefined }, "allowlist signup policy"],
-      [
-        { OMNESIS_CLOUD_RELAY_SIGNUP_GOOGLE_GROUP: undefined },
-        "require OMNESIS_CLOUD_RELAY_SIGNUP_GOOGLE_GROUP",
-      ],
-    ] as const)
+test("a setting of the retired allowlist or group gate stops startup naming it", async () => {
+  const f = await fixture();
+  for (const setting of [
+    "OMNESIS_CLOUD_RELAY_SIGNUP_ALLOWLIST_FILE",
+    "OMNESIS_CLOUD_RELAY_SIGNUP_GOOGLE_GROUP",
+    "OMNESIS_CLOUD_RELAY_SIGNUP_GOOGLE_GROUP_CREDENTIALS_FILE",
+    "OMNESIS_CLOUD_RELAY_SIGNUP_GOOGLE_GROUP_JOIN_URL",
+  ])
+    for (const origin of [f.origin, undefined])
       await expect(
-        accountRuntimeConfiguration({ ...f, env: { ...env, ...change } }),
-      ).rejects.toThrow(message);
-    // Unset, nothing changes.
-    expect(
-      (await accountRuntimeConfiguration({ ...f, env: { OMNESIS_CLOUD_RELAY_ENABLED: "1" } }))!
-        .signup,
-    ).not.toHaveProperty("googleGroup");
-    await expect(accountRuntimeConfiguration({ ...f, origin: undefined, env })).rejects.toThrow(
-      "public HTTPS origin",
-    );
-  } finally {
-    await google.close();
-  }
+        accountRuntimeConfiguration({ ...f, origin, env: { [setting]: "/unused" } }),
+      ).rejects.toThrow(`${setting} is no longer supported`);
 });

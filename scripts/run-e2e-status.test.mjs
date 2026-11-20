@@ -12,6 +12,16 @@ vi.mock("node:child_process", async (importOriginal) => ({
   ...(await importOriginal()),
   spawn,
 }));
+vi.mock("./lib/check-process.mjs", async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    // Status publishing owns inert EventEmitter fixtures. Keep real child
+    // supervision without sending a fake spawn into native Job preparation.
+    // The command boundary's Windows ownership has its own real-process tests.
+    runCheckCommand: (command, args, options) => actual.waitForChild(spawn(command, args, options)),
+  };
+});
 
 let root;
 let statusDir;

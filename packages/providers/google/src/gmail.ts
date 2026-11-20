@@ -174,6 +174,29 @@ function reachDetail(coverage: HistoryCoverage): string | undefined {
   return undefined;
 }
 
+/** A checkpoint must describe a real mailbox instant within this listing's floor. */
+function validFrontierTime(ms: number, afterFloor?: Date): boolean {
+  return (
+    Number.isSafeInteger(ms) &&
+    ms > 0 &&
+    Number.isFinite(new Date(ms).getTime()) &&
+    (afterFloor === undefined || ms >= afterFloor.getTime())
+  );
+}
+
+function frontierHint(iso: string | undefined, afterFloor?: Date): string | undefined {
+  if (typeof iso !== "string") return undefined;
+  const ms = Date.parse(iso);
+  return validFrontierTime(ms, afterFloor) ? new Date(ms).toISOString() : undefined;
+}
+
+/** Google's raw integer timestamp is checkpoint metadata, independent of document dates. */
+function receivedTimestamp(raw: string | null | undefined): number | undefined {
+  if (typeof raw !== "string" || !/^\d+$/.test(raw)) return undefined;
+  const ms = Number(raw);
+  return validFrontierTime(ms) ? ms : undefined;
+}
+
 /** The earlier of an ISO timestamp and an epoch-ms instant, as ISO. */
 function earlierIso(iso: string | undefined, ms: number | undefined): string | undefined {
   if (ms === undefined) return iso;
@@ -590,6 +613,7 @@ export class GmailSource {
   private async fetchAll(
     ids: readonly string[],
     carry: boolean,
+    afterFloor?: Date,
   ): Promise<{ documents: DocumentInput[]; gone: string[]; oldestReceivedAt?: number }> {
     const attempt = this.attempt;
     const listed = new Set(ids);
@@ -616,6 +640,7 @@ export class GmailSource {
       documents.push(...result.documents);
       if (
         result.receivedAt !== undefined &&
+        validFrontierTime(result.receivedAt, afterFloor) &&
         (oldestReceivedAt === undefined || result.receivedAt < oldestReceivedAt)
       ) {
         oldestReceivedAt = result.receivedAt;
@@ -671,13 +696,34 @@ export class GmailSource {
       state.coverage,
     );
 
-    const { res, listBefore } = await this.listBootstrapPage(state, afterFloor);
+    // Old cursors may hold a message's malformed internalDate. Keep a valid
+    // token moving, but never carry its unsafe hints into a replacement listing.
+    const beforeHint = frontierHint(state.listBefore, afterFloor);
+    const invalidBefore =
+      state.listBefore !== undefined &&
+      (beforeHint === undefined ||
+        (afterFloor !== undefined && Date.parse(beforeHint) <= afterFloor.getTime()));
+    const priorOldest = invalidBefore ? undefined : frontierHint(state.oldestListedAt, afterFloor);
+    // A page token belongs to its query; removing an invalid bound also
+    // requires replacing that query's token, rather than mixing the two.
+    const listingState = {
+      ...state,
+      pageToken: invalidBefore ? undefined : state.pageToken,
+      oldestListedAt: priorOldest,
+      listBefore: invalidBefore ? undefined : beforeHint,
+    };
+    const listed = await this.listBootstrapPage(listingState, afterFloor);
+    const { res, listBefore } = listed;
+    const restarted = invalidBefore || listed.restarted;
 
     const messageIds = (res.data.messages ?? [])
       .map((m) => m.id)
       .filter((id): id is string => typeof id === "string");
-    const { documents, oldestReceivedAt } = await this.fetchAll(messageIds, true);
-    const oldestListedAt = earlierIso(state.oldestListedAt, oldestReceivedAt);
+    const { documents, oldestReceivedAt } = await this.fetchAll(messageIds, true, afterFloor);
+    const oldestListedAt = earlierIso(
+      restarted && !listBefore ? undefined : priorOldest,
+      oldestReceivedAt,
+    );
 
     // Apply data cutoff as a safety net: Gmail's `after:YYYY/MM/DD` pushdown
     // is granular to the day in the user's account timezone, so a 1y cutoff
@@ -699,7 +745,9 @@ export class GmailSource {
     // document plus one child per extracted attachment. The guard only runs
     // on an unbounded walk, where every listed message is fetched, so the
     // page's message count is the right increment.
-    const processedDocs = (state.processedDocs ?? 0) + messageIds.length;
+    // A replacement listing replays messages; those cannot count toward the
+    // unbounded walk's runaway guard a second time.
+    const processedDocs = (restarted ? 0 : (state.processedDocs ?? 0)) + messageIds.length;
 
     // Bootstrap is "done" when any of:
     //   - Gmail's listMessages returns no more pages;
@@ -803,7 +851,11 @@ export class GmailSource {
   private async listBootstrapPage(
     state: GmailSyncCursor,
     afterFloor: Date | undefined,
-  ): Promise<{ res: { data: gmail_v1.Schema$ListMessagesResponse }; listBefore?: string }> {
+  ): Promise<{
+    res: { data: gmail_v1.Schema$ListMessagesResponse };
+    listBefore?: string;
+    restarted?: boolean;
+  }> {
     const list = (pageToken: string | undefined, listBefore: string | undefined) =>
       this.request("messagesList", () =>
         this.gmail.users.messages.list({
@@ -815,18 +867,23 @@ export class GmailSource {
       );
     try {
       const res = await list(state.pageToken ?? undefined, state.listBefore);
-      return { res, ...(state.listBefore ? { listBefore: state.listBefore } : {}) };
+      return {
+        res,
+        restarted: !state.pageToken,
+        ...(state.listBefore ? { listBefore: state.listBefore } : {}),
+      };
     } catch (error: unknown) {
       if (!state.pageToken || !isInvalidPageTokenError(error)) throw error;
       const oldest = state.oldestListedAt ? Date.parse(state.oldestListedAt) : Number.NaN;
-      const listBefore = Number.isNaN(oldest)
-        ? state.listBefore
-        : new Date(oldest + GMAIL_RESUME_OVERLAP_MS).toISOString();
+      const resumeBefore = oldest + GMAIL_RESUME_OVERLAP_MS;
+      const listBefore = validFrontierTime(resumeBefore, afterFloor)
+        ? new Date(resumeBefore).toISOString()
+        : state.listBefore;
       log.warn(
         `Gmail refused the saved page token for ${this.id}; listing again from ${listBefore ?? "the newest mail"}`,
       );
       const res = await list(undefined, listBefore);
-      return { res, ...(listBefore ? { listBefore } : {}) };
+      return { res, restarted: true, ...(listBefore ? { listBefore } : {}) };
     }
   }
 
@@ -1019,8 +1076,8 @@ export class GmailSource {
     if (res === null) return { gone: true };
 
     const msg = res.data;
-    const internal = msg.internalDate ? Number.parseInt(msg.internalDate, 10) : Number.NaN;
-    const received = Number.isNaN(internal) ? {} : { receivedAt: internal };
+    const internal = receivedTimestamp(msg.internalDate);
+    const received = internal === undefined ? {} : { receivedAt: internal };
     if (!msg.id || !msg.payload) return { documents: [], ...received };
 
     // Skip messages in Spam or Trash

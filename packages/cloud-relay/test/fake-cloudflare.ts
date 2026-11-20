@@ -21,12 +21,13 @@ export interface FakeRecord {
  * An in-memory stand-in for Cloudflare's DNS records API, as a `fetch`. It answers only the
  * calls the broker makes, checks the bearer token and zone, and records every write.
  */
-export function fakeCloudflare(options: { zoneId?: string; token?: string } = {}) {
+export function fakeCloudflare(options: { zoneId?: string; token?: string; quota?: number } = {}) {
   const zoneId = options.zoneId ?? "a".repeat(32);
   const token = options.token ?? "fixture-dns-edit-token";
   const records: FakeRecord[] = [];
   const writes: string[] = [];
   const fail = new Set<string>();
+  const capacity = { quota: options.quota ?? 1000, usage: undefined as number | undefined };
   const fetch = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
     const url = new URL(String(input));
     const method = init?.method ?? "GET";
@@ -43,14 +44,29 @@ export function fakeCloudflare(options: { zoneId?: string; token?: string } = {}
         JSON.stringify({ success: true, result, ...(info ? { result_info: info } : {}) }),
         { headers: { "content-type": "application/json" } },
       );
+    if (method === "GET" && rest === "/usage") {
+      if (fail.has("usage")) return new Response("{}", { status: 500 });
+      return reply({
+        record_quota: capacity.quota,
+        record_usage: capacity.usage ?? records.length,
+      });
+    }
     if (method === "GET" && rest === "") {
       if (fail.has("list")) return new Response("{}", { status: 500 });
       const type = url.searchParams.get("type");
       const name = url.searchParams.get("name");
-      return reply(
-        records.filter((record) => record.type === type && record.name === name),
-        { total_pages: 1 },
+      const comment = url.searchParams.get("comment.exact");
+      const selected = records.filter(
+        (record) =>
+          (!type || record.type === type) &&
+          (!name || record.name === name) &&
+          (!comment || record.comment === comment),
       );
+      const size = Number(url.searchParams.get("per_page") ?? 100);
+      const page = Number(url.searchParams.get("page") ?? 1);
+      return reply(selected.slice((page - 1) * size, page * size), {
+        total_pages: Math.max(1, Math.ceil(selected.length / size)),
+      });
     }
     if (method === "POST" && rest === "") {
       const body = JSON.parse(String(init?.body)) as Omit<FakeRecord, "id">;
@@ -81,7 +97,7 @@ export function fakeCloudflare(options: { zoneId?: string; token?: string } = {}
     records.push(created);
     return created;
   };
-  return { zoneId, token, records, writes, fail, fetch, add };
+  return { zoneId, token, records, writes, fail, fetch, add, capacity };
 }
 
 /** Serves a fake Cloudflare API on loopback, for a broker process that calls it over HTTP. */

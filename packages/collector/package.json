@@ -37,6 +37,7 @@
     "@omnesis/provider-paperless": "*",
     "@omnesis/provider-pi": "*",
     "@omnesis/provider-plaid": "*",
+    "@omnesis/provider-plaud": "*",
     "@omnesis/provider-screen-time": "*",
     "@omnesis/provider-strava": "*",
     "@omnesis/provider-telegram": "*",
@@ -58,6 +59,7 @@
   },
   "devDependencies": {
     "@hono/node-server": "^2.1.6",
+    "@lydell/node-pty": "1.2.0-beta.15",
     "@omnesis/agent-integration": "*",
     "@omnesis/extension": "*",
     "@omnesis/gateway": "*",

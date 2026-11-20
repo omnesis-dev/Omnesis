@@ -3,6 +3,8 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createDatabase } from "../../db.js";
 import { createObservation, transitionObservation } from "../storage/observations.js";
@@ -37,7 +39,7 @@ describe("morning brief detail", () => {
   }
 
   beforeEach(() => {
-    path = `/tmp/omnesis-test-${randomUUID()}.db`;
+    path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
     db = createDatabase(path);
     insertDoc("doc_offer", "gmail:work", "Loan offer letter", "2026-06-28T09:00:00.000Z");
     insertDoc("doc_untitled", "notion:home", "", "2026-06-29T10:30:00.000Z");

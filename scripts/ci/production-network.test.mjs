@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { spawn, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
+import { once } from "node:events";
+import { createInterface } from "node:readline";
+import { ownedProcessCleanupReceipt, spawnOwnedChildProcess } from "@omnesis/core";
 import { Resolver } from "node:dns/promises";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -17,26 +20,54 @@ const ISOLATE = "Keep this job off production Omnesis services";
 const VERIFY = "Check nothing tried to reach production Omnesis services";
 
 let scratch;
+let retainScratch = false;
 afterEach(() => {
-  if (scratch) rmSync(scratch, { recursive: true, force: true });
+  if (scratch && !retainScratch) rmSync(scratch, { recursive: true, force: true });
   scratch = undefined;
+  retainScratch = false;
 });
 
-describe("the macOS DNS sink", () => {
+describe("the loopback DNS sink", () => {
   test("refuses a deliberate lookup of the production relay and records it", async () => {
     scratch = mkdtempSync(join(tmpdir(), "omnesis-dns-sink-"));
     const record = join(scratch, "dns-sink.log");
     const port = 20_000 + Math.floor(Math.random() * 20_000);
-    const sink = spawn(
-      "python3",
-      [join(root, "scripts", "ci", "dns-sink.py"), String(port), record],
-      { stdio: ["ignore", "pipe", "inherit"] },
-    );
+    let owner;
     try {
-      await new Promise((ready, failed) => {
-        sink.stdout.once("data", ready);
-        sink.once("exit", failed);
-      });
+      owner = spawnOwnedChildProcess(
+        process.platform === "win32" ? "python" : "python3",
+        [join(root, "scripts", "ci", "dns-sink.py"), String(port), record],
+        { env: process.env },
+      );
+    } catch (error) {
+      retainScratch = ownedProcessCleanupReceipt(error) !== undefined;
+      throw error;
+    }
+    const output = createInterface({ input: owner.child.stdout });
+    const readiness = new AbortController();
+    const ready = once(output, "line", { signal: readiness.signal });
+    void ready.catch(() => {});
+    let readinessTimer;
+    owner.child.stderr.resume();
+    const stop = async () => {
+      try {
+        await owner.stop();
+        expect(owner.joinedConfirmed).toBe(true);
+      } catch (error) {
+        retainScratch = ownedProcessCleanupReceipt(error) !== undefined;
+        throw error;
+      }
+    };
+    try {
+      await owner.ready;
+      // Native admission has its own deadline; only the admitted Python process owes this line.
+      readinessTimer = setTimeout(() => readiness.abort(), 5_000);
+      await Promise.race([
+        ready.then(([line]) => expect(line).toBe("ready")),
+        owner.joined.then(() => {
+          throw new Error("DNS sink closed before readiness");
+        }),
+      ]);
       const resolver = new Resolver({ timeout: 2_000, tries: 2 });
       resolver.setServers([`127.0.0.1:${port}`]);
       // It never answers with an address.
@@ -46,11 +77,14 @@ describe("the macOS DNS sink", () => {
       await expect(resolver.resolve4("G-0123.Relay.Omnesis.App")).rejects.toMatchObject({
         code: "EREFUSED",
       });
-      expect(readFileSync(record, "utf8")).toMatch(
+      expect(readFileSync(record, "utf8").replaceAll("\r\n", "\n")).toMatch(
         /DNS query for relay\.omnesis\.app\n.*DNS query for g-0123\.relay\.omnesis\.app\n$/i,
       );
     } finally {
-      sink.kill();
+      clearTimeout(readinessTimer);
+      readiness.abort();
+      output.close();
+      await stop();
     }
   });
 });
@@ -70,6 +104,7 @@ describe("verify", () => {
 // Every job that runs tests, a gateway, an app or an installer is isolated.
 // The rest only read the checkout, or manage the runner's network themselves.
 const GUARDED_WORKFLOWS = [
+  "windows.yml",
   "ci.yml",
   "android.yml",
   "ios.yml",
@@ -95,6 +130,7 @@ const EXEMPT = {
     "tailnet-plan": "decides whether to run only",
     "tailnet-preflight": "checks credentials only",
     "tailnet-fixture": "builds fixtures only",
+    "tailnet-seated": "reads this run's jobs only",
     "tailnet-gateway": "Tailscale takes over the runner's DNS",
     "tailnet-collector": "Tailscale takes over the runner's DNS",
   },

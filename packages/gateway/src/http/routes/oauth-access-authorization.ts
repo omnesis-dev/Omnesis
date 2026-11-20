@@ -2,8 +2,9 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { randomBytes } from "node:crypto";
-import { cloudRelayEnabled, createLogger, tailscaleEmbedEnabled } from "@omnesis/core";
+import { createLogger } from "@omnesis/core";
 import { buildPage, clampLimit, scopeSatisfies, SCOPE_ADMIN, tryDeviceId } from "@omnesis/types";
+import { resolveRequestOAuthUrls } from "../oauth-request.js";
 
 import {
   createServedByGatewayCheck,
@@ -11,9 +12,10 @@ import {
   type ServedResource,
 } from "../../access/served-by-gateway.js";
 import {
+  isLoopbackUrl,
   narrowOAuthOverviewUrls,
+  resolveLocalOAuthUrls,
   resolveOAuthOverviewUrls,
-  resolveOAuthUrls,
   resolveOAuthResourceUrls,
 } from "../../access/oauth-urls.js";
 import { ClientMetadataDocumentResolver } from "../../access/client-metadata-document.js";
@@ -111,7 +113,7 @@ export function mountOAuthAuthorizationRoutes(
      * Which addresses away from home answer MCP. The access overview lists only those,
      * so a client is never pointed at an address that answers 404.
      */
-    mcpAddresses?: Pick<McpAddresses, "answersAt" | "settle">;
+    mcpAddresses?: Pick<McpAddresses, "answersAt" | "settle" | "hostReach">;
     /**
      * The origins whose publicly trusted certificate is still being issued,
      * so the portal can say to wait rather than to set up another one.
@@ -145,27 +147,20 @@ export function mountOAuthAuthorizationRoutes(
     },
   );
 
-  // With a second origin (the cloud relay's, or the gateway's tailnet name) a
-  // completion follows the stored resource, since the portal may be on the
-  // other origin. Without one the request's own URL decides.
-  const completionUrls = (requestUrl: string, resource: string) =>
-    cloudRelayEnabled() || tailscaleEmbedEnabled()
-      ? resolveOAuthResourceUrls(
-          resource,
-          options.publicAddress?.baseUrl(),
-          options.publicAddress?.mcpResourceUrls(),
-          options.additionalOAuthIssuerUrls,
-        )
-      : resolveOAuthUrls(
-          requestUrl,
-          options.publicAddress?.baseUrl(),
-          options.publicAddress?.mcpResourceUrls(),
-        );
+  // A completion follows the stored resource, never the request's URL: the portal that
+  // approves may be open on another of the gateway's addresses than the one the agent uses.
+  const completionUrls = (resource: string) =>
+    resolveOAuthResourceUrls(
+      resource,
+      options.publicAddress?.baseUrl(),
+      options.publicAddress?.mcpResourceUrls(),
+      options.additionalOAuthIssuerUrls,
+    );
 
   app.get("/oauth/authorize", noStore, scope.public(), async (c) => {
     if (authorizationLimiter.consume(clientIp(c))) return oauthRateLimitError(c);
-    const urls = resolveOAuthUrls(
-      c.req.url,
+    const urls = resolveRequestOAuthUrls(
+      c,
       options.publicAddress?.baseUrl(),
       options.publicAddress?.mcpResourceUrls(),
       options.additionalOAuthIssuerUrls,
@@ -371,7 +366,7 @@ export function mountOAuthAuthorizationRoutes(
       }
       return oauthError(c, status, "invalid_request", result.error);
     }
-    const urls = completionUrls(c.req.url, result.value.resource);
+    const urls = completionUrls(result.value.resource);
     if (!urls) return oauthConfigurationRequired(c);
     return c.redirect(authorizationCompletionTarget(result.value, urls.issuer), 303);
   });
@@ -410,15 +405,14 @@ export function mountOAuthAuthorizationRoutes(
         options.additionalOAuthIssuerUrls,
       ),
       answers,
-      // Nothing public answers: a gateway without its own domain still serves its own machine.
+      // No address away from home answers MCP: the gateway's own machine still does.
       () =>
-        !publicBaseUrl && options.loopbackBaseUrl
-          ? narrowOAuthOverviewUrls(
-              resolveOAuthUrls(options.loopbackBaseUrl, undefined, mcpResourceUrls),
-              answers,
-              () => null,
-            )
-          : null,
+        resolveLocalOAuthUrls(
+          options.loopbackBaseUrl,
+          publicBaseUrl,
+          mcpResourceUrls,
+          options.additionalOAuthIssuerUrls,
+        ),
     );
   };
   const accessOverview = async (requestUrl: string) => {
@@ -436,13 +430,19 @@ export function mountOAuthAuthorizationRoutes(
       oauth: urls
         ? {
             resource: urls.resource,
-            ...(!publicBaseUrl ? { loopbackOnly: true } : {}),
+            // Only software on the gateway's own machine can use the address it leads with.
+            ...(isLoopbackUrl(urls.resource) ? { loopbackOnly: true } : {}),
             resources: urls.supportedResources.map((resource) => ({
               resource,
               servedByGateway: served.get(resource)?.servedByGateway ?? false,
               direct: served.get(resource)?.direct ?? false,
               publiclyTrusted: served.get(resource)?.publiclyTrusted ?? false,
               ...(pending.has(new URL(resource).origin) ? { certificatePending: true } : {}),
+              // This computer's Tailscale address, with whether MCP there is on the Internet.
+              ...(() => {
+                const reach = options.mcpAddresses?.hostReach(resource);
+                return reach ? { tailscaleHost: reach } : {};
+              })(),
             })),
             tlsFingerprintSha256: fingerprint() ?? null,
             certificate: options.agentCertificateTrust?.() ?? null,
@@ -538,7 +538,7 @@ export function mountOAuthAuthorizationRoutes(
           result.error === "not-found" ? 404 : result.error === "expired" ? 410 : 409,
         );
       }
-      const urls = completionUrls(c.req.url, result.value.resource);
+      const urls = completionUrls(result.value.resource);
       if (!urls) return c.json({ error: "oauth-not-configured" }, 503);
       return c.json({ redirectTo: authorizationCompletionTarget(result.value, urls.issuer) });
     },

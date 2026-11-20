@@ -91,6 +91,7 @@ export class Scheduler {
   private readonly wakeable: WakeableScheduler;
   private readonly writerInspector: WriterQueueInspector;
   private readonly admission: AdmissionController;
+  private starting: Promise<void> | null = null;
 
   constructor(options: SchedulerOptions = {}) {
     const userSlaBudgetMs = options.userSlaBudgetMs ?? DEFAULT_USER_SLA_BUDGET_MS;
@@ -155,20 +156,33 @@ export class Scheduler {
     return this.core.getPreemptBuffer(kind);
   }
 
-  async start(): Promise<void> {
-    await this.core.start();
-    // Kick off any periodics registered before start().
-    this.periodic.startAll();
+  start(): Promise<void> {
+    if (this.core.disposed) return Promise.reject(new Error("scheduler disposed"));
+    if (this.starting) return this.starting;
+    this.starting = this.core
+      .start()
+      .then(() => {
+        // Disposal can win after core readiness but before this continuation.
+        // One shared activation also prevents repeated starts arming duplicate timers.
+        if (this.core.disposed) throw new Error("scheduler disposed during startup");
+        this.periodic.startAll();
+      })
+      .catch(async (error: unknown) => {
+        // The core owns runner cleanup; the façade must also stop any
+        // admission/wake timers when initialization itself failed.
+        await this.dispose().catch(() => {});
+        throw error;
+      });
+    return this.starting;
   }
 
-  async dispose(): Promise<void> {
-    if (this.core.disposed) return;
-    // Stop periodics + wakeables before tearing down the core so their
-    // already-scheduled enqueue() calls don't race with disposal.
+  dispose(): Promise<void> {
+    // These registries are idempotent. Even when core startup already failed,
+    // they must stop; core.disposed is an admission flag, not a cleanup signal.
     this.periodic.stopAll();
     this.wakeable.stopAll();
     this.admission.dispose();
-    await this.core.dispose();
+    return this.core.dispose();
   }
 
   enqueue<TArgs, TResult>(

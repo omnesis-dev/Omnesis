@@ -3,6 +3,8 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { SCOPE_ADMIN, SCOPE_READ, SCOPE_WRITE_ALL, type Scope } from "@omnesis/types";
 import { createDatabase } from "../../db.js";
@@ -71,8 +73,8 @@ async function ingest(externalId: string, contentHash: string): Promise<string> 
 }
 
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-content-hash-test-${randomUUID()}.db`;
-  indexDbPath = `/tmp/omnesis-content-hash-index-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-content-hash-test-${randomUUID()}.db`);
+  indexDbPath = fixtureJoin(fixtureTmpdir(), `omnesis-content-hash-index-${randomUUID()}.db`);
   db = createDatabase(dbPath);
   indexDb = createIndexDatabase(indexDbPath);
   token = mintToken([SCOPE_ADMIN, SCOPE_READ, SCOPE_WRITE_ALL]);
@@ -243,7 +245,7 @@ describe("POST /documents/content-hash-siblings without an index DB", () => {
   let token2: string;
 
   beforeEach(() => {
-    dbPath2 = `/tmp/omnesis-content-hash-noindex-${randomUUID()}.db`;
+    dbPath2 = fixtureJoin(fixtureTmpdir(), `omnesis-content-hash-noindex-${randomUUID()}.db`);
     db2 = createDatabase(dbPath2);
     const dev = createDevice(db2, { name: "x", kind: "cli" });
     token2 = createToken(db2, dev.id, [SCOPE_READ, SCOPE_WRITE_ALL]).token;

@@ -57,6 +57,8 @@ export type HostTailscale =
       state: "available";
       /** The machine's MagicDNS name, without the trailing dot. */
       dnsName: string;
+      /** The Tailscale version running there, such as `1.104.6`, when it says. */
+      version: string | null;
       /**
        * The port the gateway is served on, or the one publishing would use; null when
        * other apps hold every port Funnel accepts and the gateway is not served yet.
@@ -70,11 +72,17 @@ export type HostTailscale =
       publicGateway: boolean;
       /** Why publishing cannot run, when `port` is null. */
       blocked?: string;
+      /**
+       * The ports Funnel accepts that another app holds, with where Tailscale forwards
+       * each (`http://127.0.0.1:3000`, say), or null when it does not forward anywhere.
+       */
+      taken: Array<{ port: number; target: string | null }>;
     };
 
-/** A failed publish names why, and the command to run instead when there is one. */
-export type PublishOutcome =
-  { ok: true; url: string } | { ok: false; reason: string; command?: string };
+/** A failed change names why, and the command to run instead when there is one. */
+export type Refusal = { ok: false; reason: string; command?: string };
+export type PublishOutcome = { ok: true; url: string } | Refusal;
+export type UnpublishOutcome = { ok: true } | Refusal;
 
 export type RunCli = (
   candidate: TailscaleCliCandidate,
@@ -113,7 +121,7 @@ function addressOn(dnsName: string, port: number): string {
 
 interface ServeConfig {
   TCP?: Record<string, { HTTPS?: unknown; HTTP?: unknown; [other: string]: unknown }>;
-  Web?: Record<string, { Handlers?: Record<string, { Proxy?: unknown }> }>;
+  Web?: Record<string, { Handlers?: Record<string, { Proxy?: unknown; Path?: unknown }> }>;
   AllowFunnel?: Record<string, boolean>;
   /** Configs of `tailscale serve` runs still in the foreground, by session. */
   Foreground?: Record<string, ServeConfig>;
@@ -123,19 +131,30 @@ interface ServeConfig {
 interface ServedPorts {
   /** Ports that forward their root to this gateway and nothing else, with whether Funnel is on. */
   gateway: Map<number, boolean>;
-  /** Ports where something other than this gateway is served. */
-  others: Set<number>;
+  /** Ports where something other than this gateway is served, with where each forwards. */
+  others: Map<number, string | null>;
+}
+
+/** Where a port's own handler sends requests, as the owner would recognise it. */
+function forwardTarget(handler: { Proxy?: unknown; Path?: unknown } | undefined): string | null {
+  if (typeof handler?.Proxy === "string") return handler.Proxy;
+  if (typeof handler?.Path === "string") return handler.Path;
+  return null;
 }
 
 function servedPorts(config: ServeConfig, dnsName: string, gatewayPort: number): ServedPorts {
   const gateway = new Map<number, boolean>();
-  const others = new Set<number>();
+  const others = new Map<number, string | null>();
+  const hold = (port: number, target: string | null) => {
+    if (!others.has(port) || others.get(port) === null) others.set(port, target);
+  };
   const visit = (serve: ServeConfig, foreground: boolean) => {
     for (const [port, entry] of Object.entries(serve.TCP ?? {})) {
       // A raw TCP forward or TLS terminator owns the whole port; an HTTPS or HTTP entry
       // only says web handlers live there, judged below.
       if (Object.keys(entry ?? {}).some((key) => key !== "HTTPS" && key !== "HTTP")) {
-        others.add(Number(port));
+        const forward = (entry as { TCPForward?: unknown }).TCPForward;
+        hold(Number(port), typeof forward === "string" ? forward : null);
       }
     }
     for (const [hostPort, web] of Object.entries(serve.Web ?? {})) {
@@ -150,17 +169,18 @@ function servedPorts(config: ServeConfig, dnsName: string, gatewayPort: number):
       if (onlyGateway && !foreground) {
         gateway.set(port, gateway.get(port) === true || serve.AllowFunnel?.[hostPort] === true);
       } else if (handlers.length > 0) {
-        others.add(port);
+        const root = handlers.find(([path]) => path === "/")?.[1] ?? handlers[0]?.[1];
+        hold(port, forwardTarget(root));
       }
     }
   };
   visit(config, false);
   for (const session of Object.values(config.Foreground ?? {})) visit(session, true);
-  for (const port of others) gateway.delete(port);
+  for (const port of others.keys()) gateway.delete(port);
   return { gateway, others };
 }
 
-const NOTHING_SERVED: ServedPorts = { gateway: new Map(), others: new Set() };
+const NOTHING_SERVED: ServedPorts = { gateway: new Map(), others: new Map() };
 
 const isFunnelPort = (port: number) => (FUNNEL_PORTS as readonly number[]).includes(port);
 
@@ -177,6 +197,22 @@ function choosePort(served: ServedPorts, publicly: boolean): number | null {
         Number(bPublic) - Number(aPublic) || Number(isFunnelPort(b)) - Number(isFunnelPort(a)),
     );
   return serving[0]?.[0] ?? FUNNEL_PORTS.find((port) => !served.others.has(port)) ?? null;
+}
+
+/** Why Tailscale refused a change, from what its command printed. */
+function refusalReason(error: unknown): string {
+  // Tailscale prints the link that enables Funnel on stdout, its refusals on stderr.
+  const failed = error as { stdout?: string; stderr?: string };
+  const output = `${failed.stdout ?? ""}${failed.stderr ?? ""}${error instanceof Error ? error.message : ""}`;
+  if (/access denied|permission|operator|not permitted/i.test(output))
+    return "This gateway is not allowed to change Tailscale on this computer. Run the command below as root or as the computer's Tailscale operator.";
+  if (
+    /funnel.*not (enabled|allowed)|enable funnel|nodeAttrs|https:\/\/login\.tailscale\.com/i.test(
+      output,
+    )
+  )
+    return "Your tailnet does not allow Funnel or HTTPS certificates yet. Run the command below once: it prints the link that turns them on.";
+  return "Tailscale did not accept the change. Run the command below to see why.";
 }
 
 export class HostTailscaleService {
@@ -201,18 +237,23 @@ export class HostTailscaleService {
         ? { state: "stopped", reason: NOT_RUNNING }
         : { state: "missing", reason: NOT_INSTALLED };
     }
-    const { dnsName } = found.running;
+    const { dnsName, version } = found.running;
     const served = (await this.served(found.running)) ?? NOTHING_SERVED;
     const port = choosePort(served, false);
     const servesGateway = port !== null && served.gateway.has(port);
     return {
       state: "available",
       dnsName,
+      version,
       port,
       url: addressOn(dnsName, port ?? 443),
       servesGateway,
       publicGateway: servesGateway && served.gateway.get(port) === true,
       ...(port === null ? { blocked: NO_FREE_PORT } : {}),
+      taken: FUNNEL_PORTS.filter((held) => served.others.has(held)).map((held) => ({
+        port: held,
+        target: served.others.get(held) ?? null,
+      })),
     };
   }
 
@@ -248,18 +289,44 @@ export class HostTailscaleService {
       await this.run(found.running.candidate, this.publishArgs(publicly, port), PUBLISH_TIMEOUT_MS);
       return { ok: true, url: addressOn(found.running.dnsName, port) };
     } catch (error) {
-      // Tailscale prints the link that enables Funnel on stdout, its refusals on stderr.
-      const failed = error as { stdout?: string; stderr?: string };
-      const output = `${failed.stdout ?? ""}${failed.stderr ?? ""}${error instanceof Error ? error.message : ""}`;
-      const reason = /access denied|permission|operator|not permitted/i.test(output)
-        ? "This gateway is not allowed to change Tailscale on this computer. Run the command below as root or as the computer's Tailscale operator."
-        : /funnel.*not (enabled|allowed)|enable funnel|nodeAttrs|https:\/\/login\.tailscale\.com/i.test(
-              output,
-            )
-          ? "Your tailnet does not allow Funnel or HTTPS certificates yet. Run the command below once: it prints the link that turns them on."
-          : "Tailscale did not accept the change. Run the command below to see why.";
-      return { ok: false, reason, command: commandOn(port) };
+      return { ok: false, reason: refusalReason(error), command: commandOn(port) };
     }
+  }
+
+  /**
+   * Stop forwarding the machine's name to this gateway: every port that serves this
+   * gateway alone is turned off, with its Funnel. A port that also serves anything else
+   * is another app's and stays as it is.
+   */
+  async unpublish(): Promise<UnpublishOutcome> {
+    const found = await this.findRunning();
+    if (!found.running) return { ok: false, reason: found.installed ? NOT_RUNNING : NOT_INSTALLED };
+    const served = await this.served(found.running);
+    if (!served) {
+      return {
+        ok: false,
+        reason:
+          "Omnesis couldn't read what Tailscale on this computer serves, so it changed nothing. Run tailscale serve status to see it.",
+      };
+    }
+    const ports = [...served.gateway.keys()];
+    for (const [index, port] of ports.entries()) {
+      try {
+        await this.run(
+          found.running.candidate,
+          ["serve", `--https=${port}`, "off"],
+          PUBLISH_TIMEOUT_MS,
+        );
+      } catch (error) {
+        // Name only the ports still on: one already off would fail the command.
+        const command = ports
+          .slice(index)
+          .map((left) => `tailscale serve --https=${left} off`)
+          .join(" && ");
+        return { ok: false, reason: refusalReason(error), command };
+      }
+    }
+    return { ok: true };
   }
 
   /** `serve` or `funnel` in the background on `port`, naming it unless it is the default 443. */
@@ -294,7 +361,7 @@ export class HostTailscaleService {
    */
   private async findRunning(): Promise<{
     installed: boolean;
-    running: { candidate: TailscaleCliCandidate; dnsName: string } | null;
+    running: { candidate: TailscaleCliCandidate; dnsName: string; version: string | null } | null;
   }> {
     let installed = false;
     for (const candidate of this.candidates) {
@@ -302,12 +369,12 @@ export class HostTailscaleService {
         const output = await this.run(candidate, ["status", "--json"], STATUS_TIMEOUT_MS);
         installed = true;
         if (!tailscaleIsRunningStatus(output)) continue;
-        const dnsName = String(
-          (JSON.parse(output) as { Self?: { DNSName?: unknown } }).Self?.DNSName ?? "",
-        )
+        const status = JSON.parse(output) as { Self?: { DNSName?: unknown }; Version?: unknown };
+        const dnsName = String(status.Self?.DNSName ?? "")
           .replace(/\.$/, "")
           .toLowerCase();
-        if (dnsName) return { installed, running: { candidate, dnsName } };
+        const version = typeof status.Version === "string" ? status.Version.split("-")[0]! : null;
+        if (dnsName) return { installed, running: { candidate, dnsName, version } };
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") installed = true;
       }

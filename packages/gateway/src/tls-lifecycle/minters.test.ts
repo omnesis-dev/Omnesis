@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { describe, expect, test } from "vitest";
+import { dirname, join } from "node:path";
+import { describe, expect, test, vi } from "vitest";
+import * as core from "@omnesis/core";
+import * as tls from "../tls.js";
+import { TlsIssuerCleanupUnconfirmedError } from "./issuer-cleanup.js";
 import { createHostMinter } from "./minters.js";
 
 const signal = () => new AbortController().signal;
@@ -150,18 +153,30 @@ describe("createHostMinter", () => {
   test("a real CLI process that hangs is killed at the bound and said so", async () => {
     const dir = mkdtempSync(join(tmpdir(), "omnesis-minter-hung-"));
     try {
-      const cli = join(dir, "tailscale");
-      writeFileSync(cli, "#!/bin/sh\nexec sleep 30\n", { mode: 0o755 });
+      const preload = join(dir, "block.cjs");
+      const ready = join(dir, "ready");
+      // Block before Node interprets the issuer's argv, so the real executable
+      // exercises runBinary's cancellation on every supported platform.
+      writeFileSync(
+        preload,
+        `require("node:fs").writeFileSync(${JSON.stringify(ready)}, "ready");Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0);\n`,
+      );
+      // Cache preparation is a fixture prerequisite, outside the issuer's measured budget.
+      if (process.platform === "win32") core.windowsJobInvocation();
+      vi.stubEnv("NODE_OPTIONS", `--require ${JSON.stringify(preload)}`);
+      const cli = process.execPath;
       const minter = createHostMinter({
         tailscaleStatusTimeoutMs: 200,
         tailscaleCandidates: [{ file: cli, bundledApp: false }],
       });
       const started = Date.now();
       await expect(minter.mint("tailscale", ["gw.tail.example"], signal())).rejects.toThrow(
-        /`.*tailscale status` did not answer in time/u,
+        `\`${process.execPath} status\` did not answer in time`,
       );
+      expect(readFileSync(ready, "utf8")).toBe("ready");
       expect(Date.now() - started).toBeLessThan(5_000);
     } finally {
+      vi.unstubAllEnvs();
       rmSync(dir, { recursive: true, force: true });
     }
   });
@@ -238,4 +253,156 @@ describe("createHostMinter", () => {
       /HTTPS is not enabled/u,
     );
   });
+});
+
+test("the default self-signed issuer forwards its cancellation signal as generator options", async () => {
+  const generator = vi
+    .spyOn(tls, "generateSelfSigned")
+    .mockResolvedValue({ cert: "CERT", key: "KEY", fingerprintSha256: "ab".repeat(32) });
+  const controller = new AbortController();
+  try {
+    await createHostMinter().mint("self-signed", ["localhost"], controller.signal);
+    expect(generator).toHaveBeenCalledWith({ signal: controller.signal });
+  } finally {
+    generator.mockRestore();
+  }
+});
+
+test("Windows issuer default backend awaits an owned Job with literal arguments and the caller signal", async () => {
+  const descriptor = Object.getOwnPropertyDescriptor(process, "platform")!;
+  const prepare = vi.spyOn(core, "ensurePrivateDirs").mockResolvedValue();
+  vi.spyOn(core, "readSecretTextFile").mockImplementation((path) =>
+    Promise.resolve(readFileSync(path, "utf8")),
+  );
+  const run = vi.spyOn(core, "execWindowsJob").mockImplementation((_file, args) => {
+    writeFileSync(args[1]!, "invented public cert");
+    writeFileSync(args[3]!, "invented private key");
+    return Promise.resolve({ stdout: "", stderr: "" });
+  });
+  const controller = new AbortController();
+  Object.defineProperty(process, "platform", { ...descriptor, value: "win32" });
+  try {
+    const minter = createHostMinter({ mkcertCandidates: ["synthetic issuer.exe"] });
+    expect(
+      await minter.mint("mkcert", ["localhost", "studio.example.test"], controller.signal),
+    ).toEqual({ cert: "invented public cert", key: "invented private key" });
+    expect(run).toHaveBeenCalledWith(
+      "synthetic issuer.exe",
+      [
+        "-cert-file",
+        expect.any(String),
+        "-key-file",
+        expect.any(String),
+        "--",
+        "localhost",
+        "studio.example.test",
+      ],
+      { signal: controller.signal, env: undefined },
+    );
+    expect(prepare).toHaveBeenCalledOnce();
+  } finally {
+    Object.defineProperty(process, "platform", descriptor);
+    vi.restoreAllMocks();
+  }
+});
+
+test.each([undefined, new Error("Invented join failure")])(
+  "unconfirmed issuer cleanup retains its private scratch and never tries another candidate (%s)",
+  async (cleanup) => {
+    let scratch: string | undefined;
+    const run = vi.fn((_file: string, args: string[]) => {
+      scratch = dirname(args[1]!);
+      return Promise.reject(
+        Object.assign(new Error("Invented missing command with unconfirmed cleanup"), {
+          code: "ENOENT",
+          cleanupFailure: cleanup,
+        }),
+      );
+    });
+    try {
+      const minter = createHostMinter({ mkcertCandidates: ["first issuer", "second issuer"], run });
+      const error = await minter
+        .mint("mkcert", ["localhost"], signal())
+        .catch((error: unknown) => error);
+      expect(error).toBeInstanceOf(TlsIssuerCleanupUnconfirmedError);
+      expect(error).toMatchObject({ cleanupFailure: cleanup, scratchDirectory: scratch });
+      expect(run).toHaveBeenCalledOnce();
+      expect(existsSync(scratch!)).toBe(true);
+    } finally {
+      if (scratch) rmSync(scratch, { recursive: true, force: true });
+    }
+  },
+);
+
+test("Windows worker startup timeout keeps the existing status budget and permits a joined fallback", async () => {
+  const descriptor = Object.getOwnPropertyDescriptor(process, "platform")!;
+  vi.spyOn(core, "ensurePrivateDirs").mockResolvedValue();
+  vi.spyOn(core, "readSecretTextFile").mockImplementation((path) =>
+    Promise.resolve(readFileSync(path, "utf8")),
+  );
+  const job = vi.spyOn(core, "execWindowsJob").mockImplementation((file, args, opts) => {
+    if (args[0] === "status") {
+      expect(opts?.timeout).toBe(50);
+      if (file === "cold issuer")
+        return Promise.reject(
+          Object.assign(new Error("Invented worker startup timeout"), { code: "ETIMEDOUT" }),
+        );
+      return Promise.resolve({ stdout: '{"BackendState":"Running"}', stderr: "" });
+    }
+    writeFileSync(args[2]!, "invented certificate");
+    writeFileSync(args[4]!, "invented key");
+    return Promise.resolve({ stdout: "", stderr: "" });
+  });
+  Object.defineProperty(process, "platform", { ...descriptor, value: "win32" });
+  try {
+    const minter = createHostMinter({
+      tailscaleStatusTimeoutMs: 50,
+      tailscaleCandidates: [
+        { file: "cold issuer", bundledApp: false },
+        { file: "ready issuer", bundledApp: false },
+      ],
+    });
+    expect(await minter.mint("tailscale", ["gateway.example.test"], signal())).toEqual({
+      cert: "invented certificate",
+      key: "invented key",
+    });
+    expect(job.mock.calls.map(([file, args]) => [file, args[0]])).toEqual([
+      ["cold issuer", "status"],
+      ["ready issuer", "status"],
+      ["ready issuer", "cert"],
+    ]);
+  } finally {
+    Object.defineProperty(process, "platform", descriptor);
+    vi.restoreAllMocks();
+  }
+});
+
+test("an unconfirmed Windows status timeout refuses candidate fallback before any issuer scratch is created", async () => {
+  const descriptor = Object.getOwnPropertyDescriptor(process, "platform")!;
+  const prepare = vi.spyOn(core, "ensurePrivateDirs").mockResolvedValue();
+  const cleanup = new Error("Invented status process join failure");
+  const run = vi.spyOn(core, "execWindowsJob").mockRejectedValue(
+    Object.assign(new Error("Invented status deadline"), {
+      code: "ETIMEDOUT",
+      cleanupFailure: cleanup,
+    }),
+  );
+  Object.defineProperty(process, "platform", { ...descriptor, value: "win32" });
+  try {
+    const minter = createHostMinter({
+      tailscaleStatusTimeoutMs: 50,
+      tailscaleCandidates: [
+        { file: "unconfirmed status", bundledApp: false },
+        { file: "must not run", bundledApp: false },
+      ],
+    });
+    await expect(
+      minter.mint("tailscale", ["gateway.example.test"], signal()),
+    ).rejects.toMatchObject({ cleanupFailure: cleanup });
+    expect(run).toHaveBeenCalledOnce();
+    expect(prepare).not.toHaveBeenCalled();
+  } finally {
+    Object.defineProperty(process, "platform", descriptor);
+    vi.restoreAllMocks();
+  }
 });

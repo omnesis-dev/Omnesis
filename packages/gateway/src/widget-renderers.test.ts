@@ -79,6 +79,13 @@ describe("widget-renderers registry", () => {
 });
 
 describe("widgetRenderersBody schema", () => {
+  test("accepts a renderer on the host filesystem", () => {
+    const modulePath = join(tmpdir(), "provider-demo", "src", "portal", "widget.js");
+    expect(widgetRenderersBody.parse({ renderers: [{ kind: "demo-widget", modulePath }] })).toEqual(
+      { renderers: [{ kind: "demo-widget", modulePath }] },
+    );
+  });
+
   test("accepts opaque kinds and absolute module paths", () => {
     expect(
       widgetRenderersBody.parse({

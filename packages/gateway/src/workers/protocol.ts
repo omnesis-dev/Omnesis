@@ -138,6 +138,7 @@ export type IndexerInit = {
    * `gateway.minFreeDiskMb` (default 500).
    */
   minFreeDiskMb: number;
+  storagePressure?: { blocked: boolean; validUntil: number };
   /**
    * Per-model retrieval encoding: none | text-prefix | api-param.
    * Resolved at boot from `search.embedderPrefixes.enabled` × the family /
@@ -186,7 +187,7 @@ export type MainToIndexer =
   | {
       type: "deleteDocumentIndexBatch";
       id: number;
-      documentId: string;
+      documentId: string | readonly string[];
       limit: number;
       sourceDeleted: boolean;
     }
@@ -198,6 +199,7 @@ export type MainToIndexer =
   // (the scheduler's admission control is engaged). Sent on change only. The
   // scan returns to its configured pace while it is true.
   | { type: "pressure"; userActive: boolean }
+  | { type: "storagePressure"; blocked: boolean; validUntil: number }
   // Hot-reload of per-source maxAge map. Sent on every config.changed where
   // dataRetention or sources.<id>.maxAge moved. Worker swaps the map atomically.
   | { type: "updateCutoffs"; cutoffs: IndexerCutoffMap }
@@ -441,6 +443,7 @@ export type IoInit = {
    * the workers start.
    */
   watchJournal?: { path: string; keyHex?: string };
+  indexStore?: { path: string; keyHex?: string };
 };
 
 // Compute call/result reuse the writer's shapes: same dispatch envelope

@@ -9,6 +9,8 @@ import {
   type ResolvedAssignment,
 } from "@omnesis/core";
 import { IndexerWorkerProxy, buildIndexerCutoffMap } from "../workers/indexer-worker-proxy.js";
+import { InsufficientStorageError } from "../http/errors.js";
+import { purgeDocumentIndexBatch } from "./document-index-purge.js";
 import { canonicalEmbedIdentity } from "./embed-identity.js";
 import {
   cleanupStaleBuildingState,
@@ -136,6 +138,7 @@ export interface IndexerModelInfo {
 export interface IndexerLifecycleDeps {
   /** Forget queued version-only changes once the indexer has copied them; see `filter-copy.ts`. */
   completeFilterIndexQueue?: (documentIds: readonly string[]) => Promise<void>;
+  getStoragePressure?: () => import("../storage/pressure.js").StoragePressureSnapshot;
   /** Capability→backend resolver. loadConfig/resolve('embedder')/getBackendApiKey. */
   inferenceRegistry: InferenceRegistry;
   /** Live config store. .get() is read on every startIndexer/runEmbedSwap. */
@@ -265,6 +268,8 @@ export class IndexerLifecycle {
   // embedder is an independent HTTP client, the worker is simply disposed — query
   // embedding is unaffected by the worker's lifecycle.
   private _queryEmbedderIsWorker = false;
+  /** Native query bridge retained until a replacement actually takes over. */
+  private queryBridge: Embedder | null = null;
   private lexicalOnly = false;
 
   // The mode the coalesced follow-up swap will run with. Newest-wins: every
@@ -308,6 +313,11 @@ export class IndexerLifecycle {
   }
 
   /** Live worker proxy, or null while not ready / mid-swap / shut down. */
+  /** Capacity leases reach the owner during startup as well as steady-state work. */
+  setStoragePressure(blocked: boolean, validUntil: number): void {
+    this._indexerOwner?.setStoragePressure(blocked, validUntil);
+  }
+
   get indexerProxy(): IndexerWorkerProxy | null {
     return this._indexerProxy;
   }
@@ -362,6 +372,28 @@ export class IndexerLifecycle {
       documentId,
       limit,
       sourceDeleted,
+    );
+  }
+
+  /** Publish one bounded group through the same ownership fence as individual deletes. */
+  async deleteDocumentsIndexBatch(
+    documentIds: readonly string[],
+    limit: number,
+    sourceDeleted: boolean,
+  ) {
+    const owner = this._indexerOwner;
+    if (owner && !this.ownerDisposalInFlight)
+      return owner.deleteDocumentsIndexBatch(documentIds, limit, sourceDeleted);
+    await this.waitForIndexerWriteTransition();
+    const replacement = this._indexerOwner;
+    if (replacement)
+      return replacement.deleteDocumentsIndexBatch(documentIds, limit, sourceDeleted);
+    return purgeDocumentIndexBatch(
+      { indexDb: this.deps.indexDb },
+      documentIds,
+      limit,
+      sourceDeleted,
+      false,
     );
   }
 
@@ -690,8 +722,17 @@ export class IndexerLifecycle {
       );
     }
 
+    const storagePressure = this.deps.getStoragePressure?.();
     const proxy = new IndexerWorkerProxy({
       completeFilterIndexQueue: this.deps.completeFilterIndexQueue,
+      ...(storagePressure
+        ? {
+            storagePressure: {
+              blocked: storagePressure.state === "blocked" || storagePressure.state === "unknown",
+              validUntil: storagePressure.validUntil,
+            },
+          }
+        : {}),
       lexicalOnly,
       beginModelCall,
       modelPath,
@@ -820,16 +861,11 @@ export class IndexerLifecycle {
     // thread embedder calls the HTTP endpoint directly (~130ms), completely
     // independent of worker contention. For local (llama.cpp) embedders
     // the model is loaded inside the worker, so we still use the proxy.
-    if (lexicalOnly) {
-      this.deps.searchPipeline.setEmbedder(undefined);
-      this._queryEmbedderIsWorker = false;
-    } else if (httpEmbedderUrl) {
+    let searchEmbedder: Embedder | undefined;
+    if (httpEmbedderUrl && !lexicalOnly) {
       const { HttpEmbedder } = await import("./http-embedder.js");
-      // Shutdown may detach the worker while the module loader is awaiting
-      // filesystem I/O. Re-check ownership before creating or publishing any
-      // main-thread search resource.
-      if (this._indexerOwner !== proxy) return;
-      const searchEmbedder = new HttpEmbedder({
+      if (this._indexerOwner !== proxy || signal.aborted) return;
+      const direct = new HttpEmbedder({
         baseUrl: httpEmbedderUrl,
         apiPathPrefix: httpEmbedderApiPathPrefix,
         model: httpProbeResult?.model ?? "",
@@ -839,24 +875,36 @@ export class IndexerLifecycle {
         apiKey: httpEmbedderApiKey,
         allowRemoteInference: httpEmbedderAllowRemoteInference,
       });
-      this.deps.searchPipeline.setEmbedder(
-        this.deps.inferenceRegistry.health.observe(
-          embedResolved,
-          searchEmbedder,
-          ["embed", "embedQuery"],
-          beginModelCall,
-        ),
-        embedId,
+      searchEmbedder = this.deps.inferenceRegistry.health.observe(
+        embedResolved,
+        direct,
+        ["embed", "embedQuery"],
+        beginModelCall,
       );
-      this._queryEmbedderIsWorker = false;
       this.log.info(`search embedder: direct HTTP client (bypasses indexer worker)`);
-    } else {
-      this.deps.searchPipeline.setEmbedder(proxy, embedId);
-      this._queryEmbedderIsWorker = true;
+    } else if (!lexicalOnly) {
+      searchEmbedder = proxy;
     }
+    let attached = false;
+    await this.deps.searchPipeline.publishEmbeddingTransition(() => {
+      if (this._indexerOwner !== proxy || signal.aborted || this.shuttingDown) return;
+      if (searchEmbedder) this.deps.searchPipeline.setEmbedder(searchEmbedder, embedId);
+      else this.deps.searchPipeline.setEmbedder(undefined);
+      this._queryEmbedderIsWorker = searchEmbedder === proxy;
+      attached = true;
+    });
+    if (!attached) return;
+    await this.releaseRetiredQueryBridge();
+    if (this._indexerOwner !== proxy) return;
     // Publish to the live ref so POST /admin/index/reindex-missing
     // (and any future operator triggers) can drive the worker.
     this._indexerProxy = proxy;
+    const pressure = this.deps.getStoragePressure?.();
+    if (pressure)
+      proxy.setStoragePressure(
+        pressure.state === "blocked" || pressure.state === "unknown",
+        pressure.validUntil,
+      );
     // Writes can land after HTTP starts but before the scheduler has a live
     // proxy to wake. Reconcile once after publication; if the worker is still
     // in its exclusive boot scan this coalesces into one trailing cycle.
@@ -1039,11 +1087,16 @@ export class IndexerLifecycle {
       // Assignment removal must stop using the previous model, including for queries.
       await this.retireStaleBootAfterSwapValidation();
       if (signal.aborted) return;
-      this.deps.searchPipeline.setEmbedder(undefined);
+      await this.deps.searchPipeline.publishEmbeddingTransition(() => {
+        this.deps.searchPipeline.setEmbedder(undefined);
+      });
+      await this.releaseRetiredQueryBridge();
       await this.stopWorker();
       if (!signal.aborted) await this.startIndexerAttempt(signal);
       return;
     }
+
+    this.assertStorageCanGrow();
 
     // For HTTP, probe the server first to discover the served model id and
     // native dimension — both feed the canonical stamp identity below. The
@@ -1074,11 +1127,17 @@ export class IndexerLifecycle {
       }
     }
 
+    this.assertStorageCanGrow();
     if (this.lexicalOnly || hasLexicalWrites(this.deps.indexDb)) {
       await this.retireStaleBootAfterSwapValidation();
       if (signal.aborted) return;
+      this.assertStorageCanGrow();
       // The next worker warms the model before resetting lexical-only hashes.
       // A graceful generation swap assumes the old worker has a query embedder.
+      await this.deps.searchPipeline.publishEmbeddingTransition(() => {
+        this.deps.searchPipeline.setEmbedder(undefined);
+      });
+      await this.releaseRetiredQueryBridge();
       await this.stopWorker();
       if (!signal.aborted) await this.startIndexerAttempt(signal);
       return;
@@ -1098,6 +1157,7 @@ export class IndexerLifecycle {
     // generation's live worker and remains until the swap's normal quiesce.
     await this.retireStaleBootAfterSwapValidation();
     if (signal.aborted) return;
+    this.assertStorageCanGrow();
 
     // Graceful (double-buffered) swap: build a new generation
     // while the active one keeps serving, then atomically flip. Eligible when
@@ -1160,7 +1220,10 @@ export class IndexerLifecycle {
     // results (class). Search degrades to BM25-only for the documented
     // downtime; the fresh worker re-attaches the new-model query embedder at the
     // new dimension.
-    this.deps.searchPipeline.setEmbedder(undefined);
+    await this.deps.searchPipeline.publishEmbeddingTransition(() => {
+      this.deps.searchPipeline.setEmbedder(undefined);
+    });
+    await this.releaseRetiredQueryBridge();
 
     if (mode === "hard") {
       this.log.info(
@@ -1178,6 +1241,8 @@ export class IndexerLifecycle {
     });
 
     await this.stopWorker();
+
+    this.assertStorageCanGrow();
 
     // Delete the stale on-disk usearch file. It was built at the OLD model's
     // dimension; leaving it in place lets the fresh worker `load()` an
@@ -1278,6 +1343,7 @@ export class IndexerLifecycle {
     signal: AbortSignal,
     opts: { resumeVersion?: number; beginModelCall: ModelCallFactory },
   ): Promise<void> {
+    this.assertStorageCanGrow();
     const beginModelCall = opts.beginModelCall;
     const db = this.deps.indexDb;
     // Whether the NEW (target) model runs in-process (local GGUF). A local
@@ -1351,9 +1417,27 @@ export class IndexerLifecycle {
       newDim,
       {
         signal,
+        assertCanGrow: () => this.assertStorageCanGrow(),
       },
     );
+    const abandonBuild = async (): Promise<void> => {
+      cleanupStaleBuildingState(db, this.deps.indexDbPath);
+      await buildEmbedder.dispose().catch(() => {});
+      if (!this.shuttingDown && pausedForQuiesce && this._indexerProxy)
+        this._indexerProxy.resumeIndexing();
+      const pressure = this.deps.getStoragePressure?.();
+      if (
+        !this.shuttingDown &&
+        !signal.aborted &&
+        this.indexerShutdownHandle == null &&
+        pressure?.state !== "blocked" &&
+        pressure?.state !== "unknown"
+      ) {
+        await this.startIndexerAttempt(signal);
+      }
+    };
     try {
+      this.assertStorageCanGrow();
       if (resuming) {
         // Resume runs at boot BEFORE the steady-state worker starts, so the
         // corpus is frozen: a single resume pass (rebuild the usearch file from
@@ -1383,6 +1467,7 @@ export class IndexerLifecycle {
         }
         await builder.catchUp();
       }
+      this.assertStorageCanGrow();
     } catch (err) {
       const abandoned = signal.aborted || err instanceof BuildAbortedError;
       if (abandoned) {
@@ -1394,22 +1479,18 @@ export class IndexerLifecycle {
           `Graceful build of generation ${newVersion} failed — abandoning, generation ${activeVersion} keeps serving: ${err instanceof Error ? err.message : String(err)}`,
         );
       }
-      cleanupStaleBuildingState(db, this.deps.indexDbPath);
-      await buildEmbedder.dispose().catch(() => {});
       // Leave the UNCHANGED active generation serving. If the worker was paused
       // for the quiesce (a LOCAL old model) it is still alive — un-pause it so the
       // active generation keeps ingesting. If it was disposed (HTTP old model) or
       // never reached the quiesce, restart it only when no worker is running.
-      if (pausedForQuiesce && this._indexerProxy) {
-        this._indexerProxy.resumeIndexing();
-      }
-      if (this.indexerShutdownHandle == null) await this.startIndexerAttempt(signal);
+      await abandonBuild();
+      if (err instanceof InsufficientStorageError) throw err;
       return;
     }
     // 3. Atomic flip + repoint query embedding. Build the new search embedder
-    //    first so steps 3a/3b run back-to-back with NO await between them — a
-    //    search either runs entirely before (old index + old query model) or
-    //    entirely after (new index + new query model); never a mixed pair.
+    //    first, then drain searches using the old pair before publication.
+    //    New searches wait at the pipeline barrier while old native calls and
+    //    candidate reads finish; publishing itself has no await.
     //
     //    For an HTTP target the search embedder is a fresh un-throttled HTTP
     //    client and the build embedder is now done — dispose it. For a LOCAL
@@ -1434,23 +1515,50 @@ export class IndexerLifecycle {
         apiKey,
       });
     }
-    flipActiveIndexVersion(db, {
-      newVersion,
-      oldVersion: activeVersion,
-      embedModel: modelLabel,
-      embedDim: newDim,
-    });
-    this.deps.searchPipeline.setEmbedder(
-      resolved.kind === "local"
-        ? searchEmbedder
-        : this.deps.inferenceRegistry.health.observe(
-            resolved,
-            searchEmbedder,
-            ["embed", "embedQuery"],
-            beginModelCall,
-          ),
-      embedId,
-    );
+    let published = false;
+    let retiredBridge: Embedder | null = null;
+    try {
+      await this.deps.searchPipeline.publishEmbeddingTransition(
+        () => {
+          if (signal.aborted) return;
+          this.assertStorageCanGrow();
+          flipActiveIndexVersion(db, {
+            newVersion,
+            oldVersion: activeVersion,
+            embedModel: modelLabel,
+            embedDim: newDim,
+          });
+          this.deps.searchPipeline.setEmbedder(
+            resolved.kind === "local"
+              ? searchEmbedder
+              : this.deps.inferenceRegistry.health.observe(
+                  resolved,
+                  searchEmbedder,
+                  ["embed", "embedQuery"],
+                  beginModelCall,
+                ),
+            embedId,
+          );
+          retiredBridge = this.queryBridge;
+          this.queryBridge = localTarget ? buildEmbedder : null;
+          this._queryEmbedderIsWorker = false;
+          published = true;
+        },
+        { refreshSnapshot: true },
+      );
+    } catch (error) {
+      if (searchEmbedder !== buildEmbedder) await searchEmbedder.dispose().catch(() => {});
+      await abandonBuild();
+      throw error;
+    }
+    if (!published) {
+      cleanupStaleBuildingState(db, this.deps.indexDbPath);
+      await searchEmbedder.dispose?.().catch(() => {});
+      if (!this.shuttingDown && pausedForQuiesce && this._indexerProxy)
+        this._indexerProxy.resumeIndexing();
+      return;
+    }
+    await this.disposeQueryBridge(retiredBridge);
     this.log.info(
       `Atomic flip complete: generation ${newVersion} now serving vector search; generation ${activeVersion} retired.`,
     );
@@ -1476,12 +1584,17 @@ export class IndexerLifecycle {
     await this.stopWorker();
     await this.startIndexerAttempt(signal);
 
-    // For a LOCAL target the build worker was the query-embedder bridge across
-    // the flip; startIndexer has now re-attached the fresh steady-state worker as
-    // the query embedder, so the bridge can be torn down (frees the extra model
-    // copy). For an HTTP target it was already disposed before the flip.
-    if (localTarget) {
-      await buildEmbedder.dispose().catch(() => {});
+    // A failed/aborted worker handoff leaves the bridge serving the new index.
+    // A later successful start, another publication or shutdown releases it.
+    await this.releaseRetiredQueryBridge();
+  }
+
+  private assertStorageCanGrow(): void {
+    const pressure = this.deps.getStoragePressure?.();
+    if (pressure?.state === "blocked" || pressure?.state === "unknown") {
+      throw new InsufficientStorageError(
+        "Model migration is paused because gateway storage is unavailable. Open Settings → Storage to reclaim space, then retry.",
+      );
     }
   }
 
@@ -1549,6 +1662,22 @@ export class IndexerLifecycle {
     });
   }
 
+  private async disposeQueryBridge(bridge: Embedder | null): Promise<void> {
+    if (!bridge) return;
+    await bridge.dispose?.().catch((error: unknown) => {
+      this.log.warn(
+        `query bridge cleanup failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    });
+  }
+
+  private async releaseRetiredQueryBridge(): Promise<void> {
+    const bridge = this.queryBridge;
+    if (!bridge || this.deps.searchPipeline.isQueryEmbedder(bridge)) return;
+    this.queryBridge = null;
+    await this.disposeQueryBridge(bridge);
+  }
+
   /**
    * Force a final HNSW save in the indexer worker before {@link shutdownIndexer}
    * disposes it, so the on-disk graph (and `usearch_saved_seq`) reflect the
@@ -1577,6 +1706,11 @@ export class IndexerLifecycle {
     const swap = this.queuedSwap ?? this.embedSwapInFlight;
     this.startupAbort?.abort();
     this.buildAbort?.abort();
+    await this.deps.searchPipeline.publishEmbeddingTransition(() => {
+      this.deps.searchPipeline.setEmbedder(undefined);
+      this._queryEmbedderIsWorker = false;
+    });
+    await this.releaseRetiredQueryBridge();
     if (this.indexerShutdownHandle) {
       await this.indexerShutdownHandle();
     } else if (startup) {
@@ -1590,6 +1724,8 @@ export class IndexerLifecycle {
     // steady-state worker starts. Join their abort cleanup before the gateway
     // closes DB handles or encrypts sidecars.
     if (swap) await swap;
+    // A swap completing its abort cleanup may have transferred bridge ownership.
+    await this.releaseRetiredQueryBridge();
   }
 }
 

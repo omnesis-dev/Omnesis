@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { realpathSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, posix } from "node:path";
 
 /** `<prefix>/Cellar/<formula>/<version>/bin/node` — a node binary inside a Homebrew keg. */
 const HOMEBREW_CELLAR_NODE = /^(.+)\/Cellar\/([^/]+)\/[^/]+\/bin\/node$/;
@@ -24,12 +24,13 @@ export function stableNodeBinDir(
   const match = HOMEBREW_CELLAR_NODE.exec(execPath);
   if (match) {
     const [, prefix, formula] = match;
-    const optBin = join(prefix!, "opt", formula!, "bin");
+    const optBin = posix.join(prefix!, "opt", formula!, "bin");
     try {
-      if (realpath(join(optBin, "node")) === realpath(execPath)) return optBin;
+      if (realpath(posix.join(optBin, "node")) === realpath(execPath)) return optBin;
     } catch {
       // No opt link for this keg (or it cannot be read): keep the keg path.
     }
+    return posix.dirname(execPath);
   }
   return dirname(execPath);
 }

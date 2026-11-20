@@ -35,6 +35,9 @@ import { promisify } from "node:util";
 
 import {
   createLogger,
+  nodeCommandInvocation,
+  execWindowsJob,
+  spawnWindowsJob,
   readPackageVersion,
   type AgentContextAssessment,
   type AgentEvent,
@@ -282,6 +285,7 @@ export class ClaudeCodeRuntime implements ClaudeCodeTurnRunner {
   private readonly idleTimeoutMs: number;
   private readonly log: Logger;
   private resolvedCommand: string | null = null;
+  private cleanupFailure: unknown;
 
   constructor(opts: ClaudeCodeRuntimeOptions) {
     this.workspaceDir = opts.workspaceDir;
@@ -294,8 +298,27 @@ export class ClaudeCodeRuntime implements ClaudeCodeTurnRunner {
     this.log = opts.logger ?? log;
   }
 
+  private assertCleanupConfirmed(): void {
+    if (this.cleanupFailure !== undefined)
+      throw Object.assign(
+        new Error("Claude Code process cleanup was not confirmed; runtime reuse is blocked", {
+          cause: this.cleanupFailure,
+        }),
+        { cleanupFailure: this.cleanupFailure },
+      );
+  }
+
+  private recordCleanupFailure(error: unknown): boolean {
+    if (error !== null && typeof error === "object" && "cleanupFailure" in error) {
+      this.cleanupFailure ??= error;
+      return true;
+    }
+    return false;
+  }
+
   /** The `claude` executable, resolved once and then reused until {@link forgetCommand}. */
   async resolveCommand(): Promise<string> {
+    this.assertCleanupConfirmed();
     if (this.resolvedCommand) return this.resolvedCommand;
     const command = await resolveClaudeCodeCommand({
       commandOverride: this.commandOverride,
@@ -321,14 +344,20 @@ export class ClaudeCodeRuntime implements ClaudeCodeTurnRunner {
     const command = await this.resolveCommand();
     let output: string;
     try {
-      const result = await execFileAsync(command, ["--version"], {
-        env: this.childEnv,
-        timeout: timeoutMs,
-        windowsHide: true,
-      });
+      const invocation = nodeCommandInvocation(command, ["--version"]);
+      const result = await (process.platform === "win32" ? execWindowsJob : execFileAsync)(
+        invocation.command,
+        invocation.args,
+        {
+          env: this.childEnv,
+          timeout: timeoutMs,
+          windowsHide: true,
+        },
+      );
       output = `${result.stdout}${result.stderr}`;
     } catch (err) {
       this.forgetCommand();
+      if (this.recordCleanupFailure(err)) throw err;
       throw new Error(`Claude Code probe failed: ${conciseError(err)}`, { cause: err });
     }
     const version = parseClaudeCodeVersion(output);
@@ -350,13 +379,19 @@ export class ClaudeCodeRuntime implements ClaudeCodeTurnRunner {
     const command = await this.resolveCommand();
     let stdout: string;
     try {
-      const result = await execFileAsync(command, ["auth", "status", "--json"], {
-        env: this.childEnv,
-        timeout: timeoutMs,
-        windowsHide: true,
-      });
+      const invocation = nodeCommandInvocation(command, ["auth", "status", "--json"]);
+      const result = await (process.platform === "win32" ? execWindowsJob : execFileAsync)(
+        invocation.command,
+        invocation.args,
+        {
+          env: this.childEnv,
+          timeout: timeoutMs,
+          windowsHide: true,
+        },
+      );
       stdout = String(result.stdout);
     } catch (err) {
+      if (this.recordCleanupFailure(err)) throw err;
       // Signed out is exit 1 with the same JSON on stdout.
       const out = (err as { stdout?: unknown }).stdout;
       if (typeof out !== "string" || !out.trim()) throw err;
@@ -380,6 +415,7 @@ export class ClaudeCodeRuntime implements ClaudeCodeTurnRunner {
 
   /** The CLI's model catalog, from a session that never sends a prompt. */
   async listModels(timeoutMs = 30_000): Promise<ClaudeCodeModelInfo[]> {
+    this.assertCleanupConfirmed();
     await ensureWorkspace(this.workspaceDir);
     const command = await this.resolveCommand();
     await this.assertNoManagedPolicyConflict();
@@ -390,6 +426,9 @@ export class ClaudeCodeRuntime implements ClaudeCodeTurnRunner {
       cwd: this.workspaceDir,
       env: this.childEnv,
       log: this.log,
+      onCleanupFailure: (error) => {
+        this.cleanupFailure = error;
+      },
       onMessage: () => {},
       onMcpMessage: () => Promise.resolve(undefined),
       onUnexpectedRequest: (subtype) => {
@@ -425,6 +464,7 @@ export class ClaudeCodeRuntime implements ClaudeCodeTurnRunner {
 
     let command: string;
     try {
+      this.assertCleanupConfirmed();
       await ensureWorkspace(this.workspaceDir);
       command = await this.resolveCommand();
       await this.assertNoManagedPolicyConflict();
@@ -461,6 +501,9 @@ export class ClaudeCodeRuntime implements ClaudeCodeTurnRunner {
       cwd: this.workspaceDir,
       env: this.childEnv,
       log: this.log,
+      onCleanupFailure: (error) => {
+        this.cleanupFailure = error;
+      },
       onMessage: (message) => turn.onMessage(message),
       onMcpMessage: (message) => turn.onMcpMessage(message),
       onUnexpectedRequest: (subtype) =>
@@ -1012,7 +1055,7 @@ class ClaudeCodeTurn {
     this.queue.push(wrapEvent("agent.error", { ...this.ids, code, message }));
     this.complete("error", { code, message });
     // Nothing more from this process may reach the conversation.
-    void this.session?.dispose();
+    void this.session?.dispose().catch(() => {});
   }
 
   /** A breach of the locked-down session: stop the CLI at once, without a grace period. */
@@ -1091,6 +1134,7 @@ interface ClaudeCodeProcessOptions {
   /** A control request Omnesis never registered for: a hook, an elicitation, a permission prompt. */
   onUnexpectedRequest?(subtype: string): void;
   onExit?(code: number | null, sig: NodeJS.Signals | null): void;
+  onCleanupFailure?(error: unknown): void;
 }
 
 /** One `claude -p` process: newline-delimited JSON both ways, with request/response control frames. */
@@ -1107,14 +1151,37 @@ class ClaudeCodeProcess {
 
   start(): void {
     if (this.proc) return;
-    const proc = spawn(this.opts.command, [...this.opts.args], {
-      cwd: this.opts.cwd,
-      env: this.opts.env,
-      stdio: ["pipe", "pipe", "pipe"],
-      windowsHide: true,
-    });
+    const invocation = nodeCommandInvocation(this.opts.command, this.opts.args);
+    const job =
+      process.platform === "win32"
+        ? spawnWindowsJob(invocation.command, invocation.args, {
+            cwd: this.opts.cwd,
+            env: this.opts.env,
+          })
+        : null;
+    const proc =
+      job ??
+      spawn(invocation.command, invocation.args, {
+        cwd: this.opts.cwd,
+        env: this.opts.env,
+        stdio: ["pipe", "pipe", "pipe"],
+        windowsHide: true,
+      });
     this.proc = proc;
-    this.exited = new Promise((resolve) => proc.once("exit", () => resolve()));
+    this.exited = (
+      job?.jobClosed ?? new Promise<void>((resolve) => proc.once("close", () => resolve()))
+    ).catch((error: unknown) => {
+      // Keep the runtime's undefined sentinel distinct from a failed join.
+      throw error === undefined
+        ? Object.assign(
+            new Error("Claude Code process cleanup was not confirmed", { cause: error }),
+            { cleanupFailure: error },
+          )
+        : error;
+    });
+    // Observe early rejection while a turn is active; dispose still awaits the
+    // same promise and refuses to release the session on uncertain cleanup.
+    void this.exited.catch((error: unknown) => this.opts.onCleanupFailure?.(error));
     createInterface({ input: proc.stdout }).on("line", (line) =>
       markActivity("agent.claudeCode.message", () => this.handleLine(line)),
     );
@@ -1126,13 +1193,20 @@ class ClaudeCodeProcess {
     proc.stdin.on("error", () => {
       /* the exit handler reports a dead process */
     });
-    proc.once("error", (err) => {
+    let failed = false;
+    const startFailed = (err: Error): void => {
+      if (failed || this.disposed) return;
+      failed = true;
       this.rejectAll(new Error(`Claude Code failed to start: ${err.message}`));
-      if (!this.disposed) this.opts.onExit?.(null, null);
-    });
+      this.opts.onExit?.(null, null);
+    };
+    proc.once("error", startFailed);
+    void job?.jobReady.catch((err: unknown) =>
+      startFailed(err instanceof Error ? err : new Error(String(err))),
+    );
     proc.once("exit", (code, sig) => {
       this.rejectAll(new Error(`Claude Code exited (${sig ?? code ?? "unknown"})`));
-      if (!this.disposed) this.opts.onExit?.(code, sig);
+      if (!this.disposed && !failed) this.opts.onExit?.(code, sig);
     });
   }
 

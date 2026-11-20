@@ -166,6 +166,26 @@ describe("iOS build identities", () => {
     );
   });
 
+  // Passkey sign-in to the cloud account needs the relay's domain as a web
+  // credentials domain, so every distribution profile of the two phone apps
+  // must carry the Associated Domains capability.
+  it("gives both phone apps the passkey domain and an Associated Domains profile", () => {
+    for (const path of ["ios/Omnesis.entitlements", "ios/Omnesis-Demo.entitlements"]) {
+      expect(read(path)).toMatch(
+        /<key>com\.apple\.developer\.associated-domains<\/key>\s*<array>\s*<string>webcredentials:\$\(OMNESIS_CLOUD_RELAY_RP_ID\)<\/string>\s*<\/array>/,
+      );
+    }
+    expect(read("ios/Config.xcconfig")).toMatch(
+      /^OMNESIS_CLOUD_RELAY_RP_ID = relay\.omnesis\.app$/m,
+    );
+    expect(spec.targets.Omnesis.settings.configs.Release.PROVISIONING_PROFILE_SPECIFIER).toBe(
+      "Omnesis Cloud App Store",
+    );
+    expect(spec.targets.OmnesisDemo.settings.configs.Release.PROVISIONING_PROFILE_SPECIFIER).toBe(
+      "Omnesis Cloud Demo App Store",
+    );
+  });
+
   // WebRTC bundles BoringSSL, which is not Apple's encryption: shipping it
   // would take the production app out of the export-compliance exemption.
   it("builds realtime voice and WebRTC into the demo app only", () => {
@@ -535,25 +555,52 @@ describe("hosted iOS simulator preparation", () => {
       expect(setup).toBeLessThan(steps.findIndex((step) => step.name?.startsWith("lane [")));
       expect(workflow.jobs[job].env?.[variable]).toBeUndefined();
     }
-    const journeys = parse(read(".github/workflows/mobile-journeys.yml")).jobs.ios.steps;
+    const mobile = parse(read(".github/workflows/mobile-journeys.yml")).jobs;
+    const journeys = mobile.ios.steps;
     expect(journeys.find((step) => step.name === "Prepare iPhone simulator").run).toContain(
       "OMNESIS_JOURNEY_IOS_UDID=$udid",
     );
     expect(read("scripts/run-mobile-journeys.sh")).toContain('udid="$OMNESIS_JOURNEY_IOS_UDID"');
-    const interactions = journeys.find(
-      (step) => step.name === "lane [ios-cloud-pairing-interactions]",
+    // The cloud pairing interaction tests need no gateway: they run in a job
+    // of their own, beside the journeys, under the same conditions.
+    expect(journeys.map((step) => step.name)).not.toContain(
+      "lane [ios-cloud-pairing-interactions]",
     );
-    expect(journeys.indexOf(interactions)).toBeGreaterThan(
-      journeys.findIndex((step) => step.name === "lane [ios-journeys]"),
-    );
+    const cloud = mobile["ios-cloud-pairing"];
+    expect(cloud.if).toBe(mobile.ios.if);
+    expect(cloud.needs).toBe(mobile.ios.needs);
+    expect(cloud["runs-on"]).toBe(mobile.ios["runs-on"]);
+    const steps = cloud.steps;
+    const index = (name) => steps.findIndex((step) => step.name === name);
+    expect(steps[index("Prepare iPhone simulator")].run).toContain("OMNESIS_IOS_UDID=$udid");
+    const generate = steps[index("Generate the project and resolve its packages")];
+    expect(generate.run).toContain("xcodegen generate");
+    expect(generate.run).toContain("scripts/ci/resolve-ios-packages.sh OmnesisDemoUITests");
+    const lane = index("lane [ios-cloud-pairing-interactions]");
+    expect(lane).toBeGreaterThan(index("Generate the project and resolve its packages"));
+    expect(lane).toBeGreaterThan(index("Prepare iPhone simulator"));
+    const interactions = steps[lane];
     expect(interactions.run).toContain("-scheme OmnesisDemoUITests");
     expect(interactions.run).toContain(
       "-only-testing:OmnesisDemoUITests/CloudPairingInteractionUITests",
     );
-    expect(interactions.run).toContain("platform=iOS Simulator,id=$OMNESIS_JOURNEY_IOS_UDID");
+    expect(interactions.run).toContain("platform=iOS Simulator,id=$OMNESIS_IOS_UDID");
+    expect(interactions.run).toContain("-disableAutomaticPackageResolution");
     expect(interactions.run).toContain("-enableCodeCoverage YES");
-    expect(interactions.run).toContain("${{ runner.temp }}/mobile-journeys/cloud-pairing.xcresult");
-    expect(interactions.run).toContain("set -o pipefail");
+    expect(interactions.run).toContain("${{ runner.temp }}/cloud-pairing/cloud-pairing.xcresult");
+    // The step's status is xcodebuild's, through the wrapper that retries
+    // only a UI test runner that never initialized.
+    expect(interactions.run).toMatch(
+      /^\s*node scripts\/ci\/xcodebuild-ui-tests\.mjs \\\n\s*--log "\$\{\{ runner\.temp \}\}\/cloud-pairing\/cloud-pairing-xcodebuild\.log" -- \\\n\s*test \\$/m,
+    );
+    expect(interactions.run).not.toContain("| tee");
+    const upload = steps[index("Upload cloud pairing artifacts")];
+    expect(upload.if).toBe("failure() || cancelled()");
+    expect(upload.with).toMatchObject({
+      name: "ios-cloud-pairing",
+      path: "${{ runner.temp }}/cloud-pairing/",
+    });
+    expect(index("Upload cloud pairing artifacts")).toBeGreaterThan(lane);
   });
 });
 
@@ -722,31 +769,34 @@ describe("Xcode simulator destination discovery", () => {
   });
 });
 
-it("reads eligible Xcode destinations emitted on stderr by a successful command", () => {
-  const fixture = mkdtempSync(join(tmpdir(), "ios-destination-output-"));
-  try {
-    const command = join(fixture, "xcodebuild");
-    const udid = "00000000-0000-0000-0000-000000000017";
-    writeFileSync(
-      command,
-      `#!/usr/bin/env bash\ncat >&2 <<'DESTINATIONS'\nAvailable destinations for the "Omnesis" scheme:\n{ platform:macOS, arch:arm64, variant:Designed for [iPad,iPhone], id:mac, name:local }\n{ platform:iOS Simulator, id:${udid}, OS:26.5, name:iPhone 17 }\nDESTINATIONS\n`,
-    );
-    chmodSync(command, 0o755);
-    const result = spawnSync(
-      process.execPath,
-      [join(root, "scripts/ci/wait-ios-destination.mjs"), `platform=iOS Simulator,id=${udid}`],
-      {
-        env: { ...process.env, PATH: `${fixture}:${process.env.PATH}` },
-        encoding: "utf8",
-        timeout: 5000,
-      },
-    );
-    expect(result.status, result.stderr).toBe(0);
-    expect(result.stderr).toContain("Xcode destination ready");
-  } finally {
-    rmSync(fixture, { recursive: true, force: true });
-  }
-});
+it.skipIf(process.platform === "win32")(
+  "reads eligible Xcode destinations emitted on stderr by a successful command",
+  () => {
+    const fixture = mkdtempSync(join(tmpdir(), "ios-destination-output-"));
+    try {
+      const command = join(fixture, "xcodebuild");
+      const udid = "00000000-0000-0000-0000-000000000017";
+      writeFileSync(
+        command,
+        `#!/usr/bin/env bash\ncat >&2 <<'DESTINATIONS'\nAvailable destinations for the "Omnesis" scheme:\n{ platform:macOS, arch:arm64, variant:Designed for [iPad,iPhone], id:mac, name:local }\n{ platform:iOS Simulator, id:${udid}, OS:26.5, name:iPhone 17 }\nDESTINATIONS\n`,
+      );
+      chmodSync(command, 0o755);
+      const result = spawnSync(
+        process.execPath,
+        [join(root, "scripts/ci/wait-ios-destination.mjs"), `platform=iOS Simulator,id=${udid}`],
+        {
+          env: { ...process.env, PATH: `${fixture}:${process.env.PATH}` },
+          encoding: "utf8",
+          timeout: 5000,
+        },
+      );
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stderr).toContain("Xcode destination ready");
+    } finally {
+      rmSync(fixture, { recursive: true, force: true });
+    }
+  },
+);
 
 describe("latest iOS destination discovery", () => {
   const udid = "00000000-0000-0000-0000-000000000017";
@@ -800,7 +850,8 @@ describe("latest iOS destination discovery", () => {
 // Run the actual wrapper without Xcode or a gateway. Child stubs record the
 // order of each step, so startup and test-run failures show what ran and what
 // was cleaned up.
-describe("iOS live gateway wrapper", () => {
+// These wrappers run the macOS Xcode/iOS lane; identity and planning checks above remain portable.
+describe.skipIf(process.platform === "win32")("iOS live gateway wrapper", () => {
   const LOST =
     "xcodebuild: error: Unable to find a device matching the provided destination specifier:";
 
@@ -1148,7 +1199,7 @@ function bootstrap(failedFeature = "") {
   }
 }
 
-describe("iOS live gateway Lab fixture", () => {
+describe.skipIf(process.platform === "win32")("iOS live gateway Lab fixture", () => {
   it("opts into Tasks and Watches before launching native tests, keeping Brain off", () => {
     const result = bootstrap();
     expect(result.status, result.stderr).toBe(59);

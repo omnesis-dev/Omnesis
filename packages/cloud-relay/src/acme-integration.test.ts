@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { beforeEach, afterEach, expect, test, vi } from "vitest";
+import * as core from "@omnesis/core";
 import { expiredCertificate } from "../test/expired-certificate.js";
 import { tlsFiles } from "../test/support.js";
 import { brokerHarness } from "../test/dns-broker-owner.js";
@@ -17,7 +18,7 @@ import type { AcmeDnsChallenges as AcmeDnsService } from "./acme-dns.js";
 let directory: string;
 beforeEach(async () => {
   directory = await mkdtemp(join(tmpdir(), "omnesis-acme-integration-"));
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
+  if (process.platform === "win32") await core.ensurePrivateDirs([directory]);
 });
 afterEach(async () => {
   vi.restoreAllMocks();
@@ -35,7 +36,6 @@ async function environment() {
     OMNESIS_TLS_CERT: tls.certFile,
     OMNESIS_TLS_KEY: tls.keyFile,
     OMNESIS_PUBLIC_BASE_URL: "https://owned.test",
-    OMNESIS_CLOUD_RELAY_ENABLED: process.env.OMNESIS_CLOUD_RELAY_ENABLED,
     OMNESIS_CLOUD_RELAY_URL: "https://relay.example.test",
     OMNESIS_CLOUD_RELAY_SESSION_FILE: join(directory, "session"),
     OMNESIS_CLOUD_RELAY_GATEWAY_ID: randomUUID(),
@@ -45,7 +45,7 @@ async function environment() {
     OMNESIS_ACME_DNS_TOKEN_FILE: tokenFile,
   };
 }
-test("ACME absent or experimental disabled leaves all files, certificate contexts and provider activity untouched", async () => {
+test("without an ACME directory nothing is created, activated or asked, whatever else is configured", async () => {
   const activate = vi.fn(async () => {}),
     fetch = vi.fn<typeof globalThis.fetch>();
   const prepared = await environment();
@@ -53,20 +53,14 @@ test("ACME absent or experimental disabled leaves all files, certificate context
   expect(
     await createGatewayAcmeController({}, { configDir: directory, activate, fetch }),
   ).toBeUndefined();
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "0");
-  expect(
-    await createGatewayAcmeController(
-      { OMNESIS_ACME_DIRECTORY_URL: "malformed", OMNESIS_ACME_TERMS_ACCEPTED: "invalid" },
-      { configDir: directory, activate, fetch },
-    ),
-  ).toBeUndefined();
-  // Without the flag, neither the official broker nor a configured one is ever asked anything.
+  // A gateway that never chose ACME asks neither the official broker nor a configured one.
+  const withoutDirectory: NodeJS.ProcessEnv = { ...prepared };
+  delete withoutDirectory.OMNESIS_ACME_DIRECTORY_URL;
   for (const provider of [{}, { OMNESIS_ACME_DNS_PROVIDER: "broker" }])
     expect(
       await createGatewayAcmeController(
         {
-          ...prepared,
-          OMNESIS_CLOUD_RELAY_ENABLED: "0",
+          ...withoutDirectory,
           OMNESIS_CLOUD_RELAY_URL: "https://relay.omnesis.app",
           OMNESIS_ACME_DNS_BROKER_URL: "https://dns.example.test",
           ...provider,
@@ -218,6 +212,7 @@ test("failed initial SNI activation contains cleanup errors and rejects reusing 
   const env = await environment(),
     { AcmeDnsChallenges } = await import("./acme-dns.js");
   const service = {
+    cleanupFailure: () => undefined,
     close: vi.fn(async () => {
       throw new Error("cleanup-provider-secret");
     }),
@@ -560,7 +555,7 @@ async function hostedEnvironment(relayUrl: string, extra: NodeJS.ProcessEnv = {}
   };
 }
 
-test("until the official broker answers, the official relay's gateways publish DNS-01 through the relay", async () => {
+test("an unavailable official broker never falls back to publishing DNS-01 through the relay", async () => {
   const { env } = await hostedEnvironment("https://relay.omnesis.app");
   const keys = await import("./gateway-key-client.js"),
     client = await import("./dns-broker-client.js");
@@ -583,10 +578,11 @@ test("until the official broker answers, the official relay's gateways publish D
     const presenter = presenters.mock.results[0]!.value as ReturnType<
       typeof client.brokerOrRelayPresenter
     >;
-    expect(await presenter.create("a".repeat(43), new AbortController().signal)).toEqual({ id });
+    await expect(presenter.create("a".repeat(43), new AbortController().signal)).rejects.toThrow(
+      "DNS broker is unavailable",
+    );
     expect(transport.mock.calls.map(([url]) => String(url))).toEqual([
       "https://dns.omnesis.app/_dns/v2/health",
-      "https://relay.omnesis.app/_relay/v2/acme/challenge",
     ]);
   } finally {
     await controller!.close();

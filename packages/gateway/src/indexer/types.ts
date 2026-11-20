@@ -143,6 +143,12 @@ export interface Embedder {
   embedQuery(query: string): Promise<Float32Array>;
   /** Clean up resources. */
   dispose(): Promise<void>;
+  /**
+   * Start no further native work: queued inputs fail and the returned promise
+   * resolves once the work already running has finished. Optional; only an
+   * embedder whose in-flight work can't be abandoned safely implements it.
+   */
+  quiesce?(): Promise<void>;
 }
 
 // ---------------------------------------------------------------------------

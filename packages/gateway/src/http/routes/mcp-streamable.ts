@@ -10,6 +10,7 @@ import {
 import { createLogger, readPackageVersion } from "@omnesis/core";
 import { tryDeviceId, type DeviceId } from "@omnesis/types";
 import { bodyLimit } from "hono/body-limit";
+import { resolveRequestOAuthUrls } from "../oauth-request.js";
 
 import { registerNotesMcpTool, NOTES_MCP_INSTRUCTIONS } from "../../mcp/notes-server.js";
 import { notesRateLimiter } from "../../rate-limit.js";
@@ -21,7 +22,6 @@ import {
 import {
   protectedResourceMetadataUrl,
   resolveMcpRequestResource,
-  resolveOAuthUrls,
 } from "../../access/oauth-urls.js";
 import {
   createCorpusAuthorization,
@@ -765,8 +765,8 @@ function oauthChallenge(
   rejectedToken = false,
   additionalOAuthIssuerUrls?: import("../../access/oauth-urls.js").OAuthIssuerSource,
 ) {
-  const urls = resolveOAuthUrls(
-    c.req.url,
+  const urls = resolveRequestOAuthUrls(
+    c,
     publicBaseUrl,
     mcpResourceUrls,
     additionalOAuthIssuerUrls,

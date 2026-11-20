@@ -136,14 +136,9 @@ describe("the note agent (Tasks enabled, Brain off, Agent puppet, no Brain model
   const tellNotes = (day: string) => bench.obs.tellNotes(day);
   const noteCalls = () => bench.puppetCalls.filter((c) => c.flavour === "note");
 
-  // The puppet resolves "next month" and "Friday" from the capture day, as the
-  // note agent's prompt tells the model to, once when the bench starts; the
-  // tests expect exactly those days, however long the suite runs.
-  let nextMonth: string;
-  let friday: string;
+  // Relative schedules follow each note's capture day, independently of when
+  // the bench starts or the note is processed.
   beforeAll(async () => {
-    nextMonth = monthAfter(isoDay(new Date()));
-    friday = fridayAfter(isoDay(new Date()));
     bench = await BrainBench.start({
       experimental: true,
       labFeatures: { tasks: true, brain: false, watches: false },
@@ -157,18 +152,18 @@ describe("the note agent (Tasks enabled, Brain off, Agent puppet, no Brain model
           {
             flavour: "note",
             subject: EDITED_GREENHOUSE_NOTE,
-            plan: {
+            plan: (context) => ({
               calls: [
                 call("task_list", { query: "community greenhouse" }),
                 call("task_update", {
                   id: ref("task_list", "tasks.0.id"),
                   action: "migrate",
-                  to: nextMonth,
+                  to: monthAfter(context.detail!),
                 }),
               ],
               finalText:
                 "Moved the existing greenhouse task to next month; its guide stays attached.",
-            },
+            }),
           },
           {
             flavour: "note",
@@ -282,28 +277,31 @@ describe("the note agent (Tasks enabled, Brain off, Agent puppet, no Brain model
           {
             flavour: "note",
             promptContains: MIGRATE_NOTE,
-            plan: {
+            plan: (context) => ({
               calls: [
                 call("task_list", { query: "car insurance" }),
                 call("task_update", {
                   id: ref("task_list", "tasks.0.id"),
                   action: "migrate",
-                  to: nextMonth,
+                  to: monthAfter(context.detail!),
                 }),
               ],
               finalText: "Moved renewing the car insurance to next month.",
-            },
+            }),
           },
           {
             flavour: "note",
             promptContains: SCHEDULED_CREATE_NOTE,
-            plan: {
+            plan: (context) => ({
               calls: [
                 call("task_list", { query: "boiler" }),
-                call("task_create", { title: BOILER_TITLE, scheduledFor: nextMonth }),
+                call("task_create", {
+                  title: BOILER_TITLE,
+                  scheduledFor: monthAfter(context.detail!),
+                }),
               ],
               finalText: "Added servicing the boiler for next month.",
-            },
+            }),
           },
           {
             flavour: "note",
@@ -323,17 +321,17 @@ describe("the note agent (Tasks enabled, Brain off, Agent puppet, no Brain model
           {
             flavour: "note",
             promptContains: RESCHEDULE_NOTE,
-            plan: {
+            plan: (context) => ({
               calls: [
                 call("task_list", { query: "quarterly report" }),
                 call("task_update", {
                   id: ref("task_list", "tasks.0.id"),
                   action: "edit",
-                  scheduledFor: friday,
+                  scheduledFor: fridayAfter(context.detail!),
                 }),
               ],
               finalText: "Moved the quarterly report to Friday.",
-            },
+            }),
           },
           {
             flavour: "note",
@@ -492,7 +490,7 @@ describe("the note agent (Tasks enabled, Brain off, Agent puppet, no Brain model
     expect(editedReceipt.receipt?.changes).toHaveLength(1);
     expect(editedReceipt.receipt?.changes[0]?.taskId).toBe(taskId);
     const moved = await bench.obs.task(taskId);
-    expect(moved.task.scheduledFor).toBe(nextMonth);
+    expect(moved.task.scheduledFor).toBe(monthAfter(dayOf(created)));
     expect(moved.task.documents).toEqual([guide]);
     expect(moved.history[0]).toMatchObject({
       kind: "migrated",
@@ -535,8 +533,10 @@ describe("the note agent (Tasks enabled, Brain off, Agent puppet, no Brain model
   }, 180_000);
 
   test("a note putting a task off moves it to next month, out of the open views", async () => {
-    const at = new Date();
+    // Explicit capture dates exercise year/month rollover without a clock race.
+    const at = new Date("2026-12-31T23:59:59Z");
     const day = isoDay(at);
+    const nextMonth = monthAfter(day);
     const insurance = await bench.obs.createTask({ title: INSURANCE_TITLE });
     const taskId = insurance.task!.id;
     expect(insurance.task).toMatchObject({ scheduledFor: null, state: "open" });
@@ -578,8 +578,9 @@ describe("the note agent (Tasks enabled, Brain off, Agent puppet, no Brain model
   }, 180_000);
 
   test("a note putting off a task that does not exist adds it already scheduled", async () => {
-    const at = new Date();
+    const at = new Date("2027-01-01T00:00:01Z");
     const day = isoDay(at);
+    const nextMonth = monthAfter(day);
     const id = await capture(SCHEDULED_CREATE_NOTE, at);
     const agent = await receiptFor(tellNotes, id, day);
     expect(agent.receipt).toMatchObject({
@@ -637,8 +638,10 @@ describe("the note agent (Tasks enabled, Brain off, Agent puppet, no Brain model
   }, 180_000);
 
   test("a note pushing a task to a weekday reschedules it to that day", async () => {
-    const at = new Date();
+    // A Friday capture must schedule the following Friday, even in an older month.
+    const at = new Date("2026-01-02T00:00:01Z");
     const day = isoDay(at);
+    const friday = fridayAfter(day);
     const report = await bench.obs.createTask({ title: REPORT_TITLE, scheduledFor: day });
     const taskId = report.task!.id;
     const before = await bench.obs.taskCounts(day);

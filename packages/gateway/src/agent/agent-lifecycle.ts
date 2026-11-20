@@ -26,6 +26,7 @@ import {
 } from "@omnesis/agent";
 import {
   createLogger,
+  ownedProcessCleanupReceipt,
   resolveModelDisplay,
   experimentalVisible,
   CLOUD_EGRESS_DISABLED_REASON,
@@ -1331,7 +1332,8 @@ export class AgentLifecycle {
     if (previousService) {
       try {
         await previousService.dispose();
-      } catch {
+      } catch (error) {
+        if (ownedProcessCleanupReceipt(error)) throw error;
         /* best-effort */
       }
     }

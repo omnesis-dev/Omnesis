@@ -3,53 +3,28 @@
 
 package dev.omnesis.android.session
 
-import dev.omnesis.android.BuildConfig
 import dev.omnesis.android.pairing.PairedGatewayTransport
 import dev.omnesis.android.pairing.Pairing
 import dev.omnesis.android.pairing.PairingTlsMode
 import dev.omnesis.android.transport.routing.DirectGatewayRoute
-import dev.omnesis.android.transport.tls.PinnedOkHttp
-import java.net.URI
 import okhttp3.OkHttpClient
 
-/**
- * The session's HTTP clients. A build without cloud connectivity builds them exactly as it
- * did before the feature: no routes, one client shared by the socket and the streams.
- */
-internal class SessionTransport(private val cloudEnabled: Boolean = BuildConfig.CLOUD_RELAY_ENABLED) {
+/** The session's HTTP clients, each on the pairing's route and under its trust. */
+internal class SessionTransport {
     fun http(pairing: Pairing, upgrade: (() -> Unit)?, route: DirectGatewayRoute?): OkHttpClient =
-        if (cloudEnabled) PairedGatewayTransport.httpOnRoute(pairing, upgrade, route)
-        else PinnedOkHttp.build(
-            pairing.fingerprint,
-            requirePin = pairing.tlsMode == PairingTlsMode.PINNED_LEAF,
-            host = hostOf(pairing.url),
-            onSystemTrustVerified = upgrade,
-        )
+        PairedGatewayTransport.httpOnRoute(pairing, upgrade, route)
 
     fun streaming(pairing: Pairing, upgrade: (() -> Unit)?, route: DirectGatewayRoute?): OkHttpClient =
-        if (cloudEnabled) PairedGatewayTransport.streamingOnRoute(pairing, upgrade, route)
-        else PinnedOkHttp.buildStreaming(
-            pairing.fingerprint,
-            requirePin = pairing.tlsMode == PairingTlsMode.PINNED_LEAF,
-            host = hostOf(pairing.url),
-            onSystemTrustVerified = upgrade,
-        )
+        PairedGatewayTransport.streamingOnRoute(pairing, upgrade, route)
 
-    /** The socket's own client with cloud connectivity, otherwise the [streaming] one. */
-    fun socket(pairing: Pairing, upgrade: (() -> Unit)?, route: DirectGatewayRoute?, streaming: OkHttpClient): OkHttpClient =
-        if (cloudEnabled) PairedGatewayTransport.socket(pairing, upgrade, route) else streaming
+    /** The socket has its own client, so replacing it never touches the streams. */
+    fun socket(pairing: Pairing, upgrade: (() -> Unit)?, route: DirectGatewayRoute?): OkHttpClient =
+        PairedGatewayTransport.socket(pairing, upgrade, route)
 
-    fun revocation(pending: Pairing): OkHttpClient =
-        if (cloudEnabled) PairedGatewayTransport.http(pending)
-        else PinnedOkHttp.build(pending.fingerprint, host = hostOf(pending.url))
+    fun revocation(pending: Pairing): OkHttpClient = PairedGatewayTransport.http(pending)
 
-    fun socketRoute(route: DirectGatewayRoute?): DirectGatewayRoute? = route.takeIf { cloudEnabled }
+    fun refreshesHints(pairing: Pairing): Boolean = pairing.tlsMode == PairingTlsMode.PINNED_KEY_STRICT
 
-    fun refreshesHints(pairing: Pairing): Boolean = cloudEnabled && pairing.tlsMode == PairingTlsMode.PINNED_KEY_STRICT
-
-    /** The device the hello reply must name, checked only with cloud connectivity. */
-    fun expectedDeviceId(pairing: Pairing): String? =
-        pairing.deviceId.takeIf { cloudEnabled && pairing.pairingGeneration != null }
-
-    private fun hostOf(url: String): String? = runCatching { URI(url).host }.getOrNull()
+    /** The device the hello reply must name. A pairing from before token generations has no identity to check. */
+    fun expectedDeviceId(pairing: Pairing): String? = pairing.deviceId.takeIf { pairing.pairingGeneration != null }
 }

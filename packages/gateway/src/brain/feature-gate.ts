@@ -166,6 +166,8 @@ export interface BriefsRunQueueBootDeps {
   getOperatorInstructions?: () => string;
   /** Directory run transcripts persist under (created on demand). */
   transcriptsDir: string;
+  /** Register the owned transcript facade for closure after scheduled work drains. */
+  onTranscriptStore?: (store: { close(): Promise<void> }) => void;
   /**
    * The sweep set (system definitions layered with the operator's files).
    * Omitted by storage-only tests, which then schedule no sweeps at all.
@@ -267,6 +269,8 @@ export interface BriefsRunQueueBootDeps {
  * model changes; model assignment is never itself a registration event.
  */
 export async function bootBriefs(deps: {
+  /** Capacity admission parks autonomous growth; privacy cleanup remains runnable. */
+  canGrow?: () => boolean;
   registry: BackgroundAgentResolver;
   isEnabled?: () => boolean;
   /** Runtime-readiness probes for the background-agent backend. */
@@ -361,6 +365,12 @@ export async function bootBriefs(deps: {
       import("./transcripts.js"),
     ]);
     const transcripts = new FsCognitionTranscriptStore(rq.transcriptsDir);
+    try {
+      rq.onTranscriptStore?.(transcripts);
+    } catch (error) {
+      await transcripts.close();
+      throw error;
+    }
     // The real Brain (tools + per-kind prompts + notes injection),
     // unless a test passed explicit seam overrides. Lazy-loaded like the
     // drainer so inert builds never pull the agent-ports graph.
@@ -455,7 +465,9 @@ export async function bootBriefs(deps: {
       const maintenance = knowledgeMaintenanceTask({
         engine,
         scheduler: rq.scheduler,
-        isEnabled: () => briefsFeatureStatus(deps.registry, deps.readiness, deps.isEnabled).active,
+        isEnabled: () =>
+          (deps.canGrow?.() ?? true) &&
+          briefsFeatureStatus(deps.registry, deps.readiness, deps.isEnabled).active,
         intervalMs: rq.wakerIntervalMs,
         idleMs: rq.wakerIdleMs,
         startDelayMs: rq.wakerStartDelayMs,
@@ -674,7 +686,9 @@ export async function bootBriefs(deps: {
         log,
         getBudgetVerdict: () =>
           cognitionBudgetVerdict(rq.db, rq.getSettings().budget, (rq.clock ?? Date.now)()),
-        isEnabled: () => briefsFeatureStatus(deps.registry, deps.readiness, deps.isEnabled).active,
+        isEnabled: () =>
+          (deps.canGrow?.() ?? true) &&
+          briefsFeatureStatus(deps.registry, deps.readiness, deps.isEnabled).active,
         ...(rq.activity ? { activity: rq.activity } : {}),
         getWorkerConcurrency: () => rq.getSettings().workerConcurrency,
         getMaxStalledHandoffs: () => rq.getSettings().knowledge.maxStalledHandoffs,
@@ -749,6 +763,7 @@ export async function bootBriefs(deps: {
           writeGate: deps.writeGate,
           log: log.child("rhythm"),
           isEnabled: () =>
+            (deps.canGrow?.() ?? true) &&
             briefsFeatureStatus(deps.registry, deps.readiness, deps.isEnabled).active,
           tasksEnabled: () => labFeatureEnabled(rq.db, "tasks"),
           getDailyRunHour: () => rq.getSettings().dailyRunHour,
@@ -891,7 +906,9 @@ export async function bootBriefs(deps: {
           buffer,
           log: wakerLog,
           isEnabled: () =>
-            !knowledge && briefsFeatureStatus(deps.registry, deps.readiness, deps.isEnabled).active,
+            !knowledge &&
+            (deps.canGrow?.() ?? true) &&
+            briefsFeatureStatus(deps.registry, deps.readiness, deps.isEnabled).active,
           derivationBarrierMs: () => rq.getSettings().derivationBarrierMs,
           ...(rq.contentPending
             ? {

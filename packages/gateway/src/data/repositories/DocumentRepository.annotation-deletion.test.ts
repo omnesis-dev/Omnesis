@@ -3,6 +3,8 @@
 
 import { randomUUID } from "node:crypto";
 import { rmSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { ProviderId, SourceId } from "@omnesis/types";
 import { createDatabase, upsertDocuments } from "../../db.js";
@@ -35,7 +37,7 @@ describe("document deletion keeps durable annotations for review", () => {
   let survivorId: string;
 
   beforeEach(() => {
-    path = `/tmp/omnesis-test-${randomUUID()}.db`;
+    path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
     db = createDatabase(path);
     for (const externalId of ["evidence", "survivor"]) {
       upsertDocuments(db, [

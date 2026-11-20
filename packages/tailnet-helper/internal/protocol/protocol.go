@@ -15,18 +15,20 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 )
 
 // Version is the protocol revision the helper speaks. The gateway refuses a
 // helper whose first status event reports a different value.
-const Version = 1
+const Version = 2
 
 // Command types the gateway may send.
 const (
-	CommandConfigure = "configure"
-	CommandLogin     = "login"
-	CommandLogout    = "logout"
+	CommandGatewayCertificate = "gateway-certificate"
+	CommandConfigure          = "configure"
+	CommandLogin              = "login"
+	CommandLogout             = "logout"
 )
 
 // Command is one instruction from the gateway.
@@ -34,7 +36,14 @@ type Command struct {
 	Type string `json:"type"`
 	// Public is set on configure: whether the public address is wanted and
 	// which paths it may serve.
-	Public *PublicConfig `json:"public,omitempty"`
+	Public      *PublicConfig       `json:"public,omitempty"`
+	Certificate *GatewayCertificate `json:"certificate,omitempty"`
+}
+
+// GatewayCertificate is private parent-to-helper material, never emitted in status.
+type GatewayCertificate struct {
+	Cert string `json:"cert"`
+	Key  string `json:"key"`
 }
 
 // PublicConfig is the gateway's wish for the public (Funnel) address.
@@ -53,7 +62,17 @@ func ParseCommand(line []byte) (Command, error) {
 	if err := dec.Decode(&c); err != nil {
 		return Command{}, fmt.Errorf("decode command: %w", err)
 	}
+	if err := dec.Decode(new(any)); err != io.EOF {
+		return Command{}, errors.New("command must contain exactly one JSON object")
+	}
+	if c.Type != CommandGatewayCertificate && c.Certificate != nil {
+		return Command{}, errors.New("certificate material requires gateway-certificate")
+	}
 	switch c.Type {
+	case CommandGatewayCertificate:
+		if c.Public != nil || c.Certificate == nil || len(c.Certificate.Cert) == 0 || len(c.Certificate.Cert) > 256*1024 || len(c.Certificate.Key) == 0 || len(c.Certificate.Key) > 64*1024 {
+			return Command{}, errors.New("gateway-certificate needs a bounded certificate pair and no public settings")
+		}
 	case CommandLogin, CommandLogout:
 		if c.Public != nil {
 			return Command{}, fmt.Errorf("%s takes no public settings", c.Type)

@@ -12,6 +12,7 @@ import {
 const cli = { file: "tailscale", bundledApp: false };
 const running = JSON.stringify({
   BackendState: "Running",
+  Version: "1.104.6-t0123456789-g0123456789",
   Self: { DNSName: "Studio.Example-Net.ts.net." },
 });
 const NAME = "studio.example-net.ts.net";
@@ -91,10 +92,12 @@ describe("HostTailscaleService", () => {
     expect(await host.status()).toEqual({
       state: "available",
       dnsName: NAME,
+      version: "1.104.6",
       port: 443,
       url: `https://${NAME}`,
       servesGateway: false,
       publicGateway: false,
+      taken: [],
     });
   });
 
@@ -168,6 +171,81 @@ describe("HostTailscaleService", () => {
     ]);
   });
 
+  test("unpublishing turns off only the ports that serve this gateway alone", async () => {
+    // The gateway on 10000 through Funnel; 443 and 8443 belong to other apps.
+    const { host, run } = service({
+      "status --json": running,
+      "serve status --json": serving(
+        {
+          443: { "/": gatewayTarget(7601) },
+          8443: { "/": "http://127.0.0.1:3000" },
+          10000: { "/": GATEWAY },
+        },
+        [443, 10000],
+      ),
+      "serve --https=10000 off": "",
+    });
+    expect(await host.unpublish()).toEqual({ ok: true });
+    expect(run.mock.calls.map(([, args]) => args.join(" "))).toEqual([
+      "status --json",
+      "serve status --json",
+      "serve --https=10000 off",
+    ]);
+  });
+
+  test("unpublishing a gateway nothing serves runs nothing", async () => {
+    const { host, run } = service({
+      "status --json": running,
+      "serve status --json": serving({ 443: { "/": "http://127.0.0.1:3000" } }),
+    });
+    expect(await host.unpublish()).toEqual({ ok: true });
+    expect(run).toHaveBeenCalledTimes(2);
+  });
+
+  test("an unpublish Tailscale refuses names the command to run instead", async () => {
+    const { host } = service({
+      "status --json": running,
+      "serve status --json": serving({ 443: { "/": GATEWAY } }, [443]),
+      "serve --https=443 off": Object.assign(new Error("exit 1"), {
+        stderr: "Access denied: serve config denied",
+      }),
+    });
+    expect(await host.unpublish()).toEqual({
+      ok: false,
+      reason: expect.stringContaining("not allowed to change Tailscale"),
+      command: "tailscale serve --https=443 off",
+    });
+  });
+
+  test("after a partial unpublish, the command names only the ports still on", async () => {
+    const { host } = service({
+      "status --json": running,
+      "serve status --json": serving({ 443: { "/": GATEWAY }, 10000: { "/": GATEWAY } }, [443]),
+      "serve --https=443 off": "",
+      "serve --https=10000 off": Object.assign(new Error("exit 1"), {
+        stderr: "Access denied: serve config denied",
+      }),
+    });
+    expect(await host.unpublish()).toMatchObject({
+      ok: false,
+      command: "tailscale serve --https=10000 off",
+    });
+  });
+
+  test("unpublishing changes nothing when Tailscale is down or will not say what it serves", async () => {
+    const stopped = service({ "status --json": JSON.stringify({ BackendState: "Stopped" }) });
+    expect(await stopped.host.unpublish()).toMatchObject({ ok: false });
+    const unreadable = service({
+      "status --json": running,
+      "serve status --json": new Error("exit 1"),
+    });
+    expect(await unreadable.host.unpublish()).toEqual({
+      ok: false,
+      reason: expect.stringContaining("changed nothing"),
+    });
+    expect(unreadable.run).toHaveBeenCalledTimes(2);
+  });
+
   test("Funnel's enable link, printed on stdout, is recognised", async () => {
     const { host } = service({
       "status --json": running,
@@ -239,6 +317,7 @@ describe("HostTailscaleService", () => {
         port: 8443,
         url: `https://${NAME}:8443`,
         servesGateway: false,
+        taken: [{ port: 443, target: OTHER }],
       });
       expect(await host.publish(false)).toEqual({ ok: true, url: `https://${NAME}:8443` });
       const commands = run.mock.calls.map(([, args]) => args.join(" "));
@@ -252,12 +331,20 @@ describe("HostTailscaleService", () => {
         "status --json": running,
         "serve status --json": serving({ 443: { "/": GATEWAY, "/files": OTHER } }),
       });
-      expect(await path.host.status()).toMatchObject({ port: 8443, servesGateway: false });
+      expect(await path.host.status()).toMatchObject({
+        port: 8443,
+        servesGateway: false,
+        taken: [{ port: 443, target: GATEWAY }],
+      });
       const tcp = service({
         "status --json": running,
         "serve status --json": serving({}, [], { 443: { TCPForward: "127.0.0.1:5432" } }),
       });
-      expect(await tcp.host.status()).toMatchObject({ port: 8443, servesGateway: false });
+      expect(await tcp.host.status()).toMatchObject({
+        port: 8443,
+        servesGateway: false,
+        taken: [{ port: 443, target: "127.0.0.1:5432" }],
+      });
     });
 
     test("a serve still running in a terminal holds its port", async () => {
@@ -295,6 +382,7 @@ describe("HostTailscaleService", () => {
         port: null,
         servesGateway: false,
         blocked: NO_FREE_PORT,
+        taken: [443, 8443, 10000].map((port) => ({ port, target: OTHER })),
       });
       expect(await host.publish(true)).toEqual({ ok: false, reason: NO_FREE_PORT });
       expect(run.mock.calls.every(([, args]) => !args.includes("--bg"))).toBe(true);

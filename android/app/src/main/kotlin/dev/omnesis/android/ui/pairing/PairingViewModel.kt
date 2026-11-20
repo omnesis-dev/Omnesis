@@ -19,26 +19,18 @@ import javax.inject.Inject
 @HiltViewModel
 class PairingViewModel internal constructor(
     private val session: () -> SessionManager,
-    googlePorts: GooglePairingPorts,
+    accountPorts: AccountPairingPorts,
     googleAvailable: Boolean,
-    accountPorts: AccountPairingPorts? = null,
-    /** Off, a QR naming a strict trust mode is refused like any unknown mode. */
-    private val cloudRelay: Boolean = false,
+    passkeyAvailable: Boolean = android.os.Build.VERSION.SDK_INT >= 28,
 ) : ViewModel() {
-    @Inject constructor(session: SessionManager) : this(
-        { session },
-        defaultGooglePairingPorts(session),
-        googlePairingConfigured(),
-        defaultAccountPairingPorts(session),
-        session.cloudRelay,
-    )
+    @Inject constructor(session: SessionManager) : this({ session }, AccountPairingDefaults.ports(session), googlePairingConfigured())
 
     /**
-     * Which pairing affordance is on screen. Scanner-first, mirroring iOS `PairingView`; with an
-     * Omnesis account available it opens on [Mode.Google], the entry offering sign-in or direct pairing.
+     * Which pairing affordance is on screen. With a way to sign in to the Omnesis account it opens
+     * on [Mode.Account], the entry offering sign-in or direct pairing; otherwise scanner-first,
+     * mirroring iOS `PairingView`.
      */
-    enum class Mode { Scan, Manual, Google }
-    enum class GooglePhase { Idle, SigningIn, Finding, Comparing, Waiting, Ready, Pairing, Failed }
+    enum class Mode { Scan, Manual, Account }
     enum class TrustKind { System, PinnedLeaf, PinnedKey, Legacy }
 
     /**
@@ -78,54 +70,57 @@ class PairingViewModel internal constructor(
         val isPairing: Boolean = false,
         val error: String? = null,
         val pending: Pending? = null,
-        val googleAvailable: Boolean = googlePairingConfigured(),
-        val googlePhase: GooglePhase = GooglePhase.Idle,
-        val googleCode: String? = null,
-        val googleHost: String? = null,
-        val googleCompared: Boolean = false,
-        val googleApproved: Boolean = false,
-        val account: AccountPairingState? = null,
+        val googleAvailable: Boolean = false,
         val passkeyAvailable: Boolean = false,
+        /** The Omnesis account sign-in; null when this phone has no way to sign in. */
+        val account: AccountPairingState? = null,
+        /** The account's sign-in choices are open, past the entry's single button. */
+        val choosingSignIn: Boolean = false,
         val tailnetUnreachable: TailnetUnreachable? = null,
     ) {
         val canSubmit: Boolean get() = gatewayUrl.isNotBlank() && pairingCode.isNotBlank() && !isPairing
     }
 
-    private val _state = MutableStateFlow(State(mode = if (accountPorts != null) Mode.Google else Mode.Scan, googleAvailable = googleAvailable, account = accountPorts?.let { AccountPairingState() }, passkeyAvailable = accountPorts != null && android.os.Build.VERSION.SDK_INT >= 28))
+    private val signIn = googleAvailable || passkeyAvailable
+    private val _state = MutableStateFlow(State(
+        mode = if (signIn) Mode.Account else Mode.Scan,
+        googleAvailable = googleAvailable,
+        passkeyAvailable = passkeyAvailable,
+        account = if (signIn) AccountPairingState() else null,
+    ))
     val state = _state.asStateFlow()
-    private val google = GooglePairingController(
-        scope = viewModelScope,
-        acquireToken = googlePorts.acquireToken,
-        createClient = googlePorts.createClient,
-        applyPairing = googlePorts.applyPairing,
-        changed = { value -> _state.update { it.copy(googlePhase = value.phase, googleCode = value.code,
-            googleHost = value.host, googleCompared = value.compared, googleApproved = value.approved, error = value.error) } },
-    )
 
-    private val account = accountPorts?.let { ports -> AccountPairingController(viewModelScope, ports) { value -> _state.update { it.copy(account = value) } } }
+    /** Null when this phone has no way to sign in, so nothing account-related ever reaches the state. */
+    private val account = if (signIn) AccountPairingController(viewModelScope, accountPorts) { value -> _state.update { it.copy(account = value) } } else null
 
-    fun showScanner() { account?.cancel(); google.cancel(); _state.update { it.copy(mode = Mode.Scan, error = null, tailnetUnreachable = null) } }
-    fun showManualEntry() { account?.cancel(); google.cancel(); _state.update { it.copy(mode = Mode.Manual, error = null, tailnetUnreachable = null) } }
-    fun showGoogle() { if (_state.value.googleAvailable || account != null) _state.update { it.copy(mode = Mode.Google, error = null) } }
+    fun showScanner() { account?.cancel(); _state.update { it.copy(mode = Mode.Scan, choosingSignIn = false, error = null, tailnetUnreachable = null) } }
+    fun showManualEntry() { account?.cancel(); _state.update { it.copy(mode = Mode.Manual, choosingSignIn = false, error = null, tailnetUnreachable = null) } }
+    /** Back to the account entry, from direct pairing or the sign-in choices. */
+    fun showAccount() {
+        val account = account ?: return
+        account.cancel()
+        _state.update { it.copy(mode = Mode.Account, choosingSignIn = false, error = null) }
+    }
+    /** The entry's one button: the next step asks how to sign in. */
+    fun showSignInChoices() {
+        if (account == null) return
+        _state.update { it.copy(mode = Mode.Account, choosingSignIn = true, error = null) }
+    }
     fun startGoogle(context: Context) {
-        if (!_state.value.googleAvailable) return
-        _state.update { it.copy(mode = Mode.Google) }
-        if (account != null) account.start(context, AccountPairingController.Method.Google) else google.start(context)
+        val account = account?.takeIf { _state.value.googleAvailable } ?: return
+        _state.update { it.copy(mode = Mode.Account, choosingSignIn = true) }
+        account.start(context, AccountPairingController.Method.Google)
     }
     fun startPasskey(context: Context) {
-        if (!_state.value.passkeyAvailable) return
-        _state.update { it.copy(mode = Mode.Google) }
-        account?.start(context, AccountPairingController.Method.Passkey)
+        val account = account?.takeIf { _state.value.passkeyAvailable } ?: return
+        _state.update { it.copy(mode = Mode.Account, choosingSignIn = true) }
+        account.start(context, AccountPairingController.Method.Passkey)
     }
-    /** Back to the account entry's sign-in choices. */
+    /** Back to the sign-in choices. */
     fun cancelAccountSignIn() { account?.cancel() }
     fun chooseAccountGateway(gatewayId: String) { account?.choose(gatewayId) }
-    fun finishGooglePairing() {
-        if (account != null) { account.finish(); return }
-        if (!_state.value.googleApproved && _state.value.googlePhase != GooglePhase.Ready) return
-        google.compare(); google.finish()
-    }
-    override fun onCleared() { account?.cancel(); google.cancel(); super.onCleared() }
+    fun finishAccountPairing() { account?.finish() }
+    override fun onCleared() { account?.cancel(); super.onCleared() }
 
     fun onUrlChange(v: String) = _state.update { it.copy(gatewayUrl = v, error = null) }
     fun onCodeChange(v: String) = _state.update { it.copy(pairingCode = v, error = null) }
@@ -165,7 +160,7 @@ class PairingViewModel internal constructor(
      */
     fun pairFromQr(raw: String) {
         if (_state.value.isPairing || _state.value.pending != null) return
-        val payload = runCatching { PairingPayload.decode(raw, cloudRelay) }.getOrElse { e ->
+        val payload = runCatching { PairingPayload.decode(raw) }.getOrElse { e ->
             _state.update { it.copy(mode = Mode.Manual, error = pairingErrorMessage(e, gatewayHost = null)) }
             return
         }

@@ -9,6 +9,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { ensureInstallRootKey } from "../packages/core/src/secret-store.ts";
 import { writeSecretTextFileSync } from "../packages/core/src/secret-file.ts";
 import { readInstanceToken } from "./lib/instance-token.mjs";
+import { bashExecutable, bashEnvironment, bashFixturePath } from "./lib/test-shell.mjs";
 
 const directories = [];
 afterEach(() => {
@@ -20,35 +21,38 @@ function fixture() {
   directories.push(dir);
   return dir;
 }
-it("reads an encrypted fixture through the shared shell helper from another directory", async () => {
-  vi.stubEnv("OMNESIS_SECRET_STORE", "file");
-  const dir = fixture();
-  await ensureInstallRootKey({ backend: "file", configDir: dir });
-  const token = "fictional-token+with/reserved=characters&scope=read#fragment";
-  writeSecretTextFileSync(join(dir, "token"), token, { backend: "file", configDir: dir });
-  expect(readFileSync(join(dir, "token"), "utf8")).not.toContain(token);
-  expect(readInstanceToken(dir)).toBe(token);
-  const helper = resolve("scripts/lib/test_instance");
-  const result = spawnSync(
-    "bash",
-    [
-      "-c",
-      'source "$1"; read_instance_token "$2" "$3"',
-      "fixture",
-      helper,
-      relative(tmpdir(), dir),
-      "https://example.com:43123",
-    ],
-    {
-      cwd: tmpdir(),
-      encoding: "utf8",
-      env: { ...process.env, OMNESIS_SECRET_STORE: "file" },
-    },
-  );
-  expect(result.status, result.stderr).toBe(0);
-  expect(new URL(result.stdout).searchParams.get("token")).toBe(token);
-  expect(result.stdout).not.toContain("omnesis.secret-file");
-});
+it.each(["relative", "absolute"])(
+  "reads an encrypted fixture through the shared shell helper with a %s directory",
+  async (kind) => {
+    vi.stubEnv("OMNESIS_SECRET_STORE", "file");
+    const dir = fixture();
+    await ensureInstallRootKey({ backend: "file", configDir: dir });
+    const token = "fictional-token+with/reserved=characters&scope=read#fragment";
+    writeSecretTextFileSync(join(dir, "token"), token, { backend: "file", configDir: dir });
+    expect(readFileSync(join(dir, "token"), "utf8")).not.toContain(token);
+    expect(readInstanceToken(dir)).toBe(token);
+    const helper = resolve("scripts/lib/test_instance");
+    const result = spawnSync(
+      bashExecutable(),
+      [
+        "-c",
+        'source "$1"; read_instance_token "$2" "$3"',
+        "fixture",
+        bashFixturePath(helper),
+        kind === "absolute" ? dir : relative(tmpdir(), dir),
+        "https://example.com:43123",
+      ],
+      {
+        cwd: tmpdir(),
+        encoding: "utf8",
+        env: bashEnvironment({ ...process.env, OMNESIS_SECRET_STORE: "file" }),
+      },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    expect(new URL(result.stdout).searchParams.get("token")).toBe(token);
+    expect(result.stdout).not.toContain("omnesis.secret-file");
+  },
+);
 it("supports a legacy plaintext token and refuses missing or malformed secrets without leaking them", () => {
   vi.stubEnv("OMNESIS_SECRET_STORE", "file");
   const dir = fixture();

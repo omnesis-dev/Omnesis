@@ -3,7 +3,6 @@
 
 package dev.omnesis.android.ui.pairing
 
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -13,7 +12,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
-import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Dns
 import androidx.compose.material.icons.outlined.Info
@@ -66,30 +64,25 @@ fun AccountCloudPairingPane(
     onScan: () -> Unit = {},
     onManual: () -> Unit = {},
     onCancel: () -> Unit = {},
+    /** The sign-in choices are open. Otherwise the entry offers one button that opens them, beside direct pairing. */
+    choosingSignIn: Boolean = false,
+    onSignIn: () -> Unit = {},
 ) {
     val colors = OmTheme.colors
     Column(Modifier.fillMaxSize().background(colors.bgPrimary).verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(24.dp)) {
         when (state.phase) {
-            AccountPairingPhase.Idle, AccountPairingPhase.Failed -> {
+            AccountPairingPhase.Idle, AccountPairingPhase.Failed -> if (choosingSignIn) {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    SectionHeader(ACCOUNT_PAIRING_TITLE, ACCOUNT_PAIRING_DETAIL)
+                    SectionHeader(CLOUD_ACCOUNT_SIGN_IN, SIGN_IN_CHOICES_DETAIL)
                     // Both sign-in buttons share one shape and size; each keeps its own colours.
                     if (googleAvailable) GoogleSignInButton(onClick = onGoogle, modifier = Modifier.fillMaxWidth().testTag("pairing.entry.google"))
-                    if (passkeyAvailable) OutlinedButton(
-                        onClick = onPasskey,
-                        shape = SignInButtonShape,
-                        border = BorderStroke(1.dp, colors.border),
-                        colors = ButtonDefaults.outlinedButtonColors(containerColor = colors.bgSecondary, contentColor = colors.accent),
-                        contentPadding = SignInButtonPadding,
-                        modifier = Modifier.fillMaxWidth().heightIn(min = SignInButtonMinHeight).testTag("pairing.entry.passkey"),
-                    ) {
-                        Icon(Icons.Filled.Key, contentDescription = null, modifier = Modifier.size(20.dp))
-                        Spacer(Modifier.width(10.dp)); Text("Sign in with Passkey", style = MaterialTheme.typography.labelLarge, textAlign = TextAlign.Center)
-                    }
+                    if (passkeyAvailable) PasskeySignInButton(onClick = onPasskey, modifier = Modifier.fillMaxWidth().testTag("pairing.entry.passkey"))
                     val notice = state.notice
                     if (notice != null) EntryMessage(notice, Icons.Outlined.Info, colors.textSecondary, "pairing.account.notice")
                     else state.error?.let { EntryMessage(it, Icons.Outlined.Warning, colors.danger, "account-pairing-error") }
                 }
+            } else {
+                CloudAccountSignInButton(onClick = onSignIn, modifier = Modifier.fillMaxWidth().testTag("pairing.entry.cloudAccount"))
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     SectionHeader("Pair directly", "Use a pairing code from your gateway. No account needed.")
                     Column(Modifier.fillMaxWidth().clip(CardShape).background(colors.bgSecondary)) {
@@ -102,7 +95,7 @@ fun AccountCloudPairingPane(
             else -> {
                 val waiting = (state.phase == AccountPairingPhase.Comparing || state.phase == AccountPairingPhase.Pairing) && !state.joined
                 if (state.phase == AccountPairingPhase.Choosing) SectionHeader("Choose a gateway", "Your Omnesis account has more than one. Pick the one this device joins.")
-                else if (!waiting) SectionHeader(ACCOUNT_PAIRING_TITLE, ACCOUNT_PAIRING_DETAIL)
+                else if (!waiting) SectionHeader(CLOUD_ACCOUNT_SIGN_IN)
                 Progress(state, onChoose, onPair, onCancel)
                 state.error?.let { Text(it, color = colors.danger, modifier = Modifier.testTag("account-pairing-error")) }
             }
@@ -290,9 +283,6 @@ internal fun pairingExpiryText(remainingMillis: Long): String {
     return "Expires in %d:%02d".format(seconds / 60, seconds % 60)
 }
 
-/** What the legacy Google pairing says above its code while it waits. */
-internal const val PAIRING_CODE_CHECK_TEXT = "Approve this device from a device you already use. Make sure it shows this same code."
-
 internal const val PAIRING_WAITING_TITLE = "Waiting for your OK"
 internal const val PAIRING_WAITING_FROM_ANOTHER_DEVICE = "Approve this phone from a device you already use:"
 internal val PAIRING_WAITING_PLACES = listOf("the Omnesis portal on your computer, or", "the Omnesis app on another phone.")
@@ -301,18 +291,15 @@ internal const val PAIRING_WAITING_COMPARE = "Continue only if the device you ap
 internal const val PAIRING_WAITING_CONFIRM = "Codes match, connect this phone"
 internal const val PAIRING_WAITING_APPROVED = "Approved. Connecting this phone…"
 
-internal const val ACCOUNT_PAIRING_TITLE = "Pair using your Omnesis Account"
-internal const val ACCOUNT_PAIRING_DETAIL =
-    "Sign in to your Omnesis account to enroll this device to your gateway. Access your gateway from anywhere outside your home network " +
-        "via Omnesis Relay. Traffic is encrypted end-to-end and Omnesis Relay cannot see your data."
+internal const val SIGN_IN_CHOICES_DETAIL = "Choose how to sign in."
 
-/** A section's bold title over the paragraph that explains it. Both sections of the entry use it. */
+/** A section's bold title, over the line that explains it when there is one. */
 @Composable
-private fun SectionHeader(title: String, detail: String) {
+private fun SectionHeader(title: String, detail: String? = null) {
     val colors = OmTheme.colors
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = colors.textPrimary, modifier = Modifier.semantics { heading() })
-        Text(detail, style = MaterialTheme.typography.bodyMedium, color = colors.textSecondary)
+        detail?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = colors.textSecondary) }
     }
 }
 
@@ -327,5 +314,6 @@ fun accountPairingPreviewState(phase: AccountPairingPhase): AccountPairingState 
     expiresAt = if (phase == AccountPairingPhase.Comparing) PREVIEW_PAIRING_NOW + 272_000 else null,
     error = if (phase == AccountPairingPhase.Failed) "This Omnesis account has no gateway yet. Connect your gateway to it first, or pair directly with a QR code." else null,
 )
-@Preview @Composable private fun AccountSignInPreview() { OmnesisTheme { AccountCloudPairingPane(accountPairingPreviewState(AccountPairingPhase.Idle), true, true, {}, {}, {}, {}) } }
+@Preview @Composable private fun AccountEntryPreview() { OmnesisTheme { AccountCloudPairingPane(accountPairingPreviewState(AccountPairingPhase.Idle), true, true, {}, {}, {}, {}) } }
+@Preview @Composable private fun AccountSignInPreview() { OmnesisTheme { AccountCloudPairingPane(accountPairingPreviewState(AccountPairingPhase.Idle), true, true, {}, {}, {}, {}, choosingSignIn = true) } }
 @Preview @Composable private fun AccountGatewaysPreview() { OmnesisTheme(darkTheme = true) { AccountCloudPairingPane(accountPairingPreviewState(AccountPairingPhase.Choosing), true, true, {}, {}, {}, {}) } }

@@ -93,9 +93,9 @@ extension Pairing {
         return try? GatewayDirectRoute(origin: url, candidates: directCandidates)
     }
 
-    /// The device a hello must answer for. Off the cloud build flag any answer is accepted.
-    func expectedSocketDeviceId(cloudRelayEnabled: Bool = CloudRelayFeature.enabled) -> String? {
-        cloudRelayEnabled && pairingGeneration != nil ? deviceId : nil
+    /// The device a hello must answer for. A pairing stored before generations existed accepts any answer.
+    func expectedSocketDeviceId() -> String? {
+        pairingGeneration != nil ? deviceId : nil
     }
 
     func makeSocketRoutingSession() -> PinnedSession? {

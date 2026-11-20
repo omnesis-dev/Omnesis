@@ -2,6 +2,8 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { hostTimeZone } from "@omnesis/core";
 import { createIndexDatabase, EMBEDDING_DIM, upsertChunks } from "../indexer/db.js";
@@ -74,7 +76,9 @@ describe("SearchPipeline temporal lane", () => {
   });
   afterAll(() => vi.useRealTimers());
   beforeEach(() => {
-    db = createIndexDatabase(`/tmp/omnesis-temporal-pipeline-${randomUUID()}.db`);
+    db = createIndexDatabase(
+      fixtureJoin(fixtureTmpdir(), `omnesis-temporal-pipeline-${randomUUID()}.db`),
+    );
     seed(db);
   });
   afterEach(() => closeTempDb(db));

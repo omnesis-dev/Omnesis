@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { join, resolve } from "node:path";
 import { describe, expect, test } from "vitest";
 import {
   compareStableReleaseVersions,
@@ -10,7 +11,12 @@ import {
   type DetectFs,
 } from "./release-check.js";
 
-function fakeFs(files: Record<string, string>, real = "/repo/packages/cli/src/index.ts"): DetectFs {
+const REPO = resolve("/fixture-repository");
+
+function fakeFs(
+  files: Record<string, string>,
+  real = join(REPO, "packages", "cli", "src", "index.ts"),
+): DetectFs {
   return {
     realpath: () => real,
     exists: (path) => Object.hasOwn(files, path),
@@ -26,24 +32,35 @@ describe("shared release-check primitives", () => {
     expect(
       detectInstallMethod(
         "entry",
-        fakeFs({ "/repo/package.json": '{"name":"omnesis"}', "/repo/.git": "" }),
+        fakeFs({ [join(REPO, "package.json")]: '{"name":"omnesis"}', [join(REPO, ".git")]: "" }),
       ),
-    ).toEqual({ method: "source", rootDir: "/repo" });
+    ).toEqual({ method: "source", rootDir: REPO });
 
     expect(
-      detectInstallMethod("entry", fakeFs({}, "/prefix/lib/node_modules/omnesis/dist/index.js")),
+      detectInstallMethod(
+        "entry",
+        fakeFs({}, join(resolve("/prefix"), "lib", "node_modules", "omnesis", "dist", "index.js")),
+      ),
     ).toEqual({ method: "npm-global" });
   });
 
   test("Docker's installer marker outranks entry-script detection", () => {
+    const state = resolve("/fixture-state");
     const fs = fakeFs({
-      "/state/install-method": "docker\n",
-      "/state/docker-compose.yml": "services: {}",
+      [join(state, "install-method")]: "docker\n",
+      [join(state, "docker-compose.yml")]: "services: {}",
     });
-    expect(detectDockerInstall("/state", fs)).toEqual({
+    expect(detectDockerInstall(state, fs)).toEqual({
       method: "docker",
-      composeFile: "/state/docker-compose.yml",
-      projectDir: "/state",
+      composeFile: join(state, "docker-compose.yml"),
+      projectDir: state,
+    });
+  });
+
+  test("only native separators identify an npm package directory", () => {
+    const real = join(REPO, "lookalike\\node_modules\\omnesis\\dist\\index.js");
+    expect(detectInstallMethod("entry", fakeFs({}, real))).toEqual({
+      method: process.platform === "win32" ? "npm-global" : "unknown",
     });
   });
 

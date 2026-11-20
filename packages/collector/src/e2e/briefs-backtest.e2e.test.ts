@@ -16,6 +16,8 @@
  * behavior. All snapshot data is INVENTED (privacy rule).
  */
 
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import Database from "better-sqlite3";
@@ -95,7 +97,7 @@ function seedSnapshot(): void {
 
 describe("brain backtest bridge (virtual clock + mirror replay)", () => {
   beforeAll(async () => {
-    snapshotPath = `/tmp/omnesis-test-snapshot-${randomUUID()}.db`;
+    snapshotPath = join(tmpdir(), `omnesis-test-snapshot-${randomUUID()}.db`);
     seedSnapshot();
     // Empty behavior table: every woken run completes as a no-op — the
     // smoke exercises wake mechanics, not agent behavior.

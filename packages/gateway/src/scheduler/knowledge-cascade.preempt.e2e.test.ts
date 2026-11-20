@@ -23,15 +23,18 @@
  * statement a step runs is index-served, and the writer handler's time slice
  * stops a large budget once its clock says the slice is spent.
  *
- * Like the link-apply preemption suite, it runs a Scheduler with preemption
- * and a real `WriterTaskRunner` against a temp DB, with no gateway process,
- * so a yield can be forced in the same synchronous turn as the dispatch.
+ * It runs a Scheduler with preemption and a real `WriterTaskRunner` against
+ * a temp DB, with no gateway process. A barrier holds the runner's dispatch
+ * until the higher-priority write has requested a yield: the worker must not
+ * race ahead of that signal while the main thread is descheduled.
  */
 
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
 import Database from "better-sqlite3";
-import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 import {
   KNOWLEDGE_CASCADE_NEXT_JOB_SQL,
   KNOWLEDGE_CASCADE_NEXT_ROW_SQL,
@@ -87,24 +90,24 @@ function seedBacklog(path: string): void {
 describe("knowledge cascade on the writer against an ingest backlog", () => {
   let dbPath: string;
   let scheduler: Scheduler;
+  let writer: WriterTaskRunner;
   let gate: WriteGate;
   let read: Database.Database;
   let pressureSeq = 0;
 
   beforeAll(async () => {
-    dbPath = `/tmp/omnesis-test-${randomUUID()}.db`;
+    dbPath = join(tmpdir(), `omnesis-test-${randomUUID()}.db`);
     seedBacklog(dbPath);
     scheduler = new Scheduler({ enablePreemption: true });
-    scheduler.registerRunner(
-      new WriterTaskRunner({
-        gatewayDbPath: dbPath,
-        journalMode: "WAL",
-        heartbeatIntervalMs: 1_000,
-        heartbeatWarnGapMs: 10_000,
-        workerUrl: WORKER_URL,
-        workerExecArgv: ["--import", LOADER_URL],
-      }),
-    );
+    writer = new WriterTaskRunner({
+      gatewayDbPath: dbPath,
+      journalMode: "WAL",
+      heartbeatIntervalMs: 1_000,
+      heartbeatWarnGapMs: 10_000,
+      workerUrl: WORKER_URL,
+      workerExecArgv: ["--import", LOADER_URL],
+    });
+    scheduler.registerRunner(writer);
     await scheduler.start();
     gate = writeGateFromScheduler(scheduler);
     read = new Database(dbPath, { readonly: true });
@@ -166,12 +169,30 @@ describe("knowledge cascade on the writer against an ingest backlog", () => {
     "a write queued behind a slice of %i steps stops it after the step it is on and is served",
     async (limit) => {
       const before = pendingJobs();
+      const release = Promise.withResolvers<void>();
+      const exec = writer.exec.bind(writer);
+      const held = vi.spyOn(writer, "exec").mockImplementationOnce(async (...args) => {
+        await release.promise;
+        return exec(...args);
+      });
       const cascade = slice(limit);
-      const pressure = unrelatedWrite();
-      const result = await cascade;
-      expect(await pressure).toBe(true);
-      expect(result.pending).toBe(true);
-      expect(before - pendingJobs()).toBe(1);
+      let pressure: Promise<boolean> | undefined;
+      try {
+        expect(held).toHaveBeenCalledOnce();
+        const preemptRequests = scheduler.preemptRequestCount;
+        pressure = unrelatedWrite();
+        expect(scheduler.preemptRequestCount).toBe(preemptRequests + 1);
+        expect(scheduler.getPreemptBuffer("writer")?.isRequested()).toBe(true);
+        release.resolve();
+        const result = await cascade;
+        expect(await pressure).toBe(true);
+        expect(result.pending).toBe(true);
+        expect(before - pendingJobs()).toBe(1);
+      } finally {
+        release.resolve();
+        await Promise.allSettled([cascade, pressure]);
+        held.mockRestore();
+      }
     },
   );
 });

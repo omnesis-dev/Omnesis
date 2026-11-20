@@ -16,6 +16,13 @@ const log = createLogger("gateway:models:anthropic-catalog");
 /** Refresh often enough to pick up newly entitled models without a restart. */
 export const DEFAULT_ANTHROPIC_CATALOG_REFRESH_MS = 60 * 60_000;
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
+/**
+ * First retry after a discovery that failed with no list yet. Until one loads,
+ * a model newer than the bundled list resolves with no limits (a 4,096-token
+ * output cap for the agent), so waiting a full refresh interval leaves it there
+ * for an hour. The delay doubles up to the refresh interval.
+ */
+export const DEFAULT_ANTHROPIC_CATALOG_RETRY_MS = 15_000;
 
 interface AnthropicModelRecord {
   id: string;
@@ -45,6 +52,8 @@ export interface AnthropicCatalogServiceOptions {
   credentialSource?: () => BackendStatus["credentialSource"];
   createClient?: (apiKey: string) => AnthropicModelsClient;
   refreshIntervalMs?: number;
+  /** First retry after a failed discovery with no list loaded; 0 disables retries. */
+  retryDelayMs?: number;
   requestTimeoutMs?: number;
 }
 
@@ -75,7 +84,11 @@ export class AnthropicCatalogService {
   private readonly createClient: (apiKey: string) => AnthropicModelsClient;
   private readonly credentialSource: () => BackendStatus["credentialSource"];
   private readonly refreshIntervalMs: number;
+  private readonly retryDelayMs: number;
   private readonly requestTimeoutMs: number;
+  private retryTimer: ReturnType<typeof setTimeout> | null = null;
+  private nextRetryMs = 0;
+  private started = false;
 
   private generation = 0;
   private credentialFingerprint: string | null = null;
@@ -105,11 +118,14 @@ export class AnthropicCatalogService {
           timeout: opts.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
         }) as unknown as AnthropicModelsClient);
     this.refreshIntervalMs = opts.refreshIntervalMs ?? DEFAULT_ANTHROPIC_CATALOG_REFRESH_MS;
+    this.retryDelayMs = opts.retryDelayMs ?? DEFAULT_ANTHROPIC_CATALOG_RETRY_MS;
+    this.nextRetryMs = this.retryDelayMs;
     this.requestTimeoutMs = opts.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
   }
 
   /** Start a non-blocking refresh and the periodic refresh timer. */
   start(): void {
+    this.started = true;
     void this.refresh();
     if (this.refreshTimer || this.refreshIntervalMs <= 0) return;
     this.refreshTimer = setInterval(() => void this.refresh(), this.refreshIntervalMs);
@@ -118,8 +134,11 @@ export class AnthropicCatalogService {
 
   /** Stop periodic work and invalidate any in-flight result. */
   stop(): void {
+    this.started = false;
     if (this.refreshTimer) clearInterval(this.refreshTimer);
     this.refreshTimer = null;
+    if (this.retryTimer) clearTimeout(this.retryTimer);
+    this.retryTimer = null;
     this.inFlight?.controller.abort();
     this.generation += 1;
     this.inFlight = null;
@@ -214,6 +233,9 @@ export class AnthropicCatalogService {
           models: entries.map((entry) => entry.apiModelId),
         };
         log.info(`Discovered ${entries.length} Anthropic models`);
+        this.nextRetryMs = this.retryDelayMs;
+        if (this.retryTimer) clearTimeout(this.retryTimer);
+        this.retryTimer = null;
         return this.status();
       })
       .catch((err: unknown) => {
@@ -229,6 +251,7 @@ export class AnthropicCatalogService {
             : {}),
         };
         log.warn(`Anthropic model discovery failed: ${reason}`);
+        this.scheduleRetry();
         return this.status();
       });
 
@@ -275,6 +298,25 @@ export class AnthropicCatalogService {
     } finally {
       clearTimeout(timeout);
     }
+  }
+
+  /**
+   * Retry soon after a failure while no list has loaded; a retained
+   * last-known-good list already carries the limits, so the periodic refresh
+   * suffices then.
+   */
+  private scheduleRetry(): void {
+    if (!this.started || this.retryDelayMs <= 0 || this.retryTimer) return;
+    if (this.liveEntries.length > 0) return;
+    const delay = this.nextRetryMs;
+    const cap = this.refreshIntervalMs > 0 ? this.refreshIntervalMs : delay;
+    this.nextRetryMs = Math.min(delay * 2, Math.max(cap, this.retryDelayMs));
+    log.info(`Retrying Anthropic model discovery in ${Math.round(delay / 1000)}s`);
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = null;
+      void this.refresh();
+    }, delay);
+    this.retryTimer.unref?.();
   }
 
   private isCurrent(generation: number, fingerprint: string): boolean {

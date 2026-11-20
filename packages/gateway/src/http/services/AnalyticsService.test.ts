@@ -11,6 +11,7 @@
  */
 import { describe, expect, it, vi } from "vitest";
 import { encodeRowKey, RowKeyError } from "@omnesis/source-sdk";
+import { StoragePressureManager, resolveStoragePolicy } from "../../storage/pressure.js";
 import { BadRequestError } from "../errors.js";
 import { SourceWriteEpochFence, epochScope } from "../../source-write-epoch-fence.js";
 import { EventBus } from "../../events.js";
@@ -91,6 +92,45 @@ function fakeDb(overrides: Partial<AnalyticsDb> = {}) {
 }
 
 describe("AnalyticsService.ingest", () => {
+  it("parks analytics writes at quota and resumes after recovery without writing a rejected page", async () => {
+    let usageBytes = 1000;
+    const pressure = new StoragePressureManager({
+      getPolicy: () => ({ ...resolveStoragePolicy(undefined, 0), maxBytes: 1000 }),
+      measure: async () => ({
+        usageBytes,
+        measuredAt: Date.now(),
+        volumes: [{ id: "test", totalBytes: 10000, availableBytes: 5000 }],
+      }),
+    });
+    await pressure.refresh();
+    const analytics = fakeDb();
+    const svc = new AnalyticsService(
+      analytics,
+      undefined,
+      false,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      {
+        dbPath: "/tmp/omnesis-test.db",
+        minFreeBytes: 0,
+        check: () => ({ ok: true, freeBytes: 1e12 }),
+        assertStorageCanGrow: () => pressure.assertCanGrow(),
+      },
+    );
+    const page = { tableName: "hc_body", sourceId: "health-connect:local", schema, records: [] };
+    await expect(svc.ingest(page)).rejects.toMatchObject({
+      status: 507,
+      code: "INSUFFICIENT_STORAGE",
+    });
+    expect(analytics.ingestPage).not.toHaveBeenCalled();
+    usageBytes = 900;
+    await pressure.refresh();
+    await expect(svc.ingest(page)).resolves.toBeDefined();
+    expect(analytics.ingestPage).toHaveBeenCalledTimes(1);
+  });
+
   it("refuses analytics and Watch outbox writes below the disk floor", async () => {
     const analytics = fakeDb();
     const svc = new AnalyticsService(
@@ -881,6 +921,7 @@ describe("AnalyticsService.sql — what a source may reach", () => {
     expect(executeQuery.mock.calls[0]?.[1]).toEqual({
       limit: 10,
       permittedSourceIds: new Set(["lunchflow:personal", "lunchflow"]),
+      sharedSourceType: "lunchflow",
     });
   });
 

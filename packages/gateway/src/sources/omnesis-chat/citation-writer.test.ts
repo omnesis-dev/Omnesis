@@ -3,8 +3,9 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { tmpdir as fixtureTmpdir } from "node:os";
+import { join as fixtureJoin } from "node:path";
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
-import type Database from "better-sqlite3";
 type Db = Database.Database;
 
 import { ProviderId, SourceId } from "@omnesis/types";
@@ -17,9 +18,10 @@ import {
   upsertConversationCitations,
   type ConversationRecordCitationInput,
 } from "./citation-writer.js";
+import type Database from "better-sqlite3";
 
 function testDbPath(): string {
-  return `/tmp/omnesis-citation-writer-test-${randomUUID()}.db`;
+  return fixtureJoin(fixtureTmpdir(), `omnesis-citation-writer-test-${randomUUID()}.db`);
 }
 function cleanupDb(path: string): void {
   for (const suffix of ["", "-wal", "-shm", "-journal"]) {

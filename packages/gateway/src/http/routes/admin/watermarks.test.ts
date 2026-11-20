@@ -3,6 +3,8 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { SCOPE_ADMIN } from "@omnesis/types";
 import { createDatabase } from "../../../db.js";
@@ -17,7 +19,7 @@ let app: ReturnType<typeof createServer>;
 let dbPath: string;
 
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-watermarks-route-test-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-watermarks-route-test-${randomUUID()}.db`);
   db = createDatabase(dbPath);
   app = createServer(db, dbPath);
 });

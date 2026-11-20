@@ -2,9 +2,10 @@
 
 This package implements Omnesis's outbound reverse tunnel, separately from the
 push-notification relay. It uses native WebSocket/TCP streams with no cloudflared
-or Tailscale dependency. Gateway integration and Google pairing require
-`OMNESIS_CLOUD_RELAY_ENABLED=1`. This is independent of `OMNESIS_EXPERIMENTAL`;
-experimental or synthetic mode alone never enables cloud relay features.
+or Tailscale dependency. Every gateway, CLI and collector includes the
+gateway integration and Google pairing; a gateway reaches a relay only once its
+owner connects it or a saved connection starts. New accounts on a relay need
+an invite unless its operator opens sign-up (see Invites).
 
 ## Encryption and trust
 
@@ -104,8 +105,7 @@ An account may have multiple linked gateways and multiple passkeys. Removing the
 last usable sign-in method is refused. Link an additional method while signed in;
 matching email addresses never merge accounts.
 
-With `OMNESIS_CLOUD_RELAY_ENABLED=1`, gateway settings offer account linking and
-unlinking. Native clients and `omnesis cloud pair --kind cli` or `--kind collector`
+Gateway settings offer account linking and unlinking. Native clients and `omnesis cloud pair --kind cli` or `--kind collector`
 let the user sign in, explicitly choose a gateway, and request enrollment. By
 default a trusted gateway device must approve the request, and the requesting
 device must confirm the comparison code. A gateway whose owner chose
@@ -139,7 +139,9 @@ was made on a relay page, so the request waits for approval on the gateway. A li
 phished to someone else ends on their own machine. A
 connect code typed on another device never yields a proof, so the CLI says that
 signing in elsewhere needs approval on the owner's phone or another paired
-device; over SSH it prints the comparison code and waits for that approval.
+device. Every CLI or collector pairing also asks for the comparison code from an
+independently trusted gateway terminal or paired device before redeeming approval,
+including over SSH and with a publicly logged certificate.
 
 ### Deleting an account
 
@@ -167,11 +169,9 @@ it, in one transaction, and closes those gateways' tunnels. What each table keep
 A hosted name stays held for the gateway it was granted to, by a digest of that
 gateway's id: its label can be ground and paired devices still know the address,
 so no other gateway is given it, and the same gateway gets it back when it
-registers again. Operator files are not touched: remove the person from
-`OMNESIS_CLOUD_RELAY_SIGNUP_ALLOWLIST_FILE` yourself if they should not be able
-to create an account again, and remove them from the sign-up Google Group if
-the relay uses one. Request logs and metrics hold no account
-identifiers.
+registers again. The record that an invite was used stays, and never named the
+account, so an invite can't create a second account after the first is deleted.
+Request logs and metrics hold no account identifiers.
 
 The digests let the account page tell a browser that offers one of those passkeys
 again that its account was deleted, and ask the browser's password manager to
@@ -260,7 +260,9 @@ web client secrets.
 - **Android presenters:** set `OMNESIS_CLOUD_RELAY_GOOGLE_ANDROID_CLIENT_ID` on
   relay and gateway to the trusted Android OAuth client IDs. Hybrid Google tokens
   can name the web client as audience and the Android client as authorized party;
-  those are checked separately from gateway certificate attestation.
+  those are checked separately from gateway certificate attestation. Production
+  gateways accept only the Android release signing identity; debug-build OAuth
+  presenters and passkey origins are not trusted.
 - **iOS:** configure `OMNESIS_GOOGLE_CLIENT_ID`, `OMNESIS_GOOGLE_CALLBACK_SCHEME`
   and `OMNESIS_CLOUD_RELAY_URL` in ignored `ios/Local.xcconfig`. Register the
   correct bundle identifier with Google.
@@ -271,8 +273,8 @@ web client secrets.
 The public deployment registry is separate from OAuth secrets. The official
 relay's public Google client IDs (owner-link client, device-enrollment client,
 native device audiences and Android presenters) are compiled into the gateway
-in `src/google-browser-trust.ts`, so a gateway with only
-`OMNESIS_CLOUD_RELAY_ENABLED=1` offers managed Google sign-in. They are not
+in `src/google-browser-trust.ts`, so every gateway offers managed Google
+sign-in. They are not
 configuration: no environment variable or portal setting changes them, and the
 relay's discovery response never adds to them. They only name which Google apps
 may present a token; the gateway still checks Google's signature, issuer,
@@ -297,6 +299,10 @@ The separate opaque data listener defaults to port 8789. Set
 `OMNESIS_CLOUD_RELAY_DATA_PORT` and arrange ordinary TCP forwarding from each
 gateway hostname's HTTPS port, preserving TLS bytes. Control TLS credentials are
 separate from gateway TLS credentials. Start with `npm run cloud-relay -- serve`.
+
+Startup failures exit non-zero and log a fixed diagnostic, optionally followed
+by an allowlisted operating-system or SQLite error code such as `EADDRINUSE`.
+Credential parser messages, paths and stacks are omitted.
 
 Sign-in and account routes (logins, account pages, connect-code claims, native,
 desktop and gateway-signup operations) share global bounds,
@@ -330,7 +336,12 @@ The data listener bounds what one client address (again an IPv6 /64) can hold:
 | `OMNESIS_CLOUD_RELAY_STREAM_IDLE_TIMEOUT_MS`             | 600000  | a routed connection with no bytes either way for this long is closed      |
 
 A connection over a limit is closed before it reaches a gateway. So one client
-cannot fill a gateway's streams or the relay's, though a few can, and a front layer
+cannot fill a gateway's streams or the relay's. The last quarter of the relay's
+data connections and each gateway's streams is reserved for client address buckets
+that currently hold no slot (IPv6 addresses share a /64). Existing clients cannot
+consume that reserve; existing connections are never evicted to admit another.
+This improves access when a few clients occupy many slots, but does not authenticate
+a source or prevent a sufficiently distributed denial of service. A front layer
 should keep its own per-address connection limits as well. The idle timeout is far
 longer than anything a gateway leaves quiet: it pings device WebSockets and sends
 server-sent event keep-alives every 15 to 30 seconds. The relay's own tunnel and
@@ -355,7 +366,6 @@ request's Host header.
 On the gateway, configure its normal isolated/local state and TLS plus:
 
 ```sh
-export OMNESIS_CLOUD_RELAY_ENABLED=1
 export OMNESIS_CLOUD_RELAY_URL=https://control.relay.example.test
 export OMNESIS_PUBLIC_BASE_URL=https://gateway.example.test
 export OMNESIS_CLOUD_RELAY_GATEWAY_ID=00000000-0000-4000-8000-000000000001
@@ -390,14 +400,14 @@ renews routing sessions using its owner and TLS keys; Google is optional.
 Existing owners renew without another invitation.
 
 A relay can instead connect a new gateway from its owner's sign-in.
-`OMNESIS_CLOUD_RELAY_SIGNUP_POLICY` chooses who may: `invitation` (the default)
-keeps the signup routes closed and answers them with 403; `allowlist` admits the
-accounts and Google subjects listed in the private JSON file named by
-`OMNESIS_CLOUD_RELAY_SIGNUP_ALLOWLIST_FILE`, read again on every check, as
-`{"accounts":["<account ID>"],"googleSubjects":["<digest>"]}`, plus any account
-that already has a linked gateway; `open` admits everyone the account capacity
-allows. A refused sign-in shows the person the value to send the operator. The
-public configuration advertises `signup` when the policy is not `invitation`.
+`OMNESIS_CLOUD_RELAY_SIGNUP_POLICY` chooses who may create an account that way:
+`closed` keeps the signup routes closed and answers them with 403; `invite`
+creates one account per unused invite the operator signed; `open` lets anyone
+create one, up to the account capacity. Under `invite` and `open` an account
+that already exists may connect another gateway without an invite. Setting
+`OMNESIS_CLOUD_RELAY_INVITE_KEYS` alone selects `invite`; with neither setting
+the policy is `closed`. The public configuration advertises `signup` when the
+policy is not `closed`.
 Machines without a browser print a short code instead; the person enters it at
 `/_relay/connect`, which continues to the same sign-in page.
 `OMNESIS_CLOUD_RELAY_CONNECT_SHORT_URL` names a shorter address for that page
@@ -416,67 +426,47 @@ the proof once (`POST /_relay/account/api/portal/handoff`) and passes it to the
 portal in the URL fragment. The gateway verifies that proof itself and applies
 its own enrollment policy. `docs/device-enrollment.md` describes the exchange.
 
-An `allowlist` relay can also accept invitations through a Google Group: a
-Google sign-in the allowlist does not admit is admitted when the email Google
-verified for it is a member of the group, directly or through a nested group.
-That covers a sign-in that creates an account and one for an existing account
-that has no linked gateway, such as an invited person connecting a new gateway
-after removing their last one. The allowlist and a linked gateway are checked
-first, so they keep working without the group and never ask it, and approving
-the sign-in that was just checked does not ask again. A passkey carries no
-email, so a passkey sign-in the allowlist refuses stays refused, and the page
-tells the person to start again and sign in with Google. Passkey account
-creation still needs `open`. All three settings are optional, and with none of
-them set nothing changes:
+#### Invites
 
-| Setting                                                    | Value                                                                                                                          |
-| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `OMNESIS_CLOUD_RELAY_SIGNUP_GOOGLE_GROUP`                  | The group's email address, such as `testers@example.com`. Requires the `allowlist` policy, which then needs no allowlist file. |
-| `OMNESIS_CLOUD_RELAY_SIGNUP_GOOGLE_GROUP_CREDENTIALS_FILE` | A Google service account's JSON key, mounted read-only (for example under `/run/secrets`). Required with the group.            |
-| `OMNESIS_CLOUD_RELAY_SIGNUP_GOOGLE_GROUP_JOIN_URL`         | Optional public `https` link where a refused person can ask to join, such as the group's page.                                 |
+An invite lets one person create one account. The operator signs invites
+offline with an Ed25519 key the relay never holds; the relay is given only the
+public half, so it can check an invite but cannot make one, and whoever holds
+the private key can make any number. An invite is a JWS compact token: the
+header `{"alg":"EdDSA","typ":"omnesis-invite"}`, claims `{aud, jti, iat, exp}`
+(the relay's origin, a random 128-bit id, and when it was issued and expires,
+at most 366 days apart), and an Ed25519 signature, each part unpadded
+base64url. `signInvite` in `src/invites.ts` writes exactly this format.
 
-The relay refuses to start when the group is set without a readable service
-account key (the file Google downloads: `type` `service_account`,
-`client_email`, `private_key`, and the other fields it carries), when the join
-link is not `https`, or when either file setting is present without the group.
+| Setting                           | Value                                                                                                                  |
+| --------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `OMNESIS_CLOUD_RELAY_INVITE_KEYS` | One to eight public keys, separated by commas: each the raw 32-byte Ed25519 key in unpadded base64url (43 characters). |
 
-The relay mints its own OAuth token for the service account (a JWT bearer grant
-for the `cloud-identity.groups.readonly` scope, renewed a minute before it
-expires), resolves the group's resource name once with `groups:lookup`, then
-looks the address up with `memberships:lookup`. An address that is not a direct
-member is checked with `memberships:checkTransitiveMembership`; Google answers
-that method only for premium Cloud Identity and Workspace editions, so on
-Cloud Identity Free the relay logs once an hour that nested groups are not
-followed and admits direct members only. Every request has a ten-second timeout
-and a bounded response. When Google cannot answer (a network error, an error
-status or a credential Google refuses), the sign-up is refused with "We couldn't
-check your invitation right now. Try again in a few minutes.", nothing is
-recorded, and the same request can be retried. A person outside the group sees
-"Omnesis accounts are invite-only for now." with the join link; the gateway sees
-the ordinary `not-allowed` refusal.
+Any configured key's invites are accepted, so a new key can be added before an
+old one is removed; removing a key ends every invite it signed. The relay refuses
+to start with a malformed key, with keys under another policy, with the `invite`
+policy and no keys, and with any setting of the allowlist or Google Group gate
+it no longer has, naming that setting.
 
-With a join link, the relay also publishes it before anyone signs in, at the
-public `GET /_relay/v3/signup/access`
-(`{"signup":{"inviteOnly":true,"requestAccessUrl":"…"}}`; `{}` without a link or
-under another policy). A gateway that is not linked yet reads it and shows the
-link with its host on its Omnesis account page, so the link does not need to be
-handed out separately.
+The link a person is sent is `https://<relay>/invite#<token>`. The relay serves
+that page, which keeps the token in the fragment so no server sees it, checks
+it, says until when it works or why it does not, and tells the person to paste
+it on their gateway's Omnesis account page. The gateway sends it beside its
+signed `POST /_relay/v3/signup/start` as `invite` (the whole link or the bare
+token). The relay checks its signature, audience and lifetime, and that it was
+not used, before anyone is sent to sign in; a refused invite answers 403 with
+`{"error":"invite-invalid"}`, `"invite-expired"` or `"invite-used"`. Creating the
+account records the invite as used in the same transaction, so of two sign-ups
+started with one invite only the first creates an account; the other is told
+the invite was used. A sign-up without an invite can still sign in to an
+account that exists, and its page says creating one needs an invite.
 
-For this check only, the relay's Google sign-in for connecting a gateway asks
-for the `email` scope as well as `openid`, and only on a relay with a group. The address is used only if the ID token says `email_verified`,
-compared lower-cased, and sent to Google once for the check. It is never stored,
-logged or returned, and accounts stay keyed by Google's subject.
-
-Setting it up on Google's side:
-
-1. Add Cloud Identity Free to the domain that owns the group, if it has neither
-   Cloud Identity nor Google Workspace.
-2. Create the group, allow members from outside the organization, and let people
-   ask to join (its page is the join link).
-3. In a Google Cloud project, enable the Cloud Identity API, create a service
-   account and download a JSON key for it.
-4. In the Admin console, assign that service account the Groups Reader admin
-   role. No domain-wide delegation is needed.
+`POST /_relay/v3/signup/invite` with `{"invite":"…"}` answers
+`{"status":"valid","expiresAt":…}` or `{"status":"invalid"|"expired"|"used"}`
+and uses nothing up. A gateway asks it before it starts connecting, and the
+invite page asks it from the relay's own origin; another origin is refused. The
+public `GET /_relay/v3/signup/access` answers `{"signup":{"inviteOnly":true}}`
+under the `invite` policy and `{}` otherwise, so a gateway that is not linked
+yet can say an invite is needed before anyone signs in.
 
 Moving a gateway that a Google identity registered before Omnesis accounts to an
 owner key requires proof of its exact current TLS key and certificate and, like
@@ -633,7 +623,7 @@ contact Google, DNS, a certificate authority or a relay:
 | `omnesis cloud recovery-policy-digest`      | Print the canonical digest of a signed policy.                                                               |
 | `omnesis cloud recovery-rotate-session-key` | Replace only the relay session-signing secret; restart the relay to invalidate old sessions and invitations. |
 
-Set `OMNESIS_CLOUD_RELAY_ENABLED=1`. Offline signing uses
+Offline signing uses
 `OMNESIS_CLOUD_RELAY_RECOVERY_AUTHORITY_KEY_FILE`, with public output at
 `OMNESIS_CLOUD_RELAY_RECOVERY_PUBLIC_KEY_FILE` for authority creation. Signing
 and digest commands read `OMNESIS_CLOUD_RELAY_RECOVERY_INPUT_FILE`; signed
@@ -698,6 +688,76 @@ dns-broker-import-registry` sends it to `OMNESIS_ACME_DNS_BROKER_URL` with the
 token in `OMNESIS_CLOUD_RELAY_DNS_BROKER_IMPORT_TOKEN_FILE`. An import never
 replaces a name the broker already binds. The import route exists only while
 the import token is configured.
+
+For public signup, the hosted Worker uses automatic independent admission:
+
+- Set `PUBLIC_ADMISSION_ENABLED=1`, `TURNSTILE_SITE_KEY`, the
+  `TURNSTILE_SECRET_KEY` secret, and the separate `PUBLIC_ADMISSION_KEY` secret.
+  The admission key is at least 32 random bytes encoded as canonical base64url;
+  never reuse the Cloudflare DNS token. Create a **managed** Turnstile widget for
+  the broker's own hostname, without pre-clearance. The Worker verifies the
+  hostname, `gateway-enrollment` action, freshness, and an exact owner-key/name
+  binding. The relay cannot approve a name or supply that proof.
+- Initial setup opens an independent browser security check. Cloudflare normally
+  verifies the browser automatically and may require human confirmation. There
+  is no operator approval list and no Google-account requirement. Active
+  gateways renew certificates without a browser check.
+- Public challenges are short-lived authenticated tickets rather than entries
+  in a shared pending pool. Replay tracking and operation limits are per name.
+  Browser verification tickets also allocate no pending storage. Concurrent
+  successful verifications of the same name charge one allocation.
+- Solving a check does not override resource limits. Default new-allocation
+  budgets are three per network per hour, ten per network per day, three per
+  owner key per day, and 1,000 across the service per day. IPv6 uses a /64 network
+  bucket. Durable counters contain keyed address digests and expire; raw client
+  addresses are not stored. `PUBLIC_ADMISSION_LIMITS_JSON` can override
+  `networkPerHour`, `networkPerDay`, `ownerPerDay`, `totalPerDay`, and
+  `reservedRecords`.
+- Before reserving permanent records, the Worker reads the DNS provider's real
+  record usage and quota, counts the current wildcard's A/AAAA records plus CAA,
+  and accounts for admitted names whose records are not published yet. It keeps
+  at least 36 records free, or the configured lease concurrency plus one full
+  routing replacement when that needs more. Partial writes retain their
+  reservation. A missing/unavailable quota, including an account-wide quota
+  requiring a different adapter, refuses new allocations. Existing active
+  renewals remain available. Provider plan limits still need enough capacity
+  for the expected user count; a security check cannot expand them.
+- A setup reservation expires after 15 minutes if publication never starts.
+  Releasing a name frees its active record entitlement while retaining its
+  permanent owner binding. Reconnecting that released gateway needs automatic
+  admission again and may have to wait if the service is full.
+- Provider work is bounded independently of new-name allocation. TXT and
+  configuration writes have separate concurrency limits of eight and two, and
+  rates of 30 and 12 operations per minute. A name may start six TXT leases an
+  hour. Identical in-flight CAA updates share one call; unchanged CAA is cached
+  for an hour before reassertion. Changing an ACME account waits ten minutes
+  after a successful publication; failed publication retries wait at least one
+  30-second rate window. A slow name cannot hold the shared metadata lock or an
+  unrelated owner's TXT renewal.
+
+Upgrade **every active gateway client** before enabling public admission; older
+strict wire parsers do not support its capability fields and stateless tickets.
+An imported ownership entry that has never completed CAA publication through
+this broker has no active record entitlement yet; its first use requires the
+automatic browser check. Importing an identity does not silently grant capacity.
+Live gateways cache broker capabilities for ten minutes, so restart them to
+refresh immediately or wait for discovery before retrying a certificate
+operation. `PUBLIC_ADMISSION_ENABLED=0` is an explicit temporary compatibility
+mode, not a public-launch protection: it retains legacy allocation behavior.
+An unset/invalid mode or incomplete public-mode secrets fail closed. A private
+closed-registry deployment can still use `APPROVED_NEW_OWNERS_JSON` in explicit
+compatibility mode, but it is not the public signup path.
+
+To roll back public admission, keep the **same updated Worker bundle** and set
+`PUBLIC_ADMISSION_ENABLED=0` temporarily. Do not restore an older bundle after
+public-mode writes: older strict store readers reject the new
+`caaPublishedAt` publication metadata. Preserve the registry and secrets; do not
+erase owner bindings to work around a rollout failure.
+
+Automatic admission raises the cost of abuse and protects renewal capacity; it
+cannot guarantee availability against a distributed attack or exhaustion of a
+provider's overall Worker/API request allowance. Size provider plans and edge
+controls for public traffic as well as the application limits.
 
 The CAA record names only accounts under the configured prefix (Let's Encrypt
 production by default), and the account URL can't carry another parameter. A
@@ -947,8 +1007,7 @@ enabled only by a new pairing that explicitly selects that trust mode.
 
 ## Optional gateway-owned ACME certificates
 
-ACME is optional and requires `OMNESIS_CLOUD_RELAY_ENABLED=1`. With no
-`OMNESIS_ACME_DIRECTORY_URL`, it creates no files, certificate contexts, renewal
+ACME is optional. With no `OMNESIS_ACME_DIRECTORY_URL`, it creates no files, certificate contexts, renewal
 jobs, DNS requests or account keys. Existing direct/QR/Tailscale/Funnel paths
 continue independently of Google and the relay.
 
@@ -967,9 +1026,8 @@ receive the relay's Cloudflare token and needs no inbound Internet listener.
 `OMNESIS_ACME_DNS_PROVIDER` selects who publishes the DNS-01 digest for a hosted
 name. The default, `auto`, sends a gateway of the official relay to the
 [independent DNS broker](#independent-dns-broker) compiled into the gateway
-(`https://dns.omnesis.app`) as soon as that broker answers for the relay's
-domain, and keeps using the relay's DNS cooperation until then; gateways of
-any other relay keep the relay. The broker's address is never taken from the
+(`https://dns.omnesis.app`), without a relay fallback if that broker is unavailable;
+gateways of any other relay keep the relay. The broker's address is never taken from the
 relay. A new gateway claims its hosted name at the broker before it first asks
 the relay for its configuration, and draws a new id when the broker binds the
 name to another key. Once a gateway has used the broker it never returns to
@@ -1286,8 +1344,6 @@ routing records, not unique people. DNS proof publication is not confirmation
 that a certificate authority issued a certificate. A zero recovery expiry means
 that independent recovery policy is not configured.
 
-Native apps opt in separately at build time with `OMNESIS_CLOUD_RELAY_ENABLED=1`.
-This controls Google sign-in before pairing without consulting a gateway. iOS
-uses the corresponding build setting; Android reads the environment variable
-or Gradle property. Valid platform OAuth configuration is also required. Direct
-and QR pairing remain available with the cloud relay flag disabled.
+Native apps offer Google and passkey sign-in before pairing without consulting
+a gateway. Valid platform OAuth configuration is required for Google. Direct
+and QR pairing work without an account.

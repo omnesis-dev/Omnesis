@@ -4,6 +4,20 @@
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import type Database from "better-sqlite3";
 type Db = Database.Database;
+import { unlinkSync, existsSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { AccountId, SourceType, type DocumentInput } from "@omnesis/types";
+import {
+  addSourceMember,
+  createSource,
+  listSourceMembers,
+  removeSourceMember,
+  updateSource,
+} from "./data/repositories/SourceRepository.js";
+import { createDevice } from "./data/repositories/DeviceRepository.js";
+import { aliasWriter } from "./data/repositories/PersonAliasRepository.js";
 import {
   createDatabase,
   openReadOnlyDatabase,
@@ -45,18 +59,6 @@ import {
   getLatestActivityBySource,
   type StoredDocument,
 } from "./db.js";
-import { AccountId, SourceType, type DocumentInput } from "@omnesis/types";
-import { aliasWriter } from "./data/repositories/PersonAliasRepository.js";
-import { createDevice } from "./data/repositories/DeviceRepository.js";
-import {
-  addSourceMember,
-  createSource,
-  listSourceMembers,
-  removeSourceMember,
-  updateSource,
-} from "./data/repositories/SourceRepository.js";
-import { unlinkSync, existsSync } from "node:fs";
-import { randomUUID } from "node:crypto";
 
 /**
  * The shipped snapshot-absence policy, for the pages that carry a snapshot.
@@ -69,7 +71,7 @@ const ABSENCE_POLICY = {
 };
 
 function testDbPath() {
-  return `/tmp/omnesis-test-${randomUUID()}.db`;
+  return join(tmpdir(), `omnesis-test-${randomUUID()}.db`);
 }
 
 function cleanupDb(path: string) {

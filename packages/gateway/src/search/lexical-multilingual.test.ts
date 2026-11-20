@@ -8,6 +8,8 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 
 import {
@@ -28,7 +30,9 @@ type Db = Database.Database;
 let db: Db;
 
 beforeEach(() => {
-  db = createIndexDatabase(`/tmp/omnesis-lexical-multilingual-${randomUUID()}.db`);
+  db = createIndexDatabase(
+    fixtureJoin(fixtureTmpdir(), `omnesis-lexical-multilingual-${randomUUID()}.db`),
+  );
 });
 
 afterEach(() => {
@@ -139,7 +143,7 @@ describe("keyword search across scripts", () => {
 
 describe("an index built by version 0", () => {
   test("keeps answering by version 0 until its version 1 rebuild switches in", () => {
-    const path = `/tmp/omnesis-lexical-multilingual-${randomUUID()}.db`;
+    const path = fixtureJoin(fixtureTmpdir(), `omnesis-lexical-multilingual-${randomUUID()}.db`);
     const first = createIndexDatabase(path);
     upsertChunks(first, [chunk("zh-library", "我昨天在图书馆借了三本书")]);
     // What an install from before version 1 holds: version 0's index.

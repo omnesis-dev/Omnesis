@@ -4,6 +4,8 @@
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 
 import { createDatabase } from "../../db.js";
@@ -33,7 +35,7 @@ import type { Db } from "../../data/types.js";
 import type { DocumentInput } from "@omnesis/types";
 
 function testDbPath(): string {
-  return `/tmp/omnesis-test-${randomUUID()}.db`;
+  return fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
 }
 function cleanupDb(path: string): void {
   for (const suffix of ["", "-wal", "-shm", "-journal"]) {

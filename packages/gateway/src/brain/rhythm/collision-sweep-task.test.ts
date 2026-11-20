@@ -11,6 +11,8 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { createLogger } from "@omnesis/core";
 import { createDatabase } from "../../db.js";
@@ -44,7 +46,7 @@ let prepared: string[];
 let calls: string[];
 
 beforeEach(() => {
-  path = `/tmp/omnesis-test-${randomUUID()}.db`;
+  path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
   db = createDatabase(path);
   // A collision on the main handle: a sweep that read it would enqueue L1+L2.
   for (const id of ["L1", "L2"])

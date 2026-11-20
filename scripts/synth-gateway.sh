@@ -100,10 +100,11 @@ agent_demos_dir() {
   local manifest="$(manifest_path)"
   [[ -f "$manifest" ]] || return 0
   MANIFEST="$manifest" UNIVERSE_DIR="$ROOT/evals/universes/$UNIVERSE" python3 -c "
-import json, os
+import json, os, sys
+sys.stdout.reconfigure(encoding='utf-8', newline='\n')
 with open(os.environ['MANIFEST']) as f:
     rel = json.load(f).get('agentDemos')
-print(os.path.join(os.environ['UNIVERSE_DIR'], rel) if rel else '')
+sys.stdout.write(os.path.join(os.environ['UNIVERSE_DIR'], rel).replace(chr(92), '/') if rel else '')
 "
 }
 
@@ -325,7 +326,7 @@ seed_sources() {
   DEVICE_ID=""
   for _ in $(seq 1 40); do
     DEVICE_ID=$(curl -sk -H "Authorization: Bearer ${TOKEN}" "${URL}/admin/devices" \
-      | python3 -c "import sys,json; d=json.load(sys.stdin); ids=[x['id'] for x in d.get('items',[]) if x.get('kind')=='collector']; print(ids[0] if ids else '')" 2>/dev/null)
+      | python3 -c "import sys,json; d=json.load(sys.stdin); ids=[x['id'] for x in d.get('items',[]) if x.get('kind')=='collector']; sys.stdout.write(ids[0] if ids else '')" 2>/dev/null)
     [[ -n "${DEVICE_ID}" ]] && break
     sleep 1
   done
@@ -342,7 +343,8 @@ seed_sources() {
   # polled by that collector's synth twin.
   local specs
   specs=$(MANIFEST="$manifest" python3 -c "
-import json, os
+import json, os, sys
+sys.stdout.reconfigure(encoding='utf-8', newline='\n')
 with open(os.environ['MANIFEST']) as f:
     m = json.load(f)
 for s in m['sources']:
@@ -408,7 +410,9 @@ seed_privacy() {
   TOKEN="$(read_instance_token "${CONFIG_DIR}")"
   echo "Driving privacy exchanges from $(basename "$(dirname "${requests}")")/privacy-requests.json…"
   REQUESTS="${requests}" GATEWAY_URL="${URL}" ADMIN_TOKEN="${TOKEN}" python3 - <<'PY'
-import json, os, ssl, urllib.error, urllib.request
+import json, os, ssl, sys, urllib.error, urllib.request
+
+sys.stdout.reconfigure(encoding="utf-8", newline="\n")
 
 url = os.environ["GATEWAY_URL"]
 admin = os.environ["ADMIN_TOKEN"]

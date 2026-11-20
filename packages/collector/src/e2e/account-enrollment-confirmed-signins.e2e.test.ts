@@ -41,6 +41,7 @@ import {
   browserSuiteAvailable,
   clickFirst,
   connectGatewayBySignIn,
+  devicePinnedJson,
   connectThisGateway,
   enterConnectCode,
   expectText,
@@ -53,6 +54,33 @@ import {
 import { gatewayBootBudgetMs } from "./gateway-env.js";
 
 const browserReady = browserSuiteAvailable("account-enrollment-confirmed-signins.e2e");
+
+/** Local status can refresh before the public tunnel is ready for a new TLS client. */
+async function waitForPublicTlsHealth(gateway: EnrollmentGateway): Promise<void> {
+  const timeoutMs = gatewayBootBudgetMs(),
+    deadline = performance.now() + timeoutMs;
+  await waitFor(
+    async () => {
+      const remaining = deadline - performance.now();
+      if (remaining <= 0) throw new Error("Public TLS readiness budget exhausted");
+      const health = await devicePinnedJson(
+        { publicOrigin: gateway.publicOrigin, certificate: gateway.leaf.cert },
+        "/health",
+        undefined,
+        AbortSignal.timeout(Math.ceil(remaining)),
+      );
+      return (
+        performance.now() < deadline &&
+        health !== null &&
+        typeof health === "object" &&
+        "status" in health &&
+        health.status === "ok"
+      );
+    },
+    "the pinned public TLS health response",
+    timeoutMs,
+  );
+}
 
 /** The owner's Google account, and one the relay slips into the account later. Both invented. */
 const OWNER_GOOGLE = "fictional-owner-google-subject";
@@ -71,7 +99,6 @@ describe.skipIf(!browserReady)(
     let owner: PasskeySession;
     let passkey: string;
     const priorCaFile = process.env.OMNESIS_CLOUD_RELAY_GATEWAY_CA_FILE;
-    const priorEnabled = process.env.OMNESIS_CLOUD_RELAY_ENABLED;
 
     /**
      * A CLI pairs with `gateway` while the person signs in with Google on this
@@ -91,6 +118,7 @@ describe.skipIf(!browserReady)(
       method: "Google" | "Passkey",
     ) {
       await gateway.pace(2);
+      await waitForPublicTlsHealth(gateway);
       let launched!: (url: string) => void;
       const launchUrl = new Promise<string>((resolve) => (launched = resolve));
       const comparisons: string[] = [];
@@ -177,7 +205,6 @@ describe.skipIf(!browserReady)(
         directory = await mkdtemp(join(tmpdir(), "omnesis-enroll-confirmed-"));
         world = await EnrollmentWorld.create(directory, { signupPolicy: "open", google: true });
         process.env.OMNESIS_CLOUD_RELAY_GATEWAY_CA_FILE = world.pki.caCertFile;
-        process.env.OMNESIS_CLOUD_RELAY_ENABLED = "1";
         browser = await PasskeyBrowser.launch(world);
         home = await EnrollmentGateway.start(world, "home");
         cabin = await EnrollmentGateway.start(world, "cabin");
@@ -195,8 +222,6 @@ describe.skipIf(!browserReady)(
       } finally {
         if (priorCaFile === undefined) delete process.env.OMNESIS_CLOUD_RELAY_GATEWAY_CA_FILE;
         else process.env.OMNESIS_CLOUD_RELAY_GATEWAY_CA_FILE = priorCaFile;
-        if (priorEnabled === undefined) delete process.env.OMNESIS_CLOUD_RELAY_ENABLED;
-        else process.env.OMNESIS_CLOUD_RELAY_ENABLED = priorEnabled;
         if (directory) await rm(directory, { recursive: true, force: true });
       }
     }, 60_000);

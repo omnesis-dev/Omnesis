@@ -137,28 +137,7 @@ describe("notification claim routes", () => {
   });
 });
 
-test("without the cloud relay opt-in the negotiation header is ignored", async () => {
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "");
-  try {
-    const claim = vi.fn(async () => null);
-    const { app } = appWith(bearer([SCOPE_PUSH_CLAIM]), {
-      claim,
-      confirm: vi.fn(async () => false),
-    });
-    const response = await app.request("/notifications/claim", {
-      method: "POST",
-      headers: { "content-type": "application/json", "X-Omnesis-Pairing-Notifications": "1" },
-      body: "{}",
-    });
-    expect(response.status).toBe(204);
-    expect(claim.mock.calls).toEqual([[DEVICE_ID]]);
-  } finally {
-    vi.unstubAllEnvs();
-  }
-});
-
 test("new reminder kinds require explicit negotiation on this authenticated claim", async () => {
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
   for (const value of [undefined, "true", "0", "1"]) {
     const claim = vi.fn(async () => null);
     const { app } = appWith(bearer([SCOPE_PUSH_CLAIM]), {
@@ -178,10 +157,9 @@ test("new reminder kinds require explicit negotiation on this authenticated clai
       expect(claim).toHaveBeenCalledWith(DEVICE_ID, { pairingNotifications: true });
     else expect(claim).toHaveBeenCalledWith(DEVICE_ID);
   }
-  vi.unstubAllEnvs();
 });
 
-test("the Tailscale join header counts only with its own opt-in, alongside the relay's", async () => {
+test("the Tailscale join header counts on its own, alongside the pairing one", async () => {
   const claimWith = async (headers: Record<string, string>) => {
     const claim = vi.fn(async () => null);
     const { app } = appWith(bearer([SCOPE_PUSH_CLAIM]), {
@@ -200,23 +178,15 @@ test("the Tailscale join header counts only with its own opt-in, alongside the r
     "X-Omnesis-Pairing-Notifications": "1",
     "X-Omnesis-Tailscale-Join-Notifications": "1",
   };
-  try {
-    vi.stubEnv("OMNESIS_TAILSCALE_EMBED_ENABLED", "");
-    vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "");
-    expect(await claimWith(both)).toHaveBeenCalledWith(DEVICE_ID);
-    vi.stubEnv("OMNESIS_TAILSCALE_EMBED_ENABLED", "1");
-    expect(await claimWith(both)).toHaveBeenCalledWith(DEVICE_ID, {
-      tailscaleJoinNotifications: true,
-    });
-    expect(
-      await claimWith({ "X-Omnesis-Tailscale-Join-Notifications": "true" }),
-    ).toHaveBeenCalledWith(DEVICE_ID);
-    vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
-    expect(await claimWith(both)).toHaveBeenCalledWith(DEVICE_ID, {
-      pairingNotifications: true,
-      tailscaleJoinNotifications: true,
-    });
-  } finally {
-    vi.unstubAllEnvs();
-  }
+  expect(await claimWith({ "X-Omnesis-Tailscale-Join-Notifications": "1" })).toHaveBeenCalledWith(
+    DEVICE_ID,
+    { tailscaleJoinNotifications: true },
+  );
+  expect(
+    await claimWith({ "X-Omnesis-Tailscale-Join-Notifications": "true" }),
+  ).toHaveBeenCalledWith(DEVICE_ID);
+  expect(await claimWith(both)).toHaveBeenCalledWith(DEVICE_ID, {
+    pairingNotifications: true,
+    tailscaleJoinNotifications: true,
+  });
 });

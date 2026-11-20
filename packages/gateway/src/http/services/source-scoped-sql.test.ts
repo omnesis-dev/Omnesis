@@ -152,3 +152,45 @@ test("Strava enrichment and athlete-refresh query forms remain executable", asyn
     expect(result.columns.length, sql).toBeGreaterThan(0);
   }
 });
+
+test("a new account reads its type's shared tables before its first write, and nothing else of a sibling's", async () => {
+  const column = (name: string) => ({ name, type: "VARCHAR" as const, description: name });
+  const shared: AnalyticsTableSchema = {
+    tableName: "fixture_chat_messages",
+    displayName: "Fixture chat messages",
+    description: "Invented messages shared by every account of the fixture type",
+    columns: [column("account"), column("id")],
+    primaryKey: ["account", "id"],
+    sharedDiscriminatorColumn: "account",
+    semanticTimeColumn: null,
+    record: { titleColumns: ["id"], keyColumns: ["id"] },
+  };
+  const exclusive: AnalyticsTableSchema = {
+    ...shared,
+    tableName: "fixture_chat_private",
+    sharedDiscriminatorColumn: undefined,
+    primaryKey: ["id"],
+  };
+  await db.ensureTable(shared, "fixture-chat:alpha");
+  await db.ensureTable(exclusive, "fixture-chat:alpha");
+  await db.ensureTable({ ...shared, tableName: "other_chat_messages" }, "other-chat:alpha");
+  const sibling = "fixture-chat:beta";
+  expect(
+    (
+      await service.sql(
+        "SELECT id FROM fixture_chat_messages WHERE account = 'beta'",
+        undefined,
+        sibling,
+      )
+    ).rows,
+  ).toEqual([]);
+  await expect(
+    service.sql("SELECT id FROM fixture_chat_private", undefined, sibling),
+  ).rejects.toBeInstanceOf(ScopedSqlDeniedError);
+  await expect(
+    service.sql("SELECT id FROM other_chat_messages", undefined, sibling),
+  ).rejects.toBeInstanceOf(ScopedSqlDeniedError);
+  await expect(
+    service.sql("SELECT id FROM fixture_chat_messages", undefined, "other-chat:alpha"),
+  ).rejects.toBeInstanceOf(ScopedSqlDeniedError);
+});

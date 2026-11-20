@@ -3,6 +3,8 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { makeCommand, PROTOCOL_VERSION, type WsResponse } from "@omnesis/core";
 import {
@@ -44,9 +46,7 @@ let dbPath: string;
 let db: ReturnType<typeof createDatabase>;
 
 beforeEach(() => {
-  // How a device joined is read back only with the cloud relay opt-in.
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
-  dbPath = `/tmp/omnesis-pairing-service-test-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-pairing-service-test-${randomUUID()}.db`);
   db = createDatabase(dbPath);
 });
 

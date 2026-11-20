@@ -4,6 +4,8 @@
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { createDatabase } from "../../db.js";
@@ -71,7 +73,7 @@ describe("fetchDateExtractionBatch reads a bounded batch", () => {
   let dbPath: string;
 
   beforeEach(() => {
-    dbPath = `/tmp/omnesis-test-${randomUUID()}.db`;
+    dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
     db = createDatabase(dbPath);
     upsertDocuments(
       db,

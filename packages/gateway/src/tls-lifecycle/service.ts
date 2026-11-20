@@ -23,20 +23,9 @@
  */
 
 import { createHash, X509Certificate } from "node:crypto";
-import {
-  closeSync,
-  existsSync,
-  mkdirSync,
-  openSync,
-  readFileSync,
-  renameSync,
-  rmSync,
-  statSync,
-  writeFileSync,
-  writeSync,
-} from "node:fs";
+import { closeSync, mkdirSync, openSync, readFileSync, rmSync, statSync, writeSync } from "node:fs";
 import { isIP } from "node:net";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 
 import {
   assertNever,
@@ -51,6 +40,17 @@ import {
   type TlsRenewalMode,
 } from "@omnesis/core";
 import { fingerprintFromCertPem } from "../tls.js";
+import {
+  tlsIssuerCleanupFailure,
+  type TlsIssuerCleanupUnconfirmedError,
+} from "./issuer-cleanup.js";
+import {
+  readLifecycleRecord,
+  writeLifecycleRecord,
+  readTlsPrivateKey,
+  writeTlsMaterial,
+  type LifecycleRecord,
+} from "./persistence.js";
 import {
   mkcertRootCandidates,
   resolveAgentCertificateTrust,
@@ -105,29 +105,13 @@ export interface TlsLifecycleServiceOptions {
   onRotation?: (fingerprintSha256: string) => void;
 }
 
-/** Renewal state that survives a restart, beside the material it describes. */
-interface LifecycleRecord {
-  lastAttemptAt: string | null;
-  lastError: string | null;
-  lastRenewedAt: string | null;
-  rotation: { previousFingerprintSha256: string; rotatedAt: string } | null;
-}
-
 export type RenewOutcome =
   | { ok: true; fingerprintSha256: string; snapshot: TlsLifecycleSnapshot }
   | { ok: false; reason: string; snapshot: TlsLifecycleSnapshot };
 
-const RECORD_FILE = "lifecycle.json";
 const LOCK_FILE = ".renew.lock";
 /** A lock older than this belongs to a renewal that died; it is taken over. */
 const LOCK_STALE_MS = 10 * 60 * 1000;
-
-const EMPTY_RECORD: LifecycleRecord = {
-  lastAttemptAt: null,
-  lastError: null,
-  lastRenewedAt: null,
-  rotation: null,
-};
 
 function errorText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -138,6 +122,10 @@ export class TlsLifecycleService {
   private record: LifecycleRecord;
   private pendingReplacement: TlsLifecycleSnapshot["pendingReplacement"] = null;
   private renewing: Promise<RenewOutcome> | null = null;
+  private mutationTail: Promise<void> = Promise.resolve();
+  private closing = false;
+  private issuerCleanupFailure: TlsIssuerCleanupUnconfirmedError | null = null;
+  private readonly closeAbort = new AbortController();
   private readonly now: () => number;
   private readonly tlsDir: string;
 
@@ -148,7 +136,40 @@ export class TlsLifecycleService {
       ...options.initial,
       fingerprintSha256: fingerprintFromCertPem(options.initial.cert),
     };
-    this.record = this.readRecord();
+    this.record = readLifecycleRecord(this.tlsDir);
+  }
+
+  /** A known uncertain issuer remains visible even while its mutation is still settling. */
+  cleanupFailure(): TlsIssuerCleanupUnconfirmedError | null {
+    return this.issuerCleanupFailure;
+  }
+
+  /** Stop admission and join every accepted read, issuer and private publication. */
+  async close(): Promise<void> {
+    this.closing = true;
+    this.closeAbort.abort();
+    await this.mutationTail;
+    if (this.issuerCleanupFailure) throw this.issuerCleanupFailure;
+  }
+
+  private mutate<T>(operation: () => Promise<T>): Promise<T> {
+    if (this.issuerCleanupFailure) return Promise.reject(this.issuerCleanupFailure);
+    if (this.closing) return Promise.reject(new Error("The TLS lifecycle is closed."));
+    const result = this.mutationTail.then(async () => {
+      if (this.issuerCleanupFailure) throw this.issuerCleanupFailure;
+      if (this.closing) throw new Error("The TLS lifecycle is closed.");
+      return operation();
+    });
+    this.mutationTail = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  }
+
+  /** Internal snapshot of the pair actually served; disk may hold an unactivated replacement. */
+  servedMaterial(): Readonly<TlsPem> {
+    return { cert: this.served.cert, key: this.served.key };
   }
 
   /** The fingerprint of the certificate the server presents right now. */
@@ -276,7 +297,7 @@ export class TlsLifecycleService {
    */
   async refresh(signal: AbortSignal): Promise<TlsLifecycleSnapshot> {
     try {
-      this.activateFromDisk();
+      await this.activateFromDisk();
       const snapshot = this.snapshot();
       const due = snapshot.served.state === "expiring" || snapshot.served.state === "expired";
       if (due && snapshot.renewal.mode === "automatic" && !signal.aborted) {
@@ -295,13 +316,17 @@ export class TlsLifecycleService {
    * from what is served and passes verification. Something that does not
    * pass is reported, and the served material stays.
    */
-  activateFromDisk(): TlsLifecycleSnapshot["pendingReplacement"] {
+  activateFromDisk(): Promise<TlsLifecycleSnapshot["pendingReplacement"]> {
+    return this.mutate(() => this.activateFromDiskOnce());
+  }
+
+  private async activateFromDiskOnce(): Promise<TlsLifecycleSnapshot["pendingReplacement"]> {
     const material = this.material();
     let disk: TlsPem;
     try {
       disk = {
         cert: readFileSync(material.certPath, "utf8"),
-        key: readFileSync(material.keyPath, "utf8"),
+        key: await readTlsPrivateKey(material.keyPath, this.options.configDir),
       };
     } catch (err) {
       this.pendingReplacement = {
@@ -325,7 +350,7 @@ export class TlsLifecycleService {
       return this.pendingReplacement;
     }
     try {
-      this.activate(disk, inspection.fingerprintSha256!, "disk");
+      await this.activate(disk, inspection.fingerprintSha256!, "disk");
     } catch (err) {
       this.pendingReplacement = {
         fingerprintSha256: inspection.fingerprintSha256,
@@ -346,7 +371,9 @@ export class TlsLifecycleService {
    */
   renew(signal: AbortSignal, opts: { force?: boolean } = {}): Promise<RenewOutcome> {
     if (this.renewing) return this.renewing;
-    this.renewing = this.renewOnce(signal, opts).finally(() => {
+    this.renewing = this.mutate(() =>
+      this.renewOnce(AbortSignal.any([signal, this.closeAbort.signal]), opts),
+    ).finally(() => {
       this.renewing = null;
     });
     return this.renewing;
@@ -392,9 +419,9 @@ export class TlsLifecycleService {
 
     const startedAt = this.now();
     this.record = { ...this.record, lastAttemptAt: new Date(startedAt).toISOString() };
-    const fail = (reason: string): RenewOutcome => {
+    const fail = async (reason: string): Promise<RenewOutcome> => {
       this.record = { ...this.record, lastError: reason };
-      this.writeRecord();
+      await this.writeRecord();
       log.warn(`TLS renewal (${ownership}) failed: ${reason}`);
       return { ok: false, reason, snapshot: this.snapshot() };
     };
@@ -411,8 +438,11 @@ export class TlsLifecycleService {
       let minted: TlsPem;
       try {
         minted = await this.options.minter.mint(ownership, served.names, signal);
+        signal.throwIfAborted();
       } catch (err) {
-        return fail(errorText(err));
+        const cleanup = tlsIssuerCleanupFailure(err);
+        if (cleanup) this.issuerCleanupFailure ??= cleanup;
+        return await fail(errorText(cleanup ?? err));
       }
       const inspection = this.inspect(minted, 0, intended);
       const verdict = replacementVerdict(inspection);
@@ -421,24 +451,29 @@ export class TlsLifecycleService {
           verdict.startsWith("it does not cover") && ownership === "self-signed"
             ? " (a name in OMNESIS_GATEWAY_URL or a pairing origin the host no longer answers to has to be changed there first)"
             : "";
-        return fail(`the minted certificate was rejected: ${verdict}${stale}`);
+        return await fail(`the minted certificate was rejected: ${verdict}${stale}`);
       }
 
       // Disk and the served material move together: a write or activation
       // that fails leaves the pair the server presents in place, on disk too,
       // so the next boot loads what is being served now.
       try {
-        this.writeMaterial(material.certPath, material.keyPath, minted);
-        this.activate(minted, inspection.fingerprintSha256!, ownership);
+        await writeTlsMaterial(material.certPath, material.keyPath, minted, this.options.configDir);
+        await this.activate(minted, inspection.fingerprintSha256!, ownership);
       } catch (err) {
         try {
-          this.writeMaterial(material.certPath, material.keyPath, this.served);
+          await writeTlsMaterial(
+            material.certPath,
+            material.keyPath,
+            this.served,
+            this.options.configDir,
+          );
         } catch (restoreErr) {
           log.error(
             `The served TLS pair could not be restored to ${material.certPath} after a failed renewal: ${errorText(restoreErr)}`,
           );
         }
-        return fail(`the renewed material could not be put into service: ${errorText(err)}`);
+        return await fail(`the renewed material could not be put into service: ${errorText(err)}`);
       }
       this.pendingReplacement = null;
       this.record = {
@@ -446,7 +481,7 @@ export class TlsLifecycleService {
         lastError: null,
         lastRenewedAt: new Date(this.now()).toISOString(),
       };
-      this.writeRecord();
+      await this.writeRecord();
       return {
         ok: true,
         fingerprintSha256: inspection.fingerprintSha256!,
@@ -488,7 +523,11 @@ export class TlsLifecycleService {
     });
   }
 
-  private activate(material: TlsPem, fingerprintSha256: string, origin: string): void {
+  private async activate(
+    material: TlsPem,
+    fingerprintSha256: string,
+    origin: string,
+  ): Promise<void> {
     this.options.activate(material);
     const previous = this.served.fingerprintSha256;
     this.served = { ...material, fingerprintSha256 };
@@ -500,31 +539,13 @@ export class TlsLifecycleService {
           rotatedAt: new Date(this.now()).toISOString(),
         },
       };
-      this.writeRecord();
+      await this.writeRecord();
       log.info(
         `Activated a new TLS certificate (${origin}); fingerprint ${previous} -> ${fingerprintSha256}`,
       );
       this.options.onRotation?.(fingerprintSha256);
     } else {
       log.info(`Activated re-read TLS material (${origin}); fingerprint unchanged`);
-    }
-  }
-
-  /** Write the pair beside its targets, then rename each into place. */
-  private writeMaterial(certPath: string, keyPath: string, material: TlsPem): void {
-    mkdirSync(dirname(certPath), { recursive: true, mode: 0o700 });
-    mkdirSync(dirname(keyPath), { recursive: true, mode: 0o700 });
-    const suffix = `.renew-${process.pid}`;
-    const certTmp = `${certPath}${suffix}`;
-    const keyTmp = `${keyPath}${suffix}`;
-    try {
-      writeFileSync(certTmp, material.cert, { mode: 0o600 });
-      writeFileSync(keyTmp, material.key, { mode: 0o600 });
-      renameSync(keyTmp, keyPath);
-      renameSync(certTmp, certPath);
-    } finally {
-      rmSync(certTmp, { force: true });
-      rmSync(keyTmp, { force: true });
     }
   }
 
@@ -559,37 +580,9 @@ export class TlsLifecycleService {
     };
   }
 
-  private readRecord(): LifecycleRecord {
-    const path = join(this.tlsDir, RECORD_FILE);
-    if (!existsSync(path)) return { ...EMPTY_RECORD };
+  private async writeRecord(): Promise<void> {
     try {
-      const raw = JSON.parse(readFileSync(path, "utf8")) as Partial<LifecycleRecord>;
-      return {
-        lastAttemptAt: typeof raw.lastAttemptAt === "string" ? raw.lastAttemptAt : null,
-        lastError: typeof raw.lastError === "string" ? raw.lastError : null,
-        lastRenewedAt: typeof raw.lastRenewedAt === "string" ? raw.lastRenewedAt : null,
-        rotation:
-          raw.rotation &&
-          typeof raw.rotation.previousFingerprintSha256 === "string" &&
-          typeof raw.rotation.rotatedAt === "string"
-            ? {
-                previousFingerprintSha256: raw.rotation.previousFingerprintSha256,
-                rotatedAt: raw.rotation.rotatedAt,
-              }
-            : null,
-      };
-    } catch {
-      return { ...EMPTY_RECORD };
-    }
-  }
-
-  private writeRecord(): void {
-    try {
-      mkdirSync(this.tlsDir, { recursive: true, mode: 0o700 });
-      const path = join(this.tlsDir, RECORD_FILE);
-      const tmp = `${path}.${process.pid}`;
-      writeFileSync(tmp, `${JSON.stringify(this.record, null, 2)}\n`, { mode: 0o600 });
-      renameSync(tmp, path);
+      await writeLifecycleRecord(this.tlsDir, this.record);
     } catch (err) {
       log.warn(`TLS lifecycle record could not be written: ${errorText(err)}`);
     }

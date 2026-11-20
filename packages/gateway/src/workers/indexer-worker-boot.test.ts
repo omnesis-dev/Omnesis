@@ -1,24 +1,29 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { execFileSync, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import { type AddressInfo } from "node:net";
 import {
-  chmodSync,
+  closeSync,
+  constants,
   existsSync,
   mkdirSync,
   mkdtempSync,
+  openSync,
   readFileSync,
   rmSync,
   statSync,
   writeFileSync,
 } from "node:fs";
+import { open, type FileHandle } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { Worker } from "node:worker_threads";
 import { afterEach, describe, expect, test } from "vitest";
 import { resolveWorkerEntry } from "@omnesis/core";
+import { setFixtureDirectoryWritable } from "@omnesis/source-sdk/testing";
 import { createDatabase, deleteAllBySource, upsertDocuments } from "../db.js";
 import { NO_ENCODING } from "../indexer/embedder-prefixes.js";
 import {
@@ -197,6 +202,7 @@ function makeWorkerOptions(
     indexerPageSize: 50,
     indexerBetweenPageSleepMs: 0,
     indexerCatchUp: { enabled: true, maxPageSize: 1000, minSleepMs: 0 },
+    lexicalRebuild: { batchSize: 1000, pauseMs: 50 },
     reindexMissingAtBoot: options.reindexMissingAtBoot ?? false,
     chunkerChunkSize: 512,
     chunkerOverlap: 64,
@@ -313,22 +319,56 @@ type RecordingWorker = {
   backfillProgress: number[];
   vectorIndex: Array<{ state: string; reason?: string }>;
   cycleCompletions(): number;
-  /** Stop the thread the way an OOM kill stops the process: no shutdown, no final save. */
+  /** SIGKILL the process hosting the thread, as an OOM kill would: no shutdown, no final save. */
   kill(): Promise<void>;
   dispose(): Promise<void>;
 };
 
-/** A bare worker that records what it reports, so a test can kill it mid-boot. */
+/**
+ * Runs one indexer thread in a child process and relays its messages over IPC.
+ * The thread is the gateway's own worker; only the process around it differs,
+ * so a test can kill that process the way the OS kills a gateway.
+ */
+const INDEXER_HOST_SOURCE = `
+import { Worker } from "node:worker_threads";
+process.once("disconnect", () => process.exit(0));
+process.once("message", ({ url, execArgv, init }) => {
+  const worker = new Worker(new URL(url), { execArgv });
+  worker.on("message", (message) => {
+    process.send(message);
+    if (message.type === "shutdownComplete") void worker.terminate();
+  });
+  worker.once("error", (error) => process.send({ type: "initError", error: String(error) }));
+  worker.once("exit", () => process.disconnect());
+  process.on("message", (message) => worker.postMessage(message));
+  worker.postMessage(init);
+});
+`;
+
+/**
+ * A bare worker that records what it reports, so a test can kill it mid-boot.
+ *
+ * The kill must stop a whole process. `Worker.terminate()` is not a stand-in:
+ * once it begins, a usearch call the thread is making fails its next Node-API
+ * call, and the addon's C++ exception for that failure cannot be handed to
+ * JavaScript, so `std::terminate` aborts the process hosting the thread. The
+ * gateway never terminates its indexer thread before the thread has
+ * acknowledged shutdown; see `shutdownWorker`.
+ */
 function startRecordingWorker(
   paths: { gatewayDbPath: string; indexDbPath: string; usearchIndexPath: string },
   httpEmbedderUrl: string,
   options: WorkerTestOptions = {},
 ): RecordingWorker {
   const entry = resolveWorkerEntry("./indexer-worker.ts", import.meta.url, "./register-tsx.mjs");
-  const worker = new Worker(entry.url, { execArgv: entry.execArgv });
+  const host = spawn(process.execPath, ["--input-type=module", "--eval", INDEXER_HOST_SOURCE], {
+    stdio: ["ignore", "ignore", "inherit", "ipc"],
+    serialization: "advanced",
+  });
   const backfillProgress: number[] = [];
   const vectorIndex: Array<{ state: string; reason?: string }> = [];
   let cycles = 0;
+  let stopping = false;
   let resolveReady!: () => void;
   let rejectReady!: (error: Error) => void;
   const ready = new Promise<void>((resolve, reject) => {
@@ -336,9 +376,12 @@ function startRecordingWorker(
     rejectReady = reject;
   });
   const exit = new Promise<void>((resolve) => {
-    worker.once("exit", () => resolve());
+    host.once("exit", (code, signal) => {
+      if (!stopping) rejectReady(new Error(`indexer host exited (${signal ?? code})`));
+      resolve();
+    });
   });
-  worker.on("message", (message: IndexerToMain) => {
+  host.on("message", (message: IndexerToMain) => {
     if (message.type === "bootProgress" && message.stage === "hnsw-backfill") {
       backfillProgress.push(message.progress);
     }
@@ -354,25 +397,27 @@ function startRecordingWorker(
     }
     if (message.type === "ready") resolveReady();
     if (message.type === "initError") rejectReady(new Error(message.error));
-    if (message.type === "shutdownComplete") void worker.terminate().catch(() => {});
   });
-  worker.once("error", (error) => rejectReady(error));
+  host.once("error", (error) => rejectReady(error));
   const options_ = makeWorkerOptions(paths, httpEmbedderUrl, options);
-  worker.postMessage({
-    type: "init",
-    ...options_,
-    heartbeatIntervalMs: 30_000,
-  } satisfies IndexerInit);
+  host.send({
+    url: entry.url.href,
+    execArgv: entry.execArgv,
+    init: { type: "init", ...options_, heartbeatIntervalMs: 30_000 } satisfies IndexerInit,
+  });
   return {
     ready,
     backfillProgress,
     vectorIndex,
     cycleCompletions: () => cycles,
     async kill() {
-      await worker.terminate();
+      stopping = true;
+      host.kill("SIGKILL");
+      await exit;
     },
     async dispose() {
-      worker.postMessage({ type: "shutdown" });
+      stopping = true;
+      if (host.exitCode === null && host.signalCode === null) host.send({ type: "shutdown" });
       await exit;
     },
   };
@@ -1024,7 +1069,7 @@ describe("indexer worker boot persistence", () => {
 
       deleteDocumentsBySource(paths.gatewayDbPath, sourceId);
       await proxy.deleteSourceIndex(sourceId);
-      chmodSync(graphDir, 0o500);
+      setFixtureDirectoryWritable(graphDir, false);
       graphReadOnly = true;
       fakeEmbedder.holds[0]!.release();
 
@@ -1032,7 +1077,7 @@ describe("indexer worker boot persistence", () => {
       await proxy.dispose();
       proxy = undefined;
 
-      chmodSync(graphDir, graphDirMode);
+      setFixtureDirectoryWritable(graphDir, true, graphDirMode);
       graphReadOnly = false;
       const failedDb = openIndexDb(paths.indexDbPath, { readonly: true });
       try {
@@ -1059,7 +1104,7 @@ describe("indexer worker boot persistence", () => {
       }
     } finally {
       fakeEmbedder.holds[0]!.release();
-      if (graphReadOnly) chmodSync(graphDir, graphDirMode);
+      if (graphReadOnly) setFixtureDirectoryWritable(graphDir, true, graphDirMode);
       await proxy?.dispose();
       await closeServer(fakeEmbedder.server);
     }
@@ -1094,7 +1139,7 @@ describe("indexer worker boot persistence", () => {
         indexDb.close();
       }
 
-      chmodSync(graphDir, 0o500);
+      setFixtureDirectoryWritable(graphDir, false);
       graphReadOnly = true;
       proxy = createProxy(paths, seedEmbedder.url);
 
@@ -1111,7 +1156,7 @@ describe("indexer worker boot persistence", () => {
         failedDb.close();
       }
 
-      chmodSync(graphDir, graphDirMode);
+      setFixtureDirectoryWritable(graphDir, true, graphDirMode);
       graphReadOnly = false;
       proxy = createProxy(paths, seedEmbedder.url);
       await proxy.whenReady();
@@ -1123,7 +1168,7 @@ describe("indexer worker boot persistence", () => {
         recoveredDb.close();
       }
     } finally {
-      if (graphReadOnly) chmodSync(graphDir, graphDirMode);
+      if (graphReadOnly) setFixtureDirectoryWritable(graphDir, true, graphDirMode);
       await proxy?.dispose();
       await closeServer(seedEmbedder.server);
     }
@@ -1427,6 +1472,70 @@ describe("indexer worker boot persistence", () => {
     }
   }, 60_000);
 
+  // The kill lands while the thread is inside usearch's native save: the
+  // checkpoint's temporary file is a FIFO, and the graph being written is
+  // larger than a pipe holds, so the write blocks until the reader closes.
+  test.skipIf(process.platform === "win32")(
+    "a rebuild killed inside a checkpoint save is rebuilt by the next start",
+    async () => {
+      const documents = Array.from({ length: 1_000 }, (_, index) =>
+        makeDocument(`save-kill-${index}`, `Maya Reeves drafted fictional save item ${index}.`),
+      );
+      const paths = createFixture(documents);
+      const embedder = await startFakeEmbedder();
+      const checkpointTemp = `${paths.usearchIndexPath}.tmp`;
+      let worker: RecordingWorker | undefined;
+      let readerOpening: Promise<FileHandle> | undefined;
+      try {
+        const seed = createProxy(paths, embedder.url);
+        await seed.whenReady();
+        await waitForCycleRuns(seed, 1);
+        await seed.dispose();
+        rmSync(paths.usearchIndexPath, { force: true });
+        execFileSync("mkfifo", [checkpointTemp]);
+        // The first page's checkpoint saves 600 vectors, several pipe buffers.
+        worker = startRecordingWorker(paths, embedder.url, {
+          usearchBackfillPageSize: 600,
+          usearchCheckpointIntervalMs: 0,
+        });
+        const killed = worker;
+        // Opening the reader completes once that checkpoint opens the FIFO to
+        // write; without reads, the save then blocks on a full pipe.
+        readerOpening = open(checkpointTemp, "r");
+        const reader = await readerOpening;
+        const killing = killed.kill();
+        // Closing the reader fails the blocked write, so a thread still alive
+        // after the kill would now return from the native save with an error.
+        await reader.close();
+        await killing;
+        rmSync(checkpointTemp, { force: true });
+
+        worker = startRecordingWorker(paths, embedder.url, { usearchBackfillPageSize: 100 });
+        await worker.ready;
+        expect(worker.backfillProgress.at(-1)).toBe(1);
+        expect(worker.vectorIndex.at(-1)?.state).toBe("ready");
+        const graph = UsearchReadHandle.open(paths.usearchIndexPath, EMBED_DIM);
+        try {
+          expect(graph.size()).toBe(documents.length);
+        } finally {
+          graph.close();
+        }
+      } finally {
+        // A reader still waiting for a writer would keep this process alive.
+        try {
+          closeSync(openSync(checkpointTemp, constants.O_WRONLY | constants.O_NONBLOCK));
+        } catch {
+          // No reader is waiting.
+        }
+        await readerOpening?.then((handle) => handle.close()).catch(() => {});
+        rmSync(checkpointTemp, { force: true });
+        await worker?.dispose();
+        await closeServer(embedder.server);
+      }
+    },
+    60_000,
+  );
+
   test("an encrypted graph killed after its rebuild is restored and caught up, not rebuilt", async () => {
     const indexDbKey = randomBytes(32);
     const indexDbKeyHex = indexDbKey.toString("hex");
@@ -1689,9 +1798,12 @@ describe("indexer worker boot persistence", () => {
 
     try {
       await blockingEmbedder.holds[0]!.started;
-      await proxy.dispose();
-      expect(exited).toBe(true);
+      const disposal = proxy.dispose();
       await readyRejection;
+      expect(exited).toBe(false);
+      blockingEmbedder.holds[0]!.release();
+      await disposal;
+      expect(exited).toBe(true);
     } finally {
       blockingEmbedder.holds[0]!.release();
       await proxy.dispose();
@@ -2107,7 +2219,7 @@ test("source and document reapply journals stay pending until the in-flight owne
     await proxy.whenReady();
     await fake.holds[0]!.started;
     deleteDocumentsBySource(paths.gatewayDbPath, sourceId);
-    await expect(proxy.deleteDocumentIndexBatch(documentId, 64, true)).resolves.toMatchObject({
+    await expect(proxy.deleteDocumentsIndexBatch([documentId], 64, true)).resolves.toMatchObject({
       complete: false,
     });
     await proxy.deleteSourceIndex(sourceId);
@@ -2137,3 +2249,156 @@ test("source and document reapply journals stay pending until the in-flight owne
     await closeServer(fake.server);
   }
 }, 30_000);
+
+test("storage pressure gates initial indexing and recovery without restarting the worker", async () => {
+  const paths = createFixture([makeDocument("capacity-one", "fictional orange prism")]);
+  const proxy = new IndexerWorkerProxy({
+    ...makeWorkerOptions(paths, "http://127.0.0.1:9"),
+    lexicalOnly: true,
+    embedDim: 1,
+    modelName: "keyword-only",
+    storagePressure: { blocked: true, validUntil: Date.now() + 60000 },
+  });
+  try {
+    await proxy.whenReady();
+    const index = openIndexDb(paths.indexDbPath, { readonly: true });
+    expect(getIndexedDocumentCount(index)).toBe(0);
+    index.close();
+    proxy.setStoragePressure(false, Date.now() + 60000);
+    await waitForCycleRuns(proxy, 1);
+    const recovered = openIndexDb(paths.indexDbPath, { readonly: true });
+    expect(getIndexedDocumentCount(recovered)).toBeGreaterThan(0);
+    recovered.close();
+  } finally {
+    await proxy.dispose();
+  }
+});
+
+test("shutdown acknowledges a semantic worker parked on initial storage pressure", async () => {
+  const paths = createFixture([makeDocument("capacity-parked", "Invented copper sphere")]);
+  const entry = resolveWorkerEntry("./indexer-worker.ts", import.meta.url, "./register-tsx.mjs");
+  const worker = new Worker(entry.url, { execArgv: entry.execArgv });
+  let parked = false;
+  let ready = false;
+  let acknowledged = false;
+  let failure: Error | undefined;
+  const exited = new Promise<void>((resolve) => worker.once("exit", () => resolve()));
+  worker.on("error", (error) => {
+    failure = error;
+  });
+  worker.on("message", (message: IndexerToMain) => {
+    if (message.type === "vectorIndex" && message.state === "degraded") parked = true;
+    if (message.type === "ready") ready = true;
+    if (message.type === "initError") failure = new Error(message.error);
+    if (message.type === "shutdownComplete") acknowledged = true;
+  });
+  try {
+    worker.postMessage({
+      ...makeWorkerOptions(paths, "http://127.0.0.1:9"),
+      type: "init",
+      heartbeatIntervalMs: 30_000,
+      storagePressure: { blocked: true, validUntil: Date.now() + 60_000 },
+    } satisfies IndexerInit);
+    await waitUntil(() => {
+      if (failure) throw failure;
+      return parked;
+    }, "storage-blocked semantic startup");
+    worker.postMessage({ type: "shutdown" });
+    // No pressure recovery, timeout, or force termination unblocks initialization:
+    // shutdown must wake its own storage wait before awaiting that initialization.
+    await waitUntil(() => {
+      if (failure) throw failure;
+      return acknowledged;
+    }, "blocked startup shutdown acknowledgement");
+    await exited;
+    expect(ready).toBe(false);
+    expect(existsSync(paths.usearchIndexPath)).toBe(false);
+  } finally {
+    await worker.terminate();
+  }
+});
+
+test("semantic startup preserves stored graphs while pressure blocks model replacement", async () => {
+  const paths = createFixture([makeDocument("capacity-semantic", "fictional blue lantern")]);
+  const fake = await startFakeEmbedder();
+  let proxy: IndexerWorkerProxy | undefined;
+  try {
+    proxy = createProxy(paths, fake.url);
+    await proxy.whenReady();
+    await waitForCycleRuns(proxy, 1);
+    await proxy.dispose();
+    proxy = undefined;
+    const stored = readFileSync(paths.usearchIndexPath);
+    proxy = new IndexerWorkerProxy({
+      ...makeWorkerOptions(paths, fake.url),
+      modelName: "replacement-test-model",
+      storagePressure: { blocked: true, validUntil: Date.now() + 60000 },
+    });
+    const deadline = Date.now() + 10000;
+    while (proxy.vectorIndex?.state !== "degraded" && Date.now() < deadline)
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(proxy.vectorIndex?.state).toBe("degraded");
+    expect(readFileSync(paths.usearchIndexPath)).toEqual(stored);
+    proxy.setStoragePressure(false, Date.now() + 60000);
+    await proxy.whenReady();
+    await waitForCycleRuns(proxy, 1);
+    expect(countVectors(paths.indexDbPath)).toBeGreaterThan(0);
+  } finally {
+    await proxy?.dispose();
+    await new Promise<void>((resolve) => fake.server.close(() => resolve()));
+  }
+});
+
+test("one bulk document request removes indexed rows and publishes its vectors without touching a sibling", async () => {
+  const sourceId = "synthetic:bulk-purge@example.com";
+  const sibling = "synthetic:bulk-kept@example.org";
+  const paths = createFixture([
+    ...Array.from({ length: 5 }, (_, index) =>
+      makeDocument(`bulk-${index}`, `Fictional archive entry ${index}`, sourceId),
+    ),
+    makeDocument("bulk-kept", "Fictional sibling entry", sibling),
+  ]);
+  const fake = await startFakeEmbedder();
+  const proxy = createProxy(paths, fake.url);
+  try {
+    await proxy.whenReady();
+    await waitForCycleRuns(proxy, 1);
+    await proxy.pauseIndexing();
+    const gateway = createDatabase(paths.gatewayDbPath);
+    let ids: string[];
+    try {
+      ids = gateway
+        .prepare<[string], { id: string }>("SELECT id FROM documents WHERE source_id = ?")
+        .all(sourceId)
+        .map((row) => row.id);
+    } finally {
+      gateway.close();
+    }
+    deleteDocumentsBySource(paths.gatewayDbPath, sourceId);
+    await expect(proxy.deleteDocumentsIndexBatch(ids, 64, true)).resolves.toMatchObject({
+      deletedChunks: 5,
+      complete: true,
+    });
+    const db = openIndexDb(paths.indexDbPath, { readonly: true });
+    const graph = UsearchReadHandle.open(paths.usearchIndexPath, EMBED_DIM);
+    try {
+      expect(
+        db.prepare("SELECT count(*) AS n FROM chunks WHERE source_id = ?").get(sourceId),
+      ).toEqual({ n: 0 });
+      expect(
+        db.prepare("SELECT count(*) AS n FROM chunks WHERE source_id = ?").get(sibling),
+      ).toEqual({ n: 1 });
+      expect(listPendingDocumentIndexPurges(db)).toEqual([]);
+      expect(db.prepare("SELECT count(*) AS n FROM pending_vector_deletes").get()).toEqual({
+        n: 0,
+      });
+      expect(graph.size()).toBe(1);
+    } finally {
+      db.close();
+      graph.close();
+    }
+  } finally {
+    await proxy.dispose();
+    await closeServer(fake.server);
+  }
+}, 60_000);

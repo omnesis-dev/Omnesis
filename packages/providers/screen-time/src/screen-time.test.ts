@@ -5,12 +5,12 @@ import { describe, test, expect, beforeAll, afterAll } from "vitest";
 import Database from "better-sqlite3";
 type Db = Database.Database;
 import { SourceId, ProviderId, SyncError } from "@omnesis/types";
-import { rowsFor, tablesWritten } from "@omnesis/source-sdk/testing";
+import { setFixtureMode, rowsFor, tablesWritten } from "@omnesis/source-sdk/testing";
 import { coreDataToISO, coreDataToDate, appNameFromBundleId } from "./types.js";
 import { aggregateDaily } from "./aggregator.js";
 import definition from "./index.js";
 import type { UsageSession } from "./types.js";
-import { mkdtempSync, rmSync, chmodSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -664,28 +664,32 @@ describe("KnowledgeDbReader", () => {
 
   // Screen Time is the only source on its connection, so a denial stops this
   // source and names nothing beyond it: the scope stays at the default.
-  test("an unreadable knowledgeC.db raises a permission SyncError scoped to the source, with full-disk access remediation", async () => {
-    const { KnowledgeDbReader } = await import("./db-reader.js");
-    const dbPath = makeDbWith([
-      { pk: 1, stream: "/app/usage", bundle: "a", start: 1, end: 2, created: 2 },
-    ]);
-    chmodSync(dbPath, 0o000);
-    try {
-      expect(() => new KnowledgeDbReader(dbPath)).toThrow(SyncError);
+  // The full disk access grant belongs to macOS; Windows access controls have no equivalent.
+  test.skipIf(process.platform === "win32")(
+    "an unreadable knowledgeC.db raises a permission SyncError scoped to the source, with full-disk access remediation",
+    async () => {
+      const { KnowledgeDbReader } = await import("./db-reader.js");
+      const dbPath = makeDbWith([
+        { pk: 1, stream: "/app/usage", bundle: "a", start: 1, end: 2, created: 2 },
+      ]);
+      setFixtureMode(dbPath, 0o000);
       try {
-        new KnowledgeDbReader(dbPath);
-        expect.unreachable("expected KnowledgeDbReader to throw");
-      } catch (err) {
-        expect(err).toBeInstanceOf(SyncError);
-        const syncErr = err as SyncError;
-        expect(syncErr.kind).toBe("permission");
-        expect(syncErr.scope).toBe("source");
-        expect(syncErr.remediation?.executable).toBe(process.execPath);
+        expect(() => new KnowledgeDbReader(dbPath)).toThrow(SyncError);
+        try {
+          new KnowledgeDbReader(dbPath);
+          expect.unreachable("expected KnowledgeDbReader to throw");
+        } catch (err) {
+          expect(err).toBeInstanceOf(SyncError);
+          const syncErr = err as SyncError;
+          expect(syncErr.kind).toBe("permission");
+          expect(syncErr.scope).toBe("source");
+          expect(syncErr.remediation?.executable).toBe(process.execPath);
+        }
+      } finally {
+        setFixtureMode(dbPath, 0o600);
       }
-    } finally {
-      chmodSync(dbPath, 0o600);
-    }
-  });
+    },
+  );
 });
 
 describe("coreDataToUtcWeekday", () => {

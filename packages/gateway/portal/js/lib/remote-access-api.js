@@ -13,12 +13,17 @@ const remoteAccessRequest = adminJsonRequest("/admin/remote-access", "Remote acc
 
 /**
  * `{ setupCompletedAt, first, features, publicBaseUrl: { configured, setByEnvironment, way },
- * mcpAddresses: [{ id, url, enabled, available }] }`: `configured` is the public address in
- * use now, or null.
+ * mcpAddresses: [{ id, url, reach, choices, available, opening? }] }`: `configured` is the
+ * public address in use now, or null; `reach` is where MCP answers at that address now,
+ * one of `choices` ("off", "private", "public" or "on").
  */
 export const getRemoteAccess = (signal) => remoteAccessRequest("GET", "", { signal });
 
-/** `{ setupCompleted?, first?, mcp? }`; answers with the same shape as `getRemoteAccess`. */
+/**
+ * `{ setupCompleted?, first?, mcp?: { <id>: <reach> } }`; answers with the same shape as
+ * `getRemoteAccess`, plus `mcpRefusal: { reason, command? }` when Tailscale on this computer
+ * would not change Funnel for a choice.
+ */
 export const updateRemoteAccess = (patch, signal) =>
   remoteAccessRequest("PATCH", "", { body: patch, signal });
 
@@ -32,7 +37,9 @@ export const checkPublicAddress = (url, signal) =>
 
 /**
  * Tailscale already on this computer: `{ state: "unavailable", reason }` or
- * `{ state: "available", dnsName, url, servesGateway, publicGateway }`.
+ * `{ state: "available", dnsName, version, url, port, servesGateway, funnel, publicGateway,
+ * publicMcp, taken, blocked? }`: `publicGateway` is whether the portal and device
+ * connections answer the Internet, `publicMcp` whether MCP does.
  */
 export const getHostTailscale = (signal) => remoteAccessRequest("GET", "/host-tailscale", { signal });
 
@@ -42,3 +49,10 @@ export const getHostTailscale = (signal) => remoteAccessRequest("GET", "/host-ta
  */
 export const publishHostTailscale = (isPublic, signal) =>
   remoteAccessRequest("POST", "/host-tailscale/publish", { body: { public: isPublic }, signal });
+
+/**
+ * Stops Tailscale on this computer serving the gateway, on the tailnet and the Internet:
+ * `{ ok: true }`, or `{ ok: false, reason, command }` naming the command the owner runs.
+ */
+export const unpublishHostTailscale = (signal) =>
+  remoteAccessRequest("POST", "/host-tailscale/unpublish", { body: {}, signal });

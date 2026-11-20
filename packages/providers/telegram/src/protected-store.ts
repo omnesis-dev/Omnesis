@@ -33,6 +33,8 @@ import EncryptedDatabase from "better-sqlite3-multiple-ciphers";
 import {
   createLogger,
   readStorageKeySync,
+  readStorageKey,
+  ownedProcessCleanupReceipt,
   storageEncryptionRequired,
   storageKeyHex,
   toErrorMessage,
@@ -61,8 +63,8 @@ export class StoreKeyUnavailableError extends Error {
 
 /** An encryption migration that failed after the file was read intact. */
 class StoreRekeyFailure extends Error {
-  constructor(label: string, detail: string) {
-    super(`Telegram ${label} encryption failed and the file was left as it was: ${detail}`);
+  constructor(label: string, detail: string, cause?: unknown) {
+    super(`Telegram ${label} encryption failed; the file was preserved: ${detail}`, { cause });
     this.name = "StoreRekeyFailure";
   }
 }
@@ -77,6 +79,7 @@ export function readTelegramStoreKey(configDir: string): Buffer | null {
   try {
     key = readStorageKeySync(TELEGRAM_STORE_KEY, { configDir });
   } catch (err) {
+    if (ownedProcessCleanupReceipt(err)) throw err;
     // A wrapped key exists but cannot be unwrapped: whatever the marker says,
     // something here was encrypted, so opening in plaintext is never right.
     throw new StoreKeyUnavailableError(toErrorMessage(err));
@@ -98,7 +101,8 @@ export function openProtectedDatabase(path: string, key: Buffer | null, label: s
   } catch (err) {
     // A failed migration leaves the original intact; quarantining it would
     // answer a full disk by discarding the very file that could not be copied.
-    if (err instanceof StoreRekeyFailure) throw err;
+    if (err instanceof StoreRekeyFailure || err instanceof AggregateError || !sqliteCorruption(err))
+      throw err;
     log.error(
       `Telegram ${label} open failed (${toErrorMessage(err)}); quarantining and starting fresh`,
     );
@@ -111,22 +115,30 @@ export function openProtectedDatabase(path: string, key: Buffer | null, label: s
  * What is on disk at `path` and whether this host's key opens it, for the
  * doctor. Read-only: never migrates, repairs or writes.
  */
-export function inspectProtectedStore(
+export async function inspectProtectedStore(
   path: string,
   label: string,
   configDir: string,
-): LocalStoreProbeResult {
+  signal?: AbortSignal,
+): Promise<LocalStoreProbeResult> {
+  signal?.throwIfAborted();
   const keyName = TELEGRAM_STORE_KEY;
   if (!fileExists(path)) return { keyName, label, state: "absent" };
   if (sqliteFileLooksPlaintext(path)) return { keyName, label, state: "plaintext" };
   let key: Buffer | null;
   try {
-    key = readStorageKeySync(keyName, { configDir });
-  } catch {
+    key = await readStorageKey(keyName, { configDir });
+  } catch (error) {
+    if (ownedProcessCleanupReceipt(error)) throw error;
+    signal?.throwIfAborted();
     return { keyName, label, state: "locked", detail: "Its key could not be read." };
   }
-  if (!key) return { keyName, label, state: "locked", detail: "No wrapped key exists for it." };
+  if (!key) {
+    signal?.throwIfAborted();
+    return { keyName, label, state: "locked", detail: "No wrapped key exists for it." };
+  }
   try {
+    signal?.throwIfAborted();
     const db = new EncryptedDatabase(path, { readonly: true }) as unknown as Db;
     try {
       keyDatabase(db, key);
@@ -136,6 +148,7 @@ export function inspectProtectedStore(
     }
     return { keyName, label, state: "encrypted" };
   } catch (err) {
+    if (signal?.aborted) throw err;
     // SQLite reports a wrong key as "not a database"; anything else is the
     // file being unreadable right now, which is not a verdict on the key.
     return sqliteNotADatabase(err)
@@ -147,8 +160,22 @@ export function inspectProtectedStore(
 }
 
 function openDatabase(path: string, key: Buffer | null, label: string): Db {
+  if (key && sqliteFileLooksPlaintext(path)) migratePlaintext(path, key, label);
+  // SQLite may delete a rejected WAL when a writable handle closes. Validate
+  // existing bytes read-only first so corruption quarantine retains sidecars.
+  if (existsSync(path)) {
+    const probe = (key
+      ? new EncryptedDatabase(path, { readonly: true })
+      : new Database(path, { readonly: true })) as unknown as Db;
+    try {
+      if (key) keyDatabase(probe, key);
+      probe.prepare("SELECT count(*) FROM sqlite_master").get();
+    } catch (error) {
+      closeFailedDatabase(probe, error);
+    }
+    probe.close();
+  }
   if (!key) return new Database(path);
-  if (sqliteFileLooksPlaintext(path)) migratePlaintext(path, key, label);
   const db = new EncryptedDatabase(path) as unknown as Db;
   try {
     keyDatabase(db, key);
@@ -156,10 +183,26 @@ function openDatabase(path: string, key: Buffer | null, label: string): Db {
     // caller's quarantine path, rather than on the first real statement.
     db.prepare("SELECT count(*) FROM sqlite_master").get();
   } catch (err) {
-    db.close();
-    throw err;
+    closeFailedDatabase(db, err);
   }
   return db;
+}
+
+/** A failed open owns its new handle until it closes, including before quarantine. */
+function closeFailedDatabase(db: Db, error: unknown): never {
+  const failures: unknown[] = [error];
+  try {
+    db.close();
+  } catch (cleanup) {
+    failures.push(cleanup);
+  }
+  if (failures.length > 1)
+    throw new AggregateError(
+      failures,
+      "Failed database initialization could not close its handle",
+      { cause: error },
+    );
+  throw error;
 }
 
 function keyDatabase(db: Db, key: Buffer): void {
@@ -169,14 +212,18 @@ function keyDatabase(db: Db, key: Buffer): void {
 }
 
 function configurePragmas(db: Db): Db {
-  db.pragma("journal_mode = WAL");
-  // Both files are rebuildable (the archive from Telegram, the cache from the
-  // session string): NORMAL is durable enough and far cheaper than FULL.
-  db.pragma("synchronous = NORMAL");
-  db.pragma("busy_timeout = 5000");
-  // pread() over mmap — the SIGBUS-avoidance rationale the gateway documents.
-  db.pragma("mmap_size = 0");
-  return db;
+  try {
+    db.pragma("journal_mode = WAL");
+    // Both files are rebuildable (the archive from Telegram, the cache from the
+    // session string): NORMAL is durable enough and far cheaper than FULL.
+    db.pragma("synchronous = NORMAL");
+    db.pragma("busy_timeout = 5000");
+    // pread() over mmap — the SIGBUS-avoidance rationale the gateway documents.
+    db.pragma("mmap_size = 0");
+    return db;
+  } catch (error) {
+    return closeFailedDatabase(db, error);
+  }
 }
 
 /**
@@ -186,16 +233,19 @@ function configurePragmas(db: Db): Db {
  * an in-place `PRAGMA rekey` has at its commit.
  */
 function migratePlaintext(path: string, key: Buffer, label: string): void {
-  const plain = new Database(path);
-  try {
-    plain.pragma("busy_timeout = 30000");
-    plain.pragma("wal_checkpoint(TRUNCATE)");
-    plain.pragma("journal_mode = DELETE");
-  } finally {
-    plain.close();
-  }
   const staging = `${path}.rekey`;
   try {
+    const plain = new Database(path);
+    try {
+      plain.pragma("busy_timeout = 30000");
+      const checkpoint = plain.pragma("wal_checkpoint(TRUNCATE)") as { busy: number }[];
+      if (checkpoint.some((row) => row.busy !== 0))
+        throw new Error("Archive WAL checkpoint is busy");
+      if (plain.pragma("journal_mode = DELETE", { simple: true }) !== "delete")
+        throw new Error("Archive journal is busy");
+    } finally {
+      plain.close();
+    }
     clearStaging(staging);
     copyFileSync(path, staging);
     const db = new EncryptedDatabase(staging);
@@ -206,17 +256,19 @@ function migratePlaintext(path: string, key: Buffer, label: string): void {
     } finally {
       db.close();
     }
+    // Publication failures are operational migration failures, never evidence
+    // that the valid active archive should be quarantined or replaced empty.
+    renameSync(staging, path);
+    rmSync(`${path}-wal`, { force: true });
+    rmSync(`${path}-shm`, { force: true });
   } catch (err) {
     try {
       clearStaging(staging);
     } catch {
-      // The next attempt clears the staging path before using it anyway.
+      /* A later retry removes owned staging. */
     }
-    throw new StoreRekeyFailure(label, toErrorMessage(err));
+    throw new StoreRekeyFailure(label, toErrorMessage(err), err);
   }
-  renameSync(staging, path);
-  rmSync(`${path}-wal`, { force: true });
-  rmSync(`${path}-shm`, { force: true });
 }
 
 function clearStaging(staging: string): void {
@@ -254,6 +306,17 @@ function sqliteFileLooksPlaintext(path: string): boolean {
     closeSync(fd);
   }
   return header.equals(SQLITE_HEADER);
+}
+
+/** Operational access/locking failures never justify discarding a valid archive. */
+function sqliteCorruption(error: unknown): boolean {
+  if (typeof error !== "object" || error === null || !("code" in error)) return false;
+  return (
+    typeof error.code === "string" &&
+    (error.code === "SQLITE_NOTADB" ||
+      error.code === "SQLITE_CORRUPT" ||
+      error.code.startsWith("SQLITE_CORRUPT_"))
+  );
 }
 
 function sqliteNotADatabase(err: unknown): boolean {

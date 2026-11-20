@@ -3,7 +3,6 @@
 
 package dev.omnesis.android.access
 
-import dev.omnesis.android.BuildConfig
 import dev.omnesis.android.transport.dto.GatewayPairingApprovalRequest
 import dev.omnesis.android.transport.dto.TailscaleJoinApproving
 import dev.omnesis.android.transport.dto.TailscaleJoinRequest
@@ -128,14 +127,7 @@ class PairingPendingRequests(clock: () -> Long) {
 
         fun requestRefresh() = _refreshRequests.update { it + 1 }
 
-        /**
-         * Whether the main screen reads waiting requests at all: a build with cloud connectivity,
-         * or a gateway that advertises Tailscale joins. Otherwise the loop never starts.
-         */
-        fun polls(cloudEnabled: Boolean = BuildConfig.CLOUD_RELAY_ENABLED, tailscaleEmbed: Boolean): Boolean =
-            cloudEnabled || tailscaleEmbed
-
         /** Whether this phone may list sign-in pairing requests at all. */
-        fun eligible(cloudEnabled: Boolean, scopes: Collection<String>?): Boolean = cloudEnabled && scopes?.contains("admin") == true
+        fun eligible(scopes: Collection<String>?): Boolean = scopes?.contains("admin") == true
     }
 }

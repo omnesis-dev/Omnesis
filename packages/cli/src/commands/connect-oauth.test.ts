@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -17,6 +18,7 @@ import {
 } from "@omnesis/agent-integration";
 
 import { EXIT_AUTH, runCli } from "@omnesis/cli-shared";
+import { browserInvocation } from "../browser-command.js";
 
 type OAuthFetch = (input: URL | RequestInfo, init?: RequestInit) => Promise<Response>;
 type Provider = {
@@ -385,6 +387,11 @@ describe("an interactive refresh", () => {
     const result = await authorizeHarness(home, "hermes", load(home));
 
     expect(result.oauth.tokens).toMatchObject({ access_token: "access_approved" });
+    const invocation = browserInvocation(`${GATEWAY}/oauth/consent?request=omn_oar_new_fictional`);
+    expect(spawnSync).toHaveBeenCalledWith(invocation.command, invocation.args, {
+      stdio: "ignore",
+      timeout: 5_000,
+    });
     expect(authorizeRequests()).toBe(1);
     expect(exchangedWith).toEqual(["new-verifier-fictional"]);
     expect(loadPendingAuthorization(credentialsPath(home))).toBeNull();

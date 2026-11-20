@@ -96,12 +96,17 @@ through `fetch_many`. Temporal casualties arrive with the frontier; the helper
 reads further pages through `knowledge_temporal_context` before discovery can settle.
 Use `contentContains` to select distinct decisions for actual source revisions.
 Negative gate scenarios specify `expectedRefusals: [{ tool, code }]` on the exact
-source decision. The puppet continues only after those declared canonical-tool
-refusals; unexpected errors preserve unfinished work. Rejected `knowledge_save`,
-`knowledge_edit`, `knowledge_retire` or `knowledge_discovery_complete` calls always stop and
-never count as settlement; a successful `knowledge_edit` settles its node exactly as
-`knowledge_save` does, and a successful `knowledge_retire` of the offered page settles it too
-(the retired page leaves the next frontier).
+source decision. The puppet accepts exactly those declared canonical-tool refusals as
+expected scenario outcomes; unexpected errors preserve unfinished work. Rejected `knowledge_save`,
+`knowledge_edit`, `knowledge_retire` or `knowledge_discovery_complete` calls never count
+as successful settlement. Opt-in `maxRevisionConflictRetries` allows bounded frontier
+reacquisition after revision conflicts or when publication rearms organization review
+between an all-covered source offer and its completion. Already covered source
+interpretation is not replayed, and recovery does not override declared negative-path
+refusals.
+Other unexpected refusals end the turn with work unfinished. A successful
+`knowledge_edit` settles its node exactly as `knowledge_save` does, and a successful
+`knowledge_retire` of the offered page settles it too (the retired page leaves the frontier).
 
 `maintainNode` is an explicit scripted repair policy for existing owners/pages. It
 must call `knowledge_save` (or `knowledge_edit`) with the offered fingerprint, current revision and
@@ -121,7 +126,10 @@ reconcile existing owners when the same source is offered again.
 
 Use `obs.runsForSource(documentId)` to find actual runs with a successful
 `knowledge_discovery_complete` call. A batch can process several sources, and a
-source can participate in several batches. `obs.runForDoc` remains restricted to
+source can participate in several batches. That includes the organization cohort
+that a later organization pass forms from freshly interpreted sources, so a test that
+counts how often a source was interpreted uses `obs.interpretationsForSource`
+instead. `obs.runForDoc` remains restricted to
 legacy datum runs. Assertions on datum dedupe keys, datum spend, created/updated
 flavours and prompt diffs need explicit migration to maintenance outcomes, coverage,
 input versions and canonical owner state.
@@ -195,10 +203,13 @@ automatically unless the plan sets it.
 
 ### The note agent and the interactive agent
 
-The note agent's turn on a quick-capture note runs on the same `background-agent` seam but
+The note agent's turn on a quick-capture note runs on the ordinary `agent` seam,
 outside the cognition queue, so its prompt carries no run envelope. `readRunContext` reads
 it from its note block: kind and flavour `note`, `subject` = the note text, `detail` = the
 capture day. Match it with `{ flavour: "note", promptContains: "…" }`.
+Resolve relative schedules inside a function plan using `context.detail`, rather
+than the bench startup date. Explicit capture timestamps at weekday and month
+boundaries keep these scenarios deterministic when a suite crosses midnight.
 
 A conversation turn — a reply in the Morning brief thread or an ordinary conversation —
 runs on the interactive `agent` role. `BrainBench.start({ agent: { behaviors } })` starts the
@@ -444,7 +455,7 @@ await bench.update(doc, "new content"); // an update transition (diff-carrying r
 await bench.deleteDoc(docId); // the real delete route, cascades and all
 await bench.pushAndSettle([a, b]); // push + drain, returns gateway doc ids
 await bench.drainUntilQuiet(); // progress-based; fails loudly on a stall
-await bench.restartGateway(); // restores the virtual clock — use INSTEAD of harness.restartGateway
+await bench.restartGateway(); // seeds the saved virtual clock before maintenance starts
 await bench.patchConfig({ brain: {} }); // several knobs are read per tick
 await bench.clock.advanceDays(1); // requires clock: "virtual"
 bench.clock.localDay(ms); // the day key the rhythm markers use
@@ -499,7 +510,13 @@ typecheck` alone will not see them, so run `typecheck:tests` before pushing.
 - **The virtual clock only exists when `clock: "virtual"`**; `POST /admin/brain/clock`
   400s otherwise. It is **frozen between `set()` calls** — wall time never moves inside a
   phase, so two writes in one phase carry identical timestamps and nothing may assert that
-  one is later than another. A clock-driven bench usually also wants
+  one is later than another. Each virtual bench captures its own initial wall-clock
+  instant before the first gateway spawn, ignoring any caller-provided initial seed.
+  `bench.restartGateway()` supplies that initial instant or the last explicitly set
+  instant through `OMNESIS_BRIEFS_VIRTUAL_CLOCK_INITIAL_MS` in its own child environment,
+  so work admitted during boot uses the same instant. The initial-time scalar is read
+  only with `OMNESIS_BRIEFS_VIRTUAL_CLOCK=1`. Each bench owns its child's clock mode and
+  leaves the caller's clock environment unchanged. A clock-driven bench usually also wants
   `brain.derivationBarrier: "0s"`: the barrier defers a data run to `now + 30m`, and under
   a frozen clock a deferred run can never age into being due.
 - **`drainUntilQuiet()` is not enough to see a rhythm pass fire.** It returns as soon as the

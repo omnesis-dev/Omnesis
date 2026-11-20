@@ -9,13 +9,13 @@
  * "@omnesis/gateway/http/schemas/admin"` (or the package's barrel) rather
  * than redeclaring the shapes locally.
  */
+import { isAbsolute } from "node:path";
 import { z } from "zod";
 import { PERSON_ROLES, RESYNC_MODES } from "@omnesis/types";
 import { DOCUMENT_FIELD_SEMANTICS } from "@omnesis/source-sdk";
 import { isSafeUrlCanonicalizerPattern } from "../../known-url-pattern-safety.js";
 import { accountDescriptorSchema } from "./account-descriptor.js";
 import {
-  cloudRelayGated,
   deviceCapabilitySchema,
   deviceKindSchema,
   nonEmptyString,
@@ -164,11 +164,9 @@ export type RevokePairingBody = z.infer<typeof revokePairingBody>;
 export const pairQrBody = z.object({
   pairingCode: nonEmptyString,
   gatewayUrl: nonEmptyString,
-  // The strict modes belong to the cloud relay and do not exist without it.
-  trustMode: cloudRelayGated(
-    z.enum(["auto", "system", "pinned-leaf", "pinned-leaf-strict", "pinned-key-strict"]),
-    z.enum(["auto", "system", "pinned-leaf"]),
-  ).optional(),
+  trustMode: z
+    .enum(["auto", "system", "pinned-leaf", "pinned-leaf-strict", "pinned-key-strict"])
+    .optional(),
 });
 export type PairQrBody = z.infer<typeof pairQrBody>;
 
@@ -698,7 +696,7 @@ export const widgetRenderersBody = z.object({
           .string()
           .trim()
           .min(1)
-          .refine((p) => p.startsWith("/"), {
+          .refine(isAbsolute, {
             message: "must be an absolute filesystem path",
           })
           .refine((p) => p.endsWith(".js"), {

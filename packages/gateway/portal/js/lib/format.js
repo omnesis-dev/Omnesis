@@ -121,6 +121,7 @@ export function isExternalDocHref(doc) {
 // on the account (browser-history, …) get account-specific icons while
 // single-icon sources (Gmail, Notes, …) keep the old behaviour.
 let _metaCache = null;
+let _metaGeneration = 0;
 
 // The portal CSP permits only same-origin and data: images. Older
 // sync_state rows may still contain hosted URLs from before the gateway
@@ -147,11 +148,13 @@ export function setSourceMeta(entries) {
       if (!isPortalSafeIcon(safe[id].icon)) delete safe[id].icon;
     }
   }
+  _metaGeneration++;
   _metaCache = safe;
 }
 
 /** Prefetch source metadata from gateway. Call once on app startup. */
 export async function loadSourceMeta() {
+  const generation = ++_metaGeneration;
   // `/portal/source-meta.json` is the sync_state-backed map: it only carries
   // an entry for sources that have already synced at least once. A
   // freshly-added source (just walked through "+Add Source") has no row
@@ -171,8 +174,10 @@ export async function loadSourceMeta() {
   // right icon immediately via the descriptor lookup, and once it syncs
   // the more-specific sync_state entry takes over (relevant for sources
   // whose icon varies per account, e.g. browser-history chrome vs safari).
-  const synced = await fetchSyncedMeta();
-  const fromDescriptors = await fetchDescriptorMeta();
+  const [synced, fromDescriptors] = await Promise.all([fetchSyncedMeta(), fetchDescriptorMeta()]);
+  // A source change can refresh metadata while the shell's first request is
+  // still in flight. Only the newest request may publish its snapshot.
+  if (generation !== _metaGeneration) return;
   // Per-key merge so synced entries (icon/label per account) layer over
   // descriptor entries (unitName, plus type-level icon/label) WITHOUT
   // dropping fields the synced row doesn't carry. A naive spread of

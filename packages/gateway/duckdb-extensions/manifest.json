@@ -19,6 +19,10 @@
       "osx_arm64": {
         "sha256": "0cde1f5acd1970bfd414b11f5e945a1eddd8425e96e273f6411538d8fe3d951d",
         "size": 16030718
+      },
+      "windows_amd64": {
+        "sha256": "9b0b0202cfa34f94f12bd9b2698002735bbcd0c1bd5fda2e85450583efd18e94",
+        "size": 28525078
       }
     }
   }

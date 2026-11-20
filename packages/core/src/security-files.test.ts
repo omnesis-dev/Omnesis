@@ -25,6 +25,8 @@ import {
   secretPathExists,
 } from "./security-files.js";
 
+import { inspectWindowsPrivatePathSync } from "./windows-private-file.js";
+
 const dirs: string[] = [];
 
 afterEach(() => {
@@ -32,12 +34,17 @@ afterEach(() => {
 });
 
 describe("security file helpers", () => {
+  test.runIf(process.platform === "win32")("does not claim a POSIX umask on Windows", () => {
+    expect(applyPrivateUmask()).toBeNull();
+  });
   test("ensurePrivateDirSync creates and tightens a directory", () => {
     const root = mkdtempSync(join(tmpdir(), "omnesis-secure-dir-"));
     dirs.push(root);
     const dir = join(root, "state");
     ensurePrivateDirSync(dir);
-    expect(statSync(dir).mode & 0o777).toBe(PRIVATE_DIR_MODE);
+    if (process.platform === "win32")
+      expect(inspectWindowsPrivatePathSync(dir, "directory").private).toBe(true);
+    else expect(statSync(dir).mode & 0o777).toBe(PRIVATE_DIR_MODE);
   });
 
   test("ensurePrivateFileSync tightens an existing file", () => {
@@ -46,20 +53,25 @@ describe("security file helpers", () => {
     const file = join(root, "token");
     writeFileSync(file, "omn_test\n", { mode: 0o644 });
     ensurePrivateFileSync(file);
-    expect(statSync(file).mode & 0o777).toBe(PRIVATE_FILE_MODE);
+    if (process.platform === "win32")
+      expect(inspectWindowsPrivatePathSync(file, "file").private).toBe(true);
+    else expect(statSync(file).mode & 0o777).toBe(PRIVATE_FILE_MODE);
   });
 
-  test("applyPrivateUmask sets umask 077 and returns the previous value", () => {
-    const before = process.umask();
-    try {
-      process.umask(0o022);
-      const previous = applyPrivateUmask();
-      expect(previous).toBe(0o022);
-      expect(process.umask()).toBe(PRIVATE_UMASK);
-    } finally {
-      process.umask(before);
-    }
-  });
+  test.runIf(process.platform !== "win32")(
+    "applyPrivateUmask sets umask 077 and returns the previous value",
+    () => {
+      const before = process.umask();
+      try {
+        process.umask(0o022);
+        const previous = applyPrivateUmask();
+        expect(previous).toBe(0o022);
+        expect(process.umask()).toBe(PRIVATE_UMASK);
+      } finally {
+        process.umask(before);
+      }
+    },
+  );
 });
 
 describe("secretPathExists", () => {

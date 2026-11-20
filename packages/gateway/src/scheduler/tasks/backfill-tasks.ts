@@ -1441,6 +1441,7 @@ export function nearDupDfRefreshTask(
         // shingles before pruning; held in memory they are held in RSS, and
         // the writer then needed its own copy of the survivors. On a file,
         // the writer reads the result by attaching it.
+        if (opts.canGrow?.() === false) return { idle: true };
         const stagingPath = dfStagingPath(readDb);
         removeDfStaging(stagingPath);
         const staging = new NearDupDfStagingWorker({
@@ -1453,6 +1454,7 @@ export function nearDupDfRefreshTask(
         try {
           let afterId: string | null = null;
           for (;;) {
+            if (opts.canGrow?.() === false) return { idle: true };
             // Fetch a page of doc content (IO on compute worker)
             const page = await ioGate.fetchDfDocChunk(
               eligibleDocTypes,
@@ -1478,12 +1480,15 @@ export function nearDupDfRefreshTask(
 
             // The proxy bounds flattening + IPC into acknowledged slices, and
             // the dedicated worker alone owns the SQLite handle.
+            if (opts.canGrow?.() === false) return { idle: true };
             await staging.add(perDocResults);
           }
+          if (opts.canGrow?.() === false) return { idle: true };
           const { totalDocs, uniqueShingles } = await staging.finish(MIN_DF_TO_PERSIST);
           const computedMs = Date.now() - startMs;
 
           // Phase 3: apply, by attaching the staging file on the writer.
+          if (opts.canGrow?.() === false) return { idle: true };
           const { rebuilt } = await writeGate.applyNearDupDfFromStaging({
             stagingPath,
             ...(derivedStoreKey ? { stagingKeyHex: derivedStoreKey.toString("hex") } : {}),

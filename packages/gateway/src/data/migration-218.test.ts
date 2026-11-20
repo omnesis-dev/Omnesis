@@ -1,96 +1,62 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-/**
- * Migration 218 — the source version of a published profile, and a source's
- * resync cost.
- *
- * Both columns land on tables that already hold rows. A stored profile takes
- * version 0, which is what a publication without a version counts as, so the
- * next publish from any collector replaces it exactly as before.
- */
-
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, expect, test } from "vitest";
-import { MIGRATIONS } from "./migrations.js";
-import { addSourceVersionDeclarations } from "./migration-218-source-version-declarations.js";
-import {
-  getStoredSourceDocumentProfile,
-  upsertSourceDocumentProfiles,
-} from "./repositories/SourceDocumentProfileRepository.js";
-import {
-  getSourceResyncCost,
-  setSourceFamilyMeta,
-} from "./repositories/SourceFamilyMetaRepository.js";
 
-let db: Database.Database;
+import {
+  PERSON_NAME_ALIAS_INDEX,
+  indexPersonNameAliases,
+} from "./migration-218-person-name-alias-index.js";
+import { MIGRATIONS } from "./migrations.js";
+import type { Db } from "./types.js";
+
+let db: Db;
 
 beforeEach(() => {
-  db = new Database(":memory:");
-  db.exec(`
-    CREATE TABLE source_document_profiles (
-      source_type TEXT PRIMARY KEY,
-      profile_json TEXT NOT NULL,
-      published_at INTEGER NOT NULL
-    );
-    CREATE TABLE source_family_meta (
-      source_type TEXT PRIMARY KEY,
-      icon TEXT,
-      label TEXT,
-      bg_color TEXT,
-      accent_color TEXT,
-      updated_at TEXT NOT NULL
-    );
-    INSERT INTO source_document_profiles VALUES ('mailbox', '{"documentTypes":["email"]}', 1000);
-    INSERT INTO source_family_meta (source_type, label, updated_at)
-      VALUES ('mailbox', 'Mailbox', '2026-01-01T00:00:00.000Z');
-  `);
+  db = new Database(":memory:") as unknown as Db;
+  db.exec(`CREATE TABLE person_aliases (
+    id TEXT PRIMARY KEY,
+    person_id TEXT NOT NULL,
+    alias TEXT NOT NULL,
+    alias_type TEXT NOT NULL,
+    UNIQUE(alias_type, alias, person_id)
+  )`);
+  const insert = db.prepare(
+    "INSERT INTO person_aliases (id, person_id, alias, alias_type) VALUES (?, ?, ?, ?)",
+  );
+  insert.run("a1", "p1", "Maya reeves", "name");
+  insert.run("a2", "p2", "MAYA REEVES", "name");
+  insert.run("a3", "p3", "maya reeves", "email");
 });
 
 afterEach(() => db.close());
 
-test("is the migration at its slot", () => {
-  expect(MIGRATIONS.find((m) => m.version === 218)?.up).toBe(addSourceVersionDeclarations);
-});
+test("indexes name aliases by their lowercased text on an existing table, idempotently", () => {
+  indexPersonNameAliases(db);
+  indexPersonNameAliases(db);
 
-test("existing rows keep their data and gain empty declarations, and it runs twice", () => {
-  addSourceVersionDeclarations(db);
-  addSourceVersionDeclarations(db);
-
-  expect(db.prepare("SELECT * FROM source_document_profiles").all()).toEqual([
-    {
-      source_type: "mailbox",
-      profile_json: '{"documentTypes":["email"]}',
-      published_at: 1000,
-      output_revision: 0,
-    },
-  ]);
+  // Without statistics the planner prefers the covering `(alias_type, alias)`
+  // index and walks every name, so readers name this one.
+  const sql = `SELECT person_id FROM person_aliases INDEXED BY ${PERSON_NAME_ALIAS_INDEX}
+     WHERE alias_type = 'name' AND LOWER(alias) = ? ORDER BY person_id`;
   expect(
-    db.prepare("SELECT source_type, label, resync_cost FROM source_family_meta").all(),
-  ).toEqual([{ source_type: "mailbox", label: "Mailbox", resync_cost: null }]);
+    db
+      .prepare<[string], { detail: string }>(`EXPLAIN QUERY PLAN ${sql}`)
+      .all("maya reeves")
+      .map((row) => row.detail),
+  ).toEqual([
+    `SEARCH person_aliases USING INDEX ${PERSON_NAME_ALIAS_INDEX} (<expr>=?)`,
+    "USE TEMP B-TREE FOR ORDER BY",
+  ]);
+  // Names only, whatever their case; the email with the same text is not one.
+  expect(db.prepare<[string], { person_id: string }>(sql).all("maya reeves")).toEqual([
+    { person_id: "p1" },
+    { person_id: "p2" },
+  ]);
 });
 
-test("a profile stored before the migration is replaced by a collector that sends no version", () => {
-  addSourceVersionDeclarations(db);
-
-  upsertSourceDocumentProfiles(
-    db,
-    [{ sourceType: "mailbox", profile: { documentTypes: ["email", "attachment"] } }],
-    2000,
-  );
-
-  expect(getStoredSourceDocumentProfile(db, "mailbox")).toEqual({
-    profile: { documentTypes: ["email", "attachment"] },
-    outputRevision: 0,
-  });
-});
-
-test("a family that predates the migration takes a resync cost without losing its label", () => {
-  addSourceVersionDeclarations(db);
-  expect(getSourceResyncCost(db, "mailbox")).toBeNull();
-
-  setSourceFamilyMeta(db, "mailbox", { resyncCost: "This reads every message again." });
-
-  expect(getSourceResyncCost(db, "mailbox")).toBe("This reads every message again.");
-  expect(db.prepare("SELECT label FROM source_family_meta").get()).toEqual({ label: "Mailbox" });
+test("is registered as migration 218", () => {
+  const step = MIGRATIONS.find((m) => m.version === 218);
+  expect(step?.up).toBe(indexPersonNameAliases);
 });

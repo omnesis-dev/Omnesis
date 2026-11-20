@@ -22,7 +22,6 @@ const localDial: typeof connectOrigin = (origin, ca, signal, opaque, pin, _host,
   connectOrigin(origin, ca, signal, opaque, pin, "127.0.0.1", port, spki);
 
 test("same-LAN adapter sends HTTP and WebSocket directly; unreachable LAN falls back once to opaque relay", async () => {
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
   const f = await fixture(),
     gateway = await echoGateway();
   let relayConnections = 0;
@@ -253,7 +252,6 @@ test("stable leaf-key pin survives same-key certificate renewal while exact lega
 });
 
 test("authenticated startup hint refresh uses the saved LAN route without contacting the relay", async () => {
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
   const directory = await mkdtemp(join(tmpdir(), "omnesis-direct-refresh-"));
   const files = tlsFiles(directory, "gateway.example.test"),
     certificate = await readFile(files.certFile, "utf8"),

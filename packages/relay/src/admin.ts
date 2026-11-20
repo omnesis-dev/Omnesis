@@ -3,6 +3,8 @@
 
 import { existsSync, readFileSync, statSync } from "node:fs";
 
+import { readWindowsPrivateFileContentsSync } from "@omnesis/core";
+
 import { digestSecret, RelayStore } from "./store.js";
 
 const DIGEST_PATTERN = /^[0-9a-f]{64}$/i;
@@ -87,12 +89,18 @@ function parseRevokeArgs(
 }
 
 function readCredentialFile(path: string): string {
-  const stat = statSync(path);
-  if (!stat.isFile()) throw new Error("credential secret path is not a regular file");
-  if ((stat.mode & 0o077) !== 0) {
-    throw new Error("credential secret file must not be accessible by group or other users");
+  if (process.platform !== "win32") {
+    const stat = statSync(path);
+    if (!stat.isFile()) throw new Error("credential secret path is not a regular file");
+    if ((stat.mode & 0o077) !== 0) {
+      throw new Error("credential secret file must not be accessible by group or other users");
+    }
   }
-  const credential = readFileSync(path, "utf8").trim();
+  const credential = (
+    process.platform === "win32"
+      ? readWindowsPrivateFileContentsSync(path).toString("utf8")
+      : readFileSync(path, "utf8")
+  ).trim();
   if (!CREDENTIAL_PATTERN.test(credential)) {
     throw new Error("credential secret file does not contain one valid relay credential");
   }

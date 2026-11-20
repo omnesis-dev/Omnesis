@@ -8,6 +8,8 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, expect, test } from "vitest";
 import { SCOPE_ADMIN, SCOPE_READ, SCOPE_WRITE_ALL, Scope } from "@omnesis/types";
 import { createDatabase } from "../../db.js";
@@ -31,7 +33,7 @@ let token: string;
 let runtime: OmnesisNotesRuntime | undefined;
 
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-test-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
   db = createDatabase(dbPath);
   const device = createDevice(db, { name: `test-${randomUUID()}`, kind: "cli" });
   token = createToken(db, device.id, [SCOPE_ADMIN, SCOPE_READ, SCOPE_WRITE_ALL]).token;

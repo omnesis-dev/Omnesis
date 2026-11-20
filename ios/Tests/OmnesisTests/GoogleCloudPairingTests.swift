@@ -34,7 +34,7 @@ final class GoogleCloudPairingTests: XCTestCase {
         XCTAssertFalse(flow.compared)
         XCTAssertThrowsError(try flow.pairingPayload(now: testNow))
         flow.confirmComparison()
-        let payload = try PairingPayload.decode(from: flow.pairingPayload(now: testNow), cloudRelayEnabled: true)
+        let payload = try PairingPayload.decode(from: flow.pairingPayload(now: testNow))
         guard case .v4(let value) = payload,
               case .pinnedKeyStrict(let fingerprint) = value.tls else { return XCTFail("Strict pin required") }
         XCTAssertEqual(fingerprint, flow.spkiFingerprint)

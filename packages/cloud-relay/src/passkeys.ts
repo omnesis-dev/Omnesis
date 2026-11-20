@@ -13,6 +13,7 @@ import { passkeyProofChallenge } from "./device-enrollment.js";
 import { bindingOrigin } from "./gateway-binding.js";
 import { OmnesisAccounts } from "./omnesis-accounts.js";
 import { PasskeyEndorsements } from "./passkey-endorsement.js";
+import { InviteRefused } from "./invites.js";
 import { RelayError } from "./tunnels.js";
 import type { AccountAdmission, PasskeyRegistrationAuthorization } from "./account-admission.js";
 import type { ProofCommitment } from "./operation-proof.js";
@@ -233,7 +234,9 @@ export class Passkeys {
         credential,
         credentialId: credential.id,
       };
-    } catch {
+    } catch (error) {
+      // An invite used up or expired since the sign-up started is the one reason the page can name.
+      if (error instanceof InviteRefused) throw error;
       throw new RelayError(400, "Passkey registration did not complete; try again");
     }
   }

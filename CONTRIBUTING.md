@@ -42,6 +42,23 @@ it almost always resolves on the second attempt.
 
 ---
 
+## Windows x64 development
+
+Use x64 Node 24, Python 3, Visual Studio Build Tools with Desktop development
+with C++ and a Windows SDK, and Git for Windows. After `npm ci`, prepare the
+patched native dependencies before running the product or its tests:
+
+```powershell
+node scripts/ci/build-windows-sqlite.mjs
+node scripts/ci/build-windows-usearch.mjs
+```
+
+The [manual Windows source instructions](https://omnesis.dev/docs/install#windows-source)
+cover OpenSSL, passphrase-backed encryption and the direct Node commands for
+Gateway, Collector and CLI. The `collector` and `cli` npm aliases use POSIX shell
+syntax; use those direct commands in PowerShell. Windows installation and
+service management are outside this setup; ARM runtime acceptance remains pending.
+
 ## Repository layout
 
 ```

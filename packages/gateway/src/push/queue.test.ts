@@ -3,6 +3,8 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createDatabase } from "../db.js";
@@ -36,7 +38,7 @@ let dbPath: string;
 let db: ReturnType<typeof createDatabase>;
 
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-notification-queue-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-notification-queue-${randomUUID()}.db`);
   db = createDatabase(dbPath);
 });
 

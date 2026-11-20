@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { existsSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, utimesSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { createServer, type ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test, vi } from "vitest";
+import { writePrivateFixture as writeFileSync } from "../test/private-fixtures.js";
 
 import { loadIntegrationCredentials } from "./credentials.js";
 import { integrationOAuthFetch } from "./native-answer-mcp.js";
@@ -86,10 +87,10 @@ describe("integration OAuth provider", () => {
     const credentialsPath = join(directory, "integration.json");
     const lockPath = `${credentialsPath}.refresh.lock`;
     const holder = spawn(
-      "python3",
+      process.platform === "win32" ? "python" : "python3",
       [
         "-c",
-        "import os,sys,time; p=sys.argv[1]; f=os.open(p,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600); os.write(f,(str(os.getpid())+'\\n').encode()); print('ready',flush=True); time.sleep(.15); s=os.fstat(f); c=os.stat(p); (os.unlink(p) if (s.st_dev,s.st_ino)==(c.st_dev,c.st_ino) else None); os.close(f)",
+        "import os,sys,time; p=sys.argv[1]; f=os.open(p,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600); os.write(f,(str(os.getpid())+'\\n').encode()); print('ready',flush=True); time.sleep(.15); s=os.fstat(f); c=os.stat(p); os.close(f); (os.unlink(p) if (s.st_dev,s.st_ino)==(c.st_dev,c.st_ino) else None)",
         lockPath,
       ],
       { stdio: ["ignore", "pipe", "inherit"] },

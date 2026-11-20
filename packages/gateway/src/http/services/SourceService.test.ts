@@ -3,6 +3,8 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { RowKeyError } from "@omnesis/source-sdk";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import {
@@ -59,7 +61,7 @@ let db: Db;
 let dbPath: string;
 
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-sourceservice-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-sourceservice-${randomUUID()}.db`);
   db = createDatabase(dbPath);
 });
 

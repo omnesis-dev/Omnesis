@@ -5,6 +5,7 @@ import { mkdtempSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { defineConfig } from "@playwright/test";
+import gatewayBootBudget from "./scripts/lib/gateway-boot-budget.json";
 
 // Isolated high-port instance — never the live gateway (7600). A fresh temp
 // config dir per run means the gateway auto-generates its own token + self-
@@ -70,20 +71,23 @@ export default defineConfig({
   webServer: {
     // Boot the real gateway under tsx — the same `npm run gateway` entrypoint
     // dev uses. NOT bun: there is no bun on the dev box or the CI runner.
-    command: [
-      `OMNESIS_GATEWAY_PORT=${port}`,
-      `OMNESIS_LOG_LEVEL=warn`,
-      `OMNESIS_CONFIG_DIR=${tempDir}`,
-      `OMNESIS_DB_PATH=${join(tempDir, "omnesis.db")}`,
-      `OMNESIS_ANALYTICS_DB_PATH=${join(tempDir, "analytics.db")}`,
-      `npx tsx packages/gateway/src/index.ts`,
-    ].join(" "),
+    command: "node --import tsx packages/gateway/src/index.ts",
+    env: {
+      OMNESIS_GATEWAY_PORT: String(port),
+      OMNESIS_LOG_LEVEL: "warn",
+      OMNESIS_CONFIG_DIR: tempDir,
+      OMNESIS_DB_PATH: join(tempDir, "omnesis.db"),
+      OMNESIS_ANALYTICS_DB_PATH: join(tempDir, "analytics.db"),
+      // A test gateway names no relay, so opening the account pages asks none (and never the
+      // production one) whether new accounts need an invite.
+      OMNESIS_E2E_DISABLE_DEFAULT_RELAY: "1",
+    },
     // Wait on the public /health route over HTTPS — a deterministic readiness
     // signal, never `networkidle` (which never fires on the portal's SSE/WS
     // pages). ignoreHTTPSErrors lets the probe trust the self-signed cert.
     url: `${baseURL}/health`,
     ignoreHTTPSErrors: true,
     reuseExistingServer: !process.env.CI,
-    timeout: 30000,
+    timeout: gatewayBootBudget.seconds * 1000,
   },
 });

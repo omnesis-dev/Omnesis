@@ -120,15 +120,15 @@ if (typeof window !== "undefined") {
   });
 }
 
-// Sign-in appears only when the gateway advertises the optional cloud relay. With Omnesis account
-// sign-in on offer, it comes first and the token or pairing-code form waits behind a quiet link.
-function LoginView({ reason, cloudRelay = false } = {}) {
+// Omnesis account sign-in appears once the gateway offers it, which takes a linked account. Then it
+// comes first and the token or pairing-code form waits behind a quiet link.
+function LoginView({ reason } = {}) {
   const [token, setToken] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [accountSignIn, setAccountSignIn] = useState(false);
   const [showForm, setShowForm] = useState(false);
-  const collapsed = cloudRelay && accountSignIn && !showForm;
+  const collapsed = accountSignIn && !showForm;
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -172,7 +172,7 @@ function LoginView({ reason, cloudRelay = false } = {}) {
             ${loading ? "Authenticating..." : "Log in"}
           </button>
         </form>`}
-        ${cloudRelay && html`<${CloudPairingLogin} onReady=${() => setAccountSignIn(true)} />`}
+        <${CloudPairingLogin} onReady=${() => setAccountSignIn(true)} />
         ${collapsed
           ? html`<button type="button" class="cloud-pairing-quiet" onClick=${() => setShowForm(true)}>
               Have a pairing code? Enter it
@@ -246,6 +246,16 @@ function orderConversations(conversations) {
 
 function App() {
   const [route, setRoute] = useState(parseRoute());
+  const [, setSourceMetaReady] = useState(false);
+  useEffect(() => {
+    let mounted = true;
+    // The shell renders with generic labels/icons while metadata loads. A
+    // parent update refreshes the current view without remounting its state.
+    loadSourceMeta().catch(() => {}).finally(() => {
+      if (mounted) setSourceMetaReady(true);
+    });
+    return () => { mounted = false; };
+  }, []);
   const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false);
   const accessArea = route.view === "settings" && (route.tab === "access" || route.accessNewLevel || route.accessLevelId);
   const mobileNavigationButton = useRef(null);
@@ -299,8 +309,7 @@ function App() {
   const [experimental, setExperimental] = useState(false);
   const [labAvailable, setLabAvailable] = useState(false);
   const [lab, setLab] = useState({ brain: false, tasks: false, watches: false });
-  const [cloudRelay, setCloudRelay] = useState(false);
-  // Whether the gateway runs its own Tailscale device (OMNESIS_TAILSCALE_EMBED_ENABLED=1).
+  // Whether the gateway has its own Tailscale device: its installation includes the helper program.
   const [tailscaleEmbed, setTailscaleEmbed] = useState(false);
 
   // Whether the gateway runs in developer mode (OMNESIS_DEV_MODE=1). Separate
@@ -318,6 +327,7 @@ function App() {
   const [releaseUpdate, setReleaseUpdate] = useState(null);
   const statusRequestGeneration = useRef(0);
   const [modelHealth, setModelHealth] = useState({ warnings: [] });
+  const [storagePressure, setStoragePressure] = useState(null);
 
   // Half the window the gateway believes a viewing mark for, so a refresh
   // always lands well inside it. Derived rather than hardcoded: the two
@@ -328,7 +338,7 @@ function App() {
   // What waits for the owner's decision — devices, agent access, held
   // answers, watch requests — kept current by the gateway's signals: the strip
   // on every page and every attention mark show this one answer.
-  const attention = useAttention({ cloudRelay, tailscaleEmbed, watches: lab.watches });
+  const attention = useAttention({ tailscaleEmbed, watches: lab.watches });
 
   // Today's open tasks, shown on the Tasks nav item as "Tasks (n)". Read
   // from `/tasks/counts` on arrival, on every navigation and on an interval;
@@ -367,10 +377,10 @@ function App() {
       const status = await getStatus();
       if (generation !== statusRequestGeneration.current) return;
       setModelHealth(status?.modelHealth ?? { warnings: [] });
+      setStoragePressure(status?.storagePressure ?? null);
       setExperimental(status?.experimental === true);
       setLabAvailable(status?.labAvailable === true);
       setLab({ brain: status?.lab?.brain === true, tasks: status?.lab?.tasks === true, watches: status?.lab?.watches === true });
-      setCloudRelay(status?.cloudRelay === true);
       setTailscaleEmbed(status?.tailscaleEmbed === true);
       setDeveloper(status?.developer === true);
       setDemo(status?.demo === true);
@@ -590,10 +600,7 @@ function App() {
   };
 
   if (sessionExpired) {
-    return html`<${LoginView}
-      reason="Your session expired. Log in again to continue."
-      cloudRelay=${cloudRelay}
-    />`;
+    return html`<${LoginView} reason="Your session expired. Log in again to continue." />`;
   }
 
   // A client opened this window to ask one question, so it gets one question.
@@ -651,9 +658,10 @@ function App() {
             // to a brand-new empty session).
             const isActive = route.view === item.view && !(item.isNewConvo && activeConvoId);
             const modelWarning = item.view === "settings" && modelHealth.warnings.length > 0;
-            // A decision waiting expires, so it leads where its item goes, ahead of a model problem.
+            const storageWarning = item.view === "settings" && storagePressure && storagePressure.state !== "normal";
+            // Expiring approval requests lead first; persistent health warnings stay marked.
             const waiting = navAttention(item.view, attention);
-            const href = waiting?.href ?? (modelWarning ? "/portal/settings/models" : item.href);
+            const href = waiting?.href ?? (storageWarning ? "/portal/settings/storage" : modelWarning ? "/portal/settings/models" : item.href);
             return html`
               <a
                 key=${item.view}
@@ -671,7 +679,7 @@ function App() {
                 <span class="sidebar-label"
                   >${item.view === "tasks" ? countLabel(item.label, openTasksToday) : item.label}</span
                 >
-                ${modelWarning && html`<${WarningTriangle} label="Models need attention" />`}
+                ${storageWarning ? html`<${WarningTriangle} label="Storage needs attention" />` : modelWarning && html`<${WarningTriangle} label="Models need attention" />`}
                 ${waiting && html`<${AttentionIcon} label=${waiting.label} />`}
               </a>
             `;
@@ -802,6 +810,8 @@ function App() {
               tab=${route.tab}
               modelsSection=${route.modelsSection}
               modelHealth=${modelHealth}
+              storagePressure=${storagePressure}
+              onStorageRefresh=${refreshGatewayStatus}
               onModelsRefresh=${refreshGatewayStatus}
               onLabChange=${refreshGatewayStatus}
               accessAuthorizationId=${route.accessAuthorizationId}
@@ -812,7 +822,6 @@ function App() {
               device=${route.device ?? null}
               policyId=${route.policyId}
               completeAccessInPortal=${route.completeAccessInPortal}
-              cloudRelay=${cloudRelay}
               tailscaleEmbed=${tailscaleEmbed}
               attention=${attention}
               experimental=${experimental}
@@ -877,26 +886,25 @@ async function consumeUrlToken() {
   }
 }
 
-// Check session, prefetch icons, then render
+// Authenticate before rendering. Source metadata loads after the shell mounts.
 async function init() {
   await consumeUrlToken();
   let session = await checkSession();
   // A signed-in portal on another address opened this one: sign in with what it handed over.
-  // Only the cloud relay mints one, and a browser already signed in here doesn't need it.
+  // A browser already signed in here doesn't need it.
   const handoff = takePortalHandoff();
   let handoffReason;
-  if (handoff && !session.authenticated && session.cloudRelay === true) {
+  if (handoff && !session.authenticated) {
     if (await redeemPortalHandoff(handoff)) session = await checkSession();
     else
       handoffReason =
         "That link expired or was already used. Go back to the page you came from and open it again, or sign in below.";
   }
-  await loadSourceMeta();
 
-  // Only the cloud relay's sign-in view can use a handed-over sign-in; anywhere else it is dropped.
-  if (session.authenticated || session.cloudRelay !== true) takeAccountSignIn();
+  // Only the sign-in view can use a handed-over sign-in; a signed-in portal drops it.
+  if (session.authenticated) takeAccountSignIn();
   // Approving a device with a passkey needs no portal login: the passkey is the credential.
-  if (session.cloudRelay === true && window.location.pathname === "/portal/approve") {
+  if (window.location.pathname === "/portal/approve") {
     const { ApproveView } = await import("./views/approve.js");
     render(html`<${ErrorBoundary}><${ApproveView} /></${ErrorBoundary}>`, document.getElementById("app"));
     return;
@@ -904,7 +912,7 @@ async function init() {
   if (session.authenticated) {
     render(html`<${ErrorBoundary}><${App} /></${ErrorBoundary}>`, document.getElementById("app"));
   } else {
-    render(html`<${ErrorBoundary}><${LoginView} reason=${handoffReason} cloudRelay=${session.cloudRelay === true} /></${ErrorBoundary}>`, document.getElementById("app"));
+    render(html`<${ErrorBoundary}><${LoginView} reason=${handoffReason} /></${ErrorBoundary}>`, document.getElementById("app"));
   }
 }
 

@@ -1,13 +1,68 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import * as core from "@omnesis/core";
 import { describe, expect, test, vi } from "vitest";
+import * as reaper from "./subprocess-reaper.js";
 import {
   assertSyntheticGatewayVisibility,
   syntheticGatewayEnv,
   SyntheticE2EHarness,
   type SyntheticGatewayMode,
 } from "./synth-harness.js";
+import type { ChildProcess } from "node:child_process";
+
+describe("SyntheticE2EHarness bootstrap reader ownership", () => {
+  test.each(
+    [undefined, new Error("invented reader cleanup failure")].flatMap((cleanupFailure) =>
+      (["destroy", "crash-restart"] as const).map((operation) => ({ cleanupFailure, operation })),
+    ),
+  )(
+    "retains independent reader uncertainty and refuses retry or fixture deletion during $operation",
+    async ({ cleanupFailure, operation }) => {
+      const root = mkdtempSync(join(tmpdir(), "invented-reader-hold-"));
+      const failure = new Error("invented outer failure", {
+        cause: Object.assign(new Error("invented reader failure"), { cleanupFailure }),
+      });
+      const read = vi.spyOn(core, "readSecretTextFile").mockRejectedValue(failure);
+      const independentlyJoinedGateway = {} as ChildProcess;
+      const stop = vi.spyOn(reaper, "killSubprocessGroup").mockResolvedValue();
+      const harness = Object.assign(Object.create(SyntheticE2EHarness.prototype), {
+        configDir: root,
+        tempDir: root,
+        devices: [],
+        gatewayProcess: independentlyJoinedGateway,
+      }) as SyntheticE2EHarness;
+      const bootstrap = harness as unknown as { readGatewayToken(path: string): Promise<string> };
+      try {
+        await expect(bootstrap.readGatewayToken(join(root, "token"))).rejects.toBe(failure);
+        await expect(bootstrap.readGatewayToken(join(root, "token"))).rejects.toBe(failure);
+        expect(read).toHaveBeenCalledTimes(1);
+        if (operation === "crash-restart") {
+          await expect(harness.restartGateway({ signal: "SIGKILL" })).rejects.toBe(failure);
+          expect(stop).toHaveBeenLastCalledWith(independentlyJoinedGateway, {
+            initialSignal: "SIGKILL",
+          });
+          expect(existsSync(root)).toBe(true);
+        }
+        await expect(harness.destroy()).rejects.toBe(failure);
+        expect(stop).toHaveBeenLastCalledWith(independentlyJoinedGateway, {
+          initialSignal: "SIGTERM",
+        });
+        expect(stop).toHaveBeenCalledTimes(operation === "crash-restart" ? 2 : 1);
+        expect(existsSync(root)).toBe(true);
+      } finally {
+        read.mockRestore();
+        stop.mockRestore();
+        // The mocked producer created no helper; only this owned fixture exists.
+        rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
+});
 
 describe("SyntheticE2EHarness gateway mode", () => {
   test.each<

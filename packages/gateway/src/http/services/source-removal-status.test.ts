@@ -13,6 +13,8 @@
 
 import { existsSync, rmSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { AccountId, SourceId, SourceType, type DeviceId } from "@omnesis/types";
 import { createDatabase } from "../../db.js";
@@ -99,7 +101,7 @@ async function seedSource(service: SourceService): Promise<void> {
 }
 
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-test-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
   db = createDatabase(dbPath);
   DEVICE = createDevice(db, { name: "test-host", kind: "collector" }).id;
 });

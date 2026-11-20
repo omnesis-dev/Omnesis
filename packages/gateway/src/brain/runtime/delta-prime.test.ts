@@ -10,6 +10,8 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import { ProviderId, SourceId } from "@omnesis/types";
 import { createDatabase, upsertDocuments } from "../../db.js";
@@ -33,7 +35,7 @@ const NOW = Date.parse("2026-07-02T10:00:00.000Z");
 const DAY = 86_400_000;
 
 function testDbPath(): string {
-  return `/tmp/omnesis-test-${randomUUID()}.db`;
+  return fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
 }
 function cleanupDb(path: string): void {
   for (const suffix of ["", "-wal", "-shm", "-journal"]) {

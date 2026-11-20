@@ -6,6 +6,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test, vi, beforeEach } from "vitest";
 import { InferenceHealth } from "../inference/model-health.js";
+import {
+  resolveStoragePolicy,
+  type StoragePressureSnapshot,
+  type StoragePressureState,
+} from "../storage/pressure.js";
+import { SearchPipeline } from "../search/pipeline.js";
 import { IndexerLifecycle, type IndexerLifecycleDeps } from "./indexer-lifecycle.js";
 import { IndexerStatusReporter } from "./indexer-status.js";
 import {
@@ -128,9 +134,15 @@ class FakeProxy {
     complete: true,
     readyForSourceDelete: false,
   }));
+  deleteDocumentsIndexBatch = vi.fn(async () => ({
+    deletedChunks: 0,
+    complete: true,
+    readyForSourceDelete: false,
+  }));
   createBackgroundJobs = vi.fn(() => []);
   updateCutoffs = vi.fn();
-  embedQuery = vi.fn(async () => new Float32Array([0.1, 0.2]));
+  setStoragePressure = vi.fn();
+  embedQuery = vi.fn(async (): Promise<Float32Array> => new Float32Array([0.1, 0.2]));
   reindexMissing = vi.fn(async () => ({ queued: 0 }));
   wake = vi.fn();
   // Graceful-for-local quiesce: pause keeps the worker alive as the
@@ -247,9 +259,11 @@ function makeDeps(overrides: Partial<IndexerLifecycleDeps> = {}): {
   });
   const setVectorSearchUnavailable = vi.fn();
   const searchPipeline = {
+    publishEmbeddingTransition: async (operation: () => void) => operation(),
     setEmbedder,
     setVectorSearchUnavailable,
     queryEmbedder: () => queryEmbedder,
+    isQueryEmbedder: (value: Embedder) => queryEmbedder === value,
   } as unknown as IndexerLifecycleDeps["searchPipeline"];
 
   const registerAll = vi.fn();
@@ -303,6 +317,129 @@ function makeDeps(overrides: Partial<IndexerLifecycleDeps> = {}): {
   };
   return { deps, setEmbedder, setVectorSearchUnavailable, registerAll, resolve, statusReporter };
 }
+
+function capacitySnapshot(state: StoragePressureState): StoragePressureSnapshot {
+  return {
+    state,
+    reasons: state === "blocked" ? ["quota"] : [],
+    measuredAt: Date.now(),
+    usageBytes: 100,
+    volumes: [],
+    policy: resolveStoragePolicy(undefined, 0),
+    validUntil: Date.now() + 60_000,
+  };
+}
+
+test.each(["graceful", "hard"] as const)(
+  "%s migration refuses capacity pressure before stopping the active worker",
+  async (mode) => {
+    const { deps, setEmbedder } = makeDeps({
+      getStoragePressure: () => capacitySnapshot("blocked"),
+    });
+    const lifecycle = new IndexerLifecycle(deps);
+    try {
+      await lifecycle.startIndexer();
+      const owner = proxyInstances[0]!;
+      setEmbedder.mockClear();
+      await expect(lifecycle.applyEmbedSwap(mode)).rejects.toMatchObject({ status: 507 });
+      expect(owner.dispose).not.toHaveBeenCalled();
+      expect(setEmbedder).not.toHaveBeenCalled();
+      expect(wipeAndRecreateVectorIndex).not.toHaveBeenCalled();
+    } finally {
+      await lifecycle.shutdownIndexer();
+      deps.indexDb.close();
+    }
+  },
+);
+
+test("removing an embedder assignment remains available under capacity pressure", async () => {
+  const { deps, resolve, setEmbedder } = makeDeps({
+    getStoragePressure: () => capacitySnapshot("blocked"),
+  });
+  const lifecycle = new IndexerLifecycle(deps);
+  try {
+    await lifecycle.startIndexer();
+    const owner = proxyInstances[0]!;
+    resolve.mockReturnValue({ kind: "disabled" });
+    await lifecycle.applyEmbedSwap();
+    expect(owner.dispose).toHaveBeenCalled();
+    expect(setEmbedder).toHaveBeenCalledWith(undefined);
+    expect(wipeAndRecreateVectorIndex).not.toHaveBeenCalled();
+  } finally {
+    await lifecycle.shutdownIndexer();
+    deps.indexDb.close();
+  }
+});
+
+test.each(["embedding", "quiesce", "publication"])(
+  "capacity lost during %s abandons only the building generation",
+  async (phase) => {
+    const dir = mkdtempSync(join(tmpdir(), "omnesis-capacity-migration-"));
+    const dbPath = join(dir, "index.db");
+    const indexDb = createIndexDatabase(dbPath);
+    let blocked = false;
+    const { deps } = makeDeps({
+      indexDb,
+      indexDbPath: dbPath,
+      configDir: dir,
+      getStoragePressure: () => capacitySnapshot(blocked ? "blocked" : "normal"),
+    });
+    const lifecycle = new IndexerLifecycle(deps);
+    try {
+      upsertChunks(indexDb, [
+        {
+          id: "fictional-chunk",
+          documentId: "fictional-document",
+          chunkIndex: 0,
+          content: "Invented reference text.",
+          embedding: new Float32Array(32).fill(0.1),
+          sourceId: "fictional-notes",
+          title: "Reference",
+          sourceCreatedAt: "2020-01-01T00:00:00.000Z",
+        },
+      ]);
+      setIndexEmbedModel(indexDb, "old-embedder", 32);
+      migrateAdoptInPlaceVersion(indexDb);
+      const writer = new UsearchWriteHandle(usearchPathForVersion(dir, 1), 32);
+      writer.backfillFromDb(indexDb);
+      writer.close();
+      await lifecycle.startIndexer();
+      let swap: Promise<void>;
+      if (phase === "embedding") {
+        const gate = armEmbedGate();
+        swap = lifecycle.applyEmbedSwap();
+        await gate.reached;
+        blocked = true;
+        gate.release();
+      } else if (phase === "quiesce") {
+        proxyInstances[0]!.dispose.mockImplementation(async () => {
+          blocked = true;
+        });
+        swap = lifecycle.applyEmbedSwap();
+      } else {
+        vi.spyOn(deps.searchPipeline, "publishEmbeddingTransition").mockImplementation(
+          async (publish) => {
+            blocked = true;
+            publish();
+          },
+        );
+        swap = lifecycle.applyEmbedSwap();
+      }
+      await expect(swap).rejects.toMatchObject({ status: 507 });
+      expect(getActiveIndexVersion(indexDb)).toBe(1);
+      expect(getBuildingIndexVersion(indexDb)).toBeNull();
+      expect(getBuildingEmbeddingCount(indexDb)).toBe(0);
+      expect(existsSync(usearchPathForVersion(dir, 1))).toBe(true);
+      expect(existsSync(usearchPathForVersion(dir, 2))).toBe(false);
+      expect(wipeAndRecreateVectorIndex).not.toHaveBeenCalled();
+      expect(proxyInstances).toHaveLength(1);
+    } finally {
+      await lifecycle.shutdownIndexer();
+      indexDb.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  },
+);
 
 /** Count on-disk generation usearch files (`index.usearch` / `index-N.usearch`),
  *  ignoring atomic-save `.tmp` siblings — the bounded-to-two invariant. */
@@ -687,6 +824,10 @@ describe("IndexerLifecycle", () => {
     proxy.deleteSourceIndex.mockResolvedValueOnce(3);
     await expect(lifecycle.deleteSourceIndex("synthetic:maya@example.com")).resolves.toBe(3);
     expect(proxy.deleteSourceIndex).toHaveBeenCalledWith("synthetic:maya@example.com");
+    await expect(
+      lifecycle.deleteDocumentsIndexBatch(["one", "two"], 64, true),
+    ).resolves.toMatchObject({ complete: true });
+    expect(proxy.deleteDocumentsIndexBatch).toHaveBeenCalledWith(["one", "two"], 64, true);
 
     // A shutdown in this startup window must dispose the owner. Releasing the
     // held ready promise afterwards cannot republish the dead proxy.
@@ -1798,6 +1939,259 @@ describe("lexical worker promotion on model installation", () => {
       expect(deps.searchPipeline.queryEmbedder()).toBeUndefined();
     } finally {
       await lifecycle.shutdownIndexer();
+    }
+  });
+});
+
+/** Real pipeline admission with scripted workers, so native ownership has no inference dependency. */
+function localBridgeFixture(refreshIndexSnapshot?: () => Promise<unknown>) {
+  const dir = mkdtempSync(join(tmpdir(), "omnesis-query-bridge-"));
+  const db = seedActiveGeneration(dir, 32);
+  const { deps, resolve } = makeDeps({
+    indexDb: db,
+    indexDbPath: join(dir, "index.db"),
+    configDir: dir,
+  });
+  const pipeline = new SearchPipeline({ indexDb: db, refreshIndexSnapshot });
+  const published = vi.spyOn(pipeline, "setEmbedder");
+  deps.searchPipeline = pipeline;
+  const assignment = { kind: "http" as EmbedderKind, dim: 32 };
+  resolve.mockImplementation((role: string) =>
+    role === "embedder"
+      ? embedderAssignment(assignment.kind, assignment.dim)
+      : { kind: "disabled" },
+  );
+  probeHttpEmbedder.mockResolvedValue({ model: "mock-embed", dim: 32 });
+  const lifecycle = new IndexerLifecycle(deps);
+  return {
+    dir,
+    db,
+    pipeline,
+    assignment,
+    lifecycle,
+    currentEmbedder: () => published.mock.calls.at(-1)?.[0],
+    close: async () => {
+      nextProxyReadyGate = null;
+      nextProxyReadyError = null;
+      await lifecycle.shutdownIndexer();
+      db.close();
+      rmSync(dir, { recursive: true, force: true });
+    },
+  };
+}
+
+describe("query bridge ownership across worker handoff", () => {
+  test("a failed read-cache refresh after a committed flip does not prevent native cleanup", async () => {
+    const refresh = vi.fn(async () => {
+      throw new Error("scripted read-cache refresh failure");
+    });
+    const f = localBridgeFixture(refresh);
+    try {
+      await f.lifecycle.startIndexer();
+      expect(refresh).not.toHaveBeenCalled();
+      f.assignment.kind = "local";
+      f.assignment.dim = 64;
+      await expect(f.lifecycle.applyEmbedSwap()).resolves.toBeUndefined();
+      expect(getIndexVersion(f.db, getActiveIndexVersion(f.db)!)?.embed_dim).toBe(64);
+      expect(f.pipeline.isQueryEmbedder(proxyInstances[1] as unknown as Embedder)).toBe(true);
+      expect(proxyInstances[0].dispose).toHaveBeenCalledOnce();
+      expect(buildWorkerInstances[0].dispose).toHaveBeenCalledOnce();
+      expect(refresh).toHaveBeenCalledOnce();
+      await f.lifecycle.shutdownIndexer();
+      expect(refresh).toHaveBeenCalledOnce();
+    } finally {
+      await f.close();
+    }
+  });
+
+  test("a superseded swap waiting for an old query never publishes its abandoned generation", async () => {
+    const f = localBridgeFixture();
+    const started = Promise.withResolvers<void>();
+    const result = Promise.withResolvers<Float32Array>();
+    let first: Promise<void> | undefined;
+    let second: Promise<void> | undefined;
+    let buildGate: ReturnType<typeof armEmbedGate> | undefined;
+    try {
+      f.assignment.kind = "local";
+      await f.lifecycle.startIndexer();
+      const old = proxyInstances[0];
+      old.embedQuery.mockImplementation(async () => {
+        started.resolve();
+        return result.promise;
+      });
+      const query = f.pipeline.queryEmbedder()!.embedQuery("fixture query");
+      await started.promise;
+      f.assignment.dim = 64;
+      first = f.lifecycle.applyEmbedSwap();
+      await vi.waitFor(() => expect(old.pauseIndexing).toHaveBeenCalledOnce());
+      await new Promise<void>((done) => setImmediate(done));
+      expect(getActiveIndexVersion(f.db)).toBe(1);
+
+      f.assignment.kind = "http";
+      f.assignment.dim = 96;
+      probeHttpEmbedder.mockResolvedValue({ model: "latest-fixture-model", dim: 96 });
+      buildGate = armEmbedGate();
+      second = f.lifecycle.applyEmbedSwap();
+      result.resolve(new Float32Array(32));
+      await query;
+      await buildGate.reached;
+      expect(getActiveIndexVersion(f.db)).toBe(1);
+      expect(buildWorkerInstances[0].dispose).toHaveBeenCalledOnce();
+      buildGate.release();
+      await Promise.all([first, second]);
+      expect(getIndexVersion(f.db, getActiveIndexVersion(f.db)!)?.embed_dim).toBe(96);
+    } finally {
+      result.resolve(new Float32Array(32));
+      buildGate?.release();
+      await Promise.all([first, second]);
+      await f.close();
+    }
+  });
+
+  test.each(["retry", "shutdown"] as const)(
+    "a failed steady worker leaves the serving bridge alive until %s",
+    async (afterFailure) => {
+      const f = localBridgeFixture();
+      try {
+        await f.lifecycle.startIndexer();
+        f.assignment.kind = "local";
+        f.assignment.dim = 64;
+        nextProxyReadyError = new Error("scripted steady worker startup failure");
+        await f.lifecycle.applyEmbedSwap();
+        const bridge = buildWorkerInstances[0];
+        expect(f.pipeline.queryEmbedder()).toBeDefined();
+        expect(bridge.dispose).not.toHaveBeenCalled();
+        expect((await f.pipeline.queryEmbedder()!.embedQuery("fixture query")).length).toBe(64);
+        expect(getIndexVersion(f.db, getActiveIndexVersion(f.db)!)?.embed_dim).toBe(64);
+
+        if (afterFailure === "retry") {
+          nextProxyReadyError = null;
+          await f.lifecycle.startIndexer();
+          expect(f.pipeline.isQueryEmbedder(proxyInstances.at(-1)! as unknown as Embedder)).toBe(
+            true,
+          );
+        } else {
+          await f.lifecycle.shutdownIndexer();
+          expect(f.pipeline.queryEmbedder()).toBeUndefined();
+        }
+        expect(bridge.dispose).toHaveBeenCalledOnce();
+      } finally {
+        await f.close();
+      }
+    },
+  );
+
+  test("a ready steady worker waits for an in-flight bridge query before retiring its model", async () => {
+    const f = localBridgeFixture();
+    const ready = Promise.withResolvers<void>();
+    const queryStarted = Promise.withResolvers<void>();
+    const queryResult = Promise.withResolvers<Float32Array>();
+    let swap: Promise<void> | undefined;
+    try {
+      await f.lifecycle.startIndexer();
+      f.assignment.kind = "local";
+      f.assignment.dim = 64;
+      nextProxyReadyGate = ready.promise;
+      swap = f.lifecycle.applyEmbedSwap();
+      await vi.waitFor(() => expect(proxyInstances).toHaveLength(2));
+      const bridge = buildWorkerInstances[0];
+      const servingBridge = f.currentEmbedder()!;
+      vi.spyOn(bridge, "embedQuery").mockImplementation(async () => {
+        queryStarted.resolve();
+        return queryResult.promise;
+      });
+      const query = f.pipeline.queryEmbedder()!.embedQuery("fixture query");
+      await queryStarted.promise;
+      ready.resolve();
+      await new Promise<void>((done) => setImmediate(done));
+      expect(f.pipeline.isQueryEmbedder(servingBridge)).toBe(true);
+      expect(bridge.dispose).not.toHaveBeenCalled();
+      queryResult.resolve(new Float32Array(64));
+      await Promise.all([query, swap]);
+      expect(f.pipeline.isQueryEmbedder(proxyInstances[1] as unknown as Embedder)).toBe(true);
+      expect(bridge.dispose).toHaveBeenCalledOnce();
+    } finally {
+      ready.resolve();
+      queryResult.resolve(new Float32Array(64));
+      await swap;
+      await f.close();
+    }
+  });
+
+  test("shutdown cancels a waiting handoff and drains its bridge query before disposal", async () => {
+    const f = localBridgeFixture();
+    const ready = Promise.withResolvers<void>();
+    const queryStarted = Promise.withResolvers<void>();
+    const queryResult = Promise.withResolvers<Float32Array>();
+    let swap: Promise<void> | undefined;
+    let shutdown: Promise<void> | undefined;
+    try {
+      await f.lifecycle.startIndexer();
+      f.assignment.kind = "local";
+      f.assignment.dim = 64;
+      nextProxyReadyGate = ready.promise;
+      swap = f.lifecycle.applyEmbedSwap();
+      await vi.waitFor(() => expect(proxyInstances).toHaveLength(2));
+      const bridge = buildWorkerInstances[0];
+      vi.spyOn(bridge, "embedQuery").mockImplementation(async () => {
+        queryStarted.resolve();
+        return queryResult.promise;
+      });
+      const query = f.pipeline.queryEmbedder()!.embedQuery("fixture query");
+      await queryStarted.promise;
+      const publications = vi.spyOn(f.pipeline, "setEmbedder");
+      publications.mockClear();
+      shutdown = f.lifecycle.shutdownIndexer();
+      ready.resolve();
+      await new Promise<void>((done) => setImmediate(done));
+      expect(bridge.dispose).not.toHaveBeenCalled();
+      expect(proxyInstances[1].dispose).not.toHaveBeenCalled();
+      queryResult.resolve(new Float32Array(64));
+      await Promise.all([query, swap, shutdown]);
+      expect(f.pipeline.queryEmbedder()).toBeUndefined();
+      expect(publications.mock.calls.every(([embedder]) => embedder === undefined)).toBe(true);
+      expect(bridge.dispose).toHaveBeenCalledOnce();
+      expect(proxyInstances[1].dispose).toHaveBeenCalledOnce();
+    } finally {
+      ready.resolve();
+      queryResult.resolve(new Float32Array(64));
+      await Promise.all([swap, shutdown]);
+      await f.close();
+    }
+  });
+
+  test("direct shutdown drains a local query before disposing its owning indexer worker", async () => {
+    const { deps, resolve } = makeDeps();
+    resolve.mockImplementation((role: string) =>
+      role === "embedder" ? embedderAssignment("local", 32) : { kind: "disabled" },
+    );
+    const pipeline = new SearchPipeline({ indexDb: deps.indexDb });
+    deps.searchPipeline = pipeline;
+    const lifecycle = new IndexerLifecycle(deps);
+    const started = Promise.withResolvers<void>();
+    const result = Promise.withResolvers<Float32Array>();
+    let shutdown: Promise<void> | undefined;
+    try {
+      await lifecycle.startIndexer();
+      const worker = proxyInstances[0];
+      worker.embedQuery.mockImplementation(async () => {
+        started.resolve();
+        return result.promise;
+      });
+      const query = pipeline.queryEmbedder()!.embedQuery("fixture query");
+      await started.promise;
+      shutdown = lifecycle.shutdownIndexer();
+      await new Promise<void>((done) => setImmediate(done));
+      expect(worker.dispose).not.toHaveBeenCalled();
+      result.resolve(new Float32Array(32));
+      await Promise.all([query, shutdown]);
+      expect(worker.dispose).toHaveBeenCalledOnce();
+      expect(pipeline.queryEmbedder()).toBeUndefined();
+    } finally {
+      result.resolve(new Float32Array(32));
+      await shutdown;
+      await lifecycle.shutdownIndexer();
+      deps.indexDb.close();
     }
   });
 });

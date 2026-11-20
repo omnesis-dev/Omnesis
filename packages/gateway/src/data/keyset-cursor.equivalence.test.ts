@@ -20,11 +20,13 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, test } from "vitest";
 import { createDatabase } from "../db.js";
 import { listAccessAuditEvents } from "../access/store-audit.js";
-import { seedPilotCorpus } from "../scheduler/__fixtures__/pilot-corpus.js";
+import { seedLargeCorpus } from "../scheduler/__fixtures__/large-corpus.js";
 import { getRecentDocuments } from "./repositories/DocumentRepository.js";
 
 type Db = Database.Database;
@@ -167,10 +169,10 @@ describe("rewritten keyset cursors", () => {
 
 describe("rewritten keyset pages end to end", () => {
   function corpus(): Db {
-    const path = `/tmp/omnesis-test-${randomUUID()}.db`;
+    const path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
     const db = createDatabase(path) as unknown as Db;
     opened.push({ db, path });
-    seedPilotCorpus(db, { docs: 2_000 });
+    seedLargeCorpus(db, { docs: 2_000 });
     // Ties on the timestamp a page orders by.
     db.exec(
       "UPDATE documents SET source_created_at = substr(source_created_at, 1, 7) || '-01T00:00:00.000Z' WHERE source_id = 'synth-mail-work'",

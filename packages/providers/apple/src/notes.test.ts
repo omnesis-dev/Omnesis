@@ -610,6 +610,7 @@ describe("AppleNotesSource", () => {
     // Rebuild the store without ZFOLDERMODIFICATIONDATE, as an older macOS
     // schema would have it: the deletes window falls back to the modification
     // date alone rather than guessing at a column.
+    await provider.disconnect();
     testDb.close();
     rmSync(dbPath);
     testDb = new Database(dbPath);
@@ -818,16 +819,18 @@ describe("AppleNotesSource", () => {
   });
 
   test("paginates with hasMore", async () => {
-    for (let i = 1; i <= 101; i++) {
-      insertNote(testDb, {
-        pk: i,
-        title: `Note ${i}`,
-        body: `Content ${i}`,
-        identifier: `uuid-${i}`,
-        creationDate: TS_2024_03_08 + i,
-        modificationDate: TS_2024_03_08 + i,
-      });
-    }
+    testDb.transaction(() => {
+      for (let i = 1; i <= 101; i++) {
+        insertNote(testDb, {
+          pk: i,
+          title: `Note ${i}`,
+          body: `Content ${i}`,
+          identifier: `uuid-${i}`,
+          creationDate: TS_2024_03_08 + i,
+          modificationDate: TS_2024_03_08 + i,
+        });
+      }
+    })();
 
     const r1 = await source.sync(null);
     expect(r1.documents).toHaveLength(100);

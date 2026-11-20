@@ -77,7 +77,7 @@ const log = createLogger("test").child("loop-agent-runtime");
 const NOW = Date.parse("2026-07-02T10:00:00.000Z");
 
 function testDbPath(): string {
-  return `/tmp/omnesis-test-${randomUUID()}.db`;
+  return join(tmpdir(), `omnesis-test-${randomUUID()}.db`);
 }
 function cleanupDb(path: string): void {
   for (const suffix of ["", "-wal", "-shm", "-journal"]) {
@@ -224,7 +224,8 @@ describe("assembled Brain through the real driver", () => {
       experimental: false,
     };
   });
-  afterEach(() => {
+  afterEach(async () => {
+    await transcripts.close();
     db.close();
     cleanupDb(path);
     vi.unstubAllEnvs();

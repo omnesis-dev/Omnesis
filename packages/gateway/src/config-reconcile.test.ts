@@ -3,6 +3,8 @@
 
 import { unlinkSync, existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 type Db = Database.Database;
 import { type OmnesisConfig } from "@omnesis/config";
@@ -27,7 +29,7 @@ let dbPath: string;
 let w: WriteGate;
 
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-reconcile-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-reconcile-${randomUUID()}.db`);
   db = createDatabase(dbPath);
   w = directWriteGate(db);
 });

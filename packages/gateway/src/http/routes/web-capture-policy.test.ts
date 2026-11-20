@@ -13,6 +13,8 @@
 
 import { existsSync, rmSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import {
   DEFAULT_WEB_CAPTURE_RULES,
@@ -103,8 +105,11 @@ function webDocUrls(): string[] {
 }
 
 beforeEach(async () => {
-  dbPath = `/tmp/omnesis-capture-policy-test-${randomUUID()}.db`;
-  analyticsPath = `/tmp/omnesis-capture-policy-test-${randomUUID()}.duckdb`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-capture-policy-test-${randomUUID()}.db`);
+  analyticsPath = fixtureJoin(
+    fixtureTmpdir(),
+    `omnesis-capture-policy-test-${randomUUID()}.duckdb`,
+  );
   db = createDatabase(dbPath);
   analyticsDb = new AnalyticsDb(analyticsPath);
   await analyticsDb.open();

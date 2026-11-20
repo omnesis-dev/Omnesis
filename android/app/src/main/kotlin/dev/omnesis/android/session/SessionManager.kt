@@ -408,9 +408,7 @@ class SessionManager @Inject constructor(
     private val notificationDrainMutex = Mutex()
     private val revocationDrainMutex = Mutex()
     private val statusProbeSerializer = StatusProbeSerializer()
-    /** Whether this build enables cloud connectivity, as its capabilities carry it. */
-    internal val cloudRelay: Boolean = deviceCapabilities.pairingNotifications
-    private val transport = SessionTransport(cloudRelay)
+    private val transport = SessionTransport()
     private val deviceTokenRotator by lazy { DeviceTokenRotator(KeystoreDeviceKeys()) }
     private val tokenRotationAttempts = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
 
@@ -620,13 +618,11 @@ class SessionManager @Inject constructor(
             pairing.pairingGeneration,
         )
         val streaming = transport.streaming(pairing, upgrade, routes.streaming)
-        val socketRoute = transport.socketRoute(routes.socket)
         val socket = DeviceSocket(
-            client = transport.socket(pairing, upgrade, socketRoute, streaming),
-            directRoute = socketRoute,
+            client = transport.socket(pairing, upgrade, routes.socket),
+            directRoute = routes.socket,
             refreshHints = if (transport.refreshesHints(pairing)) ({ routes.refresh(); Unit }) else null,
             expectedDeviceId = transport.expectedDeviceId(pairing),
-            cloudRelay = cloudRelay,
             gatewayUrl = pairing.url,
             token = pairing.token,
             scope = scope,
@@ -694,7 +690,6 @@ class SessionManager @Inject constructor(
                             pairing.url,
                             token,
                         ),
-                        pairingNotifications = BuildConfig.CLOUD_RELAY_ENABLED,
                     )
                 },
             agentEventSourceFactory = {
@@ -716,7 +711,7 @@ class SessionManager @Inject constructor(
             launch {
                 probeStatus(built)
             }
-            if (BuildConfig.CLOUD_RELAY_ENABLED) launch { rotateDeviceTokenIfDue(built, http) }
+            launch { rotateDeviceTokenIfDue(built, http) }
             launch {
                 pushRegistrationMutex.withLock {
                     retryPushRegistrationForSession(
@@ -1119,7 +1114,6 @@ class SessionManager @Inject constructor(
                 current.pairing.url,
                 minted.token,
             ),
-            pairingNotifications = BuildConfig.CLOUD_RELAY_ENABLED,
         )
     }
 

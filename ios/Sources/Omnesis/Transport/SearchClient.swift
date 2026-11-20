@@ -1351,9 +1351,9 @@ public struct StatusSnapshot: Decodable, Sendable {
     /// (shake-to-annotate). Decoded leniently — an older gateway that omits the
     /// field reads as `false`, so the affordance stays hidden.
     public let developer: Bool
-    /// Whether the gateway runs its own Tailscale device (`OMNESIS_TAILSCALE_EMBED_ENABLED`),
-    /// so devices on the owner's tailnet can ask to join. Absent, as from a gateway without
-    /// the opt-in, reads as `false`.
+    /// Whether the gateway has its own Tailscale device, so devices on the owner's tailnet
+    /// can ask to join. Absent, as from a gateway installed without the device's helper
+    /// program, reads as `false`.
     public let tailscaleEmbed: Bool
     /// The Tasks surface. `nil` from a gateway that predates `/tasks`, which
     /// keeps the Tasks entry hidden.

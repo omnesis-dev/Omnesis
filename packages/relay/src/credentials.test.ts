@@ -1,10 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { execFileSync } from "node:child_process";
+
 import { generateKeyPairSync } from "node:crypto";
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import {
+  atomicWriteFileSync,
+  ensurePrivateDirSync,
+  inspectWindowsPrivatePathSync,
+} from "@omnesis/core";
 
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -15,6 +22,22 @@ const tempDirectories: string[] = [];
 afterEach(() => {
   for (const path of tempDirectories.splice(0)) rmSync(path, { recursive: true, force: true });
 });
+
+function writePrivateFixture(path: string, data: string | Buffer, options: { mode: number }): void {
+  if (process.platform === "win32") {
+    ensurePrivateDirSync(dirname(path));
+    atomicWriteFileSync(path, data, { mode: 0o600 });
+  } else writeFileSync(path, data, options);
+}
+function broadenRead(path: string): void {
+  if (process.platform === "win32")
+    execFileSync(
+      join(process.env.SystemRoot!, "System32", "icacls.exe"),
+      [path, "/grant", "*S-1-1-0:(R)"],
+      { windowsHide: true, timeout: 10_000 },
+    );
+  else chmodSync(path, 0o644);
+}
 
 function fixture(): { config: RelayConfig; apnsPath: string; fcmPath: string } {
   const directory = mkdtempSync(join(tmpdir(), "omnesis-relay-credentials-"));
@@ -29,8 +52,8 @@ function fixture(): { config: RelayConfig; apnsPath: string; fcmPath: string } {
     format: "pem",
     type: "pkcs8",
   });
-  writeFileSync(apnsPath, apns, { mode: 0o600 });
-  writeFileSync(
+  writePrivateFixture(apnsPath, apns, { mode: 0o600 });
+  writePrivateFixture(
     fcmPath,
     JSON.stringify({
       client_email: "relay@example.invalid",
@@ -65,25 +88,34 @@ describe("relay credential startup validation", () => {
   it("accepts protected parseable APNs and FCM private credentials", () => {
     const set = fixture();
     expect(() => validateRelayCredentialFiles(set.config)).not.toThrow();
+    if (process.platform === "win32")
+      for (const path of [set.apnsPath, set.fcmPath])
+        expect(inspectWindowsPrivatePathSync(path, "file").private).toBe(true);
   });
 
   it("fails before startup when a credential file is broadly readable", () => {
     const set = fixture();
-    chmodSync(set.fcmPath, 0o644);
+    const before = readFileSync(set.fcmPath);
+    broadenRead(set.fcmPath);
     expect(() => validateRelayCredentialFiles(set.config)).toThrow(
-      "FCM service-account file must not be accessible by group or other users",
+      process.platform === "win32"
+        ? /trusted Windows owner and ACL/
+        : "FCM service-account file must not be accessible by group or other users",
     );
+    expect(readFileSync(set.fcmPath)).toEqual(before);
+    if (process.platform === "win32")
+      expect(inspectWindowsPrivatePathSync(set.fcmPath, "file").private).toBe(false);
   });
 
   it("fails before startup when a credential cannot be parsed", () => {
     const set = fixture();
-    writeFileSync(set.apnsPath, "not a private key", { mode: 0o600 });
+    writePrivateFixture(set.apnsPath, "not a private key", { mode: 0o600 });
     expect(() => validateRelayCredentialFiles(set.config)).toThrow(
       "APNs key is not a valid private key",
     );
 
     const second = fixture();
-    writeFileSync(second.fcmPath, "{}", { mode: 0o600 });
+    writePrivateFixture(second.fcmPath, "{}", { mode: 0o600 });
     expect(() => validateRelayCredentialFiles(second.config)).toThrow(
       "FCM service-account file is missing or has invalid required fields",
     );

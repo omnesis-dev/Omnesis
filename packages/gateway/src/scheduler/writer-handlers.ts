@@ -21,6 +21,20 @@ import {
   type MultiDeviceMode,
   type SyncRemediation,
 } from "@omnesis/types";
+import {
+  reconcileStorageRetentionBindings,
+  bindStorageRetentionPolicy,
+  type ReconcileStorageRetentionBindingsInput,
+  type BindStorageRetentionPolicyInput,
+} from "../storage/retention-bindings.js";
+import {
+  startStorageTrimJob,
+  applyStorageTrimPage,
+  failStorageTrimJob,
+  type StartStorageTrimJob,
+  type ApplyStorageTrimPage,
+  type FailStorageTrimJob,
+} from "../storage/trim-job-store.js";
 import { initializeLabFlags, setLabFlag, type LabFeatureId, type LabFlags } from "../lab/store.js";
 
 import {
@@ -811,6 +825,13 @@ export const writerHandlers = {
     tombstone?: boolean,
   ) =>
     deleteDocumentForUser(db, providerId, sourceId, externalId, streamId ?? "", tombstone ?? true),
+  "storage.reconcileRetentionBindings": (db: Db, input: ReconcileStorageRetentionBindingsInput) =>
+    reconcileStorageRetentionBindings(db, input),
+  "storage.bindRetentionPolicy": (db: Db, input: BindStorageRetentionPolicyInput) =>
+    bindStorageRetentionPolicy(db, input),
+  "storage.startTrimJob": (db: Db, input: StartStorageTrimJob) => startStorageTrimJob(db, input),
+  "storage.applyTrimPage": (db: Db, input: ApplyStorageTrimPage) => applyStorageTrimPage(db, input),
+  "storage.failTrimJob": (db: Db, input: FailStorageTrimJob) => failStorageTrimJob(db, input),
   "db.deleteDocumentForRetention": (
     db: Db,
     providerId: string,

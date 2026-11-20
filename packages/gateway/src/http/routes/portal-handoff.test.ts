@@ -6,6 +6,8 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { SCOPE_ADMIN, SCOPE_READ, type Scope } from "@omnesis/types";
 import { createDatabase } from "../../db.js";
@@ -24,8 +26,7 @@ let origin: string | undefined;
 let stepUp: boolean;
 
 beforeEach(() => {
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
-  dbPath = `/tmp/omnesis-test-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
   db = createDatabase(dbPath);
   origin = ORIGIN;
   stepUp = false;
@@ -231,11 +232,15 @@ test("a handoff store keeps a few at a time and spends each on any attempt", () 
   expect(handoffs.take(issued[18]!.code)).toBeUndefined();
 });
 
-test("without the cloud relay opt-in, neither route exists", async () => {
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", undefined);
-  const app = gateway();
-  expect((await redeem(app, "u".repeat(43))).status).toBe(404);
+test("a gateway that never linked an account mints nothing and signs no one in", async () => {
+  const app = createServer(db, dbPath);
+  const home = await signIn(app);
+  const refused = await mint(app, home);
+  expect(refused.status).toBe(409);
+  expect(JSON.stringify(await refused.json())).toContain("PORTAL_HANDOFF_UNAVAILABLE");
+  expect((await redeem(app, "u".repeat(43))).status).toBe(401);
+  // Signed out, nothing is minted at all.
   expect((await app.request("/portal/api/handoff", { method: "POST", body: "{}" })).status).toBe(
-    404,
+    401,
   );
 });

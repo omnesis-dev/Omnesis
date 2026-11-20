@@ -270,6 +270,7 @@ export function agentSetups(oauth, { harnessAddress, pairingCode, relay, tailsca
         value: `Please connect to Omnesis using my MCP server at ${oauth.resource} and authenticate with OAuth.`,
       }],
       note: [],
+      needsPublicAddress: "Grok connects from xAI's servers",
       docs: `${DOCS}/connect#grok-bot`,
     },
     {

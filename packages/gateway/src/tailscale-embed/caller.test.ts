@@ -81,6 +81,18 @@ describe("tailnetCallerAddress", () => {
 });
 
 describe("publicPathAllowed", () => {
+  test("allows startup progress without exposing neighboring discovery paths", () => {
+    expect(publicPathAllowed("/.well-known/omnesis-startup")).toBe(true);
+    for (const path of [
+      "/.well-known/omnesis-startup/",
+      "/.well-known/omnesis-startup/details",
+      "/.well-known/omnesis-startup-private",
+      "/.well-known/private",
+    ]) {
+      expect(publicPathAllowed(path), path).toBe(false);
+    }
+  });
+
   test("allows exactly what agents need to connect and sign in", () => {
     for (const path of [
       "/mcp",

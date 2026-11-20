@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 
 const native = vi.hoisted(() => ({
   load: vi.fn(),
+  reset: vi.fn(),
   view: vi.fn(),
   search: vi.fn(),
   dimensions: vi.fn(),
@@ -15,6 +16,7 @@ vi.mock("usearch", () => ({
   default: {
     Index: class {
       load = native.load;
+      reset = native.reset;
       view = native.view;
       search = native.search;
       dimensions = native.dimensions;

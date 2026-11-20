@@ -1857,7 +1857,7 @@ public final class AppStore {
         while let pending = pairingCoord.pendingRevocation() {
             let session: URLSessionLike
             if let revocationSession { session = revocationSession } else {
-                let resolved = OmnesisURLSession.revocationSession(
+                let resolved = OmnesisURLSession.resolveSession(
                     tlsMode: pending.tlsMode.rawValue,
                     fingerprint: pending.fingerprint,
                     host: pending.url.host,

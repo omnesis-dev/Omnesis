@@ -240,23 +240,11 @@ class MainActivityLaunchReplayTest {
             .apply { deviceId?.let { putExtra(MainActivity.EXTRA_DEVICES_DEVICE_ID, it) } }
 
     @Test
-    fun a_devices_notification_tap_opens_devices_once_and_pairing_requests_only_with_cloud_connectivity() {
+    fun a_devices_notification_tap_opens_devices_once_and_pairing_requests_once() {
         val first = devicesTap(stamp = 1_000, deviceId = "device-joined")
         val activity = created(first)
-        // A device that joined opens Devices in every build: without the cloud relay, only a
-        // Tailscale join sends that tap.
         assertEquals("device-joined", notifications.devices.value?.deviceId)
         notifications.consumeDevices()
-        if (!BuildConfig.CLOUD_RELAY_ENABLED) {
-            // As on a build without the feature: a pairing request opens nothing and the intent is left as it came.
-            activity.newIntent(devicesTap(stamp = 2_000, pairingRequests = true))
-            assertNull(notifications.pairingRequests.value)
-            assertNull(notifications.devices.value)
-            assertEquals(MainActivity.ACTION_DEVICES, activity.get().intent.action)
-            activity.killedAndRebuiltWith(first)
-            assertNull(notifications.devices.value)
-            return
-        }
         activity.newIntent(devicesTap(stamp = 2_000, pairingRequests = true))
         assertNotNull(notifications.pairingRequests.value)
         assertNull(notifications.devices.value)

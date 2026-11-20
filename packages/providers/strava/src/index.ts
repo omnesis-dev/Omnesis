@@ -10,6 +10,7 @@ import {
   type BrokerCredentialResult,
 } from "@omnesis/core";
 import { defineProvider, emptySync, readConnectionState } from "@omnesis/source-sdk";
+import { stravaId, type StravaId } from "./ids.js";
 import {
   authenticate as stravaAuthenticate,
   authFlow as stravaAuthFlow,
@@ -33,13 +34,18 @@ export { stravaCredentialsSpec } from "./credentials-spec.js";
 
 /**
  * The athlete a Strava payload names — the `athlete` of a token response, or
- * `GET /athlete` — as the sign-in here records one: its numeric id, and the
+ * `GET /athlete` — as the sign-in here records one: its exact id, and the
  * first and last name joined for display.
  */
-function athleteIdentity(value: unknown): { id: number; name?: string } | undefined {
+function athleteIdentity(value: unknown): { id: StravaId; name?: string } | undefined {
   if (!value || typeof value !== "object") return undefined;
-  const { id, firstname, lastname } = value as Record<string, unknown>;
-  if (typeof id !== "number" || !Number.isSafeInteger(id) || id <= 0) return undefined;
+  const { id: numericId, id_str, firstname, lastname } = value as Record<string, unknown>;
+  let id: StravaId;
+  try {
+    id = stravaId(id_str ?? numericId);
+  } catch {
+    return undefined;
+  }
   const name = [firstname, lastname]
     .filter((s): s is string => typeof s === "string" && s !== "")
     .join(" ")
@@ -56,10 +62,10 @@ export function verifyStravaAthlete(
   accountId: string,
 ): (purpose: string, result: BrokerCredentialResult) => void {
   return (_purpose, { credential }) => {
-    const named = athleteIdentity(
-      credential.type === "oauth2" ? credential.raw.athlete : undefined,
-    );
-    if (named && named.id !== Number(accountId)) {
+    const raw = credential.type === "oauth2" ? credential.raw.athlete : undefined;
+    const named = athleteIdentity(raw);
+    const hasId = raw !== null && typeof raw === "object" && ("id" in raw || "id_str" in raw);
+    if (hasId && (!named || String(named.id) !== accountId)) {
       throw new BrokerCredentialError(
         "identity-changed",
         `The broker's Strava connection now belongs to another athlete, not ${accountId}; link it again with \`omnesis broker link\``,
@@ -126,10 +132,7 @@ export default defineProvider<StravaContext>({
     const configDir = host?.configDir;
     if (hasBrokerBinding("strava", accountId, configDir)) {
       // The account id is the athlete id, as the sign-in here stores it.
-      const athleteId = Number(accountId);
-      if (!Number.isSafeInteger(athleteId) || athleteId <= 0) {
-        throw new Error(`Strava account ${accountId} is not an athlete id`);
-      }
+      const athleteId = stravaId(accountId);
       const credentials = await BrokeredCredentials.load("strava", accountId, configDir, {
         verify: verifyStravaAthlete(accountId),
       });

@@ -2,15 +2,15 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /** Portable check entrypoint; shared-host admission is an optional local adapter. */
-import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { availableParallelism, homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseCLI } from "vitest/node";
-import { waitForChild } from "./lib/check-process.mjs";
+import { runCheckCommand } from "./lib/check-process.mjs";
 import { progressArgs, progressEnvironment } from "./lib/check-progress.mjs";
 import { assertTreeFingerprint } from "./nx/tree-state.mjs";
+import { resolveNpmInvocation } from "../packages/core/src/node-command.ts";
 
 export function schedulerCommand(env = process.env) {
   if (env.OMNESIS_TEST_SCHEDULER === "0") return null;
@@ -80,10 +80,13 @@ export function testProcessEnv(env = process.env) {
   return child;
 }
 
-function run(command, args, env) {
-  return waitForChild(
-    spawn(command, args, { stdio: "inherit", env, detached: process.platform !== "win32" }),
-  );
+async function run(command, args, env) {
+  if (command === "npm") {
+    const invocation = await resolveNpmInvocation(args, { env });
+    command = invocation.command;
+    args = invocation.args;
+  }
+  return runCheckCommand(command, args, { env });
 }
 
 export function focusedUnit(args) {
@@ -229,10 +232,19 @@ export async function main(argv = process.argv.slice(2)) {
       ) {
         throw new Error(`Unit --maxWorkers must be between 1 and ${workers} for this invocation`);
       }
-      // The scripts project includes release staging tests against workspace
-      // dist output. Build inside the admitted job, before Vitest can start.
+      // Broad units and release staging tests require workspace dist output.
+      // Build inside the admitted job, before Vitest can start.
       code = 0;
-      if (kind === "unit" && filter.some((path) => resolve(path) === resolve("scripts"))) {
+      const compiledInputs = [
+        "scripts",
+        "scripts/release",
+        "scripts/release/stage-packages.test.mjs",
+        "scripts/release/stage-runtime.test.mjs",
+      ].map((path) => resolve(path));
+      if (
+        kind === "unit" &&
+        (filter.length === 0 || filter.some((path) => compiledInputs.includes(resolve(path))))
+      ) {
         code = await run(process.execPath, [nodeModule("typescript/bin/tsc"), "--build"], env);
       }
       const selection =
@@ -253,7 +265,12 @@ export async function main(argv = process.argv.slice(2)) {
           ],
           { ...env, OMNESIS_LOG_LEVEL: env.OMNESIS_LOG_LEVEL ?? "warn" },
         );
-    } else if (kind === "types-tests") code = await run("npm", ["run", "typecheck:tests:raw"], env);
+    } else if (kind === "types-tests")
+      code = await run(
+        process.execPath,
+        [join(import.meta.dirname, "typecheck-tests.mjs"), ...args],
+        env,
+      );
     else if (kind === "deadcode")
       code = await run(process.execPath, [nodeModule("knip/bin/knip.js"), ...args], env);
     else if (kind === "e2e")

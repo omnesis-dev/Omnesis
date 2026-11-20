@@ -21,7 +21,7 @@
  *   - honors idle offload by forwarding `offloadSeconds` to the worker, where
  *     smart-whisper unloads the model weights after idle while the (cheap) JS
  *     process stays warm — so the next clip skips the ~50s model reload;
- *   - `dispose()` kills the worker.
+ *   - `dispose()` closes admission, cancels decoding and joins every owned worker.
  *
  * Audio never leaves the machine: it's decoded to 16 kHz mono f32 PCM in-process
  * (ffmpeg-static via audio-decode.ts) and only the PCM is shipped to the worker.
@@ -34,17 +34,20 @@
  * without either a real child process or the native deps.
  */
 
-import { spawn } from "node:child_process";
-import { createLogger, resolveSubprocessEntry } from "@omnesis/core";
+import { createLogger, ownedProcessCleanupReceipt } from "@omnesis/core";
 import { PCM_SAMPLE_RATE, decodeToPcm16kMono, type AudioDecoder } from "./audio-decode.js";
 import {
-  FrameDecoder,
   encodeFrame,
   type WhisperRequestHeader,
   type WhisperWorkerMessage,
 } from "./whisper-worker-protocol.js";
 import { adaptTranscriptionVocabulary } from "./vocabulary-adapter.js";
 import { transcribeInChunks, type ChunkTranscript } from "./chunks.js";
+import {
+  defaultWhisperSpawner,
+  type WhisperWorkerProcess,
+  type WhisperWorkerSpawner,
+} from "./whisper-worker-process.js";
 import type { TranscribeCapability, TranscriptionResult } from "@omnesis/core";
 
 const log = createLogger("gateway:transcribe:whisper");
@@ -54,69 +57,12 @@ const SMART_WHISPER_SPECIFIER = "smart-whisper";
 /** Idle seconds before smart-whisper offloads the model from memory. */
 const DEFAULT_OFFLOAD_SECONDS = 300;
 
-/** A spawned worker process — minimal surface the supervisor drives. */
-export interface WhisperWorkerProcess {
-  /** Write a framed request to the worker's stdin. */
-  write(frame: Buffer): void;
-  /** Force-kill the worker. */
-  kill(): void;
-  /** Register a handler for each decoded worker→parent message. */
-  onMessage(handler: (msg: WhisperWorkerMessage) => void): void;
-  /** Register a handler for worker death (exit code/signal or spawn error). */
-  onExit(
-    handler: (info: { code: number | null; signal: string | null; error?: Error }) => void,
-  ): void;
-}
-
-export interface SpawnWhisperWorkerArgs {
-  modelPath: string;
-  gpu: boolean;
-  offloadSeconds: number;
-}
-
-/** Spawn a worker process. Injectable so tests run without a real subprocess. */
-export type WhisperWorkerSpawner = (args: SpawnWhisperWorkerArgs) => WhisperWorkerProcess;
-
-/**
- * Default spawner: launch `whisper-worker.ts` via `resolveSubprocessEntry` so
- * it works under tsx (dev) and compiled (published), and frame its stdio.
- */
-export const defaultWhisperSpawner: WhisperWorkerSpawner = (args) => {
-  const entry = resolveSubprocessEntry("./whisper-worker.ts", import.meta.url);
-  const proc = spawn(
-    entry.command,
-    [...entry.args, args.modelPath, args.gpu ? "1" : "0", String(args.offloadSeconds)],
-    { stdio: ["pipe", "pipe", "pipe"], cwd: import.meta.dirname },
-  );
-  // Surface worker stderr (its logger) into the gateway log at debug.
-  proc.stderr?.setEncoding("utf8");
-  proc.stderr?.on("data", (chunk: string) => {
-    const trimmed = chunk.trimEnd();
-    if (trimmed) log.debug(`worker: ${trimmed}`);
-  });
-  // EPIPE on stdin when the child has already died — exit/error paths report it.
-  proc.stdin?.on("error", () => {});
-
-  let messageHandler: ((msg: WhisperWorkerMessage) => void) | null = null;
-  const decoder = new FrameDecoder((header) => {
-    messageHandler?.(header as WhisperWorkerMessage);
-  });
-  proc.stdout?.on("data", (chunk: Buffer) => decoder.push(chunk));
-
-  return {
-    write: (frame) => proc.stdin?.write(frame),
-    kill: () => proc.kill("SIGKILL"),
-    onMessage: (handler) => {
-      messageHandler = handler;
-    },
-    onExit: (handler) => {
-      proc.on("exit", (code: number | null, signal: NodeJS.Signals | null) =>
-        handler({ code, signal }),
-      );
-      proc.on("error", (error: Error) => handler({ code: null, signal: null, error }));
-    },
-  };
-};
+export { defaultWhisperSpawner } from "./whisper-worker-process.js";
+export type {
+  WhisperWorkerProcess,
+  SpawnWhisperWorkerArgs,
+  WhisperWorkerSpawner,
+} from "./whisper-worker-process.js";
 
 export type WhisperModuleLoader = () => Promise<{ Whisper: unknown }>;
 
@@ -142,7 +88,8 @@ export async function whisperDepsAvailable(
   try {
     const mod = await loader();
     return typeof (mod as { Whisper?: unknown })?.Whisper === "function";
-  } catch {
+  } catch (error) {
+    if (ownedProcessCleanupReceipt(error)) throw error;
     return false;
   }
 }
@@ -171,9 +118,9 @@ export interface WhisperTranscriberOptions {
 }
 
 interface PendingRequest {
-  id: number;
+  worker: WhisperWorkerProcess;
   resolve: (r: ChunkTranscript) => void;
-  reject: (err: Error) => void;
+  reject: (err: unknown) => void;
   timer: ReturnType<typeof setTimeout>;
 }
 
@@ -184,16 +131,25 @@ export class WhisperTranscriber implements TranscribeCapability {
   private readonly modelPath: string;
   private readonly gpu: boolean;
   private readonly offloadSeconds: number;
-  /** Explicit timeout override; when undefined, derived per request from duration. */
   private readonly requestTimeoutMs: number | undefined;
   private readonly spawnWorker: WhisperWorkerSpawner;
   private readonly decodeAudio: AudioDecoder;
-
   private worker: WhisperWorkerProcess | null = null;
-  /** Resolves to the running worker once its `ready` frame arrives. */
+  private startingWorker: WhisperWorkerProcess | null = null;
   private starting: Promise<WhisperWorkerProcess> | null = null;
+  private readonly owners = new Set<WhisperWorkerProcess>();
+  private readonly retiring = new Map<WhisperWorkerProcess, Promise<void>>();
+  private readonly startupRejects = new Map<WhisperWorkerProcess, (error: unknown) => void>();
+  private readonly accepted = new Set<Promise<TranscriptionResult>>();
+  private readonly shutdown = new AbortController();
+  private closed = false;
+  private closing: Promise<void> | undefined;
+  private terminalFailure: unknown;
+  private readonly pendingCleanup = Object.assign(new Error("Whisper work remains owned"), {
+    cleanupFailure: undefined,
+    cleanupPending: true as const,
+  });
   private nextId = 1;
-  /** In-flight requests keyed by id, so a worker death rejects them all. */
   private readonly pending = new Map<number, PendingRequest>();
 
   constructor(opts: WhisperTranscriberOptions) {
@@ -204,86 +160,150 @@ export class WhisperTranscriber implements TranscribeCapability {
     this.offloadSeconds = opts.offloadSeconds ?? DEFAULT_OFFLOAD_SECONDS;
     this.requestTimeoutMs = opts.requestTimeoutMs;
     this.spawnWorker = opts.spawnWorker ?? defaultWhisperSpawner;
-    this.decodeAudio = opts.decodeAudio ?? ((bytes) => decodeToPcm16kMono(bytes));
+    this.decodeAudio =
+      opts.decodeAudio ??
+      ((bytes, _mime, options) => decodeToPcm16kMono(bytes, { signal: options?.signal }));
   }
 
-  /** Lazily spawn the worker and wait for its `ready`; reuse it thereafter. */
-  private async ensureWorker(): Promise<WhisperWorkerProcess> {
-    if (this.worker) return this.worker;
+  cleanupFailure(): unknown {
+    return (
+      this.terminalFailure ??
+      (this.owners.size || this.starting || this.accepted.size ? this.pendingCleanup : undefined)
+    );
+  }
+
+  private assertOpen(): void {
+    if (this.terminalFailure) throw this.terminalFailure;
+    if (this.closed) throw new Error("Whisper transcriber disposed");
+  }
+
+  private retainFailure(error: unknown): void {
+    const receipt = ownedProcessCleanupReceipt(error);
+    if (receipt)
+      this.terminalFailure ??= Object.assign(
+        new Error("Whisper cleanup is unconfirmed", { cause: error }),
+        { cleanupFailure: receipt.failure },
+      );
+  }
+
+  /** Replacements wait for physical closure, including a worker still loading its model. */
+  private async ensureWorker(signal: AbortSignal): Promise<WhisperWorkerProcess> {
+    this.assertOpen();
+    signal.throwIfAborted();
+    if (this.retiring.size) await Promise.all(this.retiring.values());
+    this.assertOpen();
+    signal.throwIfAborted();
     if (this.starting) return this.starting;
-    this.starting = new Promise<WhisperWorkerProcess>((resolve, reject) => {
+    if (this.worker) return this.worker;
+    const starting = new Promise<WhisperWorkerProcess>((resolve, reject) => {
       const proc = this.spawnWorker({
         modelPath: this.modelPath,
         gpu: this.gpu,
         offloadSeconds: this.offloadSeconds,
       });
-      let ready = false;
+      this.startingWorker = proc;
+      this.owners.add(proc);
+      this.startupRejects.set(proc, reject);
       proc.onMessage((msg) => {
+        if (this.closed || this.retiring.has(proc) || !this.owners.has(proc)) return;
         if (msg.type === "ready") {
-          ready = true;
           this.worker = proc;
+          this.startupRejects.delete(proc);
           log.info(`Whisper worker ready for ${this.modelId} (gpu=${this.gpu})`);
           resolve(proc);
-          return;
-        }
-        this.onWorkerMessage(msg);
+        } else this.onWorkerMessage(proc, msg);
       });
       proc.onExit((info) => {
-        // A death before `ready` fails the spawn; a death after fails whatever
-        // is in flight. Either way the worker is gone — drop it and respawn next.
-        this.handleWorkerDeath(proc, info);
-        if (!ready) {
-          const why = info.error
-            ? info.error.message
-            : `worker exited ${info.signal ? `with signal ${info.signal}` : `code ${info.code}`}`;
-          reject(new Error(`Whisper worker failed to start: ${why}`));
-        }
+        const cause =
+          info.error ??
+          new Error(
+            `Whisper worker died: ${info.signal ? `signal ${info.signal}` : `code ${info.code}`}`,
+          );
+        const reason = this.startupRejects.has(proc)
+          ? new Error(`Whisper worker failed to start: ${cause.message}`, { cause })
+          : cause;
+        this.retainFailure(reason);
+        if (this.owners.has(proc)) void this.retire(proc, reason).catch(() => {});
+      });
+      void proc.joined.catch((error: unknown) => {
+        this.retainFailure(error);
+        if (this.owners.has(proc)) void this.retire(proc, error).catch(() => {});
       });
     });
+    this.starting = starting;
     try {
-      return await this.starting;
+      return await starting;
     } finally {
-      this.starting = null;
+      if (this.starting === starting) this.starting = null;
     }
   }
 
-  /** Route a result/error frame to its pending request. */
-  private onWorkerMessage(msg: WhisperWorkerMessage): void {
+  private onWorkerMessage(proc: WhisperWorkerProcess, msg: WhisperWorkerMessage): void {
     if (msg.type === "ready") return;
     const pending = this.pending.get(msg.id);
-    if (!pending) return;
+    if (!pending || pending.worker !== proc) return;
     this.pending.delete(msg.id);
     clearTimeout(pending.timer);
-    if (msg.type === "result") {
+    if (msg.type === "result")
       pending.resolve({ text: msg.text, ...(msg.language ? { language: msg.language } : {}) });
-    } else {
-      pending.reject(new Error(msg.error));
-    }
+    else pending.reject(new Error(msg.error));
   }
 
-  /**
-   * Mark the worker dead and reject every in-flight request. The next
-   * transcribe respawns it (reloading the model). A segfault lands here as a
-   * signal exit; a clean idle/dispose exit also lands here with no pending work.
-   */
-  private handleWorkerDeath(
-    proc: WhisperWorkerProcess,
-    info: { code: number | null; signal: string | null; error?: Error },
-  ): void {
+  /** Kill requests do not prove closure; retain every owner and its pending calls until joined. */
+  private retire(proc: WhisperWorkerProcess, reason: unknown): Promise<void> {
+    this.retainFailure(reason);
+    const existing = this.retiring.get(proc);
+    if (existing) return existing;
     if (this.worker === proc) this.worker = null;
-    const why = info.error
-      ? info.error.message
-      : info.signal
-        ? `signal ${info.signal}`
-        : `code ${info.code}`;
-    if (this.pending.size > 0) {
-      log.warn(`Whisper worker died (${why}) with ${this.pending.size} in-flight — will respawn`);
-    }
-    for (const pending of this.pending.values()) {
-      clearTimeout(pending.timer);
-      pending.reject(new Error(`Whisper worker died: ${why}`));
-    }
-    this.pending.clear();
+    for (const pending of this.pending.values())
+      if (pending.worker === proc) clearTimeout(pending.timer);
+    const stopping = (async () => {
+      // Publish the retained retirement before kill can synchronously report an exit.
+      await Promise.resolve();
+      const outcomes = await Promise.allSettled([
+        Promise.resolve().then(() => proc.kill()),
+        proc.joined,
+      ]);
+      const errors = outcomes.flatMap((result) =>
+        result.status === "rejected" ? [result.reason as unknown] : [],
+      );
+      let failure: unknown = errors.length
+        ? new AggregateError(errors, "Whisper worker stop failed", {
+            cause: errors.find((error) => ownedProcessCleanupReceipt(error)),
+          })
+        : undefined;
+      const joined = outcomes[1]!;
+      if (joined.status === "rejected" || !proc.joinedConfirmed) {
+        const receipt = ownedProcessCleanupReceipt(failure);
+        const cleanupFailure = receipt
+          ? receipt.failure
+          : joined.status === "rejected"
+            ? (joined.reason as unknown)
+            : failure;
+        failure = Object.assign(
+          new Error("Whisper worker closure is unconfirmed", { cause: failure }),
+          { cleanupFailure },
+        );
+      }
+      this.retainFailure(failure);
+      failure ??= this.terminalFailure;
+      this.startupRejects.get(proc)?.(failure ?? reason);
+      this.startupRejects.delete(proc);
+      for (const [id, pending] of this.pending)
+        if (pending.worker === proc) {
+          this.pending.delete(id);
+          pending.reject(failure ?? reason);
+        }
+      if (this.startingWorker === proc) this.startingWorker = null;
+      if (proc.joinedConfirmed && !ownedProcessCleanupReceipt(failure)) {
+        this.owners.delete(proc);
+        this.retiring.delete(proc);
+      }
+      if (failure) throw failure;
+    })();
+    this.retiring.set(proc, stopping);
+    void stopping.catch(() => {});
+    return stopping;
   }
 
   async transcribe(
@@ -291,16 +311,38 @@ export class WhisperTranscriber implements TranscribeCapability {
     mimeType: string,
     opts?: Parameters<TranscribeCapability["transcribe"]>[2],
   ): Promise<TranscriptionResult> {
-    const pcm = await this.decodeAudio(audio, mimeType);
+    this.assertOpen();
+    const signal = opts?.signal
+      ? AbortSignal.any([opts.signal, this.shutdown.signal])
+      : this.shutdown.signal;
+    const work = this.performTranscription(audio, mimeType, opts, signal);
+    this.accepted.add(work);
+    try {
+      return await work;
+    } catch (error) {
+      this.retainFailure(error);
+      throw error;
+    } finally {
+      this.accepted.delete(work);
+    }
+  }
+
+  private async performTranscription(
+    audio: Uint8Array,
+    mimeType: string,
+    opts: Parameters<TranscribeCapability["transcribe"]>[2],
+    signal: AbortSignal,
+  ): Promise<TranscriptionResult> {
+    signal.throwIfAborted();
+    const pcm = await this.decodeAudio(audio, mimeType, { signal });
+    this.assertOpen();
+    signal.throwIfAborted();
     const vocabularyHint = opts?.vocabulary
       ? adaptTranscriptionVocabulary(opts.vocabulary, {
           runtime: this.vocabularyRuntime,
           maxPromptTokens: opts.maxPromptTokens,
         })
       : undefined;
-    // Budget per chunk = explicit override (tests) or a duration-scaled value
-    // that covers a cold reload plus the inference itself — so a long clip on
-    // CPU isn't killed mid-transcribe — raised to the caller's `minTimeoutMs`.
     const { text, language } = await transcribeInChunks(
       pcm,
       { minTimeoutMs: opts?.minTimeoutMs },
@@ -310,84 +352,84 @@ export class WhisperTranscriber implements TranscribeCapability {
           opts?.language ?? "auto",
           vocabularyHint,
           this.requestTimeoutMs ?? ms,
-          opts?.signal,
+          signal,
         ),
     );
     return { text, language, durationSec: pcm.length / PCM_SAMPLE_RATE };
   }
 
-  /** Send one chunk to the worker and wait for its result, within `timeoutMs`. */
+  /** A chunk's deadline covers cold model loading as well as inference. */
   private async request(
     pcm: Float32Array,
     language: string,
     vocabularyHint: WhisperRequestHeader["vocabularyHint"],
     timeoutMs: number,
-    signal: AbortSignal | undefined,
+    caller: AbortSignal,
   ): Promise<ChunkTranscript> {
-    let worker: WhisperWorkerProcess;
-    try {
-      worker = await this.ensureWorker();
-    } catch (err) {
-      // Spawn/model-load failure — let it propagate as a thrown error; the
-      // service translates it to null and leaves the note to retry.
-      throw err instanceof Error ? err : new Error(String(err));
-    }
-
-    const id = this.nextId++;
-    const header: WhisperRequestHeader = {
-      type: "request",
-      id,
-      pcmBytes: pcm.byteLength,
-      language,
-      ...(vocabularyHint ? { vocabularyHint } : {}),
+    const deadline = new AbortController();
+    const signal = AbortSignal.any([caller, deadline.signal]);
+    const timer = setTimeout(
+      () => deadline.abort(new Error(`Whisper transcription timed out after ${timeoutMs}ms`)),
+      timeoutMs,
+    );
+    let worker: WhisperWorkerProcess | undefined;
+    const onAbort = () => {
+      const owner = worker ?? this.startingWorker ?? this.worker;
+      if (owner) void this.retire(owner, signal.reason).catch(() => {});
     };
-    signal?.throwIfAborted();
-    return new Promise<ChunkTranscript>((resolve, reject) => {
-      // whisper.cpp cannot be interrupted mid-call, so giving a request up
-      // means killing the worker; it respawns on the next call. Nothing else
-      // is in flight to lose, since rejecting removed this request first.
-      const giveUp = (reason: Error, why: string) => {
-        if (!this.pending.delete(id)) return;
-        log.warn(`Whisper request ${id} ${why} — killing worker`);
-        worker.kill();
-        reject(reason);
-      };
-      const timer = setTimeout(
-        () =>
-          giveUp(
-            new Error(`Whisper transcription timed out after ${timeoutMs}ms`),
-            `timed out after ${timeoutMs}ms`,
-          ),
-        timeoutMs,
-      );
-      const onAbort = () => {
-        clearTimeout(timer);
-        giveUp(
-          signal!.reason instanceof Error ? signal!.reason : new Error("Transcription aborted"),
-          "lost its caller",
-        );
-      };
-      signal?.addEventListener("abort", onAbort, { once: true });
-      const settle =
-        <T>(fn: (value: T) => void) =>
-        (value: T) => {
-          signal?.removeEventListener("abort", onAbort);
-          fn(value);
-        };
-      this.pending.set(id, { id, resolve: settle(resolve), reject: settle(reject), timer });
-      worker.write(encodeFrame(header, pcm));
-    });
+    signal.addEventListener("abort", onAbort, { once: true });
+    try {
+      worker = await this.ensureWorker(signal);
+      signal.throwIfAborted();
+      this.assertOpen();
+      const id = this.nextId++;
+      return await new Promise<ChunkTranscript>((resolve, reject) => {
+        this.pending.set(id, { worker: worker!, resolve, reject, timer });
+        try {
+          worker!.write(
+            encodeFrame(
+              {
+                type: "request",
+                id,
+                pcmBytes: pcm.byteLength,
+                language,
+                ...(vocabularyHint ? { vocabularyHint } : {}),
+              } satisfies WhisperRequestHeader,
+              pcm,
+            ),
+          );
+        } catch (error) {
+          void this.retire(worker!, error).catch(() => {});
+        }
+      });
+    } catch (error) {
+      const owner = worker ?? this.startingWorker ?? this.worker;
+      if (signal.aborted && owner) await this.retire(owner, signal.reason);
+      throw error;
+    } finally {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", onAbort);
+    }
   }
 
-  async dispose(): Promise<void> {
-    const worker = this.worker;
-    this.worker = null;
-    // Fail anything still queued and stop their timers before tearing down.
-    for (const pending of this.pending.values()) {
-      clearTimeout(pending.timer);
-      pending.reject(new Error("Whisper transcriber disposed"));
-    }
-    this.pending.clear();
-    if (worker) worker.kill();
+  dispose(): Promise<void> {
+    if (this.closing) return this.closing;
+    this.closed = true;
+    const reason = new Error("Whisper transcriber disposed");
+    this.shutdown.abort(reason);
+    const stops = [...this.owners].map((proc) => this.retire(proc, reason));
+    this.closing = (async () => {
+      const stopped = await Promise.allSettled(stops);
+      await this.starting?.catch(() => {});
+      await Promise.allSettled(this.accepted);
+      const remaining = await Promise.allSettled(this.retiring.values());
+      if (this.terminalFailure) throw this.terminalFailure;
+      const failures = [...stopped, ...remaining].flatMap((result) =>
+        result.status === "rejected" ? [result.reason as unknown] : [],
+      );
+      if (failures.length) throw new AggregateError(failures, "Whisper disposal failed");
+    })();
+    void this.closing.catch(() => {});
+    return this.closing;
   }
 }

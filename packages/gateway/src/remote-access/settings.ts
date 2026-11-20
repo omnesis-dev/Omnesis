@@ -5,9 +5,10 @@
  * The owner's remote-access choices that belong to no single way in, kept in
  * `<config>/remote-access.json`: whether the guided setup was finished, which
  * way in a device tries first when both the gateway's own Tailscale device and
- * the Omnesis relay can answer, and which addresses away from home answer
- * MCP. Nothing is written until the owner makes a choice, so a gateway that
- * never opens the setup has no such file.
+ * the Omnesis relay can answer, which addresses away from home answer MCP,
+ * and what Tailscale on this computer lets the Internet reach. Nothing is
+ * written until the owner makes a choice, so a gateway that never opens the
+ * setup has no such file.
  */
 
 import { existsSync, readFileSync } from "node:fs";
@@ -25,8 +26,8 @@ export type RemoteAccessFirst = z.infer<typeof remoteAccessFirstSchema>;
  * Whether MCP answers on each address away from home (see
  * mcp-addresses.ts). Only a choice the owner made is stored: an address
  * missing here answers MCP, so a file written before this choice existed, or
- * none at all, leaves every address on. The public Tailscale address is the
- * Tailscale device's own setting and is not kept here.
+ * none at all, leaves every address on. The public address of the gateway's
+ * own Tailscale device is that device's setting and is not kept here.
  */
 const mcpAddressChoicesSchema = z
   .object({
@@ -34,12 +35,25 @@ const mcpAddressChoicesSchema = z
     relay: z.boolean().optional(),
     /** The gateway's own Tailscale device, on the owner's Tailscale network. */
     tailnet: z.boolean().optional(),
-    /** Tailscale already on this computer, by the machine's MagicDNS name. */
-    host: z.boolean().optional(),
+    /**
+     * Tailscale already on this computer, by the machine's MagicDNS name: false for
+     * nowhere, "private" for the owner's Tailscale network only, "public" for the
+     * Internet too. Unset, or `true` as an earlier version wrote for "on", MCP answers
+     * wherever the address does (see host-access.ts).
+     */
+    host: z.union([z.boolean(), z.enum(["private", "public"])]).optional(),
     /** The address in `gateway.publicBaseUrl`. */
     domain: z.boolean().optional(),
   })
   .strict();
+
+/**
+ * Whether the gateway's own pages and device API answer requests that Tailscale
+ * on this computer forwards from the Internet through Funnel. Unset, they answer
+ * whenever Funnel is on (see host-access.ts).
+ */
+export const hostApiChoiceSchema = z.enum(["private", "public"]);
+export type HostApiChoice = z.infer<typeof hostApiChoiceSchema>;
 
 const remoteAccessSettingsSchema = z
   .object({
@@ -47,6 +61,7 @@ const remoteAccessSettingsSchema = z
     setupCompletedAt: z.string().datetime().nullable(),
     first: remoteAccessFirstSchema,
     mcp: mcpAddressChoicesSchema.optional(),
+    hostApi: hostApiChoiceSchema.optional(),
   })
   .strict();
 export type RemoteAccessSettings = z.infer<typeof remoteAccessSettingsSchema>;

@@ -60,7 +60,6 @@ import dev.omnesis.android.transport.dto.ModelCredentialEntry
 import dev.omnesis.android.transport.dto.ModelsOverview
 import dev.omnesis.android.transport.dto.ModelBehaviorValues
 import dev.omnesis.android.transport.dto.SaveModelBehaviorBody
-import dev.omnesis.android.transport.dto.NetworkIdentity
 import dev.omnesis.android.transport.dto.PairAddressesBody
 import dev.omnesis.android.transport.dto.PairingAddressPlan
 import dev.omnesis.android.transport.dto.OkResponse
@@ -139,7 +138,6 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
-import okhttp3.HttpUrl
 
 /**
  * Admin surface (sources, descriptors, sync status, devices) plus the mutating source
@@ -275,14 +273,6 @@ class AdminClient(private val http: GatewayHttp) : GatewayPairingApproving, Clou
     }
 
     /**
-     * The gateway's own origin (scheme + host + port). Used to build a pairing
-     * QR's `gatewayUrl` by swapping in a chosen network identity's host while
-     * preserving the real scheme + port — mirrors the portal's
-     * `swapHostForUrl(window.location.origin, …)`.
-     */
-    val gatewayOrigin: HttpUrl get() = http.baseUrl
-
-    /**
      * The source-descriptor registry that drives all generic, source-agnostic rendering:
      * the union across every online collector, so it is the same whether one host or
      * several are connected. (`admin/sources/descriptors` is one collector's registry
@@ -403,14 +393,6 @@ class AdminClient(private val http: GatewayHttp) : GatewayPairingApproving, Clou
      */
     suspend fun pairAddresses(pairingCode: String): PairingAddressPlan =
         http.postJson("admin/devices/pair-addresses", PairAddressesBody(pairingCode))
-
-    /**
-     * `GET /admin/network-identities` — the addresses this gateway is reachable
-     * at (LAN, mDNS, Tailscale). The pairing flow lets the user pick which one
-     * bakes into the QR's `gatewayUrl`.
-     */
-    suspend fun networkIdentities(): List<NetworkIdentity> =
-        http.getJson<Page<NetworkIdentity>>("admin/network-identities").items
 
     /** Per-source display metadata (icons/labels/colors), keyed by sourceId and type. */
     suspend fun sourceMeta(): Map<String, SourceMetaEntry> =

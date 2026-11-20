@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { mkdtemp, mkdir, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { ProviderId, SourceId } from "@omnesis/types";
@@ -224,6 +224,12 @@ const current: Record<string, unknown> = {
     snapshot: { ids: { documents: ["3", "7", "9"] } },
   },
   plaid: { phase: "transactions", transactionsCursor: "page-2", lastSnapshotDate: "2026-01-02" },
+  "plaud-recordings": {
+    known: { "rec-1": "0a1b2c3d4e5f6a7b" },
+    pending: [{ id: "rec-2", filename: "Weekly planning", start_time: 1_790_000_000_000 }],
+    lastSnapshotAt: timestamp,
+    snapshot: { ids: { recordings: ["rec-1", "rec-2"] } },
+  },
   "telegram-messages": { phase: "incremental", committedSeq: 42, storeId: "store-1" },
   "whatsapp-messages": {
     phase: "incremental",
@@ -347,6 +353,8 @@ const incompatible: Record<string, unknown> = {
   // A sweep in progress without what it has listed would end by vouching for
   // an empty archive.
   "paperless-documents": { phase: "snapshot", watermark: timestamp, pending: [7, 3] },
+  // A presence ledger without the sweep it belongs to would vouch for a stale listing.
+  "plaud-recordings": { known: {}, snapshot: { ids: { recordings: ["rec-1"] } } },
 };
 
 function options(id: string, version?: number): SourceConformanceOptions {
@@ -376,7 +384,12 @@ describe("registered provider contract conformance", () => {
       );
       if (!definition || definition.type !== "source" || !definition.create)
         throw new Error(`Missing factory for ${id}`);
-      const root = await mkdtemp(join(tmpdir(), "omnesis-conformance-"));
+      // Windows' OS temp directory is inside protected AppData. Use a fresh
+      // home child, as the provider's security fixtures do, without reading any
+      // existing operator directory or weakening the production boundary.
+      const root = await mkdtemp(
+        join(process.platform === "win32" ? homedir() : tmpdir(), "omnesis-conformance-"),
+      );
       let instance: SourceInstance | undefined;
       try {
         const configs: Record<string, Record<string, unknown>> = {

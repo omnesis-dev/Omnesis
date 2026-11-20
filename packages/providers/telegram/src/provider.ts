@@ -450,7 +450,7 @@ export class TelegramProvider {
             users,
             this.cutoffTs !== undefined && message.date < this.cutoffTs
               ? null
-              : extractMessage(message),
+              : extractMessage(message, this.chatPolicy),
             { id: message.id, date: message.date },
             isChatIncluded(chat, this.chatPolicy),
           );

@@ -277,9 +277,9 @@ struct OmnesisAccountWaiting: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Spacing.md) {
-            if CloudRelayPresentation.httpsURL(connect?.authorizeUrl) != nil {
+            if CloudRelayPresentation.connectBrowserURL(connect) != nil {
                 Button(action: onOpenSignIn) {
-                    Text("Open sign-in").frame(maxWidth: .infinity)
+                    Text(connect?.verification == nil ? "Open sign-in" : "Open security check").frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
@@ -384,7 +384,7 @@ struct OmnesisAccountCopyButton: View {
 @available(iOS 17.0, *)
 private func omnesisAccountPreview(_ status: CloudRelayStatus?, failure: String? = nil, loadError: Error? = nil) -> some View {
     NavigationStack {
-        OmnesisAccountView(model: OmnesisAccountModel(enabled: true, status: status, failure: failure, loadError: loadError), client: nil)
+        OmnesisAccountView(model: OmnesisAccountModel(status: status, failure: failure, loadError: loadError), client: nil)
     }
 }
 
@@ -411,6 +411,11 @@ private func omnesisAccountPreview(_ status: CloudRelayStatus?, failure: String?
 @available(iOS 17.0, *)
 #Preview("Omnesis account — connected") {
     omnesisAccountPreview(PreviewMocks.cloudRelayConnected)
+}
+
+@available(iOS 17.0, *)
+#Preview("Omnesis account — security check") {
+    omnesisAccountPreview(PreviewMocks.cloudRelayVerification)
 }
 
 @available(iOS 17.0, *)

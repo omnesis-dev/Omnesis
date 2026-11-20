@@ -37,7 +37,7 @@ import {
 import { openProtectedDatabase, inspectProtectedStore, type Db } from "./protected-store.js";
 import { EXTRACT_REVISION } from "./message-extractor.js";
 import { RENDER_REVISION } from "./normalizer.js";
-import { PENDING_DELETION_TTL_DAYS } from "./limits.js";
+import { EXPIRY_SKEW_S, PENDING_DELETION_TTL_DAYS } from "./limits.js";
 import {
   backoffStep,
   downloadRetryDelaySec,
@@ -124,6 +124,7 @@ CREATE TABLE IF NOT EXISTS messages (
   extract_rev INTEGER NOT NULL DEFAULT 0,
   media_extract_json TEXT,
   changed_at INTEGER,
+  expires_at INTEGER,
   PRIMARY KEY (chat_id, msg_id)
 );
 CREATE INDEX IF NOT EXISTS messages_by_chat_ts ON messages(chat_id, ts);
@@ -178,7 +179,16 @@ const ADDED_COLUMNS: ReadonlyArray<[table: string, column: string, decl: string]
   ["messages", "changed_at", "INTEGER"],
   ["dirty_days", "render_failures", "INTEGER NOT NULL DEFAULT 0"],
   ["dirty_days", "retry_at", "INTEGER"],
+  ["messages", "expires_at", "INTEGER"],
 ];
+
+/**
+ * Whether a kept self-destructing message's timer has run by `at` (Unix
+ * seconds), give or take the clock skew between this host and Telegram.
+ */
+function isExpired(expiresAt: number | null, at: number): boolean {
+  return expiresAt !== null && at >= expiresAt - EXPIRY_SKEW_S;
+}
 
 /** The longest a day whose render keeps failing waits before it is tried again. */
 const RENDER_RETRY_MAX_S = 6 * 3600;
@@ -714,7 +724,8 @@ export class TelegramArchive {
 
   /**
    * The next batch of a presence check: ids of recent, surviving messages
-   * past `afterId`, in id order.
+   * past `afterId`, in id order. A kept self-destructing message whose timer
+   * has run is left out: Telegram no longer has it, and that is not news.
    */
   presenceBatch(chatId: number, sinceTs: number, afterId: number, limit: number): number[] {
     return (
@@ -722,9 +733,10 @@ export class TelegramArchive {
         .prepare(
           `SELECT msg_id FROM messages
            WHERE chat_id = ? AND deleted = 0 AND ts > ? AND msg_id > ?
+             AND (expires_at IS NULL OR expires_at > ?)
            ORDER BY msg_id ASC LIMIT ?`,
         )
-        .all(chatId, sinceTs, afterId, limit) as { msg_id: number }[]
+        .all(chatId, sinceTs, afterId, this.now(), limit) as { msg_id: number }[]
     ).map((r) => r.msg_id);
   }
 
@@ -836,11 +848,19 @@ export class TelegramArchive {
       .run(this.now() - PENDING_DELETION_TTL_DAYS * 86_400);
   }
 
+  /**
+   * Delete one archived message, unless it is a kept self-destructing message
+   * whose timer has run: Telegram reports that expiry as an ordinary deletion,
+   * and the operator chose to keep such messages past it. A deletion that
+   * comes before the timer was made by hand and is applied.
+   */
   private deleteOne(box: string, msgId: number, chatId: number): boolean {
     const row = this.db
-      .prepare("SELECT ts FROM messages WHERE chat_id = ? AND msg_id = ? AND deleted = 0")
-      .get(chatId, msgId) as { ts: number } | undefined;
-    if (!row) return false;
+      .prepare(
+        "SELECT ts, expires_at FROM messages WHERE chat_id = ? AND msg_id = ? AND deleted = 0",
+      )
+      .get(chatId, msgId) as { ts: number; expires_at: number | null } | undefined;
+    if (!row || isExpired(row.expires_at, this.now())) return false;
     this.db
       .prepare(
         "UPDATE messages SET deleted = 1, deleted_at = ?, changed_at = ? WHERE chat_id = ? AND msg_id = ? AND box = ?",
@@ -868,7 +888,8 @@ export class TelegramArchive {
         .prepare("SELECT observed_at FROM pending_deletions WHERE box = ? AND msg_id = ?")
         .get(m.box, m.msgId) as { observed_at: number } | undefined;
       if (pending) {
-        deletedAt = pending.observed_at;
+        // An expiry the operator keeps past is not a deletion (`deleteOne`).
+        if (!isExpired(m.expiresAt ?? null, pending.observed_at)) deletedAt = pending.observed_at;
         this.db
           .prepare("DELETE FROM pending_deletions WHERE box = ? AND msg_id = ?")
           .run(m.box, m.msgId);
@@ -878,8 +899,8 @@ export class TelegramArchive {
       .prepare(
         `INSERT INTO messages (chat_id, msg_id, box, ts, edit_ts, sender_id, sender_name, outgoing,
            text, reply_to_id, topic_id, forward_from, grouped_id, service, media_json,
-           deleted, deleted_at, extract_rev, media_state, media_next_attempt)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           deleted, deleted_at, extract_rev, media_state, media_next_attempt, expires_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(chat_id, msg_id) DO UPDATE SET
            edit_ts = excluded.edit_ts, sender_id = excluded.sender_id,
            sender_name = excluded.sender_name, text = excluded.text,
@@ -914,6 +935,7 @@ export class TelegramArchive {
         EXTRACT_REVISION,
         enrols(m.media) ? "pending" : null,
         enrols(m.media) ? 0 : null,
+        m.expiresAt ?? null,
       );
     if (info.changes === 0 || deletedAt !== null) return false;
     // An edit that replaced the media starts its lifecycle again; a fresh
@@ -1746,12 +1768,18 @@ function displayName(u: Pick<TgUser, "firstName" | "lastName" | "username">): st
 }
 
 /** The doctor's view of both of an account's local stores. */
-export function inspectTelegramStores(
+export async function inspectTelegramStores(
   stateDir: string,
   configDir: string,
-): LocalStoreProbeResult[] {
+  signal?: AbortSignal,
+): Promise<LocalStoreProbeResult[]> {
   return [
-    inspectProtectedStore(join(stateDir, ARCHIVE_FILE), ARCHIVE_LABEL, configDir),
-    inspectProtectedStore(join(stateDir, "mtcute.db"), "Telegram connection cache", configDir),
+    await inspectProtectedStore(join(stateDir, ARCHIVE_FILE), ARCHIVE_LABEL, configDir, signal),
+    await inspectProtectedStore(
+      join(stateDir, "mtcute.db"),
+      "Telegram connection cache",
+      configDir,
+      signal,
+    ),
   ];
 }

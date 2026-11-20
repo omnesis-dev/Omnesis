@@ -9,6 +9,8 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { vi, afterEach, beforeEach, describe, expect, test } from "vitest";
 import { SCOPE_ADMIN, SCOPE_READ, ProviderId, SourceId, type Scope } from "@omnesis/types";
 import { setLabFlag } from "../../lab/store.js";
@@ -66,7 +68,7 @@ const action = (id: string, body: Record<string, unknown>) =>
 
 beforeEach(() => {
   clock.set(NOW);
-  dbPath = `/tmp/omnesis-test-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
   db = createDatabase(dbPath);
   vi.stubEnv("OMNESIS_EXPERIMENTAL", "1");
   setLabFlag(db, "tasks", true);

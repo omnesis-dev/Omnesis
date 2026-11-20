@@ -97,6 +97,8 @@ export interface GenerationBuildOptions {
    * abandon is always safe.
    */
   signal?: AbortSignal;
+  /** Capacity admission, rechecked after model calls and before durable growth. */
+  assertCanGrow?: () => void;
 }
 
 export interface GenerationBuildResult {
@@ -133,9 +135,11 @@ export class GenerationBuilder {
    */
   private throwIfAborted(): void {
     if (this.opts.signal?.aborted) throw new BuildAbortedError();
+    this.opts.assertCanGrow?.();
   }
 
   async build(): Promise<GenerationBuildResult> {
+    this.throwIfAborted();
     const batchSize = this.opts.batchSize ?? 32;
     const saveEvery = this.opts.saveEveryN ?? 5_000;
 
@@ -186,6 +190,7 @@ export class GenerationBuilder {
           ),
         );
         const embeddings = await this.embedder.embed(inputs);
+        this.throwIfAborted();
 
         const staged: Array<{ chunkRowid: number; embedding: Float32Array }> = [];
         for (let j = 0; j < batch.length; j++) {
@@ -195,7 +200,10 @@ export class GenerationBuilder {
           staged.push({ chunkRowid: batch[j].rowid, embedding: vec });
           vectors++;
         }
-        if (staged.length > 0) upsertBuildingEmbeddings(this.db, staged);
+        if (staged.length > 0) {
+          this.throwIfAborted();
+          upsertBuildingEmbeddings(this.db, staged);
+        }
 
         for (const r of batch) {
           if (r.document_id !== lastDocId) {
@@ -208,14 +216,18 @@ export class GenerationBuilder {
         if (sinceSave >= saveEvery) {
           // A build runs on the main thread, and a resumed build rebuilds this
           // file from the staged embeddings, so a checkpoint is not worth a sync.
+          this.throwIfAborted();
           writer.save({ durable: false });
+          this.throwIfAborted();
           setIndexVersionProgress(this.db, this.version, Math.min(documents, docsTotal));
           sinceSave = 0;
         }
       }
     }
 
+    this.throwIfAborted();
     writer.close(); // flushes a final save()
+    this.throwIfAborted();
     setIndexVersionProgress(this.db, this.version, Math.min(documents, docsTotal));
     this.log.info(
       `Built generation ${this.version}: ${vectors} vector(s) across ${documents}/${docsTotal} doc(s) @ dim ${this.embedDim} in ${Date.now() - startMs}ms`,
@@ -263,6 +275,7 @@ export class GenerationBuilder {
    * touched.
    */
   private rebuildUsearchFromStaging(): void {
+    this.throwIfAborted();
     const path = usearchPathForVersion(this.configDir, this.version);
     // Discard any file the crash left behind BEFORE constructing the handle:
     // it may be stale (only the last periodic save), torn, or truncated, and the
@@ -294,6 +307,7 @@ export class GenerationBuilder {
       }
       cursor = rows[rows.length - 1].chunk_rowid;
     }
+    this.throwIfAborted();
     writer.close();
     this.log.info(
       `Resuming generation ${this.version}: rebuilt usearch file from ${restored} durably-staged vector(s); embedding only the remaining chunks.`,
@@ -323,6 +337,7 @@ export class GenerationBuilder {
    * addition of the new ones — no stale-content vector survives.
    */
   async catchUp(): Promise<GenerationCatchUpResult> {
+    this.throwIfAborted();
     const batchSize = this.opts.batchSize ?? 32;
     const PAGE = 2_000;
     const path = usearchPathForVersion(this.configDir, this.version);
@@ -332,7 +347,10 @@ export class GenerationBuilder {
     //    re-chunked mid-rebuild) so nothing resurrects in the new generation.
     const orphans = getOrphanBuildingRowids(this.db);
     for (const rowid of orphans) writer.remove(BigInt(rowid));
-    if (orphans.length > 0) deleteBuildingEmbeddings(this.db, orphans);
+    if (orphans.length > 0) {
+      this.throwIfAborted();
+      deleteBuildingEmbeddings(this.db, orphans);
+    }
 
     // 2. Embed + stage chunks not yet covered by the building generation
     //    (new docs, and the new rowids of re-chunked docs). Paginate by a
@@ -370,6 +388,7 @@ export class GenerationBuilder {
           ),
         );
         const embeddings = await this.embedder.embed(inputs);
+        this.throwIfAborted();
 
         const staged: Array<{ chunkRowid: number; embedding: Float32Array }> = [];
         for (let j = 0; j < batch.length; j++) {
@@ -379,13 +398,18 @@ export class GenerationBuilder {
           staged.push({ chunkRowid: batch[j].rowid, embedding: vec });
           added++;
         }
-        if (staged.length > 0) upsertBuildingEmbeddings(this.db, staged);
+        if (staged.length > 0) {
+          this.throwIfAborted();
+          upsertBuildingEmbeddings(this.db, staged);
+        }
       }
     }
 
+    this.throwIfAborted();
     writer.close();
 
     const documents = getBuildableDocumentCount(this.db);
+    this.throwIfAborted();
     setIndexVersionProgress(this.db, this.version, documents);
 
     if (added > 0 || orphans.length > 0) {

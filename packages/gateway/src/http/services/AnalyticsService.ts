@@ -5,6 +5,7 @@ import { dirname } from "node:path";
 import { createHash } from "node:crypto";
 import { createLogger } from "@omnesis/core";
 import { RowKeyError } from "@omnesis/source-sdk";
+import { sourceTypeOf } from "@omnesis/types";
 import { AnalyticsPageReceiptConflict } from "../../analytics/page-receipt-store.js";
 import { catalogOwnerIds } from "../../analytics/catalog-store.js";
 import { BadRequestError, ConflictError, InsufficientStorageError } from "../errors.js";
@@ -118,6 +119,7 @@ export class AnalyticsService {
     private readonly absencePolicy?: () => SnapshotAbsencePolicy,
     private readonly replicaLedger?: AnalyticsReplicaLedger,
     private readonly diskGuard?: {
+      readonly assertStorageCanGrow?: () => void;
       readonly dbPath: string;
       readonly minFreeBytes: number;
       readonly check?: (path: string, minFreeBytes: number) => DiskSpaceCheck;
@@ -216,6 +218,7 @@ export class AnalyticsService {
   }
 
   private assertWriteSpace(): void {
+    this.diskGuard?.assertStorageCanGrow?.();
     if (!this.diskGuard) return;
     const check = this.diskGuard.check ?? hasFreeDiskSpace;
     const result = check(dirname(this.diskGuard.dbPath), this.diskGuard.minFreeBytes);
@@ -431,7 +434,12 @@ export class AnalyticsService {
     // silently reach a table holding every account's rows.
     return this.analyticsDb.executeQuery(sql, {
       limit,
-      ...(sourceId === undefined ? {} : { permittedSourceIds: new Set(catalogOwnerIds(sourceId)) }),
+      ...(sourceId === undefined
+        ? {}
+        : {
+            permittedSourceIds: new Set(catalogOwnerIds(sourceId)),
+            sharedSourceType: sourceTypeOf(sourceId),
+          }),
     });
   }
 

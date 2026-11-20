@@ -33,6 +33,10 @@ details.
    - no `WebRTC.framework` in the production app or any bundle it embeds;
    - HealthKit, notification, widget, and Watch entitlements expected for their
      respective targets;
+   - the app's `webcredentials:` associated domain for the passkey domain, from a
+     distribution profile with the Associated Domains capability, and the relay
+     URL, Google client ID and its reversed-client-ID callback scheme in its
+     Info.plist, so cloud account sign-in works;
    - the intended product version and build number.
 7. Compare App Store privacy answers with the bundled privacy manifest, the
    shipping behavior, and `website/mobile-privacy-policy.html`.
@@ -43,6 +47,8 @@ Physical-device tests are an operator step. Before review, validate the exact
 candidate build from TestFlight:
 
 - scan an HTTPS V4 pairing QR and pair successfully;
+- tap **Sign in with cloud account**, then sign in with Google and, separately,
+  with a passkey, and confirm each reaches the gateway;
 - use the Paste JSON fallback;
 - ask the agent and receive an answer;
 - capture a note from the app and Siri;

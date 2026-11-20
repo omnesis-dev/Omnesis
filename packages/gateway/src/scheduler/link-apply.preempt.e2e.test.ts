@@ -45,6 +45,8 @@
  * box with other E2E suites.
  */
 
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
 import Database from "better-sqlite3";
@@ -103,7 +105,7 @@ interface RawLink {
 }
 
 function testDbPath(): string {
-  return `/tmp/omnesis-link-apply-${randomUUID()}.db`;
+  return join(tmpdir(), `omnesis-link-apply-${randomUUID()}.db`);
 }
 
 function cleanupDb(path: string): void {

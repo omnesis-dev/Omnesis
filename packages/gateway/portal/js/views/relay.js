@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-// Settings → Omnesis account: the account link and remote access through the optional cloud relay. Only
-// rendered when the gateway runs with OMNESIS_CLOUD_RELAY_ENABLED=1.
+// Settings → Omnesis account: the account link and remote access through the Omnesis relay.
 //
 // The page leads with one state headline and at most one primary action, then
 // three short sections: the account, remote access and new devices. Anything
@@ -25,6 +24,7 @@ import { navigate } from "../lib/router.js";
 import { useAccountRefresh, useRelayManagement } from "../lib/use-relay-management.js";
 import {
   relayError,
+  dnsVerificationUrl,
   relayClock,
   relayHttpsUrl,
 } from "../lib/cloud-relay-api.js";
@@ -86,16 +86,6 @@ function TipButton({ id, tip, children, ...button }) {
   </span>`;
 }
 
-/** Accounts need approval: where to ask, with the link's host in plain sight. */
-export function RequestAccess({ access }) {
-  return html`<p class="relay-invite">
-    Omnesis accounts are invite-only for now.${" "}
-    <a href=${access.url} target="_blank" rel="noopener noreferrer">Request access</a>
-    ${" "}<span class="relay-invite-host">(${access.host})</span> — you can create your account
-    once it's approved.
-  </p>`;
-}
-
 /** The relay page's headline once the gateway is registered: connected, reconnecting, dropped or off. */
 function Hero({ status, phase, busy, run }) {
   const disabled = Boolean(busy) && busy !== "refresh";
@@ -149,6 +139,19 @@ function Hero({ status, phase, busy, run }) {
 
 /** Waiting for sign-in: open the relay's sign-in page, or enter the code on another device. */
 export function Waiting({ connect, busy, run }) {
+  if (connect.verification) {
+    const url = dnsVerificationUrl(connect.verification.url);
+    return html`<div class="relay-waiting">
+      <div class="relay-actions relay-hero-action">
+        ${url && html`<a class="btn-primary relay-button-link" href=${url} target="_blank" rel="noopener noreferrer">Open security check</a>`}
+        <button type="button" class="relay-quiet" disabled=${Boolean(busy) && busy !== "refresh"} onClick=${() => run("connect/cancel", {})}>
+          ${busy === "connect/cancel" ? "Cancelling…" : "Cancel"}
+        </button>
+      </div>
+      <p class="relay-hint">${url ? `Security check at ${new URL(url).host}. This page continues automatically once it finishes.` : "The security check link is unavailable. Cancel and try connecting again."}</p>
+      ${relayClock(connect.verification.expiresAt) && html`<p class="relay-hint">Complete by ${relayClock(connect.verification.expiresAt)}.</p>`}
+    </div>`;
+  }
   const authorizeUrl = relayHttpsUrl(connect.authorizeUrl);
   const connectUrl = relayHttpsUrl(connect.connectUrl);
   // The relay's short address is only shown; the link itself stays on the relay's own page.

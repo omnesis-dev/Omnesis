@@ -18,6 +18,7 @@
  * names itself.
  */
 
+import { isNoteIdentity } from "./identity.js";
 import type { SourceStateSpec } from "@omnesis/source-sdk";
 import type { ObsidianFileState, ObsidianSyncCursor } from "./types.js";
 
@@ -35,6 +36,7 @@ function isFileState(value: unknown): value is ObsidianFileState {
     typeof value.contentHash === "string" &&
     typeof value.size === "number" &&
     typeof value.inode === "number" &&
+    (value.fileIdentity === undefined || isNoteIdentity(value.fileIdentity)) &&
     typeof value.stableId === "string" &&
     (value.renderVersion === undefined || typeof value.renderVersion === "number")
   );

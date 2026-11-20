@@ -70,7 +70,6 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.omnesis.android.AppVersionInfo
-import dev.omnesis.android.BuildConfig
 import dev.omnesis.android.designsystem.components.OmSpinner
 import dev.omnesis.android.designsystem.components.OmnesisCard
 import dev.omnesis.android.designsystem.theme.OmSpacing
@@ -301,8 +300,6 @@ fun SettingsContent(
     /** The gateway has Omnesis account settings; shows the row that opens them. */
     omnesisAccountOffered: Boolean = false,
     onOpenOmnesisAccount: () -> Unit = {},
-    /** Everything sign-in enrollment adds to this screen; off, it matches a build without cloud connectivity. */
-    cloudFeatures: Boolean = BuildConfig.CLOUD_RELAY_ENABLED,
     /**
      * Undelivered data from this phone's own sources. A slot rather than a set
      * of fields, so this screen carries no knowledge of what "undelivered" means.
@@ -390,7 +387,7 @@ fun SettingsContent(
                     KeyValue("Name", gateway.name)
                     UrlEditor(gateway.url, onSaveUrl)
                     Spacer(Modifier.height(OmSpacing.sm))
-                    ConnectionRowLabel(connection, gateway?.usesDirectRouting == true, cloudFeatures)
+                    ConnectionRowLabel(connection, gateway?.usesDirectRouting == true)
                     RowDivider()
                     if (labAvailable) {
                         NavigationRow("Omnesis Lab", onOpenLab)
@@ -403,7 +400,7 @@ fun SettingsContent(
                     // The rules an answer is judged by sit beside the grants that name them.
                     NavigationRow("Policies", onOpenPolicies)
                     RowDivider()
-                    if (cloudFeatures && omnesisAccountOffered) {
+                    if (omnesisAccountOffered) {
                         NavigationRow("Omnesis account", onOpenOmnesisAccount)
                         RowDivider()
                     }
@@ -752,7 +749,7 @@ private fun NavigationRow(label: String, onClick: () -> Unit, warning: Boolean =
  * temporary state says recovery is automatic; the wording comes from [GatewayConnectionStatus].
  */
 @Composable
-private fun ConnectionRowLabel(connection: ConnectionState, routed: Boolean, cloudFeatures: Boolean) {
+private fun ConnectionRowLabel(connection: ConnectionState, routed: Boolean) {
     val c = OmTheme.colors
     val status = GatewayConnectionStatus.of(connection)
     val titleColor = when (status.tone) {
@@ -779,9 +776,7 @@ private fun ConnectionRowLabel(connection: ConnectionState, routed: Boolean, clo
                     Icon(Icons.Outlined.WarningAmber, contentDescription = null, tint = titleColor, modifier = Modifier.size(18.dp))
             }
             Text(status.title, style = MaterialTheme.typography.bodyMedium, color = titleColor)
-            if (!cloudFeatures) {
-                // A build without cloud connectivity has no route to show.
-            } else if (connection is ConnectionState.Connected) {
+            if (connection is ConnectionState.Connected) {
                 connection.connectionPath?.let { dev.omnesis.android.ui.common.GatewayConnectionPill(it) }
             } else if (routed && (connection is ConnectionState.Reconnecting ||
                     connection == ConnectionState.Connecting || connection == ConnectionState.Authenticating)) {

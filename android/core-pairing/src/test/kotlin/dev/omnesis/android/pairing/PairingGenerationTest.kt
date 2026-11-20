@@ -114,6 +114,6 @@ class PairingGenerationTest {
         val client = OkHttpClient.Builder().addInterceptor { chain ->
             chain.proceed(chain.request().newBuilder().url(server.url(chain.request().url.encodedPath)).build())
         }.build()
-        return PairingService(store, cloudRelay = true, keyClientFactory = { _, _ -> client }, fetchDirectCandidates = { _, _, _ -> facts() })
+        return PairingService(store, keyClientFactory = { _, _ -> client }, fetchDirectCandidates = { _, _, _ -> facts() })
     }
 }

@@ -11,21 +11,21 @@ import SwiftUI
 @MainActor
 struct CloudPairingDemoSurface: View {
     enum Scenario: String {
-        case google, googleFailure = "google-failure", googleCancel = "google-cancel"
+        case account, accountFailure = "account-failure", accountCancel = "account-cancel"
         case approval, approvalRetry = "approval-retry", approvalExpired = "approval-expired", approvalCompleted = "approval-completed"
         case devicesAdmin = "devices-admin", devicesReadOnly = "devices-read-only"
-        case status, settings, qr, qrDisabled = "qr-disabled"
+        case status, settings
     }
 
     let scenario: Scenario
     @State private var receipt: CloudPairingDemoReceipt
     @State private var approvals: CloudPairingDemoApprovals
     @State private var settingsPath = GatewayConnectionPath.local
-    @State private var google: CloudPairingDemoGoogle?
+    @State private var account: CloudPairingDemoAccount?
     @State private var unavailable = false
-    private let configuration = GoogleCloudPairingConfiguration(
-        clientId: "fixture-ios.apps.googleusercontent.com",
-        relayOrigin: URL(string: "https://relay.example.test")!
+    private let configuration = AccountCloudPairingConfiguration(
+        relayOrigin: URL(string: "https://relay.example.test")!,
+        google: GoogleCloudPairingConfiguration(clientId: "fixture-ios.apps.googleusercontent.com")
     )
 
     init(scenario: Scenario) {
@@ -43,10 +43,10 @@ struct CloudPairingDemoSurface: View {
     var body: some View {
         Group {
             switch scenario {
-            case .google, .googleFailure, .googleCancel:
-                if let google {
-                    GoogleCloudPairingView(configuration: configuration, model: google.model)
-                        .environment(google.store)
+            case .account, .accountFailure, .accountCancel:
+                if let account {
+                    PairingView(accountConfiguration: configuration, accountModel: account.model)
+                        .environment(account.store)
                 } else if unavailable {
                     Text("Fixture unavailable").accessibilityIdentifier("cloud.fixture.unavailable")
                 } else { ProgressView() }
@@ -57,7 +57,6 @@ struct CloudPairingDemoSurface: View {
                 NavigationStack {
                     GatewayPairingRequestsButton(
                         kinds: DeviceApprovalKinds(
-                            cloudRelayEnabled: true,
                             tailscaleEmbed: false,
                             scopes: scenario == .devicesAdmin ? ["read", "admin"] : ["read"]
                         ),
@@ -94,8 +93,6 @@ struct CloudPairingDemoSurface: View {
                         ))
                         .id(settingsPath.rawValue)
                 }
-            case .qr, .qrDisabled:
-                PairingView(googleConfiguration: scenario == .qr ? configuration : nil).environment(AppStore.preview())
             }
         }
         .safeAreaInset(edge: .bottom) {
@@ -105,14 +102,16 @@ struct CloudPairingDemoSurface: View {
             }
         }
         .task {
-            if [.google, .googleFailure, .googleCancel].contains(scenario) {
+            if [.account, .accountFailure, .accountCancel].contains(scenario) {
                 do {
-                    google = try CloudPairingDemoGoogle(scenario: scenario, receipt: receipt)
+                    account = try CloudPairingDemoAccount(scenario: scenario, receipt: receipt)
                 } catch {
                     unavailable = true
                 }
             }
         }
+        // Logs the scene's taps and cancels chosen ones when a UI test asks.
+        .automationTouchLog()
     }
 
     private func row(_ name: String, path: String?, revoked: Bool = false) -> DeviceRecord {
@@ -165,10 +164,13 @@ private actor CloudPairingDemoApprovals: GatewayPairingApproving {
     }
 }
 
+/// The real sign-in coordinator over scripted ports: the system browser, the passkey prompt,
+/// Google's token endpoint and the relay answer from the fixture, and the pairing exchange
+/// goes to a scripted gateway.
 @available(iOS 17.0, *)
 @MainActor
-private final class CloudPairingDemoGoogle {
-    let model: GoogleCloudPairingCoordinator
+private final class CloudPairingDemoAccount {
+    let model: AccountCloudPairingCoordinator
     let store: AppStore
     private let vault: InMemoryStore
 
@@ -187,7 +189,7 @@ private final class CloudPairingDemoGoogle {
         try pending.commit(to: PairingComparisonCode.commitment(codeNonce: CloudPairingDemoSession.codeNonce))
         try pending.receive(CloudPairingDemoSession.reply(pending, status: "pending", now: fixture.clock), now: fixture.clock)
         let confirmed = pending
-        let exchange = CloudPairingDemoExchange(fail: scenario == .googleFailure, receipt: receipt)
+        let exchange = CloudPairingDemoExchange(fail: scenario == .accountFailure, receipt: receipt)
         let service = PairingService(
             store: vault,
             exchange: exchange,
@@ -206,12 +208,13 @@ private final class CloudPairingDemoGoogle {
             notificationWarningDefaults: DictionaryDefaults(),
             loadPersistedPairing: false
         )
-        model = GoogleCloudPairingCoordinator(
-            browser: CloudPairingDemoBrowser(waitForCancel: scenario == .googleCancel, receipt: receipt),
-            makeChallenge: { challenge },
+        model = AccountCloudPairingCoordinator(
+            googleBrowser: CloudPairingDemoBrowser(waitForCancel: scenario == .accountCancel, receipt: receipt),
+            passkeyProvider: CloudPairingDemoPasskeys(receipt: receipt),
+            makeClient: { _ in CloudPairingDemoSession(pending: confirmed, now: fixture.clock) },
             makeTransport: { CloudPairingDemoProvider() },
-            makeClient: { _, _ in CloudPairingDemoSession(pending: confirmed, now: fixture.clock) },
             sleep: {},
+            retryWait: { _ in },
             now: { fixture.clock }
         )
     }
@@ -243,6 +246,21 @@ private final class CloudPairingDemoBrowser: GooglePairingBrowser {
     }
 }
 
+@MainActor
+private final class CloudPairingDemoPasskeys: AccountPasskeyProvider {
+    let receipt: CloudPairingDemoReceipt
+    init(receipt: CloudPairingDemoReceipt) {
+        self.receipt = receipt
+    }
+
+    func assertion(options: Data, rpId: String) async throws -> Data {
+        receipt.value = "Passkey prompt shown"
+        return Data(#"{"id":"fixture-passkey"}"#.utf8)
+    }
+
+    func cancel() {}
+}
+
 private final class CloudPairingDemoProvider: CloudPairingTransport, @unchecked Sendable {
     func requestData(url: URL, method: String, body: Data?, bearer: String?, form: Bool) async throws -> Data {
         guard url.absoluteString == "https://oauth2.googleapis.com/token", method == "POST", form else { throw CloudPairingError.response }
@@ -252,7 +270,7 @@ private final class CloudPairingDemoProvider: CloudPairingTransport, @unchecked 
     func close() {}
 }
 
-private actor CloudPairingDemoSession: GooglePairingSession {
+private actor CloudPairingDemoSession: AccountPairingSession {
     let pending: CloudPairingConfirmation
     let now: TimeInterval
     init(pending: CloudPairingConfirmation, now: TimeInterval) {
@@ -260,10 +278,42 @@ private actor CloudPairingDemoSession: GooglePairingSession {
         self.now = now
     }
 
-    func start(challenge: CloudPairingChallenge, idToken: String) async throws -> CloudPairingConfirmation {
-        guard challenge.requestId == pending.challenge.requestId,
-              idToken == "presentation-port-token" else { throw CloudPairingError.response }
+    static let gateway = AccountGatewayChoice(
+        gatewayId: "fixture-gateway",
+        publicOrigin: "https://gateway.localhost:9",
+        displayName: "Test gateway",
+        online: true
+    )
+
+    func begin(challenge: CloudPairingChallenge) async throws -> String {
+        "fixture-google-nonce"
+    }
+
+    func google(idToken: String) async throws -> [AccountGatewayChoice] {
+        guard idToken == "presentation-port-token" else { throw CloudPairingError.response }
+        return [Self.gateway]
+    }
+
+    func passkeyOptions() async throws -> AccountCloudPairingClient.PasskeyOptions {
+        .init(ceremonyId: "fixture-ceremony", options: Data(#"{"challenge":"fixture"}"#.utf8))
+    }
+
+    func passkey(options: AccountCloudPairingClient.PasskeyOptions, assertion: Data) async throws -> [AccountGatewayChoice] {
+        guard options.ceremonyId == "fixture-ceremony", !assertion.isEmpty else { throw CloudPairingError.response }
+        return [Self.gateway]
+    }
+
+    func select(gatewayId: String) async throws -> CloudPairingConfirmation {
+        guard gatewayId == Self.gateway.gatewayId else { throw CloudPairingError.response }
         return pending
+    }
+
+    func retryEnrollment() async throws -> CloudPairingConfirmation {
+        throw CloudPairingError.response
+    }
+
+    func approvalPage() async throws -> URL? {
+        nil
     }
 
     func poll() async throws -> CloudPairingProgress {

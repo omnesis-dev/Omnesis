@@ -107,6 +107,7 @@ export class Indexer {
   private loggedFailedDocIds = new Set<string>();
   /** Set to true to cooperatively abort in-flight indexing work (shutdown). */
   private stopping = false;
+  private readonly canGrow: () => boolean;
   private indexWriteOptions?: import("./db.js").IndexWriteOptions;
   private onPageScanned?: (documentIds: readonly string[]) => void;
 
@@ -142,6 +143,8 @@ export class Indexer {
       catchUp?: { enabled: boolean; maxPageSize: number; minSleepMs: number };
       /** Backpressure the scan consults between pages. */
       getPressure?: () => ScanPressureSignal;
+      /** Live reversible capacity admission, checked between bounded work pages. */
+      canGrow?: () => boolean;
       /** Least time between two writes of an unfinished scan's position, ms. Default 1s. */
       progressWriteIntervalMs?: number;
       /** Optional usearch HNSW handle for dual-index writes. */
@@ -154,6 +157,7 @@ export class Indexer {
       onPageScanned?: (documentIds: readonly string[]) => void;
     },
   ) {
+    this.canGrow = opts?.canGrow ?? (() => true);
     this.dataCutoff = opts?.dataCutoff ?? null;
     this.getCutoffForDoc = opts?.getCutoff ?? null;
     this.pageSize = opts?.pageSize ?? DEFAULT_PAGE_SIZE;
@@ -188,10 +192,11 @@ export class Indexer {
     return this.dataCutoff;
   }
 
-  /**
-   * Signal the indexer to cooperatively stop. Terminal — once stopped,
-   * subsequent calls to indexing methods bail out immediately.
-   */
+  private get growthPaused(): boolean {
+    return this.stopping || !this.canGrow();
+  }
+
+  /** Signal terminal shutdown; capacity pauses use the reversible canGrow gate. */
   stop(): void {
     this.stopping = true;
   }
@@ -225,7 +230,7 @@ export class Indexer {
   }> {
     // A scan a stop or a restart interrupted resumes with the bounds it began
     // with, after the last page it committed (see scan-progress.ts).
-    const resumedScan = this.stopping ? null : readScanProgress(this.db);
+    const resumedScan = this.growthPaused ? null : readScanProgress(this.db);
     const watermark = resumedScan ? resumedScan.since : getWatermark(this.db, "last_updated_at");
     // UUID pagination can pass a write before its transaction commits. Hold
     // the checkpoint at the highest timestamp already committed when the
@@ -339,6 +344,11 @@ export class Indexer {
         );
         allEmbeddings = null;
       }
+      // A stop quiesces the embedder, which fails the chunks it had not
+      // started. Write nothing and leave the scan cursor where it was: the
+      // page stays pending for the next worker instead of being recorded as
+      // failed document by document.
+      if (!allEmbeddings && this.stopping) return;
 
       type WritePayload = {
         documentId: string;
@@ -426,7 +436,7 @@ export class Indexer {
     };
 
     while (hasMore) {
-      if (this.stopping) break;
+      if (this.growthPaused) break;
       const pageStartMs = performance.now();
       const sizing = pacer.next();
       // ── Phase 1: lightweight scan ─────────────────────────────────
@@ -516,12 +526,12 @@ export class Indexer {
       // ── Phase 2: full fetch + chunk (only changed docs) ───────────
       const toEmbed: Prepared[] = [];
       if (needFetchIds.length > 0) {
-        if (this.stopping) {
+        if (this.growthPaused) {
           pageAbandoned = true;
         } else {
           const fullDocs = await this.source.getByIds(needFetchIds);
           for (const doc of fullDocs) {
-            if (this.stopping) {
+            if (this.growthPaused) {
               pageAbandoned = true;
               break;
             }
@@ -572,7 +582,7 @@ export class Indexer {
       // order, since each flush awaits its own page before the next.
       let nextEmbed: PendingEmbed | null = null;
       if (toEmbed.length > 0) {
-        if (this.stopping) {
+        if (this.growthPaused) {
           pageAbandoned = true;
         } else {
           const allInputs = toEmbed.flatMap(({ chunks }) => chunks.map((c) => c.embeddingInput));
@@ -606,7 +616,7 @@ export class Indexer {
       // Yield between pages so the writer worker's commits have gaps
       // to land in without a reader mid-page. Skipped when there's no
       // more work so the cycle ends promptly once caught up.
-      if (hasMore && !this.stopping) {
+      if (hasMore && !this.growthPaused) {
         const sleepMs = pacer.settle(
           { elapsedMs: performance.now() - pageStartMs, embedLimited },
           this.getPressure(),
@@ -643,7 +653,7 @@ export class Indexer {
 
     // Cooperative shutdown: keep the scan's position and bail before
     // retry/reconcile work that would keep the disposed embedder busy.
-    if (this.stopping) {
+    if (this.growthPaused) {
       if (scanComplete) finishScan();
       else if (progressWritten || durableAfterId !== undefined) saveProgress();
       return {
@@ -688,7 +698,7 @@ export class Indexer {
       updated,
       skipped,
       errors,
-      ...(!this.stopping && committedBoundary ? { scannedThrough: committedBoundary } : {}),
+      ...(!this.growthPaused && committedBoundary ? { scannedThrough: committedBoundary } : {}),
       ...(resumedScan ? { resumed: true } : {}),
     };
   }
@@ -755,14 +765,14 @@ export class Indexer {
     const failedIds = Array.from(this.failedDocIds);
 
     for (let start = 0; start < failedIds.length; start += this.pageSize) {
-      if (this.stopping) break;
+      if (this.growthPaused) break;
       const page = failedIds.slice(start, start + this.pageSize);
       const docs = await this.source.getByIds(page);
       const docsById = new Map(docs.map((d) => [d.id, d]));
       const indexedStates = getIndexedDocumentStates(this.db, page);
 
       for (const docId of page) {
-        if (this.stopping) break;
+        if (this.growthPaused) break;
         const doc = docsById.get(docId);
         if (!doc) continue; // Document may have been deleted from the source
 
@@ -851,7 +861,7 @@ export class Indexer {
     // page time while catching up.
     const pacer = new ScanPacer(this.pacing);
     for (let batchStart = 0; batchStart < missingIds.length;) {
-      if (this.stopping) break;
+      if (this.growthPaused) break;
       const batchStartMs = performance.now();
 
       const batchIds = missingIds.slice(batchStart, batchStart + pacer.next().embedDocs);
@@ -869,7 +879,7 @@ export class Indexer {
       const toEmbed: Prepared[] = [];
 
       for (const doc of docs) {
-        if (this.stopping) break;
+        if (this.growthPaused) break;
         if (
           isBeforeCutoff(
             this.cutoffForSource(doc.sourceId),
@@ -896,7 +906,7 @@ export class Indexer {
       // Phase 2: batch-embed all chunks across all docs in one call.
       // On batch failure, fall back to per-document embedding so one bad
       // doc doesn't block the rest of the batch.
-      if (toEmbed.length > 0 && !this.stopping) {
+      if (toEmbed.length > 0 && !this.growthPaused) {
         const allInputs = toEmbed.flatMap(({ chunks }) => chunks.map((c) => c.embeddingInput));
         let allEmbeddings: Float32Array[] | null = null;
         try {
@@ -909,6 +919,8 @@ export class Indexer {
         if (allEmbeddings && allEmbeddings.length !== allInputs.length) {
           allEmbeddings = null;
         }
+        // A stop cut the batch short: leave these documents pending.
+        if (!allEmbeddings && this.stopping) break;
 
         // Phase 3: distribute embeddings back, prepare write payloads,
         // and batch-write to DB.
@@ -990,7 +1002,7 @@ export class Indexer {
 
       // Yield between batches so other work (HTTP, writer commits) can land.
       const hasMoreBatches = batchStart < missingIds.length;
-      if (hasMoreBatches && !this.stopping) {
+      if (hasMoreBatches && !this.growthPaused) {
         const sleepMs = pacer.settle(
           { elapsedMs: performance.now() - batchStartMs, embedLimited: true },
           this.getPressure(),
@@ -1036,14 +1048,14 @@ export class Indexer {
     // document CONTENT, and after an embedder outage this set can be the whole
     // corpus.
     for (let start = 0; start < erroredIds.length; start += this.pageSize) {
-      if (this.stopping) break;
+      if (this.growthPaused) break;
       const page = erroredIds.slice(start, start + this.pageSize);
       const docs = await this.source.getByIds(page);
       const docById = new Map(docs.map((d) => [d.id, d]));
       const indexedStates = getIndexedDocumentStates(this.db, page);
 
       for (const id of page) {
-        if (this.stopping) break;
+        if (this.growthPaused) break;
         const doc = docById.get(id);
         if (!doc) {
           clearIndexError(this.db, id); // no longer in the gateway

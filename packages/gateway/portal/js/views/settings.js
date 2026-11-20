@@ -29,6 +29,7 @@ import {
 } from "../lib/settings-tabs.js";
 
 const LabView = lazy(() => import("./lab.js").then((m) => m.LabView));
+const StorageView = lazy(() => import("./storage.js").then((m) => m.StorageView));
 const ConfigView = lazy(() => import("./config.js").then((m) => m.ConfigView));
 const OmnesisMdView = lazy(() => import("./omnesis-md.js").then((m) => m.OmnesisMdView));
 const ModelsView = lazy(() => import("./models.js").then((m) => m.ModelsView));
@@ -77,6 +78,8 @@ export function SettingsView({
   tab,
   modelsSection,
   modelHealth,
+  storagePressure,
+  onStorageRefresh,
   onModelsRefresh,
   onLabChange,
   accessAuthorizationId,
@@ -90,7 +93,6 @@ export function SettingsView({
   experimental = false,
   lab = { brain: experimental },
   labAvailable = false,
-  cloudRelay = false,
   tailscaleEmbed = false,
   // What waits for the owner's decision (`useAttention`), marked on the Devices and Access tabs.
   attention = null,
@@ -106,7 +108,7 @@ export function SettingsView({
   const requested = SETTINGS_TAB_KEYS.includes(tab) ? tab : DEFAULT_SETTINGS_TAB;
   // A link into a disabled feature lands on the default tab.
   const page =
-    (!experimental && EXPERIMENTAL_SETTINGS_TABS.includes(requested)) || (requested === "sweeps" && !lab.brain) || (requested === "lab" && !labAvailable) || !settingsTabAvailable(requested, { cloudRelay, tailscaleEmbed })
+    (!experimental && EXPERIMENTAL_SETTINGS_TABS.includes(requested)) || (requested === "sweeps" && !lab.brain) || (requested === "lab" && !labAvailable) || !settingsTabAvailable(requested, { tailscaleEmbed })
       ? DEFAULT_SETTINGS_TAB
       : requested;
   // A detail page (the Omnesis account, the Tailscale device) shows its parent tab as current.
@@ -194,9 +196,12 @@ export function SettingsView({
         style="margin-bottom:16px;"
         active=${activeTab}
         onSelect=${switchTab}
-        tabs=${settingsTabs({ experimental, brain: lab.brain, labAvailable, cloudRelay, tailscaleEmbed }).map((item) => {
+        tabs=${settingsTabs({ experimental, brain: lab.brain, labAvailable, tailscaleEmbed }).map((item) => {
           if (item.key === "models" && modelHealth?.warnings?.length) {
             return { ...item, label: html`${item.label} <${WarningTriangle} label="Models need attention" />` };
+          }
+          if (item.key === "storage" && storagePressure && storagePressure.state !== "normal") {
+            return { ...item, label: html`${item.label} <${WarningTriangle} label="Storage needs attention" />` };
           }
           const waiting = settingsTabAttention(item.key, attention);
           return waiting ? { ...item, label: html`${item.label} <${AttentionIcon} label=${waiting} />` } : item;
@@ -204,6 +209,7 @@ export function SettingsView({
       />
       ${activeTab === "lab" && html`<${LabView} onChange=${onLabChange} />`}
       ${activeTab === "config" && html`<${ConfigView} />`}
+      ${activeTab === "storage" && html`<${StorageView} onChange=${onStorageRefresh} />`}
       ${activeTab === "omnesis-md" && html`<${OmnesisMdView} />`}
       ${activeTab === "models" && html`<${ModelsView} section=${modelsSection ?? null} onModelsRefresh=${onModelsRefresh} />`}
       ${parent && html`<button type="button" class="doc-back access-page-back remote-access-back" onClick=${() => switchTab(parent)}>← Connectivity</button>`}
@@ -213,7 +219,7 @@ export function SettingsView({
       ${page === "own-address" && html`<${OwnAddressView} />`}
       ${page === "mcp" && html`<${McpView} />`}
       ${page === "tailscale" && html`<${TailscaleView} />`}
-      ${page === "connectivity" && html`<${RemoteAccessView} cloudRelay=${cloudRelay} tailscaleEmbed=${tailscaleEmbed} />`}
+      ${page === "connectivity" && html`<${RemoteAccessView} tailscaleEmbed=${tailscaleEmbed} />`}
       ${activeTab === "sweeps" && html`<${SweepsView} />`}
       ${activeTab === "access" && html`<${AccessView}
         authorizationId=${accessAuthorizationId ?? null}
@@ -221,11 +227,10 @@ export function SettingsView({
         newLevel=${accessNewLevel ?? false}
         connectOpen=${accessConnect ?? false}
         completeInPortal=${completeAccessInPortal ?? false}
-        cloudRelay=${cloudRelay}
         tailscaleEmbed=${tailscaleEmbed}
       />`}
       ${activeTab === "policies" && html`<${PoliciesView} policyId=${policyId ?? null} />`}
-      ${activeTab === "devices" && html`<${DevicesView} pairKindRequest=${pair ?? null} focusDeviceId=${device ?? null} cloudRelay=${cloudRelay} tailscaleEmbed=${tailscaleEmbed} />`}
+      ${activeTab === "devices" && html`<${DevicesView} pairKindRequest=${pair ?? null} focusDeviceId=${device ?? null} tailscaleEmbed=${tailscaleEmbed} />`}
     </div>
   `;
 }

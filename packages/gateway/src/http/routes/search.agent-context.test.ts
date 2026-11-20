@@ -3,6 +3,8 @@
 
 import { randomUUID } from "node:crypto";
 import { rmSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { toolResultSchema, type SearchProvenance } from "@omnesis/core";
@@ -48,7 +50,7 @@ const hit = {
 let db: Database.Database;
 let dbPath: string;
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-test-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
   db = createDatabase(dbPath);
 });
 afterEach(() => {

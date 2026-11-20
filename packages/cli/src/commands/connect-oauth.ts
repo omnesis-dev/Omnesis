@@ -26,6 +26,7 @@ import {
   type PendingIntegrationAuthorization,
 } from "@omnesis/agent-integration";
 
+import { browserInvocation } from "../browser-command.js";
 import { c, CliError, EXIT_AUTH } from "../utils.js";
 import type { Harness } from "../harness-skills.js";
 
@@ -496,13 +497,8 @@ export async function authorizeHarness(
           `If that page is not signed in, enter code ${c.bold}${shortCode}${c.reset} in your logged-in Omnesis portal.`,
         );
       }
-      const opener =
-        process.platform === "darwin" ? "open" : process.platform === "win32" ? "cmd" : "xdg-open";
-      const args =
-        process.platform === "win32"
-          ? ["/c", "start", "", consentUrl.toString()]
-          : [consentUrl.toString()];
-      spawnSync(opener, args, { stdio: "ignore", timeout: 5_000 });
+      const invocation = browserInvocation(consentUrl.toString());
+      spawnSync(invocation.command, invocation.args, { stdio: "ignore", timeout: 5_000 });
 
       return await waitAndFinish(pending, callback);
     } finally {

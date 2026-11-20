@@ -6,8 +6,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { X509Certificate } from "node:crypto";
 import { execFileSync } from "node:child_process";
+import { ensurePrivateDirs } from "@omnesis/core";
 import { beforeAll, afterAll, beforeEach, afterEach, expect, test, vi } from "vitest";
+import { markedFileError } from "../test/private-operation-fixture.js";
 import { tlsFiles, malformedDateCertificate } from "../test/support.js";
+import * as privateCredentials from "./google-credentials.js";
 import { tlsSpkiFingerprint } from "./pinned-key.js";
 import { CertificateIssuanceMonitor } from "./certificate-monitor.js";
 import {
@@ -43,6 +46,7 @@ beforeAll(async () => {
 afterAll(() => rm(root, { recursive: true, force: true }));
 beforeEach(async () => {
   directory = await mkdtemp(join(tmpdir(), "ct-journal-"));
+  if (process.platform === "win32") await ensurePrivateDirs([directory]);
   now = Date.now();
 });
 afterEach(() => rm(directory, { recursive: true, force: true }));
@@ -484,3 +488,50 @@ test("each new incident is reported before the journal records it, and only once
   const restored = await CertificateIssuanceMonitor.open({ ...f.options, onIncident: vi.fn() });
   expect(restored.status().incidents).toHaveLength(1);
 });
+
+afterEach(() => vi.restoreAllMocks());
+test.each(["own", "cause"] as const)(
+  "marked monitor-journal absence cannot publish fresh observations over unresolved state (%s)",
+  async (placement) => {
+    const f = fixture(),
+      failure = markedFileError("ENOENT", placement);
+    vi.spyOn(privateCredentials, "readPrivateJson").mockRejectedValueOnce(failure);
+    const publish = vi.spyOn(privateCredentials, "savePrivateJson").mockResolvedValue(undefined);
+    await expect(
+      (async () => {
+        const monitor = await f.open();
+        return monitor.check();
+      })(),
+    ).rejects.toBe(failure);
+    expect(f.provider.page).not.toHaveBeenCalled();
+    expect(publish).not.toHaveBeenCalled();
+  },
+);
+
+test.each(["journal", "incident"] as const)(
+  "marked monitor %s publication propagates without becoming a routine unavailable status",
+  async (target) => {
+    const f = fixture(),
+      failure = markedFileError("EPRIVATE", "cause");
+    const journal = { version: 1, hostname: f.options.hostname, incidents: [] };
+    await privateCredentials.savePrivateJson(f.options.journalFile, journal);
+    const bytes = await readFile(f.options.journalFile, "utf8");
+    const publish = vi.spyOn(privateCredentials, "savePrivateJson");
+    let monitor: CertificateIssuanceMonitor;
+    if (target === "journal") {
+      monitor = await f.open();
+      publish.mockRejectedValueOnce(failure);
+    } else {
+      f.provider.page.mockResolvedValueOnce(page(other));
+      monitor = await CertificateIssuanceMonitor.open({
+        ...f.options,
+        onIncident: vi.fn(() => Promise.reject(failure)),
+      });
+    }
+    await expect(monitor.check()).rejects.toBe(failure);
+    if (target === "incident") expect(publish).not.toHaveBeenCalled();
+    else expect(publish).toHaveBeenCalledOnce();
+    expect(await readFile(f.options.journalFile, "utf8")).toBe(bytes);
+    expect(monitor.status().lastCompletedAt).toBeUndefined();
+  },
+);

@@ -3,6 +3,8 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { Scope, SCOPE_ADMIN, SCOPE_READ, SCOPE_WRITE_ALL } from "@omnesis/types";
 import { createDatabase } from "../../db.js";
@@ -55,7 +57,7 @@ function capture(body: Record<string, unknown>, bearer?: string): Promise<Respon
 beforeEach(() => {
   priorExperimental = process.env.OMNESIS_EXPERIMENTAL;
   delete process.env.OMNESIS_EXPERIMENTAL;
-  dbPath = `/tmp/omnesis-test-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
   db = createDatabase(dbPath);
   token = mintToken([SCOPE_ADMIN, SCOPE_READ, SCOPE_WRITE_ALL]);
   notesRuntime = undefined;
@@ -119,7 +121,7 @@ describe("/notes availability", () => {
   });
 
   test("a server without a lifecycle owner defers notes boot until an authorized request", async () => {
-    const lazyPath = `/tmp/omnesis-test-${randomUUID()}.db`;
+    const lazyPath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
     const lazyDb = createDatabase(lazyPath);
     try {
       const device = createDevice(lazyDb, { name: "lazy-notes-test", kind: "cli" });
@@ -836,7 +838,7 @@ describe("GET /notes/history", () => {
 
 describe("restart persistence", () => {
   test("deleted notes stay deleted across a gateway restart; live ones rebuild", async () => {
-    const restartPath = `/tmp/omnesis-test-${randomUUID()}.db`;
+    const restartPath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
     const boot = (): {
       handle: Db;
       server: ReturnType<typeof createServer>;

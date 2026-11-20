@@ -24,7 +24,7 @@ class DeviceSocketLifetimeTest {
     @Test fun `stop during SDK factory handoff closes the resource before any hello and rejects late events`() = runTest {
         val factory = Factory()
         lateinit var socket: DeviceSocket
-        socket = DeviceSocket(OkHttpClient(), origin, "device-token", backgroundScope, cloudRelay = true, webSockets = factory)
+        socket = DeviceSocket(OkHttpClient(), origin, "device-token", backgroundScope, webSockets = factory)
         factory.beforeReturn = { socket.stop() }
         socket.start(); runCurrent()
         val connection = factory.connections.single()
@@ -42,7 +42,7 @@ class DeviceSocketLifetimeTest {
     @Test fun `early open authenticates once and old SDK callbacks cannot mutate a restarted session`() = runTest {
         val factory = Factory()
         factory.beforeReturn = { it.open() }
-        val socket = DeviceSocket(OkHttpClient(), origin, "device-token", backgroundScope, cloudRelay = true, expectedDeviceId = "device", webSockets = factory)
+        val socket = DeviceSocket(OkHttpClient(), origin, "device-token", backgroundScope, expectedDeviceId = "device", webSockets = factory)
         socket.start(); runCurrent()
         val old = factory.connections.single()
         old.authenticate()
@@ -75,7 +75,7 @@ class DeviceSocketLifetimeTest {
             val probe = object : DirectGatewayProbing {
                 override suspend fun reachable(route: DirectGatewayRoute, client: OkHttpClient): Boolean { started.complete(Unit); return result.await() }
             }
-            val socket = DeviceSocket(OkHttpClient(), origin, "device-token", owner, cloudRelay = true, directRoute = route(), directProbe = probe,
+            val socket = DeviceSocket(OkHttpClient(), origin, "device-token", owner, directRoute = route(), directProbe = probe,
                 expectedDeviceId = "device", webSockets = factory)
             try {
                 socket.start(); runCurrent()
@@ -96,7 +96,7 @@ class DeviceSocketLifetimeTest {
 
     @Test fun `foreground wakes failed backoff and preserves identity while late callbacks and stopped visits cannot reconnect`() = runTest {
         val factory = Factory().also { it.beforeReturn = { ws -> ws.open() } }
-        val socket = DeviceSocket(OkHttpClient(), origin, "device-token", backgroundScope, cloudRelay = true, expectedDeviceId = "device", webSockets = factory)
+        val socket = DeviceSocket(OkHttpClient(), origin, "device-token", backgroundScope, expectedDeviceId = "device", webSockets = factory)
         socket.start(); runCurrent()
         val old = factory.connections.single()
         old.authenticate()
@@ -120,7 +120,7 @@ class DeviceSocketLifetimeTest {
     @Test fun `foreground before first dispatch and during factory handoff closes obsolete resource and keeps the replacement`() = runTest {
         val factory = Factory()
         lateinit var socket: DeviceSocket
-        socket = DeviceSocket(OkHttpClient(), origin, "device-token", backgroundScope, cloudRelay = true, webSockets = factory)
+        socket = DeviceSocket(OkHttpClient(), origin, "device-token", backgroundScope, webSockets = factory)
         socket.start()
         socket.start()
         socket.recoverAfterInterruption() // active runner has not created its first SDK task yet
@@ -146,7 +146,7 @@ class DeviceSocketLifetimeTest {
         val job = SupervisorJob()
         val owner = CoroutineScope(job + StandardTestDispatcher(testScheduler))
         val factory = Factory().also { it.beforeReturn = { ws -> ws.open() } }
-        val socket = DeviceSocket(OkHttpClient(), origin, "device-token", owner, cloudRelay = true, webSockets = factory)
+        val socket = DeviceSocket(OkHttpClient(), origin, "device-token", owner, webSockets = factory)
         try {
             socket.start(); runCurrent()
             factory.connections.single().authenticate()
@@ -164,7 +164,7 @@ class DeviceSocketLifetimeTest {
         val probe = object : DirectGatewayProbing {
             override suspend fun reachable(route: DirectGatewayRoute, client: OkHttpClient) = result.await()
         }
-        val socket = DeviceSocket(OkHttpClient(), origin, "device-token", backgroundScope, cloudRelay = true, directRoute = route(),
+        val socket = DeviceSocket(OkHttpClient(), origin, "device-token", backgroundScope, directRoute = route(),
             directProbe = probe, expectedDeviceId = "device", webSockets = factory)
         try {
             socket.start(); runCurrent()
@@ -188,7 +188,7 @@ class DeviceSocketLifetimeTest {
         val probe = object : DirectGatewayProbing {
             override suspend fun reachable(route: DirectGatewayRoute, client: OkHttpClient) = result.await()
         }
-        val socket = DeviceSocket(OkHttpClient(), origin, "device-token", owner, cloudRelay = true, directRoute = route(),
+        val socket = DeviceSocket(OkHttpClient(), origin, "device-token", owner, directRoute = route(),
             directProbe = probe, expectedDeviceId = "device", webSockets = factory)
         try {
             socket.start(); runCurrent()
@@ -213,7 +213,7 @@ class DeviceSocketLifetimeTest {
         val probe = object : DirectGatewayProbing {
             override suspend fun reachable(route: DirectGatewayRoute, client: OkHttpClient) = result.await()
         }
-        val socket = DeviceSocket(OkHttpClient(), origin, "device-token", backgroundScope, cloudRelay = true, directRoute = route(),
+        val socket = DeviceSocket(OkHttpClient(), origin, "device-token", backgroundScope, directRoute = route(),
             directProbe = probe, expectedDeviceId = "device", webSockets = factory)
         try {
             socket.start(); runCurrent()
@@ -233,7 +233,7 @@ class DeviceSocketLifetimeTest {
         val ownerJob = SupervisorJob()
         val owner = CoroutineScope(ownerJob + UnconfinedTestDispatcher(testScheduler))
         val factory = Factory().also { it.beforeReturn = { ownerJob.cancel() } }
-        val socket = DeviceSocket(OkHttpClient(), origin, "device-token", owner, cloudRelay = true, directRoute = route(), webSockets = factory)
+        val socket = DeviceSocket(OkHttpClient(), origin, "device-token", owner, directRoute = route(), webSockets = factory)
         try {
             socket.start()
             assertEquals(1, factory.connections.single().cancelled)
@@ -247,7 +247,7 @@ class DeviceSocketLifetimeTest {
         val owner = CoroutineScope(ownerJob + UnconfinedTestDispatcher(testScheduler))
         val factory = Factory()
         lateinit var socket: DeviceSocket
-        socket = DeviceSocket(OkHttpClient(), origin, "device-token", owner, cloudRelay = true, directRoute = route(), webSockets = factory)
+        socket = DeviceSocket(OkHttpClient(), origin, "device-token", owner, directRoute = route(), webSockets = factory)
         factory.beforeReturn = { socket.stop() }
         try {
             socket.start()
@@ -262,7 +262,7 @@ class DeviceSocketLifetimeTest {
     @Test fun `absent or non-object authenticated identity never publishes connected or advisory telemetry`() = runTest {
         for (result in listOf("null", "[]", "42", "{}", "{\"deviceId\":null}", "{\"deviceId\":{}}")) {
             val factory = Factory().also { it.beforeReturn = { ws -> ws.open() } }
-            val socket = DeviceSocket(OkHttpClient(), origin, "device-token", backgroundScope, cloudRelay = true,
+            val socket = DeviceSocket(OkHttpClient(), origin, "device-token", backgroundScope,
                 directRoute = route(), expectedDeviceId = "device", webSockets = factory)
             try {
                 socket.start(); runCurrent()
@@ -281,7 +281,7 @@ class DeviceSocketLifetimeTest {
         val factory = Factory().also { it.beforeReturn = { ws -> ws.open() } }
         lateinit var socket: DeviceSocket
         var refreshed = 0
-        socket = DeviceSocket(OkHttpClient(), origin, "device-token", backgroundScope, cloudRelay = true,
+        socket = DeviceSocket(OkHttpClient(), origin, "device-token", backgroundScope,
             directRoute = route(), refreshHints = { refreshed++; socket.stop() }, webSockets = factory)
         try {
             socket.start(); runCurrent()
@@ -297,7 +297,7 @@ class DeviceSocketLifetimeTest {
 
     @Test fun `hello cannot advertise a physical path before routing has selected one`() = runTest {
         val factory = Factory().also { it.beforeReturn = { ws -> ws.open() } }
-        val socket = DeviceSocket(OkHttpClient(), origin, "device-token", backgroundScope, cloudRelay = true,
+        val socket = DeviceSocket(OkHttpClient(), origin, "device-token", backgroundScope,
             directRoute = DirectGatewayRoute.maintained(origin, emptyList()), expectedDeviceId = "device", webSockets = factory)
         try {
             socket.start(); runCurrent()
@@ -311,7 +311,7 @@ class DeviceSocketLifetimeTest {
     @Test fun `promotion network restoration and foreground share the same exhausted attempt budget`() = runTest {
         val factory = Factory().also { it.beforeReturn = { ws -> ws.open() } }
         val paths = kotlinx.coroutines.flow.MutableSharedFlow<NetworkPathSnapshot>(extraBufferCapacity = 20)
-        val socket = DeviceSocket(OkHttpClient(), origin, "device-token", backgroundScope, cloudRelay = true,
+        val socket = DeviceSocket(OkHttpClient(), origin, "device-token", backgroundScope,
             directRoute = route(), expectedDeviceId = "device", webSockets = factory,
             directProbe = object : DirectGatewayProbing {
                 override suspend fun reachable(route: DirectGatewayRoute, client: OkHttpClient) = true

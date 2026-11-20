@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { randomUUID } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -25,12 +24,35 @@ const DIMS = 32;
 let db: Db;
 let dir: string;
 
+const disposeHandles: Array<() => void> = [];
+
+function createWriter(
+  ...args: ConstructorParameters<typeof UsearchWriteHandle>
+): UsearchWriteHandle {
+  const handle = new UsearchWriteHandle(...args);
+  disposeHandles.push(() => handle.release());
+  return handle;
+}
+
+function createRegistry(): UsearchReadRegistry {
+  const registry = new UsearchReadRegistry(db, dir);
+  disposeHandles.push(() => registry.close());
+  return registry;
+}
+
+function openDirectReader(): UsearchReadHandle {
+  const reader = UsearchReadHandle.open(join(dir, "index.usearch"), EMBEDDING_DIM);
+  disposeHandles.push(() => reader.close());
+  return reader;
+}
+
 beforeEach(() => {
-  db = createIndexDatabase(`/tmp/omnesis-registry-test-${randomUUID()}.db`);
   dir = mkdtempSync(join(tmpdir(), "registry-usearch-"));
+  db = createIndexDatabase(join(dir, "index.db"));
 });
 
 afterEach(() => {
+  for (const dispose of disposeHandles.splice(0).reverse()) dispose();
   db.close();
   rmSync(dir, { recursive: true, force: true });
 });
@@ -55,7 +77,7 @@ function makeEmbedding(val: number, dim: number): Float32Array {
 
 /** Write a populated usearch file at the legacy (version-1) path. */
 function writeLegacyIndex(dim: number, count: number): void {
-  const writer = new UsearchWriteHandle(join(dir, "index.usearch"), dim);
+  const writer = createWriter(join(dir, "index.usearch"), dim);
   for (let i = 1; i <= count; i++) writer.add(BigInt(i), makeEmbedding(i, dim));
   writer.close();
 }
@@ -74,10 +96,10 @@ describe("UsearchReadRegistry", () => {
     setIndexEmbedModel(db, "nomic-embed-text-v1.5.Q8_0", EMBEDDING_DIM);
     migrateAdoptInPlaceVersion(db);
 
-    const registry = new UsearchReadRegistry(db, dir);
+    const registry = createRegistry();
     registry.maybeRefresh();
 
-    const direct = UsearchReadHandle.open(join(dir, "index.usearch"), EMBEDDING_DIM);
+    const direct = openDirectReader();
     direct.maybeRefresh();
 
     expect(registry.size()).toBe(direct.size());
@@ -96,7 +118,7 @@ describe("UsearchReadRegistry", () => {
     setIndexEmbedModel(db, "some-other-embedder", DIM);
     migrateAdoptInPlaceVersion(db);
 
-    const registry = new UsearchReadRegistry(db, dir);
+    const registry = createRegistry();
     registry.maybeRefresh();
     expect(registry.size()).toBe(10);
 
@@ -108,7 +130,7 @@ describe("UsearchReadRegistry", () => {
 
   test("falls back to the legacy path at the default dim when no version is adopted", () => {
     // No stamp, no version row — exactly today's pre-versioning behaviour.
-    const registry = new UsearchReadRegistry(db, dir);
+    const registry = createRegistry();
     expect(registry.size()).toBe(0);
     expect(registry.search(makeEmbedding(1, EMBEDDING_DIM), 5)).toEqual([]);
 
@@ -123,12 +145,12 @@ describe("UsearchReadRegistry", () => {
     writeLegacyIndex(DIMS, 3);
     setIndexEmbedModel(db, "fictional-embedder-a", DIMS);
     migrateAdoptInPlaceVersion(db);
-    const registry = new UsearchReadRegistry(db, dir);
+    const registry = createRegistry();
     expect(registry.search(makeEmbedding(2, DIMS), 1)[0]?.key).toBe(2n);
 
     const nextDim = DIMS * 2;
     const nextPath = usearchPathForVersion(dir, 2);
-    const nextWriter = new UsearchWriteHandle(nextPath, nextDim);
+    const nextWriter = createWriter(nextPath, nextDim);
     nextWriter.add(101n, makeEmbedding(101, nextDim));
     nextWriter.add(102n, makeEmbedding(102, nextDim));
     nextWriter.close();
@@ -163,11 +185,11 @@ describe("UsearchReadRegistry", () => {
     writeLegacyIndex(DIMS, 2);
     setIndexEmbedModel(db, "fictional-embedder-a", DIMS);
     migrateAdoptInPlaceVersion(db);
-    const registry = new UsearchReadRegistry(db, dir);
+    const registry = createRegistry();
     expect(registry.activeModelId()).toBe("fictional-embedder-a");
 
     const nextPath = usearchPathForVersion(dir, 2);
-    const nextWriter = new UsearchWriteHandle(nextPath, DIMS);
+    const nextWriter = createWriter(nextPath, DIMS);
     nextWriter.add(201n, makeEmbedding(201, DIMS));
     nextWriter.close();
     createBuildingIndexVersion(db, {

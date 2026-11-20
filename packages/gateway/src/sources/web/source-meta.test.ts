@@ -3,17 +3,19 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { tmpdir as fixtureTmpdir } from "node:os";
+import { join as fixtureJoin } from "node:path";
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
-import type Database from "better-sqlite3";
 type Db = Database.Database;
 
 import { createDatabase } from "../../db.js";
 import { directWriteGate } from "../../write-gate.js";
 import { WEB_SOURCE_ID } from "../../web-dataset.js";
 import { seedWebSourceMeta } from "./source-meta.js";
+import type Database from "better-sqlite3";
 
 function testDbPath(): string {
-  return `/tmp/omnesis-web-meta-test-${randomUUID()}.db`;
+  return fixtureJoin(fixtureTmpdir(), `omnesis-web-meta-test-${randomUUID()}.db`);
 }
 function cleanupDb(path: string): void {
   for (const suffix of ["", "-wal", "-shm", "-journal"]) {

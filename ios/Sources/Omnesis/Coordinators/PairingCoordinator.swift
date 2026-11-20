@@ -173,9 +173,8 @@ final class PairingCoordinator {
         onError(failure.message)
     }
 
-    /// Off the cloud build flag a finished pairing is always published.
     private func isCurrent(_ generation: UUID) -> Bool {
-        !service.cloudRelayEnabled || generation == operation
+        generation == operation
     }
 
     func updateGatewayURL(_ url: URL) throws {

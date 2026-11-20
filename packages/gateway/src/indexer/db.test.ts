@@ -67,7 +67,7 @@ type Db = Database.Database;
 let db: Db;
 
 beforeEach(() => {
-  db = createIndexDatabase(`/tmp/omnesis-indexer-test-${randomUUID()}.db`);
+  db = createIndexDatabase(join(tmpdir(), `omnesis-indexer-test-${randomUUID()}.db`));
 });
 
 afterEach(() => {
@@ -91,6 +91,50 @@ function makeEmbedding(val: number, dim: number = EMBEDDING_DIM): Float32Array {
   for (let i = 0; i < dim; i++) arr[i] /= norm;
   return arr;
 }
+
+describe("lexical change log", () => {
+  test("a change to a chunk's source, type or date is logged for the lexical ranker", () => {
+    upsertChunks(db, [makeChunk("doc-1", 0)]);
+    const seq = () =>
+      db.prepare<[], { n: number }>("SELECT count(*) AS n FROM chunks_fts_changes").get()!.n;
+    const before = seq();
+    db.prepare("UPDATE chunks SET source_id = 'other' WHERE document_id = 'doc-1'").run();
+    db.prepare("UPDATE chunks SET document_type = 'note' WHERE document_id = 'doc-1'").run();
+    db.prepare(
+      "UPDATE chunks SET source_created_at = '2026-04-01T00:00:00Z' WHERE document_id = 'doc-1'",
+    ).run();
+    db.prepare(
+      "UPDATE chunks SET source_url = 'https://example.com/x' WHERE document_id = 'doc-1'",
+    ).run();
+    expect(seq() - before).toBe(3);
+  });
+
+  test("an index database with the earlier trigger gets the wider one on open", () => {
+    const path = `/tmp/omnesis-indexer-test-${randomUUID()}.db`;
+    const older = createIndexDatabase(path);
+    older.exec(`
+      DROP TRIGGER chunks_fts_changes_au;
+      CREATE TRIGGER chunks_fts_changes_au AFTER UPDATE OF content, title ON chunks
+        WHEN old.content IS NOT new.content OR old.title IS NOT new.title OR old.rowid != new.rowid BEGIN
+        INSERT INTO chunks_fts_changes(chunk_rowid) VALUES (old.rowid);
+        INSERT INTO chunks_fts_changes(chunk_rowid) SELECT new.rowid WHERE new.rowid != old.rowid;
+      END;
+    `);
+    older.close();
+    const reopened = createIndexDatabase(path);
+    try {
+      const sql = reopened
+        .prepare<[], { sql: string }>(
+          "SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = 'chunks_fts_changes_au'",
+        )
+        .get()!.sql;
+      expect(sql).toContain("source_created_at");
+      createIndexDatabase(path).close();
+    } finally {
+      reopened.close();
+    }
+  });
+});
 
 describe("schema", () => {
   test("chunks table has an embedding BLOB column", () => {
@@ -118,7 +162,7 @@ describe("schema", () => {
   });
 
   test("an index database that predates the stats index gets it on reopen", () => {
-    const path = `/tmp/omnesis-indexer-test-${randomUUID()}.db`;
+    const path = join(tmpdir(), `omnesis-indexer-test-${randomUUID()}.db`);
     const older = createIndexDatabase(path);
     upsertChunks(older, [makeChunk("doc-1", 0), makeChunk("doc-2", 0)]);
     older.exec(`DROP INDEX ${CHUNK_STATS_INDEX}`);
@@ -1393,7 +1437,7 @@ describe("chunks_fts tokenizer migration", () => {
   });
 
   test("a legacy bare-unicode61 index keeps serving and is rebuilt step by step", () => {
-    const path = `/tmp/omnesis-fts-migration-${randomUUID()}.db`;
+    const path = join(tmpdir(), `omnesis-fts-migration-${randomUUID()}.db`);
 
     // First open: standard DB so we get all schema, chunks, triggers, etc.
     const legacy = createIndexDatabase(path);
@@ -1483,7 +1527,7 @@ describe("chunks_fts tokenizer migration", () => {
   });
 
   test("rebuilds FTS when a restored database contains chunks but no shadow index", () => {
-    const path = `/tmp/omnesis-fts-restored-${randomUUID()}.db`;
+    const path = join(tmpdir(), `omnesis-fts-restored-${randomUUID()}.db`);
     const restored = createIndexDatabase(path);
     upsertChunks(restored, [
       {

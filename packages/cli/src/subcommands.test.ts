@@ -1,9 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { stripVTControlCharacters } from "node:util";
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { HIDDEN_COMMAND_ALIASES, SUB_COMMANDS } from "./subcommands.js";
-import type { CommandDef } from "citty";
+import { renderUsage, type CommandDef } from "citty";
+import {
+  COMMANDS,
+  HIDDEN_COMMAND_ALIASES,
+  HIDDEN_INTERNAL_COMMANDS,
+  SUB_COMMANDS,
+  visibleSubCommands,
+} from "./subcommands.js";
 
 afterEach(() => vi.unstubAllEnvs());
 
@@ -41,19 +48,18 @@ describe("the omnesis command tree", () => {
     expect(Object.keys(alias.subCommands ?? {})).toEqual(Object.keys(brain.subCommands ?? {}));
   });
 
-  test.each(["0", "1"])("the cloud command exists only with the cloud opt-in %s", async (flag) => {
-    vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", flag);
-    vi.stubEnv("OMNESIS_EXPERIMENTAL", flag === "1" ? "0" : "1");
+  test.each(["0", "1"])("the cloud command is listed with experimental mode %s", async (flag) => {
+    vi.stubEnv("OMNESIS_EXPERIMENTAL", flag);
     // The tree is built when the module loads, as it is for each CLI run.
     const tree = await freshTree();
     const visible = new Set(Object.keys(tree.visibleSubCommands()));
     const registered = Object.keys(tree.SUB_COMMANDS);
-    expect(registered.includes("cloud")).toBe(flag === "1");
+    expect(registered.includes("cloud")).toBe(true);
     expect(registered.filter((name) => !visible.has(name))).toEqual([
       ...tree.HIDDEN_COMMAND_ALIASES,
       ...tree.HIDDEN_INTERNAL_COMMANDS,
     ]);
-    expect(visible.has("cloud")).toBe(flag === "1");
+    expect(visible.has("cloud")).toBe(true);
     expect(visible.has("watches")).toBe(true);
     expect(visible.has("subscriptions")).toBe(false);
     expect(visible.has("brain")).toBe(true);
@@ -63,7 +69,6 @@ describe("the omnesis command tree", () => {
 });
 
 test("the optional cloud command resolves without starting a gateway or requiring a Google identity", async () => {
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
   const entry = (await freshTree()).SUB_COMMANDS.cloud;
   expect(entry, "no command registered as `cloud`").toBeDefined();
   expect(
@@ -89,5 +94,40 @@ describe("the sources group", () => {
     const verbs = Object.keys(sources.subCommands ?? {});
     expect(verbs).toEqual(expect.arrayContaining(["move", "members", "join", "detach"]));
     expect(verbs.indexOf("members")).toBeGreaterThan(verbs.indexOf("move"));
+  });
+});
+
+describe("the top-level help", () => {
+  test("lists every visible command from inert summaries, so printing it imports no command", async () => {
+    const listed = visibleSubCommands();
+    for (const [name, entry] of Object.entries(listed)) {
+      // citty calls a function entry (or awaits a promise) to read its meta, which
+      // would import the command's whole module graph just to print one line.
+      expect(typeof entry, `\`${name}\` would be imported to render --help`).toBe("object");
+      expect(entry).not.toBeInstanceOf(Promise);
+      expect(Object.keys(entry as object), `\`${name}\` is more than a summary`).toEqual(["meta"]);
+    }
+    const usage = stripVTControlCharacters(
+      await renderUsage({ meta: { name: "omnesis" }, subCommands: listed }),
+    );
+    const lines = usage.split("\n").map((line) => line.trim().split(/\s{2,}/));
+    for (const [name, { description }] of Object.entries(COMMANDS)) {
+      if (HIDDEN_COMMAND_ALIASES.has(name) || HIDDEN_INTERNAL_COMMANDS.has(name)) {
+        expect(Object.keys(listed)).not.toContain(name);
+        continue;
+      }
+      expect(lines, `\`${name}\` is not listed with its summary`).toContainEqual([
+        name,
+        description,
+      ]);
+    }
+  });
+
+  test("summarises each command with the description its own help prints", async () => {
+    for (const [name, entry] of Object.entries(COMMANDS)) {
+      const command = (await entry.load()) as CommandDef;
+      const meta = await (typeof command.meta === "function" ? command.meta() : command.meta);
+      expect(entry.description, `summary of \`${name}\``).toBe(meta?.description);
+    }
   });
 });

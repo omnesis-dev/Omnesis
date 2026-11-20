@@ -73,7 +73,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import dev.omnesis.android.BuildConfig
 import dev.omnesis.android.designsystem.components.LoadingView
 import dev.omnesis.android.designsystem.components.OmSpinner
 import dev.omnesis.android.designsystem.theme.OmRadius
@@ -107,8 +106,6 @@ fun DevicesScreen(
     onBack: () -> Unit,
     onOpenSettings: () -> Unit = {},
     focusedDeviceId: String? = null,
-    /** Everything sign-in enrollment adds to this screen; off, it matches a build without cloud connectivity. */
-    cloudFeatures: Boolean = BuildConfig.CLOUD_RELAY_ENABLED,
     vm: DevicesViewModel = hiltViewModel(),
     tailscaleJoins: TailscaleJoinRequestsViewModel = hiltViewModel(),
 ) {
@@ -118,10 +115,10 @@ fun DevicesScreen(
     val notice by vm.notice.collectAsStateWithLifecycle()
     val pair by vm.pair.collectAsStateWithLifecycle()
     var showApprovals by remember { mutableStateOf(false) }
-    val approvalClient = vm.pairingApprovalClient(cloudFeatures)
+    val approvalClient = vm.pairingApprovalClient()
     val thisDeviceId by vm.thisDeviceId.collectAsStateWithLifecycle()
     // Tailscale joins are read only while the gateway advertises them to an administrator's
-    // phone; otherwise the read asks nothing and the entry is the sign-in one, as before.
+    // phone; otherwise the read asks nothing and the entry is the sign-in one.
     val joins by tailscaleJoins.state.collectAsStateWithLifecycle()
     val tailscaleEmbed by vm.tailscaleEmbed.collectAsStateWithLifecycle()
     LaunchedEffect(tailscaleJoins, tailscaleEmbed) { tailscaleJoins.refresh() }
@@ -149,7 +146,6 @@ fun DevicesScreen(
         onDismissNotice = vm::dismissNotice,
         onOpenSettings = onOpenSettings,
         focusedDeviceId = focusedDeviceId,
-        cloudFeatures = cloudFeatures,
     )
 
     if (showApprovals && (approvalClient != null || tailscaleServed)) {
@@ -167,11 +163,9 @@ fun DevicesScreen(
         PairDeviceSheet(
             state = state,
             onPair = vm::pairDevice,
-            onSelectHost = vm::selectPairHost,
             onSelectAddress = vm::selectPairAddress,
             onDismiss = vm::closePair,
             repairTarget = state.repairTarget,
-            cloudFeatures = cloudFeatures,
         )
     }
 }
@@ -197,7 +191,6 @@ fun DevicesContent(
     onOpenSettings: () -> Unit = {},
     otherExpanded: Boolean = false,
     focusedDeviceId: String? = null,
-    cloudFeatures: Boolean = BuildConfig.CLOUD_RELAY_ENABLED,
 ) {
     val c = OmTheme.colors
     // Destructive-confirm targets (null = no dialog open).
@@ -263,7 +256,6 @@ fun DevicesContent(
                                 onDismissNotice = onDismissNotice,
                                 otherExpanded = otherExpanded,
                                 focusedDeviceId = focusedDeviceId,
-                                cloudFeatures = cloudFeatures,
                             )
                         }
                     }
@@ -283,8 +275,8 @@ fun DevicesContent(
     }
     forgetDeviceConfirm?.let { device ->
         ConfirmDialog(
-            title = forgetDeviceTitle(device, cloudFeatures),
-            body = forgetDeviceBody(device, cloudFeatures),
+            title = "Forget device?",
+            body = forgetDeviceBody(device),
             confirmLabel = "Forget",
             onConfirm = { onForgetDevice(device); forgetDeviceConfirm = null },
             onDismiss = { forgetDeviceConfirm = null },
@@ -301,16 +293,8 @@ fun DevicesContent(
     }
 }
 
-/** The Forget confirmation's title; a build without cloud connectivity keeps main's wording. */
-internal fun forgetDeviceTitle(device: DeviceRecord, cloudFeatures: Boolean): String =
-    if (cloudFeatures) "Forget device?" else "Forget ${device.name}?"
-
-internal fun forgetDeviceBody(device: DeviceRecord, cloudFeatures: Boolean): String =
-    if (cloudFeatures) {
-        "This forgets ${device.name} for good. A device that still hosts sources is refused — remove those sources first."
-    } else {
-        "Deletes the device for good. A device that still hosts sources is refused — remove those sources first."
-    }
+internal fun forgetDeviceBody(device: DeviceRecord): String =
+    "This forgets ${device.name} for good. A device that still hosts sources is refused — remove those sources first."
 
 @Composable
 private fun ConfirmDialog(
@@ -340,11 +324,9 @@ private fun ConfirmDialog(
 private fun PairDeviceSheet(
     state: DevicesViewModel.PairState,
     onPair: (String) -> Unit,
-    onSelectHost: (Int) -> Unit,
     onSelectAddress: (String) -> Unit,
     onDismiss: () -> Unit,
     repairTarget: DeviceRecord?,
-    cloudFeatures: Boolean,
 ) {
     val sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)
     androidx.compose.material3.ModalBottomSheet(
@@ -352,40 +334,18 @@ private fun PairDeviceSheet(
         sheetState = sheetState,
         containerColor = OmTheme.colors.bgPrimary,
     ) {
-        PairDeviceSheetContent(state, onPair, onSelectHost, onSelectAddress, repairTarget, cloudFeatures)
+        PairDeviceSheetContent(state, onPair, onSelectAddress, repairTarget)
     }
 }
 
-/**
- * The pair sheet's content. A build without cloud connectivity shows main's sheet, which
- * picks a network identity; a build with it shows the gateway's address plan.
- */
+/** The pair sheet's content: the form, then the code at the address the gateway's plan recommends. */
 @Composable
 internal fun PairDeviceSheetContent(
     state: DevicesViewModel.PairState,
     onPair: (String) -> Unit,
-    onSelectHost: (Int) -> Unit,
     onSelectAddress: (String) -> Unit,
     repairTarget: DeviceRecord?,
-    cloudFeatures: Boolean,
 ) {
-    if (!cloudFeatures) {
-        LegacyPairDeviceContent(
-            pending = state.pending,
-            kind = state.kind,
-            gatewayUrl = state.gatewayUrl,
-            identities = state.identities,
-            selectedHostIdx = state.selectedHostIdx,
-            qrPayload = state.qrPayload,
-            qrError = state.qrError,
-            submitting = state.submitting,
-            error = state.error,
-            onPair = onPair,
-            onSelectHost = onSelectHost,
-            repairTarget = repairTarget,
-        )
-        return
-    }
     PairDeviceContent(
         pending = state.pending,
         kind = state.kind,
@@ -416,7 +376,6 @@ private fun DevicesList(
     onDismissNotice: () -> Unit,
     otherExpanded: Boolean,
     focusedDeviceId: String?,
-    cloudFeatures: Boolean,
 ) {
     var showOther by remember { mutableStateOf(otherExpanded || focusedDeviceId != null) }
     val grouped = remember(devices, thisDeviceId) { DeviceGrouping.group(devices, thisDeviceId) }
@@ -443,7 +402,7 @@ private fun DevicesList(
         grouped.thisDevice?.let { device ->
             item("h-this") { GroupHeader("This device", null) }
             item("c-${device.id}") {
-                DeviceCardItem(device, true, tokens[device.id], notice, onExpand, onRevokeDevice, onForgetDevice, onRepairDevice, onRevokeToken, cloudFeatures)
+                DeviceCardItem(device, true, tokens[device.id], notice, onExpand, onRevokeDevice, onForgetDevice, onRepairDevice, onRevokeToken)
             }
         }
 
@@ -454,7 +413,7 @@ private fun DevicesList(
             }
         } else {
             items(grouped.live, key = { "l-${it.id}" }) { device ->
-                DeviceCardItem(device, false, tokens[device.id], notice, onExpand, onRevokeDevice, onForgetDevice, onRepairDevice, onRevokeToken, cloudFeatures)
+                DeviceCardItem(device, false, tokens[device.id], notice, onExpand, onRevokeDevice, onForgetDevice, onRepairDevice, onRevokeToken)
             }
         }
 
@@ -464,7 +423,7 @@ private fun DevicesList(
             }
             if (showOther) {
                 items(grouped.other, key = { "o-${it.id}" }) { device ->
-                    DeviceCardItem(device, false, tokens[device.id], notice, onExpand, onRevokeDevice, onForgetDevice, onRepairDevice, onRevokeToken, cloudFeatures)
+                    DeviceCardItem(device, false, tokens[device.id], notice, onExpand, onRevokeDevice, onForgetDevice, onRepairDevice, onRevokeToken)
                 }
             }
         }
@@ -491,7 +450,6 @@ private fun DeviceCardItem(
     onForgetDevice: (DeviceRecord) -> Unit,
     onRepairDevice: (DeviceRecord) -> Unit,
     onRevokeToken: (String, String) -> Unit,
-    cloudFeatures: Boolean,
 ) {
     DeviceCard(
         device = device,
@@ -503,7 +461,6 @@ private fun DeviceCardItem(
         onForgetDevice = { onForgetDevice(device) },
         onRepairDevice = { onRepairDevice(device) },
         onRevokeToken = { tokenId -> onRevokeToken(tokenId, device.id) },
-        cloudFeatures = cloudFeatures,
     )
 }
 
@@ -658,11 +615,10 @@ fun DeviceCard(
     startExpanded: Boolean = false,
     /** The instant the card's relative times ("just now", "5m ago") are measured from. */
     now: Long = System.currentTimeMillis(),
-    cloudFeatures: Boolean = BuildConfig.CLOUD_RELAY_ENABLED,
 ) {
     val c = OmTheme.colors
     var expanded by remember { mutableStateOf(startExpanded) }
-    val enrollment = device.enrollment.takeIf { cloudFeatures }
+    val enrollment = device.enrollment
 
     // Trigger the lazy token fetch the first time the row opens.
     LaunchedEffect(expanded) {
@@ -689,8 +645,7 @@ fun DeviceCard(
             onRevokeDevice = onRevokeDevice,
             onForgetDevice = onForgetDevice,
             onRepairDevice = onRepairDevice,
-            cloudFeatures = cloudFeatures,
-        )
+            )
         enrollment?.let(::deviceJoinLabel)?.let {
             Spacer(Modifier.height(OmSpacing.sm))
             DeviceJoinRow(it)
@@ -736,7 +691,6 @@ private fun DeviceHeader(
     onRevokeDevice: () -> Unit = {},
     onForgetDevice: () -> Unit = {},
     onRepairDevice: () -> Unit = {},
-    cloudFeatures: Boolean = false,
 ) {
     val c = OmTheme.colors
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(OmSpacing.sm)) {
@@ -783,7 +737,7 @@ private fun DeviceHeader(
                     )
                 }
             }
-            StatusLabel(device, isThis = isThis, cloudFeatures = cloudFeatures)
+            StatusLabel(device, isThis = isThis)
         }
         DeviceMenu(DeviceActions.menu(device, isThis)) { action ->
             when (action) {
@@ -857,7 +811,7 @@ private fun DeviceMenu(items: List<DeviceMenuItem>, perform: (DeviceAction) -> U
 
 /** Revocation first, then current-client activity, live transport for others, then last activity. */
 @Composable
-private fun StatusLabel(device: DeviceRecord, isThis: Boolean, cloudFeatures: Boolean) {
+private fun StatusLabel(device: DeviceRecord, isThis: Boolean) {
     val c = OmTheme.colors
     val activeNow = !device.revoked && (isThis || device.online == true)
     val fg = when {
@@ -870,7 +824,7 @@ private fun StatusLabel(device: DeviceRecord, isThis: Boolean, cloudFeatures: Bo
         horizontalArrangement = Arrangement.spacedBy(5.dp),
     ) {
         Box(Modifier.size(6.dp).clip(CircleShape).background(fg))
-        val path = when (device.connectionPath.takeIf { cloudFeatures }) {
+        val path = when (device.connectionPath) {
             "local" -> dev.omnesis.android.transport.routing.GatewayConnectionPath.LOCAL
             "relay" -> dev.omnesis.android.transport.routing.GatewayConnectionPath.RELAY
             "reconnecting" -> dev.omnesis.android.transport.routing.GatewayConnectionPath.RECONNECTING

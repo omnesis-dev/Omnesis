@@ -6,7 +6,10 @@ import { X509Certificate, createHash } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, test, expect, beforeEach, afterEach } from "vitest";
+import { describe, test, expect, beforeEach, afterEach, vi } from "vitest";
+
+import * as core from "@omnesis/core";
+import { TlsIssuerCleanupUnconfirmedError } from "./tls-lifecycle/issuer-cleanup.js";
 
 import {
   directProcessLauncher,
@@ -25,10 +28,15 @@ import {
 let configDir: string;
 
 beforeEach(() => {
+  core.clearSecretFileKeyCacheForTests();
+  vi.stubEnv("OMNESIS_SECRET_STORE", "file");
   configDir = mkdtempSync(join(tmpdir(), "omnesis-tls-test-"));
 });
 
 afterEach(() => {
+  core.clearSecretFileKeyCacheForTests();
+  vi.unstubAllEnvs();
+  vi.restoreAllMocks();
   rmSync(configDir, { recursive: true, force: true });
 });
 
@@ -218,6 +226,45 @@ describe("self-signed nudge signal", () => {
 });
 
 describe("generateSelfSigned off the event loop", () => {
+  test("gateway shutdown cancels first-install certificate generation without persisting partial material", async () => {
+    const before = processLauncher();
+    const controller = new AbortController();
+    let entered!: () => void;
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    setProcessLauncher({
+      async run(_command, _args, options) {
+        expect(options.signal).toBe(controller.signal);
+        entered();
+        await new Promise<void>((resolve) =>
+          options.signal!.addEventListener("abort", () => resolve(), { once: true }),
+        );
+        return { exitCode: null, signal: "SIGTERM", stdout: new Uint8Array(), stderr: "" };
+      },
+    });
+    try {
+      const generation = resolveTlsBundle({ configDir, signal: controller.signal });
+      const rejected = expect(generation).rejects.toThrow("killed by SIGTERM");
+      await started;
+      controller.abort();
+      await rejected;
+      expect(existsSync(join(configDir, "tls", "cert.pem"))).toBe(false);
+      expect(existsSync(join(configDir, "tls", "key.pem"))).toBe(false);
+    } finally {
+      setProcessLauncher(before);
+    }
+  });
+
+  test("a pre-aborted boot does not start certificate preparation", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    await expect(resolveTlsBundle({ configDir, signal: controller.signal })).rejects.toMatchObject({
+      name: "AbortError",
+    });
+    expect(existsSync(join(configDir, "tls"))).toBe(false);
+  });
+
   test("runs openssl through the process launcher and lets the loop turn while it does", async () => {
     const before = processLauncher();
     const programs: string[] = [];
@@ -287,3 +334,94 @@ describe("fingerprintFromCertPem", () => {
     expect(fingerprintFromCertPem(copy)).toBe(b.fingerprintSha256);
   });
 });
+
+test("startup decrypts scope-bound key envelopes on every platform and keeps certificate PEM public", async () => {
+  vi.stubEnv("OMNESIS_SECRET_STORE", "file");
+  await core.ensureInstallRootKey({ backend: "file", configDir });
+  await core.primeSecretFileKeyCache({ backend: "file", configDir });
+  const first = await resolveTlsBundle({ configDir });
+  const serialized = readFileSync(join(configDir, "tls", "key.pem"), "utf8");
+  expect(core.isEncryptedSecretFile(serialized)).toBe(true);
+  expect(serialized).not.toContain("BEGIN PRIVATE KEY");
+  expect(core.secretFileEncryptionRequired(configDir)).toBe(true);
+  expect(readFileSync(join(configDir, "tls", "cert.pem"), "utf8")).toBe(first.cert);
+  expect((await resolveTlsBundle({ configDir })).key).toBe(first.key);
+  const explicit = await resolveTlsBundle({
+    configDir,
+    envKeyPath: join(configDir, "tls", "key.pem"),
+    envCertPath: join(configDir, "tls", "cert.pem"),
+  });
+  expect(explicit.source).toBe("user-provided");
+  expect(explicit.key).toBe(first.key);
+});
+
+test.skipIf(process.platform !== "win32")(
+  "Windows generation protects the scratch directory before OpenSSL writes its private key",
+  async () => {
+    const previous = processLauncher();
+    const direct = directProcessLauncher;
+    let checked = false;
+    setProcessLauncher({
+      ...direct,
+      async run(file, args, options) {
+        const key = args[args.indexOf("-keyout") + 1]!;
+        const parent = join(key, "..");
+        expect(core.inspectWindowsPrivatePathSync(parent, "directory").private).toBe(true);
+        expect(existsSync(key)).toBe(false);
+        const result = await direct.run(file, args, options);
+        if (result.exitCode === 0)
+          expect(core.inspectWindowsPrivatePathSync(key, "file").private).toBe(true);
+        checked = true;
+        return result;
+      },
+    });
+    try {
+      await resolveTlsBundle({ configDir });
+      expect(checked).toBe(true);
+      for (const name of ["key.pem", "cert.pem"]) {
+        expect(
+          core.inspectWindowsPrivatePathSync(join(configDir, "tls", name), "file").private,
+        ).toBe(true);
+      }
+    } finally {
+      setProcessLauncher(previous);
+    }
+  },
+);
+
+test.each([undefined, new Error("Invented join failure")])(
+  "an unconfirmed self-signed issuer retains its owned private scratch instead of reporting ordinary failure cleanup (%s)",
+  async (failure) => {
+    const before = processLauncher();
+    let scratch: string | undefined;
+    setProcessLauncher({
+      run: (_file, args) => {
+        const keyPath = args[args.indexOf("-keyout") + 1]!;
+        scratch = join(keyPath, "..");
+        writeFileSync(keyPath, "invented partial private key");
+        return Promise.resolve(
+          Object.assign(
+            {
+              exitCode: null,
+              signal: null,
+              stdout: Buffer.alloc(0),
+              stderr: "",
+              failure: "spawn" as const,
+            },
+            { cleanupFailure: failure },
+          ),
+        );
+      },
+    });
+    try {
+      const error = await generateSelfSigned().catch((error: unknown) => error);
+      expect(error).toBeInstanceOf(TlsIssuerCleanupUnconfirmedError);
+      expect(error).toMatchObject({ cleanupFailure: failure, scratchDirectory: scratch });
+      expect(existsSync(scratch!)).toBe(true);
+      expect(readFileSync(join(scratch!, "key.pem"), "utf8")).toBe("invented partial private key");
+    } finally {
+      setProcessLauncher(before);
+      if (scratch) rmSync(scratch, { recursive: true, force: true });
+    }
+  },
+);

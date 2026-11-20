@@ -8,12 +8,13 @@
 // guided setup can be walked from here at will.
 
 import { html } from "htm/preact";
+import { relayInviteOnly } from "../../lib/cloud-relay-api.js";
 import { relayPhase, relayEstablished } from "../relay.js";
 import { tailscalePhase } from "../tailscale.js";
 import { DevicesChoice, devicePolicies } from "./devices-step.js";
 import { FirstChoice } from "./connection-step.js";
 import { ACCOUNT_PAGE, AddressLink, HOST_TAILSCALE_PAGE, MCP_PAGE, OWN_ADDRESS_PAGE, RELAY_PAGE, TAILSCALE_PAGE } from "./manage.js";
-import { MCP_ADDRESS_LABELS, mcpRows } from "./mcp.js";
+import { MCP_ADDRESS_LABELS, REACH_DETAILS, mcpRows } from "./mcp.js";
 import { useHostTailscale } from "./own-setup.js";
 import { accountState, listSentence } from "./model.js";
 
@@ -85,10 +86,18 @@ export function Summary({ remote, setRemote, relay, tailscale, headingRef, onSta
   const hostServes = host?.state === "available" && host.servesGateway;
   const policies = devicePolicies(relay, tailscale);
   const applies = policies.relayLinked || policies.tailscaleOn;
-  const [accountMark, accountTitle, accountDetail] = ACCOUNT_ITEMS[accountState(relayStatus)];
+  const accountNow = accountState(relayStatus);
+  const [accountMark, accountTitle, plainDetail] = ACCOUNT_ITEMS[accountNow];
+  // Before any account, the line says up front that creating one needs an invite.
+  const accountDetail =
+    accountNow === "none" && relayInviteOnly(relayStatus)
+      ? `Private, invite only: creating an account needs an invite link. ${plainDetail}`
+      : plainDetail;
   const google = !relayStatus?.account?.linked && relayStatus?.google?.linked;
   const mcp = mcpRows(remote);
-  const mcpOn = mcp.filter((row) => row.enabled);
+  const mcpOn = mcp.filter((row) => row.reach !== "off");
+  // The device's own address is on the Tailscale network only; its public address carries MCP alone.
+  const tailscalePublic = tailscaleState?.public?.state === "on";
   const accountOn = accountMark === "on" || accountState(relayStatus) === "enrolled";
   const anything = accountOn || tailscaleOn || relayOn || hostServes || Boolean(ownAddress);
   const joinWays = [policies.relayLinked && "devices signing in with your account", policies.tailscaleOn && "devices on your Tailscale network"].filter(Boolean);
@@ -119,9 +128,11 @@ export function Summary({ remote, setRemote, relay, tailscale, headingRef, onSta
           detail=${!tailscaleOn
             ? "Off."
             : tailscaleNow === "connected"
-              ? tailscaleState.node?.dnsName
-                ? html`<${AddressLink} url=${`https://${tailscaleState.node.dnsName}`} />${tailscaleState.certificate?.source === "tailscale" ? ", with a trusted certificate" : ""}.`
-                : `${tailscaleState.deviceName}.`
+              ? html`${tailscaleState.node?.dnsName
+                  ? html`<${AddressLink} url=${`https://${tailscaleState.node.dnsName}`} />${tailscaleState.certificate?.source === "tailscale" ? ", with a trusted certificate" : ""}`
+                  : tailscaleState.deviceName}${tailscalePublic
+                  ? ", on your Tailscale network. Only its MCP server is public on the Internet."
+                  : ", on your Tailscale network only. Not public on the Internet."}`
               : (TAILSCALE_PENDING[tailscaleNow] ?? "Needs attention on its page.")}
           action=${html`<${ItemManage} href=${TAILSCALE_PAGE} label="This gateway's own Tailscale device" on=${tailscaleOn} onManage=${onManage} />`}
         />`}
@@ -145,7 +156,11 @@ export function Summary({ remote, setRemote, relay, tailscale, headingRef, onSta
           mark=${hostServes ? "on" : "off"}
           title="Tailscale on this computer"
           detail=${hostServes
-            ? html`<${AddressLink} url=${host.url} />${host.publicGateway ? ", public on the Internet." : ", on your Tailscale network only. Not public on the Internet."}`
+            ? html`<${AddressLink} url=${host.url} />${host.publicGateway
+                ? ", public on the Internet."
+                : host.publicMcp
+                  ? ", on your Tailscale network. Only its MCP server is public on the Internet."
+                  : ", on your Tailscale network only. Not public on the Internet."}`
             : !host
               ? "Checking…"
               : host.state === "available"
@@ -169,7 +184,12 @@ export function Summary({ remote, setRemote, relay, tailscale, headingRef, onSta
           detail=${mcp.length === 0
             ? "On this computer and your home network only, until an address away from home is set up."
             : mcpOn.length > 0
-              ? `On ${listSentence(mcpOn.map((row) => MCP_ADDRESS_LABELS[row.id] ?? row.id))}.`
+              ? `On ${listSentence(
+                  mcpOn.map((row) => {
+                    const label = MCP_ADDRESS_LABELS[row.id] ?? row.id;
+                    return REACH_DETAILS[row.reach] && row.id !== "relay" ? `${label} (${REACH_DETAILS[row.reach]})` : label;
+                  }),
+                )}.`
               : "Off on every address away from home."}
           action=${html`<${ItemManage} href=${MCP_PAGE} label="MCP server" on=${mcpOn.length > 0} onManage=${onManage} />`}
         />

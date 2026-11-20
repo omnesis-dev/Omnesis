@@ -176,6 +176,43 @@ export function captureOwnerDecisionPayload(
   return captureDecisionPayloadSubjects(db, { nodeIds, sourceIds }, generation);
 }
 
+const SOURCE_SUBJECT_TRIGGERS: ReadonlyArray<[string, string]> = [
+  [
+    "knowledge_decision_input_source_subject_insert",
+    "AFTER INSERT ON knowledge_decision_inputs WHEN NEW.source_id IS NOT NULL",
+  ],
+  [
+    "knowledge_decision_input_source_subject_update",
+    "AFTER UPDATE OF source_id ON knowledge_decision_inputs WHEN NEW.source_id IS NOT NULL",
+  ],
+];
+
+/**
+ * Every decision input that names a source has that source among its
+ * subjects, so erasing the source erases the input. Triggers keep this true
+ * for every write, whichever code made it; rows written while the triggers
+ * were absent (stores that predate them, or a table rebuilt without them)
+ * are covered by one scan in the same transaction that installs them. A
+ * store whose triggers are present needs no scan.
+ */
+function ensureSourceSubjects(db: Database.Database): void {
+  const present = new Set(
+    db
+      .prepare<[], { name: string }>(
+        "SELECT name FROM sqlite_master WHERE type='trigger' AND tbl_name='knowledge_decision_inputs'",
+      )
+      .all()
+      .map((row) => row.name),
+  );
+  if (SOURCE_SUBJECT_TRIGGERS.every(([name]) => present.has(name))) return;
+  db.exec(
+    "INSERT OR IGNORE INTO knowledge_decision_input_subjects SELECT decision_id,'source',source_id FROM knowledge_decision_inputs WHERE source_id IS NOT NULL",
+  );
+  for (const [name, event] of SOURCE_SUBJECT_TRIGGERS)
+    db.exec(
+      `CREATE TRIGGER IF NOT EXISTS ${name} ${event} BEGIN INSERT OR IGNORE INTO knowledge_decision_input_subjects VALUES(NEW.decision_id,'source',NEW.source_id); END`,
+    );
+}
 /** Shared exact request/result store; subject indexes erase multi-source and derived inputs. */
 export function createDecisionPayloadTables(db: Database.Database): void {
   db.transaction(() => {
@@ -212,8 +249,8 @@ export function createDecisionPayloadTables(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS knowledge_decision_inputs_time ON knowledge_decision_inputs(created_at,decision_id);
     CREATE TABLE IF NOT EXISTS knowledge_decision_input_subjects(decision_id TEXT NOT NULL,kind TEXT NOT NULL,id TEXT NOT NULL,PRIMARY KEY(decision_id,kind,id));
     CREATE INDEX IF NOT EXISTS knowledge_decision_input_subjects_target ON knowledge_decision_input_subjects(kind,id,decision_id);
-    INSERT OR IGNORE INTO knowledge_decision_input_subjects SELECT decision_id,'source',source_id FROM knowledge_decision_inputs WHERE source_id IS NOT NULL;
     CREATE TRIGGER IF NOT EXISTS knowledge_decision_input_cleanup AFTER DELETE ON knowledge_decision_inputs BEGIN DELETE FROM knowledge_decision_input_subjects WHERE decision_id=OLD.decision_id; END;`);
+    ensureSourceSubjects(db);
     const erase = (kind: "source" | "node", id: string) =>
       `UPDATE knowledge_decision_privacy SET generation=generation+1 WHERE id=1; DELETE FROM knowledge_decision_inputs WHERE decision_id IN (SELECT decision_id FROM knowledge_decision_input_subjects WHERE kind='${kind}' AND id=${id});`;
     const triggers: Array<[string, string, string]> = [

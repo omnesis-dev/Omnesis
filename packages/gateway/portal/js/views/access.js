@@ -111,9 +111,6 @@ export function AccessView({
   newLevel = false,
   connectOpen = false,
   completeInPortal = false,
-  // Whether the gateway advertises the optional cloud relay. Only then does the
-  // page read the relay's status, for the public address it gives the gateway.
-  cloudRelay = false,
   // Whether the gateway advertises its own Tailscale device. Only then does
   // the page read the device's state, for the address it gives the gateway.
   tailscaleEmbed = false,
@@ -127,8 +124,8 @@ export function AccessView({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [connectLocal, setConnectLocal] = useState(false);
-  const relayStatus = useRelayStatus(cloudRelay, connectOpen || connectLocal);
-  const relay = relayPublicAddress(cloudRelay, relayStatus, overview.oauth);
+  const relayStatus = useRelayStatus(connectOpen || connectLocal);
+  const relay = relayPublicAddress(relayStatus, overview.oauth);
   const tailscaleState = useTailscaleState(tailscaleEmbed, connectOpen || connectLocal);
   const tailscale = tailscalePublicAddress(tailscaleEmbed, tailscaleState, overview.oauth);
   // The pending request under review, with the gateway's `connection`
@@ -673,7 +670,7 @@ export function AccessView({
                 ? html`This can be a private network address. ${hostedHint.map((part) => typeof part === "string"
                     ? part
                     : html`<a href=${part.route} onClick=${(event) => { event.preventDefault(); navigate(part.route); }}>${part.text}</a>`)}`
-                : "This can be a private network address; ChatGPT and Claude apps need an Internet-reachable address."}
+                : "This can be a private network address; ChatGPT, Claude apps and Grok bot need an Internet-reachable address."}
             </span>
           </div>`
         : null}

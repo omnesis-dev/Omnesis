@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { tmpdir } from "node:os";
+import { resolve } from "node:path";
 import { stripVTControlCharacters } from "node:util";
 import { describe, expect, test } from "vitest";
 import { EXIT_USER_ERROR, type SerializedDescriptor } from "../utils.js";
@@ -95,15 +97,16 @@ describe("reading the flags", () => {
   });
 
   test("--config reads inline JSON, a file and standard input; --set wins over it", () => {
+    const settingsPath = resolve(tmpdir(), "fictional", "settings.json");
     const io = {
       readFile: (path: string) => {
-        expect(path).toBe("/tmp/fictional/settings.json");
+        expect(path).toBe(settingsPath);
         return '{"api_key":"k-1","port":443,"verbose":true,"skip":null}';
       },
       readStdin: () => '{"vaultPath":"/from-stdin"}',
     };
     expect(parseConfigFlag('{"vaultPath":"/inline"}', io)).toEqual({ vaultPath: "/inline" });
-    expect(parseConfigFlag("@/tmp/fictional/settings.json", io)).toEqual({
+    expect(parseConfigFlag(`@${settingsPath}`, io)).toEqual({
       api_key: "k-1",
       port: "443",
       verbose: "true",
@@ -127,8 +130,9 @@ describe("reading the flags", () => {
       },
       readStdin: () => "",
     };
-    const message = refusal(() => parseConfigFlag("@/nowhere.json", unreadable));
-    expect(message).toContain("could not read /nowhere.json");
+    const missingPath = resolve(tmpdir(), "fictional", "missing-settings.json");
+    const message = refusal(() => parseConfigFlag(`@${missingPath}`, unreadable));
+    expect(message).toContain(`could not read ${missingPath}`);
     expect(message).toContain("--config - < settings.json");
     expect(refusal(() => readSuppliedSettings(["--config", "{}", "--config", "{}"], io))).toContain(
       "more than once",

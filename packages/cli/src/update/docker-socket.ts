@@ -64,6 +64,8 @@ export const nodeDockerSocketProbeDeps: DockerSocketProbeDeps = {
       socket.once("error", (err: NodeJS.ErrnoException) => done(err.code ?? "EIO"));
     }),
   socketGid: (path) => {
+    // Windows stat fields do not describe usable Unix group ownership.
+    if (process.platform === "win32") return null;
     try {
       return statSync(path).gid;
     } catch {

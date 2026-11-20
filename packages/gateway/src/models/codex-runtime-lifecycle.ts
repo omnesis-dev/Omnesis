@@ -10,6 +10,10 @@ import { promisify } from "node:util";
 import { buildCodexEnv, ensureCodexHome } from "@omnesis/agent";
 import {
   createLogger,
+  nodeCommandInvocation,
+  terminateChildProcess,
+  spawnWindowsJob,
+  execWindowsJob,
   type CodexBackendStatus,
   type CodexLoginFlow,
   type CodexRuntimeStatus,
@@ -18,6 +22,8 @@ import {
   reassertCodexGenerationAuth,
   type CodexGenerationSupervisor,
 } from "./codex-generation-supervisor.js";
+
+import { CodexGenerationCleanupError, codexCleanupFailure } from "./codex-runtime-cleanup.js";
 
 const execFileAsync = promisify(execFile);
 const log = createLogger("gateway:models:codex:lifecycle");
@@ -31,6 +37,7 @@ interface ActiveLogin {
   running: boolean;
   closed: Promise<void>;
   timer: NodeJS.Timeout;
+  termination: Promise<void> | null;
 }
 
 interface CodexRuntimeLifecycleOptions {
@@ -55,55 +62,121 @@ export class CodexRuntimeLifecycle {
   private activeLogin: ActiveLogin | null = null;
   private claim: "login-starting" | "agent-setup" | "logout" | null = null;
   private loginStartInFlight: Promise<void> | null = null;
+  private readonly acceptedWork = new Set<Promise<void>>();
   private disposed = false;
+  private cleanupFailure: unknown;
+  private disposal: Promise<void> | undefined;
+  private readonly pendingCleanup = Object.assign(
+    new CodexGenerationCleanupError(new Error("Codex lifecycle cleanup remains pending.")),
+    { cleanupPending: true as const },
+  );
 
   constructor(opts: CodexRuntimeLifecycleOptions) {
     this.opts = opts;
   }
 
+  private holdCleanup(error: unknown): void {
+    const failure = codexCleanupFailure(error) ?? new CodexGenerationCleanupError(error);
+    this.cleanupFailure = this.opts.supervisor.holdCleanup(failure);
+  }
+
+  private assertCleanupConfirmed(): void {
+    const failure = this.cleanupFailure ?? this.opts.supervisor.cleanupError;
+    if (failure !== undefined && failure !== null)
+      throw new CodexRuntimeLifecycleConflictError(
+        "Codex process cleanup was not confirmed. Review the process state before retrying.",
+        { cause: failure },
+      );
+  }
+
+  /** Read-only shutdown receipt, including operations whose close has not settled. */
+  cleanupReceipt(): unknown | undefined {
+    return (
+      this.cleanupFailure ??
+      this.opts.supervisor.cleanupError ??
+      (this.disposed &&
+      (this.claim !== null || this.activeLogin?.running || this.activeLogin?.termination)
+        ? this.pendingCleanup
+        : undefined)
+    );
+  }
+
   get busy(): boolean {
-    return this.activeLogin?.running === true || this.claim !== null;
+    return (
+      this.cleanupFailure !== undefined ||
+      Boolean(this.opts.supervisor.cleanupError) ||
+      this.activeLogin?.running === true ||
+      this.activeLogin?.termination != null ||
+      this.claim !== null
+    );
+  }
+
+  private retainAcceptedWork(): () => void {
+    let finish!: () => void;
+    const work = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    this.acceptedWork.add(work);
+    return () => {
+      this.acceptedWork.delete(work);
+      finish();
+    };
   }
 
   async runAgentSetup<T>(operation: () => Promise<T>): Promise<T> {
+    this.assertCleanupConfirmed();
     if (this.disposed) throw new Error("Codex runtime service disposed.");
     if (this.opts.updateInProgress()) {
       throw new CodexRuntimeLifecycleConflictError(
         "Wait for the Codex runtime update to finish before setting up Agent.",
       );
     }
-    if (this.activeLogin?.running || this.claim) {
+    if (this.busy) {
       throw new CodexRuntimeLifecycleConflictError(
         "Another Codex lifecycle operation is in progress.",
       );
     }
     this.claim = "agent-setup";
+    const finish = this.retainAcceptedWork();
     try {
       return await operation();
     } finally {
       if (this.claim === "agent-setup") this.claim = null;
+      finish();
     }
   }
 
-  async dispose(): Promise<void> {
+  dispose(): Promise<void> {
+    return (this.disposal ??= this.disposeLifecycle());
+  }
+
+  private async disposeLifecycle(): Promise<void> {
     this.disposed = true;
-    await this.loginStartInFlight;
+    // Disposal is not admitted work: close admission, then join the accepted operations.
+    await Promise.all([this.loginStartInFlight, ...this.acceptedWork]);
     const active = this.activeLogin;
-    if (!active) return;
+    if (!active) {
+      if (this.cleanupFailure !== undefined) throw this.cleanupFailure;
+      if (this.opts.supervisor.cleanupError) throw this.opts.supervisor.cleanupError;
+      return;
+    }
     clearTimeout(active.timer);
     if (active.flow.status === "pending") {
       active.flow = { ...active.flow, status: "canceled", reason: "Gateway stopped." };
     }
-    if (active.running) active.proc.kill("SIGTERM");
+    if (active.running || active.termination) await this.stopLogin(active, "SIGTERM");
     await Promise.race([active.closed, new Promise<void>((resolve) => setTimeout(resolve, 2_000))]);
     if (active.running) {
-      active.proc.kill("SIGKILL");
+      await this.stopLogin(active, "SIGKILL");
       await active.closed;
     }
     this.activeLogin = null;
+    if (this.cleanupFailure !== undefined) throw this.cleanupFailure;
+    if (this.opts.supervisor.cleanupError) throw this.opts.supervisor.cleanupError;
   }
 
   async startDeviceLogin(): Promise<CodexLoginFlow> {
+    this.assertCleanupConfirmed();
     if (this.disposed) throw new Error("Codex runtime service disposed.");
     if (this.opts.updateInProgress()) {
       throw new CodexRuntimeLifecycleConflictError(
@@ -116,7 +189,7 @@ export class CodexRuntimeLifecycle {
       );
     }
     if (this.activeLogin?.flow.status === "pending") return this.activeLogin.flow;
-    if (this.activeLogin?.running) {
+    if (this.activeLogin?.running || this.activeLogin?.termination) {
       throw new CodexRuntimeLifecycleConflictError(
         "Wait for the previous Codex login process to finish.",
       );
@@ -135,13 +208,33 @@ export class CodexRuntimeLifecycle {
 
     try {
       await this.opts.ensureSelectedRuntime();
+      this.assertCleanupConfirmed();
+      if (this.cleanupFailure !== undefined)
+        throw new CodexRuntimeLifecycleConflictError(
+          "Codex process cleanup was not confirmed. Review the process state before retrying.",
+        );
       if (this.disposed) throw new Error("Codex runtime service disposed.");
       await ensureCodexHome(this.opts.codexHome);
+      this.assertCleanupConfirmed();
+      if (this.cleanupFailure !== undefined)
+        throw new CodexRuntimeLifecycleConflictError(
+          "Codex process cleanup was not confirmed. Review the process state before retrying.",
+        );
       if (this.disposed) throw new Error("Codex runtime service disposed.");
       const childEnv = buildCodexEnv(this.opts.env, this.opts.codexHome);
       await this.opts.supervisor.current.runtime.probeRuntime(this.opts.refreshTimeoutMs);
+      this.assertCleanupConfirmed();
+      if (this.cleanupFailure !== undefined)
+        throw new CodexRuntimeLifecycleConflictError(
+          "Codex process cleanup was not confirmed. Review the process state before retrying.",
+        );
       if (this.disposed) throw new Error("Codex runtime service disposed.");
       const commandInfo = await this.opts.supervisor.current.runtime.resolveCommandInfo();
+      this.assertCleanupConfirmed();
+      if (this.cleanupFailure !== undefined)
+        throw new CodexRuntimeLifecycleConflictError(
+          "Codex process cleanup was not confirmed. Review the process state before retrying.",
+        );
       if (this.disposed) throw new Error("Codex runtime service disposed.");
 
       const id = randomUUID();
@@ -150,14 +243,31 @@ export class CodexRuntimeLifecycle {
         status: "pending",
         expiresAt: new Date(Date.now() + this.opts.loginTtlMs).toISOString(),
       };
-      const proc = spawn(
-        commandInfo.command,
-        [...this.opts.cliArgsPrefix, "login", "--device-auth"],
-        { env: childEnv, stdio: ["ignore", "pipe", "pipe"], windowsHide: true },
-      );
-      const closed = new Promise<void>((resolve) => {
-        proc.once("close", () => resolve());
-        proc.once("error", () => resolve());
+      const invocation = nodeCommandInvocation(commandInfo.command, [
+        ...this.opts.cliArgsPrefix,
+        "login",
+        "--device-auth",
+      ]);
+      const job =
+        process.platform === "win32"
+          ? spawnWindowsJob(invocation.command, invocation.args, { env: childEnv })
+          : null;
+      const proc =
+        job ??
+        spawn(invocation.command, invocation.args, {
+          env: childEnv,
+          stdio: ["ignore", "pipe", "pipe"],
+          windowsHide: true,
+        });
+      job?.stdin.end();
+      const closed =
+        job?.jobClosed ??
+        new Promise<void>((resolve) => {
+          proc.once("close", () => resolve());
+          proc.once("error", () => resolve());
+        });
+      void closed.catch((error: unknown) => {
+        if (job) this.holdCleanup(error);
       });
       let output = "";
       let startTimer: NodeJS.Timeout | null = null;
@@ -184,10 +294,17 @@ export class CodexRuntimeLifecycle {
           status: "failed",
           reason: "The Codex device login expired.",
         };
-        proc.kill("SIGTERM");
+        void this.stopLogin(this.activeLogin, "SIGTERM");
       };
       const expiryTimer = setTimeout(expireLogin, this.opts.loginTtlMs + 5_000);
-      this.activeLogin = { flow, proc, running: true, closed, timer: expiryTimer };
+      this.activeLogin = {
+        flow,
+        proc,
+        running: true,
+        closed,
+        timer: expiryTimer,
+        termination: null,
+      };
 
       return await new Promise<CodexLoginFlow>((resolve, reject) => {
         startTimer = setTimeout(() => {
@@ -198,7 +315,7 @@ export class CodexRuntimeLifecycle {
               reason: "Codex did not return a device login code.",
             };
           }
-          proc.kill("SIGTERM");
+          if (this.activeLogin?.flow.id === id) void this.stopLogin(this.activeLogin, "SIGTERM");
           failStart(reject, "Codex did not return a device login code.");
         }, this.opts.loginStartTimeoutMs);
 
@@ -221,7 +338,7 @@ export class CodexRuntimeLifecycle {
         proc.stderr?.on("data", onChunk);
         proc.on("error", (err) => {
           if (this.activeLogin?.flow.id === id) {
-            this.activeLogin.running = false;
+            if (!job) this.activeLogin.running = false;
             clearTimeout(this.activeLogin.timer);
             this.activeLogin.flow = {
               ...this.activeLogin.flow,
@@ -231,7 +348,17 @@ export class CodexRuntimeLifecycle {
           }
           failStart(reject, conciseError(err));
         });
-        proc.on("exit", (code, signal) => {
+        void job?.jobReady.catch((err: unknown) => {
+          if (this.activeLogin?.flow.id === id) {
+            this.activeLogin.flow = {
+              ...this.activeLogin.flow,
+              status: "failed",
+              reason: conciseError(err),
+            };
+          }
+          failStart(reject, conciseError(err));
+        });
+        const exited = (code: number | null, signal: NodeJS.Signals | null): void => {
           if (this.activeLogin?.flow.id !== id) return;
           this.activeLogin.running = false;
           clearTimeout(this.activeLogin.timer);
@@ -263,6 +390,26 @@ export class CodexRuntimeLifecycle {
             : `Codex login exited with code ${code ?? "unknown"}.`;
           this.activeLogin.flow = { ...this.activeLogin.flow, status: "failed", reason };
           if (!startSettled) failStart(reject, reason);
+        };
+        proc.on("exit", (code, signal) => {
+          if (!job) {
+            exited(code, signal);
+            return;
+          }
+          void closed.then(
+            () => exited(code, signal),
+            (cleanupError: unknown) => {
+              this.holdCleanup(cleanupError);
+              if (this.activeLogin?.flow.id !== id) return;
+              // Keep the operation fenced: raw helper exit is insufficient
+              // authority to start another login or mutate its auth state.
+              clearTimeout(this.activeLogin.timer);
+              const reason =
+                "Codex login cleanup was not confirmed. Review the process state before retrying.";
+              this.activeLogin.flow = { ...this.activeLogin.flow, status: "failed", reason };
+              failStart(reject, reason);
+            },
+          );
         });
       });
     } finally {
@@ -283,11 +430,12 @@ export class CodexRuntimeLifecycle {
     }
     active.flow = { ...active.flow, status: "canceled", reason: "Login canceled." };
     clearTimeout(active.timer);
-    active.proc.kill("SIGTERM");
+    void this.stopLogin(active, "SIGTERM");
     return { ok: true, canceled: true, flow: { ...active.flow } };
   }
 
   async logout(): Promise<{ ok: true; status: CodexBackendStatus }> {
+    this.assertCleanupConfirmed();
     if (this.disposed) throw new Error("Codex runtime service disposed.");
     if (this.opts.updateInProgress()) {
       throw new CodexRuntimeLifecycleConflictError(
@@ -300,18 +448,21 @@ export class CodexRuntimeLifecycle {
       );
     }
     this.claim = "logout";
+    const finish = this.retainAcceptedWork();
     try {
       await this.opts.ensureSelectedRuntime();
+      this.assertCleanupConfirmed();
+      if (this.disposed) throw new Error("Codex runtime service disposed.");
       if (this.activeLogin) {
         clearTimeout(this.activeLogin.timer);
-        if (this.activeLogin.running) {
-          this.activeLogin.proc.kill("SIGTERM");
+        if (this.activeLogin.running || this.activeLogin.termination) {
+          await this.stopLogin(this.activeLogin, "SIGTERM");
           await Promise.race([
             this.activeLogin.closed,
             new Promise<void>((resolve) => setTimeout(resolve, 2_000)),
           ]);
           if (this.activeLogin.running) {
-            this.activeLogin.proc.kill("SIGKILL");
+            await this.stopLogin(this.activeLogin, "SIGKILL");
             await this.activeLogin.closed;
           }
         }
@@ -320,14 +471,30 @@ export class CodexRuntimeLifecycle {
       const childEnv = buildCodexEnv(this.opts.env, this.opts.codexHome);
       try {
         const commandInfo = await this.opts.supervisor.current.runtime.resolveCommandInfo();
-        await execFileAsync(commandInfo.command, [...this.opts.cliArgsPrefix, "logout"], {
-          env: childEnv,
-          timeout: this.opts.refreshTimeoutMs,
-          windowsHide: true,
-        });
+        this.assertCleanupConfirmed();
+        if (this.disposed) throw new Error("Codex runtime service disposed.");
+        const invocation = nodeCommandInvocation(commandInfo.command, [
+          ...this.opts.cliArgsPrefix,
+          "logout",
+        ]);
+        await (process.platform === "win32" ? execWindowsJob : execFileAsync)(
+          invocation.command,
+          invocation.args,
+          {
+            env: childEnv,
+            timeout: this.opts.refreshTimeoutMs,
+            windowsHide: true,
+          },
+        );
       } catch (err) {
+        if (err && typeof err === "object" && "cleanupFailure" in err) {
+          this.holdCleanup(err);
+          throw err;
+        }
+        if (this.disposed) throw err;
         log.warn(`Codex logout command failed; removing local auth file: ${conciseError(err)}`);
       }
+      this.assertCleanupConfirmed();
       await rm(join(this.opts.codexHome, "auth.json"), { force: true });
       this.opts.invalidateRefresh();
       reassertCodexGenerationAuth(this.opts.supervisor.current);
@@ -345,7 +512,31 @@ export class CodexRuntimeLifecycle {
       return { ok: true, status };
     } finally {
       if (this.claim === "logout") this.claim = null;
+      finish();
     }
+  }
+
+  private stopLogin(active: ActiveLogin, signal: NodeJS.Signals): Promise<void> {
+    if (process.platform === "win32" && active.termination) return active.termination;
+    const stopping =
+      process.platform === "win32"
+        ? (async () => {
+            if (active.proc.exitCode === null && active.proc.signalCode === null)
+              active.proc.kill("SIGKILL");
+            await active.closed;
+          })()
+        : terminateChildProcess(active.proc, signal);
+    active.termination = stopping;
+    void stopping.then(
+      () => {
+        if (active.termination === stopping) active.termination = null;
+      },
+      (err: unknown) => {
+        if (active.termination === stopping) active.termination = null;
+        log.warn(`Could not stop Codex login process: ${conciseError(err)}`);
+      },
+    );
+    return stopping;
   }
 }
 

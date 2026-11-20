@@ -112,13 +112,13 @@ class SettingsViewModel @Inject constructor(
 
     private val _omnesisAccountOffered = MutableStateFlow(false)
 
-    /** Whether the gateway has Omnesis account settings to open. Never asked unless the build enables cloud connectivity. */
+    /** Whether the gateway has Omnesis account settings to open. */
     val omnesisAccountOffered: StateFlow<Boolean> = _omnesisAccountOffered.asStateFlow()
 
     init {
         pushHealthCoordinator.refresh()
         permissionHealthCoordinator.refresh()
-        if (BuildConfig.CLOUD_RELAY_ENABLED) viewModelScope.launch {
+        viewModelScope.launch {
             session.state.collectLatest {
                 _omnesisAccountOffered.value = cloudRelayClient()?.let { cloudAccountOffered(it) } ?: false
             }
@@ -126,7 +126,7 @@ class SettingsViewModel @Inject constructor(
     }
 
     private fun cloudRelayClient(): CloudRelayManaging? =
-        session.session?.takeIf { BuildConfig.CLOUD_RELAY_ENABLED && "admin" in it.pairing.scopes }?.admin
+        session.session?.takeIf { "admin" in it.pairing.scopes }?.admin
 
     fun retryDelivery() = pushHealthCoordinator.retry()
 

@@ -7,9 +7,9 @@
  */
 
 import { createHash } from "node:crypto";
-import { closeSync, constants, fstatSync, openSync, readSync } from "node:fs";
 import PostalMime from "postal-mime";
 import { parseMessageFileName } from "./layout.js";
+import { readMessagePrefix as readPrefix } from "./message-reader.js";
 import type { Address, Email } from "postal-mime";
 import type { MailAddress } from "@omnesis/core";
 
@@ -64,35 +64,6 @@ export interface ParsedMessage {
    * before its attachments — and its attachments are left out.
    */
   oversized: boolean;
-}
-
-/**
- * Read the start of a message file: at most `maxBytes` of it.
- *
- * Opened without following a link and without blocking, and refused unless
- * it is a regular file: a named pipe would otherwise stall the collector on
- * the open, and a file swapped for a link since the walk could point anywhere.
- */
-function readPrefix(path: string, maxBytes: number): { bytes: Buffer; size: number } {
-  const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
-  try {
-    const stat = fstatSync(fd);
-    if (!stat.isFile()) {
-      throw Object.assign(new Error("Not a regular file"), { code: "ENOTREGULAR" });
-    }
-    const size = stat.size;
-    const length = Math.min(size, maxBytes);
-    const bytes = Buffer.alloc(length);
-    let offset = 0;
-    while (offset < length) {
-      const read = readSync(fd, bytes, offset, length - offset, offset);
-      if (read === 0) break;
-      offset += read;
-    }
-    return { bytes: bytes.subarray(0, offset), size };
-  } finally {
-    closeSync(fd);
-  }
 }
 
 /** The header block of a raw message: everything before the first empty line. */
@@ -258,7 +229,7 @@ export async function scanMessage(
   mtimeMs: () => number,
   flagsInFile = false,
 ): Promise<ScannedMessage> {
-  const { bytes } = readPrefix(path, HEADER_SCAN_BYTES);
+  const { bytes } = await readPrefix(path, HEADER_SCAN_BYTES);
   const headers = await PostalMime.parse(repairCharsets(headerBlock(bytes)), MIME_OPTIONS);
   const dateMs =
     (validDate(headers.date) ?? receivedDate(headers))?.getTime() ??
@@ -372,7 +343,7 @@ function asUtf8Text(content: Uint8Array): Uint8Array {
 
 /** Parse a whole message file. */
 export async function parseMessageFile(path: string): Promise<ParsedMessage> {
-  const { bytes, size } = readPrefix(path, MAX_MESSAGE_BYTES);
+  const { bytes, size } = await readPrefix(path, MAX_MESSAGE_BYTES);
   const oversized = size > MAX_MESSAGE_BYTES;
   const email = await PostalMime.parse(repairCharsets(bytes), MIME_OPTIONS);
   return {

@@ -2,7 +2,11 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { z } from "zod";
-import { GATEWAY_SIGNUP_ACCESS_PATH, GATEWAY_SIGNUP_PATH } from "./gateway-signup-contract.js";
+import {
+  GATEWAY_SIGNUP_ACCESS_PATH,
+  GATEWAY_SIGNUP_INVITE_PATH,
+  GATEWAY_SIGNUP_PATH,
+} from "./gateway-signup-contract.js";
 import { readJsonBody } from "./relay-json-body.js";
 import { RelayError } from "./tunnels.js";
 import { brand } from "./relay-page.js";
@@ -17,8 +21,8 @@ const launch = z
   .strict();
 const complete = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Omnesis account</title><link rel="stylesheet" href="/_relay/account/style.css"></head><body><main>${brand}<h1>You're all set</h1><p>Go back to your gateway. It will finish connecting to your Omnesis account on its own. You can close this page.</p></main></body></html>`;
 const refusal = JSON.stringify({
-  reason: "invitation-required",
-  message: "This relay connects new gateways by invitation only. Ask its operator for one.",
+  reason: "signup-closed",
+  message: "This relay is not accepting new gateways.",
 });
 
 const restart =
@@ -30,6 +34,7 @@ export class GatewaySignupHttp {
     private readonly options: {
       signup: GatewaySignup;
       admission: LoginAdmission;
+      ownerAdmission: LoginAdmission;
       authenticateOwner(req: IncomingMessage): Promise<AccountBrowserOwner>;
     },
   ) {}
@@ -52,6 +57,23 @@ export class GatewaySignupHttp {
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify(access ? { signup: access } : {}));
       return true;
+    }
+    if (url.pathname === GATEWAY_SIGNUP_INVITE_PATH) {
+      // A gateway asks without an Origin; this relay's own invite page asks from its origin.
+      if (req.method !== "POST") throw new RelayError(405, "Method not allowed");
+      if (
+        url.search ||
+        (req.headers.origin !== undefined && req.headers.origin !== this.options.signup.origin)
+      )
+        throw new RelayError(403, "Invite check refused");
+      if (req.headers["content-type"]?.split(";")[0]?.trim().toLowerCase() !== "application/json")
+        throw new RelayError(415, "JSON invite check required");
+      return await this.options.admission.run(async () => {
+        const status = this.options.signup.checkInvite(await readJsonBody(req, 4096));
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify(status));
+        return true;
+      }, req);
     }
     if (!this.options.signup.enabled()) {
       req.resume();
@@ -93,27 +115,30 @@ export class GatewaySignupHttp {
       throw new RelayError(403, "Use your gateway to connect");
     if (req.headers["content-type"]?.split(";")[0]?.trim().toLowerCase() !== "application/json")
       throw new RelayError(415, "JSON gateway signup request required");
-    // Waiting on an operation already started is not a new sign-in attempt.
-    return this.options.admission[action === "poll" || action === "cancel" ? "poll" : "run"](
-      async () => {
-        const owner = action === "link" ? await this.options.authenticateOwner(req) : undefined;
-        const body = await readJsonBody(req, 8192);
-        let value: unknown;
-        if (action === "start") value = this.options.signup.start(body);
-        else if (action === "poll") value = this.options.signup.poll(body);
-        else if (owner) value = await this.options.signup.link(owner, body);
-        else {
-          this.options.signup.cancel(body);
-          value = { ok: true };
-        }
-        res.writeHead(200, { "content-type": "application/json" });
-        res.end(JSON.stringify(value));
-        return true;
-      },
-      req,
-    ).catch((error: unknown) => {
+    try {
+      const owner = action === "link" ? await this.options.authenticateOwner(req) : undefined;
+      const admission = owner ? this.options.ownerAdmission : this.options.admission;
+      // Waiting on an operation already started is not a new sign-in attempt.
+      return await admission[action === "poll" || action === "cancel" ? "poll" : "run"](
+        async () => {
+          const body = await readJsonBody(req, 8192);
+          let value: unknown;
+          if (action === "start") value = this.options.signup.start(body);
+          else if (action === "poll") value = this.options.signup.poll(body);
+          else if (owner) value = await this.options.signup.link(owner, body);
+          else {
+            this.options.signup.cancel(body);
+            value = { ok: true };
+          }
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(JSON.stringify(value));
+          return true;
+        },
+        req,
+      );
+    } catch (error) {
       req.resume();
       throw error;
-    });
+    }
   }
 }

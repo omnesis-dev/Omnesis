@@ -64,7 +64,6 @@ let linked: ReturnType<typeof account> | undefined;
 const handled = vi.fn();
 
 beforeEach(() => {
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
   clock = 1_000_000;
   methods = {};
   linked = account();
@@ -400,15 +399,14 @@ test("who must step up: relayed requests and devices that joined on their own; t
   expect((await app(null).request(PAIR.path, json("POST", PAIR.body, RELAYED))).status).toBe(401);
 });
 
-test("nothing changes before the owner confirms a passkey, without an account, or without the opt-in", async () => {
+test("nothing changes before the owner confirms a passkey or without an account", async () => {
   linked!.state.confirmed = false;
   expect((await app().request(PAIR.path, json("POST", PAIR.body, RELAYED))).status).toBe(200);
   linked = undefined;
-  expect((await app().request(PAIR.path, json("POST", PAIR.body, RELAYED))).status).toBe(200);
-  linked = account();
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "0");
   const router = app();
   expect((await router.request(PAIR.path, json("POST", PAIR.body, RELAYED))).status).toBe(200);
+  expect((await router.request(PAIR.path, json("POST", PAIR.body))).status).toBe(200);
+  // A gateway with no account has no ceremony to offer, and says so.
   expect(
     (
       await router.request(
@@ -419,9 +417,9 @@ test("nothing changes before the owner confirms a passkey, without an account, o
         ),
       )
     ).status,
-  ).toBe(404);
+  ).toBe(403);
+  linked = account();
   // A route guarded on an app that never mounted step-up behaves as before.
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
   const bare = strictRoute(new Hono<AppEnv>());
   bare.post("/admin/devices/pair", scope.public(), requireStepUp(), (c) => c.json({ ok: true }));
   bare.get("/label", scope.public(), (c) => c.json({ stepUpRequired: stepUpRequired(c) }));

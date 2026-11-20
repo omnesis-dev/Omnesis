@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { RelayError } from "./tunnels.js";
+import type { VerifiedInvite } from "./invites.js";
 
 /**
  * A verified sign-in that no Omnesis account uses. Accounts are created only when the person
@@ -18,6 +19,13 @@ export interface AccountAdmission {
   gatewayId: string;
   ownerAccountId: string;
   assertCurrent(): void;
+  /** The invite the account is created with; creating the account records it as used. */
+  invite?: VerifiedInvite;
+  /**
+   * A gateway linked with Google before Omnesis accounts existed, carried into an account; it
+   * needs no invite.
+   */
+  carriedOver?: true;
 }
 export type PasskeyRegistrationAuthorization =
   | { kind: "gateway-owner"; admission: AccountAdmission }

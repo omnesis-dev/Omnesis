@@ -3,6 +3,8 @@
 
 import { randomUUID } from "node:crypto";
 import { rmSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { bm25Search } from "../search/bm25.js";
 import { targetLexicalVersion } from "../search/lexical-versions.js";
@@ -22,7 +24,9 @@ type Db = Database.Database;
 const paths: string[] = [];
 const dbs: Db[] = [];
 
-function openDb(path = `/tmp/omnesis-lexical-store-${randomUUID()}.db`): Db {
+function openDb(
+  path = fixtureJoin(fixtureTmpdir(), `omnesis-lexical-store-${randomUUID()}.db`),
+): Db {
   paths.push(path);
   const db = createIndexDatabase(path);
   dbs.push(db);
@@ -220,7 +224,7 @@ describe("rebuilding to a new version", () => {
   });
 
   test("resumes from its cursor after the database is reopened", () => {
-    const path = `/tmp/omnesis-lexical-store-${randomUUID()}.db`;
+    const path = fixtureJoin(fixtureTmpdir(), `omnesis-lexical-store-${randomUUID()}.db`);
     const first = openDb(path);
     seed(first);
     target(9001);
@@ -292,7 +296,7 @@ describe("rebuilding to a new version", () => {
   });
 
   test("after a downgrade, an index this build cannot maintain stays as it was until it is replaced", () => {
-    const path = `/tmp/omnesis-lexical-store-${randomUUID()}.db`;
+    const path = fixtureJoin(fixtureTmpdir(), `omnesis-lexical-store-${randomUUID()}.db`);
     target(9001);
     const newer = openDb(path);
     seed(newer);
@@ -324,7 +328,7 @@ describe("rebuilding to a new version", () => {
   });
 
   test("an existing index gets the current trigger shape when it opens", () => {
-    const path = `/tmp/omnesis-lexical-store-${randomUUID()}.db`;
+    const path = fixtureJoin(fixtureTmpdir(), `omnesis-lexical-store-${randomUUID()}.db`);
     const first = openDb(path);
     seed(first);
     // The update trigger as older releases created it: it fires on any update.
@@ -363,7 +367,7 @@ describe("rebuilding to a new version", () => {
 
 describe("a restored database", () => {
   test("indexes chunks that arrived without a full-text index, and drops stale triggers", () => {
-    const path = `/tmp/omnesis-lexical-store-${randomUUID()}.db`;
+    const path = fixtureJoin(fixtureTmpdir(), `omnesis-lexical-store-${randomUUID()}.db`);
     const original = openDb(path);
     seed(original);
     target(9001);
@@ -394,7 +398,7 @@ describe("a restored database", () => {
 
 describe("a restored database with an unfinished build", () => {
   test("sets the build aside and can start a new one", () => {
-    const path = `/tmp/omnesis-lexical-store-${randomUUID()}.db`;
+    const path = fixtureJoin(fixtureTmpdir(), `omnesis-lexical-store-${randomUUID()}.db`);
     const original = openDb(path);
     seed(original);
     target(9001);

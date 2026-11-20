@@ -12,6 +12,8 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 import { DEFAULT_SEARCH_V2_SETTINGS } from "@omnesis/config";
@@ -53,7 +55,7 @@ afterEach(async () => {
 });
 
 function tempPath(): string {
-  const path = `/tmp/omnesis-test-${randomUUID()}.db`;
+  const path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
   paths.push(path);
   return path;
 }

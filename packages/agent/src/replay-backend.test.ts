@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { z } from "zod";
 import {
@@ -27,6 +27,107 @@ function fixture(events: AgentEvent[], afterMs = 0): ReplayFixture {
 }
 
 describe("ReplayBackend", () => {
+  it("immediate text replay completes without advancing the timer clock", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const controller = new AbortController();
+    const backend = new ReplayBackend({
+      fixtures: [
+        fixture([
+          {
+            type: "agent.text.delta",
+            payload: {
+              sessionId: "$SESSION",
+              messageId: "$MSG",
+              delta: "Invented text spans several chunks.",
+            },
+          },
+        ]),
+      ],
+      capMs: 0,
+      textStreamMs: 0,
+      textStreamChars: 4,
+    });
+    let events: AgentEvent[] | undefined;
+    const done = drainEvents(
+      backend.runTurn(
+        {
+          sessionId: "session_fixture",
+          messageId: "message_fixture",
+          history: [],
+          userMessage: "fixture",
+          tools: [],
+          systemPrompt: "",
+        },
+        controller.signal,
+      ),
+    ).then((value) => {
+      events = value;
+    });
+    try {
+      for (let turn = 0; events === undefined && turn < 100; turn++)
+        await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(events).toBeDefined();
+      expect(
+        events
+          ?.filter((event) => event.type === "agent.text.delta")
+          .map((event) => event.payload.delta)
+          .join(""),
+      ).toBe("Invented text spans several chunks.");
+    } finally {
+      controller.abort();
+      await done;
+      vi.useRealTimers();
+    }
+  });
+
+  it("immediate text replay yields to I/O and observes cancellation between chunks", async () => {
+    const controller = new AbortController();
+    const backend = new ReplayBackend({
+      fixtures: [
+        fixture([
+          {
+            type: "agent.text.delta",
+            payload: {
+              sessionId: "$SESSION",
+              messageId: "$MSG",
+              delta: "Invented text spans several chunks.",
+            },
+          },
+        ]),
+      ],
+      capMs: 0,
+      textStreamMs: 0,
+      textStreamChars: 4,
+    });
+    const iterator = backend
+      .runTurn(
+        {
+          sessionId: "session_fixture",
+          messageId: "message_fixture",
+          history: [],
+          userMessage: "fixture",
+          tools: [],
+          systemPrompt: "",
+        },
+        controller.signal,
+      )
+      [Symbol.asyncIterator]();
+    try {
+      expect((await iterator.next()).done).toBe(false);
+      let ioRan = false;
+      setImmediate(() => {
+        ioRan = true;
+      });
+      expect((await iterator.next()).done).toBe(false);
+      expect(ioRan).toBe(true);
+      controller.abort();
+      expect((await iterator.next()).done).toBe(true);
+    } finally {
+      controller.abort();
+      await iterator.return?.();
+    }
+  });
+
   it.each([0, -1, Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY])(
     "rejects invalid pacing speed %s",
     (speed) => {

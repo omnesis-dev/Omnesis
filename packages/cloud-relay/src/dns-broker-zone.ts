@@ -39,6 +39,15 @@ export interface BrokerZone {
   publishName(hostname: string, caaValue: string, signal: AbortSignal): Promise<void>;
   /** Every CAA and address record at exactly this name; the relay's wildcard answers again. */
   removeName(hostname: string, signal: AbortSignal): Promise<void>;
+  /** Real provider usage and the permanent records needed for the current wildcard routing. */
+  capacity?(signal: AbortSignal): Promise<BrokerZoneCapacity>;
+}
+
+export interface BrokerZoneCapacity {
+  usage: number;
+  quota: number;
+  recordsPerName: number;
+  managedRecords: Record<string, number>;
 }
 
 async function boundedJson(response: Response, limit = 262_144): Promise<unknown> {
@@ -153,6 +162,57 @@ export function cloudflareBrokerZone(options: {
     comment: `${BROKER_RECORD_TAG}:${lease.id}:${lease.expiresAt}`,
   });
   return {
+    async capacity(signal) {
+      // Read managed records before usage so an intervening publication is conservatively
+      // included in usage; the admission service also rejects snapshots spanning its writes.
+      const managedRecords: Record<string, number> = {};
+      let inventoryCount = 0;
+      for (let page = 1; ; page++) {
+        const response = await api(`?per_page=100&page=${page}`, "GET", signal);
+        const records = z
+          .array(
+            z.object({
+              id: idSchema,
+              type: z.string(),
+              name: z.string(),
+              comment: z.string().nullable().optional(),
+            }),
+          )
+          .max(100)
+          .parse(response.result);
+        inventoryCount += records.length;
+        for (const record of records) {
+          if (
+            record.comment === BROKER_RECORD_TAG &&
+            ["A", "AAAA", "CAA"].includes(record.type) &&
+            /^g-[a-z2-7]{8}\./.test(record.name) &&
+            record.name.endsWith(`.${relayDomain}`) &&
+            record.name.split(".").length === relayDomain.split(".").length + 1
+          )
+            managedRecords[record.name] = (managedRecords[record.name] ?? 0) + 1;
+        }
+        if (page >= (response.total_pages ?? 1)) break;
+        if (page >= 100) throw new Error("DNS capacity inventory is too large");
+      }
+      let recordsPerName = 1;
+      for (const type of ["A", "AAAA"])
+        recordsPerName += new Set(
+          (await list(type, `*.${relayDomain}`, signal)).map((r) => r.content),
+        ).size;
+      const usage = z
+        .object({
+          record_usage: z.number().int().nonnegative(),
+          // Account-wide quotas need an explicit account-aware adapter, never an invented limit.
+          record_quota: z.number().int().positive(),
+        })
+        .parse((await api("/usage", "GET", signal)).result);
+      return {
+        usage: Math.max(usage.record_usage, inventoryCount),
+        quota: usage.record_quota,
+        recordsPerName,
+        managedRecords,
+      };
+    },
     async createTxt(lease, signal) {
       const expected = txtFields(lease);
       const record = await create(expected, signal);

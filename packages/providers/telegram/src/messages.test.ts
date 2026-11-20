@@ -89,6 +89,41 @@ describe("TelegramMessagesSource.sync", () => {
     expect(emptied.deletedExternalIds).toEqual([JAMIE_DAY]);
   });
 
+  it("drops self-destructing messages unless the operator keeps them, and then keeps them past their timer", async () => {
+    const r = await twoChatRig();
+    const boot = await syncAll(r.source, null);
+    const timed = { date: T0 + 3600, ttlPeriod: 86_400 };
+    r.sim.pushNew(JAMIE_CHAT.id, { text: "Gate code is 4821", ...timed });
+    const dropped = await r.source.sync(boot.cursor);
+    expect(dropped.documents).toEqual([]);
+
+    r.remake({ policy: { includeChannels: false, excludedChats: [], keepSelfDestructing: true } });
+    const kept = r.sim.pushNew(JAMIE_CHAT.id, { text: "Locker code is 7310", ...timed });
+    // A second one whose timer still runs (sent now, expiring tomorrow).
+    const byHand = r.sim.pushNew(JAMIE_CHAT.id, {
+      text: "Wrong chat, sorry",
+      date: Math.floor(Date.now() / 1000),
+      ttlPeriod: 86_400,
+    });
+    const added = await r.source.sync(dropped.cursor);
+    const contents = added.documents.map((d) => d.content).join("\n");
+    expect(contents).toContain("Locker code is 7310");
+    expect(contents).toContain("Wrong chat, sorry");
+    const todayDoc = added.documents.find((d) => d.content.includes("Wrong chat, sorry"))!;
+
+    // The first one's timer has long run: this is Telegram's expiry, not a deletion.
+    r.sim.pushDelete(JAMIE_CHAT.id, [kept.id]);
+    const expired = await r.source.sync(added.cursor);
+    expect(expired.documents).toEqual([]);
+    expect(expired.deletedExternalIds).toEqual([]);
+    expect(r.provider.getArchive().hasMessage(JAMIE_CHAT.id, kept.id)).toBe(true);
+
+    // The second is deleted by hand before its timer: removed as usual.
+    r.sim.pushDelete(JAMIE_CHAT.id, [byHand.id]);
+    const removed = await r.source.sync(expired.cursor);
+    expect(removed.deletedExternalIds).toEqual([todayDoc.externalId]);
+  });
+
   it("tombstones a deleted day's ledgered attachments with it", async () => {
     const r = await twoChatRig();
     const boot = await syncAll(r.source, null);

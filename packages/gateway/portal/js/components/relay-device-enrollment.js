@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-// Devices-view addition for the optional cloud relay: how a device joined.
-// Rendered only when the gateway runs with OMNESIS_CLOUD_RELAY_ENABLED=1.
+// Devices-view addition for the Omnesis account: how a device joined, for a
+// device that signed in to join rather than pairing with a code or QR.
 
 import { html } from "htm/preact";
 

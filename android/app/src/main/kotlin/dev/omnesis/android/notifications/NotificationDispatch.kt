@@ -3,7 +3,6 @@
 
 package dev.omnesis.android.notifications
 
-import dev.omnesis.android.BuildConfig
 import dev.omnesis.android.transport.dto.ClaimedNotificationDelivery
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -49,28 +48,26 @@ internal enum class NotificationRenderOutcome(val shouldConfirm: Boolean) {
     DeferredUnknownKind(false),
 }
 
-private val cloudNotificationKinds = setOf("device-pairing", "device-joined")
-
 /**
- * A build without cloud connectivity defers the cloud kinds like any kind it has never heard of.
- * Every build routes the Tailscale kinds: only a gateway with its own Tailscale device sends them,
- * and only to an app that said it can route them.
+ * The kinds this app routes. Only a gateway with its own Tailscale device sends the Tailscale
+ * kinds, and the pairing kinds come from devices that sign in with the Omnesis account; each
+ * reaches only an app that said it can route them.
  */
-internal fun knownNotificationKind(kind: String, cloudEnabled: Boolean = BuildConfig.CLOUD_RELAY_ENABLED): Boolean = kind in setOf(
+internal fun knownNotificationKind(kind: String): Boolean = kind in setOf(
     "diagnostic", "agent-answer", "conversation", "watch", "needs-auth", "privacy-approval",
     "source-permission",
     "access-authorization",
+    "device-pairing",
+    "device-joined",
     "tailscale-join",
     "tailscale-joined",
-) || (cloudEnabled && kind in cloudNotificationKinds)
+)
 
 /** Strict local routing for shared notification kinds. Unknown/malformed content is ignored. */
 internal fun notificationAction(
     notification: ClaimedNotificationDelivery,
     localDeviceId: String? = null,
-    cloudEnabled: Boolean = BuildConfig.CLOUD_RELAY_ENABLED,
 ): ClaimedPushAction? {
-    if (!cloudEnabled && notification.kind in cloudNotificationKinds) return null
     val route = notification.route?.takeIf {
         it.string("kind") == notification.kind
     }

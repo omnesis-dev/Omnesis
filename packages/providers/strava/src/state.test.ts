@@ -212,3 +212,20 @@ describe("strava-activities declared state", () => {
     expect(isStateEnvelope(result.cursor)).toBe(true);
   });
 });
+
+test.each(["101", "9007199254740993"])(
+  "keeps interrupted acknowledgement and snapshot state for ID %s",
+  (id) => {
+    const cursor = {
+      phase: "snapshot-rewalk",
+      resumePhase: "detail-backfill",
+      snapshotPage: 3,
+      snapshotBefore: 1_900_000_000,
+      snapshotIds: [id],
+      pendingDetailStamps: [id],
+      pendingSocialStamps: [id],
+      enrichStrikes: { [`detail:${id}`]: { count: 1, at: "2026-01-01T12:00:00Z" } },
+    };
+    expect(stravaActivitiesStateSpec.decode(JSON.parse(JSON.stringify(cursor)))).toEqual(cursor);
+  },
+);

@@ -141,7 +141,11 @@ export function ConnectionStep({
   // Which confirmation is open: turning the Tailscale device off, or choosing the owner's own setup.
   const [confirming, setConfirming] = useState("");
   const relayStatus = relay?.status;
-  const host = useHostTailscale();
+  const firstHost = useHostTailscale();
+  // What Tailscale on this computer does, as its panel last read it, and whether that
+  // still differs from the owner's choice.
+  const [hostNow, setHostNow] = useState(null);
+  const host = hostNow?.host ?? firstHost;
   const phase = relayPhase(relayStatus);
   const relayReady = relayEstablished(phase);
   const relayOn = relayReady && relayStatus.enabled === true;
@@ -163,6 +167,11 @@ export function ConnectionStep({
   const chooseHost = (checked) => onFlow({ host: checked });
   // Ticked when the owner ticked it, or, until they choose, when this computer already serves the gateway.
   const hostChosen = (flow.host ?? host?.servesGateway === true) && host?.state !== "missing";
+  // Unticked while it still serves the gateway, its panel stays to stop that, and to
+  // show a public address it could not remove.
+  const hostShown = hostChosen || (host?.state === "available" && host.servesGateway) || Boolean(hostNow?.error);
+  // Until its panel has read Tailscale, the setup waits.
+  const hostPending = hostShown && hostNow?.pending !== false;
   const chooseDomain = (checked) => onFlow({ domain: checked });
   const confirm = async () => {
     setConfirming("");
@@ -183,7 +192,7 @@ export function ConnectionStep({
     onStep=${onStep}
     onCancel=${onCancel}
     actions=${html`<${BackButton} onBack=${onBack} />
-      <button type="button" class="btn-primary" onClick=${onNext}>${nextLabel(last)}</button>`}
+      <button type="button" class="btn-primary" disabled=${hostPending} onClick=${onNext}>${nextLabel(last)}</button>`}
   >
     <div class="remote-access-options">
       ${tailscaleEmbed &&
@@ -211,7 +220,8 @@ export function ConnectionStep({
         checked=${hostChosen}
         disabled=${host?.state === "missing"}
         onChange=${chooseHost}
-        body=${hostChosen && html`<${HostTailscale} remote=${remote} setRemote=${setRemote} />`}
+        body=${hostShown &&
+        html`<${HostTailscale} remote=${remote} setRemote=${setRemote} wanted=${hostChosen} onState=${setHostNow} />`}
       />`}
       ${relay &&
       html`<${WayOption}
@@ -240,6 +250,12 @@ export function ConnectionStep({
       />
       ${tailscaleOn && relayOn && html`<${FirstChoice} remote=${remote} setRemote=${setRemote} />`}
     </div>
+    ${hostPending &&
+    html`<p class="remote-access-muted" role="status">
+      ${hostChosen
+        ? "Set up Tailscale on this computer, or untick it, to continue."
+        : "Stop serving this gateway from Tailscale on this computer, or tick it again, to continue."}
+    </p>`}
     <${ConfirmModal}
       open=${confirming === "tailscale-off"}
       ...${turnOffConfirm(tailscale?.state)}

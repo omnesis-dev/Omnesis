@@ -19,6 +19,8 @@
 
 import { readFileSync, existsSync, rmSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import webSource from "@omnesis/provider-web";
 import {
@@ -340,8 +342,8 @@ function recipeFor(route: ContractRoute): Recipe {
 
 beforeEach(async () => {
   vi.stubEnv("OMNESIS_EXPERIMENTAL", "1");
-  dbPath = `/tmp/omnesis-extension-contract-${randomUUID()}.db`;
-  analyticsPath = `/tmp/omnesis-extension-contract-${randomUUID()}.duckdb`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-extension-contract-${randomUUID()}.db`);
+  analyticsPath = fixtureJoin(fixtureTmpdir(), `omnesis-extension-contract-${randomUUID()}.duckdb`);
   db = createDatabase(dbPath);
   analyticsDb = new AnalyticsDb(analyticsPath);
   await analyticsDb.open();

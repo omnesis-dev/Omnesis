@@ -1057,6 +1057,102 @@ describe("Message Deletion", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Group 4b: Disappearing messages and deletions made by hand
+// ---------------------------------------------------------------------------
+describe("Disappearing messages", () => {
+  // A disappearing message's expiry happens on each phone and sends nothing
+  // to a linked device, so the archive keeps it. Deletions made by hand do
+  // reach the companion, and are applied.
+  async function seeded() {
+    const provider = await createConnectedProvider();
+    provider.store.setHistorySyncState("complete");
+    const ts = 1709900000;
+    provider.emitter.emit(
+      "messaging-history.set",
+      makeHistorySyncEvent({
+        messages: [
+          makeWAMessage({
+            id: "timed",
+            remoteJid: CHAT_JID,
+            timestamp: ts,
+            message: {
+              ephemeralMessage: {
+                message: {
+                  extendedTextMessage: {
+                    text: "Gate code is 4821",
+                    contextInfo: { expiration: 86_400 },
+                  },
+                },
+              },
+            },
+          }),
+          makeWAMessage({
+            id: "for-me",
+            remoteJid: CHAT_JID,
+            timestamp: ts + 60,
+            message: {
+              extendedTextMessage: {
+                text: "Hidden on my phone",
+                contextInfo: { expiration: 86_400 },
+              },
+            },
+          }),
+          makeWAMessage({
+            id: "for-all",
+            remoteJid: CHAT_JID,
+            timestamp: ts + 120,
+            message: {
+              extendedTextMessage: {
+                text: "Unsent for everyone",
+                contextInfo: { expiration: 86_400 },
+              },
+            },
+          }),
+        ],
+        isLatest: true,
+      }),
+    );
+    return provider;
+  }
+
+  test("keeps a disappearing message through a timer change, with no deletion arriving", async () => {
+    const { emitter, source } = await seeded();
+    // The chat's timer is switched off: a protocol message, not a deletion.
+    emitter.emit(
+      "messages.upsert",
+      makeMessageUpsertEvent([
+        makeWAMessage({
+          id: "setting",
+          remoteJid: CHAT_JID,
+          timestamp: 1709900000 + 600,
+          message: { protocolMessage: { type: 3, ephemeralExpiration: 0 } },
+        }),
+      ]),
+    );
+    const result = await source.sync(null);
+    expect(result.documents).toHaveLength(1);
+    expect(result.documents[0].content).toContain("Gate code is 4821");
+  });
+
+  test("removes a disappearing message deleted by hand, for me or for everyone", async () => {
+    const { emitter, source } = await seeded();
+    // "Delete for me", synced from the phone's app state.
+    emitter.emit("messages.delete", {
+      keys: [{ id: "for-me", remoteJid: CHAT_JID, fromMe: false }],
+    });
+    // "Delete for everyone".
+    emitter.emit("messages.update", [
+      { key: { id: "for-all", remoteJid: CHAT_JID }, update: { messageStubType: 1 } },
+    ]);
+    const result = await source.sync(null);
+    expect(result.documents).toHaveLength(1);
+    expect(result.documents[0].content).toContain("Gate code is 4821");
+    expect(result.documents[0].content).not.toContain("Hidden on my phone");
+    expect(result.documents[0].content).not.toContain("Unsent for everyone");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Group 5: Account Discovery
 // ---------------------------------------------------------------------------
 describe("Account Discovery", () => {

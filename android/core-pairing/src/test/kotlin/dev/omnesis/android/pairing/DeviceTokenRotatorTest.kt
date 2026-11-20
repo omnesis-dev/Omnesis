@@ -32,7 +32,7 @@ class DeviceTokenRotatorTest {
             deviceId = deviceId, name = "Test phone", scopes = listOf("read"), tlsMode = "pinned-key-strict", spkiFingerprint = spki,
             deviceKeyRecorded = recorded, tokenRotatedAt = start,
         )))
-        return PairingService(store, cloudRelay = true)
+        return PairingService(store)
     }
 
     private fun http(server: MockWebServer, pairing: Pairing) = GatewayHttp(client, server.url("/"), pairing.token, pairing.pairingGeneration)
@@ -106,7 +106,7 @@ class DeviceTokenRotatorTest {
             scopes = emptyList(), tlsMode = "system",
         )))
         assertFalse(store.get("gateway.credential.v1")!!.contains("deviceKeyRecorded"))
-        val service = PairingService(store, cloudRelay = true)
+        val service = PairingService(store)
         assertFalse(service.current()!!.deviceKeyRecorded)
         val marked = service.markDeviceKeyRecorded(start)
         assertTrue(marked.deviceKeyRecorded)

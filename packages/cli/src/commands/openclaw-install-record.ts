@@ -29,18 +29,15 @@ export type OpenClawInstallRecord = Readonly<Record<string, unknown>>;
  */
 export function readOpenClawInstallRecord(
   environment: NodeJS.ProcessEnv,
+  run: typeof spawnSync = spawnSync,
 ): OpenClawInstallRecord | null {
-  const result = spawnSync(
-    "openclaw",
-    ["plugins", "inspect", OPENCLAW_INTEGRATION_PLUGIN_ID, "--json"],
-    {
-      env: environment,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-      timeout: INSPECT_TIMEOUT_MS,
-      maxBuffer: INSPECT_MAX_BUFFER_BYTES,
-    },
-  );
+  const result = run("openclaw", ["plugins", "inspect", OPENCLAW_INTEGRATION_PLUGIN_ID, "--json"], {
+    env: environment,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    timeout: INSPECT_TIMEOUT_MS,
+    maxBuffer: INSPECT_MAX_BUFFER_BYTES,
+  });
   if (result.error || result.status !== 0) return null;
   return recordedInstall(String(result.stdout ?? ""));
 }

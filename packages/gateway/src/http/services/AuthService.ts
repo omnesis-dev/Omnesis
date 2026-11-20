@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { cloudRelayEnabled, createLogger } from "@omnesis/core";
+import { createLogger } from "@omnesis/core";
 import { type DeviceCapability, type DeviceId, type Scope, type TokenId } from "@omnesis/types";
 import { GATEWAY_VERSION } from "../../version.js";
 import { peekPairing } from "../../data/repositories/DeviceRepository.js";
@@ -129,8 +129,8 @@ export class AuthService {
     let scopes: readonly Scope[];
     if (/^[0-9a-fA-F]{10}$/.test(raw)) {
       const code = raw.toUpperCase();
-      // Sign-in codes exist only with the cloud relay; otherwise nothing is looked up.
-      const preview = cloudRelayEnabled() ? peekPairing(this.deps.db, code) : null;
+      // A sign-in code carries an enrollment; any other portal code is consumed below.
+      const preview = peekPairing(this.deps.db, code);
       if (preview?.kind === "portal" && preview.enrollment) {
         const redeemed = await this.deps.redeemEnrollmentPairing?.(
           code,

@@ -3,6 +3,8 @@
 
 import { createHash } from "node:crypto";
 import { unlinkSync, existsSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { DuckDBInstance } from "@duckdb/node-api";
 import Database from "better-sqlite3";
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
@@ -11,7 +13,7 @@ import { AnalyticsDb } from "./analytics-db.js";
 import { ANALYTICS_INTERNAL_TABLES } from "./analytics/internal.js";
 import type { AnalyticsTableSchema, ColumnType } from "@omnesis/source-sdk";
 
-const TEST_DB = `/tmp/omnesis-test-analytics-${crypto.randomUUID()}.db`;
+const TEST_DB = fixtureJoin(fixtureTmpdir(), `omnesis-test-analytics-${crypto.randomUUID()}.db`);
 
 const testSchema: AnalyticsTableSchema = {
   tableName: "test_metrics",
@@ -1160,7 +1162,10 @@ describe("AnalyticsDb", () => {
     // scanner read — not a missing path that would reject for unrelated
     // reasons. With the engine flag set, the ATTACH must reject before
     // it ever opens the file, so the torn-page race can never recur.
-    const omnesisDbPath = `/tmp/omnesis-test-cross-store-${crypto.randomUUID()}.db`;
+    const omnesisDbPath = fixtureJoin(
+      fixtureTmpdir(),
+      `omnesis-test-cross-store-${crypto.randomUUID()}.db`,
+    );
     const sqlite = new Database(omnesisDbPath);
     try {
       sqlite.exec("CREATE TABLE documents (id TEXT PRIMARY KEY, title TEXT, body TEXT)");
@@ -3201,7 +3206,10 @@ describe("AnalyticsDb — device streams", () => {
   });
 
   test("a catalog created before tables could key by stream gains the flag on open", async () => {
-    const legacyPath = `/tmp/omnesis-test-analytics-legacy-${crypto.randomUUID()}.db`;
+    const legacyPath = fixtureJoin(
+      fixtureTmpdir(),
+      `omnesis-test-analytics-legacy-${crypto.randomUUID()}.db`,
+    );
     try {
       const legacy = new AnalyticsDb(legacyPath);
       await legacy.open();
@@ -3253,7 +3261,10 @@ describe("AnalyticsDb — device streams", () => {
   });
 
   test("open repairs a false catalog flag when the physical primary key is already stream-keyed", async () => {
-    const repairPath = `/tmp/omnesis-test-analytics-stream-repair-${crypto.randomUUID()}.db`;
+    const repairPath = fixtureJoin(
+      fixtureTmpdir(),
+      `omnesis-test-analytics-stream-repair-${crypto.randomUUID()}.db`,
+    );
     try {
       const original = new AnalyticsDb(repairPath);
       await original.open();
@@ -3798,7 +3809,10 @@ describe("AnalyticsDb — exclusive to partitioned adoption", () => {
   });
 
   test("fails closed before rebuilding a table above the configured online admission ceiling", async () => {
-    const limitedPath = `/tmp/omnesis-transition-admission-${crypto.randomUUID()}.duckdb`;
+    const limitedPath = fixtureJoin(
+      fixtureTmpdir(),
+      `omnesis-transition-admission-${crypto.randomUUID()}.duckdb`,
+    );
     const limited = new AnalyticsDb(limitedPath, { maxInlineStreamRekeyRows: 1 });
     await limited.open();
     try {
@@ -3834,7 +3848,10 @@ describe("AnalyticsDb — exclusive to partitioned adoption", () => {
   });
 
   test("invalidates bound-document bindings after a later table fails adoption", async () => {
-    const partialPath = `/tmp/omnesis-transition-partial-${crypto.randomUUID()}.duckdb`;
+    const partialPath = fixtureJoin(
+      fixtureTmpdir(),
+      `omnesis-transition-partial-${crypto.randomUUID()}.duckdb`,
+    );
     const partial = new AnalyticsDb(partialPath);
     await partial.open();
     try {
@@ -3929,7 +3946,10 @@ describe("AnalyticsDb — exclusive to partitioned adoption", () => {
   });
 
   test("admits a table exactly at the configured online ceiling", async () => {
-    const limitedPath = `/tmp/omnesis-transition-admission-boundary-${crypto.randomUUID()}.duckdb`;
+    const limitedPath = fixtureJoin(
+      fixtureTmpdir(),
+      `omnesis-transition-admission-boundary-${crypto.randomUUID()}.duckdb`,
+    );
     const limited = new AnalyticsDb(limitedPath, { maxInlineStreamRekeyRows: 2 });
     await limited.open();
     try {
@@ -4601,7 +4621,10 @@ describe("AnalyticsDb — snapshot absence", () => {
   });
 
   test("an upgraded empty-token mark is still protected from clear/re-mark ABA", async () => {
-    const legacyPath = `/tmp/omnesis-test-analytics-absence-legacy-${crypto.randomUUID()}.db`;
+    const legacyPath = fixtureJoin(
+      fixtureTmpdir(),
+      `omnesis-test-analytics-absence-legacy-${crypto.randomUUID()}.db`,
+    );
     const legacySchema = { ...schema, tableName: "legacy_absence_samples" };
     const immediate = { minObservations: 1, minAgeMs: 0, maxMarksPerSnapshot: 100 };
     try {

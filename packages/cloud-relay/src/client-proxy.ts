@@ -5,11 +5,7 @@ import { createServer, type IncomingMessage, type Server } from "node:http";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { type Duplex } from "node:stream";
 import { Socket, type AddressInfo } from "node:net";
-import {
-  cloudRelayEnabled,
-  parseWebSocketAuthProtocolHeader,
-  WS_AUTH_PROTOCOL_PREFIX,
-} from "@omnesis/core";
+import { parseWebSocketAuthProtocolHeader, WS_AUTH_PROTOCOL_PREFIX } from "@omnesis/core";
 import { connectPreferredGateway, type DirectCandidate } from "./direct-path.js";
 import { connectOrigin, forwardHttp, forwardUpgrade, relayOrigin } from "./network.js";
 import { rejectUpgrade, validateTarget } from "./server.js";
@@ -43,7 +39,6 @@ export function createRelayClientProxy(
   },
   dependencies: { connect?: typeof connectOrigin; stallMs?: number } = {},
 ): { server: Server; close(): Promise<void> } {
-  if (!cloudRelayEnabled()) throw new Error("Cloud relay requires OMNESIS_CLOUD_RELAY_ENABLED=1");
   const gateway = relayOrigin(options.gatewayUrl);
   if (gateway.protocol !== "https:" || !/^[a-f0-9]{64}$/.test(options.gatewayFingerprint))
     throw new Error("Relay client requires a verified gateway HTTPS origin and certificate pin");

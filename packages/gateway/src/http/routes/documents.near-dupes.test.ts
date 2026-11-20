@@ -3,6 +3,8 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { SCOPE_ADMIN, SCOPE_READ, SCOPE_WRITE_ALL, type Scope } from "@omnesis/types";
 import { createDatabase } from "../../db.js";
@@ -96,8 +98,8 @@ function seedEdge(
 }
 
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-near-dupes-test-${randomUUID()}.db`;
-  indexDbPath = `/tmp/omnesis-near-dupes-index-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-near-dupes-test-${randomUUID()}.db`);
+  indexDbPath = fixtureJoin(fixtureTmpdir(), `omnesis-near-dupes-index-${randomUUID()}.db`);
   db = createDatabase(dbPath);
   indexDb = createIndexDatabase(indexDbPath);
   token = mintToken([SCOPE_ADMIN, SCOPE_READ, SCOPE_WRITE_ALL]);

@@ -3,11 +3,11 @@
 
 import Foundation
 
-/// The ways a new device can wait for the owner's OK that this phone reviews. Each sits
-/// behind its own opt-in, and only a phone with the admin scope reviews either; with both
-/// off, Devices shows no Waiting for your OK entry and nothing asks the gateway.
+/// The ways a new device can wait for the owner's OK that this phone reviews. Only a phone
+/// with the admin scope reviews either; without it, Devices shows no Waiting for your OK
+/// entry and nothing asks the gateway.
 public struct DeviceApprovalKinds: Equatable, Sendable {
-    /// Devices that signed in with the owner's Omnesis account: a build with the cloud relay.
+    /// Devices that signed in with the owner's Omnesis account.
     public let cloud: Bool
     /// Devices that reached the gateway through the owner's Tailscale network: a gateway
     /// that runs its own Tailscale device.
@@ -22,9 +22,9 @@ public struct DeviceApprovalKinds: Equatable, Sendable {
 
     /// `tailscaleEmbed` is the gateway saying it runs its own Tailscale device: its status,
     /// or a `tailscale-join` notification it sent before this phone read that status.
-    public init(cloudRelayEnabled: Bool, tailscaleEmbed: Bool, scopes: [String]?) {
+    public init(tailscaleEmbed: Bool, scopes: [String]?) {
         let admin = scopes?.contains("admin") == true
-        self.init(cloud: cloudRelayEnabled && admin, tailscale: tailscaleEmbed && admin)
+        self.init(cloud: admin, tailscale: tailscaleEmbed && admin)
     }
 
     public var any: Bool {

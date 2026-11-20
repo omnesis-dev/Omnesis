@@ -552,8 +552,10 @@ describe("Chromium reader", () => {
     reader.close();
 
     expect(paths.length).toBe(2); // History + History-wal
-    expect(paths[0]).toContain("Default/History");
-    expect(paths[1]).toContain("Default/History-wal");
+    expect(paths).toEqual([
+      join(tmpDir, "Default", "History"),
+      join(tmpDir, "Default", "History-wal"),
+    ]);
   });
 
   test("readDistinctVisitDates enumerates dates across all visits", () => {

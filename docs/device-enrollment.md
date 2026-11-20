@@ -82,14 +82,15 @@ A device sets `requireApproval` when it cannot tell, without the relay, that the
 gateway is the owner's, so a person's comparison takes the place of that check.
 The iOS and Android apps set it for every gateway except one whose key they already
 pin and whose certificate passes the public checks (see "Which gateway a new device
-trusts"); the CLI and collector set it when the certificate fails those checks.
+trusts"). The CLI and collector always set it and require the code from an
+independently trusted gateway terminal or paired device before redeeming approval.
 
 ### Which gateway a new device trusts
 
 The relay lists the gateways a sign-in can join and proposes each one's certificate.
 A hacked relay can list a gateway of its own as "your gateway": under any name with a
-valid, logged certificate, including a name of its own under the relay's domain
-(anyone with an owner key can claim a fresh `g-…` name at the DNS broker). That
+valid, logged certificate, including a different hostname outside the relay’s
+domain. That
 gateway would approve the device, and the device would then send its data there. It
 cannot reach the owner's gateway: the device's signature names the stand-in's key.
 But nothing in a Google or passkey sign-in names the owner's gateway, and a valid
@@ -108,7 +109,8 @@ The owner's own gateway then holds the request whatever its policy, notifies the
 owner's admin devices, and lists it with the same code. A stand-in can say it
 approved, but the owner never saw the code on a device of theirs, so they do not
 confirm it. This costs a new phone one approval and one confirmation on first
-setup.
+setup. CLI and collector pairing always uses that independent comparison; a
+publicly logged certificate never removes it.
 
 ### What the gateway checks
 
@@ -399,8 +401,8 @@ cannot add a device. The gateway checks this in `gateway/src/http/step-up.ts`.
   it already carries `push:claim`. That scope only claims and confirms the
   device's own queued notifications, so the new token can do nothing its caller
   can't. Anything else sent to a guarded route needs the step-up.
-- Nothing changes without `OMNESIS_CLOUD_RELAY_ENABLED`, before the owner confirms
-  a passkey, or for a gateway with no account.
+- Nothing changes before the owner confirms a passkey, or for a gateway with no
+  account.
 
 The exchange:
 
@@ -527,13 +529,14 @@ make. A failed attempt cannot be retried without the owner starting over.
 
 ### Where it is shown
 
-| Flow                                                             | New device                                              | Why the code matters                                                                 |
-| ---------------------------------------------------------------- | ------------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| App, CLI or collector signs in (`/devices/account`, device key)  | Computes it; shows it while held                        | The signature already binds the gateway key; the code covers an unlogged certificate |
-| CLI over SSH or a typed connect code                             | Prints it and waits; types it if the cert is not logged | Same, and nothing was proved about the machine                                       |
-| Google pairing without a device key (`/devices/google`)          | Computes it; the CLI always asks for it to be typed     | The code is the only check on the proposed certificate                               |
-| Portal signs in itself (device key, or the account page handoff) | Computes it after its own challenge and request         | Tells requests apart                                                                 |
-| Portal returning from a sign-in redirect (no device key)         | Computes it from `poll`; there is no challenge          | Tells requests apart                                                                 |
+| Flow                                                             | New device                                                 | Why the code matters                                                          |
+| ---------------------------------------------------------------- | ---------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| App signs in (`/devices/account`, device key)                    | Computes it; compares it for an unrecognised gateway key   | Independently identifies the owner's gateway, beyond the proposed certificate |
+| CLI or collector signs in (`/devices/account`, device key)       | Always asks for the code from a trusted device or terminal | A logged certificate does not establish which gateway belongs to the owner    |
+| CLI over SSH or a typed connect code                             | Always asks for the code from a trusted device or terminal | Same verification is required when sign-in finishes on another machine        |
+| Google pairing without a device key (`/devices/google`)          | Computes it; the CLI always asks for it to be typed        | The code is the only check on the proposed certificate                        |
+| Portal signs in itself (device key, or the account page handoff) | Computes it after its own challenge and request            | Tells requests apart                                                          |
+| Portal returning from a sign-in redirect (no device key)         | Computes it from `poll`; there is no challenge             | Tells requests apart                                                          |
 
 In the last flow the gateway starts the request itself when the browser returns,
 so there is no challenge and the nonce is simply drawn. Nothing is lost: a
@@ -899,16 +902,15 @@ machine's name, and continues to the normal sign-in page. A code can be typed on
 any machine, so an operation reached through it never returns `signInProof` and
 never redirects to a loopback: the device always waits for approval on the
 owner's phone or another paired device, which the CLI, the relay page and its
-completion page say. Over SSH the CLI prints the six-digit comparison code to check on the
-approving device, then waits and continues once the request is approved; nothing
-is typed. If the gateway certificate is not publicly logged, the CLI instead asks
-for the code shown on the approving device before it waits.
+completion page say. The CLI asks for the six-digit code shown on the approving
+device or trusted gateway terminal, including over SSH and with a publicly logged
+certificate. Only a matching comparison and gateway approval let it redeem a credential.
 
 ## Connecting a gateway
 
 `POST /_relay/v3/signup/start` is signed by the gateway's owner key and returns
 `authorizeUrl`, `connectUrl`, `code`. After sign-in, subject to the relay's
-`OMNESIS_CLOUD_RELAY_SIGNUP_POLICY` (`invitation`, `allowlist`, `open`),
+`OMNESIS_CLOUD_RELAY_SIGNUP_POLICY` (`closed`, `invite`, `open`),
 `POST /_relay/v3/signup/poll` returns an enrollment invitation and sign-in proof.
 The gateway registers with the invitation, then `POST /_relay/v3/signup/link`
 binds the account using its new owner session.
@@ -920,41 +922,28 @@ this gateway". Whoever started the request chose that name, so the press is the
 person's confirmation that it is theirs. Pairing a browser from a gateway's own
 portal still goes on by itself after sign-in.
 
-Under `allowlist`, the relay may also take invitations from a Google Group
-(`OMNESIS_CLOUD_RELAY_SIGNUP_GOOGLE_GROUP`, its service account key in
-`OMNESIS_CLOUD_RELAY_SIGNUP_GOOGLE_GROUP_CREDENTIALS_FILE`, and an optional
-`https` link to ask to join in `OMNESIS_CLOUD_RELAY_SIGNUP_GOOGLE_GROUP_JOIN_URL`;
-`packages/cloud-relay/README.md` lists the Google-side setup). It applies only
-to a Google sign-in that the allowlist does not already admit and that either
-would create an account or is for an existing account with no linked gateway.
-On such a relay, the sign-in for connecting a gateway also asks Google for the
-`email` scope,
-and the address Google marked `email_verified` is checked once against the group
-through the Cloud Identity Groups API. The address is never stored, logged or
-returned, and the account is keyed by Google's subject as always. A member
-creates the account or connects the gateway to it; anyone else is refused with "Omnesis accounts are
-invite-only for now." and the join link, and the gateway's poll sees the usual
-`not-allowed`. If Google cannot answer, the sign-up is refused for now ("We
-couldn't check your invitation right now. Try again in a few minutes."),
-nothing is recorded, and the person can sign in again on the same request.
-An account that already has a linked gateway, or that the allowlist names, is
-never checked against the group. A passkey sign-in the allowlist refuses stays
-refused, since it carries no email; the page asks the person to start again
-from the gateway and sign in with Google.
+Under `invite`, creating an account needs an invite: a token the relay's
+operator signed offline with an Ed25519 key whose public half the relay holds
+(`OMNESIS_CLOUD_RELAY_INVITE_KEYS`; `packages/cloud-relay/README.md` gives the
+format). The person receives it as a link to the relay's `/invite` page and
+pastes it on their gateway, which sends it beside its signed start request. The
+relay checks the invite before anyone is sent to sign in, refusing a bad one
+with `invite-invalid`, `invite-expired` or `invite-used`, and records it as used
+in the transaction that creates the account, so an invite creates at most one
+account, with a passkey or with Google. Without an invite the page offers only
+signing in to an account that exists, which may connect any number of gateways.
 
-With a join link configured, the relay also says so before anyone signs in:
+The relay says before anyone signs in whether an invite is needed:
 `GET /_relay/v3/signup/access` (public, no parameters) answers
-`{"signup":{"inviteOnly":true,"requestAccessUrl":"…"}}` under `allowlist`, and
-`{}` under any other policy or without a link. It is a separate path because
-gateways parse `/_relay/v2/config` strictly. A gateway with
-`OMNESIS_CLOUD_RELAY_ENABLED=1` that is not linked to an account reads it when
-its owner opens Settings → Omnesis account (or runs `omnesis cloud status` or
-`connect`), at most every ten minutes, and keeps it only if the link is an
-`https` URL without credentials of at most 2048 characters; unknown fields are
-ignored. The management status then carries `signup`, and the portal shows
-"Omnesis accounts are invite-only for now." with a Request access link and its
-host above the two choices, and again when a sign-in is refused as
-`not-allowed`; the CLI prints the link once while waiting.
+`{"signup":{"inviteOnly":true}}` under `invite` and `{}` under any other policy.
+It is a separate path because gateways parse `/_relay/v2/config` strictly. A
+gateway that is not linked to an account reads it when its owner opens
+Settings → Omnesis account or Connectivity (or runs `omnesis cloud status` or
+`connect`): those status reads carry `?signup=1`, and no other read of `GET
+/admin/cloud-relay` reaches the relay. It asks at most every ten minutes;
+unknown fields are ignored. `POST /_relay/v3/signup/invite` checks an invite
+without using it, for the gateway before it starts connecting and for the
+relay's own invite page.
 
 ### Accounts are created on purpose
 
@@ -1135,8 +1124,8 @@ does not see it (it watches the owner's gateway's name) and `ask` does not apply
 (the owner's gateway never sees the request). The apps therefore join by
 themselves only a gateway whose key they already pin, and otherwise wait for a
 person to compare the code on a device they already use (see "Which gateway a new
-device trusts"). The CLI and collector do not yet: they still continue by
-themselves once a gateway with a publicly logged certificate reports an approval.
+device trusts"). The CLI and collector always request approval and require a code
+comparison through an independently trusted device or gateway terminal before continuing.
 
 Operators who want a person to approve every device switch to `ask`, in the
 Omnesis account settings of the portal or the iOS and Android apps, or with

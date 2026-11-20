@@ -20,21 +20,33 @@
  * is covered by the `SyntheticE2EHarness` suites.
  */
 import { createHash } from "node:crypto";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createServer, type AddressInfo } from "node:net";
-import { execFile, spawn, type ChildProcess } from "node:child_process";
-import { promisify } from "node:util";
 import { GatewayWsClient } from "@omnesis/gateway-client";
+import {
+  ownedProcessCleanupReceipt,
+  parseSecretStoreBackend,
+  readSecretTextFile,
+} from "@omnesis/core";
 import {
   createRecordingUpdater,
   registerSelfUpdateCommand,
   type RecordingUpdater,
 } from "../self-update.js";
 import { createCommandDispatch } from "../ws-command-dispatch.js";
+import { execE2EBufferedCommand } from "./e2e-buffered-command.js";
 import { e2eGatewayEnv, e2eTsxCommand, gatewayBootBudgetMs } from "./gateway-env.js";
 import { killSubprocessGroup, registerSubprocessGroup } from "./subprocess-reaper.js";
+import {
+  spawnE2ESubprocess,
+  e2eApplicationStatus,
+  e2eApplicationPid,
+  e2eProcessOutput,
+  requestE2EProcessShutdown,
+} from "./e2e-owned-process.js";
+import type { ChildProcess } from "node:child_process";
 import type {
   WsCommandType,
   WsRequestPayload,
@@ -44,7 +56,6 @@ import type {
 import type { DoctorReport } from "@omnesis/core/doctor";
 import type { DeviceCapability } from "@omnesis/types";
 
-const execFileAsync = promisify(execFile);
 const REPO_ROOT = join(import.meta.dirname, "../../../..");
 const CLI_ENTRY = "packages/cli/src/index.ts";
 
@@ -117,6 +128,11 @@ export class MultiCollectorHarness {
   private configDir: string;
   private dbPath: string;
   private gatewayProcess: ChildProcess | null = null;
+  private gatewayCleanupUnconfirmed = false;
+  private gatewayCleanupFailure: unknown;
+  private auxiliaryCleanupFailure: { error: unknown } | undefined;
+  private readonly acceptedOperations = new Set<Promise<unknown>>();
+  private destroying = false;
   private gatewayOutput = "";
   collectors: PairedCollector[] = [];
 
@@ -134,6 +150,7 @@ export class MultiCollectorHarness {
   }
 
   async start(): Promise<void> {
+    this.assertAdmitting();
     this.gatewayPort = await getFreePort();
     this.gatewayUrl = `https://localhost:${this.gatewayPort}`;
     await this.startGateway();
@@ -151,7 +168,19 @@ export class MultiCollectorHarness {
 
   /** The PID of the gateway process this harness spawned, or null before boot. */
   get gatewayPid(): number | null {
-    return this.gatewayProcess?.pid ?? null;
+    return this.gatewayProcess ? (e2eApplicationPid(this.gatewayProcess) ?? null) : null;
+  }
+
+  /** Ask the owned gateway to drain while allowing a replacement to start at once. */
+  async requestGatewayShutdown(): Promise<void> {
+    const proc = this.gatewayProcess;
+    if (!proc?.pid) throw new Error("No gateway is running");
+    if (process.platform === "win32") {
+      if (!(await requestE2EProcessShutdown(proc)))
+        throw new Error("The gateway parent channel is unavailable");
+    } else {
+      process.kill(-proc.pid, "SIGTERM");
+    }
   }
 
   /**
@@ -162,6 +191,7 @@ export class MultiCollectorHarness {
    * its stores; SIGKILL leaves them for the replacement to reclaim.
    */
   async restartGateway(opts: { signal?: NodeJS.Signals } = {}): Promise<void> {
+    this.assertAdmitting();
     for (const c of this.collectors) {
       try {
         c.ws.disconnect();
@@ -478,7 +508,8 @@ export class MultiCollectorHarness {
     return (await res.json()) as { ingested: number };
   }
 
-  async destroy(): Promise<void> {
+  async destroy(opts: { retainFiles?: boolean } = {}): Promise<void> {
+    this.destroying = true;
     for (const c of this.collectors) {
       try {
         c.ws.disconnect();
@@ -486,7 +517,26 @@ export class MultiCollectorHarness {
         /* best effort */
       }
     }
-    await this.killGateway();
+    // Gateway shutdown starts independently of commands or private reads that
+    // were already accepted. Their own completion proofs still precede removal.
+    const results = await Promise.allSettled([this.killGateway(), ...this.acceptedOperations]);
+    const errors = results
+      .filter((result) => result.status === "rejected")
+      .map((result) => result.reason as unknown);
+    const failure =
+      this.auxiliaryCleanupFailure?.error ??
+      errors.find((error) => ownedProcessCleanupReceipt(error) !== undefined);
+    if (ownedProcessCleanupReceipt(failure) !== undefined) {
+      const others = errors.filter((error) => error !== failure);
+      if (!others.length) throw failure;
+      throw Object.assign(
+        new AggregateError([failure, ...others], "E2E fixture cleanup failed", { cause: failure }),
+        { cleanupFailure: ownedProcessCleanupReceipt(failure)!.failure },
+      );
+    }
+    if (errors.length === 1) throw errors[0];
+    if (errors.length) throw new AggregateError(errors, "E2E fixture cleanup failed");
+    if (opts.retainFiles) return;
     try {
       rmSync(this.tempDir, { recursive: true, force: true });
     } catch {
@@ -494,12 +544,13 @@ export class MultiCollectorHarness {
     }
   }
 
-  /** Run the CLI as a subprocess pointing at this gateway. Resolves with the
-   * exit code + outputs regardless of success/failure (caller asserts). */
+  /** Run the isolated CLI and return ordinary exit status/output. Unconfirmed
+   * process cleanup rejects and retains the fixture for review. */
   async runCli(
     args: string[],
     opts: { token?: string; extraEnv?: NodeJS.ProcessEnv; timeoutMs?: number } = {},
   ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+    this.assertAdmitting();
     const env: NodeJS.ProcessEnv = {
       ...process.env,
       OMNESIS_GATEWAY_URL: this.gatewayUrl,
@@ -519,14 +570,18 @@ export class MultiCollectorHarness {
     delete env.NODE_EXTRA_CA_CERTS;
     delete env.OMNESIS_INSECURE_TLS;
     try {
-      const { stdout, stderr } = await execFileAsync("npx", ["tsx", CLI_ENTRY, ...args], {
-        cwd: REPO_ROOT,
-        env,
-        timeout: opts.timeoutMs ?? 30_000,
-        maxBuffer: 8 * 1024 * 1024,
-      });
+      const cli = e2eTsxCommand(CLI_ENTRY);
+      const { stdout, stderr } = await this.ownOperation(() =>
+        execE2EBufferedCommand(cli.command, [...cli.args, ...args], {
+          cwd: REPO_ROOT,
+          env,
+          timeout: opts.timeoutMs ?? 30_000,
+          maxBuffer: 8 * 1024 * 1024,
+        }),
+      );
       return { stdout, stderr, exitCode: 0 };
     } catch (err) {
+      if (ownedProcessCleanupReceipt(err) !== undefined) throw err;
       const e = err as { stdout?: string; stderr?: string; code?: number | string };
       return {
         stdout: typeof e.stdout === "string" ? e.stdout : "",
@@ -534,6 +589,31 @@ export class MultiCollectorHarness {
         exitCode: typeof e.code === "number" ? e.code : Number(e.code ?? -1),
       };
     }
+  }
+
+  private assertAdmitting(): void {
+    if (this.auxiliaryCleanupFailure) throw this.auxiliaryCleanupFailure.error;
+    if (this.gatewayCleanupUnconfirmed) throw this.gatewayCleanupFailure;
+    if (this.destroying) throw new Error("E2E fixture is closing");
+  }
+
+  private ownOperation<T>(operation: () => Promise<T>): Promise<T> {
+    this.assertAdmitting();
+    const running = (async () => {
+      try {
+        return await operation();
+      } catch (error) {
+        if (ownedProcessCleanupReceipt(error) !== undefined)
+          this.auxiliaryCleanupFailure ??= { error };
+        throw error;
+      }
+    })();
+    this.acceptedOperations.add(running);
+    void running.then(
+      () => this.acceptedOperations.delete(running),
+      () => this.acceptedOperations.delete(running),
+    );
+    return running;
   }
 
   /**
@@ -557,40 +637,66 @@ export class MultiCollectorHarness {
   }
 
   private async startGateway(): Promise<void> {
+    this.assertAdmitting();
     const env = this.gatewayLaunchEnv;
+    const startTime = Date.now();
+    const timeout = gatewayBootBudgetMs();
     const gatewayCommand = e2eTsxCommand("packages/gateway/src/index.ts");
-    this.gatewayProcess = spawn(gatewayCommand.command, gatewayCommand.args, {
-      env,
-      cwd: REPO_ROOT,
-      stdio: ["ignore", "pipe", "pipe"],
-      detached: true,
-    });
+    try {
+      this.gatewayProcess = spawnE2ESubprocess(gatewayCommand.command, gatewayCommand.args, {
+        env,
+        cwd: REPO_ROOT,
+        stdio: ["ignore", "pipe", "pipe", "ipc"],
+        detached: true,
+      });
+    } catch (error) {
+      if (ownedProcessCleanupReceipt(error) !== undefined) {
+        this.gatewayCleanupUnconfirmed = true;
+        this.gatewayCleanupFailure = error;
+      }
+      throw error;
+    }
     const recordOutput = (chunk: Buffer | string): void => {
       this.gatewayOutput = `${this.gatewayOutput}${String(chunk)}`.slice(-8_000);
     };
-    this.gatewayProcess.stdout?.on("data", recordOutput);
-    this.gatewayProcess.stderr?.on("data", recordOutput);
+    const output = e2eProcessOutput(this.gatewayProcess);
+    output.stdout?.on("data", recordOutput);
+    output.stderr?.on("data", recordOutput);
     // Reap this detached group if the runner dies before teardown runs —
     // otherwise the gateway orphans and holds ~1.5 GB indefinitely.
-    registerSubprocessGroup(this.gatewayProcess);
+    await registerSubprocessGroup(this.gatewayProcess);
 
     // Same handshake pattern as E2EHarness — wait for /health AND /whoami
     // with our bootstrap token so we're definitely talking to this gateway.
-    const startTime = Date.now();
-    const timeout = gatewayBootBudgetMs();
     const tokenPath = join(this.configDir, "token");
     while (Date.now() - startTime < timeout) {
-      if (this.gatewayProcess?.exitCode !== null || this.gatewayProcess?.signalCode) break;
+      if (this.gatewayProcess) {
+        const status = e2eApplicationStatus(this.gatewayProcess);
+        if (status.exitCode !== null || status.signalCode !== null) break;
+      }
       try {
-        const health = await fetch(`${this.gatewayUrl}/health`);
+        const health = await fetch(`${this.gatewayUrl}/health`, {
+          signal: AbortSignal.timeout(Math.max(1, timeout - (Date.now() - startTime))),
+        });
+        if (Date.now() - startTime >= timeout) break;
         if (!health.ok) {
           await sleep(100);
           continue;
         }
         let token: string;
         try {
-          token = readFileSync(tokenPath, "utf-8").trim();
-        } catch {
+          token = (
+            (await this.ownOperation(() =>
+              readSecretTextFile(tokenPath, {
+                configDir: this.configDir,
+                backend: parseSecretStoreBackend(env.OMNESIS_SECRET_STORE),
+              }),
+            )) ?? ""
+          ).trim();
+          this.assertAdmitting();
+          if (Date.now() - startTime >= timeout) break;
+        } catch (error) {
+          if (ownedProcessCleanupReceipt(error) !== undefined || this.destroying) throw error;
           await sleep(100);
           continue;
         }
@@ -600,33 +706,46 @@ export class MultiCollectorHarness {
         }
         const whoami = await fetch(`${this.gatewayUrl}/whoami`, {
           headers: { Authorization: `Bearer ${token}` },
+          signal: AbortSignal.timeout(Math.max(1, timeout - (Date.now() - startTime))),
         });
+        if (Date.now() - startTime >= timeout) break;
         if (whoami.ok) {
           this.bootstrapToken = token;
           return;
         }
-      } catch {
+      } catch (error) {
+        if (ownedProcessCleanupReceipt(error) !== undefined || this.destroying) throw error;
         /* not reachable yet */
       }
       await sleep(100);
     }
     const proc = this.gatewayProcess;
+    const status = proc ? e2eApplicationStatus(proc) : null;
     const fate =
-      proc?.exitCode !== null && proc?.exitCode !== undefined
-        ? `the gateway process exited with code ${proc.exitCode}`
-        : proc?.signalCode
-          ? `the gateway process was killed by ${proc.signalCode}`
+      status?.exitCode !== null && status?.exitCode !== undefined
+        ? `the gateway process exited with code ${status.exitCode}`
+        : status?.signalCode
+          ? `the gateway process was killed by ${status.signalCode}`
           : "the gateway process was still running — this is the harness giving up on a slow boot, not a gateway that failed";
-    const output = this.gatewayOutput.trim();
+    const diagnosticOutput = this.gatewayOutput.trim();
     throw new Error(
-      `The harness stopped waiting for the gateway after ${timeout}ms (the shared boot budget in scripts/lib/gateway-boot-budget.json): ${fate}.${output ? `\nGateway output:\n${output}` : ""}`,
+      `The harness stopped waiting for the gateway after ${timeout}ms (the shared boot budget in scripts/lib/gateway-boot-budget.json): ${fate}.${diagnosticOutput ? `\nGateway output:\n${diagnosticOutput}` : ""}`,
     );
   }
 
   private async killGateway(signal?: NodeJS.Signals): Promise<void> {
+    if (this.gatewayCleanupUnconfirmed) throw this.gatewayCleanupFailure;
     const proc = this.gatewayProcess;
     if (!proc) return;
-    await killSubprocessGroup(proc, signal ? { initialSignal: signal } : {});
+    try {
+      await killSubprocessGroup(proc, signal ? { initialSignal: signal } : {});
+    } catch (error) {
+      if (ownedProcessCleanupReceipt(error) !== undefined) {
+        this.gatewayCleanupUnconfirmed = true;
+        this.gatewayCleanupFailure = error;
+      }
+      throw error;
+    }
   }
 }
 

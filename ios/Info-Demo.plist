@@ -2,12 +2,8 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<key>OmnesisCloudRelayEnabled</key>
-	<string>$(OMNESIS_CLOUD_RELAY_ENABLED)</string>
 	<key>OmnesisGoogleClientID</key>
 	<string>$(OMNESIS_GOOGLE_CLIENT_ID)</string>
-	<key>OmnesisCloudRelayPasskeysEnabled</key>
-	<string>$(OMNESIS_CLOUD_RELAY_PASSKEYS_ENABLED)</string>
 	<key>OmnesisCloudRelaySkipPublicCertificateCheck</key>
 	<string>$(OMNESIS_CLOUD_RELAY_SKIP_PUBLIC_CERTIFICATE_CHECK)</string>
 	<key>OmnesisCloudRelayURL</key>
@@ -39,6 +35,7 @@
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>omnesis-demo</string>
+				<string>$(OMNESIS_GOOGLE_CALLBACK_SCHEME)</string>
 			</array>
 		</dict>
 	</array>
@@ -50,6 +47,8 @@
 	<true/>
 	<key>MinimumOSVersion</key>
 	<string>17.0</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Omnesis connects directly to your paired gateway on your local network when available.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>Omnesis Demo uses the camera only to scan the gateway pairing QR code during setup.</string>
 	<key>NSHealthShareUsageDescription</key>

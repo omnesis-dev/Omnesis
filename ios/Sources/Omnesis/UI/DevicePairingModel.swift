@@ -8,44 +8,6 @@ import Observation
 // outside the UIKit-gated views so the simulator-free SwiftPM lane can verify
 // kind visibility and the agent setup commands.
 
-/// Build the `gatewayUrl` baked into a pairing QR by swapping the chosen
-/// network identity's host into the gateway's own origin — preserving the real
-/// scheme and port the gateway is served on. Mirrors the portal's
-/// `swapHostForUrl(window.location.origin, host)`. Falls back to an
-/// `https://host` URL when no origin is known (no port assumed).
-func swapHost(into origin: URL?, host: String) -> String {
-    guard var components = origin.flatMap({ URLComponents(url: $0, resolvingAgainstBaseURL: false) }) else {
-        return "https://\(host)"
-    }
-    components.host = host
-    // Drop a trailing empty path so the URL is just scheme://host[:port].
-    if components.path == "/" { components.path = "" }
-    return components.string ?? "https://\(host)"
-}
-
-/// Resolve an agent setup URL from the selected advertised identity. The
-/// gateway's scheme and port stay authoritative; only the host is substituted.
-func agentGatewayURL(gatewayOrigin: URL?, identityAddresses: [String], selectedIndex: Int) -> String? {
-    guard !identityAddresses.isEmpty else {
-        return gatewayOrigin?.absoluteString
-    }
-    let boundedIndex = min(max(selectedIndex, 0), identityAddresses.count - 1)
-    return swapHost(into: gatewayOrigin, host: identityAddresses[boundedIndex])
-}
-
-/// Which pair-a-device sheet a build presents. With the cloud build flag off it is the
-/// sheet of a build without cloud connectivity: it lists `GET /admin/network-identities`,
-/// lets the person pick a host and swaps it into the gateway's origin (`swapHost`).
-/// With the flag on the gateway judges the addresses (`PairingAddressModel`).
-enum PairDeviceSheetStyle: Equatable {
-    case networkIdentities
-    case addressPlan
-
-    init(cloudRelayEnabled: Bool = CloudRelayFeature.enabled) {
-        self = cloudRelayEnabled ? .addressPlan : .networkIdentities
-    }
-}
-
 /// The address a pairing code will carry: the gateway's plan for the code, the
 /// person's choice among its usable addresses, and the QR for that choice.
 ///

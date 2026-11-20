@@ -5,50 +5,39 @@
 import XCTest
 
 /// A gateway running its own Tailscale device notifies the owner's phone when a device waits
-/// to join (`tailscale-join`) and when one joined (`tailscale-joined`). Every build routes both
-/// and says so, through its capabilities and on each claim; a gateway without the feature
-/// never sends either, so nothing changes against it. The cloud relay's kinds, pairing
-/// requests and `device-joined`, stay cloud-build kinds.
+/// to join (`tailscale-join`) and when one joined (`tailscale-joined`); one with the cloud
+/// account does the same for a sign-in that waits (`device-pairing`) or joined
+/// (`device-joined`). The app routes all of them and says so, through its capabilities and on
+/// each claim; a gateway without either feature never sends them.
 final class TailscaleJoinNotificationTests: XCTestCase {
-    private let flags = [false, true]
-
     // MARK: - Routing
 
-    func testAWaitingDeviceOpensWaitingToJoinInEveryBuild() {
-        for enabled in flags {
-            for payload: [String: Any] in [
-                ["kind": "tailscale-join"],
-                ["kind": "tailscale-join", "targetId": "tailscale-join"],
-            ] {
-                XCTAssertEqual(
-                    PushTarget.fromUserInfo(["omnesis": payload], cloudRelayEnabled: enabled),
-                    .tailscaleJoinRequests,
-                    "cloud build \(enabled): \(payload)"
-                )
-            }
+    func testAWaitingDeviceOpensWaitingToJoin() {
+        for payload: [String: Any] in [
+            ["kind": "tailscale-join"],
+            ["kind": "tailscale-join", "targetId": "tailscale-join"],
+        ] {
+            XCTAssertEqual(PushTarget.fromUserInfo(["omnesis": payload]), .tailscaleJoinRequests, "\(payload)")
         }
         XCTAssertEqual(PushTarget.tailscaleJoinRequests.kindName, "tailscale-join")
         XCTAssertTrue(PushTarget.tailscaleJoinRequests.opensDevices)
     }
 
-    func testADeviceThatJoinedThroughTailscaleOpensDevicesInEveryBuild() {
-        for enabled in flags {
-            XCTAssertEqual(
-                PushTarget.fromUserInfo(["omnesis": ["kind": "tailscale-joined", "targetId": "devices"]], cloudRelayEnabled: enabled),
-                .deviceJoined
-            )
-            XCTAssertEqual(PushTarget.fromUserInfo(["omnesis": ["kind": "tailscale-joined"]], cloudRelayEnabled: enabled), .deviceJoined)
-        }
+    func testADeviceThatJoinedThroughTailscaleOpensDevices() {
+        XCTAssertEqual(PushTarget.fromUserInfo(["omnesis": ["kind": "tailscale-joined", "targetId": "devices"]]), .deviceJoined)
+        XCTAssertEqual(PushTarget.fromUserInfo(["omnesis": ["kind": "tailscale-joined"]]), .deviceJoined)
         XCTAssertTrue(PushTarget.deviceJoined.opensDevices)
     }
 
-    func testTheCloudRelayKindsStayGatedOnTheCloudBuild() {
+    func testTheCloudAccountKindsRoute() {
         let pairing: [AnyHashable: Any] = ["omnesis": ["kind": "device-pairing", "targetId": "pairing"]]
         let joined: [AnyHashable: Any] = ["omnesis": ["kind": "device-joined", "targetId": "devices"]]
-        XCTAssertNil(PushTarget.fromUserInfo(pairing, cloudRelayEnabled: false))
-        XCTAssertNil(PushTarget.fromUserInfo(joined, cloudRelayEnabled: false))
-        XCTAssertEqual(PushTarget.fromUserInfo(pairing, cloudRelayEnabled: true), .pairingRequests())
-        XCTAssertEqual(PushTarget.fromUserInfo(joined, cloudRelayEnabled: true), .deviceJoined)
+        XCTAssertEqual(PushTarget.fromUserInfo(pairing), .pairingRequests())
+        XCTAssertEqual(PushTarget.fromUserInfo(joined), .deviceJoined)
+        XCTAssertEqual(PushTarget.fromUserInfo(["omnesis": ["kind": "device-joined"]]), .deviceJoined)
+        XCTAssertEqual(PushTarget.deviceJoined.kindName, "device-joined")
+        XCTAssertTrue(PushTarget.pairingRequests().opensDevices)
+        XCTAssertFalse(PushTarget.accessAuthorization.opensDevices)
     }
 
     @MainActor
@@ -68,65 +57,62 @@ final class TailscaleJoinNotificationTests: XCTestCase {
                 + #""title":"Device waiting to join","body":"maya-laptop wants to join through Tailscale. Tap to review.","#
                 + #""collapseId":"\#(kind):1","remaining":1,"route":{"kind":"\#(kind)"}}"#
             let claimed = try JSONDecoder().decode(ClaimedNotification.self, from: Data(json.utf8))
-            for enabled in flags {
-                XCTAssertEqual(PushTarget.fromUserInfo(claimed.userInfo, cloudRelayEnabled: enabled), expected, kind)
-            }
+            XCTAssertEqual(PushTarget.fromUserInfo(claimed.userInfo), expected, kind)
         }
     }
 
     // MARK: - Claims
 
-    func testEveryClaimSaysItRoutesTailscaleJoins() async throws {
+    func testEveryClaimSaysItRoutesBothKindsOfJoin() async throws {
         let seen = RequestRecorder()
-        for pairing in flags {
-            let claimer = try NotificationClaimer(
-                baseURL: XCTUnwrap(URL(string: "https://gateway.example.test")),
-                token: "omn_device",
-                claimsPairingNotifications: pairing
-            ) { request in
-                seen.append(request)
-                let response = try XCTUnwrap(HTTPURLResponse(
-                    url: XCTUnwrap(request.url),
-                    statusCode: 200,
-                    httpVersion: nil,
-                    headerFields: nil
-                ))
-                return (Data(#"{"ok":true}"#.utf8), response)
-            }
-            _ = try? await claimer.claim()
-            try await claimer.confirm(id: "00000000-0000-4000-8000-000000000101")
+        let claimer = try NotificationClaimer(
+            baseURL: XCTUnwrap(URL(string: "https://gateway.example.test")),
+            token: "omn_device"
+        ) { request in
+            seen.append(request)
+            let response = try XCTUnwrap(HTTPURLResponse(
+                url: XCTUnwrap(request.url),
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: nil
+            ))
+            return (Data(#"{"ok":true}"#.utf8), response)
         }
+        _ = try? await claimer.claim()
+        try await claimer.confirm(id: "00000000-0000-4000-8000-000000000101")
         let claims = seen.all.filter { $0.url?.path == "/notifications/claim" }
-        XCTAssertEqual(claims.map { $0.value(forHTTPHeaderField: "X-Omnesis-Tailscale-Join-Notifications") }, ["1", "1"])
-        XCTAssertEqual(claims.map { $0.value(forHTTPHeaderField: "X-Omnesis-Pairing-Notifications") }, [nil, "1"])
+        XCTAssertEqual(claims.map { $0.value(forHTTPHeaderField: "X-Omnesis-Tailscale-Join-Notifications") }, ["1"])
+        XCTAssertEqual(claims.map { $0.value(forHTTPHeaderField: "X-Omnesis-Pairing-Notifications") }, ["1"])
         let confirms = seen.all.filter { $0.url?.path == "/notifications/confirm" }
-        XCTAssertEqual(confirms.count, 2)
+        XCTAssertEqual(confirms.count, 1)
         XCTAssertTrue(confirms.allSatisfy { $0.value(forHTTPHeaderField: "X-Omnesis-Tailscale-Join-Notifications") == nil })
+        XCTAssertTrue(confirms.allSatisfy { $0.value(forHTTPHeaderField: "X-Omnesis-Pairing-Notifications") == nil })
     }
 
     // MARK: - Capabilities
 
-    func testCapabilitiesAdvertiseTailscaleJoinsInEveryBuild() throws {
-        for pairing in flags {
-            let capabilities = PairingCapabilities.ios(version: "1.0.0", pairingNotifications: pairing)
-            XCTAssertEqual(capabilities.tailscaleJoinNotifications, true)
-            XCTAssertEqual(capabilities.jsonObject["tailscaleJoinNotifications"], .bool(true))
+    func testCapabilitiesAdvertiseBothKindsOfJoin() throws {
+        let capabilities = PairingCapabilities.ios(version: "1.0.0")
+        XCTAssertEqual(capabilities.tailscaleJoinNotifications, true)
+        XCTAssertEqual(capabilities.pairingNotifications, true)
+        XCTAssertEqual(capabilities.jsonObject["tailscaleJoinNotifications"], .bool(true))
+        XCTAssertEqual(capabilities.jsonObject["pairingNotifications"], .bool(true))
 
-            // The pairing exchange body.
-            let body = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(capabilities)) as? [String: Any])
-            XCTAssertEqual(body["tailscaleJoinNotifications"] as? Bool, true)
+        // The pairing exchange body.
+        let body = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(capabilities)) as? [String: Any])
+        XCTAssertEqual(body["tailscaleJoinNotifications"] as? Bool, true)
+        XCTAssertEqual(body["pairingNotifications"] as? Bool, true)
 
-            // The WebSocket hello.
-            let hello = DeviceSocket.helloCommand(id: "hello-1", capabilities: capabilities)
-            guard case .object(let payload)? = hello["payload"],
-                  case .object(let sent)? = payload["capabilities"]
-            else { return XCTFail("expected hello capabilities") }
-            XCTAssertEqual(sent["tailscaleJoinNotifications"], .bool(true))
-        }
-        XCTAssertEqual(PairingCapabilities.ios().tailscaleJoinNotifications, true)
+        // The WebSocket hello.
+        let hello = DeviceSocket.helloCommand(id: "hello-1", capabilities: capabilities)
+        guard case .object(let payload)? = hello["payload"],
+              case .object(let sent)? = payload["capabilities"]
+        else { return XCTFail("expected hello capabilities") }
+        XCTAssertEqual(sent["tailscaleJoinNotifications"], .bool(true))
+        XCTAssertEqual(sent["pairingNotifications"], .bool(true))
     }
 
-    func testThePairExchangeAdvertisesTailscaleJoinsWithTheCloudFlagOff() async throws {
+    func testThePairExchangeAdvertisesBothKindsOfJoin() async throws {
         let exchange = StubExchange()
         exchange.response = .success(DevicePairResponse(
             device: .init(id: "test-phone", name: "Test phone", kind: "ios"),
@@ -134,19 +120,22 @@ final class TailscaleJoinNotificationTests: XCTestCase {
             token: "omn_new",
             scopes: ["read"]
         ))
-        let service = PairingService(store: InMemoryStore(), exchange: exchange, cloudRelayEnabled: false)
+        let service = PairingService(store: InMemoryStore(), exchange: exchange)
         _ = try await service.pairAsync(raw: #"{"v":2,"gatewayUrl":"https://gateway.example.test","pairingCode":"AAAA-BBBB"}"#)
         XCTAssertEqual(exchange.lastCapabilities?.tailscaleJoinNotifications, true)
-        XCTAssertNil(exchange.lastCapabilities?.pairingNotifications)
+        XCTAssertEqual(exchange.lastCapabilities?.pairingNotifications, true)
     }
 
     func testCapabilitiesFromAnOlderAppStillDecode() throws {
         let encoded = try JSONEncoder().encode(PairingCapabilities.ios(version: "1.0.0"))
         var older = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
         XCTAssertEqual(older.removeValue(forKey: "tailscaleJoinNotifications") as? Bool, true)
+        XCTAssertEqual(older.removeValue(forKey: "pairingNotifications") as? Bool, true)
         let restored = try JSONDecoder().decode(PairingCapabilities.self, from: JSONSerialization.data(withJSONObject: older))
         XCTAssertNil(restored.tailscaleJoinNotifications)
+        XCTAssertNil(restored.pairingNotifications)
         XCTAssertNil(restored.jsonObject["tailscaleJoinNotifications"])
+        XCTAssertNil(restored.jsonObject["pairingNotifications"])
     }
 }
 

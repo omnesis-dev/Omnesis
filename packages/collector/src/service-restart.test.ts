@@ -332,6 +332,9 @@ describe("the relaunch guard", () => {
     dir = null;
   });
 
+  // The real relaunch guard executes macOS launchd's POSIX shell contract.
+  const testLaunchdShell = test.skipIf(process.platform === "win32");
+
   const UNIT = {
     manager: "launchd" as const,
     label: "dev.omnesis.collector",
@@ -383,36 +386,56 @@ describe("the relaunch guard", () => {
     return { calls, stderr };
   }
 
-  test("a job killed outright is started again, without -k, and the guard says why", async () => {
-    const { calls, stderr } = await guard(ENDED("last terminating signal = Killed: 9"));
-    expect(calls).toEqual([
-      "print gui/501/dev.omnesis.collector",
-      "kickstart gui/501/dev.omnesis.collector",
-    ]);
-    expect(stderr).toMatch(
-      /INFO {2}\[collector:relaunch-guard\] gui\/501\/dev\.omnesis\.collector ended without a clean exit/,
-    );
-  }, 30_000);
+  testLaunchdShell(
+    "a job killed outright is started again, without -k, and the guard says why",
+    async () => {
+      const { calls, stderr } = await guard(ENDED("last terminating signal = Killed: 9"));
+      expect(calls).toEqual([
+        "print gui/501/dev.omnesis.collector",
+        "kickstart gui/501/dev.omnesis.collector",
+      ]);
+      expect(stderr).toMatch(
+        /INFO {2}\[collector:relaunch-guard\] gui\/501\/dev\.omnesis\.collector ended without a clean exit/,
+      );
+    },
+    30_000,
+  );
 
-  test("a job that exited non-zero is started again", async () => {
-    const { calls } = await guard(ENDED("last exit code = 1"));
-    expect(calls.at(-1)).toBe("kickstart gui/501/dev.omnesis.collector");
-  }, 30_000);
+  testLaunchdShell(
+    "a job that exited non-zero is started again",
+    async () => {
+      const { calls } = await guard(ENDED("last exit code = 1"));
+      expect(calls.at(-1)).toBe("kickstart gui/501/dev.omnesis.collector");
+    },
+    30_000,
+  );
 
-  test("a clean exit is a deliberate stop and stays stopped", async () => {
-    const { calls } = await guard(ENDED("last exit code = 0"));
-    expect(calls).toEqual(["print gui/501/dev.omnesis.collector"]);
-  }, 30_000);
+  testLaunchdShell(
+    "a clean exit is a deliberate stop and stays stopped",
+    async () => {
+      const { calls } = await guard(ENDED("last exit code = 0"));
+      expect(calls).toEqual(["print gui/501/dev.omnesis.collector"]);
+    },
+    30_000,
+  );
 
-  test("a job that was booted out stays unloaded", async () => {
-    const { calls } = await guard(null);
-    expect(calls).toEqual(["print gui/501/dev.omnesis.collector"]);
-  }, 30_000);
+  testLaunchdShell(
+    "a job that was booted out stays unloaded",
+    async () => {
+      const { calls } = await guard(null);
+      expect(calls).toEqual(["print gui/501/dev.omnesis.collector"]);
+    },
+    30_000,
+  );
 
-  test("a job launchd or a restart already started again is left alone", async () => {
-    const { calls } = await guard(LAUNCHD_PRINT(9999));
-    expect(calls).toEqual(["print gui/501/dev.omnesis.collector"]);
-  }, 30_000);
+  testLaunchdShell(
+    "a job launchd or a restart already started again is left alone",
+    async () => {
+      const { calls } = await guard(LAUNCHD_PRINT(9999));
+      expect(calls).toEqual(["print gui/501/dev.omnesis.collector"]);
+    },
+    30_000,
+  );
 
   test("waits out the throttle interval and watches the job's own process", () => {
     const spec = relaunchGuardFor(UNIT);

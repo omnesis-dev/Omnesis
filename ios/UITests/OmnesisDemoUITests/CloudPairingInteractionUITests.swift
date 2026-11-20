@@ -26,49 +26,107 @@ final class CloudPairingInteractionUITests: XCTestCase {
         app = nil
     }
 
-    private func launch(_ scenario: String) {
+    /// Launches the Demo scene for `scenario`. `cancellingTouches` lists the
+    /// ordinals of the touches the app cancels, counting from 1, the way the
+    /// system's gesture gate sometimes does (`DEMO_CANCEL_TOUCHES`).
+    private func launch(_ scenario: String, cancellingTouches: String? = nil) {
         app?.terminate()
         app = XCUIApplication()
         app.launchEnvironment["DEMO_PLAIN_GLASS"] = "1"
         app.launchEnvironment["DEMO_RESET_PAIRING"] = "1"
         app.launchEnvironment["DEMO_CLOUD_PAIRING"] = scenario
+        // Logs where each tap lands and how it ends; see `AutomationTouchLog`.
+        app.launchEnvironment["DEMO_TOUCH_LOG"] = "1"
+        if let cancellingTouches { app.launchEnvironment["DEMO_CANCEL_TOUCHES"] = cancellingTouches }
         app.launch()
         XCTAssertTrue(app.staticTexts["cloud.fixture.receipt"].waitForExistence(timeout: 15), "The isolated fixture did not load")
-        if scenario.hasPrefix("google") { XCTAssertTrue(app.buttons["Sign in with Google"].waitForExistence(timeout: 15)) }
+        if scenario.hasPrefix("account") { XCTAssertTrue(app.buttons["pairing.entry.cloudAccount"].waitForExistence(timeout: 15)) }
         XCTAssertFalse(app.staticTexts["cloud.fixture.unavailable"].exists)
     }
 
-    func testGoogleRequiresLocalComparisonAndActualAppStoreCompletion() {
-        launch("google")
-        app.buttons["Sign in with Google"].tap()
-        XCTAssertFalse(app.buttons["pairing.google.confirmCode"].exists)
-        let pair = app.buttons["pairing.google.pair"]
-        XCTAssertTrue(pair.waitForExistence(timeout: 5))
-        pair.tap()
+    /// Pairing opens on one button for the cloud account beside the ways to pair directly; the
+    /// button opens the choice of Google or a passkey, and Back returns with nothing started.
+    func testTheCloudAccountButtonOpensTheSignInChoice() {
+        launch("account")
+        XCTAssertEqual(app.buttons["pairing.entry.cloudAccount"].label, "Sign in with cloud account")
+        XCTAssertTrue(app.buttons["pairing.entry.scan"].exists)
+        XCTAssertTrue(app.buttons["pairing.entry.manual"].exists)
+        XCTAssertFalse(app.buttons["pairing.account.google"].exists)
+        XCTAssertFalse(app.buttons["pairing.account.passkey"].exists)
+        openSignInChoice()
+        XCTAssertFalse(app.buttons["pairing.entry.scan"].exists)
+        app.navigationBars["Cloud account"].buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(app.buttons["pairing.entry.cloudAccount"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["pairing.account.google"].exists)
+        XCTAssertEqual(app.staticTexts["cloud.fixture.receipt"].label, "No operation")
+    }
+
+    func testGoogleSignInWaitsForTheCodesToBeConfirmedThenPairs() {
+        launch("account")
+        openSignInChoice()
+        app.buttons["pairing.account.google"].tap()
+        let confirm = app.buttons["pairing.account.confirm"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["pairing.account.google"].exists, "The sign-in's progress replaces the choice")
+        XCTAssertEqual(app.staticTexts["cloud.fixture.receipt"].label, "System browser started")
+        confirm.tap()
         XCTAssertTrue(
-            app.buttons["Sign in with Google"].waitForExistence(timeout: 15),
+            app.buttons["pairing.account.google"].waitForExistence(timeout: 15),
             "Only a freshly accepted AppStore pairing returns the model to idle"
         )
         XCTAssertEqual(app.staticTexts["cloud.fixture.receipt"].label, "Pair exchange completed")
     }
 
-    func testGooglePairFailureRemainsRecoverableAndCancelStopsTheBrowser() {
-        launch("google-failure")
-        app.buttons["Sign in with Google"].tap()
-        XCTAssertFalse(app.buttons["pairing.google.confirmCode"].exists)
-        XCTAssertTrue(app.buttons["pairing.google.pair"].waitForExistence(timeout: 5))
-        app.buttons["pairing.google.pair"].tap()
-        XCTAssertTrue(app.buttons["Retry"].waitForExistence(timeout: 10))
+    func testPasskeySignInWaitsForTheCodesToBeConfirmedThenPairs() {
+        launch("account")
+        openSignInChoice()
+        app.buttons["pairing.account.passkey"].tap()
+        let confirm = app.buttons["pairing.account.confirm"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 10))
+        XCTAssertEqual(app.staticTexts["cloud.fixture.receipt"].label, "Passkey prompt shown")
+        confirm.tap()
+        XCTAssertTrue(app.buttons["pairing.account.passkey"].waitForExistence(timeout: 15))
+        XCTAssertEqual(app.staticTexts["cloud.fixture.receipt"].label, "Pair exchange completed")
+    }
+
+    func testAFailedPairingReturnsToTheChoiceWithTheReasonAndCancelStopsTheBrowser() {
+        launch("account-failure")
+        openSignInChoice()
+        app.buttons["pairing.account.google"].tap()
+        XCTAssertTrue(app.buttons["pairing.account.confirm"].waitForExistence(timeout: 10))
+        app.buttons["pairing.account.confirm"].tap()
+        XCTAssertTrue(app.descendants(matching: .any)["pairing.account.error"].firstMatch.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["pairing.account.google"].exists)
+        XCTAssertTrue(app.buttons["pairing.account.passkey"].exists)
+        XCTAssertFalse(app.buttons["pairing.account.confirm"].exists)
         XCTAssertEqual(app.staticTexts["cloud.fixture.receipt"].label, "Pair exchange failed")
-        XCTAssertFalse(app.buttons["pairing.google.pair"].exists)
-        app.buttons["Retry"].tap()
-        XCTAssertTrue(app.buttons["pairing.google.pair"].waitForExistence(timeout: 10))
-        XCTAssertFalse(app.buttons["pairing.google.confirmCode"].exists, "The pairing button confirms the fresh code")
-        launch("google-cancel")
-        app.buttons["Sign in with Google"].tap()
-        XCTAssertTrue(app.staticTexts["Complete sign-in in the system browser."].waitForExistence(timeout: 5))
-        app.navigationBars["Find your gateway"].buttons["Cancel"].tap()
+
+        launch("account-cancel")
+        openSignInChoice()
+        app.buttons["pairing.account.google"].tap()
+        XCTAssertTrue(app.staticTexts["Complete sign-in in the system dialog."].waitForExistence(timeout: 5))
+        app.navigationBars["Cloud account"].buttons["Cancel"].tap()
         XCTAssertEqual(app.staticTexts["cloud.fixture.receipt"].label, "System browser canceled")
+        XCTAssertTrue(app.buttons["pairing.account.google"].waitForExistence(timeout: 5))
+    }
+
+    /// The QR code and the manual code keep their places on the first screen.
+    func testScanningAndEnteringACodeStillOpenFromTheFirstScreen() {
+        launch("account")
+        app.buttons["pairing.entry.scan"].tap()
+        XCTAssertTrue(app.navigationBars["Scan the QR code"].waitForExistence(timeout: 5))
+        dismissCameraAlert()
+        app.navigationBars["Scan the QR code"].buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(app.buttons["pairing.entry.manual"].waitForExistence(timeout: 5))
+        app.buttons["pairing.entry.manual"].tap()
+        XCTAssertTrue(app.navigationBars["Manual entry"].waitForExistence(timeout: 5))
+    }
+
+    private func openSignInChoice() {
+        app.buttons["pairing.entry.cloudAccount"].tap()
+        XCTAssertTrue(app.navigationBars["Cloud account"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["pairing.account.google"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["pairing.account.passkey"].exists)
     }
 
     func testTrustedApprovalRequiresComparisonAndRejectionDoesNot() {
@@ -156,28 +214,35 @@ final class CloudPairingInteractionUITests: XCTestCase {
         let missing = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Missing row")).firstMatch
         XCTAssertTrue(missing.label.contains("Active now"))
         launch("settings")
-        XCTAssertTrue(app.staticTexts["Gateway connection: Local"].waitForExistence(timeout: 5))
-        app.buttons["Show relay"].tap()
-        XCTAssertTrue(app.staticTexts["Gateway connection: Remote"].waitForExistence(timeout: 5))
-        app.buttons["Show reconnecting"].tap()
-        XCTAssertTrue(app.staticTexts["Gateway connection: Reconnecting"].waitForExistence(timeout: 5))
+        showEachSettingsPath()
     }
 
-    func testOptionalGoogleOverlayAndMenuActionsPresentTheSameSheet() {
-        launch("qr")
-        dismissCameraAlert()
-        app.buttons["pairing.google.open"].tap()
-        XCTAssertTrue(app.navigationBars["Find your gateway"].waitForExistence(timeout: 5))
-        app.navigationBars["Find your gateway"].buttons["Cancel"].tap()
-        app.buttons["pairing.moreOptions"].tap()
-        app.buttons["pairing.google.menuSignIn"].tap()
-        XCTAssertTrue(app.navigationBars["Find your gateway"].waitForExistence(timeout: 5))
-        launch("qr-disabled")
-        dismissCameraAlert()
-        XCTAssertFalse(app.buttons["pairing.google.open"].exists)
-        app.buttons["pairing.moreOptions"].tap()
-        XCTAssertFalse(app.buttons["pairing.google.menuSignIn"].exists)
-        XCTAssertTrue(app.buttons["Enter code manually"].exists)
+    /// The Settings steps when the system takes the first tap on "Show
+    /// reconnecting" away, as its gesture gate sometimes does on a simulator:
+    /// the button shows its pressed state and the row still says Remote. The
+    /// step notices and taps again.
+    func testSettingsConnectionStatusSurvivesACancelledTap() {
+        // Touch 1 is the tap on "Show relay" and touch 2 the first tap on
+        // "Show reconnecting".
+        launch("settings", cancellingTouches: "2")
+        showEachSettingsPath()
+    }
+
+    /// Switches the settings scene from the local path to the relay, then to
+    /// reconnecting, and checks that Settings names each one. A button only
+    /// sets the scene's path, so tapping it again after a cancelled tap does
+    /// nothing a single tap would not.
+    private func showEachSettingsPath() {
+        XCTAssertTrue(app.staticTexts["Gateway connection: Local"].waitForExistence(timeout: 5))
+        for (button, path) in [("Show relay", "Remote"), ("Show reconnecting", "Reconnecting")] {
+            retap(
+                until: app.staticTexts["Gateway connection: \(path)"],
+                has: "exists == true",
+                or: "tapping \"\(button)\" never made Settings say \(path)"
+            ) {
+                app.buttons[button].tap()
+            }
+        }
     }
 
     private func dismissCameraAlert() {

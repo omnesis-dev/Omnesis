@@ -3,6 +3,8 @@
 
 import { randomUUID } from "node:crypto";
 import { unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import Database from "better-sqlite3";
 import { createMinhashParams, minhash } from "../algo/minhash.js";
@@ -14,7 +16,7 @@ describe("DupeStore", () => {
   let store: DupeStore;
 
   beforeEach(() => {
-    path = `/tmp/omnesis-dupes-test-${randomUUID()}.db`;
+    path = fixtureJoin(fixtureTmpdir(), `omnesis-dupes-test-${randomUUID()}.db`);
     store = new DupeStore(path);
   });
 
@@ -104,7 +106,7 @@ describe("DupeStore.migrate (legacy pairs table)", () => {
   let path: string;
 
   beforeEach(() => {
-    path = `/tmp/omnesis-dupes-migrate-${randomUUID()}.db`;
+    path = fixtureJoin(fixtureTmpdir(), `omnesis-dupes-migrate-${randomUUID()}.db`);
   });
 
   afterEach(() => {

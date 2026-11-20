@@ -6,10 +6,13 @@ import { apiFetch } from "../api.js";
 /**
  * One relay management call. No operation reads status; an operation is a POST
  * unless a method is named (the enrollment policy is a PUT). `stepUpAnnounced`: the control
- * already said the passkey comes next, so no note is shown before it.
+ * already said the passkey comes next, so no note is shown before it. `signup`: a status read
+ * for a page that shows how to sign up, which lets the gateway ask the relay whether accounts
+ * are invite-only; any other status read never reaches the relay.
  */
 export async function relayManagement(operation, input, signal, method = "POST", options = {}) {
-  const response = await apiFetch(`/admin/cloud-relay${operation ? `/${operation}` : ""}`, {
+  const query = !operation && options.signup ? "?signup=1" : "";
+  const response = await apiFetch(`/admin/cloud-relay${operation ? `/${operation}` : ""}${query}`, {
     cache: "no-store",
     signal,
     ...(operation ? { method, body: JSON.stringify(input) } : {}),
@@ -74,17 +77,26 @@ const ERRORS = {
     "Google sign-in is unavailable. Remote access and QR pairing work without it.",
   "google-link-failed": "Couldn't connect with Google. Try again. Gateway access is unchanged.",
   "relay-service-unavailable":
-    "Omnesis account setup is unavailable. Ask the installation administrator to configure the relay service.",
+    "This installation has no Omnesis relay service set, so Omnesis accounts aren't available. Set OMNESIS_CLOUD_RELAY_URL for the gateway, then restart it.",
   "relay-service-mismatch":
-    "The installation service configuration does not match this gateway. Ask the installation administrator to resolve it.",
+    "OMNESIS_CLOUD_RELAY_URL names a different relay service from the one this gateway is registered with. Set it back to that service, then restart the gateway.",
   "configuration-invalid": "Check the public gateway origin and certificate settings.",
+  "dns-capacity":
+    "Cloud gateway address capacity is temporarily full. Try connecting later. Existing gateways keep working.",
+  "dns-allocation-rate":
+    "New gateway setup is temporarily rate limited. Wait and try again. Existing gateways keep working.",
+  "dns-verification-required":
+    "Complete the security check shown by `omnesis cloud status`, then retry this gateway's setup.",
   "relay-unreachable":
     "Omnesis Relay could not be reached. Check this gateway's internet connection. It keeps trying by itself.",
   "invitation-required": "This relay requires an invitation for this gateway ID.",
   "enrollment-refused": "This gateway couldn't register with Omnesis Relay. It keeps trying by itself. If this message stays, try connecting again.",
   "tunnel-disconnected": "Remote access was interrupted. Reconnect to try again.",
   "not-allowed":
-    "This account hasn't been approved for Omnesis yet. Nothing on this gateway changed.",
+    "This Omnesis account can't connect this gateway. Nothing on this gateway changed.",
+  "invite-invalid": "That invite isn't valid. Check that you pasted the whole invite link.",
+  "invite-expired": "That invite has expired. Ask whoever sent it for a new one.",
+  "invite-used": "That invite was already used to create an account. Ask for a new one.",
   "certificate-setup-failed":
     "The certificate for this gateway's address could not be prepared. The gateway tries again by itself.",
   "certificate-renewal-failed":
@@ -134,15 +146,34 @@ export function relayHttpsUrl(value) {
   }
 }
 
+/** A broker verification ticket, already checked against local broker configuration by the gateway. */
+export function dnsVerificationUrl(value) {
+  if (typeof value !== "string" || value.length > 16_384) return null;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && !url.username && !url.password && !url.hash &&
+      url.pathname === "/_dns/v2/enroll" && url.searchParams.getAll("ticket").length === 1 &&
+      url.searchParams.get("ticket") && [...url.searchParams.keys()].every((key) => key === "ticket")
+      ? url.href : null;
+  } catch { return null; }
+}
+
+/** Whether the gateway's relay creates new accounts only with an invite. */
+export function relayInviteOnly(status) {
+  return status?.signup?.inviteOnly === true;
+}
+
 /**
- * Where to ask for an account when the relay's accounts are invite-only, with the host to show
- * beside the link so a substituted address is visible. Null when the gateway reported nothing usable.
+ * The invite in what the person pasted: a whole invite link, its fragment, or the bare code.
+ * Null when it can't be one. The relay checks the invite itself; this only spares a round trip.
  */
-export function relaySignupAccess(status) {
-  const signup = status?.signup;
-  if (!signup || signup.inviteOnly !== true) return null;
-  const url = relayHttpsUrl(signup.requestAccessUrl);
-  return url ? { url, host: new URL(url).host } : null;
+export function relayInvite(value) {
+  if (typeof value !== "string") return null;
+  const text = value.trim();
+  const token = text.slice(text.lastIndexOf("#") + 1);
+  return token.length <= 1024 && /^[A-Za-z0-9_-]{1,200}\.[A-Za-z0-9_-]{1,700}\.[A-Za-z0-9_-]{86}$/.test(token)
+    ? token
+    : null;
 }
 
 /** Accept Google directly or a single-use launch on the gateway's authenticated installation service. */

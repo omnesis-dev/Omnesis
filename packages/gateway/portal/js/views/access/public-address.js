@@ -18,7 +18,7 @@
 // link, or `{ route, text }` for a link inside the portal.
 
 import { useEffect, useState } from "preact/hooks";
-import { ACCOUNT_PAGE, HOST_TAILSCALE_PAGE, OWN_ADDRESS_PAGE, RELAY_PAGE, TAILSCALE_PAGE } from "../remote-access/manage.js";
+import { ACCOUNT_PAGE, HOST_TAILSCALE_PAGE, MCP_PAGE, OWN_ADDRESS_PAGE, RELAY_PAGE, TAILSCALE_PAGE } from "../remote-access/manage.js";
 
 import { relayManagement } from "../../lib/cloud-relay-api.js";
 import { getTailscale } from "../../lib/tailscale-api.js";
@@ -34,6 +34,9 @@ const RELAY_SETTINGS = { route: RELAY_PAGE, text: "Settings, Connectivity" };
 /** Where the gateway's own Tailscale device and its public address are managed. */
 export const TAILSCALE_SETTINGS_ROUTE = TAILSCALE_PAGE;
 const TAILSCALE_SETTINGS = { route: TAILSCALE_PAGE, text: "Settings, Connectivity" };
+
+/** Where the MCP server is put on the Internet, address by address. */
+const MCP_SETTINGS = { route: MCP_PAGE, text: "Settings, MCP server" };
 
 const PRIVATE_SUFFIXES = [".local", ".internal", ".lan", ".home.arpa", ".localhost"];
 
@@ -126,9 +129,9 @@ export const NO_RELAY = Object.freeze({ state: "none" });
 /**
  * The gateway's relay-hosted public address, from `GET /admin/cloud-relay`:
  *
- * - `none`: the feature is off, its status is unknown, or this installation
- *   cannot connect to an account. Nothing about the relay is shown.
- * - `not-connected`: the feature is on and the gateway has no public address yet.
+ * - `none`: its status is unknown, or this installation cannot connect to an
+ *   account. Nothing about the relay is shown.
+ * - `not-connected`: the gateway can connect and has no public address yet.
  * - `ready`: `url` answers from the Internet.
  * - `checking`: connected, and the gateway is still confirming `url` answers.
  * - `off`: the gateway keeps `url`, with remote access turned off.
@@ -138,12 +141,11 @@ export const NO_RELAY = Object.freeze({ state: "none" });
  * An address the gateway does not list among the resources it authorizes is
  * never offered: a sign-in against it would be refused.
  *
- * @param {boolean} cloudRelay whether the gateway advertises the feature
  * @param {object | null} status the relay management status, when it was read
  * @param {{ resource: string, resources?: Array<{ resource: string }> } | null} oauth
  */
-export function relayPublicAddress(cloudRelay, status, oauth) {
-  if (!cloudRelay || !status) return NO_RELAY;
+export function relayPublicAddress(status, oauth) {
+  if (!status) return NO_RELAY;
   const url = httpsAddress(status.publicMcp?.url);
   if (!url) return status.serviceConfigured === true ? { state: "not-connected" } : NO_RELAY;
   const authorized = oauth?.resources?.length ? oauth.resources : [{ resource: oauth?.resource }];
@@ -190,8 +192,9 @@ export function tailscalePublicAddress(tailscaleEmbed, state, oauth) {
 /** Why the Tailscale device's address cannot serve an agent on the Internet, and what to do. */
 const TAILSCALE_PRIVATE = {
   off: {
+    lead: "This gateway's Tailscale device has an address.",
     headline: "This address only answers on your Tailscale network.",
-    action: ["Turn on its public address in ", TAILSCALE_SETTINGS, "."],
+    action: ["Put its MCP server on the Internet in ", MCP_SETTINGS, "."],
   },
   starting: {
     headline: "This address's public access is still opening.",
@@ -201,6 +204,13 @@ const TAILSCALE_PRIVATE = {
     headline: "Tailscale is not letting this address be public yet.",
     action: ["See what it needs in ", TAILSCALE_SETTINGS, "."],
   },
+};
+
+/** Why this computer's Tailscale address cannot serve an agent on the Internet, and what to do. */
+const HOST_PRIVATE = {
+  lead: "Tailscale on this computer has an address.",
+  headline: "This address only answers on your Tailscale network.",
+  action: ["Put its MCP server on the Internet in ", MCP_SETTINGS, "."],
 };
 
 /**
@@ -255,11 +265,12 @@ const OR_PICK_ANOTHER = ["Or pick another address from the list above."];
  * - `tailscale`: the Tailscale device's address while its public address is on.
  * - `tailnet`: the Tailscale device's address, reachable only on the owner's
  *   Tailscale network for now, with `private` saying why and what to do.
- * - `public`: an address the owner published themselves.
+ * - `public`: an address the owner published themselves, or this computer's
+ *   Tailscale address while its MCP server is on the Internet (`published`).
  * - `network` and `machine`: reachable only from the gateway's networks, or
  *   only on its own machine.
  */
-function describeAddress(resource, relay, tailscale = NO_TAILSCALE) {
+function describeAddress(resource, relay, tailscale = NO_TAILSCALE, entry = null) {
   if (relay.url !== undefined && sameAddress(resource, relay.url)) {
     const problem = RELAY_UNAVAILABLE[relay.state];
     return {
@@ -283,6 +294,13 @@ function describeAddress(resource, relay, tailscale = NO_TAILSCALE) {
   if (isLoopbackAddress(resource)) {
     return { resource, kind: "machine", text: `This machine only: ${resource}` };
   }
+  // This computer's Tailscale address: kept to the owner's Tailscale network, or published.
+  if (entry?.tailscaleHost === "private") {
+    return { resource, kind: "tailnet", text: `Tailscale network only: ${resource}`, private: HOST_PRIVATE };
+  }
+  if (entry?.tailscaleHost === "public") {
+    return { resource, kind: "public", published: true, text: `Tailscale on this computer, public: ${resource}` };
+  }
   return isPrivateAddress(resource)
     ? { resource, kind: "network", text: `This network only: ${resource}` }
     : { resource, kind: "public", text: `Your public address: ${resource}` };
@@ -301,13 +319,16 @@ function describeAddress(resource, relay, tailscale = NO_TAILSCALE) {
  *   Tailscale device's public address; else the one the gateway leads with.
  * - `tailscale` is the Tailscale device's address as given, for the notices.
  *
- * @param {{ resource: string, resources?: Array<{ resource: string }> }} oauth
+ * @param {{ resource: string, resources?: Array<{ resource: string, tailscaleHost?: "private" | "public" }> }} oauth
  * @param {{ state: string, url?: string }} [relay] from `relayPublicAddress`
  * @param {{ state: string, url?: string }} [tailscale] from `tailscalePublicAddress`
  */
 export function addressChoices(oauth, relay = NO_RELAY, tailscale = NO_TAILSCALE) {
   const resources = [...new Set([oauth.resource, ...(oauth.resources ?? []).map((entry) => entry.resource)])];
-  const options = resources.map((resource) => describeAddress(resource, relay, tailscale));
+  const entries = oauth.resources ?? [];
+  const options = resources.map((resource) =>
+    describeAddress(resource, relay, tailscale, entries.find((entry) => sameAddress(entry.resource, resource))),
+  );
   const selectable = (relay.state !== "none" || tailscale.state !== "none") && options.length > 1;
   const preferred = selectable
     ? (options.find((option) => option.kind === "public") ??
@@ -416,7 +437,8 @@ export function hostedClientAddress(agent, resource, relay = NO_RELAY, choices =
     };
   }
   const own = ownAddress(agent, resource);
-  if ((selected.kind === "relay" || selected.kind === "tailscale") && own.reachable) {
+  // An address the gateway itself knows to be on the Internet needs no advice about publishing.
+  if ((selected.kind === "relay" || selected.kind === "tailscale" || selected.published) && own.reachable) {
     return {
       usable: true,
       notice: {
@@ -430,7 +452,7 @@ export function hostedClientAddress(agent, resource, relay = NO_RELAY, choices =
   // The device's own address is the shortest way to a public one; with it, publishing the
   // gateway some other way goes unmentioned.
   const publish = [
-    tailnet ? [`This gateway's Tailscale device has an address. ${tailnet.headline} `, ...tailnet.action] : PUBLISH_IT_YOURSELF,
+    tailnet ? [`${tailnet.lead ?? "This gateway's Tailscale device has an address."} ${tailnet.headline} `, ...tailnet.action] : PUBLISH_IT_YOURSELF,
     ...(relay.state === "not-connected" ? [CONNECT_AN_ACCOUNT] : []),
   ];
   if (own.reachable) {
@@ -486,12 +508,12 @@ export function localClientAddress(resource, relay = NO_RELAY, choices = { optio
  */
 export function hostedClientsHint(relay = NO_RELAY, tailscale = NO_TAILSCALE) {
   if (tailscale.state === "on" && relay.state !== "ready") {
-    return ["ChatGPT and Claude apps can use this gateway's Tailscale public address."];
+    return ["ChatGPT, Claude apps and Grok bot can use this gateway's Tailscale public address."];
   }
   if (relay.state === "none") {
     if (tailscale.state === "none") {
       return [
-        "ChatGPT and Claude apps need an Internet-reachable address: publish the gateway with ",
+        "ChatGPT, Claude apps and Grok bot need an Internet-reachable address: publish the gateway with ",
         { route: HOST_TAILSCALE_PAGE, text: "Tailscale on this computer" },
         " or ",
         { route: OWN_ADDRESS_PAGE, text: "a domain of your own" },
@@ -499,19 +521,19 @@ export function hostedClientsHint(relay = NO_RELAY, tailscale = NO_TAILSCALE) {
       ];
     }
     return [
-      "ChatGPT and Claude apps need an Internet-reachable address. Turning on the public address in ",
-      TAILSCALE_SETTINGS,
-      " gives this gateway one.",
+      "ChatGPT, Claude apps and Grok bot need an Internet-reachable address. Putting the MCP server of this gateway's Tailscale device on the Internet, in ",
+      MCP_SETTINGS,
+      ", gives it one.",
     ];
   }
   if (relay.state === "not-connected") {
     return [
-      "ChatGPT and Claude apps need an Internet-reachable address. Connecting this gateway to an Omnesis account in ",
+      "ChatGPT, Claude apps and Grok bot need an Internet-reachable address. Connecting this gateway to an Omnesis account in ",
       ACCOUNT_SETTINGS,
       " gives it one.",
     ];
   }
-  const uses = "ChatGPT and Claude apps can use this gateway's Omnesis address.";
+  const uses = "ChatGPT, Claude apps and Grok bot can use this gateway's Omnesis address.";
   const unavailable = RELAY_UNAVAILABLE[relay.state];
   return unavailable ? [`${uses} ${unavailable.headline} `, ...unavailable.action] : [uses];
 }
@@ -521,16 +543,12 @@ const RELAY_POLL_OPEN_MS = 5_000;
 const RELAY_POLL_IDLE_MS = 30_000;
 
 /**
- * The relay management status, read only where the gateway advertises the
- * feature. A failed read keeps the last answer; before the first one it is null.
+ * The relay management status. A failed read keeps the last answer; before the
+ * first one it is null.
  */
-export function useRelayStatus(cloudRelay, watching = false) {
+export function useRelayStatus(watching = false) {
   const [status, setStatus] = useState(null);
   useEffect(() => {
-    if (!cloudRelay) {
-      setStatus(null);
-      return undefined;
-    }
     let current = true;
     const read = () => {
       relayManagement("")
@@ -550,7 +568,7 @@ export function useRelayStatus(cloudRelay, watching = false) {
       current = false;
       clearInterval(timer);
     };
-  }, [cloudRelay, watching]);
+  }, [watching]);
   return status;
 }
 

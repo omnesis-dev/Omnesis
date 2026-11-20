@@ -3,6 +3,7 @@
 
 import { randomBytes, randomUUID } from "node:crypto";
 import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import * as files from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { request } from "node:https";
@@ -10,6 +11,8 @@ import { createServer, Server } from "node:net";
 import { once } from "node:events";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT } from "jose";
+import * as core from "@omnesis/core";
+import { exposeOwnedFixtureRead } from "../test/owned-file-acl.js";
 import { fixture, echoGateway, localToken, tlsFiles } from "../test/support.js";
 import { loginRelay, runRelayCommand, startRelayDaemon } from "./runtime.js";
 import { readRelaySession, startGatewayCloudTunnel } from "./gateway-integration.js";
@@ -18,16 +21,216 @@ import * as googleCommands from "./google-commands.js";
 import * as relayIdentity from "./identity.js";
 import { RelayAccounts } from "./accounts.js";
 
+vi.mock("node:fs/promises", { spy: true });
+
 let dir: string;
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), "omnesis-cloud-runtime-"));
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
+  if (process.platform === "win32") await core.ensurePrivateDirs([dir]);
 });
+
+test.each(["session", "mock-identity", "tls", "invitation", "identity-token"])(
+  "Windows runtime refuses unsafe %s private input before opening state or sending credentials",
+  async (kind) => {
+    const env = await daemonEnv();
+    delete env.OMNESIS_CLOUD_RELAY_MOCK_KEY_FILE;
+    const tokenFile = join(dir, "identity-token");
+    await writeFile(tokenFile, "invented-private-id-token");
+    let deniedPath = env.OMNESIS_CLOUD_RELAY_KEY_FILE!;
+    if (kind === "mock-identity") {
+      env.OMNESIS_CLOUD_RELAY_MOCK_KEY_FILE = join(dir, "mock-key");
+      deniedPath = env.OMNESIS_CLOUD_RELAY_MOCK_KEY_FILE;
+    } else if (kind === "tls") {
+      const tls = tlsFiles(dir);
+      env.OMNESIS_CLOUD_RELAY_TLS_CERT_FILE = tls.certFile;
+      env.OMNESIS_CLOUD_RELAY_TLS_KEY_FILE = tls.keyFile;
+      deniedPath = tls.keyFile;
+    } else if (kind === "identity-token") {
+      deniedPath = tokenFile;
+    }
+    const actual = await vi.importActual<typeof files>("node:fs/promises");
+    const refused = Object.assign(new Error("Invented unsafe private input"), { code: "EPRIVATE" });
+    const held = vi
+      .spyOn(core, "readWindowsPrivateFile")
+      .mockImplementation(async (path, limit) => {
+        expect(limit).toBe(65_536);
+        if (path === deniedPath) throw refused;
+        return actual.readFile(path);
+      });
+    vi.mocked(files.readFile).mockImplementation((...args: Parameters<typeof files.readFile>) => {
+      if (args[0] === deniedPath) throw new Error("Invented unprotected private read");
+      return actual.readFile(...args);
+    });
+    const transport = vi.fn<typeof fetch>();
+    vi.stubGlobal("fetch", transport);
+    const descriptor = Object.getOwnPropertyDescriptor(process, "platform")!;
+    Object.defineProperty(process, "platform", { ...descriptor, value: "win32" });
+    try {
+      const operation =
+        kind === "invitation"
+          ? runRelayCommand("issue-invite", {
+              ...env,
+              OMNESIS_CLOUD_RELAY_ENROLLMENT_TOKEN_FILE: join(dir, "invitation.json"),
+              OMNESIS_CLOUD_RELAY_GATEWAY_ID: randomUUID(),
+              OMNESIS_CLOUD_RELAY_PUBLIC_ORIGIN: "https://relay.example.test",
+            })
+          : kind === "identity-token"
+            ? loginRelay({
+                relayUrl: "https://relay.example.test",
+                idTokenFile: tokenFile,
+                sessionFile: join(dir, "login.json"),
+              })
+            : startRelayDaemon(env);
+      await expect(operation).rejects.toBe(refused);
+      expect(held).toHaveBeenCalledWith(deniedPath, 65_536);
+      expect(transport).not.toHaveBeenCalled();
+      await expect(actual.stat(env.OMNESIS_CLOUD_RELAY_DB!)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      await expect(actual.stat(join(dir, "invitation.json"))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      await expect(actual.stat(join(dir, "login.json"))).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      Object.defineProperty(process, "platform", descriptor);
+      vi.unstubAllGlobals();
+    }
+  },
+);
 afterEach(async () => {
   vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
   vi.restoreAllMocks();
   await rm(dir, { recursive: true, force: true });
 });
+
+test("Windows login refuses private publication failure without replacing the previous session", async () => {
+  const tokenFile = join(dir, "publication-token");
+  const sessionFile = join(dir, "publication-session.json");
+  await writeFile(tokenFile, "invented-id-token");
+  await writeFile(sessionFile, "previous-session-bytes");
+  vi.spyOn(core, "readWindowsPrivateFile").mockResolvedValue(Buffer.from("invented-id-token"));
+  const failure = new Error("Invented private publication failure");
+  const writer = vi.spyOn(core, "atomicWriteFile").mockRejectedValue(failure);
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          token: "invented-session-token",
+          expiresAt: 12345,
+          accountId: "a".repeat(64),
+        }),
+        { status: 200 },
+      ),
+    ),
+  );
+  const descriptor = Object.getOwnPropertyDescriptor(process, "platform")!;
+  Object.defineProperty(process, "platform", { ...descriptor, value: "win32" });
+  try {
+    await expect(
+      loginRelay({ relayUrl: "https://relay.example.test", idTokenFile: tokenFile, sessionFile }),
+    ).rejects.toBe(failure);
+    expect(writer).toHaveBeenCalledWith(
+      sessionFile,
+      expect.stringContaining("invented-session-token"),
+      { mode: 0o600 },
+    );
+  } finally {
+    Object.defineProperty(process, "platform", descriptor);
+  }
+  expect(await readFile(sessionFile, "utf8")).toBe("previous-session-bytes");
+  expect((await files.readdir(dir)).sort()).toEqual([
+    "publication-session.json",
+    "publication-token",
+  ]);
+});
+
+test
+  .skipIf(process.platform !== "win32")
+  .each(["session", "mock-identity", "invitation", "identity-token"])(
+  "Windows native reader refuses a public read grant on %s private input",
+  async (kind) => {
+    const env = await daemonEnv();
+    const tokenFile = join(dir, "identity-token");
+    await writeFile(tokenFile, "invented-private-id-token");
+    const deniedPath =
+      kind === "mock-identity"
+        ? env.OMNESIS_CLOUD_RELAY_MOCK_KEY_FILE!
+        : kind === "identity-token"
+          ? tokenFile
+          : env.OMNESIS_CLOUD_RELAY_KEY_FILE!;
+    const previous = await readFile(deniedPath);
+    const transport = vi.fn<typeof fetch>();
+    vi.stubGlobal("fetch", transport);
+    const exposure = await exposeOwnedFixtureRead(deniedPath);
+    try {
+      expect(core.inspectWindowsPrivatePathSync(deniedPath, "file").private).toBe(false);
+      const operation =
+        kind === "invitation"
+          ? runRelayCommand("issue-invite", {
+              ...env,
+              OMNESIS_CLOUD_RELAY_ENROLLMENT_TOKEN_FILE: join(dir, "invitation.json"),
+              OMNESIS_CLOUD_RELAY_GATEWAY_ID: randomUUID(),
+              OMNESIS_CLOUD_RELAY_PUBLIC_ORIGIN: "https://relay.example.test",
+            })
+          : kind === "identity-token"
+            ? loginRelay({
+                relayUrl: "https://relay.example.test",
+                idTokenFile: tokenFile,
+                sessionFile: join(dir, "login.json"),
+              })
+            : startRelayDaemon(env);
+      await expect(operation).rejects.toMatchObject({ code: "EPRIVATE" });
+      expect(transport).not.toHaveBeenCalled();
+      expect(await readFile(deniedPath)).toEqual(previous);
+      await expect(files.stat(env.OMNESIS_CLOUD_RELAY_DB!)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      await expect(files.stat(join(dir, "invitation.json"))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      await expect(files.stat(join(dir, "login.json"))).rejects.toMatchObject({ code: "ENOENT" });
+      expect(await exposure.snapshot()).toBe(exposure.exposed);
+    } finally {
+      await exposure.restore();
+    }
+    expect(await core.readWindowsPrivateFile(deniedPath, 65_536)).toEqual(previous);
+  },
+);
+
+test.skipIf(process.platform !== "win32")(
+  "Windows accepts a public relay certificate and refuses a public private-key file",
+  async () => {
+    const env = await daemonEnv();
+    const tls = tlsFiles(dir);
+    env.OMNESIS_CLOUD_RELAY_TLS_CERT_FILE = tls.certFile;
+    env.OMNESIS_CLOUD_RELAY_TLS_KEY_FILE = tls.keyFile;
+    let daemon: Awaited<ReturnType<typeof startRelayDaemon>> | undefined;
+    const certificateExposure = await exposeOwnedFixtureRead(tls.certFile);
+    let keyExposure: Awaited<ReturnType<typeof exposeOwnedFixtureRead>> | undefined;
+    try {
+      expect(core.inspectWindowsPrivatePathSync(tls.certFile, "file").private).toBe(false);
+      daemon = await startRelayDaemon(env);
+      expect(daemon.url).toMatch(/^https:/);
+      await daemon.close();
+      daemon = undefined;
+      const previous = await readFile(tls.keyFile, "utf8");
+      keyExposure = await exposeOwnedFixtureRead(tls.keyFile);
+      await expect(startRelayDaemon(env)).rejects.toMatchObject({ code: "EPRIVATE" });
+      expect(await readFile(tls.keyFile, "utf8")).toBe(previous);
+      expect(await keyExposure.snapshot()).toBe(keyExposure.exposed);
+      expect(await certificateExposure.snapshot()).toBe(certificateExposure.exposed);
+    } finally {
+      try {
+        await keyExposure?.restore();
+        await certificateExposure.restore();
+      } finally {
+        await daemon?.close();
+      }
+    }
+  },
+);
 
 async function daemonEnv(): Promise<NodeJS.ProcessEnv> {
   const key = join(dir, "session-key");
@@ -128,7 +331,7 @@ describe("local daemon and credential files", () => {
     const value = {
       gatewayUrl: f.gatewayUrl,
       gatewayFingerprint: gateway.fingerprint,
-      gatewayCertificate: gateway.certificate,
+      gatewayCertificate: gateway.certificate.replace(/\r?\n/g, "\r\n"),
       token: "fixture-token",
       deviceId: randomUUID(),
       kind: "cli",
@@ -183,9 +386,12 @@ describe("local daemon and credential files", () => {
       ).rejects.toThrow();
     }
     await writeFile(file, "x".repeat(65_537));
-    await expect(
-      runRelayCommand("client", { OMNESIS_CLOUD_RELAY_DEVICE_FILE: file }),
-    ).rejects.toThrow("too large");
+    if (process.platform === "win32")
+      expect(core.inspectWindowsPrivatePathSync(file, "file").private).toBe(true);
+    const oversized = runRelayCommand("client", { OMNESIS_CLOUD_RELAY_DEVICE_FILE: file });
+    if (process.platform === "win32")
+      await expect(oversized).rejects.toMatchObject({ code: "EPRIVATE", stage: "validate" });
+    else await expect(oversized).rejects.toThrow("too large");
   });
 
   test("dispatches interactive device pairing without starting a relay or adapter", async () => {
@@ -209,7 +415,6 @@ describe("local daemon and credential files", () => {
       OMNESIS_CLOUD_RELAY_GOOGLE_WEB_CLIENT_ID: "fictional-web-client",
       OMNESIS_CLOUD_RELAY_GOOGLE_WEB_SECRET_FILE: secretFile,
       OMNESIS_CLOUD_RELAY_PUBLIC_ORIGIN: "https://relay.example.test",
-      OMNESIS_CLOUD_RELAY_ENABLED: "1",
     };
     const relay = await startRelayDaemon(configured);
     try {
@@ -267,7 +472,6 @@ describe("local daemon and credential files", () => {
       OMNESIS_CLOUD_RELAY_GOOGLE_WEB_CLIENT_ID: "fictional-web-client",
       OMNESIS_CLOUD_RELAY_GOOGLE_WEB_SECRET_FILE: secretFile,
       OMNESIS_CLOUD_RELAY_PUBLIC_ORIGIN: "https://relay.example.test",
-      OMNESIS_CLOUD_RELAY_ENABLED: "1",
     };
     const relay = await startRelayDaemon(configured);
     try {
@@ -380,7 +584,9 @@ describe("local daemon and credential files", () => {
     const relay = await startRelayDaemon(env);
     try {
       expect(await (await fetch(`${relay.url}/healthz`)).json()).toEqual({ ok: true, protocol: 2 });
-      expect((await stat(env.OMNESIS_CLOUD_RELAY_DB!)).mode & 0o777).toBe(0o600);
+      if (process.platform !== "win32") {
+        expect((await stat(env.OMNESIS_CLOUD_RELAY_DB!)).mode & 0o777).toBe(0o600);
+      }
       const tokenFile = join(dir, "id-token");
       const sessionFile = join(dir, "client", "session.json");
       await writeFile(
@@ -388,12 +594,15 @@ describe("local daemon and credential files", () => {
         await localToken(await readFile(env.OMNESIS_CLOUD_RELAY_MOCK_KEY_FILE!)),
       );
       await loginRelay({ relayUrl: relay.url, idTokenFile: tokenFile, sessionFile });
-      expect((await stat(sessionFile)).mode & 0o777).toBe(0o600);
+      if (process.platform === "win32") {
+        expect(core.inspectWindowsPrivatePathSync(sessionFile, "file").private).toBe(true);
+      } else {
+        expect((await stat(sessionFile)).mode & 0o777).toBe(0o600);
+      }
       const first = await readRelaySession(sessionFile);
       expect(first).toMatch(/^ey/);
       expect(
         await runRelayCommand("login", {
-          OMNESIS_CLOUD_RELAY_ENABLED: process.env.OMNESIS_CLOUD_RELAY_ENABLED,
           OMNESIS_CLOUD_RELAY_URL: relay.url,
           OMNESIS_CLOUD_RELAY_SESSION_FILE: sessionFile,
           OMNESIS_CLOUD_RELAY_ID_TOKEN_FILE: tokenFile,
@@ -401,7 +610,6 @@ describe("local daemon and credential files", () => {
       ).toBeUndefined();
       expect(await readRelaySession(sessionFile)).toMatch(/^ey/);
       const client = await runRelayCommand("client", {
-        OMNESIS_CLOUD_RELAY_ENABLED: process.env.OMNESIS_CLOUD_RELAY_ENABLED,
         OMNESIS_CLOUD_RELAY_URL: relay.url,
         OMNESIS_CLOUD_RELAY_SESSION_FILE: sessionFile,
         OMNESIS_CLOUD_RELAY_CLIENT_PORT: "0",
@@ -515,7 +723,6 @@ describe("local daemon and credential files", () => {
     await expect(startRelayDaemon(invalidBind)).rejects.toThrow("loopback");
     await expect(
       runRelayCommand("unknown", {
-        OMNESIS_CLOUD_RELAY_ENABLED: process.env.OMNESIS_CLOUD_RELAY_ENABLED,
         OMNESIS_CLOUD_RELAY_URL: "http://127.0.0.1",
         OMNESIS_CLOUD_RELAY_SESSION_FILE: "unused",
       }),
@@ -603,18 +810,16 @@ describe("local daemon and credential files", () => {
     await relay.close();
   });
 
-  test("gateway integration is opt-in, requires complete configuration and respects the feature gate", async () => {
+  test("gateway integration starts only with a relay URL and gateway ID, and requires complete configuration", async () => {
     expect(startGatewayCloudTunnel("https://localhost:1", {})).toBeUndefined();
     // A relay URL without a gateway ID chooses a service for portal setup; it starts nothing.
     expect(
       startGatewayCloudTunnel("https://localhost:1", {
-        OMNESIS_CLOUD_RELAY_ENABLED: process.env.OMNESIS_CLOUD_RELAY_ENABLED,
         OMNESIS_CLOUD_RELAY_URL: "http://127.0.0.1:1",
       }),
     ).toBeUndefined();
     expect(() =>
       startGatewayCloudTunnel("https://localhost:1", {
-        OMNESIS_CLOUD_RELAY_ENABLED: process.env.OMNESIS_CLOUD_RELAY_ENABLED,
         OMNESIS_CLOUD_RELAY_URL: "http://127.0.0.1:1",
         OMNESIS_CLOUD_RELAY_GATEWAY_ID: randomUUID(),
       }),
@@ -623,7 +828,6 @@ describe("local daemon and credential files", () => {
     const path = join(dir, "session.json");
     await writeFile(path, JSON.stringify(f.session));
     const env = {
-      OMNESIS_CLOUD_RELAY_ENABLED: process.env.OMNESIS_CLOUD_RELAY_ENABLED,
       OMNESIS_CLOUD_RELAY_URL: f.url,
       OMNESIS_CLOUD_RELAY_GATEWAY_ID: randomUUID(),
       OMNESIS_CLOUD_RELAY_SESSION_FILE: path,
@@ -632,13 +836,6 @@ describe("local daemon and credential files", () => {
       const tunnel = startGatewayCloudTunnel("https://localhost:1", env);
       expect(tunnel).toBeDefined();
       tunnel!.stop();
-      vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "0");
-      expect(
-        startGatewayCloudTunnel("https://localhost:1", {
-          ...env,
-          OMNESIS_CLOUD_RELAY_ENABLED: "0",
-        }),
-      ).toBeUndefined();
     } finally {
       await f.close();
     }

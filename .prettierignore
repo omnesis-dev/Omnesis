@@ -55,6 +55,8 @@ ios/Resources/ThirdParty/
 # The collision sweep's parity goldens are its test's file snapshots; the test
 # owns their serialization.
 packages/gateway/src/brain/rhythm/__fixtures__/collision-sweep-parity.*.json
+# The People → Rules page's parity goldens, likewise.
+packages/gateway/src/domain/merge/__fixtures__/rule-groups-parity.*.json
 
 # models.dev's decision catalog, kept byte-for-byte as served so its recorded
 # sha256 (decision-snapshot.json) matches upstream.

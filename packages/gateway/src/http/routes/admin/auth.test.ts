@@ -14,6 +14,8 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { describe, expect, test, beforeEach, afterEach, vi } from "vitest";
 
 import { SCOPE_ADMIN, SCOPE_READ, DeviceId, SourceType, type Scope } from "@omnesis/types";
@@ -135,7 +137,7 @@ describe("typed challenge answers", () => {
 });
 
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-auth-code-http-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-auth-code-http-${randomUUID()}.db`);
   db = createDatabase(dbPath);
   ADMIN_TOKEN = mintToken([SCOPE_ADMIN, SCOPE_READ]);
   authFlows = new AuthFlowRegistry();

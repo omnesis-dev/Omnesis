@@ -99,10 +99,12 @@ test("deleting an account removes every row about it and its gateways, in every 
       passkey = "fixture-deleted-passkey";
     // The account its first gateway created, with Google and a vouched-for passkey that
     // countersigned the Google sign-in.
+    const invite = { id: "FixtureInvite000000000", expiresAt: Math.floor(Date.now() / 1000) + 600 };
     const account = identities.signInFederated("google", digest, {
       gatewayId: first.gatewayId,
       ownerAccountId: first.owner,
       assertCurrent() {},
+      invite,
     });
     identities.bindGoogleAliases(digest, [digest, legacy]);
     identities.registerPasskey(
@@ -168,11 +170,18 @@ test("deleting an account removes every row about it and its gateways, in every 
     const forgotten = "omnesis_deleted_passkeys";
     // Gateways unlinked on the account page, which deleting the account unlinks none of.
     const unlinked = "relay_removed_gateways";
+    // Invites already used, which never name the account they created.
+    const spent = "omnesis_redeemed_invites";
     expect(before.get(forgotten)).toEqual([]);
     expect(before.get(unlinked)).toEqual([]);
+    expect(named(before, invite.id)).toEqual([spent]);
     expect(
       [...before.keys()].filter(
-        (table) => !table.startsWith("sqlite_") && table !== forgotten && table !== unlinked,
+        (table) =>
+          !table.startsWith("sqlite_") &&
+          table !== forgotten &&
+          table !== unlinked &&
+          table !== spent,
       ),
     ).toEqual([...new Set(about.flatMap((value) => named(before, value)))].sort());
 
@@ -193,6 +202,9 @@ test("deleting an account removes every row about it and its gateways, in every 
       }),
     ]);
     expect(after.get(unlinked)).toEqual([]);
+    // The invite stays spent: deleting the account never lets it create another.
+    expect(after.get(spent)).toEqual(before.get(spent));
+    expect(identities.inviteRedeemed(invite.id)).toBe(true);
     // A hosted name keeps a digest in place of its gateway's id: it routes nowhere, nobody else
     // can be granted it, and the same gateway may ask for its address again.
     expect(after.get("relay_hosted_names")!.sort()).toEqual(

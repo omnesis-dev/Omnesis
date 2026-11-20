@@ -3,6 +3,8 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import Database from "better-sqlite3";
 import {
@@ -111,7 +113,7 @@ describe("source document profile store", () => {
   });
 
   it("survives a fresh handle on the same file — the point of persisting it", () => {
-    const path = `/tmp/omnesis-test-${randomUUID()}.db`;
+    const path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
     const first = new Database(path);
     createSourceDocumentProfilesTable(first);
     upsertSourceDocumentProfiles(first, [mailbox], 1000);

@@ -8,6 +8,8 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { AccountId, SourceType, type DeviceId, type SourceId } from "@omnesis/types";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createDatabase } from "../../db.js";
@@ -75,7 +77,7 @@ describe("the replica deletion ledger for analytics rows", () => {
     recordAnalyticsPresence(db, { sourceId, tableName: TABLE, deviceId, keyValues, now: 2_000 });
 
   beforeEach(() => {
-    dbPath = `/tmp/omnesis-test-${randomUUID()}.db`;
+    dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
     db = createDatabase(dbPath);
     phoneA = host("phone-a");
     phoneB = host("phone-b");

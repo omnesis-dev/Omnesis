@@ -175,7 +175,7 @@ export function mountPeopleRoutes(app: RouteApp, deps: PeopleRoutesDeps): void {
     return c.json({ rules });
   });
 
-  app.get("/people/merge-rule-groups", scope.read(), (c) => {
+  app.get("/people/merge-rule-groups", scope.read(), async (c) => {
     const limit = clampLimit(c.req.query("limit"), { default: 50, max: 200 });
     const q = (c.req.query("q") ?? "").trim();
     const kindParam = c.req.query("kind");
@@ -197,7 +197,7 @@ export function mountPeopleRoutes(app: RouteApp, deps: PeopleRoutesDeps): void {
       }
       return { latest: value.latest, key: value.key };
     });
-    const result = personService.listMergeRuleGroups({
+    const result = await personService.listMergeRuleGroups({
       limit,
       ...(q ? { q } : {}),
       ...(kind ? { kind } : {}),

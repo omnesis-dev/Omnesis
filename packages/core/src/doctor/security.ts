@@ -67,6 +67,8 @@ import {
   systemdEscapeArg,
   systemdUnitPath,
 } from "../service-paths.js";
+import { ownedProcessCleanupReceipt } from "../owned-process-cleanup.js";
+import { collectWindowsPermissionData } from "./windows-permissions.js";
 import type {
   SecurityData,
   SecurityDiskEncryptionStatus,
@@ -181,6 +183,7 @@ export async function collectSecurityData(opts: CollectSecurityOptions): Promise
   // records why instead of throwing the collection away.
   let keyringAccess: SecurityKeyringAccess = { readable: true };
   const noteUnreadable = (err: unknown): void => {
+    if (ownedProcessCleanupReceipt(err) !== undefined) throw err;
     if (!(err instanceof SecretPathUnreadableError)) throw err;
     if (keyringAccess.readable) {
       keyringAccess = { readable: false, path: err.path, detail: err.message };
@@ -218,7 +221,13 @@ export async function collectSecurityData(opts: CollectSecurityOptions): Promise
   return {
     configDir: opts.configDir,
     fixPermissions: opts.fixPermissions,
-    ...collectPermissionData(opts.configDir, opts.fixPermissions),
+    ...(process.platform === "win32"
+      ? await collectWindowsPermissionData(
+          opts.configDir,
+          opts.fixPermissions,
+          MAX_PERMISSION_REPORT_ENTRIES,
+        )
+      : collectPermissionData(opts.configDir, opts.fixPermissions)),
     diskEncryption: inContainer
       ? await recordedHostDiskEncryption(platform, opts.configDir)
       : await collectDiskEncryptionStatus(platform, opts.configDir, runCommand),
@@ -315,7 +324,7 @@ async function collectDatabaseEncryptionStatus(
   let stores: SecurityData["databaseEncryption"]["stores"];
   try {
     required = storageEncryptionRequired(configDir);
-    stores = await Promise.all(
+    const inspected = await Promise.allSettled(
       keyNames.map(async (keyName) => {
         const state = await inspectStorageKey(keyName, { configDir });
         return {
@@ -326,6 +335,15 @@ async function collectDatabaseEncryptionStatus(
         };
       }),
     );
+    // Every Native-backed reader must settle before a report or repair starts.
+    // A later ownership failure dominates an earlier ordinary unreadable key.
+    for (const result of inspected)
+      if (result.status === "rejected" && ownedProcessCleanupReceipt(result.reason) !== undefined)
+        throw result.reason;
+    stores = inspected.map((result) => {
+      if (result.status === "rejected") throw result.reason;
+      return result.value;
+    });
   } catch (err) {
     noteUnreadable(err);
     // Nothing here can be answered. Answering "off" would report an armed

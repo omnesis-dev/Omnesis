@@ -14,9 +14,10 @@ import {
 } from "@omnesis/core";
 import {
   type CodexGenerationSupervisor,
-  disposeCodexGeneration,
+  CodexGenerationCleanupError,
   type CodexRuntimeGeneration,
 } from "./codex-generation-supervisor.js";
+import { codexCleanupFailure } from "./codex-runtime-cleanup.js";
 import type { CodexRuntimeInstaller, InstalledCodexRuntime } from "./codex-runtime-installer.js";
 
 const log = createLogger("gateway:models:codex:update");
@@ -47,6 +48,7 @@ interface CodexRuntimeUpdaterOptions {
 export class CodexRuntimeUpdater {
   private readonly opts: CodexRuntimeUpdaterOptions;
   private disposed = false;
+  private readonly inspections = new Set<Promise<unknown>>();
   private selectedRuntimeInitialized = false;
   private selectedRuntimeInFlight: Promise<void> | null = null;
   private updateInFlight: Promise<void> | null = null;
@@ -68,7 +70,34 @@ export class CodexRuntimeUpdater {
     this.disposed = true;
     this.cancelRequested = true;
     this.updateAbort?.abort();
-    await Promise.all([this.updateInFlight, this.selectedRuntimeInFlight]);
+    await Promise.all([
+      this.updateInFlight,
+      this.selectedRuntimeInFlight,
+      Promise.allSettled([...this.inspections]),
+    ]);
+  }
+
+  private assertAdmitting(): void {
+    if (this.disposed) throw new Error("Codex runtime updater disposed.");
+  }
+
+  private inspect<T>(run: () => Promise<T>): Promise<T> {
+    if (this.disposed) return Promise.reject(new Error("Codex runtime updater disposed."));
+    const work = Promise.resolve()
+      .then(() => {
+        this.assertAdmitting();
+        return run();
+      })
+      .then((result) => {
+        this.assertAdmitting();
+        return result;
+      });
+    this.inspections.add(work);
+    void work.then(
+      () => this.inspections.delete(work),
+      () => this.inspections.delete(work),
+    );
+    return work;
   }
 
   async ensureSelectedRuntime(): Promise<void> {
@@ -88,18 +117,28 @@ export class CodexRuntimeUpdater {
             // before retiring the known-good process generation.
             await this.opts.validateGeneration(replacement);
           } catch (err) {
-            await disposeCodexGeneration(replacement);
+            const cleanup = codexCleanupFailure(err);
+            if (cleanup) this.opts.supervisor.holdCleanup(cleanup);
+            await this.opts.supervisor.retire(replacement);
+            if (cleanup) throw cleanup;
             await this.opts.installer.rollbackActivation();
             throw err;
           }
           if (this.disposed) {
-            await disposeCodexGeneration(replacement);
+            await this.opts.supervisor.retire(replacement);
             return;
           }
-          replace(replacement);
-          await disposeCodexGeneration(previous);
+          try {
+            replace(replacement);
+          } catch (error) {
+            await this.opts.supervisor.retire(replacement);
+            throw error;
+          }
+          await this.opts.supervisor.retire(previous);
         });
       } catch (err) {
+        const cleanup = codexCleanupFailure(err);
+        if (cleanup) this.opts.supervisor.holdCleanup(cleanup);
         this.runtimeSelectionError = conciseError(err);
         log.warn(
           `Gateway-owned Codex runtime could not be selected: ${this.runtimeSelectionError}`,
@@ -112,17 +151,25 @@ export class CodexRuntimeUpdater {
     return this.selectedRuntimeInFlight;
   }
 
-  async get(): Promise<CodexRuntimeUpdateSnapshot> {
+  get(): Promise<CodexRuntimeUpdateSnapshot> {
+    return this.inspect(() => this.inspectSnapshot());
+  }
+
+  private async inspectSnapshot(): Promise<CodexRuntimeUpdateSnapshot> {
     await this.ensureSelectedRuntime();
-    const plan =
-      this.updateInFlight && this.lastPlan
+    this.assertAdmitting();
+    const plan = this.opts.supervisor.cleanupError
+      ? await this.computePlan()
+      : this.updateInFlight && this.lastPlan
         ? this.lastPlan
         : await this.opts.supervisor.use(() => this.computePlan());
     return { plan, operation: this.operationSnapshot() };
   }
 
   async start(opts: { dryRun: boolean }): Promise<CodexRuntimeUpdateSnapshot> {
+    this.assertAdmitting();
     const snapshot = await this.get();
+    this.assertAdmitting();
     if (opts.dryRun || !snapshot.plan.canUpdate || snapshot.plan.action === "none") return snapshot;
     if (this.opts.loginBusy()) {
       throw new CodexRuntimeUpdateConflictError(
@@ -168,17 +215,36 @@ export class CodexRuntimeUpdater {
     return this.get();
   }
 
-  async computePlan(): Promise<CodexRuntimeUpdatePlan> {
+  computePlan(): Promise<CodexRuntimeUpdatePlan> {
+    return this.inspect(() => this.inspectPlan());
+  }
+
+  private async inspectPlan(): Promise<CodexRuntimeUpdatePlan> {
     const common = {
       targetVersion: CODEX_RUNTIME_COMPAT.testedVersion,
       preservesLogin: true as const,
       preservesAssignments: true as const,
       requiresGatewayRestart: false as const,
     };
+    if (this.opts.supervisor.cleanupError) {
+      return this.remember({
+        ...common,
+        state: "repair-needed",
+        action: "none",
+        canUpdate: false,
+        reason: this.opts.supervisor.cleanupError.message,
+      });
+    }
     let commandInfo: CodexRuntimeCommandInfo;
     try {
       commandInfo = await this.opts.supervisor.current.runtime.resolveCommandInfo();
+      this.assertAdmitting();
     } catch (err) {
+      const cleanup = codexCleanupFailure(err);
+      if (cleanup) {
+        this.opts.supervisor.holdCleanup(cleanup);
+        return this.computePlan();
+      }
       return this.remember({
         ...common,
         state: "repair-needed",
@@ -220,6 +286,11 @@ export class CodexRuntimeUpdater {
         canUpdate: !upToDate,
       });
     } catch (err) {
+      const cleanup = codexCleanupFailure(err);
+      if (cleanup) {
+        this.opts.supervisor.holdCleanup(cleanup);
+        return this.computePlan();
+      }
       return this.remember({
         ...common,
         state: "repair-needed",
@@ -264,34 +335,57 @@ export class CodexRuntimeUpdater {
         if (this.disposed) throw new Error("Gateway stopped before Codex runtime activation.");
         previousInfo = await previousGeneration.runtime.resolveCommandInfo();
         operation.state = "activating";
-        await disposeCodexGeneration(previousGeneration);
+        await this.opts.supervisor.retire(previousGeneration);
         oldDisposed = true;
+        let replacementRefused = false;
         try {
           if (this.disposed) throw new Error("Gateway stopped before Codex runtime activation.");
           const installed: InstalledCodexRuntime = await this.opts.installer.commit(prepared!);
           prepared = null;
           committed = true;
+          if (this.disposed) throw new Error("Gateway stopped before Codex runtime activation.");
           const replacement = this.opts.createGeneration(installed);
-          replace(replacement);
+          try {
+            replace(replacement);
+          } catch (error) {
+            replacementRefused = true;
+            await this.opts.supervisor.retire(replacement);
+            throw error;
+          }
           try {
             await this.opts.validateGeneration(replacement);
           } catch (err) {
-            await disposeCodexGeneration(replacement);
-            throw err;
+            const cleanup = codexCleanupFailure(err);
+            if (cleanup) this.opts.supervisor.holdCleanup(cleanup);
+            await this.opts.supervisor.retire(replacement);
+            throw cleanup ?? err;
           }
           this.runtimeSelectionError = null;
         } catch (err) {
+          const cleanup = codexCleanupFailure(err);
+          if (cleanup) throw this.opts.supervisor.holdCleanup(cleanup);
+          if (replacementRefused) throw err;
           if (committed) {
             try {
               await this.opts.installer.rollbackActivation();
               committed = false;
               rolledBack = true;
             } catch (rollbackError) {
+              const cleanup = codexCleanupFailure(rollbackError);
+              if (cleanup) throw this.opts.supervisor.holdCleanup(cleanup);
               rollbackFailed = true;
               this.runtimeSelectionError = conciseError(rollbackError);
             }
           }
-          if (previousInfo && !this.disposed) replace(this.opts.createGeneration(previousInfo));
+          if (previousInfo && !this.disposed) {
+            const fallback = this.opts.createGeneration(previousInfo);
+            try {
+              replace(fallback);
+            } catch (error) {
+              await this.opts.supervisor.retire(fallback);
+              throw error;
+            }
+          }
           throw err;
         }
       }, this.updateAbort?.signal);
@@ -304,16 +398,30 @@ export class CodexRuntimeUpdater {
       operation.finishedAt = new Date().toISOString();
       this.lastPlan = await this.computePlan();
     } catch (err) {
-      if (prepared) await this.opts.installer.discard(prepared).catch(() => {});
-      if (this.cancelRequested && !oldDisposed) {
+      const cleanup = codexCleanupFailure(err);
+      let failure = cleanup ? this.opts.supervisor.holdCleanup(cleanup) : err;
+      if (!cleanup && prepared) {
+        try {
+          await this.opts.installer.discard(prepared);
+        } catch (discardError) {
+          const uncertain = codexCleanupFailure(discardError);
+          if (uncertain) failure = this.opts.supervisor.holdCleanup(uncertain);
+        }
+      }
+      if (
+        this.cancelRequested &&
+        !oldDisposed &&
+        !(failure instanceof CodexGenerationCleanupError)
+      ) {
         operation.state = "canceled";
         operation.finishedAt = new Date().toISOString();
         return;
       }
       operation.state = rolledBack && oldDisposed ? "rolled-back" : "failed";
-      operation.reason = conciseError(err);
+      operation.reason = conciseError(failure);
       operation.finishedAt = new Date().toISOString();
-      if (!rollbackFailed) this.runtimeSelectionError = null;
+      if (!rollbackFailed && !(failure instanceof CodexGenerationCleanupError))
+        this.runtimeSelectionError = null;
       this.lastPlan = null;
       log.warn(`Codex runtime update ${operation.state}: ${operation.reason}`);
     }

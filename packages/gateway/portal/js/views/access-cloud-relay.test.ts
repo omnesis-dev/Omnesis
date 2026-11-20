@@ -144,11 +144,13 @@ describe("Access page with the cloud relay", () => {
   }
   const commands = () => [...host.querySelectorAll(".access-agent-steps .access-agent-command code")].map((entry) => entry.textContent ?? "");
 
-  describe("flag off", () => {
-    test("the page never asks for the relay's status and reads as before", async () => {
+  describe("a gateway that never linked an account", () => {
+    beforeEach(() => relayApi.relayManagement.mockResolvedValue(NOT_CONNECTED));
+
+    test("the owner's own public address: publishing advice, and the account offered as one more way", async () => {
       api.getAccessOverview.mockResolvedValue(overview(OWN, {}, []));
       await mount();
-      expect(relayApi.relayManagement).not.toHaveBeenCalled();
+      expect(relayApi.relayManagement).toHaveBeenCalledWith("");
       expect(addressSelect()).toBeNull();
       expect(shownAddress()).toBe(OWN);
       for (const [id, , needs] of HOSTED) {
@@ -156,48 +158,32 @@ describe("Access page with the cloud relay", () => {
         expect(noticeParagraphs()).toEqual([
           `${needs}, so the address above must be reachable from the Internet${id === "chatgpt" ? " on port 443" : ""}.`,
           "Publish the gateway with Tailscale on this computer or a domain of your own, in Settings, Connectivity.",
+          "Or connect this gateway to an Omnesis account in Settings, Connectivity to give it a public address.",
         ]);
         expect(notice().classList.contains("is-warning")).toBe(false);
         expect(steps.textContent).toContain("the address above");
-        expect(steps.textContent).not.toMatch(/Omnesis account|Omnesis address|from the list/u);
+        expect(steps.textContent).not.toMatch(/Omnesis address|from the list/u);
         await select(id);
       }
     });
 
-    test("the localhost banner and caption keep their sentences about hosted apps", async () => {
+    test("the localhost banner offers the account for hosted apps, and the caption keeps its sentence", async () => {
       api.getAccessOverview.mockResolvedValue(overview(LOCAL, { loopbackOnly: true }, []));
       await mount();
       expect(host.querySelector(".access-oauth-blocker")?.textContent?.replace(/\s+/gu, " ")).toContain(
-        "Settings, Connectivity. This can be a private network address. ChatGPT and Claude apps need an Internet-reachable address: publish the gateway with Tailscale on this computer or a domain of your own.",
+        "Settings, Connectivity. This can be a private network address. ChatGPT, Claude apps and Grok bot need an Internet-reachable address. Connecting this gateway to an Omnesis account in Settings, Connectivity gives it one.",
       );
       expect(host.querySelector(".access-connect-dialog")?.textContent).toContain(
         "This localhost address works only for agents running on the gateway’s machine. Hosted clients cannot reach it.",
       );
     });
 
-    test("several addresses, even a relay's, are no choice: the dialog shows the one it leads with", async () => {
-      api.getAccessOverview.mockResolvedValue(overview(TAILNET, {}, [RELAY, OWN]));
-      await mount({ cloudRelay: false });
-      expect(relayApi.relayManagement).not.toHaveBeenCalled();
-      expect(addressSelect()).toBeNull();
-      expect(shownAddress()).toBe(TAILNET);
-      expect(warned()).toEqual(["chatgpt", "claude-apps"]);
-      await select("claude-apps");
-      expect(noticeParagraphs()).toEqual([
-        "This address is private. Claude connects from Anthropic's servers, so it cannot reach this gateway until you publish it.",
-        "Publish the gateway with Tailscale on this computer or a domain of your own, in Settings, Connectivity.",
-      ]);
-      // The managed integrations keep their own choice of address.
-      await select("claude-apps");
-      await select("openclaw");
-      expect(host.querySelector("#access-agent-address")).not.toBeNull();
-    });
   });
 
   describe("a single address", () => {
     test("the relay's own, ready: plain display, usable by every agent, no publishing advice", async () => {
       api.getAccessOverview.mockResolvedValue(overview(RELAY, { loopbackOnly: true }, []));
-      await mount({ cloudRelay: true });
+      await mount();
       expect(relayApi.relayManagement).toHaveBeenCalledWith("");
       expect(addressSelect()).toBeNull();
       expect(shownAddress()).toBe(RELAY);
@@ -220,7 +206,7 @@ describe("Access page with the cloud relay", () => {
       const unanswered = overview(RELAY, {}, []);
       unanswered.oauth.resources[0]!.publiclyTrusted = false;
       api.getAccessOverview.mockResolvedValue(unanswered);
-      await mount({ cloudRelay: true });
+      await mount();
       expect(addressSelect()).toBeNull();
       expect(warned()).toEqual(["claude-code", "codex", "chatgpt", "claude-apps", "grok-bot", "antigravity", "openclaw", "hermes"]);
       await select("claude-apps");
@@ -241,9 +227,9 @@ describe("Access page with the cloud relay", () => {
     test("a private one on a gateway not connected to an account: the existing options, and one line", async () => {
       relayApi.relayManagement.mockResolvedValue(NOT_CONNECTED);
       api.getAccessOverview.mockResolvedValue(overview(TAILNET, {}, []));
-      await mount({ cloudRelay: true });
+      await mount();
       expect(addressSelect()).toBeNull();
-      expect(warned()).toEqual(["chatgpt", "claude-apps"]);
+      expect(warned()).toEqual(["chatgpt", "claude-apps", "grok-bot"]);
       await select("claude-apps");
       expect(noticeParagraphs()).toEqual([
         "This address is private. Claude connects from Anthropic's servers, so it cannot reach this gateway until you publish it.",
@@ -264,7 +250,7 @@ describe("Access page with the cloud relay", () => {
     });
 
     test("the address is a labelled drop-down that starts on the owner's address", async () => {
-      await mount({ cloudRelay: true });
+      await mount();
       const element = addressSelect()!;
       expect(element.tagName).toBe("SELECT");
       expect(element.getAttribute("aria-label")).toBe("MCP server address");
@@ -280,7 +266,7 @@ describe("Access page with the cloud relay", () => {
     });
 
     test.each(HOSTED)("%s: the owner's address has no warning and no publishing advice", async (id, _name, needs) => {
-      await mount({ cloudRelay: true });
+      await mount();
       const steps = await select(id);
       expect(noticeParagraphs()).toEqual([
         `${needs}, so the address above must be reachable from the Internet${id === "chatgpt" ? " on port 443" : ""}.`,
@@ -290,7 +276,7 @@ describe("Access page with the cloud relay", () => {
     });
 
     test("switching to the Omnesis address rewrites the copied address, the commands and the notice", async () => {
-      await mount({ cloudRelay: true });
+      await mount();
       await select("claude-code");
       expect(commands().every((command) => command.includes(OWN))).toBe(true);
       await pick(RELAY);
@@ -313,7 +299,7 @@ describe("Access page with the cloud relay", () => {
     });
 
     test("a managed integration pairs against the selected address and offers no second choice", async () => {
-      await mount({ cloudRelay: true });
+      await mount();
       await select("openclaw");
       expect(host.querySelector("#access-agent-address")).toBeNull();
       expect(commands().every((command) => command.includes("--gateway-url https://gateway.example.org"))).toBe(true);
@@ -323,7 +309,7 @@ describe("Access page with the cloud relay", () => {
 
     test("a choice survives the status being read again", async () => {
       vi.useFakeTimers();
-      await mount({ cloudRelay: true });
+      await mount();
       await pick(RELAY);
       await act(async () => { await vi.advanceTimersByTimeAsync(5_000); });
       expect(relayApi.relayManagement.mock.calls.length).toBeGreaterThan(1);
@@ -334,9 +320,9 @@ describe("Access page with the cloud relay", () => {
   describe("a private address and an Omnesis address", () => {
     test("ready: the dialog starts on the Omnesis address, and a hosted app on the private one is sent back to the list", async () => {
       api.getAccessOverview.mockResolvedValue(overview(LOCAL, { loopbackOnly: true }));
-      await mount({ cloudRelay: true });
+      await mount();
       expect(host.querySelector(".access-oauth-blocker")?.textContent?.replace(/\s+/gu, " ")).toContain(
-        "Settings, Connectivity. This can be a private network address. ChatGPT and Claude apps can use this gateway's Omnesis address.",
+        "Settings, Connectivity. This can be a private network address. ChatGPT, Claude apps and Grok bot can use this gateway's Omnesis address.",
       );
       expect(addressOptions()).toEqual([
         `${LOCAL}`,
@@ -349,7 +335,7 @@ describe("Access page with the cloud relay", () => {
         "Claude connects from Anthropic's servers, and this address is reachable from the Internet.",
       ]);
       await pick(LOCAL);
-      expect(warned()).toEqual(["chatgpt", "claude-apps"]);
+      expect(warned()).toEqual(["chatgpt", "claude-apps", "grok-bot"]);
       expect(noticeParagraphs()).toEqual([
         "This address is private. Claude connects from Anthropic's servers, so it cannot reach this gateway until you publish it.",
         "Pick another address from the list above.",
@@ -366,13 +352,13 @@ describe("Access page with the cloud relay", () => {
     ])("%s: the option is not selected, and both hosted apps say so with a link to the relay page", async (_name, status, marker, headline, action) => {
       relayApi.relayManagement.mockResolvedValue(status);
       api.getAccessOverview.mockResolvedValue(overview(TAILNET));
-      await mount({ cloudRelay: true });
+      await mount();
       expect(addressOptions()).toEqual([
         `${TAILNET}`,
         `${RELAY}`,
       ]);
       expect(shownAddress()).toBe(TAILNET);
-      expect(warned()).toEqual(["chatgpt", "claude-apps"]);
+      expect(warned()).toEqual(["chatgpt", "claude-apps", "grok-bot"]);
       for (const [id, , needs] of HOSTED) {
         const steps = await select(id);
         expect(noticeParagraphs()).toEqual([
@@ -413,7 +399,7 @@ describe("Access page with the cloud relay", () => {
       vi.useFakeTimers();
       relayApi.relayManagement.mockResolvedValue(CHECKING);
       api.getAccessOverview.mockResolvedValue(overview(TAILNET));
-      await mount({ cloudRelay: true });
+      await mount();
       await select("claude-apps");
       expect(shownAddress()).toBe(TAILNET);
       expect(noticeParagraphs()[1]).toMatch(/still being checked/u);
@@ -427,7 +413,7 @@ describe("Access page with the cloud relay", () => {
   test("the owner's public address beside an Omnesis address that is turned off keeps working, with no advice", async () => {
     relayApi.relayManagement.mockResolvedValue(OFF);
     api.getAccessOverview.mockResolvedValue(overview(OWN));
-    await mount({ cloudRelay: true });
+    await mount();
     expect(addressOptions()[1]).toBe(`${RELAY}`);
     expect(shownAddress()).toBe(OWN);
     expect(warned()).toEqual([]);
@@ -446,7 +432,7 @@ describe("Access page with the cloud relay", () => {
   test("a status that cannot be read leaves the page as it is without the relay", async () => {
     relayApi.relayManagement.mockRejectedValue(new Error("unavailable"));
     api.getAccessOverview.mockResolvedValue(overview(TAILNET));
-    await mount({ cloudRelay: true });
+    await mount();
     expect(addressSelect()).toBeNull();
     expect(shownAddress()).toBe(TAILNET);
     await select("claude-apps");

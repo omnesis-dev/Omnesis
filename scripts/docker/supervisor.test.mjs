@@ -12,6 +12,8 @@ import { parse as parseYaml } from "yaml";
 import { GATEWAY_SHUTDOWN_BUDGET_MS } from "../../packages/core/src/gateway-lock.js";
 import { DEFAULT_COLLECTOR_DRAIN_MS, DEFAULT_GATEWAY_DRAIN_MS } from "./supervisor.mjs";
 
+// Docker runs Linux daemons: POSIX signal delivery and process groups have no Windows host equivalent.
+const testLinuxSignals = test.skipIf(process.platform === "win32");
 const supervisorUrl = new URL("./supervisor.mjs", import.meta.url).href;
 
 test("shutdown budgets let the gateway finish and fit both drains inside Compose grace", async () => {
@@ -140,7 +142,7 @@ async function fixture({
 }
 
 for (const signal of ["SIGTERM", "SIGINT"]) {
-  test(`${signal} drains collector before gateway and exits successfully`, async () => {
+  testLinuxSignals(`${signal} drains collector before gateway and exits successfully`, async () => {
     const f = await fixture();
     f.child.kill(signal);
     assert.deepEqual(await f.done, { code: 0, signal: null }, await f.diagnostics());
@@ -149,20 +151,20 @@ for (const signal of ["SIGTERM", "SIGINT"]) {
   });
 }
 for (const fail of ["gateway", "collector"]) {
-  test(`${fail} failure stops its sibling and preserves failure status`, async () => {
+  testLinuxSignals(`${fail} failure stops its sibling and preserves failure status`, async () => {
     const f = await fixture({ fail });
     assert.deepEqual(await f.done, { code: 7, signal: null }, await f.diagnostics());
     assert.match(await f.log(), new RegExp(`${fail === "gateway" ? "collector" : "gateway"}:term`));
   });
 }
-test("unresponsive daemons are killed after their drain deadline", async () => {
+testLinuxSignals("unresponsive daemons are killed after their drain deadline", async () => {
   const f = await fixture({ ignoreTerm: true });
   f.child.kill("SIGTERM");
   assert.deepEqual(await f.done, { code: 0, signal: null }, await f.diagnostics());
   assert.match(await f.log(), /collector:term/);
   assert.match(await f.log(), /gateway:term/);
 });
-test("deadline shutdown sends only one SIGKILL to each process group", async () => {
+testLinuxSignals("deadline shutdown sends only one SIGKILL to each process group", async () => {
   const f = await fixture({ ignoreTerm: true, duplicateKillFails: true });
   f.child.kill("SIGTERM");
   assert.deepEqual(await f.done, { code: 0, signal: null }, await f.diagnostics());
@@ -172,30 +174,33 @@ test("deadline shutdown sends only one SIGKILL to each process group", async () 
   assert.equal([...events.matchAll(/^killed:\d+$/gm)].length, 2, events);
 });
 
-test("normal daemon exit still kills an auth grandchild holding its process group", async () => {
-  const f = await fixture({ authGrandchild: true });
-  const port = Number(/^auth:port:(\d+)$/m.exec(await f.log())?.[1]);
-  assert.ok(Number.isInteger(port) && port > 0);
-  f.child.kill("SIGTERM");
-  assert.deepEqual(await f.done, { code: 0, signal: null }, await f.diagnostics());
-  // Group termination is asynchronous for grandchildren; prove the listener
-  // actually disappears, rather than checking only that a signal was requested.
-  for (let i = 0; i < 200; i++) {
-    const server = createServer();
-    try {
-      await new Promise((resolve, reject) => {
-        server.once("error", reject);
-        server.listen(port, "127.0.0.1", resolve);
-      });
-      await new Promise((resolve) => server.close(resolve));
-      return;
-    } catch (error) {
-      if (error.code !== "EADDRINUSE") throw error;
-      await delay(10);
+testLinuxSignals(
+  "normal daemon exit still kills an auth grandchild holding its process group",
+  async () => {
+    const f = await fixture({ authGrandchild: true });
+    const port = Number(/^auth:port:(\d+)$/m.exec(await f.log())?.[1]);
+    assert.ok(Number.isInteger(port) && port > 0);
+    f.child.kill("SIGTERM");
+    assert.deepEqual(await f.done, { code: 0, signal: null }, await f.diagnostics());
+    // Group termination is asynchronous for grandchildren; prove the listener
+    // actually disappears, rather than checking only that a signal was requested.
+    for (let i = 0; i < 200; i++) {
+      const server = createServer();
+      try {
+        await new Promise((resolve, reject) => {
+          server.once("error", reject);
+          server.listen(port, "127.0.0.1", resolve);
+        });
+        await new Promise((resolve) => server.close(resolve));
+        return;
+      } catch (error) {
+        if (error.code !== "EADDRINUSE") throw error;
+        await delay(10);
+      }
     }
-  }
-  assert.fail(`Owned auth grandchild still holds port ${port}: ${await f.diagnostics()}`);
-});
+    assert.fail(`Owned auth grandchild still holds port ${port}: ${await f.diagnostics()}`);
+  },
+);
 
 test("spawn failure terminates the service", async () => {
   const { supervise } = await import(supervisorUrl);

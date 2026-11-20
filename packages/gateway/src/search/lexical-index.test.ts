@@ -1,15 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { randomUUID } from "node:crypto";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import type Database from "better-sqlite3";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 type Db = Database.Database;
 import {
   createIndexDatabase,
   EMBEDDING_DIM,
   enqueueDocumentIndexPurge,
   openIndexDb,
+  repointChunkSource,
   upsertChunks,
   type ChunkUpsertInput,
 } from "../indexer/db.js";
@@ -19,15 +21,20 @@ import { lexicalVersion } from "./lexical-versions.js";
 const VERSION_0 = lexicalVersion(0)!;
 import { LexicalIndex } from "./lexical-index.js";
 import { closeTempDb } from "./test-utils.js";
+import type Database from "better-sqlite3";
 
 let db: Db;
+let directory: string;
 
 beforeEach(() => {
-  db = createIndexDatabase(`/tmp/omnesis-lexical-index-${randomUUID()}.db`);
+  directory = mkdtempSync(join(tmpdir(), "omnesis-lexical-index-"));
+  db = createIndexDatabase(join(directory, "index.db"));
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   closeTempDb(db);
+  rmSync(directory, { recursive: true, force: true });
 });
 
 function chunk(
@@ -309,6 +316,28 @@ describe("LexicalIndex", () => {
     expect(index.stats(db)!.chunkCount()).toBe(1);
   });
 
+  test("a scheduling pause exhausts the query budget without losing pending changes", () => {
+    upsertChunks(db, [chunk({ id: "c1", documentId: "d1", content: "budget review" })]);
+    const index = new LexicalIndex(LexicalIndex.build(db).data, {
+      changesBatch: 1,
+      changesBudgetMs: 25,
+    });
+    upsertChunks(db, [
+      chunk({ id: "c2", documentId: "d2", content: "budget review" }),
+      chunk({ id: "c3", documentId: "d3", content: "budget review" }),
+    ]);
+    const clock = vi.spyOn(Date, "now").mockReturnValue(1_026);
+    clock.mockImplementationOnce(() => 1_000);
+    expect(index.rank(db, "budget", 10)).toBeNull();
+    expect(index.follow(db, 25)).toBe(false);
+    expect(
+      index
+        .rank(db, "budget", 10)!
+        .map((row) => row.rowid)
+        .sort(),
+    ).toEqual([1, 2, 3]);
+  });
+
   test("past its time budget it declines, then resumes where it stopped", () => {
     upsertChunks(db, [chunk({ id: "c1", documentId: "d1", content: "budget review" })]);
     const index = new LexicalIndex(LexicalIndex.build(db).data, {
@@ -480,6 +509,10 @@ describe("LexicalIndex", () => {
   ])(
     "matches what FTS5 matches through a seeded stream of inserts, rewrites and deletes, compacting $compaction",
     ({ deltaCompactMinRetired }) => {
+      // Ranking parity is independent of host scheduling. Budget exhaustion
+      // has its own controlled-clock coverage.
+      const clock = Date.now();
+      vi.spyOn(Date, "now").mockReturnValue(clock);
       const vocabulary = [
         "budget",
         "review",
@@ -814,5 +847,205 @@ describe("bm25Search — rank-first", () => {
     db.prepare("DELETE FROM chunks WHERE id = 'c0'").run();
     const { candidates } = bm25Search(db, "budget", {}, 50, { ranker: index });
     expect(candidates.some((c) => c.documentId === "d0")).toBe(false);
+  });
+});
+
+/** A corpus spread over sources, types and dates, with dates in several text formats. */
+function seedVariedCorpus(count: number): void {
+  let seed = 11;
+  const rnd = () => (seed = (seed * 1103515245 + 12345) >>> 0) / 2 ** 32;
+  const pick = () => WORDS[Math.floor(rnd() ** 2 * WORDS.length)];
+  const sources = ["gmail", "gmail", "gmail", "drive", "notes", "calendar"];
+  const types = ["email", "email", "file", "note", "event", null];
+  const formats = [
+    (day: number) => `2026-03-${String(day).padStart(2, "0")}T09:15:00Z`,
+    (day: number) => `2026-03-${String(day).padStart(2, "0")}T00:00:00.000Z`,
+    (day: number) => `2026-03-${String(day).padStart(2, "0")}`,
+    (day: number) => `2026-03-${String(day).padStart(2, "0")}T23:59:59.999Z`,
+  ];
+  const rows: ChunkUpsertInput[] = [];
+  for (let i = 0; i < count; i++) {
+    const day = 1 + Math.floor(rnd() * 28);
+    rows.push(
+      chunk({
+        id: `v${i}`,
+        documentId: `v${i}`,
+        content: Array.from({ length: 5 + Math.floor(rnd() * 30) }, pick).join(" "),
+        title: pick(),
+        sourceId: sources[Math.floor(rnd() * sources.length)],
+        documentType: types[Math.floor(rnd() * types.length)] as string,
+        sourceCreatedAt: formats[i % formats.length](day),
+      }),
+    );
+  }
+  upsertChunks(db, rows);
+}
+
+/** A ranker that records the windows it is asked for. */
+function recording(index: LexicalIndex): { ranker: LexicalRanker; windows: number[] } {
+  const windows: number[] = [];
+  return {
+    windows,
+    ranker: {
+      rules: index.rules,
+      rank: (d, q, k, opts) => {
+        windows.push(k);
+        return index.rank(d, q, k, opts);
+      },
+      stats: (d) => index.stats(d),
+    },
+  };
+}
+
+const FILTER_CASES: Parameters<typeof bm25Search>[2][] = [
+  { sourceIds: ["notes"] },
+  { sourceIds: ["drive", "calendar"] },
+  { documentTypes: ["note"] },
+  { documentTypes: ["email", "event"] },
+  { dateFrom: "2026-03-10" },
+  { dateTo: "2026-03-10" },
+  { dateFrom: "2026-03-10T00:00:00.000Z", dateTo: "2026-03-12" },
+  { dateFrom: "2026-03-05T09:15:00Z", dateTo: "2026-03-05T09:15:00Z" },
+  { sourceIds: ["gmail"], documentTypes: ["file"], dateFrom: "2026-03-20" },
+  { dateFrom: "2026-04-01" },
+];
+
+describe("LexicalIndex — filters applied while scoring", () => {
+  test("a filtered query ranks exactly what joining every match first returns", () => {
+    seedVariedCorpus(1500);
+    const index = LexicalIndex.build(db);
+    expect(index.data.attributes).toBeDefined();
+    for (const filters of FILTER_CASES) {
+      for (const query of ["budget", "the review", "meeting notes"]) {
+        const viaFts = bm25Search(db, query, filters, 50);
+        const viaMemory = bm25Search(db, query, filters, 50, { ranker: index });
+        expect(viaMemory.ranker).toBe("memory");
+        expect(viaMemory.candidates.map((c) => c.chunkRowid)).toEqual(
+          viaFts.candidates.map((c) => c.chunkRowid),
+        );
+        for (const [i, c] of viaMemory.candidates.entries()) {
+          expect(c.score).toBeCloseTo(viaFts.candidates[i].score, 9);
+        }
+      }
+    }
+  });
+
+  test("a filter that admits few chunks needs one window, not a widening search", () => {
+    seedVariedCorpus(3000);
+    const { ranker, windows } = recording(LexicalIndex.build(db));
+    const filters = { sourceIds: ["notes"], dateFrom: "2026-03-26" };
+    const viaMemory = bm25Search(db, "the", filters, 50, { ranker });
+    expect(windows).toEqual([200]);
+    expect(viaMemory.candidates.length).toBeGreaterThan(0);
+    expect(viaMemory.candidates.map((c) => c.chunkRowid)).toEqual(
+      bm25Search(db, "the", filters, 50).candidates.map((c) => c.chunkRowid),
+    );
+  });
+
+  test("dates compare as SQLite compares the text, whatever the format", () => {
+    upsertChunks(db, [
+      chunk({ id: "a", documentId: "a", content: "invoice", sourceCreatedAt: "2026-03-10" }),
+      chunk({
+        id: "b",
+        documentId: "b",
+        content: "invoice",
+        sourceCreatedAt: "2026-03-10T00:00:00Z",
+      }),
+      chunk({
+        id: "c",
+        documentId: "c",
+        content: "invoice",
+        sourceCreatedAt: "2026-03-10T00:00:00.000Z",
+      }),
+      chunk({
+        id: "d",
+        documentId: "d",
+        content: "invoice",
+        sourceCreatedAt: "2026-03-11T09:30:00+02:00",
+      }),
+      chunk({
+        id: "e",
+        documentId: "e",
+        content: "invoice",
+        sourceCreatedAt: "2026-03-09T23:59:59Z",
+      }),
+    ]);
+    const index = LexicalIndex.build(db);
+    const cases: Parameters<typeof bm25Search>[2][] = [
+      { dateFrom: "2026-03-10T00:00:00Z" },
+      { dateFrom: "2026-03-10T00:00:00.000Z" },
+      { dateTo: "2026-03-10" },
+      { dateTo: "2026-03-10T00:00:00Z" },
+      { dateFrom: "2026-03-10", dateTo: "2026-03-10T00:00:00.000Z" },
+    ];
+    for (const filters of cases) {
+      const viaMemory = bm25Search(db, "invoice", filters, 10, { ranker: index });
+      const viaFts = bm25Search(db, "invoice", filters, 10);
+      expect(new Set(viaMemory.candidates.map((c) => c.documentId))).toEqual(
+        new Set(viaFts.candidates.map((c) => c.documentId)),
+      );
+    }
+  });
+
+  test("a chunk moved to another source or re-dated after the build is filtered on its new values", () => {
+    seedVariedCorpus(400);
+    const index = LexicalIndex.build(db);
+    upsertChunks(db, [
+      chunk({
+        id: "late",
+        documentId: "late",
+        content: "zephyr budget",
+        sourceId: "drive",
+        sourceCreatedAt: "2026-03-02T08:00:00Z",
+      }),
+    ]);
+    expect(
+      bm25Search(db, "zephyr", { sourceIds: ["drive"] }, 10, { ranker: index }).candidates.map(
+        (c) => c.documentId,
+      ),
+    ).toEqual(["late"]);
+
+    repointChunkSource(db, ["late", "v1", "v2"], "archive");
+    upsertChunks(db, [
+      chunk({
+        id: "late",
+        documentId: "late",
+        content: "zephyr budget",
+        sourceId: "archive",
+        sourceCreatedAt: "2026-03-27T08:00:00Z",
+      }),
+    ]);
+    for (const filters of [
+      { sourceIds: ["drive"] },
+      { sourceIds: ["archive"] },
+      { sourceIds: ["archive"], dateFrom: "2026-03-27" },
+      { dateTo: "2026-03-03" },
+    ]) {
+      for (const query of ["zephyr", "budget"]) {
+        expect(
+          bm25Search(db, query, filters, 50, { ranker: index }).candidates.map((c) => c.chunkRowid),
+        ).toEqual(bm25Search(db, query, filters, 50).candidates.map((c) => c.chunkRowid));
+      }
+    }
+  });
+
+  test("without filter columns it scores unfiltered and the join still filters", () => {
+    seedVariedCorpus(600);
+    const built = LexicalIndex.build(db);
+    const index = new LexicalIndex({ ...built.data, attributes: undefined });
+    for (const filters of FILTER_CASES.slice(0, 4)) {
+      expect(
+        bm25Search(db, "budget", filters, 50, { ranker: index }).candidates.map(
+          (c) => c.chunkRowid,
+        ),
+      ).toEqual(bm25Search(db, "budget", filters, 50).candidates.map((c) => c.chunkRowid));
+    }
+  });
+
+  test("an unfiltered query scores exactly as before", () => {
+    seedVariedCorpus(500);
+    const index = LexicalIndex.build(db);
+    const withEmptyFilter = index.rank(db, "budget review", 100, { filter: {} });
+    expect(withEmptyFilter).toEqual(index.rank(db, "budget review", 100));
   });
 });

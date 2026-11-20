@@ -107,6 +107,42 @@ test("F16: each client's share of a gateway is reserved per /64 and returned whe
   await Promise.all([other, unnamed, again].map((work) => work.catch(() => {})));
 });
 
+test("gateway fairness reserves new-client capacity without closing existing channels", async () => {
+  const broker = new TunnelBroker({ ...DEFAULT_TUNNEL_LIMITS, maxStreamsPerGateway: 4 });
+  const control = new Control();
+  broker.attach("account", control.socket, 3600);
+  const tasks: Promise<unknown>[] = [];
+  const reserve = (address?: string) => {
+    const abort = new AbortController();
+    tasks.push(broker.open("account", abort.signal, address).catch(() => undefined));
+    return abort;
+  };
+  const first = reserve("2001:db8:1:2::1");
+  reserve("2001:db8:1:2::2");
+  reserve();
+  expect(() => broker.open("account", new AbortController().signal, "2001:db8:1:2::3")).toThrow(
+    "capacity",
+  );
+  // Absent peer metadata is one existing client, not a new source for every request.
+  expect(() => broker.open("account", new AbortController().signal)).toThrow("capacity");
+  reserve("192.0.2.7");
+  expect(broker.snapshot().pendingStreams).toBe(4);
+  expect(() => broker.open("account", new AbortController().signal, "192.0.2.8")).toThrow(
+    "capacity",
+  );
+  expect(control.terminate).not.toHaveBeenCalled();
+  first.abort();
+  expect(broker.snapshot().pendingStreams).toBe(3);
+  // Remaining reservations still account for their sources after an abort.
+  expect(() => broker.open("account", new AbortController().signal, "2001:db8:1:2::4")).toThrow(
+    "capacity",
+  );
+  reserve("192.0.2.8");
+  broker.close();
+  await Promise.all(tasks);
+  expect(broker.snapshot().pendingStreams).toBe(0);
+});
+
 test("heartbeats require pong, contain socket errors, and end expired sessions", async () => {
   const broker = new TunnelBroker({ ...DEFAULT_TUNNEL_LIMITS, heartbeatMs: 100 });
   const control = new Control();

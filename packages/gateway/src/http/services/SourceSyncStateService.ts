@@ -13,6 +13,7 @@ import type { SourceSyncMeta, SyncCursor } from "@omnesis/source-sdk";
 import type { WriteGate } from "../../write-gate.js";
 
 interface SourceSyncStateDeps {
+  assertStorageCanGrow?: () => void;
   db: Database.Database;
   writeGate: WriteGate;
   sourceWriteEpochFence?: SourceWriteEpochFence;
@@ -37,6 +38,7 @@ export class SourceSyncStateService {
   ): Promise<number | undefined> {
     const claim = () => {
       assertSourceWireAuthority?.();
+      this.deps.assertStorageCanGrow?.();
       return this.deps.writeGate.beginSyncAttempt(sourceId, cursorRow);
     };
     return this.deps.sourceWriteEpochFence
@@ -116,6 +118,7 @@ export class SourceSyncStateService {
     writeEpoch?: number,
     deviceId = "",
   ): Promise<boolean> {
+    this.deps.assertStorageCanGrow?.();
     if (isSourceRemoved(this.deps.db, SourceId(sourceId))) return false;
     validateAccount(sourceId, meta);
     const written = await this.deps.writeGate.setSyncState(

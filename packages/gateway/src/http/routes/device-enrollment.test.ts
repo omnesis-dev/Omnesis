@@ -3,6 +3,8 @@
 
 import { createPublicKey, generateKeyPairSync, randomUUID, type KeyObject } from "node:crypto";
 import { rmSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { signDeviceTranscript, tokenRotationTranscript } from "@omnesis/cloud-relay";
 import { defaultScopesForDeviceKind } from "@omnesis/types";
@@ -40,8 +42,7 @@ function boot(): void {
 }
 
 beforeEach(() => {
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
-  dbPath = `/tmp/omnesis-device-enrollment-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-device-enrollment-${randomUUID()}.db`);
   db = createDatabase(dbPath);
   const admin = createDevice(db, { name: "Admin phone", kind: "ios" });
   adminToken = createToken(db, admin.id, defaultScopesForDeviceKind("ios")).token;
@@ -127,17 +128,19 @@ describe("token rotation", () => {
   });
 });
 
-describe("without the cloud relay opt-in", () => {
-  beforeEach(() => {
-    vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "");
-    boot();
-  });
-
-  test("none of these routes exist", async () => {
-    for (const path of ["/devices/token/challenge", "/devices/token/rotate"]) {
-      const response = await app.request(path, json(adminToken, {}));
-      expect(response.status, path).toBe(404);
-    }
+describe("on a gateway where no device joined with a device key", () => {
+  test("no token can be rotated", async () => {
+    const challenge = await app.request("/devices/token/challenge", json(adminToken, {}));
+    expect(challenge.status).toBe(200);
+    const response = await app.request(
+      "/devices/token/rotate",
+      json(adminToken, {
+        challenge: ((await challenge.json()) as { challenge: string }).challenge,
+        signature: "A".repeat(86),
+      }),
+    );
+    expect(response.status).toBe(409);
+    expect(((await response.json()) as { code: string }).code).toBe("DEVICE_KEY_REQUIRED");
   });
 
   test("whoami and the device list keep their shape", async () => {
@@ -145,15 +148,12 @@ describe("without the cloud relay opt-in", () => {
       await app.request("/whoami", json(adminToken, undefined, "GET"))
     ).json()) as object;
     expect(Object.keys(whoami).sort()).toEqual(["deviceId", "deviceName", "scopes", "tokenId"]);
-    // Even a row enrolled while the opt-in was on.
-    const enrolled = createDevice(db, { name: "Enrolled", kind: "cli" });
-    db.prepare(
-      "UPDATE devices SET enrollment_method = 'automatic', enrolled_at = ?, enrollment_public_key = 'k' WHERE id = ?",
-    ).run(Date.now(), enrolled.id);
+    createDevice(db, { name: "Fictional laptop", kind: "cli" });
     boot();
     const devices = (await (
       await app.request("/admin/devices", json(adminToken, undefined, "GET"))
     ).json()) as { items: object[] };
+    expect(devices.items.length).toBeGreaterThan(1);
     expect(devices.items.every((device) => !("enrollment" in device))).toBe(true);
   });
 });

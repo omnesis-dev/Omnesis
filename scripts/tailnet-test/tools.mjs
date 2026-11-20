@@ -12,6 +12,8 @@
  * published SHA-256. The Tailscale programs are built with the Go toolchain at
  * the version the helper's go.mod pins, so the test tailnet speaks exactly
  * what the helper does.
+ * Windows uses the SDK's local test coordinator and userspace peers instead
+ * of Headscale. OMNESIS_TEST_PORTABLE_TAILNET=1 selects that fixture on POSIX.
  *
  *   node scripts/tailnet-test/tools.mjs          # provision, print the paths as JSON
  *
@@ -124,6 +126,10 @@ export async function ensureTailnetTools() {
   const cacheDir =
     process.env.OMNESIS_TAILNET_TOOLS_DIR ?? join(homedir(), ".cache", "omnesis-tailnet-tools");
   mkdirSync(cacheDir, { recursive: true });
+  if (process.platform === "win32" || process.env.OMNESIS_TEST_PORTABLE_TAILNET === "1") {
+    const { ensurePortableTailnetTools } = await import("./portable-tools.mjs");
+    return ensurePortableTailnetTools(cacheDir);
+  }
   return {
     headscale: await headscale(cacheDir),
     ...tailscalePrograms(cacheDir),

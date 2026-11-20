@@ -3,6 +3,8 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { SCOPE_WRITE_ALL, type DeviceId, type DeviceKind, type Scope } from "@omnesis/types";
 import { createDatabase } from "../../db.js";
@@ -34,7 +36,7 @@ let dbPath: string;
 let db: ReturnType<typeof createDatabase>;
 
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-device-doctor-test-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-device-doctor-test-${randomUUID()}.db`);
   db = createDatabase(dbPath);
 });
 

@@ -3,6 +3,8 @@
 
 import { randomUUID } from "node:crypto";
 import { rmSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { AGENT_TOOL_CARDS, createLogger } from "@omnesis/core";
 import { summarizeToolArgs, type SearchPort, type ToolHandle } from "@omnesis/agent";
@@ -27,7 +29,7 @@ const emptySearch: SearchPort = {
 let db: Database.Database;
 let path: string;
 beforeEach(() => {
-  path = `/tmp/omnesis-test-${randomUUID()}.db`;
+  path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
   db = createDatabase(path);
   db.prepare(
     `INSERT INTO people(id,canonical_name,source,first_seen,last_seen,created_at,updated_at)

@@ -12,6 +12,8 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { createDatabase } from "../db.js";
 import { Scheduler } from "../scheduler/scheduler.js";
@@ -38,7 +40,7 @@ function addPerson(id: string, name: string, options: { self?: boolean; into?: s
 }
 
 beforeEach(async () => {
-  dbPath = `/tmp/omnesis-test-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
   db = createDatabase(dbPath) as unknown as Database.Database;
   addPerson("0a1b2c3d-0000-4000-8000-000000000001", "fixture self", { self: true });
   addPerson("b3f2a9d4-0000-4000-8000-000000000002", "fixture person");

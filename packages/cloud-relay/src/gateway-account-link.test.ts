@@ -66,7 +66,6 @@ async function fixture() {
     gatewayId = randomUUID(),
     ownerAccountId = gatewayKeyAccount({ gatewayId, ownerPublicKey });
   const env: NodeJS.ProcessEnv = {
-    OMNESIS_CLOUD_RELAY_ENABLED: "1",
     OMNESIS_CLOUD_RELAY_URL: origin,
     OMNESIS_CLOUD_RELAY_GATEWAY_ID: gatewayId,
     OMNESIS_CLOUD_RELAY_OWNER_KEY_FILE: join(directory, "owner.pem"),
@@ -174,7 +173,9 @@ test("a verified account link persists privately across restart and unlink leave
   expect(await f.link()).toMatchObject({ redirectUrl: gatewayOrigin + "/portal/settings/account" });
   expect(f.manager.status()).toMatchObject({ linked: true, canLink: false, canUnlink: true });
   expect(f.manager.verifiedAccountId()).toBe(f.accountId);
-  expect((await stat(f.options.metadataFile)).mode & 0o777).toBe(0o600);
+  if (process.platform !== "win32") {
+    expect((await stat(f.options.metadataFile)).mode & 0o777).toBe(0o600);
+  }
   const restored = new GatewayAccountLink(f.options);
   await restored.initialize();
   expect(restored.verifiedAccountId()).toBe(f.accountId);
@@ -250,12 +251,9 @@ test("expiry and bounded pending requests remain recoverable", async () => {
   expect(f.browser.begin).toHaveBeenCalledTimes(9);
 });
 
-test("owner rotation, changed routing identity and opt-out never reuse a saved account", async () => {
+test("owner rotation and a changed routing identity never reuse a saved account", async () => {
   const f = await fixture();
   await f.link();
-  f.env.OMNESIS_CLOUD_RELAY_ENABLED = "0";
-  expect(f.manager.verifiedAccountId()).toBeUndefined();
-  f.env.OMNESIS_CLOUD_RELAY_ENABLED = "1";
   f.env.OMNESIS_CLOUD_RELAY_GATEWAY_ID = randomUUID();
   expect(f.manager.verifiedAccountId()).toBeUndefined();
   await f.manager.refresh();
@@ -1938,16 +1936,30 @@ test("a sign-in asks the relay nothing, refreshes fetch one at a time, and each 
     expect(result).toMatchObject({ trusted: false });
   expect(f.credentials).not.toHaveBeenCalled();
   // Refreshes that overlap share one fetch.
-  let release!: () => void;
-  const held = new Promise<void>((resolve) => (release = resolve));
+  const held = Promise.withResolvers<void>();
+  const fetching = Promise.withResolvers<void>();
+  const secondBrowserRefresh = Promise.withResolvers<void>();
+  f.browser.refresh.mockResolvedValueOnce(undefined).mockImplementationOnce(async () => {
+    secondBrowserRefresh.resolve();
+  });
   f.credentials.mockImplementationOnce(async () => {
-    await held;
+    fetching.resolve();
+    await held.promise;
     return { google: [f.google], passkeys: [f.listedPasskey] };
   });
-  const both = Promise.all([f.manager.refresh(), f.manager.refresh()]);
-  await vi.waitFor(() => expect(f.credentials).toHaveBeenCalledOnce());
-  release();
-  await both;
+  const first = f.manager.refresh();
+  await fetching.promise;
+  const second = f.manager.refresh();
+  try {
+    await secondBrowserRefresh.promise;
+    // Let the second refresh finish its promise continuations after the owner
+    // key read, while the first credential fetch is still held.
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(f.credentials).toHaveBeenCalledOnce();
+  } finally {
+    held.resolve();
+    await Promise.all([first, second]);
+  }
   expect(f.credentials).toHaveBeenCalledOnce();
   await f.manager.refresh();
   expect(f.credentials).toHaveBeenCalledTimes(2);

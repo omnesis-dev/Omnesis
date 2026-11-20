@@ -36,6 +36,7 @@ import {
   type PersonSortBy,
 } from "../data/repositories/PersonRepository.js";
 import { getPersonDocuments } from "../data/repositories/DocumentPeopleRepository.js";
+import { listMergeRuleGroups, type MergeRuleGroupsOptions } from "../domain/merge/rule-groups.js";
 import { assemblePersonLookup } from "../domain/person-lookup.js";
 import { countMessagesByPerson, type MessageCountsQuery } from "../domain/message-counts.js";
 import { likeSearchDocuments } from "../search/like-search.js";
@@ -153,6 +154,7 @@ import {
 import { ioReadHandlers } from "./read-port.js";
 import { IO_READS } from "./io-read-ports.js";
 import type { SearchResultItem } from "../search/types.js";
+import type { IoIndexHandlers } from "./io-index-handlers.js";
 import type { IoJournalHandlers } from "./io-journal-handlers.js";
 import type { IoSqlHandlers } from "./io-sql-handlers.js";
 import type { UrlCanonicalizerSpec, TranscriptionContext } from "@omnesis/core";
@@ -288,6 +290,11 @@ export const ioHandlers = {
   // serializable output.
   "io.mergeCandidateVisibility": (db: Db, opts: { status: "pending" | "accepted" | "denied" }) =>
     explainMergeCandidateVisibility(db, opts),
+
+  // The People → Rules page (GET /people/merge-rule-groups). Grouping resolves
+  // the winner of every active rule and enriching a page reads its people's
+  // documents, so the read grows with the store and stays off the main thread.
+  "io.mergeRuleGroups": (db: Db, opts: MergeRuleGroupsOptions) => listMergeRuleGroups(db, opts),
 
   // Legacy LIKE search (GET /documents/search) — a leading-wildcard
   // `content LIKE '%q%'` full-table scan. Low-traffic legacy path, moved off
@@ -499,7 +506,7 @@ export const ioHandlers = {
     nearDupFileLikeDocsSince(db, builtAtSec, fileLikeDocTypes),
 } as const;
 
-export type IoHandlers = typeof ioHandlers & IoJournalHandlers & IoSqlHandlers;
+export type IoHandlers = typeof ioHandlers & IoJournalHandlers & IoSqlHandlers & IoIndexHandlers;
 export type IoOpName = keyof IoHandlers;
 
 export type IoArgs<K extends IoOpName> = IoHandlers[K] extends (db: Db, ...rest: infer A) => unknown

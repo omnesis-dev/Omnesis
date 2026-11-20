@@ -10,6 +10,9 @@ import {
   validateDocumentTemporalProjectionContracts,
 } from "@omnesis/core";
 import { SourceId, sourceTypeOf, type DocumentInput, type Scope } from "@omnesis/types";
+import { readBoundStorageRetentionPolicies } from "../../storage/retention-bindings.js";
+import { readActiveStorageTrimCutoff } from "../../storage/trim-job-authority.js";
+import { isBeforeRetentionCutoff, retentionCutoff } from "../../storage/retention-policy.js";
 import { getInitialSourceInventory } from "../../data/repositories/SourceInventoryRepository.js";
 import { isKnowledgeDocumentReadable } from "../../brain/knowledge/retrieval-fence.js";
 import {
@@ -44,7 +47,7 @@ import { resolveRuntimeSettings } from "../../runtime-settings.js";
 import { getNearDupEdges } from "../../near-dupes/index.js";
 import { withHiddenSourcesExcluded } from "../../search/hidden-sources.js";
 import { runWithPriority } from "../../priority.js";
-import { isSourceRemoved } from "../../data/repositories/SourceRepository.js";
+import { getSource, isSourceRemoved } from "../../data/repositories/SourceRepository.js";
 import { hasFreeDiskSpace, type DiskSpaceCheck } from "../../disk-guard.js";
 import { BadRequestError, InsufficientStorageError } from "../errors.js";
 import { normalizeSnapshot, vouchesForWholeSource } from "../../absence/snapshot-claims.js";
@@ -67,6 +70,7 @@ import {
 } from "../../analytics-db.js";
 import { epochScope, type SourceWriteEpochFence } from "../../source-write-epoch-fence.js";
 import { matchDocumentIdPrefix } from "../../data/like-prefix-seek.js";
+import { settleIndexCleanup, type IndexWriteGate } from "../../indexer/index-write-gate.js";
 import { SourceSyncStateService } from "./SourceSyncStateService.js";
 import type { SourceDataRemovalService } from "./SourceDataRemovalService.js";
 import type { SourcePageWriteAuthority } from "../../sync-lease.js";
@@ -74,7 +78,6 @@ import type { OmnesisConfig } from "@omnesis/config";
 import type { SourceSyncMeta, SyncCursor } from "@omnesis/source-sdk";
 import type Database from "better-sqlite3";
 import type { DocumentProjection } from "../../events.js";
-import type { IndexWriteGate } from "../../indexer/index-write-gate.js";
 import type { WriteGate } from "../../write-gate.js";
 import type { ConfigStore } from "../../config-store.js";
 import type { IComputeScheduler } from "./ports.js";
@@ -113,6 +116,8 @@ export interface IngestResult {
 }
 
 export interface DocumentServiceDeps {
+  /** Shared capacity admission; only growth paths consult it, never user deletion. */
+  assertStorageCanGrow?: () => void;
   db: Db;
   writeGate: WriteGate;
   events: EventService;
@@ -256,6 +261,7 @@ export class DocumentService {
    * lost. Inert when no `gatewayDbPath` / `minFreeDiskBytes` is wired.
    */
   private assertDiskSpace(): void {
+    this.deps.assertStorageCanGrow?.();
     const { gatewayDbPath, minFreeDiskBytes } = this.deps;
     if (!gatewayDbPath || minFreeDiskBytes === undefined) return;
     const check = this.deps.checkDiskSpace ?? hasFreeDiskSpace;
@@ -331,16 +337,39 @@ export class DocumentService {
    */
   private applyMaxAgeCutoff(documents: readonly DocumentInput[]): DocumentInput[] {
     const liveConfig = this.deps.configStore?.get() ?? this.deps.config ?? {};
-    const cutoffCache = new Map<string, string | null>();
+    const cutoffCache = new Map<string, { maxAge: string | null; retention: string | null }>();
+    const now = Date.now();
     const before = documents.length;
     const filtered = documents.filter((d) => {
       if (d.metadata?.documentType === "contact") return true;
-      let cutoff = cutoffCache.get(d.sourceId);
-      if (cutoff === undefined) {
-        cutoff = getSourceCutoffDate(liveConfig, d.sourceId);
-        cutoffCache.set(d.sourceId, cutoff);
+      let cutoffs = cutoffCache.get(d.sourceId);
+      if (cutoffs === undefined) {
+        const retention = liveConfig.gateway?.storage?.retention?.find(
+          (policy) => policy.sourceId === d.sourceId,
+        );
+        cutoffs = {
+          maxAge: getSourceCutoffDate(liveConfig, d.sourceId),
+          retention:
+            [
+              retentionCutoff(
+                readBoundStorageRetentionPolicies(this.deps.db, retention ? [retention] : []),
+                d.sourceId,
+                now,
+              ),
+              readActiveStorageTrimCutoff(this.deps.db, d.sourceId),
+            ]
+              .filter((value): value is string => value !== null)
+              .sort()
+              .at(-1) ?? null,
+        };
+        cutoffCache.set(d.sourceId, cutoffs);
       }
-      return cutoff === null || d.sourceCreatedAt >= cutoff;
+      // Preserve the established import maxAge comparison. Rolling retention
+      // is independent and only excludes documents whose age is trustworthy.
+      if (cutoffs.maxAge !== null && d.sourceCreatedAt < cutoffs.maxAge) return false;
+      return (
+        cutoffs.retention === null || !isBeforeRetentionCutoff(d.sourceCreatedAt, cutoffs.retention)
+      );
     });
     const dropped = before - filtered.length;
     if (dropped > 0) {
@@ -576,7 +605,9 @@ export class DocumentService {
       );
       let indexCleanedRows = 0;
       if (indexWriteGate && deletedDocIds.length > 0) {
-        indexCleanedRows = await indexWriteGate.deleteChunksByDocuments(deletedDocIds);
+        indexCleanedRows = await settleIndexCleanup(
+          indexWriteGate.deleteChunksByDocuments(deletedDocIds),
+        );
       }
       await this.cascadeCognitionFor(deletedDocIds);
       log.debug(`Deleted ${externalIds.length} documents`, {
@@ -659,7 +690,9 @@ export class DocumentService {
       if (url) urls.push(url);
       let indexCleanedRows = 0;
       if (indexWriteGate) {
-        indexCleanedRows = await indexWriteGate.deleteChunksByDocuments(deletedDocIds);
+        indexCleanedRows = await settleIndexCleanup(
+          indexWriteGate.deleteChunksByDocuments(deletedDocIds),
+        );
       }
       await this.cascadeCognitionFor(deletedDocIds);
       log.debug(
@@ -1015,15 +1048,19 @@ export class DocumentService {
     // Tombstones and the cursor commit share one writer transaction. Clean
     // derived stores only for IDs it actually deleted — the page's snapshot
     // deletes nothing, so the tombstone channel is the whole cascade here.
+    // Index cleanup still pending leaves the outbox entry's index half open
+    // for the absence sweep; the committed page is not a failure.
     const cascadeDeletedDocumentIds = result.tombstoneDeletedDocumentIds;
     const indexCleanedRows = result.tombstoneCascade
-      ? await finishDocumentCascade(result.tombstoneCascade, {
-          deleteIndex: indexWriteGate
-            ? (ids) => indexWriteGate.deleteChunksByDocuments(ids)
-            : undefined,
-          cascadeCognition: (ids) => this.cascadeCognitionFor(ids),
-          acknowledge: (id, part) => w.acknowledgeAbsenceCascade(id, part),
-        })
+      ? await settleIndexCleanup(
+          finishDocumentCascade(result.tombstoneCascade, {
+            deleteIndex: indexWriteGate
+              ? (ids) => indexWriteGate.deleteChunksByDocuments(ids)
+              : undefined,
+            cascadeCognition: (ids) => this.cascadeCognitionFor(ids),
+            acknowledge: (id, part) => w.acknowledgeAbsenceCascade(id, part),
+          }),
+        )
       : 0;
 
     // The source was wiped after this sync started — the writer
@@ -1292,7 +1329,7 @@ export class DocumentService {
           );
           deletedIds = outcome.deletedDocumentIds;
           if (indexWriteGate && deletedIds.length > 0) {
-            await indexWriteGate.deleteChunksByDocuments(deletedIds);
+            await settleIndexCleanup(indexWriteGate.deleteChunksByDocuments(deletedIds));
           }
           await this.cascadeCognitionFor(deletedIds);
           if (outcome.disputed.length > 0) deletionDisputed = outcome.disputed.length;

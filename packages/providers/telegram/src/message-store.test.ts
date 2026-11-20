@@ -124,7 +124,7 @@ describe("TelegramArchive storage", () => {
     const reopened = openArchive();
     expect(reopened.getUser(SELF.id)?.displayName).toBe("Maya Reeves");
     reopened.close();
-    expect(inspectTelegramStores(stateDir, configDir)).toEqual([
+    expect(await inspectTelegramStores(stateDir, configDir)).toEqual([
       { keyName: "telegram-store", label: "Telegram message archive", state: "encrypted" },
       { keyName: "telegram-store", label: "Telegram connection cache", state: "absent" },
     ]);
@@ -136,7 +136,7 @@ describe("TelegramArchive storage", () => {
     const id = plain.storeId;
     plain.close();
     expect(header(join(stateDir, "archive.db"))).toBe(HEADER);
-    expect(inspectTelegramStores(stateDir, configDir)[0]?.state).toBe("plaintext");
+    expect((await inspectTelegramStores(stateDir, configDir))[0]?.state).toBe("plaintext");
 
     await mintKey();
     const archive = openArchive();
@@ -371,6 +371,55 @@ describe("TelegramArchive writes and drain", () => {
     expect(archive.hasMessage(chat.id, 42)).toBe(false);
     const { days } = archive.drain({ committedSeq: 0, limit: 10 });
     expect(days[0]?.messages.map((m) => m.msgId)).toEqual([41]);
+  });
+
+  it("keeps a kept self-destructing message past its timer, and applies a deletion made before it", () => {
+    const expiring = (id: number, text: string): StoredMessage =>
+      stored(chat, id, T0, text, { expiresAt: clock + 3600 });
+    live(chat, expiring(1, "Gate code is 4821"));
+    live(chat, expiring(2, "Sent by mistake"));
+    drainAll();
+    // Before the timer: a deletion the sender made by hand.
+    expect(archive.deleteMessages("common", [2])).toBe(1);
+    expect(archive.hasMessage(chat.id, 2)).toBe(false);
+    drainAll();
+    // From the timer on: Telegram's own expiry, which is not applied.
+    clock += 3600;
+    expect(archive.deleteMessages("common", [1])).toBe(0);
+    expect(archive.hasMessage(chat.id, 1)).toBe(true);
+    expect(archive.dirtyDayCount()).toBe(0);
+    // A message without a timer is deleted as always, whenever the deletion comes.
+    live(chat, stored(chat, 3, T0, "Riverside Estate visit"));
+    expect(archive.deleteMessages("common", [3])).toBe(1);
+  });
+
+  it("keeps a kept self-destructing message whose expiry deletion arrived before it", () => {
+    archive.deleteMessages("common", [44, 45]);
+    archive.commitWalkPage(chat.id, {
+      messages: [
+        // Its timer had already run when the deletion was observed.
+        stored(chat, 44, T0, "Expired before the walk", { expiresAt: clock - 60 }),
+        // Its timer still had an hour to go: the deletion was made by hand.
+        stored(chat, 45, T0, "Deleted by hand", { expiresAt: clock + 3600 }),
+      ],
+      users: [JAMIE],
+      rawIds: [45, 44],
+      done: true,
+    });
+    expect(archive.pendingDeletionCount()).toBe(0);
+    expect(archive.hasMessage(chat.id, 44)).toBe(true);
+    expect(archive.hasMessage(chat.id, 45)).toBe(false);
+  });
+
+  it("leaves expired kept messages out of the presence check and keeps them when it calls them gone", () => {
+    const since = T0 - 60;
+    live(chat, stored(chat, 1, T0, "Expires soon", { expiresAt: clock + 60 }));
+    live(chat, stored(chat, 2, T0, "No timer"));
+    expect(archive.presenceBatch(chat.id, since, 0, 10)).toEqual([1, 2]);
+    clock += 60;
+    expect(archive.presenceBatch(chat.id, since, 0, 10)).toEqual([2]);
+    archive.commitPresence(chat.id, { missingIds: [1], current: [], users: [], nextAfterId: null });
+    expect(archive.hasMessage(chat.id, 1)).toBe(true);
   });
 
   it("forgets an unmatched deletion after the pending window", () => {

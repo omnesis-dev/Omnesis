@@ -22,13 +22,13 @@
  * `OMNESIS_NEAR_DUP_BACKLOG_DOCS` sizes the corpus for a bench run.
  */
 
-import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
 import Database from "better-sqlite3";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { createDatabase } from "../db.js";
 import { runWithPriority } from "../priority.js";
 import { setActiveAlgoVersion } from "../near-dupes/meta.js";
+import { sqlitePerformanceDatabasePath } from "../../test/sqlite-performance-temp.js";
 import { Scheduler } from "./scheduler.js";
 import { WriterTaskRunner } from "./runners/writer.js";
 import { writeGateFromScheduler } from "./write-ops.js";
@@ -39,13 +39,13 @@ import type { SyncCursor } from "@omnesis/source-sdk";
 const WORKER_URL = new URL("../workers/writer-worker.ts", import.meta.url);
 const LOADER_URL = new URL("../workers/register-tsx.mjs", import.meta.url).href;
 
-/** Signed documents already in the corpus — the pilot held about 81k. */
+/** Signed documents already in the corpus, as on a large install. */
 const SIGNED_DOCS = Number(process.env.OMNESIS_NEAR_DUP_BACKLOG_DOCS ?? 80_000);
 const BANDS = 16;
 /** One compute batch, as `computeBatchSize` sizes it. */
 const BATCH_DOCS = 100;
 const BATCHES = 4;
-/** The most near-duplicate edges one document carried on the pilot. */
+/** Near-duplicate edges of one heavily duplicated document. */
 const HEAVY_EDGES = 127;
 /** The longest a single apply call may hold the writer. */
 const HOLD_BUDGET_MS = 250;
@@ -196,7 +196,7 @@ describe("nearDup.applyBatch on the writer against a drive-sized signed corpus",
   let nextBatch = 0;
 
   beforeAll(async () => {
-    dbPath = `/tmp/omnesis-test-${randomUUID()}.db`;
+    dbPath = sqlitePerformanceDatabasePath();
     seedCorpus(dbPath);
     scheduler = new Scheduler({ enablePreemption: true });
     scheduler.registerRunner(

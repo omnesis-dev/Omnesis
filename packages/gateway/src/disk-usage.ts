@@ -24,8 +24,27 @@ import type { DiskUsageSnapshot, DiskUsageStore } from "@omnesis/core/doctor";
 
 const log = createLogger("gateway").child("disk-usage");
 
-const SQLITE_SIDECARS = ["", "-wal", "-shm", "-journal"];
-const DUCKDB_SIDECARS = ["", ".wal", ".tmp", ".extensions"];
+const COMPONENT_LABELS = {
+  database: "Database file",
+  "write-log": "Write log",
+  coordination: "Coordination files",
+  graph: "Vector graph",
+  spill: "Spill files",
+  extensions: "Extensions",
+} as const;
+type ComponentId = keyof typeof COMPONENT_LABELS;
+const SQLITE_FILES = [
+  ["", "database"],
+  ["-wal", "write-log"],
+  ["-shm", "coordination"],
+  ["-journal", "write-log"],
+] as const;
+const DUCKDB_FILES = [
+  ["", "database"],
+  [".wal", "write-log"],
+  [".tmp", "spill"],
+  [".extensions", "extensions"],
+] as const;
 const NOTHING: ReadonlySet<string> = new Set();
 
 /** Where each part of the footprint lives, resolved the way the gateway resolved it. */
@@ -45,13 +64,16 @@ interface Part {
   id: string;
   label: string;
   /** Absolute paths claimed whole; a directory is counted recursively. */
-  paths: string[];
+  paths: { path: string; component?: ComponentId }[];
   /** Entries of the config dir claimed by name, for files with generated names. */
   configDirNames?: RegExp;
 }
 
-function withSuffixes(path: string, suffixes: readonly string[]): string[] {
-  return suffixes.map((suffix) => `${path}${suffix}`);
+function engineFiles(
+  path: string,
+  files: readonly (readonly [string, ComponentId])[],
+): Part["paths"] {
+  return files.map(([suffix, component]) => ({ path: `${path}${suffix}`, component }));
 }
 
 /** Display order, which is also claim order: a path belongs to the first part naming it. */
@@ -60,24 +82,24 @@ function partsFor(layout: DiskUsageLayout): Part[] {
     {
       id: "documents",
       label: "Main database",
-      paths: withSuffixes(layout.dbPath, SQLITE_SIDECARS),
+      paths: engineFiles(layout.dbPath, SQLITE_FILES),
     },
     {
       id: "index",
       label: "Search index",
-      paths: withSuffixes(layout.indexDbPath, SQLITE_SIDECARS),
+      paths: engineFiles(layout.indexDbPath, SQLITE_FILES),
       configDirNames: USEARCH_FILE_NAME,
     },
     {
       id: "analytics",
       label: "Analytics",
-      paths: withSuffixes(layout.analyticsDbPath, DUCKDB_SIDECARS),
+      paths: engineFiles(layout.analyticsDbPath, DUCKDB_FILES),
     },
-    { id: "watch", label: "Watches", paths: withSuffixes(layout.watchDbPath, SQLITE_SIDECARS) },
-    { id: "transcripts", label: "Agent transcripts", paths: [layout.transcriptsDir] },
-    { id: "conversations", label: "Conversations", paths: [layout.conversationsDir] },
-    { id: "models", label: "Models", paths: [layout.modelsDir] },
-    { id: "backups", label: "Backups", paths: [layout.backupsDir] },
+    { id: "watch", label: "Watches", paths: engineFiles(layout.watchDbPath, SQLITE_FILES) },
+    { id: "transcripts", label: "Brain run logs", paths: [{ path: layout.transcriptsDir }] },
+    { id: "conversations", label: "Chat history", paths: [{ path: layout.conversationsDir }] },
+    { id: "models", label: "Models", paths: [{ path: layout.modelsDir }] },
+    { id: "backups", label: "Backups", paths: [{ path: layout.backupsDir }] },
   ];
 }
 
@@ -95,34 +117,39 @@ async function sizeOf(
   root: string,
   exclude: ReadonlySet<string>,
   seen: Set<string>,
+  strict: boolean,
 ): Promise<number> {
   if (exclude.has(root)) return 0;
   let resolved: string;
   try {
     resolved = await realpath(root);
-  } catch {
+  } catch (error) {
+    rethrowUnreadable(error, strict);
     return 0; // absent
   }
-  let dev: number;
+  let dev: bigint;
   try {
-    dev = (await lstat(resolved)).dev;
-  } catch {
+    dev = (await lstat(resolved, { bigint: true })).dev;
+  } catch (error) {
+    rethrowUnreadable(error, strict);
     return 0;
   }
-  return walk(resolved, dev, exclude, seen);
+  return walk(resolved, dev, exclude, seen, strict);
 }
 
 async function walk(
   path: string,
-  dev: number,
+  dev: bigint,
   exclude: ReadonlySet<string>,
   seen: Set<string>,
+  strict: boolean,
 ): Promise<number> {
   if (exclude.has(path)) return 0;
   let st;
   try {
-    st = await lstat(path);
-  } catch {
+    st = await lstat(path, { bigint: true });
+  } catch (error) {
+    rethrowUnreadable(error, strict);
     return 0; // vanished mid-walk
   }
   if (st.dev !== dev) return 0;
@@ -130,18 +157,26 @@ async function walk(
     let names: string[];
     try {
       names = await readdir(path);
-    } catch {
+    } catch (error) {
+      rethrowUnreadable(error, strict);
       return 0;
     }
     let total = 0;
-    for (const name of names) total += await walk(join(path, name), dev, exclude, seen);
+    for (const name of names) total += await walk(join(path, name), dev, exclude, seen, strict);
     return total;
   }
   if (!st.isFile()) return 0;
   const key = `${st.dev}:${st.ino}`;
   if (seen.has(key)) return 0;
   seen.add(key);
-  return st.size;
+  return Number(st.size);
+}
+
+/** Missing files are normal during churn; unreadable files cannot count as zero for quotas. */
+function rethrowUnreadable(error: unknown, strict: boolean): void {
+  if (strict && (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT")) {
+    throw error;
+  }
 }
 
 /**
@@ -158,44 +193,74 @@ async function canonical(path: string): Promise<string> {
   }
 }
 
-/** Measure the footprint once. Missing paths count as zero; the walk never throws. */
+/** Measure once. Missing paths count as zero; strict quota inventories reject unreadable paths. */
 export async function measureDiskUsage(
   layout: DiskUsageLayout,
   now: () => Date = () => new Date(),
+  options: { strict?: boolean } = {},
 ): Promise<DiskUsageSnapshot> {
+  const strict = options.strict ?? false;
   const configDir = await realpath(layout.configDir).catch(() => resolve(layout.configDir));
   const parts = await Promise.all(
     partsFor(layout).map(async (part) => ({
       ...part,
-      paths: await Promise.all(part.paths.map(canonical)),
+      paths: await Promise.all(
+        part.paths.map(async (claim) => ({ ...claim, path: await canonical(claim.path) })),
+      ),
     })),
   );
 
   let configDirEntries: string[] = [];
   try {
     configDirEntries = await readdir(configDir);
-  } catch {
+  } catch (error) {
+    rethrowUnreadable(error, strict);
     // No config dir: only stores placed elsewhere can contribute.
   }
   for (const part of parts) {
     if (!part.configDirNames) continue;
     for (const name of configDirEntries) {
-      if (part.configDirNames.test(name)) part.paths.push(join(configDir, name));
+      if (part.configDirNames.test(name))
+        part.paths.push({ path: join(configDir, name), component: "graph" });
     }
   }
 
-  const claimed = new Set(parts.flatMap((part) => part.paths));
+  const claimed = new Set(parts.flatMap((part) => part.paths.map((claim) => claim.path)));
   const seen = new Set<string>();
   const stores: DiskUsageStore[] = [];
   for (const part of parts) {
     let bytes = 0;
-    for (const path of new Set(part.paths)) bytes += await sizeOf(path, NOTHING, seen);
-    if (bytes > 0) stores.push({ id: part.id, label: part.label, bytes });
+    const components = new Map<ComponentId, number>();
+    const measuredPaths = new Set<string>();
+    for (const claim of part.paths) {
+      if (measuredPaths.has(claim.path)) continue;
+      measuredPaths.add(claim.path);
+      const measured = await sizeOf(claim.path, NOTHING, seen, strict);
+      bytes += measured;
+      if (claim.component && measured > 0)
+        components.set(claim.component, (components.get(claim.component) ?? 0) + measured);
+    }
+    if (bytes > 0) {
+      stores.push({
+        id: part.id,
+        label: part.label,
+        bytes,
+        ...(components.size > 0
+          ? {
+              components: [...components].map(([id, bytes]) => ({
+                id,
+                label: COMPONENT_LABELS[id],
+                bytes,
+              })),
+            }
+          : {}),
+      });
+    }
   }
 
   // Everything else in the config dir. Claimed paths are skipped rather than
   // relying on `seen` alone, so the walk never descends into models/ or backups/.
-  const other = await sizeOf(configDir, claimed, seen);
+  const other = await sizeOf(configDir, claimed, seen, strict);
   if (other > 0) stores.push({ id: "other", label: "Other", bytes: other });
 
   return {

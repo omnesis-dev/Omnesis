@@ -70,7 +70,7 @@ On top sits a built-in **agent**, in the web portal and the iOS and Android apps
 
 ## Quick start
 
-Omnesis runs on **macOS** and **Linux**. Windows is not supported. Install it on the machine that will hold your data, usually an always-on computer:
+The installer supports **macOS** and **Linux**. The **Windows x64** runtime runs [manually from source](https://omnesis.dev/docs/install#windows-source); Windows installers and background-service management are outside that path, and Windows ARM support remains pending. Install Omnesis on the machine that will hold your data, usually an always-on computer:
 
 ```bash
 curl -fsSL https://omnesis.dev/install.sh | sh
@@ -88,7 +88,7 @@ omnesis devices pair --kind portal    # a code to paste into the portal's login
 omnesis status                        # what is syncing, and how far it has got
 ```
 
-The portal is at `https://<gateway-host>:7600/portal/`. Sources sync in the background from then on; Omnesis never updates itself, so run `omnesis update` when you choose to.
+The portal is at `https://<gateway-host>:7600/portal/`. During startup it shows progress and opens your requested page automatically when the gateway is ready. Sources sync in the background from then on; Omnesis never updates itself, so run `omnesis update` when you choose to.
 
 A second computer can collect for the same gateway — a Mac for the Apple sources while the gateway runs on Linux, for example. The gateway's install prints the exact command to run there. [Setup](https://omnesis.dev/docs/setup) covers that, certificates, remote access, phones and the browser extension.
 

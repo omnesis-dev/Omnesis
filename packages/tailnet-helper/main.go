@@ -12,6 +12,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -28,6 +29,7 @@ import (
 	"github.com/omnesis-dev/omnesis/packages/tailnet-helper/internal/certs"
 	"github.com/omnesis-dev/omnesis/packages/tailnet-helper/internal/node"
 	"github.com/omnesis-dev/omnesis/packages/tailnet-helper/internal/protocol"
+	"github.com/omnesis-dev/omnesis/packages/tailnet-helper/internal/proxy"
 )
 
 // version is set at build time.
@@ -37,9 +39,11 @@ func main() {
 	stateDir := flag.String("state-dir", "", "directory for this device's Tailscale state (required)")
 	hostname := flag.String("hostname", "omnesis", "device name on the tailnet")
 	controlURL := flag.String("control-url", "", "coordination server URL; empty for Tailscale's own")
-	socket := flag.String("socket", "", "the gateway's private Unix socket (required)")
+	socket := flag.String("socket", "", "the gateway's private local endpoint (required)")
+	socketPin := flag.String("socket-certificate-sha256", "", "pinned certificate for the authenticated local transport")
 	certFile := flag.String("fallback-cert", "", "the gateway's certificate, served when Tailscale's cannot be")
 	keyFile := flag.String("fallback-key", "", "the key for -fallback-cert")
+	certificateBootstrap := flag.Bool("certificate-bootstrap", false, "require the active gateway certificate on standard input before starting")
 	showVersion := flag.Bool("version", false, "print the version and exit")
 	flag.Parse()
 	if *showVersion {
@@ -51,23 +55,46 @@ func main() {
 		logger.Println("omnesis-tailnet: -state-dir and -socket are required")
 		os.Exit(2)
 	}
+	token := os.Getenv("OMNESIS_TAILNET_IPC_TOKEN")
+	os.Unsetenv("OMNESIS_TAILNET_IPC_TOKEN")
+	endpoint := proxy.Endpoint{Path: *socket, CertificateSHA256: *socketPin, Token: token}
+	if err := endpoint.Validate(); err != nil {
+		logger.Printf("omnesis-tailnet: %v", err)
+		os.Exit(2)
+	}
 	isolateFromEnvironment()
-
-	out := newEmitter(os.Stdout)
-	n := node.New(node.Config{
-		StateDir:   *stateDir,
-		Hostname:   *hostname,
-		ControlURL: *controlURL,
-		SocketPath: *socket,
-		Fallback:   certs.NewFallback(*certFile, *keyFile),
-		Logf:       logger.Printf,
-		Emit:       func(st protocol.Status) { out.send(st) },
-	})
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	// Cancellation must also release a bootstrap blocked on its parent.
+	stopInputClose := context.AfterFunc(ctx, func() { _ = os.Stdin.Close() })
+	defer stopInputClose()
+	sc := commandScanner(os.Stdin)
+	fallback := certs.NewFallback(*certFile, *keyFile)
+	out := newEmitter(os.Stdout)
+	if *certificateBootstrap {
+		if err := readGatewayCertificateBootstrap(sc, fallback); err != nil {
+			out.send(protocol.Fatal{Type: "fatal", Message: err.Error()})
+			logger.Printf("omnesis-tailnet: %v", err)
+			os.Exit(1)
+		}
+	}
+	if ctx.Err() != nil {
+		return
+	}
+	n := node.New(node.Config{
+		StateDir:                *stateDir,
+		Hostname:                *hostname,
+		ControlURL:              *controlURL,
+		SocketPath:              *socket,
+		SocketCertificateSHA256: *socketPin,
+		SocketToken:             token,
+		Fallback:                fallback,
+		Logf:                    logger.Printf,
+		Emit:                    func(st protocol.Status) { out.send(st) },
+	})
 
 	if err := n.Start(); err != nil {
 		out.send(protocol.Fatal{Type: "fatal", Message: err.Error()})
@@ -78,7 +105,7 @@ func main() {
 	// for any reason, so does the helper.
 	go func() {
 		defer cancel()
-		readCommands(ctx, os.Stdin, n, logger)
+		readCommandScanner(ctx, sc, n, logger)
 	}()
 
 	if err := n.Run(ctx); err != nil {
@@ -95,7 +122,7 @@ func isolateFromEnvironment() {
 		name, _, _ := strings.Cut(kv, "=")
 		// A stray TS_AUTHKEY or TS_CLIENT_SECRET would sign this device in to
 		// whatever account it names without the owner choosing it.
-		if strings.HasPrefix(name, "TS_") {
+		if strings.HasPrefix(strings.ToUpper(name), "TS_") {
 			os.Unsetenv(name)
 		}
 	}
@@ -107,16 +134,38 @@ func isolateFromEnvironment() {
 
 // commander is what the gateway's commands act on: the node, or a test double.
 type commander interface {
+	SetGatewayCertificate(protocol.GatewayCertificate) error
 	Configure(protocol.PublicConfig)
 	Login(context.Context) error
 	Logout(context.Context) error
 }
 
-// readCommands applies the gateway's commands, one JSON line each, until r
-// ends. A line it cannot parse is logged and skipped.
-func readCommands(ctx context.Context, r io.Reader, n commander, logger *log.Logger) {
+// commandScanner bounds every private input frame.
+func commandScanner(r io.Reader) *bufio.Scanner {
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 64*1024), 1024*1024)
+	return sc
+}
+
+// readGatewayCertificateBootstrap fails closed before any network listener starts.
+// Its scanner is reused for commands so buffered frames cannot be lost.
+func readGatewayCertificateBootstrap(sc *bufio.Scanner, fallback *certs.Fallback) error {
+	if !sc.Scan() {
+		return errors.New("gateway certificate bootstrap ended before a certificate arrived")
+	}
+	cmd, err := protocol.ParseCommand(sc.Bytes())
+	if err != nil || cmd.Type != protocol.CommandGatewayCertificate {
+		return errors.New("gateway certificate bootstrap requires a certificate command")
+	}
+	return fallback.SetPEM(cmd.Certificate.Cert, cmd.Certificate.Key)
+}
+
+// readCommands applies JSON lines until EOF, skipping invalid commands.
+func readCommands(ctx context.Context, r io.Reader, n commander, logger *log.Logger) {
+	readCommandScanner(ctx, commandScanner(r), n, logger)
+}
+
+func readCommandScanner(ctx context.Context, sc *bufio.Scanner, n commander, logger *log.Logger) {
 	for sc.Scan() {
 		line := sc.Bytes()
 		if len(strings.TrimSpace(string(line))) == 0 {
@@ -128,6 +177,10 @@ func readCommands(ctx context.Context, r io.Reader, n commander, logger *log.Log
 			continue
 		}
 		switch cmd.Type {
+		case protocol.CommandGatewayCertificate:
+			if err := n.SetGatewayCertificate(*cmd.Certificate); err != nil {
+				logger.Println("omnesis-tailnet: gateway certificate refresh rejected")
+			}
 		case protocol.CommandConfigure:
 			n.Configure(*cmd.Public)
 		case protocol.CommandLogin:

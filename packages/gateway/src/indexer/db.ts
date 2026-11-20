@@ -224,6 +224,17 @@ export function createIndexDatabase(path: string, opts: OpenIndexDbOptions = {})
   // miss both. The log prunes itself every 10,000 entries, keeping the newest
   // 500,000 — far more than accumulate between index rebuilds; a ranker that
   // finds itself pruned past declines and FTS5 answers until the next build.
+  // A lexical ranker also filters on source, type and date while it scores, so
+  // a change to any of them must reach it. Replace a trigger made before it
+  // watched those columns; idempotent once replaced.
+  const changesTrigger = db
+    .prepare<[], { sql: string }>(
+      "SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = 'chunks_fts_changes_au'",
+    )
+    .get();
+  if (changesTrigger && !changesTrigger.sql.includes("source_created_at")) {
+    db.exec("DROP TRIGGER chunks_fts_changes_au");
+  }
   db.exec(`
     CREATE TABLE IF NOT EXISTS chunks_fts_changes (
       seq INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -235,8 +246,11 @@ export function createIndexDatabase(path: string, opts: OpenIndexDbOptions = {})
     CREATE TRIGGER IF NOT EXISTS chunks_fts_changes_ad AFTER DELETE ON chunks BEGIN
       INSERT INTO chunks_fts_changes(chunk_rowid) VALUES (old.rowid);
     END;
-    CREATE TRIGGER IF NOT EXISTS chunks_fts_changes_au AFTER UPDATE OF content, title ON chunks
-      WHEN old.content IS NOT new.content OR old.title IS NOT new.title OR old.rowid != new.rowid BEGIN
+    CREATE TRIGGER IF NOT EXISTS chunks_fts_changes_au
+      AFTER UPDATE OF content, title, source_id, document_type, source_created_at ON chunks
+      WHEN old.content IS NOT new.content OR old.title IS NOT new.title
+        OR old.source_id IS NOT new.source_id OR old.document_type IS NOT new.document_type
+        OR old.source_created_at IS NOT new.source_created_at OR old.rowid != new.rowid BEGIN
       INSERT INTO chunks_fts_changes(chunk_rowid) VALUES (old.rowid);
       INSERT INTO chunks_fts_changes(chunk_rowid) SELECT new.rowid WHERE new.rowid != old.rowid;
     END;
@@ -1786,10 +1800,12 @@ function adjustSourceIndexStats(
       `UPDATE source_index_stats SET
          indexed_docs = MAX(0, indexed_docs + ?),
          chunks       = MAX(0, chunks + ?),
+         earliest_source_date = CASE WHEN ? < 0 THEN NULL ELSE earliest_source_date END,
+         latest_source_date = CASE WHEN ? < 0 THEN NULL ELSE latest_source_date END,
          last_computed_at = ?
        WHERE source_id = ?`,
     )
-    .run(indexedDelta, chunksDelta, new Date().toISOString(), sourceId);
+    .run(indexedDelta, chunksDelta, chunksDelta, chunksDelta, new Date().toISOString(), sourceId);
   if (updated.changes === 0 && indexedDelta > 0) {
     db.prepare(
       `INSERT OR IGNORE INTO source_index_stats (source_id, indexed_docs, chunks, last_computed_at)

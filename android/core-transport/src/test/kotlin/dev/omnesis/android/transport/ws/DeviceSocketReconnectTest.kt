@@ -127,12 +127,7 @@ private class FakeFactory : WebSocket.Factory {
 }
 
 @OptIn(ExperimentalCoroutinesApi::class)
-class DeviceSocketReconnectTest : DeviceSocketReconnectCases(cloudRelay = false)
-
-/** The same reconnect contract with cloud connectivity enabled. */
-class DeviceSocketReconnectCloudTest : DeviceSocketReconnectCases(cloudRelay = true)
-
-abstract class DeviceSocketReconnectCases(private val cloudRelay: Boolean) {
+class DeviceSocketReconnectTest {
     private val factory = FakeFactory()
     private val paths = MutableSharedFlow<NetworkPathSnapshot>(extraBufferCapacity = 512)
 
@@ -141,7 +136,6 @@ abstract class DeviceSocketReconnectCases(private val cloudRelay: Boolean) {
         gatewayUrl = "https://gateway.example.com:7600/",
         token = "omn_test",
         scope = backgroundScope,
-        cloudRelay = cloudRelay,
         pathObserver = { paths },
         onRouteEvent = onRouteEvent,
         nowMs = { testScheduler.currentTime },
@@ -404,8 +398,7 @@ abstract class DeviceSocketReconnectCases(private val cloudRelay: Boolean) {
             gatewayUrl = "https://gateway.example.com:7600/",
             token = "omn_test",
             scope = backgroundScope,
-            cloudRelay = cloudRelay,
-            pathObserver = { kotlinx.coroutines.flow.flow { throw SecurityException("too many callbacks") } },
+                pathObserver = { kotlinx.coroutines.flow.flow { throw SecurityException("too many callbacks") } },
             nowMs = { testScheduler.currentTime },
             randomUnit = { 0.0 },
         )
@@ -425,27 +418,8 @@ abstract class DeviceSocketReconnectCases(private val cloudRelay: Boolean) {
         assertEquals(2, factory.opened.size)
     }
 
-    /** Without cloud connectivity nothing about an open socket changed: the client's ping interval watches it. */
-    @Test
-    fun wake_signals_leave_an_open_socket_alone_without_cloud_connectivity() = runTest {
-        if (cloudRelay) return@runTest
-        val socket = started(wifi)
-        connectNewest()
-
-        socket.appDidBecomeActive()
-        send(noNetwork)
-        assertTrue("a path report alone does not end a session", socket.state.value is ConnectionState.Connected)
-        send(cellular)
-        advance(120_000)
-
-        assertEquals(1, factory.opened.size)
-        assertFalse(factory.opened.single().cancelled)
-        assertEquals("only the hello was sent", 1, factory.opened.single().sent.size)
-    }
-
     @Test
     fun a_network_change_asks_an_open_socket_to_answer_and_an_answer_keeps_it() = runTest {
-        if (!cloudRelay) return@runTest
         val events = mutableListOf<DeviceSocket.RouteEvent>()
         val socket = socket(events::add)
         socket.start(); runCurrent(); send(wifi)
@@ -479,7 +453,6 @@ abstract class DeviceSocketReconnectCases(private val cloudRelay: Boolean) {
 
     @Test
     fun an_open_socket_that_does_not_answer_within_five_seconds_is_replaced_at_once() = runTest {
-        if (!cloudRelay) return@runTest
         val socket = started(wifi)
         connectNewest()
         val dead = factory.opened.single()
@@ -500,7 +473,6 @@ abstract class DeviceSocketReconnectCases(private val cloudRelay: Boolean) {
 
     @Test
     fun returning_to_the_app_checks_an_open_socket_too() = runTest {
-        if (!cloudRelay) return@runTest
         val socket = started(wifi)
         connectNewest()
         socket.appDidEnterBackground()
@@ -512,7 +484,6 @@ abstract class DeviceSocketReconnectCases(private val cloudRelay: Boolean) {
 
     @Test
     fun a_socket_that_cannot_even_send_the_question_is_replaced_without_waiting() = runTest {
-        if (!cloudRelay) return@runTest
         started(wifi)
         connectNewest()
         factory.opened.single().refusesSends = true

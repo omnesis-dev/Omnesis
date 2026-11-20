@@ -15,6 +15,8 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import {
   ProviderId,
@@ -86,7 +88,7 @@ function twoSourceBatch(perSource: number, v: number) {
 }
 
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-ingest-yield-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-ingest-yield-${randomUUID()}.db`);
   db = createDatabase(dbPath);
   token = mintToken([SCOPE_ADMIN, SCOPE_READ, SCOPE_WRITE_ALL]);
   bus = new EventBus();

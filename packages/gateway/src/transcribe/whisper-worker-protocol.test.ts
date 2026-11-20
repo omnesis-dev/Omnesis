@@ -67,3 +67,31 @@ describe("whisper-worker-protocol framing", () => {
     expect(ids).toEqual([1, 2]);
   });
 });
+
+test("rejects oversized headers immediately from their prefix without buffering their advertised payload", () => {
+  const decoder = new FrameDecoder(() => {
+    throw new Error("unexpected frame");
+  });
+  const length = Buffer.alloc(4);
+  length.writeUInt32BE(0xffffffff);
+  expect(() => decoder.push(length)).toThrow(/header length/);
+});
+
+test.each([-4, 0.5, 3, 40 * 1024 * 1024 + 4, Number.MAX_SAFE_INTEGER])(
+  "rejects invalid PCM length %s before waiting for its payload",
+  (pcmBytes) => {
+    const decoder = new FrameDecoder(() => {
+      throw new Error("unexpected frame");
+    });
+    expect(() => decoder.push(encodeFrame({ type: "request", pcmBytes }))).toThrow(/length/);
+  },
+);
+
+test("the response channel refuses a request tail and invalid JSON does not reach the consumer", () => {
+  const seen: unknown[] = [];
+  const response = new FrameDecoder((header) => seen.push(header), { maxTailBytes: 0 });
+  expect(() => response.push(encodeFrame({ type: "request", pcmBytes: 4 }))).toThrow(/tail length/);
+  const malformed = Buffer.from([0, 0, 0, 1, 0x7b]);
+  expect(() => response.push(malformed)).toThrow(/JSON/);
+  expect(seen).toEqual([]);
+});

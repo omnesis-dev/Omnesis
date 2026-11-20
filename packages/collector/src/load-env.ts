@@ -7,13 +7,12 @@
  * module-scope `GATEWAY_URL` read (and any other import-time env reads) pick
  * up `OMNESIS_GATEWAY_URL` / `OMNESIS_TOKEN` from the file.
  */
-import { loadDotEnv } from "@omnesis/config";
+import { loadBootstrapDotEnv } from "@omnesis/config/dotenv-bootstrap";
 
-loadDotEnv();
+loadBootstrapDotEnv();
 if (typeof process.umask === "function") process.umask(0o077);
 
 if (
-  process.env.OMNESIS_CLOUD_RELAY_ENABLED === "1" &&
   !process.env.OMNESIS_GATEWAY_URL &&
   (process.env.OMNESIS_CLOUD_RELAY_DEVICE_FILE || !process.env.OMNESIS_TOKEN)
 ) {

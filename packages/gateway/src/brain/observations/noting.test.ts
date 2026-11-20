@@ -9,6 +9,8 @@
 
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test, vi, type Mock } from "vitest";
 import {
   createLogger,
@@ -83,7 +85,7 @@ describe("createObservationScorer", () => {
   });
 
   beforeEach(() => {
-    path = `/tmp/omnesis-test-${randomUUID()}.db`;
+    path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
     db = createDatabase(path);
     decisions = [];
     recordSpend = vi.fn(async () => {});

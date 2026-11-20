@@ -31,6 +31,18 @@ describe("the helper protocol, as the helper speaks it", () => {
     }
   });
 
+  test("private certificate commands reject missing, oversized and unexpected fields", () => {
+    for (const certificate of [
+      { cert: "", key: "invented" },
+      { cert: "invented", key: "" },
+      { cert: "x".repeat(256 * 1024 + 1), key: "invented" },
+      { cert: "invented", key: "x".repeat(64 * 1024 + 1) },
+      { cert: "invented", key: "invented", extra: true },
+    ]) {
+      expect(() => encodeHelperCommand({ type: "gateway-certificate", certificate })).toThrow();
+    }
+  });
+
   test("anything else is not an event", () => {
     for (const line of [
       "",

@@ -2,10 +2,11 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { generateKeyPairSync, createPublicKey } from "node:crypto";
-import { mkdtemp, readFile, rm, writeFile, stat } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
+import * as core from "@omnesis/core";
 import { tlsFiles } from "../test/support.js";
 import { gatewayKeyAccount, publicKeyFingerprint } from "./gateway-key-auth.js";
 import {
@@ -78,6 +79,7 @@ const policy: RecoveryPolicyPayload = {
 let directory: string;
 beforeAll(async () => {
   directory = await mkdtemp(join(tmpdir(), "omnesis-recovery-authority-"));
+  if (process.platform === "win32") await core.ensurePrivateDirs([directory]);
   const tls = tlsFiles(directory, "gateway.example.test");
   registration.certificate = await readFile(tls.certFile, "utf8");
 });
@@ -348,6 +350,66 @@ describe("fresh policy, independent rollback anchor and revocations", () => {
 });
 
 describe("offline authority tool", () => {
+  test.skipIf(process.platform !== "win32")(
+    "Windows protects new recovery authority bytes under a publicly readable owned parent",
+    async () => {
+      const root = join(directory, "public-parent");
+      await mkdir(root);
+      await core.execWindowsJob(join(process.env.SystemRoot!, "System32", "icacls.exe"), [
+        root,
+        "/grant",
+        "*S-1-1-0:(OI)(CI)(R)",
+        "/Q",
+      ]);
+      const privateKeyFile = join(root, "authority.key"),
+        publicKeyFile = join(root, "authority.pem");
+      await runRecoveryAuthorityTool("create", { privateKeyFile, publicKeyFile });
+      expect(core.inspectWindowsPrivatePathSync(privateKeyFile, "file").private).toBe(true);
+      expect(core.inspectWindowsPrivatePathSync(publicKeyFile, "file").private).toBe(false);
+      const previous = await readFile(privateKeyFile);
+      await expect(
+        runRecoveryAuthorityTool("create", { privateKeyFile, publicKeyFile }),
+      ).rejects.toMatchObject({ code: "EEXIST" });
+      expect(await readFile(privateKeyFile)).toEqual(previous);
+    },
+  );
+  test("Windows publishes a recovery authority privately and atomically without replacing an existing key", async () => {
+    const privateKeyFile = join(directory, "private-publish", "authority.key");
+    const publicKeyFile = join(directory, "private-publish", "authority.pem");
+    const publish = vi
+      .spyOn(core, "writeWindowsPrivateFileAtomicStream")
+      .mockImplementationOnce(async (path, source, length, options) => {
+        expect(path).toBe(privateKeyFile);
+        expect(options).toMatchObject({ replaceExisting: false });
+        const chunks: Buffer[] = [];
+        for await (const chunk of source as AsyncIterable<Uint8Array>)
+          chunks.push(Buffer.from(chunk));
+        const bytes = Buffer.concat(chunks);
+        expect(bytes).toHaveLength(length);
+        expect(bytes.toString()).toContain("PRIVATE KEY");
+        await writeFile(path, bytes, { flag: "wx", mode: 0o600 });
+      });
+    const descriptor = Object.getOwnPropertyDescriptor(process, "platform")!;
+    Object.defineProperty(process, "platform", { ...descriptor, value: "win32" });
+    try {
+      const created = await runRecoveryAuthorityTool("create", { privateKeyFile, publicKeyFile });
+      expect(created.publicKey).toContain("PUBLIC KEY");
+      expect(publish).toHaveBeenCalledOnce();
+      const previous = await readFile(privateKeyFile);
+      const previousPublic = await readFile(publicKeyFile);
+      publish.mockRejectedValueOnce(
+        Object.assign(new Error("Invented existing authority"), { code: "EEXIST" }),
+      );
+      await expect(
+        runRecoveryAuthorityTool("create", { privateKeyFile, publicKeyFile }),
+      ).rejects.toMatchObject({ code: "EEXIST" });
+      expect(await readFile(privateKeyFile)).toEqual(previous);
+      expect(await readFile(publicKeyFile)).toEqual(previousPublic);
+    } finally {
+      Object.defineProperty(process, "platform", descriptor);
+      vi.restoreAllMocks();
+    }
+  });
   test("creates an exclusive private authority and signs receipt/policy files without network or secret output", async () => {
     const root = join(directory, "offline");
     const paths = {
@@ -359,14 +421,20 @@ describe("offline authority tool", () => {
     const created = await runRecoveryAuthorityTool("create", paths);
     expect(created.publicKey).toContain("BEGIN PUBLIC KEY");
     expect(JSON.stringify(created)).not.toContain("PRIVATE KEY");
-    expect((await stat(paths.privateKeyFile)).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") {
+      expect((await stat(paths.privateKeyFile)).mode & 0o777).toBe(0o600);
+    } else {
+      expect(core.inspectWindowsPrivatePathSync(paths.privateKeyFile, "file").private).toBe(true);
+    }
     await expect(runRecoveryAuthorityTool("create", paths)).rejects.toThrow();
     await writeFile(paths.inputFile, JSON.stringify(receipt));
     expect(await runRecoveryAuthorityTool("receipt", paths)).toEqual({});
     expect(
       recoveryReceiptSchema.parse(JSON.parse(await readFile(paths.outputFile, "utf8"))).payload,
     ).toEqual(receipt);
-    expect((await stat(paths.outputFile)).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") {
+      expect((await stat(paths.outputFile)).mode & 0o777).toBe(0o600);
+    }
     await writeFile(paths.inputFile, JSON.stringify(policy));
     const result = await runRecoveryAuthorityTool("policy", paths);
     expect(result.policySha256).toBe(
@@ -412,9 +480,14 @@ describe("offline authority tool", () => {
     ).rejects.toThrow("cannot replace");
     expect(await readFile(privateKeyFile, "utf8")).toBe(authority.privateKey);
     await writeFile(privateKeyFile, "x".repeat(4097));
-    await expect(
-      runRecoveryAuthorityTool("receipt", { privateKeyFile, inputFile, outputFile }),
-    ).rejects.toThrow("too large");
+    const oversized = runRecoveryAuthorityTool("receipt", {
+      privateKeyFile,
+      inputFile,
+      outputFile,
+    });
+    if (process.platform === "win32")
+      await expect(oversized).rejects.toMatchObject({ code: "EPRIVATE" });
+    else await expect(oversized).rejects.toThrow("too large");
     await expect(readFile(outputFile)).rejects.toMatchObject({ code: "ENOENT" });
   });
 });

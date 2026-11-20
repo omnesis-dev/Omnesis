@@ -15,6 +15,8 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { makeCommand, PROTOCOL_VERSION, type AgentEvent } from "@omnesis/core";
@@ -206,7 +208,7 @@ describe("push delivery", () => {
 
 describe("the device WebSocket server", () => {
   it("names a stall in its heartbeat and in a closing connection", async () => {
-    const dbPath = `/tmp/omnesis-test-${randomUUID()}.db`;
+    const dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
     const db = createDatabase(dbPath);
     let inHeartbeat: ActivitySample | undefined;
     let inClose: ActivitySample | undefined;

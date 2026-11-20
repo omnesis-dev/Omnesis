@@ -14,13 +14,31 @@
  * that changes when a directive is added or renamed.
  */
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterEach, describe, expect, test } from "vitest";
+import { join, posix } from "node:path";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { collectSecurityData, type SecurityCommandRunner } from "@omnesis/core/doctor";
 import { generateSystemdUnit } from "./units.js";
 import { HARDENED_CONFIG_DIR, generateHardenedSystemdUnit } from "./hardened.js";
+
+// Linux target paths are exact keys; only their owned backing files use host paths.
+const { fixturePaths } = vi.hoisted(() => ({ fixturePaths: new Map<string, string>() }));
+vi.mock("node:fs", async (importOriginal) => {
+  const fs = await importOriginal<typeof import("node:fs")>();
+  return {
+    ...fs,
+    existsSync: (path: import("node:fs").PathLike) =>
+      fs.existsSync(typeof path === "string" ? (fixturePaths.get(path) ?? path) : path),
+    readFileSync: ((...args: unknown[]) => {
+      const [path, ...options] = args;
+      return Reflect.apply(fs.readFileSync, fs, [
+        typeof path === "string" ? (fixturePaths.get(path) ?? path) : path,
+        ...options,
+      ]);
+    }) as typeof fs.readFileSync,
+  };
+});
 
 const dirs: string[] = [];
 
@@ -31,6 +49,7 @@ function tmp(prefix: string): string {
 }
 
 afterEach(() => {
+  fixturePaths.clear();
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
@@ -41,18 +60,18 @@ const runner: SecurityCommandRunner = async (cmd) => {
 
 describe("generated systemd user unit satisfies the doctor's hardening audit", () => {
   test("every required directive is present and correct", async () => {
-    const homeDir = tmp("omnesis-home-");
-    const configDir = join(homeDir, ".config", "omnesis");
-    const unitDir = join(homeDir, ".config", "systemd", "user");
-    mkdirSync(unitDir, { recursive: true });
+    const homeDir = "/home/service-audit-fixture";
+    const configDir = posix.join(homeDir, ".config", "omnesis");
+    const unitPath = join(tmp("omnesis-unit-audit-"), "gateway.service");
+    fixturePaths.set(posix.join(homeDir, ".config/systemd/user/omnesis-gateway.service"), unitPath);
     writeFileSync(
-      join(unitDir, "omnesis-gateway.service"),
+      unitPath,
       generateSystemdUnit({
         component: "gateway",
         configDir,
         exec: ["/usr/local/bin/omnesis", "gateway", "serve"],
         env: { OMNESIS_CONFIG_DIR: configDir },
-        logsDir: join(homeDir, ".local", "state", "omnesis", "logs"),
+        logsDir: posix.join(homeDir, ".local", "state", "omnesis", "logs"),
       }),
     );
 
@@ -71,12 +90,12 @@ describe("generated systemd user unit satisfies the doctor's hardening audit", (
   });
 
   test("extra writable paths from the spec still satisfy ReadWritePaths", async () => {
-    const homeDir = tmp("omnesis-home-");
-    const configDir = join(homeDir, ".config", "omnesis");
-    const unitDir = join(homeDir, ".config", "systemd", "user");
-    mkdirSync(unitDir, { recursive: true });
+    const homeDir = "/home/service-audit-fixture";
+    const configDir = posix.join(homeDir, ".config", "omnesis");
+    const unitPath = join(tmp("omnesis-unit-audit-"), "gateway.service");
+    fixturePaths.set(posix.join(homeDir, ".config/systemd/user/omnesis-gateway.service"), unitPath);
     writeFileSync(
-      join(unitDir, "omnesis-gateway.service"),
+      unitPath,
       generateSystemdUnit({
         component: "gateway",
         configDir,
@@ -85,7 +104,7 @@ describe("generated systemd user unit satisfies the doctor's hardening audit", (
           OMNESIS_CONFIG_DIR: configDir,
           OMNESIS_DB_PATH: "/srv/omnesis/omnesis.db",
         },
-        logsDir: join(homeDir, ".local", "state", "omnesis", "logs"),
+        logsDir: posix.join(homeDir, ".local", "state", "omnesis", "logs"),
       }),
     );
 

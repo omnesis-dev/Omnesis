@@ -17,7 +17,6 @@ import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
-import kotlinx.coroutines.async
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
@@ -45,8 +44,6 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
-import org.junit.Assume.assumeFalse
-import org.junit.Assume.assumeTrue
 import org.junit.Before
 import org.junit.Test
 
@@ -56,12 +53,7 @@ import org.junit.Test
  * while the mandatory generic ack still goes out, and the outbound
  * `{kind:"event", type, payload}` shape from [DeviceSocket.sendEvent].
  */
-class DeviceSocketTest : DeviceSocketCases(cloudRelay = true)
-
-/** A build without cloud connectivity: the socket behaves as it did before the feature. */
-class DeviceSocketCloudOffTest : DeviceSocketCases(cloudRelay = false)
-
-abstract class DeviceSocketCases(private val cloudRelay: Boolean) {
+class DeviceSocketTest {
 
     /** Server end of the socket: records inbound frames, exposes the ws to push frames. */
     private class ServerSide {
@@ -119,19 +111,11 @@ abstract class DeviceSocketCases(private val cloudRelay: Boolean) {
         server.shutdown()
     }
 
-    private fun socket(route: DirectGatewayRoute? = null, probe: DirectGatewayProbing = DirectGatewayProbe, expected: String? = null, refresh: (suspend () -> Unit)? = null,
-                       cloudOnly: Boolean = route != null || expected != null || refresh != null): DeviceSocket {
-        // Routing and identity cases only exist with cloud connectivity.
-        assumeTrue(cloudRelay || !cloudOnly)
-        return newSocket(route, probe, expected, refresh, cloudRelay)
-    }
-
-    private fun newSocket(route: DirectGatewayRoute?, probe: DirectGatewayProbing, expected: String?, refresh: (suspend () -> Unit)?, cloudRelay: Boolean) = DeviceSocket(
+    private fun socket(route: DirectGatewayRoute? = null, probe: DirectGatewayProbing = DirectGatewayProbe, expected: String? = null, refresh: (suspend () -> Unit)? = null) = DeviceSocket(
         OkHttpClient(),
         server.url("/").toString(),
         "tok",
         scope,
-        cloudRelay = cloudRelay,
         directRoute = route,
         directProbe = probe,
         expectedDeviceId = expected,
@@ -369,7 +353,7 @@ abstract class DeviceSocketCases(private val cloudRelay: Boolean) {
     }
 
     @Test fun `default direct socket stays independent of cloud routing and retains decoded device metadata`() = runBlocking {
-        val socket = DeviceSocket(OkHttpClient(), server.url("/").toString(), "tok", scope, cloudRelay = cloudRelay)
+        val socket = DeviceSocket(OkHttpClient(), server.url("/").toString(), "tok", scope)
         socket.start()
         assertEquals("Bearer tok", server.takeRequest(5, TimeUnit.SECONDS)!!.getHeader("Authorization"))
         val hello = serverSide.takeFrame()
@@ -383,78 +367,6 @@ abstract class DeviceSocketCases(private val cloudRelay: Boolean) {
         assertEquals(connected, socket.state.value)
         assertTrue(serverSide.received.isEmpty())
         assertNull(socket.dispatchSync)
-        socket.stop()
-    }
-
-    @Test fun `without cloud connectivity frames ahead of the hello reply are still handled`() = runBlocking {
-        assumeFalse(cloudRelay)
-        val socket = socket()
-        val event = async(start = CoroutineStart.UNDISPATCHED) { withTimeout(5_000) { socket.events.first() } }
-        socket.start()
-        assertNotNull(server.takeRequest(5, TimeUnit.SECONDS))
-        val hello = serverSide.takeFrame()
-        serverSide.ws!!.send("""{"kind":"event","type":"sync.progress","payload":{"n":1}}""")
-        serverSide.ws!!.send("""{"kind":"command","id":"cmd-1","type":"source.debug","payload":{}}""")
-        assertEquals("sync.progress", event.await().type)
-        assertEquals("cmd-1", serverSide.takeFrame()["correlationId"]!!.jsonPrimitive.content)
-        assertFalse(socket.state.value is DeviceSocket.ConnectionState.Connected)
-        serverSide.ws!!.send("""{"kind":"response","correlationId":"${hello["id"]!!.jsonPrimitive.content}","ok":true,"result":{"deviceId":"dev-1","deviceName":"Pixel Test","scopes":["read"]}}""")
-        withTimeout(5_000) { socket.state.first { it is DeviceSocket.ConnectionState.Connected } }
-        socket.stop()
-    }
-
-    @Test fun `without cloud connectivity a frame handler does not hold the socket lifecycle`() = runBlocking {
-        assumeFalse(cloudRelay)
-        val socket = socket()
-        val stoppedDuringFrame = CompletableDeferred<Boolean>()
-        socket.dispatchSync = {
-            val stopper = Thread { socket.stop() }.apply { start() }
-            stopper.join(3_000)
-            stoppedDuringFrame.complete(!stopper.isAlive)
-            true
-        }
-        connect(socket)
-        serverSide.ws!!.send("""{"kind":"command","id":"cmd-1","type":"source.sync","payload":{"sourceId":"health-connect"}}""")
-        assertTrue(withTimeout(10_000) { stoppedDuringFrame.await() })
-    }
-
-    @Test fun `without cloud connectivity the hello reply's device identity is not compared`() = runBlocking {
-        assumeFalse(cloudRelay)
-        val socket = newSocket(null, DirectGatewayProbe, "a-different-device", null, cloudRelay = false)
-        connect(socket)
-        assertEquals("dev-1", (socket.state.value as DeviceSocket.ConnectionState.Connected).deviceId)
-        socket.stop()
-    }
-
-    @Test fun `without cloud connectivity a route is never used reported or maintained`() {
-        assumeFalse(cloudRelay)
-        scope.cancel()
-        val scheduler = kotlinx.coroutines.test.TestCoroutineScheduler()
-        scope = CoroutineScope(SupervisorJob() + kotlinx.coroutines.test.StandardTestDispatcher(scheduler))
-        val route = DirectGatewayRoute.createValidated("https://gateway.example.test", listOf(DirectGatewayCandidate("127.0.0.1", server.port)), true)!!
-        route.connected(java.net.InetSocketAddress("127.0.0.1", 9443))
-        var probes = 0
-        var refreshes = 0
-        val probe = object : DirectGatewayProbing {
-            override suspend fun reachable(route: DirectGatewayRoute, client: OkHttpClient): Boolean { probes++; return true }
-        }
-        val socket = newSocket(route, probe, null, { refreshes++ }, cloudRelay = false)
-        socket.start()
-        scheduler.runCurrent()
-        assertNotNull(server.takeRequest(5, TimeUnit.SECONDS))
-        val hello = serverSide.takeFrame()
-        serverSide.ws!!.send("""{"kind":"response","correlationId":"${hello["id"]!!.jsonPrimitive.content}","ok":true,"result":{"deviceId":"dev-1","deviceName":"Pixel Test","scopes":["read"]}}""")
-        val connected = runBlocking { withTimeout(5_000) { socket.state.first { it is DeviceSocket.ConnectionState.Connected } } }
-        assertNull((connected as DeviceSocket.ConnectionState.Connected).connectionPath)
-        scheduler.advanceTimeBy(120_000)
-        scheduler.runCurrent()
-        runBlocking { socket.refreshDirectPath(); socket.promoteDirectPath() }
-        socket.recoverAfterInterruption()
-        assertEquals(0, probes)
-        assertEquals(0, refreshes)
-        assertEquals(connected, socket.state.value)
-        assertNull(serverSide.received.poll(300, TimeUnit.MILLISECONDS))
-        assertEquals(1, server.requestCount)
         socket.stop()
     }
 

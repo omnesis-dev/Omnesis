@@ -12,7 +12,6 @@ import { pinnedGatewayJson } from "./google-device-pairing.js";
 afterEach(() => vi.unstubAllEnvs());
 
 test("verified authenticated LAN return migrates an existing relay WebSocket without replaying HTTP, then revocation fails closed", async () => {
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
   let authorized = true,
     lan = false;
   const gateway = await echoGateway(

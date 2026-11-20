@@ -63,19 +63,8 @@ async function amend(
     await route.abort().catch(() => {});
   }
 }
-/** The gateway under test runs without the flag; the portal sees it on, as an opted-in gateway reports. */
-async function relayOn(page: Page) {
-  await page.route("**/status", (route) => amend(route, (body) => ({ ...body, cloudRelay: true })));
-}
-/** The same for a signed-out browser, which learns it from its session check. */
-async function relayOnSignedOut(page: Page) {
-  await page.route("**/portal/api/session", (route) =>
-    amend(route, (body) => ({ ...body, cloudRelay: true })),
-  );
-}
 async function pendingBrowser(page: Page, pairingCode: string, replaceCode = false) {
   await configured(page);
-  await relayOnSignedOut(page);
   const { value, verificationCode } = challenge();
   await page.addInitScript((pending) => {
     if (new URL(location.href).searchParams.get("googlePairing") === pending.requestId)
@@ -97,24 +86,7 @@ async function pendingBrowser(page: Page, pairingCode: string, replaceCode = fal
   return { value, verificationCode };
 }
 
-test("without the flag the login page offers no sign-in and never asks for its configuration", async ({
-  page,
-}) => {
-  let asked = false;
-  await page.route("**/devices/google/config", (route) => {
-    asked = true;
-    return route.fulfill({
-      json: { clientId: "fictional-web-client", gatewayFingerprint: fingerprint, webSignIn: true },
-    });
-  });
-  await page.goto("/portal/");
-  await expect(page.getByRole("button", { name: "Log in", exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Continue with Google" })).toHaveCount(0);
-  expect(asked).toBe(false);
-});
-
 test("optional Google sign-in stays hidden when configuration is absent", async ({ page }) => {
-  await relayOnSignedOut(page);
   await page.route("**/devices/google/config", (route) =>
     route.fulfill({ status: 404, body: "Not Found" }),
   );
@@ -153,7 +125,6 @@ test("device approval presents the complete comparison code and takes one explic
     decided = true;
     await route.fulfill({ json: { ok: true } });
   });
-  await relayOn(page);
   await page.goto(`/portal/?token=${encodeURIComponent(token())}`);
   await page.locator("nav.sidebar-nav").waitFor();
   await page.goto("/portal/settings/devices");
@@ -224,7 +195,6 @@ test("a request the gateway still lists as approved, denied or out of time is no
   await page.route("**/admin/cloud-pairing/requests", (route) =>
     route.fulfill({ json: { items } }),
   );
-  await relayOn(page);
   await page.goto(`/portal/?token=${encodeURIComponent(token())}`);
   await page.locator("nav.sidebar-nav").waitFor();
   await page.goto("/portal/settings/devices");
@@ -257,7 +227,6 @@ test("a device waiting for approval is announced above every page, in the page f
   await page.route("**/admin/cloud-pairing/requests", (route) =>
     route.fulfill({ json: { items } }),
   );
-  await relayOn(page);
   await page.goto(`/portal/?token=${encodeURIComponent(token())}`);
   await page.locator("nav.sidebar-nav").waitFor();
   const strip = page.getByRole("region", { name: "Devices waiting for approval" });
@@ -396,7 +365,6 @@ test("a device that joined by signing in has the same actions as any other, all 
       },
     });
   });
-  await relayOn(page);
   await page.goto(`/portal/?token=${encodeURIComponent(token())}`);
   await page.locator("nav.sidebar-nav").waitFor();
   await page.goto("/portal/settings/devices");
@@ -437,8 +405,10 @@ test("a device that joined by signing in has the same actions as any other, all 
   await page.screenshot({ path: test.info().outputPath("device-menu-mobile.png") });
 });
 
-test("without the flag no page asks for waiting devices or shows the strip", async ({ page }) => {
-  await configured(page);
+// The gateway under test never linked an account, so it offers no sign-in pairing.
+test("a gateway with no account asks for no waiting devices and shows no strip", async ({
+  page,
+}) => {
   let asked = false;
   await page.route("**/admin/cloud-pairing/requests", (route) => {
     asked = true;
@@ -465,8 +435,9 @@ test("without the flag no page asks for waiting devices or shows the strip", asy
   expect(asked).toBe(false);
 });
 
-test("without the flag the devices page asks for no device approvals", async ({ page }) => {
-  await configured(page);
+test("on a gateway with no account the devices page asks for no device approvals", async ({
+  page,
+}) => {
   let asked = false;
   await page.route("**/admin/cloud-pairing/requests", (route) => {
     asked = true;
@@ -545,7 +516,6 @@ test("with account sign-in the login page offers the Omnesis account, with a pas
       },
     }),
   );
-  await relayOnSignedOut(page);
   await page.goto("/portal/");
   const signIn = page.getByRole("region", { name: "Omnesis account sign-in" });
   await expect(

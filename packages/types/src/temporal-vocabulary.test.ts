@@ -166,9 +166,11 @@ describe("temporal vocabulary has exactly one declaration", () => {
 
   it("no stale allowlist entries", () => {
     for (const entry of ALLOWED_LITERAL_LISTS) {
-      expect(sourceFiles(join(REPO_ROOT, "packages")).map((f) => relative(REPO_ROOT, f))).toContain(
-        entry,
-      );
+      expect(
+        sourceFiles(join(REPO_ROOT, "packages")).map((f) =>
+          relative(REPO_ROOT, f).split(sep).join("/"),
+        ),
+      ).toContain(entry);
     }
   });
 });

@@ -115,7 +115,6 @@ describe.skipIf(!browserReady)("gateway names at the DNS broker", () => {
       const fresh = new E2EHarness({
         extraGatewayEnv: {
           ...world.clientEnv({ NODE_EXTRA_CA_CERTS: bundle }),
-          OMNESIS_CLOUD_RELAY_ENABLED: "1",
           OMNESIS_CLOUD_RELAY_URL: world.relayOrigin,
           OMNESIS_ACME_DIRECTORY_URL: authority.directoryUrl,
           OMNESIS_ACME_CA_FILE: acmeRoot,

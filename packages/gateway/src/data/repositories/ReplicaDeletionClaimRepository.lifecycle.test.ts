@@ -9,6 +9,8 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import {
   AccountId,
   SourceType,
@@ -78,7 +80,7 @@ describe("replica deletion claims across the member lifecycle", () => {
     }).id;
 
   beforeEach(() => {
-    dbPath = `/tmp/omnesis-test-${randomUUID()}.db`;
+    dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
     db = createDatabase(dbPath);
     macA = host("mac-a");
     macB = host("mac-b");

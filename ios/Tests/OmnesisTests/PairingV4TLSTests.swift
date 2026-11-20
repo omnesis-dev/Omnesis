@@ -23,7 +23,7 @@ final class PairingV4TLSTests: XCTestCase {
             let field = name == "pinned-key-strict" ? "spkiFingerprint" : "fingerprint"
             XCTAssertEqual(Set(tls.keys), name == "system" ? ["mode"] : ["mode", field])
             if name != "system" { XCTAssertEqual(tls[field], digest) }
-            let decoded = try PairingPayload.decode(from: XCTUnwrap(String(data: data, encoding: .utf8)), cloudRelayEnabled: true)
+            let decoded = try PairingPayload.decode(from: XCTUnwrap(String(data: data, encoding: .utf8)))
             XCTAssertEqual(decoded, .v4(payload))
         }
     }
@@ -58,7 +58,7 @@ final class PairingV4TLSTests: XCTestCase {
             """#, "tls.fingerprint"),
         ]
         for (raw, field) in templates {
-            XCTAssertThrowsError(try PairingPayload.decode(from: raw, cloudRelayEnabled: true)) {
+            XCTAssertThrowsError(try PairingPayload.decode(from: raw)) {
                 XCTAssertEqual($0 as? PairingPayloadError, .missingField(field))
             }
         }

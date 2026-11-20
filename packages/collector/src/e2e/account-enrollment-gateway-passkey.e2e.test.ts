@@ -61,7 +61,6 @@ describe.skipIf(!browserReady)("passkeys on the gateway's own page", () => {
   /** Holds the passkey of the account the gateway is linked to. */
   let owner: PasskeySession;
   const priorCaFile = process.env.OMNESIS_CLOUD_RELAY_GATEWAY_CA_FILE;
-  const priorEnabled = process.env.OMNESIS_CLOUD_RELAY_ENABLED;
 
   /**
    * Opens the portal on the gateway's public name, logged in with the owner's admin token. A
@@ -77,11 +76,31 @@ describe.skipIf(!browserReady)("passkeys on the gateway's own page", () => {
     return page;
   }
 
+  async function relayMetrics(): Promise<{ slots: number; capacityRefusals: number }> {
+    const response = await fetch(`http://127.0.0.1:${world.metricsPort}/metrics`);
+    expect(response.status).toBe(200);
+    const lines = (await response.text()).split("\n");
+    const metric = (name: string, optional = false): number => {
+      const line = lines.find((value) => value.startsWith(`${name} `));
+      if (!line) {
+        if (optional) return 0;
+        throw new Error(`Missing relay metric ${name}`);
+      }
+      const value = Number(line.slice(name.length + 1));
+      if (!Number.isSafeInteger(value) || value < 0)
+        throw new Error(`Invalid relay metric ${name}`);
+      return value;
+    };
+    return {
+      slots: metric("cloud_relay_active_streams") + metric("cloud_relay_pending_streams"),
+      capacityRefusals: metric('cloud_relay_stream_events_total{event="capacity"}', true),
+    };
+  }
+
   beforeAll(async () => {
     directory = await mkdtemp(join(tmpdir(), "omnesis-enroll-gateway-passkey-"));
-    world = await EnrollmentWorld.create(directory, { signupPolicy: "open" });
+    world = await EnrollmentWorld.create(directory, { signupPolicy: "open", metrics: true });
     process.env.OMNESIS_CLOUD_RELAY_GATEWAY_CA_FILE = world.pki.caCertFile;
-    process.env.OMNESIS_CLOUD_RELAY_ENABLED = "1";
     browser = await PasskeyBrowser.launch(world);
     gateway = await EnrollmentGateway.start(world, "home");
     owner = await browser.session();
@@ -98,8 +117,6 @@ describe.skipIf(!browserReady)("passkeys on the gateway's own page", () => {
     } finally {
       if (priorCaFile === undefined) delete process.env.OMNESIS_CLOUD_RELAY_GATEWAY_CA_FILE;
       else process.env.OMNESIS_CLOUD_RELAY_GATEWAY_CA_FILE = priorCaFile;
-      if (priorEnabled === undefined) delete process.env.OMNESIS_CLOUD_RELAY_ENABLED;
-      else process.env.OMNESIS_CLOUD_RELAY_ENABLED = priorEnabled;
       if (directory) await rm(directory, { recursive: true, force: true });
     }
   }, 60_000);
@@ -151,43 +168,57 @@ describe.skipIf(!browserReady)("passkeys on the gateway's own page", () => {
   }, 120_000);
 
   test("right after linking, the owner confirms the passkey from the setup checklist on the gateway's own page", async () => {
-    const page = await ownerPortal(owner);
-    await page.goto(`${gateway.publicOrigin}/portal/settings/account`);
-    // Nothing is confirmed yet, so the checklist stands in for the headline; its last step is
-    // the account's passkey, used here on the gateway's own page.
-    await expectText(page, "Finish setting up");
-    await expectText(page, "Let your passkey add devices");
-    await expectText(page, "Not confirmed on this gateway");
-    await shot(page, "confirm-card");
-    await clickFirst(page, ["Continue with passkey"]);
-    const confirmed = await waitFor(async () => {
-      const status = await gateway.status();
-      return status.deviceEnrollment.confirmedSignIns?.length ? status : undefined;
-    }, "the passkey to be confirmed");
-    expect(confirmed.deviceEnrollment.confirmedSignIns).toEqual([
-      {
-        type: "passkey",
-        id: (await passkeyIds(owner))[0],
-        at: expect.any(Number),
-        via: "gateway-origin",
-      },
-    ]);
-    expect(confirmed.deviceEnrollment.trustedSignIns).toEqual([
-      expect.objectContaining({ source: "link-page", confirmed: true }),
-    ]);
-    await expectText(page, "Confirmed on this gateway");
-    // Set up: the checklist gives way to the account itself.
-    await expectText(page, "This gateway is linked to your Omnesis account.");
-    expect(await page.getByText("Finish setting up").count()).toBe(0);
-    await shot(page, "confirmed");
-    // The list the CLI reads says the same.
-    const listed = await gateway.json<{ items: Array<{ confirmed: boolean; via?: string }> }>(
-      "/admin/cloud-relay/trusted-sign-ins",
-    );
-    expect(listed.items).toEqual([
-      expect.objectContaining({ confirmed: true, via: "gateway-origin" }),
-    ]);
-    expect(owner.errors).toEqual([]);
+    const slotsBefore = (await relayMetrics()).slots;
+    const confirmer = await browser.session();
+    try {
+      const copied = await copyPasskey(owner, confirmer);
+      const page = await ownerPortal(confirmer);
+      await page.goto(`${gateway.publicOrigin}/portal/settings/account`);
+      // Nothing is confirmed yet, so the checklist stands in for the headline; its last step is
+      // the account's passkey, used here on the gateway's own page.
+      await expectText(page, "Finish setting up");
+      await expectText(page, "Let your passkey add devices");
+      await expectText(page, "Not confirmed on this gateway");
+      await shot(page, "confirm-card");
+      await clickFirst(page, ["Continue with passkey"]);
+      const confirmed = await waitFor(async () => {
+        const status = await gateway.status();
+        return status.deviceEnrollment.confirmedSignIns?.length ? status : undefined;
+      }, "the passkey to be confirmed");
+      expect(confirmed.deviceEnrollment.confirmedSignIns).toEqual([
+        {
+          type: "passkey",
+          id: (await passkeyIds(owner))[0],
+          at: expect.any(Number),
+          via: "gateway-origin",
+        },
+      ]);
+      expect(confirmed.deviceEnrollment.trustedSignIns).toEqual([
+        expect.objectContaining({ source: "link-page", confirmed: true }),
+      ]);
+      await expectText(page, /(?:^| · )Confirmed on this gateway$/);
+      await page.locator("#relay-setup-title").waitFor({ state: "detached", timeout: 20_000 });
+      // Set up: the checklist gives way to the account itself.
+      await expectText(page, "This gateway is linked to your Omnesis account.");
+      expect(await page.getByText("Finish setting up").count()).toBe(0);
+      await shot(page, "confirmed");
+      // The list the CLI reads says the same.
+      const listed = await gateway.json<{ items: Array<{ confirmed: boolean; via?: string }> }>(
+        "/admin/cloud-relay/trusted-sign-ins",
+      );
+      expect(listed.items).toEqual([
+        expect.objectContaining({ confirmed: true, via: "gateway-origin" }),
+      ]);
+      expect(owner.errors).toEqual([]);
+      expect(confirmer.errors).toEqual([]);
+      await syncPasskey(confirmer, owner, copied);
+    } finally {
+      await confirmer.context.close();
+      await waitFor(
+        async () => (await relayMetrics()).slots <= slotsBefore,
+        "the completed portal profile to release its relay streams",
+      );
+    }
   }, 180_000);
 
   /**
@@ -254,25 +285,31 @@ describe.skipIf(!browserReady)("passkeys on the gateway's own page", () => {
     await gateway.pace(3);
     const before = new Set((await gateway.devices()).map((device) => device.id));
     const fresh = await browser.session();
-    const copied = await copyPasskey(owner, fresh);
-    const visited: string[] = [];
-    fresh.page.on("framenavigated", (frame) => {
-      if (frame === fresh.page.mainFrame()) visited.push(frame.url());
-    });
-    await fresh.page.goto(`${gateway.publicOrigin}/portal/`);
-    await clickFirst(fresh.page, ["Continue with passkey"]);
-    await fresh.page.locator("nav.sidebar-nav").waitFor({ timeout: 30_000 });
-    await syncPasskey(fresh, owner, copied);
-    expect(visited.filter((url) => new URL(url).origin === world.relayOrigin)).toEqual([]);
-    const added = (await gateway.devices()).filter((device) => !before.has(device.id));
-    expect(added).toEqual([
-      expect.objectContaining({
-        kind: "portal",
-        enrollment: expect.objectContaining({ method: "automatic", signIn: "passkey" }),
-      }),
-    ]);
-    expect(fresh.errors).toEqual([]);
-    await fresh.context.close();
+    try {
+      const copied = await copyPasskey(owner, fresh);
+      const visited: string[] = [];
+      fresh.page.on("framenavigated", (frame) => {
+        if (frame === fresh.page.mainFrame()) visited.push(frame.url());
+      });
+      const refusedBefore = (await relayMetrics()).capacityRefusals;
+      await fresh.page.goto(`${gateway.publicOrigin}/portal/`);
+      await clickFirst(fresh.page, ["Continue with passkey"]);
+      await fresh.page.locator("nav.sidebar-nav").waitFor({ timeout: 30_000 });
+      await syncPasskey(fresh, owner, copied);
+      // A retried connection can hide a rejected module load; see #1126.
+      expect((await relayMetrics()).capacityRefusals).toBe(refusedBefore);
+      expect(visited.filter((url) => new URL(url).origin === world.relayOrigin)).toEqual([]);
+      const added = (await gateway.devices()).filter((device) => !before.has(device.id));
+      expect(added).toEqual([
+        expect.objectContaining({
+          kind: "portal",
+          enrollment: expect.objectContaining({ method: "automatic", signIn: "passkey" }),
+        }),
+      ]);
+      expect(fresh.errors).toEqual([]);
+    } finally {
+      await fresh.context.close();
+    }
   }, 180_000);
 
   test("TM-01 (join): a device-enrollment assertion steered by a relay page or a sibling gateway's page joins nothing", async () => {
@@ -490,7 +527,6 @@ describe.skipIf(!browserReady)("passkeys on the gateway's own page", () => {
       const handoff = new ManagedAccountBrowser({
         accountId: () => account,
         env: () => ({
-          OMNESIS_CLOUD_RELAY_ENABLED: "1",
           OMNESIS_CLOUD_RELAY_URL: world.relayOrigin,
           OMNESIS_CLOUD_RELAY_SESSION_FILE: rogue.sessionFile,
           OMNESIS_CLOUD_RELAY_OWNER_KEY_FILE: rogue.ownerKeyFile,

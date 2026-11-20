@@ -3,6 +3,7 @@
 
 import { z } from "zod";
 import { sourceTypeOf, trySourceId } from "@omnesis/types";
+import { storageRetentionPolicySchema } from "./storage-retention-config.js";
 
 /**
  * Generation number of the persisted config shape (`omnesis.json`).
@@ -760,15 +761,19 @@ const indexer = z
     embedder: z
       .object({
         /**
-         * Per-slot context size in tokens. The embedding model's max
-         * context is 8192; default 2048 keeps KV-cache memory low.
-         * Raise to fit longer chunks; KV cache scales linearly.
+         * Per-slot context size in tokens, for a local GGUF embedder.
+         * Default 2048 keeps KV-cache memory low; raise it to fit longer
+         * chunks (KV cache scales linearly). It is capped at the window the
+         * model was trained on (512 tokens for the BGE, mxbai and E5
+         * models), and an input longer than the context is cut to it.
          */
         contextSize: z
           .number()
           .int()
           .positive()
-          .describe("Per-slot embedder context size in tokens. Default 2048 (model max 8192).")
+          .describe(
+            "Per-slot local embedder context size in tokens. Default 2048, capped at the model's trained window.",
+          )
           .optional(),
         /**
          * Hard ceiling per `getEmbeddingFor` call in milliseconds.
@@ -1781,6 +1786,61 @@ const gatewayTls = z
   })
   .strict();
 
+/** Capacity limits pause growth; they never authorize deleting indexed data. */
+export const gatewayStoragePolicySchema = z
+  .object({
+    maxBytes: z
+      .number()
+      .int()
+      .positive()
+      .max(Number.MAX_SAFE_INTEGER)
+      .nullable()
+      .optional()
+      .describe("Maximum gateway footprint in bytes; null means no size limit."),
+    maxDiskUsedPercent: z
+      .number()
+      .min(50)
+      .max(99)
+      .optional()
+      .describe("Pause growth when any gateway volume reaches this used percentage. Default 95."),
+    resumeMarginPercent: z
+      .number()
+      .min(0.1)
+      .max(10)
+      .optional()
+      .describe("Recovery margin in percentage points below disk and quota limits. Default 2."),
+    measurementIntervalMs: z
+      .number()
+      .int()
+      .min(1000)
+      .max(300000)
+      .optional()
+      .describe("Capacity inventory cadence in milliseconds. Default 30000."),
+    retention: z
+      .array(storageRetentionPolicySchema)
+      .max(1000)
+      .refine(
+        (policies) => new Set(policies.map((policy) => policy.sourceId)).size === policies.length,
+        "Each source may have only one retention policy",
+      )
+      .optional()
+      .describe(
+        "Explicit rolling document retention policies. Omitted means no automatic trimming.",
+      ),
+    measurementMaxAgeMs: z
+      .number()
+      .int()
+      .min(1000)
+      .max(3600000)
+      .optional()
+      .describe(
+        "Maximum age of a successful capacity measurement before growth pauses. Default 120000.",
+      ),
+  })
+  .strict();
+
+export type GatewayStoragePolicySettings = z.infer<typeof gatewayStoragePolicySchema>;
+
 const gateway = z
   .object({
     /**
@@ -1974,6 +2034,7 @@ const gateway = z
         "Worker threads for the analytics DuckDB instance. Applied at gateway start. Default: half the cores, 2–8.",
       )
       .optional(),
+    storage: gatewayStoragePolicySchema.optional(),
     /**
      * Minimum free disk space (megabytes) on the gateway DB volume below
      * which the gateway pauses writes: document ingestion is rejected with

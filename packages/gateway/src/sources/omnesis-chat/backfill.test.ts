@@ -4,6 +4,7 @@
 import { existsSync, mkdirSync, unlinkSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 type Db = Database.Database;
 
@@ -16,10 +17,10 @@ import type { ConversationRecord } from "../../agent/conversation-store.js";
 import type Database from "better-sqlite3";
 
 function tempDbPath(): string {
-  return `/tmp/omnesis-chat-backfill-test-${randomUUID()}.db`;
+  return join(fixtureTmpdir(), `omnesis-chat-backfill-test-${randomUUID()}.db`);
 }
 function tempDir(): string {
-  const p = `/tmp/omnesis-chat-backfill-dir-${randomUUID()}`;
+  const p = join(fixtureTmpdir(), `omnesis-chat-backfill-dir-${randomUUID()}`);
   mkdirSync(p, { recursive: true });
   return p;
 }

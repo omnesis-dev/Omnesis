@@ -15,12 +15,16 @@ import { bm25Search } from "./bm25.js";
 import { buildLexicalIndexData } from "./lexical-index-data.js";
 import { LexicalIndexFollower } from "./lexical-index-follower.js";
 import { closeTempDb } from "./test-utils.js";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 let db: Db;
 let follower: LexicalIndexFollower | undefined;
 
 beforeEach(() => {
-  db = createIndexDatabase(`/tmp/omnesis-lexical-follower-${randomUUID()}.db`);
+  db = createIndexDatabase(
+    fixtureJoin(fixtureTmpdir(), `omnesis-lexical-follower-${randomUUID()}.db`),
+  );
 });
 
 afterEach(() => {

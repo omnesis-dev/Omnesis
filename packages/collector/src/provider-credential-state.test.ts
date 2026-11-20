@@ -22,6 +22,7 @@ import strava from "@omnesis/provider-strava";
 import imap from "@omnesis/provider-imap";
 import enableBanking from "@omnesis/provider-enable-banking";
 import plaid from "@omnesis/provider-plaid";
+import plaud from "@omnesis/provider-plaud";
 
 const fixtures = [
   {
@@ -66,6 +67,15 @@ const fixtures = [
     definition: plaid,
     file: "item.json",
     fields: { item_id: "fixture@example.com", access_token: "fictional-token" },
+  },
+  {
+    definition: plaud,
+    file: "credentials.json",
+    fields: {
+      email: "fixture@example.com",
+      api_base: "https://api.plaud.ai",
+      access_token: "fictional-token",
+    },
   },
 ];
 const dirs: string[] = [];

@@ -5,6 +5,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -13,8 +14,22 @@ import {
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, test, expect, beforeEach, afterEach, vi } from "vitest";
-import { LogLevel, setLogLevel } from "@omnesis/core";
+import { LogLevel, setLogLevel, inspectWindowsPrivatePathSync } from "@omnesis/core";
 import { ConfigBootError, ConfigStore } from "./config-store.js";
+
+const writing = vi.hoisted(() => ({
+  afterPublish: undefined as (() => Promise<void>) | undefined,
+}));
+vi.mock("@omnesis/core", async (importOriginal) => {
+  const core = await importOriginal<typeof import("@omnesis/core")>();
+  return {
+    ...core,
+    atomicWriteFile: async (...args: Parameters<typeof core.atomicWriteFile>) => {
+      await core.atomicWriteFile(...args);
+      await writing.afterPublish?.();
+    },
+  };
+});
 
 let dir: string;
 let path: string;
@@ -39,6 +54,46 @@ beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "omnesis-config-"));
   path = join(dir, "omnesis.json");
   store = new ConfigStore({ filePath: path, watchDebounceMs: 40 });
+});
+
+describe("ConfigStore — worker authority revision", () => {
+  test("API changes revoke captured and structured-cloned authority; no-op and rejected changes do not", async () => {
+    await store.load();
+    const captured = store.captureRevisionFence();
+    const cloned = structuredClone(captured);
+    await store.patch({ indexer: { cycleInterval: "10m" } });
+    expect(Atomics.load(new Int32Array(captured.buffer), 0)).not.toBe(captured.revision);
+    expect(Atomics.load(new Int32Array(cloned.buffer), 0)).not.toBe(cloned.revision);
+    const afterPatch = store.captureRevisionFence();
+    await store.patch({ indexer: { cycleInterval: "10m" } });
+    await store.patch({ indexer: { cycleInterval: "invalid" } });
+    expect(store.captureRevisionFence().revision).toBe(afterPatch.revision);
+    await store.put({ indexer: { cycleInterval: "20m" } });
+    expect(store.captureRevisionFence().revision).not.toBe(afterPatch.revision);
+    const afterPut = store.captureRevisionFence();
+    await store.update((current) => ({ ...current, indexer: { cycleInterval: "30m" } }));
+    expect(store.captureRevisionFence().revision).not.toBe(afterPut.revision);
+  });
+
+  test("loading a saved configuration advances authority", async () => {
+    const before = store.captureRevisionFence();
+    writeFileSync(path, JSON.stringify({ indexer: { cycleInterval: "10m" } }));
+    await store.load();
+    expect(Atomics.load(new Int32Array(before.buffer), 0)).not.toBe(before.revision);
+  });
+
+  test("external removal revokes authority when its empty configuration is applied", async () => {
+    await store.load();
+    await store.patch({ indexer: { cycleInterval: "10m" } });
+    const before = store.captureRevisionFence();
+    rmSync(path);
+    const deadline = Date.now() + 3000;
+    while (Date.now() < deadline && store.captureRevisionFence().revision === before.revision) {
+      await wait(20);
+    }
+    expect(store.get()).toEqual({});
+    expect(Atomics.load(new Int32Array(before.buffer), 0)).not.toBe(before.revision);
+  });
 });
 
 afterEach(() => {
@@ -250,12 +305,14 @@ describe("ConfigStore — listeners + file watcher", () => {
   });
 
   test("external file edit triggers reload + listener", async () => {
+    const authority = store.captureRevisionFence();
     let changed: string[] | null = null;
     store.onChange((_b, _a, paths) => {
       changed = paths;
     });
     await writeExternalCycleInterval("30m");
     expect(changed).toContain("/indexer/cycleInterval");
+    expect(Atomics.load(new Int32Array(authority.buffer), 0)).not.toBe(authority.revision);
   });
 
   test("our own writes don't re-trigger listeners (hash-dedup)", async () => {
@@ -267,6 +324,62 @@ describe("ConfigStore — listeners + file watcher", () => {
     // Give the file watcher a chance to fire on our own write and prove it's ignored.
     await wait(120);
     expect(count).toBe(1);
+  });
+
+  test("a watcher waits for async publication to commit before considering its own write", async () => {
+    await writeExternalCycleInterval("5m");
+    const beforeVersion = store.getStatus().version;
+    let count = 0;
+    store.onChange(() => {
+      count += 1;
+    });
+    let published!: () => void;
+    let release!: () => void;
+    const publication = new Promise<void>((resolve) => {
+      published = resolve;
+    });
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    writing.afterPublish = async () => {
+      published();
+      await held;
+    };
+    const pending = store.patch({ indexer: { cycleInterval: "10m" } });
+    try {
+      await Promise.race([
+        publication,
+        pending.then(() => {
+          throw new Error("Missing publication rendezvous");
+        }),
+      ]);
+      await wait(120);
+      expect(store.get().indexer?.cycleInterval).toBe("5m");
+      expect(count).toBe(0);
+      release();
+      await pending;
+      await wait(120);
+      expect(store.get().indexer?.cycleInterval).toBe("10m");
+      expect(store.getStatus().version).toBe(beforeVersion + 1);
+      expect(count).toBe(1);
+    } finally {
+      writing.afterPublish = undefined;
+      release();
+      await pending;
+    }
+  });
+
+  test("failed publication keeps memory and the next mutation's mutex usable", async () => {
+    const before = store.get();
+    const beforeVersion = store.getStatus().version;
+    mkdirSync(path);
+    await expect(store.patch({ indexer: { cycleInterval: "10m" } })).rejects.toThrow();
+    expect(store.get()).toEqual(before);
+    expect(store.getStatus().version).toBe(beforeVersion);
+    expect(readdirSync(dir)).toEqual(["omnesis.json"]);
+    rmSync(path, { recursive: true });
+    expect((await store.patch({ indexer: { cycleInterval: "15m" } })).ok).toBe(true);
+    expect(store.get().indexer?.cycleInterval).toBe("15m");
   });
 
   test("invalid external edit leaves config + sets lastError", async () => {
@@ -367,7 +480,9 @@ describe("ConfigStore — settings kept across a downgrade", () => {
     };
     expect(store.get()).toMatchObject(expected);
     expect(JSON.parse(readFileSync(path, "utf-8"))).toEqual(expected);
-    expect(statSync(path).mode & 0o777).toBe(0o600);
+    if (process.platform === "win32")
+      expect(inspectWindowsPrivatePathSync(path, "file").private).toBe(true);
+    else expect(statSync(path).mode & 0o777).toBe(0o600);
     expect(existsSync(`${path}.newer-settings`)).toBe(false);
     expect(lines).toContain(
       "Restored 3 setting(s) an older release had dropped from omnesis.json: " +

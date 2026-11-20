@@ -57,7 +57,7 @@ describe("backfillFromDb rebuild branch (currentSize > 0)", () => {
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "usearch-boundary-"));
     path = join(dir, "test.usearch");
-    db = createIndexDatabase(`/tmp/omnesis-usearch-boundary-${randomUUID()}.db`);
+    db = createIndexDatabase(join(tmpdir(), `omnesis-usearch-boundary-${randomUUID()}.db`));
   });
 
   afterEach(() => {

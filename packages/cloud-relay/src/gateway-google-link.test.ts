@@ -83,7 +83,9 @@ test("a raw key owner links independently verified Google identity without grant
   );
   expect(saved.accountId).toBe(accountId(identity));
   expect(saved).not.toHaveProperty("refreshToken");
-  expect((await stat(env.OMNESIS_CLOUD_RELAY_GOOGLE_CREDENTIALS_FILE!)).mode & 0o777).toBe(0o600);
+  if (process.platform !== "win32") {
+    expect((await stat(env.OMNESIS_CLOUD_RELAY_GOOGLE_CREDENTIALS_FILE!)).mode & 0o777).toBe(0o600);
+  }
   expect(fetch).toHaveBeenCalledTimes(1);
 });
 

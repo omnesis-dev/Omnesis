@@ -126,6 +126,7 @@
         "@omnesis/provider-pi",
         "@omnesis/provider-plaid",
         "@omnesis/provider-plaid-synth",
+        "@omnesis/provider-plaud",
         "@omnesis/provider-screen-time",
         "@omnesis/provider-screen-time-synth",
         "@omnesis/provider-strava",
@@ -174,13 +175,17 @@
         "src/chrome/content.ts",
         "src/**/*.test.ts"
       ]
+    },
+    "packages/platform": {
+      "entry": ["src/**/*.test.ts"]
     }
   },
   "ignore": [
     "website/**",
     ".claude/**",
     "integrations/**",
-    "extension/scripts/test-manifest.d.mts"
+    "extension/scripts/test-manifest.d.mts",
+    "scripts/lib/check-process.d.mts"
   ],
   "rules": {
     "files": "error",

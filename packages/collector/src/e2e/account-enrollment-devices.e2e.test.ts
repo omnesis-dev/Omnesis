@@ -27,7 +27,7 @@ import {
   randomBytes,
   randomUUID,
 } from "node:crypto";
-import { mkdir, mkdtemp, readFile, readdir, rm, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -40,8 +40,10 @@ import {
   tokenRotationTranscript,
 } from "@omnesis/cloud-relay";
 import { HttpGatewayClient, GatewayWsClient } from "@omnesis/gateway-client";
+import { inspectWindowsPrivatePathSync } from "@omnesis/core";
 import { AccountId, SourceId, SourceType, ProviderId } from "@omnesis/types";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { closeEnrollmentFixture } from "./enrollment-fixture-cleanup.js";
 import {
   EnrollmentGateway,
   EnrollmentWorld,
@@ -62,7 +64,7 @@ import {
   devicePinnedJson,
   passkeyIds,
   printedConnectCode,
-  runCli,
+  REPO_ROOT,
   sha256Hex,
   approveHeld,
   confirmPasskeyHere,
@@ -73,10 +75,38 @@ import {
   type DeviceRow,
   type PasskeySession,
 } from "./account-enrollment-harness.js";
-import { gatewayBootBudgetMs } from "./gateway-env.js";
+import { e2eGatewayEnv, e2eTsxCommand, gatewayBootBudgetMs } from "./gateway-env.js";
+import { runEnrollmentTerminal } from "./enrollment-terminal-fixture.js";
 import { getDocumentCount } from "./helpers.js";
 
 const browserReady = browserSuiteAvailable("account-enrollment-devices.e2e");
+
+/** Local status can refresh before the public tunnel is ready for a new TLS client. */
+async function waitForPublicTlsHealth(gateway: EnrollmentGateway): Promise<void> {
+  const timeoutMs = gatewayBootBudgetMs(),
+    deadline = performance.now() + timeoutMs;
+  await waitFor(
+    async () => {
+      const remaining = deadline - performance.now();
+      if (remaining <= 0) throw new Error("Public TLS readiness budget exhausted");
+      const health = await devicePinnedJson(
+        { publicOrigin: gateway.publicOrigin, certificate: gateway.leaf.cert },
+        "/health",
+        undefined,
+        AbortSignal.timeout(Math.ceil(remaining)),
+      );
+      return (
+        performance.now() < deadline &&
+        health !== null &&
+        typeof health === "object" &&
+        "status" in health &&
+        health.status === "ok"
+      );
+    },
+    "the pinned public TLS health response",
+    timeoutMs,
+  );
+}
 
 describe.skipIf(!browserReady)("devices join a gateway by signing in", () => {
   let directory: string;
@@ -87,8 +117,8 @@ describe.skipIf(!browserReady)("devices join a gateway by signing in", () => {
   let first: PasskeySession;
   /** Holds a passkey added to the same account afterwards. */
   let second: PasskeySession;
+  const terminalRuns: ReturnType<typeof runEnrollmentTerminal>[] = [];
   const priorCaFile = process.env.OMNESIS_CLOUD_RELAY_GATEWAY_CA_FILE;
-  const priorEnabled = process.env.OMNESIS_CLOUD_RELAY_ENABLED;
 
   /**
    * Pairs a CLI or collector in this process with the real Node client. The
@@ -105,6 +135,7 @@ describe.skipIf(!browserReady)("devices join a gateway by signing in", () => {
     },
   ) {
     await gateway.pace(2);
+    await waitForPublicTlsHealth(gateway);
     const comparisons: string[] = [];
     let printed!: (value: { connectUrl: string; code: string }) => void;
     const code = new Promise<{ connectUrl: string; code: string }>(
@@ -212,8 +243,6 @@ describe.skipIf(!browserReady)("devices join a gateway by signing in", () => {
     directory = await mkdtemp(join(tmpdir(), "omnesis-enroll-devices-"));
     world = await EnrollmentWorld.create(directory, { signupPolicy: "open" });
     process.env.OMNESIS_CLOUD_RELAY_GATEWAY_CA_FILE = world.pki.caCertFile;
-    // The collector's relay client runs in this process.
-    process.env.OMNESIS_CLOUD_RELAY_ENABLED = "1";
     browser = await PasskeyBrowser.launch(world);
     gateway = await EnrollmentGateway.start(world, "home");
     first = await browser.session();
@@ -224,15 +253,15 @@ describe.skipIf(!browserReady)("devices join a gateway by signing in", () => {
 
   afterAll(async () => {
     try {
-      await browser?.close();
-      await gateway?.close();
-      await world?.close();
+      await closeEnrollmentFixture(world ? directory : undefined, [
+        ...terminalRuns.map((run) => () => run.kill()),
+        () => browser?.close(),
+        () => gateway?.close(),
+        () => world?.close(),
+      ]);
     } finally {
       if (priorCaFile === undefined) delete process.env.OMNESIS_CLOUD_RELAY_GATEWAY_CA_FILE;
       else process.env.OMNESIS_CLOUD_RELAY_GATEWAY_CA_FILE = priorCaFile;
-      if (priorEnabled === undefined) delete process.env.OMNESIS_CLOUD_RELAY_ENABLED;
-      else process.env.OMNESIS_CLOUD_RELAY_ENABLED = priorEnabled;
-      if (directory) await rm(directory, { recursive: true, force: true });
     }
   }, 60_000);
 
@@ -368,6 +397,11 @@ describe.skipIf(!browserReady)("devices join a gateway by signing in", () => {
     );
     // The account still lists the passkey with its confirmation; a refresh must not bring the pin back.
     await gateway.json("/admin/cloud-relay/reconnect", { method: "POST", body: "{}" });
+    await waitFor(
+      async () => (await gateway.status()).tunnel.state === "online",
+      "the reconnected gateway tunnel to come online",
+      gatewayBootBudgetMs(),
+    );
     expect((await gateway.status()).deviceEnrollment.policy).toBe("automatic");
     const name = "Fictional porch CLI";
     const pairing = await pairBySignIn(second, {
@@ -452,19 +486,32 @@ describe.skipIf(!browserReady)("devices join a gateway by signing in", () => {
     );
   }, 120_000);
 
-  test("TM-01: the real CLI's own sign-in, made on the relay's page on this machine, is held: the CLI waits with its code and saves its credential only once the owner approves", async () => {
+  test("TM-01: the real collector CLI requires owner approval and an independently typed comparison before saving its credential", async () => {
     await gateway.setPolicy("automatic");
     const configDir = join(directory, "cli-config");
     await mkdir(configDir, { recursive: true, mode: 0o700 });
     const name = "Fictional basement CLI";
     await gateway.pace(2);
     const launches = (await launchedUrls(world)).length;
-    const run = runCli(world, ["cloud", "pair", "--kind", "collector", "--name", name], {
-      OMNESIS_CONFIG_DIR: configDir,
-      OMNESIS_CLOUD_RELAY_ENABLED: "1",
-      OMNESIS_CLOUD_RELAY_URL: world.relayOrigin,
-      OMNESIS_CLOUD_RELAY_GATEWAY_CA_FILE: world.pki.caCertFile,
-    });
+    const cli = e2eTsxCommand("packages/cli/src/index.ts");
+    const run = runEnrollmentTerminal(
+      cli.command,
+      [...cli.args, "cloud", "pair", "--kind", "collector", "--name", name],
+      {
+        cwd: REPO_ROOT,
+        env: {
+          ...e2eGatewayEnv(),
+          ...world.clientEnv(),
+          OMNESIS_LOG_LEVEL: "error",
+          OMNESIS_GATEWAY_URL: undefined,
+          OMNESIS_TOKEN: undefined,
+          OMNESIS_CONFIG_DIR: configDir,
+          OMNESIS_CLOUD_RELAY_URL: world.relayOrigin,
+          OMNESIS_CLOUD_RELAY_GATEWAY_CA_FILE: world.pki.caCertFile,
+        },
+      },
+    );
+    terminalRuns.push(run);
     try {
       await printedConnectCode(run);
       // The CLI's browser launch, opened on this machine, so the sign-in comes back over loopback.
@@ -481,7 +528,11 @@ describe.skipIf(!browserReady)("devices join a gateway by signing in", () => {
         "the CLI's held request",
       );
       expect(held).toMatchObject({ kind: "collector", signIn: "passkey", canTrustSignIn: false });
-      // Still running, with nothing saved: only the owner's approval lets it finish.
+      await waitFor(
+        () => run.stdout().includes("Code shown on the trusted device:"),
+        "the collector CLI to ask for the comparison code",
+      );
+      // Approval alone cannot finish desktop pairing: the requester must also compare codes.
       expect(run.closed()).toBe(false);
       expect(
         (await readdir(join(configDir, "cloud-relay")).catch(() => [] as string[])).filter((file) =>
@@ -489,17 +540,36 @@ describe.skipIf(!browserReady)("devices join a gateway by signing in", () => {
         ),
       ).toEqual([]);
       await gateway.decide(held.requestId, true);
+      expect(run.closed()).toBe(false);
+      expect(
+        (await readdir(join(configDir, "cloud-relay"))).filter((file) =>
+          file.endsWith("-device.json"),
+        ),
+      ).toEqual([]);
+      await run.write(`${held.verificationCode}\r`);
       expect(await run.exit).toBe(0);
     } catch (error) {
       throw new Error(`CLI pairing failed:\n${run.stdout()}\n${run.stderr()}`, { cause: error });
+    } finally {
+      await run.kill();
     }
     expect(run.stdout()).toContain("device credential saved");
     const bundle = JSON.parse(
       await readFile(join(configDir, "cloud-relay", "collector-device.json"), "utf8"),
-    ) as { gatewayUrl: string; deviceId: string };
-    expect(
-      (await stat(join(configDir, "cloud-relay", "collector-device.json.key"))).mode & 0o077,
-    ).toBe(0);
+    ) as {
+      gatewayUrl: string;
+      gatewayCertificate: string;
+      gatewayFingerprint: string;
+      tlsSpkiFingerprint: string;
+      token: string;
+      deviceId: string;
+    };
+    const deviceKeyPath = join(configDir, "cloud-relay", "collector-device.json.key");
+    if (process.platform === "win32") {
+      expect(inspectWindowsPrivatePathSync(deviceKeyPath, "file").private).toBe(true);
+    } else {
+      expect((await stat(deviceKeyPath)).mode & 0o077).toBe(0);
+    }
     expect(bundle.gatewayUrl).toBe(gateway.publicOrigin);
     expect(await deviceRow(bundle.deviceId)).toMatchObject({
       kind: "collector",
@@ -516,7 +586,12 @@ describe.skipIf(!browserReady)("devices join a gateway by signing in", () => {
       name,
       keyFile: join(directory, "collector", "device.key"),
     });
-    expect((await stat(join(directory, "collector", "device.key"))).mode & 0o077).toBe(0);
+    const deviceKeyPath = join(directory, "collector", "device.key");
+    if (process.platform === "win32") {
+      expect(inspectWindowsPrivatePathSync(deviceKeyPath, "file").private).toBe(true);
+    } else {
+      expect((await stat(deviceKeyPath)).mode & 0o077).toBe(0);
+    }
     expect(bundle.gatewayUrl).toBe(gateway.publicOrigin);
     const row = await deviceRow(bundle.deviceId);
     expect(row).toMatchObject({ kind: "collector", name });

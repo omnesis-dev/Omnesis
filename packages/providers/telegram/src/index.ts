@@ -174,6 +174,11 @@ export function buildTelegramProvider(
             default: [],
             help: "Chat IDs or @usernames to skip. Already-archived content from them is removed. Leave empty to include every chat.",
           }),
+          keepSelfDestructing: config.boolean({
+            label: "Keep self-destructing messages",
+            default: false,
+            help: "Off by default. When on, messages under an auto-delete timer and view-once media are archived and kept after Telegram removes them; a message deleted by hand is still removed. You are responsible for following Telegram's API terms: https://core.telegram.org/api/terms",
+          }),
           historyRequestsPerPage: config.number({
             label: "History requests per sync page",
             default: WALK_REQUESTS_PER_PAGE,
@@ -209,6 +214,7 @@ export function buildTelegramProvider(
               excludedChats: Array.isArray(options?.excludedChats)
                 ? options.excludedChats.filter((c): c is string => typeof c === "string")
                 : [],
+              keepSelfDestructing: options?.keepSelfDestructing === true,
             },
             ...(dataCutoff ? { dataCutoff } : {}),
             ...(host?.ingestion?.phoneRegion ? { phoneRegion: host.ingestion.phoneRegion } : {}),
@@ -232,9 +238,9 @@ export function buildTelegramProvider(
             onSourceError: (callback) => provider.onSourceError(callback),
             suspend: () => provider.suspend(),
             resume: () => provider.resume(),
-            probeLocalStores: () =>
+            probeLocalStores: ({ signal }: { signal: AbortSignal }) =>
               Promise.resolve(
-                stateDir && configDir ? inspectTelegramStores(stateDir, configDir) : [],
+                stateDir && configDir ? inspectTelegramStores(stateDir, configDir, signal) : [],
               ),
             async dispose() {
               source.dispose();

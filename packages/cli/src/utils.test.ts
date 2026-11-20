@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, test, expect, afterEach } from "vitest";
 import {
   resolvePatterns,
@@ -139,11 +141,11 @@ describe("buildResultUrl", () => {
 });
 
 describe("defaultGatewayUrl", () => {
-  const dir = "/Users/maya/.config/omnesis-collector";
+  const dir = join(tmpdir(), "omnesis-fictional-collector");
   const files =
     (...names: string[]) =>
     (path: string) =>
-      names.some((name) => path === `${dir}/${name}`);
+      names.some((name) => path === join(dir, name));
   const paired = () => "https://studio.example.ts.net:7600";
 
   // `omnesis-collector status` once dialled https://localhost:7600 and asked
@@ -186,20 +188,16 @@ describe("defaultGatewayUrl", () => {
 
 test("a remote gateway's private loopback adapter is not mistaken for a gateway installed on this host", () => {
   const priorRequest = process.env.OMNESIS_GATEWAY_REQUEST_URL,
-    priorOrigin = process.env.OMNESIS_GATEWAY_URL,
-    priorFlag = process.env.OMNESIS_CLOUD_RELAY_ENABLED;
+    priorOrigin = process.env.OMNESIS_GATEWAY_URL;
   try {
-    process.env.OMNESIS_CLOUD_RELAY_ENABLED = "1";
     process.env.OMNESIS_GATEWAY_REQUEST_URL = "http://127.0.0.1:12345";
     process.env.OMNESIS_GATEWAY_URL = "https://canonical.example.com";
     expect(targetsLocalGateway("http://127.0.0.1:12345")).toBe(false);
     expect(targetsLocalGateway("https://localhost:7600")).toBe(true);
-    // Without the opt-in the variable is not read: loopback is this machine.
-    delete process.env.OMNESIS_CLOUD_RELAY_ENABLED;
+    // Without a paired transport, loopback is this machine.
+    delete process.env.OMNESIS_GATEWAY_REQUEST_URL;
     expect(targetsLocalGateway("http://127.0.0.1:12345")).toBe(true);
   } finally {
-    if (priorFlag === undefined) delete process.env.OMNESIS_CLOUD_RELAY_ENABLED;
-    else process.env.OMNESIS_CLOUD_RELAY_ENABLED = priorFlag;
     if (priorRequest === undefined) delete process.env.OMNESIS_GATEWAY_REQUEST_URL;
     else process.env.OMNESIS_GATEWAY_REQUEST_URL = priorRequest;
     if (priorOrigin === undefined) delete process.env.OMNESIS_GATEWAY_URL;

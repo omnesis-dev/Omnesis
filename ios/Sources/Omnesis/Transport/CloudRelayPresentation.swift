@@ -35,6 +35,8 @@ public enum CloudRelayPresentation {
         "hostname-required": "This relay needs a public gateway hostname. Enter its HTTPS origin in custom domain settings.",
         "ca-terms-required": "Accept the configured certificate authority’s terms before enabling public certificates.",
         "operation-in-progress": "Another change is in progress. Wait for it to finish and try again.",
+        "dns-capacity": "New gateway setup is temporarily at capacity. Try again later. Existing gateways keep working.",
+        "dns-allocation-rate": "Too many gateways were set up recently. Wait before trying again. Existing gateways keep working.",
         "google-unavailable": "Google sign-in is unavailable. Remote access and QR pairing work without it.",
         "google-link-failed": "Couldn't connect with Google. Try again. Gateway access is unchanged.",
         "relay-service-unavailable":
@@ -92,8 +94,11 @@ public enum CloudRelayPresentation {
             )
         case .waiting:
             Hero(
-                title: "Sign in to your Omnesis account",
-                lede: "Continue in the sign-in page to finish connecting. This screen updates by itself."
+                title: status.connect?.verification == nil ? "Sign in to your Omnesis account" : "Verify this gateway setup",
+                lede: status.connect?.verification == nil
+                    ? "Continue in the sign-in page to finish connecting. This screen updates by itself."
+                    : "Open the security check before signing in. It usually completes automatically "
+                    + "and may ask you to confirm you are human."
             )
         case .registering:
             Hero(
@@ -253,6 +258,16 @@ public enum CloudRelayPresentation {
     public static func displayAddress(_ url: URL) -> String {
         let host = url.port.map { "\(url.host ?? ""):\($0)" } ?? url.host ?? ""
         return url.path == "/" ? host : host + url.path
+    }
+
+    /// The pending security check takes precedence over sign-in; allow one minute of device clock skew.
+    public static func connectBrowserURL(_ connect: CloudRelayStatus.Connect?, now: Date = Date()) -> URL? {
+        if let verification = connect?.verification {
+            guard let expiry = verification.expiresAt?.date, expiry > now,
+                  expiry.timeIntervalSince(now) <= 660 else { return nil }
+            return httpsURL(verification.url)
+        }
+        return httpsURL(connect?.authorizeUrl)
     }
 
     /// The code a person types on another device, when it is one.

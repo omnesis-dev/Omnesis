@@ -5,10 +5,10 @@
 // by the shell, so the strip on every page and every attention mark show one
 // answer. Four topics, each read through the list route its own page uses:
 //
-// - devices: sign-in requests through the optional cloud relay
-//   (OMNESIS_CLOUD_RELAY_ENABLED=1, read once the gateway says sign-in pairing
-//   is configured) and Tailscale join requests through the gateway's own
-//   Tailscale device (OMNESIS_TAILSCALE_EMBED_ENABLED=1);
+// - devices: sign-in requests through the Omnesis account (read once the
+//   gateway says sign-in pairing is configured, which takes a linked account)
+//   and Tailscale join requests through the gateway's own Tailscale device,
+//   when the gateway has one;
 // - access: MCP clients asking to connect;
 // - answers: Answer releases held for the owner's review;
 // - watches: requests for a standing watch, only where watches are on.
@@ -126,12 +126,12 @@ function useTopic({ topic, enabled, what = "", empty, read, signals }) {
 }
 
 /**
- * Whether the gateway offers sign-in pairing, asked once the cloud relay is on. Until it says yes
- * it is asked again on every devices signal and resync — a sign-in request means it is now
+ * Whether the gateway offers sign-in pairing, which takes an Omnesis account linked to it. Until it
+ * says yes it is asked again on every devices signal and resync — a sign-in request means it is now
  * configured — and, after a failed read, on the fallback interval and when the tab comes back into
  * view.
  */
-function useCloudPairingConfigured(cloudRelay, api, signals) {
+function useCloudPairingConfigured(api, signals) {
   /** "unknown" before an answer, then "configured", "off" or "failed". */
   const [state, setState] = useState("unknown");
   const generation = useRef(0);
@@ -147,14 +147,13 @@ function useCloudPairingConfigured(cloudRelay, api, signals) {
       });
   };
   useEffect(() => {
-    if (cloudRelay) check();
-    else setState("unknown");
+    check();
     return () => {
       generation.current += 1;
     };
-  }, [cloudRelay]);
-  usePortalSignal("devices", check, { enabled: cloudRelay && state !== "configured", signals });
-  useVisiblePoll(check, SIGNAL_FALLBACK_MS, { enabled: cloudRelay && state === "failed" });
+  }, []);
+  usePortalSignal("devices", check, { enabled: state !== "configured", signals });
+  useVisiblePoll(check, SIGNAL_FALLBACK_MS, { enabled: state === "failed" });
   return state === "configured";
 }
 
@@ -163,15 +162,15 @@ function useCloudPairingConfigured(cloudRelay, api, signals) {
  * first of them expires (`nextExpiry`); `devices` also lists the waiting sign-in requests
  * (`cloud`) and Tailscale joins (`tailscale`), and `access` the waiting requests (`requests`).
  *
- * @param {{ cloudRelay?: boolean, tailscaleEmbed?: boolean, watches?: boolean }} features what
+ * @param {{ tailscaleEmbed?: boolean, watches?: boolean }} features what
  *   `/status` says this gateway runs.
  * @param {{ api?: typeof ATTENTION_API, signals?: ReturnType<import("./portal-signals.js").createPortalSignals> }} [deps]
  */
 export function useAttention(
-  { cloudRelay = false, tailscaleEmbed = false, watches = false } = {},
+  { tailscaleEmbed = false, watches = false } = {},
   { api = ATTENTION_API, signals = null } = {},
 ) {
-  const cloud = useCloudPairingConfigured(cloudRelay, api, signals) && cloudRelay;
+  const cloud = useCloudPairingConfigured(api, signals);
   const kinds = { cloud, tailscale: tailscaleEmbed };
   return {
     devices: useTopic({

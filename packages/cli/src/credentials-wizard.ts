@@ -20,6 +20,8 @@ import {
   secretFileWritesEncrypted,
   type SerializedProviderCredentialsSpec,
 } from "@omnesis/core";
+import { browserInvocation } from "./browser-command.js";
+export { browserInvocation } from "./browser-command.js";
 import { detectDockerContext, isWithinDir } from "./docker-install.js";
 import { c, gatewayJson, withSpinner, GATEWAY_URL } from "./utils.js";
 
@@ -140,12 +142,15 @@ export function defaultWizardHost(): WizardHost {
  * a `~` that would name the container's home. A collector elsewhere keeps its
  * own directory and keyring, which this CLI cannot see.
  */
-export async function credentialsDestinationLines(input: {
-  fileKey: string;
-  perAccount: boolean;
-  sameHost: boolean;
-  host: WizardHost;
-}): Promise<string[]> {
+export async function credentialsDestinationLines(
+  input: {
+    fileKey: string;
+    perAccount: boolean;
+    sameHost: boolean;
+    host: WizardHost;
+  },
+  platform: NodeJS.Platform = process.platform,
+): Promise<string[]> {
   const { fileKey, perAccount, sameHost, host } = input;
   const inDocker =
     sameHost &&
@@ -163,7 +168,9 @@ export async function credentialsDestinationLines(input: {
   } else {
     where = "They'll be saved to the collector's config dir";
   }
-  const lines = [`${where} (mode 0600).`];
+  // POSIX mode bits do not describe Windows ACL permissions.
+  const permissions = platform === "win32" ? "" : " (mode 0600)";
+  const lines = [`${where}${permissions}.`];
   if (!sameHost) return lines;
   lines.push(
     (await host.secretsEncrypted())
@@ -173,12 +180,11 @@ export async function credentialsDestinationLines(input: {
   return lines;
 }
 
-/** Spawn `open <url>` (macOS) / `xdg-open` (linux). Best-effort, never throws. */
+/** Best-effort; the wizard also prints the URL for manual opening. */
 function openInBrowser(url: string): void {
-  const cmd =
-    process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open";
+  const invocation = browserInvocation(url);
   try {
-    const child = spawn(cmd, [url], { stdio: "ignore", detached: true });
+    const child = spawn(invocation.command, invocation.args, { stdio: "ignore", detached: true });
     child.on("error", () => {
       /* swallow — fall back to printing the URL */
     });

@@ -14,13 +14,16 @@ import { promisify } from "node:util";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { rootCertificates } from "node:tls";
-import { acquireGatewayLock, atomicWriteFile } from "@omnesis/core";
+import { acquireGatewayLock, atomicWriteFile, ownedProcessCleanupReceipt } from "@omnesis/core";
 import { z } from "zod";
+import { isJoinedPrivateFileError } from "./private-file-errors.js";
 import { issueAcmeCertificate, type AcmeDnsPresenter } from "./acme-client.js";
 import { bindingOrigin, validateCertificateDates } from "./gateway-binding.js";
 import { publicKeyFingerprint } from "./gateway-key-auth.js";
 import { readBoundedJson } from "./google-credentials.js";
 import { relayOrigin } from "./network.js";
+import { readPrivateText } from "./private-inputs.js";
+import { combinedCleanupErrors, OwnedCleanupLifecycle } from "./owned-cleanup-lifecycle.js";
 
 export function relayDnsPresenter(options: {
   relayUrl: string;
@@ -143,21 +146,16 @@ async function verifyChain(
 
 async function accountKey(path: string): Promise<string> {
   try {
-    return await readFile(path, "utf8");
+    return await readPrivateText(path);
   } catch (error) {
-    if (!(
-      typeof error === "object" &&
-      error !== null &&
-      "code" in error &&
-      error.code === "ENOENT"
-    ))
-      throw error;
+    if (!isJoinedPrivateFileError(error, "ENOENT")) throw error;
     await mkdir(dirname(path), { recursive: true, mode: 0o700 });
     const temporary = `${path}.${randomUUID()}.tmp`;
     const key = generateKeyPairSync("ec", { namedCurve: "prime256v1" }).privateKey.export({
       type: "pkcs8",
       format: "pem",
     });
+    let publicationFailure: unknown;
     try {
       await atomicWriteFile(temporary, key, { mode: 0o600 });
       try {
@@ -171,10 +169,14 @@ async function accountKey(path: string): Promise<string> {
         ))
           throw error;
       }
+    } catch (error) {
+      publicationFailure = error;
+      throw error;
     } finally {
-      await rm(temporary, { force: true });
+      if (ownedProcessCleanupReceipt(publicationFailure) === undefined)
+        await rm(temporary, { force: true });
     }
-    return readFile(path, "utf8");
+    return readPrivateText(path);
   }
 }
 
@@ -196,20 +198,43 @@ export interface GatewayAcmeOptions {
 
 /** One gateway-owned TLS key, one DNS hostname, and serialized renewal. The relay receives public challenges only. */
 export class GatewayAcmeRenewal {
+  private readonly abort = new AbortController();
+  private readonly cleanup = new OwnedCleanupLifecycle(() => this.abort.abort());
+  private readonly retainedLocks = new Set<Awaited<ReturnType<typeof acquireGatewayLock>>>();
   private pending: Promise<boolean> | undefined;
   constructor(private readonly options: GatewayAcmeOptions) {
     bindingOrigin(options.publicOrigin);
   }
   renew(signal: AbortSignal): Promise<boolean> {
-    return (this.pending ??= this.perform(signal).finally(() => {
-      this.pending = undefined;
-    }));
+    try {
+      this.cleanup.assertAdmitting();
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    return (this.pending ??= this.cleanup
+      .run(() => this.perform(AbortSignal.any([signal, this.abort.signal])))
+      .finally(() => {
+        this.pending = undefined;
+      }));
+  }
+  cleanupFailure(): unknown | undefined {
+    return this.cleanup.receipt();
+  }
+  close(): Promise<void> {
+    this.abort.abort();
+    return this.cleanup.close();
+  }
+  private assertContinuing(signal: AbortSignal): void {
+    signal.throwIfAborted();
+    this.cleanup.assertAdmitting();
   }
   private async perform(signal: AbortSignal): Promise<boolean> {
-    signal.throwIfAborted();
+    this.assertContinuing(signal);
     const hostname = bindingOrigin(this.options.publicOrigin).hostname;
-    const certificate = await readFile(this.options.certificateFile, "utf8"),
-      tlsKey = await readFile(this.options.privateKeyFile, "utf8");
+    const certificate = await readFile(this.options.certificateFile, "utf8");
+    this.assertContinuing(signal);
+    const tlsKey = await readPrivateText(this.options.privateKeyFile);
+    this.assertContinuing(signal);
     const leaf = new X509Certificate(certificate);
     let usable = false;
     try {
@@ -226,17 +251,22 @@ export class GatewayAcmeRenewal {
       return false;
     const lockDir = join(dirname(this.options.certificateFile), ".acme-renewal");
     await mkdir(lockDir, { recursive: true, mode: 0o700 });
+    this.assertContinuing(signal);
     const lock = await acquireGatewayLock(lockDir, { waitMs: 0 });
     try {
+      this.assertContinuing(signal);
+      const key = await accountKey(this.options.accountKeyFile);
+      this.assertContinuing(signal);
       const renewed = await (this.options.issuer ?? issueAcmeCertificate)({
         directoryUrl: this.options.directoryUrl,
         hostname,
-        accountKey: await accountKey(this.options.accountKeyFile),
+        accountKey: key,
         tlsKey,
         presenter: this.options.presenter,
         ...(this.options.beforeOrder ? { beforeOrder: this.options.beforeOrder } : {}),
         signal,
       });
+      this.assertContinuing(signal);
       const candidate = validateAcmeCertificate(
         renewed,
         tlsKey,
@@ -244,27 +274,42 @@ export class GatewayAcmeRenewal {
         this.options.trustedRoots,
       );
       await verifyChain(renewed, hostname, this.options.trustedRoots ?? rootCertificates, signal);
+      this.assertContinuing(signal);
       if (!leaf.verify(leaf.publicKey) && Date.parse(candidate.validTo) <= Date.parse(leaf.validTo))
         throw new Error("ACME renewal did not extend the certificate lifetime");
-      if (
-        (await readFile(this.options.certificateFile, "utf8")) !== certificate ||
-        (await readFile(this.options.privateKeyFile, "utf8")) !== tlsKey
-      )
+      const currentCertificate = await readFile(this.options.certificateFile, "utf8");
+      this.assertContinuing(signal);
+      if (currentCertificate !== certificate)
         throw new Error("Gateway TLS material changed during ACME issuance");
-      signal.throwIfAborted();
+      const currentKey = await readPrivateText(this.options.privateKeyFile);
+      this.assertContinuing(signal);
+      if (currentKey !== tlsKey)
+        throw new Error("Gateway TLS material changed during ACME issuance");
       await atomicWriteFile(this.options.certificateFile, renewed, { mode: 0o600 });
       try {
         signal.throwIfAborted();
         await this.options.activate(signal);
-        await this.options.afterActivation?.(signal);
+        if (this.options.afterActivation) {
+          this.assertContinuing(signal);
+          await this.options.afterActivation(signal);
+        }
       } catch (error) {
-        await atomicWriteFile(this.options.certificateFile, certificate, { mode: 0o600 });
-        await this.options.activate(AbortSignal.timeout(15_000));
+        if (this.cleanup.observe(error)) throw error;
+        try {
+          await atomicWriteFile(this.options.certificateFile, certificate, { mode: 0o600 });
+          await this.options.activate(AbortSignal.timeout(15_000));
+        } catch (rollbackError) {
+          throw combinedCleanupErrors([error, rollbackError], "ACME activation rollback failed");
+        }
         throw error;
       }
       return true;
+    } catch (error) {
+      this.cleanup.observe(error);
+      throw error;
     } finally {
-      lock.release();
+      if (this.cleanup.uncertain) this.retainedLocks.add(lock);
+      else lock.release();
     }
   }
 }

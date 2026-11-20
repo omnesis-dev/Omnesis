@@ -3,6 +3,7 @@
 
 package dev.omnesis.android.screenshots
 
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalInspectionMode
@@ -31,7 +32,8 @@ class AccountCloudPairingScreenshotTest {
         for (phase in AccountPairingPhase.entries) for (dark in listOf(false, true)) {
             captureRoboImage(filePath = "src/test/roborazzi/account-pairing-${phase.name.lowercase()}-${if (dark) "dark" else "light"}.png") {
                 CompositionLocalProvider(LocalInspectionMode provides true, LocalPairingClock provides { PREVIEW_PAIRING_NOW }) {
-                    OmnesisTheme(darkTheme = dark) { AccountCloudPairingPane(accountPairingPreviewState(phase), true, true, {}, {}, {}, {}) }
+                    // Idle and failed are the sign-in choices, where a sign-in starts and where it ends when it fails.
+                    OmnesisTheme(darkTheme = dark) { AccountCloudPairingPane(accountPairingPreviewState(phase), true, true, {}, {}, {}, {}, choosingSignIn = true) }
                 }
             }
         }
@@ -58,20 +60,41 @@ class AccountCloudPairingScreenshotTest {
             }
         }
     }
-    @Test fun the_pairing_entry_offers_the_omnesis_account_and_direct_pairing() {
+    @Test fun the_pairing_entry_offers_one_cloud_account_button_and_direct_pairing() {
         for (dark in listOf(false, true)) for (large in listOf(false, true)) {
             captureRoboImage(filePath = "src/test/roborazzi/account-pairing-entry-${if (large) "large" else "normal"}-${if (dark) "dark" else "light"}.png") {
-                val density = LocalDensity.current
-                CompositionLocalProvider(LocalInspectionMode provides true, LocalPairingClock provides { PREVIEW_PAIRING_NOW }, LocalDensity provides Density(density.density, if (large) 1.6f else 1f)) {
-                    OmnesisTheme(darkTheme = dark) {
-                        PairingContent(
-                            state = PairingViewModel.State(mode = PairingViewModel.Mode.Google, googleAvailable = true, account = AccountPairingState(), passkeyAvailable = true),
-                            onBack = {}, onShowScanner = {}, onShowManual = {}, onQrCode = {},
-                            onUrlChange = {}, onCodeChange = {}, onFingerprintChange = {}, onToggleAdvanced = {}, onPair = {},
-                            cloudFeatures = true,
-                        )
-                    }
-                }
+                pairingScreen(dark, large, PairingViewModel.State(mode = PairingViewModel.Mode.Account, googleAvailable = true, passkeyAvailable = true, account = AccountPairingState()))
+            }
+        }
+    }
+
+    @Test fun the_cloud_account_button_opens_the_choice_of_google_or_a_passkey() {
+        for (dark in listOf(false, true)) for (large in listOf(false, true)) {
+            captureRoboImage(filePath = "src/test/roborazzi/account-pairing-choices-${if (large) "large" else "normal"}-${if (dark) "dark" else "light"}.png") {
+                pairingScreen(dark, large, PairingViewModel.State(mode = PairingViewModel.Mode.Account, googleAvailable = true, passkeyAvailable = true, account = AccountPairingState(), choosingSignIn = true))
+            }
+        }
+    }
+
+    /** A build without Google's client IDs signs in with a passkey alone. */
+    @Test fun a_build_without_google_offers_only_the_passkey() {
+        for (dark in listOf(false, true)) {
+            captureRoboImage(filePath = "src/test/roborazzi/account-pairing-choices-passkey-only-${if (dark) "dark" else "light"}.png") {
+                pairingScreen(dark, large = false, PairingViewModel.State(mode = PairingViewModel.Mode.Account, googleAvailable = false, passkeyAvailable = true, account = AccountPairingState(), choosingSignIn = true))
+            }
+        }
+    }
+
+    @Composable
+    private fun pairingScreen(dark: Boolean, large: Boolean, state: PairingViewModel.State) {
+        val density = LocalDensity.current
+        CompositionLocalProvider(LocalInspectionMode provides true, LocalPairingClock provides { PREVIEW_PAIRING_NOW }, LocalDensity provides Density(density.density, if (large) 1.6f else 1f)) {
+            OmnesisTheme(darkTheme = dark) {
+                PairingContent(
+                    state = state,
+                    onBack = {}, onShowScanner = {}, onShowManual = {}, onQrCode = {},
+                    onUrlChange = {}, onCodeChange = {}, onFingerprintChange = {}, onToggleAdvanced = {}, onPair = {},
+                )
             }
         }
     }

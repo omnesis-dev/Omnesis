@@ -3,6 +3,8 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { SCOPE_READ, SCOPE_WRITE_ALL, type DeviceId } from "@omnesis/types";
 import { AuthFlowRegistry } from "../../auth-flows.js";
@@ -18,7 +20,7 @@ let dbPath: string;
 let db: ReturnType<typeof createDatabase>;
 
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-ws-descriptors-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-ws-descriptors-${randomUUID()}.db`);
   db = createDatabase(dbPath);
 });
 

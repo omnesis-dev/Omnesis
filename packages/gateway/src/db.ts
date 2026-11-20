@@ -7,7 +7,11 @@ type Db = Database.Database;
 import { installTemporalDocumentEpochs } from "./brain/knowledge/temporal-document-epochs.js";
 import { registerFilterSqlFunctions } from "./access/filter-people.js";
 import { runSchemaSetup } from "./data/schema.js";
-import { runDowngradeCompatCheck, runMigrations } from "./data/migrations.js";
+import {
+  runDowngradeCompatCheck,
+  runMigrations,
+  type MigrationProgress,
+} from "./data/migrations.js";
 import { openEncryptedSqlite } from "./sqlite-encryption.js";
 
 // Re-export shared types so existing consumers keep working unchanged.
@@ -166,6 +170,7 @@ export { retryOnBusy } from "./data/retry.js";
  * that ever creates + migrates.
  */
 export interface GatewayDatabaseOptions {
+  onMigrationProgress?: (progress: MigrationProgress) => void;
   encryptionKey?: Buffer | null;
   /**
    * Page-cache budget in BYTES for this read handle. A larger cache keeps more
@@ -248,7 +253,7 @@ export function createDatabase(path: string, opts: GatewayDatabaseOptions = {}):
   // twice the database's size in free space.
   runSchemaSetup(db);
   runDowngradeCompatCheck(db); // Per-source cursor reset on downgrade
-  runMigrations(db);
+  runMigrations(db, { onProgress: opts.onMigrationProgress });
   // Cross-table triggers must follow historical table rebuilds, whose renames
   // would otherwise rewrite their references to temporary migration tables.
   db.transaction(() => installTemporalDocumentEpochs(db))();

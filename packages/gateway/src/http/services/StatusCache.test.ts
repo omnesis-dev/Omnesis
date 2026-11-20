@@ -3,6 +3,8 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { createDatabase } from "../../db.js";
 import { directReadPort } from "../../scheduler/read-port.js";
@@ -32,7 +34,7 @@ afterEach(() => {
 describe("StatusCache lifetime", () => {
   test("retires its refresh timer when its owning database closes", async () => {
     vi.useFakeTimers();
-    const path = `/tmp/omnesis-status-cache-${randomUUID()}.db`;
+    const path = fixtureJoin(fixtureTmpdir(), `omnesis-status-cache-${randomUUID()}.db`);
     paths.push(path);
     const db = createDatabase(path);
     const cache = new StatusCache(db);
@@ -48,7 +50,7 @@ describe("StatusCache lifetime", () => {
 
 describe("StatusCache refresh through a read port", () => {
   function setup() {
-    const path = `/tmp/omnesis-status-cache-${randomUUID()}.db`;
+    const path = fixtureJoin(fixtureTmpdir(), `omnesis-status-cache-${randomUUID()}.db`);
     paths.push(path);
     const db = createDatabase(path);
     const portDb = createDatabase(path);
@@ -107,7 +109,7 @@ describe("StatusCache refresh through a read port", () => {
   });
 
   test("a failed port read is reported, unless it met a lock, a full io queue or the cache had stopped", async () => {
-    const path = `/tmp/omnesis-status-cache-${randomUUID()}.db`;
+    const path = fixtureJoin(fixtureTmpdir(), `omnesis-status-cache-${randomUUID()}.db`);
     paths.push(path);
     const db = createDatabase(path);
     handles.push(db);
@@ -140,7 +142,7 @@ describe("StatusCache refresh through a read port", () => {
   });
 
   test("the analytics refresh reads only each table's activity", async () => {
-    const path = `/tmp/omnesis-status-cache-${randomUUID()}.db`;
+    const path = fixtureJoin(fixtureTmpdir(), `omnesis-status-cache-${randomUUID()}.db`);
     paths.push(path);
     const db = createDatabase(path);
     const getCatalog = vi.fn();

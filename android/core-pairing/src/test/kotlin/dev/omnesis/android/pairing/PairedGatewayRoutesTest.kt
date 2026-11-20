@@ -18,7 +18,7 @@ class PairedGatewayRoutesTest {
     private val bundle = PairingCredentialBundle("https://gateway.example.test", "device-token", "generation", "local",
         "device", "Gateway", listOf("read"), "pinned-key-strict", spkiFingerprint = "ab".repeat(32))
     private val candidates = listOf(DirectGatewayCandidate("10.0.0.2", 8443))
-    private fun service() = PairingService(InMemoryStore().apply { set("gateway.credential.v1", OmnesisJson.encodeToString(bundle)) }, cloudRelay = true)
+    private fun service() = PairingService(InMemoryStore().apply { set("gateway.credential.v1", OmnesisJson.encodeToString(bundle)) })
 
     @Test fun `refresh acquires and clears hints without replacing identity or live stream owners`(): Unit = runBlocking {
         val service = service()
@@ -106,7 +106,7 @@ class PairedGatewayRoutesTest {
 
     @Test fun `strict direct IP gateways keep ordinary transport when no optional cloud route exists`(): Unit = runBlocking {
         val directBundle = bundle.copy(url = "https://127.0.0.1")
-        val service = PairingService(InMemoryStore().apply { set("gateway.credential.v1", OmnesisJson.encodeToString(directBundle)) }, cloudRelay = true)
+        val service = PairingService(InMemoryStore().apply { set("gateway.credential.v1", OmnesisJson.encodeToString(directBundle)) })
         val expected = service.current()!!
         var updates = 0
         val routes = PairedGatewayRoutes(expected, service, { _, _ -> emptyList() }, { assertEquals(expected, it); updates++ })

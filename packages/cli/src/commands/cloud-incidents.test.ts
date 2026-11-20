@@ -42,10 +42,10 @@ const incidents = cloudIncidentCommands.incidents.subCommands as unknown as Reco
 >;
 
 test("listing says whether new devices are held and which certificates hold them", async () => {
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
   const output = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
   gatewayJson.mockResolvedValueOnce(held);
   await runCommand(incidents.list, { rawArgs: [] });
+  // A local read: without `signup=1` the gateway asks the relay nothing.
   expect(gatewayJson).toHaveBeenCalledExactlyOnceWith("/admin/cloud-relay");
   expect(String(output.mock.calls[0]![0]).split("\n")).toEqual([
     "New devices are held for approval since 2028-01-02T00:00:00.000Z: 1 unexpected certificates. Run `omnesis cloud incidents ack` on the gateway host once you have looked into them.",
@@ -72,7 +72,6 @@ test("status shows the hold among the error codes and on its own line", () => {
 });
 
 test("ack asks the gateway to lift the hold and says what that does, or why the gateway refused", async () => {
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
   const output = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
   gatewayJson.mockImplementation((path) =>
     Promise.resolve(path === "/health" ? { version: "9.8.7" } : { enabled: true }),
@@ -106,15 +105,4 @@ test("ack asks the gateway to lift the hold and says what that does, or why the 
   );
   gatewayJson.mockRejectedValue(other);
   await expect(runCommand(incidents.ack, { rawArgs: [] })).rejects.toBe(other);
-});
-
-test("both refuse before any gateway call unless cloud relay is enabled", async () => {
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "0");
-  await expect(runCommand(incidents.list, { rawArgs: [] })).rejects.toThrow(
-    "OMNESIS_CLOUD_RELAY_ENABLED=1",
-  );
-  await expect(runCommand(incidents.ack, { rawArgs: [] })).rejects.toThrow(
-    "OMNESIS_CLOUD_RELAY_ENABLED=1",
-  );
-  expect(gatewayJson).not.toHaveBeenCalled();
 });

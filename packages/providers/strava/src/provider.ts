@@ -22,6 +22,7 @@ import {
 } from "@omnesis/core";
 import { AccountId } from "@omnesis/types";
 import { AuthFailure } from "@omnesis/source-sdk";
+import { parseStravaJson, type StravaId } from "./ids.js";
 import type {
   AuthFlowCallbacks,
   AuthNotice,
@@ -251,14 +252,14 @@ export async function authFlow(opts: AuthFlowOptions = {}): Promise<AccountId> {
     throw new Error(`Strava token exchange failed (${tokenResponse.status}): ${body}`);
   }
 
-  const tokenData = (await tokenResponse.json()) as {
+  const tokenData = parseStravaJson<{
     access_token: string;
     refresh_token: string;
     expires_at: number;
     expires_in: number;
     token_type: string;
-    athlete: { id: number; firstname?: string; lastname?: string; username?: string };
-  };
+    athlete: { id: StravaId; firstname?: string; lastname?: string; username?: string };
+  }>(await tokenResponse.text());
 
   const tokens: StravaTokens = {
     access_token: tokenData.access_token,
@@ -373,7 +374,7 @@ interface StravaTokenResponse {
   access_token: string;
   refresh_token: string;
   expires_at: number;
-  athlete: { id: number; firstname?: string; lastname?: string; username?: string };
+  athlete: { id: StravaId; firstname?: string; lastname?: string; username?: string };
 }
 
 /** Trade the authorization code for the athlete's tokens. */
@@ -401,7 +402,7 @@ async function exchangeAuthorizationCode(
     );
   }
   if (!response.ok) throw tokenExchangeFailure(response.status, await response.text());
-  return (await response.json()) as StravaTokenResponse;
+  return parseStravaJson<StravaTokenResponse>(await response.text());
 }
 
 /**

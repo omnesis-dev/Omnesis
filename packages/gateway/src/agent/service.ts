@@ -75,6 +75,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import {
   BACKGROUND_RATE_LIMIT_PATIENCE,
   createLogger,
+  ownedProcessCleanupReceipt,
   InferenceUrlPolicyError,
   experimentalVisible,
   hostTimeZone,
@@ -1037,6 +1038,17 @@ export class AgentService {
   private readonly sessions = new Map<string, LiveSessionEntry>();
   /** Prevents terminal callbacks from accepting fresh work during teardown. */
   private disposing = false;
+  private disposal: Promise<void> | undefined;
+  private disposalSettled = false;
+  private conversationCleanupHeld = false;
+  private conversationCleanupError: unknown;
+  private readonly pendingConversationCleanup = Object.assign(
+    new Error("Conversation work remains pending"),
+    {
+      cleanupFailure: true,
+      cleanupPending: true as const,
+    },
+  );
 
   private dailyBriefContext: DailyBriefContextProvider | null = null;
 
@@ -1281,6 +1293,7 @@ export class AgentService {
     callerId: CallerId,
     opts: CreateSessionOptions = {},
   ): Promise<CreateSessionResult> {
+    this.assertConversationAdmission();
     const resumeFromId = opts.resumeFromId;
     if (!resumeFromId) return this.createSessionUnlocked(callerId, opts);
     return this.withResumeGate(resumeFromId, () => this.createSessionUnlocked(callerId, opts));
@@ -1313,6 +1326,7 @@ export class AgentService {
     callerId: CallerId,
     opts: CreateSessionOptions,
   ): Promise<CreateSessionResult> {
+    this.assertConversationAdmission();
     // Resume path: caller asks to continue an existing conversation.
     if (opts.resumeFromId) {
       if (this.answerDeleteLocks.has(opts.resumeFromId)) {
@@ -2046,6 +2060,7 @@ export class AgentService {
 
   /** Permanently remove a stored conversation. The Morning brief conversation is permanent. */
   async deleteConversation(id: string): Promise<boolean> {
+    this.assertConversationAdmission();
     if (this.realtimeOwners.has(id) || this.voiceOwners.has(id))
       throw new AgentError("session_busy", "conversation is in a voice call");
     if (!this.store) return false;
@@ -2121,6 +2136,7 @@ export class AgentService {
     cutoffMs: number,
     limit = 10,
   ): Promise<{ deleted: number; hasMore: boolean }> {
+    this.assertConversationAdmission();
     if (
       !this.store ||
       !this.store.listRetentionCandidates ||
@@ -2198,6 +2214,7 @@ export class AgentService {
    * file exists for the id.
    */
   async setConversationPinned(id: string, pinned: boolean): Promise<boolean> {
+    this.assertConversationAdmission();
     if (this.answerDeleteLocks.has(id)) {
       throw new AgentError("session_busy", "conversation already has a deletion in progress");
     }
@@ -2231,6 +2248,7 @@ export class AgentService {
     text: string;
     notify: boolean;
   }): Promise<{ conversationId: string; messageId: string }> {
+    this.assertConversationAdmission();
     if (!this.store) {
       throw new AgentError("agent_unconfigured", "no conversation store configured");
     }
@@ -2245,6 +2263,7 @@ export class AgentService {
     text: string;
     notify: boolean;
   }): Promise<{ conversationId: string; messageId: string }> {
+    this.assertConversationAdmission();
     const existing = (await this.store!.list()).find(
       (summary) => summary.origin?.kind === "daily_brief",
     );
@@ -2332,6 +2351,7 @@ export class AgentService {
    * Returns false when the brief is not in the thread.
    */
   async redactMorningBrief(conversationId: string, messageId: string): Promise<boolean> {
+    this.assertConversationAdmission();
     if (!this.store) return false;
     const store = this.store;
     const redacted = await this.withResumeGate(conversationId, async () => {
@@ -2393,6 +2413,7 @@ export class AgentService {
 
   /** Seed one durable owner-note clarification without invoking a model. */
   async openNoteClarification(input: NoteHandoff): Promise<void> {
+    this.assertConversationAdmission();
     const store = this.store;
     if (!store) throw new AgentError("agent_unconfigured", "No conversation store is configured.");
     const id = input.conversationId;
@@ -2484,6 +2505,7 @@ export class AgentService {
     callerId: CallerId,
     input: { taskId: string; snapshot: TaskConversationOriginSnapshot },
   ): Promise<ConversationSummary> {
+    this.assertConversationAdmission();
     const store = this.store;
     if (!store) throw new AgentError("agent_unconfigured", "no conversation store configured");
     const backend = this.backendFactory("agent");
@@ -2728,6 +2750,7 @@ export class AgentService {
       submissionIds?: string[];
     } = {},
   ): { messageId: string; userMessageId: string } {
+    this.assertConversationAdmission();
     if (
       this.realtimeOwners.has(sessionId) ||
       (this.voiceOwners.has(sessionId) && !opts.acceptedSubmission)
@@ -3280,6 +3303,7 @@ export class AgentService {
       submissionIds?: string[];
     } = {},
   ): { messageId: string; userMessageId: string; completion: Promise<void> } {
+    this.assertConversationAdmission();
     const owner = this.realtimeOwners.get(sessionId);
     if (owner && owner !== opts.owner)
       throw new AgentError("session_busy", "conversation is in a voice call");
@@ -3434,6 +3458,7 @@ export class AgentService {
       }
       return;
     }
+    this.assertConversationHealthy();
     const live = this.sessions.get(sessionId);
     if (!live) {
       if (arrivingMessageId) {
@@ -3450,12 +3475,15 @@ export class AgentService {
       // conversation is indexed like any chat, so what the user says about
       // their mornings is evidence for the preferences they state there.
       if (live.meta.origin?.kind === "watch_firing") return;
+      this.assertConversationHealthy();
       try {
         this.onTurnComplete?.(sessionId);
       } catch (err) {
+        if (this.observeConversationCleanup(err)) throw err;
         log.warn(`onTurnComplete threw for ${sessionId}: ${(err as Error).message ?? err}`);
       }
     } catch (err) {
+      if (this.observeConversationCleanup(err)) throw err;
       log.warn(`failed to persist conversation ${sessionId}: ${(err as Error).message ?? err}`);
     } finally {
       if (arrivingMessageId) {
@@ -3503,6 +3531,7 @@ export class AgentService {
     text: string,
     submissionIds?: string[],
   ): { messageId: string; userMessageId: string } {
+    this.assertConversationAdmission();
     const messageId = `dr_${crypto.randomUUID()}`;
     const userMessageId = `dr_${crypto.randomUUID()}`;
     log.info(`session ${sessionId} deep-research user> (${text.length} chars)`);
@@ -3521,7 +3550,9 @@ export class AgentService {
       events: [],
       acceptErrors: true,
     });
-    void this.persistAndNotify(sessionId);
+    void this.persistAndNotify(sessionId).catch((error: unknown) => {
+      this.observeConversationCleanup(error);
+    });
 
     const rawEmit = (event: WsEvent): void => {
       this.emit(event);
@@ -3688,7 +3719,10 @@ export class AgentService {
         await finalize(terminal);
       }
     })();
-    operation.then(settleRun, settleRun);
+    operation.then(settleRun, (error: unknown) => {
+      this.observeConversationCleanup(error);
+      settleRun();
+    });
     void operation.finally(() => this.controls.kick(sessionId)).catch(() => {});
 
     this.touch(sessionId);
@@ -3783,6 +3817,7 @@ export class AgentService {
     callerId: CallerId,
     options: { conversationId?: string; timeZone?: string; authorized?: () => boolean } = {},
   ): Promise<VoiceAgentSession> {
+    this.assertConversationAdmission();
     if (this.disposing) throw new AgentError("session_busy", "agent service is shutting down");
     const { sessionId, entry, owner } = await this.withResumeGate(
       options.conversationId ?? "__voice_create__",
@@ -3951,6 +3986,7 @@ export class AgentService {
     callerId: CallerId,
     options: { conversationId?: string; timeZone?: string; missingConversationPolicy?: "create" },
   ): Promise<RealtimeAgentSession> {
+    this.assertConversationAdmission();
     if (this.disposing) throw new AgentError("session_busy", "agent service is shutting down");
     const sessionOptions: CreateSessionOptions = {
       profile: "interactive",
@@ -4084,6 +4120,7 @@ export class AgentService {
   }
 
   async submitMessage(callerId: CallerId, sessionId: string, input: SubmissionInput) {
+    this.assertConversationAdmission();
     if (this.realtimeOwners.has(sessionId) && input.mode === "interrupt")
       throw new AgentError("session_busy", "End the voice call before sending a message now.");
     const entry = this.requireSession(sessionId);
@@ -4098,6 +4135,7 @@ export class AgentService {
   }
 
   async sendQueuedNow(callerId: CallerId, sessionId: string, submissionIds: string[]) {
+    this.assertConversationAdmission();
     if (this.realtimeOwners.has(sessionId))
       throw new AgentError(
         "session_busy",
@@ -4417,14 +4455,71 @@ export class AgentService {
     });
   }
 
+  /** Read-only publication ownership, including the shared store's retained proof. */
+  cleanupFailure(): unknown {
+    if (this.conversationCleanupHeld) return this.conversationCleanupError;
+    const stored = this.store?.cleanupFailure?.();
+    const receipt = ownedProcessCleanupReceipt(stored);
+    if (receipt && !receipt.pending) return stored;
+    return receipt ||
+      this.conversationPersistenceTails.size > 0 ||
+      this.activeTurnCompletions.size > 0 ||
+      this.deepResearchRuns.size > 0 ||
+      (this.disposal && !this.disposalSettled)
+      ? this.pendingConversationCleanup
+      : undefined;
+  }
+
+  private observeConversationCleanup(error: unknown): boolean {
+    const receipt = ownedProcessCleanupReceipt(error);
+    if (!receipt) return false;
+    if (!this.conversationCleanupHeld) {
+      this.conversationCleanupHeld = true;
+      this.conversationCleanupError = receipt.pending
+        ? Object.assign(
+            new Error("Conversation publication cleanup is unconfirmed", { cause: error }),
+            {
+              cleanupFailure: receipt.failure,
+            },
+          )
+        : error;
+    }
+    return true;
+  }
+
+  private assertConversationHealthy(): void {
+    if (this.conversationCleanupHeld) throw this.conversationCleanupError;
+    const stored = this.store?.cleanupFailure?.();
+    const receipt = ownedProcessCleanupReceipt(stored);
+    if (receipt && !receipt.pending) {
+      this.observeConversationCleanup(stored);
+      throw this.conversationCleanupError;
+    }
+  }
+
+  private assertConversationAdmission(): void {
+    this.assertConversationHealthy();
+    if (this.disposing) throw new AgentError("session_busy", "agent service is shutting down");
+  }
+
   /** Serialize every durable mutation for one conversation in acceptance order. */
   private async enqueueConversationMutation<T>(id: string, mutation: () => Promise<T>): Promise<T> {
+    this.assertConversationHealthy();
+    if (this.disposalSettled) throw new AgentError("session_busy", "agent service is shut down");
     this.conversationPersistenceCounts.set(
       id,
       (this.conversationPersistenceCounts.get(id) ?? 0) + 1,
     );
     const prior = this.conversationPersistenceTails.get(id) ?? Promise.resolve();
-    const result = prior.then(mutation, mutation);
+    const result = prior
+      .then(() => {
+        this.assertConversationHealthy();
+        return mutation();
+      })
+      .catch((error: unknown) => {
+        this.observeConversationCleanup(error);
+        throw error;
+      });
     const tail = result.then(
       () => undefined,
       () => undefined,
@@ -4518,8 +4613,29 @@ export class AgentService {
    * gateway shutdown hook so a pending turn doesn't keep the event loop
    * alive past `SIGTERM`. Idempotent.
    */
-  async dispose(): Promise<void> {
+  dispose(): Promise<void> {
+    if (this.disposal) return this.disposal;
     this.disposing = true;
+    let resolve!: () => void;
+    let reject!: (error: unknown) => void;
+    this.disposal = new Promise<void>((done, fail) => {
+      resolve = done;
+      reject = fail;
+    });
+    void this.disposeOwned().then(
+      () => {
+        this.disposalSettled = true;
+        resolve();
+      },
+      (error: unknown) => {
+        this.disposalSettled = true;
+        reject(error);
+      },
+    );
+    return this.disposal;
+  }
+
+  private async disposeOwned(): Promise<void> {
     this.voiceOwners.clear();
     this.voiceSubmissionIds.clear();
     this.voiceMutationBatches.clear();
@@ -4542,11 +4658,12 @@ export class AgentService {
     // place until every aborted run has completed its terminal cleanup.
     const researchSettlements = [...this.deepResearchRuns.values()].map((run) => {
       run.abort.abort();
-      return run.completion.catch((err: unknown) =>
+      return run.completion.catch((err: unknown) => {
+        this.observeConversationCleanup(err);
         log.warn(
           `deep-research dispose threw: ${err instanceof Error ? err.message : String(err)}`,
-        ),
-      );
+        );
+      });
     });
     if (researchSettlements.length > 0) await Promise.all(researchSettlements);
 
@@ -4555,11 +4672,10 @@ export class AgentService {
     for (const [, entry] of this.sessions) {
       if (entry.timer) clearTimeout(entry.timer);
       disposals.push(
-        entry.session
-          .dispose()
-          .catch((err: unknown) =>
-            log.warn(`session dispose threw: ${err instanceof Error ? err.message : String(err)}`),
-          ),
+        entry.session.dispose().catch((err: unknown) => {
+          this.observeConversationCleanup(err);
+          log.warn(`session dispose threw: ${err instanceof Error ? err.message : String(err)}`);
+        }),
       );
     }
     // A live ordinary turn settles through AgentSession first and persists in
@@ -4568,7 +4684,11 @@ export class AgentService {
     if (turnSettlements.length > 0) {
       await Promise.all([
         ...disposals,
-        ...turnSettlements.map((settlement) => settlement.catch(() => {})),
+        ...turnSettlements.map((settlement) =>
+          settlement.catch((error: unknown) => {
+            this.observeConversationCleanup(error);
+          }),
+        ),
       ]);
     }
     if (this.controls.hasWork) await this.controls.settle();
@@ -4593,6 +4713,7 @@ export class AgentService {
     );
     this.conversationPersistenceCounts.clear();
     this.conversationPersistenceTails.clear();
+    this.assertConversationHealthy();
   }
 }
 

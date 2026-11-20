@@ -16,6 +16,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { tailnetCleanupError } from "./tailnet-command-processes.js";
 import {
   fetchFrom,
   GATEWAY_TAILNET_ORIGIN,
@@ -45,7 +46,7 @@ const SUITE = "tailscale-embed.e2e";
 const tools: TailnetTools | null = await tailnetTools(SUITE);
 
 describe.skipIf(!tools)("the gateway's own Tailscale device", () => {
-  let tailnet: TestTailnet;
+  let tailnet: Awaited<ReturnType<typeof TestTailnet.start>>;
   let gateway: TailnetGateway;
   let laptop: TailnetMachine;
   let desktop: TailnetMachine;
@@ -79,11 +80,24 @@ describe.skipIf(!tools)("the gateway's own Tailscale device", () => {
   }, 300_000);
 
   afterAll(async () => {
-    if (failed) {
-      console.error(`--- gateway log\n${gateway?.log() ?? ""}\n${tailnet?.logs() ?? ""}`);
+    if (failed)
+      process.stderr.write(`--- gateway log\n${gateway?.log() ?? ""}\n${tailnet?.logs() ?? ""}\n`);
+    const failures: unknown[] = [];
+    try {
+      await gateway?.stop();
+    } catch (error) {
+      failures.push(error);
     }
-    await gateway?.remove();
-    await tailnet?.stop();
+    try {
+      await tailnet?.stop({ retainInputs: true });
+    } catch (error) {
+      failures.push(error);
+    }
+    if (failures.length) throw tailnetCleanupError(failures);
+    const removed = await Promise.allSettled([gateway?.remove(), tailnet?.stop()]);
+    const removalFailures = removed.filter((result) => result.status === "rejected");
+    if (removalFailures.length)
+      throw tailnetCleanupError(removalFailures.map((result) => result.reason as unknown));
   }, 120_000);
 
   const step = (name: string, fn: () => Promise<void>, timeoutMs = 180_000) =>
@@ -92,6 +106,7 @@ describe.skipIf(!tools)("the gateway's own Tailscale device", () => {
       async () => {
         try {
           await fn();
+          expect(gateway.helperPanicked(), "the Go helper must remain free of panics").toBe(false);
         } catch (err) {
           failed = true;
           throw err;
@@ -114,7 +129,7 @@ describe.skipIf(!tools)("the gateway's own Tailscale device", () => {
       const connected = await until((s) => s.connection === "connected", "the device to connect");
       expect(connected).toMatchObject({
         url: GATEWAY_TAILNET_ORIGIN,
-        owner: { login: "owner" },
+        owner: { login: tailnet.ownerLogin },
         // headscale offers no Tailscale certificates, so the gateway serves its own.
         certificate: { source: "gateway", reason: "https-disabled" },
         helper: { state: "running" },
@@ -156,7 +171,7 @@ describe.skipIf(!tools)("the gateway's own Tailscale device", () => {
       expect(request).toMatchObject({
         name: "maya-laptop",
         machine: "maya-laptop",
-        login: "owner",
+        login: tailnet.ownerLogin,
       });
       expect(
         (
@@ -275,6 +290,10 @@ describe.skipIf(!tools)("the gateway's own Tailscale device", () => {
     );
     await tailnet.approveSignIn(waiting.signInUrl!, "owner");
     await until((s) => s.connection === "connected", "the device to connect again");
+    await waitFor(
+      async () => (await fromLaptop("/health")).status === 200,
+      "the reapproved gateway to answer over the real tailnet",
+    );
   });
 
   step("turning it off closes the tailnet address", async () => {

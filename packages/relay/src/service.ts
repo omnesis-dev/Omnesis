@@ -15,6 +15,7 @@ const log = createLogger("relay");
 
 export const RELAY_CHALLENGE_TTL_MS = 2 * 60_000;
 export const RELAY_MAX_PENDING_CHALLENGES = 1_000;
+const RELAY_CHALLENGE_COOLDOWN_MS = 30_000;
 const NEW_ENROLMENT_CAPACITY_SHARE = 0.9;
 export const RELAY_PRUNE_INTERVAL_MS = 60_000;
 export const RELAY_CREDENTIAL_PREFIX = "omnrelay_v1_";
@@ -54,6 +55,7 @@ export interface RelayServiceOptions {
   abuseGuard?: RelayAbuseGuard;
   challengeTtlMs?: number;
   maxPendingChallenges?: number;
+  challengeCooldownMs?: number;
 }
 
 export class RelayService {
@@ -66,6 +68,8 @@ export class RelayService {
   private readonly abuseGuard: RelayAbuseGuard | null;
   private readonly challengeTtlMs: number;
   private readonly maxPendingChallenges: number;
+  private readonly challengeCooldownMs: number;
+  private readonly challengeDispatches = new Map<string, Promise<void>>();
 
   constructor(opts: RelayServiceOptions) {
     this.store = opts.store;
@@ -76,6 +80,10 @@ export class RelayService {
     this.abuseGuard = opts.abuseGuard ?? null;
     this.challengeTtlMs = opts.challengeTtlMs ?? RELAY_CHALLENGE_TTL_MS;
     this.maxPendingChallenges = opts.maxPendingChallenges ?? RELAY_MAX_PENDING_CHALLENGES;
+    this.challengeCooldownMs = Math.min(
+      opts.challengeCooldownMs ?? RELAY_CHALLENGE_COOLDOWN_MS,
+      this.challengeTtlMs,
+    );
     const pruneIntervalMs = opts.pruneIntervalMs ?? RELAY_PRUNE_INTERVAL_MS;
     this.pruneTimer =
       opts.pruneIntervalMs === null
@@ -85,6 +93,7 @@ export class RelayService {
   }
 
   async enrol(target: RelayTarget, source?: string): Promise<{ challengeId: string }> {
+    if (target.platform === "ios") target = { ...target, token: target.token.toLowerCase() };
     this.enforceAbuse(
       "enrol",
       this.abuseGuard && source ? this.abuseGuard.admitEnrol(source, this.clock.now()) : null,
@@ -110,7 +119,7 @@ export class RelayService {
     const renewal = this.store.hasActiveCredentialForTarget(target);
     const challengeId = this.random.uuid();
     const nonce = this.random.bytes(32).toString("base64url");
-    const created = this.store.tryCreateChallenge(
+    const reservation = this.store.reserveChallenge(
       {
         id: challengeId,
         target,
@@ -121,8 +130,22 @@ export class RelayService {
       renewal
         ? this.maxPendingChallenges
         : Math.max(1, Math.floor(this.maxPendingChallenges * NEW_ENROLMENT_CAPACITY_SHARE)),
+      this.challengeCooldownMs,
     );
-    if (!created) {
+    if (reservation.status === "pending") {
+      // Concurrent retries share the dispatch result as well as the challenge.
+      await this.challengeDispatches.get(reservation.challengeId);
+      return { challengeId: reservation.challengeId };
+    }
+    if (reservation.status === "cooldown") {
+      this.metrics.abuseRejected("enrol", "target_cooldown");
+      throw new RelayServiceError(
+        "rate_limited",
+        "carrier target enrolment is temporarily unavailable",
+        reservation.retryAfterMs,
+      );
+    }
+    if (reservation.status === "capacity") {
       this.metrics.abuseRejected("enrol", "challenge_capacity");
       throw new RelayServiceError("capacity_unavailable", "relay enrolment capacity is exhausted");
     }
@@ -133,6 +156,23 @@ export class RelayService {
       this.store.deleteChallenge(challengeId);
       this.enforceAbuse("enrol", globalDecision);
     }
+    const dispatch = this.dispatchChallenge(carrier, target, nonce, challengeId, source);
+    this.challengeDispatches.set(challengeId, dispatch);
+    try {
+      await dispatch;
+    } finally {
+      this.challengeDispatches.delete(challengeId);
+    }
+    return { challengeId };
+  }
+
+  private async dispatchChallenge(
+    carrier: RelayCarrier,
+    target: RelayTarget,
+    nonce: string,
+    challengeId: string,
+    source: string | undefined,
+  ): Promise<void> {
     const startedAt = this.clock.now();
     try {
       await carrier.sendChallenge(target, nonce);
@@ -144,14 +184,13 @@ export class RelayService {
       const reason = this.observeCarrierError(target.platform, err);
       this.metrics.carrier(target.platform, "failure", reason, this.clock.now() - startedAt);
       this.metrics.enrol(target.platform, "failed");
-      this.store.deleteChallenge(challengeId);
+      this.store.failChallenge(challengeId, this.clock.now());
       if (this.abuseGuard && source) {
         this.abuseGuard.recordCarrierChallengeFailure(source, this.clock.now());
       }
       log.warn(`challenge dispatch failed for ${target.platform}`);
       throw new RelayServiceError("carrier_failed", "carrier rejected the enrolment challenge");
     }
-    return { challengeId };
   }
 
   verify(challengeId: string, nonce: string, source?: string): { credential: string } {

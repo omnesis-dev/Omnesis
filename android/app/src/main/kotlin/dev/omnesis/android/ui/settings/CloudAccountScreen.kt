@@ -73,7 +73,6 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
-import dev.omnesis.android.BuildConfig
 import dev.omnesis.android.designsystem.components.LoadingView
 import dev.omnesis.android.designsystem.components.OmSpinner
 import dev.omnesis.android.designsystem.components.OmnesisCard
@@ -99,6 +98,7 @@ import dev.omnesis.android.pairing.cloudAccountDiagnostics
 import dev.omnesis.android.pairing.cloudAccountElsewhere
 import dev.omnesis.android.pairing.cloudAccountErrorText
 import dev.omnesis.android.pairing.cloudAccountHttpsUrl
+import dev.omnesis.android.pairing.cloudAccountConnectUrl
 import dev.omnesis.android.pairing.cloudAccountPageUrl
 import dev.omnesis.android.pairing.cloudAccountPollMillis
 import dev.omnesis.android.pairing.cloudAccountProblems
@@ -137,8 +137,7 @@ class CloudAccountViewModel @Inject constructor(
     val state = controller.state
     private var polling: Job? = null
 
-    /** Never read from the gateway unless the build enables cloud connectivity. */
-    private fun client(): CloudRelayManaging? = session.session?.takeIf { BuildConfig.CLOUD_RELAY_ENABLED }?.admin
+    private fun client(): CloudRelayManaging? = session.session?.admin
 
     /**
      * Re-reads the status for as long as the screen is in front. A sign-in finishes on the
@@ -215,7 +214,7 @@ fun CloudAccountScreen(onBack: () -> Unit, vm: CloudAccountViewModel = hiltViewM
             cancelConnect = vm::cancelConnect,
             run = vm::run,
             setPolicy = vm::setPolicy,
-            openSignIn = { openInCustomTab(context, it) },
+            openSignIn = { openInCustomTab(context, it); vm.launched() },
             openPage = { url -> runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) } },
         ),
     )
@@ -323,11 +322,12 @@ private fun PhaseHero(
         CloudAccountPhase.Waiting -> Hero(
             dot = c.accent,
             progress = true,
-            title = "Sign in to your Omnesis account",
-            lede = "Continue in the sign-in page to finish connecting. This screen updates by itself.",
+            title = if (status.connect?.verification == null) "Sign in to your Omnesis account" else "Verify this gateway setup",
+            lede = if (status.connect?.verification == null) "Continue in the sign-in page to finish connecting. This screen updates by itself."
+                else "Open the security check before signing in. It usually completes automatically and may ask you to confirm you are human.",
         ) {
-            cloudAccountHttpsUrl(status.connect?.authorizeUrl)?.let { url ->
-                PrimaryButton("Open sign-in", enabled = canAct, modifier = Modifier.testTag("cloudAccount.openSignIn")) { actions.openSignIn(url) }
+            cloudAccountConnectUrl(status.connect)?.let { url ->
+                PrimaryButton(if (status.connect?.verification == null) "Open sign-in" else "Open security check", enabled = canAct, modifier = Modifier.testTag("cloudAccount.openSignIn")) { actions.openSignIn(url) }
             }
             SecondaryButton(if (busy == "connect/cancel") "Cancelling…" else "Cancel", enabled = canAct, modifier = Modifier.testTag("cloudAccount.cancel"), onClick = actions.cancelConnect)
             Elsewhere(status, dates)

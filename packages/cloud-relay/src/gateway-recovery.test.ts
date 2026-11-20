@@ -5,7 +5,9 @@ import { createPublicKey } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { ensurePrivateDirs } from "@omnesis/core";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { markedFileError } from "../test/private-operation-fixture.js";
 import { createRecoveryAuthority, signRecoveryReceipt } from "./recovery-authority.js";
 import { gatewayRecoveryDraft, readGatewayRecoveryReceipt } from "./gateway-recovery.js";
 import {
@@ -18,6 +20,7 @@ let directory: string;
 const authority = createRecoveryAuthority();
 beforeEach(async () => {
   directory = await mkdtemp(join(tmpdir(), "omnesis-gateway-recovery-"));
+  if (process.platform === "win32") await ensurePrivateDirs([directory]);
 });
 afterEach(async () => {
   vi.restoreAllMocks();
@@ -110,7 +113,11 @@ test("every fresh proof can carry a bounded exact owner receipt from its default
   await writeFile(path, "not json");
   await expect(readGatewayRecoveryReceipt(f.options, f.identity)).rejects.toThrow();
   await writeFile(path, "x".repeat(65_537));
-  await expect(readGatewayRecoveryReceipt(f.options, f.identity)).rejects.toThrow("too large");
+  if (process.platform === "win32")
+    await expect(readGatewayRecoveryReceipt(f.options, f.identity)).rejects.toMatchObject({
+      code: "EPRIVATE",
+    });
+  else await expect(readGatewayRecoveryReceipt(f.options, f.identity)).rejects.toThrow("too large");
 });
 
 test("unreadable recovery artifacts cannot silently downgrade to invitation or receipt-less enrollment", async () => {
@@ -132,7 +139,6 @@ test("real sockets recover absent heartbeats, abrupt resets and transient sessio
   const { WebSocketServer } = await import("ws");
   const { GatewayTunnel } = await import("./tunnel-client.js");
   const { listen, until, closeServer } = await import("../test/support.js");
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
   const server = createServer();
   const sockets = new WebSocketServer({ noServer: true });
   let admitted = 0;
@@ -176,3 +182,13 @@ test("real sockets recover absent heartbeats, abrupt resets and transient sessio
     vi.unstubAllEnvs();
   }
 });
+
+test.each(["own", "cause"] as const)(
+  "marked recovery-receipt absence cannot authorize receipt-free enrollment (%s)",
+  async (placement) => {
+    const f = await fixture(),
+      failure = markedFileError("ENOENT", placement);
+    vi.spyOn(credentials, "readPrivateJson").mockRejectedValueOnce(failure);
+    await expect(readGatewayRecoveryReceipt(f.options, f.identity)).rejects.toBe(failure);
+  },
+);

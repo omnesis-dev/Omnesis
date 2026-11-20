@@ -7,11 +7,10 @@
  * / source.validate-param / source.add / sources.snapshot.request.
  */
 
-import { spawn } from "node:child_process";
 import { describe, test, expect } from "vitest";
 import { makeCommand } from "@omnesis/core";
 import { AccountId, ProviderType, SourceType } from "@omnesis/types";
-import { createSourceWsHandlers, endedFlowOutcome, terminateChild } from "./source-ws-handlers.js";
+import { createSourceWsHandlers, endedFlowOutcome } from "./source-ws-handlers.js";
 import type { SourceConfig } from "@omnesis/core";
 import type {
   GatewayClient,
@@ -459,37 +458,6 @@ describe("source-ws-handlers", () => {
     await expect(handlers.shutdown()).resolves.toBeUndefined();
     // Idempotent — second call is also a no-op.
     await expect(handlers.shutdown()).resolves.toBeUndefined();
-  });
-});
-
-// terminateChild is the SIGTERM-then-SIGKILL helper that
-// shutdown() and handleAuthCancel both rely on. Spinning up a real
-// long-running child is the only honest way to verify the signal
-// escalation actually fires; the kill() calls are otherwise just
-// no-op invocations on a settled handle.
-describe("terminateChild", () => {
-  test("SIGTERMs a long-running child and resolves on exit", async () => {
-    const child = spawn("node", ["-e", "setInterval(() => {}, 1000)"], {
-      stdio: "ignore",
-    });
-    // Give the child a moment to be fully spawned before we signal it
-    // (otherwise kill() can race against the spawn syscall on slow CI).
-    await new Promise((r) => setTimeout(r, 50));
-    expect(child.exitCode).toBeNull();
-    await terminateChild(child);
-    expect(child.exitCode === 0 || child.signalCode === "SIGTERM").toBe(true);
-  });
-
-  test("resolves immediately on an already-exited child", async () => {
-    const child = spawn("node", ["-e", "process.exit(0)"], { stdio: "ignore" });
-    // Wait for natural exit.
-    await new Promise<void>((resolve) => child.once("exit", () => resolve()));
-    expect(child.exitCode).toBe(0);
-    // Should resolve without sending any new signal — the early return
-    // skips the Promise + signal path entirely.
-    const start = Date.now();
-    await terminateChild(child);
-    expect(Date.now() - start).toBeLessThan(50);
   });
 });
 

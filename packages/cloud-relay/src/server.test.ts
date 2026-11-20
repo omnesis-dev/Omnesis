@@ -14,7 +14,6 @@ import { createRelayClientProxy } from "./client-proxy.js";
 import { DEFAULT_TUNNEL_LIMITS } from "./tunnels.js";
 import type { WebSocket } from "ws";
 
-beforeEach(() => vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1"));
 afterEach(() => vi.unstubAllEnvs());
 
 describe("opaque cloud relay transport", () => {
@@ -453,10 +452,6 @@ describe("native client adapter", () => {
     } finally {
       await proxy.close();
     }
-    vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "0");
-    expect(() =>
-      createRelayClientProxy({ gatewayUrl: url, gatewayFingerprint: "a".repeat(64) }),
-    ).toThrow("OMNESIS_CLOUD_RELAY_ENABLED=1");
   });
 
   test("shutdown terminates an active streaming response", async () => {

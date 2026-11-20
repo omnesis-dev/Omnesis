@@ -15,6 +15,7 @@ import {
   Socket,
   type AddressInfo,
 } from "node:net";
+import { createWindowsPrivateFile, ensurePrivateFileSync } from "@omnesis/core";
 import {
   createRelayClientProxy,
   certificateFingerprint,
@@ -42,6 +43,7 @@ import { getDocumentCount } from "./helpers.js";
 import { authorizeMcpClient, revokeAccess, type AuthorizedMcpClient } from "./mcp-oauth-helper.js";
 import { lostAckProxy } from "./lost-ack-proxy.js";
 import { verifiedLoopbackFetch } from "./verified-tls-fetch.js";
+import { execCliWithDiagnostics } from "./cli-process.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -60,12 +62,10 @@ describe("native cloud tunnel with real gateway, collector sync engine and CLI",
   let wireServer: ReturnType<typeof createTcpServer>;
   const wireSockets = new Set<Socket>();
   const wireChunks: Buffer[] = [];
-  const priorCloudRelayEnabled = process.env.OMNESIS_CLOUD_RELAY_ENABLED;
   const gatewayId = randomUUID();
   const gatewayHostname = hostedGatewayHostname(gatewayId, "relay.example.test");
 
   beforeAll(async () => {
-    process.env.OMNESIS_CLOUD_RELAY_ENABLED = "1";
     directory = await mkdtemp(join(tmpdir(), "omnesis-cloud-e2e-"));
     const keyFile = join(directory, "relay-key");
     const gatewayKeyFile = join(directory, "gateway-key.pem");
@@ -125,9 +125,11 @@ describe("native cloud tunnel with real gateway, collector sync engine and CLI",
       "-extfile",
       gatewayExtensionsFile,
     ]);
+    if (process.platform === "win32") ensurePrivateFileSync(gatewayKeyFile);
     gatewayAuthorityCertificate = await readFile(authorityCertFile, "utf8");
     gatewayCertificate = await readFile(gatewayCertFile, "utf8");
-    await writeFile(keyFile, randomBytes(32));
+    if (process.platform === "win32") await createWindowsPrivateFile(keyFile, randomBytes(32));
+    else await writeFile(keyFile, randomBytes(32));
     relay = await startRelayProcess({
       OMNESIS_CLOUD_RELAY_KEY_FILE: keyFile,
       OMNESIS_SYNTHETIC: "1",
@@ -160,9 +162,13 @@ describe("native cloud tunnel with real gateway, collector sync engine and CLI",
     await once(wireServer, "listening");
     publicOrigin = `https://${gatewayHostname}:${(wireServer.address() as AddressInfo).port}`;
     const registration = e2eTsxCommand("packages/cloud-relay/src/main.ts");
+    const osEnvironment = Object.fromEntries(
+      Object.entries(process.env).filter(([name]) => !name.toUpperCase().startsWith("OMNESIS_")),
+    );
     await execFileAsync(registration.command, [...registration.args, "register-key"], {
       env: e2eGatewayEnv({
-        OMNESIS_CLOUD_RELAY_ENABLED: "1",
+        ...osEnvironment,
+        OMNESIS_CONFIG_DIR: directory,
         OMNESIS_CLOUD_RELAY_URL: relay.url,
         OMNESIS_CLOUD_RELAY_SESSION_FILE: sessionFile,
         OMNESIS_CLOUD_RELAY_GATEWAY_ID: gatewayId,
@@ -197,7 +203,6 @@ describe("native cloud tunnel with real gateway, collector sync engine and CLI",
     proxyUrl = faults.url;
     harness = new E2EHarness({
       extraGatewayEnv: {
-        OMNESIS_CLOUD_RELAY_ENABLED: "1",
         OMNESIS_CLOUD_RELAY_URL: relay.url,
         OMNESIS_CLOUD_RELAY_SESSION_FILE: sessionFile,
         OMNESIS_CLOUD_RELAY_GATEWAY_ID: gatewayId,
@@ -285,8 +290,6 @@ describe("native cloud tunnel with real gateway, collector sync engine and CLI",
           await new Promise<void>((resolve) => wireServer.close(() => resolve()));
         await relay?.close();
         if (directory) await rm(directory, { recursive: true, force: true });
-        if (priorCloudRelayEnabled === undefined) delete process.env.OMNESIS_CLOUD_RELAY_ENABLED;
-        else process.env.OMNESIS_CLOUD_RELAY_ENABLED = priorCloudRelayEnabled;
       }
     }
   }, 30_000);
@@ -437,7 +440,6 @@ describe("native cloud tunnel with real gateway, collector sync engine and CLI",
     );
     const env = {
       ...e2eGatewayEnv(),
-      OMNESIS_CLOUD_RELAY_ENABLED: "1",
       OMNESIS_CONFIG_DIR: join(directory, "automatic-cli"),
       OMNESIS_GATEWAY_URL: undefined,
       OMNESIS_GATEWAY_REQUEST_URL: undefined,
@@ -452,7 +454,7 @@ describe("native cloud tunnel with real gateway, collector sync engine and CLI",
       timeout: 20_000,
     });
     expect(JSON.parse(result.stdout).deviceId).toBe(paired.device.id);
-    const help = await execFileAsync(command.command, [...command.args, "--help"], {
+    const help = await execCliWithDiagnostics(command.command, [...command.args, "--help"], {
       env: { ...env, OMNESIS_CLOUD_RELAY_DEVICE_FILE: join(directory, "missing-device.json") },
       timeout: 20_000,
     });
@@ -476,7 +478,7 @@ describe("native cloud tunnel with real gateway, collector sync engine and CLI",
     expect(JSON.parse(defaultResult.stdout).deviceId).toBe(paired.device.id);
     await writeFile(defaultFile, "malformed old cloud bundle", { mode: 0o600 });
     for (const flag of ["--help", "-V"]) {
-      const info = await execFileAsync(command.command, [...command.args, flag], {
+      const info = await execCliWithDiagnostics(command.command, [...command.args, flag], {
         env: automatic,
         timeout: 20_000,
       });
@@ -744,15 +746,14 @@ describe("native cloud tunnel with real gateway, collector sync engine and CLI",
   test("direct no-Google collector and relay collector share one gateway with independent identities", async () => {
     const command = e2eTsxCommand("packages/collector/src/main.ts");
     const collectors = [
-      { name: "fictional-relay-daemon", url: proxyUrl, cloudRelay: "1" },
-      { name: "fictional-direct-daemon", url: directGateway, cloudRelay: "0" },
+      { name: "fictional-relay-daemon", url: proxyUrl },
+      { name: "fictional-direct-daemon", url: directGateway },
     ].map((topology) => {
       const configDir = join(directory, topology.name);
       const proc = spawn(command.command, command.args, {
         cwd: join(import.meta.dirname, "../../../.."),
         env: {
           ...e2eGatewayEnv(),
-          OMNESIS_CLOUD_RELAY_ENABLED: topology.cloudRelay,
           OMNESIS_SYNTHETIC: "1",
           OMNESIS_MDNS_DISABLE: "1",
           OMNESIS_CONFIG_DIR: configDir,
@@ -1081,7 +1082,12 @@ async function startRelayProcess(env: NodeJS.ProcessEnv): Promise<RelayProcess> 
   const command = e2eTsxCommand("packages/cloud-relay/src/main.ts");
   const proc: ChildProcess = spawn(command.command, [...command.args, "serve"], {
     cwd: join(import.meta.dirname, "../../../.."),
-    env: { ...e2eGatewayEnv(), ...env, OMNESIS_LOG_LEVEL: "info" },
+    // The relay server process starts only with its own opt-in.
+    env: {
+      ...e2eGatewayEnv(),
+      ...env,
+      OMNESIS_LOG_LEVEL: "info",
+    },
     detached: true,
     stdio: ["ignore", "pipe", "pipe"],
   });

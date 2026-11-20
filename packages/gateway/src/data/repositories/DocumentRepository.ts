@@ -7,7 +7,8 @@ import {
   recordSourceInventoryDocument,
 } from "./SourceInventoryRepository.js";
 import { isKnowledgeDocumentReadable } from "../../brain/knowledge/retrieval-fence.js";
-import type Database from "better-sqlite3";
+import { readActiveStorageTrimCutoff } from "../../storage/trim-job-authority.js";
+import { isBeforeRetentionCutoff } from "../../storage/retention-policy.js";
 type Db = Database.Database;
 import { randomUUID } from "node:crypto";
 import { createLogger, normalizeUrl } from "@omnesis/core";
@@ -54,6 +55,7 @@ import {
 import { findRemovedSourceIds } from "./SourceRepository.js";
 import { retractAliasAssertions } from "./PersonAliasRepository.js";
 import { deleteSourceWatermark, upsertSourceWatermark } from "./WatermarkRepository.js";
+import type Database from "better-sqlite3";
 import type { UrlCanonicalizerSpec, EdgeDeclaration } from "@omnesis/core";
 
 const log = createLogger("gateway:documents");
@@ -328,6 +330,16 @@ export function upsertDocuments(
   const tombstoned = filterTombstonedDocuments(db, documents, options.streams);
   const suppressedDocuments = tombstoned.suppressed;
   documents = filterRemovedSourceDocuments(db, tombstoned.kept);
+  // Resolve active deletion authority at commit time: an ingest request may
+  // have passed its reader-side cutoff before the user started a trim.
+  const trimCutoffs = new Map<string, string | null>();
+  documents = documents.filter((document) => {
+    if (document.metadata?.documentType === "contact") return true;
+    if (!trimCutoffs.has(document.sourceId))
+      trimCutoffs.set(document.sourceId, readActiveStorageTrimCutoff(db, document.sourceId));
+    const cutoff = trimCutoffs.get(document.sourceId);
+    return !cutoff || !isBeforeRetentionCutoff(document.sourceCreatedAt, cutoff);
+  });
 
   const stmt = db.prepare(`
     INSERT INTO documents (id, provider_id, source_id, external_id, stream_id, partition_key, title, content, content_hash, extracted_content_hash, metadata, source_created_at, source_updated_at, ingested_at, updated_at, source_url, source_version)

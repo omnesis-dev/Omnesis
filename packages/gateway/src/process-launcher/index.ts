@@ -20,6 +20,11 @@ export {
   type ProcessResult,
   type RunProcessOptions,
 } from "./run-child.js";
+export {
+  assertProcessCleanupConfirmed,
+  hasUnconfirmedProcessCleanup,
+  ProcessCleanupUnconfirmedError,
+} from "./cleanup.js";
 
 const log = createLogger("gateway:process-launcher");
 const READY_TIMEOUT_MS = 15_000;
@@ -93,8 +98,19 @@ export class HostedProcessLauncher implements ProcessLauncher {
         if (!pending) return;
         host.pending.delete(id);
         pending.cleanup();
-        if (pending.pid !== undefined) killProcessGroup(pending.pid);
-        resolve(launcherFailure("timeout", "process launcher did not answer"));
+        if (process.platform === "win32") {
+          // Each native job helper watches this host through a pinned handle.
+          // Stopping an unresponsive host closes all its owned jobs without
+          // guessing whether a helper's numeric PID has been reused.
+          host.child.kill("SIGKILL");
+        } else if (pending.pid !== undefined) killProcessGroup(pending.pid);
+        resolve(
+          launcherFailure(
+            "timeout",
+            "process launcher did not answer",
+            process.platform === "win32",
+          ),
+        );
       }, opts.timeoutMs + HOST_REPLY_GRACE_MS);
       backstop.unref();
       const cleanup = (): void => {
@@ -222,7 +238,9 @@ export class HostedProcessLauncher implements ProcessLauncher {
           pending.cleanup();
           // The programs of a host that was killed outlive it; nobody reads them now.
           if (pending.pid !== undefined) killProcessGroup(pending.pid);
-          pending.resolve(launcherFailure("spawn", "process launcher exited"));
+          pending.resolve(
+            launcherFailure("spawn", "process launcher exited", process.platform === "win32"),
+          );
         }
       });
     });
@@ -237,7 +255,11 @@ function retire(child: ChildProcess): void {
   child.once("exit", () => clearTimeout(kill));
 }
 
-function launcherFailure(failure: "spawn" | "timeout", failureMessage: string): ProcessResult {
+function launcherFailure(
+  failure: "spawn" | "timeout",
+  failureMessage: string,
+  unconfirmedCleanup = false,
+): ProcessResult {
   return {
     exitCode: null,
     signal: null,
@@ -245,6 +267,11 @@ function launcherFailure(failure: "spawn" | "timeout", failureMessage: string): 
     stderr: "",
     failure,
     failureMessage,
+    ...(unconfirmedCleanup
+      ? {
+          cleanupFailure: "Windows process launcher did not provide authenticated child join proof",
+        }
+      : {}),
   };
 }
 

@@ -6,15 +6,25 @@ import { createServer, type ServerResponse } from "node:http";
 import { afterEach, expect, it } from "vitest";
 import { z } from "zod";
 import { annotationVerificationContext } from "../../../gateway/src/brain/annotation-verification.js";
+import { isParallelKnowledgeRun } from "../../../gateway/src/brain/storage/run-queue.js";
 import {
   BrainBench,
   call,
+  collectToolSteps,
   compressCognitionCadences,
+  decideNextTurn,
   note,
   preserveCurrentOwner,
+  readRunContext,
   sourceInterpretations,
+  structuredData,
   urgencyOnlyDecisionPolicy,
 } from "./brain-bench/index.js";
+import {
+  startOpenAiServer,
+  userPromptOf,
+  type OpenAiServerHandle,
+} from "./brain-bench/openai-server.js";
 import { startVerdictServer, type VerdictServer } from "./brain-bench/verdict-servers.js";
 
 compressCognitionCadences();
@@ -34,11 +44,15 @@ const documents = [
 ];
 let bench: BrainBench | undefined;
 let healthy: VerdictServer | undefined;
+let model: OpenAiServerHandle | undefined;
 let stop: (() => Promise<void>) | undefined;
+let releaseAnnotations: (() => void) | undefined;
 afterEach(async () => {
-  await bench?.destroy();
-  await stop?.();
-  await healthy?.close();
+  releaseAnnotations?.();
+  const gateway = await Promise.allSettled([bench?.destroy()]);
+  const servers = await Promise.allSettled([stop?.(), model?.close(), healthy?.close()]);
+  const failed = [...gateway, ...servers].filter((result) => result.status === "rejected");
+  if (failed.length) throw new AggregateError(failed.map((result) => result.reason));
 }, 60_000);
 
 it("bounds overlapping remote verifications and closes timed-out calls before retries", async () => {
@@ -105,43 +119,92 @@ it("bounds overlapping remote verifications and closes timed-out calls before re
   const address = server.address();
   if (!address || typeof address === "string")
     throw new Error("Fixture server address unavailable");
+  const behaviors = {
+    dynamic: sourceInterpretations({
+      maintainNode: preserveCurrentOwner,
+      sources: documents.map((doc) => ({
+        docTitle: doc.title,
+        plan: (ctx) => ({
+          calls: [
+            call("annotation_search", { docId: ctx.subject }),
+            call("annotate_durable", {
+              docId: ctx.subject,
+              claimType: "inspection",
+              claimText: doc.content,
+              evidenceDocId: ctx.subject,
+              evidenceQuote: doc.content,
+              confidence: 0.8,
+              claimBasis: "quoted",
+            }),
+          ],
+        }),
+      })),
+    }),
+  };
+  const ready = new Map<string, string>();
+  const release = Promise.withResolvers<void>();
+  let released = false;
+  releaseAnnotations = () => {
+    released = true;
+    release.resolve();
+  };
+  model = await startOpenAiServer({
+    modelId: "verifier-cancellation-ordering",
+    async respond(messages) {
+      const turn = decideNextTurn(messages, behaviors);
+      if (!released && turn.kind === "tool" && turn.name === "annotate_durable") {
+        const ctx = readRunContext(userPromptOf(messages));
+        const read = collectToolSteps(messages).findLast(
+          (step) => step.name === "annotation_search" && step.args?.docId === turn.args.docId,
+        );
+        const receipt = structuredData(read?.result);
+        if (
+          !ctx?.runId ||
+          typeof turn.args.docId !== "string" ||
+          receipt?.docId !== turn.args.docId
+        )
+          throw new Error("Fixture annotation requires its source collection read");
+        ready.set(turn.args.docId, ctx.runId);
+        // Hold before either verifier clock starts, with both collection reads captured.
+        await release.promise;
+      }
+      return turn.kind === "tool"
+        ? { kind: "tool", name: turn.name, args: turn.args }
+        : { kind: "text", text: turn.text };
+    },
+  });
   bench = await BrainBench.start({
-    // Judged soon, each source keeps its own batch: routine changes would
-    // share one run, and the two verifications would no longer overlap.
+    // Admit promptly; maxSeeds keeps each source in an independent batch.
     decision: { policy: urgencyOnlyDecisionPolicy() },
     experimental: true,
+    syncSources: false,
     brain: {
+      bootstrap: { enabled: false },
+      derivationBarrier: "0s",
       workerConcurrency: 2,
-      knowledge: { soonDelay: "1s", routineDelay: "1s", maxFrontierItems: 1 },
+      knowledge: { soonDelay: "1s", routineDelay: "1s", maxSeeds: 1 },
     },
     extraInference: {
-      backends: { cancellation: { type: "http", url: `http://127.0.0.1:${address.port}` } },
-      assignments: { "entailment-verifier": `cancellation/${healthy.modelId}` },
-    },
-    behaviors: {
-      dynamic: sourceInterpretations({
-        maintainNode: preserveCurrentOwner,
-        sources: documents.map((doc) => ({
-          docTitle: doc.title,
-          plan: (ctx) => ({
-            calls: [
-              call("annotation_search", { docId: ctx.subject }),
-              call("annotate_durable", {
-                docId: ctx.subject,
-                claimType: "inspection",
-                claimText: doc.content,
-                evidenceDocId: ctx.subject,
-                evidenceQuote: doc.content,
-                confidence: 0.8,
-                claimBasis: "quoted",
-              }),
-            ],
-          }),
-        })),
-      }),
+      backends: {
+        cancellation: { type: "http", url: `http://127.0.0.1:${address.port}` },
+        ordering: { type: "http", url: model.url },
+      },
+      assignments: {
+        "entailment-verifier": `cancellation/${healthy.modelId}`,
+        "background-agent": `ordering/${model.modelId}`,
+      },
     },
   });
   await bench.pushAll(documents);
+  await expect
+    .poll(() => ({ sources: ready.size, runs: new Set(ready.values()).size }), {
+      timeout: 20_000,
+      message: "Both source collection reads must precede either verifier call",
+    })
+    .toEqual({ sources: 2, runs: 2 });
+  for (const runId of ready.values()) expect(isParallelKnowledgeRun(bench.sql, runId)).toBe(true);
+  expect(requests).toHaveLength(0);
+  releaseAnnotations();
   await bench.drainUntilQuiet({ timeoutMs: 100_000, stallMs: 65_000 });
   expect(requests).toHaveLength(3);
   expect(requests.slice(0, 2).map((request) => request.claim)).toContain(requests[2]!.claim);
@@ -150,6 +213,8 @@ it("bounds overlapping remote verifications and closes timed-out calls before re
   // Both independent remote operations enter before either transport closes.
   // The third is the existing global collection-CAS retry, not extra admission.
   expect(requests[1]!.started).toBeLessThan(requests[0]!.closed!);
+  const retried = requests.find((request) => request.claim === requests[2]!.claim)!;
+  expect(requests[2]!.started).toBeGreaterThanOrEqual(retried.closed!);
   for (const request of requests) expect(request.started + 25_000).toBeLessThan(request.closed!);
   const boundaries = requests
     .flatMap((request) => [

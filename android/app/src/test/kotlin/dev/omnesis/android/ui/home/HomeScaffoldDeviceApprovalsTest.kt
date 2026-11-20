@@ -16,12 +16,10 @@ import androidx.compose.ui.test.performSemanticsAction
 import dagger.hilt.android.testing.HiltAndroidRule
 import dagger.hilt.android.testing.HiltAndroidTest
 import dagger.hilt.android.testing.HiltTestApplication
-import dev.omnesis.android.BuildConfig
 import java.time.Instant
 import okhttp3.mockwebserver.MockResponse
 import org.junit.After
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -96,10 +94,6 @@ class HomeScaffoldDeviceApprovalsTest {
         compose.waitForIdle()
         assertEquals(0, joinReads())
         compose.onAllNodesWithTag(BANNER).assertCountEquals(0)
-        if (!BuildConfig.CLOUD_RELAY_ENABLED) {
-            // Without cloud connectivity the banner's loop never starts: no sign-in requests either.
-            assertTrue(harness.gateway.requests.none { it.contains("/cloud-pairing/") })
-        }
     }
 
     @Test

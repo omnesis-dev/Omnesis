@@ -25,6 +25,8 @@
 
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import { createDatabase } from "../db.js";
 import { EventBus } from "../events.js";
@@ -192,7 +194,7 @@ function seedAnnotation(
 }
 
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-test-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
   db = createDatabase(dbPath);
   writeGate = directWriteGate(db);
   bus = new EventBus();

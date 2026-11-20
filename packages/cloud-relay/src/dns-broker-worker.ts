@@ -9,8 +9,11 @@
  * The Workers runtime types are declared here as narrowly as the broker uses them, so the
  * package needs no Workers type dependency.
  */
+import { z } from "zod";
+import { registryImportSchema } from "./dns-broker-contract.js";
 import { DnsBroker } from "./dns-broker-core.js";
 import { cloudflareBrokerZone } from "./dns-broker-zone.js";
+import { turnstileVerifier } from "./dns-broker-public-admission.js";
 
 export interface DurableObjectStorageLike {
   get(key: string): Promise<unknown>;
@@ -39,22 +42,67 @@ export interface DnsBrokerEnv {
   CLOUDFLARE_API_TOKEN: string;
   /** Secret, set only for the one-time registry import and deleted afterwards. */
   REGISTRY_IMPORT_TOKEN?: string;
+  /** JSON registry entries approved for new names. Omit during gateway-client migration. */
+  APPROVED_NEW_OWNERS_JSON?: string;
   CAA_ACCOUNT_URI_PREFIX?: string;
+  PUBLIC_ADMISSION_ENABLED?: string;
+  PUBLIC_ADMISSION_KEY?: string;
+  TURNSTILE_SITE_KEY?: string;
+  TURNSTILE_SECRET_KEY?: string;
+  PUBLIC_ADMISSION_LIMITS_JSON?: string;
 }
+
+const CLIENT_HEADER = "x-omnesis-dns-worker-client";
+const limitsSchema = z
+  .object({
+    networkPerHour: z.number().int().positive().optional(),
+    networkPerDay: z.number().int().positive().optional(),
+    ownerPerDay: z.number().int().positive().optional(),
+    totalPerDay: z.number().int().positive().optional(),
+    reservedRecords: z.number().int().positive().optional(),
+  })
+  .strict();
 
 /** The single registry instance every request is routed to. */
 export class DnsBrokerRegistry {
   private readonly broker: DnsBroker;
+  private alarmAt: number | undefined;
   constructor(
     private readonly state: DurableObjectStateLike,
     env: DnsBrokerEnv,
   ) {
     const storage = state.storage;
+    if (!["0", "1"].includes(env.PUBLIC_ADMISSION_ENABLED ?? ""))
+      throw new Error("Choose public DNS admission or explicit migration compatibility mode");
+    const publicMode = env.PUBLIC_ADMISSION_ENABLED === "1";
+    if (
+      publicMode &&
+      (!env.PUBLIC_ADMISSION_KEY || !env.TURNSTILE_SITE_KEY || !env.TURNSTILE_SECRET_KEY)
+    )
+      throw new Error("Public DNS admission requires its key and Turnstile configuration");
     this.broker = new DnsBroker({
+      onMaintenance: () => this.requestMaintenance(),
       origin: env.BROKER_ORIGIN,
+      approvedNewOwners:
+        env.APPROVED_NEW_OWNERS_JSON === undefined
+          ? undefined
+          : registryImportSchema.parse({ entries: JSON.parse(env.APPROVED_NEW_OWNERS_JSON) })
+              .entries,
       relayDomain: env.RELAY_DOMAIN,
       importToken: env.REGISTRY_IMPORT_TOKEN || undefined,
       caa: env.CAA_ACCOUNT_URI_PREFIX ? { accountUriPrefix: env.CAA_ACCOUNT_URI_PREFIX } : {},
+      ...(publicMode
+        ? {
+            publicAdmission: {
+              secret: env.PUBLIC_ADMISSION_KEY!,
+              siteKey: env.TURNSTILE_SITE_KEY!,
+              verify: turnstileVerifier(env.TURNSTILE_SECRET_KEY!),
+              ...(env.PUBLIC_ADMISSION_LIMITS_JSON
+                ? { limits: limitsSchema.parse(JSON.parse(env.PUBLIC_ADMISSION_LIMITS_JSON)) }
+                : {}),
+            },
+          }
+        : {}),
       store: {
         get: (key) => storage.get(key),
         put: (key, value) => storage.put(key, value),
@@ -74,17 +122,30 @@ export class DnsBrokerRegistry {
     void state.blockConcurrencyWhile(() => this.schedule());
   }
   async fetch(request: Request): Promise<Response> {
-    const response = await this.broker.handle(request);
-    await this.schedule();
-    return response;
+    return this.broker.handle(request, {
+      clientAddress: request.headers.get(CLIENT_HEADER) ?? undefined,
+    });
   }
   async alarm(): Promise<void> {
+    this.alarmAt = undefined;
     await this.schedule();
   }
   private async schedule(): Promise<void> {
-    const next = await this.broker.expire();
-    if (next === undefined) await this.state.storage.deleteAlarm();
-    else await this.state.storage.setAlarm(next);
+    await this.broker.expire();
+    await this.broker.updateMaintenance(async (next) => {
+      this.alarmAt = next;
+      if (next === undefined) await this.state.storage.deleteAlarm();
+      else await this.state.storage.setAlarm(next);
+    });
+  }
+  private async requestMaintenance(): Promise<void> {
+    // Called under the broker metadata lock, before a journal mutation can reach provider I/O.
+    // Earlier alarms remain earlier; continued traffic cannot postpone a lease cleanup.
+    const at = Date.now() + 60_000;
+    if (this.alarmAt === undefined || at < this.alarmAt) {
+      this.alarmAt = at;
+      await this.state.storage.setAlarm(at);
+    }
   }
 }
 
@@ -95,6 +156,15 @@ export default {
         status: 404,
         headers: { "content-type": "application/json", "cache-control": "no-store" },
       });
-    return env.DNS_BROKER.get(env.DNS_BROKER.idFromName("registry")).fetch(request);
+    const headers = new Headers(request.headers);
+    // Cloudflare overwrites CF-Connecting-IP at this public entry point. A caller's internal
+    // header is never forwarded, so only this Worker can supply the Durable Object's context.
+    headers.delete(CLIENT_HEADER);
+    const address = request.headers.get("cf-connecting-ip");
+    headers.delete("cf-connecting-ip");
+    if (address) headers.set(CLIENT_HEADER, address);
+    return env.DNS_BROKER.get(env.DNS_BROKER.idFromName("registry")).fetch(
+      new Request(request, { headers }),
+    );
   },
 };

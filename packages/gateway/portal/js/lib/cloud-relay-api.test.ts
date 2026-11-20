@@ -7,10 +7,12 @@ import {
   relayManagement,
   relayError,
   relayHttpsUrl,
+  dnsVerificationUrl,
   gatewayVersion,
   googleAuthorizationUrl,
   accountAuthorizationUrl,
-  relaySignupAccess,
+  relayInvite,
+  relayInviteOnly,
   stopTrustingSignIn,
   // @ts-expect-error portal JS
 } from "./cloud-relay-api.js";
@@ -21,6 +23,9 @@ test("uses authenticated same-origin status and mutation calls with cancellation
   const signal = new AbortController().signal;
   expect(await relayManagement("", undefined, signal)).toEqual(status);
   expect(request).toHaveBeenLastCalledWith("/admin/cloud-relay", { cache: "no-store", signal });
+  // Only a page that shows how to sign up lets the gateway ask the relay about it.
+  await relayManagement("", undefined, signal, "POST", { signup: true });
+  expect(request).toHaveBeenLastCalledWith("/admin/cloud-relay?signup=1", { cache: "no-store", signal });
   await relayManagement("enable", { invitation: "fictional-invitation" }, signal);
   expect(request).toHaveBeenLastCalledWith("/admin/cloud-relay/enable", {
     cache: "no-store",
@@ -49,6 +54,9 @@ test("never displays server bodies, unknown codes, paths or credentials", async 
     "relay-service-unavailable",
     "configuration-invalid",
     "relay-unreachable",
+    "dns-capacity",
+    "dns-allocation-rate",
+    "dns-verification-required",
     "invitation-required",
     "enrollment-refused",
     "tunnel-disconnected",
@@ -56,25 +64,37 @@ test("never displays server bodies, unknown codes, paths or credentials", async 
     "certificate-renewal-failed",
     "public-endpoint-unreachable",
     "not-allowed",
+    "invite-invalid",
+    "invite-expired",
+    "invite-used",
   ])
     expect(relayError(code)).not.toContain("An operation failed");
 });
-test("an invite-only relay's request link is shown only as a safe https address, with its host", () => {
-  const requestAccessUrl = "https://groups.example.com/g/fictional-testers";
-  expect(relaySignupAccess({ signup: { inviteOnly: true, requestAccessUrl } })).toEqual({
-    url: requestAccessUrl,
-    host: "groups.example.com",
-  });
-  for (const status of [
-    null,
-    {},
-    { signup: null },
-    { signup: { inviteOnly: "true", requestAccessUrl } },
-    { signup: { inviteOnly: true, requestAccessUrl: "http://groups.example.com/" } },
-    { signup: { inviteOnly: true, requestAccessUrl: "https://a:b@groups.example.com/" } },
-    { signup: { inviteOnly: true, requestAccessUrl: ["https://groups.example.com/"] } },
+test("the relay is invite-only only when the gateway says exactly that", () => {
+  expect(relayInviteOnly({ signup: { inviteOnly: true } })).toBe(true);
+  for (const status of [null, {}, { signup: null }, { signup: { inviteOnly: "true" } }])
+    expect(relayInviteOnly(status)).toBe(false);
+});
+test("a pasted invite link, its fragment or the bare code all give the invite's token", () => {
+  const token = `${"a".repeat(36)}.${"b".repeat(120)}.${"c".repeat(86)}`;
+  for (const value of [
+    token,
+    ` ${token}\n`,
+    `#${token}`,
+    `https://relay.example.test/invite#${token}`,
   ])
-    expect(relaySignupAccess(status)).toBeNull();
+    expect(relayInvite(value)).toBe(token);
+  for (const value of [
+    undefined,
+    7,
+    "",
+    "https://relay.example.test/invite",
+    `${token}x`.replace(/c+x$/, "c"),
+    `${token}.extra`,
+    `${"a".repeat(36)}.${"b".repeat(1000)}.${"c".repeat(86)}`,
+    token.replace("a", "+"),
+  ])
+    expect(relayInvite(value)).toBeNull();
 });
 test("the gateway version is read from health and is never an error or an odd string", async () => {
   request.mockResolvedValue({ ok: true, json: async () => ({ version: "9.8.7-rc.1" }) });
@@ -93,6 +113,10 @@ test("the gateway version is read from health and is never an error or an odd st
   expect(await gatewayVersion()).toBe("");
 });
 test("only known typed refusal codes cross the API error boundary", async () => {
+  for (const code of ["dns-capacity", "dns-allocation-rate", "dns-verification-required"]) {
+    request.mockResolvedValueOnce({ ok: false, json: async () => ({ code, error: "private diagnostic" }) });
+    await expect(relayManagement("connect", {})).rejects.toMatchObject({ code });
+  }
   request.mockResolvedValueOnce({
     ok: false,
     json: async () => ({ code: "ca-terms-required", error: "secret" }),
@@ -265,4 +289,18 @@ test("stopping trust in a sign-in deletes it by its encoded id and nothing else"
     method: "DELETE",
     body: undefined,
   });
+});
+
+
+test("DNS verification links accept long broker tickets and reject ambiguous browser destinations", () => {
+  const base = "https://dns.example.test/_dns/v2/enroll";
+  const valid = `${base}?ticket=${"a".repeat(3000)}`;
+  expect(dnsVerificationUrl(valid)).toBe(valid);
+  for (const value of [undefined, null, 1, "not a URL", "a".repeat(16_385),
+    `${base}?ticket=`, base, `${base}?ticket=one&ticket=two`, `${base}?ticket=one&next=elsewhere`,
+    `${base}?ticket=one#fragment`, "http://dns.example.test/_dns/v2/enroll?ticket=one",
+    "https://user@dns.example.test/_dns/v2/enroll?ticket=one",
+    "https://:password@dns.example.test/_dns/v2/enroll?ticket=one",
+    "https://dns.example.test/elsewhere?ticket=one",
+  ]) expect(dnsVerificationUrl(value), String(value)).toBeNull();
 });

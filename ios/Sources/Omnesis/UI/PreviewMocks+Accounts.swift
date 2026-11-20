@@ -26,9 +26,8 @@ extension PreviewMocks {
         ),
     ]
     static let accountCloudPairingConfiguration = AccountCloudPairingConfiguration(
-        relayOrigin: googleCloudPairingConfiguration.relayOrigin,
-        google: googleCloudPairingConfiguration,
-        passkeysEnabled: true
+        relayOrigin: URL(string: "https://relay.example.test")!,
+        google: googleCloudPairingConfiguration
     )
     private static func joinedMillisAgo(_ seconds: TimeInterval) -> Int64 {
         Int64((Date().timeIntervalSince1970 - seconds) * 1000)
@@ -162,13 +161,10 @@ extension PreviewMocks {
             approved: approved || phase == .pairing,
             error: error ?? (phase == .failed ? AccountPairingError.noGateways : nil),
             googleAvailable: true,
-            passkeysAvailable: true,
             onGoogle: {},
             onPasskey: {},
             onChoose: { _ in },
             onPair: {},
-            onScan: {},
-            onManual: {},
             approvalPageAvailable: approvalPage,
             expiresAt: Date().addingTimeInterval(272),
             continuesOnApproval: continues

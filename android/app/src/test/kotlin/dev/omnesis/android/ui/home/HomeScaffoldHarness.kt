@@ -104,10 +104,6 @@ class HomeScaffoldHostActivityRule : TestRule {
 @Module
 @TestInstallIn(components = [SingletonComponent::class], replaces = [AppModule::class, PushModule::class])
 object HomeScaffoldTestModule {
-    /** A test of cloud connectivity sets this before its graph is built and clears it afterwards. */
-    @Volatile
-    var cloudRelay: Boolean = false
-
     @Provides
     @Singleton
     fun provideAppVersionInfo(): AppVersionInfo = AppVersionInfo(
@@ -125,7 +121,6 @@ object HomeScaffoldTestModule {
         optIns.map(HostedSourceOptIn::hostedSourceContract),
         version = appVersion.version,
         pushAppId = "dev.omnesis.android",
-        pairingNotifications = cloudRelay,
     )
 
     @Provides

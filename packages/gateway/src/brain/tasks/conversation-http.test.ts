@@ -110,7 +110,7 @@ function seedDocument(externalId: string, title: string): string {
 
 beforeEach(() => {
   clock.set(NOW);
-  dbPath = `/tmp/omnesis-test-${randomUUID()}.db`;
+  dbPath = join(tmpdir(), `omnesis-test-${randomUUID()}.db`);
   db = createDatabase(dbPath);
   vi.stubEnv("OMNESIS_EXPERIMENTAL", "1");
   setLabFlag(db, "tasks", true);

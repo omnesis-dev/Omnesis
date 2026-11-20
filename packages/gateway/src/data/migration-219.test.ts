@@ -1,70 +1,55 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-/**
- * Migration 219 — the tables of published filter lists. They are new, so the
- * migration only has to create them, and creating them twice must be harmless.
- */
-
 import Database from "better-sqlite3";
-import { afterEach, beforeEach, expect, test } from "vitest";
-import { MIGRATIONS } from "./migrations.js";
-import { addSourceFilterLists } from "./migration-219-source-filter-lists.js";
-import { runSchemaSetup } from "./schema.js";
+import { expect, it } from "vitest";
+import {
+  bindStorageRetentionPolicy,
+  readBoundStorageRetentionPolicies,
+  readStorageSourceIncarnation,
+} from "../storage/retention-bindings.js";
+import { MIGRATIONS, runMigrations } from "./migrations.js";
+import { addStorageAuthority } from "./migration-219-storage-authority.js";
 
-let db: Database.Database;
-
-beforeEach(() => {
-  db = new Database(":memory:");
-});
-
-afterEach(() => db.close());
-
-const TABLES = ["source_filter_item_members", "source_filter_items", "source_filter_lists"];
-
-function shape(handle: Database.Database): unknown {
-  return handle
-    .prepare(
-      `SELECT type, name, tbl_name, sql FROM sqlite_master
-        WHERE tbl_name IN (${TABLES.map(() => "?").join(", ")}) ORDER BY type, name`,
-    )
-    .all(...TABLES);
-}
-
-test("is registered as migration 219", () => {
-  expect(MIGRATIONS.find((migration) => migration.version === 219)?.up).toBe(addSourceFilterLists);
-});
-
-test("creates the three tables and the parent index, and running it again changes nothing", () => {
-  addSourceFilterLists(db);
-  const once = shape(db);
-  expect(
-    (once as Array<{ type: string; name: string }>)
-      .filter((row) => !row.name.startsWith("sqlite_autoindex"))
-      .map((row) => `${row.type}:${row.name}`),
-  ).toEqual([
-    "index:idx_source_filter_items_parent",
-    "table:source_filter_item_members",
-    "table:source_filter_items",
-    "table:source_filter_lists",
-  ]);
-  db.prepare(
-    `INSERT INTO source_filter_lists
-       (source_id, field, device_id, generation, digest, item_count, published_at)
-     VALUES ('filing:northstar', 'extra.folderIds', '', 1, 'abc', 0, 1000)`,
-  ).run();
-  addSourceFilterLists(db);
-  expect(shape(db)).toEqual(once);
-  expect(db.prepare("SELECT COUNT(*) AS n FROM source_filter_lists").get()).toEqual({ n: 1 });
-});
-
-test("an upgraded install ends with the same tables a fresh one starts with", () => {
-  addSourceFilterLists(db);
-  const fresh = new Database(":memory:");
+it("migration219 preserves existing sources, binds their identity once, and preserves durable trim progress", () => {
+  const db = new Database(":memory:");
   try {
-    runSchemaSetup(fresh);
-    expect(shape(db)).toEqual(shape(fresh));
+    db.exec(`CREATE TABLE sources(id TEXT PRIMARY KEY, created_at INTEGER NOT NULL);
+      CREATE TABLE removed_sources(id TEXT PRIMARY KEY);
+      CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, description TEXT, run_at INTEGER, duration_ms INTEGER);
+      CREATE TABLE snapshot_absence_cascade_outbox(id INTEGER PRIMARY KEY);
+      INSERT INTO sources VALUES ('fictional-notes:one', 123);
+      PRAGMA user_version = 218`);
+    expect(MIGRATIONS.find((migration) => migration.version === 219)?.up).toBe(addStorageAuthority);
+    // Later migrations alter tables this skeleton database does not have.
+    const through219 = { migrations: MIGRATIONS.filter((migration) => migration.version <= 219) };
+    runMigrations(db, through219);
+    expect(db.pragma("user_version", { simple: true })).toBe(219);
+    const sourceIncarnation = readStorageSourceIncarnation(db, "fictional-notes:one")!;
+    const policy = { sourceId: "fictional-notes:one", maxAgeDays: 365, sourceIncarnation };
+    expect(bindStorageRetentionPolicy(db, policy).stale).toBe(false);
+    const bound = readBoundStorageRetentionPolicies(db, [policy]);
+    db.prepare(
+      `INSERT INTO storage_trim_jobs(id,kind,source_id,source_incarnation,before_date,state,
+      cursor_date,cursor_id,upper_date,upper_id,revision,deleted,examined,skipped,created_at,updated_at)
+      VALUES ('fictional-job','manual',?,?,'2031-01-01T00:00:00.000Z','running',
+      '2020-01-02T00:00:00.000Z','doc-second','2020-01-03T00:00:00.000Z','doc-last',1,3,5,2,1,2)`,
+    ).run(policy.sourceId, sourceIncarnation);
+    addStorageAuthority(db);
+    runMigrations(db, through219);
+    expect(readStorageSourceIncarnation(db, policy.sourceId)).toBe(sourceIncarnation);
+    expect(readBoundStorageRetentionPolicies(db, [policy])).toEqual(bound);
+    expect(
+      db
+        .prepare(
+          "SELECT state,cursor_id,deleted,examined,skipped FROM storage_trim_jobs WHERE id='fictional-job'",
+        )
+        .get(),
+    ).toEqual({ state: "running", cursor_id: "doc-second", deleted: 3, examined: 5, skipped: 2 });
+    expect(db.prepare("SELECT created_at FROM sources WHERE id=?").get(policy.sourceId)).toEqual({
+      created_at: 123,
+    });
   } finally {
-    fresh.close();
+    db.close();
   }
 });

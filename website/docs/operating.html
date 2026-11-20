@@ -135,6 +135,7 @@
               <ul class="side-sub">
                 <li><a href="#services">Services</a></li>
                 <li><a href="#monitoring">Monitoring</a></li>
+                <li><a href="#storage">Storage</a></li>
                 <li><a href="#configuration">Configuration</a></li>
                 <li><a href="#models">Models</a></li>
                 <li><a href="#troubleshooting">Troubleshooting</a></li>
@@ -230,9 +231,24 @@ collector    omnesis-collector.service                running        41283</pre>
           its own configuration directory.
         </p>
         <p>
+          During startup, the gateway serves a progress page as soon as its HTTPS certificate and
+          listener are ready. Open the portal or a saved link to see the current startup step,
+          completed steps, and database migration progress. The page opens your original destination
+          automatically when the required services are ready. API requests, including
+          <code>/health</code>, return <code>503</code> until then; a visible progress page does not
+          mean the API is ready. Search preparation can continue after the portal opens.
+        </p>
+        <p>
           During shutdown the gateway refuses new requests and disconnects WebSocket clients;
           requests already in flight get a short window to finish. Clients reconnect once it is
           back.
+        </p>
+        <p>
+          Collector shutdown refuses new source-management commands, cancels history imports, and
+          waits for accepted commands and imports to finish. Authentication waits for its process to
+          finish before reporting success. Unconfirmed cleanup is logged and keeps the process
+          running for investigation. Import working files are kept when their worker's cleanup
+          cannot be confirmed.
         </p>
         <p>
           A collector whose event loop stops turning for five minutes (alive, but stuck and syncing
@@ -294,8 +310,9 @@ collector    omnesis-collector.service                running        41283</pre>
           <code>omnesis status</code> prints one row per source: sync state, document count, index
           coverage, last sync, and the ingested and indexed date ranges. It ends with the gateway's
           version and a count of how the paired devices compare to it (see
-          <a href="updating#compatibility">Version compatibility</a>). Pass <code>-w</code>
-          to keep it open as a live view.
+          <a href="updating#compatibility">Version compatibility</a>). Pass <code>-w</code> to keep
+          it open as a live view. Pass <code>--json</code> for one machine-readable status snapshot
+          without terminal formatting. JSON output cannot be combined with <code>--watch</code>.
         </p>
         <div class="term">
           <div class="term-bar"><span></span><span></span><span></span></div>
@@ -368,7 +385,19 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
           show N/A. On macOS the permission belongs to the collector's executable, so a file your
           terminal can read may still be refused to the collector. The portal's checks only read;
           <code>omnesis doctor --fix-permissions</code>, run on the affected host, is what restores
-          owner-only file modes under its configuration directory.
+          private file access under its configuration directory.
+        </p>
+
+        <p>
+          On Windows, startup stops before loading <code>.env</code> when its access controls cannot
+          be verified. Run exactly <code>omnesis doctor --fix-permissions</code> on that host for an
+          early repair of directory access and inheritance on an already-private file. Broad file
+          access is refused without reading or changing its contents: stop related processes, review
+          permissions, and recreate the file privately before retrying. A successful early repair
+          exits with status <code>2</code>. Review <code>.env</code>, then rerun the command.
+          Commands that update <code>.env</code> refuse an unreadable existing file; restore its
+          read access before changing configuration. Additional flags and remote or fleet selections
+          are refused during this early repair.
         </p>
 
         <h3 id="stalls">Event-loop stalls</h3>
@@ -423,6 +452,81 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
           <code>info</code>, <code>warn</code> or <code>error</code>; default <code>info</code>) and
           <code>OMNESIS_LOG_FILE</code>, which also writes a rotated copy to that file. Set them on
           a service with <code>omnesis service install --env</code>.
+        </p>
+
+        <h2 id="storage">Storage</h2>
+        <p>
+          Open <strong>Settings → Storage</strong> in the portal to see the gateway's measured
+          files, the capacity of each disk it uses, and estimated usage by source. The on-disk
+          breakdown relates each store's file size to the data shown in source totals and the
+          remaining storage. Expand a database store to see its database file, write logs and other
+          files, including vector graph files for the search index. Write logs can retain copies of
+          recently changed database pages.
+        </p>
+        <p>
+          <strong>Brain run logs</strong> are the Brain's execution transcripts;
+          <strong>Chat history</strong> holds conversations with the built-in agent. Document and
+          search-index measurements run independently in the background. Document totals and history
+          appear as soon as they are measured, while index measurements can still be running. Each
+          measurement shows its status and last measurement time. A failed refresh keeps previous
+          measurements visible and offers a retry. Database allocation details are measured
+          separately; waiting for those details does not hide measured source totals or history.
+        </p>
+        <p>
+          Expand a source to see a monthly and cumulative breakdown of the data currently stored,
+          grouped by its source date. Source totals include document payload, stored vectors,
+          indexed text and a share of the lexical index weighted by indexed text size. Shared
+          database overhead, vector graph files and analytics are excluded from the source
+          estimates. Measurements refresh in the background. Collector caches on other machines are
+          outside this gateway view.
+        </p>
+        <p>
+          Set an optional maximum gateway size in GiB. An empty field means there is no custom size
+          limit. Disk protection always applies: growth pauses when a gateway disk reaches 95% used
+          space or has less than the safety reserve available (500 MiB by default). The gateway
+          checks every disk holding its stores, including stores moved outside its configuration
+          directory. Capacity is sampled, so the limit is a safety threshold rather than a hard
+          filesystem reservation; concurrent writes and other applications can consume space between
+          measurements.
+        </p>
+        <p>
+          Storage pressure pauses ingestion and space-growing background work; existing data is not
+          deleted to satisfy a limit. Reads and storage controls remain available. A warning
+          triangle marks Settings when storage needs attention. The Storage tab explains the problem
+          and offers controls. Free disk space by removing unused downloaded models or moving
+          retained backup copies to another disk, or raise your gateway size limit. Removing source
+          data makes database pages reusable but may leave physical usage unchanged, so trimming
+          alone may not clear the limit. Work resumes after space clears the recovery margin,
+          avoiding repeated pause/resume cycles near the threshold. If a current capacity
+          measurement cannot be obtained, growth pauses until measurement succeeds again.
+        </p>
+        <p>
+          Choose <strong>Trim</strong> from a source row’s actions. Enter a cutoff date and review
+          the shaded area on the chart, then confirm once to remove all eligible documents before
+          that date. Omnesis saves the request and works through it in bounded background batches,
+          resuming after a gateway restart. The source row reports progress, pending search cleanup
+          and completion. Contacts and documents with ambiguous dates are exempt; newer documents
+          and other sources are preserved. Originals in the connected service remain untouched. A
+          one-off trim suppresses those items locally so an ordinary sync does not immediately
+          restore them. The orange area under a source’s cumulative curve shows the portion
+          scheduled for trimming. Charts update as measurements refresh in the background.
+        </p>
+        <p>
+          Choose <strong>Set rolling retention</strong> from the same source menu. Enter the number
+          of days to keep, review the shaded portion of the chart, and confirm automatic removal. It
+          trims stored older documents in bounded background batches and keeps newly received older
+          documents out. It does not trim analytics rows or collector-owned archives. Turning it off
+          stops automatic trimming; widening it allows older documents to be imported again, subject
+          to the source's import window. The source chart shows scheduled removal in orange and
+          updates in the background as data is removed. See
+          <a href="sources#storage-retention">Source retention</a>.
+        </p>
+        <p>
+          Deletion frees pages inside a database for reuse; it does not guarantee a smaller file on
+          disk. Omnesis does not automatically run a full database compaction under storage
+          pressure: that operation can need substantial temporary space. The configuration keys are
+          under <code>gateway.storage</code>; the disk reserve remains
+          <code>gateway.minFreeDiskMb</code>.
         </p>
 
         <h2 id="configuration">Configuration</h2>
@@ -540,12 +644,13 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
           go back for the older history by itself. To fetch it, run
           <code>omnesis sources resync &lt;id&gt;</code> after widening: the source is read again
           from the start under the new window, and nothing already indexed is deleted. Narrowing the
-          window keeps older items out from then on and deletes nothing already stored.
-          <code>activityRetention.maxAge</code> is separate: it removes expired operational history
-          and unpinned agent conversations in small background batches, never data ingested from
-          sources, and never pinned, running or pending work. Without it, activity is kept forever.
-          Deleted data frees space inside the databases for reuse, but a database file may not
-          shrink on disk.
+          window keeps older items out from then on and deletes nothing already stored. To remove
+          stored source documents, use the explicit trim or rolling retention controls in
+          <a href="#storage">Settings → Storage</a>. <code>activityRetention.maxAge</code> is
+          separate: it removes expired operational history and unpinned agent conversations in small
+          background batches, never data ingested from sources, and never pinned, running or pending
+          work. Without it, activity is kept forever. Deleted data frees space inside the databases
+          for reuse, but a database file may not shrink on disk.
         </p>
         <p>
           <code>gateway.snapshotAbsence</code> controls how cautiously Omnesis deletes items that a
@@ -1339,6 +1444,12 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
         </p>
 
         <h3 id="codex">Codex runtime and capacity</h3>
+        <p>
+          On Windows, Codex authentication sharing between isolated runtimes requires permission to
+          create file symbolic links. Enable Windows Developer Mode for a standard account before
+          configuring this optional backend. Omnesis keeps its Codex state in dedicated private
+          directories; do not point it at a personal Codex home or a general working directory.
+        </p>
         <p>
           Omnesis manages a Codex runtime version tested with the installed release. In
           <strong>Settings → Models → Backends</strong>, <strong>Refresh model list</strong> asks

@@ -17,7 +17,6 @@ import {
   makeResponseOk,
   newCorrelationId,
   parseRequestPayload,
-  cloudRelayEnabled,
   parseEventPayload,
   parseResponsePayload,
   PROTOCOL_VERSION,
@@ -204,12 +203,11 @@ export interface DeviceWsOptions {
  */
 export class DeviceWsServer {
   private readonly paths = new DevicePathTelemetry();
-  // Path observations exist only with the cloud relay opt-in.
   connectionPath(deviceId: DeviceId) {
-    return cloudRelayEnabled() ? this.paths.snapshot(deviceId) : undefined;
+    return this.paths.snapshot(deviceId);
   }
   noteConnectionPath(deviceId: DeviceId, path: import("@omnesis/core").ConnectionPath) {
-    if (cloudRelayEnabled()) this.paths.request(deviceId, path);
+    this.paths.request(deviceId, path);
   }
   private connections = new Map<WsHandle, ConnectionState>();
   private byDevice = new Map<DeviceId, Set<WsHandle>>();
@@ -470,8 +468,7 @@ export class DeviceWsServer {
     }
 
     if (isWsEvent(parsed)) {
-      const known =
-        isKnownEventType(parsed.type) && (parsed.type !== "connection.path" || cloudRelayEnabled());
+      const known = isKnownEventType(parsed.type);
       const name = known ? `ws ${parsed.type}` : "ws (unknown)";
       withActivity(name, () => this.handleEvent(ws, state, parsed));
       return;
@@ -850,11 +847,7 @@ export class DeviceWsServer {
       if (this.connections.get(ws) !== state) return;
     }
 
-    this.paths.open(
-      ws,
-      auth.deviceId,
-      cloudRelayEnabled() ? state.upgradeAuth?.connectionPath : undefined,
-    );
+    this.paths.open(ws, auth.deviceId, state.upgradeAuth?.connectionPath);
     this.sendRaw(
       ws,
       makeResponseOk(cmd.id, {
@@ -908,8 +901,7 @@ export class DeviceWsServer {
 
   private handleEvent(ws: WsHandle, state: ConnectionState, event: WsEvent): void {
     if (!state.deviceId) return;
-    // Without the opt-in this is an event like any other the gateway does not know.
-    if (cloudRelayEnabled() && event.type === "connection.path") {
+    if (event.type === "connection.path") {
       const parsed = parseEventPayload("connection.path", event.payload);
       if (parsed.ok) this.paths.update(ws, state.deviceId, parsed.value.path);
       return;

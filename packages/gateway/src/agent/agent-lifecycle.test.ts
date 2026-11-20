@@ -165,6 +165,56 @@ describe("AgentLifecycle", () => {
     }
   });
 
+  test.each([false, true])(
+    "a model swap retains an explicitly unjoined previous service (nested:%s)",
+    async (nested) => {
+      const { lifecycle, attach } = makeLifecycle();
+      const cause = Object.assign(new Error("invented service cleanup uncertainty"), {
+        cleanupFailure: undefined,
+      });
+      const marker = nested ? new Error("invented disposal wrapper", { cause }) : cause;
+      const previous = {
+        dispose: vi.fn(async () => {
+          throw marker;
+        }),
+        cleanupFailure: () => marker,
+      };
+      lifecycle.routeDeps.agentService = previous as unknown as NonNullable<
+        typeof lifecycle.routeDeps.agentService
+      >;
+      try {
+        await expect(lifecycle.applyAgentSwap()).rejects.toBe(marker);
+        expect(lifecycle.routeDeps.agentService).toBe(previous);
+        expect(attach).not.toHaveBeenCalled();
+      } finally {
+        // The refusal is injected; this fixture owns no Native child or real turn.
+        lifecycle.routeDeps.agentService = undefined;
+        await lifecycle.shutdown();
+      }
+    },
+  );
+
+  test("an ordinary joined previous-service disposal failure still allows the requested model swap", async () => {
+    const { lifecycle, attach } = makeLifecycle();
+    const previous = {
+      dispose: vi.fn(async () => {
+        throw new Error("invented joined disposal failure");
+      }),
+    };
+    lifecycle.routeDeps.agentService = previous as unknown as NonNullable<
+      typeof lifecycle.routeDeps.agentService
+    >;
+    try {
+      await lifecycle.applyAgentSwap();
+      expect(previous.dispose).toHaveBeenCalledOnce();
+      expect(lifecycle.routeDeps.agentService).toBeUndefined();
+      expect(attach).toHaveBeenCalled();
+    } finally {
+      lifecycle.routeDeps.agentService = undefined;
+      await lifecycle.shutdown();
+    }
+  });
+
   test("boot then swap (no assignment): distinct disabled reasons, no service, stable routeDeps", async () => {
     const conversationStore = new FsConversationStore(join(configDir, "conversations"));
     const { lifecycle, attach } = makeLifecycle(disabledConfig(), { conversationStore });

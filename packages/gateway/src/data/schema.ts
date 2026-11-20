@@ -36,17 +36,19 @@ import { createAnswerPrivacyTables, createDirectAuditTables } from "../privacy/s
 import { createSubscriptionTables } from "../subscriptions/store-schema.js";
 import { createTranscriptionVocabularyTables } from "../transcribe/vocabulary/storage.js";
 import { createDocumentFilterValueTables } from "../access/filter-values.js";
+import { addStorageAuthority } from "./migration-219-storage-authority.js";
 import { REVOKED_DEVICE_KEYS_TABLE } from "./migration-217-sticky-revocation.js";
 import { DEVICE_ENROLLMENT_PUBLIC_KEY_INDEX } from "./migration-214-device-enrollment.js";
 import { createSourceInventoryTables } from "./repositories/SourceInventoryRepository.js";
 import { addSourceSyncIssues } from "./migration-179-source-sync-issues.js";
 import { indexDocumentsBySourceExternalId } from "./migration-187-documents-source-external-index.js";
 import { indexDocumentsByIdAndType } from "./migration-216-documents-id-type-index.js";
+import { indexPersonNameAliases } from "./migration-218-person-name-alias-index.js";
 import { indexDocumentsBySourceCreatedRevision } from "./migration-208-documents-source-created-revision-index.js";
 import {
   createDocumentFilterIndexQueue,
   createSourceVersionCounts,
-} from "./migration-220-source-version.js";
+} from "./migration-222-source-version.js";
 import { addPendingSourcePages } from "./migration-178-pending-source-pages.js";
 import { addSourceWireContracts } from "./migration-177-source-wire-contract.js";
 import { installCollectorRosterRevision, installMutableListRevisions } from "./list-revisions.js";
@@ -67,6 +69,40 @@ import { createDeviceDoctorRunsTable } from "./repositories/DeviceDoctorRunRepos
 import type Database from "better-sqlite3";
 
 type Db = Database.Database;
+
+/**
+ * The partial index cross-source deduplication reads, as SQLite records it in
+ * `sqlite_master` (which keeps the statement text without `IF NOT EXISTS`).
+ */
+const ATTACHMENT_CONTENT_HASH_INDEX_SQL = `CREATE INDEX idx_documents_attachment_content_hash
+       ON documents(extracted_content_hash)
+       WHERE json_extract(metadata, '$.documentType') IN ('attachment', 'file')
+         AND extracted_content_hash IS NOT NULL`;
+
+const collapseWhitespace = (sql: string): string => sql.replace(/\s+/g, " ").trim();
+
+/**
+ * Builds the attachment content-hash index only when it is missing or
+ * differs from {@link ATTACHMENT_CONTENT_HASH_INDEX_SQL}. Older stores
+ * indexed `content_hash` under the same name, so a differing definition is
+ * dropped and rebuilt; a matching one is kept. Building the index reads
+ * every document row through its content, so it must not happen on an
+ * ordinary boot.
+ */
+function ensureAttachmentContentHashIndex(db: Db): void {
+  const existing = db
+    .prepare<[], { sql: string | null }>(
+      "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'idx_documents_attachment_content_hash'",
+    )
+    .get();
+  if (
+    existing &&
+    collapseWhitespace(existing.sql ?? "") === collapseWhitespace(ATTACHMENT_CONTENT_HASH_INDEX_SQL)
+  )
+    return;
+  db.exec("DROP INDEX IF EXISTS idx_documents_attachment_content_hash");
+  db.exec(ATTACHMENT_CONTENT_HASH_INDEX_SQL);
+}
 
 /**
  * Idempotent schema setup for `omnesis.db`. Creates every table, index,
@@ -210,16 +246,7 @@ function runSchemaSetupInTxn(db: Db): void {
   // match — the wrapped/unwrapped split made `content_hash` diverge for
   // identical bytes. Keep the predicate in sync with the
   // `BINARY_EXTRACTED_DOC_TYPES` set in `domain/LinkGraphService.ts`.
-  //
-  // Idempotent migration: prior installs indexed `content_hash`. Drop and
-  // recreate on the new column.
-  db.exec("DROP INDEX IF EXISTS idx_documents_attachment_content_hash");
-  db.exec(
-    `CREATE INDEX IF NOT EXISTS idx_documents_attachment_content_hash
-       ON documents(extracted_content_hash)
-       WHERE json_extract(metadata, '$.documentType') IN ('attachment', 'file')
-         AND extracted_content_hash IS NOT NULL`,
-  );
+  ensureAttachmentContentHashIndex(db);
 
   // Partial index supporting calendar-event link resolution by
   // RFC 5545 iCalUID. `resolveCalendarEventLink` queries by
@@ -1350,6 +1377,8 @@ function runSchemaSetupInTxn(db: Db): void {
     "CREATE INDEX IF NOT EXISTS idx_person_aliases_lookup ON person_aliases(alias_type, alias)",
   );
   db.exec("CREATE INDEX IF NOT EXISTS idx_person_aliases_person ON person_aliases(person_id)");
+  // Name aliases by their lowercased text, for case-insensitive name lookups (see the migration).
+  indexPersonNameAliases(db);
 
   // Every source that vouches for an alias, not only the first to see it.
   // `person_aliases.source_id` records the first asserter and cannot record a
@@ -1522,6 +1551,7 @@ function runSchemaSetupInTxn(db: Db): void {
   // data-quality feedback channel.
   createDevAnnotationsTables(db);
   createLabTable(db);
+  addStorageAuthority(db);
   db.exec(REVOKED_DEVICE_KEYS_TABLE);
   // Which agent conversations hold something the operator has not seen.
   createConversationReadStateTables(db);

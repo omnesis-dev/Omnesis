@@ -36,6 +36,9 @@ import {
   OPERATOR_INSTRUCTIONS_FILENAME,
   WATCH_JOURNAL_FILENAME,
 } from "./utils.js";
+import { ensurePrivateDirSync } from "./security-files.js";
+import { copyWindowsPrivateFileSync } from "./windows-private-file.js";
+import { ownedProcessCleanupReceipt } from "./owned-process-cleanup.js";
 
 export const BACKUP_MANIFEST_NAME = "backup-manifest.json";
 export const BACKUP_FULL_MANIFEST_NAME = "backup-manifest.full.json";
@@ -450,7 +453,8 @@ export interface OfflineBackupResult {
  * `omnesis restore` puts the files back as they were.
  *
  * The manifest is written last. A copy that fails part-way removes its
- * directory, and one that never got that far is skipped by every reader.
+ * directory only after helper cleanup is confirmed. Unpublished directories
+ * are skipped by every reader.
  */
 export function writeOfflineBackup(opts: OfflineBackupOptions): OfflineBackupResult {
   const backupsDir = opts.backupsDir ?? join(opts.configDir, "backups");
@@ -467,7 +471,8 @@ export function writeOfflineBackup(opts: OfflineBackupOptions): OfflineBackupRes
     copies.push({ from: join(opts.configDir, name), name });
   }
 
-  mkdirSync(backupsDir, { recursive: true, mode: 0o700 });
+  if (process.platform === "win32") ensurePrivateDirSync(backupsDir);
+  else mkdirSync(backupsDir, { recursive: true, mode: 0o700 });
   const requiredBytes = copies.reduce((sum, copy) => sum + sizeOfPath(copy.from), 0);
   const sf = (opts.statfs ?? statfsSync)(backupsDir);
   const freeBytes = Number(sf.bavail) * Number(sf.bsize);
@@ -481,6 +486,7 @@ export function writeOfflineBackup(opts: OfflineBackupOptions): OfflineBackupRes
 
   const startedAt = now().toISOString();
   const path = createBackupDir(backupsDir, startedAt);
+  if (process.platform === "win32") ensurePrivateDirSync(path);
   try {
     const files: Array<{ name: string; bytes: number }> = [];
     for (const copy of copies) {
@@ -503,7 +509,8 @@ export function writeOfflineBackup(opts: OfflineBackupOptions): OfflineBackupRes
     );
     return { path, files };
   } catch (err) {
-    rmSync(path, { recursive: true, force: true });
+    if (ownedProcessCleanupReceipt(err) === undefined)
+      rmSync(path, { recursive: true, force: true });
     throw err;
   }
 }
@@ -521,15 +528,23 @@ export function writeOfflineBackup(opts: OfflineBackupOptions): OfflineBackupRes
 export function copyPrivate(from: string, to: string): void {
   const stat = lstatSync(from);
   if (stat.isDirectory()) {
-    mkdirSync(to, { recursive: true, mode: 0o700 });
-    chmodSync(to, 0o700);
+    if (process.platform === "win32") ensurePrivateDirSync(to);
+    else {
+      mkdirSync(to, { recursive: true, mode: 0o700 });
+      chmodSync(to, 0o700);
+    }
     for (const entry of readdirSync(from)) copyPrivate(join(from, entry), join(to, entry));
     return;
   }
   if (!stat.isFile()) return;
-  mkdirSync(dirname(to), { recursive: true, mode: 0o700 });
-  copyFileSync(from, to);
-  chmodSync(to, 0o600);
+  if (process.platform === "win32") {
+    ensurePrivateDirSync(dirname(to));
+    copyWindowsPrivateFileSync(from, to);
+  } else {
+    mkdirSync(dirname(to), { recursive: true, mode: 0o700 });
+    copyFileSync(from, to);
+    chmodSync(to, 0o600);
+  }
 }
 
 function sizeOfPath(path: string): number {

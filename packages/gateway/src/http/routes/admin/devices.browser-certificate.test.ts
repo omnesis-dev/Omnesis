@@ -8,7 +8,9 @@
  * tier, and kept off every other kind of code.
  */
 
-import { existsSync, unlinkSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { SCOPE_ADMIN, type DeviceKind } from "@omnesis/types";
@@ -22,6 +24,13 @@ import type Database from "better-sqlite3";
 
 let db: Database.Database;
 let dbPath: string;
+let fixtureDir: string;
+const apps: ReturnType<typeof createServer>[] = [];
+function ownedServer(...args: Parameters<typeof createServer>): ReturnType<typeof createServer> {
+  const app = createServer(...args);
+  apps.push(app);
+  return app;
+}
 
 function snapshot(
   ownership: TlsOwnership,
@@ -60,7 +69,7 @@ function snapshot(
 function lifecycle(snap: TlsLifecycleSnapshot): TlsLifecyclePort {
   return {
     snapshot: () => snap,
-    activateFromDisk: () => null,
+    activateFromDisk: () => Promise.resolve(null),
     renew: () => Promise.resolve({ ok: false, reason: "not due", snapshot: snap }),
   };
 }
@@ -84,20 +93,20 @@ async function pair(
 }
 
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-test-${randomUUID()}.db`;
+  fixtureDir = mkdtempSync(join(tmpdir(), "browser-certificate-route-"));
+  dbPath = join(fixtureDir, "gateway.db");
   db = createDatabase(dbPath);
 });
 
-afterEach(() => {
+afterEach(async () => {
+  await Promise.all(apps.splice(0).map((app) => app.close()));
   db.close();
-  for (const suffix of ["", "-wal", "-shm", "-journal"]) {
-    if (existsSync(dbPath + suffix)) unlinkSync(dbPath + suffix);
-  }
+  rmSync(fixtureDir, { recursive: true, force: true });
 });
 
 describe("POST /admin/devices/pair — the browser certificate verdict", () => {
   test("a self-signed gateway still issues the browser code, marked untrusted with the native fix", async () => {
-    const app = createServer(db, dbPath, {
+    const app = ownedServer(db, dbPath, {
       tlsLifecycle: lifecycle(snapshot("self-signed", { selfSigned: true })),
     });
     const body = await pair(app, "browser");
@@ -115,7 +124,7 @@ describe("POST /admin/devices/pair — the browser certificate verdict", () => {
   });
 
   test("a containerised gateway's fix is the installer, not `omnesis tls provision`", async () => {
-    const app = createServer(db, dbPath, {
+    const app = ownedServer(db, dbPath, {
       tlsLifecycle: lifecycle(snapshot("self-signed", { selfSigned: true })),
       inContainer: true,
     });
@@ -129,7 +138,7 @@ describe("POST /admin/devices/pair — the browser certificate verdict", () => {
     ["mkcert", "local-ca"],
     ["external", "unknown"],
   ] as const)("a %s certificate is reported as %s", async (ownership, status) => {
-    const app = createServer(db, dbPath, { tlsLifecycle: lifecycle(snapshot(ownership)) });
+    const app = ownedServer(db, dbPath, { tlsLifecycle: lifecycle(snapshot(ownership)) });
     expect((await pair(app, "browser")).browserCertificate).toMatchObject({
       status,
       certificate: ownership,
@@ -138,7 +147,7 @@ describe("POST /admin/devices/pair — the browser certificate verdict", () => {
 
   test("the verdict reads the certificate served at mint time, not one from boot", async () => {
     let current = snapshot("self-signed", { selfSigned: true });
-    const app = createServer(db, dbPath, {
+    const app = ownedServer(db, dbPath, {
       tlsLifecycle: { ...lifecycle(current), snapshot: () => current },
     });
     expect((await pair(app, "browser")).browserCertificate).toMatchObject({ status: "untrusted" });
@@ -149,7 +158,7 @@ describe("POST /admin/devices/pair — the browser certificate verdict", () => {
   test.each(["cli", "collector", "ios", "android", "portal", "agent", "integration"] as const)(
     "a %s code carries no browser verdict",
     async (kind) => {
-      const app = createServer(db, dbPath, {
+      const app = ownedServer(db, dbPath, {
         tlsLifecycle: lifecycle(snapshot("self-signed", { selfSigned: true })),
       });
       const body = await pair(app, kind);
@@ -159,7 +168,7 @@ describe("POST /admin/devices/pair — the browser certificate verdict", () => {
   );
 
   test("a composition without TLS wiring issues the browser code without a verdict", async () => {
-    const app = createServer(db, dbPath, {});
+    const app = ownedServer(db, dbPath, {});
     const body = await pair(app, "browser");
     expect(body.pairingCode).toEqual(expect.any(String));
     expect(body).not.toHaveProperty("browserCertificate");

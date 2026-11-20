@@ -9,6 +9,7 @@
  */
 
 import { computeContentHash, toCanonicalInstant } from "@omnesis/core";
+import type { StravaId } from "./ids.js";
 import type {
   StravaSummaryActivity,
   StravaDetailedActivity,
@@ -31,7 +32,7 @@ import type {
 
 export function splitToRecord(
   s: StravaSplit,
-  activityId: number,
+  activityId: StravaId,
   unit: "metric" | "standard",
 ): Record<string, unknown> {
   return {
@@ -176,7 +177,7 @@ function zoneUpperBound(max: number): number | null {
  * neighbours' indexes, which number the zones.
  */
 export function activityZonesToRecords(
-  activityId: number,
+  activityId: StravaId,
   zones: (StravaActivityZone | null)[],
 ): Record<string, unknown>[] {
   const rows: Record<string, unknown>[] = [];
@@ -221,7 +222,7 @@ export function commentToRecord(c: StravaComment): Record<string, unknown> {
 
 export function kudoToRecord(
   k: StravaSummaryAthlete,
-  activityId: number,
+  activityId: StravaId,
   position: number,
 ): Record<string, unknown> {
   return {
@@ -237,7 +238,7 @@ export function kudoToRecord(
 // ── Streams ────────────────────────────────────────────────────────
 
 export function streamSetToRecord(
-  activityId: number,
+  activityId: StravaId,
   set: StravaStreamSet,
 ): Record<string, unknown> {
   // Pull resolution / series_type / original_size off the first present stream
@@ -289,7 +290,7 @@ export function athleteToRecord(
 }
 
 export function athleteZonesToRecords(
-  athleteId: number,
+  athleteId: StravaId,
   z: StravaAthleteZones,
 ): Record<string, unknown>[] {
   const rows: Record<string, unknown>[] = [];
@@ -321,7 +322,7 @@ export function athleteZonesToRecords(
 }
 
 export function athleteStatsToRecords(
-  athleteId: number,
+  athleteId: StravaId,
   s: StravaActivityStats,
 ): Record<string, unknown>[] {
   const rows: Record<string, unknown>[] = [];
@@ -357,7 +358,7 @@ export function athleteStatsToRecords(
 
 export function gearToRecord(
   g: StravaDetailedGear,
-  athleteId: number | null,
+  athleteId: StravaId | null,
 ): Record<string, unknown> {
   const gearType = g.id.startsWith("b") ? "bike" : g.id.startsWith("g") ? "shoe" : "unknown";
   return {
