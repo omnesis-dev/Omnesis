@@ -69,6 +69,68 @@ async function drain(service: HistoryCleanupService, id: string, max = 2000) {
   throw new Error("Invented cleanup did not finish");
 }
 const before = "2032-01-01T00:00:00.000Z";
+test("job lookup keeps old cleanup results readable without exposing durable removal authority", async () => {
+  const { db, service } = fixture({});
+  const first = startHistoryCleanupJob(db, { request: { target: "backups", before }, now: 1 });
+  updateHistoryCleanupJob(db, {
+    expectedRevision: first.revision,
+    job: {
+      ...first,
+      state: "completed",
+      updatedAt: 2,
+      completedAt: 2,
+      removed: 7,
+      protected: 2,
+      removedBytesEstimate: 420,
+      protectedReasons: { newest: 2 },
+    },
+  });
+  const publicCompleted = service.jobs()[0];
+  for (let i = 0; i < 55; i++) {
+    const job = startHistoryCleanupJob(db, { request: { target: "backups", before }, now: i + 3 });
+    updateHistoryCleanupJob(db, {
+      expectedRevision: job.revision,
+      job: { ...job, state: "completed", completedAt: i + 3 },
+    });
+  }
+  expect(service.jobs()).toHaveLength(50);
+  expect(service.jobs().some((job) => job.id === first.id)).toBe(false);
+  expect(service.job(first.id)).toEqual(publicCompleted);
+  expect(service.job(first.id)).toMatchObject({
+    keepNewest: true,
+    removed: 7,
+    protected: 2,
+    removedBytesEstimate: 420,
+    protectedReasons: { newest: 2 },
+    hasPendingRemoval: false,
+  });
+  expect(service.job("00000000-0000-4000-8000-000000000001")).toBeNull();
+
+  const active = startHistoryCleanupJob(db, {
+    request: { target: "conversations", before },
+    now: 60,
+  });
+  updateHistoryCleanupJob(db, {
+    expectedRevision: active.revision,
+    job: {
+      ...active,
+      state: "failed",
+      cursor: "private-scan-cursor",
+      pending: {
+        id: "invented-item",
+        identity: "private-file-identity",
+        bytesEstimate: 42,
+        detail: "private-resume-details",
+      },
+    },
+  });
+  const result = service.job(active.id);
+  expect(result).toMatchObject({ state: "failed", hasPendingRemoval: true });
+  for (const field of ["revision", "cursor", "pending", "identity", "detail"])
+    expect(result).not.toHaveProperty(field);
+  expect(JSON.stringify(result)).not.toContain("private-");
+});
+
 test("Brain cleanup covers more than one display page and preserves newer logs and run metadata", async () => {
   const root = mkdtempSync(join(tmpdir(), "history-brain-"));
   roots.push(root);

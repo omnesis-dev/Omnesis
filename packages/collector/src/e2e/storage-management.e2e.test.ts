@@ -50,6 +50,12 @@ interface StorageSnapshot {
   trimJobs: Array<{ id: string; sourceId: string; before: string; state: string; deleted: number }>;
 }
 
+async function storageCli<T>(harness: MultiCollectorHarness, args: string[]): Promise<T> {
+  const result = await harness.runCli(["storage", ...args, "--json"], { timeoutMs: 90_000 });
+  expect(result.exitCode, result.stderr).toBe(0);
+  return JSON.parse(result.stdout) as T;
+}
+
 /** Tiny real files can exceed a one-byte quota; no disk-filling fixture is needed. */
 describe("gateway storage admission and explicit retention", () => {
   let harness: MultiCollectorHarness;
@@ -319,6 +325,130 @@ describe("gateway storage admission and explicit retention", () => {
     await push([document(SOURCE, "old")]);
     expect(stored(SOURCE)).not.toContain("old");
   }, 90_000);
+
+  test("the CLI measures storage and changes quota without disabling automatic disk protection", async () => {
+    const initial = await storageCli<StorageSnapshot>(harness, []);
+    expect(initial.physical?.totalBytes).toBeGreaterThan(0);
+    try {
+      const limited = await storageCli<StorageSnapshot["policy"]>(harness, [
+        "policy",
+        "--max-bytes",
+        "1",
+      ]);
+      expect(limited.maxBytes).toBe(1);
+      expect((await admin<StorageSnapshot>("/admin/storage")).pressure.state).toBe("blocked");
+      const blocked = await deviceRequest("/documents", {
+        documents: [document(SIBLING, "cli-quota-blocked")],
+      });
+      expect(blocked.status).toBe(507);
+      expect(stored(SIBLING)).not.toContain("cli-quota-blocked");
+      const policy = await storageCli<StorageSnapshot["policy"]>(harness, ["policy"]);
+      expect(policy.maxBytes).toBe(1);
+      const recovered = await storageCli<StorageSnapshot["policy"]>(harness, [
+        "policy",
+        "--max-bytes",
+        "unlimited",
+      ]);
+      expect(recovered.maxBytes).toBeNull();
+      expect(recovered).toMatchObject({ maxDiskUsedPercent: 95 });
+      expect((await admin<StorageSnapshot>("/admin/storage")).pressure.state).toBe("normal");
+    } finally {
+      await admin("/admin/storage/policy", { maxBytes: null }, "PATCH");
+    }
+    const refreshed = await storageCli<StorageSnapshot>(harness, ["refresh", "--timeout", "60"]);
+    expect(refreshed.accounting.logical.state).toBe("ready");
+    const selected = await storageCli<{
+      sourceId: string;
+      documentMeasurement: { sourceId: string } | null;
+    }>(harness, ["status", "--source", SOURCE, "--history"]);
+    expect(selected.sourceId).toBe(SOURCE);
+    expect(selected.documentMeasurement).toMatchObject({ sourceId: SOURCE });
+    expect(JSON.stringify(selected)).not.toContain(SIBLING);
+  }, 90_000);
+
+  test("the CLI trims one source, observes its job and changes only the selected rolling policy", async () => {
+    const manual = "notes-synth:storage-cli-manual";
+    const rolling = "notes-synth:storage-cli-rolling";
+    const sibling = "notes-synth:storage-cli-sibling";
+    const registered = await deviceJson<{ errors: unknown[] }>("/devices/sources/bulk-upsert", {
+      sources: ["storage-cli-manual", "storage-cli-rolling", "storage-cli-sibling"].map(
+        (accountId) => ({
+          type: "notes-synth",
+          accountId,
+          enabled: true,
+        }),
+      ),
+    });
+    expect(registered.errors).toEqual([]);
+    await push([
+      document(manual, "cli-old"),
+      document(manual, "cli-recent", RECENT),
+      document(rolling, "cli-rolling-old"),
+      document(rolling, "cli-rolling-recent", RECENT),
+      document(sibling, "cli-sibling-old"),
+    ]);
+    const before = await admin<StorageSnapshot>("/admin/storage");
+    for (const args of [
+      ["trim", manual, "--before", "2010-01-01"],
+      ["trim", manual, "--before", "2021-02-29", "--yes"],
+      ["retention", rolling, "--days", "20"],
+    ]) {
+      const rejected = await harness.runCli(["storage", ...args, "--json"]);
+      expect(rejected.exitCode, rejected.stdout + rejected.stderr).not.toBe(0);
+    }
+    expect((await admin<StorageSnapshot>("/admin/storage")).trimJobs.map((job) => job.id)).toEqual(
+      before.trimJobs.map((job) => job.id),
+    );
+    expect(stored(manual)).toEqual(["cli-old", "cli-recent"]);
+    expect(stored(rolling)).toEqual(["cli-rolling-old", "cli-rolling-recent"]);
+
+    const trimmed = await storageCli<
+      StorageSnapshot["trimJobs"][number] & { cleanupPending: boolean }
+    >(harness, ["trim", manual, "--before", "2010-01-01", "--yes", "--wait", "--timeout", "60"]);
+    expect(trimmed).toMatchObject({
+      sourceId: manual,
+      before: CUTOFF,
+      state: "completed",
+      deleted: 1,
+      cleanupPending: false,
+    });
+    expect(stored(manual)).toEqual(["cli-recent"]);
+    expect(stored(sibling)).toEqual(["cli-sibling-old"]);
+    const jobs = await storageCli<{ trimJobs: StorageSnapshot["trimJobs"] }>(harness, ["jobs"]);
+    expect(jobs.trimJobs).toContainEqual(
+      expect.objectContaining({ id: trimmed.id, state: "completed" }),
+    );
+    const waited = await storageCli<{ id: string; state: string }>(harness, ["wait", trimmed.id]);
+    expect(waited).toMatchObject({ id: trimmed.id, state: "completed" });
+    const unsupported = await harness.runCli(["storage", "cancel", trimmed.id, "--yes", "--json"]);
+    expect(unsupported.exitCode).not.toBe(0);
+    expect(unsupported.stderr).toMatch(/source|trim|not supported/i);
+    const missing = await harness.runCli(["storage", "wait", randomUUID(), "--json"]);
+    expect(missing.exitCode).not.toBe(0);
+    expect(missing.stderr).toMatch(/not found|404/i);
+
+    await storageCli(harness, ["retention", sibling, "--days", "365", "--yes"]);
+    await storageCli(harness, ["retention", rolling, "--days", "20", "--yes"]);
+    await expect
+      .poll(() => stored(rolling), { timeout: 30_000, interval: 200 })
+      .toEqual(["cli-rolling-recent"]);
+    await storageCli(harness, ["retention", rolling, "--off"]);
+    const after = await admin<StorageSnapshot>("/admin/storage");
+    expect(after.retention).not.toContainEqual(expect.objectContaining({ sourceId: rolling }));
+    expect(after.retention).toContainEqual({ sourceId: sibling, maxAgeDays: 365 });
+    await storageCli(harness, ["retention", sibling, "--off"]);
+    await push([document(rolling, "cli-import-restored")]);
+    expect(stored(rolling)).toContain("cli-import-restored");
+
+    const reader = await admin<{ token: string }>("/admin/devices", {
+      name: "storage-cli-read-only",
+      kind: "cli",
+      scopes: ["read"],
+    });
+    const refused = await harness.runCli(["storage", "status", "--json"], { token: reader.token });
+    expect(refused.exitCode).not.toBe(0);
+    expect(refused.stderr).toMatch(/403|admin|scope/i);
+  }, 180_000);
 });
 
 /** Logical accounting stays available independently of the active indexer. */
@@ -625,8 +755,17 @@ describe("manual storage history cleanup", () => {
     return result!;
   }
   test("trims all old Brain log files and retains newer logs across restart", async () => {
-    const { job } = await start("brain-transcripts");
-    expect((await completed(job.id)).removed).toBe(1);
+    const job = await storageCli<Job>(harness, [
+      "cleanup",
+      "brain-transcripts",
+      "--before",
+      "2020-01-01",
+      "--yes",
+      "--wait",
+      "--timeout",
+      "60",
+    ]);
+    expect(job).toMatchObject({ state: "completed", removed: 1 });
     expect(existsSync(join(transcriptDir, `${Date.parse(older)}-invented-old-run-a1.json`))).toBe(
       false,
     );
@@ -674,34 +813,141 @@ describe("manual storage history cleanup", () => {
     }
   }, 90_000);
   test("deletes old completed backups while preserving the newest and incomplete backups", async () => {
-    const { job } = await start("backups");
-    expect((await completed(job.id)).removed).toBe(1);
+    const job = await storageCli<Job>(harness, [
+      "cleanup",
+      "backups",
+      "--before",
+      cutoff,
+      "--yes",
+      "--wait",
+      "--timeout",
+      "60",
+    ]);
+    expect(job).toMatchObject({ state: "completed", removed: 1 });
     expect(existsSync(join(backupsDir, "2018-01-01T00-00-00"))).toBe(false);
     expect(existsSync(join(backupsDir, "2019-01-01T00-00-00"))).toBe(true);
     expect(existsSync(join(backupsDir, "2017-01-01T00-00-00", "incomplete"))).toBe(true);
-    const { job: final } = await start("backups", { keepNewest: false });
-    expect((await completed(final.id)).removed).toBe(1);
+    const final = await storageCli<Job>(harness, [
+      "cleanup",
+      "backups",
+      "--before",
+      cutoff,
+      "--include-newest",
+      "--yes",
+      "--wait",
+      "--timeout",
+      "60",
+    ]);
+    expect(final).toMatchObject({ state: "completed", removed: 1 });
     expect(existsSync(join(backupsDir, "2019-01-01T00-00-00"))).toBe(false);
     expect(existsSync(join(backupsDir, "2017-01-01T00-00-00", "incomplete"))).toBe(true);
   }, 90_000);
-  test("accepts cancellation through the real writer and preserves unfinished backup files", async () => {
-    const { job } = await start("backups");
-    const response = await harness.json<{ job: Job }>(
-      `/admin/storage/cleanup/jobs/${job.id}/cancel`,
-      { method: "POST", body: JSON.stringify({}) },
+  test("CLI cancellation stops a queued removal and preserves completed and unfinished backup files", async () => {
+    await harness.json("/admin/background/pause", { method: "POST", body: "{}" });
+    const kept = join(backupsDir, "2016-01-01T00-00-00");
+    mkdirSync(kept, { recursive: true });
+    writeFileSync(join(kept, "omnesis.db"), "Invented backup payload");
+    writeFileSync(
+      join(kept, "backup-manifest.json"),
+      JSON.stringify({
+        version: "0.0.0",
+        startedAt: "2016-01-01T00:00:00.000Z",
+        finishedAt: "2016-01-01T00:00:00.000Z",
+        includeIndex: false,
+        files: [{ name: "omnesis.db", bytes: 23 }],
+      }),
     );
-    expect(response.job.id).toBe(job.id);
-    await expect
-      .poll(
-        async () => {
-          const { jobs } = await harness.json<{ jobs: Job[] }>("/admin/storage/cleanup/jobs");
-          return ["cancelled", "completed"].includes(
-            jobs.find((entry) => entry.id === job.id)?.state ?? "",
-          );
-        },
-        { timeout: 10_000, interval: 100 },
-      )
-      .toBe(true);
+    try {
+      const { job } = await start("backups", { keepNewest: false });
+      expect(job.state).toBe("queued");
+      const response = await storageCli<Job>(harness, ["cancel", job.id, "--yes"]);
+      expect(response).toMatchObject({ id: job.id, state: "cancelled" });
+      const listed = await storageCli<{ cleanupJobs: Job[] }>(harness, ["jobs"]);
+      expect(listed.cleanupJobs).toContainEqual(
+        expect.objectContaining({ id: job.id, state: "cancelled" }),
+      );
+      const watched = await harness.runCli([
+        "storage",
+        "jobs",
+        "--watch",
+        "--timeout",
+        "60",
+        "--json",
+      ]);
+      expect(watched.exitCode, watched.stderr).toBe(0);
+      const snapshots = watched.stdout
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as { cleanupJobs: Job[] });
+      expect(snapshots.at(-1)).toMatchObject({ trimJobs: [], cleanupJobs: [] });
+    } finally {
+      await harness.json("/admin/background/resume", { method: "POST", body: "{}" });
+    }
+    expect(existsSync(join(kept, "omnesis.db"))).toBe(true);
     expect(existsSync(join(backupsDir, "2017-01-01T00-00-00", "incomplete"))).toBe(true);
-  }, 30_000);
+  }, 90_000);
+  test("the CLI requires cleanup consent and removes chat files, documents and chunks while preserving pinned chats", async () => {
+    const before = await harness.json<{ jobs: Job[] }>("/admin/storage/cleanup/jobs");
+    const refused = await harness.runCli([
+      "storage",
+      "cleanup",
+      "conversations",
+      "--before",
+      "2022-01-01",
+      "--json",
+    ]);
+    expect(refused.exitCode).not.toBe(0);
+    expect(refused.stderr).toContain("--yes");
+    const after = await harness.json<{ jobs: Job[] }>("/admin/storage/cleanup/jobs");
+    expect(after.jobs.map((job) => job.id)).toEqual(before.jobs.map((job) => job.id));
+    expect(existsSync(join(conversationsDir, "s_cleanup_recent.json"))).toBe(true);
+    const cleaned = await storageCli<Job>(harness, [
+      "cleanup",
+      "conversations",
+      "--before",
+      "2022-01-01",
+      "--yes",
+      "--wait",
+      "--timeout",
+      "60",
+    ]);
+    expect(cleaned).toMatchObject({ state: "completed", removed: 1 });
+    expect(existsSync(join(conversationsDir, "s_cleanup_recent.json"))).toBe(false);
+    expect(existsSync(join(conversationsDir, "s_cleanup_pinned.json"))).toBe(true);
+    const main = new Database(harness.getDbPath(), { readonly: true, fileMustExist: true });
+    const index = new Database(indexPath, { readonly: true, fileMustExist: true });
+    try {
+      expect(
+        main
+          .prepare("SELECT id FROM documents WHERE id=?")
+          .get(mirroredDocumentIds.get("s_cleanup_recent")),
+      ).toBeUndefined();
+      expect(
+        index
+          .prepare("SELECT COUNT(*) AS n FROM chunks WHERE document_id=?")
+          .get(mirroredDocumentIds.get("s_cleanup_recent")),
+      ).toEqual({ n: 0 });
+      expect(
+        main
+          .prepare("SELECT id FROM documents WHERE id=?")
+          .get(mirroredDocumentIds.get("s_cleanup_pinned")),
+      ).toEqual({ id: mirroredDocumentIds.get("s_cleanup_pinned") });
+      expect(
+        index
+          .prepare("SELECT COUNT(*) AS n FROM chunks WHERE document_id=?")
+          .get(mirroredDocumentIds.get("s_cleanup_pinned")),
+      ).toEqual({ n: 1 });
+    } finally {
+      index.close();
+      main.close();
+    }
+    const jobs = await storageCli<{ cleanupJobs: Job[] }>(harness, ["jobs"]);
+    expect(jobs.cleanupJobs).toContainEqual(
+      expect.objectContaining({ id: cleaned.id, state: "completed" }),
+    );
+    expect(await storageCli<Job>(harness, ["wait", cleaned.id])).toMatchObject({
+      id: cleaned.id,
+      state: "completed",
+    });
+  }, 90_000);
 });

@@ -52,6 +52,12 @@ const cleanup = z.discriminatedUnion("target", [
 ]);
 
 export function mountStorageRoutes(app: RouteApp, service: StorageService): void {
+  app.get("/admin/storage/jobs/:id", scope.admin(), (c) => {
+    c.header("Cache-Control", "no-store");
+    const id = z.uuid().safeParse(c.req.param("id"));
+    if (!id.success) throw new BadRequestError("Invalid storage job id");
+    return c.json(service.job(id.data));
+  });
   app.get("/admin/storage/cleanup/jobs", scope.admin(), (c) => {
     c.header("Cache-Control", "no-store");
     return c.json(service.cleanupJobs());

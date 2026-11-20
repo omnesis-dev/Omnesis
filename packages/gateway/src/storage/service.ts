@@ -116,6 +116,14 @@ export class StorageService {
     return { jobs: this.requireHistoryCleanup().jobs() };
   }
 
+  job(id: string) {
+    const trim = this.deps.retention.job(id);
+    if (trim) return { kind: "trim" as const, job: trim };
+    const cleanup = this.deps.historyCleanup?.job(id);
+    if (cleanup) return { kind: "cleanup" as const, job: cleanup };
+    throw new NotFoundError("Storage job not found");
+  }
+
   async startCleanup(request: import("./history-cleanup-types.js").HistoryCleanupRequest) {
     return { job: await this.requireHistoryCleanup().start(request) };
   }

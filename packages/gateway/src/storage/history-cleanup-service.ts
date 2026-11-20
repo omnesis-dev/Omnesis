@@ -63,6 +63,10 @@ export class HistoryCleanupService {
   jobs(): HistoryCleanupJob[] {
     return listHistoryCleanupJobs(this.options.db).map(publicJob);
   }
+  job(id: string): HistoryCleanupJob | null {
+    const job = readHistoryCleanupJob(this.options.db, id);
+    return job ? publicJob(job) : null;
+  }
   async start(request: HistoryCleanupRequest): Promise<HistoryCleanupJob> {
     const cutoff = Date.parse(request.before);
     if (!Number.isFinite(cutoff) || new Date(cutoff).toISOString() !== request.before)

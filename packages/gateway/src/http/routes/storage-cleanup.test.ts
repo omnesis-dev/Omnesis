@@ -4,7 +4,7 @@
 import { Hono } from "hono";
 import { describe, expect, it, vi } from "vitest";
 import { SCOPE_ADMIN, SCOPE_READ, type Scope } from "@omnesis/types";
-import { HttpError, errorResponse } from "../errors.js";
+import { HttpError, NotFoundError, errorResponse } from "../errors.js";
 import { strictRoute } from "../scope.js";
 import { mountStorageRoutes } from "./storage.js";
 import type { AppEnv } from "./types.js";
@@ -12,6 +12,9 @@ import type { StorageService } from "../../storage/service.js";
 
 function fixture(scopes: Scope[] = [SCOPE_ADMIN]) {
   const service = {
+    job: vi.fn((_id: string): unknown => {
+      throw new NotFoundError("Storage job not found");
+    }),
     startCleanup: vi.fn(async (request) => ({ job: { ...request, state: "queued" } })),
     cleanupJobs: vi.fn(() => ({ jobs: [] })),
     cancelCleanup: vi.fn(async (id) => ({ job: { id, state: "cancelled" } })),
@@ -70,6 +73,9 @@ describe("storage cleanup authority", () => {
   it("requires administrator authority for listing, starting and cancelling", async () => {
     const { app, post, service } = fixture([SCOPE_READ]);
     expect((await app.request("/admin/storage/cleanup/jobs")).status).toBe(403);
+    expect(
+      (await app.request("/admin/storage/jobs/00000000-0000-4000-8000-000000000001")).status,
+    ).toBe(403);
     expect((await post({ target: "backups", before })).status).toBe(403);
     expect(
       (await post({}, "/admin/storage/cleanup/jobs/00000000-0000-4000-8000-000000000001/cancel"))
@@ -77,6 +83,32 @@ describe("storage cleanup authority", () => {
     ).toBe(403);
     expect(service.startCleanup).not.toHaveBeenCalled();
     expect(service.cancelCleanup).not.toHaveBeenCalled();
+    expect(service.job).not.toHaveBeenCalled();
+  });
+  it("validates exact job ids and serves noncached public state for either job family", async () => {
+    const { app, service } = fixture();
+    const id = "00000000-0000-4000-8000-000000000001";
+    expect((await app.request("/admin/storage/jobs/not-a-job")).status).toBe(400);
+    expect(service.job).not.toHaveBeenCalled();
+    const missing = await app.request(`/admin/storage/jobs/${id}`);
+    expect(missing.status).toBe(404);
+    expect(missing.headers.get("cache-control")).toBe("no-store");
+    for (const kind of ["trim", "cleanup"]) {
+      const result = {
+        kind,
+        job: {
+          id,
+          state: "completed",
+          ...(kind === "trim" ? { cleanupPending: true } : { hasPendingRemoval: false }),
+        },
+      };
+      service.job.mockReturnValueOnce(result);
+      const response = await app.request(`/admin/storage/jobs/${id}`);
+      expect(response.status).toBe(200);
+      expect(response.headers.get("cache-control")).toBe("no-store");
+      expect(await response.json()).toEqual(result);
+      expect(service.job).toHaveBeenLastCalledWith(id);
+    }
   });
   it("validates cancellation ids and returns noncached job state", async () => {
     const { app, post, service } = fixture();

@@ -103,6 +103,30 @@ beforeEach(() => {
 });
 afterEach(() => db.close());
 
+test("a terminal trim remains readable by id after it leaves the bounded recent list", async () => {
+  const service = engine();
+  const oldest = await service.startTrim(sourceId, before);
+  expect(oldest.state).toBe("completed");
+  for (let i = 0; i < 25; i++) {
+    now++;
+    await service.startTrim(sourceId, before);
+  }
+  expect(service.jobs()).toHaveLength(20);
+  expect(service.jobs().some((job) => job.id === oldest.id)).toBe(false);
+  expect(service.job(oldest.id)).toEqual(oldest);
+  expect(service.job("00000000-0000-4000-8000-000000000001")).toBeNull();
+  for (const field of [
+    "revision",
+    "sourceIncarnation",
+    "bindingId",
+    "cursorId",
+    "cursorDate",
+    "upperId",
+    "upperDate",
+  ])
+    expect(service.job(oldest.id)).not.toHaveProperty(field);
+});
+
 test("one durable command finishes multiple pages across engine restart and protects all excluded data", async () => {
   for (let i = 0; i < 253; i++) add(`old-${i}`);
   add("contact", old, { documentType: "contact" });
@@ -233,6 +257,13 @@ test("failed cross-store cleanup remains associated with the job and is not mist
     deleted: 1,
     cleanupPending: true,
   });
+  expect(service.job(job.id)).toMatchObject({
+    state: "completed",
+    deleted: 1,
+    cleanupPending: true,
+  });
+  expect(service.job(job.id)).not.toHaveProperty("revision");
+  expect(service.job(job.id)).not.toHaveProperty("sourceIncarnation");
   expect(db.prepare("SELECT 1 FROM storage_trim_job_cascades").get()).toBeDefined();
 });
 
