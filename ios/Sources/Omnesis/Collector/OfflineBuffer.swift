@@ -13,13 +13,21 @@ import Foundation
 /// holds already-normalised, ready-to-POST payloads that couldn't be
 /// delivered immediately.
 ///
-/// Durability model (see design doc §4.4):
-///   - HealthKit is the source of truth. Dropping oldest batches
-///     because the buffer filled is recoverable by resetting the
-///     source anchor (Phase 3).
-///   - The buffer is a network-coalescing optimisation, not a
-///     durability layer. Losing the directory entirely just means a
-///     fresh backfill.
+/// Durability model:
+///   - A batch is written here before its source's cursor moves past
+///     it, so the buffer is the only copy of that page the collector
+///     will ever offer again. It never drops a queued batch to make
+///     room: `enqueue` refuses instead (`BufferFull`), the collector
+///     keeps its cursor where it was, and the page is read again once
+///     delivery has made room. Buffer pressure slows reading down; it
+///     never costs data.
+///   - Each source may hold at most `Config.maxSourceShareBytes`, so a
+///     source that cannot deliver (a long backfill on a dead link, a
+///     source the gateway refuses) leaves the rest of the buffer to the
+///     others. The total stays under `Config.maxSizeBytes`.
+///   - A batch's source is recorded in its file name (see
+///     `Batch.makeId(now:sourceId:)`), so per-source usage is rebuilt
+///     from a directory listing without reading any batch.
 ///
 /// Quarantine:
 ///   - A batch the gateway will never accept (a payload its schema
@@ -72,8 +80,19 @@ public actor OfflineBuffer {
         }
     }
 
+    /// Thrown by `enqueue` when the batch would push its source past its
+    /// share or the buffer past its limit. Nothing is written; the caller
+    /// keeps the page to offer again once delivery has made room.
+    public struct BufferFull: Error, Equatable {
+        public let sourceId: String
+    }
+
     public struct Config: Sendable {
         public let maxSizeBytes: Int
+        /// The most one source's queued batches may occupy. A source's first
+        /// batch is admitted whatever its size (as long as the total allows),
+        /// so an outsized page can never wedge its source.
+        public let maxSourceShareBytes: Int
         /// Alert threshold — warn the UI when the buffer grows past this.
         public let warningSizeBytes: Int
         /// How many permanent delivery failures a single batch may collect
@@ -105,14 +124,19 @@ public actor OfflineBuffer {
             warningSizeBytes: 50 * 1024 * 1024
         )
 
+        /// `maxSourceShareBytes` defaults to an equal share for every source
+        /// this app can host, so all of them full at once still fit.
         public init(
             maxSizeBytes: Int,
             warningSizeBytes: Int,
+            maxSourceShareBytes: Int? = nil,
             quarantineAfterAttempts: Int = 5,
             quarantineGrace: TimeInterval = 6 * 60 * 60,
             maxQuarantinedBatches: Int = 25
         ) {
             self.maxSizeBytes = maxSizeBytes
+            self.maxSourceShareBytes = maxSourceShareBytes
+                ?? maxSizeBytes / max(1, NativeHostedSourceRegistry.ios.count)
             self.warningSizeBytes = warningSizeBytes
             self.quarantineAfterAttempts = quarantineAfterAttempts
             self.quarantineGrace = quarantineGrace
@@ -151,6 +175,11 @@ public actor OfflineBuffer {
     /// Running total of all queued file sizes in bytes. Kept in lockstep
     /// with `fileURLs` so `totalSizeBytes()` is O(1).
     private var totalBytes: Int = 0
+
+    /// Queued bytes per source key (`Batch.sourceKey(fromId:)`), in lockstep
+    /// with `fileURLs`. Batches from builds that predate the key share the
+    /// empty key; they count toward the total but no source's share.
+    private var bytesBySourceKey: [String: Int] = [:]
 
     /// Sentinel: until the first cache load, we don't know whether the
     /// directory is actually empty or whether we just haven't scanned
@@ -193,28 +222,19 @@ public actor OfflineBuffer {
         lifetime.invalidate()
     }
 
-    /// Persist a batch to disk. If the buffer would exceed
-    /// `maxSizeBytes`, drops oldest batches FIFO until there's room.
-    /// Returns the number of evicted batches (0 if nothing was dropped).
-    @discardableResult
-    public func enqueue(_ batch: Batch) throws -> Int {
+    /// Persist a batch to disk, or throw `BufferFull` without writing
+    /// anything when it does not fit its source's share or the buffer's
+    /// limit. Never removes a queued batch to make room.
+    public func enqueue(_ batch: Batch) throws {
         try lifetime.withActive {
             try ProtectedStore.offlineBuffer.requireBackupExclusion(
                 to: directory, fileManager: fileManager
             )
             ensureCacheLoaded()
             let data = try encoder.encode(batch)
-            var evicted = 0
-
-            // Ensure room before writing. Delete oldest until under limit.
-            while totalBytes + data.count > config.maxSizeBytes,
-                  let oldest = fileURLs.first {
-                let size = (try? sizeOf(oldest)) ?? 0
-                try fileManager.removeItem(at: oldest)
-                fileURLs.removeFirst()
-                totalBytes = max(0, totalBytes - size)
-                forgetFailures(id: oldest.deletingPathExtension().lastPathComponent)
-                evicted += 1
+            let key = Batch.sourceKey(fromId: batch.id)
+            guard admits(bytes: data.count, key: key) else {
+                throw BufferFull(sourceId: batch.sourceId)
             }
 
             let url = fileURL(for: batch.id)
@@ -231,7 +251,27 @@ public actor OfflineBuffer {
                 fileURLs.append(url)
             }
             totalBytes += data.count
-            return evicted
+            bytesBySourceKey[key, default: 0] += data.count
+        }
+    }
+
+    /// Whether `sourceId` can queue more right now: it is under its share and
+    /// the buffer under its limit. The collector asks before reading a page,
+    /// so a page it cannot keep is not read at all.
+    public func hasRoom(forSourceId sourceId: String) throws -> Bool {
+        try lifetime.withActive {
+            ensureCacheLoaded()
+            let key = Batch.sourceKey(for: sourceId)
+            return totalBytes < config.maxSizeBytes
+                && bytesBySourceKey[key, default: 0] < config.maxSourceShareBytes
+        }
+    }
+
+    /// Bytes currently queued for `sourceId`.
+    public func queuedBytes(forSourceId sourceId: String) throws -> Int {
+        try lifetime.withActive {
+            ensureCacheLoaded()
+            return bytesBySourceKey[Batch.sourceKey(for: sourceId), default: 0]
         }
     }
 
@@ -293,6 +333,7 @@ public actor OfflineBuffer {
                 fileURLs.remove(at: idx)
             }
             totalBytes = max(0, totalBytes - size)
+            releaseShare(bytes: size, id: id)
             forgetFailures(id: id)
         }
     }
@@ -443,7 +484,29 @@ public actor OfflineBuffer {
             fileURLs.remove(at: idx)
         }
         totalBytes = max(0, totalBytes - size)
+        releaseShare(bytes: size, id: id)
         forgetFailures(id: id)
+    }
+
+    /// The admission rule: within the total, and within the source's share
+    /// unless the source has nothing queued at all.
+    private func admits(bytes: Int, key: String) -> Bool {
+        guard totalBytes + bytes <= config.maxSizeBytes else { return false }
+        let queued = bytesBySourceKey[key, default: 0]
+        return queued == 0 || queued + bytes <= config.maxSourceShareBytes
+    }
+
+    private func releaseShare(bytes: Int, id: String) {
+        let key = Batch.sourceKey(fromId: id)
+        let left = bytesBySourceKey[key, default: 0] - bytes
+        bytesBySourceKey[key] = left > 0 ? left : nil
+    }
+
+    private func recountShares() {
+        bytesBySourceKey = fileURLs.reduce(into: [:]) { shares, url in
+            let key = Batch.sourceKey(fromId: url.deletingPathExtension().lastPathComponent)
+            shares[key, default: 0] += (try? sizeOf(url)) ?? 0
+        }
     }
 
     /// Quarantined batch files, oldest first (filenames sort by creation).
@@ -511,7 +574,7 @@ public actor OfflineBuffer {
             return
         }
         // Drop counts for batches that are no longer queued — a delivered or
-        // evicted batch must not hand its failure history to a future id.
+        // quarantined batch must not hand its failure history to a future id.
         let queued = Set(fileURLs.map { $0.deletingPathExtension().lastPathComponent })
         permanentFailures = decoded.filter { queued.contains($0.key) }
     }
@@ -529,6 +592,7 @@ public actor OfflineBuffer {
             totalBytes = fileURLs.reduce(0) { total, fileURL in
                 total + ((try? sizeOf(fileURL)) ?? 0)
             }
+            recountShares()
         }
         forgetFailures(id: id)
     }
@@ -545,8 +609,12 @@ public actor OfflineBuffer {
             .filter { $0.pathExtension == "json" }
             .sorted { $0.lastPathComponent < $1.lastPathComponent }
         fileURLs = urls
-        totalBytes = urls.reduce(0) { acc, url in
-            acc + ((try? sizeOf(url)) ?? 0)
+        totalBytes = 0
+        bytesBySourceKey = [:]
+        for url in urls {
+            let size = (try? sizeOf(url)) ?? 0
+            totalBytes += size
+            bytesBySourceKey[Batch.sourceKey(fromId: url.deletingPathExtension().lastPathComponent), default: 0] += size
         }
         cacheLoaded = true
         // After `fileURLs`, which it is pruned against.

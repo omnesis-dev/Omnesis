@@ -454,6 +454,30 @@ final class SyncCoordinator {
         await refreshBufferCount()
     }
 
+    /// Run the sync a HealthKit observer callback woke the app for, and
+    /// return when it has finished — its uploads included — or when the
+    /// wake's time is nearly spent, whichever comes first. The callback
+    /// signals completion to HealthKit when this returns.
+    ///
+    /// Each type's observer calls this, often several at once; the core
+    /// runs one pass for all of them (see `CollectorCore.sync`), and each
+    /// caller returns with it.
+    func syncForObserverWake(sourceId: String) async {
+        guard let core else { return }
+        let generation = collectorGeneration
+        let summary = await BackgroundTaskGuard.run(name: "omnesis.health-wake") { () -> CollectorCore.SyncSummary? in
+            let budget = await BackgroundTaskGuard.remainingBudget()
+            let work = Task { await core.sync(sourceId: sourceId, budget: budget) }
+            guard let finished = await awaitWithinBudget(work, budget: budget) else { return nil }
+            return finished
+        }
+        guard collectorGeneration == generation, self.core === core else { return }
+        if let observed = summary?.blocked {
+            blockedSourceIds = observed.sorted()
+        }
+        await refreshBufferCount()
+    }
+
     // MARK: - Scene lifecycle
 
     func onBackground() async {
@@ -467,6 +491,7 @@ final class SyncCoordinator {
         // Scheduled unconditionally — the handler itself no-ops when
         // Photos isn't enabled (see `onPhotosBackfillRequested`).
         bgCoordinator?.scheduleNextPhotosBackfill()
+        bgCoordinator?.scheduleNextBackfill()
         #endif
     }
 

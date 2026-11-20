@@ -17,11 +17,17 @@ import Foundation
 ///   - 4xx (400 / 404 / 422 …) → persistent, not retryable on this
 ///     end. Skip past this batch; it stays on disk. The next drain cycle
 ///     will try it again if the server-side situation has changed.
-///   - Network / 5xx / batch-file read failures → transient. After
-///     `maxConsecutiveFailures` in a row we conclude the link is down
-///     (or the buffer is sealed by file protection during a
-///     locked-device wake) and stop early — next drain cycle picks up
-///     where we left off.
+///     One 400 is the exception: "Malformed JSON in request body" for a
+///     body this app serialized itself means the gateway received less
+///     than was sent — an upload iOS suspended midway — so it is transient
+///     (see `isCutOffUpload`).
+///   - Network / 5xx / batch-file read failures → transient. The rest of
+///     that source's batches are passed over for this pass, so one source
+///     the gateway cannot take right now does not hold back the others
+///     queued behind it. After `maxConsecutiveFailures` in a row we
+///     conclude the link is down (or the buffer is sealed by file
+///     protection during a locked-device wake) and stop early — next
+///     drain cycle picks up where we left off.
 ///
 /// "Skip and retry next cycle" has no end on its own, so every outcome is
 /// additionally classified as transient or permanent, and permanent ones
@@ -156,6 +162,25 @@ public actor Uploader {
     /// source storage is being migrated; retain the original batch for retry.
     private static let retryableStatuses: Set<Int> = [408, 409, 425, 429]
 
+    /// The refusal a gateway gives a JSON body it received only part of.
+    /// Current gateways answer 408 `REQUEST_BODY_INCOMPLETE`, already
+    /// retryable; older ones answer this 400, which the phone can still
+    /// recognise as transport damage, since every body it sends is
+    /// serialized by `JSONEncoder` and therefore complete JSON when it leaves.
+    private static let cutOffUploadMessage = "Malformed JSON in request body"
+
+    /// Whether a 4xx refusal is a cut-off upload rather than a verdict on
+    /// the batch. Only the exact malformed-JSON envelope qualifies; every
+    /// other 400 stays permanent.
+    static func isCutOffUpload(status: Int, body: String) -> Bool {
+        status == 400 && GatewayErrorEnvelope.parse(body)?.error == cutOffUploadMessage
+    }
+
+    /// How long one batch takes to deliver, so a bounded drain can decline a
+    /// batch that would not finish before the wake ends. Starts generous
+    /// and follows what is measured.
+    private var batchEstimate = WorkEstimate(initial: 3)
+
     public struct Stats: Equatable, Sendable {
         public var uploaded: Int
         public var failed: Int
@@ -175,6 +200,16 @@ public actor Uploader {
         /// still refused. The device's token is missing `write:<source-type>`;
         /// the data stays buffered and delivers once the scope is granted.
         public var blocked: [String]?
+        /// True when the pass stopped because the time budget ran out, with
+        /// batches it did not try left queued.
+        public var outOfTime = false
+        /// Sources with a batch that failed transiently this pass, sorted.
+        public var failedSources: [String] = []
+    }
+
+    /// The expected time to deliver one more batch.
+    public func expectedBatchDuration() -> TimeInterval {
+        batchEstimate.expected
     }
 
     public init(gateway: GatewayClient, buffer: OfflineBuffer) {
@@ -193,8 +228,12 @@ public actor Uploader {
     /// skipped this pass, plus the sources rejected (removed/paused) and
     /// blocked (403) along the way. Rethrows only on 401 — the token itself
     /// is dead, so the UI must prompt for a re-pair.
+    ///
+    /// A bounded `budget` stops the pass before a batch that is not expected
+    /// to finish in time: a half-sent batch costs the upload and, against an
+    /// older gateway, used to cost the batch.
     @discardableResult
-    public func drain() async throws -> Stats {
+    public func drain(budget: SyncBudget = .unbounded) async throws -> Stats {
         if draining {
             log.debug("Drain already in progress, skipping")
             // Another drain owns the buffer — this pass observed nothing.
@@ -208,15 +247,30 @@ public actor Uploader {
         var skipped = 0
         var quarantined = 0
         var consecutiveFailures = 0
+        var outOfTime = false
         // sourceId → reason for any source the gateway rejected this pass.
         var rejections: [String: String] = [:]
         // Sources the gateway refused with 403 this pass.
         var blocked: Set<String> = []
+        // Sources with a transient failure this pass; their later batches wait.
+        var failing: Set<String> = []
         let gateway = gatewayRoute.current()
 
         let ids = try await buffer.listIds()
         drainPass: for id in ids {
-            let effect = try await deliver(id: id, blockedSources: blocked, gateway: gateway).effect
+            guard budget.allows(batchEstimate.expected) else {
+                outOfTime = true
+                break drainPass
+            }
+            let started = budget.clock.now()
+            let result = try await deliver(id: id, blockedSources: blocked, failingSources: failing, gateway: gateway)
+            if case .transientFailure(let sourceId?) = result {
+                failing.insert(sourceId)
+            }
+            if result.measuresDelivery {
+                batchEstimate.record(budget.clock.now().timeIntervalSince(started))
+            }
+            let effect = result.effect
             uploaded += effect.uploaded
             failed += effect.failed
             skipped += effect.skipped
@@ -251,13 +305,20 @@ public actor Uploader {
         let rejected = rejections
             .map { PushRejection(sourceId: $0.key, reason: $0.value) }
             .sorted { $0.sourceId < $1.sourceId }
+        if outOfTime {
+            log.notice("Drain pass stopped for time with \(remaining, privacy: .public) batches queued")
+        }
         return Stats(
             uploaded: uploaded,
             failed: failed,
             skipped: skipped,
             remaining: remaining,
             rejected: rejected,
-            blocked: blocked.sorted()
+            // A pass the clock cut short before it saw any refusal walked
+            // too little of the buffer to say nothing is blocked.
+            blocked: outOfTime && blocked.isEmpty ? nil : blocked.sorted(),
+            outOfTime: outOfTime,
+            failedSources: failing.sorted()
         )
     }
 
@@ -286,7 +347,8 @@ public actor Uploader {
         /// quarantine budget.
         case permanentlyRefused
         /// The world may fix this on its own; never costs the batch data.
-        case transientFailure
+        /// The source id is absent when the batch file could not be read.
+        case transientFailure(sourceId: String?)
         /// Replicated deletion was deliberately refused to this non-holder.
         case replicaDeletionDeferred
         /// The file went away between listing and loading it.
@@ -294,6 +356,17 @@ public actor Uploader {
         /// An earlier batch of the same source was refused with 403 this
         /// pass, so this one was not attempted.
         case skippedBlockedSource
+        /// An earlier batch of the same source failed transiently this pass,
+        /// so this one waits for the next.
+        case skippedFailingSource
+
+        /// Whether this outcome involved a round-trip worth timing.
+        var measuresDelivery: Bool {
+            switch self {
+            case .vanished, .skippedBlockedSource, .skippedFailingSource: false
+            default: true
+            }
+        }
 
         var effect: BatchEffect {
             switch self {
@@ -316,7 +389,7 @@ public actor Uploader {
                 // Another healthy replica owns deletion authority. Retaining
                 // the batch is expected coordination, not a failure.
                 BatchEffect(resetsConsecutiveFailures: true)
-            case .vanished:
+            case .vanished, .skippedFailingSource:
                 BatchEffect()
             case .skippedBlockedSource:
                 BatchEffect(skipped: 1)
@@ -329,6 +402,7 @@ public actor Uploader {
     private func deliver(
         id: String,
         blockedSources: Set<String>,
+        failingSources: Set<String>,
         gateway: GatewayClient
     ) async throws
         -> BatchResult {
@@ -349,6 +423,9 @@ public actor Uploader {
             // those rows on every batch.
             if blockedSources.contains(batch.sourceId) {
                 return .skippedBlockedSource
+            }
+            if failingSources.contains(batch.sourceId) {
+                return .skippedFailingSource
             }
 
             let pushOutcome = try await pushWithReplicaLease(batch, gateway: gateway)
@@ -404,10 +481,14 @@ public actor Uploader {
             // can still drain. Batch stays on disk; a future drain retries it
             // (e.g. after the gateway schema catches up) until it runs out of
             // budget.
+            if Self.isCutOffUpload(status: status, body: body) {
+                log.notice("Batch \(id, privacy: .public) reached the gateway incomplete; retrying it later")
+                return .transientFailure(sourceId: batchSourceId)
+            }
             log.warning(
                 "Skipping batch \(id, privacy: .public) after \(status, privacy: .public): \(body, privacy: .private)"
             )
-            return Self.retryableStatuses.contains(status) ? .transientFailure : .permanentlyRefused
+            return Self.retryableStatuses.contains(status) ? .transientFailure(sourceId: batchSourceId) : .permanentlyRefused
         } catch let error as DecodingError {
             // The bytes were read and do not parse. Unlike a read failure —
             // routine while the device is locked — no amount of retrying turns
@@ -426,12 +507,12 @@ public actor Uploader {
             log.warning(
                 "Batch \(id, privacy: .public) got an unreadable gateway response: \(detail, privacy: .private)"
             )
-            return .transientFailure
+            return .transientFailure(sourceId: batchSourceId)
         } catch {
             log.warning(
                 "Batch \(id, privacy: .public) undeliverable: \(String(describing: error), privacy: .private)"
             )
-            return .transientFailure
+            return .transientFailure(sourceId: batchSourceId)
         }
     }
 

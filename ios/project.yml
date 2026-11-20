@@ -480,6 +480,24 @@ targets:
         CODE_SIGN_ENTITLEMENTS: ""
         TEST_TARGET_NAME: Omnesis
 
+  # Apple Health sync against the simulator's real HealthKit store: grants
+  # Health access through the system sheet, then reads the in-app probe's
+  # report (`HealthKitSimulatorProbe`). Needs an ad-hoc-signed app so the
+  # HealthKit entitlement applies.
+  OmnesisHealthKitUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: UITests/OmnesisHealthKitUITests
+    dependencies:
+      - target: Omnesis
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_FILE: ""
+        CODE_SIGN_ENTITLEMENTS: ""
+        TEST_TARGET_NAME: Omnesis
+
 schemes:
   # The push-spike UI-test scheme references the production target, so
   # XcodeGen does not autocreate a separate production app scheme. Keep an
@@ -533,3 +551,12 @@ schemes:
     test:
       targets:
         - OmnesisPushSpikeUITests
+
+  OmnesisHealthKitUITests:
+    build:
+      targets:
+        Omnesis: all
+        OmnesisHealthKitUITests: [testing]
+    test:
+      targets:
+        - OmnesisHealthKitUITests

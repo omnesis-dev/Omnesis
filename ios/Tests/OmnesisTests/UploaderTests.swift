@@ -374,4 +374,57 @@ final class UploaderTests: XCTestCase {
         let remaining = try await buf.count()
         XCTAssertEqual(remaining, 1)
     }
+
+    // MARK: - Uploads cut off in transit
+
+    /// iOS suspends an upload midway; the gateway gets half a JSON body. A
+    /// current gateway says 408, an older one "Malformed JSON" with a 400 —
+    /// neither may cost the batch, while any other 400 still does.
+    func testAnUploadCutOffInTransitIsNeverQuarantinedWhateverTheGatewayVersion() async throws {
+        let answers = [
+            (408, #"{"error":"The request body ended before it was complete; send it again","code":"REQUEST_BODY_INCOMPLETE"}"#),
+            (400, #"{"error":"Malformed JSON in request body","code":"BAD_REQUEST"}"#),
+        ]
+        for (status, body) in answers {
+            let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+                .appendingPathComponent("omnesis-uploader-\(UUID().uuidString)")
+            defer { try? FileManager.default.removeItem(at: dir) }
+            let buf = OfflineBuffer(
+                directory: dir,
+                config: OfflineBuffer.Config(
+                    maxSizeBytes: 1_000_000,
+                    warningSizeBytes: 500_000,
+                    quarantineAfterAttempts: 1,
+                    quarantineGrace: 0
+                )
+            )
+            _ = try await enqueueOne(buf)
+            let uploader = try Uploader(gateway: gateway(status: status, body: body), buffer: buf)
+
+            for _ in 0 ..< 4 {
+                let stats = try await uploader.drain()
+                XCTAssertEqual(stats.failed, 1, "\(status) is a transient failure")
+                XCTAssertEqual(stats.skipped, 0, "\(status) is not a refusal")
+            }
+            let setAside = try await buf.quarantinedCount()
+            XCTAssertEqual(setAside, 0)
+        }
+
+        let buf = buffer(attempts: 1)
+        _ = try await enqueueOne(buf)
+        let validation = #"{"error":"Validation failed","code":"VALIDATION_ERROR"}"#
+        let uploader = try Uploader(gateway: gateway(status: 400, body: validation), buffer: buf)
+        _ = try await uploader.drain()
+        let setAside = try await buf.quarantinedCount()
+        XCTAssertEqual(setAside, 1, "a genuine refusal of the payload still leaves the queue")
+    }
+
+    func testOnlyTheMalformedJsonRefusalCountsAsACutOffUpload() {
+        let cutOff = #"{"error":"Malformed JSON in request body","code":"BAD_REQUEST"}"#
+        XCTAssertTrue(Uploader.isCutOffUpload(status: 400, body: cutOff), "an older gateway's answer to a truncated body")
+        XCTAssertFalse(Uploader.isCutOffUpload(status: 400, body: #"{"error":"Validation failed","code":"VALIDATION_ERROR"}"#))
+        XCTAssertFalse(Uploader.isCutOffUpload(status: 400, body: #"{"error":"Dynamic analytics schemas require write:* scope"}"#))
+        XCTAssertFalse(Uploader.isCutOffUpload(status: 400, body: "Malformed JSON in request body"), "only the gateway's envelope")
+        XCTAssertFalse(Uploader.isCutOffUpload(status: 422, body: cutOff))
+    }
 }

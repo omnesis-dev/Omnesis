@@ -599,6 +599,14 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
           is healthy. Background App Refresh is reported separately for every iOS source that
           depends on it.
         </p>
+        <p>
+          Apple Health syncs newest first. Each time iOS wakes the app for new Health data, the app
+          brings every data type you selected up to date with its last day, then the week and the
+          month before it, and spends whatever time is left on older history. It finishes uploading
+          what it read before the wake ends. On a newly paired iPhone, recent data appears within
+          the first few wakes, while years of history follow over the next days, mostly in the
+          longer background sessions iOS grants overnight.
+        </p>
         <p>On Android:</p>
         <div class="table-wrap">
           <table>
@@ -1154,6 +1162,12 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
             aside, out of the queue, so they stop counting as pending.
           </li>
         </ul>
+        <p>
+          Data waiting to upload is never discarded to make room. When uploads stall, a source that
+          has filled its share of the phone's upload queue stops reading new data until the queue
+          drains, then continues where it stopped; other sources keep syncing. An upload cut off
+          because iOS suspended the app is sent again, never set aside.
+        </p>
         <p>
           Activity still in progress is not an upload backlog. Android Activity Segments counts
           completed intervals ready for its next sync, not the raw transitions it keeps while

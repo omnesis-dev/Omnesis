@@ -67,7 +67,11 @@ public struct OmnesisApp: App {
             // simulator (which the offscreen snapshot harness can't — it
             // reports zero safe area); `scroll-stress` drives the
             // scroll-to-bottom UI test. No-op unless the env var is set.
-            if let scenario = Self.cloudPairingDemoScenario {
+            if ProcessInfo.processInfo.environment["DEMO_HEALTHKIT_PROBE"] == "1" {
+                // Apple Health sync against the simulator's HealthKit store;
+                // driven by OmnesisHealthKitUITests.
+                HealthKitProbeRoot()
+            } else if let scenario = Self.cloudPairingDemoScenario {
                 cloudPairingDemoRoot(scenario)
             } else if ProcessInfo.processInfo.environment["DEMO_REALTIME_SCROLL"] == "1" {
                 RealtimeScrollDemoSurface()
@@ -2170,18 +2174,11 @@ public final class AppStore {
         )
         backgroundDelivery = installer
         await installer.install { [weak self] in
-            // The closure is `@Sendable` (runs in the global actor
-            // context). Hop to the main actor to fire-and-forget a sync
-            // on the main-actor-isolated coordinator. `Task<Void, Never>`
-            // pins the overload (throwing vs non-throwing) and the
-            // `_ =` discards the value so `MainActor.run`'s closure
-            // returns `Void` — without that, type inference flips and
-            // the closure body becomes `Task<Void, Never>` instead.
-            await MainActor.run { [weak self] in
-                _ = Task<Void, Never> { [weak self] in
-                    await self?.syncCoord.syncOne(sourceId: "apple-health:local")
-                }
-            }
+            // Awaited, not fired and forgotten: HealthKit's observer
+            // completion runs when this returns, and iOS may suspend the
+            // app as soon as it does. Returns once the sync — upload
+            // included — has finished, or the wake is nearly out of time.
+            await self?.syncCoord.syncForObserverWake(sourceId: "apple-health:local")
         }
         #endif
     }

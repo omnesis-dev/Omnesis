@@ -341,6 +341,27 @@ scripts/ios-logic.sh AgentTurnBuilderTests    # one XCTest class (swift test --f
 
 The scratch checkout is kept **warm**: `ios-logic.sh` rsyncs into a persistent dir (default `~/omnesis-ios-logic` on the host, override with `OMNESIS_EPIC_MACOS_IOS_LOGIC_WORKTREE`) and **preserves the SwiftPM `.build` cache** across runs (it excludes `.build` from the up-sync, so the host's compiled cache survives), so a repeat run skips most recompilation. The full suite — snapshot + UI + live tests included — still runs via `xcodebuild test` on the simulator through `ios-snapshot.sh`; use the logic lane while iterating, the snapshot lane to self-critique a UI change.
 
+## Apple Health against the simulator's HealthKit
+
+The logic lane stands `FakeHealthStore` in for HealthKit. What only HealthKit
+can answer — how anchored queries restricted to a start-date window page,
+resume and report deletions, and that a wake delivers recent samples first
+through the real collector — is checked on the simulator by
+`OmnesisHealthKitUITests`: it launches the app with `DEMO_HEALTHKIT_PROBE=1`
+(`HealthKitSimulatorProbe`, DEBUG only), grants Health access through the real
+system sheet, and fails with the probe's report unless every check passed. The
+probe saves invented, tagged samples and judges only those. It needs an
+ad-hoc-signed build so the HealthKit entitlement applies:
+
+```bash
+OMNESIS_IOS_SNAPSHOT_SIGNING=adhoc OMNESIS_IOS_SNAPSHOT_SCHEME=OmnesisHealthKitUITests \
+  scripts/ios-snapshot.sh --logic --only OmnesisHealthKitUITests
+```
+
+Run it after changing `AppleHealthSource`, `AppleHealthCursor` or
+`HealthSampleReading`. iOS waking a suspended app for new Health data does not
+happen on the simulator; that remains a device check.
+
 ## SwiftLint, SwiftFormat, and the baseline's line-count coupling
 
 CI pins both tools (`.github/workflows/swiftlint.yml` — an upstream release asset with a
