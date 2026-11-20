@@ -27,13 +27,14 @@ type LaunchdProcessType = "Background" | "Standard" | "Adaptive" | "Interactive"
 /**
  * The class each component's LaunchAgent runs in.
  *
- * The gateway is `Standard`, the class of an ordinary program: it answers the
- * apps, the portal, search and agents while someone waits, and every write
- * passes through its one writer thread. As a `Background` job it waits behind
- * every program the user runs, and so does every request: its CPU drops to the
- * lowest priority and its disk I/O is throttled while anything else uses the
- * disk. The price is that its own background work, such as embedding a newly
- * synced backlog, competes with the user's programs as an equal.
+ * The gateway is `Standard`: it answers the apps, the portal, search and agents
+ * while someone waits, and every write passes through its one writer thread.
+ * A `Background` job runs at the lowest CPU priority (4) with throttled disk
+ * I/O, and a gateway in that class takes seconds to answer even when nothing
+ * else on the Mac is busy. A `Standard` job runs at a system service's
+ * priority (20): above every background job, still below the programs the
+ * user is working in (31 and up), so its own bulk work, such as embedding a
+ * newly synced backlog, does not slow them down.
  *
  * The collector is `Background`. Its work is bulk sync that nobody waits on
  * from moment to moment, so it yields CPU and disk to the user's programs and
