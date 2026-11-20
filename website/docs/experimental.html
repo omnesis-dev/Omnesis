@@ -671,6 +671,104 @@
           while it is disconnected is not downloaded.
         </p>
 
+        <h3 id="voice-commands">Voice commands</h3>
+        <p>
+          With a pendant linked, the Android app can pass spoken commands to a destination you
+          choose for each wake word. Say the wake word and then the command, for example “ok home,
+          turn off the kitchen lights”. Each wake word leads to one destination:
+        </p>
+        <ul>
+          <li>
+            <strong>Home Assistant.</strong> Home Assistant's Assist pipeline hears the command
+            itself and carries it out, using the speech-to-text engine, the conversation agent and
+            the exposed entities you chose in Home Assistant. The gateway is not involved.
+          </li>
+          <li>
+            <strong>Webhook.</strong> The command is transcribed and its text is posted as JSON to
+            an address you enter, such as an n8n or Node-RED flow. The body carries
+            <code>text</code>, <code>wakeWord</code>, <code>locale</code> and <code>at</code>; an
+            optional secret is sent as <code>Authorization: Bearer</code>. Any 2xx answer counts as
+            done.
+          </li>
+          <li>
+            <strong>This phone.</strong> The command is transcribed and read, in Italian or English,
+            as one of the phone actions below, which an app on the phone then carries out. Anything
+            else is reported as not understood.
+          </li>
+        </ul>
+        <p>The phone actions are read by fixed rules:</p>
+        <ul>
+          <li><strong>Timers and alarms</strong>: “timer di 10 minuti”, “alarm at 7:30”.</li>
+          <li>
+            <strong>Navigation</strong>: “naviga verso la stazione”, “take me to the airport”.
+          </li>
+          <li><strong>Music</strong>: “metti un po' di jazz”, “play some piano music”.</li>
+          <li><strong>Open an app</strong>: “apri la fotocamera”, “open the camera”.</li>
+          <li>
+            <strong>Calls</strong>: “chiama Maya Reeves”, “call 555 0100”. Calling someone by name
+            needs the contacts and phone permissions, which the card asks for; the contacts are read
+            on the phone to find the number. Without them a spoken number opens the dialer.
+          </li>
+          <li>
+            <strong>Calendar events</strong>: “appuntamento dal dentista domani alle 15”. The
+            calendar app opens the event filled in, for you to save.
+          </li>
+          <li>
+            <strong>Notes and lists</strong>: “aggiungi alla lista latte”, “take a note buy stamps”.
+            The text is shared with the app you choose.
+          </li>
+        </ul>
+        <p>
+          Under <strong>Phone actions</strong> the card lists which app carries out each action. An
+          action no app on the phone takes is not available. Where several apps take one, you choose
+          which; without a choice the phone's default is used, and an action with neither is
+          reported failed.
+        </p>
+        <p>
+          Set it up under <strong>Settings → Omi pendant → Voice commands</strong>. A new phone
+          starts with “ok home” for Home Assistant; <strong>Add a wake word</strong> adds another,
+          and each word's menus choose the word and its destination. A wake word leads to one
+          destination only. For Home Assistant, enter its address and a long-lived access token from
+          your Home Assistant profile, then <strong>Save and test</strong>; when Home Assistant has
+          more than one assistant you can choose which one runs the commands.
+        </p>
+        <p>
+          The app does not ship the wake-word models. <strong>Download the models</strong> fetches
+          the ones your wake words use to the phone, and the app checks each file's digest before
+          using it. “hey jarvis”, “alexa”, “hey mycroft” and “hey rhasspy” come from the
+          openWakeWord project, which publishes its trained models for non-commercial use only (CC
+          BY-NC-SA 4.0); “ok home” comes from the Home Assistant community wake-word collection
+          (MIT). <strong>Import a model (.onnx)</strong> adds any other openWakeWord model, such as
+          one trained with Home Assistant's wake-word notebook for a word in your own language; the
+          app checks that it is an openWakeWord classifier and names the word after the file.
+        </p>
+        <p>
+          Webhooks and phone actions need the command as text. Under
+          <strong>Transcription</strong>, choose the gateway, which transcribes the audio when its
+          dictation is on and keeps nothing, or the phone's on-device speech recognizer, which needs
+          Android 13 or later and keeps the audio on the phone. The card shows how long each took on
+          the last command.
+        </p>
+        <p>
+          Android lets an app in the background start the clock app only when it may display over
+          other apps. Choosing <strong>This phone</strong> for a wake word opens that system
+          setting; until it is allowed, the wake word's row says so with an
+          <strong>Allow</strong> button, and the word is not listened for. Omnesis never draws over
+          other apps.
+        </p>
+        <p>
+          Then turn on <strong>Listen for wake words</strong>. While listening is on and the pendant
+          is linked, the pendant streams its audio to the phone, and the phone listens for every
+          wake word that is ready. That audio stays in the phone's memory and is neither stored nor
+          sent anywhere. One short vibration means a wake word was heard. Only the command that
+          follows it is sent, and only to that word's destination. The command ends after a short
+          pause or after eight seconds. Three short vibrations mean the destination carried it out.
+          One long vibration means it was not understood or the destination could not be reached. A
+          wake word with nothing said after it sends nothing. A command that cannot be sent is never
+          queued or sent later. A recording can run at the same time and is not affected. Listening
+          keeps the pendant's microphone on, which uses more of its battery.
+        </p>
+
         <h2 id="brain">Omnesis Brain</h2>
         <p>
           Brain is a background agent. It reads your records as they arrive, and on a schedule,

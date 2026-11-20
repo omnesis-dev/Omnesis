@@ -4,7 +4,6 @@
 package dev.omnesis.android.feature.omi.di
 
 import android.content.Context
-import dagger.Binds
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -13,6 +12,7 @@ import dagger.hilt.components.SingletonComponent
 import dev.omnesis.android.feature.omi.OmiLink
 import dev.omnesis.android.feature.omi.OmiPairing
 import dev.omnesis.android.feature.omi.OmiPairingStore
+import dev.omnesis.android.feature.recording.SharedWearableAudio
 import dev.omnesis.android.feature.recording.WearableAudio
 import javax.inject.Singleton
 
@@ -31,12 +31,14 @@ object OmiModule {
     @Provides
     @Singleton
     fun provideLink(@ApplicationContext context: Context, store: OmiPairingStore): OmiLink = OmiLink(context, store)
-}
 
-/** The pendant is the recorder's wearable input. */
-@Module
-@InstallIn(SingletonComponent::class)
-interface OmiWearableModule {
-    @Binds
-    fun bindWearableAudio(link: OmiLink): WearableAudio
+    /** The pendant's audio, heard by the recorder and by any other listener at once. */
+    @Provides
+    @Singleton
+    fun provideSharedAudio(link: OmiLink): SharedWearableAudio = SharedWearableAudio(link)
+
+    /** The pendant is the recorder's wearable input, through its own view of the shared audio. */
+    @Provides
+    @Singleton
+    fun provideWearableAudio(shared: SharedWearableAudio): WearableAudio = shared.view()
 }

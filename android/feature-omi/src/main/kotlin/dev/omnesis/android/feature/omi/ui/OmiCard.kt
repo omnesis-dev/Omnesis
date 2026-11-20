@@ -47,6 +47,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import dev.omnesis.android.designsystem.components.OmnesisCard
 import dev.omnesis.android.designsystem.theme.OmSpacing
 import dev.omnesis.android.designsystem.theme.OmTheme
+import dev.omnesis.android.feature.assist.ui.VoiceCommandsCard
 import dev.omnesis.android.feature.omi.OmiLink
 import dev.omnesis.android.feature.omi.OmiLinkService
 import dev.omnesis.android.feature.omi.OmiPairing
@@ -252,8 +253,9 @@ private fun detail(status: OmiStatus): String = when (status) {
 
 /**
  * The pendant's section in Settings, beside the watch: link it, see its state
- * and details, forget it. Shown while the gateway takes recordings, and while
- * a pendant is linked so it can always be forgotten.
+ * and details, forget it, and set up voice commands once one is linked. Shown
+ * while the gateway takes recordings, and while a pendant is linked so it can
+ * always be forgotten.
  */
 @Composable
 fun OmiSettingsSection(vm: OmiViewModel = hiltViewModel()) {
@@ -268,6 +270,15 @@ fun OmiSettingsSection(vm: OmiViewModel = hiltViewModel()) {
         modifier = Modifier.padding(top = OmSpacing.sm, bottom = OmSpacing.xs),
     )
     OmiCard(vm)
+    if (state.status == OmiStatus.NotPaired) return
+    Spacer(Modifier.height(OmSpacing.md))
+    Text(
+        "VOICE COMMANDS",
+        style = MaterialTheme.typography.labelMedium,
+        color = OmTheme.colors.textSecondary,
+        modifier = Modifier.padding(top = OmSpacing.sm, bottom = OmSpacing.xs),
+    )
+    VoiceCommandsCard()
 }
 
 /** The pendant on the Recordings screen: its state in one line, managed in Settings. */

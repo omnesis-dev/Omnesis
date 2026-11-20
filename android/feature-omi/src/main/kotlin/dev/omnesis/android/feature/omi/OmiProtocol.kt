@@ -156,8 +156,14 @@ enum class Haptic(val pulses: List<Byte>) {
     /** Two very short pulses: recording stopped. */
     STOPPED(listOf(1, 1)),
 
-    /** One long pulse: the recording could not start. */
+    /** One long pulse: the recording could not start, or a voice command failed. */
     FAILED(listOf(3)),
+
+    /** One very short pulse: the wake word was heard, say the command. */
+    LISTENING(listOf(1)),
+
+    /** Three very short pulses: Home Assistant carried the voice command out. */
+    DONE(listOf(1, 1, 1)),
     ;
 
     companion object {
