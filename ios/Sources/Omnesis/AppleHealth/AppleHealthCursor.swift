@@ -84,8 +84,7 @@ public struct HealthRead: Equatable, Sendable {
 ///
 /// Structure:
 ///   - `lanesByIdentifier` — per type, one `HealthLane` per recency tier
-///     (see `HealthRecency`), newest first. Stored deflated (`lanesZ`);
-///     the plain `lanes` object is still read.
+///     (see `HealthRecency`), newest first. Stored deflated (`lanesZ`).
 ///   - `pending` — the reads the current pass still owes, one queue per
 ///     tier. A pass reads tier 0 of every type, round-robin a page at a
 ///     time, then tier 1, and so on: every type is brought up to date with
@@ -212,13 +211,7 @@ public struct AppleHealthCursor: Sendable, Equatable {
                 }
             }
         }
-        // Compressed lanes first; the plain form is what build 369 wrote.
-        let lanes: JSONValue? = if case .string(let packed) = cursor["lanesZ"] {
-            unpack(packed)
-        } else {
-            cursor["lanes"]
-        }
-        if case .object(let obj) = lanes {
+        if case .string(let packed) = cursor["lanesZ"], case .object(let obj) = unpack(packed) {
             for (identifier, value) in obj {
                 guard case .array(let rawLanes) = value else { continue }
                 let decoded = rawLanes.compactMap(decodeLane)
@@ -246,6 +239,10 @@ public struct AppleHealthCursor: Sendable, Equatable {
     /// gateway persists.
     public func encode() -> SyncCursor {
         let lanes = JSONValue.object(lanesByIdentifier.mapValues { .array($0.map(Self.encodeLane)) })
+        // Deflating an in-memory buffer does not fail in practice. If it ever
+        // did, the lanes are left out: the next pass starts them afresh and
+        // re-reads, which the gateway's upserts absorb, rather than storing a
+        // second format that every reader would have to know.
         var dict: [String: JSONValue] = [
             "version": .int(2),
             "pending": .array(pending.map { .array($0.map(JSONValue.string)) }),
@@ -253,8 +250,6 @@ public struct AppleHealthCursor: Sendable, Equatable {
         ]
         if let packed = Self.pack(lanes) {
             dict["lanesZ"] = .string(packed)
-        } else {
-            dict["lanes"] = lanes
         }
         if !anchorsByIdentifier.isEmpty {
             dict["anchorsByIdentifier"] = .object(anchorsByIdentifier.mapValues(JSONValue.string))

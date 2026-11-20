@@ -149,25 +149,13 @@ final class AppleHealthCursorTests: XCTestCase {
         XCTAssertEqual(AppleHealthCursor.decode(from: cursor.encode()), cursor)
     }
 
-    /// Build 369 stored lanes uncompressed; a phone updating from it must
-    /// carry on from those anchors.
-    func testAPlainLanesCursorFromBuild369IsStillRead() {
+    func testLanesAreStoredOnlyInTheirCompressedForm() {
         var cursor = AppleHealthCursor()
         cursor.beginPass(identifiers: types, now: now)
-        _ = drain(&cursor, fullPages: ["TypeA#0": 1])
-        var plain = cursor.encode()
-        XCTAssertNotNil(plain.removeValue(forKey: "lanesZ"))
-        plain["lanes"] = .object(cursor.lanesByIdentifier.mapValues { lanes in
-            .array(lanes.map { lane in
-                var obj: [String: JSONValue] = [:]
-                if let start = lane.window.start { obj["start"] = .int(Int64(start.timeIntervalSince1970)) }
-                if let end = lane.window.end { obj["end"] = .int(Int64(end.timeIntervalSince1970)) }
-                if let anchor = lane.anchor { obj["anchor"] = .string(anchor) }
-                return .object(obj)
-            })
-        })
-
-        XCTAssertEqual(AppleHealthCursor.decode(from: plain), cursor)
+        _ = drain(&cursor)
+        let encoded = cursor.encode()
+        XCTAssertNil(encoded["lanes"])
+        guard case .string = encoded["lanesZ"] else { return XCTFail("lanes must be stored compressed") }
     }
 
     /// Saved after every page, so it must stay small with every type
