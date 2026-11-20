@@ -55,7 +55,7 @@ function invocation(
   complete = true,
   budget: number | null = 30_000,
 ): { command: string; args: readonly string[]; input: Buffer; timeoutMs: number | undefined } {
-  const started = Date.now();
+  const started = performance.now();
   const paths =
     operation.action === "inspect"
       ? operation.paths.map((entry) => entry.path)
@@ -79,17 +79,21 @@ function invocation(
   if (metadata.length > 2097152) throw new Error("Private file operation is too large");
   const length = Buffer.alloc(4);
   length.writeUInt32LE(metadata.length);
-  const { command, args } = windowsFilesystemInvocation(budget ?? undefined);
-  const timeoutMs = budget === null ? undefined : budget - (Date.now() - started);
-  if (timeoutMs !== undefined && timeoutMs <= 0) {
-    resultBytes({
-      exitCode: null,
-      signal: null,
-      stdout: Buffer.alloc(0),
-      stderr: "",
-      failure: "timeout",
-    });
-  }
+  const remaining = (): number | undefined => {
+    const timeoutMs =
+      budget === null ? undefined : Math.floor(budget - (performance.now() - started));
+    if (timeoutMs !== undefined && timeoutMs <= 0) {
+      resultBytes({
+        exitCode: null,
+        signal: null,
+        stdout: Buffer.alloc(0),
+        stderr: "",
+        failure: "timeout",
+      });
+    }
+    return timeoutMs;
+  };
+  const { command, args } = windowsFilesystemInvocation(remaining());
   // The native Job launcher quotes each argument, including the executable.
   if (command.length + 3 + args.reduce((size, arg) => size + arg.length + 3, 0) > 32767) {
     throw new Error("Windows private helper command line is too large");
@@ -98,11 +102,12 @@ function invocation(
     complete && (operation.action === "create" || operation.action === "atomic")
       ? COMMIT
       : Buffer.alloc(0);
+  const framed = Buffer.concat([length, metadata, Buffer.from(input ?? []), commit]);
   return {
     command,
     args,
-    timeoutMs,
-    input: Buffer.concat([length, metadata, Buffer.from(input ?? []), commit]),
+    timeoutMs: remaining(),
+    input: framed,
   };
 }
 function resultBytes(result: WindowsJobResult): Buffer {

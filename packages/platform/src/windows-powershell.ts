@@ -62,10 +62,9 @@ function processStartFailure(error: unknown): WindowsProcessStartFailure {
   return "spawn";
 }
 
-/** Exact UTC creation ticks for durable ownership records; only this process is cached. */
-export function windowsProcessStart(
+function processStart(
   pid: number,
-  timeoutMs = 10_000,
+  timeoutMs: number,
   unavailable?: (reason: WindowsProcessStartFailure) => void,
 ): string | null {
   if (!Number.isSafeInteger(pid) || pid <= 0) {
@@ -95,7 +94,7 @@ export function windowsProcessStart(
       {
         encoding: "utf8",
         windowsHide: true,
-        timeout: Math.max(1, Math.min(timeoutMs, 10_000)),
+        timeout: timeoutMs,
         stdio: ["ignore", "pipe", "pipe"],
       },
     );
@@ -111,4 +110,26 @@ export function windowsProcessStart(
   }
   if (pid === process.pid) ownBirth = birth;
   return birth;
+}
+
+/** Exact UTC creation ticks for lock ownership; arbitrary process probes stay capped at ten seconds. */
+export function windowsProcessStart(
+  pid: number,
+  timeoutMs = 10_000,
+  unavailable?: (reason: WindowsProcessStartFailure) => void,
+): string | null {
+  return processStart(pid, Math.max(1, Math.min(timeoutMs, 10_000)), unavailable);
+}
+
+/** Verify only this process within the native worker's remaining initialization budget. */
+export function windowsWorkerOwnerStart(
+  timeoutMs: number,
+  unavailable?: (reason: WindowsProcessStartFailure) => void,
+): string | null {
+  const remainingMs = Math.floor(Math.min(timeoutMs, 30_000));
+  if (!Number.isFinite(remainingMs) || remainingMs <= 0) {
+    unavailable?.("timeout:before-query");
+    return null;
+  }
+  return processStart(process.pid, remainingMs, unavailable);
 }

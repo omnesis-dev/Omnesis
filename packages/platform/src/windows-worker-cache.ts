@@ -6,7 +6,7 @@ import { win32 } from "node:path";
 import { getEnvironmentData, setEnvironmentData } from "node:worker_threads";
 import {
   windowsPowerShellExecutable,
-  windowsProcessStart,
+  windowsWorkerOwnerStart,
   windowsEnvironmentValue,
   type WindowsProcessStartFailure,
 } from "./windows-powershell.js";
@@ -65,7 +65,10 @@ export interface WindowsBootstrapRequest {
   invocation: WindowsOwnedInvocation;
   input: Uint8Array;
 }
-export type WindowsBootstrapRunner = (request: WindowsBootstrapRequest) => WindowsJobResult;
+export type WindowsBootstrapRunner = (
+  request: WindowsBootstrapRequest,
+  remainingMs: number,
+) => WindowsJobResult;
 function frame(bytes: Uint8Array): Buffer {
   const length = Buffer.alloc(4);
   length.writeUInt32LE(bytes.length);
@@ -132,6 +135,18 @@ export function windowsWorkerInvocation(
   if (initializationFailed) throw initializationFailure;
   if (verifiedExecutable === undefined) {
     try {
+      // See #1159 — owner verification and native bootstrap consume one initialization allowance.
+      const started = performance.now();
+      const budgetMs = Math.min(opts.timeoutMs ?? 30_000, 30_000);
+      const remaining = () => {
+        const elapsedMs = performance.now() - started;
+        const remainingMs = Math.floor(budgetMs - elapsedMs);
+        if (!Number.isFinite(remainingMs) || remainingMs <= 0 || elapsedMs < 0)
+          throw Object.assign(new Error("Windows native worker initialization timed out"), {
+            code: "ETIMEDOUT",
+          });
+        return remainingMs;
+      };
       const root = cacheRoot();
       const inherited = inheritedExecutable(root);
       if (inherited !== undefined) {
@@ -143,7 +158,7 @@ export function windowsWorkerInvocation(
       // nested bootstrap can start. Normalize year-1 .NET ticks to FILETIME's
       // 1601 epoch with exact integers, never Date/Number rounding.
       let failure: WindowsProcessStartFailure | undefined;
-      const ticks = windowsProcessStart(process.pid, opts.timeoutMs, (reason) => {
+      const ticks = windowsWorkerOwnerStart(remaining(), (reason) => {
         failure = reason;
       });
       if (ticks === null || BigInt(ticks) <= DOTNET_TO_FILETIME_TICKS)
@@ -168,19 +183,22 @@ export function windowsWorkerInvocation(
         }),
         "utf8",
       );
-      const result = bootstrap({
-        invocation: {
-          command: windowsPowerShellExecutable(),
-          args: [
-            "-NoLogo",
-            "-NoProfile",
-            "-NonInteractive",
-            "-EncodedCommand",
-            Buffer.from(LOAD_PROGRAM, "utf16le").toString("base64"),
-          ],
+      const result = bootstrap(
+        {
+          invocation: {
+            command: windowsPowerShellExecutable(),
+            args: [
+              "-NoLogo",
+              "-NoProfile",
+              "-NonInteractive",
+              "-EncodedCommand",
+              Buffer.from(LOAD_PROGRAM, "utf16le").toString("base64"),
+            ],
+          },
+          input: Buffer.concat([frame(program), frame(metadata), source, COMMIT]),
         },
-        input: Buffer.concat([frame(program), frame(metadata), source, COMMIT]),
-      });
+        remaining(),
+      );
       if (
         Object.hasOwn(result, "cleanupFailure") ||
         result.failure ||
@@ -209,6 +227,7 @@ export function windowsWorkerInvocation(
           Object.assign(error, { cleanupFailure: result.cleanupFailure });
         throw error;
       }
+      remaining();
       let record: unknown;
       try {
         record = JSON.parse(Buffer.from(result.stdout).toString("utf8"));
@@ -235,6 +254,7 @@ export function windowsWorkerInvocation(
       ) {
         throw new Error("Invalid Windows native worker verification response");
       }
+      remaining();
       // The uncached bootstrap checked owner, protected DACL, reparse metadata,
       // source generation and binary hash before returning this executable.
       verifiedExecutable = expected;

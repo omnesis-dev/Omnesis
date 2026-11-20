@@ -54,6 +54,33 @@ describe("Windows creation-time identity", () => {
   });
   afterEach(() => vi.unstubAllEnvs());
 
+  it.each([15_000, 30_000, 180_000])(
+    "keeps the self-only worker probe within its %s ms initialization allowance",
+    async (timeoutMs) => {
+      const { windowsWorkerOwnerStart, windowsProcessStart } =
+        await import("./windows-powershell.js");
+      commands.run.mockReturnValue("638000000000000004\n");
+      expect(windowsWorkerOwnerStart(timeoutMs)).toBe("638000000000000004");
+      expect(commands.run.mock.calls[0]![2].timeout).toBe(Math.min(timeoutMs, 30_000));
+      expect(commands.run.mock.calls[0]![1].at(-1)).toContain(`GetProcessById(${process.pid})`);
+      expect(windowsProcessStart(process.pid)).toBe("638000000000000004");
+      expect(commands.run).toHaveBeenCalledOnce();
+      windowsProcessStart(process.pid + 1, 180_000);
+      expect(commands.run.mock.calls[1]![2].timeout).toBe(10_000);
+    },
+  );
+
+  it.each([0, 0.5, -1, Number.NaN])(
+    "never starts a self-only probe with an exhausted %s ms allowance",
+    async (timeoutMs) => {
+      const { windowsWorkerOwnerStart } = await import("./windows-powershell.js");
+      const unavailable = vi.fn();
+      expect(windowsWorkerOwnerStart(timeoutMs, unavailable)).toBeNull();
+      expect(unavailable).toHaveBeenCalledExactlyOnceWith("timeout:before-query");
+      expect(commands.run).not.toHaveBeenCalled();
+    },
+  );
+
   it.each([
     [
       Object.assign(new Error("invented private command"), { code: "ETIMEDOUT", status: null }),
