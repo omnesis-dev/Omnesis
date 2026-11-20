@@ -348,9 +348,9 @@ jobs:
     needs: tailnet-seated
     if: ${{ !cancelled() && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.lanes == 'all' || inputs.lanes == 'docker'))) }}
     runs-on: macos-15-intel
-    # Colima's VM is slow on the Intel runner: minutes to start it, about 40
-    # to pull the two images and 10 for the gateway's first boot, so a
-    # passing journey takes about an hour.
+    # Colima's VM is slow on the Intel runner: a few minutes to start it,
+    # then 20 to 40 to pull the two images and boot the gateway, so a
+    # passing journey takes 30 to 60 minutes.
     timeout-minutes: 150
     permissions:
       contents: read
