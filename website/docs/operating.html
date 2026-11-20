@@ -400,6 +400,13 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
           are refused during this early repair.
         </p>
 
+        <p>
+          The first native operation on Windows verifies ownership and initializes a protected
+          helper. Those steps share a 30-second deadline, shortened by the operation's remaining
+          timeout. Preparing inputs and initializing the helper count toward that same operation
+          timeout. An operation stops if its helper cannot be verified.
+        </p>
+
         <h3 id="stalls">Event-loop stalls</h3>
         <p>
           The gateway answers every request on one event loop, so work that holds it for a moment

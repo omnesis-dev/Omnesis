@@ -4,7 +4,7 @@
 import { createHash } from "node:crypto";
 import { win32 } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { windowsProcessStart } from "./windows-powershell.js";
+import { windowsWorkerOwnerStart } from "./windows-powershell.js";
 import type { WindowsBootstrapRequest } from "./windows-worker-cache.js";
 const inherited = vi.hoisted(() => ({ data: new Map<string, unknown>() }));
 vi.mock("node:worker_threads", async (original) => ({
@@ -17,14 +17,14 @@ vi.mock("node:worker_threads", async (original) => ({
 }));
 vi.mock("./windows-powershell.js", async (original) => ({
   ...(await original<typeof import("./windows-powershell.js")>()),
-  windowsProcessStart: vi.fn(() => "638000000000000001"),
+  windowsWorkerOwnerStart: vi.fn(() => "638000000000000001"),
 }));
 
 beforeEach(() => {
   vi.resetModules();
   inherited.data.clear();
-  vi.mocked(windowsProcessStart).mockClear();
-  vi.mocked(windowsProcessStart).mockReturnValue("638000000000000001");
+  vi.mocked(windowsWorkerOwnerStart).mockClear();
+  vi.mocked(windowsWorkerOwnerStart).mockReturnValue("638000000000000001");
   vi.stubEnv("SystemRoot", "C:\\Windows");
   vi.stubEnv("LOCALAPPDATA", "C:\\example folder\\literal & $()\\Local");
 });
@@ -71,6 +71,22 @@ function verified(request: WindowsBootstrapRequest) {
   };
 }
 describe("Windows native worker cache boundary", () => {
+  it("retains only a safe owner-birth failure reason and never starts a bootstrap", async () => {
+    vi.mocked(windowsWorkerOwnerStart).mockImplementation((_timeout, unavailable) => {
+      unavailable?.("timeout:query");
+      return null;
+    });
+    const { windowsWorkerInvocation } = await import("./windows-worker-cache.js");
+    const bootstrap = vi.fn(verified);
+    expect(() => windowsWorkerInvocation("job", bootstrap)).toThrow(
+      "Cannot verify Windows native worker owner (EPRIVATE:owner-birth:timeout:query)",
+    );
+    expect(() => windowsWorkerInvocation("filesystem", bootstrap)).toThrow(
+      "Cannot verify Windows native worker owner (EPRIVATE:owner-birth:timeout:query)",
+    );
+    expect(bootstrap).not.toHaveBeenCalled();
+    expect(windowsWorkerOwnerStart).toHaveBeenCalledOnce();
+  });
   it.each(["success-shaped", "failure-shaped"] as const)(
     "rejects and retains %s bootstrap cleanup uncertainty",
     async (kind) => {
@@ -113,7 +129,7 @@ describe("Windows native worker cache boundary", () => {
     async (ticks, expected) => {
       // Calendar anchors: 1601-01-01 and 1970-01-01. Expected values are
       // independent of the implementation's epoch constant.
-      vi.mocked(windowsProcessStart).mockReturnValue(ticks);
+      vi.mocked(windowsWorkerOwnerStart).mockReturnValue(ticks);
       const { windowsWorkerInvocation } = await import("./windows-worker-cache.js");
       const bootstrap = vi.fn(verified);
       windowsWorkerInvocation("job", bootstrap);
@@ -241,7 +257,7 @@ async function primedSeed() {
   const [key, value] = [...inherited.data.entries()][0]!;
   const seed = value as Record<string, unknown>;
   vi.resetModules();
-  vi.mocked(windowsProcessStart).mockClear();
+  vi.mocked(windowsWorkerOwnerStart).mockClear();
   return { key, seed, invocation };
 }
 
@@ -257,7 +273,7 @@ describe("process-local verified cache inheritance", () => {
       args: ["filesystem", String(process.pid)],
     });
     expect(windowsWorkerInvocation("job", bootstrap)).toEqual(invocation);
-    expect(windowsProcessStart).not.toHaveBeenCalled();
+    expect(windowsWorkerOwnerStart).not.toHaveBeenCalled();
     expect(bootstrap).not.toHaveBeenCalled();
     expect([...inherited.data.values()]).toEqual([seed]);
   });
@@ -297,7 +313,7 @@ describe("process-local verified cache inheritance", () => {
     const bootstrap = vi.fn(verified);
     expect(windowsWorkerInvocation("job", bootstrap)).toEqual(invocation);
     expect(bootstrap).toHaveBeenCalledOnce();
-    expect(windowsProcessStart).toHaveBeenCalledOnce();
+    expect(windowsWorkerOwnerStart).toHaveBeenCalledOnce();
     expect(inherited.data.get(key)).toEqual(seed);
   });
 
@@ -316,6 +332,6 @@ describe("process-local verified cache inheritance", () => {
     inherited.data.set(key, seed);
     expect(() => windowsWorkerInvocation("job", bootstrap)).toThrow("native worker");
     expect(bootstrap).toHaveBeenCalledOnce();
-    expect(windowsProcessStart).toHaveBeenCalledOnce();
+    expect(windowsWorkerOwnerStart).toHaveBeenCalledOnce();
   });
 });

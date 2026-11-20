@@ -128,13 +128,14 @@ async function takeSnapshot(forBeat: number, afterMs: number): Promise<Snapshot 
   try {
     // A stall in native code delays the profiler's start until it returns, by
     // which time the samples would be of whatever ran next: a slow answer, or
-    // a heartbeat since `forBeat` (the stall is over), abandons the profile.
+    // a heartbeat since `forBeat` (the stall is over), abandons the profile
+    // before the profiler starts, since starting it holds the main thread.
     let activity = 0;
     const profile = await captureMainThreadProfile(
       SNAPSHOT_SAMPLE_MS,
       SNAPSHOT_SAMPLING_INTERVAL_US,
       (answerWaitMs) => {
-        // Also the moment sampling starts: note the activity it starts in.
+        // Also the moment sampling is decided: note the activity it starts in.
         activity = sampleActivity(slots).inner;
         return (
           answerWaitMs <= SNAPSHOT_MAX_ANSWER_WAIT_MS && Number(Atomics.load(beat, 0)) === forBeat

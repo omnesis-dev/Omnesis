@@ -54,6 +54,109 @@ describe("Windows creation-time identity", () => {
   });
   afterEach(() => vi.unstubAllEnvs());
 
+  it.each([15_000, 30_000, 180_000])(
+    "keeps the self-only worker probe within its %s ms initialization allowance",
+    async (timeoutMs) => {
+      const { windowsWorkerOwnerStart, windowsProcessStart } =
+        await import("./windows-powershell.js");
+      commands.run.mockReturnValue("638000000000000004\n");
+      expect(windowsWorkerOwnerStart(timeoutMs)).toBe("638000000000000004");
+      expect(commands.run.mock.calls[0]![2].timeout).toBe(Math.min(timeoutMs, 30_000));
+      expect(commands.run.mock.calls[0]![1].at(-1)).toContain(`GetProcessById(${process.pid})`);
+      expect(windowsProcessStart(process.pid)).toBe("638000000000000004");
+      expect(commands.run).toHaveBeenCalledOnce();
+      windowsProcessStart(process.pid + 1, 180_000);
+      expect(commands.run.mock.calls[1]![2].timeout).toBe(10_000);
+    },
+  );
+
+  it.each([0, 0.5, -1, Number.NaN])(
+    "never starts a self-only probe with an exhausted %s ms allowance",
+    async (timeoutMs) => {
+      const { windowsWorkerOwnerStart } = await import("./windows-powershell.js");
+      const unavailable = vi.fn();
+      expect(windowsWorkerOwnerStart(timeoutMs, unavailable)).toBeNull();
+      expect(unavailable).toHaveBeenCalledExactlyOnceWith("timeout:before-query");
+      expect(commands.run).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    [
+      Object.assign(new Error("invented private command"), { code: "ETIMEDOUT", status: null }),
+      "timeout:unknown-phase",
+    ],
+    [Object.assign(new Error("invented private command"), { code: "ENOENT" }), "spawn"],
+    [
+      Object.assign(new Error("invented private command"), {
+        status: 7,
+        stderr: "invented secret",
+      }),
+      "exit:7",
+    ],
+    [Object.assign(new Error("invented private command"), { status: "invented secret" }), "spawn"],
+    [Object.assign(new Error("invented private command"), { status: -1 }), "spawn"],
+    [Object.assign(new Error("invented private command"), { status: 1.5 }), "spawn"],
+    [Object.assign(new Error("invented private command"), { status: 0x100000000 }), "spawn"],
+  ])("preserves a safe reason for an unavailable identity", async (error, reason) => {
+    const { windowsProcessStart } = await import("./windows-powershell.js");
+    commands.run.mockImplementation(() => {
+      throw error;
+    });
+    const unavailable = vi.fn();
+    expect(windowsProcessStart(process.pid, 10_000, unavailable)).toBeNull();
+    expect(unavailable).toHaveBeenCalledExactlyOnceWith(reason);
+  });
+
+  it("recognizes an actual Node timeout without exposing its command or captured output", async () => {
+    const real = await vi.importActual<typeof import("node:child_process")>("node:child_process");
+    const { windowsProcessStart } = await import("./windows-powershell.js");
+    commands.run.mockImplementation(() =>
+      real.execFileSync(
+        process.execPath,
+        ["-e", 'process.stdout.write("invented private output");setInterval(()=>{},1000)'],
+        {
+          timeout: 100,
+          stdio: ["ignore", "pipe", "pipe"],
+        },
+      ),
+    );
+    const unavailable = vi.fn();
+    expect(windowsProcessStart(process.pid, 10_000, unavailable)).toBeNull();
+    expect(unavailable).toHaveBeenCalledExactlyOnceWith("timeout:before-query");
+  });
+
+  it.each([
+    ["", "timeout:before-query"],
+    [Buffer.alloc(0), "timeout:before-query"],
+    ["OMNESIS_OWNER_QUERY_V1", "timeout:query"],
+    [Buffer.from("OMNESIS_OWNER_QUERY_V1"), "timeout:query"],
+    ["invented private startup output", "timeout:unknown-phase"],
+    [Buffer.from("invented private startup output"), "timeout:unknown-phase"],
+    ["invented private output OMNESIS_OWNER_QUERY_V1", "timeout:unknown-phase"],
+    ["OMNESIS_OWNER_QUERY_V1invented private output", "timeout:unknown-phase"],
+  ])("classifies only exact owner-query phase markers", async (stderr, reason) => {
+    const { windowsProcessStart } = await import("./windows-powershell.js");
+    commands.run.mockImplementation(() => {
+      throw Object.assign(new Error("invented private command"), { code: "ETIMEDOUT", stderr });
+    });
+    const unavailable = vi.fn();
+    expect(windowsProcessStart(process.pid, 10_000, unavailable)).toBeNull();
+    expect(unavailable).toHaveBeenCalledExactlyOnceWith(reason);
+  });
+
+  it("distinguishes invalid output from an unresolvable trusted executable", async () => {
+    const { windowsProcessStart } = await import("./windows-powershell.js");
+    const unavailable = vi.fn();
+    commands.run.mockReturnValue("invented private output");
+    expect(windowsProcessStart(process.pid, 10_000, unavailable)).toBeNull();
+    expect(unavailable).toHaveBeenLastCalledWith("invalid-output");
+    vi.stubEnv("SystemRoot", "relative");
+    expect(windowsProcessStart(process.pid, 10_000, unavailable)).toBeNull();
+    expect(unavailable).toHaveBeenLastCalledWith("host-executable");
+    expect(commands.run).toHaveBeenCalledOnce();
+  });
+
   it("keeps exact ticks beyond Number precision and never caches another process", async () => {
     const { windowsProcessStart } = await import("./windows-powershell.js");
     commands.run
@@ -62,6 +165,14 @@ describe("Windows creation-time identity", () => {
     expect(windowsProcessStart(process.pid + 1)).toBe("638000000000000001");
     expect(windowsProcessStart(process.pid + 1)).toBe("638000000000000002");
     expect(commands.run).toHaveBeenCalledTimes(2);
+    const script: string = commands.run.mock.calls[0]![1].at(-1);
+    expect(script).toContain(
+      "[Console]::Error.Write('OMNESIS_OWNER_QUERY_V1'); [Console]::Error.Flush();",
+    );
+    expect(script.indexOf("[Console]::Error.Flush()")).toBeLessThan(
+      script.indexOf("GetProcessById"),
+    );
+    expect(commands.run.mock.calls[0]![2].stdio).toEqual(["ignore", "pipe", "pipe"]);
   });
 
   it("retries an unavailable self identity and caches only the successful observation", async () => {

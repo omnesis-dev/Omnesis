@@ -157,6 +157,16 @@ API 34 emulator with KVM on `ubuntu-latest`, rendering through ANGLE
 emulator process dies while the app draws its Ask screen. Neither lane needs a
 secret.
 
+The iOS journeys run through `scripts/ci/macos-interactive-job.sh`, which
+starts the lane as an Interactive launchd job in the runner's logged-in
+session. Every process a hosted macOS runner's step starts inherits the runner
+agent's utility scheduling class (base priority 20), while the simulator's
+processes run at 31 and above. On the 3-core runner, with the simulator busy,
+a gateway in that class is runnable but gets a few percent of a core, and its
+event loop stalls for up to a minute: long enough for the app's request to time
+out. As an Interactive job, the lane, the gateway and the collector run at the
+default priority, level with the simulator.
+
 A manual run picks its platforms:
 `gh workflow run mobile-journeys.yml --ref <branch> -f platforms=android`
 (`both`, `ios` or `android`).

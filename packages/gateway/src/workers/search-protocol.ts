@@ -45,6 +45,13 @@ export type SearchInit = {
   heartbeatIntervalMs: number;
   /** OS nice for this compute thread (resolved on the main thread). */
   backgroundWorkerNice: number;
+  /**
+   * One `Int32` the pool sets to 1 when it starts shutting down, shared by
+   * every worker it spawns. A call the worker takes off its queue after that
+   * is refused without running, so `shutdown` is answered as soon as the call
+   * already running returns rather than after every call queued before it.
+   */
+  stopping: SharedArrayBuffer;
 };
 
 /**

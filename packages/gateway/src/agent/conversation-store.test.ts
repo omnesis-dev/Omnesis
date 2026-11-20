@@ -2,11 +2,21 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
-import { copyFile, readFile, readdir, stat, unlink, utimes, writeFile } from "node:fs/promises";
+import {
+  copyFile,
+  readFile,
+  readdir,
+  rename,
+  stat,
+  unlink,
+  utimes,
+  writeFile,
+} from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as core from "@omnesis/core";
 
@@ -101,6 +111,12 @@ describe("FsConversationStore", () => {
         expect(core.inspectWindowsPrivatePathSync(join(dir, file), "file").private).toBe(true);
       }
       expect((await store.load("s_one"))?.title).toBe("replacement turn");
+      // The identity recorded after a private publication is the one a
+      // directory scan sees, so a restart lists without reading a transcript.
+      const restarted = new FsConversationStore(dir);
+      const reads = spyIndexReads(restarted);
+      expect((await restarted.list()).map((c) => c.title)).toEqual(["replacement turn"]);
+      expect(reads).toEqual([]);
     },
   );
 
@@ -523,6 +539,19 @@ function spyIndexReads(store: FsConversationStore): string[] {
 
 describe("FsConversationStore summary index", () => {
   const roots: string[] = [];
+  // These cases check the index's bookkeeping across tens to a hundred
+  // writes, and every Windows write is a private publication run by a native
+  // helper process, so a case would take its write count times the runner's
+  // process start latency, which a busy runner stretches several-fold. Write
+  // in process here instead: the bookkeeping is the same, and the Windows
+  // private publication of transcripts and the index has its own cases.
+  beforeEach(() => {
+    vi.spyOn(core, "atomicWriteFile").mockImplementation(async (path, data) => {
+      const scratch = `${path}.${randomUUID()}.tmp`;
+      await writeFile(scratch, data);
+      await rename(scratch, path);
+    });
+  });
   afterEach(() => {
     vi.restoreAllMocks();
     for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });

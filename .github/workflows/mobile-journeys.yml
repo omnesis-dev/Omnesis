@@ -144,10 +144,14 @@ jobs:
           key: ios-packages-${{ runner.os }}-${{ hashFiles('ios/project.yml') }}
 
       - name: lane [ios-journeys]
+        # A step's processes run at utility QoS, beneath the simulator's, and
+        # the synthetic gateway then waits up to a minute for a core while
+        # the app's request times out. As an Interactive launchd job, the lane
+        # and the gateway it starts run at the simulator's own priority.
         env:
           OMNESIS_JOURNEY_ARTIFACTS: ${{ runner.temp }}/mobile-journeys
           OMNESIS_CONFIG_DIR: ${{ runner.temp }}/mobile-journeys-gateway
-        run: scripts/run-mobile-journeys.sh ios
+        run: scripts/ci/macos-interactive-job.sh scripts/run-mobile-journeys.sh ios
 
       - name: Upload journey artifacts
         # The screen recording, xcresult bundle (screenshots of every failure),
@@ -285,8 +289,11 @@ jobs:
       # entries main's Android lane saves serve this job too. Without them every
       # run downloads Gradle itself and every dependency, and a slow
       # services.gradle.org or Maven repository fails the build before it starts.
+      # Restored only, never saved: a saved entry is never replaced, and one this
+      # job saved first would lack every module's unit-test dependencies, which
+      # the Android lane would then download from Maven Central on every run.
       - name: Restore Gradle caches
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.gradle/caches

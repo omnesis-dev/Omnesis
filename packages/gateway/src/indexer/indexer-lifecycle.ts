@@ -1513,6 +1513,7 @@ export class IndexerLifecycle {
         maxInputChars: this.deps.runtime.embedderMaxInputChars,
         encoding,
         apiKey,
+        allowRemoteInference: resolved.allowRemoteInference,
       });
     }
     let published = false;
@@ -1659,6 +1660,7 @@ export class IndexerLifecycle {
       encoding,
       apiKey,
       maxBackgroundRequests: this.deps.runtime.embedConcurrency,
+      allowRemoteInference: resolved.allowRemoteInference,
     });
   }
 

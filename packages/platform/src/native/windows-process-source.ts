@@ -12,26 +12,30 @@ using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
 
 public static class OmnesisProcessMetadata {
-  const uint QUERY=0x400,SYNCHRONIZE=0x100000,TERMINATE=1,EXITED=0;
+  // Limited query rights cover waiting, creation time and basic information,
+  // and unlike full query rights they are not refused on protected processes.
+  const uint QUERY_LIMITED=0x1000,SYNCHRONIZE=0x100000,TERMINATE=1,EXITED=0;
   const long FILETIME_EPOCH=504911232000000000L;
-  const int MAX_PROCESSES=65536;
-  [StructLayout(LayoutKind.Sequential,CharSet=CharSet.Unicode)] struct ProcessEntry {
-    public uint size,usage,pid;public UIntPtr heap;public uint module,threads,parentPid;
-    public int priority;public uint flags;
-    [MarshalAs(UnmanagedType.ByValTStr,SizeConst=260)] public string name;
+  const int MAX_PROCESSES=65536,MAX_LISTING_BYTES=64<<20,LENGTH_MISMATCH=unchecked((int)0xC0000004);
+  [StructLayout(LayoutKind.Sequential)] struct SystemProcess {
+    public uint next,threads;public long workingSetPrivate;public uint hardFaults,threadsHighWatermark;public ulong cycles;
+    public long created,user,kernel;public ushort nameLength,nameMaximum;public IntPtr name;public int priority;
+    public IntPtr pid,parentPid;
+  }
+  sealed class Candidate {
+    public readonly uint pid;public readonly long created;
+    public Candidate(uint pid,long created) {this.pid=pid;this.created=created;}
   }
   [StructLayout(LayoutKind.Sequential)] struct BasicInformation {
     public int exitStatus;public IntPtr peb;public UIntPtr affinity;public int priority;
     public UIntPtr pid,parentPid;
   }
-  // See #1143 — distinguish native refusals without exposing process metadata.
+  // Name the refusing native call without exposing process metadata.
   static Win32Exception Failure(string phase,int error) {
     OmnesisPrivateFile.Stage+="-"+phase;
     return new Win32Exception(error);
   }
-  [DllImport("kernel32.dll",SetLastError=true)] static extern SafeFileHandle CreateToolhelp32Snapshot(uint flags,uint pid);
-  [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern bool Process32FirstW(SafeFileHandle snapshot,ref ProcessEntry entry);
-  [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern bool Process32NextW(SafeFileHandle snapshot,ref ProcessEntry entry);
+  [DllImport("ntdll.dll")] static extern int NtQuerySystemInformation(int kind,IntPtr buffer,int size,out int returned);
   [DllImport("kernel32.dll",SetLastError=true)] static extern SafeFileHandle OpenProcess(uint access,bool inherit,uint pid);
   [DllImport("kernel32.dll",SetLastError=true)] static extern bool GetProcessTimes(SafeFileHandle process,out long created,out long exited,out long kernel,out long user);
   [DllImport("kernel32.dll",SetLastError=true)] static extern uint WaitForSingleObject(SafeFileHandle process,uint milliseconds);
@@ -57,24 +61,36 @@ public static class OmnesisProcessMetadata {
     if(!GetProcessTimes(handle,out created,out exited,out kernel,out user)) throw Failure("birth",Marshal.GetLastWin32Error());
     return checked(created+FILETIME_EPOCH);
   }
-  static Dictionary<uint,List<uint>> Candidates() {
-    Dictionary<uint,List<uint>> children=new Dictionary<uint,List<uint>>();
-    using(SafeFileHandle snapshot=CreateToolhelp32Snapshot(2,0)) {
-      if(snapshot.IsInvalid) throw Failure("enumerate",Marshal.GetLastWin32Error());
-      ProcessEntry entry=new ProcessEntry();entry.size=(uint)Marshal.SizeOf(typeof(ProcessEntry));
-      bool next=Process32FirstW(snapshot,ref entry);int count=0;
-      while(next) {
-        if(++count>MAX_PROCESSES) throw new InvalidDataException();
-        if(entry.pid!=0) {
-          List<uint> values;
-          if(!children.TryGetValue(entry.parentPid,out values)) {values=new List<uint>();children.Add(entry.parentPid,values);}
-          values.Add(entry.pid);
+  // The system listing records each process's creator PID and creation time
+  // without opening it. A recorded creator PID can name an earlier holder of
+  // that number, so the listing only proposes candidates.
+  static Dictionary<uint,List<Candidate>> Candidates() {
+    for(int size=1<<20;;) {
+      IntPtr buffer=Marshal.AllocHGlobal(size);
+      try {
+        int returned;int status=NtQuerySystemInformation(5,buffer,size,out returned);
+        if(status==LENGTH_MISMATCH && size<MAX_LISTING_BYTES) {size=Math.Min(MAX_LISTING_BYTES,Math.Max(size*2,returned+(1<<16)));continue;}
+        if(status<0) throw Failure("enumerate",(int)RtlNtStatusToDosError(status));
+        Dictionary<uint,List<Candidate>> children=new Dictionary<uint,List<Candidate>>();
+        int entrySize=Marshal.SizeOf(typeof(SystemProcess));
+        for(long offset=0,count=0;;) {
+          if(++count>MAX_PROCESSES || offset<0 || offset+entrySize>returned) throw new InvalidDataException();
+          SystemProcess entry=(SystemProcess)Marshal.PtrToStructure(new IntPtr(buffer.ToInt64()+offset),typeof(SystemProcess));
+          long pid=entry.pid.ToInt64(),parentPid=entry.parentPid.ToInt64();
+          if(pid<0 || pid>UInt32.MaxValue || parentPid<0 || parentPid>UInt32.MaxValue) throw new InvalidDataException();
+          if(pid!=0) {
+            List<Candidate> values;
+            if(!children.TryGetValue((uint)parentPid,out values)) {values=new List<Candidate>();children.Add((uint)parentPid,values);}
+            values.Add(new Candidate((uint)pid,entry.created));
+          }
+          if(entry.next==0) break;
+          offset+=entry.next;
         }
-        next=Process32NextW(snapshot,ref entry);
+        return children;
+      } finally {
+        Marshal.FreeHGlobal(buffer);
       }
-      int error=Marshal.GetLastWin32Error();if(error!=18) throw Failure("enumerate",error);
     }
-    return children;
   }
   sealed class Observation {
     public SafeFileHandle handle;
@@ -82,7 +98,7 @@ public static class OmnesisProcessMetadata {
   }
   public static void Snapshot(uint[] roots,Action<List<Dictionary<string,object>>> publish) {
     OmnesisPrivateFile.Stage="process-snapshot";
-    Dictionary<uint,List<uint>> children=Candidates();
+    Dictionary<uint,List<Candidate>> children=Candidates();
     Queue<uint> pending=new Queue<uint>(roots);HashSet<uint> seen=new HashSet<uint>();
     List<SafeFileHandle> handles=new List<SafeFileHandle>();
     List<Observation> observed=new List<Observation>();
@@ -90,18 +106,23 @@ public static class OmnesisProcessMetadata {
       while(pending.Count!=0) {
         uint pid=pending.Dequeue();if(!seen.Add(pid)) continue;
         if(seen.Count>MAX_PROCESSES) throw new InvalidDataException();
-        List<uint> descendants;if(children.TryGetValue(pid,out descendants)) foreach(uint child in descendants) pending.Enqueue(child);
-        SafeFileHandle handle=Open(pid,QUERY);if(handle==null) continue;
+        SafeFileHandle handle=Open(pid,QUERY_LIMITED);if(handle==null) continue;
         handles.Add(handle);
         if(Exited(handle)) continue;
         long birth=Birth(handle);BasicInformation info;int returned;
-        // Toolhelp only selects candidates. Its PPID is never paired with a
+        // The listing only selects candidates. Its PPID is never paired with a
         // later PID's birth: query both fields on this same pinned object.
         int status=NtQueryInformationProcess(handle,0,out info,Marshal.SizeOf(typeof(BasicInformation)),out returned);
         if(status<0) {if(Exited(handle)) continue;throw Failure("query-"+unchecked((uint)status).ToString("X8",CultureInfo.InvariantCulture),(int)RtlNtStatusToDosError(status));}
         if(info.pid.ToUInt64()!=pid || info.parentPid.ToUInt64()>UInt32.MaxValue || returned!=Marshal.SizeOf(typeof(BasicInformation))) throw new InvalidDataException();
         Dictionary<string,object> row=new Dictionary<string,object>();row["pid"]=pid;row["parentPid"]=(uint)info.parentPid.ToUInt64();row["birth"]=birth.ToString(CultureInfo.InvariantCulture);
         observed.Add(new Observation {handle=handle,row=row});
+        // Descend only from a live parent pinned here, and only to processes
+        // created no earlier than it: an older process listed under this PID
+        // was created by a previous holder of the number. Children of a parent
+        // that has gone cannot be adopted by their caller, so none are opened.
+        List<Candidate> descendants;
+        if(children.TryGetValue(pid,out descendants)) foreach(Candidate child in descendants) if(checked(child.created+FILETIME_EPOCH)>=birth) pending.Enqueue(child.pid);
       }
       // Keep every observed parent object pinned until all child metadata is
       // captured: Windows cannot recycle those PIDs between rows. Filter dead
@@ -117,7 +138,7 @@ public static class OmnesisProcessMetadata {
   public static void Kill(uint[] pids,long[] births) {
     OmnesisPrivateFile.Stage="process-kill";
     for(int index=0;index<pids.Length;index++) {
-      using(SafeFileHandle handle=Open(pids[index],QUERY|TERMINATE)) {
+      using(SafeFileHandle handle=Open(pids[index],QUERY_LIMITED|TERMINATE)) {
         if(handle==null || Exited(handle) || Birth(handle)!=births[index]) continue;
         // The numeric ID is no longer consulted after OpenProcess succeeds.
         if(!TerminateProcess(handle,1)) {if(Exited(handle)) continue;throw new Win32Exception(Marshal.GetLastWin32Error());}

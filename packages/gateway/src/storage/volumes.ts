@@ -28,6 +28,13 @@ export async function measureStorageVolumes(paths: readonly string[]): Promise<S
         path = parent;
       }
     }
+    // A store under a regular file can never be created. POSIX reports that as ENOTDIR;
+    // Windows reports ENOENT, so the walk above reaches the file and is refused here.
+    if (path !== resolve(configuredPath) && !identity.isDirectory())
+      throw Object.assign(new Error(`ENOTDIR: not a directory, stat '${configuredPath}'`), {
+        code: "ENOTDIR",
+        path: configuredPath,
+      });
     const id = String(identity.dev);
     if (volumes.has(id)) continue;
     const fs = await statfs(path);

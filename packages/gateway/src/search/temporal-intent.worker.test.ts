@@ -175,8 +175,15 @@ it("stops waiting for a pool whose worker never reports ready", async () => {
     indexDbPath: join(configDir, "index.db"),
     configDir,
     concurrency: 1,
-    // A worker that never answers its `init`.
-    workerUrl: new URL("data:text/javascript,setInterval(() => {}, 1000)"),
+    // A worker that never answers its `init`. It acknowledges `shutdown` like
+    // the real worker: the pool stops a thread only once it has.
+    workerUrl: new URL(
+      `data:text/javascript,${encodeURIComponent(`
+        import { parentPort } from "node:worker_threads";
+        parentPort.on("message", (msg) => {
+          if (msg.type === "shutdown") parentPort.postMessage({ type: "shutdownComplete" });
+        });`)}`,
+    ),
     startWaitMs: 50,
   });
   void stuck.start().catch(() => {});

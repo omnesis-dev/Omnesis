@@ -58,6 +58,11 @@ jobs:
       # (a release bumps the app version in one) makes a new key, so restore the
       # closest older entry rather than start empty: an empty cache downloads every
       # dependency from Maven Central, which rate-limits a runner with HTTP 429.
+      #
+      # This job is the only Linux job that saves this entry. A saved entry is
+      # never replaced, so whichever job saves a key first decides what every
+      # later run restores; this job resolves every module's build and unit-test
+      # dependencies, and the other Linux jobs that run Gradle only restore it.
       - name: Restore Gradle caches
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -286,12 +291,13 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      # Gradle's dependency and wrapper caches. A change to any Gradle build file
-      # (a release bumps the app version in one) makes a new key, so restore the
-      # closest older entry rather than start empty: an empty cache downloads every
-      # dependency from Maven Central, which rate-limits a runner with HTTP 429.
+      # The Gradle cache build-and-test saves for these build files. It runs
+      # before this job, so the exact entry exists by now. Restored, never
+      # saved: this job resolves only the transport and pairing modules' test
+      # dependencies, and a saved entry is never replaced, so one it saved
+      # would serve every later run without the rest.
       - name: Restore Gradle caches
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.gradle/caches
