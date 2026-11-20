@@ -20,7 +20,10 @@ public static class OmnesisProcessMetadata {
     public long created,user,kernel;public ushort nameLength,nameMaximum;public IntPtr name;public int priority;
     public IntPtr pid,parentPid;
   }
-  struct Candidate {public uint pid;public long created;}
+  sealed class Candidate {
+    public readonly uint pid;public readonly long created;
+    public Candidate(uint pid,long created) {this.pid=pid;this.created=created;}
+  }
   [StructLayout(LayoutKind.Sequential)] struct BasicInformation {
     public int exitStatus;public IntPtr peb;public UIntPtr affinity;public int priority;
     public UIntPtr pid,parentPid;
@@ -76,7 +79,7 @@ public static class OmnesisProcessMetadata {
           if(pid!=0) {
             List<Candidate> values;
             if(!children.TryGetValue((uint)parentPid,out values)) {values=new List<Candidate>();children.Add((uint)parentPid,values);}
-            values.Add(new Candidate {pid=(uint)pid,created=entry.created});
+            values.Add(new Candidate((uint)pid,entry.created));
           }
           if(entry.next==0) break;
           offset+=entry.next;

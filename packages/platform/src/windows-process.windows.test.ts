@@ -87,7 +87,7 @@ function snapshotLifetimeFixture(): string {
     };
   }
   static Candidate listed(uint pid) {
-    return new Candidate {pid=pid,created=638999999999999000L+(pid==102 ? 99 : pid)-FILETIME_EPOCH};
+    return new Candidate(pid,638999999999999000L+(pid==102 ? 99 : pid)-FILETIME_EPOCH);
   }
   static SafeFileHandle Open(uint pid,uint access) {
     if(pid==102 || pid==105) throw new Exception("non-descendant candidate opened");
