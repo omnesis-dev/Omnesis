@@ -9,6 +9,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readdirSync,
+  readFileSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -92,5 +93,169 @@ describe("scripts/run-mobile-journeys.sh artifacts", () => {
     expect(result.status).toBe(1);
     expect(readdirSync(join(artifacts, "gateway-logs"))).toContain("gateway.log");
     expect(existsSync(join(artifacts, "gateway-logs/stall-profiles"))).toBe(false);
+  });
+});
+
+/** Writes an executable script. */
+function executable(path, lines) {
+  writeFileSync(path, ["#!/usr/bin/env bash", ...lines, ""].join("\n"));
+  chmodSync(path, 0o755);
+}
+
+/**
+ * Stand-ins for the macOS tools the iOS lane calls. `xcodebuild
+ * test-without-building` plays one outcome per call from TEST_XCODEBUILD, the
+ * way Xcode prints it, records its arguments and the journey configuration it
+ * was handed, and refuses an existing result bundle as Xcode does:
+ * - `runner`: the UI test runner fails to initialize before any journey starts;
+ * - `passed`: the journey passes;
+ * - `failed`: the journey fails, on both of xcodebuild's own iterations.
+ */
+function writeIosTools(bin) {
+  executable(join(bin, "xcodebuild"), [
+    'if [[ "$1" == build-for-testing ]]; then echo "** TEST BUILD SUCCEEDED **"; exit 0; fi',
+    'args=("$@"); bundle=""',
+    "for ((i = 0; i < $#; i++)); do",
+    '  if [[ "${args[i]}" == -resultBundlePath ]]; then bundle="${args[i + 1]}"; fi',
+    "done",
+    'attempt="$(( $(grep -c "^xcodebuild " "$TEST_CALLS" 2>/dev/null || true) + 1 ))"',
+    'outcome="$(cut -d, -f"$attempt" <<<"$TEST_XCODEBUILD")"',
+    'echo "xcodebuild $* => $outcome" >>"$TEST_CALLS"',
+    'echo "config $TEST_RUNNER_OMNESIS_JOURNEY_CONFIG" >>"$TEST_CALLS"',
+    'if [[ -e "$bundle" ]]; then echo "Existing file at -resultBundlePath $bundle" >&2; exit 64; fi',
+    'mkdir -p "$bundle"',
+    'case "$outcome" in',
+    "  runner)",
+    `    echo 'OmnesisDemoUITests-Runner[1:2] [Default] Failed to initialize for UI testing: Error Domain=com.apple.dt.XCTest.XCTFuture Code=1000 "Timed out while loading Accessibility."' >&2`,
+    '    echo "Testing failed:"',
+    `    printf '\\tOmnesisDemoUITests-Runner (1) encountered an error (The test runner failed to initialize for UI testing. (Underlying Error: Timed out while loading Accessibility.))\\n'`,
+    '    echo "** TEST EXECUTE FAILED **"',
+    "    exit 65 ;;",
+    "  passed)",
+    `    echo "Test Case '-[OmnesisDemoUITests.MobileJourneyUITests testAskingTheAgentShowsItsAnswer]' started (Iteration 1 of 2)."`,
+    `    echo "Test Case '-[OmnesisDemoUITests.MobileJourneyUITests testAskingTheAgentShowsItsAnswer]' passed (12.000 seconds)."`,
+    '    echo "** TEST EXECUTE SUCCEEDED **" ;;',
+    "  failed)",
+    "    for iteration in 1 2; do",
+    `      echo "Test Case '-[OmnesisDemoUITests.MobileJourneyUITests testAskingTheAgentShowsItsAnswer]' started (Iteration $iteration of 2)."`,
+    `      echo "MobileJourneyUITests.swift:250: error: -[OmnesisDemoUITests.MobileJourneyUITests testAskingTheAgentShowsItsAnswer] : XCTAssertTrue failed"`,
+    `      echo "Test Case '-[OmnesisDemoUITests.MobileJourneyUITests testAskingTheAgentShowsItsAnswer]' failed (60.000 seconds)."`,
+    "    done",
+    '    echo "** TEST EXECUTE FAILED **"',
+    "    exit 65 ;;",
+    "esac",
+  ]);
+  // simctl's boot, privacy, recording and log calls succeed silently; the
+  // result bundle summarises one passed journey.
+  executable(join(bin, "xcrun"), [
+    'if [[ "$1 $2 $3" == "xcresulttool get test-results" ]]; then',
+    '  echo \'{"totalTestCount": 1, "passedTests": 1, "skippedTests": 0, "failedTests": 0}\'',
+    "fi",
+  ]);
+  executable(join(bin, "xcodegen"), []);
+  executable(join(bin, "openssl"), ['echo "sha256 Fingerprint=AB:CD"']);
+  // The gateway's search finds the document the lane waits for.
+  executable(join(bin, "curl"), [
+    'if [[ "$*" == */search\\ * && "$*" != *search-snapshot* ]]; then',
+    '  echo \'{"results": [{"title": "Acme Q3 Planning"}]}\'',
+    "fi",
+  ]);
+}
+
+/**
+ * Runs the real iOS journey lane from a sandbox checkout, with the real
+ * `xcodebuild-ui-tests.mjs` and stand-ins for the simulator tools, the
+ * gateway and the corpus check, so no Mac, simulator or gateway is needed.
+ */
+function runIosJourneys(outcomes) {
+  const sandbox = mkdtempSync(join(tmpdir(), "omnesis-ios-journeys-"));
+  sandboxes.push(sandbox);
+  const checkout = join(sandbox, "checkout");
+  const scripts = join(checkout, "scripts");
+  mkdirSync(join(scripts, "ci"), { recursive: true });
+  mkdirSync(join(checkout, "ios"));
+  for (const file of ["run-mobile-journeys.sh", "ci/xcodebuild-ui-tests.mjs"]) {
+    copyFileSync(join(root, "scripts", file), join(scripts, file));
+  }
+  executable(join(scripts, "ci/resolve-ios-packages.sh"), []);
+  executable(join(scripts, "ios-resolved-bundle-id.sh"), ["echo dev.example.demo"]);
+  executable(join(scripts, "synth-gateway.sh"), [
+    'if [[ "$1" == start ]]; then',
+    '  mkdir -p "$OMNESIS_CONFIG_DIR/tls"',
+    '  echo journey-token >"$OMNESIS_CONFIG_DIR/token"',
+    '  echo certificate >"$OMNESIS_CONFIG_DIR/tls/cert.pem"',
+    "fi",
+  ]);
+  chmodSync(join(scripts, "run-mobile-journeys.sh"), 0o755);
+  const bin = join(sandbox, "bin");
+  mkdirSync(bin);
+  writeIosTools(bin);
+  const home = join(sandbox, "home");
+  mkdirSync(join(home, ".config/omnesis/models"), { recursive: true });
+  writeFileSync(join(home, ".config/omnesis/models/nomic-embed-text-v1.5.Q8_0.gguf"), "");
+  const artifacts = join(sandbox, "artifacts");
+  const calls = join(sandbox, "calls");
+  const result = spawnSync("bash", [join(scripts, "run-mobile-journeys.sh"), "ios"], {
+    encoding: "utf8",
+    env: {
+      PATH: `${bin}:${process.env.PATH}`,
+      HOME: home,
+      OMNESIS_CONFIG_DIR: join(sandbox, "gateway"),
+      OMNESIS_GATEWAY_PORT: "17999",
+      OMNESIS_JOURNEY_ARTIFACTS: artifacts,
+      OMNESIS_JOURNEY_IOS_UDID: "00000000-0000-0000-0000-000000000000",
+      OMNESIS_JOURNEY_ONLY: "MobileJourneyUITests/testAskingTheAgentShowsItsAnswer",
+      TEST_CALLS: calls,
+      TEST_XCODEBUILD: outcomes.join(","),
+    },
+  });
+  const lines = existsSync(calls) ? readFileSync(calls, "utf8").trim().split("\n") : [];
+  return {
+    result,
+    artifacts,
+    outcomes: lines
+      .filter((line) => line.startsWith("xcodebuild "))
+      .map((line) => line.split(" => ")[1]),
+    calls: lines,
+  };
+}
+
+describe.skipIf(process.platform === "win32")("scripts/run-mobile-journeys.sh ios", () => {
+  it("runs the journeys once more when the UI test runner never initialized", () => {
+    const { result, artifacts, outcomes, calls } = runIosJourneys(["runner", "passed"]);
+    expect(result.status, result.stderr).toBe(0);
+    expect(outcomes).toEqual(["runner", "passed"]);
+    expect(result.stderr).toContain("failed to initialize before any test ran");
+    expect(result.stdout).toContain("✓ iOS journeys passed.");
+    // Both attempts get the journey's gateway configuration and its own
+    // result bundle; the first is kept for the artifacts.
+    for (const line of calls.filter((call) => call.startsWith("config "))) {
+      expect(JSON.parse(line.slice("config ".length))).toEqual({
+        gatewayURL: "https://localhost:17999",
+        token: "journey-token",
+        fingerprint: "abcd",
+      });
+    }
+    expect(readdirSync(artifacts)).toEqual(
+      expect.arrayContaining([
+        "ios-journeys.xcresult",
+        "ios-journeys-runner-not-initialized.xcresult",
+      ]),
+    );
+    const log = readFileSync(join(artifacts, "xcodebuild.log"), "utf8");
+    expect(log).toContain("Timed out while loading Accessibility.");
+    expect(log).toContain("** TEST EXECUTE SUCCEEDED **");
+  });
+
+  it("leaves a failed journey to xcodebuild's own retry and fails the lane", () => {
+    const { result, outcomes, calls } = runIosJourneys(["failed", "passed"]);
+    expect(result.status).toBe(65);
+    expect(outcomes).toEqual(["failed"]);
+    expect(calls[0]).toContain("-retry-tests-on-failure -test-iterations 2");
+    expect(calls[0]).toContain(
+      "-only-testing:OmnesisDemoUITests/MobileJourneyUITests/testAskingTheAgentShowsItsAnswer",
+    );
+    expect(result.stderr).not.toContain("running xcodebuild once more");
+    expect(result.stderr).toContain("✗ iOS journeys failed (xcodebuild exit 65)");
   });
 });

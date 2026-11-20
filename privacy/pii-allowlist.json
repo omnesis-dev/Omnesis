@@ -12616,17 +12616,26 @@
     },
     {
       "value": "Test Case",
-      "paths": ["scripts/ci/xcodebuild-ui-tests.test.mjs"],
+      "paths": [
+        "scripts/ci/xcodebuild-ui-tests.test.mjs",
+        "scripts/ci/run-mobile-journeys.test.mjs"
+      ],
       "reason": "XCTest's own xcodebuild output line for a test case, not a person's name."
     },
     {
       "value": "Error Domain",
-      "paths": ["scripts/ci/xcodebuild-ui-tests.test.mjs"],
+      "paths": [
+        "scripts/ci/xcodebuild-ui-tests.test.mjs",
+        "scripts/ci/run-mobile-journeys.test.mjs"
+      ],
       "reason": "Part of an NSError description XCTest prints, not a person's name."
     },
     {
       "value": "Underlying Error",
-      "paths": ["scripts/ci/xcodebuild-ui-tests.test.mjs"],
+      "paths": [
+        "scripts/ci/xcodebuild-ui-tests.test.mjs",
+        "scripts/ci/run-mobile-journeys.test.mjs"
+      ],
       "reason": "Part of xcodebuild's error message for a test runner that failed to initialize, not a person's name."
     },
     {

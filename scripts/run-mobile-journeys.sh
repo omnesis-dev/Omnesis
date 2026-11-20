@@ -23,7 +23,9 @@
 #
 # A journey that fails is retried once (OMNESIS_JOURNEY_RETRIES), because
 # simulators and emulators have known one-off flakes; a journey that fails
-# every attempt fails the run. The screen is recorded for the whole run.
+# every attempt fails the run. On iOS, an XCTest runner that fails to
+# initialize before any journey starts gets one more xcodebuild run. The
+# screen is recorded for the whole run.
 # Everything worth reading after a failure lands in OMNESIS_JOURNEY_ARTIFACTS:
 # the recording, per-failure screenshots, test reports / the xcresult bundle,
 # the iOS app's touch log, and the gateway's logs and stall profiles.
@@ -215,10 +217,13 @@ print(json.dumps({"gatewayURL": os.environ["URL"], "token": os.environ["TOKEN"],
   local log_start
   log_start="$(date '+%Y-%m-%d %H:%M:%S')"
   # The full xcodebuild output goes to the artifacts; the console keeps the
-  # test verdicts and errors.
+  # test verdicts and errors. A UI test runner that fails to initialize before
+  # any journey starts gets one more attempt (`xcodebuild-ui-tests.mjs`, which
+  # says so on stderr); a journey that fails is retried by xcodebuild itself.
   local status=0
   set +e
-  TEST_RUNNER_OMNESIS_JOURNEY_CONFIG="$config" xcodebuild test-without-building \
+  TEST_RUNNER_OMNESIS_JOURNEY_CONFIG="$config" node "$ROOT/scripts/ci/xcodebuild-ui-tests.mjs" \
+    --log "$ARTIFACTS/xcodebuild.log" -- test-without-building \
     -project "$ROOT/ios/Omnesis.xcodeproj" \
     -scheme OmnesisDemoUITests \
     -destination "platform=iOS Simulator,id=$udid" \
@@ -226,7 +231,7 @@ print(json.dumps({"gatewayURL": os.environ["URL"], "token": os.environ["TOKEN"],
     "${IOS_PACKAGE_FLAGS[@]}" \
     -resultBundlePath "$ARTIFACTS/ios-journeys.xcresult" \
     -retry-tests-on-failure -test-iterations $((RETRIES + 1)) \
-    "${tests[@]}" 2>&1 | tee "$ARTIFACTS/xcodebuild.log" \
+    "${tests[@]}" \
     | grep -E --line-buffered '^(Test Case|Test Suite|Testing|Executed|\*\*)|error:'
   status="${PIPESTATUS[0]}"
   set -e
