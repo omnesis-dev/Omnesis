@@ -25,7 +25,7 @@ import {
   findCollapsedMergeCandidates,
   sweepCollapsedMergeCandidates,
 } from "../merge-candidates.js";
-import { pilotEmail, seedPilotCorpus, type PilotCorpus } from "./__fixtures__/pilot-corpus.js";
+import { corpusEmail, seedLargeCorpus, type LargeCorpus } from "./__fixtures__/large-corpus.js";
 import { join as fixtureJoin } from "node:path";
 import { tmpdir as fixtureTmpdir } from "node:os";
 
@@ -33,14 +33,14 @@ type Db = Database.Database;
 
 const opened: Array<{ db: Db; path: string }> = [];
 
-function twin(options: Parameters<typeof seedPilotCorpus>[1]): {
+function twin(options: Parameters<typeof seedLargeCorpus>[1]): {
   db: Db;
   path: string;
-  corpus: PilotCorpus;
+  corpus: LargeCorpus;
 } {
   const path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
   const db = createDatabase(path) as unknown as Db;
-  const corpus = seedPilotCorpus(db, options);
+  const corpus = seedLargeCorpus(db, options);
   opened.push({ db, path });
   return { db, path, corpus };
 }
@@ -168,7 +168,7 @@ describe("people backfill stopped between documents", () => {
     expect(unresolved(sliced.db)).toBe(0);
     expect(unresolved(whole.db)).toBe(0);
     expect(resolvedGraph(sliced.db)).toEqual(resolvedGraph(whole.db));
-    expect(resolvedGraph(sliced.db).some((row) => row.includes(pilotEmail(0)))).toBe(true);
+    expect(resolvedGraph(sliced.db).some((row) => row.includes(corpusEmail(0)))).toBe(true);
   });
 
   test("a batch that runs out of documents is not stopped", () => {

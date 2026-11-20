@@ -32,6 +32,7 @@
     { "path": "packages/providers/google" },
     { "path": "packages/providers/granola" },
     { "path": "packages/providers/paperless" },
+    { "path": "packages/providers/plaud" },
     { "path": "packages/providers/hermes" },
     { "path": "packages/providers/immich" },
     { "path": "packages/providers/imap" },

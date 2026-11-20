@@ -53,7 +53,7 @@ import { WAL_SIZE_LIMIT_BYTES } from "../workers/wal-checkpoint.js";
 import { Scheduler } from "./scheduler.js";
 import { WriterTaskRunner } from "./runners/writer.js";
 import { writeGateFromScheduler } from "./write-ops.js";
-import { PILOT_ALGO, seedPilotCorpus } from "./__fixtures__/pilot-corpus.js";
+import { CORPUS_ALGO, seedLargeCorpus } from "./__fixtures__/large-corpus.js";
 import { sqlitePerformanceDatabasePath } from "../../test/sqlite-performance-temp.js";
 import type { WriteGate } from "../write-gate.js";
 import type { SyncCursor } from "@omnesis/source-sdk";
@@ -70,8 +70,8 @@ const DOCS = Number(process.env.OMNESIS_WAL_BENCH_DOCS ?? 20_000);
 const REWRITTEN = 4_000;
 const BATCH = 40;
 /**
- * Pause between write batches: about 10 MB/s of WAL, several times what the
- * pilot install wrote, so the WAL passes its size limit every few seconds.
+ * Pause between write batches: about 10 MB/s of WAL, several times a busy
+ * install's write rate, so the WAL passes its size limit every few seconds.
  */
 const BATCH_PAUSE_MS = 100;
 const BACKLOG = Number(process.env.OMNESIS_WAL_BENCH_BACKLOG ?? 1_200);
@@ -203,8 +203,8 @@ function seedLongReaderLoad(
       `WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < ?)
        INSERT INTO near_dup_df (algo_version, generation, shingle, df)
        SELECT ?, 1, printf('summit %08d lantern harbor', i), 2 + i % 9 FROM n`,
-    ).run(dfRows, PILOT_ALGO);
-    publishDfGeneration(db, PILOT_ALGO, 1, docs, dfRows, 1_790_000_000);
+    ).run(dfRows, CORPUS_ALGO);
+    publishDfGeneration(db, CORPUS_ALGO, 1, docs, dfRows, 1_790_000_000);
   })();
 }
 
@@ -221,7 +221,7 @@ async function startBench(seedExtra?: (db: Database.Database) => void): Promise<
   const dbPath = sqlitePerformanceDatabasePath();
   const seed = createDatabase(dbPath, { encryptionKey: key }) as unknown as Database.Database;
   try {
-    seedPilotCorpus(seed, { docs: DOCS });
+    seedLargeCorpus(seed, { docs: DOCS });
     seedExtra?.(seed);
     seed.pragma("wal_checkpoint(TRUNCATE)");
   } finally {
@@ -415,7 +415,7 @@ describe("writer WAL checkpoints while the gateway's own background reads run ba
   test("every statement stays short, readers never starve the rewind, and no checkpoint holds the writer", async () => {
     const real = {
       statsSourceId: BACKLOG_SOURCE,
-      algoVersion: PILOT_ALGO,
+      algoVersion: CORPUS_ALGO,
       dateBatch: 50,
       dateMaxChars: 50_000,
     };

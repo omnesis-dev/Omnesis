@@ -512,8 +512,8 @@ export class AnalyticsTableManager {
    * every outcome the delete key is untouched, so the absence ledgers built on
    * it keep their meaning.
    *
-   * The rebuild holds the analytics writer once per table, for about six
-   * seconds at 131k calendar rows with a projection each, mostly the
+   * The rebuild holds the analytics writer once per table, for a few
+   * seconds per hundred thousand rows with a projection each, mostly the
    * projection move. Unlike the stream rekey it has no online row cap: writes
    * queue behind it rather than fail, it never runs again for that table, and
    * a cap would leave the table refusing every row a second account shares —
