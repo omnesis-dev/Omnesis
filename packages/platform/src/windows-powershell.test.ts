@@ -57,7 +57,7 @@ describe("Windows creation-time identity", () => {
   it.each([
     [
       Object.assign(new Error("invented private command"), { code: "ETIMEDOUT", status: null }),
-      "timeout",
+      "timeout:unknown-phase",
     ],
     [Object.assign(new Error("invented private command"), { code: "ENOENT" }), "spawn"],
     [
@@ -96,7 +96,26 @@ describe("Windows creation-time identity", () => {
     );
     const unavailable = vi.fn();
     expect(windowsProcessStart(process.pid, 10_000, unavailable)).toBeNull();
-    expect(unavailable).toHaveBeenCalledExactlyOnceWith("timeout");
+    expect(unavailable).toHaveBeenCalledExactlyOnceWith("timeout:before-query");
+  });
+
+  it.each([
+    ["", "timeout:before-query"],
+    [Buffer.alloc(0), "timeout:before-query"],
+    ["OMNESIS_OWNER_QUERY_V1", "timeout:query"],
+    [Buffer.from("OMNESIS_OWNER_QUERY_V1"), "timeout:query"],
+    ["invented private startup output", "timeout:unknown-phase"],
+    [Buffer.from("invented private startup output"), "timeout:unknown-phase"],
+    ["invented private output OMNESIS_OWNER_QUERY_V1", "timeout:unknown-phase"],
+    ["OMNESIS_OWNER_QUERY_V1invented private output", "timeout:unknown-phase"],
+  ])("classifies only exact owner-query phase markers", async (stderr, reason) => {
+    const { windowsProcessStart } = await import("./windows-powershell.js");
+    commands.run.mockImplementation(() => {
+      throw Object.assign(new Error("invented private command"), { code: "ETIMEDOUT", stderr });
+    });
+    const unavailable = vi.fn();
+    expect(windowsProcessStart(process.pid, 10_000, unavailable)).toBeNull();
+    expect(unavailable).toHaveBeenCalledExactlyOnceWith(reason);
   });
 
   it("distinguishes invalid output from an unresolvable trusted executable", async () => {
@@ -119,6 +138,14 @@ describe("Windows creation-time identity", () => {
     expect(windowsProcessStart(process.pid + 1)).toBe("638000000000000001");
     expect(windowsProcessStart(process.pid + 1)).toBe("638000000000000002");
     expect(commands.run).toHaveBeenCalledTimes(2);
+    const script: string = commands.run.mock.calls[0]![1].at(-1);
+    expect(script).toContain(
+      "[Console]::Error.Write('OMNESIS_OWNER_QUERY_V1'); [Console]::Error.Flush();",
+    );
+    expect(script.indexOf("[Console]::Error.Flush()")).toBeLessThan(
+      script.indexOf("GetProcessById"),
+    );
+    expect(commands.run.mock.calls[0]![2].stdio).toEqual(["ignore", "pipe", "pipe"]);
   });
 
   it("retries an unavailable self identity and caches only the successful observation", async () => {

@@ -25,13 +25,31 @@ export function windowsPowerShellExecutable(env: NodeJS.ProcessEnv = process.env
 }
 
 let ownBirth: string | undefined;
+const OWNER_QUERY_MARKER = "OMNESIS_OWNER_QUERY_V1";
 
 export type WindowsProcessStartFailure =
-  "invalid-pid" | "host-executable" | "timeout" | "spawn" | "invalid-output" | `exit:${number}`;
+  | "invalid-pid"
+  | "host-executable"
+  | "timeout:before-query"
+  | "timeout:query"
+  | "timeout:unknown-phase"
+  | "spawn"
+  | "invalid-output"
+  | `exit:${number}`;
 
 function processStartFailure(error: unknown): WindowsProcessStartFailure {
   if (error && typeof error === "object") {
-    if ("code" in error && error.code === "ETIMEDOUT") return "timeout";
+    if ("code" in error && error.code === "ETIMEDOUT") {
+      const stderr = "stderr" in error ? error.stderr : undefined;
+      if (stderr === "" || (Buffer.isBuffer(stderr) && stderr.length === 0))
+        return "timeout:before-query";
+      if (
+        stderr === OWNER_QUERY_MARKER ||
+        (Buffer.isBuffer(stderr) && stderr.equals(Buffer.from(OWNER_QUERY_MARKER)))
+      )
+        return "timeout:query";
+      return "timeout:unknown-phase";
+    }
     if (
       "status" in error &&
       typeof error.status === "number" &&
@@ -72,13 +90,13 @@ export function windowsProcessStart(
         "-NonInteractive",
         "-Command",
         // Process identity must not depend on cmdlet/module discovery paths.
-        `$ErrorActionPreference = 'Stop'; [Console]::Out.Write(([System.Diagnostics.Process]::GetProcessById(${pid})).StartTime.ToUniversalTime().Ticks.ToString([System.Globalization.CultureInfo]::InvariantCulture))`,
+        `$ErrorActionPreference = 'Stop'; [Console]::Error.Write('${OWNER_QUERY_MARKER}'); [Console]::Error.Flush(); [Console]::Out.Write(([System.Diagnostics.Process]::GetProcessById(${pid})).StartTime.ToUniversalTime().Ticks.ToString([System.Globalization.CultureInfo]::InvariantCulture))`,
       ],
       {
         encoding: "utf8",
         windowsHide: true,
         timeout: Math.max(1, Math.min(timeoutMs, 10_000)),
-        stdio: ["ignore", "pipe", "ignore"],
+        stdio: ["ignore", "pipe", "pipe"],
       },
     );
   } catch (error) {

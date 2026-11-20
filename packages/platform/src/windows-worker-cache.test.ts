@@ -73,16 +73,16 @@ function verified(request: WindowsBootstrapRequest) {
 describe("Windows native worker cache boundary", () => {
   it("retains only a safe owner-birth failure reason and never starts a bootstrap", async () => {
     vi.mocked(windowsProcessStart).mockImplementation((_pid, _timeout, unavailable) => {
-      unavailable?.("timeout");
+      unavailable?.("timeout:query");
       return null;
     });
     const { windowsWorkerInvocation } = await import("./windows-worker-cache.js");
     const bootstrap = vi.fn(verified);
     expect(() => windowsWorkerInvocation("job", bootstrap)).toThrow(
-      "Cannot verify Windows native worker owner (EPRIVATE:owner-birth:timeout)",
+      "Cannot verify Windows native worker owner (EPRIVATE:owner-birth:timeout:query)",
     );
     expect(() => windowsWorkerInvocation("filesystem", bootstrap)).toThrow(
-      "Cannot verify Windows native worker owner (EPRIVATE:owner-birth:timeout)",
+      "Cannot verify Windows native worker owner (EPRIVATE:owner-birth:timeout:query)",
     );
     expect(bootstrap).not.toHaveBeenCalled();
     expect(windowsProcessStart).toHaveBeenCalledOnce();
