@@ -335,10 +335,17 @@ final class PushRegistrationConcurrencyTests: XCTestCase {
         let olderWriteStarted = AsyncLatch()
         let releaseOlderWrite = AsyncLatch()
         let requests = AsyncRequestRecorder()
+        let plans = AsyncCounter()
+        let newerPlanStarted = AsyncLatch()
+        let completedWrites = AsyncRequestRecorder()
         let coordinator = PushRegistrationCoordinator(
             store: InMemoryStore(),
             gatewayRequest: { _, request in
                 if request.url?.path.hasSuffix("/push-plan") == true {
+                    await plans.increment()
+                    if await plans.value == 2 {
+                        await newerPlanStarted.open()
+                    }
                     return response(request, 200, #"{"transport":"direct-apns"}"#)
                 }
                 let ordinal = await requests.record(request)
@@ -346,6 +353,7 @@ final class PushRegistrationConcurrencyTests: XCTestCase {
                     await olderWriteStarted.open()
                     await releaseOlderWrite.wait()
                 }
+                _ = await completedWrites.record(request)
                 return response(request, 200, #"{"ok":true}"#)
             },
             relayRequest: { request in response(request, 500, "") }
@@ -368,7 +376,8 @@ final class PushRegistrationConcurrencyTests: XCTestCase {
                 environment: "production"
             )
         }
-        await Task.yield()
+        // See #1174 — yielding does not prove that the newer generation began.
+        await newerPlanStarted.wait()
         let writesBeforeRelease = await requests.count
         XCTAssertEqual(writesBeforeRelease, 1)
 
@@ -377,6 +386,8 @@ final class PushRegistrationConcurrencyTests: XCTestCase {
         try await newer.value
 
         let tokens = await requests.jsonValues(named: "deviceToken")
+        let completedTokens = await completedWrites.jsonValues(named: "deviceToken")
+        XCTAssertEqual(completedTokens, tokens)
         XCTAssertEqual(tokens, [
             String(repeating: "9", count: 64),
             String(repeating: "a", count: 64),
