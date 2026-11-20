@@ -1,18 +1,23 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { execFileSync, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import { type AddressInfo } from "node:net";
 import {
+  closeSync,
+  constants,
   existsSync,
   mkdirSync,
   mkdtempSync,
+  openSync,
   readFileSync,
   rmSync,
   statSync,
   writeFileSync,
 } from "node:fs";
+import { open, type FileHandle } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { Worker } from "node:worker_threads";
@@ -314,22 +319,56 @@ type RecordingWorker = {
   backfillProgress: number[];
   vectorIndex: Array<{ state: string; reason?: string }>;
   cycleCompletions(): number;
-  /** Stop the thread the way an OOM kill stops the process: no shutdown, no final save. */
+  /** SIGKILL the process hosting the thread, as an OOM kill would: no shutdown, no final save. */
   kill(): Promise<void>;
   dispose(): Promise<void>;
 };
 
-/** A bare worker that records what it reports, so a test can kill it mid-boot. */
+/**
+ * Runs one indexer thread in a child process and relays its messages over IPC.
+ * The thread is the gateway's own worker; only the process around it differs,
+ * so a test can kill that process the way the OS kills a gateway.
+ */
+const INDEXER_HOST_SOURCE = `
+import { Worker } from "node:worker_threads";
+process.once("disconnect", () => process.exit(0));
+process.once("message", ({ url, execArgv, init }) => {
+  const worker = new Worker(new URL(url), { execArgv });
+  worker.on("message", (message) => {
+    process.send(message);
+    if (message.type === "shutdownComplete") void worker.terminate();
+  });
+  worker.once("error", (error) => process.send({ type: "initError", error: String(error) }));
+  worker.once("exit", () => process.disconnect());
+  process.on("message", (message) => worker.postMessage(message));
+  worker.postMessage(init);
+});
+`;
+
+/**
+ * A bare worker that records what it reports, so a test can kill it mid-boot.
+ *
+ * The kill must stop a whole process. `Worker.terminate()` is not a stand-in:
+ * once it begins, a usearch call the thread is making fails its next Node-API
+ * call, and the addon's C++ exception for that failure cannot be handed to
+ * JavaScript, so `std::terminate` aborts the process hosting the thread. The
+ * gateway never terminates its indexer thread before the thread has
+ * acknowledged shutdown; see `shutdownWorker`.
+ */
 function startRecordingWorker(
   paths: { gatewayDbPath: string; indexDbPath: string; usearchIndexPath: string },
   httpEmbedderUrl: string,
   options: WorkerTestOptions = {},
 ): RecordingWorker {
   const entry = resolveWorkerEntry("./indexer-worker.ts", import.meta.url, "./register-tsx.mjs");
-  const worker = new Worker(entry.url, { execArgv: entry.execArgv });
+  const host = spawn(process.execPath, ["--input-type=module", "--eval", INDEXER_HOST_SOURCE], {
+    stdio: ["ignore", "ignore", "inherit", "ipc"],
+    serialization: "advanced",
+  });
   const backfillProgress: number[] = [];
   const vectorIndex: Array<{ state: string; reason?: string }> = [];
   let cycles = 0;
+  let stopping = false;
   let resolveReady!: () => void;
   let rejectReady!: (error: Error) => void;
   const ready = new Promise<void>((resolve, reject) => {
@@ -337,9 +376,12 @@ function startRecordingWorker(
     rejectReady = reject;
   });
   const exit = new Promise<void>((resolve) => {
-    worker.once("exit", () => resolve());
+    host.once("exit", (code, signal) => {
+      if (!stopping) rejectReady(new Error(`indexer host exited (${signal ?? code})`));
+      resolve();
+    });
   });
-  worker.on("message", (message: IndexerToMain) => {
+  host.on("message", (message: IndexerToMain) => {
     if (message.type === "bootProgress" && message.stage === "hnsw-backfill") {
       backfillProgress.push(message.progress);
     }
@@ -355,25 +397,27 @@ function startRecordingWorker(
     }
     if (message.type === "ready") resolveReady();
     if (message.type === "initError") rejectReady(new Error(message.error));
-    if (message.type === "shutdownComplete") void worker.terminate().catch(() => {});
   });
-  worker.once("error", (error) => rejectReady(error));
+  host.once("error", (error) => rejectReady(error));
   const options_ = makeWorkerOptions(paths, httpEmbedderUrl, options);
-  worker.postMessage({
-    type: "init",
-    ...options_,
-    heartbeatIntervalMs: 30_000,
-  } satisfies IndexerInit);
+  host.send({
+    url: entry.url.href,
+    execArgv: entry.execArgv,
+    init: { type: "init", ...options_, heartbeatIntervalMs: 30_000 } satisfies IndexerInit,
+  });
   return {
     ready,
     backfillProgress,
     vectorIndex,
     cycleCompletions: () => cycles,
     async kill() {
-      await worker.terminate();
+      stopping = true;
+      host.kill("SIGKILL");
+      await exit;
     },
     async dispose() {
-      worker.postMessage({ type: "shutdown" });
+      stopping = true;
+      if (host.exitCode === null && host.signalCode === null) host.send({ type: "shutdown" });
       await exit;
     },
   };
@@ -1427,6 +1471,70 @@ describe("indexer worker boot persistence", () => {
       await closeServer(embedder.server);
     }
   }, 60_000);
+
+  // The kill lands while the thread is inside usearch's native save: the
+  // checkpoint's temporary file is a FIFO, and the graph being written is
+  // larger than a pipe holds, so the write blocks until the reader closes.
+  test.skipIf(process.platform === "win32")(
+    "a rebuild killed inside a checkpoint save is rebuilt by the next start",
+    async () => {
+      const documents = Array.from({ length: 1_000 }, (_, index) =>
+        makeDocument(`save-kill-${index}`, `Maya Reeves drafted fictional save item ${index}.`),
+      );
+      const paths = createFixture(documents);
+      const embedder = await startFakeEmbedder();
+      const checkpointTemp = `${paths.usearchIndexPath}.tmp`;
+      let worker: RecordingWorker | undefined;
+      let readerOpening: Promise<FileHandle> | undefined;
+      try {
+        const seed = createProxy(paths, embedder.url);
+        await seed.whenReady();
+        await waitForCycleRuns(seed, 1);
+        await seed.dispose();
+        rmSync(paths.usearchIndexPath, { force: true });
+        execFileSync("mkfifo", [checkpointTemp]);
+        // The first page's checkpoint saves 600 vectors, several pipe buffers.
+        worker = startRecordingWorker(paths, embedder.url, {
+          usearchBackfillPageSize: 600,
+          usearchCheckpointIntervalMs: 0,
+        });
+        const killed = worker;
+        // Opening the reader completes once that checkpoint opens the FIFO to
+        // write; without reads, the save then blocks on a full pipe.
+        readerOpening = open(checkpointTemp, "r");
+        const reader = await readerOpening;
+        const killing = killed.kill();
+        // Closing the reader fails the blocked write, so a thread still alive
+        // after the kill would now return from the native save with an error.
+        await reader.close();
+        await killing;
+        rmSync(checkpointTemp, { force: true });
+
+        worker = startRecordingWorker(paths, embedder.url, { usearchBackfillPageSize: 100 });
+        await worker.ready;
+        expect(worker.backfillProgress.at(-1)).toBe(1);
+        expect(worker.vectorIndex.at(-1)?.state).toBe("ready");
+        const graph = UsearchReadHandle.open(paths.usearchIndexPath, EMBED_DIM);
+        try {
+          expect(graph.size()).toBe(documents.length);
+        } finally {
+          graph.close();
+        }
+      } finally {
+        // A reader still waiting for a writer would keep this process alive.
+        try {
+          closeSync(openSync(checkpointTemp, constants.O_WRONLY | constants.O_NONBLOCK));
+        } catch {
+          // No reader is waiting.
+        }
+        await readerOpening?.then((handle) => handle.close()).catch(() => {});
+        rmSync(checkpointTemp, { force: true });
+        await worker?.dispose();
+        await closeServer(embedder.server);
+      }
+    },
+    60_000,
+  );
 
   test("an encrypted graph killed after its rebuild is restored and caught up, not rebuilt", async () => {
     const indexDbKey = randomBytes(32);
