@@ -90,6 +90,8 @@ const WOUND_BACK = [
   218,
   // 219 installs source identity markers, policy bindings and trim jobs, dropped by windBack.
   219,
+  // 220 stores background cleanup jobs, dropped by windBack.
+  220,
 ];
 
 let dir: string;
@@ -300,6 +302,7 @@ function undoStickyRevocation(db: Db): void {
 }
 
 function windBack(db: Db): void {
+  db.exec("DROP TABLE storage_cleanup_jobs");
   db.exec("DROP TABLE storage_trim_job_cascades");
   db.exec("DROP TABLE storage_trim_jobs");
   db.exec("DROP TABLE storage_retention_bindings");
@@ -671,6 +674,9 @@ describe("an install several versions behind, upgrading", () => {
   test("the tail runs in order and lands on the head version", () => {
     seedOlderInstall((old) => {
       expect(
+        old.prepare("SELECT name FROM sqlite_master WHERE name='storage_cleanup_jobs'").get(),
+      ).toBeUndefined();
+      expect(
         old.prepare("SELECT name FROM sqlite_master WHERE name='knowledge_nodes'").get(),
       ).toBeUndefined();
       expect(old.prepare("SELECT name FROM pragma_table_info('documents')").all()).not.toEqual(
@@ -697,6 +703,17 @@ describe("an install several versions behind, upgrading", () => {
         .all()
         .map((row) => row.version);
       expect(recorded).toEqual(TAIL_VERSIONS);
+      expect(db.prepare("SELECT COUNT(*) AS n FROM storage_cleanup_jobs").get()).toEqual({ n: 0 });
+      expect(
+        db
+          .prepare(
+            "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='storage_cleanup_jobs' AND name NOT LIKE 'sqlite_%' ORDER BY name",
+          )
+          .all(),
+      ).toEqual([
+        { name: "idx_storage_cleanup_active_target" },
+        { name: "idx_storage_cleanup_recent" },
+      ]);
       expect(
         db.prepare("SELECT name FROM sqlite_master WHERE name='knowledge_nodes'").get(),
       ).toEqual({ name: "knowledge_nodes" });
