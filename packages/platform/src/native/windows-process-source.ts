@@ -12,7 +12,9 @@ using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
 
 public static class OmnesisProcessMetadata {
-  const uint QUERY=0x1000,SYNCHRONIZE=0x100000,TERMINATE=1,EXITED=0;
+  // Limited query rights cover waiting, creation time and basic information,
+  // and unlike full query rights they are not refused on protected processes.
+  const uint QUERY_LIMITED=0x1000,SYNCHRONIZE=0x100000,TERMINATE=1,EXITED=0;
   const long FILETIME_EPOCH=504911232000000000L;
   const int MAX_PROCESSES=65536,MAX_LISTING_BYTES=64<<20,LENGTH_MISMATCH=unchecked((int)0xC0000004);
   [StructLayout(LayoutKind.Sequential)] struct SystemProcess {
@@ -28,7 +30,7 @@ public static class OmnesisProcessMetadata {
     public int exitStatus;public IntPtr peb;public UIntPtr affinity;public int priority;
     public UIntPtr pid,parentPid;
   }
-  // See #1143 — distinguish native refusals without exposing process metadata.
+  // Name the refusing native call without exposing process metadata.
   static Win32Exception Failure(string phase,int error) {
     OmnesisPrivateFile.Stage+="-"+phase;
     return new Win32Exception(error);
@@ -61,7 +63,7 @@ public static class OmnesisProcessMetadata {
   }
   // The system listing records each process's creator PID and creation time
   // without opening it. A recorded creator PID can name an earlier holder of
-  // that number, so the listing only proposes candidates (see #1143).
+  // that number, so the listing only proposes candidates.
   static Dictionary<uint,List<Candidate>> Candidates() {
     for(int size=1<<20;;) {
       IntPtr buffer=Marshal.AllocHGlobal(size);
@@ -104,7 +106,7 @@ public static class OmnesisProcessMetadata {
       while(pending.Count!=0) {
         uint pid=pending.Dequeue();if(!seen.Add(pid)) continue;
         if(seen.Count>MAX_PROCESSES) throw new InvalidDataException();
-        SafeFileHandle handle=Open(pid,QUERY);if(handle==null) continue;
+        SafeFileHandle handle=Open(pid,QUERY_LIMITED);if(handle==null) continue;
         handles.Add(handle);
         if(Exited(handle)) continue;
         long birth=Birth(handle);BasicInformation info;int returned;
@@ -136,7 +138,7 @@ public static class OmnesisProcessMetadata {
   public static void Kill(uint[] pids,long[] births) {
     OmnesisPrivateFile.Stage="process-kill";
     for(int index=0;index<pids.Length;index++) {
-      using(SafeFileHandle handle=Open(pids[index],QUERY|TERMINATE)) {
+      using(SafeFileHandle handle=Open(pids[index],QUERY_LIMITED|TERMINATE)) {
         if(handle==null || Exited(handle) || Birth(handle)!=births[index]) continue;
         // The numeric ID is no longer consulted after OpenProcess succeeds.
         if(!TerminateProcess(handle,1)) {if(Exited(handle)) continue;throw new Win32Exception(Marshal.GetLastWin32Error());}
