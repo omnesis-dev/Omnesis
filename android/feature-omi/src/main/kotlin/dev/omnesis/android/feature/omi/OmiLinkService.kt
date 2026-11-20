@@ -24,10 +24,14 @@ import dagger.hilt.components.SingletonComponent
 import dev.omnesis.android.feature.recording.RecordingController
 import dev.omnesis.android.feature.recording.RecordingForegroundService
 import dev.omnesis.android.feature.recording.RecordingInput
+import dev.omnesis.android.feature.recording.RecordingSettings
+import dev.omnesis.android.feature.recording.RecordingState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 
 /**
@@ -35,6 +39,9 @@ import kotlinx.coroutines.launch
  * button can start one: a foreground service of type connectedDevice with a
  * quiet notification of the pendant's state. The pendant's capture stays
  * muted meanwhile ([OmiLink]); only the link and the button are live.
+ * While all-day capture is on ([RecordingSettings.alwaysOn]) it starts the
+ * ambient episodes whenever the pendant is linked and nothing records, and
+ * stops them when capture is turned off.
  * Started from the Recordings screen, after an association, and by the
  * system when the pendant comes in range ([OmiPresenceService]).
  */
@@ -45,6 +52,7 @@ class OmiLinkService : Service() {
     interface Deps {
         fun omiLink(): OmiLink
         fun recordingController(): RecordingController
+        fun recordingSettings(): RecordingSettings
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -55,8 +63,10 @@ class OmiLinkService : Service() {
         super.onCreate()
         val deps = EntryPointAccessors.fromApplication(applicationContext, Deps::class.java)
         link = deps.omiLink()
+        val controller = deps.recordingController()
+        val settings = deps.recordingSettings()
         val policy = OmiButtonPolicy(
-            recording = deps.recordingController().state,
+            recording = controller.state,
             startRecording = {
                 try {
                     RecordingForegroundService.start(this, title = null, input = RecordingInput.WEARABLE)
@@ -68,12 +78,35 @@ class OmiLinkService : Service() {
                 }
             },
             stopRecording = { RecordingForegroundService.send(this, RecordingForegroundService.ACTION_STOP) },
+            markMoment = controller::markMoment,
+            alwaysOn = settings.alwaysOn,
             vibrate = link::vibrate,
             scope = scope,
         )
         scope.launch { link.buttons.collect(policy::onButton) }
         scope.launch { link.status.collect { refreshNotification(it) } }
+        scope.launch {
+            combine(link.ready, settings.alwaysOn, controller.state) { ready, on, state ->
+                when {
+                    on && ready && state == RecordingState.Idle -> AmbientAction.START
+                    !on && (state as? RecordingState.Active)?.ambient == true -> AmbientAction.STOP
+                    else -> AmbientAction.NONE
+                }
+            }.distinctUntilChanged().collect { action ->
+                when (action) {
+                    AmbientAction.START -> try {
+                        RecordingForegroundService.startAmbient(this@OmiLinkService)
+                    } catch (e: IllegalStateException) {
+                        Log.w(TAG, "Could not start capturing with the pendant: ${e.message}")
+                    }
+                    AmbientAction.STOP -> RecordingForegroundService.send(this@OmiLinkService, RecordingForegroundService.ACTION_STOP)
+                    AmbientAction.NONE -> Unit
+                }
+            }
+        }
     }
+
+    private enum class AmbientAction { START, STOP, NONE }
 
     override fun onBind(intent: Intent?): IBinder? = null
 

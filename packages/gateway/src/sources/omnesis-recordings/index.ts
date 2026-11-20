@@ -18,7 +18,7 @@ import { ProviderId, SourceId } from "@omnesis/types";
 
 import { omnesisBrandIcon } from "../omnesis-notes/index.js";
 import { renderRecording } from "./render.js";
-import type { RecordingChunk, RecordingSession } from "../../recordings/storage.js";
+import type { RecordingChunk, RecordingMark, RecordingSession } from "../../recordings/storage.js";
 import type { WriteGate } from "../../write-gate.js";
 import type { DocumentInput } from "@omnesis/types";
 
@@ -47,8 +47,9 @@ export async function seedOmnesisRecordingsSourceMeta(writeGate: WriteGate): Pro
 export function buildRecordingDocument(
   session: RecordingSession,
   chunks: readonly RecordingChunk[],
+  marks: readonly RecordingMark[] = [],
 ): DocumentInput | null {
-  const rendered = renderRecording(session, chunks);
+  const rendered = renderRecording(session, chunks, marks);
   if (!rendered.hasSpeech) return null;
   return {
     providerId: ProviderId(OMNESIS_RECORDINGS_PROVIDER_ID),
@@ -65,6 +66,10 @@ export function buildRecordingDocument(
       // unattributed until speakers can be mapped to people.
       // See #859 — planned: diarization and speaker-to-people mapping (suggestions: #860, #861).
       people: [{ name: "You", role: "participant", isSelf: true }],
+      extra: {
+        recordingOrigin: session.origin,
+        ...(marks.length > 0 ? { markedMoments: marks.length } : {}),
+      },
     },
   };
 }

@@ -130,6 +130,17 @@ class RecordingScreenshotTest {
         false,
         recording.copy(wearableName = "Omi", recording = recording.recording!!.copy(input = RecordingInput.WEARABLE)),
     )
+    private val wearableAmbient = recording.copy(
+        wearableName = "Omi",
+        wearableReady = true,
+        title = "",
+        recent = emptyList(),
+        recording = recording.recording!!.copy(title = null, input = RecordingInput.WEARABLE, ambient = true),
+    )
+
+    @Test fun wearable_ambient_light() = capture("recording_wearable_ambient_light", false, wearableAmbient)
+    @Test fun wearable_ambient_dark() = capture("recording_wearable_ambient_dark", true, wearableAmbient)
+
     @Test fun wearable_lost_light() = capture("recording_wearable_lost_light", false, wearableLost)
     @Test fun wearable_lost_dark() = capture("recording_wearable_lost_dark", true, wearableLost)
 

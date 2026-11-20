@@ -23,8 +23,18 @@ class FrameAudioRecorderTest {
     /** Chunk files whose encoder fails to open. */
     private val unopenable = mutableSetOf<String>()
     private var decoderAvailable = true
+    private val clips = mutableListOf<MarkedClip>()
 
-    private val recorder = FrameAudioRecorder(
+    private fun clipper() = MomentClipper(
+        newFile = { File(dir, "moment-${clips.size}.m4a") },
+        encoders = { file -> FakeEncoder(file) },
+        detectors = { null },
+        onClip = { clips += it },
+    )
+
+    private val recorder = recorder()
+
+    private fun recorder(clipper: MomentClipper? = null) = FrameAudioRecorder(
         directory = dir,
         input = input,
         onChunk = { chunks += it },
@@ -36,6 +46,7 @@ class FrameAudioRecorderTest {
         },
         worker = DirectExecutor(),
         postToMain = { it.run() },
+        clipper = clipper,
     )
 
     /** Send [count] frames 20 ms apart, the first arriving at [fromMs]. */
@@ -163,6 +174,38 @@ class FrameAudioRecorderTest {
         assertFalse(recorder.isRecording)
         recorder.stop()
         assertTrue(chunks.isEmpty())
+    }
+
+    @Test fun withoutAClipperNothingIsMarked() {
+        recorder.start()
+        frames(10, fromMs = 20)
+        assertFalse(recorder.markMoment())
+    }
+
+    @Test fun aMarkedMomentRunsUntilThePendantFallsSilent() {
+        val marking = recorder(clipper())
+        assertFalse(marking.markMoment()) // not recording yet
+        marking.start()
+        frames(100, fromMs = 20) // 0..2000
+        assertTrue(marking.markMoment())
+        frames(50, fromMs = 2_020) // 2000..3000
+        assertTrue(clips.isEmpty())
+        frames(1, fromMs = 8_020) // the pendant heard nothing for five seconds
+        // The moment: the two seconds held before the mark and the one after.
+        assertEquals(3_000L, clips.single().durationMs)
+        assertEquals(0L, clips.single().startedAtMs)
+        marking.stop()
+        assertEquals(1, clips.size)
+    }
+
+    @Test fun aLostLinkClosesTheMarkedMoment() {
+        val marking = recorder(clipper())
+        marking.start()
+        frames(50, fromMs = 20)
+        marking.markMoment()
+        frames(25, fromMs = 1_020)
+        input.sink!!.onLinkLost()
+        assertEquals(1_500L, clips.single().durationMs)
     }
 
     @Test fun anUndecodableFrameIsSkipped() {

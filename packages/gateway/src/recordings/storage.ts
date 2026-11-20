@@ -7,7 +7,8 @@
  *
  * `recording_sessions` holds one row per session; `recording_chunks` one row
  * per uploaded chunk, keyed by `(session_id, seq)` so a retried upload is a
- * no-op. A chunk's audio waits here until the transcriber has read it, then is
+ * no-op. `recording_marks` holds the moments the owner marked during a
+ * session, each saved as a voice note. A chunk's audio waits here until the transcriber has read it, then is
  * dropped: the transcript is what stays. Audio lives in the main database so
  * it shares the corpus's encryption at rest, as voice notes do.
  *
@@ -22,10 +23,17 @@ type Db = Database.Database;
 /** A chunk's lifecycle. Every state but `pending` is settled. */
 export type RecordingChunkStatus = "pending" | "transcribed" | "failed" | "silent";
 
+/**
+ * How a session began: `explicit` when the owner started it, `ambient` when a
+ * wearable capturing all day opened it on its own as one episode of speech.
+ */
+export type RecordingOrigin = "explicit" | "ambient";
+
 export interface RecordingSession {
   id: string;
   deviceId: string | null;
   title: string | null;
+  origin: RecordingOrigin;
   /** ISO-8601 instant recording started. */
   startedAt: string;
   startedTimeZoneId: string | null;
@@ -95,6 +103,14 @@ export interface RecordingChunk {
   receivedAt: string;
 }
 
+/** A moment the owner marked during a session; the marked audio became note `noteId`. */
+export interface RecordingMark {
+  sessionId: string;
+  noteId: string;
+  /** ISO-8601 instant of the mark. */
+  markedAt: string;
+}
+
 export interface NewRecordingChunk {
   sessionId: string;
   seq: number;
@@ -114,6 +130,7 @@ export function createRecordingTables(db: Db): void {
       id TEXT PRIMARY KEY,
       device_id TEXT,
       title TEXT,
+      origin TEXT NOT NULL DEFAULT 'explicit',
       started_at TEXT NOT NULL,
       started_time_zone_id TEXT,
       started_utc_offset_seconds INTEGER,
@@ -154,6 +171,14 @@ export function createRecordingTables(db: Db): void {
     );
     CREATE INDEX IF NOT EXISTS idx_recording_chunks_due
       ON recording_chunks(status, next_attempt_at);
+    -- No foreign key: the voice note carrying a mark can reach the gateway
+    -- before the phone has opened the session it belongs to.
+    CREATE TABLE IF NOT EXISTS recording_marks (
+      session_id TEXT NOT NULL,
+      note_id TEXT NOT NULL,
+      marked_at TEXT NOT NULL,
+      PRIMARY KEY (session_id, note_id)
+    );
   `);
 }
 
@@ -163,6 +188,7 @@ interface SessionRow {
   id: string;
   device_id: string | null;
   title: string | null;
+  origin: string;
   started_at: string;
   started_time_zone_id: string | null;
   started_utc_offset_seconds: number | null;
@@ -183,6 +209,7 @@ function toSession(row: SessionRow): RecordingSession {
     id: row.id,
     deviceId: row.device_id,
     title: row.title,
+    origin: row.origin === "ambient" ? "ambient" : "explicit",
     startedAt: row.started_at,
     startedTimeZoneId: row.started_time_zone_id,
     startedUtcOffsetSeconds: row.started_utc_offset_seconds,
@@ -205,14 +232,15 @@ export function insertRecordingSession(db: Db, s: NewRecordingSession): boolean 
   const result = db
     .prepare(
       `INSERT OR IGNORE INTO recording_sessions
-         (id, device_id, title, started_at, started_time_zone_id, started_utc_offset_seconds,
-          language, last_activity_at, allow_vocabulary, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (id, device_id, title, origin, started_at, started_time_zone_id,
+          started_utc_offset_seconds, language, last_activity_at, allow_vocabulary, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       s.id,
       s.deviceId,
       s.title,
+      s.origin,
       s.startedAt,
       s.startedTimeZoneId,
       s.startedUtcOffsetSeconds,
@@ -351,9 +379,40 @@ export function markRecordingSessionProjected(db: Db, id: string, revision: numb
   ).run(revision, id);
 }
 
-/** Delete a session and, through the foreign key, its chunks. */
+/** Delete a session, its marks and, through the foreign key, its chunks. */
 export function deleteRecordingSession(db: Db, id: string): boolean {
+  db.prepare(`DELETE FROM recording_marks WHERE session_id = ?`).run(id);
   return db.prepare(`DELETE FROM recording_sessions WHERE id = ?`).run(id).changes > 0;
+}
+
+// ── marks ─────────────────────────────────────────────────────────────
+
+/**
+ * Record a marked moment. Idempotent per `(session, note)`. Marks the session
+ * changed, when it exists yet, so its document is written again with the mark.
+ */
+export function insertRecordingMark(db: Db, mark: RecordingMark): boolean {
+  const result = db
+    .prepare(
+      `INSERT OR IGNORE INTO recording_marks (session_id, note_id, marked_at) VALUES (?, ?, ?)`,
+    )
+    .run(mark.sessionId, mark.noteId, mark.markedAt);
+  if (result.changes === 0) return false;
+  db.prepare(`UPDATE recording_sessions SET revision = revision + 1 WHERE id = ?`).run(
+    mark.sessionId,
+  );
+  return true;
+}
+
+/** A session's marks, earliest first. */
+export function listRecordingMarks(db: Db, sessionId: string): RecordingMark[] {
+  return db
+    .prepare<[string], { session_id: string; note_id: string; marked_at: string }>(
+      `SELECT session_id, note_id, marked_at FROM recording_marks
+        WHERE session_id = ? ORDER BY marked_at, note_id`,
+    )
+    .all(sessionId)
+    .map((row) => ({ sessionId: row.session_id, noteId: row.note_id, markedAt: row.marked_at }));
 }
 
 // ── chunks ────────────────────────────────────────────────────────────

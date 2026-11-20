@@ -16,8 +16,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.completeWith
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -38,6 +41,8 @@ sealed interface RecordingState {
         /** Paused because the input was lost (the microphone taken, the wearable gone), not by the user. */
         val micLost: Boolean = false,
         val input: RecordingInput = RecordingInput.PHONE,
+        /** One episode of a wearable capturing all day, opened on its own rather than by the owner. */
+        val ambient: Boolean = false,
     ) : RecordingState {
         val paused: Boolean get() = runningSinceMs == null
 
@@ -58,6 +63,10 @@ sealed interface RecordingState {
  * anything tries to upload it; after a process kill, [recoverInterrupted]
  * files what the recorder left on disk and closes the session, so a kill
  * loses at most the audio of the chunk being recorded.
+ *
+ * An ambient session is one episode of all-day capture: once
+ * [EPISODE_QUIET_MS] pass without a chunk holding speech, [episodesOver]
+ * names it so the service closes it and opens the next.
  */
 class RecordingController(
     private val outbox: RecordingOutbox,
@@ -76,6 +85,25 @@ class RecordingController(
     private val queue = Channel<suspend () -> Unit>(Channel.UNLIMITED)
 
     private data class ChunkRef(val sessionId: String, val seq: Int)
+
+    private val _episodesOver = MutableSharedFlow<String>(extraBufferCapacity = 8)
+
+    /** Ambient sessions that went [EPISODE_QUIET_MS] without speech, by id, each named once. */
+    val episodesOver: SharedFlow<String> = _episodesOver.asSharedFlow()
+
+    /** The ambient session being judged, and where its last speech (or its start) ends. Only the queue touches it. */
+    private var quietSince: Pair<String, Long>? = null
+
+    /** Marks a moment in the running recording; set by the service while its recorder can. */
+    @Volatile private var marker: (() -> Boolean)? = null
+
+    /** Let [markMoment] reach the running recorder, or nothing when null. */
+    fun setMarker(marker: (() -> Boolean)?) {
+        this.marker = marker
+    }
+
+    /** Mark the moment just heard in the running recording; false when nothing can mark it. */
+    fun markMoment(): Boolean = marker?.invoke() ?: false
 
     /**
      * The last chunk filed whose end held speech. Only the queue touches it.
@@ -116,6 +144,7 @@ class RecordingController(
         title: String?,
         id: String = UUID.randomUUID().toString(),
         input: RecordingInput = RecordingInput.PHONE,
+        ambient: Boolean = false,
     ): RecordingState.Active? = serial {
         if (_state.value != RecordingState.Idle) return@serial null
         val now = clock()
@@ -135,9 +164,11 @@ class RecordingController(
                 created = false,
                 finished = false,
                 refusal = null,
+                ambient = ambient,
             ),
         )
-        val active = RecordingState.Active(id, title, recordedMs = 0, runningSinceMs = now, chunks = 0, input = input)
+        if (ambient) quietSince = id to now
+        val active = RecordingState.Active(id, title, recordedMs = 0, runningSinceMs = now, chunks = 0, input = input, ambient = ambient)
         _state.value = active
         onWorkQueued()
         active
@@ -288,16 +319,34 @@ class RecordingController(
             if (active?.sessionId == sessionId) active.copy(chunks = maxOf(active.chunks, chunk.seq + 1)) else s
         }
         onWorkQueued()
+        judgeEpisode(sessionId, chunk, silent)
+    }
+
+    /** Name an ambient session whose speech stopped [EPISODE_QUIET_MS] ago. */
+    private fun judgeEpisode(sessionId: String, chunk: RecordedChunk, silent: Boolean) {
+        val (judged, since) = quietSince ?: return
+        if (judged != sessionId) return
+        val endsAt = chunk.startedAtMs + chunk.durationMs
+        if (!silent) {
+            quietSince = sessionId to endsAt
+        } else if (endsAt - since >= EPISODE_QUIET_MS) {
+            quietSince = null
+            _episodesOver.tryEmit(sessionId)
+        }
     }
 
     private suspend fun closeSession(sessionId: String, chunkCount: Int) {
+        if (quietSince?.first == sessionId) quietSince = null
         outbox.markStopped(sessionId, chunkCount, Instant.ofEpochMilli(clock()).toString())
         _state.update { s -> if ((s as? RecordingState.Active)?.sessionId == sessionId) RecordingState.Idle else s }
         onWorkQueued()
     }
 
-    private companion object {
-        const val TAG = "Omnesis:Recording"
+    companion object {
+        private const val TAG = "Omnesis:Recording"
+
+        /** An ambient episode ends after this long without speech. */
+        const val EPISODE_QUIET_MS = 3 * 60_000L
     }
 }
 

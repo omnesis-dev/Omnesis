@@ -11,6 +11,7 @@ import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
 import dev.omnesis.android.feature.recording.ChunkSpeechScanner
+import dev.omnesis.android.feature.recording.MarkedMomentSink
 import dev.omnesis.android.feature.recording.RecordingController
 import dev.omnesis.android.feature.recording.RecordingFiles
 import dev.omnesis.android.feature.recording.RecordingOutbox
@@ -64,4 +65,8 @@ object RecordingModule {
 interface WearableAudioModule {
     @BindsOptionalOf
     fun optionalWearableAudio(): WearableAudio
+
+    /** Bound by the app, which saves a marked moment as a note; without it a clip is dropped. */
+    @BindsOptionalOf
+    fun optionalMarkedMomentSink(): MarkedMomentSink
 }

@@ -81,6 +81,9 @@ class OmiCardScreenshotTest {
         storage = OmiStorage(usedBytes = 3_400_000, unreadPackets = 1_250, freeBytes = 120_000_000, clockSet = true),
     )
 
+    @Test fun always_on_light() = capture("omi_card_always_on_light", false, OmiCardState(OmiStatus.Ready(89, true), alwaysOn = true))
+    @Test fun always_on_dark() = capture("omi_card_always_on_dark", true, OmiCardState(OmiStatus.Ready(89, true), alwaysOn = true))
+
     @Test fun details_light() = captureDetails("omi_details_light", false, OmiStatus.Ready(89, true, canMute = false), details)
     @Test fun details_dark() = captureDetails("omi_details_dark", true, OmiStatus.Ready(89, true, canMute = false), details)
     @Test fun details_not_linked_light() = captureDetails("omi_details_not_linked_light", false, OmiStatus.Disconnected, null)

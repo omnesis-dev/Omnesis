@@ -13,6 +13,7 @@ function session(overrides: Partial<RecordingSession> = {}): RecordingSession {
     id: "rec-1",
     deviceId: null,
     title: null,
+    origin: "explicit",
     startedAt: START,
     startedTimeZoneId: "Europe/Paris",
     startedUtcOffsetSeconds: 3600,
@@ -114,6 +115,30 @@ describe("renderRecording", () => {
       "[00:01:00] — the microphone was interrupted —",
       "[00:01:00] — silence, 2 min —",
       "[00:03:00] After the call.",
+    ]);
+  });
+
+  test("places each marked moment after the transcript it falls in", () => {
+    const mark = (noteId: string, sec: number) => ({
+      sessionId: "rec-1",
+      noteId,
+      markedAt: new Date(Date.parse(START) + sec * 1000).toISOString(),
+    });
+    const r = renderRecording(
+      session({ origin: "ambient" }),
+      [chunk(0, 0, "Opening remarks."), chunk(1, 60, null), chunk(2, 120, "The deadline moves.")],
+      // Out of order; one lands in the silence, one before the session started.
+      [mark("n2", 150), mark("n1", 70), mark("n0", -5)],
+    );
+    expect(r.body.split("\n").slice(2)).toEqual([
+      "Conversation captured by a wearable · 2026-03-02 10:00 · 3 min",
+      "",
+      "[00:00:00] Opening remarks.",
+      "[00:00:00] ★ Marked moment, saved as a note",
+      "[00:01:00] — silence, 1 min —",
+      "[00:01:10] ★ Marked moment, saved as a note",
+      "[00:02:00] The deadline moves.",
+      "[00:02:30] ★ Marked moment, saved as a note",
     ]);
   });
 

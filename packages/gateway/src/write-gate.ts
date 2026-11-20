@@ -576,10 +576,12 @@ import {
   settleRecordingChunk,
   markRecordingSessionProjected,
   deleteRecordingSession,
+  insertRecordingMark,
   type FinishRecordingOutcome,
   type InsertRecordingChunkOutcome,
   type NewRecordingSession,
   type NewRecordingChunk,
+  type RecordingMark,
 } from "./recordings/storage.js";
 import { insertAgentMessage, type AgentMessageRow } from "./sources/agent-conversations/storage.js";
 import { resolveDerivationStages, type DerivationStageId } from "./domain/DocumentDerivation.js";
@@ -2339,6 +2341,8 @@ export interface WriteGate extends KnowledgeWriteGate {
   markRecordingSessionProjected(id: string, revision: number): Promise<void>;
   /** Delete a session and its chunks. */
   deleteRecordingSession(id: string): Promise<boolean>;
+  /** Record a moment marked during a session; false when already recorded. */
+  addRecordingMark(mark: RecordingMark): Promise<boolean>;
 
   // ── agent-conversations (pushed) ──────────────────────────────────
   /**
@@ -3070,6 +3074,7 @@ export function writeGateFromCall(call: WriterCallFn): WriteGate {
     markRecordingSessionProjected: (id, revision) =>
       call("recordings.markProjected", [id, revision]),
     deleteRecordingSession: (id) => call("recordings.deleteSession", [id]),
+    addRecordingMark: (mark) => call("recordings.addMark", [mark]),
 
     appendAgentMessage: (message) => call("agentMessages.appendMessage", [message]),
 
@@ -3815,6 +3820,7 @@ export function directWriteGate(db: Db): WriteGate {
     markRecordingSessionProjected: async (id, revision) =>
       markRecordingSessionProjected(db, id, revision),
     deleteRecordingSession: async (id) => deleteRecordingSession(db, id),
+    addRecordingMark: async (mark) => insertRecordingMark(db, mark),
 
     appendAgentMessage: async (message) => insertAgentMessage(db, message),
 

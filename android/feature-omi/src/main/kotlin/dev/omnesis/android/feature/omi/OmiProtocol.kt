@@ -156,8 +156,11 @@ enum class Haptic(val pulses: List<Byte>) {
     /** Two very short pulses: recording stopped. */
     STOPPED(listOf(1, 1)),
 
-    /** One long pulse: the recording could not start. */
+    /** One long pulse: the recording could not start, or the moment could not be marked. */
     FAILED(listOf(3)),
+
+    /** One very short pulse: the moment just heard is marked. */
+    MARKED(listOf(1)),
     ;
 
     companion object {
