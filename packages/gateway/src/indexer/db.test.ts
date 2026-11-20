@@ -110,7 +110,7 @@ describe("lexical change log", () => {
   });
 
   test("an index database with the earlier trigger gets the wider one on open", () => {
-    const path = `/tmp/omnesis-indexer-test-${randomUUID()}.db`;
+    const path = join(tmpdir(), `omnesis-indexer-test-${randomUUID()}.db`);
     const older = createIndexDatabase(path);
     older.exec(`
       DROP TRIGGER chunks_fts_changes_au;
@@ -132,6 +132,7 @@ describe("lexical change log", () => {
       createIndexDatabase(path).close();
     } finally {
       reopened.close();
+      for (const suffix of ["", "-wal", "-shm"]) rmSync(path + suffix, { force: true });
     }
   });
 });
