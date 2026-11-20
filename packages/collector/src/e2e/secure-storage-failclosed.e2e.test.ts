@@ -20,7 +20,6 @@ import { request as httpsRequest } from "node:https";
 import { existsSync, readdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { pathToFileURL } from "node:url";
 import { ensureInstallRootKey, markStorageEncryptionRequired } from "@omnesis/core";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { e2eGatewayEnv, e2eTsxCommand, gatewayBootBudgetMs } from "./gateway-env.js";
@@ -33,9 +32,7 @@ const PROGRESS_PATH = "/.well-known/omnesis-startup";
 const API_PATHS = ["/health", "/portal/api/session", "/admin/config", "/documents"] as const;
 const PROBE_PATHS = [...API_PATHS, "/portal/", PROGRESS_PATH] as const;
 /** Holds the gateway's marker read; written by `secure-marker-read-hold.mjs`. */
-const MARKER_READ_HOLD = pathToFileURL(
-  join(import.meta.dirname, "secure-marker-read-hold.mjs"),
-).href;
+const MARKER_READ_HOLD = new URL("./secure-marker-read-hold.mjs", import.meta.url).href;
 const MARKER_READ_HELD = "secure-marker-read-hold: held";
 
 interface ObservedResponse {
