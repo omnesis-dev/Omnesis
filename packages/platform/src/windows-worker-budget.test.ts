@@ -216,6 +216,75 @@ describe("one Windows native initialization budget", () => {
     expect(bootstrap).toHaveBeenCalledOnce();
   });
 
+  it("loads PowerShell under its own allowance before the initialization allowance starts", async () => {
+    slowIdentity(25_000);
+    const { prepareWindowsNativeWorker, windowsWorkerInvocation } =
+      await import("./windows-worker-cache.js");
+    const bootstrap = vi.fn((request: WindowsBootstrapRequest, remainingMs: number) => {
+      expect(remainingMs).toBe(30_000);
+      state.now += 10_000;
+      return verified(request);
+    });
+    prepareWindowsNativeWorker();
+    expect(state.now).toBe(25_000);
+    expect(windowsWorkerInvocation("job", bootstrap).parentBirth).toBe("133088768000000001");
+    expect(state.run).toHaveBeenCalledOnce();
+    expect(state.run.mock.calls[0]![2].timeout).toBe(30_000);
+  });
+
+  it("refuses the same slow first load when it falls inside the initialization allowance", async () => {
+    slowIdentity(25_000);
+    const { windowsWorkerInvocation } = await import("./windows-worker-cache.js");
+    const bootstrap = vi.fn((request: WindowsBootstrapRequest) => {
+      state.now += 10_000;
+      return verified(request);
+    });
+    expect(() => windowsWorkerInvocation("job", bootstrap)).toThrow(
+      "Windows native worker initialization timed out (owner 25000 ms, bootstrap 10000 ms, 30000 ms allowance)",
+    );
+  });
+
+  it("queries the owner again with a loaded engine when the first load times out", async () => {
+    state.run
+      .mockImplementationOnce((_command, _args, options: { timeout: number }) => {
+        state.now += options.timeout;
+        throw Object.assign(new Error("Invented load deadline"), {
+          code: "ETIMEDOUT",
+          stderr: "",
+          status: null,
+        });
+      })
+      .mockImplementationOnce(() => {
+        state.now += 500;
+        return "638000000000000001";
+      });
+    const { prepareWindowsNativeWorker, windowsWorkerInvocation } =
+      await import("./windows-worker-cache.js");
+    const bootstrap = vi.fn((request: WindowsBootstrapRequest, remainingMs: number) => {
+      expect(remainingMs).toBe(29_500);
+      return verified(request);
+    });
+    prepareWindowsNativeWorker();
+    prepareWindowsNativeWorker();
+    expect(state.run).toHaveBeenCalledOnce();
+    expect(windowsWorkerInvocation("job", bootstrap).parentBirth).toBe("133088768000000001");
+    expect(state.run).toHaveBeenCalledTimes(2);
+    expect(bootstrap).toHaveBeenCalledOnce();
+  });
+
+  it("launches nothing to prepare an already verified or inherited worker", async () => {
+    slowIdentity(1_000);
+    const { prepareWindowsNativeWorker, windowsWorkerInvocation } =
+      await import("./windows-worker-cache.js");
+    windowsWorkerInvocation("job", vi.fn(verified));
+    prepareWindowsNativeWorker();
+    expect(state.run).toHaveBeenCalledOnce();
+    vi.resetModules();
+    const inherited = await import("./windows-worker-cache.js");
+    inherited.prepareWindowsNativeWorker();
+    expect(state.run).toHaveBeenCalledOnce();
+  });
+
   it("preserves pending cleanup authority even when bootstrap exhausts the deadline", async () => {
     slowIdentity();
     const { windowsWorkerInvocation } = await import("./windows-worker-cache.js");

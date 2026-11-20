@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import { win32 } from "node:path";
 import { Readable } from "node:stream";
 import { windowsFilesystemInvocation } from "./windows-job.js";
+import { prepareWindowsNativeWorker } from "./windows-worker-cache.js";
 import {
   runWindowsOwnedProcess,
   runWindowsOwnedProcessSync,
@@ -55,6 +56,7 @@ function invocation(
   complete = true,
   budget: number | null = 30_000,
 ): { command: string; args: readonly string[]; input: Buffer; timeoutMs: number | undefined } {
+  prepareWindowsNativeWorker();
   const started = performance.now();
   const paths =
     operation.action === "inspect"

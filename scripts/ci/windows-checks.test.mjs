@@ -106,22 +106,6 @@ describe("Windows CI coverage", () => {
     expect(config.jobs.windows.strategy["max-parallel"]).toBe(4);
   });
 
-  test("loads Windows PowerShell before every dependency installation starts the native worker", () => {
-    const { jobs } = workflow();
-    for (const job of [jobs.windows, jobs["native-integrations"]]) {
-      const warm = job.steps.findIndex(({ id }) => id === "powershell_loaded");
-      const install = job.steps.findIndex(({ id }) => id === "dependencies");
-      expect(warm).toBeGreaterThan(-1);
-      expect(warm).toBe(install - 1);
-      expect(job.steps[warm]).not.toHaveProperty("if");
-      expect(job.steps[warm]).not.toHaveProperty("continue-on-error");
-      expect(job.steps[warm].run).toBe("./scripts/ci/load-windows-powershell.ps1");
-    }
-    const script = readFileSync(new URL("./load-windows-powershell.ps1", import.meta.url), "utf8");
-    expect(script).toContain("System32\\WindowsPowerShell\\v1.0\\powershell.exe");
-    expect(script).toContain("-NoLogo -NoProfile -NonInteractive");
-  });
-
   test("the complete unit lane configures real native ASR without expanding focused PR work", () => {
     const steps = workflow().jobs.windows.steps;
     const index = steps.findIndex(

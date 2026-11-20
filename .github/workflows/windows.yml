@@ -110,11 +110,6 @@ jobs:
             $opensslDir | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
           }
 
-      - name: Load Windows PowerShell before native worker startup
-        id: powershell_loaded
-        timeout-minutes: 5
-        run: ./scripts/ci/load-windows-powershell.ps1
-
       - name: Install dependencies
         id: dependencies
         run: node scripts/ci/npm-ci.mjs --no-audit --no-fund
@@ -278,10 +273,6 @@ jobs:
           $opensslDir = Join-Path $env:ProgramFiles 'Git\usr\bin'
           if (-not (Test-Path (Join-Path $opensslDir 'openssl.exe'))) { throw 'OpenSSL is required for gateway tests' }
           $opensslDir | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
-      - name: Load Windows PowerShell before native worker startup
-        id: powershell_loaded
-        timeout-minutes: 5
-        run: ./scripts/ci/load-windows-powershell.ps1
       - name: Install locked Omnesis and pinned OpenClaw dependencies
         id: dependencies
         run: node scripts/ci/npm-ci.mjs --no-audit --no-fund

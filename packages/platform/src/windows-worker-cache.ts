@@ -30,6 +30,7 @@ const sourceHash = createHash("sha256")
 const seedKey = `@omnesis/platform/native-worker-cache/v1:${sourceHash}`;
 let verifiedExecutable: string | undefined;
 let verifiedParentBirth: string | undefined;
+let ownerPrepared = false;
 let initializationFailed = false;
 let initializationFailure: unknown;
 // Product dotenv and target environments never redirect the host helper cache.
@@ -126,6 +127,31 @@ function invocationFor(
   };
 }
 
+/**
+ * Load Windows PowerShell before a caller starts its native startup clock.
+ *
+ * The first Windows PowerShell launch in a session can spend tens of seconds
+ * loading the engine before it runs a statement, on a freshly booted machine
+ * or a newly provisioned VM. That launch is this process's owner-birth query,
+ * so it runs here, once, under its own thirty-second allowance, before any
+ * caller budget or the worker's initialization allowance starts. A success is
+ * cached for the owner check; a failure leaves the owner check to query again
+ * with the engine loaded and report the refusal. Already verified, inherited
+ * or failed workers launch nothing.
+ */
+export function prepareWindowsNativeWorker(): void {
+  if (ownerPrepared || initializationFailed || verifiedExecutable !== undefined) return;
+  ownerPrepared = true;
+  let root: string;
+  try {
+    root = cacheRoot();
+  } catch {
+    return;
+  }
+  if (inheritedExecutable(root) !== undefined) return;
+  windowsWorkerOwnerStart(30_000);
+}
+
 /** Validate or compile one protected generation using the uncached trusted runner. */
 export function windowsWorkerInvocation(
   mode: "job" | "filesystem",
@@ -135,9 +161,9 @@ export function windowsWorkerInvocation(
   if (initializationFailed) throw initializationFailure;
   if (verifiedExecutable === undefined) {
     try {
-      // Owner verification and native bootstrap each start a Windows
-      // PowerShell, which a cold host can take over ten seconds to load. They
-      // consume one initialization allowance rather than separate sub-limits.
+      // Owner verification and native bootstrap consume one initialization
+      // allowance rather than separate sub-limits. The owner query is normally
+      // already answered by prepareWindowsNativeWorker.
       const started = performance.now();
       const budgetMs = Math.min(opts.timeoutMs ?? 30_000, 30_000);
       // Phase durations name which step consumed the allowance when it runs

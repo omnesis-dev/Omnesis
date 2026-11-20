@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { windowsFilesystemInvocation } from "./windows-job.js";
+import { prepareWindowsNativeWorker } from "./windows-worker-cache.js";
 import {
   runWindowsOwnedProcess,
   runWindowsOwnedProcessSync,
@@ -37,6 +38,7 @@ function invocation(operation: Operation) {
     )
   )
     throw new Error("Invalid owned Windows process identity");
+  prepareWindowsNativeWorker();
   const start = Date.now();
   const metadata = Buffer.from(
     JSON.stringify(
