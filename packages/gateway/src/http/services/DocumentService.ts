@@ -70,6 +70,7 @@ import {
 } from "../../analytics-db.js";
 import { epochScope, type SourceWriteEpochFence } from "../../source-write-epoch-fence.js";
 import { matchDocumentIdPrefix } from "../../data/like-prefix-seek.js";
+import { settleIndexCleanup, type IndexWriteGate } from "../../indexer/index-write-gate.js";
 import { SourceSyncStateService } from "./SourceSyncStateService.js";
 import type { SourceDataRemovalService } from "./SourceDataRemovalService.js";
 import type { SourcePageWriteAuthority } from "../../sync-lease.js";
@@ -77,7 +78,6 @@ import type { OmnesisConfig } from "@omnesis/config";
 import type { SourceSyncMeta, SyncCursor } from "@omnesis/source-sdk";
 import type Database from "better-sqlite3";
 import type { DocumentProjection } from "../../events.js";
-import type { IndexWriteGate } from "../../indexer/index-write-gate.js";
 import type { WriteGate } from "../../write-gate.js";
 import type { ConfigStore } from "../../config-store.js";
 import type { IComputeScheduler } from "./ports.js";
@@ -602,7 +602,9 @@ export class DocumentService {
       );
       let indexCleanedRows = 0;
       if (indexWriteGate && deletedDocIds.length > 0) {
-        indexCleanedRows = await indexWriteGate.deleteChunksByDocuments(deletedDocIds);
+        indexCleanedRows = await settleIndexCleanup(
+          indexWriteGate.deleteChunksByDocuments(deletedDocIds),
+        );
       }
       await this.cascadeCognitionFor(deletedDocIds);
       log.debug(`Deleted ${externalIds.length} documents`, {
@@ -685,7 +687,9 @@ export class DocumentService {
       if (url) urls.push(url);
       let indexCleanedRows = 0;
       if (indexWriteGate) {
-        indexCleanedRows = await indexWriteGate.deleteChunksByDocuments(deletedDocIds);
+        indexCleanedRows = await settleIndexCleanup(
+          indexWriteGate.deleteChunksByDocuments(deletedDocIds),
+        );
       }
       await this.cascadeCognitionFor(deletedDocIds);
       log.debug(
@@ -1039,15 +1043,19 @@ export class DocumentService {
     // Tombstones and the cursor commit share one writer transaction. Clean
     // derived stores only for IDs it actually deleted — the page's snapshot
     // deletes nothing, so the tombstone channel is the whole cascade here.
+    // Index cleanup still pending leaves the outbox entry's index half open
+    // for the absence sweep; the committed page is not a failure.
     const cascadeDeletedDocumentIds = result.tombstoneDeletedDocumentIds;
     const indexCleanedRows = result.tombstoneCascade
-      ? await finishDocumentCascade(result.tombstoneCascade, {
-          deleteIndex: indexWriteGate
-            ? (ids) => indexWriteGate.deleteChunksByDocuments(ids)
-            : undefined,
-          cascadeCognition: (ids) => this.cascadeCognitionFor(ids),
-          acknowledge: (id, part) => w.acknowledgeAbsenceCascade(id, part),
-        })
+      ? await settleIndexCleanup(
+          finishDocumentCascade(result.tombstoneCascade, {
+            deleteIndex: indexWriteGate
+              ? (ids) => indexWriteGate.deleteChunksByDocuments(ids)
+              : undefined,
+            cascadeCognition: (ids) => this.cascadeCognitionFor(ids),
+            acknowledge: (id, part) => w.acknowledgeAbsenceCascade(id, part),
+          }),
+        )
       : 0;
 
     // The source was wiped after this sync started — the writer
@@ -1316,7 +1324,7 @@ export class DocumentService {
           );
           deletedIds = outcome.deletedDocumentIds;
           if (indexWriteGate && deletedIds.length > 0) {
-            await indexWriteGate.deleteChunksByDocuments(deletedIds);
+            await settleIndexCleanup(indexWriteGate.deleteChunksByDocuments(deletedIds));
           }
           await this.cascadeCognitionFor(deletedIds);
           if (outcome.disputed.length > 0) deletionDisputed = outcome.disputed.length;

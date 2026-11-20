@@ -91,7 +91,8 @@ export interface KnowledgePuppetPolicy {
   /** Script decisions from the actual source/node payload offered by the engine. */
   plan: (item: PuppetKnowledgeItem, ctx: RunContext, steps: readonly ToolStep[]) => PuppetPlan;
   /** Opt-in contention recovery: reacquire the real frontier and rebuild all
-   * reads after a revision conflict. Bounded per run; negative-path refusals
+   * reads after a revision conflict or changed source review obligations.
+   * Bounded per run; negative-path refusals
    * remain explicit and are never retried. */
   maxRevisionConflictRetries?: number;
   /** Explicit negative-path scenarios may continue after an exact canonical-tool refusal. */
@@ -141,20 +142,57 @@ export function knowledgePuppet(
       typeof step.result === "object" &&
       (step.result as { kind?: unknown }).kind === "error" &&
       (step.result as { code?: unknown }).code === "revision_conflict";
+    const isSourceReviewConflict = (step: ToolStep): boolean => {
+      const result = step.result as { kind?: unknown; code?: unknown; message?: unknown } | null;
+      return (
+        step.name === "knowledge_discovery_complete" &&
+        result?.kind === "error" &&
+        result.code === "claim_invalid" &&
+        typeof result.message === "string" &&
+        result.message.startsWith(
+          "Source discovery is incomplete: organization still requires review.",
+        )
+      );
+    };
     const expectedConflict =
       parsed.success &&
       last &&
       parsed.data.items.some((item) =>
         policy
           .expectedRefusals?.(item)
-          .some((expected) => expected.tool === last.name && expected.code === "revision_conflict"),
+          .some(
+            (expected) =>
+              expected.tool === last.name &&
+              expected.code === (last.result as { code?: unknown } | null)?.code,
+          ),
       );
-    if (last && isConflict(last) && policy.maxRevisionConflictRetries && !expectedConflict) {
-      if (steps.filter(isConflict).length <= policy.maxRevisionConflictRetries)
+    // Publication may rearm organization after an all-covered source offer.
+    // Reacquire current obligations without replaying interpretation writes.
+    const sourceReviewChanged =
+      parsed.success &&
+      last &&
+      isSourceReviewConflict(last) &&
+      parsed.data.items.some(
+        (item) =>
+          item.source &&
+          item.id === last.args?.id &&
+          item.inputFingerprint === last.args?.inputFingerprint &&
+          item.completionRequirements?.requiredPhases.length === 0,
+      );
+    if (
+      last &&
+      (isConflict(last) || sourceReviewChanged) &&
+      policy.maxRevisionConflictRetries &&
+      !expectedConflict
+    ) {
+      const conflicts = steps.filter(
+        (step) => isConflict(step) || isSourceReviewConflict(step),
+      ).length;
+      if (conflicts <= policy.maxRevisionConflictRetries)
         return { kind: "tool", name: "knowledge_next_frontier", args: {} };
       return {
         kind: "final",
-        text: "Maintenance revision-conflict retry budget exhausted; preserve pending work.",
+        text: "Maintenance frontier-conflict retry budget exhausted; preserve pending work.",
       };
     }
     if (!parsed.success)

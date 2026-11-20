@@ -30,6 +30,7 @@
  * surface) and `snapshot.ts` (normalized whole-state snapshots).
  */
 
+import { readFileSync } from "node:fs";
 import Database from "better-sqlite3";
 import {
   SyntheticE2EHarness,
@@ -445,7 +446,26 @@ export class BrainBench {
   /** Delete a document through the production route (cascades run for real). */
   async deleteDoc(docId: string): Promise<void> {
     const res = await this.harness.gatewayFetch(`/documents/${docId}`, { method: "DELETE" });
-    if (!res.ok) throw new Error(`delete /documents/${docId} failed: ${res.status}`);
+    if (!res.ok) {
+      // The gateway answers a 500 with only a request id; its log holds the stack.
+      const body = await res.text();
+      let logged = "";
+      try {
+        const lines = readFileSync(this.harness.getGatewayLogPath(), "utf8").split("\n");
+        const mentions = (line: string) => line.includes(`/documents/${docId}`);
+        const unhandled = lines.findLastIndex(
+          (line) => mentions(line) && line.includes("unhandled"),
+        );
+        const at = unhandled >= 0 ? unhandled : lines.findLastIndex(mentions);
+        // The error line carries the stack on the lines after it.
+        if (at >= 0) logged = lines.slice(at, at + 25).join("\n");
+      } catch {
+        logged = "(gateway log unreadable)";
+      }
+      throw new Error(
+        `delete /documents/${docId} failed: ${res.status} ${body}${logged ? `\n${logged}` : ""}`,
+      );
+    }
   }
 
   // ── time ──────────────────────────────────────────────────────────────────

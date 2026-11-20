@@ -13,6 +13,7 @@ import {
   withFreshIndexWriteGate,
   workerCoordinatedIndexWriteGate,
   IndexCleanupPendingError,
+  settleIndexCleanup,
 } from "./index-write-gate.js";
 
 test("document cascades keep the outbox pending until the worker's stale writes have drained", async () => {
@@ -388,6 +389,25 @@ test("bulk worker purge splits at one hundred IDs and never falls back while the
       IndexCleanupPendingError,
     );
     expect(single).not.toHaveBeenCalled();
+  } finally {
+    db.close();
+  }
+});
+
+test("settling a pending purge yields the chunks removed so far; other failures still throw", async () => {
+  const db = createIndexDatabase(":memory:");
+  try {
+    const bulk = vi.fn(async () => ({
+      deletedChunks: 3,
+      complete: false,
+      readyForSourceDelete: false,
+    }));
+    const gate = workerCoordinatedIndexWriteGate(db, () => undefined, undefined, bulk);
+    expect(await settleIndexCleanup(gate.deleteChunksByDocuments(["awaiting-cycle"]))).toBe(3);
+    bulk.mockRejectedValueOnce(new Error("index writer unavailable"));
+    await expect(settleIndexCleanup(gate.deleteChunksByDocuments(["doc-1"]))).rejects.toThrow(
+      "index writer unavailable",
+    );
   } finally {
     db.close();
   }

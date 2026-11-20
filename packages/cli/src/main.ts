@@ -29,7 +29,10 @@ const main = defineCommand({
   subCommands: SUB_COMMANDS,
 });
 
-/** `main` with the hidden aliases stripped, for rendering the top-level help. */
+/**
+ * `main` as the top-level help renders it: hidden aliases stripped, and each
+ * command a summary-only stub so printing the list imports no command module.
+ */
 const mainForHelp: CommandDef = { ...main, subCommands: visibleSubCommands() };
 
 const rawArgs = process.argv.slice(2).filter((a) => a !== "--");

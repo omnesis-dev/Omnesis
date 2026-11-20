@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { IndexCleanupPendingError } from "../indexer/index-write-gate.js";
 import type { AbsenceCascade } from "../data/repositories/AbsenceRepository.js";
 
 /** Complete each idempotent store independently so one failure cannot skip the other. */
@@ -30,7 +31,10 @@ export async function finishDocumentCascade(
       await ops.acknowledge(cascade.id, "cognition");
     } catch (error) {
       failed = true;
-      failure ??= error;
+      // Index cleanup still pending is not a failure of its own, so a caller
+      // that settles it must still see the cognition cascade's real error.
+      failure =
+        failure === undefined || failure instanceof IndexCleanupPendingError ? error : failure;
     }
   }
   if (failed) throw failure;
