@@ -4,6 +4,8 @@
 import { z } from "zod";
 import {
   GATEWAY_SIGNUP_ACCESS_PATH,
+  GATEWAY_SIGNUP_ACCOUNT_CREATED,
+  GATEWAY_SIGNUP_FEATURES_HEADER,
   GATEWAY_SIGNUP_INVITE_PATH,
   GATEWAY_SIGNUP_PATH,
 } from "./gateway-signup-contract.js";
@@ -124,7 +126,14 @@ export class GatewaySignupHttp {
           const body = await readJsonBody(req, 8192);
           let value: unknown;
           if (action === "start") value = this.options.signup.start(body);
-          else if (action === "poll") value = this.options.signup.poll(body);
+          else if (action === "poll")
+            value = this.options.signup.poll(body, {
+              // Only a gateway that asks gets the field: older ones parse the answer strictly.
+              reportCreation: String(req.headers[GATEWAY_SIGNUP_FEATURES_HEADER] ?? "")
+                .split(",")
+                .map((feature) => feature.trim())
+                .includes(GATEWAY_SIGNUP_ACCOUNT_CREATED),
+            });
           else if (owner) value = await this.options.signup.link(owner, body);
           else {
             this.options.signup.cancel(body);

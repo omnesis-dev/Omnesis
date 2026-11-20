@@ -97,7 +97,7 @@ export function startFlow(mode, steps, remote) {
 /**
  * What step 1 shows, from the relay's status: `loading`, `unavailable`, `none`
  * (no account yet), the connect phases `waiting`, `registering`, `linking` and
- * `failed`, `linked` (the status reports an Omnesis account link or a Google
+ * `failed`, `unfinished` (a connection that never finished), `linked` (the status reports an Omnesis account link or a Google
  * link), or `enrolled` (registered with the relay but linked to no account).
  */
 export function accountState(status) {

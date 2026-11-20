@@ -21,6 +21,7 @@ export const cloudRelayEnrollmentBody = z.object({ policy: z.enum(["automatic", 
 export const cloudRelayRemoveSignInQuery = z
   .object({ revokeDevices: z.enum(["true", "false"]).optional() })
   .strict();
+/** Every client states the certificate authority's terms beside the action that connects. */
 export const cloudRelayConnectBody = z
   .object({
     termsAccepted: z.literal(true),

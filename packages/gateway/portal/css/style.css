@@ -19937,6 +19937,12 @@ summary.decision-card-head {
 .relay-view.remote-access-relay:empty { display: none; }
 .relay-view.remote-access-relay .relay-hero-action { margin-top: 0; }
 .relay-view.remote-access-relay .relay-elsewhere { margin-top: 8px; }
+/* The button that opens the security check or the sign-in stands apart from the words around it. */
+.relay-waiting > .relay-hero-action,
+.relay-view.remote-access-relay .relay-waiting > .relay-hero-action { margin: 16px 0; }
+/* What connecting agrees to, said once beside the buttons that connect. */
+.relay-terms { margin-top: 10px !important; }
+.relay-terms a { color: inherit; text-decoration: underline; }
 .relay-view.remote-access-relay .relay-setup { padding-bottom: 0; }
 
 /* tailscale-embed:start

@@ -18,6 +18,7 @@ export type CloudRelayManagementError =
   | "hostname-conflict"
   | "ca-terms-required"
   | "operation-in-progress"
+  | "already-connected"
   | "google-unavailable"
   | "google-link-failed"
   | "account-unavailable"
@@ -97,6 +98,19 @@ export interface CloudRelayManagementStatus {
   /** Progress of connecting by sign-in. Present while a connection is under way or just ended. */
   connect?: {
     state: "idle" | "waiting" | "registering" | "linking" | "done" | "failed";
+    /** The choice the owner made: creating an account, or signing in to one they have. */
+    intent?: "create" | "existing";
+    /**
+     * While `registering`: what the gateway is doing. `registering` with the relay, getting its
+     * `certificate`, then opening its `tunnel` and checking its address answers.
+     */
+    step?: "registering" | "certificate" | "tunnel";
+    /**
+     * Once `done`: the owner chose to create an account, but the sign-in already had one, so the
+     * gateway was linked to that account and the invite was not used. Absent when the relay
+     * doesn't say which happened.
+     */
+    existingAccount?: true;
     /** An independent DNS broker check before this gateway obtains its public name. */
     verification?: { url: string; expiresAt: number };
     authorizeUrl?: string;
@@ -153,6 +167,15 @@ export interface CloudRelayManagementStatus {
    */
   notice?: "account-deleted" | "gateway-removed";
   /**
+   * Connecting started on this gateway and never finished: it holds a reserved address it has
+   * never been reachable at, so that address is offered nowhere. `error` is why the last attempt
+   * stopped, when the gateway knows; absent, it was interrupted. Connecting again resumes with the
+   * same address; starting over discards it.
+   */
+  unfinished?: {
+    error?: CloudRelayManagementError | NonNullable<CloudRelayManagementStatus["connect"]>["error"];
+  };
+  /**
    * The relay's accounts need approval, and this is where to ask for it. Present only before this
    * gateway is linked to an account, once the relay has said so.
    */
@@ -163,6 +186,11 @@ export interface CloudRelayManagementStatus {
     disable: boolean;
     reconnect: boolean;
     renew: boolean;
+    /**
+     * Discard an unfinished connection, so the gateway is as if it never connected. Absent from a
+     * gateway that predates starting over.
+     */
+    startOver?: boolean;
   };
 }
 
@@ -188,10 +216,17 @@ export interface CloudRelayManagement {
     | undefined;
   /** `intent` picks the sign-in page's first view: creating an account, or signing in to one. */
   connect?(input: {
-    termsAccepted: boolean;
+    termsAccepted?: boolean;
     intent?: "create" | "existing";
+    invite?: string;
   }): Promise<CloudRelayManagementStatus>;
   cancelConnect?(): Promise<CloudRelayManagementStatus>;
+  /**
+   * Discards a connection that never finished: the reserved address, the gateway id, its keys and
+   * the saved choices, so the gateway is as if it had never connected. Refused once the gateway
+   * has connected; unlinking is the way out then.
+   */
+  startOver?(): Promise<CloudRelayManagementStatus>;
   setEnrollmentPolicy?(policy: "automatic" | "ask"): Promise<CloudRelayManagementStatus>;
   /** Lifts an incident hold. Callers must refuse a request that came through the relay. */
   acknowledgeIncidentHold?(): Promise<CloudRelayManagementStatus>;

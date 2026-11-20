@@ -12,7 +12,12 @@ export const signupRelayOrigin = "https://relay.example.test";
 type PollReply =
   | { status: "pending" }
   | { status: "denied"; reason: "not-allowed" | "capacity" }
-  | { status: "approved"; credentialPublicKey?: string }
+  | {
+      status: "approved";
+      credentialPublicKey?: string;
+      /** Sent only to a gateway that asks for it, as the relay does. */
+      accountCreated?: boolean;
+    }
   | { status: "unavailable" };
 
 /**
@@ -39,6 +44,7 @@ export function fakeSignupRelay(
   const authenticator = passkeyAuthenticator();
   const polls: PollReply[] = [];
   let started: Record<string, unknown> | undefined;
+  let pollFeatures: string | null = null;
   const calls: string[] = [];
   const handlers = new Map<string, (body: Record<string, unknown>) => Response>();
   const fetch = async (input: string | URL | Request, init?: RequestInit) => {
@@ -61,6 +67,7 @@ export function fakeSignupRelay(
         return Response.json(options.started?.(reply) ?? reply);
       }
       case "/_relay/v3/signup/poll": {
+        pollFeatures = new Headers(init?.headers).get("omnesis-signup-features");
         const next = polls.length > 1 ? polls.shift()! : (polls[0] ?? { status: "pending" });
         if (next.status === "unavailable") return new Response(null, { status: 503 });
         if (next.status === "pending")
@@ -85,6 +92,9 @@ export function fakeSignupRelay(
             ),
           },
           ...(next.credentialPublicKey ? { credentialPublicKey: next.credentialPublicKey } : {}),
+          ...(next.accountCreated !== undefined && pollFeatures === "account-created"
+            ? { accountCreated: next.accountCreated }
+            : {}),
         });
       }
       case "/_relay/v3/signup/link": {
@@ -115,6 +125,8 @@ export function fakeSignupRelay(
     authenticator,
     calls,
     started: () => started,
+    /** The features the gateway's last poll asked for. */
+    pollFeatures: () => pollFeatures,
     /** Replies are used in order; the last one repeats. */
     poll(...replies: PollReply[]) {
       polls.splice(0, polls.length, ...replies);

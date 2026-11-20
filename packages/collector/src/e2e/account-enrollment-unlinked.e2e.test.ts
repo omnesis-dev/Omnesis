@@ -81,6 +81,16 @@ describe("a gateway that never linked an Omnesis account", () => {
     expect(configEntries().filter((entry) => /cloud-relay|acme|enrollment/i.test(entry))).toEqual(
       [],
     );
+    // Starting over has nothing to discard, and writes nothing either.
+    const startOver = await harness.gatewayJson<{ configured: boolean; can: object }>(
+      "/admin/cloud-relay/start-over",
+      { method: "POST", body: "{}" },
+    );
+    expect(startOver).toMatchObject({ configured: false, can: { startOver: false } });
+    expect(startOver).not.toHaveProperty("unfinished");
+    expect(configEntries().filter((entry) => /cloud-relay|acme|enrollment/i.test(entry))).toEqual(
+      [],
+    );
   });
 
   test("no account-bound route acts", async () => {

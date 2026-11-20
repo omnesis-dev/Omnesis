@@ -12932,8 +12932,19 @@
     },
     {
       "value": "Omnesis Relay",
-      "paths": ["packages/gateway/portal/js/views/relay.test.ts"],
+      "paths": [
+        "packages/gateway/portal/js/views/relay.test.ts",
+        "packages/gateway/portal/js/views/remote-access.test.ts"
+      ],
       "reason": "Product name in interface text asserted by a test, not a person's name."
+    },
+    {
+      "value": "Subscriber Agreement",
+      "paths": [
+        "packages/cli/src/commands/cloud-management.test.ts",
+        "packages/gateway/portal/js/views/remote-access.test.ts"
+      ],
+      "reason": "Name of the certificate authority's terms document asserted by a test, not a person."
     },
     {
       "value": "The Access",

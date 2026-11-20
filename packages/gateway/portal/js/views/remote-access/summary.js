@@ -17,6 +17,7 @@ import { ACCOUNT_PAGE, AddressLink, HOST_TAILSCALE_PAGE, MCP_PAGE, OWN_ADDRESS_P
 import { MCP_ADDRESS_LABELS, REACH_DETAILS, mcpRows } from "./mcp.js";
 import { useHostTailscale } from "./own-setup.js";
 import { accountState, listSentence } from "./model.js";
+import { unfinishedReason } from "./account-step.js";
 
 /** The account line: `[mark, title, detail]` by what step 1 shows. */
 const ACCOUNT_ITEMS = {
@@ -27,6 +28,7 @@ const ACCOUNT_ITEMS = {
   registering: ["warn", "Registering this gateway…", "This usually takes less than a minute."],
   linking: ["warn", "Connecting to your Omnesis account…", "Almost done."],
   failed: ["warn", "Couldn't connect to your Omnesis account", "Nothing on this gateway changed."],
+  unfinished: ["warn", "Connecting didn't finish", "Try again, or start over."],
   linked: ["on", "Linked to your Omnesis account", "Your apps find this gateway by signing in."],
   enrolled: ["warn", "Registered with the Omnesis relay, linked to no account", "Link it to find this gateway when you sign in."],
 };
@@ -92,7 +94,9 @@ export function Summary({ remote, setRemote, relay, tailscale, headingRef, onSta
   const accountDetail =
     accountNow === "none" && relayInviteOnly(relayStatus)
       ? `Private, invite only: creating an account needs an invite link. ${plainDetail}`
-      : plainDetail;
+      : accountNow === "unfinished"
+        ? `${unfinishedReason(relayStatus)} ${plainDetail}`
+        : plainDetail;
   const google = !relayStatus?.account?.linked && relayStatus?.google?.linked;
   const mcp = mcpRows(remote);
   const mcpOn = mcp.filter((row) => row.reach !== "off");

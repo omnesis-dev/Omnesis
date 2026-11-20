@@ -775,16 +775,25 @@ async function startDnsFixture(values: Map<string, string>) {
 
 export interface CloudRelayStatus {
   enabled: boolean;
+  configured?: boolean;
+  gatewayId?: string;
+  hostname?: string;
+  publicOrigin?: string;
+  publicMcp: { ready: boolean; url?: string };
   enrollment: { state: string };
   tunnel: { state: string };
   account: { linked: boolean; activated: boolean; lastError?: string };
   connect?: {
     state: "waiting" | "registering" | "linking" | "done" | "failed";
+    intent?: "create" | "existing";
     connectUrl?: string;
     authorizeUrl?: string;
     code?: string;
     error?: string;
+    existingAccount?: true;
   };
+  unfinished?: { error?: string };
+  can?: { startOver?: boolean };
   deviceEnrollment: {
     policy: "automatic" | "ask";
     trustedSignIns: Array<{

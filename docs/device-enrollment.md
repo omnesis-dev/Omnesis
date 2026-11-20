@@ -933,6 +933,26 @@ in the transaction that creates the account, so an invite creates at most one
 account, with a passkey or with Google. Without an invite the page offers only
 signing in to an account that exists, which may connect any number of gateways.
 
+A person who chose to create an account may still sign in with one they already
+have (the page lets them switch, and a Google sign-in with an account signs in to
+it). The invite is then not used. A gateway that sends
+`omnesis-signup-features: account-created` with its poll gets `accountCreated` on
+the approval, true only when that sign-in created the account; the relay adds the
+field only when asked, because older gateways parse the approval strictly. The
+gateway reports `connect.existingAccount` once linked, and the portal and CLI say
+the invite wasn't used.
+
+`POST /admin/cloud-relay/connect` refuses a gateway already linked to an account
+(`already-connected`); it is unlinked first. Connecting reserves the hosted name
+and saves the configuration before the sign-in, so a connection that stops there
+leaves a gateway that never registered. Until the relay first accepts its
+registration (recorded in `cloud-relay/registered.json`), its status reports no
+address and `publicOrigin()` is empty, so the reserved name is offered to no
+agent, OAuth resource or MCP setting, and `unfinished` says why it stopped.
+Connecting again continues with the same name; `POST /admin/cloud-relay/start-over`
+(`omnesis cloud start-over`) discards the configuration, owner key and anything
+the attempt left, and is refused once the gateway has registered.
+
 The relay says before anyone signs in whether an invite is needed:
 `GET /_relay/v3/signup/access` (public, no parameters) answers
 `{"signup":{"inviteOnly":true}}` under `invite` and `{}` under any other policy.

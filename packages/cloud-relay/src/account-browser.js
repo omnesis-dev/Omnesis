@@ -1356,11 +1356,17 @@ export function installConnectUI() {
   });
 }
 
-/** The invite page: says whether the invite in the link still works, and lets the person copy it. */
+/**
+ * The invite page: says whether the invite in the link still works, and lets the person copy it
+ * or the command that connects with it. A link with no invite in it shows only that.
+ */
 export function installInviteUI() {
+  const missing = document.getElementById("invite-missing");
+  const found = document.getElementById("invite-found");
   const status = document.getElementById("invite-status");
   const value = document.getElementById("invite-value");
   const copy = document.getElementById("invite-copy");
+  const command = document.getElementById("invite-command");
   const say = (text) => {
     status.textContent = text;
   };
@@ -1382,15 +1388,22 @@ export function installInviteUI() {
   let latest = 0;
   const check = () => {
     const attempt = ++latest;
-    const invite = window.location.hash.slice(1);
+    const invite = window.location.hash.slice(1).trim();
     copy.textContent = "Copy invite";
-    if (!invite) {
+    // An invite is made of letters, digits and `-_.`; a fragment with anything else holds none.
+    const present = /^[A-Za-z0-9_.-]+$/.test(invite);
+    missing.hidden = present;
+    found.hidden = !present;
+    if (!present) {
       value.textContent = "";
+      command.textContent = "";
       copy.hidden = true;
-      say("This link has no invite in it. Ask whoever sent it for the whole link.");
+      say("");
       return;
     }
     value.textContent = window.location.href;
+    // Single-quoted for the shell, with any quote in the link closed, escaped and reopened.
+    command.textContent = `omnesis cloud connect --invite '${window.location.href.replaceAll("'", "'\\''")}'`;
     copy.hidden = false;
     say("Checking your invite…");
     fetch("/_relay/v3/signup/invite", {

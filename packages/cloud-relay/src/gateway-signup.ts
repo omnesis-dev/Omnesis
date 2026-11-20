@@ -85,6 +85,8 @@ interface Operation {
     inviteRequired?: true;
   };
   approved?: { account: AccountBrowserAccount; enrollmentToken: string };
+  /** The account this sign-up's sign-in created, if it created one rather than signing in. */
+  createdAccount?: string;
 }
 
 /**
@@ -331,7 +333,8 @@ export class GatewaySignup implements AccountOperationBroker {
     }
   }
 
-  poll(input: unknown) {
+  /** `reportCreation`: the gateway asked whether the sign-in created the account. */
+  poll(input: unknown, options: { reportCreation?: boolean } = {}) {
     const operation = this.redemption(input);
     if (operation.denied) return { status: "denied" as const, reason: operation.denied.reason };
     if (operation.phase === "approved") {
@@ -343,6 +346,9 @@ export class GatewaySignup implements AccountOperationBroker {
         enrollmentToken,
         accountId: account.accountId,
         ...operation.proof.take(),
+        ...(options.reportCreation
+          ? { accountCreated: operation.createdAccount === account.accountId }
+          : {}),
       };
     }
     if (operation.phase === "redeemed" || operation.phase === "linking")
@@ -419,6 +425,9 @@ export class GatewaySignup implements AccountOperationBroker {
       assertCurrent: () => {
         this.active(id, cookieHeader);
         this.assertOwnerFree(operation.gatewayId, operation.ownerAccountId);
+      },
+      created: (account) => {
+        operation.createdAccount = account;
       },
     };
   }

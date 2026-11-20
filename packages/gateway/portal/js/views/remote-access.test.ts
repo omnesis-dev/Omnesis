@@ -38,8 +38,8 @@ vi.mock("../lib/cloud-relay-api.js", async (importOriginal) => ({
     if (operation === "account/refresh") return {};
     if (operation) gateway.calls.push(["relay", operation, input, method, ...(options ? [options] : [])]);
     const relay = gateway.relay!;
-    if (operation === "connect") gateway.relay = waiting();
-    if (operation === "connect/cancel") gateway.relay = relayNone();
+    if (operation === "connect") gateway.relay = waiting((input as Json).intent as string | undefined);
+    if (operation === "connect/cancel" || operation === "start-over") gateway.relay = relayNone();
     if (operation === "enable") gateway.relay = { ...relay, enabled: true, tunnel: { state: "online" }, can: { ...relay.can, enable: false, disable: true } };
     if (operation === "disable") gateway.relay = { ...relay, enabled: false, tunnel: { state: "disabled" }, can: { ...relay.can, enable: true, disable: false } };
     if (operation === "enrollment") gateway.relay = { ...relay, deviceEnrollment: { ...relay.deviceEnrollment, policy: (input as Json).policy } };
@@ -124,11 +124,11 @@ function relayNone(): Json {
     can: { configure: true, enable: false, disable: false, reconnect: false, renew: false },
   };
 }
-function waiting(): Json {
+function waiting(intent = "existing"): Json {
   return {
     ...relayNone(),
     connect: {
-      state: "waiting", authorizeUrl: "https://relay.example.test/_relay/sign-in", connectUrl: "https://relay.example.test/connect",
+      state: "waiting", intent, authorizeUrl: "https://relay.example.test/_relay/sign-in", connectUrl: "https://relay.example.test/connect",
       connectShortUrl: "https://relay.example.test/c", code: "KTPX-4QRD", expiresAt: Date.now() + 600_000,
     },
   };
@@ -492,9 +492,10 @@ describe("without the gateway's own Tailscale device", () => {
     await startSetup();
     await click("Create an account");
     expect(calls("relay")).toEqual([["relay", "connect", { termsAccepted: true, intent: "create" }, "POST"]]);
-    expect(heading()).toBe("Sign in to your Omnesis account");
-    expect(link("Open sign-in")?.getAttribute("href")).toBe("https://relay.example.test/_relay/sign-in");
-    expect(link("Open sign-in")?.getAttribute("target")).toBe("_blank");
+    expect(heading()).toBe("Create your Omnesis account");
+    // The button is named for the choice: the relay's page opens on creating the account.
+    expect(link("Create your Omnesis account")?.getAttribute("href")).toBe("https://relay.example.test/_relay/sign-in");
+    expect(link("Create your Omnesis account")?.getAttribute("target")).toBe("_blank");
     expect(text()).toContain("KTPX-4QRD");
     await act(async () => (host.querySelector(".relay-view button.btn-secondary, .relay-view button") as HTMLButtonElement).click());
     await settle();
@@ -502,6 +503,82 @@ describe("without the gateway's own Tailscale device", () => {
     expect(heading()).toBe("Do you want an Omnesis account?");
     await click("I already have one");
     expect(calls("relay").at(-1)).toEqual(["relay", "connect", { termsAccepted: true, intent: "existing" }, "POST"]);
+    expect(link("Sign in to your Omnesis account")?.getAttribute("href")).toBe("https://relay.example.test/_relay/sign-in");
+  });
+
+  test("before connecting, one line says connecting agrees to the certificate authority's terms", async () => {
+    gateway.relay = {
+      ...relayNone(),
+      config: { ...relayNone().config, acmeTermsUrl: "https://letsencrypt.org/repository/" },
+    };
+    savedSetup("account");
+    await mount(FLAGS.relay);
+    const terms = host.querySelector(".relay-terms");
+    expect(terms?.textContent?.replace(/\s+/g, " ").trim()).toBe(
+      "By connecting, you agree to Let's Encrypt's Subscriber Agreement.",
+    );
+    expect(terms?.querySelector("a")?.getAttribute("href")).toBe("https://letsencrypt.org/repository/");
+    // There is nothing to tick: connecting is the agreement.
+    expect(host.querySelector('input[type="checkbox"]')).toBeNull();
+    // Another certificate authority states its own terms; the page claims none for it.
+    gateway.relay = relayNone();
+    await remount(FLAGS.relay);
+    expect(host.querySelector(".relay-terms")).toBeNull();
+  });
+
+  test("a connection that never finished says why, tries again with the same choice, or starts over", async () => {
+    gateway.relay = {
+      ...relayNone(),
+      configured: true,
+      unfinished: { error: "enrollment-refused" },
+      can: { ...relayNone().can, startOver: true },
+    };
+    savedSetup("account");
+    await mount(FLAGS.relay);
+    expect(heading()).toBe("Connecting didn't finish");
+    const blurb = host.querySelector(".access-wizard-copy p")?.textContent?.replace(/\s+/g, " ") ?? "";
+    expect(blurb).toContain("This gateway couldn't register with Omnesis Relay.");
+    expect(blurb).toContain("Try again to continue with that address, or start over");
+    await click("Try again");
+    // Trying again is the account choice again: the sign-in decides which account.
+    expect(button("I already have one")).toBeTruthy();
+    await click("I already have one");
+    expect(calls("relay").at(-1)).toEqual(["relay", "connect", { termsAccepted: true, intent: "existing" }, "POST"]);
+    gateway.relay = { ...relayNone(), configured: true, unfinished: {}, can: { ...relayNone().can, startOver: true } };
+    await remount(FLAGS.relay);
+    expect(host.querySelector(".access-wizard-copy p")?.textContent).toContain(
+      "It stopped before the sign-in or the security check was completed.",
+    );
+    await click("Start over");
+    expect(calls("relay").at(-1)).toEqual(["relay", "start-over", {}, "POST"]);
+    expect(heading()).toBe("Do you want an Omnesis account?");
+  });
+
+  test("an invite the gateway refused stays said until the invite is edited", async () => {
+    gateway.relay = { ...relayNone(), signup: { inviteOnly: true } };
+    savedSetup("account");
+    await mount(FLAGS.relay);
+    // @ts-expect-error — portal modules are plain JS.
+    const { relayManagement } = await import("../lib/cloud-relay-api.js");
+    vi.mocked(relayManagement).mockImplementationOnce(async (operation: string, input: unknown) => {
+      gateway.calls.push(["relay", operation, input, "POST"]);
+      throw Object.assign(new Error("refused"), { code: "invite-used" });
+    });
+    const field = host.querySelector("#relay-invite-input") as HTMLInputElement;
+    const invite = `https://relay.example.test/invite#${"a".repeat(20)}.${"b".repeat(40)}.${"c".repeat(86)}`;
+    await act(async () => {
+      field.value = invite;
+      field.dispatchEvent(new window.Event("input"));
+    });
+    await click("Create an account");
+    const refusal = "That invite was already used to create an account. Ask for a new one.";
+    // The page's own status reads keep it (see use-relay-management.test.ts); editing answers it.
+    expect(text()).toContain(refusal);
+    await act(async () => {
+      field.value = `${invite}x`;
+      field.dispatchEvent(new window.Event("input"));
+    });
+    expect(text()).not.toContain(refusal);
   });
 
   test("the relay's link back to step 1 keeps the choices and returns to step 2, across a reload", async () => {

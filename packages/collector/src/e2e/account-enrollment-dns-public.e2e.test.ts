@@ -296,7 +296,7 @@ describe.skipIf(!ready)("public DNS enrollment", () => {
               .action,
         ),
       ).toBe("gateway-enrollment");
-      await expectText(portal.page, "Sign in to your Omnesis account", 30_000);
+      await expectText(portal.page, "Create your Omnesis account", 30_000);
       const waiting = await gateway.gatewayJson<Status>("/admin/cloud-relay");
       expect(waiting.connect?.verification).toBeUndefined();
       const person = await browser.session();
@@ -316,7 +316,7 @@ describe.skipIf(!ready)("public DNS enrollment", () => {
       const gateway = await freshGateway();
       const person = await browser.session();
       await createUnlinkedAccount(world, person);
-      const run = runCli(world, ["cloud", "connect", "--accept-terms"], {
+      const run = runCli(world, ["cloud", "connect", "--existing"], {
         OMNESIS_CONFIG_DIR: join(directory, "cli-public"),
         OMNESIS_GATEWAY_URL: gateway.gatewayUrl,
         OMNESIS_TOKEN: gateway.apiKey,

@@ -192,6 +192,16 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
   private pendingGatewayId: string | undefined;
   private connectPreparation: Promise<void> | undefined;
   private notice: CloudRelayManagementStatus["notice"];
+  /**
+   * Whether this gateway has registered with the relay at least once. Until it has, the address it
+   * reserved is offered nowhere, and an unfinished connection can be started over.
+   */
+  private connected = false;
+  /** The owner's choice behind the connection under way, for its progress and its outcome. */
+  private connectIntent: "create" | "existing" | undefined;
+  /** What the launch under way is doing, shown while connecting registers this gateway. */
+  private launchStep: NonNullable<NonNullable<CloudRelayManagementStatus["connect"]>["step"]> =
+    "registering";
   private forgetting: Promise<void> | undefined;
   /** Whether any answer behind the leaving under way said the gateway was unlinked. */
   private forgetRemoved = false;
@@ -314,7 +324,14 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
       spkiFingerprint: () => options.publicSpkiFingerprint?.() ?? manager.spkiFingerprintSha256(),
     });
     await manager.account.initialize();
-    if (manager.settings && !manager.settings.enabled && manager.managesPublicCertificate()) {
+    manager.connected = await manager.everConnected();
+    // A gateway that never registered has no certificate for its reserved name to serve.
+    if (
+      manager.settings &&
+      manager.connected &&
+      !manager.settings.enabled &&
+      manager.managesPublicCertificate()
+    ) {
       try {
         manager.requireSeparateHostname(manager.settings);
         const e = manager.environment(),
@@ -461,8 +478,53 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
   managesPublicCertificate(): boolean {
     return Boolean(this.settings?.acmeDirectoryUrl);
   }
+  /** The relay address, once this gateway has registered there: a reserved name isn't one yet. */
   publicOrigin(): string | undefined {
-    return this.settings?.publicOrigin;
+    return this.connected ? this.settings?.publicOrigin : undefined;
+  }
+  private get registeredFile(): string {
+    return join(this.directory, "registered.json");
+  }
+  /**
+   * Whether the saved configuration ever registered with the relay. The marker records it; a
+   * gateway that registered before the marker existed still has a session, a pending release, a
+   * certificate from its authority or an account link to show for it.
+   */
+  private async everConnected(): Promise<boolean> {
+    const s = this.settings;
+    if (!s) return false;
+    if (s.legacyEnvironment || this.account!.status().linked || this.google!.status().linked)
+      return true;
+    if (await identityArtifactPresent(this.registeredFile)) return true;
+    const e = this.environment();
+    let registered = false;
+    for (const file of [e.OMNESIS_CLOUD_RELAY_SESSION_FILE!, this.releaseFile])
+      registered ||= await identityArtifactPresent(file);
+    if (!registered && s.acmeDirectoryUrl) {
+      try {
+        const cert = new X509Certificate(await readFile(e.OMNESIS_ACME_CERT_FILE!));
+        registered = !cert.checkIssued(cert);
+      } catch {
+        registered = false;
+      }
+    }
+    // Recorded, so the answer no longer depends on files that unlinking removes.
+    if (registered) await this.markConnected();
+    return registered;
+  }
+  /** Recorded once, when the relay first accepts this gateway's registration. */
+  private async markConnected(): Promise<void> {
+    if (this.connected) return;
+    this.connected = true;
+    try {
+      await this.admitted(() =>
+        savePrivateJson(this.registeredFile, { version: 1, registeredAt: Date.now() }),
+      );
+    } catch (error) {
+      if (this.cleanup.observe(error)) throw error;
+      // Its session file says the same after a restart; only the marker is missing.
+      log.warn(`Recording this gateway's registration failed: ${String(error)}`);
+    }
   }
   fingerprintSha256(): string | undefined {
     return this.controller?.fingerprintSha256() ?? this.fingerprint;
@@ -777,6 +839,7 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
     this.pending = this.run(async () => {
       let unregistered: GatewayUnregistered | undefined;
       this.enrollment = { state: "pending" };
+      this.launchStep = "registering";
       this.revision++;
       try {
         this.requireSeparateHostname(this.settings!);
@@ -811,6 +874,7 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
         // A refusal the relay has since lifted must not keep the Relay page on the old failure.
         if (this.connection.state === "failed" && this.connection.error === "enrollment-refused")
           this.connection = { state: "idle" };
+        await this.markConnected();
         await this.admitted(() => this.google!.refreshManaged(signal));
         await this.admitted(() => this.account!.refresh(signal));
         signal.throwIfAborted();
@@ -820,11 +884,15 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
           (removed) => this.forgotten(removed),
         );
         if (force || !this.publicReady) {
+          this.launchStep = "certificate";
+          this.revision++;
           if (await this.admitted(() => this.controller?.renew(signal)))
             this.lastRenewedAt = new Date().toISOString();
         }
         signal.throwIfAborted();
         this.certificateError = undefined;
+        this.launchStep = "tunnel";
+        this.revision++;
         // The relay drops public connections until it has accepted the tunnel, so a look taken
         // earlier would call a working address unreachable until the next recheck. A tunnel that
         // does not come online by then is looked at anyway and rechecked as usual.
@@ -1226,9 +1294,12 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
       }
       certificate.lastError = this.certificateError;
       certificate.lastRenewedAt = this.lastRenewedAt;
+      // A name reserved by a connection that never finished is not this gateway's address yet.
+      const origin = this.publicOrigin();
+      const connecting = ["waiting", "registering", "linking"].includes(this.connection.state);
       const cloud: CloudRelayNetworkIdentity = {
         id: "cloud",
-        names: s ? [new URL(s.publicOrigin).hostname] : [],
+        names: origin ? [new URL(origin).hostname] : [],
         kind:
           certificate.state === "unconfigured"
             ? "unconfigured"
@@ -1263,12 +1334,13 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
         serviceConfigured: !this.serviceError(),
         serviceError: this.serviceError(),
         gatewayId: s?.gatewayId,
-        hostname: s ? new URL(s.publicOrigin).hostname : undefined,
-        publicOrigin: s?.publicOrigin,
+        hostname: origin ? new URL(origin).hostname : undefined,
+        publicOrigin: origin,
         identities: [direct, cloud],
         directCertificate: { state: direct.state, expiresAt: direct.expiresAt },
         config: {
           relayUrl: s?.relayUrl ?? installationRelayUrl(this.options.env),
+          // What was saved, for the record; the address offered is `publicOrigin` above.
           publicOrigin: s?.publicOrigin,
           // Before the first connect, the directory a connect would use.
           acmeDirectoryUrl: s?.acmeDirectoryUrl || (s ? undefined : this.defaultAcmeDirectoryUrl()),
@@ -1286,7 +1358,7 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
         publicMcp: {
           lastError: this.publicError,
           ready: this.publicReady && tunnel?.state === "online",
-          url: s ? `${s.publicOrigin}/mcp` : undefined,
+          url: origin ? `${origin}/mcp` : undefined,
         },
         google: {
           ...this.google!.status(),
@@ -1302,7 +1374,26 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
             this.account!.status().canLink &&
             Boolean(s?.enabled && this.enrollment.state === "enrolled"),
         },
-        ...(this.connection.state === "idle" ? {} : { connect: { ...this.connection } }),
+        ...(this.connection.state === "idle"
+          ? {}
+          : {
+              connect: {
+                ...this.connection,
+                ...(this.connectIntent ? { intent: this.connectIntent } : {}),
+                ...(this.connection.state === "registering" ? { step: this.launchStep } : {}),
+              },
+            }),
+        ...(s && !this.connected && !connecting
+          ? {
+              unfinished: {
+                ...(this.connection.state === "failed" && this.connection.error
+                  ? { error: this.connection.error }
+                  : this.enrollment.state === "failed" && this.enrollment.error
+                    ? { error: this.enrollment.error }
+                    : {}),
+              },
+            }
+          : {}),
         deviceEnrollment: this.account!.enrollmentStatus(),
         ...(this.account!.incidentHold() ? { incidentHold: this.account!.incidentHold() } : {}),
         ...(this.notice ? { notice: this.notice } : {}),
@@ -1313,6 +1404,14 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
           disable: Boolean(s?.enabled),
           reconnect: Boolean(s?.enabled && !this.pending),
           renew: Boolean(s?.enabled && !this.pending),
+          startOver: Boolean(
+            s &&
+            !this.connected &&
+            !s.legacyEnvironment &&
+            !this.busy &&
+            !this.pending &&
+            !this.linkingUnderWay(),
+          ),
         },
       };
     });
@@ -1336,21 +1435,29 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
   /**
    * Configure, register and link from one sign-in. The relay's answer only supplies an
    * invitation and an account; the gateway still proves its own keys and checks the link.
+   * Connecting accepts the certificate authority's terms the page states; only an explicit
+   * `termsAccepted: false` refuses them. A gateway already linked to an account is refused: it
+   * is unlinked first.
    */
   async connect(input: {
-    termsAccepted: boolean;
+    termsAccepted?: boolean;
     intent?: "create" | "existing";
     /** The invite link or code that may create the account, as the person pasted it. */
     invite?: string;
   }): Promise<CloudRelayManagementStatus> {
     return this.run(async () => {
-      if (!input.termsAccepted) throw new CloudRelayManagementFailure(400, "ca-terms-required");
+      if (input.termsAccepted === false)
+        throw new CloudRelayManagementFailure(400, "ca-terms-required");
+      if (this.account!.status().linked)
+        throw new CloudRelayManagementFailure(409, "already-connected");
       if (input.invite !== undefined) await this.checkInvite(input.invite);
       if (
         ["waiting", "registering", "linking"].includes(this.connection.state) &&
         (this.connection.state !== "waiting" || this.connectPreparation || this.signup)
       )
         return this.status();
+      const intent = input.intent ?? "existing";
+      this.connectIntent = intent;
       this.connectAbort = new AbortController();
       const controller = this.connectAbort;
       const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(10 * 60_000)]);
@@ -1369,7 +1476,7 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
         exposeVerification();
       };
       const preparing: Promise<void> = this.prepareConnect(
-        input,
+        { ...input, intent },
         signal,
         onVerification,
         controller.signal,
@@ -1425,7 +1532,7 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
       throw new CloudRelayManagementFailure(400, `invite-${answer.status}`);
   }
   private async prepareConnect(
-    input: { termsAccepted: boolean; intent?: "create" | "existing"; invite?: string },
+    input: { intent: "create" | "existing"; invite?: string },
     signal: AbortSignal,
     onVerification: (verification: DnsBrokerVerification | undefined) => void,
     lifetime: AbortSignal,
@@ -1463,13 +1570,14 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
         expiresAt: pending.expiresAt,
       };
       this.revision++;
-      void this.finishConnect(client, pending, lifetime).catch(() => {});
+      void this.finishConnect(client, pending, lifetime, input.intent).catch(() => {});
     });
   }
   private async finishConnect(
     client: GatewaySignupClient,
     pending: GatewaySignupPending,
     signal: AbortSignal,
+    intent: "create" | "existing",
   ): Promise<void> {
     return this.run(async () => {
       const fail = (error: NonNullable<CloudRelayManagementStatus["connect"]>["error"]) => {
@@ -1536,7 +1644,11 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
           }),
         );
         await this.admitted(() => this.account!.refresh(signal));
-        this.connection = { state: "done" };
+        // The relay says whether this sign-in created the account; an older relay says nothing.
+        this.connection =
+          intent === "create" && approved.accountCreated === false
+            ? { state: "done", existingAccount: true }
+            : { state: "done" };
         this.signup = undefined;
         this.revision++;
       } catch (error) {
@@ -1547,16 +1659,78 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
   }
   async cancelConnect(): Promise<CloudRelayManagementStatus> {
     return this.run(async () => {
-      this.connectAbort.abort();
-      const preparing = this.connectPreparation;
-      if (preparing) await this.admitted(() => preparing.catch(() => {}));
-      const signup = this.signup;
-      this.signup = undefined;
-      if (signup && this.connection.state === "waiting")
-        await this.admitted(() => signup.client.cancel(signup.pending));
-      this.connection = { state: "idle" };
+      await this.admitted(() => this.stopConnecting());
       this.revision++;
       return this.status();
+    });
+  }
+  /** Ends the connection under way, telling the relay when it still waits for a sign-in. */
+  private async stopConnecting(): Promise<void> {
+    this.connectAbort.abort();
+    const preparing = this.connectPreparation;
+    if (preparing) await this.admitted(() => preparing.catch(() => {}));
+    const signup = this.signup;
+    this.signup = undefined;
+    if (signup && this.connection.state === "waiting")
+      await this.admitted(() => signup.client.cancel(signup.pending));
+    this.connection = { state: "idle" };
+    this.connectIntent = undefined;
+  }
+  /** After the sign-in: registering this gateway, then linking it. Starting over waits for it. */
+  private linkingUnderWay(): boolean {
+    return this.connection.state === "registering" || this.connection.state === "linking";
+  }
+  /**
+   * Discards a connection that never finished: the reserved address, the gateway id, the owner
+   * key that claimed the name, the saved choices and anything the attempt left. The gateway is
+   * then as if it had never connected, and connecting again starts from scratch. A hosted name
+   * stays bound at the DNS broker to a key that no longer exists, and is never drawn again.
+   * Refused once the gateway has registered with the relay: unlinking is the way out then.
+   */
+  async startOver(): Promise<CloudRelayManagementStatus> {
+    return this.run(async () => {
+      if (this.connected || this.settings?.legacyEnvironment || this.account!.status().linked)
+        throw new CloudRelayManagementFailure(409, "already-connected");
+      // A registration in flight may succeed, and a registered gateway is never started over.
+      if (this.linkingUnderWay() || this.pending)
+        throw new CloudRelayManagementFailure(409, "operation-in-progress");
+      // A gateway that never started connecting has nothing to discard, and nothing is touched.
+      if (!this.settings && this.connection.state === "idle") return this.status();
+      // No retry may start a registration from here on: the next one is cancelled now.
+      clearTimeout(this.timer);
+      this.timer = undefined;
+      return this.control(async () => {
+        await this.admitted(() => this.stopConnecting());
+        await this.admitted(() => this.stop());
+        if (this.connected) throw new CloudRelayManagementFailure(409, "already-connected");
+        const settings = this.settings;
+        if (settings) {
+          const e = this.environment();
+          // The configuration goes first: without it, whatever a crash leaves is never read.
+          for (const file of [
+            this.file,
+            e.OMNESIS_CLOUD_RELAY_OWNER_KEY_FILE!,
+            e.OMNESIS_CLOUD_RELAY_SESSION_FILE!,
+            `${e.OMNESIS_CLOUD_RELAY_SESSION_FILE!}.recovery.json`,
+            e.OMNESIS_CLOUD_RELAY_ENROLLMENT_TOKEN_FILE!,
+            e.OMNESIS_ACME_CERT_FILE!,
+            e.OMNESIS_ACME_KEY_FILE!,
+            e.OMNESIS_ACME_ACCOUNT_KEY_FILE!,
+            `${e.OMNESIS_ACME_ACCOUNT_KEY_FILE!}.dns-broker.json`,
+            this.registeredFile,
+          ])
+            await this.admitted(() => rm(file, { force: true }));
+          log.info("Discarded an unfinished connection to the relay; this gateway starts over");
+        }
+        this.settings = undefined;
+        this.pendingGatewayId = undefined;
+        this.enrollment = { state: "unconfigured" };
+        this.certificateError = this.publicError = this.lastRenewedAt = undefined;
+        this.fingerprint = this.spkiFingerprint = undefined;
+        this.registrationRetries = 0;
+        this.notice = undefined;
+        this.revision++;
+      });
     });
   }
   async setEnrollmentPolicy(policy: "automatic" | "ask"): Promise<CloudRelayManagementStatus> {

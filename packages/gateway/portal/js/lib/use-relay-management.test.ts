@@ -19,6 +19,8 @@ let host: HTMLElement;
 let current: {
   status: unknown;
   error: string;
+  errorCode: string;
+  clearError: () => void;
   busy: string;
   version: string;
   run: (op?: string, input?: unknown, method?: string, options?: unknown) => Promise<void>;
@@ -391,4 +393,50 @@ test("asks the gateway to read the account on opening and on coming back into vi
   await shown("visible");
   expect(request).toHaveBeenCalledTimes(5);
   expect(refreshed).toHaveBeenCalledTimes(2);
+});
+
+test("what an operation was refused for outlasts the page's status reads until it is cleared or another operation runs", async () => {
+  request.mockResolvedValue({ revision: 1 });
+  await mount();
+  const refused = Object.assign(new Error("refused"), { code: "invite-used" });
+  request.mockRejectedValueOnce(refused);
+  await act(async () => {
+    await current.run("connect", { intent: "create" });
+  });
+  expect(current.errorCode).toBe("invite-used");
+  expect(current.error).toBe("That invite was already used to create an account. Ask for a new one.");
+  // The page reads its status every few seconds; none of those reads takes the refusal away.
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(15_000);
+  });
+  expect(request.mock.calls.filter(([operation]) => operation === "").length).toBeGreaterThan(2);
+  expect(current.errorCode).toBe("invite-used");
+  // Nor does a status read that failed.
+  request.mockRejectedValueOnce(new Error("offline"));
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(5000);
+  });
+  expect(current.errorCode).toBe("invite-used");
+  await act(async () => current.clearError());
+  expect(current.error).toBe("");
+  // A failed status read is said only until a read succeeds.
+  request.mockRejectedValueOnce(new Error("offline"));
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(5000);
+  });
+  expect(current.error).toContain("Couldn't load or update");
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(5000);
+  });
+  expect(current.error).toBe("");
+  // The next operation starts without the last one's refusal.
+  request.mockRejectedValueOnce(refused);
+  await act(async () => {
+    await current.run("connect", { intent: "create" });
+  });
+  expect(current.errorCode).toBe("invite-used");
+  await act(async () => {
+    await current.run("connect/cancel", {});
+  });
+  expect(current.error).toBe("");
 });

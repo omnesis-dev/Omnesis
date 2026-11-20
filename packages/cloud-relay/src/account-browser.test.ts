@@ -2945,7 +2945,7 @@ test("each gateway's actions sit behind its own \u201c…\u201d menu, apart from
 const inviteToken = "aGVhZGVy.Y2xhaW1z." + "s".repeat(86);
 function inviteSetup(hash = `#${inviteToken}`) {
   const { document, window } = parseHTML(
-    '<html><body><p id="invite-status"></p><p id="invite-value"></p><button type="button" id="invite-copy" hidden>Copy invite</button></body></html>',
+    '<html><body><div id="invite-missing" hidden><h1>This link has no invite in it</h1></div><div id="invite-found" hidden><h1>You\'re invited to Omnesis</h1><p id="invite-status"></p><p id="invite-value"></p><button type="button" id="invite-copy" hidden>Copy invite</button><code id="invite-command"></code></div></body></html>',
   );
   const href = `https://relay.example.test/invite${hash}`;
   const location = { origin: "https://relay.example.test", hash, href };
@@ -2960,7 +2960,12 @@ function inviteSetup(hash = `#${inviteToken}`) {
   vi.stubGlobal("fetch", request);
   const status = () => document.getElementById("invite-status")!.textContent;
   const copy = () => document.getElementById("invite-copy") as unknown as HTMLButtonElement;
-  return { document, window, href, request, clipboard, status, copy };
+  const command = () => document.getElementById("invite-command")!.textContent;
+  const shown = () => ({
+    missing: !document.getElementById("invite-missing")!.hasAttribute("hidden"),
+    found: !document.getElementById("invite-found")!.hasAttribute("hidden"),
+  });
+  return { document, window, href, request, clipboard, status, copy, command, shown };
 }
 
 test("the invite page checks the invite in its fragment and says until when it works", async () => {
@@ -2971,8 +2976,10 @@ test("the invite page checks the invite in its fragment and says until when it w
   expect(path).toBe("/_relay/v3/signup/invite");
   expect(init).toMatchObject({ method: "POST", credentials: "omit", redirect: "error" });
   expect(JSON.parse(String(init!.body))).toEqual({ invite: inviteToken });
-  // The whole link is what the person pastes into their gateway.
+  // The whole link is what the person pastes into their gateway, or passes to the CLI.
+  expect(f.shown()).toEqual({ missing: false, found: true });
   expect(f.document.getElementById("invite-value")!.textContent).toBe(f.href);
+  expect(f.command()).toBe(`omnesis cloud connect --invite '${f.href}'`);
   expect(f.copy().hidden).toBe(false);
   f.copy().dispatchEvent(new f.window.Event("click"));
   await vi.waitFor(() => expect(f.copy().textContent).toBe("Copied"));
@@ -2987,11 +2994,17 @@ test("the invite page checks the invite in its fragment and says until when it w
 });
 
 test("the invite page says plainly when an invite is missing, unusable or can't be checked", async () => {
-  const empty = inviteSetup("");
-  installInviteUI();
-  expect(empty.status()).toContain("has no invite in it");
-  expect(empty.request).not.toHaveBeenCalled();
-  expect(empty.copy().hidden).toBe(true);
+  // A link with no invite in its fragment shows only that, with nothing to use or copy.
+  for (const hash of ["", "#", "#  ", "#%20%20", "#top section"]) {
+    const empty = inviteSetup(hash);
+    installInviteUI();
+    expect(empty.shown()).toEqual({ missing: true, found: false });
+    expect(empty.status()).toBe("");
+    expect(empty.command()).toBe("");
+    expect(empty.document.getElementById("invite-value")!.textContent).toBe("");
+    expect(empty.request).not.toHaveBeenCalled();
+    expect(empty.copy().hidden).toBe(true);
+  }
   for (const [answer, text] of [
     [() => Response.json({ status: "used" }), "already used to create an account"],
     [() => Response.json({ status: "expired" }), "has expired"],
@@ -3050,12 +3063,23 @@ test("the invite page checks again when only the link's fragment changes", async
   failFirst(new TypeError("offline"));
   await new Promise((resolve) => setTimeout(resolve, 10));
   expect(f.status()).toContain("has expired");
-  // Clearing the fragment says there is no invite and hides the copy button.
+  expect(f.command()).toContain(other);
+  // Clearing the fragment shows only that there is no invite.
   Object.assign(f.window.location, { hash: "", href: "https://relay.example.test/invite" });
   f.window.dispatchEvent(new f.window.Event("hashchange"));
-  expect(f.status()).toContain("has no invite in it");
+  expect(f.shown()).toEqual({ missing: true, found: false });
+  expect(f.command()).toBe("");
   expect(f.copy().hidden).toBe(true);
   expect(f.request).toHaveBeenCalledTimes(4);
+});
+
+test("the invite page's command keeps a quote in the link inside the shell quoting", () => {
+  const f = inviteSetup();
+  Object.assign(f.window.location, { href: `https://relay.example.test/in'vite#${inviteToken}` });
+  installInviteUI();
+  expect(f.command()).toBe(
+    `omnesis cloud connect --invite 'https://relay.example.test/in'\\''vite#${inviteToken}'`,
+  );
 });
 
 test("the invite script stays self-contained when served as one function", async () => {
