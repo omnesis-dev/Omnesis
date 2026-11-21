@@ -175,9 +175,12 @@
         <p>
           For a native install, the <a href="install">installer</a> registers the gateway and
           collector as user services: launchd LaunchAgents on macOS, systemd user units on Linux.
-          Both start at login and restart on failure. <code>omnesis service install</code> sets them
-          up on a machine where the installer did not. Name a component to install just one, for
-          example <code>omnesis service install collector</code> on a machine that only syncs.
+          Both start at login and restart on failure. On macOS the gateway runs as a standard
+          service rather than a background job, so macOS does not throttle the answers it gives the
+          apps, search and agents; the collector runs as a background job, so its syncing gives way
+          to the programs you are using. <code>omnesis service install</code> sets them up on a
+          machine where the installer did not. Name a component to install just one, for example
+          <code>omnesis service install collector</code> on a machine that only syncs.
         </p>
         <p>
           The other verbs are <code>start</code>, <code>stop</code>, <code>restart</code>,
