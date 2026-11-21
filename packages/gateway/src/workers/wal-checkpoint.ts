@@ -100,8 +100,10 @@ export interface WalCheckpointRun {
   /**
    * `copied`: frames were copied and the WAL was not rewound, including a
    * rewind whose own copy spent its whole wait. `rewound`: the next commit
-   * starts the WAL over. `deferred`: readers kept the rewind off. `cut`: the
-   * file was shortened by `cutBytes`.
+   * starts the WAL over, unless a read whose start straddled the RESTART
+   * still holds a WAL read slot; that commit then appends once, and the
+   * next call rewinds again with no backoff. `deferred`: readers kept the
+   * rewind off. `cut`: the file was shortened by `cutBytes`.
    */
   outcome: "copied" | "rewound" | "deferred" | "cut";
   /** Frames in the WAL when the run ended; 0 once rewound. */
