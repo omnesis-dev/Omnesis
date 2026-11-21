@@ -14,7 +14,7 @@ import { request as httpsRequest } from "node:https";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { spawnOwnedChildProcess } from "@omnesis/core";
+import { spawnOwnedChildProcess, atomicWriteFile, writeSecretTextFile } from "@omnesis/core";
 import { getRequestListener } from "@hono/node-server";
 import { afterEach, beforeAll, beforeEach, describe, expect, test, vi } from "vitest";
 import { SCOPE_ADMIN, SCOPE_READ } from "@omnesis/types";
@@ -54,15 +54,36 @@ const peer = (overrides: Partial<NonNullable<TailnetCaller["peer"]>> = {}) => ({
   ...overrides,
 });
 
+const PROFILE: string[] = [];
+let mark = 0;
+function lap(name: string): void {
+  const now = performance.now();
+  PROFILE.push(`${name}=${Math.round(now - mark)}`);
+  mark = now;
+}
+function flush(label: string): void {
+  process.stderr.write(`[boot-profile] ${label} ${PROFILE.join(" ")}\n`);
+  PROFILE.length = 0;
+}
+
 async function boot(scenario = "connected"): Promise<void> {
+  mark = performance.now();
   dir = mkdtempSync(join(tmpdir(), "ts-int-"));
   mkdirSync(join(dir, "tailscale", "node"), { recursive: true });
   writeFileSync(join(dir, "tailscale", "node", "fake-scenario"), scenario);
+  lap("dirs");
+  await writeSecretTextFile(join(dir, "key.pem"), material.key, { configDir: dir });
+  lap("tlsKey");
+  await atomicWriteFile(join(dir, "cert.pem"), material.cert, { mode: 0o600 });
+  lap("tlsCert");
   await writeTlsMaterial(join(dir, "cert.pem"), join(dir, "key.pem"), material, dir);
+  lap("writeTlsMaterial");
   const path = join(dir, "gateway.sqlite");
   db = createDatabase(path);
+  lap("createDatabase");
   const device = createDevice(db, { name: "Fictional admin CLI", kind: "cli" });
   admin = createToken(db, device.id, [SCOPE_ADMIN, SCOPE_READ]).token;
+  lap("deviceToken");
   notified = { waiting: [], joined: [] };
   service = new TailscaleEmbedService({
     configDir: dir,
@@ -76,22 +97,31 @@ async function boot(scenario = "connected"): Promise<void> {
       notifyJoined: (d) => notified.joined.push(d),
     },
   });
+  lap("serviceCtor");
   app = createServer(db, path, {
     tailscaleEmbed: service,
     // As the running gateway does: agents reach it by its tailnet name too.
     additionalOAuthIssuerUrls: () => [service.tailnetOrigin()].filter((o): o is string => !!o),
   });
+  lap("createServer");
   await service.attach({ listener: getRequestListener(app.fetch) });
+  lap("attach");
+  flush(`boot(${scenario})`);
 }
 
 beforeEach(async () => {
   await boot();
 });
-afterEach(async () => {
+afterEach(async (ctx) => {
+  mark = performance.now();
   await service.shutdown();
+  lap("shutdown");
   vi.unstubAllEnvs();
   db.close();
+  lap("dbClose");
   rmSync(dir, { recursive: true, force: true });
+  lap("rm");
+  flush(`teardown ${ctx.task.name}`);
 });
 
 async function adminCall(
@@ -231,8 +261,12 @@ describe("owner controls", () => {
 
 describe("collectors joining through Tailscale", () => {
   beforeEach(async () => {
+    mark = performance.now();
     await adminCall("POST", "/admin/tailscale/enable", { enabled: true });
+    lap("enable");
     await until((s) => s.connection === "connected");
+    lap("connected");
+    flush("enable");
   });
 
   test("ask first: the owner approves, the collector collects working credentials once", async () => {
