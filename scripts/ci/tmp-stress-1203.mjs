@@ -7,7 +7,7 @@ import { cpus, tmpdir } from "node:os";
 import { join } from "node:path";
 import { closeSync, fsyncSync, openSync, rmSync, writeSync } from "node:fs";
 const cpu = `for(;;){Math.sqrt(Math.random());}`;
-for (let i = 0; i < cpus().length; i++) new Worker(cpu, { eval: true });
+for (let i = 0; i < Math.max(1, cpus().length / 2); i++) new Worker(cpu, { eval: true });
 const file = join(tmpdir(), `stress-1203-${process.pid}.bin`);
 const buf = Buffer.alloc(64 * 1024, 1);
 process.on("SIGTERM", () => {
