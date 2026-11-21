@@ -6,11 +6,15 @@ package dev.omnesis.android.ui.agent
 import dev.omnesis.android.transport.client.AgentClient
 import dev.omnesis.android.transport.client.AgentEventSource
 import dev.omnesis.android.transport.http.GatewayHttp
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
+import kotlinx.coroutines.withTimeout
 import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockResponse
@@ -20,7 +24,6 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
-import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -53,9 +56,19 @@ class LaunchDraftTest {
     }
 
     @After fun tearDown() {
+        // The resume's own request can outlive the assertions; join the coordinator's scope
+        // before resetting Main.
         coordinator.teardown()
-        server.shutdown()
-        Dispatchers.resetMain()
+        val scope = AgentCoordinator::class.java.getDeclaredField("scope").apply { isAccessible = true }
+        try {
+            runBlocking {
+                val job = checkNotNull((scope.get(coordinator) as CoroutineScope).coroutineContext[Job])
+                withTimeout(5_000) { job.cancelAndJoin() }
+            }
+        } finally {
+            server.shutdown()
+            Dispatchers.resetMain()
+        }
     }
 
     /** Serves [conversations] as the list, running [whileListing] before it is answered. */
@@ -117,17 +130,6 @@ class LaunchDraftTest {
         assertEquals("s_stored", coordinator.state.value.sessionId)
         assertEquals("The stored conversation's own draft", coordinator.state.value.composer.text)
         assertEquals("An earlier unsent question", store.read("", null).text)
-        // The transcript request the resume started has landed before teardown.
-        assertTrue(await { !coordinator.state.value.transcriptLoading })
-    }
-
-    private fun await(predicate: () -> Boolean): Boolean {
-        val deadline = System.currentTimeMillis() + 3_000
-        while (System.currentTimeMillis() < deadline) {
-            if (predicate()) return true
-            Thread.sleep(10)
-        }
-        return predicate()
     }
 
     private companion object {
