@@ -9,10 +9,14 @@ const mocks = vi.hoisted(() => ({
   spawn: vi.fn(),
   spawnSync: vi.fn(),
   workerInvocation: vi.fn(),
+  prepare: vi.fn(),
   control: vi.fn(),
 }));
 vi.mock("node:child_process", () => ({ spawn: mocks.spawn, spawnSync: mocks.spawnSync }));
-vi.mock("./windows-worker-cache.js", () => ({ windowsWorkerInvocation: mocks.workerInvocation }));
+vi.mock("./windows-worker-cache.js", () => ({
+  prepareWindowsNativeWorker: mocks.prepare,
+  windowsWorkerInvocation: mocks.workerInvocation,
+}));
 vi.mock("./windows-job-control.js", () => ({
   WindowsJobControl: vi.fn(function (parentBirth: string, deadlineUnixMs: number) {
     return mocks.control(parentBirth, deadlineUnixMs);
@@ -80,6 +84,7 @@ let helper: Helper;
 beforeEach(() => {
   vi.stubEnv("SystemRoot", "C:\\Windows");
   vi.spyOn(performance, "now").mockReturnValue(0);
+  mocks.prepare.mockReset();
   mocks.workerInvocation.mockReset().mockImplementation((mode: string) => ({
     command: "C:\\Windows\\native-worker.exe",
     args: [mode],
@@ -332,11 +337,22 @@ describe("Windows job stream protocol", () => {
     },
   );
 
-  it.each(["stream", "buffer", "sync"] as const)(
-    "charges framing and initialization against the original %s caller deadline",
-    async (mode) => {
+  it.each([
+    ["stream", 0],
+    ["buffer", 0],
+    ["sync", 0],
+    ["stream", 25_000],
+    ["buffer", 25_000],
+    ["sync", 25_000],
+  ] as const)(
+    "charges framing and initialization against the original %s caller deadline after a %i ms PowerShell load",
+    async (mode, loadMs) => {
       vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
       let now = 1000;
+      // The PowerShell load happens before the caller's clock starts.
+      mocks.prepare.mockImplementationOnce(() => {
+        now += loadMs;
+      });
       vi.spyOn(performance, "now").mockImplementation(() => now);
       vi.spyOn(Date, "now").mockImplementation(() => now);
       let frames = 0;
@@ -375,8 +391,9 @@ describe("Windows job stream protocol", () => {
           vi.advanceTimersByTime(1);
           await terminal;
           expect(helper.kill).toHaveBeenCalledOnce();
-          expect(mocks.control.mock.calls[0]![1]).toBe(1100);
+          expect(mocks.control.mock.calls[0]![1]).toBe(1100 + loadMs);
         }
+        expect(mocks.prepare).toHaveBeenCalled();
         expect(mocks.workerInvocation.mock.calls[0]![2]).toEqual({ timeoutMs: 80 });
       } finally {
         vi.useRealTimers();

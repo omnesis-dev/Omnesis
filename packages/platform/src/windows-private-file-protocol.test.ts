@@ -9,7 +9,10 @@ vi.mock("node:child_process", async (original) => ({
   spawn: mocks.spawn,
   spawnSync: mocks.spawnSync,
 }));
-vi.mock("./windows-worker-cache.js", () => ({ windowsWorkerInvocation: mocks.workerInvocation }));
+vi.mock("./windows-worker-cache.js", () => ({
+  prepareWindowsNativeWorker: () => {},
+  windowsWorkerInvocation: mocks.workerInvocation,
+}));
 import {
   copyWindowsPrivateFileSync,
   createWindowsPrivateFileSync,
