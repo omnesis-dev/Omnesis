@@ -29,6 +29,8 @@ afterEach(() => {
  * bundle as Xcode does:
  * - `runner`: the UI test runner times out waiting for accessibility before
  *   any test starts (exit 65);
+ * - `runner-loading`: the same, as `test-without-building` reports it when
+ *   accessibility never finishes loading (exit 65);
  * - `passed`: every test passes (exit 0);
  * - `failed`: a test fails (exit 65);
  * - `runner-mid-run`: a test ran, then the relaunched runner failed to
@@ -57,6 +59,12 @@ case "$outcome" in
     echo "Testing failed:"
     echo "	OmnesisDemoUITests-Runner (30456) encountered an error (The test runner failed to initialize for UI testing. (Underlying Error: Timed out waiting for AX loaded notification))"
     echo "** TEST FAILED **"
+    exit 65 ;;
+  runner-loading)
+    echo "OmnesisDemoUITests-Runner[34474:89579] [Default] Failed to initialize for UI testing: Error Domain=com.apple.dt.XCTest.XCTFuture Code=1000 \"Timed out while loading Accessibility.\" UserInfo={NSLocalizedDescription=Timed out while loading Accessibility.}" >&2
+    echo "Testing failed:"
+    echo "	OmnesisDemoUITests-Runner (34474) encountered an error (The test runner failed to initialize for UI testing. (Underlying Error: Timed out while loading Accessibility.))"
+    echo "** TEST EXECUTE FAILED **"
     exit 65 ;;
   passed)
     echo "Test Case '-[OmnesisDemoUITests.CloudPairingInteractionUITests testStatusSteps]' started."
@@ -142,6 +150,14 @@ describe.skipIf(process.platform === "win32")("scripts/ci/xcodebuild-ui-tests.mj
     expect(readFileSync(join(result.bundle, "attempt"), "utf8")).toBe("attempt 2\n");
     expect(result.log).toContain("Timed out waiting for AX loaded notification");
     expect(result.log).toContain("running xcodebuild once more");
+    expect(result.log).toContain("** TEST SUCCEEDED **");
+  });
+
+  it("runs once more when accessibility never finished loading for the runner", () => {
+    const result = run(["runner-loading", "passed"]);
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.calls.map((call) => call.split(" => ")[1])).toEqual(["runner-loading", "passed"]);
+    expect(result.log).toContain("Timed out while loading Accessibility.");
     expect(result.log).toContain("** TEST SUCCEEDED **");
   });
 

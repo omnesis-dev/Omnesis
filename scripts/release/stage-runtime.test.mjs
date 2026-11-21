@@ -106,11 +106,14 @@ describe("runtime staging", () => {
     expect(() => localRuntimeClosure([])).toThrow(/at least one runtime root/u);
   });
 
-  it("compiles every package in the staged closure", () => {
+  it("compiles every package in the staged closure in one process when there is room", () => {
     const entries = localRuntimeClosure("@omnesis/gateway");
     const calls = [];
 
-    compileRuntimeClosure(entries, (...args) => calls.push(args));
+    compileRuntimeClosure(entries, {
+      oneAtATime: false,
+      runCompiler: (...args) => calls.push(args),
+    });
 
     expect(calls).toHaveLength(1);
     const [executable, args, options] = calls[0];
@@ -124,6 +127,32 @@ describe("runtime staging", () => {
       expect.arrayContaining([expect.stringMatching(/packages[\\/]near-dupes$/u)]),
     );
     expect(options).toMatchObject({ stdio: "inherit" });
+  });
+
+  it("compiles the closure one project per process, dependencies first", () => {
+    const entries = localRuntimeClosure("omnesis");
+    const calls = [];
+
+    compileRuntimeClosure(entries, {
+      oneAtATime: true,
+      runCompiler: (...args) => calls.push(args),
+    });
+
+    const built = calls.map(([executable, args, options]) => {
+      expect(executable).toBe(process.execPath);
+      expect(args).toHaveLength(3);
+      expect(args[1]).toBe("--build");
+      expect(options).toMatchObject({ cwd: process.cwd(), stdio: "inherit" });
+      return args[2];
+    });
+    expect(new Set(built).size).toBe(built.length);
+    expect(built).toEqual(
+      expect.arrayContaining(entries.map((entry) => join(entry.dir, "tsconfig.json"))),
+    );
+    const at = (dir) => built.indexOf(join(dir, "tsconfig.json"));
+    expect(at("packages/types")).toBeLessThan(at("packages/core"));
+    expect(at("packages/core")).toBeLessThan(at("packages/gateway"));
+    expect(at("packages/gateway")).toBeLessThan(at("packages/cli"));
   });
 
   it("keeps prebuilt outputs out of the Docker build context", () => {

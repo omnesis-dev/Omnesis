@@ -121,3 +121,15 @@ test("the Docker runtime build gets the policy's smallest heap", () => {
     stage.indexOf("stage-runtime.mjs --build"),
   );
 });
+
+test("the installer coverage journeys run with the policy's smallest heap", () => {
+  // The macOS installer journeys state the floor for the whole journey, so
+  // their source build runs with the heap the smallest machine gets.
+  const workflow = readFileSync(
+    fileURLToPath(new URL("../../../../.github/workflows/installer-coverage.yml", import.meta.url)),
+    "utf8",
+  );
+  const stated = [...workflow.matchAll(/^\s*NODE_OPTIONS: (.+)$/gmu)].map((match) => match[1]);
+  expect(stated.length).toBeGreaterThan(0);
+  for (const value of stated) expect(value).toBe(buildNodeOptions(1, undefined));
+});

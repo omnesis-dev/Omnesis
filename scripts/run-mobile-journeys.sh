@@ -27,7 +27,9 @@
 #
 # A journey that fails is retried once (OMNESIS_JOURNEY_RETRIES), because
 # simulators and emulators have known one-off flakes; a journey that fails
-# every attempt fails the run. The screen is recorded for the whole run.
+# every attempt fails the run. On iOS, an XCTest runner that fails to
+# initialize before any journey starts gets one more xcodebuild run. The
+# screen is recorded for the whole run.
 # Everything worth reading after a failure lands in OMNESIS_JOURNEY_ARTIFACTS:
 # the recording, per-failure screenshots, test reports / the xcresult bundle,
 # the iOS app's touch log, and the gateway's logs and stall profiles.
@@ -94,10 +96,27 @@ bounded() {
   fi
 }
 
+# `simctl io recordVideo` stops and writes its file on SIGINT, but only once
+# it has started recording: a job this script starts in the background begins
+# with SIGINT ignored, until the recorder sets up its own handler. So the stop
+# waits (briefly) for "Recording started", and a recorder that still has not
+# exited a while after the interrupt is killed rather than waited on forever.
 RECORDER_PID=""
 stop_recording() {
   if [[ -n "$RECORDER_PID" ]]; then
+    local waited=0
+    while ((waited < 30)) && kill -0 "$RECORDER_PID" 2>/dev/null \
+      && ! grep -q 'Recording started' "$ARTIFACTS/recorder.log" 2>/dev/null; do
+      sleep 1
+      waited=$((waited + 1))
+    done
     kill -INT "$RECORDER_PID" 2>/dev/null || true
+    waited=0
+    while ((waited < 60)) && kill -0 "$RECORDER_PID" 2>/dev/null; do
+      sleep 1
+      waited=$((waited + 1))
+    done
+    kill -KILL "$RECORDER_PID" 2>/dev/null || true
     wait "$RECORDER_PID" 2>/dev/null || true
     RECORDER_PID=""
   fi
@@ -206,6 +225,11 @@ print(json.dumps({"gatewayURL": os.environ["URL"], "token": os.environ["TOKEN"],
 
   local tests=()
   local expected=0
+  # xcodebuild refuses `-test-iterations 1`, so no retry means no flags.
+  local retry=()
+  if ((RETRIES > 0)); then
+    retry=(-retry-tests-on-failure -test-iterations $((RETRIES + 1)))
+  fi
   if [[ -n "${OMNESIS_JOURNEY_ONLY:-}" ]]; then
     tests=("-only-testing:OmnesisDemoUITests/$OMNESIS_JOURNEY_ONLY")
   else
@@ -228,18 +252,21 @@ print(json.dumps({"gatewayURL": os.environ["URL"], "token": os.environ["TOKEN"],
   local log_start
   log_start="$(date '+%Y-%m-%d %H:%M:%S')"
   # The full xcodebuild output goes to the artifacts; the console keeps the
-  # test verdicts and errors.
+  # test verdicts and errors. A UI test runner that fails to initialize before
+  # any journey starts gets one more attempt (`xcodebuild-ui-tests.mjs`, which
+  # says so on stderr); a journey that fails is retried by xcodebuild itself.
   local status=0
   set +e
-  TEST_RUNNER_OMNESIS_JOURNEY_CONFIG="$config" xcodebuild test-without-building \
+  TEST_RUNNER_OMNESIS_JOURNEY_CONFIG="$config" node "$ROOT/scripts/ci/xcodebuild-ui-tests.mjs" \
+    --log "$ARTIFACTS/xcodebuild-$phase.log" -- test-without-building \
     -project "$ROOT/ios/Omnesis.xcodeproj" \
     -scheme OmnesisDemoUITests \
     -destination "platform=iOS Simulator,id=$udid" \
     -derivedDataPath "$IOS_DERIVED_DATA" \
     "${IOS_PACKAGE_FLAGS[@]}" \
     -resultBundlePath "$result" \
-    -retry-tests-on-failure -test-iterations $((RETRIES + 1)) \
-    "${tests[@]}" 2>&1 | tee "$ARTIFACTS/xcodebuild-$phase.log" \
+    ${retry[@]+"${retry[@]}"} \
+    "${tests[@]}" \
     | grep -E --line-buffered '^(Test Case|Test Suite|Testing|Executed|\*\*)|error:'
   status="${PIPESTATUS[0]}"
   set -e

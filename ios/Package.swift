@@ -77,6 +77,8 @@ let package = Package(
                 "HealthSampleProbeViewTests.swift",
                 // Hosts the search breadcrumbs' UIKit text views in a window.
                 "SearchBreadcrumbInteractionTests.swift",
+                // Hosts the Timeline drawer's UIKit blur in a window.
+                "CitationsDrawerScrimTests.swift",
                 // Drives the transport clients against a spawned live gateway.
                 "GatewayLiveE2ETests.swift",
                 // Opt-in microphone capture needs a hosted iOS audio session.

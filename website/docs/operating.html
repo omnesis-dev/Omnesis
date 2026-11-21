@@ -175,9 +175,12 @@
         <p>
           For a native install, the <a href="install">installer</a> registers the gateway and
           collector as user services: launchd LaunchAgents on macOS, systemd user units on Linux.
-          Both start at login and restart on failure. <code>omnesis service install</code> sets them
-          up on a machine where the installer did not. Name a component to install just one, for
-          example <code>omnesis service install collector</code> on a machine that only syncs.
+          Both start at login and restart on failure. On macOS the gateway runs as a standard
+          service rather than a background job, so macOS does not throttle the answers it gives the
+          apps, search and agents; the collector runs as a background job, so its syncing gives way
+          to the programs you are using. <code>omnesis service install</code> sets them up on a
+          machine where the installer did not. Name a component to install just one, for example
+          <code>omnesis service install collector</code> on a machine that only syncs.
         </p>
         <p>
           The other verbs are <code>start</code>, <code>stop</code>, <code>restart</code>,
@@ -402,9 +405,12 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
 
         <p>
           The first native operation on Windows verifies ownership and initializes a protected
-          helper. Those steps share a 30-second deadline, shortened by the operation's remaining
-          timeout. Preparing inputs and initializing the helper count toward that same operation
-          timeout. An operation stops if its helper cannot be verified.
+          helper. Loading Windows PowerShell for the ownership check has its own 30-second limit,
+          which does not count toward the operation; on a freshly started computer this first load
+          can take several seconds. Verification and initialization then share a 30-second deadline,
+          shortened by the operation's remaining timeout. Preparing inputs and initializing the
+          helper count toward that same operation timeout. An operation stops if its helper cannot
+          be verified.
         </p>
 
         <h3 id="stalls">Event-loop stalls</h3>

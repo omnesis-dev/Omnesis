@@ -18,7 +18,12 @@ import {
   systemdEscapeArg,
   type SecretStoreBackend,
 } from "@omnesis/core";
-import type { ServiceComponent, ServiceSpec, SystemdCredential } from "./types.js";
+import {
+  LAUNCHD_PROCESS_TYPE,
+  type ServiceComponent,
+  type ServiceSpec,
+  type SystemdCredential,
+} from "./types.js";
 
 // ── Unit naming ────────────────────────────────────────────────────────
 
@@ -220,6 +225,7 @@ export function escapeXml(value: string): string {
  * drain before SIGKILL; it exceeds the gateway's own shutdown budget
  * (`GATEWAY_SHUTDOWN_BUDGET_MS`) so a large index flush or analytics close
  * completes instead of being cut off with the stores half-written.
+ * ProcessType is the component's resource class (`LAUNCHD_PROCESS_TYPE`).
  */
 export function generateLaunchdPlist(spec: ServiceSpec): string {
   const label = launchdLabel(spec.component, spec.instance);
@@ -250,7 +256,7 @@ ${args}
     <key>ExitTimeOut</key>
     <integer>${GATEWAY_EXIT_TIMEOUT_SECONDS}</integer>
     <key>ProcessType</key>
-    <string>Background</string>
+    <string>${LAUNCHD_PROCESS_TYPE[spec.component]}</string>
     <key>Umask</key>
     <integer>63</integer>
     <key>EnvironmentVariables</key>

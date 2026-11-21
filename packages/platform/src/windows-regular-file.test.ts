@@ -4,6 +4,7 @@
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 const mocks = vi.hoisted(() => ({ run: vi.fn(), sync: vi.fn() }));
 vi.mock("./windows-worker-cache.js", () => ({
+  prepareWindowsNativeWorker: () => {},
   windowsWorkerInvocation: () => ({
     command: "C:\\Windows\\native-worker.exe",
     args: ["filesystem"],

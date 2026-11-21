@@ -78,12 +78,10 @@ describe("Windows native worker cache boundary", () => {
     });
     const { windowsWorkerInvocation } = await import("./windows-worker-cache.js");
     const bootstrap = vi.fn(verified);
-    expect(() => windowsWorkerInvocation("job", bootstrap)).toThrow(
-      "Cannot verify Windows native worker owner (EPRIVATE:owner-birth:timeout:query)",
-    );
-    expect(() => windowsWorkerInvocation("filesystem", bootstrap)).toThrow(
-      "Cannot verify Windows native worker owner (EPRIVATE:owner-birth:timeout:query)",
-    );
+    const refusal =
+      /^Cannot verify Windows native worker owner \(EPRIVATE:owner-birth:timeout:query; owner [0-9]+ ms, 30000 ms allowance\)$/u;
+    expect(() => windowsWorkerInvocation("job", bootstrap)).toThrow(refusal);
+    expect(() => windowsWorkerInvocation("filesystem", bootstrap)).toThrow(refusal);
     expect(bootstrap).not.toHaveBeenCalled();
     expect(windowsWorkerOwnerStart).toHaveBeenCalledOnce();
   });
