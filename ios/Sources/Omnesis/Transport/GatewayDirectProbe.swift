@@ -49,9 +49,7 @@ public enum GatewayDirectProbe {
             route: route,
             attemptTimeout: attemptTimeout,
             totalTimeout: totalTimeout,
-            connectTLS: { endpoint, host, queue, verify in
-                GatewayTLSNetworkConnection.make(endpoint: endpoint, serverName: host, queue: queue, verify: verify)
-            },
+            connectTLS: GatewayTLSNetworkConnection.make,
             verifyTrust: verifyTrust
         )
     }
@@ -143,11 +141,19 @@ public enum GatewayDirectProbe {
                 host: NWEndpoint.Host(destination.address),
                 port: NWEndpoint.Port(rawValue: UInt16(destination.port))!
             )
-            let next = connectTLS(endpoint, route.host, queue) { [weak self] trust in
-                guard let self, !finished, attempt.isCurrent(generation) else { return false }
-                let accepted = verifyTrust(trust, route.host)
-                return attempt.record(generation, accepted: accepted)
-            }
+            let host = route.host, verifyTrust = verifyTrust
+            let verification = GatewayTLSNetworkConnection.Verification(
+                admits: { [weak self] in
+                    guard let self else { return false }
+                    return !finished && attempt.isCurrent(generation)
+                },
+                evaluate: { verifyTrust($0, host) },
+                decide: { [weak self] accepted in
+                    guard let self, !finished, attempt.isCurrent(generation) else { return false }
+                    return attempt.record(generation, accepted: accepted)
+                }
+            )
+            let next = connectTLS(endpoint, host, queue, verification)
             connection = next
             next.onState { [weak self, weak next] state in
                 guard let self, let next, connection === next, !finished else { return }
