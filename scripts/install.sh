@@ -1000,9 +1000,8 @@ usable_memory_mb() {
 # memory it believes it has and settles near 2 GB on a small or containerized
 # host — not enough for `tsc --build` across every project reference, which
 # then dies with a heap OOM on a machine that had memory to spare. Claim half
-# of what this machine can really use instead, never less than the 3 GB the
-# build needs to finish, and never override a value the operator set
-# themselves.
+# of what this machine can really use instead, never less than 3 GB, and never
+# override a value the operator set themselves.
 #
 # This is the shell copy of the policy the managed updater applies to its own
 # builds (packages/cli/src/update/build-heap.ts); a test runs the arithmetic
@@ -1016,9 +1015,10 @@ build_node_options() {
   case "$BUILD_MEM_MB" in ''|*[!0-9]*) printf '%s' "${NODE_OPTIONS:-}"; return 0 ;; esac
   BUILD_HEAP_MB=$((BUILD_MEM_MB / 2))
   [ "$BUILD_HEAP_MB" -le 8192 ] || BUILD_HEAP_MB=8192
-  # The build does not finish with less, so a smaller machine still gets this
-  # much and lets the OS page; require_source_build_memory refuses a machine
-  # too small even for that before anything is installed.
+  # A smaller machine still gets this much and lets the OS page. With this heap
+  # the build compiles one project per process (scripts/build-projects.mjs),
+  # and the largest project peaks well inside it. require_source_build_memory
+  # refuses a machine too small even for that before anything is installed.
   [ "$BUILD_HEAP_MB" -ge 3072 ] || BUILD_HEAP_MB=3072
   printf '%s' "${NODE_OPTIONS:+$NODE_OPTIONS }--max-old-space-size=$BUILD_HEAP_MB"
 }

@@ -42,14 +42,16 @@ RUN if [ "$TARGETPLATFORM" != "$BUILDPLATFORM" ]; then export NPM_CI_ATTEMPT_TIM
     && sh scripts/ci/npm-ci.sh
 
 FROM workspace-install AS runtime-build
+COPY scripts/build-projects.mjs scripts/
 COPY scripts/release/ scripts/release/
 COPY scripts/runtime/ scripts/runtime/
 COPY scripts/seeded-state/ scripts/seeded-state/
-# Node settles its heap near 2 GB on a small builder, and `tsc --build` across
-# the runtime closure outgrows that and dies with a heap OOM. This is the floor
-# the source installer and `omnesis update` give the same build
-# (packages/cli/src/update/build-heap.ts); a builder short of memory pages
-# rather than failing. `--build-arg NODE_OPTIONS=...` replaces it.
+# Node settles its heap near 2 GB on a small builder, which the compiler can
+# outgrow. This is the floor the source installer and `omnesis update` give
+# the same build (packages/cli/src/update/build-heap.ts). With it the runtime
+# closure builds one project per compiler process (scripts/build-projects.mjs),
+# whose peak is the largest project's, well inside it; a heap set to 6 GB or
+# more with `--build-arg NODE_OPTIONS=...` builds it in one process.
 ARG NODE_OPTIONS=--max-old-space-size=3072
 RUN node scripts/runtime/stage-runtime.mjs --build \
       --package omnesis --out /opt/omnesis-runtime
@@ -71,6 +73,7 @@ COPY packages/ packages/
 COPY patches/ patches/
 COPY scripts/native-runtime-preflight.mjs scripts/native-vector-compat.mjs scripts/duckdb-extensions.mjs scripts/
 COPY scripts/ci/npm-ci.sh scripts/ci/npm-ci.sh
+COPY scripts/build-projects.mjs scripts/
 COPY scripts/runtime/ scripts/runtime/
 COPY scripts/release/ scripts/release/
 # Published builds set this so an image cannot ship without an optional package

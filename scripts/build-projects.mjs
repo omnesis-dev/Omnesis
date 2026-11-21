@@ -3,33 +3,37 @@
 // Copyright (c) 2026 Adrien Conrath
 
 // `npm run build`: `tsc --build` over every TypeScript project the root
-// tsconfig references, sized to the machine's memory.
+// tsconfig references, sized to the heap it runs with and the machine's memory.
+// The image build's runtime compile (`scripts/runtime/stage-runtime.mjs`)
+// builds its projects through the same policy.
 //
-// A single `tsc --build` over the whole solution keeps what it has loaded for
-// the projects it already built while it builds the next, so its memory climbs
-// with each project to about 3.5 GB by the end. On a machine with less than
-// 14 GiB, beside the operating system and a running collector, that is enough
-// to push the build into swap or the kernel's memory compressor. There the
-// projects are built one per compiler process, in the order `tsc --build`
-// itself would build them: each finds the projects it references already built
-// and reads only their declaration output, so a process holds one project's
-// program and the peak is the largest single project, about 2 GB. It takes
-// about twice as long, since each process parses its dependencies' declarations
-// again, so a machine with memory to spare keeps the single process. Either way
-// the output is the same: the same tsconfigs build with the same options, and a
-// project an earlier process built is up to date and is not built again.
+// A single `tsc --build` over many projects keeps what it has loaded for the
+// projects it already built while it builds the next, so its heap climbs with
+// each project: the runtime closure alone needs about 3 GB of it, and the whole
+// solution more. Built one per compiler process instead, in the order
+// `tsc --build` itself would build them, each process finds the projects it
+// references already built and reads only their declaration output, so it holds
+// one project's program and the peak is the largest single project, the
+// gateway's, under 2 GB. That takes longer, since each process parses its
+// dependencies' declarations again, so the single process is kept where it has
+// room: a machine with memory to spare and a heap well above what the whole
+// solution needs. Either way the output is the same: the same tsconfigs build
+// with the same options, and a project an earlier process built is up to date
+// and is not built again.
 //
 // The machine's memory is read by the build heap policy's own reader
-// (`packages/cli/src/update/build-heap.ts`). Arguments (e.g. `--verbose`,
-// `--force`) run a single `tsc --build` over the solution with them, since a
-// flag such as `--force` would otherwise rebuild every project's references
-// again in each process.
+// (`packages/cli/src/update/build-heap.ts`); the heap is the one this process
+// was started with, which the compiler processes it starts inherit through
+// NODE_OPTIONS. Arguments (e.g. `--verbose`, `--force`) run a single
+// `tsc --build` over the solution with them, since a flag such as `--force`
+// would otherwise rebuild every project's references again in each process.
 
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { constants } from "node:os";
-import { dirname, join, relative } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { getHeapStatistics } from "node:v8";
 import { nodeMemoryProbe, usableMemoryMb } from "../packages/cli/src/update/build-heap.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -41,21 +45,64 @@ const require = createRequire(import.meta.url);
  */
 export const SINGLE_PROCESS_MIN_MB = 14 * 1024;
 
-/** Whether to build one project per process: unless the machine has memory to spare. */
-export function buildOneProjectAtATime(memoryMb) {
-  return memoryMb === null || memoryMb < SINGLE_PROCESS_MIN_MB;
+/**
+ * From this heap the whole solution builds in one process. Below it, a single
+ * process can run out of heap, and the build heap policy's floor
+ * (`build-heap.ts`) is far below it; at or above it, the single process keeps
+ * a wide margin. The policy gives at least this much to every machine with
+ * SINGLE_PROCESS_MIN_MB of memory, so only a heap set smaller by hand, such as
+ * the image build's floor, moves such a machine to one project at a time.
+ */
+export const SINGLE_PROCESS_MIN_HEAP_MB = 6 * 1024;
+
+/**
+ * Whether to build one project per process: unless the machine has memory to
+ * spare and the compiler a heap the whole build fits in with room.
+ */
+export function buildOneProjectAtATime(memoryMb, heapMb) {
+  return (
+    memoryMb === null || memoryMb < SINGLE_PROCESS_MIN_MB || heapMb < SINGLE_PROCESS_MIN_HEAP_MB
+  );
 }
 
-/** Every project of the solution, dependencies first, as `tsc --build` orders them. */
-export function buildOrder(root = ROOT) {
+/** The heap, in MiB, of this process and so of the compiler processes it starts. */
+export function compilerHeapMb() {
+  return Math.floor(getHeapStatistics().heap_size_limit / (1024 * 1024));
+}
+
+/** Whether this machine and heap call for one project per process. */
+export function buildOneProjectAtATimeHere() {
+  return buildOneProjectAtATime(usableMemoryMb(nodeMemoryProbe), compilerHeapMb());
+}
+
+/**
+ * Every project the given projects build, dependencies first, as `tsc --build`
+ * orders them, relative to the root. A project is a tsconfig or the directory
+ * holding one, relative to the root or absolute.
+ */
+export function buildOrder(root = ROOT, projects = ["tsconfig.json"]) {
   const ts = require("typescript");
   const host = ts.createSolutionBuilderHost(ts.sys);
-  const order = ts.createSolutionBuilder(host, [join(root, "tsconfig.json")], {}).getBuildOrder();
+  const roots = projects.map((project) => resolve(root, project));
+  const order = ts.createSolutionBuilder(host, roots, {}).getBuildOrder();
   // A cycle in the references is reported in place of an order.
   if (!Array.isArray(order)) {
     throw new Error("the project references contain a cycle; run `tsc --build` to see it");
   }
   return order.map((project) => relative(root, project));
+}
+
+/**
+ * Build the projects: in one `compile` call over all of them, or, one project
+ * at a time, in one call per project of their build order. `compile` runs
+ * `tsc --build` over the projects it is given in a compiler process of its own.
+ */
+export function buildProjects(projects, { oneAtATime, compile, root = ROOT }) {
+  if (!oneAtATime) {
+    compile(projects);
+    return;
+  }
+  for (const project of buildOrder(root, projects)) compile([project]);
 }
 
 /**
@@ -84,11 +131,14 @@ function tscBuild(tsc, args) {
 function main() {
   const tsc = require.resolve("typescript/bin/tsc");
   const args = process.argv.slice(2);
-  if (args.length > 0 || !buildOneProjectAtATime(usableMemoryMb(nodeMemoryProbe))) {
+  if (args.length > 0) {
     tscBuild(tsc, ["tsconfig.json", ...args]);
     return;
   }
-  for (const project of buildOrder()) tscBuild(tsc, [project]);
+  buildProjects(["tsconfig.json"], {
+    oneAtATime: buildOneProjectAtATimeHere(),
+    compile: (projects) => tscBuild(tsc, projects),
+  });
 }
 
 if (import.meta.main) main();
