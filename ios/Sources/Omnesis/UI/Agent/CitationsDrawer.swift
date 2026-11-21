@@ -709,15 +709,25 @@ struct CitationsDrawer: View {
     /// `AdjustableBlur` wraps `UIVisualEffectView` + a paused
     /// `UIViewPropertyAnimator` because SwiftUI's `Material` only
     /// exposes a coarse thickness scale and not a blur radius.
+    ///
+    /// The blur exists only while some of the drawer shows. A paused
+    /// animator is an animation that never finishes, so a blur kept
+    /// mounted behind the closed drawer would hold a full-screen
+    /// effect view and an unfinished animation for as long as the
+    /// conversation is on screen; XCUITest, which waits for an app's
+    /// animations to finish before every tap, would wait out its full
+    /// timeout on each one.
     private func scrim(progress: CGFloat) -> some View {
         ZStack {
             // Adaptive material so the dimmed backdrop frosts dark in
             // dark mode and light in light mode rather than staying a
             // fixed dark charcoal that clashes with the light theme.
-            AdjustableBlur(
-                intensity: 0.12,
-                style: .systemUltraThinMaterial
-            )
+            if progress > 0 {
+                AdjustableBlur(
+                    intensity: 0.12,
+                    style: .systemUltraThinMaterial
+                )
+            }
             Color.black.opacity(0.45)
         }
         .opacity(Double(progress))
