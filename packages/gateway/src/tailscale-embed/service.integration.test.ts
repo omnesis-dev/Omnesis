@@ -8,7 +8,7 @@
  * are written to the socket exactly as the helper writes them.
  */
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { tmpdir } from "node:os";
@@ -16,7 +16,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnOwnedChildProcess } from "@omnesis/core";
 import { getRequestListener } from "@hono/node-server";
-import { afterEach, beforeAll, beforeEach, describe, expect, test, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test, vi } from "vitest";
 import { SCOPE_ADMIN, SCOPE_READ } from "@omnesis/types";
 import { writeTlsMaterial } from "../tls-lifecycle/persistence.js";
 import { generateSelfSigned } from "../tls.js";
@@ -33,8 +33,25 @@ import type { TailnetCaller } from "./caller.js";
 const FAKE = fileURLToPath(new URL("./testing/fake-helper.mjs", import.meta.url));
 
 let material: { cert: string; key: string };
+let schemaDir: string;
+let schemaPath: string;
 beforeAll(async () => {
   material = await generateSelfSigned();
+  // Every case gets its own gateway database with the complete real schema.
+  // Building that schema replays every migration, which is most of a boot,
+  // so build it once and give each case a copy. Cold schema construction has
+  // its own tests; these cases exercise the Tailscale device and its joins.
+  schemaDir = mkdtempSync(join(tmpdir(), "ts-int-schema-"));
+  schemaPath = join(schemaDir, "gateway.sqlite");
+  const seed = createDatabase(schemaPath);
+  try {
+    seed.pragma("wal_checkpoint(TRUNCATE)");
+  } finally {
+    seed.close();
+  }
+});
+afterAll(() => {
+  if (schemaDir) rmSync(schemaDir, { recursive: true, force: true });
 });
 let dir: string;
 let db: ReturnType<typeof createDatabase>;
@@ -60,6 +77,7 @@ async function boot(scenario = "connected"): Promise<void> {
   writeFileSync(join(dir, "tailscale", "node", "fake-scenario"), scenario);
   await writeTlsMaterial(join(dir, "cert.pem"), join(dir, "key.pem"), material, dir);
   const path = join(dir, "gateway.sqlite");
+  copyFileSync(schemaPath, path);
   db = createDatabase(path);
   const device = createDevice(db, { name: "Fictional admin CLI", kind: "cli" });
   admin = createToken(db, device.id, [SCOPE_ADMIN, SCOPE_READ]).token;
