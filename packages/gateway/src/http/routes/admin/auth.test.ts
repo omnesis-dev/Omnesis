@@ -14,6 +14,8 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { describe, expect, test, beforeEach, afterEach, vi } from "vitest";
 
 import { SCOPE_ADMIN, SCOPE_READ, DeviceId, SourceType, type Scope } from "@omnesis/types";
@@ -27,8 +29,6 @@ import { directWriteGate } from "../../../write-gate.js";
 import { AuthFlowRegistry, type AuthFlow } from "../../../auth-flows.js";
 import type { DeviceWsServer } from "../../../ws.js";
 import type { WireChallenge } from "@omnesis/source-sdk";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 type Db = ReturnType<typeof createDatabase>;
 

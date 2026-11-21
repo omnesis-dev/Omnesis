@@ -9,6 +9,8 @@
 
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test, vi, type Mock } from "vitest";
 import {
   createLogger,
@@ -23,8 +25,6 @@ import { DEFAULT_SALIENCE_THRESHOLDS } from "./salience.js";
 import type { CognitionDecisionRecord } from "../storage/decisions.js";
 import type { OwnerInterest } from "../interest/lookup.js";
 import type Database from "better-sqlite3";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 const log = createLogger("test").child("observation-noting");
 const NOTED_AT = Date.parse("2026-07-02T15:00:00.000Z");

@@ -7,6 +7,8 @@ import { createLogger, experimentalEnabled } from "@omnesis/core";
 import {
   executionModeOf,
   isDrivenByHost,
+  mergeContractDeclarations,
+  resolveOutputRevision,
   resolveProvider,
   memberScopedParamNames,
 } from "@omnesis/source-sdk";
@@ -45,6 +47,7 @@ function sourceDefToDescriptor(def: SourceDefinition): SourceDescriptor {
     authType: def.authType,
     acceptsAuthCode: def.acceptsAuthCode,
     experimental: def.experimental,
+    outputRevision: resolveOutputRevision(def.contract),
     widgetOrigins: def.widgetOrigins,
     widgetRenderer: def.widgetRenderer,
     conversational: def.conversational,
@@ -135,6 +138,9 @@ function providerSourceToDescriptor(
     // A per-source flag wins over the provider default, so a multi-source
     // provider can mark one source experimental without hiding its siblings.
     experimental: sourceDef.experimental ?? providerDef.experimental,
+    outputRevision: resolveOutputRevision(
+      mergeContractDeclarations(providerDef.contract, sourceDef.contract),
+    ),
     widgetOrigins: providerDef.widgetOrigins,
     widgetRenderer: providerDef.widgetRenderer,
     conversational: sourceDef.conversational,

@@ -2,7 +2,6 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { join } from "node:path";
-import type { ChildProcess } from "node:child_process";
 import { afterAll, beforeAll, expect, test } from "vitest";
 import {
   ensureInstallRootKey,
@@ -21,6 +20,7 @@ import {
   spawnE2ESubprocess,
 } from "./e2e-owned-process.js";
 import { killSubprocessGroup, registerSubprocessGroup } from "./subprocess-reaper.js";
+import type { ChildProcess } from "node:child_process";
 
 const ROOT = join(import.meta.dirname, "../../../..");
 const COLLECTOR_NAME = "invented-ipc-collector";

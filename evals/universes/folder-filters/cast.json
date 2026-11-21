@@ -1,0 +1,11 @@
+{
+  "self": "p_maya",
+  "people": [
+    {
+      "id": "p_maya",
+      "name": "Maya Reeves",
+      "emails": ["maya.reeves@example.org"],
+      "phones": ["+15550100101"]
+    }
+  ]
+}

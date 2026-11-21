@@ -9,10 +9,10 @@ import { context } from "./shared.mjs";
 // Whole serialized fixture snapshots protect values, source/file ordering and
 // cross-source copies at the reference date and calendar boundary cases.
 it.each([
-  ["2026-10-03", "490c8116430d6f8e5934d2c6818b9ab5b49361b1e1ed20c21cd2ac5d07dd151a"],
-  ["2026-12-31", "1f158f342f023e99dbfcca263a25ee84ac5d3f9c2b00fc15ce18e053b85c294b"],
-  ["2027-03-28", "3cb50f45ddd638293e6314e3583b3222e719f5893a82e1ccad4984037b67d76b"],
-  ["2028-02-29", "032e7e6d66251314a1f5b99e8de69f2454f8b346828bd7a1347801b8186847c8"],
+  ["2026-10-03", "93f2a4608fb7df4a72f37a873e79015e7e50c74ebe2729404ec1918ef6f47f1a"],
+  ["2026-12-31", "9d0633c67bd82b986c7b5627f96144845618a4c6d9f9ac3c69dc6fa39eeb6489"],
+  ["2027-03-28", "ece4e9dcbc0d97b263b336b57925049efc4e68f11686e30a34c18a2e05bb27c9"],
+  ["2028-02-29", "b0a39c504f33a1fac562209cead0991bd108e5acc0c4f8564eca00288e4454f1"],
 ])("preserves complete background fixture serialization at %s", (asOf, expected) => {
   const serialized = JSON.stringify(buildBackground(context(asOf)));
   expect(createHash("sha256").update(serialized).digest("hex")).toBe(expected);

@@ -3,14 +3,14 @@
 
 import { randomBytes, randomUUID } from "node:crypto";
 import { rmSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { openEncryptedSqlite } from "../sqlite-encryption.js";
 import { DEFAULT_WAL_CHECKPOINT_POLICY } from "./wal-checkpoint.js";
 import { openWriteConn } from "./writer-connection.js";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 const opened: Database.Database[] = [];
 let path = "";

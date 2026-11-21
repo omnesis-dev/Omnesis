@@ -111,6 +111,13 @@ export interface RegisteredSource {
    * replicated source is synced under the gateway's sync lease.
    */
   multiDeviceMode?: MultiDeviceMode;
+  /**
+   * The source's output revision, resolved from its contract declaration.
+   * Sent with every sync page so the gateway stores it on each document. A
+   * registration that names none sends none, and the gateway counts those
+   * documents as revision 0.
+   */
+  sourceVersion?: number;
   icon?: SourceIcon;
   attribution?: SourceAttribution;
   /**
@@ -123,7 +130,7 @@ export interface RegisteredSource {
    * picking one account's: two accounts of one type legitimately differ, so
    * copying either names a family after one of its members.
    */
-  family: { name: string; icon?: SourceIcon };
+  family: { name: string; icon?: SourceIcon; resyncCost?: string };
   urlPatterns?: Array<{ regex: string; idGroup?: number }>;
   /**
    * Per-host URL canonicalizer copied from the source's

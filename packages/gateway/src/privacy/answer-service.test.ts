@@ -464,7 +464,7 @@ describe("AnswerService", () => {
     expect(JSON.stringify(response)).not.toContain("Private candidate");
     expect(notify).toHaveBeenCalledWith(expect.stringContaining("approval-"));
     expect(
-      JSON.stringify(loadReleasedAnswerHistory(db, response.conversationId, request.ownerId)),
+      JSON.stringify(await loadReleasedAnswerHistory(db, response.conversationId, request.ownerId)),
     ).not.toContain("Private candidate");
   });
 
@@ -528,7 +528,7 @@ describe("AnswerService", () => {
       count: 0,
     });
     expect(
-      JSON.stringify(loadReleasedAnswerHistory(db, response.conversationId, request.ownerId)),
+      JSON.stringify(await loadReleasedAnswerHistory(db, response.conversationId, request.ownerId)),
     ).not.toContain("Private candidate");
   });
 
@@ -800,7 +800,7 @@ describe("AnswerService", () => {
     expect(response).toMatchObject({ status: "denied", reason: "hard_stop" });
     expect(JSON.stringify(response)).not.toContain("Private candidate");
     expect(
-      JSON.stringify(loadReleasedAnswerHistory(db, response.conversationId, request.ownerId)),
+      JSON.stringify(await loadReleasedAnswerHistory(db, response.conversationId, request.ownerId)),
     ).not.toContain("Private candidate");
     const candidateEvent = listPrivacyAuditEvents(db, response.conversationId, 20)?.events.find(
       (event) => event.kind === "candidate_generated",
@@ -839,7 +839,9 @@ describe("AnswerService", () => {
 
     expect(response.status).toBe("approval_required");
     expect(notify).toHaveBeenCalledOnce();
-    expect(loadReleasedAnswerHistory(db, response.conversationId, request.ownerId)).toEqual([]);
+    expect(await loadReleasedAnswerHistory(db, response.conversationId, request.ownerId)).toEqual(
+      [],
+    );
   });
 
   it("holds an answer when a direct policy edit is detected at the release commit", async () => {
@@ -862,7 +864,9 @@ describe("AnswerService", () => {
 
     expect(response.status).toBe("approval_required");
     expect(notify).toHaveBeenCalledOnce();
-    expect(loadReleasedAnswerHistory(db, response.conversationId, request.ownerId)).toEqual([]);
+    expect(await loadReleasedAnswerHistory(db, response.conversationId, request.ownerId)).toEqual(
+      [],
+    );
   });
 
   it("reviews again before release when another turn advances workflow disclosure", async () => {

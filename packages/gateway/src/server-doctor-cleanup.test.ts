@@ -2,10 +2,10 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { afterEach, expect, test, vi } from "vitest";
+import { ownedProcessCleanupReceipt } from "@omnesis/core";
 import { createServer } from "./server.js";
 import { createDatabase } from "./db.js";
 import { DoctorService } from "./http/services/DoctorService.js";
-import { ownedProcessCleanupReceipt } from "@omnesis/core";
 
 afterEach(() => vi.restoreAllMocks());
 

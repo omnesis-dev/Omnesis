@@ -14,7 +14,7 @@ vi.mock("@omnesis/providers-synth-common", async (importOriginal) => ({
   universeAccounts: () => ["synthetic"],
 }));
 import realSource from "@omnesis/provider-codex";
-import { withVersionedState, resolveSourceState } from "@omnesis/source-sdk";
+import { collectFilterList, withVersionedState, resolveSourceState } from "@omnesis/source-sdk";
 import source from "./index.js";
 import type { SourceInstance, SyncCursor } from "@omnesis/source-sdk";
 let root: string;
@@ -95,6 +95,49 @@ describe("codex synthetic source", () => {
     const second = await drain(await create(), first.cursor);
     expect(second.documents).toHaveLength(1);
     expect(second.documents[0]?.content).toContain("lamp");
+  });
+  test("sessions carry the project folder they started in and the twin lists the folders", async () => {
+    state.fixture = [
+      {
+        id: "atlas-session",
+        createdAt: "2026-03-01T10:00:00.000Z",
+        prompt: "How should the invented Atlas API paginate?",
+        answer: "Return an opaque cursor and keep the page size fixed.",
+        project: "/srv/work/atlas-api",
+      },
+      {
+        id: "billing-session",
+        createdAt: "2026-03-03T10:00:00.000Z",
+        prompt: "How should the invented billing export round?",
+        answer: "Round once, at the end, and store amounts in minor units.",
+        project: "/srv/work/billing",
+        movedTo: "/srv/personal/garden-notes",
+      },
+    ];
+    const instance = await create();
+    const { documents } = await drain(instance);
+    const folders = Object.fromEntries(
+      documents.map((document) => [
+        document.metadata.extra?.chatId,
+        document.metadata.extra?.projectFolder,
+      ]),
+    );
+    expect(folders).toEqual({
+      "atlas-session": "/srv/work/atlas-api",
+      "billing-session": "/srv/work/billing",
+    });
+
+    expect(source.contract?.outputRevision).toBe(realSource.contract?.outputRevision);
+    expect(source.resyncCost).toBe(realSource.resyncCost);
+    const listed = await collectFilterList(instance.filterLists!["extra.projectFolder"]!, {
+      signal: new AbortController().signal,
+    });
+    expect(listed.map((item) => [item.id, item.parentId])).toEqual([
+      ["/srv", undefined],
+      ["/srv/work", "/srv"],
+      ["/srv/work/atlas-api", "/srv/work"],
+      ["/srv/work/billing", "/srv/work"],
+    ]);
   });
   test("invalid fixture paths or identities fail before any real host reader runs", async () => {
     state.fixture = [

@@ -133,6 +133,15 @@ export interface LocalAgentSessionFileState {
    * safe direction.
    */
   rootId?: string;
+  /**
+   * The directory the session in this file started in, normalized. It is what
+   * the source's list of project folders is built from, so that listing them
+   * never reads a session file.
+   *
+   * Absent when the file recorded no usable directory, and on a state written
+   * before sessions carried their project folder.
+   */
+  projectFolder?: string;
 }
 
 export interface LocalAgentSessionParseOptions {

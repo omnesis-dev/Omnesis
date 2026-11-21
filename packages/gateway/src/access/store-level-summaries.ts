@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { capabilityToRule, getLevelCapabilities } from "./store-rules.js";
+import { capabilityToWireRule, getLevelCapabilities } from "./store-rules.js";
 import type { Db } from "../data/types.js";
 import type { AccessLevelSummary } from "./types.js";
 
@@ -122,7 +122,7 @@ function summaryFromRow(
     id: row.id,
     name: row.name,
     revision: row.revision,
-    rules: getLevelCapabilities(db, row.id).map(capabilityToRule),
+    rules: getLevelCapabilities(db, row.id).map(capabilityToWireRule),
     connectionCount,
     devices,
     createdAt: row.created_at,

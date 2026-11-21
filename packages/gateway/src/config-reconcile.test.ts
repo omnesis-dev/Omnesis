@@ -3,6 +3,8 @@
 
 import { unlinkSync, existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 type Db = Database.Database;
 import { type OmnesisConfig } from "@omnesis/config";
@@ -21,8 +23,6 @@ import { initializeOrAssertSourceMemberConfigContract } from "./data/repositorie
 import { reconcileConfig } from "./config-reconcile.js";
 import { directWriteGate, type WriteGate } from "./write-gate.js";
 import type Database from "better-sqlite3";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 let db: Db;
 let dbPath: string;

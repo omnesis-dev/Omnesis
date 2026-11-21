@@ -41,6 +41,7 @@
  */
 
 import { createLogger } from "@omnesis/core";
+import { registerFilterSqlFunctions } from "../access/filter-people.js";
 import { openIndexDb } from "../indexer/db.js";
 import type Database from "better-sqlite3";
 
@@ -256,6 +257,8 @@ export function openSearchSnapshotHandle(
   // Searches stage text in TEMP tables (large document-id sets, the lexical
   // index's tokenizer); in memory they never reach disk unencrypted.
   db.exec("PRAGMA temp_store = MEMORY");
+  // A filtered search's candidate statements use the filter check's functions.
+  registerFilterSqlFunctions(db);
   if (holdSnapshot) {
     db.exec("BEGIN");
     anchorSnapshot(db);

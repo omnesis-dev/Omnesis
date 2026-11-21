@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import type { SourceFilter } from "@omnesis/types";
+
 export const MCP_ACCESS_SCOPE = "omnesis:access";
 
 export type AccessCapability = "direct" | "answer" | "notes";
@@ -12,6 +14,9 @@ export type PrincipalCredentialKind = "interactive";
 export type PrincipalCredentialStatus = "pending" | "active";
 
 export interface AccessGrantCapability {
+  /** Source-filter revision; absent on whole-source capabilities. */
+  filterRevision?: number;
+  scopePolicies?: SourceFilter[];
   capability: AccessCapability;
   sourceMode: AccessSourceMode;
   sourceIds: string[];
@@ -22,7 +27,10 @@ export interface AccessGrantCapability {
   privacyPolicy: string | null;
 }
 
-export type AccessGrantRuleInput =
+export type AccessGrantRuleInput = {
+  filterRevision?: number;
+  scopePolicies?: SourceFilter[];
+} & (
   | {
       capability: "direct" | "notes";
       sources: { mode: AccessSourceMode; sourceIds: string[] };
@@ -31,7 +39,18 @@ export type AccessGrantRuleInput =
       capability: "answer";
       sources: { mode: AccessSourceMode; sourceIds: string[] };
       release: { mode: "reviewed"; policyFamilyId: string } | { mode: "unreviewed" };
-    };
+    }
+);
+
+/**
+ * A rule as responses carry it. A rule with source filters puts the boundary
+ * a client unaware of filters may safely copy in `sources` (every filtered
+ * source left out) and its real boundary in `scopeSources`, which is present
+ * only beside a non-empty `scopePolicies`. Requests never carry `scopeSources`.
+ */
+export type AccessGrantRule = AccessGrantRuleInput & {
+  scopeSources?: { mode: AccessSourceMode; sourceIds: string[] };
+};
 
 export interface AccessPrincipal {
   id: string;
@@ -360,6 +379,7 @@ export type OAuthTokenExchangeInput =
     };
 
 export interface AccessGrantUpdateInput {
+  expectedFilterRevisions?: Partial<Record<"direct" | "answer", number>>;
   grantId: string;
   expectedRevision: number;
   rules: AccessGrantRuleInput[];
@@ -386,6 +406,7 @@ export interface AccessLevelCreateInput {
 }
 
 export interface AccessLevelUpdateInput {
+  expectedFilterRevisions?: Partial<Record<"direct" | "answer", number>>;
   levelId: string;
   expectedRevision: number;
   name?: string;
@@ -467,6 +488,7 @@ export interface PendingAuthorizationRequest {
 }
 
 export interface AccessOverview {
+  sourceFilters?: { enabled: boolean };
   /** Undecided, unexpired requests, newest first, for the client's waiting banner. */
   pendingRequests: PendingAuthorizationRequest[];
   sources: Array<{
@@ -474,6 +496,9 @@ export interface AccessOverview {
     name: string;
     icon: string | null;
     available: boolean;
+    sourceType?: string;
+    /** The account's source declares a field a filter can match on. */
+    filterable?: boolean;
   }>;
   policyFamilies: Array<{
     id: string;
@@ -491,7 +516,7 @@ export interface AccessOverview {
       grants: Array<
         AccessGrant & {
           /** Canonical wire representation; capabilities remains a compatibility alias. */
-          rules: AccessGrantRuleInput[];
+          rules: AccessGrantRule[];
           credentials: PrincipalCredential[];
         }
       >;
@@ -507,7 +532,7 @@ export interface AccessLevelSummary {
   id: string;
   name: string;
   revision: number;
-  rules: AccessGrantRuleInput[];
+  rules: AccessGrantRule[];
   /** Live connections on this level. */
   connectionCount: number;
   /** Paired, unrevoked devices whose `/answer` requests use this level. */

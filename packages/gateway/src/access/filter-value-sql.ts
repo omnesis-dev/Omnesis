@@ -1,0 +1,593 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Adrien Conrath
+
+/**
+ * Counts and candidate sets of a source filter, read from the rows
+ * `filter-values.ts` keeps for every record instead of from each record's
+ * metadata.
+ *
+ * Each statement answers what the verdict of `filter-sql.ts` would answer
+ * over every record of the account, from the same conditions in the same
+ * order:
+ *
+ * 1. a record that cannot be decided (its state is `U`) is unknown;
+ * 2. one below the highest minimum version of the details used is too old;
+ * 3. one on which a detail used is not known (its bit is clear in `known`),
+ *    or that carries an id the account's current list does not hold for a
+ *    field that must be listed, is unknown;
+ * 4. one matching an entry gets the filter's answer for a match;
+ * 5. one whose chat has members that are not all known is unknown;
+ * 6. every other gets the filter's answer otherwise.
+ *
+ * Steps 1–3 read the running counts of the account's records by state,
+ * version and known details; the ids that are not listed are found among the
+ * field's terms, and only the records carrying them are read. Steps 4 and 5
+ * read the postings of the entries' values and of the chats concerned, so
+ * their cost follows how many records match, not the account's size. Every
+ * posting carries the version and known details of the record it stands for,
+ * so a matched posting is checked without reading anything else. A record is
+ * identified by its number (`seq`, its rowid) throughout, and a value's
+ * postings are read at both levels.
+ *
+ * Use these only on an account whose rows are ready (`filterValuesReady`),
+ * inside the transaction that asked; anything else is decided from the
+ * records themselves.
+ */
+
+import { registerFilterSqlFunctions } from "./filter-people.js";
+import {
+  CORPUS_FILTER_TABLES,
+  chatsWhereSql,
+  filterVerdictSql,
+  fragment,
+  generationSql,
+  memberKeysSql,
+  savedKeysSql,
+  type CompiledFilter,
+  type FieldDetail,
+  type FilterSql,
+  type PersonDetail,
+  type SqlBuilder,
+} from "./filter-sql.js";
+import {
+  FILTER_VALUE_PEOPLE,
+  RECORD_DERIVED,
+  RECORD_SELF,
+  RECORD_UNKNOWN,
+  filterValueBit,
+  filterValueDeclaration,
+  filterValuesReady,
+  filterValuesReadySql,
+  manyValuesField,
+  personKeyRows,
+  postingOfTerm,
+  type FilterValueDeclaration,
+} from "./filter-values.js";
+import type { SourceFilterFields } from "./filter-fields.js";
+import type { Db } from "../data/types.js";
+
+const MAP = CORPUS_FILTER_TABLES;
+const DECIDED = `('${RECORD_SELF}', '${RECORD_DERIVED}')`;
+const NONE = "SELECT NULL AS seq WHERE 0";
+
+/** What the conditions of steps 1–3 need from a compiled filter. */
+interface Plan {
+  compiled: CompiledFilter;
+  sourceId: string;
+  /** The bits of every detail used. */
+  mask: number;
+  /** The highest minimum version among them; 0 with none. */
+  minVersion: number;
+  /** Fields whose ids must be in the account's list. */
+  listed: FieldDetail[];
+}
+
+function planOf(compiled: CompiledFilter, declaration: FilterValueDeclaration): Plan | null {
+  if (compiled.unusable !== null) return null;
+  let mask = 0;
+  let minVersion = 0;
+  for (const detail of compiled.details) {
+    const bit = filterValueBit(
+      declaration,
+      detail.kind === "person" ? FILTER_VALUE_PEOPLE : detail.path,
+    );
+    if (bit === null) return null;
+    mask |= 1 << bit;
+    minVersion = Math.max(minVersion, detail.spec.minVersion);
+  }
+  const listed = compiled.details.filter(
+    (detail): detail is FieldDetail =>
+      detail.kind === "field" &&
+      (detail.listed ||
+        compiled.details.some((other) => other.kind === "person" && other.members === detail)),
+  );
+  return { compiled, sourceId: compiled.sourceId, mask, minVersion, listed };
+}
+
+/** The row named `row` stands for a record new enough with every detail used known. */
+function qualifies(sql: SqlBuilder, plan: Plan, row: string): string {
+  return `${row}.source_version >= ${sql.bind(plan.minVersion)} AND (${row}.known & ${sql.bind(plan.mask)}) = ${sql.bind(plan.mask)}`;
+}
+
+/**
+ * Joins from a value to its postings, as `p`: the slot of `field` on the
+ * device `device`, the term of `value` in it, the term's postings. Both are
+ * SQL over earlier tables of the statement.
+ */
+function postingsOf(
+  sql: SqlBuilder,
+  plan: Plan,
+  field: string,
+  device: string,
+  value: string,
+  p = "p",
+): string {
+  return `CROSS JOIN document_filter_slots ${p}s
+          ON ${p}s.source_id = ${sql.bind(plan.sourceId)} AND ${p}s.field = ${sql.bind(field)} AND ${p}s.device_id = ${device}
+        CROSS JOIN document_filter_terms ${p}t ON ${p}t.slot = ${p}s.slot AND ${p}t.value = ${value}
+        CROSS JOIN document_filter_postings ${p} ON ${postingOfTerm(p, `${p}t.term`)}`;
+}
+
+/**
+ * The records carrying an id the current list does not hold, for any field
+ * of the plan that must be listed: a SELECT of `seq`, possibly repeated.
+ */
+function unlistedRecordsSql(sql: SqlBuilder, plan: Plan): string {
+  if (plan.listed.length === 0) return NONE;
+  return plan.listed
+    .map(
+      (detail) => `SELECT p.seq AS seq
+          FROM document_filter_slots s
+          JOIN document_filter_terms t ON t.slot = s.slot
+          CROSS JOIN document_filter_postings p ON ${postingOfTerm("p", "t.term")}
+         WHERE s.source_id = ${sql.bind(plan.sourceId)} AND s.field = ${sql.bind(detail.path)}
+           AND t.value <> ''
+           AND NOT EXISTS (SELECT 1 FROM ${MAP.items} fi
+                WHERE fi.source_id = s.source_id AND fi.field = s.field AND fi.device_id = s.device_id
+                  AND fi.generation = (SELECT fl.generation FROM ${MAP.lists} fl
+                        WHERE fl.source_id = s.source_id AND fl.field = s.field AND fl.device_id = s.device_id)
+                  AND fi.item_id = t.value)`,
+    )
+    .join(" UNION ALL ");
+}
+
+/**
+ * The entries `seeds` (a SELECT of `idx, device, id`, bound already) and, for
+ * a tree, every node beneath them in the account's current list, as a SELECT
+ * of `idx, device, id`. Each seed's list generation is read once and carried
+ * down, so a step is one seek of a node's children.
+ */
+function expandedSql(sql: SqlBuilder, plan: Plan, detail: FieldDetail, seeds: string): string {
+  if (detail.spec.capability !== "tree") return `SELECT idx, device, id FROM (${seeds})`;
+  return `WITH RECURSIVE fexp(idx, device, generation, id) AS (
+        SELECT e.idx, e.device, fl.generation, e.id FROM (${seeds}) e
+          LEFT JOIN ${MAP.lists} fl
+            ON fl.source_id = ${sql.bind(plan.sourceId)} AND fl.field = ${sql.bind(detail.path)} AND fl.device_id = e.device
+        UNION
+        SELECT fexp.idx, fexp.device, fexp.generation, fi.item_id
+          FROM fexp
+          CROSS JOIN ${MAP.items} fi INDEXED BY ${MAP.itemsByParent}
+            ON fi.source_id = ${sql.bind(plan.sourceId)} AND fi.field = ${sql.bind(detail.path)}
+           AND fi.device_id = fexp.device AND fi.generation = fexp.generation AND fi.parent_id = fexp.id
+      ) SELECT idx, device, id FROM fexp`;
+}
+
+/** Postings of a field's values matching the detail's saved entries. */
+function fieldMatchRowsSql(sql: SqlBuilder, plan: Plan, detail: FieldDetail): string[] {
+  const parts: string[] = [];
+  if (detail.devices.length > 0) {
+    parts.push(`SELECT p.seq AS seq
+        FROM json_each(${sql.bind(JSON.stringify(detail.devices))}) fj
+        ${postingsOf(sql, plan, detail.path, "fj.value", "''")}
+       WHERE ${qualifies(sql, plan, "p")}`);
+  }
+  if (detail.pairs.length > 0) {
+    const seeds = `SELECT 0 AS idx, json_extract(fj.value, '$[0]') AS device, json_extract(fj.value, '$[1]') AS id
+        FROM json_each(${sql.bind(JSON.stringify(detail.pairs))}) fj`;
+    parts.push(`SELECT p.seq AS seq
+        FROM (${expandedSql(sql, plan, detail, seeds)}) fsel
+        ${postingsOf(sql, plan, detail.path, "fsel.device", "fsel.id")}
+       WHERE ${qualifies(sql, plan, "p")}`);
+  }
+  return parts;
+}
+
+/**
+ * Postings of a chat field's values for the chats `chats` names, a SELECT of
+ * (device_id, item_id). The chats are worked out first, once: a DISTINCT
+ * subquery is not merged into the join, so the members' keys are read once
+ * per member rather than once per posting of their chat.
+ */
+function chatRowsSql(sql: SqlBuilder, plan: Plan, members: FieldDetail, chats: string): string {
+  return `SELECT p.seq AS seq
+      FROM (SELECT DISTINCT device_id, item_id FROM (${chats})) fch
+      ${postingsOf(sql, plan, members.path, "fch.device_id", "fch.item_id")}
+     WHERE ${qualifies(sql, plan, "p")}`;
+}
+
+/**
+ * The people postings of saved keys, as `[idx, value, from, before]`: `value`
+ * for a key stored as itself, `[from, before)` for a domain.
+ */
+function personKeyRanges(
+  entries: ReadonlyArray<readonly [idx: number, key: string]>,
+): Array<[number, string | null, string | null, string | null]> {
+  return entries.map(([idx, key]) => {
+    const rows = personKeyRows(key);
+    return "value" in rows ? [idx, rows.value, null, null] : [idx, null, rows.from, rows.before];
+  });
+}
+
+/**
+ * Rows of `(idx, seq)` for the people postings of `[idx, value, from,
+ * before]` entries bound as JSON; the exact values and the domain ranges are
+ * two seeks.
+ */
+function personRowsSql(sql: SqlBuilder, plan: Plan, ranges: string): string {
+  const entries = (
+    bound: string,
+  ) => `SELECT json_extract(fj.value, '$[0]') AS idx, json_extract(fj.value, '$[1]') AS value,
+        json_extract(fj.value, '$[2]') AS low, json_extract(fj.value, '$[3]') AS high
+      FROM json_each(${bound}) fj`;
+  const slot = () =>
+    `(SELECT slot FROM document_filter_slots WHERE source_id = ${sql.bind(plan.sourceId)} AND field = ${sql.bind(FILTER_VALUE_PEOPLE)} AND device_id = '')`;
+  return `SELECT fk.idx AS idx, p.seq AS seq
+      FROM (${entries(sql.bind(ranges))}) fk
+      CROSS JOIN document_filter_terms pt ON pt.slot = ${slot()} AND pt.value = fk.value
+      CROSS JOIN document_filter_postings p ON ${postingOfTerm("p", "pt.term")}
+     WHERE fk.value IS NOT NULL AND ${qualifies(sql, plan, "p")}
+    UNION ALL
+    SELECT fk.idx AS idx, p.seq AS seq
+      FROM (${entries(sql.bind(ranges))}) fk
+      CROSS JOIN document_filter_terms pt
+        ON pt.slot = ${slot()} AND pt.value >= fk.low AND pt.value < fk.high
+      CROSS JOIN document_filter_postings p ON ${postingOfTerm("p", "pt.term")}
+     WHERE fk.low IS NOT NULL AND ${qualifies(sql, plan, "p")}`;
+}
+
+function personMatchRowsSql(sql: SqlBuilder, plan: Plan, person: PersonDetail): string[] {
+  if (person.keys.length === 0) return [];
+  const ranges = JSON.stringify(personKeyRanges(person.keys.map((key) => [0, key] as const)));
+  const parts = [`SELECT seq FROM (${personRowsSql(sql, plan, ranges)})`];
+  const members = person.members;
+  if (members) {
+    const chats = chatsWhereSql(
+      sql,
+      MAP,
+      plan.sourceId,
+      members,
+      () =>
+        `EXISTS (SELECT 1 FROM json_each(${memberKeysSql(sql, person)}) fk WHERE fk.value IN ${savedKeysSql(sql, person)})`,
+    );
+    parts.push(chatRowsSql(sql, plan, members, chats));
+  }
+  return parts;
+}
+
+/** Every posting matching a saved entry of the filter, as a SELECT of `seq`, possibly repeated. */
+function matchRowsSql(sql: SqlBuilder, plan: Plan): string {
+  const parts = plan.compiled.details.flatMap((detail) =>
+    detail.kind === "field"
+      ? fieldMatchRowsSql(sql, plan, detail)
+      : personMatchRowsSql(sql, plan, detail),
+  );
+  return parts.length > 0 ? parts.join(" UNION ALL ") : NONE;
+}
+
+/** Postings of records whose chat's members are not all known, as a SELECT of `seq`. */
+function rosterRowsSql(sql: SqlBuilder, plan: Plan): string {
+  const parts: string[] = [];
+  for (const detail of plan.compiled.details) {
+    if (detail.kind !== "person" || !detail.members) continue;
+    const members = detail.members;
+    const incomplete = `SELECT fi.device_id AS device_id, fi.item_id AS item_id FROM ${MAP.items} fi
+        WHERE fi.source_id = ${sql.bind(plan.sourceId)} AND fi.field = ${sql.bind(members.path)}
+          AND fi.generation = ${generationSql(sql, MAP, plan.sourceId, members, "fi.device_id")}
+          AND fi.members_incomplete = 1`;
+    const unreadable = chatsWhereSql(
+      sql,
+      MAP,
+      plan.sourceId,
+      members,
+      () => `${memberKeysSql(sql, detail)} IS NULL`,
+    );
+    parts.push(chatRowsSql(sql, plan, members, `${incomplete} UNION ${unreadable}`));
+  }
+  return parts.length > 0 ? parts.join(" UNION ALL ") : NONE;
+}
+
+export interface FilterValueVerdicts {
+  total: number;
+  R: number;
+  H: number;
+  N: number;
+  O: number;
+  U: number;
+}
+
+/**
+ * How many records of the account get each verdict. `null` when the filter
+ * cannot be read against the declaration the rows were cut under; the caller
+ * then decides from the records.
+ */
+export function filterValueVerdictsSql(
+  compiled: CompiledFilter,
+  declaration: FilterValueDeclaration,
+): FilterSql | null {
+  const plan = planOf(compiled, declaration);
+  if (!plan) return null;
+  // Every value is bound where it appears, in the order the text reads.
+  return fragment(
+    (sql) => `WITH
+        bad(seq) AS MATERIALIZED (SELECT DISTINCT seq FROM (${unlistedRecordsSql(sql, plan)})),
+        matched(seq) AS MATERIALIZED (
+          SELECT seq FROM (${matchRowsSql(sql, plan)}) EXCEPT SELECT seq FROM bad),
+        roster(seq) AS MATERIALIZED (
+          SELECT seq FROM (${rosterRowsSql(sql, plan)})
+          EXCEPT SELECT seq FROM bad EXCEPT SELECT seq FROM matched),
+        rec AS MATERIALIZED (
+          SELECT state, source_version, known, records FROM document_filter_record_counts
+           WHERE source_id = ${sql.bind(plan.sourceId)})
+      SELECT
+        (SELECT coalesce(sum(records), 0) FROM rec) AS total,
+        (SELECT coalesce(sum(records), 0) FROM rec WHERE state = '${RECORD_UNKNOWN}') AS undecided,
+        (SELECT coalesce(sum(records), 0) FROM rec
+          WHERE state IN ${DECIDED} AND source_version < ${sql.bind(plan.minVersion)}) AS tooOld,
+        (SELECT coalesce(sum(records), 0) FROM rec
+          WHERE state IN ${DECIDED} AND source_version >= ${sql.bind(plan.minVersion)}) AS current,
+        (SELECT coalesce(sum(records), 0) FROM rec
+          WHERE state IN ${DECIDED} AND ${qualifies(sql, plan, "rec")}) AS known,
+        (SELECT count(*) FROM bad b
+           CROSS JOIN document_filter_records r ON r.seq = b.seq
+          WHERE r.state IN ${DECIDED} AND ${qualifies(sql, plan, "r")}) AS unlisted,
+        (SELECT count(*) FROM matched) AS matched,
+        (SELECT count(*) FROM roster) AS roster`,
+  );
+}
+
+/** Read the row {@link filterValueVerdictsSql} returns. */
+export function filterValueVerdicts(
+  compiled: CompiledFilter,
+  row: {
+    total: number;
+    undecided: number;
+    tooOld: number;
+    current: number;
+    known: number;
+    unlisted: number;
+    matched: number;
+    roster: number;
+  },
+): FilterValueVerdicts {
+  const decidable = row.known - row.unlisted;
+  const rest = decidable - row.matched - row.roster;
+  const verdicts: FilterValueVerdicts = { total: row.total, R: 0, H: 0, N: 0, O: row.tooOld, U: 0 };
+  verdicts.U = row.undecided + (row.current - row.known) + row.unlisted + row.roster;
+  verdicts[compiled.whenMatched] += row.matched;
+  verdicts[compiled.otherwise] += rest;
+  return verdicts;
+}
+
+/**
+ * Rows of `(idx, n)` as `filterItemCountsSql` returns them, for each entry
+ * `[idx, device, id]` of a field probed with `compileFieldProbe`.
+ */
+export function filterValueItemCountsSql(
+  probe: CompiledFilter,
+  declaration: FilterValueDeclaration,
+  entries: ReadonlyArray<readonly [idx: number, device: string, id: string]>,
+): FilterSql | null {
+  const plan = planOf(probe, declaration);
+  const detail = probe.details[probe.details.length - 1];
+  if (!plan || !detail || detail.kind !== "field") return null;
+  return fragment((sql) => {
+    const entriesSql = `SELECT json_extract(fj.value, '$[0]') AS idx, json_extract(fj.value, '$[1]') AS device, json_extract(fj.value, '$[2]') AS id
+        FROM json_each(${sql.bind(JSON.stringify(entries))}) fj`;
+    if (detail.spec.capability !== "tree" && plan.listed.length === 0) {
+      // An entry is one value, held at most once per record: its count is
+      // the number of its postings.
+      return `SELECT e.idx AS idx, count(*) AS n FROM (${entriesSql}) e
+          ${postingsOf(sql, plan, detail.path, "e.device", "e.id")}
+         WHERE ${qualifies(sql, plan, "p")}
+         GROUP BY e.idx`;
+    }
+    // An entry of a tree is the node and everything beneath it: a record
+    // holding two of those ids is one record. Its count is the number of the
+    // ids' postings, less the second and later ids of each record holding
+    // several (found from their `[many]` postings), or, when those records
+    // are more than the ids' postings, the distinct records of the postings.
+    // Either way the records holding an id the list does not have are then
+    // taken out, found from those records' own terms. Postings are counted,
+    // never collected: only the rare case of more records holding several
+    // ids than postings reads them record by record.
+    const selected = expandedSql(sql, plan, detail, entriesSql);
+    const bad = unlistedRecordsSql(sql, plan);
+    return `WITH
+        sel(idx, device, id) AS MATERIALIZED (${selected}),
+        bad(seq) AS MATERIALIZED (SELECT DISTINCT seq FROM (${bad})),
+        sums(idx, n) AS MATERIALIZED (
+          SELECT sel.idx, count(*) FROM sel
+          ${postingsOf(sql, plan, detail.path, "sel.device", "sel.id")}
+           WHERE ${qualifies(sql, plan, "p")}
+           GROUP BY sel.idx),
+        several(seq, device) AS MATERIALIZED (
+          SELECT p.seq, s.device_id FROM document_filter_slots s
+            CROSS JOIN document_filter_terms t ON t.slot = s.slot AND t.value = ''
+            CROSS JOIN document_filter_postings p ON ${postingOfTerm("p", "t.term")}
+           WHERE s.source_id = ${sql.bind(plan.sourceId)} AND s.field = ${sql.bind(manyValuesField(detail.path))}
+             AND ${qualifies(sql, plan, "p")}),
+        extra(idx, n) AS MATERIALIZED (
+          SELECT idx, sum(held - 1) FROM (
+            SELECT sel.idx AS idx, count(*) AS held FROM several
+              CROSS JOIN document_filter_records vr ON vr.seq = several.seq
+              CROSS JOIN json_each(vr.terms) v
+              CROSS JOIN document_filter_terms vt ON vt.term = v.value
+              CROSS JOIN document_filter_slots vs
+                ON vs.slot = vt.slot AND vs.source_id = ${sql.bind(plan.sourceId)}
+               AND vs.field = ${sql.bind(detail.path)} AND vs.device_id = several.device
+              CROSS JOIN sel ON sel.device = several.device AND sel.id = vt.value
+             GROUP BY sel.idx, several.seq)
+           WHERE held > 1 GROUP BY idx),
+        distinct_records(idx, n) AS MATERIALIZED (
+          SELECT sel.idx, count(DISTINCT p.seq) FROM sel
+          ${postingsOf(sql, plan, detail.path, "sel.device", "sel.id")}
+           WHERE ${qualifies(sql, plan, "p")}
+           GROUP BY sel.idx),
+        unlisted(idx, n) AS MATERIALIZED (
+          SELECT sel.idx, count(DISTINCT b.seq) FROM bad b
+            CROSS JOIN document_filter_records ur ON ur.seq = b.seq
+            CROSS JOIN json_each(ur.terms) uj
+            CROSS JOIN document_filter_terms ut ON ut.term = uj.value
+            CROSS JOIN document_filter_slots us
+              ON us.slot = ut.slot AND us.source_id = ${sql.bind(plan.sourceId)}
+             AND us.field = ${sql.bind(detail.path)}
+            CROSS JOIN sel ON sel.device = us.device_id AND sel.id = ut.value
+           WHERE ${qualifies(sql, plan, "ur")}
+           GROUP BY sel.idx)
+      SELECT sums.idx AS idx,
+             CASE
+               WHEN (SELECT count(*) FROM several) <= (SELECT coalesce(sum(n), 0) FROM sums)
+                 THEN sums.n - coalesce((SELECT n FROM extra WHERE extra.idx = sums.idx), 0)
+               ELSE coalesce((SELECT n FROM distinct_records d WHERE d.idx = sums.idx), 0)
+             END - coalesce((SELECT n FROM unlisted u WHERE u.idx = sums.idx), 0) AS n
+        FROM sums`;
+  });
+}
+
+/** Rows of `(device, n)` as `filterDeviceCountsSql` returns them. */
+export function filterValueDeviceCountsSql(
+  probe: CompiledFilter,
+  declaration: FilterValueDeclaration,
+): FilterSql | null {
+  const plan = planOf(probe, declaration);
+  const detail = probe.details[probe.details.length - 1];
+  if (!plan || !detail || detail.kind !== "field") return null;
+  return fragment((sql) => {
+    const bad = unlistedRecordsSql(sql, plan);
+    return `WITH bad(seq) AS MATERIALIZED (SELECT DISTINCT seq FROM (${bad}))
+      SELECT s.device_id AS device, count(*) AS n
+        FROM document_filter_slots s
+        CROSS JOIN document_filter_terms t ON t.slot = s.slot AND t.value = ''
+        CROSS JOIN document_filter_postings p ON ${postingOfTerm("p", "t.term")}
+       WHERE s.source_id = ${sql.bind(plan.sourceId)} AND s.field = ${sql.bind(detail.path)}
+         AND ${qualifies(sql, plan, "p")} AND p.seq NOT IN bad
+       GROUP BY s.device_id`;
+  });
+}
+
+/** Rows of `(idx, n)` as `filterPersonCountsSql` returns them, for `[idx, key]` entries. */
+export function filterValuePersonCountsSql(
+  probe: CompiledFilter,
+  declaration: FilterValueDeclaration,
+  entries: ReadonlyArray<readonly [idx: number, key: string]>,
+): FilterSql | null {
+  const plan = planOf(probe, declaration);
+  const person = probe.details[probe.details.length - 1];
+  if (!plan || !person || person.kind !== "person") return null;
+  return fragment((sql) => {
+    const wanted = `SELECT json_extract(fj.value, '$[0]') AS idx, json_extract(fj.value, '$[1]') AS key
+        FROM json_each(${sql.bind(JSON.stringify(entries))}) fj`;
+    const members = person.members;
+    const chats = members
+      ? `, chats(device_id, item_id, idx) AS MATERIALIZED (
+           SELECT DISTINCT fm.device_id, fm.item_id, wanted.idx
+             -- Each member's keys once, then the entries naming them.
+             FROM ${MAP.members} fm
+             CROSS JOIN json_each(${memberKeysSql(sql, person)}) fk
+             CROSS JOIN wanted ON wanted.key = fk.value
+            WHERE fm.source_id = ${sql.bind(plan.sourceId)} AND fm.field = ${sql.bind(members.path)}
+              AND fm.generation = (SELECT fl.generation FROM ${MAP.lists} fl
+                    WHERE fl.source_id = fm.source_id AND fl.field = fm.field AND fl.device_id = fm.device_id))`
+      : "";
+    const bad = unlistedRecordsSql(sql, plan);
+    const onRecord = personRowsSql(sql, plan, JSON.stringify(personKeyRanges(entries)));
+    const inChat = members
+      ? ` UNION ALL SELECT chats.idx AS idx, p.seq AS seq
+          FROM chats
+          ${postingsOf(sql, plan, members.path, "chats.device_id", "chats.item_id")}
+         WHERE ${qualifies(sql, plan, "p")}`
+      : "";
+    return `WITH wanted(idx, key) AS MATERIALIZED (${wanted})${chats},
+        bad(seq) AS MATERIALIZED (SELECT DISTINCT seq FROM (${bad}))
+      SELECT hit.idx AS idx, count(DISTINCT hit.seq) AS n FROM (${onRecord}${inChat}) hit
+       WHERE hit.seq NOT IN bad
+       GROUP BY hit.idx`;
+  });
+}
+
+/** Above this many matching postings a share-only filter is not narrowed: scanning finds its records soon enough. */
+export const FILTER_CANDIDATE_LIMIT = 10_000;
+
+/**
+ * A condition that holds for every record a share-only filter could let
+ * through, and that reads no record's metadata: the record belongs to another
+ * account, or one of its postings matches a saved entry. Placed beside the
+ * filter check it settles most records of a filter that rarely matches before
+ * the check reads anything, so a statement over the whole account costs the
+ * matching records rather than all of them. It holds for every record when
+ * the account's rows are not ready, or when more than
+ * {@link FILTER_CANDIDATE_LIMIT} postings match; both are decided once per
+ * statement, in its own snapshot.
+ *
+ * `target` is the alias of the statement's `documents` row, or a column
+ * holding a document id. `null` for a filter that is not share-only, or that
+ * cannot be read against the declaration.
+ */
+export function filterCandidateSql(
+  compiled: CompiledFilter,
+  declaration: FilterValueDeclaration,
+  target: { row: string } | { id: string },
+  sourceColumn: string,
+): FilterSql | null {
+  if (compiled.whenMatched !== "R" || compiled.otherwise !== "N") return null;
+  const plan = planOf(compiled, declaration);
+  if (!plan) return null;
+  const ready = filterValuesReadySql(plan.sourceId, declaration);
+  return fragment((sql) => {
+    const source = sql.bind(plan.sourceId);
+    for (const value of ready.params) sql.bind(value);
+    const few = `(SELECT count(*) FROM (${matchRowsSql(sql, plan)} LIMIT ${FILTER_CANDIDATE_LIMIT + 1})) <= ${FILTER_CANDIDATE_LIMIT}`;
+    // A record's number is its rowid.
+    const inside =
+      "row" in target
+        ? `${target.row}.rowid IN (${matchRowsSql(sql, plan)})`
+        : `${target.id} IN (SELECT fd.id FROM documents fd WHERE fd.rowid IN (${matchRowsSql(sql, plan)}))`;
+    return `(${sourceColumn} <> ${source} OR NOT (${ready.sql} AND ${few}) OR ${inside})`;
+  });
+}
+
+/**
+ * How many records of the account get each verdict of the filter: from the
+ * account's filter rows when they are ready, otherwise from every record's
+ * own details. Run it on a reader, inside the transaction that compiled the
+ * filter, with `fields` the declaration it was compiled against.
+ */
+export function countFilterVerdicts(
+  db: Db,
+  compiled: CompiledFilter,
+  fields: SourceFilterFields,
+): FilterValueVerdicts {
+  registerFilterSqlFunctions(db);
+  const values = filterValueDeclaration(fields);
+  if (filterValuesReady(db, compiled.sourceId, values)) {
+    const sql = filterValueVerdictsSql(compiled, values);
+    if (sql) {
+      const row = db
+        .prepare<unknown[], Parameters<typeof filterValueVerdicts>[1]>(sql.sql)
+        .get(...sql.params)!;
+      return filterValueVerdicts(compiled, row);
+    }
+  }
+  const verdict = filterVerdictSql(compiled, { row: "d" });
+  return db
+    .prepare<unknown[], FilterValueVerdicts>(
+      `SELECT count(*) AS total,
+              coalesce(sum(verdict = 'R'), 0) AS R,
+              coalesce(sum(verdict = 'H'), 0) AS H,
+              coalesce(sum(verdict = 'N'), 0) AS N,
+              coalesce(sum(verdict = 'O'), 0) AS O,
+              coalesce(sum(verdict = 'U'), 0) AS U
+         FROM (SELECT (${verdict.sql}) AS verdict FROM documents d WHERE d.source_id = ?)`,
+    )
+    .get(...verdict.params, compiled.sourceId)!;
+}

@@ -27,11 +27,11 @@ import org.junit.Test
 class AccessAuthorizationModelsTest {
     @Test fun notes_only_approval_needs_no_sources_or_privacy_policy() {
         val overview = overview().copy(sources = emptyList(), policyFamilies = emptyList())
-        val form = AccessAuthorizationForm.initial(request(), overview).copy(answerEnabled = false, notesEnabled = true)
+        val form = AccessAuthorizationForm.initial(request(), overview).editing { it.enabled(AccessCapability.ANSWER, false, overview).enabled(AccessCapability.NOTES, true, overview) }
         val selection = form.selection(request(), overview) as AccessAuthorizationSelection.Connect
         assertEquals(listOf(AccessGrantRule.notes()), selection.rules)
-        assertNull(form.copy(notesEnabled = false).selection(request(), overview))
-        assertNull(form.copy(answerEnabled = true).selection(request(), overview))
+        assertNull(form.editing { it.enabled(AccessCapability.NOTES, false, overview) }.selection(request(), overview))
+        assertNull(form.editing { it.enabled(AccessCapability.ANSWER, true, overview) }.selection(request(), overview))
     }
 
     private val known = setOf("notes:fictional", "files:fictional")
@@ -55,7 +55,7 @@ class AccessAuthorizationModelsTest {
         val overview = overview()
         val form = AccessAuthorizationForm.initial(request(), overview)
         assertNull(form.selection(request(), overview))
-        val allowed = form.copy(answerSources = form.answerSources.setAllowed("notes:fictional", true))
+        val allowed = form.editing { it.reading(AccessCapability.ANSWER, "notes:fictional") }
         assertTrue(allowed.selection(request(), overview) is AccessAuthorizationSelection.Connect)
     }
 
@@ -63,19 +63,10 @@ class AccessAuthorizationModelsTest {
         val overview = overview().copy(
             sources = listOf(AccessSourceInstance("notes:fictional", "Removed notes", available = false)),
         )
-        val form = AccessAuthorizationForm.initial(request(), overview).copy(
-            answerSources = AccessSourceSelectionState(allowedSourceIds = setOf("notes:fictional")),
-        )
+        val form = AccessAuthorizationForm.initial(request(), overview).editing { it.reading(AccessCapability.ANSWER, "notes:fictional") }
         assertNull(form.selection(request(), overview))
     }
 
-    @Test fun blocking_everything_stays_blocked_when_a_source_is_connected_later() {
-        val blocked = AccessSourceSelectionState(mode = AccessSourceMode.ALL, allowedSourceIds = known).blockAll(known)
-        assertEquals(AccessSourceMode.ALLOWLIST, blocked.mode)
-        assertFalse(blocked.futureSourcesAllowed)
-        assertFalse(blocked.permitsAnyKnownSource(known))
-        assertEquals(emptyList<String>(), blocked.boundary(known).sourceIds)
-    }
 
     @Test fun unchecking_a_source_under_all_sources_is_recorded_rather_than_lost() {
         val state = AccessSourceSelectionState(mode = AccessSourceMode.ALL, allowedSourceIds = known)
@@ -108,10 +99,9 @@ class AccessAuthorizationModelsTest {
     /** Unreviewed release is chosen outright: there is no second box confirming the first. */
     @Test fun unreviewed_answer_release_is_the_choice_itself() {
         val overview = overview()
-        val base = AccessAuthorizationForm.initial(request(), overview).copy(
-            answerSources = AccessSourceSelectionState(allowedSourceIds = setOf("notes:fictional")),
-            answerRelease = AccessAnswerReleaseChoice.UNREVIEWED,
-        )
+        val base = AccessAuthorizationForm.initial(request(), overview).editing { draft ->
+            draft.reading(AccessCapability.ANSWER, "notes:fictional").let { it.setRule(it.rule(AccessCapability.ANSWER)!!.copy(release = AccessAnswerRelease.unreviewed())) }
+        }
         assertEquals(
             AccessAnswerReleaseMode.UNREVIEWED,
             (base.selection(request(), overview)
@@ -122,9 +112,7 @@ class AccessAuthorizationModelsTest {
     /** The owner names nothing: the credential is labelled with the client's own name. */
     @Test fun the_credential_is_labelled_with_the_client_name_within_the_gateway_limit() {
         val overview = overview()
-        val form = AccessAuthorizationForm.initial(request(), overview).copy(
-            answerSources = AccessSourceSelectionState(allowedSourceIds = setOf("notes:fictional")),
-        )
+        val form = AccessAuthorizationForm.initial(request(), overview).editing { it.reading(AccessCapability.ANSWER, "notes:fictional") }
         val selection = form.selection(request(), overview) as AccessAuthorizationSelection.Connect
         assertEquals("Fictional assistant", selection.credentialLabel)
 
@@ -142,12 +130,10 @@ class AccessAuthorizationModelsTest {
 
     @Test fun a_fresh_client_starts_with_reviewed_answer_and_the_default_policy() {
         val form = AccessAuthorizationForm.initial(request(), overview())
-        assertTrue(form.answerEnabled)
-        assertFalse(form.directEnabled)
-        assertFalse(form.notesEnabled)
-        assertEquals(AccessAnswerReleaseChoice.REVIEWED, form.answerRelease)
-        assertEquals("policy_example", form.policyFamilyId)
-        assertEquals(AccessSourceSelectionState(), form.answerSources)
+        val answer = form.level.rules.single()
+        assertEquals(AccessCapability.ANSWER, answer.capability)
+        assertEquals(AccessAnswerRelease.reviewed("policy_example"), answer.release)
+        assertEquals(AccessSourceBoundary(AccessSourceMode.ALLOWLIST, emptyList()), answer.sources)
     }
 
     @Test fun a_known_client_is_prefilled_from_its_grant_rules() {
@@ -166,18 +152,14 @@ class AccessAuthorizationModelsTest {
                 AccessGrantRule.direct(AccessSourceBoundary(AccessSourceMode.DENYLIST, listOf("files:fictional"))),
             ),
         )
-        assertTrue(form.answerEnabled)
-        assertTrue(form.directEnabled)
-        assertTrue(form.notesEnabled)
-        assertEquals("policy_other", form.policyFamilyId)
-        assertEquals(AccessAnswerReleaseChoice.REVIEWED, form.answerRelease)
-        assertEquals(setOf("notes:fictional"), form.answerSources.allowedSourceIds)
-        assertFalse(form.answerSources.futureSourcesAllowed)
-        assertEquals(AccessSourceMode.DENYLIST, form.directSources.mode)
-        assertTrue(form.directSources.allows("notes:fictional"))
-        assertFalse(form.directSources.allows("files:fictional"))
+        assertTrue(form.grants(AccessCapability.NOTES))
+        val answer = requireNotNull(form.level.rule(AccessCapability.ANSWER))
+        val direct = requireNotNull(form.level.rule(AccessCapability.DIRECT))
+        assertEquals(AccessAnswerRelease.reviewed("policy_other"), answer.release)
+        assertEquals(AccessSourceBoundary(AccessSourceMode.ALLOWLIST, listOf("notes:fictional")), answer.sources)
+        assertEquals(AccessSourceBoundary(AccessSourceMode.DENYLIST, listOf("files:fictional")), direct.sources)
         // Two boundaries that differ are edited as two lists.
-        assertFalse(form.linkedSources)
+        assertFalse(form.level.directLinked)
 
         val rules = (form.selection(request(), overview) as AccessAuthorizationSelection.Connect).rules
         assertEquals(
@@ -198,11 +180,9 @@ class AccessAuthorizationModelsTest {
                 AccessGrantRule.direct(everything),
             ),
         )
-        assertTrue(form.linkedSources)
-        assertEquals(AccessAnswerReleaseChoice.UNREVIEWED, form.answerRelease)
-        assertEquals(AccessSourceMode.ALL, form.answerSources.mode)
-        // The default policy stays on hand for the moment Answer is switched back to reviewed.
-        assertEquals("policy_example", form.policyFamilyId)
+        assertTrue(form.level.directLinked)
+        assertEquals(AccessAnswerRelease.unreviewed(), form.level.rule(AccessCapability.ANSWER)?.release)
+        assertEquals(AccessSourceMode.ALL, form.level.rule(AccessCapability.ANSWER)?.sources?.mode)
     }
 
     @Test fun a_known_client_without_answer_keeps_answer_off() {
@@ -211,10 +191,9 @@ class AccessAuthorizationModelsTest {
             overview(),
             reconnect = reconnect(AccessGrantRule.direct(AccessSourceBoundary(AccessSourceMode.ALLOWLIST, listOf("files:fictional")))),
         )
-        assertFalse(form.answerEnabled)
-        assertTrue(form.directEnabled)
-        assertEquals(setOf("files:fictional"), form.directSources.allowedSourceIds)
-        assertEquals(listOf(AccessAuthorizationStep.PERMISSIONS, AccessAuthorizationStep.DATA, AccessAuthorizationStep.REVIEW), authorizationSteps(form, requiresAnswer = false))
+        assertFalse(form.grants(AccessCapability.ANSWER))
+        assertEquals(listOf("files:fictional"), form.level.rule(AccessCapability.DIRECT)?.sources?.sourceIds)
+        assertEquals(listOf(AccessAuthorizationStep.PERMISSIONS, AccessAuthorizationStep.DATA, AccessAuthorizationStep.REVIEW), authorizationSteps(form))
     }
 
     @Test fun a_known_client_whose_policy_is_no_longer_published_is_reviewed_by_the_default() {
@@ -228,8 +207,7 @@ class AccessAuthorizationModelsTest {
                 ),
             ),
         )
-        assertEquals(AccessAnswerReleaseChoice.REVIEWED, form.answerRelease)
-        assertEquals("policy_example", form.policyFamilyId)
+        assertEquals(AccessAnswerRelease.reviewed("policy_example"), form.level.rule(AccessCapability.ANSWER)?.release)
         val rules = (form.selection(request(), overview()) as AccessAuthorizationSelection.Connect).rules
         assertEquals("policy_example", rules.single().release?.policyFamilyId)
     }
@@ -246,7 +224,7 @@ class AccessAuthorizationModelsTest {
                 ),
             ),
         )
-        assertEquals("", form.policyFamilyId)
+        assertTrue(form.level.requireAnswerPolicySelection)
         assertNull(form.selection(request(), overview))
     }
 
@@ -261,19 +239,15 @@ class AccessAuthorizationModelsTest {
                 ),
             ),
         )
-        assertEquals(setOf("mail:removed"), form.answerSources.unavailableReferencedIds)
-        assertEquals(listOf("mail:removed"), form.answerSources.boundary(known).sourceIds)
+        assertEquals(listOf("mail:removed"), form.level.rule(AccessCapability.ANSWER)?.sources?.sourceIds)
+        val sent = (form.selection(request(), overview()) as AccessAuthorizationSelection.Connect).rules
+        assertEquals(AccessSourceBoundary(AccessSourceMode.DENYLIST, listOf("mail:removed")), sent.single().sources)
     }
 
     @Test fun source_exception_cap_is_enforced_locally() {
         val sources = (1..257).map { AccessSourceInstance("notes:$it", "Note $it") }
         val overview = overview().copy(sources = sources)
-        val form = AccessAuthorizationForm.initial(request(), overview).copy(
-            answerSources = AccessSourceSelectionState(
-                mode = AccessSourceMode.ALLOWLIST,
-                allowedSourceIds = sources.mapTo(mutableSetOf()) { it.id },
-            ),
-        )
+        val form = AccessAuthorizationForm.initial(request(), overview).editing { it.reading(AccessCapability.ANSWER, *sources.map { source -> source.id }.toTypedArray()) }
         assertNull(form.selection(request(), overview))
     }
 
@@ -323,25 +297,21 @@ class AccessAuthorizationModelsTest {
      */
     @Test
     fun `a grant that reads sources asks every step`() {
-        val form = AccessAuthorizationForm(answerEnabled = true)
+        val form = AccessAuthorizationForm.initial(request(), overview())
         assertEquals(
             listOf(
                 AccessAuthorizationStep.PERMISSIONS,
                 AccessAuthorizationStep.DATA,
                 AccessAuthorizationStep.REVIEW,
             ),
-            authorizationSteps(form, requiresAnswer = false),
+            authorizationSteps(form),
         )
     }
 
     @Test
     fun `a notes-only grant skips data and privacy`() {
-        val form = AccessAuthorizationForm(
-            answerEnabled = false,
-            directEnabled = false,
-            notesEnabled = true,
-        )
-        val steps = authorizationSteps(form, requiresAnswer = false)
+        val form = AccessAuthorizationForm.initial(request(), overview()).editing { it.enabled(AccessCapability.ANSWER, false, overview()).enabled(AccessCapability.NOTES, true, overview()) }
+        val steps = authorizationSteps(form)
         assertEquals(
             listOf(AccessAuthorizationStep.PERMISSIONS, AccessAuthorizationStep.REVIEW),
             steps,
@@ -352,8 +322,9 @@ class AccessAuthorizationModelsTest {
 
     @Test
     fun `a request that requires Answer keeps data and privacy`() {
-        val form = AccessAuthorizationForm(answerEnabled = false, directEnabled = false)
-        assertTrue(authorizationSteps(form, requiresAnswer = true).contains(AccessAuthorizationStep.DATA))
+        val form = AccessAuthorizationForm.initial(request().copy(requiresAnswer = true), overview(), reconnect = reconnect(AccessGrantRule.notes()))
+        assertTrue(form.grants(AccessCapability.ANSWER))
+        assertTrue(authorizationSteps(form).contains(AccessAuthorizationStep.DATA))
     }
 
     /**

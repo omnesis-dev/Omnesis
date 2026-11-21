@@ -12,6 +12,7 @@
  * version keeps answering by its own rules until its successor is current.
  */
 
+import { scopeSearchActive } from "./scope-authorization.js";
 import type Database from "better-sqlite3";
 type Db = Database.Database;
 import { buildLexicalFilter, buildMetadataFilter } from "./metadata.js";
@@ -377,7 +378,8 @@ export function bm25Search(
   const prefixLastToken = opts?.prefixLastToken;
   const threshold = opts?.commonTokenThreshold ?? 0;
 
-  const ranker = opts?.ranker;
+  // A filtered search matches inside its visible set, which only the FTS5 path below does.
+  const ranker = scopeSearchActive(db) ? undefined : opts?.ranker;
   if (!docIds && ranker) {
     const stats = threshold > 0 ? ranker.stats?.(db) : undefined;
     // A ranker that cannot follow the change log just now declines; FTS5 ranks.
@@ -422,9 +424,10 @@ export function bm25Search(
     const ftsQuery = toFts5Query(cut, prefixLastToken);
     if (!ftsQuery) return answer([]);
     try {
-      const rows = docIds
-        ? filterFirst(db, ftsQuery, filter, docIds, limit)
-        : rankWithFts(db, ftsQuery, filter, limit);
+      const rows =
+        docIds || scopeSearchActive(db)
+          ? filterFirst(db, ftsQuery, filter, docIds, limit)
+          : rankWithFts(db, ftsQuery, filter, limit);
       return answer(rows.map(toCandidate));
     } catch (err) {
       // `toFts5Query` should prevent malformed MATCH input, but the

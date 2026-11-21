@@ -12,6 +12,7 @@
 // off the critical path until they're actually asked for.
 
 import { html } from "htm/preact";
+import { useLayoutEffect, useRef } from "preact/hooks";
 import { replaceRoute } from "../lib/router.js";
 import { lazy } from "../lib/lazy.js";
 import { WarningTriangle } from "../components/model-health.js";
@@ -43,8 +44,35 @@ const McpView = lazy(() => import("./remote-access/own-pages.js").then((m) => m.
 const RemoteAccessView = lazy(() => import("./remote-access.js").then((m) => m.RemoteAccessView));
 const SweepsView = lazy(() => import("./sweeps.js").then((m) => m.SweepsView));
 
-const SUN_ICON = html`<svg aria-hidden="true" viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="3.25"/><path d="M8 1v1.5M8 13.5V15M1 8h1.5M13.5 8H15M3.05 3.05l1.05 1.05M11.9 11.9l1.05 1.05M3.05 12.95l1.05-1.05M11.9 4.1l1.05-1.05"/></svg>`;
-const MOON_ICON = html`<svg aria-hidden="true" viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M13.5 9.3A5.6 5.6 0 0 1 6.7 2.5 5.6 5.6 0 1 0 13.5 9.3z"/></svg>`;
+const SUN_ICON = html`<svg
+  aria-hidden="true"
+  viewBox="0 0 16 16"
+  width="16"
+  height="16"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="1.5"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <circle cx="8" cy="8" r="3.25" />
+  <path
+    d="M8 1v1.5M8 13.5V15M1 8h1.5M13.5 8H15M3.05 3.05l1.05 1.05M11.9 11.9l1.05 1.05M3.05 12.95l1.05-1.05M11.9 4.1l1.05-1.05"
+  />
+</svg>`;
+const MOON_ICON = html`<svg
+  aria-hidden="true"
+  viewBox="0 0 16 16"
+  width="16"
+  height="16"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="1.5"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M13.5 9.3A5.6 5.6 0 0 1 6.7 2.5 5.6 5.6 0 1 0 13.5 9.3z" />
+</svg>`;
 
 export function SettingsView({
   tab,
@@ -72,6 +100,7 @@ export function SettingsView({
   onThemeToggle,
   onLogout,
 } = {}) {
+  const shell = useRef(null);
   // The URL is the single source of truth for which tab is open — no mirrored
   // local state to drift out of sync — so a link into a specific tab (the
   // sidebar item, an agent error's "Configure the agent" link, a bookmark)
@@ -85,6 +114,26 @@ export function SettingsView({
   // A detail page (the Omnesis account, the Tailscale device) shows its parent tab as current.
   const parent = settingsTabParent(page);
   const activeTab = parent ?? page;
+
+  const accessTask = activeTab === "access" && Boolean(accessNewLevel || accessLevelId);
+  useLayoutEffect(() => {
+    if (!accessTask) return;
+    const active = shell.current?.querySelector(".config-tab.active");
+    const tabs = active?.parentElement;
+    if (!tabs?.getBoundingClientRect || !active?.getBoundingClientRect) return;
+    const reveal = () => {
+      const item = active.getBoundingClientRect(),
+        bounds = tabs.getBoundingClientRect();
+      if (item.left < bounds.left + 8) tabs.scrollLeft += item.left - bounds.left - 8;
+      else if (item.right > bounds.right - 8) tabs.scrollLeft += item.right - bounds.right + 8;
+    };
+    reveal();
+    const Observer = globalThis.ResizeObserver;
+    if (!Observer) return;
+    const observer = new Observer(reveal);
+    observer.observe(tabs);
+    return () => observer.disconnect();
+  }, [accessTask, activeTab]);
 
   // Mirror the chosen tab into the path so a refresh lands in the same place.
   // `replaceRoute` (replaceState + re-parse) keeps tab toggles out of the back
@@ -101,28 +150,30 @@ export function SettingsView({
   // authorization review, and the connect dialog.
   const switchTab = (next) => {
     const pageOpen = Boolean(
-      parent
-        || modelsSection
-        || policyId
-        || accessLevelId
-        || accessNewLevel
-        || accessAuthorizationId
-        || accessConnect,
+      parent ||
+      modelsSection ||
+      policyId ||
+      accessLevelId ||
+      accessNewLevel ||
+      accessAuthorizationId ||
+      accessConnect,
     );
     if (next === activeTab && !pageOpen) return;
     replaceRoute(`/portal/settings/${next}`);
   };
 
   return html`
-    <div class="settings-view">
+    <div
+      ref=${shell}
+      class=${`settings-view${accessTask ? " settings-view--access-task" : ""}`}
+    >
       <div class="settings-header">
         <div>
           <h1 class="settings-title">Settings</h1>
           <p class="settings-sub">
-            Set up this gateway: its configuration file, the standing
-            instructions its agent runs under, the models behind each
-            capability, delegated agent access, the policies that review it, and
-            the devices that operate it.
+            Set up this gateway: its configuration file, the standing instructions its agent runs
+            under, the models behind each capability, delegated agent access, the policies that
+            review it, and the devices that operate it.
           </p>
         </div>
         <div class="settings-actions">

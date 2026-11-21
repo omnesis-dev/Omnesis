@@ -10,6 +10,7 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.Call
 import okhttp3.Callback
@@ -114,6 +115,7 @@ class GatewayHttp(
                                 it.code,
                                 envelope?.message ?: body,
                                 envelope?.code,
+                                envelope?.userMessage,
                             )
                     }
                 }
@@ -122,8 +124,8 @@ class GatewayHttp(
     }
 }
 
-/** The two halves of the gateway's error envelope that callers act on. */
-private class ErrorEnvelope(val message: String, val code: String?)
+/** The parts of the gateway's error envelope that callers act on: `error`, `code` and the optional `message` sentence. */
+private class ErrorEnvelope(val message: String, val code: String?, val userMessage: String?)
 
 /**
  * Read `{ "error": …, "code": … }` out of an error response, or null when the
@@ -136,7 +138,11 @@ private fun parseErrorEnvelope(body: String): ErrorEnvelope? =
         val obj = OmnesisJson.parseToJsonElement(body).jsonObject
         val message = obj["error"]?.jsonPrimitive?.content?.trim()
         if (message.isNullOrEmpty()) return@runCatching null
-        ErrorEnvelope(message, obj["code"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() })
+        ErrorEnvelope(
+            message,
+            obj["code"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() },
+            (obj["message"] as? JsonPrimitive)?.takeIf { it.isString }?.content?.trim()?.takeIf { it.isNotEmpty() },
+        )
     }.getOrNull()
 
 /** Decodes a JSON body into [T], wrapping failures as [GatewayException.Decoding]. */

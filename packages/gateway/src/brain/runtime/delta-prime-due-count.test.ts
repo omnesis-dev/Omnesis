@@ -11,6 +11,8 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createDatabase } from "../../db.js";
 import { createOpenLoop } from "../storage/open-loops.js";
@@ -19,8 +21,6 @@ import { resolveBrainSettings, type ResolvedBrainSettings } from "../config.js";
 import { readDueSoonDeltaPrime } from "./delta-prime.js";
 import type Database from "better-sqlite3";
 import type { OpenLoopState } from "../storage/types.js";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 const NOW = Date.parse("2026-07-02T10:00:00.000Z");
 const DAY = 86_400_000;

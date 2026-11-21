@@ -10,6 +10,8 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 type Db = Database.Database;
 import { ProviderId, SourceId, type DocumentInput } from "@omnesis/types";
@@ -25,8 +27,6 @@ import { createObservation, getObservation } from "../storage/observations.js";
 import { buildOpenLoopDocumentInput } from "./document-projection.js";
 import { OPEN_LOOP_SOURCE_ID } from "./source-meta.js";
 import type Database from "better-sqlite3";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 function testDbPath(): string {
   return fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);

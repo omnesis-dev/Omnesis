@@ -15,7 +15,6 @@ import {
   type StartHistoryCleanupJob,
   type UpdateHistoryCleanupJob,
 } from "./storage/history-cleanup-store.js";
-import type { StoredHistoryCleanupJob } from "./storage/history-cleanup-types.js";
 import {
   startStorageTrimJob,
   applyStorageTrimPage,
@@ -71,11 +70,6 @@ import {
   type TaskCommand,
   type TaskCommandResult,
 } from "./brain/storage/tasks.js";
-import type {
-  ProposedTaskChange,
-  ObservationClaim,
-  ObservationScores,
-} from "./brain/storage/types.js";
 import type { ConversationEvidenceProjection } from "./sources/omnesis-chat/evidence-projection.js";
 import {
   assertPersonProfileReceipt,
@@ -113,6 +107,7 @@ import type {
   AccountId,
   MultiDeviceMode,
   TokenId,
+  FilterListOutcome,
 } from "@omnesis/types";
 import {
   preparePendingSourcePage,
@@ -206,6 +201,7 @@ import type {
   McpToolInvocationAuditInput,
 } from "./access/types.js";
 
+import { completeFilterIndexQueue } from "./indexer/filter-copy.js";
 import {
   upsertDocuments,
   upsertWithCursor,
@@ -722,6 +718,19 @@ import {
   upsertSourceDocumentProfiles,
   type SourceDocumentProfileEntry,
 } from "./data/repositories/SourceDocumentProfileRepository.js";
+import {
+  deleteFilterLists,
+  stageFilterListPart,
+  sweepFilterListRows,
+  type FilterListKey,
+  type StageFilterListPartArgs,
+} from "./data/repositories/SourceFilterListRepository.js";
+import {
+  advanceFilterValuePasses,
+  applyFilterValueWork,
+  mergeFilterPostings,
+  type FilterValueWork,
+} from "./access/filter-values.js";
 import { buildSafeUrlCanonicalizerRegistry } from "./known-url-pattern-safety.js";
 import { getUrlCanonicalizers, getUrlCanonicalizerSpecs } from "./url-canonicalizers.js";
 import type { UrlCanonicalizerSpec } from "@omnesis/core";
@@ -1711,6 +1720,12 @@ export interface WriteGate extends KnowledgeWriteGate {
   /** Clear only a completed tombstone; a concurrent pending removal wins. */
   clearSourceRemovedIfCleanupDone(id: SourceId): Promise<boolean>;
   /**
+   * Forget queued version-only changes the indexer has copied into the
+   * search index. One batch of at most a few hundred ids.
+   */
+  completeFilterIndexQueue(documentIds: readonly string[]): Promise<void>;
+
+  /**
    * Replace the stored per-source-type document-event profiles with the
    * publishing collector's full declaration. See
    * `data/repositories/SourceDocumentProfileRepository.ts`.
@@ -1718,7 +1733,25 @@ export interface WriteGate extends KnowledgeWriteGate {
   upsertSourceDocumentProfiles(
     entries: readonly SourceDocumentProfileEntry[],
     publishedAt: number,
-  ): Promise<{ stored: number }>;
+  ): Promise<{ stored: number; skipped: number }>;
+  /**
+   * Apply one page of a published filter list, in bounded sub-batches. See
+   * `data/repositories/SourceFilterListRepository.ts`.
+   */
+  stageFilterListPart(args: Omit<StageFilterListPartArgs, "resume">): Promise<FilterListOutcome>;
+  /** Forget the filter lists of a source, or of one of its devices. Returns the lists dropped. */
+  deleteFilterLists(sourceId: string, deviceId?: string): Promise<number>;
+  /** Delete a bounded number of filter-list rows no read can reach, from `cursor` on. */
+  sweepFilterListRows(
+    cursor: FilterListKey | null,
+    limit: number,
+  ): Promise<{ deleted: number; cursor: FilterListKey | null }>;
+  /** Apply the filter rows a reader cut for queued records; see `access/filter-values.ts`. */
+  applyFilterValueWork(work: FilterValueWork[]): Promise<{ applied: number }>;
+  /** Queue the next records of an account whose filter rows must be cut again. */
+  advanceFilterValuePasses(limit: number): Promise<{ queued: number; changed: boolean }>;
+  /** Move the filter postings of a full level into the next. */
+  mergeFilterPostings(level: number): Promise<void>;
 
   // ── briefs (the Brain run queue) ─────────────────────────────
   /** Enqueue one Brain run (or fold into a pending row by dedupe key). */
@@ -2372,6 +2405,12 @@ import {
   type WriterOpName,
   type WriterReturn,
 } from "./scheduler/writer-handlers.js";
+import type {
+  ProposedTaskChange,
+  ObservationClaim,
+  ObservationScores,
+} from "./brain/storage/types.js";
+import type { StoredHistoryCleanupJob } from "./storage/history-cleanup-types.js";
 import type { KnowledgeCanonicalFence } from "./brain/knowledge/canonical-fence.js";
 import type { AccountDescriptor, SourceSyncMeta, SyncCursor } from "@omnesis/source-sdk";
 import type Database from "better-sqlite3";
@@ -2820,6 +2859,16 @@ export function writeGateFromCall(call: WriterCallFn): WriteGate {
     clearSourceRemovedIfCleanupDone: (id) => call("sources.clearSourceRemovedIfCleanupDone", [id]),
     upsertSourceDocumentProfiles: (entries, publishedAt) =>
       call("sources.upsertDocumentProfiles", [entries, publishedAt]),
+    completeFilterIndexQueue: (documentIds) =>
+      call("documents.completeFilterIndexQueue", [[...documentIds]]),
+    stageFilterListPart: (args) => call("filterLists.stagePart", [args]),
+    deleteFilterLists: (sourceId, deviceId) => call("filterLists.delete", [sourceId, deviceId]),
+    sweepFilterListRows: (cursor, limit) => call("filterLists.sweep", [cursor, limit]),
+    applyFilterValueWork: (work) => call("filterValues.apply", [work]),
+    advanceFilterValuePasses: (limit) => call("filterValues.advancePasses", [limit]),
+    mergeFilterPostings: async (level) => {
+      await call("filterValues.mergePostings", [level]);
+    },
 
     enqueueCognitionRun: (input, now) => call("cognition.enqueue", [input, now]),
     claimDueCognitionRuns: (opts) => call("cognition.claimDue", [opts]),
@@ -3498,6 +3547,22 @@ export function directWriteGate(db: Db): WriteGate {
     clearSourceRemovedIfCleanupDone: async (id) => clearSourceRemovedIfCleanupDone(db, id),
     upsertSourceDocumentProfiles: async (entries, publishedAt) =>
       upsertSourceDocumentProfiles(db, entries, publishedAt),
+    completeFilterIndexQueue: async (documentIds) => completeFilterIndexQueue(db, documentIds),
+    stageFilterListPart: async (args) => {
+      let resume: StageFilterListPartArgs["resume"];
+      for (;;) {
+        const result = stageFilterListPart(db, { ...args, resume });
+        if (result.kind === "done") return result.outcome;
+        resume = result.resume;
+      }
+    },
+    deleteFilterLists: async (sourceId, deviceId) => deleteFilterLists(db, sourceId, deviceId),
+    sweepFilterListRows: async (cursor, limit) => sweepFilterListRows(db, cursor, limit),
+    applyFilterValueWork: async (work) => ({ applied: applyFilterValueWork(db, work).applied }),
+    advanceFilterValuePasses: async (limit) => advanceFilterValuePasses(db, limit),
+    mergeFilterPostings: async (level) => {
+      mergeFilterPostings(db, level);
+    },
 
     enqueueCognitionRun: async (input, now) => enqueueCognitionRun(db, input, now),
     claimDueCognitionRuns: async (opts) => claimDueCognitionRuns(db, opts),

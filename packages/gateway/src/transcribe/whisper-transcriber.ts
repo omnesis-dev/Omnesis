@@ -43,6 +43,11 @@ import {
 } from "./whisper-worker-protocol.js";
 import { adaptTranscriptionVocabulary } from "./vocabulary-adapter.js";
 import { transcribeInChunks, type ChunkTranscript } from "./chunks.js";
+import {
+  defaultWhisperSpawner,
+  type WhisperWorkerProcess,
+  type WhisperWorkerSpawner,
+} from "./whisper-worker-process.js";
 import type { TranscribeCapability, TranscriptionResult } from "@omnesis/core";
 
 const log = createLogger("gateway:transcribe:whisper");
@@ -57,11 +62,6 @@ export type {
   WhisperWorkerProcess,
   SpawnWhisperWorkerArgs,
   WhisperWorkerSpawner,
-} from "./whisper-worker-process.js";
-import {
-  defaultWhisperSpawner,
-  type WhisperWorkerProcess,
-  type WhisperWorkerSpawner,
 } from "./whisper-worker-process.js";
 
 export type WhisperModuleLoader = () => Promise<{ Whisper: unknown }>;

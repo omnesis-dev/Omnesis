@@ -16,6 +16,8 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import Database from "better-sqlite3";
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
 import { createDatabase, upsertWithCursor } from "../db.js";
@@ -68,8 +70,6 @@ import {
   refreshPlannerStatistics,
 } from "./planner-statistics.js";
 import type { NearDupApplyBatch } from "../near-dupes/types.js";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 type Db = Database.Database;
 

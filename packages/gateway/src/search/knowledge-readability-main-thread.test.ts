@@ -10,6 +10,8 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { computeContentHash } from "@omnesis/core";
@@ -29,8 +31,6 @@ import {
 } from "../indexer/db.js";
 import { SearchPipeline } from "./pipeline.js";
 import { closeTempDb } from "./test-utils.js";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 const BODY =
   "The invented Riverside telescope rota assigns two observers per night and a spare lens kit.";

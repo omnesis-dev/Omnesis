@@ -110,3 +110,30 @@ describe("eventDocumentsInWindows", () => {
     ).toEqual(["doc-email"]);
   });
 });
+
+it("restricted search uses document-local time evidence and rejects blended annotation origins", async () => {
+  const seen: TemporalQueryInput[] = [];
+  const ids = await eventDocumentsInWindows(
+    reader(
+      [
+        [
+          item("projection", {
+            projection: { documentId: "raw-document" } as TemporalItem["projection"],
+          }),
+          item("annotation", {
+            annotation: {
+              documentIds: ["allowed-document", "hidden-document"],
+            } as TemporalItem["annotation"],
+          }),
+        ],
+      ],
+      seen,
+    ),
+    [WINDOW],
+    "UTC",
+    undefined,
+    { includeAnnotations: false },
+  );
+  expect(seen[0]!.origins).toEqual(["projection", "mention"]);
+  expect(ids).toEqual(["raw-document"]);
+});

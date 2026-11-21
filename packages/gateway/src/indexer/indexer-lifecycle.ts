@@ -136,6 +136,8 @@ export interface IndexerModelInfo {
  * these are re-created inside the lifecycle.
  */
 export interface IndexerLifecycleDeps {
+  /** Forget queued version-only changes once the indexer has copied them; see `filter-copy.ts`. */
+  completeFilterIndexQueue?: (documentIds: readonly string[]) => Promise<void>;
   getStoragePressure?: () => import("../storage/pressure.js").StoragePressureSnapshot;
   /** Capability→backend resolver. loadConfig/resolve('embedder')/getBackendApiKey. */
   inferenceRegistry: InferenceRegistry;
@@ -722,6 +724,7 @@ export class IndexerLifecycle {
 
     const storagePressure = this.deps.getStoragePressure?.();
     const proxy = new IndexerWorkerProxy({
+      completeFilterIndexQueue: this.deps.completeFilterIndexQueue,
       ...(storagePressure
         ? {
             storagePressure: {

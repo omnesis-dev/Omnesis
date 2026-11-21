@@ -2711,6 +2711,7 @@ describe("SourceManager", () => {
     expect(pushed).toEqual([
       {
         sourceType: "other-source",
+        outputRevision: 1,
         profile: {
           documentTypes: ["note"],
           personRoles: ["author"],

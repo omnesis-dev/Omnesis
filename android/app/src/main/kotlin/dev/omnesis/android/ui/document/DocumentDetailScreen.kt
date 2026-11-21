@@ -91,6 +91,7 @@ fun DocumentDetailScreen(
     onOpenDocument: (String) -> Unit = {},
     onOpenPerson: (String) -> Unit = {},
     onOpenSettings: () -> Unit = {},
+    onOpenAccess: (String) -> Unit = {},
     vm: DocumentDetailViewModel = hiltViewModel(),
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
@@ -122,6 +123,7 @@ fun DocumentDetailScreen(
         onLoadMoreAnnotationDependents = vm::loadMoreAnnotationDependents,
         canOpenLink = context::canOpenLink,
         onOpenLinks = { urls -> context.openFirstLink(urls) },
+        onOpenAccess = onOpenAccess,
     )
 }
 
@@ -181,6 +183,7 @@ fun DocumentDetailContent(
     onLoadMoreAnnotationDependents: (dev.omnesis.android.transport.dto.Annotation) -> Unit = {},
     canOpenLink: (String) -> Boolean = { true },
     onOpenLinks: (List<String>) -> Unit = {},
+    onOpenAccess: (String) -> Unit = {},
 ) {
     val c = OmTheme.colors
     val bundle = (state as? Loadable.Content)?.value
@@ -294,6 +297,8 @@ fun DocumentDetailContent(
             onLoadMoreAnnotations = onLoadMoreAnnotations,
             onToggleAnnotationDependents = onToggleAnnotationDependents,
             onLoadMoreAnnotationDependents = onLoadMoreAnnotationDependents,
+            // Shown once the owner-only details have loaded, so a gateway without them offers no dead link.
+            onOpenAccess = if (bundle.owner && bundle.filterDetails != null) { { showInspector = false; onOpenAccess(bundle.doc.id) } } else null,
         )
     }
 

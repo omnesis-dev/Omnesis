@@ -33,6 +33,10 @@ import {
   setSyncState,
 } from "../../data/repositories/SyncStateRepository.js";
 import {
+  listFilterListDigests,
+  stageFilterListPart,
+} from "../../data/repositories/SourceFilterListRepository.js";
+import {
   enqueueSourceStreamCleanup,
   completeSourceStreamCleanup,
   listPendingSourceStreamCleanups,
@@ -1535,6 +1539,33 @@ describe("SourceService membership", () => {
     await vi.waitFor(() => expect(listPendingSourceStreamCleanups(db)).toEqual([]));
     await service.joinSource(source.id, beta.id);
     expect(memberIds(db, source.id)).toEqual(expect.arrayContaining([beta.id]));
+  });
+
+  test("a detached device's filter lists go with its stream; its siblings' and the shared ones stay", async () => {
+    const { db, alpha, beta, service, seed } = fixture();
+    const source = seed(PARTITIONED);
+    await service.joinSource(source.id, beta.id);
+    const publish = (field: string, deviceId: string) =>
+      stageFilterListPart(db, {
+        key: { sourceId: source.id, field, deviceId },
+        digest: "a".repeat(64),
+        part: 0,
+        final: true,
+        rows: [["item", "/home/maya/work", null, "work"]],
+        now: 1000,
+      });
+    publish("extra.directory", alpha.id);
+    publish("extra.directory", beta.id);
+    publish("extra.labelIds", "");
+
+    await service.detachSource(source.id, beta.id);
+    await vi.waitFor(() => expect(listPendingSourceStreamCleanups(db)).toEqual([]));
+
+    expect(
+      listFilterListDigests(db, source.id)
+        .map((list) => `${list.field}@${list.deviceId}`)
+        .sort(),
+    ).toEqual([`extra.directory@${alpha.id}`, "extra.labelIds@"]);
   });
 
   test("concurrent moves cannot re-home onto a stream the winning move is retiring", async () => {

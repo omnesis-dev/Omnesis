@@ -53,6 +53,8 @@ import {
   lookupDocumentIdsBySourceUrl,
 } from "../data/repositories/DocumentRepository.js";
 import { permittedSourceIds } from "../access/permitted-sources.js";
+import { documentAccessGrant } from "../access/document-inclusion.js";
+import { decideDocumentAccess } from "../access/filter-decision.js";
 import { matchDocumentIdPrefix } from "../data/like-prefix-seek.js";
 import {
   reconstructBoundDocumentRef,
@@ -69,7 +71,11 @@ import { graphContextPolicy } from "../search/graph-context-policy.js";
 import { parseQuery, type ParsedFilterToken } from "../search/query-parser.js";
 import { withActivity } from "../observability/main-activity.js";
 import { hydrateBrowserRecord } from "./record-browser-urls.js";
-import { isKnowledgeReadDocument, isKnowledgeReadSource } from "./knowledge-read-policy.js";
+import {
+  KNOWLEDGE_READ_SOURCE_IDS,
+  isKnowledgeReadDocument,
+  isKnowledgeReadSource,
+} from "./knowledge-read-policy.js";
 import type Database from "better-sqlite3";
 import type {
   Breadcrumb,
@@ -155,7 +161,7 @@ export function createGatewaySearchPort(
       if (parsed) rejectUnsupportedRestrictedFilters(parsed.tokens);
       const requestedFilters = parsed ? mergeFilters(parsed.filters, input.filters) : input.filters;
       let permitted = authorization && db ? permittedSourceIds(db, authorization) : null;
-      if (!knowledgeReads && db) {
+      if (!knowledgeReads && db && !authorization?.scopePolicies.length) {
         // Pass the boundary before ranking so withheld mirrors cannot crowd
         // original documents out of a capped candidate set.
         const sources = db
@@ -191,9 +197,18 @@ export function createGatewaySearchPort(
               ? false
               : labFeatureEnabled(db, "brain") && labFeatureEnabled(db, "tasks"),
         },
-        permitted
+        permitted || authorization?.scopePolicies.length
           ? {
-              sourceIds: searchSourceIntersection(permitted),
+              ...(permitted ? { sourceIds: searchSourceIntersection(permitted) } : {}),
+              // A filtered search states its boundary as policies, so the
+              // knowledge sources are excluded by name; every other search
+              // already listed the sources it may read above.
+              ...(authorization?.scopePolicies.length
+                ? {
+                    scopePolicies: authorization.scopePolicies,
+                    ...(!knowledgeReads ? { excludedSourceIds: KNOWLEDGE_READ_SOURCE_IDS } : {}),
+                  }
+                : {}),
               ...(!authorization?.restricted ? { graphContext: "unrestricted" as const } : {}),
             }
           : undefined,
@@ -256,9 +271,12 @@ export function createGatewaySearchPort(
         query: input.query,
         ...(coverage ? { coverage } : {}),
         durationMs: response.timing.totalMs ?? Date.now() - t0,
-        totalCandidates:
-          (response.timing.bm25Candidates ?? 0) + (response.timing.vectorCandidates ?? 0) ||
-          undefined,
+        // A filtered search's candidate counts are taken before its results
+        // are checked against the corpus, so they are not reported.
+        totalCandidates: authorization?.scopePolicies.length
+          ? undefined
+          : (response.timing.bm25Candidates ?? 0) + (response.timing.vectorCandidates ?? 0) ||
+            undefined,
         results,
       };
     },
@@ -493,6 +511,13 @@ export function createGatewayDocumentPort(
         if (options?.knowledgeReads === false && isKnowledgeReadDocument(db, documentId))
           return null;
         const permitted = authorization ? permittedSourceIds(db, authorization) : null;
+        // A filtered grant reads one document only when the same decision
+        // the owner's "who can read this" page shows says it may.
+        if (
+          authorization?.scopePolicies.length &&
+          !decideDocumentAccess(db, documentAccessGrant(db, authorization), documentId).readable
+        )
+          return null;
         const rows =
           options?.maxStoredDocumentBytes === undefined && !permitted
             ? listDocumentsByIds(db, [documentId])
@@ -677,20 +702,25 @@ export function createGatewayDocumentByUrlPort(
         return { url, durationMs: Date.now() - t0 };
       }
       const permitted = authorization ? permittedSourceIds(db, authorization) : null;
-      const rows = permitted
-        ? db.transaction((candidateIds: readonly string[]) => {
-            const sourceLookup = db.prepare<[string], { source_id: string }>(
-              "SELECT source_id FROM documents WHERE id = ?",
-            );
-            const allowedIds = candidateIds.filter((id) => {
-              const row = sourceLookup.get(id);
-              return row ? permitted.has(row.source_id) : false;
-            });
-            // Authorization and materialization share one reader snapshot, and
-            // denied candidate bodies are never loaded into the process.
-            return allowedIds.length > 0 ? listDocumentsByIds(db, allowedIds) : [];
-          })(ids)
-        : listDocumentsByIds(db, ids);
+      const rows =
+        permitted || authorization?.scopePolicies.length
+          ? db.transaction((candidateIds: readonly string[]) => {
+              const grant = authorization?.scopePolicies.length
+                ? documentAccessGrant(db, authorization)
+                : null;
+              const sourceLookup = db.prepare<[string], { source_id: string }>(
+                "SELECT source_id FROM documents WHERE id = ?",
+              );
+              const allowedIds = candidateIds.filter((id) => {
+                if (grant) return decideDocumentAccess(db, grant, id).readable;
+                const row = sourceLookup.get(id);
+                return row ? permitted === null || permitted.has(row.source_id) : false;
+              });
+              // Authorization and materialization share one reader snapshot, and
+              // denied candidate bodies are never loaded into the process.
+              return allowedIds.length > 0 ? listDocumentsByIds(db, allowedIds) : [];
+            })(ids)
+          : listDocumentsByIds(db, ids);
       if (rows.length === 0) {
         return { url, durationMs: Date.now() - t0 };
       }

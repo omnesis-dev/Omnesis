@@ -6,7 +6,10 @@ import { enforceBroadWriteScope, scope } from "../../scope.js";
 import { validateJson } from "../../validate.js";
 import { BadRequestError } from "../../errors.js";
 import { sourceDocumentProfilesBody } from "../../schemas/admin.js";
-import { listSourceDocumentProfiles } from "../../../data/repositories/SourceDocumentProfileRepository.js";
+import {
+  listSourceDocumentProfiles,
+  type SourceDocumentProfileEntry,
+} from "../../../data/repositories/SourceDocumentProfileRepository.js";
 import { log as adminLog } from "./internals.js";
 import type { AdminRoutesDeps } from "./internals.js";
 import type { RouteApp } from "../types.js";
@@ -22,6 +25,11 @@ const log = adminLog.child("source-document-profiles");
  * asked about — the document types it emits, the person roles it populates,
  * and the metadata fields with their vocabularies — so a natural-language
  * watch condition compiles to a deterministic document predicate.
+ *
+ * Each entry carries the source's `outputRevision`. A stored profile is
+ * replaced only by one of an equal or higher revision, so a collector on an
+ * older build cannot overwrite a newer description; an entry without a
+ * revision counts as 0. The response's `skipped` counts the entries kept out.
  *
  * Unlike the sibling boot pushes, the set is written to SQLite rather than
  * held in memory. The compiler treats a missing profile as "this source is
@@ -48,12 +56,16 @@ export function mountSourceDocumentProfilesRoutes(app: RouteApp, deps: AdminRout
     validateJson(sourceDocumentProfilesBody),
     async (c) => {
       enforceBroadWriteScope(c.get("auth").scopes);
-      const { entries } = c.req.valid("json");
+      // The body schema holds each filter declaration as an unread object, so
+      // the profile is a `DocumentEventProfile` in everything but those keys.
+      const entries = c.req.valid("json").entries as SourceDocumentProfileEntry[];
 
       // The publisher is the collector, but the same contract the source-sdk
       // enforces at definition time is re-checked here: a profile reaches the
       // compiler's prompt, and an alias naming a value the source never
-      // declares would compile a watch that silently can never match.
+      // declares would compile a watch that silently can never match. Filter
+      // declarations are not checked here: one this gateway does not know is
+      // stored as published and reported by `filterFieldsFor`.
       const seen = new Set<string>();
       for (const entry of entries) {
         if (seen.has(entry.sourceType)) {
@@ -67,9 +79,14 @@ export function mountSourceDocumentProfilesRoutes(app: RouteApp, deps: AdminRout
         }
       }
 
-      const { stored } = await deps.writeGate.upsertSourceDocumentProfiles(entries, Date.now());
-      log.info(`registered document-event profiles for ${stored} source type(s)`);
-      return c.json({ ok: true, count: stored });
+      const { stored, skipped } = await deps.writeGate.upsertSourceDocumentProfiles(
+        entries,
+        Date.now(),
+      );
+      log.info(
+        `registered document-event profiles for ${stored} source type(s), kept a newer one for ${skipped}`,
+      );
+      return c.json({ ok: true, count: stored, skipped });
     },
   );
 

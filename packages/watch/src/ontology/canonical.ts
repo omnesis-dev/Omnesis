@@ -43,6 +43,12 @@ export function canonicalJson(value: unknown): string {
  * fingerprint learned that the hard way and excludes it; both hashes taken
  * over a source project through here so they cannot come to disagree about
  * what "the source changed" means.
+ *
+ * A profile's filter declarations (`filter` on a metadata field, the
+ * profile's `personFilter`) are not in it either. They say how an access
+ * filter may match a record, which no node of a watch reads; a source that
+ * starts declaring one has not changed what any watch means, and hashing it
+ * would pause every watch on that source for a change none of them can see.
  */
 export function declaredSource(source: {
   readonly sourceId: string;
@@ -52,6 +58,31 @@ export function declaredSource(source: {
   return {
     sourceId: source.sourceId,
     semanticallyIndexed: source.semanticallyIndexed,
-    profile: source.profile,
+    profile: withoutFilterDeclarations(source.profile),
   };
+}
+
+/**
+ * The profile with its filter declarations left out and everything else,
+ * including keys this package does not know, exactly as it was.
+ */
+function withoutFilterDeclarations(profile: unknown): unknown {
+  if (!isRecord(profile)) return profile;
+  const { personFilter: _personFilter, ...declared } = profile;
+  if (!Array.isArray(declared.metadataFields)) return declared;
+  return { ...declared, metadataFields: declared.metadataFields.map(declaredMetadataField) };
+}
+
+/**
+ * The half of a metadata field a watch's meaning depends on: the field
+ * without its filter declaration. See {@link declaredSource}.
+ */
+export function declaredMetadataField(field: unknown): unknown {
+  if (!isRecord(field)) return field;
+  const { filter: _filter, ...declared } = field;
+  return declared;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

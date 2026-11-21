@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { dirname } from "node:path";
 import { computeContentHash, fileKindName } from "@omnesis/core";
+import { directoryFilterId } from "@omnesis/source-sdk";
 import type { DocumentInput, ProviderId, SourceId } from "@omnesis/types";
 import type { LocalFileEntry } from "./types.js";
 import type { ExtractionResult } from "@omnesis/core";
@@ -49,6 +51,7 @@ export function normalizeFile(
   // cross-source `duplicate-content` join key (Drive, mail attachments).
   const extractedContentHash = computeContentHash(text);
   const nonSpace = text.replace(/\s/g, "").length;
+  const folder = directoryFilterId(dirname(entry.absolutePath));
 
   const doc: DocumentInput = {
     providerId,
@@ -71,6 +74,9 @@ export function normalizeFile(
         ...(extractedExtra ?? {}),
         path: entry.displayPath,
         directory: entry.dirSegments.join("/"),
+        // Null only for a path too long to be an id; the file then carries
+        // no folder, which a filter reads as "not known".
+        ...(folder !== null ? { folder } : {}),
         mimeType: entry.mimeType,
         fileSize: entry.size,
       },

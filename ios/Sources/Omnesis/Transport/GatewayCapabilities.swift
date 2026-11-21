@@ -10,17 +10,24 @@ public struct GatewayCapabilities: Decodable, Equatable, Sendable {
     /// Starting a chat about a task (`POST /tasks/:id/conversation`).
     public let taskConversations: GatewayCapabilityRange?
     public let taskNoteCapture: GatewayCapabilityRange?
+    /// Creating and changing access levels from a paired phone.
+    public let accessLevelEditing: GatewayCapabilityRange?
 
     /// The `taskConversations` version this app speaks.
     static let taskConversationsVersion = 1
 
-    public init(taskConversations: GatewayCapabilityRange? = nil, taskNoteCapture: GatewayCapabilityRange? = nil) {
+    public init(
+        taskConversations: GatewayCapabilityRange? = nil,
+        taskNoteCapture: GatewayCapabilityRange? = nil,
+        accessLevelEditing: GatewayCapabilityRange? = nil
+    ) {
         self.taskConversations = taskConversations
         self.taskNoteCapture = taskNoteCapture
+        self.accessLevelEditing = accessLevelEditing
     }
 
     private enum CodingKeys: String, CodingKey {
-        case taskConversations, taskNoteCapture
+        case taskConversations, taskNoteCapture, accessLevelEditing
     }
 
     public init(from decoder: Decoder) throws {
@@ -28,6 +35,12 @@ public struct GatewayCapabilities: Decodable, Equatable, Sendable {
         // Decoded per entry, so one malformed entry withholds only its own feature.
         taskNoteCapture = try? container.decodeIfPresent(GatewayCapabilityRange.self, forKey: .taskNoteCapture)
         taskConversations = try? container.decodeIfPresent(GatewayCapabilityRange.self, forKey: .taskConversations)
+        accessLevelEditing = try? container.decodeIfPresent(GatewayCapabilityRange.self, forKey: .accessLevelEditing)
+    }
+
+    /// Whether this gateway lets the app create and change access levels.
+    public var supportsAccessLevelEditing: Bool {
+        accessLevelEditing?.contains(1) ?? false
     }
 
     public var supportsTaskNoteCapture: Bool {

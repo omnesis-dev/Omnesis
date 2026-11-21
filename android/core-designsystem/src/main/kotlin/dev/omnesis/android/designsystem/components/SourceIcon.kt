@@ -3,15 +3,22 @@
 
 package dev.omnesis.android.designsystem.components
 
+import android.graphics.BitmapFactory
+import android.util.Base64
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import coil.compose.SubcomposeAsyncImage
@@ -46,8 +53,12 @@ fun SourceIcon(
     size: Dp = 22.dp,
 ) {
     val data = model.imageData
+    // Coil runs no request in inspection mode, so a preview or screenshot render decodes embedded art in place.
+    val embedded = if (LocalInspectionMode.current) remember(data) { decodeEmbeddedRaster(data) } else null
     if (data.isNullOrBlank()) {
         NeutralSourceGlyph(modifier.size(size))
+    } else if (embedded != null) {
+        Image(bitmap = embedded, contentDescription = null, contentScale = ContentScale.Fit, modifier = modifier.size(size))
     } else {
         SubcomposeAsyncImage(
             model = data,
@@ -58,6 +69,17 @@ fun SourceIcon(
             error = { NeutralSourceGlyph(Modifier.fillMaxSize()) },
         )
     }
+}
+
+/** The bitmap of a base64 raster `data:` URI; null for anything else, including SVG art. */
+private fun decodeEmbeddedRaster(data: String?): ImageBitmap? {
+    if (data == null || !data.startsWith("data:image/") || data.startsWith("data:image/svg")) return null
+    val comma = data.indexOf(',')
+    if (comma < 0 || !data.substring(0, comma).endsWith(";base64", ignoreCase = true)) return null
+    return runCatching {
+        val bytes = Base64.decode(data.substring(comma + 1), Base64.DEFAULT)
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
+    }.getOrNull()
 }
 
 /** Neutral document glyph shown when no source art is available or it fails to load. */

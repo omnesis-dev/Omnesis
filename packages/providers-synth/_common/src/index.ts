@@ -24,6 +24,16 @@ export type {
 export { loadCast, getPerson, resolvePerson, personMention, selfAccountId } from "./cast.js";
 
 export {
+  ChatRoster,
+  loadChatRosterFixtures,
+  registerChatRoster,
+  unregisterChatRoster,
+  getChatRoster,
+  type ChatRosterFixture,
+  type ChatDayFixture,
+} from "./chat-roster.js";
+
+export {
   SYNTH_BATCH_SIZE,
   pageFromFixture,
   syncFromFixture,

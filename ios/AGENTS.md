@@ -402,7 +402,7 @@ Stalls: a loaded simulator can hold every request for over a minute and then rec
 
 The suite also runs the real `DeviceSocket` over the real WebSocket and TLS stack: a `LoopbackForwarder` takes the gateway away and brings it back, and path reports are scripted, because a simulator shares its host's network and `NWPathMonitor` never sees a change there. Radio transitions and iOS suspension can only be checked on a device.
 
-Not covered by this suite (intentional follow-up): pairing-flow E2E (the transport tests use the bootstrap admin token directly).
+Not covered by this suite (intentional follow-up): pairing UI E2E (the wrapper pairs a registered owner phone through the real API).
 
 ## Remote deploy via TestFlight
 

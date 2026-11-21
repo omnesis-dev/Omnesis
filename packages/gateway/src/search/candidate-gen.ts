@@ -27,6 +27,10 @@
  * thread, after this returns.
  */
 
+import {
+  withScopeSearchAuthorization,
+  type ScopeSearchAuthorization,
+} from "./scope-authorization.js";
 import type Database from "better-sqlite3";
 type Db = Database.Database;
 import { createLogger } from "@omnesis/core";
@@ -89,6 +93,8 @@ export interface CandidateGenResources {
  * to a worker unchanged.
  */
 export interface CandidateGenRequest {
+  /** The source filters of an external agent's search; see `scope-authorization.ts`. */
+  scopeAuthorization?: ScopeSearchAuthorization;
   /** `browse` lists documents newest-first; `hybrid` runs bm25 + vector. */
   mode: "hybrid" | "browse";
   /** MATCH text for BM25. */
@@ -163,6 +169,15 @@ export interface CandidateGenResult {
 }
 
 export function runCandidateGen(
+  res: CandidateGenResources,
+  req: CandidateGenRequest,
+): CandidateGenResult {
+  return withScopeSearchAuthorization(res.indexDb, req.scopeAuthorization, () =>
+    runScopedCandidateGen(res, req),
+  );
+}
+
+function runScopedCandidateGen(
   res: CandidateGenResources,
   req: CandidateGenRequest,
 ): CandidateGenResult {

@@ -4,13 +4,10 @@
 package dev.omnesis.android.ui.access
 
 import dev.omnesis.android.transport.GatewayException
-import dev.omnesis.android.transport.dto.AccessAnswerRelease
-import dev.omnesis.android.transport.dto.AccessAnswerReleaseMode
 import dev.omnesis.android.transport.dto.AccessAuthorizationRequest
 import dev.omnesis.android.transport.dto.AccessAuthorizationSelection
 import dev.omnesis.android.transport.dto.AccessCapability
 import dev.omnesis.android.transport.dto.AccessConnectionProposal
-import dev.omnesis.android.transport.dto.AccessGrantRule
 import dev.omnesis.android.transport.dto.AccessOverview
 import dev.omnesis.android.transport.dto.AccessReconnectProposal
 import dev.omnesis.android.transport.dto.AccessSourceBoundary
@@ -23,50 +20,20 @@ import java.security.cert.CertificateException
 import javax.net.ssl.SSLException
 
 /**
- * The three capabilities, always in this order.
- *
- * A capability keeps its slot wherever capabilities are listed, so "which of these reads raw
- * records" is answered by position rather than by reading every label.
- */
-enum class AccessCapabilitySlot(val label: String) { ANSWER("Answer"), DIRECT("Direct"), NOTES("Notes") }
-
-/**
  * How one capability is coloured. A capability has one colour everywhere it appears, and a
  * granted capability is never the withheld grey — grey would read as the one capability this
  * connection does not hold.
- *
- * Unreviewed answer release is [WARNING], never [RAW]: danger belongs to Direct alone, and two
- * dangers on one row means neither is read as one.
  */
-enum class AccessCapabilityTone { REVIEWED, RAW, WRITE, WARNING, WITHHELD }
+enum class AccessCapabilityTone { REVIEWED, RAW, WRITE, WITHHELD }
 
-/**
- * The tone one capability carries, given whether it is granted and — for Answer — whether its
- * answers are released without a privacy review.
- */
-fun capabilityTone(
-    capability: AccessCapabilitySlot,
-    granted: Boolean,
-    unreviewed: Boolean = false,
-): AccessCapabilityTone = when {
+/** The tone one capability carries, given whether it is granted. */
+fun capabilityTone(capability: AccessCapability, granted: Boolean): AccessCapabilityTone = when {
     !granted -> AccessCapabilityTone.WITHHELD
-    capability == AccessCapabilitySlot.ANSWER && unreviewed -> AccessCapabilityTone.WARNING
-    capability == AccessCapabilitySlot.ANSWER -> AccessCapabilityTone.REVIEWED
-    capability == AccessCapabilitySlot.DIRECT -> AccessCapabilityTone.RAW
+    capability == AccessCapability.ANSWER -> AccessCapabilityTone.REVIEWED
+    capability == AccessCapability.DIRECT -> AccessCapabilityTone.RAW
     else -> AccessCapabilityTone.WRITE
 }
 
-/**
- * The capabilities one source list governs. A shared list stands for two capabilities, so a
- * refusal it earns has to name both: "Select at least one source for Direct" in front of a list
- * the owner chose for Answer and Direct together describes a boundary that is not there.
- */
-enum class AccessSourceScope(val label: String) {
-    ANSWER("Answer"),
-    DIRECT("Direct"),
-    SHARED("Answer and Direct"),
-}
-enum class AccessAnswerReleaseChoice { REVIEWED, UNREVIEWED }
 enum class AccessAuthorizationStep(val title: String, val shortTitle: String) {
     CONNECTION("Connection", "Connection"),
     PERMISSIONS("Permissions", "Permissions"),
@@ -86,26 +53,38 @@ enum class AccessAuthorizationStep(val title: String, val shortTitle: String) {
  * A gateway that proposes connections opens on the Connection step. An existing access level
  * or a replaced connection brings its permissions with it, so those two paths go straight to
  * Review; only a new access level asks for permissions. Data & privacy asks which sources a capability may read and how its answers are
- * released; a grant that only writes notes has neither question, so the step is skipped
- * rather than shown empty. iOS and the portal derive the same lists; they must agree,
+ * released, one decision per screen ([authorizationPositions]); a grant that only writes notes has
+ * neither question, so the step is skipped rather than shown empty. iOS and the portal derive the same lists; they must agree,
  * because the step chips show the reader a number per step.
  */
-internal fun authorizationSteps(
-    form: AccessAuthorizationForm,
-    requiresAnswer: Boolean,
-): List<AccessAuthorizationStep> {
-    val connection = form.connection
-    if (connection != null && connection.path != AccessConnectionPath.NEW_LEVEL) {
-        return listOf(AccessAuthorizationStep.CONNECTION, AccessAuthorizationStep.REVIEW)
-    }
-    val readsSources = form.directEnabled || form.answerEnabled || requiresAnswer
-    val permissions = if (readsSources) {
+internal fun authorizationSteps(form: AccessAuthorizationForm): List<AccessAuthorizationStep> {
+    if (!form.decidesPermissions) return listOf(AccessAuthorizationStep.CONNECTION, AccessAuthorizationStep.REVIEW)
+    val permissions = if (form.level.readingCapabilities.isNotEmpty()) {
         listOf(AccessAuthorizationStep.PERMISSIONS, AccessAuthorizationStep.DATA, AccessAuthorizationStep.REVIEW)
     } else {
         listOf(AccessAuthorizationStep.PERMISSIONS, AccessAuthorizationStep.REVIEW)
     }
-    return if (connection == null) permissions else listOf(AccessAuthorizationStep.CONNECTION) + permissions
+    return if (form.connection == null) permissions else listOf(AccessAuthorizationStep.CONNECTION) + permissions
 }
+
+/** One screen of the approval: a step, and within Data & privacy the one decision it asks. */
+internal data class AccessAuthorizationPosition(val step: AccessAuthorizationStep, val dataPage: AccessLevelPage? = null)
+
+/**
+ * Every screen this approval walks through, in order. Data & privacy asks the decisions the level editor asks of a
+ * new level, one per screen: Answer's sources, Direct's sources, new sources, then how answers are released, each
+ * only where it applies.
+ */
+internal fun authorizationPositions(form: AccessAuthorizationForm): List<AccessAuthorizationPosition> =
+    authorizationSteps(form).flatMap { step ->
+        if (step != AccessAuthorizationStep.DATA) listOf(AccessAuthorizationPosition(step))
+        else form.level.createPages().filter { it != AccessLevelPage.PERMISSIONS && it != AccessLevelPage.REVIEW }.map { AccessAuthorizationPosition(step, it) }
+    }
+
+/** Where [step] and [dataPage] are in [positions]. A step entered without a decision, or with one it no longer asks, is at its first screen. */
+internal fun authorizationPositionIndex(positions: List<AccessAuthorizationPosition>, step: AccessAuthorizationStep, dataPage: AccessLevelPage?): Int =
+    positions.indexOf(AccessAuthorizationPosition(step, dataPage.takeIf { step == AccessAuthorizationStep.DATA })).takeIf { it >= 0 }
+        ?: positions.indexOfFirst { it.step == step }.coerceAtLeast(0)
 
 /**
  * What to say when an access call failed for a reason nothing else named.
@@ -151,6 +130,9 @@ internal fun authorizationDeadlineText(expiresAt: Long, nowMillis: Long): String
     val minutes = ((remaining + 59_999) / 60_000).coerceAtLeast(1)
     return "Expires in $minutes minute${if (minutes == 1L) "" else "s"}."
 }
+
+/** Whether a boundary of this mode takes in a source connected later: every mode but a list of the allowed ones. */
+internal val AccessSourceMode.admitsNewSources: Boolean get() = this != AccessSourceMode.ALLOWLIST
 
 /** Checked rows always mean allowed, independent of the compact wire representation. */
 data class AccessSourceSelectionState(
@@ -200,7 +182,7 @@ data class AccessSourceSelectionState(
     }
 
     /** Whether a source connected after this decision inherits the access. */
-    val futureSourcesAllowed: Boolean get() = mode != AccessSourceMode.ALLOWLIST
+    val futureSourcesAllowed: Boolean get() = mode.admitsNewSources
 
     /**
      * Change only whether sources connected later inherit the access, never which of the
@@ -214,27 +196,6 @@ data class AccessSourceSelectionState(
         )
         else -> setMode(AccessSourceMode.DENYLIST, known)
     }
-
-    fun allowAll(known: Set<String>) = copy(
-        allowedSourceIds = allowedSourceIds + known,
-        explicitlyDeniedIds = explicitlyDeniedIds - known,
-        unavailableReferencedIds = unavailableReferencedIds - known,
-    )
-
-    /**
-     * Blocking everything must stay blocked when a source is connected later. It also makes the
-     * wizard require a deliberate next selection instead of approving the surprising
-     * "none now, all later" combination.
-     */
-    fun blockAll(known: Set<String>) = copy(
-        mode = AccessSourceMode.ALLOWLIST,
-        allowedSourceIds = allowedSourceIds - known,
-        explicitlyDeniedIds = emptySet(),
-    )
-
-    /** Whether two boundaries describe the same access, and so can be edited as one list. */
-    fun sameAccessAs(other: AccessSourceSelectionState): Boolean =
-        mode == other.mode && allowedSourceIds == other.allowedSourceIds
 
     /** Whether one source is allowed under this boundary, the way its checkbox reads. */
     fun allows(sourceId: String): Boolean =
@@ -271,167 +232,40 @@ data class AccessSourceSelectionState(
     }
 }
 
-/** What a capability badge reads out: the word, then whether this connection holds it. */
-internal fun capabilityBadgeDescription(
-    capability: AccessCapabilitySlot,
-    granted: Boolean,
-    unreviewed: Boolean = false,
-): String = buildString {
-    append(capability.label)
-    append(if (granted) " granted" else " not granted")
-    if (granted && unreviewed) append(", released without privacy review")
-}
+/** What stands in place of an approval while filters cannot be authored and the new level would carry some. */
+internal const val FILTERS_UNAVAILABLE_MESSAGE = "New access with filters is unavailable. Choose an existing level or change the allowed capabilities."
 
 /**
- * One source list, as the review states it: the whole corpus, how many sources are kept in,
- * or how many are kept out. A list that lets newly connected sources in is described by what
- * it blocks, so a count never stands for an open boundary. iOS and the portal word it the
- * same way.
+ * What an approval decides. [level] is the draft of the access level the approval creates, the same draft the
+ * level editor edits, carrying the new level's name; on a gateway that predates connections it holds the client's
+ * own permissions. [connection] is the Connection step's answers, or null on such a gateway, where the wizard opens
+ * on Permissions and approves with a `connect` selection.
  */
-internal fun sourceSummary(selection: AccessSourceSelectionState, overview: AccessOverview): String {
-    val available = overview.sources.filter { it.available }.mapTo(mutableSetOf()) { it.id }
-    return when (selection.mode) {
-        AccessSourceMode.ALL -> "All sources"
-        AccessSourceMode.ALLOWLIST -> {
-            val count = selection.allowedSourceIds.count(available::contains)
-            "$count selected source${if (count == 1) "" else "s"}"
-        }
-        AccessSourceMode.DENYLIST -> {
-            val blocked = available.count { it !in selection.allowedSourceIds }
-            if (blocked == 0) "All sources" else "All except $blocked blocked"
-        }
-    }
-}
+data class AccessAuthorizationForm(val level: AccessLevelDraft, val connection: AccessConnectionChoice? = null) {
+    /** Whether this approval decides permissions itself, and does not take an existing level's or a replaced connection's. */
+    val decidesPermissions: Boolean get() = connection == null || connection.path == AccessConnectionPath.NEW_LEVEL
 
-/**
- * What is wrong with one source list, worded for the list that owns it and named for every
- * capability that list governs. The refusal belongs beside the checkboxes that fix it, not at
- * the foot of the step.
- */
-internal fun sourceBoundaryError(
-    state: AccessSourceSelectionState,
-    known: Set<String>,
-    scope: AccessSourceScope,
-): String? = when {
-    known.isEmpty() -> "No sources are connected. Connect a source before approving this access."
-    state.boundary(known).sourceIds.size > MAX_ACCESS_SOURCE_IDS ->
-        "${scope.label} can record at most $MAX_ACCESS_SOURCE_IDS source selections."
-    !state.permitsAnyKnownSource(known) -> "Select at least one source for ${scope.label}."
-    else -> null
-}
+    /** Whether the permissions this approval decides carry filters while the gateway cannot author any. */
+    fun filtersUnavailable(overview: AccessOverview): Boolean =
+        decidesPermissions && overview.sourceFilters?.enabled != true && level.serializedRules.any { it.scopePolicies.isNotEmpty() }
 
-data class AccessAuthorizationForm(
-    val answerEnabled: Boolean = true,
-    val directEnabled: Boolean = false,
-    val notesEnabled: Boolean = false,
-    val answerSources: AccessSourceSelectionState = AccessSourceSelectionState(),
-    val directSources: AccessSourceSelectionState = AccessSourceSelectionState(),
-    val answerRelease: AccessAnswerReleaseChoice = AccessAnswerReleaseChoice.REVIEWED,
-    val policyFamilyId: String = "",
-    /** Whether one source list stands for both Answer and Direct. */
-    val linkedSources: Boolean = true,
-    /**
-     * The Connection step's answers, or null on a gateway that predates connections, where
-     * the wizard opens on Permissions and approves with a `connect` selection.
-     */
-    val connection: AccessConnectionChoice? = null,
-) {
-    /**
-     * The list Direct actually uses. While the two are linked there is one list, and deriving it
-     * here rather than mirroring every edit into [directSources] means the two cannot drift.
-     */
-    fun directBoundary(answerOn: Boolean): AccessSourceSelectionState =
-        if (linkedSources && answerOn) answerSources else directSources
-
-    /**
-     * Split the two lists, or join them. Unlinking materializes the shared list as Direct's own,
-     * so the two editors that appear next start from the boundary that was in force.
-     */
-    fun withLinkedSources(linked: Boolean, answerOn: Boolean): AccessAuthorizationForm =
-        if (linked) copy(linkedSources = true) else copy(linkedSources = false, directSources = directBoundary(answerOn))
-
-    /**
-     * Decide, as the second reading capability is switched on, whether one list can stand for
-     * both. It can only if the two already agree — otherwise a boundary chosen for one
-     * capability would silently become the other's.
-     */
-    fun relinkSources(answerOn: Boolean, directOn: Boolean): AccessAuthorizationForm =
-        if (answerOn && directOn) copy(linkedSources = answerSources.sameAccessAs(directSources)) else this
-
-    /**
-     * The source lists the review states, one row each, in the order the Data & privacy step
-     * asked for them: one shared list while Answer and Direct are linked, otherwise one per
-     * capability that reads sources. A grant that only writes notes has none.
-     */
-    fun sourceScopes(answerOn: Boolean): List<AccessSourceScope> = when {
-        answerOn && directEnabled -> if (linkedSources) {
-            listOf(AccessSourceScope.SHARED)
-        } else {
-            listOf(AccessSourceScope.ANSWER, AccessSourceScope.DIRECT)
-        }
-        answerOn -> listOf(AccessSourceScope.ANSWER)
-        directEnabled -> listOf(AccessSourceScope.DIRECT)
-        else -> emptyList()
-    }
-
-    /** The list one scope stands for. The shared list is Answer's, as [directBoundary] reads it. */
-    fun sources(scope: AccessSourceScope): AccessSourceSelectionState =
-        if (scope == AccessSourceScope.DIRECT) directSources else answerSources
-
-    /** How answers are released, as the review states it: the policy that reviews them, or none. */
-    fun answerPrivacySummary(overview: AccessOverview): String = when (answerRelease) {
-        AccessAnswerReleaseChoice.REVIEWED ->
-            overview.policyFamilies.firstOrNull { it.id == policyFamilyId }?.name ?: "Privacy policy"
-        AccessAnswerReleaseChoice.UNREVIEWED -> "No privacy review"
-    }
+    /** Why the permissions this approval decides cannot be granted, or null when they can. The new level's name is the Connection step's to judge. */
+    fun permissionsError(overview: AccessOverview): String? =
+        level.permissionsError(overview) ?: FILTERS_UNAVAILABLE_MESSAGE.takeIf { filtersUnavailable(overview) }
 
     /**
      * The decision this form describes, or null while it is not one the gateway would accept.
      * A gateway that predates connections receives a `connect` selection labelled with the
-     * client's own name; any other gateway receives the path the Connection step chose.
+     * client's own name; any other gateway receives the path the Connection step chose. The
+     * rules sent are the draft's as the level editor saves them.
      */
     fun selection(
         request: AccessAuthorizationRequest,
         overview: AccessOverview,
     ): AccessAuthorizationSelection? {
         connection?.let { return it.selection(request, overview, this) }
-        val rules = ownRules(request, overview) ?: return null
-        return AccessAuthorizationSelection.Connect(rules = rules, credentialLabel = credentialLabel(request))
-    }
-
-    /**
-     * The permissions the Permissions and Data & privacy steps describe — a new access level's
-     * on a gateway that proposes connections — or null while they are invalid.
-     */
-    internal fun ownRules(
-        request: AccessAuthorizationRequest,
-        overview: AccessOverview,
-    ): List<AccessGrantRule>? {
-        val known = overview.sources.filter { it.available }.mapTo(mutableSetOf()) { it.id }
-        val answerOn = answerEnabled || request.requiresAnswer
-        if (!answerOn && !directEnabled && !notesEnabled) return null
-        val result = mutableListOf<AccessGrantRule>()
-        if (notesEnabled) result += AccessGrantRule.notes()
-        if (answerOn) {
-            if (!answerSources.permitsAnyKnownSource(known)) return null
-            val boundary = answerSources.boundary(known)
-            if (boundary.sourceIds.size > MAX_ACCESS_SOURCE_IDS) return null
-            val release = when (answerRelease) {
-                AccessAnswerReleaseChoice.REVIEWED -> policyFamilyId.takeIf(String::isNotEmpty)?.let {
-                    AccessAnswerRelease.reviewed(it)
-                } ?: return null
-                AccessAnswerReleaseChoice.UNREVIEWED -> AccessAnswerRelease.unreviewed()
-            }
-            result += AccessGrantRule.answer(boundary, release)
-        }
-        if (directEnabled) {
-            val direct = directBoundary(answerOn)
-            if (!direct.permitsAnyKnownSource(known)) return null
-            val boundary = direct.boundary(known)
-            if (boundary.sourceIds.size > MAX_ACCESS_SOURCE_IDS) return null
-            result += AccessGrantRule.direct(boundary)
-        }
-        return result
+        if (permissionsError(overview) != null) return null
+        return AccessAuthorizationSelection.Connect(rules = level.serializedRules, credentialLabel = credentialLabel(request))
     }
 
     companion object {
@@ -442,7 +276,8 @@ data class AccessAuthorizationForm(
          * proposal, and when the gateway matched a live connection from the same app a new
          * access level's permissions start as a copy of that connection's. On a gateway that
          * predates connections, a client it already knows starts from the rules its grant
-         * holds today. Anything else starts with Answer on, reviewed by the default policy.
+         * holds today. Anything else starts as the level editor's new level does. An agent that
+         * cannot work without Answer always starts with it.
          * [nowMillis] decides which connections are still live enough to preselect.
          */
         fun initial(
@@ -453,57 +288,12 @@ data class AccessAuthorizationForm(
             nowMillis: Long = System.currentTimeMillis(),
         ): AccessAuthorizationForm {
             val choice = connection?.let { AccessConnectionChoice.initial(request, overview, it, nowMillis) }
-            val prefill = if (choice == null) {
-                reconnect?.grant?.rules
-            } else {
-                connection?.match?.grant?.rules
-            }
-            val form = prefill?.let { describing(it, overview, publishedPolicyOnly = true) }
-                ?: AccessAuthorizationForm(policyFamilyId = defaultPolicy(overview))
-            return form.copy(connection = choice)
+            val prefill = if (choice == null) reconnect?.grant?.rules else connection?.match?.grant?.rules
+            val permissions = prefill?.let { AccessLevelDraft.copying(it, overview) } ?: AccessLevelDraft.opening(null, overview)
+            val level = (if (request.requiresAnswer) permissions.enabled(AccessCapability.ANSWER, true, overview) else permissions)
+                .copy(name = connection?.let { AccessConnectionChoice.defaultLevelName(request, it) }.orEmpty())
+            return AccessAuthorizationForm(level, choice)
         }
-
-        /**
-         * Existing rules as a form, so they can be edited or reviewed the way new ones are.
-         *
-         * With [publishedPolicyOnly], a policy that is no longer published is replaced by the
-         * default one: the Data & privacy step offers only published policies, so an
-         * unpublished one could be neither seen nor sent. Without it, the rules keep the policy
-         * they name, so a review states what they hold.
-         */
-        internal fun describing(
-            rules: List<AccessGrantRule>,
-            overview: AccessOverview,
-            publishedPolicyOnly: Boolean,
-        ): AccessAuthorizationForm {
-            val defaultPolicy = defaultPolicy(overview)
-            val known = overview.sources.filter { it.available }.mapTo(mutableSetOf()) { it.id }
-            val answer = rules.firstOrNull { it.capability == AccessCapability.ANSWER }
-            val direct = rules.firstOrNull { it.capability == AccessCapability.DIRECT }
-            val answerSources = answer?.let { AccessSourceSelectionState.from(it.sources, known) }
-                ?: AccessSourceSelectionState()
-            val directSources = direct?.let { AccessSourceSelectionState.from(it.sources, known) }
-                ?: AccessSourceSelectionState()
-            return AccessAuthorizationForm(
-                answerEnabled = answer != null,
-                directEnabled = direct != null,
-                notesEnabled = rules.any { it.capability == AccessCapability.NOTES },
-                answerSources = answerSources,
-                directSources = directSources,
-                answerRelease = if (answer?.release?.mode == AccessAnswerReleaseMode.UNREVIEWED) {
-                    AccessAnswerReleaseChoice.UNREVIEWED
-                } else {
-                    AccessAnswerReleaseChoice.REVIEWED
-                },
-                policyFamilyId = answer?.release?.policyFamilyId
-                    ?.takeIf { id -> !publishedPolicyOnly || overview.policyFamilies.any { it.id == id } }
-                    ?: defaultPolicy,
-                linkedSources = answer == null || direct == null || answerSources.sameAccessAs(directSources),
-            )
-        }
-
-        private fun defaultPolicy(overview: AccessOverview): String =
-            overview.defaultPolicyFamilyId ?: overview.policyFamilies.firstOrNull()?.id.orEmpty()
 
         /** The credential's label is the client's name, cut to what the gateway accepts. */
         internal fun credentialLabel(request: AccessAuthorizationRequest): String =

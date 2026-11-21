@@ -19,6 +19,56 @@ class AccessTest {
         }
     }
 
+    @Test fun a_filtered_rule_reads_its_whole_boundary_from_scope_sources_and_writes_it_as_sources() {
+        val policy = """{"sourceId":"files:fictional","audience":{"accessLevel":"level_example","capability":"direct"},"rules":[{"match":[{"capability":"tree","field":"extra.folderId","id":"folder-example"}],"action":"share"}],"otherwise":"hide"}"""
+        val whole = AccessSourceBoundary(AccessSourceMode.ALLOWLIST, listOf("notes:fictional", "files:fictional"))
+        // The gateway leaves the filtered account out of `sources` and names every account in `scopeSources`.
+        val split = OmnesisJson.decodeFromString<AccessGrantRule>(
+            """{"capability":"direct","sources":{"mode":"allowlist","sourceIds":["notes:fictional"]},"scopeSources":{"mode":"allowlist","sourceIds":["notes:fictional","files:fictional"]},"filterRevision":2,"scopePolicies":[$policy]}""",
+        )
+        assertEquals(whole, split.sources)
+        assertEquals(2, split.filterRevision)
+        assertEquals("files:fictional", split.scopePolicies.single().sourceId)
+        // A gateway without the field already states the whole boundary in `sources`.
+        val plain = OmnesisJson.decodeFromString<AccessGrantRule>(
+            """{"capability":"direct","sources":{"mode":"allowlist","sourceIds":["notes:fictional","files:fictional"]},"filterRevision":2,"scopePolicies":[$policy]}""",
+        )
+        assertEquals(split, plain)
+        assertEquals(
+            OmnesisJson.parseToJsonElement("""{"capability":"direct","sources":{"mode":"allowlist","sourceIds":["notes:fictional","files:fictional"]},"filterRevision":2,"scopePolicies":[$policy]}"""),
+            OmnesisJson.parseToJsonElement(OmnesisJson.encodeToString(AccessGrantRule.serializer(), split)),
+        )
+    }
+
+    @Test fun a_rule_without_filters_is_written_without_filter_fields() {
+        val written = OmnesisJson.encodeToString(AccessGrantRule.serializer(), AccessGrantRule.direct(denylist))
+        assertEquals(
+            OmnesisJson.parseToJsonElement("""{"capability":"direct","sources":{"mode":"denylist","sourceIds":["files:fictional"]}}"""),
+            OmnesisJson.parseToJsonElement(written),
+        )
+    }
+
+    /**
+     * The approval form and a level whose Direct follows Answer rebuild each rule's filter list, so an
+     * unfiltered rule holds a fresh empty list and not the default one. A gateway without source filters
+     * refuses any key it does not know, so these bodies must carry none.
+     */
+    @Test fun a_rule_rebuilt_with_no_filters_adds_no_key_to_an_approval_or_a_new_level() {
+        val rebuilt = listOf(
+            AccessGrantRule.answer(allowlist, AccessAnswerRelease.unreviewed()),
+            AccessGrantRule.direct(allowlist),
+        ).map { it.copy(scopePolicies = it.scopePolicies.filter { true }.map { policy -> policy }.toMutableList(), filterRevision = it.filterRevision) }
+        val rules = """[{"capability":"answer","sources":{"mode":"allowlist","sourceIds":["notes:fictional"]},"release":{"mode":"unreviewed"}},{"capability":"direct","sources":{"mode":"allowlist","sourceIds":["notes:fictional"]}}]"""
+        assertWire(
+            AccessAuthorizationDecision.Approve(AccessAuthorizationSelection.NewConnection("Northstar laptop", AccessConnectionLevel.New("Northstar Assistant", rebuilt))),
+            """{"decision":"approve","selection":{"kind":"new-connection","name":"Northstar laptop","level":{"kind":"new","name":"Northstar Assistant","rules":$rules}}}""",
+        )
+        assertEquals(
+            OmnesisJson.parseToJsonElement("""{"name":"Northstar Assistant","rules":$rules}"""),
+            OmnesisJson.parseToJsonElement(OmnesisJson.encodeToString(AccessLevelCreateBody.serializer(), AccessLevelCreateBody("Northstar Assistant", rebuilt))),
+        )
+    }
+
     private val allowlist = AccessSourceBoundary(AccessSourceMode.ALLOWLIST, listOf("notes:fictional"))
     private val denylist = AccessSourceBoundary(AccessSourceMode.DENYLIST, listOf("files:fictional"))
 
@@ -153,6 +203,17 @@ class AccessTest {
         assertEquals(emptyList<AccessLevelSummary>(), absent.levels)
         assertNull(absent.principals.single().grants.single().levelId)
         assertNull(absent.principals.single().grants.single().credentials.single().lastUsedAt)
+    }
+
+    @Test fun a_level_lists_its_integrations_and_reads_as_none_without_the_field() {
+        val level = OmnesisJson.decodeFromString<AccessLevelSummary>(
+            """{"id":"level_example","name":"Research","revision":5,"rules":[],"connectionCount":1,"devices":[{"id":"device_example","name":"Kitchen speaker","kind":"integration","pairedAt":1}]}""",
+        )
+        assertEquals(listOf(AccessLevelDevice("device_example", "Kitchen speaker", "integration")), level.devices)
+        val absent = OmnesisJson.decodeFromString<AccessLevelSummary>(
+            """{"id":"level_example","name":"Research","revision":5,"rules":[],"connectionCount":1}""",
+        )
+        assertEquals(emptyList<AccessLevelDevice>(), absent.devices)
     }
 
     @Test fun overview_accepts_the_transitional_privacy_policy_key() {

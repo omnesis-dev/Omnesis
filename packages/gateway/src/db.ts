@@ -5,6 +5,7 @@ import Database from "better-sqlite3";
 import { installConversationEvidence } from "./sources/omnesis-chat/evidence-projection.js";
 type Db = Database.Database;
 import { installTemporalDocumentEpochs } from "./brain/knowledge/temporal-document-epochs.js";
+import { registerFilterSqlFunctions } from "./access/filter-people.js";
 import { runSchemaSetup } from "./data/schema.js";
 import {
   runDowngradeCompatCheck,
@@ -66,6 +67,10 @@ export {
   type ReplicaOmissionArgs,
   type ReplicaVerdictOutcome,
 } from "./data/repositories/DocumentRepository.js";
+export {
+  countDocumentsBySourceVersion,
+  type SourceVersionCount,
+} from "./data/repositories/SourceVersionCountRepository.js";
 
 export {
   listClaimedExternalIds,
@@ -256,5 +261,7 @@ export function createDatabase(path: string, opts: GatewayDatabaseOptions = {}):
   db.transaction(() => installTemporalDocumentEpochs(db))();
   db.transaction(() => installConversationEvidence(db))();
 
+  // Source filter checks run on this handle too.
+  registerFilterSqlFunctions(db);
   return db;
 }

@@ -185,6 +185,7 @@ export default defineSource({
   authType: "local",
   unitName: "tasks",
   contract: {
+    outputRevision: 1,
     // The host resolves the stored cursor against this before `sync` runs,
     // so a value from a build that could not read it never reaches `sync`.
     state: thingsStateSpec,

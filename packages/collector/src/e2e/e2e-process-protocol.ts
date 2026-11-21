@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
-import { z } from "zod";
 import { createHmac, timingSafeEqual } from "node:crypto";
+import { z } from "zod";
 const nonceSchema = z.string().regex(/^[a-f0-9]{64}$/);
 const literal = z
   .string()

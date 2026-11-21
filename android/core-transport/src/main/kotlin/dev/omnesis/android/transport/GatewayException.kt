@@ -24,9 +24,11 @@ sealed class GatewayException(message: String? = null, cause: Throwable? = null)
      * boundary rather than by each of them. A response that is not the
      * envelope (a proxy's HTML, a truncated body) arrives here unchanged.
      * [code] is the machine-readable half, for callers that branch on a
-     * specific failure rather than showing it.
+     * specific failure rather than showing it. [userMessage] is the envelope's
+     * `message`, a sentence the gateway wrote for the person when a refusal
+     * carries one (a refused access level save names why it was refused).
      */
-    class ServerError(val status: Int, val body: String?, val code: String? = null) :
+    class ServerError(val status: Int, val body: String?, val code: String? = null, val userMessage: String? = null) :
         GatewayException("server error $status")
     class InvalidResponse(detail: String) : GatewayException(detail)
     class Decoding(detail: String, cause: Throwable? = null) : GatewayException(detail, cause)

@@ -12,10 +12,10 @@
  * a connection-wide condition, and its `SyncError` says so via `scope`.
  */
 
-import { setAppleFixtureReadable } from "./testing/apple-read-denial.test.fixture.js";
 import { rmSync } from "node:fs";
 import { describe, expect, test, beforeEach, afterEach } from "vitest";
 import { SyncError } from "@omnesis/types";
+import { setAppleFixtureReadable } from "./testing/apple-read-denial.test.fixture.js";
 import { AppleNotesSource } from "./notes.js";
 import { AppleIMessageSource } from "./imessage.js";
 import { AppleCalendarSource } from "./calendar.js";

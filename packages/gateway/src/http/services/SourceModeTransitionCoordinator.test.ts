@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { AccountId, SourceType } from "@omnesis/types";
 import { beginSyncAttempt, createDatabase, getWipeEpoch } from "../../db.js";
@@ -20,8 +22,6 @@ import { SourceModeTransitionCoordinator } from "./SourceModeTransitionCoordinat
 import { AnalyticsSourceModeTransitionAdoption } from "./AnalyticsSourceModeTransitionAdoption.js";
 import { AnalyticsService } from "./AnalyticsService.js";
 import type { AnalyticsTableSchema } from "@omnesis/source-sdk";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 const databases: ReturnType<typeof createDatabase>[] = [];
 afterEach(() => databases.splice(0).forEach((db) => db.close()));

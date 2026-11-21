@@ -10,14 +10,13 @@
 
 import { join } from "node:path";
 import { readFile } from "node:fs/promises";
-import { readTlsPrivateKey } from "../tls-lifecycle/persistence.js";
-import type { TlsPem } from "../tls-lifecycle/service.js";
 import {
   createLogger,
   ownedProcessCleanupReceipt,
   type TailscaleAdminState,
   type TailscaleJoinPolicy,
 } from "@omnesis/core";
+import { readTlsPrivateKey } from "../tls-lifecycle/persistence.js";
 import { PUBLIC_PATHS } from "./caller.js";
 import { resolveHelperBinary, type HelperBinary } from "./helper-binary.js";
 import { TailscaleJoinRequests, type JoinRequestDeps } from "./join-requests.js";
@@ -29,6 +28,7 @@ import {
   type TailnetSocketServer,
 } from "./socket-server.js";
 import { HelperSupervisor, type SupervisorSnapshot } from "./supervisor.js";
+import type { TlsPem } from "../tls-lifecycle/service.js";
 import type { HelperStatus } from "./protocol.js";
 import type { Duplex } from "node:stream";
 import type { IncomingMessage, Server } from "node:http";

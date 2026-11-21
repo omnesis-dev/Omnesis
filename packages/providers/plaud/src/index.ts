@@ -106,6 +106,7 @@ export default defineProvider<PlaudContext>({
       defaultSyncInterval: "30m",
       documentEventProfile: plaudDocumentEventProfile,
       contract: {
+        outputRevision: 1,
         state: plaudRecordingsStateSpec,
         requires: ["state-envelope"],
       },

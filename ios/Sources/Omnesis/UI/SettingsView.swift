@@ -26,6 +26,7 @@ enum SettingsDestination: Hashable, Identifiable {
     /// Every policy a grant can be judged against, listed. Sits beside
     /// Devices because both answer "what has this gateway agreed to".
     case policies
+    case access
     /// One policy's read-only text, opened from the list. Carries the name so
     /// the screen is titled before the document arrives.
     case policy(familyId: String, name: String?)
@@ -43,6 +44,7 @@ enum SettingsDestination: Hashable, Identifiable {
         case .lab: "lab"
         case .devices: "devices"
         case .notifications: "notifications"
+        case .access: "access"
         case .policies: "policies"
         case .policy(let familyId, _): "policy:\(familyId)"
         case .healthSamples: "health-samples"
@@ -367,9 +369,23 @@ struct SettingsView: View {
     }
 
     @ViewBuilder
+    private var policiesDestinationView: some View {
+        #if DEBUG
+        if destinationMode == .preview {
+            PoliciesListView(previewFamilies: PreviewMocks.privacyPolicyFamilies)
+        } else {
+            PoliciesListView()
+        }
+        #else
+        PoliciesListView()
+        #endif
+    }
+
+    @ViewBuilder
     private func destinationView(_ destination: SettingsDestination) -> some View {
         switch destination {
         case .root: EmptyView()
+        case .access: AccessHomeView()
         case .permissions(let sourceId):
             SourcePermissionHealthView(focusedSourceId: sourceId)
         case .remotePermissions(let sourceId, let deviceId, let sourceName, let deviceName):
@@ -400,15 +416,7 @@ struct SettingsView: View {
         case .notifications:
             notificationsDestinationView
         case .policies:
-            #if DEBUG
-            if destinationMode == .preview {
-                PoliciesListView(previewFamilies: PreviewMocks.privacyPolicyFamilies)
-            } else {
-                PoliciesListView()
-            }
-            #else
-            PoliciesListView()
-            #endif
+            policiesDestinationView
         case .policy(let familyId, let name):
             #if DEBUG
             if destinationMode == .preview {
@@ -894,6 +902,11 @@ struct SettingsView: View {
             // rows with near-identical names would be read as the same thing.
             NavigationLink(value: SettingsDestination.policies) {
                 Label("Policies", systemImage: "doc.text")
+            }
+            if store.statusSnapshot?.capabilities.supportsAccessLevelEditing ?? false {
+                NavigationLink(value: SettingsDestination.access) {
+                    Label("Access", systemImage: "person.badge.key")
+                }
             }
             Button {
                 showAccessAuthorization = true

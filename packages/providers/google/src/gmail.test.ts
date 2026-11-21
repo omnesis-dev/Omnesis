@@ -683,7 +683,7 @@ describe("GmailSource", () => {
       expect(callCount).toBe(2);
     });
 
-    test("falls back to the raw id when label fetch fails entirely", async () => {
+    test("fails the page when the account's labels cannot be listed at all", async () => {
       gmail.users.labels.list = vi.fn(() => Promise.reject(new Error("API down")));
       const msg = makeGmailMessage("msg-1", {
         internalDate: "1704067200000",
@@ -694,8 +694,8 @@ describe("GmailSource", () => {
       );
       gmail.users.messages.get = vi.fn(() => Promise.resolve({ data: msg }));
 
-      const result = await source.sync(null);
-      expect(result.documents[0].metadata.tags).toEqual(["INBOX", "Label_xyz"]);
+      // Landing the message would record it as carrying none of its labels.
+      await expect(source.sync(null)).rejects.toThrow();
     });
   });
 

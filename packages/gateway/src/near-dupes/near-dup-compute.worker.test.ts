@@ -14,6 +14,8 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { createLogger } from "@omnesis/core";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createDatabase } from "../db.js";
@@ -47,8 +49,6 @@ import type { WriteGate } from "../write-gate.js";
 import type { TaskContext } from "../scheduler/types.js";
 import type { NearDupApplyBatch } from "./types.js";
 import type { VerifiedPair, VerifyPairInput } from "./cpu-signing.js";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 /**
  * Text processing this thread runs. The workers load their own copy of the

@@ -9,6 +9,7 @@ import { GatewayTimeoutError } from "../http/errors.js";
 import { directMcpRateLimiter } from "../rate-limit.js";
 import { tokenIdLogPrefix } from "../http/audit-format.js";
 import type { DirectMcpService, DirectMcpToolName } from "../agent/direct-mcp.js";
+import type { AnswerScopeReadObserver } from "../privacy/answer-scope.js";
 import type { CorpusAuthorization } from "../access/corpus-authorization.js";
 
 const DIRECT_MCP_MAX_IN_FLIGHT = 2;
@@ -27,6 +28,7 @@ export interface DirectMcpInvocationContext {
   rateAlreadyCharged?: boolean;
   /** Server-derived corpus scope for an external OAuth principal. */
   authorization?: CorpusAuthorization;
+  scopeReads?: AnswerScopeReadObserver;
   /** Stable per-credential admission identity; never derived from shared proxy egress. */
   admissionKey?: string;
 }
@@ -60,6 +62,10 @@ export class DirectMcpExecutionBoundary {
 
   catalogRevision(): string {
     return this.service.catalogRevision();
+  }
+
+  captureScope(authorization?: CorpusAuthorization) {
+    return this.service.captureScope(authorization);
   }
 
   manifest(authorization?: CorpusAuthorization) {
@@ -108,6 +114,7 @@ export class DirectMcpExecutionBoundary {
         ...(context.timeZone ? { timeZone: context.timeZone } : {}),
         signal,
         ...(context.authorization ? { authorization: context.authorization } : {}),
+        ...(context.scopeReads ? { scopeReads: context.scopeReads } : {}),
       });
       // Hold the execution lease until the underlying work actually settles,
       // even if the transport deadline has already returned to the caller.

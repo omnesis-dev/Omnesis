@@ -28,6 +28,7 @@
  */
 
 import Database from "better-sqlite3";
+import { registerFilterSqlFunctions } from "../access/filter-people.js";
 type Db = Database.Database;
 import { parentPort } from "node:worker_threads";
 
@@ -77,6 +78,9 @@ function openReadOnly(path: string, gatewayDbKeyHex?: string, cipherBuild = fals
   // Disable mmap for the same belt-and-suspenders reason as elsewhere
   // in the codebase (see writer-worker openWriteConn header).
   db.exec("PRAGMA mmap_size = 0");
+  // Source filter checks run here; a statement that uses them prepares only
+  // on a connection that has them.
+  registerFilterSqlFunctions(db);
   return db;
 }
 

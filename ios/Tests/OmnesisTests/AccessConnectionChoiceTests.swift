@@ -20,8 +20,21 @@ final class AccessConnectionChoiceTests: XCTestCase {
         XCTAssertNil(choice.suggestedLevelId)
         XCTAssertNil(choice.suggestion(for: fixtures.deskConnection))
         XCTAssertNil(choice.prefillRules)
-        XCTAssertEqual(choice.steps(readsSources: true), [.connection, .permissions, .data, .review])
-        XCTAssertEqual(choice.steps(readsSources: false), [.connection, .permissions, .review])
+        var level = fixtures.level()
+        XCTAssertEqual(
+            accessAuthorizationFlow(choice: choice, draft: level.draft),
+            [.name, .permissions, .answerData, .future, .release, .review]
+        )
+        XCTAssertEqual(
+            accessAuthorizationIndicatorSteps(accessAuthorizationFlow(choice: choice, draft: level.draft)),
+            [.connection, .permissions, .data, .review]
+        )
+        level.setHeld("answer", false)
+        level.setHeld("notes", true)
+        XCTAssertEqual(
+            accessAuthorizationIndicatorSteps(accessAuthorizationFlow(choice: choice, draft: level.draft)),
+            [.connection, .permissions, .review]
+        )
         XCTAssertEqual(
             choice.orderedLevels(overview: fixtures.overview()).map(\.name),
             ["notes only", "Research assistants", "Zeta"]
@@ -34,37 +47,39 @@ final class AccessConnectionChoiceTests: XCTestCase {
             reconnect: nil,
             nowMillis: fixtures.now
         )
-        XCTAssertEqual(opening.step, .connection)
-        XCTAssertEqual(opening.form.holdings(request: fixtures.request()), AccessCapabilityHoldings(answer: true))
+        XCTAssertEqual(opening.step, .name)
+        XCTAssertEqual(opening.level.capabilityHoldings, AccessCapabilityHoldings(answer: true))
+        XCTAssertEqual(opening.level.draft, AccessLevelDraft(level: nil, overview: fixtures.overview()))
     }
 
     /// A new level sends its name with the rules the wizard drew, both names
     /// trimmed.
-    func testANewLevelSendsItsNameWithTheFormRules() {
+    func testANewLevelSendsItsNameWithTheRulesDrawnForIt() {
         let request = fixtures.request()
         let overview = fixtures.overview()
         var choice = fixtures.opened(fixtures.proposal(.newLevel, match: false))
         choice.name = "  Northstar desk  "
         choice.levelName = " Desk helpers "
-        var form = fixtures.form()
-        XCTAssertNil(choice.selection(request: request, overview: overview, form: form))
-        form.answerSources.allowAll(fixtures.known)
+        XCTAssertNil(choice.selection(request: request, overview: overview, newLevelRules: fixtures.level().sendableRules))
+        let level = fixtures.levelReadingEverySource()
         let rules: [AccessGrantRule] = [.answer(
             sources: AccessSourceBoundary(mode: .allowlist, sourceIds: fixtures.known.sorted()),
             release: .reviewed(policyFamilyId: "policy-work-safe")
         )]
+        XCTAssertEqual(level.sendableRules, rules)
         XCTAssertEqual(
-            choice.selection(request: request, overview: overview, form: form),
+            choice.selection(request: request, overview: overview, newLevelRules: level.sendableRules),
             .newConnection(name: "Northstar desk", level: .new(name: "Desk helpers", rules: rules))
         )
-        XCTAssertEqual(choice.effectiveRules(request: request, overview: overview, form: form), rules)
+        XCTAssertNil(choice.existingRules(overview: overview))
         XCTAssertEqual(
             choice.review(overview: overview),
             AccessConnectionReview(
                 connectionName: "Northstar desk",
                 accessLevel: "Desk helpers (new)",
                 replaces: nil,
-                levelFootnote: nil
+                levelFootnote: nil,
+                decidesPermissions: true
             )
         )
     }
@@ -83,10 +98,9 @@ final class AccessConnectionChoiceTests: XCTestCase {
         )
         XCTAssertEqual(choice.suggestion(for: fixtures.researchLevel), "Northstar desk uses this access level.")
         XCTAssertNil(choice.suggestion(for: fixtures.zetaLevel))
-        XCTAssertEqual(choice.steps(readsSources: true), [.connection, .review])
-        let form = fixtures.form()
+        XCTAssertEqual(accessAuthorizationFlow(choice: choice, draft: fixtures.level().draft), [.name, .review])
         XCTAssertEqual(
-            choice.selection(request: request, overview: overview, form: form),
+            choice.selection(request: request, overview: overview, newLevelRules: nil),
             .newConnection(
                 name: "Northstar Assistant 2",
                 level: .existing(levelId: "level-research", expectedLevelRevision: 4)
@@ -98,11 +112,12 @@ final class AccessConnectionChoiceTests: XCTestCase {
                 connectionName: "Northstar Assistant 2",
                 accessLevel: "Research assistants",
                 replaces: nil,
-                levelFootnote: "Also used by 2 other connections. Changing this access level later changes all of them."
+                levelFootnote: "Also used by 2 other connections. Changing this access level later changes all of them.",
+                decidesPermissions: false
             )
         )
         XCTAssertEqual(
-            choice.reviewForm(request: request, overview: overview, form: form).holdings(request: request),
+            accessCapabilityHoldings(rules: choice.existingRules(overview: overview) ?? []),
             AccessCapabilityHoldings(answer: true, notes: true)
         )
     }
@@ -119,14 +134,8 @@ final class AccessConnectionChoiceTests: XCTestCase {
         )
         XCTAssertEqual(opening.choice?.path, .newLevel)
         XCTAssertEqual(opening.choice?.suggestedLevelId, "level-research")
-        XCTAssertEqual(
-            opening.form.holdings(request: fixtures.request()),
-            AccessCapabilityHoldings(answer: true, notes: true)
-        )
-        XCTAssertEqual(
-            opening.form.rules(request: fixtures.request(), overview: fixtures.overview()),
-            [.notes] + fixtures.answerRules
-        )
+        XCTAssertEqual(opening.level.capabilityHoldings, AccessCapabilityHoldings(answer: true, notes: true))
+        XCTAssertEqual(opening.level.sendableRules, fixtures.answerRules + [.notes])
     }
 
     /// The agent's own device: replace mode with its connection picked and
@@ -142,20 +151,20 @@ final class AccessConnectionChoiceTests: XCTestCase {
         XCTAssertEqual(choice.suggestion(for: fixtures.deskConnection), "Already connected on this device.")
         choice.name = ""
         XCTAssertNil(choice.nameError)
-        XCTAssertEqual(choice.steps(readsSources: true), [.connection, .review])
-        let form = fixtures.form()
+        XCTAssertEqual(accessAuthorizationFlow(choice: choice, draft: fixtures.level().draft), [.name, .review])
         XCTAssertEqual(
-            choice.selection(request: request, overview: overview, form: form),
+            choice.selection(request: request, overview: overview, newLevelRules: nil),
             .replaceConnection(connectionId: "principal-desk", expectedGrantRevision: 6)
         )
-        XCTAssertEqual(choice.effectiveRules(request: request, overview: overview, form: form), fixtures.deskGrant.rules)
+        XCTAssertEqual(choice.existingRules(overview: overview), fixtures.deskGrant.rules)
         XCTAssertEqual(
             choice.review(overview: overview),
             AccessConnectionReview(
                 connectionName: "Northstar desk",
                 accessLevel: "Research assistants",
                 replaces: "The current sign-in of Northstar desk",
-                levelFootnote: "Also used by 1 other connection. Changing this access level later changes all of them."
+                levelFootnote: "Also used by 1 other connection. Changing this access level later changes all of them.",
+                decidesPermissions: false
             )
         )
         let alone = fixtures.overview(levels: [

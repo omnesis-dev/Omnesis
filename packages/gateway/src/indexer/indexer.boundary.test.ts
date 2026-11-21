@@ -15,6 +15,8 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import {
   createIndexDatabase,
@@ -27,8 +29,6 @@ import { Indexer } from "./indexer.js";
 import { DocumentChunker } from "./chunker.js";
 import type { DocumentSource, Embedder, IndexableDocument } from "./types.js";
 import type Database from "better-sqlite3";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 type Db = Database.Database;
 
 /** Deterministic embedder — one fixed unit vector per input. */

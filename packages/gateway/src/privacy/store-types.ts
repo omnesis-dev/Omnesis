@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import type Database from "better-sqlite3";
+import type { AnswerScopeReadSet } from "./answer-scope.js";
 import type {
   AnswerCitation,
   AnswerResponse,
@@ -32,6 +33,8 @@ export type AnswerTaskState =
   | "canceled";
 
 export interface BeginAnswerTaskInput {
+  /** Serialized server-derived authority; absent for unfiltered tasks. */
+  scopeAuthorization?: string;
   ownerId: string;
   workflowId?: string;
   conversationId?: string;
@@ -108,6 +111,7 @@ export interface BegunAnswerTask {
 }
 
 export interface CompleteAnswerTaskInput {
+  scopeReads?: AnswerScopeReadSet;
   taskId: string;
   ownerId: string;
   review: PrivacyReviewRecord;

@@ -79,7 +79,7 @@ describe("answer privacy store", () => {
     });
   }
 
-  it("commits only an authorized answer to released history", () => {
+  it("commits only an authorized answer to released history", async () => {
     const task = begin();
     const response = completeAnswerTask(db, {
       taskId: task.taskId,
@@ -103,7 +103,7 @@ describe("answer privacy store", () => {
       releaseId: "release-1",
       answer: "Friday afternoon.",
     });
-    expect(loadReleasedAnswerHistory(db, "conv-1", "token:external")).toEqual([
+    expect(await loadReleasedAnswerHistory(db, "conv-1", "token:external")).toEqual([
       { role: "user", parts: [{ kind: "text", text: "When am I available?" }] },
       { role: "assistant", parts: [{ kind: "text", text: "Friday afternoon." }] },
     ]);
@@ -125,7 +125,7 @@ describe("answer privacy store", () => {
     expect(() => begin()).toThrow(/different native completion route/);
   });
 
-  it("holds the candidate behind an opaque response and releases the frozen text once", () => {
+  it("holds the candidate behind an opaque response and releases the frozen text once", async () => {
     const task = begin();
     const candidate = "The held candidate.";
     const response = completeAnswerTask(db, {
@@ -152,7 +152,7 @@ describe("answer privacy store", () => {
       approvalExpiresAt: 5_000,
     });
     expect(JSON.stringify(response)).not.toContain(candidate);
-    expect(loadReleasedAnswerHistory(db, "conv-1", "token:external")).toEqual([]);
+    expect(await loadReleasedAnswerHistory(db, "conv-1", "token:external")).toEqual([]);
     // Fixture clock inside the approval's expiry window (expiresAt 5_000) so
     // the pending approval reads as pending.
     expect(listPrivacyApprovals(db, "pending", 100, 400)).toHaveLength(1);
@@ -199,7 +199,7 @@ describe("answer privacy store", () => {
     ).toHaveLength(1);
   });
 
-  it("purges a denied held candidate and unblocks the conversation", () => {
+  it("purges a denied held candidate and unblocks the conversation", async () => {
     const task = begin();
     const candidate = "Held and then denied.";
     completeAnswerTask(db, {
@@ -237,9 +237,9 @@ describe("answer privacy store", () => {
       ids: { workflowId: "unused", conversationId: "unused", taskId: "task-2" },
     });
     expect(next.taskId).toBe("task-2");
-    expect(JSON.stringify(loadReleasedAnswerHistory(db, "conv-1", "token:external"))).not.toContain(
-      candidate,
-    );
+    expect(
+      JSON.stringify(await loadReleasedAnswerHistory(db, "conv-1", "token:external")),
+    ).not.toContain(candidate);
   });
 
   it("purges an expired held candidate and unblocks the conversation", () => {

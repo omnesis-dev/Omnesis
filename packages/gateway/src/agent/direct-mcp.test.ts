@@ -5,11 +5,13 @@ import { z } from "zod";
 import { describe, expect, it, vi } from "vitest";
 
 import { createCorpusAuthorization } from "../access/corpus-authorization.js";
+import { createAnswerScopeReadObserver } from "../privacy/answer-scope.js";
 import {
   DIRECT_MCP_TOOL_NAMES,
   MAX_DIRECT_MCP_FETCH_DOCUMENTS,
   MAX_DIRECT_MCP_INSTRUCTIONS_BYTES,
   MAX_DIRECT_MCP_RESULT_BYTES,
+  RESTRICTED_DIRECT_MCP_TOOL_NAMES,
   STABLE_DIRECT_MCP_TOOL_NAMES,
   boundDirectAuditValue,
   DirectMcpService,
@@ -600,5 +602,28 @@ describe("sanitizeDirectToolResult", () => {
       code: "tool_failed",
       message: "The Direct MCP tool request failed.",
     });
+  });
+
+  it("closes a filtered call's read set for every tool it can run, whatever the tool reads", async () => {
+    const service = new DirectMcpService(handles(), undefined, (_authorization, scopeReads) =>
+      handles(async () => {
+        scopeReads?.recordDocuments(["fictional-document"]);
+        return success;
+      }),
+    );
+    // Every tool the service can resolve, and a name it cannot.
+    for (const name of [...DIRECT_MCP_TOOL_NAMES, ...RESTRICTED_DIRECT_MCP_TOOL_NAMES, "unknown"]) {
+      const scopeReads = createAnswerScopeReadObserver();
+      await service.invoke(
+        name as (typeof DIRECT_MCP_TOOL_NAMES)[number],
+        { query: "x" },
+        {
+          requestId: `close-${name}`,
+          authorization: restrictedAuthorization,
+          scopeReads,
+        },
+      );
+      expect({ name, complete: scopeReads.snapshot().complete }).toEqual({ name, complete: true });
+    }
   });
 });

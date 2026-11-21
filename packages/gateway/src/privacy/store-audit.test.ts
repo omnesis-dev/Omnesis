@@ -231,6 +231,8 @@ describe("trusted answer audit store", () => {
       credentialId: "credential-ledger",
       accessTokenId: "access-token-ledger",
       capability: "answer",
+      filterRevision: 0,
+      scopePolicies: [],
       sourceMode: "all",
       sourceIds: [],
       releaseMode: "unreviewed",
@@ -678,7 +680,7 @@ integrations: fictional
     ).toEqual({ count: LEGACY_ANSWER_EGRESS_EVENT_CAP + 1 });
   });
 
-  it("keeps cumulative workflow disclosure separate from released conversation context", () => {
+  it("keeps cumulative workflow disclosure separate from released conversation context", async () => {
     const first = begin();
     completeAnswerTask(db, {
       taskId: first.taskId,
@@ -707,7 +709,7 @@ integrations: fictional
        VALUES (?, 2, 3, '[{"category":"documents","detailLevel":"existence","subject":"unknown","count":3}]', 300)`,
     ).run(first.workflowId);
 
-    const context = loadPrivacyReviewerContext(
+    const context = await loadPrivacyReviewerContext(
       db,
       first.workflowId,
       second.conversationId,
@@ -731,11 +733,13 @@ integrations: fictional
     );
     const afterDeletion = begin({ workflowId: first.workflowId, now: 500 });
     expect(
-      loadPrivacyReviewerContext(
-        db,
-        first.workflowId,
-        afterDeletion.conversationId,
-        "token:synthetic",
+      (
+        await loadPrivacyReviewerContext(
+          db,
+          first.workflowId,
+          afterDeletion.conversationId,
+          "token:synthetic",
+        )
       ).cumulativeDisclosure,
     ).toMatchObject({
       revision: 1,

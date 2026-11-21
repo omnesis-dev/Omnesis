@@ -2,9 +2,9 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { afterEach, expect, test, vi } from "vitest";
-import type { SourceReadAccessResult } from "@omnesis/source-sdk";
-import { DoctorReadAccess } from "./doctor-read-access.js";
 import { cleanupMarker, closeFixture, type ProbeOwner } from "../test/doctor-cleanup-fixtures.js";
+import { DoctorReadAccess } from "./doctor-read-access.js";
+import type { SourceReadAccessResult } from "@omnesis/source-sdk";
 
 afterEach(() => vi.useRealTimers());
 

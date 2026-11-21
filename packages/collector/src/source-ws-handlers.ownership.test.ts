@@ -3,9 +3,9 @@
 
 import { expect, test } from "vitest";
 import { makeCommand } from "@omnesis/core";
+import { createSourceWsHandlers } from "./source-ws-handlers.js";
 import type { GatewayClient, ImportCallbacks, ImportSummary } from "@omnesis/source-sdk";
 import type { SourceManager } from "./source-manager.js";
-import { createSourceWsHandlers } from "./source-ws-handlers.js";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;

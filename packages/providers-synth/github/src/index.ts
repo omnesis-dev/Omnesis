@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import realGithub from "@omnesis/provider-github";
-import { defineProvider } from "@omnesis/source-sdk";
+import realGithub, { REPOSITORY_FIELD } from "@omnesis/provider-github";
+import { defineProvider, withFilterLists } from "@omnesis/source-sdk";
 import {
   fakeLocalFlow,
   preDiscoveredAccounts,
@@ -10,14 +10,20 @@ import {
   syncFromFixture,
   type SynthCursor,
 } from "@omnesis/providers-synth-common";
+import { GithubAccount, registerAccount, unregisterAccount } from "./account.js";
 import {
   loadCommitEntries,
+  loadCommitRepos,
   loadThreadEntries,
+  loadThreadRepos,
   mapCommit,
   mapThread,
   mapThreadEdges,
 } from "./fixtures.js";
-import type { ProviderSourceEntry } from "@omnesis/source-sdk";
+import type { RepoRow } from "./fixtures.js";
+import type { ProviderSourceEntry, SourceInstance } from "@omnesis/source-sdk";
+
+export { getGithubAccount, type GithubAccount } from "./account.js";
 
 const { type: _type, ...rest } = realGithub;
 
@@ -28,6 +34,24 @@ const { type: _type, ...rest } = realGithub;
 // this source must still load the package, and its discover() then reports no
 // account instead of failing the provider load.
 const selfAccount = (): string => selfAccountId("extra", "githubLogin");
+
+/**
+ * Give a fixture-paging source the list the live source publishes: the owners
+ * and repositories of the account, read from an in-memory listing a test can
+ * change between syncs.
+ */
+function withRepositoryList(
+  sourceId: string,
+  repos: RepoRow[],
+  sync: SourceInstance["sync"],
+): SourceInstance {
+  const account = new GithubAccount(repos);
+  registerAccount(sourceId, account);
+  return withFilterLists(
+    { sync, dispose: async () => unregisterAccount(sourceId) },
+    { [REPOSITORY_FIELD]: () => account.list() },
+  );
+}
 
 export default defineProvider<Record<string, never>>({
   ...rest,
@@ -62,21 +86,19 @@ export default defineProvider<Record<string, never>>({
         ...generic,
         // The double drives its own cursor; the real source's decoder does
         // not know it. Inheriting the declaration refuses it on the next tick.
-        contract: undefined,
+        // It writes what the real source writes, so it keeps that source's
+        // output revision.
+        contract: { outputRevision: s.contract?.outputRevision },
         async create({ sourceId, providerId, accountId: account }) {
           const entries = loadThreadEntries();
           const ctx = { sourceId, providerId };
           const commitsSourceId = `github-commits:${account}`;
-          return {
-            async sync(cursor) {
-              return syncFromFixture(
-                entries,
-                cursor as SynthCursor | null,
-                (e) => mapThread(e, ctx),
-                { sourceId, mapEdges: (e) => mapThreadEdges(e, { ...ctx, commitsSourceId }) },
-              );
-            },
-          };
+          return withRepositoryList(String(sourceId), loadThreadRepos(), async (cursor) =>
+            syncFromFixture(entries, cursor as SynthCursor | null, (e) => mapThread(e, ctx), {
+              sourceId,
+              mapEdges: (e) => mapThreadEdges(e, { ...ctx, commitsSourceId }),
+            }),
+          );
         },
       };
     }
@@ -85,20 +107,17 @@ export default defineProvider<Record<string, never>>({
         ...generic,
         // The double drives its own cursor; the real source's decoder does
         // not know it. Inheriting the declaration refuses it on the next tick.
-        contract: undefined,
+        // It writes what the real source writes, so it keeps that source's
+        // output revision.
+        contract: { outputRevision: s.contract?.outputRevision },
         async create({ sourceId, providerId }) {
           const entries = loadCommitEntries();
           const ctx = { sourceId, providerId };
-          return {
-            async sync(cursor) {
-              return syncFromFixture(
-                entries,
-                cursor as SynthCursor | null,
-                (e) => mapCommit(e, ctx),
-                { sourceId },
-              );
-            },
-          };
+          return withRepositoryList(String(sourceId), loadCommitRepos(), async (cursor) =>
+            syncFromFixture(entries, cursor as SynthCursor | null, (e) => mapCommit(e, ctx), {
+              sourceId,
+            }),
+          );
         },
       };
     }

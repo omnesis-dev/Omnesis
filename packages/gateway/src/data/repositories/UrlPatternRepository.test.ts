@@ -3,6 +3,8 @@
 
 import { existsSync, unlinkSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import Database from "better-sqlite3";
 import { runSchemaSetup } from "../schema.js";
@@ -13,8 +15,6 @@ import {
   getUrlIdPatterns,
   invalidateUrlIdPatternCache,
 } from "./UrlPatternRepository.js";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 type Db = Database.Database;
 

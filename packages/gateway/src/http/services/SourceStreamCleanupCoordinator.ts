@@ -69,6 +69,9 @@ export class SourceStreamCleanupCoordinator {
     const key = this.key(job);
     try {
       await this.deps.sourceDataRemoval.deleteStream(job.sourceId, job.deviceId);
+      // The device no longer hosts the source, so the lists it published
+      // for its own data go with its stream.
+      await this.deps.sourceDataRemoval.forgetFilterLists(job.sourceId, job.deviceId);
       if (await this.deps.writeGate.completeSourceStreamCleanup(job)) {
         const timer = this.retryTimers.get(key);
         if (timer) clearTimeout(timer);

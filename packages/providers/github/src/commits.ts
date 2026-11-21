@@ -6,7 +6,8 @@ import { SyncError } from "@omnesis/types";
 import { syncPage } from "@omnesis/source-sdk";
 import { COMMITS_RENDER_VERSION, commitToDocument } from "./normalizer.js";
 import { commitExternalId } from "./types.js";
-import { reconcileMissingRepos, resolveRepoList } from "./repo-selection.js";
+import { reconcileMissingRepos } from "./repo-selection.js";
+import { Repositories, inRepository } from "./repositories.js";
 import {
   gapRepo,
   resumeRepoSnapshot,
@@ -60,14 +61,24 @@ export interface GithubCommitsSourceOptions {
  * re-lists everything so force-pushed-away commits sweep via
  * `presentExternalIds` and force-pushed-in commits are noticed as unknown
  * shas.
+ *
+ * Every document carries GitHub's id of the repository it sits in; see
+ * `repositories.ts`.
  */
 export class GithubCommitsSource {
   private readonly opts: GithubCommitsSourceOptions;
   private readonly now: () => number;
+  /** The account's repositories: the id on every document, and the published list. */
+  readonly repositories: Repositories;
 
   constructor(opts: GithubCommitsSourceOptions) {
     this.opts = opts;
     this.now = opts.now ?? Date.now;
+    this.repositories = new Repositories(
+      opts.client,
+      opts.sourceConfig as Record<string, unknown> | undefined,
+      this.now,
+    );
   }
 
   async sync(cursor: GithubCommitsCursor | null): Promise<SyncResult<GithubCommitsCursor>> {
@@ -90,10 +101,7 @@ export class GithubCommitsSource {
 
     // Cycle start.
     if (cur.discoveryQueue === undefined && !cur.lane && pending.length === 0) {
-      const repoList = await resolveRepoList(
-        this.opts.client,
-        this.opts.sourceConfig as Record<string, unknown> | undefined,
-      );
+      const repoList = (await this.repositories.list()).map((repo) => repo.full_name);
       cur.discoveryQueue = [...repoList];
       cur.snapshotMode = shouldEnterSnapshotMode(
         cur,
@@ -334,7 +342,12 @@ export class GithubCommitsSource {
         const detail = await this.opts.client.getCommit(repo, sha);
         const committedAt = detail.commit.committer?.date ?? detail.commit.author?.date;
         if (!(this.opts.dataCutoff && committedAt && committedAt < this.opts.dataCutoff)) {
-          docs.push(commitToDocument(detail, repo, this.opts.providerId, this.opts.sourceId));
+          docs.push(
+            inRepository(
+              commitToDocument(detail, repo, this.opts.providerId, this.opts.sourceId),
+              await this.repositories.idOf(repo),
+            ),
+          );
         }
       } catch (err) {
         if (err instanceof SyncError && err.kind === "permission") {

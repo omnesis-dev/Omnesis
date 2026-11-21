@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { OwnedCleanupLifecycle } from "./owned-cleanup-lifecycle.js";
 import type {
   CertificateIssuanceMonitor,
   CertificateMonitorStatus,
 } from "./certificate-monitor.js";
-
-import { OwnedCleanupLifecycle } from "./owned-cleanup-lifecycle.js";
 
 /** Gateway-only opt-in lifecycle; importing this module schedules no work. */
 export function startCertificateMonitorPoller(options?: {

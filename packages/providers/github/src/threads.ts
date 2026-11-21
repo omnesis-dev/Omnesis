@@ -22,7 +22,8 @@ import {
   buildThreadBatchQuery,
 } from "./queries.js";
 import { commitExternalId, parsePendingRef, pendingRef, threadExternalId } from "./types.js";
-import { reconcileMissingRepos, resolveRepoList } from "./repo-selection.js";
+import { reconcileMissingRepos } from "./repo-selection.js";
+import { Repositories, inRepository } from "./repositories.js";
 import {
   gapRepo,
   resumeRepoSnapshot,
@@ -183,14 +184,24 @@ export interface GithubThreadsSourceOptions {
  *    is published whatever its size — how believable the result is, is the
  *    gateway's judgement, and withholding here would cancel the deletion
  *    rather than delay it.
+ *
+ * Every document carries GitHub's id of the repository it sits in; see
+ * `repositories.ts`.
  */
 export class GithubThreadsSource {
   private readonly opts: GithubThreadsSourceOptions;
   private readonly now: () => number;
+  /** The account's repositories: the id on every document, and the published list. */
+  readonly repositories: Repositories;
 
   constructor(opts: GithubThreadsSourceOptions) {
     this.opts = opts;
     this.now = opts.now ?? Date.now;
+    this.repositories = new Repositories(
+      opts.client,
+      opts.sourceConfig as Record<string, unknown> | undefined,
+      this.now,
+    );
   }
 
   async sync(cursor: GithubThreadsCursor | null): Promise<SyncResult<GithubThreadsCursor>> {
@@ -213,10 +224,7 @@ export class GithubThreadsSource {
 
     // Cycle start.
     if (cur.discoveryQueue === undefined && !cur.lane && pending.length === 0) {
-      const repoList = await resolveRepoList(
-        this.opts.client,
-        this.opts.sourceConfig as Record<string, unknown> | undefined,
-      );
+      const repoList = (await this.repositories.list()).map((repo) => repo.full_name);
       cur.discoveryQueue = [...repoList];
       cur.snapshotMode = shouldEnterSnapshotMode(
         cur,
@@ -745,6 +753,7 @@ export class GithubThreadsSource {
       nodes.push(node);
     }
     const refKinds = await this.resolveRefKinds(head.repo, nodes, head.discussion);
+    const repositoryId = await this.repositories.idOf(head.repo);
 
     const docs: DocumentInput[] = [];
     const edges: EdgeDeclaration[] = [];
@@ -757,12 +766,15 @@ export class GithubThreadsSource {
       if (this.opts.dataCutoff && node.createdAt < this.opts.dataCutoff) continue;
       if (head.discussion) {
         docs.push(
-          discussionToDocument(
-            node as GqlDiscussion,
-            head.repo,
-            this.opts.providerId,
-            this.opts.sourceId,
-            refKinds,
+          inRepository(
+            discussionToDocument(
+              node as GqlDiscussion,
+              head.repo,
+              this.opts.providerId,
+              this.opts.sourceId,
+              refKinds,
+            ),
+            repositoryId,
           ),
         );
       } else {
@@ -773,7 +785,7 @@ export class GithubThreadsSource {
           this.opts.sourceId,
           refKinds,
         );
-        docs.push(normalized.doc);
+        docs.push(inRepository(normalized.doc, repositoryId));
         edges.push(...this.threadEdges(head.repo, normalized));
       }
     }

@@ -6,12 +6,12 @@ import { ownedProcessCleanupReceipt, type ResolvedAssignment } from "@omnesis/co
 import { OptionalServiceCleanup } from "../optional-service-cleanup.js";
 import { TranscribeService } from "./transcribe-service.js";
 import { SyntheticTranscriber } from "./synthetic-transcriber.js";
-import type { WhisperWorkerProcess } from "./whisper-transcriber.js";
 import {
   FrameDecoder,
   type WhisperRequestHeader,
   type WhisperWorkerMessage,
 } from "./whisper-worker-protocol.js";
+import type { WhisperWorkerProcess } from "./whisper-transcriber.js";
 
 class FixtureWorker implements WhisperWorkerProcess {
   private readonly closure = Promise.withResolvers<void>();

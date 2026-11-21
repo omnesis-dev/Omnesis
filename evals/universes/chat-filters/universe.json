@@ -1,0 +1,25 @@
+{
+  "name": "chat-filters",
+  "description": "Two chat sources for the lists a filter on a chat or a person reads. WhatsApp runs the real provider over a fake corpus: a one-to-one chat, a group with a member who never speaks, and a group with a member known only by a LID. iMessage is the fixture twin: the same three shapes, with who is in each chat stated in chats.json. The test adds a member to a group between syncs.",
+  "cast": "cast.json",
+  "agentDemos": null,
+  "devices": [
+    {
+      "id": "macbook",
+      "name": "Sams-MacBook-Pro-collector",
+      "kind": "collector"
+    }
+  ],
+  "sources": [
+    {
+      "descriptorId": "whatsapp-messages",
+      "accountIds": ["+12025550101"],
+      "device": "macbook"
+    },
+    {
+      "descriptorId": "apple-imessage",
+      "accountIds": ["sam.rivera@icloud.example"],
+      "device": "macbook"
+    }
+  ]
+}

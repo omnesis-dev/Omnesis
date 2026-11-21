@@ -260,6 +260,9 @@ function makeAnswerService(
   const db = new Database(":memory:");
   db.pragma("foreign_keys = ON");
   db.exec("CREATE TABLE devices (id TEXT PRIMARY KEY)");
+  // Native authority is supplied by currentDeviceOwner below, not a stored
+  // token binding. The empty table lets legacy proof classification find none.
+  db.exec("CREATE TABLE tokens (id TEXT PRIMARY KEY, device_id TEXT)");
   createAnswerPrivacyTables(db);
   let id = 0;
   const writeGate = directWriteGate(db);

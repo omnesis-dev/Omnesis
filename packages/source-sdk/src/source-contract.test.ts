@@ -5,6 +5,7 @@ import { describe, expect, test } from "vitest";
 import {
   checkContractCompatibility,
   mergeContractDeclarations,
+  resolveOutputRevision,
   validateContractDeclaration,
   HOST_CAPABILITIES,
   MINIMUM_SOURCE_API_VERSION,
@@ -23,6 +24,34 @@ test.each([undefined, {}])("provider state is never inherited by child declarati
   );
   expect(merged).toMatchObject({ apiVersion: 2, requires: ["state-envelope"] });
   expect(merged?.state).toBeUndefined();
+});
+
+describe("the output revision a source writes at", () => {
+  test("a package that declares none writes at revision 1", () => {
+    expect(resolveOutputRevision(undefined)).toBe(1);
+    expect(resolveOutputRevision({})).toBe(1);
+    expect(resolveOutputRevision({ apiVersion: 2, requires: ["state-envelope"] })).toBe(1);
+  });
+
+  test("a declared revision is the one it writes at", () => {
+    expect(resolveOutputRevision({ outputRevision: 4 })).toBe(4);
+  });
+
+  test("an entry's revision is its own, and a provider's is the default for entries without one", () => {
+    const provider = { apiVersion: 2, outputRevision: 2 };
+    expect(resolveOutputRevision(mergeContractDeclarations(provider, { outputRevision: 5 }))).toBe(
+      5,
+    );
+    expect(resolveOutputRevision(mergeContractDeclarations(provider, {}))).toBe(2);
+    expect(resolveOutputRevision(mergeContractDeclarations(provider, undefined))).toBe(2);
+    expect(resolveOutputRevision(mergeContractDeclarations({ apiVersion: 2 }, undefined))).toBe(1);
+  });
+
+  test("0 is not a revision a source can declare: it means a document stored without one", () => {
+    expect(() => validateContractDeclaration({ outputRevision: 0 }, "source 'notes'")).toThrow(
+      /outputRevision must be an integer >= 1/,
+    );
+  });
 });
 
 describe("api generation compatibility", () => {

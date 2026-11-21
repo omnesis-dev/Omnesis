@@ -234,6 +234,7 @@ export default defineProvider<PlaidContext>({
       defaultSyncInterval: "12h",
       analyticsSchemas: allSchemas,
       contract: {
+        outputRevision: 1,
         // The host resolves the stored cursor against this before
         // `syncStructured` runs. See `state.ts` for why an unreadable
         // cursor rebootstraps here rather than stopping the source.

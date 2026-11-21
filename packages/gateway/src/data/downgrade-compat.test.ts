@@ -289,7 +289,15 @@ describe("a downgrade across migrations that leave cursors alone", () => {
    */
   test("keeps every cursor, shared and per member, byte for byte, with no epoch bumped", () => {
     const sourceId = "example-notes:shared";
-    setSyncState(db, "gmail:alice@example.com", { historyId: "981", page: 12 });
+    setSyncState(db, "gmail:alice@example.com", {
+      historyId: "981",
+      page: 12,
+      // Label refresh progress is additive; the ordinary body cursor keeps its meaning.
+      scopeLabelsStage: "scan",
+      scopeLabelsHistoryId: "981",
+      scopeLabelsPageToken: "fictional-label-page",
+      scopeLabelsCut: { epoch: "fictional-label-epoch", authority: "fictional-holder" },
+    });
     setSyncState(db, sourceId, { page: 1 });
     const memberEpoch = beginSyncAttempt(db, sourceId, "device-a");
     setSyncState(db, sourceId, { page: 4 }, undefined, undefined, false, memberEpoch, "device-a");
@@ -351,9 +359,12 @@ describe("a downgrade across migrations that leave cursors alone", () => {
  * flag.
  */
 describe("the cursor-compatibility version", () => {
+  // 225 adds source-filter policy and Answer-proof state, and 226 the records'
+  // filter rows. Neither changes sync_state ownership, body cursor meaning or
+  // required resume state.
   /** Every migration through this version has been decided on. */
   // Storage cleanup authority does not change provider sync-state interpretation.
-  const REVIEWED_THROUGH = 220;
+  const REVIEWED_THROUGH = 226;
   const FLAGGED = [131, 133, 134, 139, 141, 146, 178];
 
   test("every migration has been decided on", () => {

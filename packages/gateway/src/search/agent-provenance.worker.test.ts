@@ -12,6 +12,8 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 import { DEFAULT_SEARCH_V2_SETTINGS } from "@omnesis/config";
@@ -35,8 +37,6 @@ import {
   type ProvenanceCorpus,
 } from "./__fixtures__/provenance-corpus.js";
 import type { SearchResultItem } from "./types.js";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 const WORKER_URL = new URL("../workers/io-worker.ts", import.meta.url);
 const LOADER_URL = new URL("../workers/register-tsx.mjs", import.meta.url).href;

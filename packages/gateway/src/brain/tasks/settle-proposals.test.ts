@@ -3,6 +3,8 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createLogger, type DecisionCapability } from "@omnesis/core";
 import { createDatabase } from "../../db.js";
@@ -14,8 +16,6 @@ import { settleTaskProposals } from "./settle-proposals.js";
 import { TaskChecks } from "./task-checks.js";
 import type { ProposedTaskChange } from "../storage/types.js";
 import type Database from "better-sqlite3";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 const log = createLogger("test").child("settle-proposals");
 const nowMs = Date.parse("2026-07-02T10:00:00.000Z");

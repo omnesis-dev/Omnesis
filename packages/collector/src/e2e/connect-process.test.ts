@@ -6,9 +6,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createConnection, createServer } from "node:net";
 import { PassThrough } from "node:stream";
-import * as owned from "./e2e-owned-process.js";
-
 import { afterEach, describe, expect, test, vi } from "vitest";
+import * as owned from "./e2e-owned-process.js";
 
 import {
   spawnConnect,

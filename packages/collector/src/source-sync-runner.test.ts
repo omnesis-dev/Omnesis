@@ -3,6 +3,7 @@
 import { describe, test, expect, beforeEach, afterEach, vi } from "vitest";
 import { LogLevel, setLogLevel } from "@omnesis/core";
 import { SyncError, SourceId, type DocumentInput, type ProviderId } from "@omnesis/types";
+import { collectFilterList, FilterListNotReadyError, filterListDigest } from "@omnesis/source-sdk";
 import { SourceSyncRunner, isGatewayValidationError } from "./source-sync-runner.js";
 import { SourceRegistry } from "./source-registry.js";
 import { SyncScheduler } from "./sync-scheduler.js";
@@ -3537,6 +3538,160 @@ describe("SourceSyncRunner — initial inventory provenance", () => {
   );
 });
 
+describe("SourceSyncRunner — the source's version travels with every page", () => {
+  type PageArgs = Parameters<GatewayClient["upsertWithCursor"]>[0];
+
+  function twoPages(sourceId: string) {
+    let page = 0;
+    return async () => {
+      page += 1;
+      return {
+        documents: [makeDoc(`item-${page}`, sourceId)],
+        deletedExternalIds: [],
+        cursor: { page },
+        hasMore: page < 2,
+      };
+    };
+  }
+
+  test("a document source sends its version on every page", async () => {
+    const { registry } = makeRegistry();
+    const gateway = new RecordingGateway();
+    const writes = vi.spyOn(gateway, "upsertWithCursor");
+    const source = makeDocumentSource("versioned-documents", twoPages("versioned-documents"));
+    source.sourceVersion = 3;
+    registry.registerProvider(makeProvider(source));
+
+    await new SourceSyncRunner(gateway as unknown as GatewayClient, registry, 60_000).runOne(
+      source,
+    );
+
+    expect(writes.mock.calls.map(([args]) => (args as PageArgs).sourceVersion)).toEqual([3, 3]);
+  });
+
+  test("a structured source sends its version on every page", async () => {
+    const { registry } = makeRegistry();
+    const gateway = new RecordingGateway();
+    const writes = vi.spyOn(gateway, "upsertWithCursor");
+    const pages = twoPages("versioned-structured");
+    const source = makeStructuredSource("versioned-structured", async () => {
+      const { deletedExternalIds: _none, ...result } = await pages();
+      return result;
+    });
+    source.sourceVersion = 2;
+    registry.registerProvider(makeProvider(source));
+
+    await new SourceSyncRunner(gateway as unknown as GatewayClient, registry, 60_000).runOne(
+      source,
+    );
+
+    expect(writes.mock.calls.map(([args]) => (args as PageArgs).sourceVersion)).toEqual([2, 2]);
+  });
+
+  test("what a source says about having read everything travels with the page that says it", async () => {
+    const { registry } = makeRegistry();
+    const gateway = new RecordingGateway();
+    const writes = vi.spyOn(gateway, "upsertWithCursor");
+    let page = 0;
+    const staged = makeDocumentSource("staged-documents", async () => {
+      page += 1;
+      return {
+        documents: [makeDoc(`item-${page}`, "staged-documents")],
+        deletedExternalIds: [],
+        cursor: { page },
+        hasMore: page < 2,
+        // The recent window is in; older history follows in a later cycle.
+        ...(page === 2 ? { fullReadComplete: false } : {}),
+      };
+    });
+    registry.registerProvider(makeProvider(staged));
+    await new SourceSyncRunner(gateway as unknown as GatewayClient, registry, 60_000).runOne(
+      staged,
+    );
+    expect(writes.mock.calls.map(([args]) => (args as PageArgs).fullReadComplete)).toEqual([
+      undefined,
+      false,
+    ]);
+
+    writes.mockClear();
+    const structured = makeStructuredSource("staged-structured", async () => ({
+      documents: [makeDoc("item", "staged-structured")],
+      cursor: { page: 1 },
+      hasMore: false,
+      fullReadComplete: true,
+    }));
+    registry.registerProvider(makeProvider(structured));
+    await new SourceSyncRunner(gateway as unknown as GatewayClient, registry, 60_000).runOne(
+      structured,
+    );
+    expect(writes.mock.calls.map(([args]) => (args as PageArgs).fullReadComplete)).toEqual([true]);
+  });
+
+  test("a registration without a version sends none", async () => {
+    const { registry } = makeRegistry();
+    const gateway = new RecordingGateway();
+    const writes = vi.spyOn(gateway, "upsertWithCursor");
+    const source = makeDocumentSource("unversioned", twoPages("unversioned"));
+    registry.registerProvider(makeProvider(source));
+
+    await new SourceSyncRunner(gateway as unknown as GatewayClient, registry, 60_000).runOne(
+      source,
+    );
+
+    expect(writes).toHaveBeenCalledTimes(2);
+    for (const [args] of writes.mock.calls) {
+      expect((args as PageArgs).sourceVersion).toBeUndefined();
+    }
+  });
+
+  test("a stored page is committed at the version that produced it, not the running build's", async () => {
+    const { registry } = makeRegistry();
+    const gateway = new RecordingGateway();
+    let pending: PendingStructuredPage | null = null;
+    const prepared: PrepareStructuredPage[] = [];
+    const client = Object.assign(gateway, {
+      getPendingStructuredPage: vi.fn(async () => structuredClone(pending)),
+      prepareStructuredPage: vi.fn(async (_sourceId: SourceId, page: PrepareStructuredPage) => {
+        prepared.push(structuredClone(page));
+        const { writeEpoch: _epoch, ...stored } = page;
+        pending ??= structuredClone({ ...stored, cursorCommitted: false });
+        return structuredClone(pending);
+      }),
+      acknowledgeStructuredPage: vi.fn(async () => {
+        pending = null;
+        return { acknowledged: true };
+      }),
+    });
+    const commit = client.upsertWithCursor.bind(client);
+    const writes = vi
+      .spyOn(client, "upsertWithCursor")
+      .mockRejectedValueOnce(new Error("gateway restarted"))
+      .mockImplementation(async (args) => {
+        const response = await commit(args);
+        if (pending) pending.cursorCommitted = true;
+        return response;
+      });
+    const source = makeStructuredSource("upgraded-mid-page", async () => ({
+      documents: [makeDoc("item", "upgraded-mid-page")],
+      cursor: { page: 1 },
+      hasMore: false,
+    }));
+    source.sourceVersion = 1;
+    registry.registerProvider(makeProvider(source));
+
+    await new SourceSyncRunner(client as unknown as GatewayClient, registry, 60_000).runOne(source);
+    expect(prepared.map((page) => page.sourceVersion)).toEqual([1]);
+    expect(pending).not.toBeNull();
+
+    // The host is upgraded while the page waits; its replay is still version 1.
+    source.sourceVersion = 2;
+    await new SourceSyncRunner(client as unknown as GatewayClient, registry, 60_000).runOne(source);
+
+    expect(prepared).toHaveLength(1);
+    expect(writes.mock.calls.map(([args]) => (args as PageArgs).sourceVersion)).toEqual([1, 1]);
+  });
+});
+
 describe("isGatewayValidationError", () => {
   test("recognises only the gateway refusing a body as invalid", () => {
     const refused = (status: number, body: string) => new Error(`Gateway error ${status}: ${body}`);
@@ -3555,5 +3710,251 @@ describe("isGatewayValidationError", () => {
     expect(isGatewayValidationError(refused(400, "not json"))).toBe(false);
     expect(isGatewayValidationError(new Error("fetch failed"))).toBe(false);
     expect(isGatewayValidationError("Gateway error 400: {}")).toBe(false);
+  });
+});
+
+/** A gateway that stores lists whole and reports their digests on the sync-state read. */
+class ListGateway extends LeaseGateway {
+  digests: Record<string, string> = {};
+  /** What each list-carrying page held, with the position it repeated. */
+  listPages: Array<{
+    fields: string[];
+    documents: number;
+    hasMore: boolean;
+    cursor: SyncCursor;
+    wipeEpoch?: number;
+  }> = [];
+  /** Every page and digest read, in the order the runner made them. */
+  order: string[] = [];
+
+  async getFilterListDigests(): Promise<Record<string, string>> {
+    this.order.push("digests");
+    return { ...this.digests };
+  }
+
+  override async upsertWithCursor(
+    args: Parameters<RecordingGateway["upsertWithCursor"]>[0] & {
+      filterLists?: Array<{ field: string; digest: string; part: number; final: boolean }>;
+    },
+  ): ReturnType<RecordingGateway["upsertWithCursor"]> {
+    const response = await super.upsertWithCursor(args);
+    if (!args.filterLists) {
+      this.order.push(`page:${args.documents?.length ?? 0}`);
+      return response;
+    }
+    this.order.push("lists");
+    this.listPages.push({
+      fields: args.filterLists.map((list) => list.field),
+      documents: args.documents?.length ?? 0,
+      hasMore: args.hasMore,
+      cursor: args.cursor,
+      wipeEpoch: args.wipeEpoch,
+    });
+    for (const list of args.filterLists) this.digests[list.field] = list.digest;
+    return {
+      ...response,
+      filterLists: args.filterLists.map((list) => ({
+        field: list.field,
+        digest: list.digest,
+        part: list.part,
+        outcome: "published" as const,
+      })),
+    };
+  }
+}
+
+describe("SourceSyncRunner — the lists of a source's filterable fields", () => {
+  const FOLDERS = "extra.folderIds";
+
+  /** A source that syncs `pages` pages of one document each and lists its folders. */
+  function listingSource(
+    id: string,
+    pages: number,
+    listFolders: () => Array<{ id: string; label: string }>,
+  ): RegisteredSource {
+    const source = makeDocumentSource(id, async (cursor) => {
+      const page = ((cursor as { page?: number } | null)?.page ?? 0) + 1;
+      return {
+        documents: page <= pages ? [makeDoc(`doc-${page}`, id)] : [],
+        deletedExternalIds: [],
+        cursor: { page: Math.min(page, pages) },
+        hasMore: page < pages,
+      };
+    });
+    source.instance.filterLists = { [FOLDERS]: listFolders };
+    return source;
+  }
+
+  const run = (gateway: ListGateway, registry: SourceRegistry, source: RegisteredSource) =>
+    new SourceSyncRunner(gateway as unknown as GatewayClient, registry, 60_000).runOne(source);
+
+  test("are published after the first page commits and before the next is fetched, and not asked for again", async () => {
+    const { registry, events } = makeRegistry();
+    const gateway = new ListGateway();
+    const source = listingSource("filing:first-page", 3, () => [{ id: "f-work", label: "Work" }]);
+    registry.registerProvider(makeProvider(source));
+
+    await run(gateway, registry, source);
+
+    expect(gateway.order).toEqual(["page:1", "digests", "lists", "page:1", "page:1"]);
+    // The list page repeats the position the first page committed and adds nothing to it.
+    expect(gateway.listPages).toEqual([
+      { fields: [FOLDERS], documents: 0, hasMore: true, cursor: { page: 1 }, wipeEpoch: 1 },
+    ]);
+    expect(events.at(-1)?.event).toBe("sync.completed");
+    expect(events.at(-1)?.status.lastSyncStats?.documents).toBe(3);
+  });
+
+  test("are not sent again by a sync that finds them unchanged", async () => {
+    const { registry } = makeRegistry();
+    const gateway = new ListGateway();
+    let listed = 0;
+    const source = listingSource("filing:unchanged", 1, () => {
+      listed++;
+      return [{ id: "f-work", label: "Work" }];
+    });
+    registry.registerProvider(makeProvider(source));
+
+    await run(gateway, registry, source);
+    await run(gateway, registry, source);
+
+    expect(listed).toBe(2);
+    expect(gateway.listPages).toHaveLength(1);
+    expect(gateway.listPages[0]?.hasMore).toBe(false);
+  });
+
+  test("a listing that fails does not fail the sync", async () => {
+    const { registry, events } = makeRegistry();
+    const gateway = new ListGateway();
+    const source = listingSource("filing:failing", 2, () => {
+      throw new Error("the account could not be listed");
+    });
+    registry.registerProvider(makeProvider(source));
+
+    await run(gateway, registry, source);
+
+    expect(gateway.listPages).toEqual([]);
+    // Asked after the first page and once more after the last.
+    expect(gateway.order).toEqual(["page:1", "digests", "page:1", "digests"]);
+    expect(events.at(-1)?.event).toBe("sync.completed");
+    expect(registry.getStatus(source.id)?.state).toBe("idle");
+  });
+
+  test("a list that is only whole after the last page is published by the end of the same sync", async () => {
+    const { registry, events } = makeRegistry();
+    const gateway = new ListGateway();
+    let pagesRead = 0;
+    const source = listingSource("filing:late", 3, () => {
+      if (pagesRead < 3) throw new FilterListNotReadyError("the files are still being read");
+      return [{ id: "f-work", label: "Work" }];
+    });
+    const sync = source.instance.sync.bind(source.instance);
+    source.instance.sync = async (...args) => {
+      const result = await sync(...args);
+      pagesRead++;
+      return result;
+    };
+    registry.registerProvider(makeProvider(source));
+
+    await run(gateway, registry, source);
+
+    expect(gateway.order).toEqual(["page:1", "digests", "page:1", "page:1", "digests", "lists"]);
+    // The list page repeats the position of the last page and ends the cycle as it did.
+    expect(gateway.listPages).toEqual([
+      { fields: [FOLDERS], documents: 0, hasMore: false, cursor: { page: 3 }, wipeEpoch: 1 },
+    ]);
+    expect(events.at(-1)?.event).toBe("sync.completed");
+  });
+
+  test("a late list the gateway already holds is sent at neither point", async () => {
+    const { registry } = makeRegistry();
+    const gateway = new ListGateway();
+    const folders = [{ id: "f-work", label: "Work" }];
+    gateway.digests[FOLDERS] = filterListDigest(
+      await collectFilterList(() => folders, { signal: new AbortController().signal }),
+    );
+    let pagesRead = 0;
+    const source = listingSource("filing:late-unchanged", 2, () => {
+      if (pagesRead < 2) throw new FilterListNotReadyError("the files are still being read");
+      return folders;
+    });
+    const sync = source.instance.sync.bind(source.instance);
+    source.instance.sync = async (...args) => {
+      const result = await sync(...args);
+      pagesRead++;
+      return result;
+    };
+    registry.registerProvider(makeProvider(source));
+
+    await run(gateway, registry, source);
+
+    expect(gateway.order).toEqual(["page:1", "digests", "page:1", "digests"]);
+  });
+
+  test("a sync of one page offers its lists once", async () => {
+    const { registry } = makeRegistry();
+    const gateway = new ListGateway();
+    let listed = 0;
+    const source = listingSource("filing:one-page", 1, () => {
+      listed++;
+      throw new FilterListNotReadyError("nothing has been read yet");
+    });
+    registry.registerProvider(makeProvider(source));
+
+    await run(gateway, registry, source);
+
+    expect(listed).toBe(1);
+    expect(gateway.order).toEqual(["page:1", "digests"]);
+  });
+
+  test("a source with no lists costs no digest read", async () => {
+    const { registry } = makeRegistry();
+    const gateway = new ListGateway();
+    const source = makeDocumentSource("plain", async () => ({
+      documents: [makeDoc("one", "plain")],
+      deletedExternalIds: [],
+      cursor: { page: 1 },
+      hasMore: false,
+    }));
+    registry.registerProvider(makeProvider(source));
+
+    await run(gateway, registry, source);
+
+    expect(gateway.order).toEqual(["page:1"]);
+  });
+
+  test("a replicated source's lists are left to the device holding its lease", async () => {
+    const { registry } = makeRegistry();
+    const gateway = new ListGateway();
+    const source = {
+      ...listingSource("filing:replica", 1, () => [{ id: "f-work", label: "Work" }]),
+      multiDeviceMode: "replicated" as const,
+    };
+    registry.registerProvider(makeProvider(source));
+
+    gateway.decisions.set(source.id, { granted: false, holder: "other", reason: "held" });
+    await run(gateway, registry, source);
+    expect(gateway.order).toEqual(["page:1"]);
+
+    gateway.decisions.set(source.id, { granted: true });
+    await run(gateway, registry, source);
+    expect(gateway.listPages.map((page) => page.fields)).toEqual([[FOLDERS]]);
+  });
+
+  test("a structured source publishes its lists after its first page too", async () => {
+    const { registry } = makeRegistry();
+    const gateway = new ListGateway();
+    const source = makeStructuredSource("ledger:rows", async () => ({
+      analytics: { tableName: "step_counts", records: [{ day: "2024-01-01", steps: 4200 }] },
+      cursor: { page: 1 },
+      hasMore: false,
+    }));
+    source.instance.filterLists = { [FOLDERS]: () => [{ id: "f-work", label: "Work" }] };
+    registry.registerProvider(makeProvider(source));
+
+    await run(gateway, registry, source);
+
+    expect(gateway.order).toEqual(["page:0", "digests", "lists"]);
+    expect(gateway.listPages[0]).toMatchObject({ documents: 0, cursor: { page: 1 } });
   });
 });

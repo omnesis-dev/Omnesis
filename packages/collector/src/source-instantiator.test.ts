@@ -14,6 +14,8 @@ import {
   type SourceInstantiatorContext,
 } from "./source-instantiator.js";
 import { buildSourceToProviderMap } from "./source-config-reconciler.js";
+import { extractDescriptors } from "./source-descriptors.js";
+import { collectDocumentEventProfiles } from "./source-manager.js";
 import type { SourceConfig } from "@omnesis/core";
 import type {
   SourceDescriptor,
@@ -527,6 +529,110 @@ describe("setupSources — per-instance label override", () => {
     // never an account override — that is the whole distinction.
     expect(source.name).toBe("instance");
     expect(source.family.name).toBe("the-family");
+  });
+
+  it("a source's pages, its published profile and its filter declarations share one output revision", async () => {
+    // A profile whose filterable field starts at exactly the given revision:
+    // the definition is refused if that is above what the source resolves to.
+    const profileFrom = (minVersion: number) => ({
+      documentTypes: ["note"],
+      metadataFields: [
+        {
+          path: "extra.labelIds",
+          type: "string-array" as const,
+          description: "Label ids.",
+          filter: {
+            capability: "membership" as const,
+            minVersion,
+            scope: "global" as const,
+            noun: { one: "label", many: "labels" },
+            picker: "search" as const,
+          },
+        },
+      ],
+    });
+    const standalone = (id: string, revision: number, contract?: { outputRevision: number }) =>
+      defineSource({
+        id,
+        name: id,
+        description: "x",
+        authType: "local",
+        contract,
+        documentEventProfile: profileFrom(revision),
+        discover: async () => [{ id: "acct-1" }],
+        create: async () => ({ sync: noopSync }),
+      });
+    const provider = defineProvider({
+      provider: { id: "test-revision-provider", name: "test-revision-provider" },
+      authType: "local",
+      contract: { outputRevision: 2 },
+      discover: async () => [AccountId("acct-1")],
+      sources: [
+        {
+          id: "test-revision-inherits",
+          name: "Inherits",
+          description: "x",
+          documentEventProfile: profileFrom(2),
+          create: async () => ({ sync: noopSync }),
+        },
+        {
+          id: "test-revision-own",
+          name: "Own",
+          description: "x",
+          contract: { outputRevision: 5 },
+          documentEventProfile: profileFrom(5),
+          create: async () => ({ sync: noopSync }),
+        },
+        {
+          id: "test-revision-plain",
+          name: "Plain",
+          description: "x",
+          create: async () => ({ sync: noopSync }),
+        },
+      ],
+    });
+    const definitions = [
+      standalone("test-revision-declared", 3, { outputRevision: 3 }),
+      // A package that declares none writes at revision 1.
+      standalone("test-revision-omitted", 1),
+      provider,
+    ];
+    const expected = {
+      "test-revision-declared": 3,
+      "test-revision-omitted": 1,
+      "test-revision-inherits": 2,
+      "test-revision-own": 5,
+      "test-revision-plain": 2,
+    };
+    const registered: RegisteredProvider[] = [];
+    const ctx = makeCtx(definitions, definitions.flatMap(extractDescriptors), registered);
+
+    await setupSources(
+      ctx,
+      Object.fromEntries(Object.keys(expected).map((id) => [id, { enabled: true }])),
+    );
+
+    // What each source's sync pages are sent at.
+    expect(
+      Object.fromEntries(
+        registered.flatMap((p) =>
+          p.sources.map((s) => [String(s.id).replace(/:acct-1$/, ""), s.sourceVersion] as const),
+        ),
+      ),
+    ).toEqual(expected);
+    // What its descriptor advertises.
+    expect(
+      Object.fromEntries(ctx.descriptors.map((d) => [String(d.id), d.outputRevision] as const)),
+    ).toEqual(expected);
+    // What its profile is published at; a source without a profile publishes none.
+    const { "test-revision-plain": _unpublished, ...published } = expected;
+    expect(
+      Object.fromEntries(
+        collectDocumentEventProfiles(definitions).map(
+          (entry) => [entry.sourceType, entry.outputRevision] as const,
+        ),
+      ),
+    ).toEqual(published);
   });
 
   it("provider definition: instance.label wins over the source entry name", async () => {

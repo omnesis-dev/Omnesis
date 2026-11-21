@@ -36,6 +36,7 @@ import {
 import { errorResponse, HttpError } from "../errors.js";
 import { strictRoute } from "../scope.js";
 import { mountSubscriptionRoutes, type SubscriptionRoutesDeps } from "./subscriptions.js";
+import type { CorpusAuthorization } from "../../access/corpus-authorization.js";
 import type { AnswerService } from "../../privacy/answer-service.js";
 import type { AppEnv } from "./types.js";
 import type { AuthorWatchRequest } from "../../watch/authoring.js";
@@ -84,6 +85,7 @@ describe("subscription routes", () => {
       authorWatch?: SubscriptionRoutesDeps["authorWatch"];
       /** The harness the calling device holds; null stands for none. */
       harness?: string | null;
+      deviceAnswerScope?: SubscriptionRoutesDeps["deviceAnswerScope"];
     } = {},
   ): Hono<AppEnv> {
     const app = new Hono<AppEnv>();
@@ -173,6 +175,7 @@ describe("subscription routes", () => {
     mountSubscriptionRoutes(strictRoute(app), {
       service,
       getAnswerService: () => opts.answerService,
+      deviceAnswerScope: opts.deviceAnswerScope ?? (() => ({ kind: "default" })),
       ...(opts.noAuthoring ? {} : { authorWatch: opts.authorWatch ?? defaultAuthorWatch }),
       harnessOf: () => (opts.harness === undefined ? "openclaw" : opts.harness),
     });
@@ -1645,5 +1648,51 @@ describe("subscription routes", () => {
     );
     expect(afterRevoke.status).toBe(403);
     expect(answer).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses a firing answer only to a device whose access level filters a source", async () => {
+    const answer = vi.fn();
+    const scopes: string[] = [];
+    const ask = (authorization: Partial<CorpusAuthorization>) =>
+      buildApp([SCOPE_SUBSCRIPTIONS_ANSWER], {
+        tokenId: "fictional-answer-token",
+        answerService: { answer } as unknown as AnswerService,
+        deviceAnswerScope: (device, token) => {
+          scopes.push(`${device}/${token}`);
+          return {
+            kind: "level",
+            levelId: "fictional-level",
+            authorization: authorization as CorpusAuthorization,
+          };
+        },
+      }).request("/subscriptions/firings/sfiring_fictional_unknown/answer", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ question: "Fictional question" }),
+      });
+
+    const filtered = await ask({
+      restricted: true,
+      scopePolicies: [
+        {
+          sourceId: "fictional-mail:reader@example.org",
+          audience: { accessLevel: "fictional-level", capability: "answer" },
+          rules: [{ match: [{ kind: "conversation", id: "invented" }], action: "share" }],
+          otherwise: "hide",
+        },
+      ],
+    });
+    expect(filtered.status).toBe(403);
+    expect(await filtered.json()).toMatchObject({ code: "ACCESS_LEVEL_RESTRICTED" });
+
+    // A level that lists whole sources and one reading every source both reach
+    // the firing's own authority check, as they did before filters existed.
+    for (const restricted of [true, false]) {
+      const unfiltered = await ask({ restricted, scopePolicies: [] });
+      expect(unfiltered.status).toBe(403);
+      expect(await unfiltered.json()).not.toMatchObject({ code: "ACCESS_LEVEL_RESTRICTED" });
+    }
+    expect(scopes).toEqual(Array(3).fill(`${deviceId}/fictional-answer-token`));
+    expect(answer).not.toHaveBeenCalled();
   });
 });

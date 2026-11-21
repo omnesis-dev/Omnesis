@@ -183,7 +183,9 @@ class ResyncSheetUiTest {
         showDetail(ResyncOffer.WipeOnly, onResync = { resynced += it })
         compose.onNodeWithText("Resync").performClick()
         compose.onNodeWithText("Resync this source?").assertExists()
-        compose.onNodeWithText("This deletes the source's documents and refetches everything from scratch.").assertExists()
+        compose.onNodeWithText(
+            "All ingested documents for this source will be deleted and re-fetched from scratch. Large sources can take a while.",
+        ).assertExists()
         compose.onNode(hasText("In place")).assertDoesNotExist()
         compose.onNode(hasText("Resync") and hasAnyAncestor(isDialog())).performClick()
         assertEquals(listOf(ResyncMode.FROM_SCRATCH), resynced)

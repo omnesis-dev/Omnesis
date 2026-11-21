@@ -13,6 +13,8 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 type Db = Database.Database;
 import { createDatabase } from "../db.js";
@@ -43,8 +45,6 @@ import type {
   LabeledSample,
 } from "./calibration.js";
 import type Database from "better-sqlite3";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 function testDbPath(): string {
   return fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);

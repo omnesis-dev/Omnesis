@@ -3,6 +3,8 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { SCOPE_WRITE_ALL, type DeviceId, type DeviceKind, type Scope } from "@omnesis/types";
 import { createDatabase } from "../../db.js";
@@ -15,8 +17,6 @@ import { directWriteGate } from "../../write-gate.js";
 import { WsCommandError, type DeviceWsServer } from "../../ws.js";
 import { DeviceDoctorService } from "./DeviceDoctorService.js";
 import type { DoctorReport } from "@omnesis/core/doctor";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 const REPORT: DoctorReport = {
   ok: true,

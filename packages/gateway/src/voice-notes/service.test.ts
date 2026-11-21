@@ -9,6 +9,8 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 
 import { createDatabase } from "../db.js";
@@ -26,8 +28,6 @@ import {
 import type { TranscriberReadiness } from "../transcribe/index.js";
 import type { TranscriptionResult } from "@omnesis/core";
 import type Database from "better-sqlite3";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 let dbPath: string;
 let db: Database.Database;

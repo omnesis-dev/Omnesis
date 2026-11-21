@@ -309,6 +309,57 @@ function resolveOneToOnePartyName(
   return resolveDisplayName(chatJid, false, "", contacts, undefined, lidPhoneMap, contactsByLidJid);
 }
 
+/** The account holder's own phone and the JIDs WhatsApp names them by. */
+export function whatsappSelfIdentity(
+  sourceId: SourceIdType,
+  lidPhoneMap: Map<string, string>,
+): {
+  phone: string | undefined;
+  bareJid: string | undefined;
+  lidJids: Set<string>;
+  isSelfJid: (jid: string) => boolean;
+} {
+  const accountId = parseSourceKey(String(sourceId)).accountId;
+  const phone = accountId ? (normalizePhone(accountId) ?? undefined) : undefined;
+  const bareJid = phone ? `${phone.replace(/^\+/, "")}@s.whatsapp.net` : undefined;
+  const lidJids = new Set<string>();
+  if (phone) {
+    for (const [lid, mapped] of lidPhoneMap) {
+      if (mapped === phone) lidJids.add(`${lid}@lid`);
+    }
+  }
+  return { phone, bareJid, lidJids, isSelfJid: (jid) => jid === bareJid || lidJids.has(jid) };
+}
+
+/**
+ * The name a chat is known by when no day of it is at hand: the group subject
+ * or, for a group WhatsApp never named, its first members; for a one-to-one
+ * chat, the other party's saved name, then the name they chose, then their
+ * number. The same resolution a day document's title uses, without the day's
+ * messages.
+ */
+export function whatsappChatLabel(
+  chat: StoredChat,
+  contacts: Map<string, StoredContact>,
+  lidPhoneMap: Map<string, string>,
+  contactsByLidJid: Map<string, StoredContact>,
+  isSelfJid: (jid: string) => boolean,
+): string {
+  const jid = chat.jid;
+  if (jid.endsWith("@s.whatsapp.net") || jid.endsWith("@lid")) {
+    return resolveOneToOnePartyName(jid, [], chat, contacts, lidPhoneMap, contactsByLidJid);
+  }
+  return resolveGroupFallbackName(
+    jid,
+    [],
+    chat,
+    contacts,
+    lidPhoneMap,
+    contactsByLidJid,
+    isSelfJid,
+  );
+}
+
 /**
  * Format a timestamp as HH:MM for display in chat content.
  * See #406 — planned: write clock times with a zone.
@@ -479,18 +530,12 @@ export function normalizeDayChat(
   // Pre-compute self detection. Needed both for the roster pass below
   // and for the group title fallback (which excludes self when deriving
   // a name from participants).
-  const accountIdEarly = parseSourceKey(String(sourceId)).accountId;
-  const selfPhoneEarly = accountIdEarly ? (normalizePhone(accountIdEarly) ?? undefined) : undefined;
-  const selfBareJid = selfPhoneEarly
-    ? `${selfPhoneEarly.replace(/^\+/, "")}@s.whatsapp.net`
-    : undefined;
-  const selfLidJids = new Set<string>();
-  if (selfPhoneEarly) {
-    for (const [lid, phone] of lidPhoneMap) {
-      if (phone === selfPhoneEarly) selfLidJids.add(`${lid}@lid`);
-    }
-  }
-  const isSelfJid = (jid: string) => jid === selfBareJid || selfLidJids.has(jid);
+  const {
+    phone: selfPhoneEarly,
+    bareJid: selfBareJid,
+    lidJids: selfLidJids,
+    isSelfJid,
+  } = whatsappSelfIdentity(sourceId, lidPhoneMap);
 
   // Resolve the chat name shown in the title. For 1:1 chats: contact
   // name → first non-self senderName → chat.name → JID-aware label.

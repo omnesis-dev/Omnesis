@@ -26,6 +26,9 @@ final class TaskConversationTests: XCTestCase {
         XCTAssertFalse(try status(#"{"taskNoteCapture":true}"#).capabilities.supportsTaskNoteCapture)
         XCTAssertFalse(try status(#"{"taskNoteCapture":{"min":2,"max":3}}"#).capabilities.supportsTaskNoteCapture)
         XCTAssertTrue(try status(#"{"taskNoteCapture":{"min":1,"max":3}}"#).capabilities.supportsTaskNoteCapture)
+        XCTAssertFalse(try status(nil).capabilities.supportsAccessLevelEditing)
+        XCTAssertFalse(try status(#"{"accessLevelEditing":{"min":2,"max":3}}"#).capabilities.supportsAccessLevelEditing)
+        XCTAssertTrue(try status(#"{"accessLevelEditing":{"min":1,"max":1}}"#).capabilities.supportsAccessLevelEditing)
     }
 
     func testAdvertisedCapabilityOffersTheChat() throws {

@@ -14,6 +14,7 @@ import {
   parseNoreplyEmail,
   threadToDocument,
 } from "./normalizer.js";
+import { inRepository } from "./repositories.js";
 import type { DocumentEventProfile, DocumentMetadataFieldSpec } from "@omnesis/source-sdk";
 import type { GqlDiscussion, GqlIssue, GqlPullRequest, RestCommitDetail } from "./types.js";
 
@@ -491,11 +492,16 @@ describe("document-event profiles", () => {
     };
   }
 
+  // Documents as the sources emit them: normalized, then filed under the
+  // repository GitHub's listing names.
+  const filed = (doc: DocumentInput) => inRepository(doc, 4101);
   const thread = (t: GqlIssue | GqlPullRequest) =>
-    threadToDocument(t, REPO, providerId, sourceId).doc;
+    filed(threadToDocument(t, REPO, providerId, sourceId).doc);
   const openIssue = thread(issue());
   const unlabelledIssue = thread(issue({ labels: { nodes: [] } }));
-  const answeredDiscussion = discussionToDocument(discussion(true), REPO, providerId, sourceId);
+  const answeredDiscussion = filed(
+    discussionToDocument(discussion(true), REPO, providerId, sourceId),
+  );
   // One document per state a thread can be in, so every declared status value
   // is proven reachable and no reachable value goes undeclared.
   const threadDocs: DocumentInput[] = [
@@ -505,26 +511,28 @@ describe("document-event profiles", () => {
     thread(pull({ merged: false, mergedAt: null, mergedBy: null, state: "OPEN", isDraft: true })),
     thread(pull({ merged: false, mergedAt: null, mergedBy: null, state: "CLOSED" })),
     answeredDiscussion,
-    discussionToDocument(discussion(false), REPO, providerId, sourceId),
+    filed(discussionToDocument(discussion(false), REPO, providerId, sourceId)),
   ];
 
-  const plainCommit = commitToDocument(detail(), REPO, providerId, commitsSourceId);
+  const plainCommit = filed(commitToDocument(detail(), REPO, providerId, commitsSourceId));
   // A merge commit whose committer differs from its author and whose message
   // mentions a third login: the one shape that reaches every declared role
   // and the merge-commit flag at once.
-  const mergeCommit = commitToDocument(
-    detail({
-      commit: {
-        message: "Merge branch 'fix-watermark'\n\nReviewed by @jlopez-dev.",
-        author: { name: "Maya Reeves", email: "maya@example.org", date: "2026-03-14T11:59:00Z" },
-        committer: { name: "David Lin", email: "dlin@example.org", date: "2026-03-14T12:00:00Z" },
-      },
-      committer: { login: "dlin-eng", type: "User" },
-      parents: [{ sha: "0".repeat(40) }, { sha: "1".repeat(40) }],
-    }),
-    REPO,
-    providerId,
-    commitsSourceId,
+  const mergeCommit = filed(
+    commitToDocument(
+      detail({
+        commit: {
+          message: "Merge branch 'fix-watermark'\n\nReviewed by @jlopez-dev.",
+          author: { name: "Maya Reeves", email: "maya@example.org", date: "2026-03-14T11:59:00Z" },
+          committer: { name: "David Lin", email: "dlin@example.org", date: "2026-03-14T12:00:00Z" },
+        },
+        committer: { login: "dlin-eng", type: "User" },
+        parents: [{ sha: "0".repeat(40) }, { sha: "1".repeat(40) }],
+      }),
+      REPO,
+      providerId,
+      commitsSourceId,
+    ),
   );
   const commitDocs: DocumentInput[] = [plainCommit, mergeCommit];
 

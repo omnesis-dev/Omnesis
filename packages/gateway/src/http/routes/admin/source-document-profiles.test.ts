@@ -18,6 +18,8 @@
 
 import { unlinkSync, existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import { SCOPE_READ, SCOPE_WRITE_ALL, writeScope, SourceType } from "@omnesis/types";
 import { createDatabase } from "../../../db.js";
@@ -25,8 +27,6 @@ import { createServer } from "../../../server.js";
 import { createDevice } from "../../../data/repositories/DeviceRepository.js";
 import { createToken } from "../../../data/repositories/TokenRepository.js";
 import type Database from "better-sqlite3";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 type Db = Database.Database;
 
@@ -36,6 +36,7 @@ let dbPath: string;
 
 const mailbox = {
   sourceType: "mailbox",
+  outputRevision: 1,
   profile: {
     documentTypes: ["email"],
     personRoles: ["sender", "recipient"],
@@ -53,6 +54,7 @@ const mailbox = {
 
 const notebook = {
   sourceType: "notebook",
+  outputRevision: 1,
   profile: { documentTypes: ["note"], personRoles: ["author"] },
 };
 
@@ -94,6 +96,7 @@ describe("source-document-profiles endpoints", () => {
     expect((await response.json()) as { ok: boolean; count: number }).toEqual({
       ok: true,
       count: 2,
+      skipped: 0,
     });
 
     const get = await app.request("/admin/source-document-profiles", {
@@ -229,5 +232,131 @@ describe("source-document-profiles endpoints", () => {
     expect(fields.find((f) => f.path === "extra.chatName")!.identifiesPeople).toBe(true);
     // A field that never claimed identity must not acquire it.
     expect(fields.find((f) => f.path === "extra.messageCount")!.identifiesPeople).toBeUndefined();
+  });
+
+  test("a collector that sends no source version cannot replace a profile published with one", async () => {
+    const writeToken = mintToken([SCOPE_WRITE_ALL]);
+    const newer = {
+      sourceType: "mailbox",
+      outputRevision: 2,
+      profile: { documentTypes: ["email", "attachment"] },
+    };
+    await post(writeToken, [newer]);
+
+    const older = await post(writeToken, [
+      { sourceType: "mailbox", profile: { documentTypes: ["email"] } },
+      notebook,
+    ]);
+    expect(older.status).toBe(200);
+    expect(await older.json()).toEqual({ ok: true, count: 1, skipped: 1 });
+
+    const get = await app.request("/admin/source-document-profiles", {
+      headers: { Authorization: `Bearer ${mintToken([SCOPE_READ])}` },
+    });
+    expect((await get.json()) as { entries: unknown[] }).toEqual({ entries: [newer, notebook] });
+  });
+
+  test("an equal source version replaces the stored profile", async () => {
+    const writeToken = mintToken([SCOPE_WRITE_ALL]);
+    await post(writeToken, [mailbox]);
+    const revised = { ...mailbox, profile: { documentTypes: ["email", "attachment"] } };
+    expect(await (await post(writeToken, [revised])).json()).toEqual({
+      ok: true,
+      count: 1,
+      skipped: 0,
+    });
+
+    const get = await app.request("/admin/source-document-profiles", {
+      headers: { Authorization: `Bearer ${mintToken([SCOPE_READ])}` },
+    });
+    expect((await get.json()) as { entries: unknown[] }).toEqual({ entries: [revised] });
+  });
+
+  test.each([
+    ["negative", -1],
+    ["fractional", 1.5],
+    ["a string", "2"],
+  ])("a source version that is %s is rejected", async (_label, outputRevision) => {
+    const response = await post(mintToken([SCOPE_WRITE_ALL]), [{ ...notebook, outputRevision }]);
+    expect(response.status).toBe(400);
+  });
+
+  test("filter declarations are stored as published, whether or not this gateway knows them", async () => {
+    // A collector newer than the gateway may declare a capability or a key this
+    // build has never heard of. Refusing the publication would cost the source
+    // its whole profile, and stripping the key would lose the fact that the
+    // source declared something; both are stored, and judged where they are read.
+    const drive = {
+      sourceType: "drive",
+      outputRevision: 3,
+      profile: {
+        documentTypes: ["file"],
+        personRoles: ["owner"],
+        metadataFields: [
+          {
+            path: "extra.folderIds",
+            type: "string-array",
+            description: "Ids of the folders a file sits in.",
+            filter: {
+              capability: "tree",
+              minVersion: 2,
+              scope: "global",
+              noun: { one: "folder", many: "folders" },
+              picker: "tree",
+              inside: { one: "folder", many: "folders" },
+              aKeyFromALaterContract: { anything: true },
+            },
+          },
+          {
+            path: "extra.modifiedOn",
+            type: "string",
+            description: "Day the file last changed.",
+            filter: { capability: "date-range", minVersion: 3, granularity: "day" },
+          },
+        ],
+        personFilter: {
+          minVersion: 0,
+          roles: ["owner"],
+          identifiers: ["email", "handle"],
+        },
+      },
+    };
+    const response = await post(mintToken([SCOPE_WRITE_ALL]), [drive]);
+    expect(response.status).toBe(200);
+
+    const get = await app.request("/admin/source-document-profiles", {
+      headers: { Authorization: `Bearer ${mintToken([SCOPE_READ])}` },
+    });
+    expect((await get.json()) as { entries: unknown[] }).toEqual({ entries: [drive] });
+  });
+
+  test("a key the profile contract does not know is dropped without refusing the publication", async () => {
+    const response = await post(mintToken([SCOPE_WRITE_ALL]), [
+      {
+        ...notebook,
+        aKeyFromALaterContract: 1,
+        profile: { ...notebook.profile, retention: "complete" },
+      },
+    ]);
+    expect(response.status).toBe(200);
+
+    const get = await app.request("/admin/source-document-profiles", {
+      headers: { Authorization: `Bearer ${mintToken([SCOPE_READ])}` },
+    });
+    expect((await get.json()) as { entries: unknown[] }).toEqual({ entries: [notebook] });
+  });
+
+  test("a filter declaration that is not an object is rejected", async () => {
+    const response = await post(mintToken([SCOPE_WRITE_ALL]), [
+      {
+        sourceType: "drive",
+        profile: {
+          metadataFields: [
+            { path: "extra.folderIds", type: "string-array", description: "Ids.", filter: "tree" },
+          ],
+        },
+      },
+    ]);
+    expect(response.status).toBe(400);
   });
 });

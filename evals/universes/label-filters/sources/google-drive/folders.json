@@ -1,0 +1,6 @@
+[
+  { "id": "lf-drive-clients", "name": "Clients", "parentIds": [] },
+  { "id": "lf-drive-northstar", "name": "Northstar", "parentIds": ["lf-drive-clients"] },
+  { "id": "lf-drive-contracts", "name": "Contracts", "parentIds": ["lf-drive-northstar"] },
+  { "id": "lf-drive-personal", "name": "Personal", "parentIds": [] }
+]

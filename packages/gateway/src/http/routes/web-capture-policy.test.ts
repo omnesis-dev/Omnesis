@@ -13,6 +13,8 @@
 
 import { existsSync, rmSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import {
   DEFAULT_WEB_CAPTURE_RULES,
@@ -30,8 +32,6 @@ import { getSource } from "../../data/repositories/SourceRepository.js";
 import { createToken } from "../../data/repositories/TokenRepository.js";
 import type { AnalyticsTableSchema } from "@omnesis/source-sdk";
 import type Database from "better-sqlite3";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 type Db = Database.Database;
 
