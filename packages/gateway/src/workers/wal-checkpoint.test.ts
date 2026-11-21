@@ -5,6 +5,8 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { rmSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import { Worker } from "node:worker_threads";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -15,8 +17,6 @@ import {
   type WalCheckpointPolicy,
 } from "./wal-checkpoint.js";
 import { openWriteConn } from "./writer-connection.js";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 const POLICY: WalCheckpointPolicy = {
   pendingFrames: 100,
@@ -144,21 +144,45 @@ function copyClock(db: Database.Database): {
   };
 }
 
-/** A thread that runs short read statements back to back until told to stop. */
-function busyReader(): { stop: () => Promise<number> } {
-  const flag = new Int32Array(new SharedArrayBuffer(4));
+interface BusyReader {
+  started: Promise<unknown>;
+  /** Resolves once the thread is parked between two statements, holding no read lock. */
+  pause: () => Promise<void>;
+  resume: () => void;
+  /** Stops the thread and resolves with the number of reads it ran. */
+  stop: () => Promise<number>;
+}
+
+const STOP = 0;
+const PAUSE = 1;
+
+/**
+ * A thread that runs short read statements back to back until told to stop.
+ * Each statement is its own read transaction, so a thread parked by `pause`
+ * holds no read lock on the WAL.
+ */
+function busyReader(): BusyReader {
+  const control = new Int32Array(new SharedArrayBuffer(8));
   const worker = new Worker(
     `const Database = require(${JSON.stringify(createRequire(import.meta.url).resolve("better-sqlite3"))});
      const { workerData, parentPort } = require("node:worker_threads");
-     const stop = new Int32Array(workerData.flag);
+     const control = new Int32Array(workerData.control);
      const db = new Database(workerData.path, { readonly: true });
      const count = db.prepare("SELECT sum(length(body)) AS n FROM notes WHERE id > ?");
      let reads = 0;
      parentPort.postMessage("started");
-     while (Atomics.load(stop, 0) === 0) { count.get(reads % 50); reads++; }
+     while (Atomics.load(control, ${STOP}) === 0) {
+       if (Atomics.load(control, ${PAUSE}) === 1) {
+         parentPort.postMessage("paused");
+         Atomics.wait(control, ${PAUSE}, 1);
+         continue;
+       }
+       count.get(reads % 50);
+       reads++;
+     }
      db.close();
      parentPort.postMessage(reads);`,
-    { eval: true, workerData: { path, flag: flag.buffer } },
+    { eval: true, workerData: { path, control: control.buffer } },
   );
   workers.push(worker);
   const messages: unknown[] = [];
@@ -175,14 +199,25 @@ function busyReader(): { stop: () => Promise<number> } {
       else waiters.push(resolve);
     });
   const started = nextMessage();
+  const resume = () => {
+    Atomics.store(control, PAUSE, 0);
+    Atomics.notify(control, PAUSE);
+  };
   return {
+    started,
+    pause: async () => {
+      await started;
+      Atomics.store(control, PAUSE, 1);
+      expect(await nextMessage()).toBe("paused");
+    },
+    resume,
     stop: async () => {
       await started;
-      Atomics.store(flag, 0, 1);
+      Atomics.store(control, STOP, 1);
+      resume();
       return (await nextMessage()) as number;
     },
-    ...{ started },
-  } as { stop: () => Promise<number>; started: Promise<unknown> };
+  };
 }
 
 afterEach(async () => {
@@ -381,9 +416,7 @@ describe("WalCheckpointer", () => {
       { ...POLICY, pendingFrames: 1_000_000 },
       clock.now,
     );
-    const readers = [busyReader(), busyReader()] as Array<
-      ReturnType<typeof busyReader> & { started: Promise<unknown> }
-    >;
+    const readers = [busyReader(), busyReader()];
     await Promise.all(readers.map((r) => r.started));
     write(db, 1_200);
 
@@ -393,8 +426,15 @@ describe("WalCheckpointer", () => {
     expect(restartWait).toBeGreaterThan(0);
     expect(restartWait).toBeLessThanOrEqual(POLICY.restartWaitMs);
     expect(restored).toBe(POLICY.busyTimeoutMs);
+
+    // A read that began while the copy ran can take its read slot on the WAL
+    // just after the RESTART found every slot free, and a commit while that
+    // read lasts appends to the WAL instead of starting it over. The commit
+    // waits until the reads that were running at the rewind have ended.
+    for (const r of readers) await r.pause();
     write(db, 1);
     expect(wal(db).log).toBeLessThan(10);
+    for (const r of readers) r.resume();
     for (const r of readers) expect(await r.stop()).toBeGreaterThan(0);
   });
 
@@ -463,6 +503,19 @@ describe("WalCheckpointer", () => {
       expect(conn.calls.filter((c) => c === "RESTART")).toHaveLength(1);
       clock += POLICY.restartRetryMinMs;
       expect(() => checkpointer.maintain()).toThrow();
+      expect(conn.calls.filter((c) => c === "RESTART")).toHaveLength(2);
+    });
+
+    it("rewinds again at the next call when the commit after a rewind did not start the WAL over", () => {
+      const conn = scripted({
+        passive: () => ({ busy: 0, log: 20_000, checkpointed: 20_000 }),
+        restart: () => ({ busy: 0, log: 20_000, checkpointed: 20_000 }),
+      });
+      const checkpointer = new WalCheckpointer(conn.db, POLICY, () => 0);
+      expect(checkpointer.maintain()).toMatchObject({ outcome: "rewound" });
+      // The probe still reports a long WAL: a read that took its slot on the
+      // WAL after the RESTART made the next commit append. No backoff applies.
+      expect(checkpointer.maintain()).toMatchObject({ outcome: "rewound" });
       expect(conn.calls.filter((c) => c === "RESTART")).toHaveLength(2);
     });
 
