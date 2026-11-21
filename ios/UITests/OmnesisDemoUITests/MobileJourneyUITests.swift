@@ -221,7 +221,9 @@ final class MobileJourneyUITests: XCTestCase {
     // MARK: - Steps
 
     /// Asks the replayed question from a fresh Ask screen and waits for its
-    /// answer.
+    /// answer. The question is typed as soon as the composer takes the
+    /// keyboard, usually while the app is still opening its launch session,
+    /// and has to reach the gateway word for word.
     private func ask() throws {
         try gateway.deleteAllConversations()
         try launchPaired()
@@ -241,6 +243,7 @@ final class MobileJourneyUITests: XCTestCase {
             element(containing: Self.agentAnswer).waitForExistence(timeout: 60),
             "the agent's answer did not mention \"\(Self.agentAnswer)\""
         )
+        XCTAssertEqual(try gateway.userMessages(), [Self.agentQuestion], "the question sent was not the one typed")
     }
 
     /// Taps the composer until it holds the keyboard focus that typing needs.

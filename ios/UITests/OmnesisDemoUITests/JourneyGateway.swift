@@ -118,6 +118,22 @@ struct JourneyGateway {
         throw JourneyGatewayError.unexpectedResponse("/agent/conversations")
     }
 
+    /// The text of every message the user sent, across all conversations.
+    func userMessages() throws -> [String] {
+        let page = try request("GET", "/agent/conversations", body: nil)
+        let ids = (page["conversations"] as? [[String: Any]] ?? []).compactMap { $0["id"] as? String }
+        return try ids.flatMap { id in
+            let record = try request("GET", "/agent/conversations/\(id)", body: nil)
+            let messages = record["messages"] as? [[String: Any]] ?? []
+            return messages.filter { $0["role"] as? String == "user" }.map { message in
+                (message["parts"] as? [[String: Any]] ?? [])
+                    .filter { $0["kind"] as? String == "text" }
+                    .compactMap { $0["text"] as? String }
+                    .joined()
+            }
+        }
+    }
+
     private func post(_ path: String, body: [String: String]) throws -> [String: Any] {
         try request("POST", path, body: body)
     }

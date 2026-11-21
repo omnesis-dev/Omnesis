@@ -679,7 +679,7 @@ public struct AgentView: View {
                             store.agent.saveDraftResearch(command?.deepResearch ?? false, for: store.agent.composerDraftKey)
                         }
                     )
-                    .id("\(store.agent.composerDraftKey):\(editingDraft)")
+                    .id("\(store.agent.composerIdentity):\(editingDraft)")
                 }
             }
             // Publish the composer's bounds so the transcript's bottom
