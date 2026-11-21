@@ -26,6 +26,7 @@ import {
   accessSync,
   chmodSync,
   constants,
+  cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -39,7 +40,7 @@ import { dirname, join, resolve } from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { expect } from "vitest";
+import { afterAll, expect } from "vitest";
 
 export const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 export const installer = join(repoRoot, "scripts", "install.sh");
@@ -69,14 +70,23 @@ export function writeExecutable(path, body) {
   chmodSync(path, 0o755);
 }
 
-function git(...args) {
+function git(dir, ...args) {
   // A global commit.gpgsign or core.hooksPath would otherwise decide whether
   // this fixture can be built at all.
   return execFileSync("git", args, {
-    cwd: fixture,
+    cwd: dir,
     encoding: "utf8",
     env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_SYSTEM: "/dev/null" },
   }).trim();
+}
+
+function commitRelease(dir, version) {
+  mkdirSync(join(dir, "packages", "cli"), { recursive: true });
+  writeFileSync(join(dir, "packages", "cli", "package.json"), `${JSON.stringify({ version })}\n`);
+  seedSourceLauncher(dir);
+  git(dir, "add", ".");
+  git(dir, "commit", "-m", version);
+  git(dir, "tag", `v${version}`);
 }
 
 /**
@@ -85,15 +95,43 @@ function git(...args) {
  * always move together.
  */
 export function tagRelease(version) {
-  mkdirSync(join(fixture, "packages", "cli"), { recursive: true });
-  writeFileSync(
-    join(fixture, "packages", "cli", "package.json"),
-    `${JSON.stringify({ version })}\n`,
-  );
-  seedSourceLauncher(fixture);
-  git("add", ".");
-  git("commit", "-m", version);
-  git("tag", `v${version}`);
+  commitRelease(fixture, version);
+}
+
+/**
+ * The release remote for each list of versions, built once per test process.
+ * Building one takes a git process per step (an init, two configs, and an add,
+ * a commit and a tag per version), and a process launch on a loaded CI runner
+ * can stall for seconds, so a test's `beforeEach`, which has only the hook
+ * timeout to fit in, launches none: it gets an in-process copy of the remote,
+ * and what the test commits or tags stays its own.
+ */
+const releaseRemotes = new Map();
+// Registered while the importing test file is collected, so it runs after that
+// file's last test; a forked Vitest worker is stopped without an `exit` event.
+afterAll(() => {
+  for (const remote of releaseRemotes.values()) rmSync(remote, { recursive: true, force: true });
+  releaseRemotes.clear();
+});
+
+function releaseRemote(versions) {
+  const key = JSON.stringify(versions);
+  let remote = releaseRemotes.get(key);
+  if (!remote) {
+    remote = mkdtempSync(join(tmpdir(), "omnesis-installer-remote-"));
+    try {
+      git(remote, "init", "-b", "main");
+      git(remote, "config", "user.name", "omnesis-test");
+      git(remote, "config", "user.email", "release@example.com");
+      writeFileSync(join(remote, ".gitignore"), "node_modules/\n");
+      for (const version of versions) commitRelease(remote, version);
+    } catch (error) {
+      rmSync(remote, { recursive: true, force: true });
+      throw error;
+    }
+    releaseRemotes.set(key, remote);
+  }
+  return remote;
 }
 
 /**
@@ -104,11 +142,7 @@ export function tagRelease(version) {
  */
 export function createFixture({ name, versions, cliShim }) {
   fixture = mkdtempSync(join(tmpdir(), `omnesis-installer-${name}-`));
-  git("init", "-b", "main");
-  git("config", "user.name", "omnesis-test");
-  git("config", "user.email", "release@example.com");
-  writeFileSync(join(fixture, ".gitignore"), "node_modules/\n");
-  for (const version of versions) tagRelease(version);
+  cpSync(releaseRemote(versions), fixture, { recursive: true });
 
   const fakeBin = join(fixture, "fake-bin");
   mkdirSync(fakeBin);
