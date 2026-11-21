@@ -277,6 +277,7 @@ export class IoTaskRunner implements TaskRunner {
 
   /** Hand queued calls to any idle workers (no-op when `waiting` is empty). */
   private drainWaiting(): void {
+    if (this.disposed) return;
     while (this.waiting.length > 0) {
       const slot = this.idleSlot();
       if (!slot) break;
@@ -314,7 +315,7 @@ export class IoTaskRunner implements TaskRunner {
         // enqueue more work through the Scheduler continuation path).
         if (slot.currentId === msg.id) {
           slot.currentId = null;
-          const next = this.waiting.shift();
+          const next = this.disposed ? undefined : this.waiting.shift();
           if (next) this.dispatchTo(slot, next);
         }
         if (!pending) {

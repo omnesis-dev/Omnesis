@@ -3,6 +3,7 @@
 
 // swiftlint:disable file_length
 import Foundation
+import Observation
 @testable import Omnesis
 import XCTest
 
@@ -55,10 +56,7 @@ import XCTest
         XCTAssertTrue(applied.isEmpty)
         XCTAssertNil(model.choose(UUID().uuidString))
         let choosing = model.choose(fixture.gateway.gatewayId)
-        for _ in 0 ..< 1000 {
-            if model.phase == .comparing { break }
-            await Task.yield()
-        }
+        await waitFor { model.phase == .comparing }
         XCTAssertEqual(model.phase, .comparing)
         await model.complete { applied.append($0)
             return true
@@ -89,10 +87,7 @@ import XCTest
             now: { fixture.clock }
         )
         let start = try model.start(configuration: configuration(), method: .passkey)
-        for _ in 0 ..< 1000 {
-            if provider.pending != nil { break }
-            await Task.yield()
-        }
+        await waitFor { provider.pending != nil }
         XCTAssertNotNil(provider.pending)
         model.cancel()
         provider.resume()
@@ -461,10 +456,19 @@ extension AccountCloudPairingModelTests {
         try XCTUnwrap(URL(string: "\(fixture.gateway.publicOrigin)/portal/approve#00000000-0000-4000-8000-000000000001"))
     }
 
-    private func waitFor(_ condition: @MainActor () -> Bool) async {
-        for _ in 0 ..< 1000 {
-            if condition() { return }
-            await Task.yield()
+    /// Waits until `condition` holds, reading it again each time an observable value it read changes.
+    /// The model reaches each state only after the session actor answers, and the session does its work,
+    /// certificate checks included, off the main actor, so no number of main-actor turns bounds how long
+    /// that takes. The timeout only ends a wait for a state that never comes.
+    private func waitFor(
+        _ condition: @escaping @MainActor () -> Bool,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) async {
+        let reached = expectation(description: "the awaited state")
+        ObservedCondition(condition) { reached.fulfill() }.check()
+        if await XCTWaiter.fulfillment(of: [reached], timeout: 30) != .completed {
+            XCTFail("The awaited state never came", file: file, line: line)
         }
     }
 
@@ -837,7 +841,7 @@ private actor AccountModelSession: AccountPairingSession {
     func close() async {}
 }
 
-@MainActor private final class AccountModelApprovalBrowser: OmnesisAccountBrowsing {
+@MainActor @Observable private final class AccountModelApprovalBrowser: OmnesisAccountBrowsing {
     var opened: [URL] = []
     var closes = 0
     func open(_ url: URL) {
@@ -867,7 +871,7 @@ private actor AccountModelSession: AccountPairingSession {
     func cancel() {}
 }
 
-@MainActor private final class AccountModelPasskey: AccountPasskeyProvider {
+@MainActor @Observable private final class AccountModelPasskey: AccountPasskeyProvider {
     var assertions = 0
     var wait = false
     var pending: CheckedContinuation<Data, Error>?
@@ -886,6 +890,30 @@ private actor AccountModelSession: AccountPairingSession {
     }
 
     func cancel() {}
+}
+
+/// Reports the first time a condition holds, reading it again whenever an observable value it read changes.
+@MainActor private final class ObservedCondition {
+    private let condition: @MainActor () -> Bool
+    private let holds: @MainActor () -> Void
+    private var reported = false
+
+    init(_ condition: @escaping @MainActor () -> Bool, holds: @escaping @MainActor () -> Void) {
+        self.condition = condition
+        self.holds = holds
+    }
+
+    func check() {
+        guard !reported else { return }
+        // The change is reported before the new value is stored, so it is read again on a later turn.
+        let satisfied = withObservationTracking { condition() } onChange: {
+            Task { @MainActor in self.check() }
+        }
+        if satisfied {
+            reported = true
+            holds()
+        }
+    }
 }
 
 private struct AccountModelTokenTransport: CloudPairingTransport {

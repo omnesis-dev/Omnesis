@@ -36,6 +36,7 @@ import { createAnswerPrivacyTables, createDirectAuditTables } from "../privacy/s
 import { createSubscriptionTables } from "../subscriptions/store-schema.js";
 import { createTranscriptionVocabularyTables } from "../transcribe/vocabulary/storage.js";
 import { addStorageAuthority } from "./migration-219-storage-authority.js";
+import { addHistoryCleanup } from "./migration-220-history-cleanup.js";
 import { REVOKED_DEVICE_KEYS_TABLE } from "./migration-217-sticky-revocation.js";
 import { DEVICE_ENROLLMENT_PUBLIC_KEY_INDEX } from "./migration-214-device-enrollment.js";
 import { createSourceInventoryTables } from "./repositories/SourceInventoryRepository.js";
@@ -1532,6 +1533,7 @@ function runSchemaSetupInTxn(db: Db): void {
   createDevAnnotationsTables(db);
   createLabTable(db);
   addStorageAuthority(db);
+  addHistoryCleanup(db);
   db.exec(REVOKED_DEVICE_KEYS_TABLE);
   // Which agent conversations hold something the operator has not seen.
   createConversationReadStateTables(db);

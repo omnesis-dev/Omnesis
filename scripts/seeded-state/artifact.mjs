@@ -94,6 +94,7 @@ const FORBIDDEN_TABLES = new Set([
   "storage_source_incarnations",
   "storage_trim_job_cascades",
   "storage_trim_jobs",
+  "storage_cleanup_jobs",
   // A queued conversation handoff is active delivery work, not seed data.
   "note_agent_handoffs",
   // Exact unfinished source output is live write authority, never a seed.

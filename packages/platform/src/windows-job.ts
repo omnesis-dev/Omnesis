@@ -13,7 +13,12 @@ import {
   type WindowsOwnedInvocation,
   type WindowsOwnedSyncOptions,
 } from "./windows-owned-process.js";
-import { windowsWorkerInvocation, type WindowsBootstrapRequest } from "./windows-worker-cache.js";
+import {
+  prepareWindowsNativeWorker,
+  windowsWorkerInvocation,
+  type WindowsBootstrapRequest,
+} from "./windows-worker-cache.js";
+
 import { windowsPowerShellExecutable } from "./windows-powershell.js";
 import { WindowsJobControl, type WindowsJobControlConfiguration } from "./windows-job-control.js";
 import { WINDOWS_JOB_POWERSHELL_SCRIPT } from "./native/windows-job-source.js";
@@ -114,6 +119,7 @@ export function spawnWindowsJob(
   args: readonly string[],
   opts: Pick<WindowsJobOptions, "cwd" | "env" | "completion"> & { startupTimeoutMs?: number } = {},
 ): WindowsJobProcess {
+  prepareWindowsNativeWorker();
   const start = performance.now();
   const remaining = () =>
     Math.floor(Math.min(30_000, opts.startupTimeoutMs ?? Infinity) - (performance.now() - start));
@@ -186,6 +192,7 @@ export function runWindowsJob(
   onSpawn?: (pid: number) => void,
 ): Promise<WindowsJobResult> {
   if (opts.signal?.aborted) return Promise.resolve(deadlineFailure("aborted"));
+  prepareWindowsNativeWorker();
   const start = performance.now();
   const startupRemaining = () =>
     Math.floor(Math.min(30_000, opts.timeoutMs ?? Infinity) - (performance.now() - start));
@@ -245,6 +252,7 @@ export function runWindowsJobSync(
   args: readonly string[],
   opts: WindowsOwnedSyncOptions = {},
 ): WindowsJobResult {
+  prepareWindowsNativeWorker();
   const start = performance.now();
   if (opts.timeoutMs !== undefined && opts.timeoutMs <= 0) return deadlineFailure("timeout");
   const nonce = randomBytes(32).toString("hex");

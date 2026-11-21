@@ -265,8 +265,24 @@ describe("generateLaunchdPlist", () => {
     // Longer than the gateway's 60 s shutdown budget, so launchd never
     // SIGKILLs a daemon that is still closing its stores.
     expect(plist).toContain("<key>ExitTimeOut</key>\n    <integer>90</integer>");
-    expect(plist).toContain("<key>ProcessType</key>\n    <string>Background</string>");
     expect(plist).toContain("<key>Umask</key>\n    <integer>63</integer>");
+  });
+
+  it("runs the gateway in the Standard class and the collector in the Background class", () => {
+    // The gateway answers requests someone is waiting on: as a Background job
+    // it would queue behind every program the user runs. The collector's bulk
+    // sync is what Background is for.
+    const processType = (plist: string) =>
+      /<key>ProcessType<\/key>\n {4}<string>([A-Za-z]+)<\/string>/u.exec(plist)?.[1];
+    expect(processType(generateLaunchdPlist(spec()))).toBe("Standard");
+    expect(processType(generateLaunchdPlist(spec({ instance: "staging" })))).toBe("Standard");
+    expect(
+      processType(
+        generateLaunchdPlist(
+          spec({ component: "collector", exec: ["/usr/local/bin/omnesis", "collector", "run"] }),
+        ),
+      ),
+    ).toBe("Background");
   });
 
   it("renders the environment dict", () => {

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { readFile, stat } from "node:fs/promises";
+import { readFile, lstat } from "node:fs/promises";
 
 export interface ConversationRetentionFile {
   id: string;
@@ -36,46 +36,8 @@ export async function readConversationRetentionCandidates(
   files: readonly ConversationRetentionFile[],
   cutoffMs: number,
 ): Promise<ConversationRetentionCandidate[]> {
-  const candidates: ConversationRetentionCandidate[] = [];
-  for (const file of files) {
-    try {
-      const before = await stat(file.path, { bigint: true });
-      const parsed: unknown = JSON.parse(await readFile(file.path, "utf8"));
-      const after = await stat(file.path, { bigint: true });
-      if (
-        fileIdentity(before) !== fileIdentity(after) ||
-        !isRetentionEligible(parsed, file.id, cutoffMs)
-      ) {
-        continue;
-      }
-      const record = parsed as { updatedAt: string };
-      candidates.push({
-        id: file.id,
-        updatedAt: record.updatedAt,
-        fileIdentity: fileIdentity(after),
-      });
-    } catch {
-      // A concurrently removed or malformed transcript is not a retention
-      // candidate. Normal conversation reads retain their existing warning.
-    }
-  }
-  return candidates;
-}
-
-function isRetentionEligible(value: unknown, expectedId: string, cutoffMs: number): boolean {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-  const record = value as Record<string, unknown>;
-  if (
-    record.id !== expectedId ||
-    record.pinned === true ||
-    typeof record.updatedAt !== "string" ||
-    !Array.isArray(record.messages)
-  ) {
-    return false;
-  }
-  if (originIsPermanent(record.origin)) return false;
-  const updatedAt = Date.parse(record.updatedAt);
-  return Number.isFinite(updatedAt) && updatedAt < cutoffMs;
+  const inspected = await readConversationCleanupCandidates(files, cutoffMs);
+  return inspected.flatMap((file) => (file.candidate ? [file.candidate] : []));
 }
 
 export function fileIdentity(value: {
@@ -86,4 +48,67 @@ export function fileIdentity(value: {
   ctimeNs: bigint;
 }): string {
   return [value.dev, value.ino, value.size, value.mtimeNs, value.ctimeNs].join(":");
+}
+
+export interface ConversationCleanupInspection {
+  id: string;
+  candidate?: ConversationRetentionCandidate;
+  bytesEstimate: number;
+  protectedReason?: string;
+}
+/** Shared eligibility inspection for manual cleanup and automatic retention. */
+export async function readConversationCleanupCandidates(
+  files: readonly ConversationRetentionFile[],
+  cutoffMs: number,
+): Promise<ConversationCleanupInspection[]> {
+  const out: ConversationCleanupInspection[] = [];
+  for (const file of files) {
+    try {
+      const before = await lstat(file.path, { bigint: true });
+      if (!before.isFile()) {
+        out.push({ id: file.id, bytesEstimate: 0, protectedReason: "unsafe" });
+        continue;
+      }
+      const parsed: unknown = JSON.parse(await readFile(file.path, "utf8"));
+      const after = await lstat(file.path, { bigint: true });
+      if (fileIdentity(before) !== fileIdentity(after)) {
+        out.push({ id: file.id, bytesEstimate: 0, protectedReason: "changed" });
+        continue;
+      }
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        out.push({ id: file.id, bytesEstimate: 0, protectedReason: "invalid" });
+        continue;
+      }
+      const record = parsed as Record<string, unknown>;
+      const updated = typeof record.updatedAt === "string" ? Date.parse(record.updatedAt) : NaN;
+      if (record.id !== file.id || !Number.isFinite(updated) || !Array.isArray(record.messages)) {
+        out.push({ id: file.id, bytesEstimate: 0, protectedReason: "invalid" });
+        continue;
+      }
+      if (!(updated < cutoffMs)) continue;
+      const protectedReason =
+        record.pinned === true
+          ? "pinned"
+          : originIsPermanent(record.origin)
+            ? "permanent"
+            : undefined;
+      out.push({
+        id: file.id,
+        bytesEstimate: Number(after.size),
+        ...(protectedReason
+          ? { protectedReason }
+          : {
+              candidate: {
+                id: file.id,
+                updatedAt: record.updatedAt as string,
+                fileIdentity: fileIdentity(after),
+              },
+            }),
+      });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT")
+        out.push({ id: file.id, bytesEstimate: 0, protectedReason: "invalid" });
+    }
+  }
+  return out;
 }
