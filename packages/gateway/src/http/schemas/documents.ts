@@ -22,10 +22,15 @@ import {
   TEMPORAL_MODALITIES,
   TEMPORAL_STATUSES,
 } from "@omnesis/core";
-import { DOCUMENT_PROJECTION_FIELDS, type DocumentProjectionField } from "@omnesis/source-sdk";
+import {
+  DOCUMENT_PROJECTION_FIELDS,
+  RESYNC_COST_MAX_LENGTH,
+  type DocumentProjectionField,
+} from "@omnesis/source-sdk";
+import { FILTER_IDENTIFIER_TYPES, FILTER_LIST_LIMITS } from "@omnesis/types";
 import { z } from "zod";
 import { SOURCE_ICON_MAX_INPUT_CHARS } from "../../icon-limits.js";
-import { nonEmptyString, urlPatternSpecSchema } from "./common.js";
+import { nonEmptyString, sourceVersionShape, urlPatternSpecSchema } from "./common.js";
 import { accountDescriptorSchema } from "./account-descriptor.js";
 
 const documentInputShape = z
@@ -297,6 +302,7 @@ const sourceFamilyMetaSchema = z.object({
   label: z.string().optional(),
   bgColor: z.string().optional(),
   accentColor: z.string().optional(),
+  resyncCost: z.string().max(RESYNC_COST_MAX_LENGTH).optional(),
 });
 
 // POST /sync-state/:sourceId
@@ -355,6 +361,44 @@ const edgeDeclarationShape = z.object({
   metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
+// One page of the list a collector publishes for a filterable field. The
+// bounds are the ones the collector splits a list by, so a list cut by a
+// current collector always fits.
+const filterListId = z.string().min(1).max(FILTER_LIST_LIMITS.idLength);
+const filterListItemSchema = z.object({
+  id: filterListId,
+  label: z.string().max(FILTER_LIST_LIMITS.labelLength),
+  parentId: filterListId.optional(),
+  members: z
+    .array(
+      z.object({
+        type: z.enum(FILTER_IDENTIFIER_TYPES),
+        value: z.string().min(1).max(FILTER_LIST_LIMITS.identifierLength),
+      }),
+    )
+    .max(FILTER_LIST_LIMITS.membersPerItem)
+    .optional(),
+  membersIncomplete: z.boolean().optional(),
+});
+const filterListPublicationSchema = z
+  .object({
+    field: filterListId,
+    digest: z.string().regex(/^[0-9a-f]{64}$/),
+    part: z
+      .number()
+      .int()
+      .min(0)
+      .max(FILTER_LIST_LIMITS.parts - 1),
+    final: z.boolean(),
+    items: z.array(filterListItemSchema).max(FILTER_LIST_LIMITS.itemsPerPart),
+  })
+  .refine(
+    (publication) =>
+      publication.items.reduce((total, item) => total + (item.members?.length ?? 0), 0) <=
+      FILTER_LIST_LIMITS.membersPerPart,
+    { message: "A page of a list carries too many members" },
+  );
+
 // POST /documents/with-cursor — atomic per-page sync write.
 // Bundles every SQLite-side write the collector needs to commit at the
 // end of a sync page so they either all land or none do, closing the
@@ -409,6 +453,26 @@ export const upsertWithCursorBody = z
       })
       .optional(),
     meta: sourceSyncMetaBody.omit({ contentRetention: true }).optional(),
+    /**
+     * Pages of the lists the source publishes for its filterable fields. They
+     * are stored after the page commits, and say nothing about its documents.
+     */
+    filterLists: z
+      .array(filterListPublicationSchema)
+      .max(FILTER_LIST_LIMITS.publicationsPerPage)
+      .optional(),
+    /**
+     * The version of the source's output, as its host declares it; applies to
+     * every document on the page. A host that predates versions sends none,
+     * which is stored as 0.
+     */
+    sourceVersion: sourceVersionShape.optional(),
+    /**
+     * Whether the source has now read everything it holds for the account,
+     * as it said on the last page of a cycle. Absent leaves the gateway's
+     * default: the last page of a cycle begun with no cursor is a full read.
+     */
+    fullReadComplete: z.boolean().optional(),
   })
   .superRefine((body, ctx) => {
     refuseBothSpellings(body, ctx);

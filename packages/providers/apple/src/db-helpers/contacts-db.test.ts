@@ -8,12 +8,12 @@
  * failure to raise at all.
  */
 
-import { setAppleFixtureReadable } from "../testing/apple-read-denial.test.fixture.js";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import Database from "better-sqlite3";
 import { describe, expect, test, beforeEach, afterEach } from "vitest";
+import { setAppleFixtureReadable } from "../testing/apple-read-denial.test.fixture.js";
 import { CONTACTS_DB_FILENAME } from "../paths.js";
 import { ContactsDbHelper } from "./contacts-db.js";
 

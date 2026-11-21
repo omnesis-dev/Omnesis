@@ -109,6 +109,7 @@ export class Indexer {
   private stopping = false;
   private readonly canGrow: () => boolean;
   private indexWriteOptions?: import("./db.js").IndexWriteOptions;
+  private onPageScanned?: (documentIds: readonly string[]) => void;
 
   constructor(
     private db: Db,
@@ -148,6 +149,12 @@ export class Indexer {
       progressWriteIntervalMs?: number;
       /** Optional usearch HNSW handle for dual-index writes. */
       indexWriteOptions?: import("./db.js").IndexWriteOptions;
+      /**
+       * Called with the ids of each page the scan has gone through, whether or
+       * not their vectors changed: the index's copy of filter details follows
+       * every record write the scan sees.
+       */
+      onPageScanned?: (documentIds: readonly string[]) => void;
     },
   ) {
     this.canGrow = opts?.canGrow ?? (() => true);
@@ -167,6 +174,7 @@ export class Indexer {
     this.progressWriteIntervalMs =
       opts?.progressWriteIntervalMs ?? DEFAULT_PROGRESS_WRITE_INTERVAL_MS;
     this.indexWriteOptions = opts?.indexWriteOptions;
+    this.onPageScanned = opts?.onPageScanned;
     if (this.dataCutoff) {
       log.info(`Data cutoff: ${this.dataCutoff}`);
     }
@@ -600,6 +608,7 @@ export class Indexer {
         );
       }
 
+      this.onPageScanned?.(headers.slice(0, processed).map((header) => header.id));
       hasMore = lightPage.hasMore || embedLimited;
       afterId = pageLastId;
       if (pageAbandoned) break;

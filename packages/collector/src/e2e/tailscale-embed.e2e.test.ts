@@ -15,8 +15,8 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { tailnetCleanupError } from "./tailnet-command-processes.js";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { tailnetCleanupError } from "./tailnet-command-processes.js";
 import {
   fetchFrom,
   GATEWAY_TAILNET_ORIGIN,

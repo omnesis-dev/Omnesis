@@ -182,6 +182,8 @@ import { mountInstructionsRoutes } from "./http/routes/instructions.js";
 import { OperatorInstructionsStore } from "./instructions/store.js";
 import { DirectMcpExecutionBoundary } from "./mcp/direct-execution-boundary.js";
 import { mountMcpStreamableRoutes, type McpHttpRuntime } from "./http/routes/mcp-streamable.js";
+import { SourceFilterService } from "./http/services/SourceFilterService.js";
+import { mountSourceFilterRoutes } from "./http/routes/source-filters.js";
 import { mountOAuthAccessRoutes } from "./http/routes/oauth-access.js";
 import { mountLegacyMcpCutoverRoute } from "./http/routes/legacy-mcp-cutover.js";
 import { AccessService } from "./access/service.js";
@@ -205,6 +207,7 @@ import {
   portalCsrfToken,
   sessionCookieName,
 } from "./http/cookies.js";
+import type { SourceFilterReads } from "./http/services/SourceFilterService.js";
 import type { StorageAccounting } from "./storage/accounting.js";
 import type { StoragePressureManager } from "./storage/pressure.js";
 import type { SemanticSearchStatus } from "@omnesis/source-sdk";
@@ -265,7 +268,7 @@ export function createServer(
      * Read worker for the status cache's periodic refresh and for the replica
      * ledger reads of an analytics page. Absent, they read on the main handle.
      */
-    readPorts?: StatusCacheReads & AnalyticsReplicaReads;
+    readPorts?: StatusCacheReads & AnalyticsReplicaReads & Partial<SourceFilterReads>;
     /**
      * Optional metrics sink. When provided, every authenticated
      * request is recorded into the registry keyed by
@@ -1726,6 +1729,14 @@ export function createServer(
         }
       : {}),
   });
+  mountSourceFilterRoutes(app, {
+    service: new SourceFilterService(
+      opts?.readPorts,
+      (sourceId) => accessService.hasSavedSourceFilters(sourceId),
+      (sourceId) => opts?.syncStatus?.get(SourceId(sourceId))?.unitName,
+    ),
+    access: accessService,
+  });
   mountLegacyMcpCutoverRoute(app, {
     getDevice: (deviceId) => getDevice(db, deviceId),
     revokeToken: (tokenId) => w.revokeToken(tokenId),
@@ -2126,6 +2137,7 @@ export function createServer(
     isEnabled: () => labFeatureEnabled(db, "watches"),
     service: subscriptionService,
     getAnswerService: () => agentDeps.answerService,
+    deviceAnswerScope: agentDeps.deviceAnswerScope,
     // The same authoring path the operator's own compile route takes, so a
     // watch means one thing regardless of who asked for it.
     ...(opts?.watchV2Routes
@@ -2176,7 +2188,7 @@ export function createServer(
   mountDocumentByIdRoute(app, { db });
 
   // /sync-state/:sourceId GET + POST.
-  mountSyncStateRoutes(app, { documentService, sourceService });
+  mountSyncStateRoutes(app, { db, documentService, sourceService });
 
   // omnesis-notes — the "tell the brain" quick-capture source. Booted here
   // because it writes day documents through DocumentService.ingest (which

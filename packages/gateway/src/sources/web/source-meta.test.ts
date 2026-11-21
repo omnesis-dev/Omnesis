@@ -3,16 +3,16 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { tmpdir as fixtureTmpdir } from "node:os";
+import { join as fixtureJoin } from "node:path";
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
-import type Database from "better-sqlite3";
 type Db = Database.Database;
 
 import { createDatabase } from "../../db.js";
 import { directWriteGate } from "../../write-gate.js";
 import { WEB_SOURCE_ID } from "../../web-dataset.js";
 import { seedWebSourceMeta } from "./source-meta.js";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
+import type Database from "better-sqlite3";
 
 function testDbPath(): string {
   return fixtureJoin(fixtureTmpdir(), `omnesis-web-meta-test-${randomUUID()}.db`);

@@ -5,6 +5,8 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import { ProviderId, SourceId } from "@omnesis/types";
 import { parseCognitionRunEnvelope, type TemporalItem, type TemporalKind } from "@omnesis/core";
@@ -44,8 +46,6 @@ import {
 } from "./prompts.js";
 import type Database from "better-sqlite3";
 import type { ClaimedCognitionRun } from "../storage/types.js";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 type Db = Database.Database;
 

@@ -981,9 +981,19 @@ function emailLiteralAllowed(email: string): boolean {
   return local === "0" || isSyntheticPhone(local);
 }
 
+/**
+ * Whether a phone number sits in a range set aside for fiction: `+1 555 01xx`,
+ * the UK's `+44 7700 900xxx`, or `555-0100` to `555-0199` under a real North
+ * American area code. Only the last is a number phone libraries accept as
+ * valid, which a fixture needs when the real normalizer has to keep it.
+ */
 function isSyntheticPhone(phone: string): boolean {
   const digits = phone.replaceAll(/\D/g, "");
-  return /^155501(?:\d{2}|0\d{4})$/.test(digits) || /^447700900\d{3}$/.test(digits);
+  return (
+    /^155501(?:\d{2}|0\d{4})$/.test(digits) ||
+    /^447700900\d{3}$/.test(digits) ||
+    /^1[2-9]\d{2}55501\d{2}$/.test(digits)
+  );
 }
 
 /**

@@ -45,7 +45,7 @@
  */
 
 import { createHash } from "node:crypto";
-import { canonicalJson, declaredSource } from "./canonical.js";
+import { canonicalJson, declaredMetadataField, declaredSource } from "./canonical.js";
 import type {
   AnalyticsTableSnapshot,
   DocumentMetadataFieldSpecSnapshot,
@@ -102,7 +102,14 @@ export class RecordingOntology implements OntologyReads {
   }
 
   metadataField(sourceId: string, path: string): DocumentMetadataFieldSpecSnapshot | undefined {
-    return this.keep(`metadataField:${sourceId}:${path}`, this.inner.metadataField(sourceId, path));
+    const found = this.inner.metadataField(sourceId, path);
+    // The declared half only, as for a source: a field that gains a filter
+    // declaration is the same field to every watch that reads it.
+    this.consulted.set(
+      `metadataField:${sourceId}:${path}`,
+      found === undefined ? null : declaredMetadataField(found),
+    );
+    return found;
   }
 
   /**

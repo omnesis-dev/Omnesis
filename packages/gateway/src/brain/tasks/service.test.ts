@@ -3,6 +3,8 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { setLabFlag } from "../../lab/store.js";
 import { createDatabase } from "../../db.js";
@@ -14,8 +16,6 @@ import { TaskService } from "./service.js";
 import type { CaptureNoteInput } from "../../sources/omnesis-notes/wiring.js";
 import type { NoteEntry } from "../../sources/omnesis-notes/storage.js";
 import type Database from "better-sqlite3";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 const NOW = Date.parse("2026-03-10T09:00:00");
 let path: string;

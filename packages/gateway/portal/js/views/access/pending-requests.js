@@ -8,11 +8,10 @@
 // the connection before approving it, or denies it.
 
 import { html } from "htm/preact";
-import { useEffect, useState } from "preact/hooks";
 
 import { WaitingStrip } from "../../components/waiting-strip.js";
 import { navigate } from "../../lib/router.js";
-import { expiresInLabel } from "./shared.js";
+import { expiresInLabel, useExpiryClock } from "./shared.js";
 
 function authorizationReviewPath(id) {
   return `/portal/settings/access/authorizations/${encodeURIComponent(id)}`;
@@ -24,13 +23,8 @@ function authorizationReviewPath(id) {
  *   the overview's pending requests, newest first as the gateway lists them.
  */
 export function PendingRequests({ requests }) {
-  // The remaining time is what the owner acts on, and it runs out in minutes;
-  // half a minute is fine-grained enough for a label counted in whole minutes.
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const tick = setInterval(() => setNow(Date.now()), 30_000);
-    return () => clearInterval(tick);
-  }, []);
+  // The remaining time is what the owner acts on, and it runs out in minutes.
+  const now = useExpiryClock();
 
   // A request that lapsed since the overview answered is no longer waiting on
   // anyone; the next refresh drops it and the strip does not offer it meanwhile.

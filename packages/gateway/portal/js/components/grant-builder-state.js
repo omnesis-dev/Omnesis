@@ -2,7 +2,16 @@
 // Copyright (c) 2026 Adrien Conrath
 
 export const SOURCE_MODES = ["all", "allowlist", "denylist"];
-export const CAPABILITIES = ["direct", "answer", "notes"];
+
+/** The capabilities a level can hold, in the order they are always shown and saved. */
+export const CAPABILITIES = ["answer", "direct", "notes"];
+
+const CAPABILITY_NAMES = { answer: "Answer", direct: "Direct", notes: "Notes" };
+
+/** What a capability is called wherever it is named. */
+export function capabilityName(capability) {
+  return CAPABILITY_NAMES[capability];
+}
 export const DEFAULT_POLICY_FAMILY_ID = "00000000-0000-4000-8000-000000000001";
 const MAX_SOURCE_IDS = 256;
 
@@ -26,8 +35,13 @@ export function policyFamilyName(policy) {
   return policy?.name ?? policy?.familyName ?? "Unnamed policy";
 }
 
+/** The policy a reviewed release names, or undefined when `policies` does not carry it. */
+export function findPolicyFamily(policies, id) {
+  return policies.find((policy) => policyFamilyId(policy) === id);
+}
+
 export function defaultPolicyFamilyId(policies = [], configured = null) {
-  if (configured && policies.some((policy) => policyFamilyId(policy) === configured)) {
+  if (configured && findPolicyFamily(policies, configured)) {
     return configured;
   }
   return policyFamilyId(policies.find((policy) => policy.isDefault)) ||
@@ -49,7 +63,15 @@ export function newGrantRule(capability, selectedPolicyFamilyId = DEFAULT_POLICY
     : common;
 }
 
+/**
+ * The sources a wire rule allows. A rule with source filters carries its real
+ * selection in `scopeSources`; its `sources` then leaves the filtered accounts
+ * out, for clients that do not apply filters.
+ */
 function normalizeSources(rule) {
+  if (rule?.scopeSources && SOURCE_MODES.includes(rule.scopeSources.mode)) {
+    return { mode: rule.scopeSources.mode, sourceIds: uniqueSorted(rule.scopeSources.sourceIds) };
+  }
   if (rule?.sources && SOURCE_MODES.includes(rule.sources.mode)) {
     return { mode: rule.sources.mode, sourceIds: uniqueSorted(rule.sources.sourceIds) };
   }
@@ -86,7 +108,11 @@ export function normalizeGrantRules(rules = [], fallbackPolicyFamilyId = "") {
     const release = rule.capability === "answer"
       ? normalizeAnswerRelease(rule, fallbackPolicyFamilyId)
       : null;
+    const retained = { ...rule };
+    // `scopeSources` is read-only wire data: the selection is sent back as `sources`.
+    for (const key of ["sourceMode", "sourceIds", "scopeSources", "releaseMode", "policyFamilyId", "policyRevision", "privacyPolicy"]) delete retained[key];
     normalized[rule.capability] = {
+      ...retained,
       capability: rule.capability,
       sources: normalizeSources(rule),
       ...(rule.capability === "answer"
@@ -99,11 +125,18 @@ export function normalizeGrantRules(rules = [], fallbackPolicyFamilyId = "") {
   return normalized;
 }
 
+/**
+ * The rules as they are saved. A draft keeps the filter of an account that was
+ * unselected, so selecting it again brings the filter back; what is saved
+ * holds filters only for the accounts the capability shares.
+ */
 export function serializeGrantRules(state) {
   return CAPABILITIES.flatMap((capability) => {
     const rule = state?.[capability];
     if (!rule) return [];
     const common = {
+      ...rule,
+      ...(rule.scopePolicies ? { scopePolicies: sharedScopePolicies(rule) } : {}),
       capability,
       sources: {
         mode: rule.sources.mode,
@@ -122,30 +155,59 @@ export function serializeGrantRules(state) {
 }
 
 /**
- * What the capabilities a single source boundary governs are called.
- *
- * A shared boundary is one list standing for two capabilities, so a refusal it
- * earns has to name both — saying only "Direct" in front of a list the owner
- * chose for Answer and Direct together describes a boundary that is not there.
+ * The filters in effect: a filter a draft keeps on an account that is not
+ * shared is neither enforced nor saved.
  */
-export function sourceScopeName(capability) {
-  if (capability === "shared") return "Answer and Direct";
-  return capability === "direct" ? "Direct" : "Answer";
+export function sharedScopePolicies(rule) {
+  return (rule?.scopePolicies ?? []).filter((policy) => isSourceAllowed(rule, policy.sourceId));
+}
+
+/** The same filter, held by another access level or capability. */
+export function rebindScopePolicy(policy, accessLevel, capability) {
+  return { ...policy, audience: { ...policy.audience, accessLevel, capability } };
+}
+
+/** A fresh authority owns new revisions and audiences, never the matched connection's fence. */
+export function serializeNewAuthorityRules(state) {
+  return serializeGrantRules(state).map((rule) => {
+    if (rule.filterRevision === undefined && !rule.scopePolicies?.length) return rule;
+    return {
+      ...rule,
+      filterRevision: 0,
+      scopePolicies: (rule.scopePolicies ?? []).map((policy) =>
+        rebindScopePolicy(policy, "new", rule.capability),
+      ),
+    };
+  });
+}
+
+export function newAuthorityFilterError(state, authoringEnabled) {
+  return authoringEnabled !== true && serializeGrantRules(state).some((rule) => rule.scopePolicies?.length)
+    ? "Creating a new access level with these saved filters requires experimental mode. Choose an existing access level to keep its filters."
+    : null;
+}
+
+export const SAVED_FILTER_SOURCE_MESSAGE =
+  "Sources with saved filters must stay allowed while filter editing is unavailable. You can still remove the capability.";
+
+export function sourceBoundaryBlocksSavedFilter(rule, authoringEnabled) {
+  return authoringEnabled !== true &&
+    (rule.scopePolicies ?? []).some((policy) => !isSourceAllowed(rule, policy.sourceId));
 }
 
 /**
- * What is wrong with one source boundary, worded for the card that owns it.
- * `scope` names the capabilities that boundary governs; `sources` are the
+ * What is wrong with one source boundary, worded for the decision that owns
+ * it. `scope` names the capability the boundary governs; `sources` are the
  * sources the gateway knows, so a boundary that allows none of them is
  * caught however it was reached.
  */
 export function sourceBoundaryError(rule, scope, sources = []) {
   if (!rule) return null;
-  if (!SOURCE_MODES.includes(rule.sources.mode)) return "Choose how future sources are handled.";
+  if (!SOURCE_MODES.includes(rule.sources.mode)) return "Choose how new sources are handled.";
   if (uniqueSorted(rule.sources.sourceIds).length > MAX_SOURCE_IDS) {
     return `${scope} can record at most ${MAX_SOURCE_IDS} source selections.`;
   }
-  if (rule.sources.mode === "allowlist" && rule.sources.sourceIds.length === 0) {
+  if (blocksNewSources(rule) && rule.sources.sourceIds.length === 0) {
     return `Select at least one source for ${scope}.`;
   }
   if (!readsAnySource(rule, sources)) return `${scope} would not be able to read any source.`;
@@ -156,7 +218,7 @@ export function sourceBoundaryError(rule, scope, sources = []) {
  * Whether a boundary allows at least one known source. With no source known
  * yet, only an empty allowlist reads nothing, and that has its own message.
  */
-export function readsAnySource(rule, sources) {
+function readsAnySource(rule, sources) {
   if (rule.sources.mode === "all" || sources.length === 0) return true;
   return sources.some((source) => isSourceAllowed(rule, sourceId(source)));
 }
@@ -174,31 +236,29 @@ export function releaseError(state) {
 export function validateGrantRules(state, sources = []) {
   const rules = serializeGrantRules(state);
   if (rules.length === 0) return NO_CAPABILITY_MESSAGE;
-  // One boundary or two. When Answer and Direct hold the same list the owner
-  // edits it once, so an empty one is a single fault named for both.
-  if (state.answer && state.direct && rulesShareSources(state)) {
-    const shared = sourceBoundaryError(state.answer, sourceScopeName("shared"), sources);
-    if (shared) return shared;
-  } else {
-    for (const rule of rules) {
-      const error = sourceBoundaryError(state[rule.capability], sourceScopeName(rule.capability), sources);
-      if (error) return error;
-    }
+  for (const rule of rules) {
+    const error = sourceBoundaryError(state[rule.capability], capabilityName(rule.capability), sources);
+    if (error) return error;
   }
   return releaseError(state);
 }
 
-/** Whether the profile grants anything at all; nothing else means much until it does. */
-export const NO_CAPABILITY_MESSAGE = "Select at least one capability.";
+/** What a draft that grants nothing is told; nothing else means much until it grants something. */
+export const NO_CAPABILITY_MESSAGE = "Choose at least one permission.";
 
 export function hasCapability(state) {
   return CAPABILITIES.some((capability) => Boolean(state?.[capability]));
 }
 
+/** Whether sources connected later stay out until the owner allows each one. */
+export function blocksNewSources(rule) {
+  return rule.sources.mode === "allowlist";
+}
+
 export function isSourceAllowed(rule, id) {
   if (rule.sources.mode === "all") return true;
   const listed = rule.sources.sourceIds.includes(id);
-  return rule.sources.mode === "allowlist" ? listed : !listed;
+  return blocksNewSources(rule) ? listed : !listed;
 }
 
 /** Change future-source behavior without changing access to any source visible now. */
@@ -224,7 +284,7 @@ export function setSourceAllowed(rule, id, allowed) {
       : { ...rule, sources: { mode: "denylist", sourceIds: [id] } };
   }
   const listed = new Set(rule.sources.sourceIds);
-  const shouldList = rule.sources.mode === "allowlist" ? allowed : !allowed;
+  const shouldList = blocksNewSources(rule) ? allowed : !allowed;
   if (shouldList) listed.add(id);
   else listed.delete(id);
   return { ...rule, sources: { ...rule.sources, sourceIds: uniqueSorted([...listed]) } };
@@ -263,24 +323,4 @@ export function rulesShareSources(state) {
   const direct = state.direct.sources;
   return answer.mode === direct.mode &&
     uniqueSorted(answer.sourceIds).join("\u0000") === uniqueSorted(direct.sourceIds).join("\u0000");
-}
-
-export function setAllSourcesAllowed(rule, allSourceIds, allowed) {
-  const ids = uniqueSorted(allSourceIds);
-  if (allowed) {
-    return {
-      ...rule,
-      sources: rule.sources.mode === "denylist"
-        ? { mode: "denylist", sourceIds: [] }
-        : { mode: rule.sources.mode, sourceIds: rule.sources.mode === "all" ? [] : ids },
-    };
-  }
-  return {
-    ...rule,
-    // "Block all" must stay blocked when another source is connected later.
-    // An empty allowlist also makes the wizard require an intentional next
-    // selection instead of approving the surprising "none now, all later"
-    // combination.
-    sources: { mode: "allowlist", sourceIds: [] },
-  };
 }

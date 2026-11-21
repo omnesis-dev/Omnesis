@@ -105,19 +105,22 @@ describe("Brain Bench smoke", () => {
 
     const runs = await bench.obs.runsForSource(docId!);
     expect(runs.length).toBeGreaterThan(0);
-    expect(runs[0]!.status).toBe("completed");
-    expect(runs[0]!.kind).toBe("synthesis");
+    // Organization-only follow-ups also complete this source. Inspect the
+    // interpretation phase that actually executes its scripted tool plan.
+    const run = await bench.obs.interpretationForSource(docId!);
+    expect(run.status).toBe("completed");
+    expect(run.kind).toBe("synthesis");
     expect((await bench.obs.runs({ kind: "data" })).items).toHaveLength(0);
 
     // The puppet saw the run, and recognized it from the envelope.
-    const calls = bench.puppetCalls.filter((call) => call.runId === runs[0]!.id);
+    const calls = bench.puppetCalls.filter((call) => call.runId === run.id);
     expect(calls.length).toBeGreaterThan(0);
     expect(calls[0]!.kind).toBe("synthesis");
     expect(calls[0]!.flavour).toBe("synthesis.knowledge");
     expect(calls[0]!.subject).toBeNull();
 
     // Direct discovery never enters the canonical Brain toolset.
-    const executed = await bench.obs.executedTools(runs[0]!.id);
+    const executed = await bench.obs.executedTools(run.id);
     expect(executed.find((step) => step.tool === "list_tables")?.result).toMatchObject({
       kind: "error",
       code: "unknown_tool",
@@ -154,9 +157,9 @@ describe("Brain Bench smoke", () => {
 
   test("the run's transcript and spend are recorded", async () => {
     const docId = await bench.docId(TRIGGER.externalId);
-    const runs = await bench.obs.runsForSource(docId);
-    const prompt = await bench.obs.promptFor(runs[0]!.id);
-    expect(prompt).toContain(`Loop agent run ${runs[0]!.id} (kind: synthesis, attempt 1).`);
+    const run = await bench.obs.interpretationForSource(docId);
+    const prompt = await bench.obs.promptFor(run.id);
+    expect(prompt).toContain(`Loop agent run ${run.id} (kind: synthesis, attempt 1).`);
 
     const spend = await bench.obs.mechanismSpend();
     const maintenance = spend.rows.filter((r) => r.mechanism === "knowledge-maintenance");

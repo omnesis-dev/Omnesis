@@ -114,6 +114,7 @@ fun SettingsScreen(
     onOpenPolicies: () -> Unit = {},
     onOpenOmnesisAccount: () -> Unit = {},
     onOpenAccessAuthorization: () -> Unit = {},
+    onOpenAccessHome: () -> Unit = {},
     onOpenPhoneSetup: () -> Unit = {},
     onOpenPhoneSetupStep: (String) -> Unit = {},
     vm: SettingsViewModel = hiltViewModel(),
@@ -133,6 +134,7 @@ fun SettingsScreen(
     val voice by vm.voice.collectAsStateWithLifecycle()
     val modelHealth by vm.modelHealth.collectAsStateWithLifecycle()
     val omnesisAccountOffered by vm.omnesisAccountOffered.collectAsStateWithLifecycle()
+    val accessLevelEditing by vm.accessLevelEditing.collectAsStateWithLifecycle()
     val notificationIssue = notificationSetupIssue(vm.pushConfigured, pushPlan, notificationHealth, pushRegistrationFailed)
     val context = LocalContext.current
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { vm.refreshPermissions() }
@@ -164,6 +166,7 @@ fun SettingsScreen(
             onOpenDevices = onOpenDevices,
             onOpenPolicies = onOpenPolicies,
             onOpenAccessAuthorization = onOpenAccessAuthorization,
+            onOpenAccessHome = onOpenAccessHome.takeIf { accessLevelEditing },
             onOpenPrivacyPolicy = { openMobilePrivacyPolicy(context) },
             voice = voice,
             onSetTranscribeOnGateway = vm::setTranscribeOnGateway,
@@ -288,6 +291,8 @@ fun SettingsContent(
     onOpenDevices: () -> Unit = {},
     onOpenPolicies: () -> Unit = {},
     onOpenAccessAuthorization: () -> Unit = {},
+    /** Opens the access-level editor; null hides the row on a gateway that does not offer it to phones. */
+    onOpenAccessHome: (() -> Unit)? = {},
     onOpenPrivacyPolicy: () -> Unit = {},
     /** The gateway-dictation switch; null hides the Voice section. */
     voice: VoiceSettingsState? = null,
@@ -397,6 +402,10 @@ fun SettingsContent(
                     RowDivider()
                     if (omnesisAccountOffered) {
                         NavigationRow("Omnesis account", onOpenOmnesisAccount)
+                        RowDivider()
+                    }
+                    if (onOpenAccessHome != null) {
+                        NavigationRow("Access", onOpenAccessHome)
                         RowDivider()
                     }
                     NavigationRow("Authorize an MCP connection", onOpenAccessAuthorization)

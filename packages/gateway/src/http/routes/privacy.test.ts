@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { SCOPE_ADMIN, SCOPE_ANSWER, type DeviceId, type Scope, type TokenId } from "@omnesis/types";
 import {
+  AnswerStoreError,
   appendDirectAuditEvent,
   auditDisplay,
   createAnswerPrivacyTables,
@@ -107,11 +108,31 @@ describe("privacy admin routes", () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     db.close();
     rmSync(dir, { recursive: true, force: true });
     if (previousExperimental === undefined) delete process.env.OMNESIS_EXPERIMENTAL;
     else process.env.OMNESIS_EXPERIMENTAL = previousExperimental;
   });
+
+  it.each([
+    new AnswerStoreError("authority_changed", "Invented source access changed."),
+    Object.assign(new Error("Invented source access changed."), {
+      name: "AnswerStoreError",
+      code: "authority_changed",
+    }),
+  ])(
+    "reports stale native evidence as an approval conflict across writer transports",
+    async (error) => {
+      vi.spyOn(PrivacyAdminService.prototype, "resolveApproval").mockRejectedValue(error);
+      const response = await app.request("/admin/privacy/approvals/invented-approval/approve", {
+        method: "POST",
+        headers: POLICY_MUTATION_HEADERS,
+      });
+      expect(response.status).toBe(409);
+      expect(await response.json()).toMatchObject({ code: "ANSWER_ACCESS_CHANGED" });
+    },
+  );
 
   it("lists the built-in policy templates with experimental mode disabled", async () => {
     const res = await app.request("/admin/privacy/policy/templates");

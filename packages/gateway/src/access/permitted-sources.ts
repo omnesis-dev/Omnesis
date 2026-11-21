@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { sourceTypeOf } from "@omnesis/types";
 import { listSources } from "../data/repositories/SourceRepository.js";
 import type { Db } from "../data/types.js";
 import type { CorpusAuthorization } from "./corpus-authorization.js";
@@ -12,12 +13,14 @@ import type { CorpusAuthorization } from "./corpus-authorization.js";
  * A grant's rule names configured sources only, so a denylist means "every
  * configured source except the listed ones" — never "everything not listed".
  * Documents written by the gateway itself (agent transcripts, open-loop
- * mirrors) have no `sources` row, cannot be named in a rule, and are therefore
- * outside every restricted grant. Every read port checks membership in this
- * set rather than the rule alone, so the three restricted tools agree.
+ * mirrors) have no `sources` row, cannot be named in a rule or a filter, and
+ * are therefore outside every restricted grant: a transcript can quote what a
+ * source list or a per-source filter withholds. Every read port checks
+ * membership in this set rather than the rule alone, so the restricted tools
+ * agree.
  *
- * `null` for an unrestricted authorization: every source is readable and no
- * set needs to be built.
+ * `null` for an all-sources boundary with no per-source filter: every source
+ * is eligible and no set needs to be built.
  */
 export function permittedSourceIds(
   db: Db,
@@ -29,4 +32,29 @@ export function permittedSourceIds(
       .filter((source) => authorization.allowsSource(source.id))
       .map((source) => source.id),
   );
+}
+
+/** Aggregates have no document provenance; expose only whole unfiltered sources. */
+export function permittedAnalyticsSourceIds(
+  db: Db,
+  authorization: CorpusAuthorization,
+): ReadonlySet<string> | null {
+  const permitted = permittedSourceIds(db, authorization);
+  const filtered = new Set(authorization.scopePolicies.map((policy) => policy.sourceId));
+  if (!permitted && filtered.size === 0) return null;
+  const sources = permitted ?? new Set(listSources(db).map((source) => source.id));
+  const filteredTypes = new Set([...filtered].map(sourceTypeOf));
+  const result = new Set(
+    [...sources].filter((sourceId) => !filtered.has(sourceId) && !filteredTypes.has(sourceId)),
+  );
+  if (authorization.sourceMode === "all") {
+    // Shared analytics tables have a bare type owner. The entire type remains
+    // eligible only when no account of that type has a document filter. More
+    // restrictive source lists retain their existing exact-account semantics.
+    for (const sourceId of sources) {
+      const type = sourceTypeOf(sourceId);
+      if (!filteredTypes.has(type)) result.add(type);
+    }
+  }
+  return result;
 }

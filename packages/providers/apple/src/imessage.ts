@@ -42,6 +42,7 @@ import {
   imessagePersonIdentifiers,
 } from "./imessage-normalizer.js";
 import { validateAppleIMessageSyncCursor } from "./imessage-types.js";
+import { listIMessageChats } from "./imessage-chat-list.js";
 import {
   imessageAttachmentFilename,
   resolveIMessageAttachment,
@@ -55,7 +56,7 @@ import type {
   AudioTranscribeFn,
 } from "@omnesis/core";
 import type { SyncCursor, SyncProgress, SyncResult } from "@omnesis/source-sdk";
-import type { DocumentInput, SyncIssue } from "@omnesis/types";
+import type { DocumentInput, FilterListItem, SyncIssue } from "@omnesis/types";
 import type { AppleProvider } from "./provider.js";
 import type {
   AppleIMessageSyncCursor,
@@ -512,6 +513,20 @@ export class AppleIMessageSource {
         totalMessages !== undefined && totalMessages > 0 ? totalMessages : undefined,
       ),
     };
+  }
+
+  /**
+   * Every chat Messages holds, with its members, for the list a filter reads.
+   * Throws while `chat.db` cannot be opened: an empty list would read as an
+   * account that has no chats.
+   */
+  listChats(): FilterListItem[] {
+    const db = this.provider.getIMessageDb();
+    if (!db) {
+      throwOnOpenFailure(this.provider.getIMessageOpenFailure());
+      throw new Error("The Messages database is not available");
+    }
+    return listIMessageChats(db, this.id);
   }
 
   /**

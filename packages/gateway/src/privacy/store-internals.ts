@@ -18,6 +18,7 @@ import {
 } from "./store-types.js";
 import { policyRevision } from "./policy-store.js";
 import { digestAnswerCandidate, parseStoredCitations } from "./answer-citations.js";
+import { assertAnswerTaskScopeCurrent } from "./answer-scope.js";
 import type {
   AnswerCitation,
   AnswerResponse,
@@ -398,6 +399,12 @@ export function responseForTask(
 ): AnswerResponse | null {
   const task = getTask(db, taskId);
   if (!task) return null;
+  if (
+    task.status === "released" ||
+    task.status === "released_with_reductions" ||
+    task.status === "approval_required"
+  )
+    assertAnswerTaskScopeCurrent(db, taskId);
   const base = {
     workflowId: task.workflow_id,
     conversationId: task.conversation_id,

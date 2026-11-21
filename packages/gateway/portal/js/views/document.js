@@ -12,6 +12,7 @@ import {
   getDocumentNearDupes,
   getDocumentDates,
   getDocumentAnnotations,
+  getDocumentFilterDetails,
   deleteDocument,
 } from "../api.js";
 import { deleteConfirmCopy } from "../lib/document-delete.js";
@@ -19,13 +20,16 @@ import { NOTES_SOURCE_ID, manageNotesHref, notesDayForDocument } from "../lib/no
 import { renderMarkdown } from "../lib/markdown.js";
 import { sourceIcon, sourceLabel, timeAgo, isOpenableExternalUrl } from "../lib/format.js";
 import { FileTypeIcon, fileTypeKind, fileTypeLabel } from "../lib/file-type-icons.js";
-import { MetadataPanel } from "../components/metadata-panel.js";
+import { MetadataPanel, documentTypeLabel } from "../components/metadata-panel.js";
 import { GraphTimelinePanel } from "../components/graph-card.js";
 import { ConfirmModal } from "../components/confirm-modal.js";
 import { navigate } from "../lib/router.js";
 import { useCursorPage } from "../lib/use-cursor-page.js";
 
 const FILE_LIKE_DOC_TYPES = new Set(["attachment", "file"]);
+
+/** The page that says which access levels can read a document. */
+export const documentAccessPath = (id) => `/portal/doc/${encodeURIComponent(id)}/access`;
 
 function CopyButton({ value, label }) {
   const [copied, setCopied] = useState(false);
@@ -84,6 +88,7 @@ export function DocumentView({ id }) {
   const [resolvedPeople, setResolvedPeople] = useState(null);
   const [attachmentChildren, setAttachmentChildren] = useState([]);
   const [extractedDates, setExtractedDates] = useState([]);
+  const [filterDetails, setFilterDetails] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [showDelete, setShowDelete] = useState(false);
@@ -139,6 +144,19 @@ export function DocumentView({ id }) {
         setError(`${err.message}${reqId}`);
       })
       .finally(() => setLoading(false));
+  }, [id]);
+
+  // Owner-only details a filter decides this record by. A gateway without
+  // them answers an error, and the document shows without them.
+  useEffect(() => {
+    const controller = new AbortController();
+    setFilterDetails(null);
+    getDocumentFilterDetails(id, controller.signal)
+      .then((details) => {
+        if (!controller.signal.aborted) setFilterDetails(details);
+      })
+      .catch(() => {});
+    return () => controller.abort();
   }, [id]);
 
   if (loading) return html`<div class="loading"><span class="spinner"></span> Loading document...</div>`;
@@ -198,6 +216,19 @@ export function DocumentView({ id }) {
         <a class="doc-back" href="/portal/" onClick=${goBack}>\u2190 Back</a>
         <div class="doc-toolbar-actions">
           ${isOpenableExternalUrl(meta.sourceUrl) && html`<${OpenInSourceButton} url=${meta.sourceUrl} />`}
+          ${filterDetails && html`<a
+            class="doc-toolbar-btn"
+            href=${documentAccessPath(doc.id)}
+            title="Which access levels can read this document, and why"
+            onClick=${(e) => { e.preventDefault(); navigate(documentAccessPath(doc.id)); }}
+          >
+            <svg aria-hidden="true" viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M8 1.5 2.5 3.5v4c0 3.2 2.3 5.9 5.5 7 3.2-1.1 5.5-3.8 5.5-7v-4z"/>
+              <rect x="5.75" y="7" width="4.5" height="3.5" rx="0.75"/>
+              <path d="M6.75 7V5.75a1.25 1.25 0 0 1 2.5 0V7"/>
+            </svg>
+            Who can read this?
+          </a>`}
           <${CopyButton} value=${doc.id} label="ID" />
           ${manageHref
             ? html`<a
@@ -225,7 +256,7 @@ export function DocumentView({ id }) {
                 <${FileTypeIcon} mimeType=${meta.extra?.mimeType} filename=${doc.title} size=${14} />
                 ${fileTypeLabel({ mimeType: meta.extra?.mimeType, filename: doc.title })}
               </span>`
-            : html`<span>${meta.documentType}</span>`
+            : html`<span>${documentTypeLabel(meta.documentType)}</span>`
           }
         `}
         ${doc.source_created_at && html`
@@ -241,6 +272,7 @@ export function DocumentView({ id }) {
             extractedDates=${extractedDates}
             annotations=${annotationPage.items}
             annotationPage=${annotationPage}
+            filterDetails=${filterDetails}
           />
           <${GraphTimelinePanel}
             key=${id}

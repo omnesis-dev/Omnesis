@@ -211,6 +211,7 @@ export default defineProvider<CoinbaseContext>({
       defaultSyncInterval: "2h",
       analyticsSchemas: allSchemas,
       contract: {
+        outputRevision: 1,
         // The host resolves the stored cursor against this before
         // `syncStructured` runs. See `state.ts` for why an unreadable
         // cursor rebootstraps here rather than stopping the source.

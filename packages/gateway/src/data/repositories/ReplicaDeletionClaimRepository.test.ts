@@ -2,6 +2,8 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import SqliteDatabase from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import {
@@ -25,8 +27,6 @@ import {
   recordRestorerOmissions,
 } from "./ReplicaDeletionClaimRepository.js";
 import type { Db } from "../types.js";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 const PROVIDER = "apple";
 const SOURCE = "apple-notes:local";

@@ -1,0 +1,32 @@
+[
+  {
+    "path": "work/atlas-api/zqfilter-atlas.md",
+    "content": "# zqfilter TITLE_ATLAS\n\nzqfilter BODY_ATLAS Notes on the pagination cursor of the invented Atlas API. Return an opaque cursor and keep the page size fixed.\n",
+    "modifiedAt": "2026-03-01T12:00:00.000Z"
+  },
+  {
+    "path": "work/atlas-api/docs/zqfilter-guide.md",
+    "content": "# zqfilter TITLE_GUIDE\n\nzqfilter BODY_GUIDE Notes on the invented Atlas API changelog page. List the newest release first and link each entry to its guide.\n",
+    "modifiedAt": "2026-03-01T12:00:00.000Z"
+  },
+  {
+    "path": "work/billing/zqfilter-billing.md",
+    "content": "# zqfilter TITLE_BILLING\n\nzqfilter BODY_BILLING Notes on rounding in the invented billing export. Round once, at the end, and store amounts in minor units.\n",
+    "modifiedAt": "2026-03-01T12:00:00.000Z"
+  },
+  {
+    "path": "personal/garden-notes/zqfilter-garden.md",
+    "content": "# zqfilter TITLE_GARDEN\n\nzqfilter BODY_GARDEN Notes on the invented garden watering log. Record the date and the bed, and water the seedlings in the morning.\n",
+    "modifiedAt": "2026-03-01T12:00:00.000Z"
+  },
+  {
+    "path": "workshop/bench/zqfilter-bench.md",
+    "content": "# zqfilter TITLE_BENCH\n\nzqfilter BODY_BENCH Notes on the invented workbench drawer labels. Label each drawer on the front edge and keep a list inside the lid.\n",
+    "modifiedAt": "2026-03-01T12:00:00.000Z"
+  },
+  {
+    "path": "zqfilter-inbox.md",
+    "content": "# zqfilter TITLE_INBOX\n\nzqfilter BODY_INBOX Unsorted invented notes kept at the top of the folder.\n",
+    "modifiedAt": "2026-03-01T12:00:00.000Z"
+  }
+]

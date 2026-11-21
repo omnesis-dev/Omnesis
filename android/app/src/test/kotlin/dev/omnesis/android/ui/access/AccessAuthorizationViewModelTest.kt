@@ -12,6 +12,7 @@ import dev.omnesis.android.transport.dto.AccessAuthorizationDecision
 import dev.omnesis.android.transport.dto.AccessAuthorizationLookupEnvelope
 import dev.omnesis.android.transport.dto.AccessAuthorizationRequest
 import dev.omnesis.android.transport.dto.AccessAuthorizationSelection
+import dev.omnesis.android.transport.dto.AccessCapability
 import dev.omnesis.android.transport.dto.AccessConnectionLevel
 import dev.omnesis.android.transport.dto.AccessConnectionMatch
 import dev.omnesis.android.transport.dto.AccessConnectionProposal
@@ -299,7 +300,7 @@ class AccessAuthorizationViewModelTest {
     @Test fun same_launch_nonce_is_one_shot_and_preserves_in_progress_form() = runTest(dispatcher) {
         vm.lookupInitial("ABCD-EFGH", 17L, pairingIdentity())
         advanceUntilIdle()
-        val edited = requireNotNull(vm.state.value.form).copy(notesEnabled = true)
+        val edited = requireNotNull(vm.state.value.form).withNotes()
         vm.updateForm(edited)
         vm.goTo(AccessAuthorizationStep.REVIEW)
 
@@ -307,7 +308,7 @@ class AccessAuthorizationViewModelTest {
         advanceUntilIdle()
 
         assertEquals(1, gateway.lookupCalls)
-        assertTrue(requireNotNull(vm.state.value.form).notesEnabled)
+        assertTrue(requireNotNull(vm.state.value.form).grants(AccessCapability.NOTES))
         assertEquals(AccessAuthorizationStep.REVIEW, vm.state.value.step)
     }
 
@@ -438,7 +439,7 @@ class AccessAuthorizationViewModelTest {
         val choice = requireNotNull(state.form?.connection)
         assertEquals(AccessConnectionPath.NEW_LEVEL, choice.path)
         assertEquals("Example agent 2", choice.name)
-        assertEquals("Example reading", choice.levelName)
+        assertEquals("Example reading", state.form?.level?.name)
     }
 
     @Test fun approving_a_new_level_sends_the_connection_and_level_names_with_the_form_rules() = runTest(dispatcher) {
@@ -448,7 +449,7 @@ class AccessAuthorizationViewModelTest {
         gateway.decideBlock = { _, decision -> sent = decision }
         loadReady()
         val form = requireNotNull(vm.state.value.form)
-        vm.updateForm(form.copy(connection = form.connection?.copy(name = " Desk agent ", levelName = "Desk reading")))
+        vm.updateForm(form.copy(level = form.level.copy(name = "Desk reading"), connection = form.connection?.copy(name = " Desk agent ")))
 
         vm.decide(true, validSelection())
         advanceUntilIdle()
@@ -519,7 +520,7 @@ class AccessAuthorizationViewModelTest {
 
         val state = vm.state.value
         assertEquals(AccessAuthorizationStep.CONNECTION, state.step)
-        assertEquals("An access level with that name already exists.", state.actionError)
+        assertEquals("An access level already uses this name. Choose another.", state.actionError)
         assertFalse(state.deciding)
         assertNull(state.completion)
         assertEquals(answered, state.form)
@@ -540,13 +541,13 @@ class AccessAuthorizationViewModelTest {
         val refused = requireNotNull(vm.state.value.form)
         vm.updateForm(refused.copy(connection = refused.connection?.copy(name = "Desk agent")))
         assertTrue(vm.state.value.levelNameTaken)
-        assertEquals("An access level with that name already exists.", vm.state.value.actionError)
+        assertEquals("An access level already uses this name. Choose another.", vm.state.value.actionError)
 
         val renamed = requireNotNull(vm.state.value.form)
-        vm.updateForm(renamed.copy(connection = renamed.connection?.copy(levelName = "Desk reading")))
+        vm.updateForm(renamed.copy(level = renamed.level.copy(name = "Desk reading")))
         assertFalse(vm.state.value.levelNameTaken)
         assertNull(vm.state.value.actionError)
-        assertEquals("Desk reading", vm.state.value.form?.connection?.levelName)
+        assertEquals("Desk reading", vm.state.value.form?.level?.name)
     }
 
     @Test fun a_level_name_already_in_the_overview_is_never_sent() = runTest(dispatcher) {
@@ -554,13 +555,12 @@ class AccessAuthorizationViewModelTest {
         gateway.lookupBlock = { connectionEnvelope(proposal()) }
         loadReady()
         val form = requireNotNull(vm.state.value.form)
-        vm.updateForm(form.copy(connection = form.connection?.copy(levelName = " research")))
+        vm.updateForm(form.copy(level = form.level.copy(name = " research")))
 
         val state = vm.state.value
-        val choice = requireNotNull(state.form?.connection)
         assertEquals(
-            "An access level with that name already exists.",
-            choice.levelNameError(requireNotNull(state.overview)),
+            "An access level already uses this name. Choose another.",
+            requireNotNull(state.form).level.nameError(requireNotNull(state.overview)),
         )
         assertNull(state.form?.selection(requireNotNull(state.request), requireNotNull(state.overview)))
         // Refused on the phone, not by the gateway: nothing was sent and no refusal is on top.
@@ -601,10 +601,7 @@ class AccessAuthorizationViewModelTest {
         advanceUntilIdle()
         val opened = requireNotNull(vm.state.value.form)
         vm.updateForm(
-            opened.copy(
-                notesEnabled = true,
-                connection = opened.connection?.copy(name = "Desk agent", levelName = "Desk reading"),
-            ),
+            opened.withNotes().let { it.copy(level = it.level.copy(name = "Desk reading"), connection = it.connection?.copy(name = "Desk agent")) },
         )
         gateway.overviewBlock = { connectionOverview(levelRevision = 4) }
         gateway.decideBlock = { _, _ -> throw GatewayException.ServerError(409, "stale-revision") }
@@ -616,8 +613,8 @@ class AccessAuthorizationViewModelTest {
         val choice = requireNotNull(form.connection)
         assertEquals(AccessConnectionPath.EXISTING_LEVEL, choice.path)
         assertEquals("Desk agent", choice.name)
-        assertEquals("Desk reading", choice.levelName)
-        assertFalse(form.notesEnabled)
+        assertEquals("Desk reading", form.level.name)
+        assertFalse(form.grants(AccessCapability.NOTES))
         assertEquals(
             AccessAuthorizationSelection.NewConnection("Desk agent", AccessConnectionLevel.Existing("level_example", 4)),
             validSelection(),
@@ -630,7 +627,7 @@ class AccessAuthorizationViewModelTest {
         vm.lookup("abcd-efgh")
         advanceUntilIdle()
         val opened = requireNotNull(vm.state.value.form)
-        vm.updateForm(opened.copy(connection = opened.connection?.copy(name = "Desk agent", levelName = "Desk reading")))
+        vm.updateForm(opened.copy(level = opened.level.copy(name = "Desk reading"), connection = opened.connection?.copy(name = "Desk agent")))
         // The level went away, so the refreshed step opens on a new access level.
         gateway.overviewBlock = { connectionOverview().copy(levels = emptyList()) }
         gateway.decideBlock = { _, _ -> throw GatewayException.ServerError(409, "inactive-grant") }
@@ -641,7 +638,7 @@ class AccessAuthorizationViewModelTest {
         val choice = requireNotNull(vm.state.value.form?.connection)
         assertEquals(AccessConnectionPath.NEW_LEVEL, choice.path)
         assertEquals("Example agent 2", choice.name)
-        assertEquals("Example reading", choice.levelName)
+        assertEquals("Example reading", vm.state.value.form?.level?.name)
     }
 
     /* ── A gateway that predates connections reconnects a client it already knows ── */
@@ -651,7 +648,7 @@ class AccessAuthorizationViewModelTest {
         advanceUntilIdle()
         assertNull(vm.state.value.reconnect)
         assertEquals(AccessAuthorizationStep.PERMISSIONS, vm.state.value.step)
-        assertTrue(requireNotNull(vm.state.value.form).answerEnabled)
+        assertTrue(requireNotNull(vm.state.value.form).grants(AccessCapability.ANSWER))
     }
 
     @Test fun a_known_client_carries_its_proposal_and_starts_from_its_grant() = runTest(dispatcher) {
@@ -663,9 +660,8 @@ class AccessAuthorizationViewModelTest {
         assertEquals("Maya Reeves agent", state.reconnect?.principal?.name)
         assertEquals(AccessAuthorizationStep.PERMISSIONS, state.step)
         val form = requireNotNull(state.form)
-        assertFalse(form.answerEnabled)
-        assertTrue(form.directEnabled)
-        assertEquals(setOf("notes:fictional"), form.directSources.allowedSourceIds)
+        assertFalse(form.grants(AccessCapability.ANSWER))
+        assertEquals(listOf("notes:fictional"), form.level.rule(AccessCapability.DIRECT)?.sources?.sourceIds)
     }
 
     @Test fun approval_sends_one_connect_selection_built_from_the_form() = runTest(dispatcher) {
@@ -688,7 +684,7 @@ class AccessAuthorizationViewModelTest {
         gateway.lookupBlock = { envelope(request(), reconnect()) }
         vm.lookup("abcd-efgh")
         advanceUntilIdle()
-        vm.updateForm(requireNotNull(vm.state.value.form).copy(notesEnabled = true))
+        vm.updateForm(requireNotNull(vm.state.value.form).withNotes())
         gateway.decideBlock = { _, _ -> throw GatewayException.ServerError(409, "invalid-selection") }
 
         vm.decide(true, validSelection())
@@ -697,8 +693,8 @@ class AccessAuthorizationViewModelTest {
         assertEquals(2, gateway.lookupCalls)
         assertEquals(2, gateway.overviewCalls)
         assertEquals("Maya Reeves agent", vm.state.value.reconnect?.principal?.name)
-        assertFalse(requireNotNull(vm.state.value.form).notesEnabled)
-        assertTrue(requireNotNull(vm.state.value.form).directEnabled)
+        assertFalse(requireNotNull(vm.state.value.form).grants(AccessCapability.NOTES))
+        assertTrue(requireNotNull(vm.state.value.form).grants(AccessCapability.DIRECT))
     }
 
     @Test fun a_revoked_reconnect_target_leaves_the_header_and_the_form_starts_fresh() = runTest(dispatcher) {
@@ -714,8 +710,8 @@ class AccessAuthorizationViewModelTest {
         val state = vm.state.value
         assertNull(state.reconnect)
         assertEquals(AccessAuthorizationStep.PERMISSIONS, state.step)
-        assertTrue(requireNotNull(state.form).answerEnabled)
-        assertFalse(requireNotNull(state.form).directEnabled)
+        assertTrue(requireNotNull(state.form).grants(AccessCapability.ANSWER))
+        assertFalse(requireNotNull(state.form).grants(AccessCapability.DIRECT))
         assertTrue(state.actionError!!.contains("refreshed"))
     }
 
@@ -835,10 +831,10 @@ class AccessAuthorizationViewModelTest {
     }
 
     private fun selectAllowedSource() {
-        vm.updateForm(requireNotNull(vm.state.value.form).copy(
-            answerSources = AccessSourceSelectionState(allowedSourceIds = setOf("notes:fictional")),
-        ))
+        vm.updateForm(requireNotNull(vm.state.value.form).editing { it.reading(AccessCapability.ANSWER, "notes:fictional") })
     }
+
+    private fun AccessAuthorizationForm.withNotes() = editing { it.enabled(AccessCapability.NOTES, true, requireNotNull(vm.state.value.overview)) }
 
     private fun validSelection() = requireNotNull(
         vm.state.value.form?.selection(requireNotNull(vm.state.value.request), requireNotNull(vm.state.value.overview)),

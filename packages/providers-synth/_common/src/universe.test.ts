@@ -1020,7 +1020,8 @@ describe("universe validator", () => {
               id: "p_a",
               name: "person",
               emails: ["person@example.com"],
-              phones: ["+1 (555) 010-0123"],
+              // The second is the fictional range a phone library accepts as valid.
+              phones: ["+1 (555) 010-0123", "+1 (202) 555-0142"],
             },
           ],
           orgs: [{ id: "o_a", name: "org", domain: "workspace.example" }],

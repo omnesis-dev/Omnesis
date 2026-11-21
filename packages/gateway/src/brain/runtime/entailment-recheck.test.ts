@@ -3,6 +3,8 @@
 
 import { randomUUID } from "node:crypto";
 import { rmSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { createLogger, type EntailCapability } from "@omnesis/core";
 import { createDatabase } from "../../db.js";
@@ -12,8 +14,6 @@ import { createPersonAnnotation, getPersonAnnotation } from "../storage/person-a
 import { VERIFIER_CALL_LIMIT_MS } from "../../inference/verifier-limits.js";
 import { buildAnnotationTools, type AnnotationToolDeps } from "./tools.js";
 import type Database from "better-sqlite3";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 const NOW = Date.parse("2026-06-01T12:00:00Z");
 const EARLIER = NOW - 86_400_000;

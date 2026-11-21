@@ -3,6 +3,8 @@
 
 import { randomUUID } from "node:crypto";
 import { rmSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { toolResultSchema, type SearchProvenance } from "@omnesis/core";
@@ -19,8 +21,6 @@ import type { SearchPort, SearchPortInput } from "@omnesis/agent";
 import type { AppEnv, AuthContext } from "./types.js";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import type Database from "better-sqlite3";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 const PATH = "/admin/search/agent-context";
 const provenance: SearchProvenance = {

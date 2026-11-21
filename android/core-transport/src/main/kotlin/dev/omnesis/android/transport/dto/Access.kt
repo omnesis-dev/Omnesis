@@ -63,11 +63,22 @@ data class AccessAnswerRelease(
     }
 }
 
-@Serializable
+/**
+ * One capability an access level grants, and the sources it reads.
+ *
+ * For a rule with source filters the gateway states the rule's sources twice: `sources` leaves the
+ * filtered accounts out, which keeps a client that knows nothing of filters from reading them whole,
+ * and `scopeSources` holds every account the rule reads. [sources] here is always the whole boundary:
+ * `scopeSources` where the gateway sent one, else `sources`. A rule is written with its whole boundary
+ * in `sources` and never with `scopeSources`.
+ */
+@Serializable(with = AccessGrantRuleSerializer::class)
 data class AccessGrantRule(
     val capability: AccessCapability,
     val sources: AccessSourceBoundary,
     val release: AccessAnswerRelease? = null,
+    val filterRevision: Int? = null,
+    val scopePolicies: List<SourceFilter> = emptyList(),
 ) {
     init {
         require(
@@ -89,11 +100,40 @@ data class AccessGrantRule(
 }
 
 @Serializable
+private data class AccessGrantRuleWire(
+    val capability: AccessCapability,
+    val sources: AccessSourceBoundary,
+    val release: AccessAnswerRelease? = null,
+    val filterRevision: Int? = null,
+    val scopePolicies: List<SourceFilter> = emptyList(),
+    val scopeSources: AccessSourceBoundary? = null,
+)
+
+object AccessGrantRuleSerializer : KSerializer<AccessGrantRule> {
+    override val descriptor: SerialDescriptor = AccessGrantRuleWire.serializer().descriptor
+
+    override fun deserialize(decoder: Decoder): AccessGrantRule {
+        val wire = AccessGrantRuleWire.serializer().deserialize(decoder)
+        return AccessGrantRule(wire.capability, wire.scopeSources ?: wire.sources, wire.release, wire.filterRevision, wire.scopePolicies)
+    }
+
+    override fun serialize(encoder: Encoder, value: AccessGrantRule) {
+        AccessGrantRuleWire.serializer().serialize(
+            encoder,
+            AccessGrantRuleWire(value.capability, value.sources, value.release, value.filterRevision, value.scopePolicies),
+        )
+    }
+}
+
+@Serializable
 data class AccessSourceInstance(
     val id: String,
     val name: String,
     val icon: String? = null,
     val available: Boolean = true,
+    val sourceType: String? = null,
+    /** Whether the account's source declares a field a filter can use; the filter editor says the rest. */
+    val filterable: Boolean = false,
 )
 
 @Serializable
@@ -152,7 +192,13 @@ data class AccessLevelSummary(
     val rules: List<AccessGrantRule>,
     /** How many live connections use this level. */
     val connectionCount: Int,
+    /** Paired, unrevoked devices whose `/answer` requests use this level; empty from a gateway that does not list them. */
+    val devices: List<AccessLevelDevice> = emptyList(),
 )
+
+/** An integration on an access level: a paired device that asks the level for answers. */
+@Serializable
+data class AccessLevelDevice(val id: String, val name: String, val kind: String)
 
 @Serializable
 data class AccessPrincipalSummary(
@@ -173,6 +219,7 @@ data class AccessOverview(
     val pendingRequests: List<AccessPendingRequest> = emptyList(),
     /** The live access levels; empty from a gateway that has none or predates them. */
     val levels: List<AccessLevelSummary> = emptyList(),
+    val sourceFilters: SourceFiltersAvailability? = null,
 )
 
 @Serializable
@@ -184,6 +231,7 @@ private data class AccessOverviewWire(
     val defaultPolicyFamilyId: String? = null,
     val pendingRequests: List<AccessPendingRequest>? = null,
     val levels: List<AccessLevelSummary>? = null,
+    val sourceFilters: SourceFiltersAvailability? = null,
 )
 
 object AccessOverviewSerializer : KSerializer<AccessOverview> {
@@ -198,6 +246,7 @@ object AccessOverviewSerializer : KSerializer<AccessOverview> {
             defaultPolicyFamilyId = wire.defaultPolicyFamilyId,
             pendingRequests = wire.pendingRequests.orEmpty(),
             levels = wire.levels.orEmpty(),
+            sourceFilters = wire.sourceFilters,
         )
     }
 
@@ -211,6 +260,7 @@ object AccessOverviewSerializer : KSerializer<AccessOverview> {
                 defaultPolicyFamilyId = value.defaultPolicyFamilyId,
                 pendingRequests = value.pendingRequests,
                 levels = value.levels,
+                sourceFilters = value.sourceFilters,
             ),
         )
     }

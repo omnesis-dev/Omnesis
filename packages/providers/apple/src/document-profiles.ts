@@ -25,6 +25,7 @@
  * vocabulary that stays open. No value here comes from a user's data.
  */
 
+import { IMESSAGE_CHAT_FIELD } from "./imessage-chat-list.js";
 import type { DocumentEventProfile } from "@omnesis/source-sdk";
 
 /**
@@ -117,6 +118,17 @@ export const appleRemindersDocumentProfile: DocumentEventProfile = {
 export const appleIMessageDocumentProfile: DocumentEventProfile = {
   documentTypes: ["conversation"],
   personRoles: ["participant", "mentioned"],
+  // Filters read two things every stored conversation already holds, so both
+  // declare version 0: the chat's identifier, and the participants' phone
+  // numbers (E.164) and email addresses (lowercase). A day lists the members
+  // known when it was written, so a person filter also reads the chat's
+  // members from the published list.
+  personFilter: {
+    minVersion: 0,
+    roles: ["participant"],
+    identifiers: ["phone", "email"],
+    membersOf: IMESSAGE_CHAT_FIELD,
+  },
   metadataFields: [
     {
       path: "tags",
@@ -151,6 +163,23 @@ export const appleIMessageDocumentProfile: DocumentEventProfile = {
       // own display name — the same value that becomes their participant name.
       identifiesPeople: true,
       description: "Name given to the chat, as group chats usually have. Absent when it has none.",
+    },
+    {
+      path: IMESSAGE_CHAT_FIELD,
+      type: "string",
+      // A one-to-one chat's identifier is the other party's own phone number
+      // or email address.
+      identifiesPeople: true,
+      description:
+        "Messages' identifier for the chat. Every day of the same conversation repeats it, so it identifies a conversation across documents.",
+      filter: {
+        capability: "membership",
+        minVersion: 0,
+        scope: "global",
+        noun: { one: "conversation", many: "conversations" },
+        picker: "search",
+        listsMembers: true,
+      },
     },
   ],
 };

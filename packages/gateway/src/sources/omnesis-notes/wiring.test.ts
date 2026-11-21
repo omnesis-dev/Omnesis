@@ -3,6 +3,8 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 type Db = Database.Database;
 
@@ -14,8 +16,6 @@ import { insertNoteEntry, type NoteEntry } from "./storage.js";
 import { bootOmnesisNotes, type OmnesisNotesRuntime } from "./wiring.js";
 import type { DocumentInput } from "@omnesis/types";
 import type Database from "better-sqlite3";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 function testDbPath(): string {
   return fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);

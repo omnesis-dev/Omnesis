@@ -34,6 +34,7 @@ let db: Db;
 
 const mailbox: SourceDocumentProfileEntry = {
   sourceType: "mailbox",
+  outputRevision: 1,
   profile: {
     documentTypes: ["email"],
     personRoles: ["sender", "recipient"],
@@ -138,7 +139,7 @@ describe("migration 80 — durable source document profiles", () => {
       )
       .all()
       .map((r) => r.name);
-    expect(fresh).toEqual(["source_type", "profile_json", "published_at"]);
+    expect(fresh).toEqual(["source_type", "profile_json", "published_at", "output_revision"]);
 
     const upgraded = new Database(":memory:") as unknown as Db;
     try {

@@ -35,6 +35,7 @@ import { createAccessTables } from "../access/store.js";
 import { createAnswerPrivacyTables, createDirectAuditTables } from "../privacy/store.js";
 import { createSubscriptionTables } from "../subscriptions/store-schema.js";
 import { createTranscriptionVocabularyTables } from "../transcribe/vocabulary/storage.js";
+import { createDocumentFilterValueTables } from "../access/filter-values.js";
 import { addStorageAuthority } from "./migration-219-storage-authority.js";
 import { addHistoryCleanup } from "./migration-220-history-cleanup.js";
 import { REVOKED_DEVICE_KEYS_TABLE } from "./migration-217-sticky-revocation.js";
@@ -45,6 +46,10 @@ import { indexDocumentsBySourceExternalId } from "./migration-187-documents-sour
 import { indexDocumentsByIdAndType } from "./migration-216-documents-id-type-index.js";
 import { indexPersonNameAliases } from "./migration-218-person-name-alias-index.js";
 import { indexDocumentsBySourceCreatedRevision } from "./migration-208-documents-source-created-revision-index.js";
+import {
+  createDocumentFilterIndexQueue,
+  createSourceVersionCounts,
+} from "./migration-223-source-version.js";
 import { addPendingSourcePages } from "./migration-178-pending-source-pages.js";
 import { addSourceWireContracts } from "./migration-177-source-wire-contract.js";
 import { installCollectorRosterRevision, installMutableListRevisions } from "./list-revisions.js";
@@ -52,6 +57,7 @@ import { createCanonicalizationStateTable } from "./repositories/Canonicalizatio
 import { createReauthRemindersTable } from "./repositories/ReauthRemindersRepository.js";
 import { createMobilePermissionHealthTable } from "./repositories/MobilePermissionHealthRepository.js";
 import { createSourceDocumentProfilesTable } from "./repositories/SourceDocumentProfileRepository.js";
+import { createSourceFilterListTables } from "./repositories/SourceFilterListRepository.js";
 import { createSourceStreamCleanupTable } from "./repositories/SourceStreamCleanupRepository.js";
 import {
   createSourceModeTransitionIndexes,
@@ -159,6 +165,10 @@ function runSchemaSetupInTxn(db: Db): void {
       -- per-partition snapshot claim can be acted on; the empty string (a
       -- source with one backing store) is the overwhelming majority.
       partition_key TEXT NOT NULL DEFAULT '',
+      -- The highest version of its source's output this document was written
+      -- or re-read at. 0 is a document stored without one: written before
+      -- versions were stored, or by a host that sends none.
+      source_version INTEGER NOT NULL DEFAULT 0,
       UNIQUE(provider_id, source_id, external_id, stream_id)
     )
   `);
@@ -285,6 +295,8 @@ function runSchemaSetupInTxn(db: Db): void {
       consent_expires_at TEXT,
       last_document_at TEXT,
       minimum_gateway_version INTEGER NOT NULL DEFAULT 0,
+      -- The source version of the last page committed on this cursor row.
+      source_version INTEGER NOT NULL DEFAULT 0,
       PRIMARY KEY (source_id, device_id)
     )
   `);
@@ -302,7 +314,8 @@ function runSchemaSetupInTxn(db: Db): void {
       label TEXT,
       bg_color TEXT,
       accent_color TEXT,
-      updated_at TEXT NOT NULL
+      updated_at TEXT NOT NULL,
+      resync_cost TEXT
     )
   `);
 
@@ -717,6 +730,12 @@ function runSchemaSetupInTxn(db: Db): void {
         ON documents(provider_id, source_id, stream_id, partition_key, id)
     `);
   }
+  // Schema setup precedes migrations on an upgrade, so the column the counts
+  // are kept from may not be there yet; the migration that adds it creates
+  // them, filled from the documents already stored.
+  createSourceVersionCounts(db);
+  createDocumentFilterIndexQueue(db);
+  createDocumentFilterValueTables(db);
   db.exec(`
     CREATE TABLE IF NOT EXISTS snapshot_absence_cascade_outbox (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1508,6 +1527,7 @@ function runSchemaSetupInTxn(db: Db): void {
   // each source's documents can be asked about. Persisted so a restart before
   // the collector reconnects doesn't read as "the source was removed".
   createSourceDocumentProfilesTable(db);
+  createSourceFilterListTables(db);
 
   // Briefs / Brain storage (experimental): open loops, briefs,
   // the agent run queue, spend tracking, agent notes.

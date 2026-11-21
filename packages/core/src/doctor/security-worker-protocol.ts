@@ -3,8 +3,8 @@
 
 /** Internal structured-clone contract for the one-shot doctor security worker. */
 
-import type { SecurityData } from "./types.js";
 import { ownedProcessCleanupReceipt } from "../owned-process-cleanup.js";
+import type { SecurityData } from "./types.js";
 
 export interface DoctorSecurityWorkerInput {
   configDir: string;

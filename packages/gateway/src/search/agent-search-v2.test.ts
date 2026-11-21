@@ -2,6 +2,8 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { computeContentHash, type SearchProvenance } from "@omnesis/core";
 import { createDatabase } from "../db.js";
@@ -22,8 +24,6 @@ import { directAgentProvenanceReads, type AgentProvenanceReads } from "./agent-p
 import { closeTempDb } from "./test-utils.js";
 import type Database from "better-sqlite3";
 import type { SearchConfig } from "./search-config.js";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 const BODY =
   "The invented Northstar equipment agreement specifies delivery in September, replacement parts, inspection, and a twelve-month warranty.";

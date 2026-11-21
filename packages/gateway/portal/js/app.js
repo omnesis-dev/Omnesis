@@ -49,6 +49,7 @@ import { navAttention } from "./lib/attention.js";
 import { useAttention } from "./lib/use-attention.js";
 
 const DocumentView = lazy(() => import("./views/document.js").then((m) => m.DocumentView));
+const DocumentAccessView = lazy(() => import("./views/document-access.js").then((m) => m.DocumentAccessView));
 const PeopleView = lazy(() => import("./views/people.js").then((m) => m.PeopleView));
 const SourcesView = lazy(() => import("./views/sources.js").then((m) => m.SourcesView));
 const SourceRecentView = lazy(() => import("./views/source-recent.js").then((m) => m.SourceRecentView));
@@ -256,6 +257,7 @@ function App() {
     return () => { mounted = false; };
   }, []);
   const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false);
+  const accessArea = route.view === "settings" && (route.tab === "access" || route.accessNewLevel || route.accessLevelId);
   const mobileNavigationButton = useRef(null);
   useLayoutEffect(() => {
     if (!mobileNavigationOpen) return;
@@ -623,7 +625,7 @@ function App() {
   }
 
   return html`
-    <div class=${`app-layout${route.view === "debug" ? " debug-mobile-shell" : ""}`}>
+    <div class=${`app-layout${route.view === "debug" || accessArea ? " debug-mobile-shell" : ""}${accessArea ? " access-area-shell" : ""}${route.view === "settings" && (route.accessNewLevel || route.accessLevelId) ? " access-task-shell" : ""}`}>
       <aside class="app-sidebar">
         <a class="sidebar-brand" href="/portal/" onClick=${(e) => { e.preventDefault(); navigate("/portal/"); }}>
           <span class="omnesis-mark" style="width:32px;height:32px" aria-hidden="true"></span>
@@ -633,7 +635,7 @@ function App() {
           </div>
         </a>
 
-        ${route.view === "debug" && html`<button
+        ${(route.view === "debug" || accessArea) && html`<button
           class="debug-mobile-navigation-toggle"
           ref=${mobileNavigationButton}
           type="button"
@@ -795,6 +797,8 @@ function App() {
         />
         ${route.view === "document"
           ? html`<${DocumentView} id=${route.id} />`
+          : route.view === "document-access"
+          ? html`<${DocumentAccessView} id=${route.id} />`
           : route.view === "people"
           ? html`<${PeopleView} personId=${route.personId} tab=${route.tab} initialQuery=${route.query} experimental=${experimental} />`
           : route.view === "sources"

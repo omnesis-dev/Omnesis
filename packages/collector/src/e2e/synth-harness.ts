@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { ownedProcessCleanupReceipt } from "@omnesis/core";
-
 /**
  * E2E harness for the synthetic-providers framework.
  *
@@ -22,8 +20,8 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync } from "nod
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createServer, type AddressInfo } from "node:net";
-import type { ChildProcess } from "node:child_process";
 import { createHash, generateKeyPairSync, randomBytes } from "node:crypto";
+import { ownedProcessCleanupReceipt } from "@omnesis/core";
 import {
   type SourceOrProviderDefinition,
   type SourceDescriptor,
@@ -88,6 +86,7 @@ import {
   reindexMissing,
   type GatewayEndpoint,
 } from "./gateway-request.js";
+import type { ChildProcess } from "node:child_process";
 
 async function getFreePort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -1008,6 +1007,25 @@ export class SyntheticE2EHarness {
       this.triggerSync(sourceId);
     }
     await this.waitForSyncComplete(sourceId, timeout, device);
+  }
+
+  /**
+   * Change the version `sourceId`'s host sends with its sync pages, from the
+   * next page on: on every host of the source, or on `device` only.
+   *
+   * A source's version is fixed by its definition, so a real host changes it
+   * only by being upgraded. This stands in for that upgrade between two syncs
+   * of one running harness, which is how a test obtains an account whose
+   * documents were written at different versions, or two hosts of one source
+   * on different builds. `undefined` makes the host send no version at all,
+   * as a build that predates versions does; the gateway stores those
+   * documents at 0.
+   */
+  setSourceVersion(sourceId: string, version: number | undefined, device?: HarnessDevice): void {
+    const hosts = device ? [device] : this.devicesForSource(sourceId);
+    const registered = hosts.flatMap((host) => host.engine.getSourcesById(sourceId));
+    if (registered.length === 0) throw new Error(`No roster device syncs ${sourceId}`);
+    for (const source of registered) source.sourceVersion = version;
   }
 
   /**

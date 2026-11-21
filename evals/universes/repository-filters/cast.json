@@ -1,0 +1,36 @@
+{
+  "self": "p_maya",
+  "people": [
+    {
+      "id": "p_maya",
+      "name": "Maya Reeves",
+      "emails": ["maya.reeves@example.org"],
+      "extra": {
+        "githubLogin": "maya-reeves"
+      }
+    },
+    {
+      "id": "p_jamie",
+      "name": "Jamie Lopez",
+      "emails": ["jamie.lopez@example.org"],
+      "extra": {
+        "githubLogin": "jamie-lopez"
+      }
+    },
+    {
+      "id": "p_david",
+      "name": "David Lin",
+      "emails": ["david.lin@example.org"],
+      "extra": {
+        "githubLogin": "david-lin"
+      }
+    }
+  ],
+  "orgs": [
+    {
+      "id": "o_northstar",
+      "name": "Northstar Labs",
+      "domain": "northstar-labs.example"
+    }
+  ]
+}

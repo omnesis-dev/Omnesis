@@ -16,9 +16,12 @@ import dev.omnesis.android.transport.dto.AccessAuthorizationDecision
 import dev.omnesis.android.transport.dto.AccessAuthorizationLookupEnvelope
 import dev.omnesis.android.transport.dto.AccessAuthorizationRequest
 import dev.omnesis.android.transport.dto.AccessAuthorizationSelection
+import dev.omnesis.android.transport.dto.AccessCapability
 import dev.omnesis.android.transport.dto.AccessOverview
 import dev.omnesis.android.transport.dto.AccessReconnectProposal
+import dev.omnesis.android.transport.dto.AccessSourceInstance
 import dev.omnesis.android.transport.dto.PrivacyPolicyDocument
+import dev.omnesis.android.transport.dto.SourceFilter
 import dev.omnesis.android.ui.common.classifyGatewayError
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.CancellationException
@@ -32,6 +35,7 @@ import kotlinx.coroutines.async
 import javax.inject.Inject
 
 interface AccessAuthorizationGateway {
+    fun scopeEditor(expectedPairing: AccessAuthorizationPairingIdentity?): FilterEditorGateway? = null
     /** The pending request behind a code, with the gateway's proposal for approving it. */
     suspend fun lookup(
         code: String,
@@ -69,6 +73,11 @@ class SessionAccessAuthorizationGateway @Inject constructor(
     private val sourceCatalog: SourceCatalog,
     private val pendingRequests: AccessPendingRequests,
 ) : AccessAuthorizationGateway {
+    override fun scopeEditor(expectedPairing: AccessAuthorizationPairingIdentity?): FilterEditorGateway {
+        val current = session.requireSession()
+        if (expectedPairing != null && current.pairing.accessAuthorizationIdentity() != expectedPairing) throw AccessAuthorizationPairingChanged()
+        return PairedFilterEditorGateway(session)
+    }
     override suspend fun lookup(
         code: String,
         expectedPairing: AccessAuthorizationPairingIdentity?,
@@ -126,7 +135,14 @@ data class AccessAuthorizationUiState(
     val step: AccessAuthorizationStep = AccessAuthorizationStep.PERMISSIONS,
     val form: AccessAuthorizationForm? = null,
     val policyPreview: AccessPolicyPreview? = null,
+    /** The decision Data & privacy is showing; null is the step's first. */
+    val dataPage: AccessLevelPage? = null,
+    /** The account filter open over the Data & privacy step, or null while none is. */
+    val filterEdit: AccessFilterEdit? = null,
 )
+
+/** One source's filter for one capability, as the Data & privacy step opens it. */
+data class AccessFilterEdit(val source: AccessSourceInstance, val capability: AccessCapability)
 
 /**
  * One policy family's text, read without leaving the wizard. The wizard is a stack of steps
@@ -139,7 +155,13 @@ data class AccessPolicyPreview(
     val loading: Boolean = true,
     val document: PrivacyPolicyDocument? = null,
     val error: String? = null,
-)
+) {
+    companion object {
+        /** The sheet as it opens, before the policy's text arrives: named as [overview] names the family. */
+        fun opening(familyId: String, overview: AccessOverview?): AccessPolicyPreview =
+            AccessPolicyPreview(familyId, overview?.policyFamilies?.firstOrNull { it.id == familyId }?.name ?: "Privacy policy")
+    }
+}
 
 enum class AccessAuthorizationCompletion { APPROVED, DENIED }
 
@@ -175,7 +197,36 @@ class AccessAuthorizationViewModel @Inject constructor(
     private var authorizationPairing: AccessAuthorizationPairingIdentity? = null
     private var handledLaunchNonce: Long? = null
 
+    /** What the open filter editor reads its choices and previews through; one session serves every filter of a request. */
+    internal var filterSession: FilterEditorSession? = null
+        private set
+
+    /** Opens one source's filter. A pairing that changed under the wizard is reported, not edited against. */
+    fun editFilter(source: AccessSourceInstance, capability: AccessCapability) {
+        try {
+            val editor = gateway.scopeEditor(authorizationPairing) ?: return
+            if (filterSession == null) filterSession = editor.editorSession()
+        } catch (error: Exception) {
+            _state.update {
+                it.copy(actionError = if (error is AccessAuthorizationPairingChanged) PAIRING_CHANGED_MESSAGE else accessAuthorizationUnmappedMessage(error))
+            }
+            return
+        }
+        _state.update { it.copy(filterEdit = AccessFilterEdit(source, capability)) }
+    }
+
+    fun closeFilter() = _state.update { it.copy(filterEdit = null) }
+
+    /** Stores the edited filter, or removes the source's filter when [policy] is null, and closes the editor. */
+    fun applyFilter(policy: SourceFilter?) = _state.update { current ->
+        val edit = current.filterEdit ?: return@update current
+        val form = current.form ?: return@update current.copy(filterEdit = null)
+        current.copy(form = form.copy(level = form.level.setPolicy(policy, edit.source.id, edit.capability)), filterEdit = null)
+    }
+
     fun sourceIcon(sourceId: String) = sourceCatalog.iconModel(sourceId)
+
+    fun sourceName(sourceId: String) = sourceCatalog.familyLabel(sourceId)
 
     fun updateCode(value: String) {
         authorizationPairing = null
@@ -229,6 +280,7 @@ class AccessAuthorizationViewModel @Inject constructor(
         lookupJob?.cancel()
         authorizationKey = null
         authorizationPairing = pairingForLookup
+        filterSession = null
         _state.update {
             AccessAuthorizationUiState(
                 code = code,
@@ -282,7 +334,7 @@ class AccessAuthorizationViewModel @Inject constructor(
                         reconnect = envelope.reconnect,
                         overview = overview,
                         form = form,
-                        step = authorizationSteps(form, request.requiresAnswer).first(),
+                        step = authorizationSteps(form).first(),
                     )
                 }
             } catch (cancelled: CancellationException) {
@@ -296,7 +348,7 @@ class AccessAuthorizationViewModel @Inject constructor(
     }
 
     fun updateForm(form: AccessAuthorizationForm) = _state.update { current ->
-        val renamed = form.connection?.levelName != current.form?.connection?.levelName
+        val renamed = form.level.name != current.form?.level?.name
         if (current.levelNameTaken && renamed) {
             current.copy(form = form, levelNameTaken = false, actionError = null)
         } else {
@@ -305,12 +357,8 @@ class AccessAuthorizationViewModel @Inject constructor(
     }
 
     fun showPolicy(familyId: String) {
-        val name = state.value.overview?.policyFamilies
-            ?.firstOrNull { it.id == familyId }
-            ?.name
-            ?: "Privacy policy"
         policyJob?.cancel()
-        _state.update { it.copy(policyPreview = AccessPolicyPreview(familyId, name)) }
+        _state.update { it.copy(policyPreview = AccessPolicyPreview.opening(familyId, it.overview)) }
         policyJob = viewModelScope.launch {
             try {
                 val document = gateway.policy(familyId, authorizationPairing)
@@ -340,7 +388,8 @@ class AccessAuthorizationViewModel @Inject constructor(
         if (preview?.familyId != familyId) current else current.copy(policyPreview = transform(preview))
     }
 
-    fun goTo(step: AccessAuthorizationStep) = _state.update { it.copy(step = step) }
+    /** Shows [step], and within Data & privacy the decision [dataPage]; without one the step opens on its first. */
+    fun goTo(step: AccessAuthorizationStep, dataPage: AccessLevelPage? = null) = _state.update { it.copy(step = step, dataPage = dataPage) }
 
     fun decide(approve: Boolean, selection: AccessAuthorizationSelection? = null) {
         val request = state.value.request ?: return
@@ -454,7 +503,7 @@ class AccessAuthorizationViewModel @Inject constructor(
                 deciding = false,
                 actionError = when (error) {
                     is AccessAuthorizationPairingChanged ->
-                        "The paired gateway changed. Scan the authorization code again."
+                        PAIRING_CHANGED_MESSAGE
                     is GatewayException.Unauthorized, is GatewayException.Forbidden -> classifyGatewayError(error)
                     is GatewayException.ServerError -> if (error.status == 400) {
                         "Some values are invalid. Review the source selections."
@@ -506,7 +555,7 @@ class AccessAuthorizationViewModel @Inject constructor(
         val typed = state.value.form?.connection
         val choice = refreshed.connection
         val form = if (typed != null && choice != null && choice.path == typed.path) {
-            refreshed.copy(connection = choice.copy(name = typed.name, levelName = typed.levelName))
+            refreshed.copy(level = refreshed.level.copy(name = state.value.form?.level?.name.orEmpty()), connection = choice.copy(name = typed.name))
         } else {
             refreshed
         }
@@ -517,7 +566,7 @@ class AccessAuthorizationViewModel @Inject constructor(
                 reconnect = envelope.reconnect,
                 overview = overview,
                 form = form,
-                step = authorizationSteps(form, envelope.request.requiresAnswer).first(),
+                step = authorizationSteps(form).first(),
                 actionError = "Access choices changed. Review the refreshed request.",
                 levelNameTaken = false,
                 revision = it.revision + 1,
@@ -528,7 +577,7 @@ class AccessAuthorizationViewModel @Inject constructor(
     private fun policyMessage(error: Throwable): String = when (error) {
         is GatewayException.NotFound -> "That policy is no longer published on this gateway."
         is AccessAuthorizationPairingChanged ->
-            "The paired gateway changed. Scan the authorization code again."
+            PAIRING_CHANGED_MESSAGE
         else -> accessAuthorizationUnmappedMessage(error)
     }
 
@@ -538,7 +587,7 @@ class AccessAuthorizationViewModel @Inject constructor(
             is AccessLookupKey.Id -> "This request is no longer waiting for a decision."
         }
         is AccessAuthorizationPairingChanged ->
-            "The paired gateway changed. Scan the authorization code again."
+            PAIRING_CHANGED_MESSAGE
         is GatewayException.Unauthorized, is GatewayException.Forbidden -> classifyGatewayError(error)
         is GatewayException.ServerError -> if (error.status == 400) {
             "The authorization code is invalid. Check it and try again."
@@ -551,3 +600,5 @@ class AccessAuthorizationViewModel @Inject constructor(
 }
 
 internal class AccessAuthorizationPairingChanged : Exception()
+
+private const val PAIRING_CHANGED_MESSAGE = "The paired gateway changed. Scan the authorization code again."

@@ -7,6 +7,8 @@ import { topics, dayAt } from "./background-content.mjs";
 export function addGithub(state) {
   const { ctx, last, put } = state;
   const repo = "fictional-sacha/hobby-catalogue";
+  // GitHub's ids for the repository and its owner: what a filter names them by.
+  const identity = { id: 5201, owner: { id: 7301, login: "fictional-sacha" } };
   const threads = Array.from({ length: 100 }, (_, i) => {
     const day = dayAt(i, 100, "2021-01-01", last);
     const topic = topics[i % topics.length];
@@ -38,9 +40,10 @@ export function addGithub(state) {
       },
     };
   });
-  put("github", "threads.json", { repo, threads, discussions: [] });
+  put("github", "threads.json", { repo, ...identity, threads, discussions: [] });
   put("github-commits", "commits.json", {
     repo,
+    ...identity,
     commits: Array.from({ length: 140 }, (_, i) => {
       const day = dayAt(i, 140, "2021-01-01", last);
       const sha = hash(`sacha-hobby-commit-${i}`).slice(0, 40);

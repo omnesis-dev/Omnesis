@@ -3,14 +3,14 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createDatabase } from "../../db.js";
 import { directWriteGate } from "../../write-gate.js";
 import { KNOWLEDGE_SOURCE_ID } from "./source-meta.js";
 import { KNOWLEDGE_SOURCE_LABEL, seedKnowledgeSourceMeta } from "./source-identity.js";
 import type Database from "better-sqlite3";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 describe("seedKnowledgeSourceMeta", () => {
   let path: string;

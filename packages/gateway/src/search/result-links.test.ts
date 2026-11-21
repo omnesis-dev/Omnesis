@@ -9,6 +9,8 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { computeContentHash } from "@omnesis/core";
@@ -27,8 +29,6 @@ import {
 } from "./result-links.js";
 import { closeTempDb } from "./test-utils.js";
 import type { SearchConfig } from "./search-config.js";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 const SOURCE = "archive:fictional";
 const NOW = "2025-02-01T10:00:00Z";

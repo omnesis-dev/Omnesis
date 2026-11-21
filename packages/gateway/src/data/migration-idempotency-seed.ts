@@ -5,11 +5,14 @@
  * Deterministic, human-readable seed for the migration-idempotency e2e.
  *
  * The seed is a near-head migration sentinel, not a complete historical schema
- * dump. It preserves representative `open_loops` rows across the production
+ * dump. It preserves representative `open_loops` rows and unfiltered access across the production
  * open path while migrations after v160 are recorded and a second open remains
  * a no-op. Focused migration tests own each tail migration's historical shape.
  */
 
+import { createV152AccessTables } from "./migration-152-access-grants.js";
+import { migrateV153AccessPolicyFamilies } from "./migration-153-access-policy-families.js";
+import { migrateV154ConfidentialOAuthClients } from "./migration-154-confidential-oauth-clients.js";
 import type { Db } from "./types.js";
 
 /** Several versions behind the current schema head. */
@@ -19,6 +22,7 @@ export const SEEDED_SCHEMA_VERSION = 160;
 export const SEED_CREATED_AT = 1_767_322_800_000;
 export const SEED_OPEN_LOOP_ID = "seed-loop-open";
 export const SEED_DONE_LOOP_ID = "seed-loop-done";
+export const SEED_GRANT_ID = "seed-grant";
 
 /**
  * Materialise the representative v160 seed in an open, empty database. The
@@ -30,8 +34,34 @@ export const SEED_DONE_LOOP_ID = "seed-loop-done";
  * table remains intact while the current migration tail runs.
  */
 export function buildSeedDatabase(db: Db): void {
+  // Historical OAuth table rebuilds run with the migration runner's pragmas;
+  // unrelated parent tables are supplied later by the current base setup.
+  const foreignKeys = db.pragma("foreign_keys", { simple: true });
+  const legacyAlter = db.pragma("legacy_alter_table", { simple: true });
+  db.pragma("foreign_keys = OFF");
+  db.pragma("legacy_alter_table = ON");
   db.exec("BEGIN");
   try {
+    // The v160 baseline already has the access spine. Keep it historical so
+    // the level and source-filter migrations must actually install their shape.
+    createV152AccessTables(db);
+    migrateV153AccessPolicyFamilies(db);
+    migrateV154ConfidentialOAuthClients(db);
+    // The two v160 schema additions; there are no credentials to revoke here.
+    db.exec(`ALTER TABLE oauth_refresh_tokens ADD COLUMN replacement_ciphertext TEXT;
+      ALTER TABLE oauth_refresh_tokens ADD COLUMN retry_until INTEGER`);
+    db.prepare(
+      `INSERT INTO access_principals(id,name,kind,created_at,updated_at)
+      VALUES('seed-principal','Fictional seed connection','interactive',?,?)`,
+    ).run(SEED_CREATED_AT, SEED_CREATED_AT);
+    db.prepare(
+      `INSERT INTO access_grants(id,principal_id,name,revision,created_at,updated_at)
+      VALUES(?,'seed-principal','Fictional seed access',1,?,?)`,
+    ).run(SEED_GRANT_ID, SEED_CREATED_AT, SEED_CREATED_AT);
+    db.prepare(
+      `INSERT INTO access_grant_capabilities(grant_id,capability,source_mode,source_ids,release_mode,policy_family_id)
+      VALUES(?,'direct','all','[]',NULL,NULL)`,
+    ).run(SEED_GRANT_ID);
     db.exec(`
       CREATE TABLE open_loops (
         id TEXT PRIMARY KEY,
@@ -90,5 +120,8 @@ export function buildSeedDatabase(db: Db): void {
   } catch (err) {
     db.exec("ROLLBACK");
     throw err;
+  } finally {
+    db.pragma(`legacy_alter_table = ${legacyAlter ? "ON" : "OFF"}`);
+    db.pragma(`foreign_keys = ${foreignKeys ? "ON" : "OFF"}`);
   }
 }

@@ -9,8 +9,8 @@ import { execFileSync } from "node:child_process";
 import { ensurePrivateDirs } from "@omnesis/core";
 import { beforeAll, afterAll, beforeEach, afterEach, expect, test, vi } from "vitest";
 import { markedFileError } from "../test/private-operation-fixture.js";
-import * as privateCredentials from "./google-credentials.js";
 import { tlsFiles, malformedDateCertificate } from "../test/support.js";
+import * as privateCredentials from "./google-credentials.js";
 import { tlsSpkiFingerprint } from "./pinned-key.js";
 import { CertificateIssuanceMonitor } from "./certificate-monitor.js";
 import {

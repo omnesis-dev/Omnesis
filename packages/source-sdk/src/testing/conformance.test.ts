@@ -65,6 +65,7 @@ describe("a well-formed source", () => {
       name: "Bookmarks",
       description: "Saved links",
       authType: "local",
+      contract: { outputRevision: 1 },
       create: async () => ({ sync: async () => emptySync() }),
     });
     const bareReport = await runSourceConformance(bare);
@@ -73,6 +74,41 @@ describe("a well-formed source", () => {
     });
     expect(bareReport.checks).toBeLessThan(richReport.checks);
     expect(bareReport.findings).toEqual([]);
+  });
+});
+
+describe("the output revision", () => {
+  const undeclared = defineSource({
+    id: "bookmarks",
+    name: "Bookmarks",
+    description: "Saved links",
+    authType: "local",
+    create: async () => ({ sync: async () => emptySync() }),
+  });
+
+  test("a source that declares none still loads, with a warning to declare it", async () => {
+    const report = await runSourceConformance(undeclared);
+    expect(errorsOf(report)).toEqual([]);
+    expect(warningsOf(report)).toEqual(["output.revision-declared"]);
+    expect(report.ok).toBe(true);
+  });
+
+  test("a provider's entry is covered by the revision its provider declares", async () => {
+    const entry = { id: "bookmarks", name: "Bookmarks", description: "Saved links" };
+    const create = async () => ({ sync: async () => emptySync() });
+    const provider = (contract: { outputRevision?: number } | undefined) =>
+      defineProvider({
+        provider: { id: "browser", name: "Browser" },
+        authType: "local",
+        contract,
+        sources: [{ ...entry, create }],
+      });
+
+    const [declared] = await runProviderConformance(provider({ outputRevision: 1 }));
+    const [omitted] = await runProviderConformance(provider(undefined));
+
+    expect(warningsOf(declared!)).toEqual([]);
+    expect(warningsOf(omitted!)).toEqual(["output.revision-declared"]);
   });
 });
 

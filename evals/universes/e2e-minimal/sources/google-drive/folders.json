@@ -1,0 +1,352 @@
+[
+  {
+    "id": "synth-drive-root",
+    "name": "Fictional Drive",
+    "parentIds": []
+  },
+  {
+    "id": "synth-drive-observatory",
+    "name": "Observatory",
+    "parentIds": ["synth-drive-root"]
+  },
+  {
+    "id": "synth-drive-reports",
+    "name": "Reports",
+    "parentIds": ["synth-drive-observatory"]
+  },
+  {
+    "id": "synth-drive-archive",
+    "name": "Archive",
+    "parentIds": ["synth-drive-root"]
+  },
+  {
+    "id": "journey-folders-root",
+    "name": "Journey folders",
+    "parentIds": []
+  },
+  {
+    "id": "journey-folder-000",
+    "name": "Journey folder 000",
+    "parentIds": ["journey-folders-root"]
+  },
+  {
+    "id": "journey-folder-001",
+    "name": "Journey folder 001",
+    "parentIds": ["journey-folders-root"]
+  },
+  {
+    "id": "journey-folder-002",
+    "name": "Journey folder 002",
+    "parentIds": ["journey-folders-root"]
+  },
+  {
+    "id": "journey-folder-003",
+    "name": "Journey folder 003",
+    "parentIds": ["journey-folders-root"]
+  },
+  {
+    "id": "journey-folder-004",
+    "name": "Journey folder 004",
+    "parentIds": ["journey-folders-root"]
+  },
+  {
+    "id": "journey-folder-005",
+    "name": "Journey folder 005",
+    "parentIds": ["journey-folders-root"]
+  },
+  {
+    "id": "journey-folder-006",
+    "name": "Journey folder 006",
+    "parentIds": ["journey-folders-root"]
+  },
+  {
+    "id": "journey-folder-007",
+    "name": "Journey folder 007",
+    "parentIds": ["journey-folders-root"]
+  },
+  {
+    "id": "journey-folder-008",
+    "name": "Journey folder 008",
+    "parentIds": ["journey-folders-root"]
+  },
+  {
+    "id": "journey-folder-009",
+    "name": "Journey folder 009",
+    "parentIds": ["journey-folders-root"]
+  },
+  {
+    "id": "journey-folder-010",
+    "name": "Journey folder 010",
+    "parentIds": ["journey-folders-root"]
+  },
+  {
+    "id": "journey-folder-011",
+    "name": "Journey folder 011",
+    "parentIds": ["journey-folders-root"]
+  },
+  {
+    "id": "journey-folder-012",
+    "name": "Journey folder 012",
+    "parentIds": ["journey-folders-root"]
+  },
+  {
+    "id": "journey-folder-013",
+    "name": "Journey folder 013",
+    "parentIds": ["journey-folders-root"]
+  },
+  {
+    "id": "journey-folder-014",
+    "name": "Journey folder 014",
+    "parentIds": ["journey-folders-root"]
+  },
+  {
+    "id": "journey-folder-015",
+    "name": "Journey folder 015",
+    "parentIds": ["journey-folders-root"]
+  },
+  {
+    "id": "journey-folder-016",
+    "name": "Journey folder 016",
+    "parentIds": ["journey-folders-root"]
+  },
+  {
+    "id": "journey-folder-017",
+    "name": "Journey folder 017",
+    "parentIds": ["journey-folders-root"]
+  },
+  {
+    "id": "journey-folder-018",
+    "name": "Journey folder 018",
+    "parentIds": ["journey-folders-root"]
+  },
+  {
+    "id": "journey-folder-019",
+    "name": "Journey folder 019",
+    "parentIds": ["journey-folders-root"]
+  },
+  {
+    "id": "journey-folder-020",
+    "name": "Journey folder 020",
+    "parentIds": ["journey-folders-root"]
+  },
+  {
+    "id": "journey-folder-021",
+    "name": "Journey folder 021",
+    "parentIds": ["journey-folders-root"]
+  },
+  {
+    "id": "journey-folder-022",
+    "name": "Journey folder 022",
+    "parentIds": ["journey-folders-root"]
+  },
+  {
+    "id": "journey-folder-023",
+    "name": "Journey folder 023",
+    "parentIds": ["journey-folders-root"]
+  },
+  {
+    "id": "journey-folder-024",
+    "name": "Journey folder 024",
+    "parentIds": ["journey-folders-root"]
+  },
+  {
+    "id": "journey-folder-025",
+    "name": "Journey folder 025",
+    "parentIds": ["journey-folders-root"]
+  },
+  {
+    "id": "journey-folder-026",
+    "name": "Journey folder 026",
+    "parentIds": ["journey-folders-root"]
+  },
+  {
+    "id": "journey-folder-027",
+    "name": "Journey folder 027",
+    "parentIds": ["journey-folders-root"]
+  },
+  {
+    "id": "journey-folder-028",
+    "name": "Journey folder 028",
+    "parentIds": ["journey-folders-root"]
+  },
+  {
+    "id": "journey-folder-029",
+    "name": "Journey folder 029",
+    "parentIds": ["journey-folders-root"]
+  },
+  {
+    "id": "journey-folder-030",
+    "name": "Journey folder 030",
+    "parentIds": ["journey-folders-root"]
+  },
+  {
+    "id": "journey-folder-031",
+    "name": "Journey folder 031",
+    "parentIds": ["journey-folders-root"]
+  },
+  {
+    "id": "journey-folder-032",
+    "name": "Journey folder 032",
+    "parentIds": ["journey-folders-root"]
+  },
+  {
+    "id": "journey-folder-033",
+    "name": "Journey folder 033",
+    "parentIds": ["journey-folders-root"]
+  },
+  {
+    "id": "journey-folder-034",
+    "name": "Journey folder 034",
+    "parentIds": ["journey-folders-root"]
+  },
+  {
+    "id": "journey-folder-035",
+    "name": "Journey folder 035",
+    "parentIds": ["journey-folders-root"]
+  },
+  {
+    "id": "journey-folder-036",
+    "name": "Journey folder 036",
+    "parentIds": ["journey-folders-root"]
+  },
+  {
+    "id": "journey-folder-037",
+    "name": "Journey folder 037",
+    "parentIds": ["journey-folders-root"]
+  },
+  {
+    "id": "journey-folder-038",
+    "name": "Journey folder 038",
+    "parentIds": ["journey-folders-root"]
+  },
+  {
+    "id": "journey-folder-039",
+    "name": "Journey folder 039",
+    "parentIds": ["journey-folders-root"]
+  },
+  {
+    "id": "journey-folder-040",
+    "name": "Journey folder 040",
+    "parentIds": ["journey-folders-root"]
+  },
+  {
+    "id": "journey-folder-041",
+    "name": "Journey folder 041",
+    "parentIds": ["journey-folders-root"]
+  },
+  {
+    "id": "journey-folder-042",
+    "name": "Journey folder 042",
+    "parentIds": ["journey-folders-root"]
+  },
+  {
+    "id": "journey-folder-043",
+    "name": "Journey folder 043",
+    "parentIds": ["journey-folders-root"]
+  },
+  {
+    "id": "journey-folder-044",
+    "name": "Journey folder 044",
+    "parentIds": ["journey-folders-root"]
+  },
+  {
+    "id": "journey-folder-045",
+    "name": "Journey folder 045",
+    "parentIds": ["journey-folders-root"]
+  },
+  {
+    "id": "journey-folder-046",
+    "name": "Journey folder 046",
+    "parentIds": ["journey-folders-root"]
+  },
+  {
+    "id": "journey-folder-047",
+    "name": "Journey folder 047",
+    "parentIds": ["journey-folders-root"]
+  },
+  {
+    "id": "journey-folder-048",
+    "name": "Journey folder 048",
+    "parentIds": ["journey-folders-root"]
+  },
+  {
+    "id": "journey-folder-049",
+    "name": "Journey folder 049",
+    "parentIds": ["journey-folders-root"]
+  },
+  {
+    "id": "journey-folder-050",
+    "name": "Journey folder 050",
+    "parentIds": ["journey-folders-root"]
+  },
+  {
+    "id": "journey-folder-051",
+    "name": "Journey folder 051",
+    "parentIds": ["journey-folders-root"]
+  },
+  {
+    "id": "journey-folder-052",
+    "name": "Journey folder 052",
+    "parentIds": ["journey-folders-root"]
+  },
+  {
+    "id": "journey-folder-053",
+    "name": "Journey folder 053",
+    "parentIds": ["journey-folders-root"]
+  },
+  {
+    "id": "journey-folder-054",
+    "name": "Journey folder 054",
+    "parentIds": ["journey-folders-root"]
+  },
+  {
+    "id": "journey-folder-055",
+    "name": "Journey folder 055",
+    "parentIds": ["journey-folders-root"]
+  },
+  {
+    "id": "journey-folder-056",
+    "name": "Journey folder 056",
+    "parentIds": ["journey-folders-root"]
+  },
+  {
+    "id": "journey-folder-057",
+    "name": "Journey folder 057",
+    "parentIds": ["journey-folders-root"]
+  },
+  {
+    "id": "journey-folder-058",
+    "name": "Journey folder 058",
+    "parentIds": ["journey-folders-root"]
+  },
+  {
+    "id": "journey-folder-059",
+    "name": "Journey folder 059",
+    "parentIds": ["journey-folders-root"]
+  },
+  {
+    "id": "journey-folder-060",
+    "name": "Journey folder 060",
+    "parentIds": ["journey-folders-root"]
+  },
+  {
+    "id": "journey-folder-061",
+    "name": "Journey folder 061",
+    "parentIds": ["journey-folders-root"]
+  },
+  {
+    "id": "journey-folder-062",
+    "name": "Journey folder 062",
+    "parentIds": ["journey-folders-root"]
+  },
+  {
+    "id": "journey-folder-063",
+    "name": "Journey folder 063",
+    "parentIds": ["journey-folders-root"]
+  },
+  {
+    "id": "journey-folder-064",
+    "name": "Journey folder 064",
+    "parentIds": ["journey-folders-root"]
+  }
+]

@@ -1,0 +1,67 @@
+[
+  {
+    "externalId": "lf-gmail-atlas",
+    "subject": "zqfilter TITLE_ATLAS",
+    "from": "p_jamie",
+    "fromEmail": "jamie.lopez@example.org",
+    "to": ["self"],
+    "toEmails": ["maya.reeves@example.org"],
+    "body": "zqfilter invented record BODY_ATLAS",
+    "sentAt": "2026-04-01T09:00:00Z",
+    "threadId": "lf-thread-atlas",
+    "labels": ["INBOX", "Work"],
+    "labelIds": ["INBOX", "Label_work"]
+  },
+  {
+    "externalId": "lf-gmail-billing",
+    "subject": "zqfilter TITLE_BILLING",
+    "from": "p_jamie",
+    "fromEmail": "jamie.lopez@example.org",
+    "to": ["self"],
+    "toEmails": ["maya.reeves@example.org"],
+    "body": "zqfilter invented record BODY_BILLING",
+    "sentAt": "2026-04-02T09:00:00Z",
+    "threadId": "lf-thread-billing",
+    "labels": ["Work"],
+    "labelIds": ["Label_work"]
+  },
+  {
+    "externalId": "lf-gmail-garden",
+    "subject": "zqfilter TITLE_GARDEN",
+    "from": "p_david",
+    "fromEmail": "david.lin@example.org",
+    "to": ["self"],
+    "toEmails": ["maya.reeves@example.org"],
+    "body": "zqfilter invented record BODY_GARDEN",
+    "sentAt": "2026-04-03T09:00:00Z",
+    "threadId": "lf-thread-garden",
+    "labels": ["INBOX", "Personal"],
+    "labelIds": ["INBOX", "Label_personal"]
+  },
+  {
+    "externalId": "lf-gmail-both",
+    "subject": "zqfilter TITLE_BOTH",
+    "from": "p_jamie",
+    "fromEmail": "jamie.lopez@example.org",
+    "to": ["self"],
+    "toEmails": ["maya.reeves@example.org"],
+    "body": "zqfilter invented record BODY_BOTH",
+    "sentAt": "2026-04-04T09:00:00Z",
+    "threadId": "lf-thread-both",
+    "labels": ["Work", "Personal"],
+    "labelIds": ["Label_work", "Label_personal"]
+  },
+  {
+    "externalId": "lf-gmail-plain",
+    "subject": "zqfilter TITLE_PLAIN",
+    "from": "p_david",
+    "fromEmail": "david.lin@example.org",
+    "to": ["self"],
+    "toEmails": ["maya.reeves@example.org"],
+    "body": "zqfilter invented record BODY_PLAIN",
+    "sentAt": "2026-04-05T09:00:00Z",
+    "threadId": "lf-thread-plain",
+    "labels": ["INBOX"],
+    "labelIds": ["INBOX"]
+  }
+]

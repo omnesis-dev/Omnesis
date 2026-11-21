@@ -1,0 +1,408 @@
+{
+  "repositories": [
+    {
+      "repo": "northstar-labs/atlas-api",
+      "id": 4101,
+      "owner": {
+        "id": 9001,
+        "login": "northstar-labs"
+      },
+      "threads": [
+        {
+          "__typename": "Issue",
+          "number": 1,
+          "title": "zqfilter TITLE_ATLAS_ISSUE",
+          "body": "zqfilter invented record BODY_ATLAS_ISSUE",
+          "state": "OPEN",
+          "createdAt": "2026-05-11T09:12:00Z",
+          "updatedAt": "2026-05-12T10:00:00Z",
+          "closedAt": null,
+          "url": "https://github.com/northstar-labs/atlas-api/issues/1",
+          "author": {
+            "__typename": "User",
+            "login": "maya-reeves",
+            "name": "Maya Reeves"
+          },
+          "labels": {
+            "nodes": []
+          },
+          "assignees": {
+            "nodes": []
+          },
+          "milestone": null,
+          "comments": {
+            "totalCount": 1,
+            "nodes": [
+              {
+                "author": {
+                  "__typename": "User",
+                  "login": "jamie-lopez",
+                  "name": "Jamie Lopez"
+                },
+                "body": "Noted, thanks.",
+                "createdAt": "2026-05-12T10:00:00Z"
+              }
+            ]
+          }
+        },
+        {
+          "__typename": "PullRequest",
+          "number": 2,
+          "title": "zqfilter TITLE_ATLAS_PULL",
+          "body": "zqfilter invented record BODY_ATLAS_PULL",
+          "state": "OPEN",
+          "createdAt": "2026-05-11T09:12:00Z",
+          "updatedAt": "2026-05-12T10:00:00Z",
+          "closedAt": null,
+          "url": "https://github.com/northstar-labs/atlas-api/pull/2",
+          "author": {
+            "__typename": "User",
+            "login": "maya-reeves",
+            "name": "Maya Reeves"
+          },
+          "labels": {
+            "nodes": []
+          },
+          "assignees": {
+            "nodes": []
+          },
+          "milestone": null,
+          "comments": {
+            "totalCount": 1,
+            "nodes": [
+              {
+                "author": {
+                  "__typename": "User",
+                  "login": "jamie-lopez",
+                  "name": "Jamie Lopez"
+                },
+                "body": "Noted, thanks.",
+                "createdAt": "2026-05-12T10:00:00Z"
+              }
+            ]
+          },
+          "isDraft": false,
+          "merged": false,
+          "mergedAt": null,
+          "mergedBy": null,
+          "baseRefName": "main",
+          "headRefName": "invented-change",
+          "additions": 4,
+          "deletions": 1,
+          "changedFiles": 1,
+          "files": {
+            "pageInfo": {
+              "hasNextPage": false
+            },
+            "nodes": [
+              {
+                "path": "README.md",
+                "additions": 4,
+                "deletions": 1
+              }
+            ]
+          },
+          "reviews": {
+            "pageInfo": {
+              "hasNextPage": false
+            },
+            "nodes": []
+          },
+          "closingIssuesReferences": {
+            "nodes": []
+          },
+          "mergeCommit": null
+        }
+      ],
+      "discussions": [
+        {
+          "number": 3,
+          "title": "zqfilter TITLE_ATLAS_DISCUSSION",
+          "body": "zqfilter invented record BODY_ATLAS_DISCUSSION",
+          "createdAt": "2026-05-11T09:12:00Z",
+          "updatedAt": "2026-05-11T09:12:00Z",
+          "url": "https://github.com/northstar-labs/atlas-api/discussions/3",
+          "author": {
+            "__typename": "User",
+            "login": "jamie-lopez",
+            "name": "Jamie Lopez"
+          },
+          "category": {
+            "name": "Ideas"
+          },
+          "answer": null,
+          "comments": {
+            "totalCount": 0,
+            "nodes": []
+          }
+        }
+      ]
+    },
+    {
+      "repo": "northstar-labs/atlas-api-docs",
+      "id": 4102,
+      "owner": {
+        "id": 9001,
+        "login": "northstar-labs"
+      },
+      "threads": [
+        {
+          "__typename": "Issue",
+          "number": 1,
+          "title": "zqfilter TITLE_DOCS_ISSUE",
+          "body": "zqfilter invented record BODY_DOCS_ISSUE",
+          "state": "OPEN",
+          "createdAt": "2026-05-11T09:12:00Z",
+          "updatedAt": "2026-05-12T10:00:00Z",
+          "closedAt": null,
+          "url": "https://github.com/northstar-labs/atlas-api-docs/issues/1",
+          "author": {
+            "__typename": "User",
+            "login": "maya-reeves",
+            "name": "Maya Reeves"
+          },
+          "labels": {
+            "nodes": []
+          },
+          "assignees": {
+            "nodes": []
+          },
+          "milestone": null,
+          "comments": {
+            "totalCount": 1,
+            "nodes": [
+              {
+                "author": {
+                  "__typename": "User",
+                  "login": "jamie-lopez",
+                  "name": "Jamie Lopez"
+                },
+                "body": "Noted, thanks.",
+                "createdAt": "2026-05-12T10:00:00Z"
+              }
+            ]
+          }
+        }
+      ],
+      "discussions": []
+    },
+    {
+      "repo": "northstar-labs-archive/atlas-api",
+      "id": 4201,
+      "owner": {
+        "id": 9002,
+        "login": "northstar-labs-archive"
+      },
+      "threads": [
+        {
+          "__typename": "Issue",
+          "number": 1,
+          "title": "zqfilter TITLE_ARCHIVE_ISSUE",
+          "body": "zqfilter invented record BODY_ARCHIVE_ISSUE",
+          "state": "OPEN",
+          "createdAt": "2026-05-11T09:12:00Z",
+          "updatedAt": "2026-05-12T10:00:00Z",
+          "closedAt": null,
+          "url": "https://github.com/northstar-labs-archive/atlas-api/issues/1",
+          "author": {
+            "__typename": "User",
+            "login": "maya-reeves",
+            "name": "Maya Reeves"
+          },
+          "labels": {
+            "nodes": []
+          },
+          "assignees": {
+            "nodes": []
+          },
+          "milestone": null,
+          "comments": {
+            "totalCount": 1,
+            "nodes": [
+              {
+                "author": {
+                  "__typename": "User",
+                  "login": "jamie-lopez",
+                  "name": "Jamie Lopez"
+                },
+                "body": "Noted, thanks.",
+                "createdAt": "2026-05-12T10:00:00Z"
+              }
+            ]
+          }
+        }
+      ],
+      "discussions": []
+    },
+    {
+      "repo": "maya-reeves/garden-notes",
+      "id": 5201,
+      "owner": {
+        "id": 7001,
+        "login": "maya-reeves"
+      },
+      "threads": [
+        {
+          "__typename": "Issue",
+          "number": 1,
+          "title": "zqfilter TITLE_GARDEN_ISSUE",
+          "body": "zqfilter invented record BODY_GARDEN_ISSUE",
+          "state": "OPEN",
+          "createdAt": "2026-05-11T09:12:00Z",
+          "updatedAt": "2026-05-12T10:00:00Z",
+          "closedAt": null,
+          "url": "https://github.com/maya-reeves/garden-notes/issues/1",
+          "author": {
+            "__typename": "User",
+            "login": "maya-reeves",
+            "name": "Maya Reeves"
+          },
+          "labels": {
+            "nodes": []
+          },
+          "assignees": {
+            "nodes": []
+          },
+          "milestone": null,
+          "comments": {
+            "totalCount": 1,
+            "nodes": [
+              {
+                "author": {
+                  "__typename": "User",
+                  "login": "jamie-lopez",
+                  "name": "Jamie Lopez"
+                },
+                "body": "Noted, thanks.",
+                "createdAt": "2026-05-12T10:00:00Z"
+              }
+            ]
+          }
+        }
+      ],
+      "discussions": []
+    },
+    {
+      "repo": "maya-reeves/atlas-api",
+      "id": 5202,
+      "owner": {
+        "id": 7001,
+        "login": "maya-reeves"
+      },
+      "threads": [
+        {
+          "__typename": "PullRequest",
+          "number": 1,
+          "title": "zqfilter TITLE_FORK_PULL",
+          "body": "zqfilter invented record BODY_FORK_PULL",
+          "state": "OPEN",
+          "createdAt": "2026-05-11T09:12:00Z",
+          "updatedAt": "2026-05-12T10:00:00Z",
+          "closedAt": null,
+          "url": "https://github.com/maya-reeves/atlas-api/pull/1",
+          "author": {
+            "__typename": "User",
+            "login": "maya-reeves",
+            "name": "Maya Reeves"
+          },
+          "labels": {
+            "nodes": []
+          },
+          "assignees": {
+            "nodes": []
+          },
+          "milestone": null,
+          "comments": {
+            "totalCount": 1,
+            "nodes": [
+              {
+                "author": {
+                  "__typename": "User",
+                  "login": "jamie-lopez",
+                  "name": "Jamie Lopez"
+                },
+                "body": "Noted, thanks.",
+                "createdAt": "2026-05-12T10:00:00Z"
+              }
+            ]
+          },
+          "isDraft": false,
+          "merged": false,
+          "mergedAt": null,
+          "mergedBy": null,
+          "baseRefName": "main",
+          "headRefName": "invented-change",
+          "additions": 4,
+          "deletions": 1,
+          "changedFiles": 1,
+          "files": {
+            "pageInfo": {
+              "hasNextPage": false
+            },
+            "nodes": [
+              {
+                "path": "README.md",
+                "additions": 4,
+                "deletions": 1
+              }
+            ]
+          },
+          "reviews": {
+            "pageInfo": {
+              "hasNextPage": false
+            },
+            "nodes": []
+          },
+          "closingIssuesReferences": {
+            "nodes": []
+          },
+          "mergeCommit": null
+        }
+      ],
+      "discussions": []
+    },
+    {
+      "repo": "maya-reeves/sketches",
+      "threads": [
+        {
+          "__typename": "Issue",
+          "number": 1,
+          "title": "zqfilter TITLE_SKETCHES_ISSUE",
+          "body": "zqfilter invented record BODY_SKETCHES_ISSUE",
+          "state": "OPEN",
+          "createdAt": "2026-05-11T09:12:00Z",
+          "updatedAt": "2026-05-12T10:00:00Z",
+          "closedAt": null,
+          "url": "https://github.com/maya-reeves/sketches/issues/1",
+          "author": {
+            "__typename": "User",
+            "login": "maya-reeves",
+            "name": "Maya Reeves"
+          },
+          "labels": {
+            "nodes": []
+          },
+          "assignees": {
+            "nodes": []
+          },
+          "milestone": null,
+          "comments": {
+            "totalCount": 1,
+            "nodes": [
+              {
+                "author": {
+                  "__typename": "User",
+                  "login": "jamie-lopez",
+                  "name": "Jamie Lopez"
+                },
+                "body": "Noted, thanks.",
+                "createdAt": "2026-05-12T10:00:00Z"
+              }
+            ]
+          }
+        }
+      ],
+      "discussions": []
+    }
+  ]
+}

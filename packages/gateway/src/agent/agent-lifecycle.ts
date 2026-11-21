@@ -19,8 +19,6 @@ import { join } from "node:path";
 import {
   AnthropicBackend,
   HttpAgentBackend,
-  buildBuiltinTools,
-  CitationReads,
   selectNonCitationTools,
   createBuiltinSpecialistRegistry,
   type ToolHandle,
@@ -45,7 +43,6 @@ import { directIndexWriteGate } from "../indexer/index-write-gate.js";
 import { bootOmnesisChat } from "../sources/omnesis-chat/index.js";
 import { listSources } from "../data/repositories/SourceRepository.js";
 import { retainOmnesisChatConversation } from "../sources/omnesis-chat/wiring.js";
-import { resolveSelfMemory } from "../brain/self-memory.js";
 import { AnswerService } from "../privacy/answer-service.js";
 import { PrivacyPolicyStore } from "../privacy/policy-store.js";
 import { PrivacyAdminService } from "../privacy/admin-service.js";
@@ -55,6 +52,10 @@ import { toCognitionRunUsage } from "../brain/run-driver.js";
 import { renderOperatorInstructionsSection } from "../instructions/render.js";
 import { captureKnowledgeRootContext } from "../brain/knowledge/root-context.js";
 import { namedPagesNote, renderKnowledgePageDirectory } from "../brain/knowledge/page-directory.js";
+import {
+  createExternalAnswerTools,
+  resolveExternalAnswerContext,
+} from "./external-answer-scope.js";
 import { renderNoteConversationContext } from "./note-context.js";
 import { makeReplayBackendFactory } from "./replay-factory.js";
 import {
@@ -62,11 +63,6 @@ import {
   resolveViewingTtlMs,
   type ConversationReadStatePort,
 } from "./conversation-read-state-service.js";
-import {
-  createGatewayDocumentByUrlPort,
-  createGatewayDocumentPort,
-  createGatewaySearchPort,
-} from "./ports.js";
 import { createGatewayAgentPorts } from "./tool-ports.js";
 import { AgentService, type AgentAnswerNotification, type AgentPromptContext } from "./service.js";
 import { StoredConversationReader } from "./conversation-reader.js";
@@ -75,6 +71,8 @@ import {
   renderSourceRestrictedAnswerSection,
   rendersTimeline,
 } from "./system-prompt.js";
+import type { AnswerScopeReadObserver } from "../privacy/answer-scope.js";
+import type { AnswerHistoryReads } from "../privacy/context-reads.js";
 import type {
   HistoryCleanupCandidate,
   HistoryCleanupOutcome,
@@ -423,16 +421,19 @@ export function createAgentService(
       copyableValues?: boolean;
       authorization?: CorpusAuthorization;
       memoryWrites?: boolean;
+      scopeReads?: AnswerScopeReadObserver;
     },
   ): Promise<string> => {
     const restricted = options.authorization?.restricted === true;
-    const catalog = restricted ? [] : await analyticsDb.getCatalog();
+    const { catalog, selfMemory, selfPersonId } = await resolveExternalAnswerContext(
+      db,
+      analyticsDb,
+      options.authorization,
+      options.scopeReads,
+    );
     const sourceTypes = permittedSourceTypes(options.authorization);
     const experimental = restricted ? false : experimentalVisible();
-    const { selfMemory, selfPersonId } = resolveSelfMemory(db, !restricted);
-    // Deliberately NOT gated on `restricted`, unlike the catalog, the
-    // experimental sections and the self-memory above. Those are corpus
-    // exposure, which a scoped grant must not widen. This is the operator
+    // The operator's standing instructions apply to every audience. This is the operator
     // telling their own agent how to behave, and it applies whoever asked —
     // what may actually leave the machine is still the privacy reviewer's call.
     const operatorInstructions = deps.getOperatorInstructions?.() ?? "";
@@ -454,7 +455,7 @@ export function createAgentService(
       selfPersonId,
       knowledgeRootContext:
         restricted || !knowledgeReads ? root.text : root.text + renderKnowledgePageDirectory(db),
-      knowledgeReads,
+      knowledgeReads: knowledgeReads && !options.authorization?.scopePolicies.length,
       memoryWrites: options.memoryWrites === true && !restricted,
       temporal: !restricted,
       messageCounts: !restricted,
@@ -487,45 +488,20 @@ export function createAgentService(
         copyableValues: profile === "interactive",
         memoryWrites: profile !== "answer",
       }),
-    externalAnswerScope: async (authorization) => {
-      // `annotate_many` resolves each citation through the same restricted
-      // document port, so a restricted caller can cite only what it may read.
-      const safeNames = new Set([
-        "search_many",
-        "fetch_many",
-        "lookup_document_by_url",
-        "annotate_many",
-      ]);
-      const citationReads = new CitationReads();
-      const document = createGatewayDocumentPort(
+    externalAnswerScope: async (authorization, scopeReads) => {
+      const tools = createExternalAnswerTools({
         db,
+        analyticsDb,
+        searchPipeline,
         syncStatus,
-        { knowledgeReads, allowVerifiedAnswers },
         authorization,
-      );
-      const tools = buildBuiltinTools({
-        citationReads,
-        experimental: false,
-        ports: {
-          search: createGatewaySearchPort(
-            searchPipeline,
-            syncStatus,
-            db,
-            authorization,
-            knowledgeReads,
-          ),
-          document,
-          documentByUrl: createGatewayDocumentByUrlPort(
-            db,
-            syncStatus,
-            authorization,
-            knowledgeReads,
-          ),
-        },
-      }).filter((tool) => safeNames.has(tool.name));
+        knowledgeReads,
+        allowVerifiedAnswers,
+        scopeReads,
+      });
       const base = await buildLiveSystemPrompt(
         {},
-        { audience: "interactive", citationSurface: false, authorization },
+        { audience: "interactive", citationSurface: false, authorization, scopeReads },
       );
       return {
         tools,
@@ -607,6 +583,7 @@ export function createAgentService(
 
 /** Everything {@link AgentLifecycle} needs beyond the agent's own ports. */
 export interface AgentLifecycleDeps {
+  scopeHistoryReads?: AnswerHistoryReads;
   inferenceRegistry: InferenceRegistry;
   /** Config snapshot the initial boot resolves the agent from. */
   config: ReturnType<ConfigStore["get"]>;
@@ -1008,6 +985,7 @@ export class AgentLifecycle {
     this.privacyReviewerMaxToolIterations = maxToolIterations;
     return new AnswerService({
       db: this.deps.db,
+      scopeHistoryReads: this.deps.scopeHistoryReads,
       writeGate: this.deps.writeGate,
       agent: agentService,
       reviewer: this.privacyReviewer,

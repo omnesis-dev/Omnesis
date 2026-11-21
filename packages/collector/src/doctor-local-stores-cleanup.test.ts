@@ -2,9 +2,9 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { afterEach, expect, test, vi } from "vitest";
-import type { LocalStoreProbeResult } from "@omnesis/source-sdk";
-import { DoctorLocalStores } from "./doctor-local-stores.js";
 import { cleanupMarker, closeFixture, type ProbeOwner } from "../test/doctor-cleanup-fixtures.js";
+import { DoctorLocalStores } from "./doctor-local-stores.js";
+import type { LocalStoreProbeResult } from "@omnesis/source-sdk";
 
 afterEach(() => vi.useRealTimers());
 

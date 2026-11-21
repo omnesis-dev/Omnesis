@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import type { ChildProcess } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { StringDecoder } from "node:string_decoder";
@@ -11,6 +10,7 @@ import { e2eGatewayEnv, e2eTsxCommand } from "./gateway-env.js";
 import { killSubprocessGroup, registerSubprocessGroup } from "./subprocess-reaper.js";
 import { GATEWAY_TAILNET_ORIGIN } from "./tailnet-fixture-addresses.js";
 import { tailnetFixtureEnv } from "./tailnet-machine-env.js";
+import type { ChildProcess } from "node:child_process";
 import type { TailnetMachine } from "./tailnet-harness.js";
 
 const commands = new WeakMap<TailnetMachine, Set<ChildProcess>>();

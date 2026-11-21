@@ -98,6 +98,11 @@ const PEOPLE_BACKFILL_SLICE_MS = 50;
 // limit. The slice leaves room for one more unit inside the same bound.
 const PLANNER_STATISTICS_SLICE_MS = 50;
 
+// A page of a published filter list is written by the collector's own sync
+// request, at ingestion priority. A short slice keeps one large list from
+// holding back the pages of every other source.
+const FILTER_LIST_STAGE_SLICE_MS = 50;
+
 function sliceDeadline(token: PreemptToken, sliceMs: number): () => boolean {
   const deadline = performance.now() + sliceMs;
   return () => token.requested() || performance.now() >= deadline;
@@ -516,10 +521,18 @@ import {
   recordSourceModeTransitionFailure,
   recordSourceModeTransitionPublicationFailure,
 } from "../data/repositories/SourceModeTransitionRepository.js";
+import { completeFilterIndexQueue } from "../indexer/filter-copy.js";
 import {
   upsertSourceDocumentProfiles,
   type SourceDocumentProfileEntry,
 } from "../data/repositories/SourceDocumentProfileRepository.js";
+import {
+  deleteFilterLists,
+  stageFilterListPart,
+  sweepFilterListRows,
+  type FilterListKey,
+  type StageFilterListPartArgs,
+} from "../data/repositories/SourceFilterListRepository.js";
 import {
   upsertConversationCitations,
   type ConversationCitationInput,
@@ -655,6 +668,12 @@ import {
   type PairingGenerationFence,
 } from "../data/pairing-generation-fence.js";
 import { applyTranscriptionVocabularyBatch } from "../transcribe/vocabulary/storage.js";
+import {
+  advanceFilterValuePasses,
+  applyFilterValueWork,
+  mergeFilterPostings,
+  type FilterValueWork,
+} from "../access/filter-values.js";
 import { advanceTranscriptionVocabularyRebuild } from "../transcribe/vocabulary/rebuild.js";
 import type { WorthAnswer } from "../worth/answers.js";
 import type { SelfIdentitySource } from "../self-identity-sources.js";
@@ -1544,11 +1563,18 @@ export const writerHandlers = {
   "sources.clearSourceRemoved": (db: Db, id: string) => clearSourceRemoved(db, SourceId(id)),
   "sources.clearSourceRemovedIfCleanupDone": (db: Db, id: string) =>
     clearSourceRemovedIfCleanupDone(db, SourceId(id)),
+  "documents.completeFilterIndexQueue": (db: Db, documentIds: string[]) =>
+    completeFilterIndexQueue(db, documentIds),
   "sources.upsertDocumentProfiles": (
     db: Db,
     entries: readonly SourceDocumentProfileEntry[],
     publishedAt: number,
   ) => upsertSourceDocumentProfiles(db, entries, publishedAt),
+  "filterLists.delete": (db: Db, sourceId: string, deviceId?: string) =>
+    deleteFilterLists(db, sourceId, deviceId),
+  "filterLists.sweep": (db: Db, cursor: FilterListKey | null, limit: number) =>
+    sweepFilterListRows(db, cursor, limit),
+  "filterValues.advancePasses": (db: Db, limit: number) => advanceFilterValuePasses(db, limit),
 
   // ── briefs (the Brain run queue) ─────────────────────────────
   "cognition.enqueue": (db: Db, input: EnqueueCognitionRunInput, now: number) =>
@@ -2106,6 +2132,25 @@ import type {
 
 export const writerYieldableHandlers = {
   /**
+   * One page of a published filter list, written in sub-batches. Gives the
+   * writer back once the slice is spent or a higher-priority write waits; the
+   * resumed call carries on from the row it stopped at.
+   */
+  "filterLists.stagePart": (
+    db: Db,
+    token: PreemptToken,
+    args: Omit<StageFilterListPartArgs, "resume">,
+    resume?: StageFilterListPartArgs["resume"],
+  ) => {
+    const result = stageFilterListPart(
+      db,
+      { ...args, resume },
+      { shouldYield: sliceDeadline(token, FILTER_LIST_STAGE_SLICE_MS) },
+    );
+    if (result.kind === "yield") return { kind: "yield" as const, resume: [args, result.resume] };
+    return result.outcome;
+  },
+  /**
    * Bounded by its step limit, by the preempt token and by a time slice
    * between steps; the frontier is durable per step, so stopping early only
    * leaves it pending for the caller's next call.
@@ -2116,6 +2161,16 @@ export const writerYieldableHandlers = {
     }),
   "vocabulary.advanceRebuild": (db: Db, token: PreemptToken, settings: VocabularySettings) =>
     advanceTranscriptionVocabularyRebuild(db, settings, token),
+  "filterValues.apply": (db: Db, token: PreemptToken, work: FilterValueWork[]) => {
+    const result = applyFilterValueWork(db, work, sliceDeadline(token, BACKGROUND_BATCH_SLICE_MS));
+    if (result.remaining.length) return { kind: "yield" as const, resume: [result.remaining] };
+    return { applied: result.applied };
+  },
+  "filterValues.mergePostings": (db: Db, token: PreemptToken, level: number) => {
+    const result = mergeFilterPostings(db, level, sliceDeadline(token, BACKGROUND_BATCH_SLICE_MS));
+    if (!result.done) return { kind: "yield" as const, resume: [level] };
+    return { moved: result.moved };
+  },
   "vocabulary.applyBatch": (db: Db, token: PreemptToken, docs: ExtractedVocabularyDocument[]) => {
     const result = applyTranscriptionVocabularyBatch(db, docs, token);
     if (result.remaining.length) return { kind: "yield" as const, resume: [result.remaining] };

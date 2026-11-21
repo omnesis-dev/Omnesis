@@ -348,6 +348,23 @@ export function setSyncState(
 }
 
 /**
+ * Record the source version of the page just committed on one cursor row. Runs
+ * in the page's transaction, after its cursor write. Each page overwrites the
+ * last, so the row reads 0 again as soon as its host sends a page without a
+ * version.
+ */
+export function setSyncStateSourceVersion(
+  db: Db,
+  sourceId: string,
+  deviceId: string,
+  sourceVersion: number,
+): void {
+  db.prepare(
+    "UPDATE sync_state SET source_version = ? WHERE source_id = ? AND device_id = ? AND source_version != ?",
+  ).run(sourceVersion, sourceId, deviceId, sourceVersion);
+}
+
+/**
  * Persist a sync error for a source. Writes `last_error` + `errored_at`
  * without touching `cursor` or `last_synced_at`, so the next read can
  * tell "errored after a previously-good sync" from "errored before any
@@ -424,7 +441,7 @@ export function listSyncStateSummaries(db: Db): SyncStateSummary[] {
     .prepare<[], SyncStateSummary>(
       `SELECT source_id, device_id, last_synced_at, icon, label, url_patterns, last_error,
               errored_at, last_error_remediation, content_retention, consent_expires_at,
-              last_document_at, minimum_gateway_version
+              last_document_at, minimum_gateway_version, source_version
          FROM sync_state`,
     )
     .all();

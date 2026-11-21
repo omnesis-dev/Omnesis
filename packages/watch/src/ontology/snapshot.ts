@@ -19,7 +19,7 @@
  * than silently letting a snapshot describe a world that cannot exist.
  */
 
-import { PERSON_ROLES } from "@omnesis/types";
+import { FILTER_IDENTIFIER_TYPES, PERSON_ROLES } from "@omnesis/types";
 import { z } from "zod";
 
 /** Dotted path under `metadata` — `tags`, `extra.threadId`. */
@@ -30,6 +30,44 @@ const metadataPathSchema = z
     "must be a dotted path under metadata",
   );
 
+const filterNounSchema = z.object({ one: z.string(), many: z.string() });
+
+/**
+ * How an access filter may match on a metadata field (`DocumentFieldFilterSpec`
+ * in the source contract).
+ *
+ * No node of a watch reads it, and both ontology hashes leave it out (see
+ * `declaredSource`). It is typed so the snapshot stays assignable to the source
+ * contract, and it falls back to absent instead of failing: a declaration this
+ * build cannot read, such as a capability added later, must not fail its
+ * field, which would drop the whole source and pause every watch on it.
+ */
+const fieldFilterSchema = z
+  .object({
+    capability: z.enum(["membership", "tree"]),
+    minVersion: z.number().int().min(0),
+    scope: z.enum(["global", "device"]),
+    noun: filterNounSchema,
+    levels: z.array(filterNounSchema).optional(),
+    picker: z.enum(["search", "tree"]),
+    inside: filterNounSchema.optional(),
+    listsMembers: z.boolean().optional(),
+  })
+  .optional()
+  .catch(undefined);
+
+/** The profile's `PersonFilterSpec`, held on the same terms as {@link fieldFilterSchema}. */
+const personFilterSchema = z
+  .object({
+    minVersion: z.number().int().min(0),
+    roles: z.array(z.enum(PERSON_ROLES).exclude(["mentioned"])),
+    identifiers: z.array(z.enum(FILTER_IDENTIFIER_TYPES)),
+    maxPeople: z.number().int().min(1).optional(),
+    membersOf: z.string().optional(),
+  })
+  .optional()
+  .catch(undefined);
+
 const documentMetadataFieldSpecSchema = z
   .object({
     path: metadataPathSchema,
@@ -39,6 +77,7 @@ const documentMetadataFieldSpecSchema = z
     canonicalValues: z.array(z.string()).optional(),
     valueAliases: z.record(z.string(), z.array(z.string())).optional(),
     identifiesPeople: z.boolean().optional(),
+    filter: fieldFilterSchema,
   })
   // Open for the same reason the analytics columns are, and the stakes here are
   // higher: an unrecognised key on a metadata field fails its field, which fails
@@ -52,6 +91,7 @@ const documentEventProfileSchema = z
     documentTypes: z.array(z.string().min(1)).optional(),
     personRoles: z.array(z.enum(PERSON_ROLES)).optional(),
     metadataFields: z.array(documentMetadataFieldSpecSchema).optional(),
+    personFilter: personFilterSchema,
   })
   .passthrough();
 

@@ -9,6 +9,8 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import {
   AccountId,
   SourceType,
@@ -33,8 +35,6 @@ import {
 import { getWipeEpoch, resetMemberCursor } from "./SyncStateRepository.js";
 import { recordDeletionClaims, recordPresenceClaims } from "./ReplicaDeletionClaimRepository.js";
 import type { Db } from "../types.js";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 const TYPE = SourceType("apple-notes");
 const PROVIDER = "apple";

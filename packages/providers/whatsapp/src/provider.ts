@@ -1597,6 +1597,16 @@ export class WhatsAppProvider implements Provider {
         .map((p) => (typeof p === "string" ? p : p?.id))
         .filter((j): j is string => typeof j === "string" && j.length > 0);
       if (jids.length === 0) return;
+      // A participant may arrive with both its LID and its phone; keeping the
+      // pair is what lets a member named by LID be known by number.
+      for (const participant of participants as Array<
+        string | { id?: string; lid?: string; phoneNumber?: string }
+      >) {
+        if (typeof participant !== "object" || !participant.phoneNumber) continue;
+        const lid =
+          participant.lid ?? (participant.id?.endsWith("@lid") ? participant.id : undefined);
+        if (lid) this.store.setLIDPhoneFromPn(lid, participant.phoneNumber);
+      }
       if (action === "add") {
         this.store.addGroupParticipants(id, jids);
       } else if (action === "remove") {

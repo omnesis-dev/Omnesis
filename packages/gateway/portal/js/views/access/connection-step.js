@@ -13,27 +13,31 @@
 import { html } from "htm/preact";
 import { useEffect, useRef } from "preact/hooks";
 
-import { CapabilityTriad } from "../../components/grant-builder.js";
 import {
   defaultPolicyFamilyId,
+  findPolicyFamily,
   newGrantRule,
   normalizeGrantRules,
-  policyFamilyId,
 } from "../../components/grant-builder-state.js";
 import { timeAgo } from "../../lib/format.js";
-import { ACCESS_NAME_MAX, NameField, NewLevelChoice, levelNameTaken, validAccessName } from "./name-fields.js";
+import {
+  ACCESS_NAME_MAX,
+  LevelChoice,
+  NEW_LEVEL,
+  NameField,
+  NewLevelChoice,
+  validAccessName,
+  validNewLevelName,
+} from "./name-fields.js";
 import {
   LEVEL_HELPER,
   accessLevels,
   accessRules,
   compareNames,
-  levelUsersLabel,
   connectionEntries,
   isLiveConnection,
   overviewPolicies,
 } from "./shared.js";
-
-export const NEW_LEVEL = "new";
 
 /**
  * The rules a new access level opens on.
@@ -67,7 +71,7 @@ function withKnownPolicy(rules, policies, fallbackPolicy) {
   const release = rules.answer?.release;
   if (
     release?.mode !== "reviewed" ||
-    policies.some((policy) => policyFamilyId(policy) === release.policyFamilyId)
+    findPolicyFamily(policies, release.policyFamilyId)
   ) {
     return rules;
   }
@@ -148,8 +152,7 @@ export function connectionStepReady(choice, options) {
   }
   if (!validAccessName(choice.name)) return false;
   if (choice.levelChoice === NEW_LEVEL) {
-    return validAccessName(choice.levelName)
-      && !levelNameTaken(choice.levelName, options.levels.map((option) => option.level));
+    return validNewLevelName(choice.levelName, options.levels.map((option) => option.level));
   }
   return options.levels.some((option) => option.level.id === choice.levelChoice && !option.disabled);
 }
@@ -176,25 +179,19 @@ function LevelChoices({ choice, options, match, onChange, disabled, idPrefix }) 
     <fieldset class="access-choice-list" disabled=${disabled}>
       <legend class="access-choice-legend">Access level</legend>
       <p class="access-choice-helper">${LEVEL_HELPER}</p>
-      ${options.levels.map((option) => html`<label
+      ${options.levels.map((option) => html`<${LevelChoice}
         key=${option.level.id}
-        class=${`access-choice-option${option.disabled ? " is-disabled" : ""}`}
+        radioName=${`${idPrefix}-level`}
+        level=${option.level}
+        rules=${option.rules}
+        checked=${choice.levelChoice === option.level.id}
+        onSelect=${() => onChange({ levelChoice: option.level.id })}
+        disabled=${option.disabled}
+        tag=${option.suggested ? html`<${SuggestedTag} />` : null}
       >
-        <input
-          type="radio"
-          name=${`${idPrefix}-level`}
-          checked=${choice.levelChoice === option.level.id}
-          disabled=${option.disabled}
-          onChange=${() => onChange({ levelChoice: option.level.id })}
-        />
-        <span class="access-choice-text">
-          <strong>${option.level.name}${option.suggested ? html`<${SuggestedTag} />` : null}</strong>
-          <small>${levelUsersLabel(option.level)}</small>
-          ${option.suggested ? html`<small>${`${match.connectionName} uses this access level.`}</small>` : null}
-          <${NeedsAnswer} disabled=${option.disabled} />
-        </span>
-        <${CapabilityTriad} rules=${option.rules} />
-      </label>`)}
+        ${option.suggested ? html`<small>${`${match.connectionName} uses this access level.`}</small>` : null}
+        <${NeedsAnswer} disabled=${option.disabled} />
+      <//>`)}
       <${NewLevelChoice}
         radioName=${`${idPrefix}-level`}
         checked=${choice.levelChoice === NEW_LEVEL}

@@ -16,7 +16,7 @@ consequences, so they are three separate declarations on
 | ---------------- | ------------------------------------------------------------------------- | ----------------------------------------------------------- | -------------------------------------------------------------- |
 | `apiVersion`     | Which generation of the authoring contract the package is written against | The authoring surface changes incompatibly                  | A host too old to run the package refuses to load it           |
 | `state.version`  | The shape of the bookmark the source persists                             | That shape changes                                          | The host runs the declared migration chain                     |
-| `outputRevision` | The meaning of what the source emits                                      | A normalizer produces different output from unchanged input | Makes a targeted backfill possible; nothing runs automatically |
+| `outputRevision` | The meaning of what the source emits                                      | A normalizer produces different output from unchanged input | Stored on every document; nothing is reprocessed automatically |
 
 `outputRevision` is the one with no predecessor anywhere in the tree, and it is
 the one that silently rots a corpus. A normalizer change leaves every previously

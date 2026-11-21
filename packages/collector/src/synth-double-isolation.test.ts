@@ -25,6 +25,11 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
+import {
+  mergeContractDeclarations,
+  resolveOutputRevision,
+  type SourceContractDeclaration,
+} from "@omnesis/source-sdk";
 import { providerPackageNames } from "./source-descriptors.js";
 
 interface Entry {
@@ -107,6 +112,49 @@ describe("synthetic doubles inherit no live path from their real twin", () => {
             `about this machine's filesystem stops the double instantiating at all.`,
         ).not.toBe(realValue);
       }
+    }
+  });
+});
+
+/**
+ * A double writes at its real twin's output revision.
+ *
+ * The revision is what a stored document says about the build that wrote it.
+ * A double drops the real declaration because it drives its own cursor, so
+ * nothing would otherwise make it follow when the real source raises its
+ * revision, and every synthetic corpus would then describe a build that no
+ * longer exists.
+ */
+describe("synthetic doubles write at their real twin's output revision", () => {
+  type Declared = { id?: string; contract?: SourceContractDeclaration; sources?: Declared[] };
+
+  /** Every source a package declares, with the revision it resolves to. */
+  function revisions(definition: Declared): Map<string, number> {
+    const entries = definition.sources
+      ? definition.sources.map(
+          (source) =>
+            [
+              source.id ?? "",
+              mergeContractDeclarations(definition.contract, source.contract),
+            ] as const,
+        )
+      : [[definition.id ?? "", definition.contract] as const];
+    return new Map(entries.map(([id, contract]) => [id, resolveOutputRevision(contract)]));
+  }
+
+  test.each(synthPackages)("%s", async (pkgName) => {
+    const synth = revisions(((await import(pkgName)) as { default: Declared }).default);
+    let real: Map<string, number>;
+    try {
+      real = revisions(
+        ((await import(pkgName.replace(/-synth$/, ""))) as { default: Declared }).default,
+      );
+    } catch (error) {
+      expect((error as { code?: string }).code).toBe("ERR_MODULE_NOT_FOUND");
+      return;
+    }
+    for (const [id, revision] of synth) {
+      if (real.has(id)) expect(revision, `${pkgName} (${id})`).toBe(real.get(id));
     }
   });
 });

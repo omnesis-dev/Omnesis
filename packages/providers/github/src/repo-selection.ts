@@ -4,6 +4,7 @@
 import { createLogger } from "@omnesis/core";
 import { SyncError } from "@omnesis/types";
 import type { GithubClient } from "./client.js";
+import type { RestRepoRow } from "./types.js";
 
 const log = createLogger("source:github");
 
@@ -108,25 +109,28 @@ export function reconcileMissingRepos(opts: {
   return { missing: Object.keys(missing).length > 0 ? missing : undefined, poison, swept };
 }
 
-export async function resolveRepoList(
+/** The listing rows of the repositories this source indexes, sorted by name. */
+export async function resolveRepos(
   client: GithubClient,
   sourceConfig: Record<string, unknown> | undefined,
-): Promise<string[]> {
+): Promise<RestRepoRow[]> {
   const { include, exclude: excludeList } = repoFilters(sourceConfig);
   const exclude = new Set(excludeList ?? []);
   const accessible = await client.listAccessibleRepos();
-  const byLower = new Map(accessible.map((r) => [r.full_name.toLowerCase(), r.full_name]));
+  const byLower = new Map(accessible.map((r) => [r.full_name.toLowerCase(), r]));
 
-  let names: string[];
+  let rows: RestRepoRow[];
   if (include) {
-    names = [];
+    rows = [];
     for (const want of include) {
       const found = byLower.get(want);
-      if (found) names.push(found);
+      if (found) rows.push(found);
       else log.warn(`Configured repo ${want} is not accessible to this token — skipping`);
     }
   } else {
-    names = accessible.map((r) => r.full_name);
+    rows = accessible;
   }
-  return names.filter((n) => !exclude.has(n.toLowerCase())).sort();
+  return rows
+    .filter((r) => !exclude.has(r.full_name.toLowerCase()))
+    .sort((a, b) => (a.full_name < b.full_name ? -1 : a.full_name > b.full_name ? 1 : 0));
 }

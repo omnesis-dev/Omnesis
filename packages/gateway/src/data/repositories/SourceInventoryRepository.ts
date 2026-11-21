@@ -10,6 +10,10 @@ export function createSourceInventoryTables(db: Database.Database): void {
     CREATE TABLE IF NOT EXISTS source_inventories (
       id TEXT PRIMARY KEY, source_id TEXT NOT NULL, cursor_row TEXT NOT NULL,
       started_at TEXT NOT NULL, first_received_at INTEGER NOT NULL, observed_at INTEGER NOT NULL, completed_at INTEGER,
+      min_source_version INTEGER NOT NULL DEFAULT 0,
+      -- When the source had read everything it holds for the account. Null
+      -- while it has not, and on an enumeration recorded before this was.
+      full_read_at INTEGER,
       UNIQUE(source_id,cursor_row,id)
     );
     CREATE INDEX IF NOT EXISTS source_inventories_scope ON source_inventories(source_id,cursor_row,observed_at DESC);
@@ -42,7 +46,18 @@ export function hasSourceInventoryTables(db: Database.Database): boolean {
     .get();
 }
 
-/** Called inside each document chunk or final cursor transaction; retries never reopen completion. */
+/**
+ * Called inside each document chunk or final cursor transaction; retries never reopen completion.
+ *
+ * `sourceVersion` is the version the page was sent at. The inventory keeps the
+ * lowest one among its pages, so an enumeration whose host was upgraded part
+ * way through is recorded at the version it started with.
+ *
+ * `fullRead` says the page ends a read of everything the source holds. It
+ * defaults to `complete`: the last page of an enumeration from an empty
+ * cursor is the whole account, unless the source said it imports older
+ * history later. `completed_at` keeps its own meaning either way.
+ */
 export function recordSourceInventoryPage(
   db: Database.Database,
   sourceId: string,
@@ -50,6 +65,8 @@ export function recordSourceInventoryPage(
   inventory: InitialSourceInventory,
   complete: boolean,
   now: number,
+  sourceVersion = 0,
+  fullRead = complete,
 ): void {
   const existing = db
     .prepare<[string], { source_id: string; cursor_row: string; started_at: string }>(
@@ -64,10 +81,109 @@ export function recordSourceInventoryPage(
   )
     throw new Error("Initial inventory identity belongs to another source enumeration");
   db.prepare(
-    `INSERT INTO source_inventories(id,source_id,cursor_row,started_at,first_received_at,observed_at,completed_at)
-    VALUES(?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET observed_at=excluded.observed_at,
-      completed_at=COALESCE(source_inventories.completed_at,excluded.completed_at)`,
-  ).run(inventory.id, sourceId, cursorRow, inventory.startedAt, now, now, complete ? now : null);
+    `INSERT INTO source_inventories(id,source_id,cursor_row,started_at,first_received_at,observed_at,completed_at,min_source_version,full_read_at)
+    VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET observed_at=excluded.observed_at,
+      completed_at=COALESCE(source_inventories.completed_at,excluded.completed_at),
+      min_source_version=MIN(source_inventories.min_source_version,excluded.min_source_version),
+      full_read_at=COALESCE(source_inventories.full_read_at,excluded.full_read_at)`,
+  ).run(
+    inventory.id,
+    sourceId,
+    cursorRow,
+    inventory.startedAt,
+    now,
+    now,
+    complete ? now : null,
+    sourceVersion,
+    complete && fullRead ? now : null,
+  );
+}
+
+/**
+ * Account for a cursor page that carries no enumeration identity: a page of
+ * a later cycle.
+ *
+ * It matters only to a source that imports its history in stages. Its first
+ * enumeration ended without having read everything, so the pages that follow
+ * are still part of the read: each one lowers the enumeration's version to
+ * its own when it is lower, and the page on which the source says it has now
+ * read everything (`fullRead`) completes it. An enumeration already marked as
+ * a full read is left alone, so this is one indexed row for most pages.
+ */
+export function recordSourcePageAfterInventory(
+  db: Database.Database,
+  sourceId: string,
+  cursorRow: string,
+  page: { sourceVersion: number; fullRead: boolean; now: number },
+): void {
+  db.prepare(
+    `UPDATE source_inventories
+        SET min_source_version = MIN(min_source_version, ?),
+            full_read_at = CASE WHEN ? THEN ? ELSE NULL END
+      WHERE id = (SELECT id FROM source_inventories
+                   WHERE source_id = ? AND cursor_row = ?
+                   ORDER BY observed_at DESC, id DESC LIMIT 1)
+        AND completed_at IS NOT NULL AND full_read_at IS NULL
+        AND (min_source_version > ? OR ?)`,
+  ).run(
+    page.sourceVersion,
+    page.fullRead ? 1 : 0,
+    page.now,
+    sourceId,
+    cursorRow,
+    page.sourceVersion,
+    page.fullRead ? 1 : 0,
+  );
+}
+
+/** One enumeration of a source by one cursor row, as the readiness of a filter reads it. */
+export interface SourceFullRead {
+  cursorRow: string;
+  /** The lowest source version among the pages of the read. */
+  minSourceVersion: number;
+  fullReadAt: number;
+}
+
+/**
+ * For each cursor row of a source, the full read made at the highest
+ * version: the answer to "has this host read the whole account at version V
+ * or later". A cursor row with no full read is absent.
+ */
+export function listSourceFullReads(db: Database.Database, sourceId: string): SourceFullRead[] {
+  if (!hasSourceInventoryTables(db)) return [];
+  return db
+    .prepare<[string], SourceFullRead>(
+      `SELECT cursor_row AS cursorRow, MAX(min_source_version) AS minSourceVersion,
+              MAX(full_read_at) AS fullReadAt
+         FROM source_inventories
+        WHERE source_id = ? AND full_read_at IS NOT NULL
+        GROUP BY cursor_row`,
+    )
+    .all(sourceId);
+}
+
+/** An enumeration of a source that has started and not yet read everything. */
+export interface SourceOpenRead {
+  cursorRow: string;
+  minSourceVersion: number;
+}
+
+/** The latest enumeration of each cursor row of a source, when it is not yet a full read. */
+export function listSourceOpenReads(db: Database.Database, sourceId: string): SourceOpenRead[] {
+  if (!hasSourceInventoryTables(db)) return [];
+  return db
+    .prepare<[string], SourceOpenRead & { fullReadAt: number | null }>(
+      `SELECT i.cursor_row AS cursorRow, i.min_source_version AS minSourceVersion,
+              i.full_read_at AS fullReadAt
+         FROM source_inventories i
+        WHERE i.source_id = ?
+          AND i.id = (SELECT latest.id FROM source_inventories latest
+                       WHERE latest.source_id = i.source_id AND latest.cursor_row = i.cursor_row
+                       ORDER BY latest.observed_at DESC, latest.id DESC LIMIT 1)`,
+    )
+    .all(sourceId)
+    .filter((row) => row.fullReadAt === null)
+    .map(({ cursorRow, minSourceVersion }) => ({ cursorRow, minSourceVersion }));
 }
 
 /** Only a newly inserted document is inventory. Updating an existing document remains reactive. */

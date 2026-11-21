@@ -186,6 +186,8 @@ import {
   nearDupInboxFlushTask,
   indexerWakeTask,
   createCleanupTasks,
+  createFilterListSweepTask,
+  createFilterValuesTask,
   createBackendReprobeTask,
   createSubscriptionDeliveriesTask,
   type PeriodicTask,
@@ -267,6 +269,7 @@ import { DERIVATION_STAGES, type DerivationStage } from "./domain/DocumentDeriva
 import { subscribeDerivationNudge } from "./scheduler/tasks/derivation-nudge.js";
 import { SubscriptionDeliveryService } from "./subscriptions/delivery.js";
 import { AnswerCompletionDeliveryService } from "./privacy/completion-delivery.js";
+import { assertAnswerTaskReleaseCurrent } from "./privacy/answer-scope.js";
 import { createWatchFiringThreadOpener } from "./watch/firing-thread.js";
 import { ApnsClient } from "./push/transports/direct-apns.js";
 import { FcmClient } from "./push/transports/direct-fcm.js";
@@ -1140,6 +1143,8 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
   searchPipeline.setKnowledgeReadability(ioGate);
   searchPipeline.setProvenanceReads(ioGate);
   searchPipeline.setResultLinkReads(ioGate);
+  // A filtered search checks its results against the corpus on the io worker.
+  searchPipeline.setFilterRecheckReads(ioGate);
 
   // Dedicated search-worker pool (Slice 3B): relocate the heavy
   // candidate-generation block (BM25 + usearch + fusion/boost/diversity + hydrate)
@@ -1539,6 +1544,7 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
     temporalStoreReads: ioGate,
     // The Privacy page's exchange pages read off the main loop.
     privacyExchangeReads: ioGate,
+    scopeHistoryReads: ioGate,
     deleteDocumentIndexBatch: async (documentId, limit, sourceDeleted) => {
       return indexerLifecycle.deleteDocumentIndexBatch(documentId, limit, sourceDeleted);
     },
@@ -1870,6 +1876,7 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
     };
 
   const indexerLifecycle: IndexerLifecycle = new IndexerLifecycle({
+    completeFilterIndexQueue: (documentIds) => writeGate.completeFilterIndexQueue(documentIds),
     inferenceRegistry,
     configStore,
     indexerStatus,
@@ -3897,6 +3904,37 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
     },
     scheduler,
   );
+  // Published filter lists are replaced by writing a new version beside the old
+  // one; this collects the versions nothing reads any more.
+  const filterListSweepTask = createFilterListSweepTask({
+    writeGate,
+    log: log.child("filter-lists"),
+  });
+  scheduleAfterRepairs(filterListSweepTask);
+  const filterListSweepJob = periodicJob(filterListSweepTask, {
+    scheduler,
+    displayName: "Filter list cleanup",
+    description:
+      "Deletes replaced versions of the lists sources publish for their filterable fields.",
+    category: "infra",
+    tracker: new StatelessTracker(),
+  });
+  // The filter rows of records no sync page wrote: an upgrade's records, an
+  // account whose declaration changed, records another write changed.
+  const filterValuesTask = createFilterValuesTask({
+    ioGate,
+    writeGate,
+    log: log.child("filter-values"),
+  });
+  scheduleAfterRepairs(filterValuesTask);
+  const filterValuesJob = periodicJob(filterValuesTask, {
+    scheduler,
+    displayName: "Filter rows",
+    description:
+      "Writes the indexed filter details of records that were stored without them, so filter counts and previews stay fast.",
+    category: "infra",
+    tracker: new StatelessTracker(),
+  });
   const pushWakeRetryHandle = scheduleAfterRepairs(pushWakeRetryBundle.task);
   const cleanupHandles = cleanupBundle.tasks.map((t) => scheduleAfterRepairs(t));
   void cleanupHandles;
@@ -4080,6 +4118,7 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
     writeGate,
     transport: wsServer,
     getDevice: (id) => getDevice(db, id),
+    assertTaskScopeCurrent: (taskId) => assertAnswerTaskReleaseCurrent(db, taskId),
     log: log.child("privacy:completion-delivery"),
   });
   const answerCompletionDeliveryHandle = scheduleAfterRepairs({
@@ -4118,6 +4157,8 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
     nearDupInboxFlushBundle.job,
     indexerWakeBundle.job,
     ...cleanupBundle.jobs,
+    filterListSweepJob,
+    filterValuesJob,
     pushWakeRetryBundle.job,
     activityRetentionBundle.job,
     absenceSweepBundle.job,

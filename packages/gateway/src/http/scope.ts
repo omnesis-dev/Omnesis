@@ -62,6 +62,7 @@ export type AuthPolicy =
   | "answer-mcp"
   | "admin"
   | "portal-admin"
+  | "access-editor-admin"
   | "legacy-mcp-self-revoke"
   | "write-any"
   | "subscriptions-manage"
@@ -238,6 +239,19 @@ function portalAdmin(): GuardMW {
   }, "portal-admin");
 }
 
+/** Native owner editors use device credentials; cookie edits retain synchronizer protection. */
+function accessEditorAdmin(isNativeOwner: (deviceId: string) => boolean): GuardMW {
+  return tag(async (c, next) => {
+    const auth = getAuth(c);
+    if (!auth) return unauth(c);
+    if (!scopeSatisfies(auth.scopes, SCOPE_ADMIN)) return forbidden(c, "admin scope required");
+    if (auth.authMethod === "portal-session") requirePortalCsrf(c, auth);
+    else if (auth.authMethod !== "bearer" || !auth.deviceId || !isNativeOwner(auth.deviceId))
+      return forbidden(c, "a paired native owner device or portal session is required");
+    await next();
+  }, "access-editor-admin");
+}
+
 /**
  * One-time cutover boundary for a retired stdio MCP credential. Possession of
  * the exact legacy bearer is the proof needed to destroy it; it grants no
@@ -395,6 +409,7 @@ export const scope = {
   deviceSelf,
   admin,
   portalAdmin,
+  accessEditorAdmin,
   legacyMcpSelfRevoke,
   writeAny,
   deviceWs,

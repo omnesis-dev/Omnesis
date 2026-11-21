@@ -4,14 +4,14 @@
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, expect, test } from "vitest";
 
 import { createDatabase } from "../../db.js";
 import { listDocumentIds, upsertDocuments } from "./DocumentRepository.js";
 import type { Db } from "../types.js";
 import type { DocumentInput } from "@omnesis/types";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 let db: Db;
 let dbPath: string;

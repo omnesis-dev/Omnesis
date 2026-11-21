@@ -16,6 +16,8 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import { RecordPortError } from "@omnesis/agent";
 import { recordReference, REDACTED_VALUE } from "@omnesis/core";
@@ -29,8 +31,6 @@ import { createGatewayRecordPort } from "./ports.js";
 import type Database from "better-sqlite3";
 import type { AnalyticsTableSchema } from "@omnesis/source-sdk";
 import type { ActivitySample } from "../observability/stall-protocol.js";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 type Db = Database.Database;
 

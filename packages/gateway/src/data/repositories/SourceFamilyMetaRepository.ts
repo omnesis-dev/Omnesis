@@ -25,30 +25,33 @@ export function setSourceFamilyMeta(db: Db, sourceType: string, meta: SourceFami
   // a family with no fields at all writes nothing rather than an empty row.
   //
   // A family's identity is declared in code, so every sync page of every
-  // account of that type pushes the same four values. The conflict arm's
+  // account of that type pushes the same values. The conflict arm's
   // WHERE makes the repeat a no-op page instead of a writer-thread write:
   // it fires only when the merged row would actually differ from the stored
   // one (`IS NOT` is SQLite's null-safe comparison).
-  if (!meta.icon && !meta.label && !meta.bgColor && !meta.accentColor) return;
+  if (!meta.icon && !meta.label && !meta.bgColor && !meta.accentColor && !meta.resyncCost) return;
   retryOnBusy(
     () =>
       db
         .prepare(
           `INSERT INTO source_family_meta
-             (source_type, icon, label, bg_color, accent_color, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?)
+             (source_type, icon, label, bg_color, accent_color, resync_cost, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(source_type) DO UPDATE SET
              icon = COALESCE(excluded.icon, source_family_meta.icon),
              label = COALESCE(excluded.label, source_family_meta.label),
              bg_color = COALESCE(excluded.bg_color, source_family_meta.bg_color),
              accent_color = COALESCE(excluded.accent_color, source_family_meta.accent_color),
+             resync_cost = COALESCE(excluded.resync_cost, source_family_meta.resync_cost),
              updated_at = excluded.updated_at
            WHERE COALESCE(excluded.icon, source_family_meta.icon) IS NOT source_family_meta.icon
               OR COALESCE(excluded.label, source_family_meta.label) IS NOT source_family_meta.label
               OR COALESCE(excluded.bg_color, source_family_meta.bg_color)
                    IS NOT source_family_meta.bg_color
               OR COALESCE(excluded.accent_color, source_family_meta.accent_color)
-                   IS NOT source_family_meta.accent_color`,
+                   IS NOT source_family_meta.accent_color
+              OR COALESCE(excluded.resync_cost, source_family_meta.resync_cost)
+                   IS NOT source_family_meta.resync_cost`,
         )
         .run(
           sourceType,
@@ -56,6 +59,7 @@ export function setSourceFamilyMeta(db: Db, sourceType: string, meta: SourceFami
           meta.label ?? null,
           meta.bgColor ?? null,
           meta.accentColor ?? null,
+          meta.resyncCost ?? null,
           new Date().toISOString(),
         ),
     { op: "setSourceFamilyMeta" },
@@ -87,6 +91,21 @@ export function getSourceFamilyMeta(db: Db): Record<string, SourceMetaEntry> {
       out[row.source_type] = entry;
   }
   return out;
+}
+
+/**
+ * The sentence a source type declares about what a resync costs, or `null`
+ * when it declares none. Kept out of {@link getSourceFamilyMeta}: that is the
+ * display identity every client loads for every source, and this is read only
+ * where a resync is being offered.
+ */
+export function getSourceResyncCost(db: Db, sourceType: string): string | null {
+  const row = db
+    .prepare<[string], { resync_cost: string | null }>(
+      "SELECT resync_cost FROM source_family_meta WHERE source_type = ?",
+    )
+    .get(sourceType);
+  return row?.resync_cost ?? null;
 }
 
 /**

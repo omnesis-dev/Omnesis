@@ -13,6 +13,8 @@
 
 import { existsSync, rmSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { AccountId, SourceId, SourceType, type DeviceId } from "@omnesis/types";
 import { createDatabase } from "../../db.js";
@@ -22,6 +24,10 @@ import {
   listPendingSourceRemovals,
   markSourceRemoved,
 } from "../../data/repositories/SourceRepository.js";
+import {
+  listFilterListDigests,
+  stageFilterListPart,
+} from "../../data/repositories/SourceFilterListRepository.js";
 import { directWriteGate } from "../../write-gate.js";
 import { SourceWriteEpochFence, epochScope } from "../../source-write-epoch-fence.js";
 import {
@@ -31,8 +37,6 @@ import {
 import { SourceService } from "./SourceService.js";
 import { StatusCache } from "./StatusCache.js";
 import type Database from "better-sqlite3";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 let DEVICE: DeviceId;
 const SOURCE = SourceId("gmail:maya.reeves@example.com");
@@ -181,6 +185,28 @@ describe("the pending removal clears when the purge finishes", () => {
     await service.deleteSource(SOURCE);
     await vi.waitFor(() => expect(isSourceCleanupPending(db, SOURCE)).toBe(false));
     expect(service.listPendingRemovals()).toEqual([]);
+  });
+
+  test("the removed source's filter lists are forgotten, and no other source's", async () => {
+    const service = buildService({ deleteIndexBySource: async () => 0 });
+    await seedSource(service);
+    const publish = (sourceId: string) =>
+      stageFilterListPart(db, {
+        key: { sourceId, field: "extra.labelIds", deviceId: "" },
+        digest: "a".repeat(64),
+        part: 0,
+        final: true,
+        rows: [["item", "l-finance", null, "Finance"]],
+        now: 1000,
+      });
+    publish(SOURCE);
+    publish("gmail:jamie.lopez@example.com");
+
+    await service.deleteSource(SOURCE);
+    await vi.waitFor(() => expect(isSourceCleanupPending(db, SOURCE)).toBe(false));
+
+    expect(listFilterListDigests(db, SOURCE)).toEqual([]);
+    expect(listFilterListDigests(db, "gmail:jamie.lopez@example.com")).toHaveLength(1);
   });
 
   test("a failed purge stays pending rather than reporting a removal that did not happen", async () => {

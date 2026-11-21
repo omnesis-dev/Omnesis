@@ -12,6 +12,8 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { createDatabase } from "../db.js";
 import { Scheduler } from "../scheduler/scheduler.js";
@@ -21,8 +23,6 @@ import { LiveOntology } from "./ontology.js";
 import { readPeopleDirectory } from "./people-directory.js";
 import type Database from "better-sqlite3";
 import type { Db } from "../data/types.js";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 const WORKER_URL = new URL("../workers/io-worker.ts", import.meta.url);
 const LOADER_URL = new URL("../workers/register-tsx.mjs", import.meta.url).href;

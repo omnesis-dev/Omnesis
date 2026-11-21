@@ -3,6 +3,8 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { AccountId, SourceType } from "@omnesis/types";
 import { createDatabase, getSyncState, setSyncError } from "../../db.js";
@@ -12,8 +14,6 @@ import { SourceWriteEpochFence } from "../../source-write-epoch-fence.js";
 import { directWriteGate, type WriteGate } from "../../write-gate.js";
 import { SourceSyncStateService } from "./SourceSyncStateService.js";
 import type Database from "better-sqlite3";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 describe("SourceSyncStateService attempt revocation", () => {
   let sqlite: Database.Database;

@@ -87,7 +87,7 @@ describe("search page address", () => {
         .dispatchEvent(new window.Event("submit", { bubbles: true, cancelable: true }));
     });
     await flush();
-    expect(replaceState).toHaveBeenCalledWith(null, "", "/portal/search?q=invoice%20from%20March");
+    expect(replaceState).toHaveBeenCalledWith({ __omnesisRouteIndex: 0 }, "", "/portal/search?q=invoice%20from%20March");
   });
 
   it("leaves other addresses this view answers alone", async () => {

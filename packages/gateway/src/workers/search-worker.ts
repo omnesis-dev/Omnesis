@@ -51,6 +51,7 @@
 import { parentPort } from "node:worker_threads";
 
 import { assertNever } from "@omnesis/core";
+import { registerFilterSqlFunctions } from "../access/filter-people.js";
 import { runCandidateGen } from "../search/candidate-gen.js";
 import {
   parseTemporalIntent,
@@ -105,6 +106,8 @@ function openSearchIndexConn(
     ...(indexDbKeyHex ? { encryptionKey: Buffer.from(indexDbKeyHex, "hex") } : {}),
   });
   db.exec("PRAGMA temp_store = MEMORY");
+  // A filtered search's candidate statements use the filter check's functions.
+  registerFilterSqlFunctions(db);
   return db;
 }
 

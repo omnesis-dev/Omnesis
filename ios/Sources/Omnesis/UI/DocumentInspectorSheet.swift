@@ -33,6 +33,8 @@ struct DocumentInspectorSheet: View {
     let onLoadMoreOutbound: () -> Void
     let onLoadMoreInbound: () -> Void
     let onLoadMoreNearDupes: () -> Void
+    /// What a filter can see on the document, for a preview that has no gateway to load it from.
+    let previewFilterDetails: DocumentFilterDetails?
 
     enum Tab: Hashable { case metadata, graph, timeline }
     @State private var tab: Tab
@@ -50,7 +52,8 @@ struct DocumentInspectorSheet: View {
         onLoadMoreOutbound: @escaping () -> Void = {},
         onLoadMoreInbound: @escaping () -> Void = {},
         onLoadMoreNearDupes: @escaping () -> Void = {},
-        initialTab: Tab = .metadata
+        initialTab: Tab = .metadata,
+        previewFilterDetails: DocumentFilterDetails? = nil
     ) {
         self.doc = doc
         self.people = people
@@ -64,6 +67,7 @@ struct DocumentInspectorSheet: View {
         self.onLoadMoreOutbound = onLoadMoreOutbound
         self.onLoadMoreInbound = onLoadMoreInbound
         self.onLoadMoreNearDupes = onLoadMoreNearDupes
+        self.previewFilterDetails = previewFilterDetails
         self._tab = State(initialValue: initialTab)
     }
 
@@ -91,7 +95,7 @@ struct DocumentInspectorSheet: View {
                         VStack(alignment: .leading, spacing: Theme.Spacing.md) {
                             switch tab {
                             case .metadata:
-                                MetadataPane(doc: doc)
+                                MetadataPane(doc: doc, previewFilterDetails: previewFilterDetails)
                             case .graph:
                                 GraphPane(
                                     doc: doc,
@@ -260,10 +264,13 @@ private struct TimelinePane: View {
 
 @available(iOS 17.0, *)
 private struct MetadataPane: View {
+    @Environment(AppStore.self) private var store
     let doc: DocumentDetail
+    let previewFilterDetails: DocumentFilterDetails?
 
     var body: some View {
         coreFields
+        DocumentAccessSection(documentId: doc.id, previewDetails: previewFilterDetails)
         if !tags.isEmpty {
             tagsCard
         }
@@ -278,7 +285,7 @@ private struct MetadataPane: View {
         FlatSection("Document") {
             VStack(alignment: .leading, spacing: 6) {
                 kv("Type", value: docTypeLabel(doc.documentType) ?? "—")
-                kv("Source", value: humanName(for: sourceTypeFromId(doc.sourceId)))
+                kv("Source", value: documentSourceLine(doc.sourceId, store: store))
                 if let url = doc.sourceUrl, !url.isEmpty {
                     kv("URL", value: url, mono: true)
                 }
@@ -315,12 +322,12 @@ private struct MetadataPane: View {
     private var timestampsCard: some View {
         FlatSection("Timestamps") {
             VStack(alignment: .leading, spacing: 6) {
-                kv("Created", value: doc.sourceCreatedAt, mono: true)
+                kv("Created", value: inspectorTimestamp(doc.sourceCreatedAt))
                 if let u = doc.sourceUpdatedAt {
-                    kv("Updated", value: u, mono: true)
+                    kv("Updated", value: inspectorTimestamp(u))
                 }
                 if let i = doc.ingestedAt {
-                    kv("Ingested", value: i, mono: true)
+                    kv("Ingested", value: inspectorTimestamp(i))
                 }
             }
         }
@@ -340,17 +347,7 @@ private struct MetadataPane: View {
     // MARK: helpers
 
     private func kv(_ key: String, value: String, mono: Bool = false) -> some View {
-        HStack(alignment: .top) {
-            Text(key)
-                .font(.system(size: 12))
-                .foregroundStyle(Theme.textSecondary)
-            Spacer(minLength: 12)
-            Text(value)
-                .font(mono ? Theme.monospace(size: 11) : .system(size: 12))
-                .foregroundStyle(Theme.textPrimary)
-                .multilineTextAlignment(.trailing)
-                .textSelection(.enabled)
-        }
+        InspectorKeyValue(key: key, value: value, mono: mono)
     }
 
     /// Tags pulled from `metadata.tags` (string array on the wire).

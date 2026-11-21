@@ -17,6 +17,7 @@
  * binding zero variables for the id set.
  */
 
+import { scopeSearchSql } from "./scope-authorization.js";
 import type Database from "better-sqlite3";
 type Db = Database.Database;
 
@@ -32,7 +33,7 @@ export interface DocIdRestriction {
   /** SQL fragment to splice into the WHERE clause: a leading ` AND …`, or `""`. */
   clause: string;
   /** Bound params the clause contributes — empty for the temp-table path. */
-  params: readonly string[];
+  params: readonly (string | number)[];
 }
 
 /**
@@ -61,12 +62,22 @@ export function withDocIdRestriction<T>(
   documentIds: readonly string[] | undefined,
   body: (restriction: DocIdRestriction) => T,
 ): T {
+  const scope = scopeSearchSql(db, column, `${column.split(".")[0]}.source_id`);
+  const apply = (restriction: DocIdRestriction) =>
+    body(
+      scope.sql === "1"
+        ? restriction
+        : {
+            clause: `${restriction.clause} AND (${scope.sql})`,
+            params: [...restriction.params, ...scope.params],
+          },
+    );
   if (documentIds !== undefined && documentIds.length === 0) {
-    return body({ clause: " AND 1=0", params: [] });
+    return apply({ clause: " AND 1=0", params: [] });
   }
   if (documentIds === undefined || documentIds.length <= INLINE_DOCID_LIMIT) {
     const clause = documentIds ? ` AND ${column} IN (${documentIds.map(() => "?").join(",")})` : "";
-    return body({ clause, params: documentIds ?? [] });
+    return apply({ clause, params: documentIds ?? [] });
   }
 
   db.exec("CREATE TEMP TABLE IF NOT EXISTS docid_filter (id TEXT PRIMARY KEY)");
@@ -77,7 +88,7 @@ export function withDocIdRestriction<T>(
   });
   insertAll(documentIds);
   try {
-    return body({ clause: ` AND ${column} IN (SELECT id FROM docid_filter)`, params: [] });
+    return apply({ clause: ` AND ${column} IN (SELECT id FROM docid_filter)`, params: [] });
   } finally {
     db.exec("DROP TABLE IF EXISTS docid_filter");
   }

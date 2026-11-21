@@ -35,5 +35,6 @@ export default defineSource<SyncCursor>({
   gatewayHosted: true,
   singleInstance: true,
   execution: "external",
+  contract: { outputRevision: 1 },
   documentEventProfile: hermesDocumentEventProfile,
 });

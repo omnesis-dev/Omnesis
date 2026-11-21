@@ -11,6 +11,11 @@
  */
 import type { DocumentEventProfile } from "@omnesis/source-sdk";
 
+/** Profile path of the folder a file is in. */
+export const LOCAL_FILES_FOLDER_FIELD = "extra.folder";
+
+const FOLDER = { one: "folder", many: "folders" };
+
 export const localFilesDocumentEventProfile: DocumentEventProfile = {
   documentTypes: ["file"],
   // The operator's own files: the source asserts authorship, nothing else.
@@ -33,6 +38,22 @@ export const localFilesDocumentEventProfile: DocumentEventProfile = {
       type: "string",
       description:
         "The file's directory in display form (e.g. '~/Downloads'). Facetable: conditions about where a file lives match here.",
+    },
+    {
+      path: LOCAL_FILES_FOLDER_FIELD,
+      type: "string",
+      description:
+        "Id of the folder the file is in: the absolute path of its directory on the device that holds it, with symlinks resolved. Only the file's own directory; the folders above it are in the source's list of folders.",
+      filter: {
+        capability: "tree",
+        minVersion: 2,
+        // A path only means something on the machine it is on.
+        scope: "device",
+        noun: FOLDER,
+        levels: [FOLDER],
+        picker: "tree",
+        inside: FOLDER,
+      },
     },
     {
       path: "extra.mimeType",

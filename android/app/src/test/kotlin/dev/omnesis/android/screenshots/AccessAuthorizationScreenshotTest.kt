@@ -21,6 +21,7 @@ import dev.omnesis.android.transport.dto.AccessConnectionProposal
 import dev.omnesis.android.transport.dto.AccessLevelSummary
 import dev.omnesis.android.transport.dto.AccessPrincipalSummary
 import dev.omnesis.android.transport.dto.AccessAnswerRelease
+import dev.omnesis.android.transport.dto.AccessCapability
 import dev.omnesis.android.transport.dto.AccessSourceBoundary
 import dev.omnesis.android.transport.dto.AccessSourceMode
 import dev.omnesis.android.transport.dto.AccessSourceInstance
@@ -39,8 +40,11 @@ import dev.omnesis.android.ui.access.AccessAuthorizationCompletion
 import dev.omnesis.android.ui.access.AccessAuthorizationForm
 import dev.omnesis.android.ui.access.AccessAuthorizationStep
 import dev.omnesis.android.ui.access.AccessAuthorizationUiState
-import dev.omnesis.android.ui.access.AccessAnswerReleaseChoice
-import dev.omnesis.android.ui.access.AccessSourceSelectionState
+import dev.omnesis.android.ui.access.AccessLevelPage
+import dev.omnesis.android.ui.access.AccessLevelDraft
+import dev.omnesis.android.ui.access.LEVEL_NAME_TAKEN_MESSAGE
+import dev.omnesis.android.ui.access.editing
+import dev.omnesis.android.ui.access.reading
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -109,18 +113,17 @@ class AccessAuthorizationScreenshotTest {
     }
 
     /**
-     * The reviewed release, with its policy list and the affordance that reads the chosen
-     * policy without unwinding the wizard. A tall viewport because that block sits below the
-     * source list on a phone-height render.
+     * The reviewed release, with its chosen policy and the affordance that reads the policy
+     * without unwinding the wizard.
      */
     @Test
-    @Config(sdk = [34], qualifiers = "w411dp-h1400dp-xxhdpi")
     fun reviewed_release_offers_the_policy_text() =
         capture("access_authorization_reviewed_policy_light", false) {
             content(
                 readyState(),
                 AccessAuthorizationStep.DATA,
-                configuredForm().copy(directEnabled = false),
+                configuredForm().editing { it.enabled(AccessCapability.DIRECT, false, overview) },
+                AccessLevelPage.RELEASE,
             )
         }
 
@@ -159,11 +162,11 @@ class AccessAuthorizationScreenshotTest {
     }
 
     @Test fun notes_only_review_light() = capture("access_authorization_notes_only_review_light", false) {
-        content(readyState(), AccessAuthorizationStep.REVIEW, configuredForm().copy(answerEnabled = false, directEnabled = false, notesEnabled = true))
+        content(readyState(), AccessAuthorizationStep.REVIEW, notesOnlyForm())
     }
 
     @Test fun notes_only_review_dark() = capture("access_authorization_notes_only_review_dark", true) {
-        content(readyState(), AccessAuthorizationStep.REVIEW, configuredForm().copy(answerEnabled = false, directEnabled = false, notesEnabled = true))
+        content(readyState(), AccessAuthorizationStep.REVIEW, notesOnlyForm())
     }
 
     @Test fun permissions_dark() = capture("access_authorization_permissions_dark", true) {
@@ -368,15 +371,12 @@ class AccessAuthorizationScreenshotTest {
     }
 
     @Test
-    @Config(sdk = [34], qualifiers = "w411dp-h1400dp-xxhdpi")
     fun unreviewed_warning_light() = capture("access_authorization_unreviewed_light", false) {
         content(
             readyState(),
             AccessAuthorizationStep.DATA,
-            configuredForm().copy(
-                directEnabled = false,
-                answerRelease = AccessAnswerReleaseChoice.UNREVIEWED,
-            ),
+            configuredForm().editing { it.enabled(AccessCapability.DIRECT, false, overview).unreviewed() },
+            AccessLevelPage.RELEASE,
         )
     }
 
@@ -397,51 +397,12 @@ class AccessAuthorizationScreenshotTest {
         content(stateFor(existingLevelProposal), AccessAuthorizationStep.REVIEW)
     }
 
-    /** One list standing for both capabilities — the default when Answer and Direct are both held. */
-    @Test
-    @Config(sdk = [34], qualifiers = "w411dp-h1400dp-xxhdpi")
-    fun shared_source_boundary_light() = capture("access_authorization_shared_sources_light", false) {
-        content(
-            readyState(),
-            AccessAuthorizationStep.DATA,
-            configuredForm().copy(linkedSources = true),
-        )
-    }
-
-    @Test
-    @Config(sdk = [34], qualifiers = "w411dp-h1400dp-xxhdpi")
-    fun shared_source_boundary_dark() = capture("access_authorization_shared_sources_dark", true) {
-        content(
-            readyState(),
-            AccessAuthorizationStep.DATA,
-            configuredForm().copy(linkedSources = true),
-        )
-    }
-
-    /** The refusal an empty shared list earns, printed inside the list that earns it. */
-    @Test
-    @Config(sdk = [34], qualifiers = "w411dp-h1400dp-xxhdpi")
-    fun empty_shared_source_boundary_names_both_capabilities() =
-        capture("access_authorization_empty_shared_sources_light", false) {
-            content(
-                readyState(),
-                AccessAuthorizationStep.DATA,
-                configuredForm().copy(
-                    linkedSources = true,
-                    answerSources = AccessSourceSelectionState(),
-                ),
-            )
-        }
-
     /** The review's badges, with Answer released without a review — amber, not Direct's red. */
     @Test fun unreviewed_review_badges_light() = capture("access_authorization_unreviewed_review_light", false) {
         content(
             readyState(),
             AccessAuthorizationStep.REVIEW,
-            configuredForm().copy(
-                notesEnabled = true,
-                answerRelease = AccessAnswerReleaseChoice.UNREVIEWED,
-            ),
+            configuredForm().editing { it.enabled(AccessCapability.NOTES, true, overview).unreviewed() },
         )
     }
 
@@ -449,21 +410,7 @@ class AccessAuthorizationScreenshotTest {
         content(
             readyState(),
             AccessAuthorizationStep.REVIEW,
-            configuredForm().copy(
-                notesEnabled = true,
-                answerRelease = AccessAnswerReleaseChoice.UNREVIEWED,
-            ),
-        )
-    }
-
-    @Test fun all_sources_has_no_contradictory_bulk_controls() = capture("access_authorization_all_sources_light", false) {
-        content(
-            readyState(),
-            AccessAuthorizationStep.DATA,
-            configuredForm().copy(
-                directEnabled = false,
-                answerSources = AccessSourceSelectionState(mode = AccessSourceMode.ALL),
-            ),
+            configuredForm().editing { it.enabled(AccessCapability.NOTES, true, overview).unreviewed() },
         )
     }
 
@@ -472,14 +419,15 @@ class AccessAuthorizationScreenshotTest {
         state: AccessAuthorizationUiState,
         step: AccessAuthorizationStep = AccessAuthorizationStep.PERMISSIONS,
         form: AccessAuthorizationForm? = null,
+        dataPage: AccessLevelPage? = null,
     ) {
         AccessAuthorizationContent(
-            state = state.copy(step = step, form = form ?: state.form),
+            state = state.copy(step = step, form = form ?: state.form, dataPage = dataPage),
             onClose = {},
             onLookup = {},
             onDecide = { _, _ -> },
             onFormChange = {},
-            onStepChange = {},
+            onStepChange = { _, _ -> },
             clock = { REFERENCE_NOW },
         )
     }
@@ -515,24 +463,27 @@ class AccessAuthorizationScreenshotTest {
     private fun levelNameClashState(): AccessAuthorizationUiState {
         val ready = readyState()
         val form = requireNotNull(ready.form)
-        return ready.copy(form = form.copy(connection = form.connection?.copy(levelName = "planning")))
+        return ready.copy(form = form.copy(level = form.level.copy(name = "planning")))
     }
 
     private fun levelNameTakenState() =
-        readyState().copy(actionError = "An access level with that name already exists.", levelNameTaken = true)
+        readyState().copy(actionError = LEVEL_NAME_TAKEN_MESSAGE, levelNameTaken = true)
 
     private fun expiredState() = readyState().copy(request = request.copy(expiresAt = 1))
 
-    /** Answer and Direct on separate lists — the shape the second option produces. */
-    private fun configuredForm(): AccessAuthorizationForm {
-        val initial = AccessAuthorizationForm.initial(request, overview, newLevelProposal, nowMillis = REFERENCE_NOW)
-        return initial.copy(
-            directEnabled = true,
-            linkedSources = false,
-            answerSources = initial.answerSources.setAllowed("notes:fictional", true),
-            directSources = initial.directSources.setAllowed("files:fictional", true),
-        )
+    /** Answer and Direct on separate lists, the shape "Choose different sources" produces. */
+    private fun configuredForm(): AccessAuthorizationForm =
+        AccessAuthorizationForm.initial(request, overview, newLevelProposal, nowMillis = REFERENCE_NOW).editing {
+            it.reading(AccessCapability.ANSWER, "notes:fictional").enabled(AccessCapability.DIRECT, true, overview)
+                .withDirectSameAsAnswer(false).reading(AccessCapability.DIRECT, "files:fictional")
+        }
+
+    private fun notesOnlyForm(): AccessAuthorizationForm = configuredForm().editing {
+        it.enabled(AccessCapability.ANSWER, false, overview).enabled(AccessCapability.DIRECT, false, overview).enabled(AccessCapability.NOTES, true, overview)
     }
+
+    private fun AccessLevelDraft.unreviewed(): AccessLevelDraft =
+        setRule(requireNotNull(rule(AccessCapability.ANSWER)).copy(release = AccessAnswerRelease.unreviewed()))
 
     /** The sheet body on the page ground it is presented over, at the sheet's own width. */
     @Composable

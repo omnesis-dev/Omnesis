@@ -82,7 +82,7 @@ describe("WatchFiringContextCard", () => {
       host.querySelector("a")?.click();
     });
 
-    expect(pushState).toHaveBeenCalledWith(null, "", "/portal/watches/watch_example");
+    expect(pushState).toHaveBeenCalledWith({ __omnesisRouteIndex: 1 }, "", "/portal/watches/watch_example");
     expect(dispatchEvent.mock.calls[0]?.[0]).toMatchObject({ type: "route-change" });
   });
 

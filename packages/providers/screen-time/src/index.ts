@@ -70,6 +70,7 @@ export default defineStructuredSource({
   authType: "local",
   unitName: "sessions",
   contract: {
+    outputRevision: 1,
     // The host resolves the stored cursor against this before `sync` runs,
     // so the sync below only ever receives the current shape.
     state: screenTimeStateSpec,

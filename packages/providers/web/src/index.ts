@@ -55,6 +55,7 @@ export default defineStructuredSource<SyncCursor>({
   setupGuide: "browser-extension",
   singleInstance: true,
   execution: "external",
+  contract: { outputRevision: 1 },
   // The web-page entity is the graph hub: a referential URL bag with no
   // structural story — skip `url` edges through it in subgraph walks.
   urlHub: true,

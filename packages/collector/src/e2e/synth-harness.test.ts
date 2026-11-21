@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { describe, expect, test, vi } from "vitest";
-import * as core from "@omnesis/core";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import type { ChildProcess } from "node:child_process";
+import * as core from "@omnesis/core";
+import { describe, expect, test, vi } from "vitest";
 import * as reaper from "./subprocess-reaper.js";
 import {
   assertSyntheticGatewayVisibility,
@@ -14,6 +13,7 @@ import {
   SyntheticE2EHarness,
   type SyntheticGatewayMode,
 } from "./synth-harness.js";
+import type { ChildProcess } from "node:child_process";
 
 describe("SyntheticE2EHarness bootstrap reader ownership", () => {
   test.each(

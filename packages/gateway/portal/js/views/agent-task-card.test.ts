@@ -68,7 +68,7 @@ describe("TaskContextCard", () => {
     act(() => {
       host.querySelector("a")?.click();
     });
-    expect(pushState).toHaveBeenCalledWith(null, "", "/portal/tasks?task=loop_lease");
+    expect(pushState).toHaveBeenCalledWith({ __omnesisRouteIndex: 1 }, "", "/portal/tasks?task=loop_lease");
     expect(dispatchEvent.mock.calls[0]?.[0]).toMatchObject({ type: "route-change" });
   });
 

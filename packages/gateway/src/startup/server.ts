@@ -2,13 +2,13 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { createServer, type Server } from "node:https";
+import { serve, type HttpBindings, type Http2Bindings } from "@hono/node-server";
+import { GatewayHttpShutdown } from "../gateway-http-shutdown.js";
+import { renderStartupPage, startupPageCsp } from "./page.js";
 import type { IncomingMessage } from "node:http";
 import type { Duplex } from "node:stream";
 import type { SecureContext } from "node:tls";
-import { serve, type HttpBindings, type Http2Bindings } from "@hono/node-server";
-import { GatewayHttpShutdown } from "../gateway-http-shutdown.js";
 import type { StartupManager } from "./manager.js";
-import { renderStartupPage, startupPageCsp } from "./page.js";
 
 export const STARTUP_STATUS_PATH = "/.well-known/omnesis-startup";
 export type GatewayFetch = (

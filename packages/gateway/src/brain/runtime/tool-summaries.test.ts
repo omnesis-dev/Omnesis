@@ -3,6 +3,8 @@
 
 import { randomUUID } from "node:crypto";
 import { rmSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { AGENT_TOOL_CARDS, createLogger } from "@omnesis/core";
 import { summarizeToolArgs, type SearchPort, type ToolHandle } from "@omnesis/agent";
@@ -14,8 +16,6 @@ import { buildTaskTools } from "../tasks/tools.js";
 import { createOpenLoopMirror } from "./mirror.js";
 import { buildAnnotationTools, buildCognitionOwnTools } from "./tools.js";
 import type Database from "better-sqlite3";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 const NOW = Date.parse("2026-06-01T12:00:00Z");
 const log = createLogger("test:tool-summaries");

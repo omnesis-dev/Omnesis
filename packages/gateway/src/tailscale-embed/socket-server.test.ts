@@ -6,10 +6,10 @@ import { request as httpRequest, type IncomingMessage } from "node:http";
 import { connect } from "node:net";
 import { connect as tlsConnect } from "node:tls";
 import { request as httpsRequest } from "node:https";
-import { generateSelfSigned } from "../tls.js";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeAll, beforeEach, describe, expect, test, vi } from "vitest";
+import { generateSelfSigned } from "../tls.js";
 import { tailnetCallerOf, type TailnetCaller } from "./caller.js";
 import {
   TAILNET_TRANSPORT_HEADER,

@@ -3,6 +3,8 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createDatabase } from "../../db.js";
 import { transitionObservation, createObservation } from "../storage/observations.js";
@@ -10,8 +12,6 @@ import { markMorningBriefSent, replaceMorningBriefItems } from "../storage/morni
 import { createOpenLoop } from "../storage/open-loops.js";
 import { renderDailyBriefContext } from "./brief-thread-context.js";
 import type Database from "better-sqlite3";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 const NOW = Date.parse("2026-07-02T07:00:00.000Z");
 const DAY = "2026-07-02";

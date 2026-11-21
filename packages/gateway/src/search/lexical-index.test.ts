@@ -5,7 +5,6 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import type Database from "better-sqlite3";
 type Db = Database.Database;
 import {
   createIndexDatabase,
@@ -22,6 +21,7 @@ import { lexicalVersion } from "./lexical-versions.js";
 const VERSION_0 = lexicalVersion(0)!;
 import { LexicalIndex } from "./lexical-index.js";
 import { closeTempDb } from "./test-utils.js";
+import type Database from "better-sqlite3";
 
 let db: Db;
 let directory: string;

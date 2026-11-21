@@ -3,6 +3,8 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TEMPORAL_STATUSES } from "@omnesis/types";
 import { createDatabase } from "../../db.js";
@@ -22,8 +24,6 @@ import {
   type FixtureIds,
 } from "./__fixtures__/test-utils.js";
 import type { TemporalItem, TemporalQueryInput } from "@omnesis/core";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 function cleanup(path: string): void {
   for (const suffix of ["", "-wal", "-shm", "-journal"]) {

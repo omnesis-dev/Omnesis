@@ -3,6 +3,9 @@
 
 import { createHash } from "node:crypto";
 
+import { canonicalSourceFilters, sourceFilterSchema } from "./scope-policy.js";
+import { encodeStoredScopePolicies, decodeStoredScopePolicies } from "./scope-policy-encoding.js";
+import type { SourceFilter } from "@omnesis/types";
 import type { AccessGrantCapability } from "./types.js";
 
 type CorpusReadCapability = "answer" | "direct";
@@ -22,6 +25,8 @@ export interface CorpusAuthorization {
   readonly credentialId: string;
   readonly accessTokenId: string;
   readonly capability: CorpusReadCapability;
+  readonly filterRevision: number;
+  readonly scopePolicies: readonly SourceFilter[];
   readonly sourceMode: AccessGrantCapability["sourceMode"];
   readonly sourceIds: readonly string[];
   readonly releaseMode: AccessGrantCapability["releaseMode"];
@@ -35,6 +40,9 @@ export interface CorpusAuthorization {
 
 interface SerializedCorpusAuthorization {
   v: 1;
+  filterRevision?: number;
+  scopePolicies?: SourceFilter[];
+  canonicalSources?: { mode: AccessGrantCapability["sourceMode"]; sourceIds: string[] };
   principalId: string;
   grantId: string;
   grantRevision: number;
@@ -54,6 +62,8 @@ function normalizedSourceIds(values: readonly string[]): string[] {
 }
 
 export function corpusAuthorizationDigest(input: {
+  filterRevision?: number;
+  scopePolicies?: readonly SourceFilter[];
   capability: CorpusReadCapability;
   sourceMode: AccessGrantCapability["sourceMode"];
   sourceIds: readonly string[];
@@ -73,6 +83,12 @@ export function corpusAuthorizationDigest(input: {
         policyFamilyId: input.policyFamilyId,
         policyRevision: input.policyRevision,
         privacyPolicy: input.privacyPolicy,
+        ...(input.filterRevision
+          ? {
+              filterRevision: input.filterRevision,
+              scopePolicies: canonicalSourceFilters(input.scopePolicies ?? []),
+            }
+          : {}),
       }),
       "utf8",
     )
@@ -99,6 +115,12 @@ export function answerOwnerScopeDigest(authorization: CorpusAuthorization): stri
         sourceIds: authorization.sourceIds,
         releaseMode: authorization.releaseMode,
         policyFamilyId: authorization.policyFamilyId,
+        ...(authorization.filterRevision
+          ? {
+              filterRevision: authorization.filterRevision,
+              scopePolicies: canonicalSourceFilters(authorization.scopePolicies),
+            }
+          : {}),
       }),
       "utf8",
     )
@@ -106,9 +128,26 @@ export function answerOwnerScopeDigest(authorization: CorpusAuthorization): stri
 }
 
 function buildAuthorization(input: SerializedCorpusAuthorization): CorpusAuthorization {
+  const filterRevision = input.filterRevision === undefined ? 0 : input.filterRevision;
+  if (!Number.isSafeInteger(filterRevision) || filterRevision < 0) {
+    throw new Error("Invalid corpus filter revision.");
+  }
   if (input.capability !== "answer" && input.capability !== "direct") {
     throw new Error("Only Answer and Direct authorize corpus reads.");
   }
+  const scopePolicies = canonicalSourceFilters(
+    (input.scopePolicies ?? []).map((policy) => sourceFilterSchema.parse(policy)),
+  );
+  if (scopePolicies.length && filterRevision === 0) throw new Error("Filters require a revision.");
+  if (scopePolicies.some((policy) => policy.audience.capability !== input.capability))
+    throw new Error("Invalid filter capability.");
+  const freeze = (value: unknown): void => {
+    if (value && typeof value === "object") {
+      for (const child of Object.values(value)) freeze(child);
+      Object.freeze(value);
+    }
+  };
+  freeze(scopePolicies);
   const sourceIds = Object.freeze(normalizedSourceIds(input.sourceIds));
   const sourceMode =
     input.sourceMode === "denylist" && sourceIds.length === 0 ? "all" : input.sourceMode;
@@ -136,6 +175,8 @@ function buildAuthorization(input: SerializedCorpusAuthorization): CorpusAuthori
   }
   const selected = new Set(sourceIds);
   const digest = corpusAuthorizationDigest({
+    filterRevision,
+    scopePolicies,
     capability: input.capability,
     sourceMode,
     sourceIds,
@@ -158,7 +199,9 @@ function buildAuthorization(input: SerializedCorpusAuthorization): CorpusAuthori
     policyRevision: input.policyRevision,
     privacyPolicy: input.privacyPolicy,
     digest,
-    restricted: sourceMode !== "all",
+    filterRevision,
+    scopePolicies,
+    restricted: sourceMode !== "all" || scopePolicies.length > 0,
     allowsSource(sourceId: string): boolean {
       if (sourceMode === "all") return true;
       const listed = selected.has(sourceId);
@@ -179,6 +222,8 @@ export function createCorpusAuthorization(
     v: 1,
     ...identity,
     capability,
+    filterRevision: rule.filterRevision,
+    scopePolicies: rule.scopePolicies,
     sourceMode: rule.sourceMode,
     sourceIds: rule.sourceIds,
     releaseMode: rule.releaseMode,
@@ -188,7 +233,33 @@ export function createCorpusAuthorization(
   });
 }
 
+/** Conservative source boundary understood by gateways without filter enforcement. */
+function legacySourceBoundary(
+  authorization: Pick<CorpusAuthorization, "sourceMode" | "sourceIds" | "scopePolicies">,
+): {
+  mode: AccessGrantCapability["sourceMode"];
+  sourceIds: string[];
+} {
+  const filtered = new Set(authorization.scopePolicies.map((policy) => policy.sourceId));
+  if (!filtered.size)
+    return { mode: authorization.sourceMode, sourceIds: [...authorization.sourceIds] };
+  if (authorization.sourceMode === "allowlist") {
+    return {
+      mode: "allowlist",
+      sourceIds: authorization.sourceIds.filter((id) => !filtered.has(id)),
+    };
+  }
+  return {
+    mode: "denylist",
+    sourceIds: normalizedSourceIds([...authorization.sourceIds, ...filtered]),
+  };
+}
+
 export function serializeCorpusAuthorization(authorization: CorpusAuthorization): string {
+  if (!Number.isSafeInteger(authorization.filterRevision) || authorization.filterRevision < 0) {
+    throw new Error("Invalid corpus filter revision.");
+  }
+  const legacy = legacySourceBoundary(authorization);
   return JSON.stringify({
     v: 1,
     principalId: authorization.principalId,
@@ -197,12 +268,26 @@ export function serializeCorpusAuthorization(authorization: CorpusAuthorization)
     credentialId: authorization.credentialId,
     accessTokenId: authorization.accessTokenId,
     capability: authorization.capability,
-    sourceMode: authorization.sourceMode,
-    sourceIds: [...authorization.sourceIds],
+    sourceMode: legacy.mode,
+    sourceIds: legacy.sourceIds,
     releaseMode: authorization.releaseMode,
     policyFamilyId: authorization.policyFamilyId,
     policyRevision: authorization.policyRevision,
     privacyPolicy: authorization.privacyPolicy,
+    ...(authorization.scopePolicies.length
+      ? {
+          canonicalSources: {
+            mode: authorization.sourceMode,
+            sourceIds: [...authorization.sourceIds],
+          },
+        }
+      : {}),
+    ...(authorization.filterRevision
+      ? {
+          filterRevision: authorization.filterRevision,
+          scopePolicies: encodeStoredScopePolicies(authorization.scopePolicies),
+        }
+      : {}),
   } satisfies SerializedCorpusAuthorization);
 }
 
@@ -210,6 +295,9 @@ export function parseCorpusAuthorization(serialized: string): CorpusAuthorizatio
   const parsed = JSON.parse(serialized) as Partial<SerializedCorpusAuthorization>;
   if (
     parsed.v !== 1 ||
+    (parsed.scopePolicies !== undefined && !Array.isArray(parsed.scopePolicies)) ||
+    (parsed.filterRevision !== undefined &&
+      (!Number.isSafeInteger(parsed.filterRevision) || parsed.filterRevision < 0)) ||
     typeof parsed.principalId !== "string" ||
     typeof parsed.grantId !== "string" ||
     !Number.isSafeInteger(parsed.grantRevision) ||
@@ -231,7 +319,41 @@ export function parseCorpusAuthorization(serialized: string): CorpusAuthorizatio
   ) {
     throw new Error("Invalid corpus authorization context.");
   }
-  return buildAuthorization(parsed as SerializedCorpusAuthorization);
+  const input = {
+    ...parsed,
+    scopePolicies: decodeStoredScopePolicies(parsed.scopePolicies ?? []),
+  } as SerializedCorpusAuthorization;
+  if (input.scopePolicies?.length) {
+    const canonical = input.canonicalSources;
+    if (
+      !canonical ||
+      typeof canonical !== "object" ||
+      Array.isArray(canonical) ||
+      Object.keys(canonical).some((key) => key !== "mode" && key !== "sourceIds") ||
+      !["all", "allowlist", "denylist"].includes(canonical.mode) ||
+      !Array.isArray(canonical.sourceIds) ||
+      !canonical.sourceIds.every((id) => typeof id === "string")
+    ) {
+      throw new Error("Invalid canonical source boundary.");
+    }
+    const authorization = buildAuthorization({
+      ...input,
+      sourceMode: canonical.mode,
+      sourceIds: canonical.sourceIds,
+    });
+    const legacy = legacySourceBoundary(authorization);
+    if (
+      legacy.mode !== input.sourceMode ||
+      JSON.stringify(normalizedSourceIds(legacy.sourceIds)) !==
+        JSON.stringify(normalizedSourceIds(input.sourceIds))
+    ) {
+      throw new Error("Invalid conservative source boundary.");
+    }
+    return authorization;
+  }
+  if (input.canonicalSources !== undefined)
+    throw new Error("Unexpected canonical source boundary.");
+  return buildAuthorization(input);
 }
 
 export function unrestrictedInternalAuthorization(

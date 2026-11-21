@@ -156,6 +156,7 @@ export default defineProvider<ImapContext>({
       unitName: "emails",
       icon: genericImapIcon,
       contract: {
+        outputRevision: 1,
         // The host resolves the stored cursor against this before `sync`
         // runs, so a value from a build that could not read it never
         // reaches `sync`.

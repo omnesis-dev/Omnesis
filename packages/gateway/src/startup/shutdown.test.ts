@@ -2,9 +2,9 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { OptionalServiceCleanup } from "../optional-service-cleanup.js";
 import { createStartupShutdown, StartupOwnership } from "./shutdown.js";
 import { StartupOperations } from "./operations.js";
-import { OptionalServiceCleanup } from "../optional-service-cleanup.js";
 
 function deferred() {
   let resolve!: () => void;

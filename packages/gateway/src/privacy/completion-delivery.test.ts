@@ -80,6 +80,7 @@ describe("AnswerCompletionDeliveryService", () => {
       writeGate: directWriteGate(db),
       transport: { isConnected: vi.fn(() => connected), sendCommand: vi.fn(send) },
       getDevice: (id) => getDevice(db, id),
+      assertTaskScopeCurrent: () => {},
       log: createLogger("gateway:test:completion-delivery"),
       now: () => now,
     });

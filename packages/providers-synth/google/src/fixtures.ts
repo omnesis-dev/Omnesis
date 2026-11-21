@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import {
   sha256Hex,
   personMention,
@@ -56,6 +58,11 @@ export interface EmailEntry {
   sentAt: string;
   threadId: string;
   labels: string[];
+  /**
+   * Gmail's id for each entry of `labels`, in the same order. A fixture that
+   * leaves it out has ids derived from the label names by the mailbox.
+   */
+  labelIds?: string[];
   /** Structurally declared planned time, projected by the Gmail descriptor. */
   scheduledAt?: string;
   /** Structurally declared deadline, projected by the Gmail descriptor. */
@@ -113,6 +120,7 @@ export function mapEmail(
       extra: {
         threadId: e.threadId,
         labels: e.labels,
+        ...(e.labelIds ? { labelIds: e.labelIds } : {}),
         ...(attachmentInfos.length > 0 ? { attachments: attachmentInfos } : {}),
       },
     },
@@ -240,7 +248,7 @@ export function mapEventRecord(e: EventEntry, sourceAccount: string): Record<str
 
 // ── Drive ─────────────────────────────────────────────────────────
 
-interface DriveFileEntry {
+export interface DriveFileEntry {
   externalId: string;
   name: string;
   mimeType: string;
@@ -248,6 +256,15 @@ interface DriveFileEntry {
   owner: string;
   createdAt: string;
   modifiedAt: string;
+  /** Ids of the folders the file sits in directly. */
+  parentIds?: string[];
+}
+
+export interface DriveFolderEntry {
+  id: string;
+  name: string;
+  /** Ids of the folders this one sits in; empty for a top-level folder. */
+  parentIds: string[];
 }
 let filesCache: DriveFileEntry[] | null = null;
 export function loadFiles(): DriveFileEntry[] {
@@ -258,6 +275,13 @@ export function loadFiles(): DriveFileEntry[] {
     "files.json",
   );
   return filesCache;
+}
+/** The universe's Drive folders; a universe that describes none has none. */
+export function loadDriveFolders(): DriveFolderEntry[] {
+  const universe = loadActiveUniverse();
+  return existsSync(join(universe.dir, "sources", "google-drive", "folders.json"))
+    ? loadSourceFixtureJson<DriveFolderEntry[]>(universe, "google-drive", "folders.json")
+    : [];
 }
 export function mapDriveFile(
   e: DriveFileEntry,
@@ -278,6 +302,7 @@ export function mapDriveFile(
       people: [personMention(e.owner, "owner")],
       extra: {
         mimeType: e.mimeType,
+        ...(e.parentIds ? { folderIds: e.parentIds } : {}),
         ownerName: getPerson(e.owner).name,
       },
     },
