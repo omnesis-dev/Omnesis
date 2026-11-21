@@ -38,12 +38,27 @@ afterEach(async () => {
   for (const close of closers.splice(0).reverse()) await close();
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
+/**
+ * These cases test the job record's compare-and-swap bookkeeping, not its
+ * durability across power loss. A plain better-sqlite3 file runs in rollback-
+ * journal mode with a full sync, so every job update would create, flush and
+ * delete a journal file; on Windows that costs tens of milliseconds per commit
+ * and a case's running time would follow the runner's disk-flush latency. WAL
+ * with NORMAL sync, the gateway's journal mode without the per-commit flush,
+ * keeps the same transactions and readers.
+ */
+function jobsDatabase(path: string): Database.Database {
+  const db = new Database(path);
+  db.pragma("journal_mode = WAL");
+  db.pragma("synchronous = NORMAL");
+  return db;
+}
 function fixture(
   adapters: Partial<Record<StoredHistoryCleanupJob["target"], HistoryCleanupAdapter>>,
 ) {
   const root = mkdtempSync(join(tmpdir(), "history-cleanup-"));
   roots.push(root);
-  const db = new Database(join(root, "jobs.db"));
+  const db = jobsDatabase(join(root, "jobs.db"));
   createHistoryCleanupTables(db);
   const writes = {
     startHistoryCleanupJob: async (input: Parameters<typeof startHistoryCleanupJob>[1]) =>
@@ -764,7 +779,7 @@ test("shutdown closes every adapter even when one closure fails", async () => {
 test("shutdown closes acquired resources even when its database reader has failed", async () => {
   const root = mkdtempSync(join(tmpdir(), "history-cleanup-reader-failure-"));
   roots.push(root);
-  const db = new Database(join(root, "jobs.db"));
+  const db = jobsDatabase(join(root, "jobs.db"));
   createHistoryCleanupTables(db);
   const close = vi.fn(async () => {});
   const service = new HistoryCleanupService({
