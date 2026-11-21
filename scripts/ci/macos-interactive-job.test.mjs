@@ -2,7 +2,15 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -22,7 +30,10 @@ afterEach(() => {
  * from one that has exited, and `bootout` ends it.
  */
 function sandbox() {
-  const dir = mkdtempSync(join(tmpdir(), "omnesis-interactive-job-"));
+  // The job reports its working directory as `pwd` resolves it. On macOS the
+  // temporary directory is reached through the /var -> /private/var symlink, so
+  // the sandbox is named by its resolved path for the comparison to hold.
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "omnesis-interactive-job-")));
   sandboxes.push(dir);
   const bin = join(dir, "bin");
   const state = join(dir, "launchd");
