@@ -94,8 +94,9 @@ jobs:
     # The project requires Xcode 26; provision an available iPhone simulator
     # for that Xcode rather than assuming the image has a particular name.
     runs-on: macos-26
-    # Setup, the build, indexing the corpus and the journeys: 38 to 73 min
-    # measured, and a retried journey adds up to 9 min more. A UI test runner
+    # Setup, the build, indexing the corpus and the journeys: about 31 min
+    # measured (the journeys themselves 7 to 9), and a retried journey adds
+    # up to 3 min more. A UI test runner
     # that fails to initialize costs about 3 min before its one retry. The
     # limit stops a hung simulator or xcodebuild from holding the runner.
     timeout-minutes: 90
