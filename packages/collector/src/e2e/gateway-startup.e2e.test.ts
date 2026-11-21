@@ -32,6 +32,8 @@ import type { ChildProcess } from "node:child_process";
 const ROOT = join(import.meta.dirname, "../../../..");
 const BOOT_BUDGET = gatewayBootBudgetMs();
 const PROGRESS_PATH = "/.well-known/omnesis-startup";
+/** Makes every gateway module the main thread loads slower; see the preload. */
+const SLOW_MODULE_LOADS = new URL("./slow-gateway-module-loads.mjs", import.meta.url).href;
 const browserAvailable = existsSync(chromium.executablePath());
 if (!browserAvailable && process.env.CI) {
   throw new Error("gateway-startup.e2e: Chromium is required in CI");
@@ -127,7 +129,11 @@ async function fixture(options: { gate?: boolean; invalidConfig?: boolean } = {}
   return { dir, db, token, release };
 }
 
-async function launch(dir: string, requestedPort?: number): Promise<GatewayProcess> {
+async function launch(
+  dir: string,
+  requestedPort?: number,
+  options: { preload?: string } = {},
+): Promise<GatewayProcess> {
   const port = requestedPort ?? (await freePort());
   // Eliminate inherited live credentials, addresses and feature flags. Keep
   // host admission/Herdr environment untouched, as the normal harness does.
@@ -135,7 +141,8 @@ async function launch(dir: string, requestedPort?: number): Promise<GatewayProce
     Object.entries(process.env).filter(([name]) => !name.startsWith("OMNESIS_")),
   );
   const command = e2eTsxCommand("packages/gateway/src/index.ts");
-  const child = spawnE2ESubprocess(command.command, command.args, {
+  const args = options.preload ? ["--import", options.preload, ...command.args] : command.args;
+  const child = spawnE2ESubprocess(command.command, args, {
     cwd: ROOT,
     detached: true,
     // The parent channel is how Windows, which has no catchable SIGTERM, asks for a stop.
@@ -357,6 +364,36 @@ describe("gateway startup through its production entrypoint", () => {
           fullPage: true,
         });
       }
+    },
+    BOOT_BUDGET * 2,
+  );
+
+  test(
+    "answers while the runtime's modules load",
+    async () => {
+      const world = await fixture();
+      // Loading the runtime's modules is synchronous work on the thread that
+      // serves the listener; slowed down, it lasts seconds.
+      const gateway = await launch(world.dir, undefined, { preload: SLOW_MODULE_LOADS });
+      const [first, page, api] = await waitFor(
+        gateway,
+        () =>
+          Promise.all([
+            progress(gateway),
+            exchange(gateway.port, "/portal/", { headers: { accept: "text/html" } }),
+            exchange(gateway.port, "/health"),
+          ]),
+        "the startup listener's first answers",
+      );
+      // A listener that could answer only once the modules had loaded would
+      // report this step finished in its first answer.
+      expect(first.steps.find((step) => step.id === "runtime")?.state).toBe("running");
+      expect(page.status).toBe(200);
+      expect(page.body).toContain("gateway is starting up");
+      expect(api.status).toBe(503);
+      expect(JSON.parse(api.body)).toMatchObject({ code: "GATEWAY_STARTING" });
+      await waitForReady(gateway);
+      expect((await progress(gateway)).state).toBe("ready");
     },
     BOOT_BUDGET * 2,
   );

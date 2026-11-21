@@ -23,6 +23,12 @@ HTTP dispatcher and attaches WebSocket handling without rebinding the port or
 proxying requests, so peer identity, TLS and session semantics stay intact.
 Startup status is not API readiness: ordinary requests receive 503 until the
 normal application is ready, and the startup page reloads the original URL.
+The runtime is imported in steps (`startup/module-graph.ts`): one dynamic import
+loads and evaluates its whole graph without yielding, so a worker reads the
+graph without evaluating it and the main thread imports its modules in V8's own
+evaluation order, with event-loop turns between them. A module whose top level
+does slow synchronous work, or a large import cycle, which loads as one step,
+still holds the listener for that long.
 
 Blocking database/schema and graph preparation belongs to startup workers, which
 must exit before ordinary readers/writers open those resources. Migration progress

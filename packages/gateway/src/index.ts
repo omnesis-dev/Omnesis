@@ -18,15 +18,20 @@ import { StartupManager } from "./startup/manager.js";
 import { StartupServer } from "./startup/server.js";
 import { StartupOperations } from "./startup/operations.js";
 import { StartupOwnership } from "./startup/shutdown.js";
+import { importInSteps, readModuleGraph } from "./startup/module-graph.js";
 
 // Keep the application import below listen(): even the boot page must not wait
 // for the gateway's dependency graph, stores, or model services to evaluate.
+// That import then loads in steps, so the listener keeps answering while it does.
 const log = createLogger("gateway:startup");
 const startup = new StartupManager();
 const controller = new AbortController();
 const operations = new StartupOperations();
 const listener = new StartupServer(startup);
 const launcher = new HostedProcessLauncher();
+const runtimeUrl = import.meta.resolve("./runtime.js");
+// A worker reads the runtime's import graph while ownership and TLS are prepared.
+const runtimeGraph = readModuleGraph(runtimeUrl, controller.signal);
 let runtimeShutdown: ((exitCode?: number) => Promise<void>) | undefined;
 let stopping = false;
 let bootTimeout: ReturnType<typeof setTimeout> | undefined;
@@ -179,7 +184,11 @@ try {
   log.info(
     `Startup page listening on HTTPS port ${(listener.server.address() as { port: number }).port}`,
   );
-  const runtime = await operations.track(startup.run("runtime", () => import("./runtime.js")));
+  const runtime = await operations.track(
+    startup.run("runtime", () =>
+      importInSteps<typeof import("./runtime.js")>(runtimeUrl, runtimeGraph, controller.signal),
+    ),
+  );
   await operations.track(
     runtime.startGateway({
       configDir,

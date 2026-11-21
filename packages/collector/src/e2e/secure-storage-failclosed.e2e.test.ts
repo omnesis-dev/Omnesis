@@ -68,10 +68,9 @@ interface BootAttempt {
  * available even if the static startup observer is already listening.
  *
  * With `holdMarkerRead`, the gateway's read of that marker waits until every
- * probe path has answered once. The startup listener cannot answer while the
- * main thread evaluates the runtime import, and the gateway exits within
- * milliseconds of reading a tampered marker, so without the hold the listener
- * may never get a turn to answer at all.
+ * probe path has answered once. The gateway exits within milliseconds of
+ * reading a tampered marker, so without the hold the listener may close
+ * before any probe reaches it.
  */
 async function spawnGatewayExpectingExit(
   configDir: string,
