@@ -271,9 +271,10 @@ describe.skipIf(process.platform === "win32")(
       expect(result.status, result.stderr).toBe(0);
       expect(outcomes).toEqual(["runner", "passed"]);
       expect(result.stderr).toContain("failed to initialize before any test ran");
-      expect(result.stdout).toContain("✓ iOS journeys passed.");
+      expect(result.stdout).toContain("✓ iOS journeys passed on the stable gateway.");
       // Both attempts get the journey's gateway configuration and its own
-      // result bundle; the first is kept for the artifacts.
+      // result bundle; the first is kept for the artifacts, which carry the
+      // name of the gateway phase the journeys ran on.
       for (const line of calls.filter((call) => call.startsWith("config "))) {
         expect(JSON.parse(line.slice("config ".length))).toEqual({
           gatewayURL: "https://localhost:17999",
@@ -283,11 +284,11 @@ describe.skipIf(process.platform === "win32")(
       }
       expect(readdirSync(artifacts)).toEqual(
         expect.arrayContaining([
-          "ios-journeys.xcresult",
-          "ios-journeys-runner-not-initialized.xcresult",
+          "ios-journeys-stable.xcresult",
+          "ios-journeys-stable-runner-not-initialized.xcresult",
         ]),
       );
-      const log = readFileSync(join(artifacts, "xcodebuild.log"), "utf8");
+      const log = readFileSync(join(artifacts, "xcodebuild-stable.log"), "utf8");
       expect(log).toContain("Timed out while loading Accessibility.");
       expect(log).toContain("** TEST EXECUTE SUCCEEDED **");
     });
@@ -301,7 +302,9 @@ describe.skipIf(process.platform === "win32")(
         "-only-testing:OmnesisDemoUITests/MobileJourneyUITests/testAskingTheAgentShowsItsAnswer",
       );
       expect(result.stderr).not.toContain("running xcodebuild once more");
-      expect(result.stderr).toContain("✗ iOS journeys failed (xcodebuild exit 65)");
+      expect(result.stderr).toContain(
+        "✗ iOS journeys failed on the stable gateway (xcodebuild exit 65)",
+      );
     });
 
     it("passes no retry flags when journey retries are turned off", () => {
@@ -318,7 +321,7 @@ describe.skipIf(process.platform === "win32")(
       const { result, artifacts } = runIosJourneys(["refused"]);
       expect(result.error).toBeUndefined();
       expect(result.status).toBe(64);
-      expect(readFileSync(join(artifacts, "recorder.log"), "utf8")).toContain(
+      expect(readFileSync(join(artifacts, "recorder-stable.log"), "utf8")).toContain(
         "Recording completed. Writing to disk.",
       );
     });
