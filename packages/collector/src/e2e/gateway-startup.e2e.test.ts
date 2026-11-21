@@ -32,8 +32,8 @@ import type { ChildProcess } from "node:child_process";
 const ROOT = join(import.meta.dirname, "../../../..");
 const BOOT_BUDGET = gatewayBootBudgetMs();
 const PROGRESS_PATH = "/.well-known/omnesis-startup";
-/** Makes every gateway module the main thread loads slower; see the preload. */
-const SLOW_MODULE_LOADS = new URL("./slow-gateway-module-loads.mjs", import.meta.url).href;
+/** Holds the gateway's module prewarm until a release file exists; see the preload. */
+const HOLD_MODULE_PREWARM = new URL("./hold-module-prewarm.mjs", import.meta.url).href;
 const browserAvailable = existsSync(chromium.executablePath());
 if (!browserAvailable && process.env.CI) {
   throw new Error("gateway-startup.e2e: Chromium is required in CI");
@@ -132,7 +132,7 @@ async function fixture(options: { gate?: boolean; invalidConfig?: boolean } = {}
 async function launch(
   dir: string,
   requestedPort?: number,
-  options: { preload?: string } = {},
+  options: { preload?: string; env?: Record<string, string> } = {},
 ): Promise<GatewayProcess> {
   const port = requestedPort ?? (await freePort());
   // Eliminate inherited live credentials, addresses and feature flags. Keep
@@ -159,6 +159,7 @@ async function launch(
       OMNESIS_MDNS_DISABLE: "1",
       OMNESIS_PARENT_PID: String(process.pid),
       OMNESIS_LOG_LEVEL: "info",
+      ...options.env,
     }),
   });
   let output = "";
@@ -369,12 +370,14 @@ describe("gateway startup through its production entrypoint", () => {
   );
 
   test(
-    "answers while the runtime's modules load",
+    "answers while the runtime's modules are prepared, then loads them",
     async () => {
       const world = await fixture();
-      // Loading the runtime's modules is synchronous work on the thread that
-      // serves the listener; slowed down, it lasts seconds.
-      const gateway = await launch(world.dir, undefined, { preload: SLOW_MODULE_LOADS });
+      const release = join(world.dir, "release-module-prewarm");
+      const gateway = await launch(world.dir, undefined, {
+        preload: HOLD_MODULE_PREWARM,
+        env: { OMNESIS_E2E_PREWARM_RELEASE: release },
+      });
       const [first, page, api] = await waitFor(
         gateway,
         () =>
@@ -385,15 +388,36 @@ describe("gateway startup through its production entrypoint", () => {
           ]),
         "the startup listener's first answers",
       );
-      // A listener that could answer only once the modules had loaded would
+      // A listener that could answer only once the runtime had loaded would
       // report this step finished in its first answer.
       expect(first.steps.find((step) => step.id === "runtime")?.state).toBe("running");
       expect(page.status).toBe(200);
       expect(page.body).toContain("gateway is starting up");
       expect(api.status).toBe(503);
       expect(JSON.parse(api.body)).toMatchObject({ code: "GATEWAY_STARTING" });
+      await writeFile(release, "");
       await waitForReady(gateway);
       expect((await progress(gateway)).state).toBe("ready");
+      expect(gateway.output()).not.toContain("Module prewarm");
+    },
+    BOOT_BUDGET * 2,
+  );
+
+  test(
+    "a module prewarm that never finishes does not hold up the start",
+    async () => {
+      const world = await fixture();
+      const gateway = await launch(world.dir, undefined, {
+        preload: HOLD_MODULE_PREWARM,
+        env: {
+          // Never written: the prewarm worker waits for good.
+          OMNESIS_E2E_PREWARM_RELEASE: join(world.dir, "never-written"),
+          OMNESIS_MODULE_PREWARM_WAIT_MS: "500",
+        },
+      });
+      await waitForReady(gateway);
+      expect((await progress(gateway)).state).toBe("ready");
+      expect(gateway.output()).toContain("Module prewarm did not finish within 500ms");
     },
     BOOT_BUDGET * 2,
   );

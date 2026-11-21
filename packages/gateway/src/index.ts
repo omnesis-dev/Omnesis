@@ -18,20 +18,17 @@ import { StartupManager } from "./startup/manager.js";
 import { StartupServer } from "./startup/server.js";
 import { StartupOperations } from "./startup/operations.js";
 import { StartupOwnership } from "./startup/shutdown.js";
-import { importInSteps, readModuleGraph } from "./startup/module-graph.js";
+import { DEFAULT_MODULE_PREWARM_WAIT_MS, startModulePrewarm } from "./startup/module-prewarm.js";
 
 // Keep the application import below listen(): even the boot page must not wait
 // for the gateway's dependency graph, stores, or model services to evaluate.
-// That import then loads in steps, so the listener keeps answering while it does.
+// That import still holds this thread, so a worker first warms what it reads.
 const log = createLogger("gateway:startup");
 const startup = new StartupManager();
 const controller = new AbortController();
 const operations = new StartupOperations();
 const listener = new StartupServer(startup);
 const launcher = new HostedProcessLauncher();
-const runtimeUrl = import.meta.resolve("./runtime.js");
-// A worker reads the runtime's import graph while ownership and TLS are prepared.
-const runtimeGraph = readModuleGraph(runtimeUrl, controller.signal);
 let runtimeShutdown: ((exitCode?: number) => Promise<void>) | undefined;
 let stopping = false;
 let bootTimeout: ReturnType<typeof setTimeout> | undefined;
@@ -157,6 +154,13 @@ try {
       }),
     ),
   );
+  // Only the directory's owner warms its modules, while TLS is prepared.
+  const prewarm = startModulePrewarm(import.meta.resolve("./runtime.js"), controller.signal);
+  const prewarmWait = process.env.OMNESIS_MODULE_PREWARM_WAIT_MS;
+  const prewarmWaitMs =
+    prewarmWait !== undefined && /^\d+$/.test(prewarmWait)
+      ? Number(prewarmWait)
+      : DEFAULT_MODULE_PREWARM_WAIT_MS;
   const rawPort = process.env.OMNESIS_GATEWAY_PORT ?? "7600";
   const port = Number(rawPort);
   if (!/^\d+$/.test(rawPort) || !Number.isInteger(port) || port < 0 || port > 65_535) {
@@ -185,9 +189,11 @@ try {
     `Startup page listening on HTTPS port ${(listener.server.address() as { port: number }).port}`,
   );
   const runtime = await operations.track(
-    startup.run("runtime", () =>
-      importInSteps<typeof import("./runtime.js")>(runtimeUrl, runtimeGraph, controller.signal),
-    ),
+    startup.run("runtime", async () => {
+      await prewarm.finish(prewarmWaitMs);
+      controller.signal.throwIfAborted();
+      return import("./runtime.js");
+    }),
   );
   await operations.track(
     runtime.startGateway({

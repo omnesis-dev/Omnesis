@@ -2,4 +2,4 @@
 "omnesis": patch
 ---
 
-The startup page answers for the whole of the gateway's start. While the gateway loaded its own code, which can take seconds, the page and every other request to the gateway went unanswered. The gateway now loads that code a few modules at a time and answers between them.
+The startup page answers sooner on a gateway's first start after an update from source. Loading the gateway's code held every request for several seconds while its TypeScript was converted; that conversion now happens on a separate thread while the page answers.
