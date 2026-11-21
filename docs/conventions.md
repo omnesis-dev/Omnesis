@@ -23,6 +23,12 @@ HTTP dispatcher and attaches WebSocket handling without rebinding the port or
 proxying requests, so peer identity, TLS and session semantics stay intact.
 Startup status is not API readiness: ordinary requests receive 503 until the
 normal application is ready, and the startup page reloads the original URL.
+Importing the runtime holds the main thread, and with it the listener, for the
+whole of its graph's load and evaluation. In source mode a worker first loads
+that graph without evaluating it (`startup/module-prewarm.ts`), so the import
+finds every TypeScript transform cached; startup waits for it only up to a
+deadline. Keep the runtime's module-level code cheap: it runs inside that one
+synchronous import.
 
 Blocking database/schema and graph preparation belongs to startup workers, which
 must exit before ordinary readers/writers open those resources. Migration progress
