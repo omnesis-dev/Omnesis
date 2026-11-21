@@ -81,6 +81,15 @@ async function boot(scenario = "connected"): Promise<void> {
   const path = join(dir, "gateway.sqlite");
   db = createDatabase(path);
   lap("createDatabase");
+  if (process.env.OMNESIS_TEST_SQLITE_TMP) {
+    const other = mkdtempSync(join(process.env.OMNESIS_TEST_SQLITE_TMP, "ts-int-db-"));
+    lap("x");
+    const probe = createDatabase(join(other, "gateway.sqlite"));
+    lap("createDatabaseRunnerTemp");
+    probe.close();
+    rmSync(other, { recursive: true, force: true });
+    lap("x");
+  }
   const device = createDevice(db, { name: "Fictional admin CLI", kind: "cli" });
   admin = createToken(db, device.id, [SCOPE_ADMIN, SCOPE_READ]).token;
   lap("deviceToken");
