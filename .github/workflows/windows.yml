@@ -56,7 +56,11 @@ jobs:
       fail-fast: false
       max-parallel: 4
       matrix:
-        include: ${{ fromJSON(github.event_name == 'pull_request' && '[{"name":"Windows focused","lane":"focused"}]' || github.event_name == 'workflow_dispatch' && inputs.lane == 'unit' && '[{"name":"Windows unit","lane":"unit"},{"name":"Windows adapters","lane":"adapters"}]' || github.event_name == 'workflow_dispatch' && inputs.lane == 'adapters' && '[{"name":"Windows adapters","lane":"adapters"}]' || github.event_name == 'workflow_dispatch' && inputs.lane == 'e2e' && inputs.e2e_files != '' && '[{"name":"Windows E2E diagnosis","lane":"e2e"}]' || github.event_name == 'workflow_dispatch' && inputs.lane == 'e2e' && '[{"name":"Windows E2E 1/2","lane":"e2e","shard":"1/2"},{"name":"Windows E2E 2/2","lane":"e2e","shard":"2/2"}]' || github.event_name == 'workflow_dispatch' && inputs.lane == 'portal' && '[{"name":"Windows portal","lane":"portal"}]' || '[{"name":"Windows unit","lane":"unit"},{"name":"Windows adapters","lane":"adapters"},{"name":"Windows E2E 1/2","lane":"e2e","shard":"1/2"},{"name":"Windows E2E 2/2","lane":"e2e","shard":"2/2"},{"name":"Windows portal","lane":"portal"}]') }}
+        include:
+          [
+            { "name": "Windows measure A", "lane": "focused" },
+            { "name": "Windows measure B", "lane": "focused" },
+          ]
     defaults:
       run:
         shell: pwsh
@@ -152,9 +156,29 @@ jobs:
           path: ${{ runner.temp }}/omnesis-test-embedder
           key: windows-test-embedder-${{ hashFiles('scripts/ci/with-test-embedder.mjs', 'scripts/ci/reference-embedder.json') }}
 
-      - name: Focused Windows runtime tests
+      - name: Repeat the Tailscale embed integration file
         if: ${{ matrix.lane == 'focused' }}
-        run: node scripts/ci/windows-checks.mjs focused
+        run: |
+          $failed = 0
+          $file = 'packages/gateway/src/tailscale-embed/service.integration.test.ts'
+          function Run-Pair($label) {
+            Write-Output "=== $label cold ==="
+            $env:TS_INT_COLD_SCHEMA = "1"
+            node scripts/run-check.mjs unit $file --reporter=verbose
+            Write-Output "cold exit $LASTEXITCODE"
+            Remove-Item Env:TS_INT_COLD_SCHEMA
+            Write-Output "=== $label copy ==="
+            node scripts/run-check.mjs unit $file --reporter=verbose
+            Write-Output "copy exit $LASTEXITCODE"
+            if ($LASTEXITCODE) { $script:failed++ }
+          }
+          for ($i = 1; $i -le 5; $i++) { Run-Pair "quiet $i" }
+          $stress = Start-Process -FilePath node -ArgumentList 'scripts/ci/tmp-stress-1203.mjs' -PassThru -NoNewWindow
+          Start-Sleep -Seconds 5
+          for ($i = 1; $i -le 3; $i++) { Run-Pair "loaded $i" }
+          $stress | Stop-Process -Force
+          Write-Output "failed copy repeats: $failed"
+          exit $failed
 
       - name: Verify real Go-to-Node private transport
         if: ${{ !cancelled() && (matrix.lane == 'focused' || matrix.lane == 'unit') && steps.dependencies.outcome == 'success' }}
