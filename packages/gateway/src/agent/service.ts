@@ -67,6 +67,8 @@ import {
   buildEvidencePacket,
   type DeepResearchResult,
 } from "./deep-research.js";
+import type { ConversationRetentionCandidate } from "./conversation-retention.js";
+import type { HistoryCleanupOutcome } from "../storage/history-cleanup-types.js";
 import type { NoteHandoff } from "../brain/note-agent/handoffs.js";
 export type { VoiceAgentSession, VoiceTurnResult } from "./voice-session.js";
 import { createHash } from "node:crypto";
@@ -2123,6 +2125,58 @@ export class AgentService {
       if (!deleted) this.conversationDeletionTombstones.delete(id);
       this.answerDeleteLocks.delete(id);
     }
+  }
+
+  private readonly historyCleanupOwners = new Set<string>();
+  reserveHistoryCleanup(id: string): boolean {
+    if (this.historyCleanupOwners.has(id)) return true;
+    if (
+      this.answerDeleteLocks.has(id) ||
+      this.sessions.has(id) ||
+      this.resumeCreationTails.has(id) ||
+      this.realtimeOwners.has(id) ||
+      this.voiceOwners.has(id) ||
+      this.activeTurnReplays.has(id) ||
+      this.deepResearchActive.has(id) ||
+      this.conversationPersistenceCounts.has(id) ||
+      this.controls.active(id)
+    )
+      return false;
+    this.historyCleanupOwners.add(id);
+    this.answerDeleteLocks.add(id);
+    return true;
+  }
+  releaseHistoryCleanup(id: string): void {
+    if (this.historyCleanupOwners.delete(id)) this.answerDeleteLocks.delete(id);
+  }
+
+  /** Manual cleanup holds the existing mutation fence while bounded cascade pages drain. */
+  async cleanupConversation(
+    candidate: ConversationRetentionCandidate,
+    cutoffMs: number,
+    bytesEstimate: number,
+  ): Promise<HistoryCleanupOutcome> {
+    this.assertConversationAdmission();
+    const id = candidate.id;
+    if (!this.store?.retentionCandidateIsCurrent) return { state: "protected", reason: "invalid" };
+    if (!this.reserveHistoryCleanup(id)) return { state: "protected", reason: "active" };
+    // The job acknowledges durably before releasing this mutation owner.
+    if (!(await this.store.retentionCandidateIsCurrent(candidate, cutoffMs))) {
+      return { state: "protected", reason: "changed" };
+    }
+    if (this.sessions.has(id) || this.resumeCreationTails.has(id)) {
+      return { state: "protected", reason: "active" };
+    }
+    if (this.onConversationRetained) {
+      if (!(await this.onConversationRetained(id))) return { state: "pending" };
+    } else if (this.onConversationDeleted) await this.onConversationDeleted(id);
+    const removed = this.store.deleteForRetention
+      ? await this.store.deleteForRetention(id)
+      : await this.store.delete(id);
+    if (removed) await this.forgetReadState([id]);
+    return removed
+      ? { state: "removed", bytesEstimate }
+      : { state: "protected", reason: "already-removed" };
   }
 
   /**

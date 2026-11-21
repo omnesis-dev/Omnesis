@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { spawnWindowsJob, type WindowsJobProcess } from "./windows-job.js";
+import { prepareWindowsNativeWorker } from "./windows-worker-cache.js";
 
 /** UTF-8 execFile-style capture with kernel ownership through timeout and close. */
 export async function execWindowsJob(
@@ -19,7 +20,8 @@ export async function execWindowsJob(
   if (opts.signal?.aborted) {
     throw Object.assign(new Error("The operation was aborted"), { code: "ABORT_ERR" });
   }
-  const started = Date.now();
+  prepareWindowsNativeWorker();
+  const started = performance.now();
   const timeout = opts.timeout !== undefined && opts.timeout > 0 ? opts.timeout : undefined;
   let proc: WindowsJobProcess;
   try {
@@ -32,7 +34,8 @@ export async function execWindowsJob(
     if (error instanceof Error) Object.assign(error, { stdout: "", stderr: "" });
     throw error;
   }
-  const remaining = timeout === undefined ? undefined : timeout - (Date.now() - started);
+  const remaining =
+    timeout === undefined ? undefined : Math.floor(timeout - (performance.now() - started));
   return new Promise((resolve, reject) => {
     const output: Buffer[] = [];
     const errors: Buffer[] = [];

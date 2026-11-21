@@ -25,6 +25,14 @@ const workflow = () =>
   parse(readFileSync(new URL("../../.github/workflows/windows.yml", import.meta.url), "utf8"));
 
 describe("Windows CI coverage", () => {
+  test("keeps manual history cleanup filesystem ownership in focused Windows coverage", () => {
+    for (const file of [
+      "packages/gateway/src/storage/history-cleanup.test.ts",
+      "packages/gateway/src/storage/history-cleanup-writer.test.ts",
+      "packages/gateway/src/workers/io-worker-async.test.ts",
+    ])
+      expect(FOCUSED_UNIT_FILES).toContain(file);
+  });
   test("keeps dotenv refusals, CI isolation and read ownership in focused pull-request coverage", () => {
     for (const file of [
       "scripts/ci/production-network.test.mjs",

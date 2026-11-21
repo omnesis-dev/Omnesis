@@ -49,6 +49,11 @@ import {
   type AgentConversationTerminalFailure,
   type AgentTerminalFailure,
 } from "@omnesis/core";
+import { readConversationCleanupCandidates } from "./conversation-retention.js";
+import {
+  ConversationCleanupScanner,
+  type ConversationCleanupRead,
+} from "./conversation-cleanup.js";
 import {
   readConversationRetentionCandidates,
   fileIdentity,
@@ -415,8 +420,13 @@ export class FsConversationStore implements ConversationStore {
       files: readonly ConversationRetentionFile[],
       cutoffMs: number,
     ) => Promise<ConversationRetentionCandidate[]> = readConversationRetentionCandidates,
+    private readonly cleanupScanner: ConversationCleanupRead = readConversationCleanupCandidates,
   ) {
     this.dir = dir;
+  }
+
+  createCleanupScanner(): ConversationCleanupScanner {
+    return new ConversationCleanupScanner(this.dir, this.cleanupScanner);
   }
 
   async save(rec: ConversationRecord): Promise<void> {

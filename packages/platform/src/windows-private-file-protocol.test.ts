@@ -9,7 +9,10 @@ vi.mock("node:child_process", async (original) => ({
   spawn: mocks.spawn,
   spawnSync: mocks.spawnSync,
 }));
-vi.mock("./windows-worker-cache.js", () => ({ windowsWorkerInvocation: mocks.workerInvocation }));
+vi.mock("./windows-worker-cache.js", () => ({
+  prepareWindowsNativeWorker: () => {},
+  windowsWorkerInvocation: mocks.workerInvocation,
+}));
 import {
   copyWindowsPrivateFileSync,
   createWindowsPrivateFileSync,
@@ -26,6 +29,7 @@ import {
 
 beforeEach(() => {
   vi.stubEnv("SystemRoot", "C:\\Windows");
+  vi.spyOn(performance, "now").mockReturnValue(0);
   mocks.spawn.mockReset();
   mocks.workerInvocation.mockReset().mockImplementation((mode: string) => ({
     command: "C:\\Windows\\native-worker.exe",
@@ -38,7 +42,10 @@ beforeEach(() => {
     stderr: Buffer.from("OMNESIS_JOB:0\n"),
   });
 });
-afterEach(() => vi.unstubAllEnvs());
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.restoreAllMocks();
+});
 function frame(): { metadata: unknown; bytes: Buffer; command: string; args: string[] } {
   const options = mocks.spawnSync.mock.calls.at(-1)![2] as { input: Buffer };
   const length = options.input.readUInt32LE();
@@ -50,6 +57,92 @@ function frame(): { metadata: unknown; bytes: Buffer; command: string; args: str
   };
 }
 describe("Windows private native protocol", () => {
+  it.each(
+    ([-3_600_000, 3_600_000] as const).flatMap((jump) =>
+      (["framing", "initialization"] as const).map((phase) => ({ jump, phase })),
+    ),
+  )("keeps file budgets monotonic across a $jump ms UTC jump during $phase", ({ jump, phase }) => {
+    let monotonic = 1000;
+    let wall = 1_700_000_000_000;
+    vi.spyOn(performance, "now").mockImplementation(() => monotonic);
+    vi.spyOn(Date, "now").mockImplementation(() => wall);
+    const stringify = JSON.stringify;
+    vi.spyOn(JSON, "stringify").mockImplementation((value: unknown) => {
+      if (
+        value &&
+        typeof value === "object" &&
+        "action" in value &&
+        value.action === "storage-directory"
+      ) {
+        monotonic += 20;
+        if (phase === "framing") wall += jump;
+      }
+      return stringify(value);
+    });
+    mocks.workerInvocation.mockImplementationOnce((kind: string) => {
+      monotonic += 30;
+      if (phase === "initialization") wall += jump;
+      return { command: "C:\\Windows\\native-worker.exe", args: [kind] };
+    });
+    prepareWindowsPrivateStorageDirectorySync("C:\\Example\\storage");
+    expect(mocks.workerInvocation.mock.calls[0]![2]).toEqual({ timeoutMs: 29_980 });
+    expect(mocks.spawnSync.mock.calls[0]![2].timeout).toBe(29_950);
+  });
+
+  it("deducts path validation, metadata and initialization before the bounded file operation", () => {
+    let now = 1000;
+    vi.spyOn(performance, "now").mockImplementation(() => now);
+    const path = "C:\\Example\\storage";
+    const wellFormed = String.prototype.isWellFormed;
+    vi.spyOn(String.prototype, "isWellFormed").mockImplementation(function (this: string) {
+      if (String(this) === path) now += 10;
+      return wellFormed.call(this);
+    });
+    const stringify = JSON.stringify;
+    vi.spyOn(JSON, "stringify").mockImplementation((value: unknown) => {
+      if (
+        value &&
+        typeof value === "object" &&
+        "action" in value &&
+        value.action === "storage-directory"
+      )
+        now += 10;
+      return stringify(value);
+    });
+    const concat = Buffer.concat;
+    vi.spyOn(Buffer, "concat").mockImplementation((list, totalLength) => {
+      if (
+        list.length === 4 &&
+        Buffer.isBuffer(list[1]) &&
+        list[1].toString("utf8").includes('"action":"storage-directory"')
+      )
+        now += 10;
+      return concat(list, totalLength);
+    });
+    mocks.workerInvocation.mockImplementationOnce((kind: string) => {
+      now += 40;
+      return { command: "C:\\Windows\\native-worker.exe", args: [kind] };
+    });
+    prepareWindowsPrivateStorageDirectorySync(path);
+    expect(mocks.workerInvocation.mock.calls[0]![2]).toEqual({ timeoutMs: 29_980 });
+    expect(mocks.spawnSync.mock.calls[0]![2].timeout).toBe(29_930);
+  });
+
+  it("does not initialize or execute when metadata work exhausts the file budget", () => {
+    const clock = vi.spyOn(performance, "now").mockReturnValue(1000);
+    const wellFormed = String.prototype.isWellFormed;
+    vi.spyOn(String.prototype, "isWellFormed").mockImplementation(function (this: string) {
+      clock.mockReturnValue(31_000);
+      return wellFormed.call(this);
+    });
+    expect(() => prepareWindowsPrivateStorageDirectorySync("C:\\Example\\storage")).toThrow(
+      "bounded private regular file",
+    );
+    expect(mocks.workerInvocation).not.toHaveBeenCalled();
+    expect(mocks.spawnSync).not.toHaveBeenCalled();
+    expect(mocks.spawn).not.toHaveBeenCalled();
+  });
+
   it("frames storage ancestry and inheritance preflight as metadata only", () => {
     const path = "C:\\invented folder\\literal & $()";
     prepareWindowsPrivateStorageDirectorySync(path);

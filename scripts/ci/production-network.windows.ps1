@@ -55,16 +55,25 @@ $tracking = $env:RUNNER_TRACKING_ID
 try {
   $env:RUNNER_TRACKING_ID = ''
   $sink = Start-Process -FilePath $python -ArgumentList @('-u', ('"'+$proxyFile+'"'), ('"'+$configFile+'"')) -PassThru -RedirectStandardOutput $ready -RedirectStandardError $errors
+  # Opening the handle now keeps the exit code readable if the proxy ends early.
+  $null = $sink.Handle
 } finally {
   if ($null -eq $tracking) { Remove-Item Env:RUNNER_TRACKING_ID -ErrorAction SilentlyContinue }
   else { $env:RUNNER_TRACKING_ID = $tracking }
 }
-$limit = [DateTime]::UtcNow.AddSeconds(10)
+# A freshly booted runner starts Python cold, which can take well over ten seconds.
+# Wait for the proxy itself: it either reports ready or exits. The ceiling only ends a hang.
+$starting = [Diagnostics.Stopwatch]::StartNew()
 while (-not ((Test-Path $ready) -and ((Get-Content $ready -Raw) -match 'ready'))) {
   $sink.Refresh()
-  if ($sink.HasExited -or [DateTime]::UtcNow -ge $limit) { throw 'DNS proxy did not become ready; no adapter or production lookup was attempted' }
+  if ($sink.HasExited -or $starting.Elapsed.TotalSeconds -ge 120) {
+    $outcome = if ($sink.HasExited) { "exited with code $($sink.ExitCode)" } else { 'still starting after 120 s' }
+    $stderr = if (Test-Path $errors) { Get-Content $errors -Raw } else { '' }
+    throw "DNS proxy did not become ready ($outcome); no adapter or production lookup was attempted. $stderr"
+  }
   Start-Sleep -Milliseconds 100
 }
+Write-Output ('DNS proxy ready after {0:N1} s' -f $starting.Elapsed.TotalSeconds)
 # Existing resolver state is retained as forwarding input, never overwritten in source.
 foreach ($adapter in $addresses) { Set-DnsClientServerAddress -InterfaceIndex $adapter.InterfaceIndex -ServerAddresses '127.0.0.1' }
 Add-DnsClientNrptRule -Namespace @('windows-network-probe.example.test','.windows-network-probe.example.test','omnesis.app','.omnesis.app','omnesis.dev','.omnesis.dev') -NameServers '127.0.0.1' -Comment $group | Out-Null

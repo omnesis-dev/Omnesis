@@ -61,6 +61,7 @@ import Database from "better-sqlite3";
 import { describe, test, expect, beforeAll, afterAll } from "vitest";
 import { SyntheticE2EHarness } from "./synth-harness.js";
 import { waitForCondition } from "./multi-collector-harness.js";
+import { waitForStartupRepairs } from "./startup-repairs.js";
 
 /** A document-only source: the standing absence the grace tests hold and spend. */
 const NOTES = "apple-notes:john.smith@icloud.example";
@@ -873,18 +874,8 @@ describe("snapshot absence: the deadline's currencies and what a swept row takes
       }
     });
 
-    // HTTP health is available before background tasks finish registering.
-    // Wait for this sweep's observable registration before kicking it.
-    await waitForCondition(
-      async () => {
-        const snapshot = await harness.gatewayJson<{ jobs: Array<{ id: string }> }>(
-          "/admin/background-jobs",
-        );
-        return snapshot.jobs.some((job) => job.id === "absence.sweep");
-      },
-      30_000,
-      "the absence sweep to register after the gateway restart",
-    );
+    // See #1172 — the observable catalog precedes live scheduling behind boot repairs.
+    await waitForStartupRepairs((path) => harness.gatewayJson(path));
 
     // Find a tick that provably belonged to the document phase and provably
     // found work — which is what removes any need to know where `phaseIndex`

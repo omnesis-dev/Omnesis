@@ -75,6 +75,10 @@ import {
   renderSourceRestrictedAnswerSection,
   rendersTimeline,
 } from "./system-prompt.js";
+import type {
+  HistoryCleanupCandidate,
+  HistoryCleanupOutcome,
+} from "../storage/history-cleanup-types.js";
 import type { WatchFiringRecord } from "./watch-port.js";
 import type { MessageCountGate } from "./message-count-port.js";
 import type { ConversationNotification } from "./conversation-notifier.js";
@@ -781,6 +785,73 @@ export class AgentLifecycle {
     this.routeDeps.agentService?.setInteractiveWriteProfile(profile);
   }
 
+  private readonly historyCleanupOwners = new Set<string>();
+  reserveHistoryCleanup(id: string): boolean {
+    if (this.historyCleanupOwners.has(id)) return true;
+    if (this.routeDeps.agentService && !this.routeDeps.agentService.reserveHistoryCleanup(id))
+      return false;
+    this.historyCleanupOwners.add(id);
+    return true;
+  }
+  releaseHistoryCleanup(id: string): void {
+    this.historyCleanupOwners.delete(id);
+    this.routeDeps.agentService?.releaseHistoryCleanup(id);
+  }
+
+  /** Available independently of any chat model; source/index cleanup never requires inference. */
+  async cleanupConversation(
+    candidate: HistoryCleanupCandidate,
+    cutoffMs: number,
+  ): Promise<HistoryCleanupOutcome> {
+    return this.withAgentServiceStable(async () => {
+      if (!this.reserveHistoryCleanup(candidate.id))
+        return { state: "protected", reason: "active" } as const;
+      const retentionCandidate = {
+        id: candidate.id,
+        updatedAt: candidate.detail ?? "",
+        fileIdentity: candidate.identity,
+      };
+      const active = this.routeDeps.agentService;
+      if (active) {
+        const outcome = await active.cleanupConversation(
+          retentionCandidate,
+          cutoffMs,
+          candidate.bytesEstimate,
+        );
+        return outcome;
+      }
+      const store = this.deps.conversationStore;
+      if (
+        !store.retentionCandidateIsCurrent ||
+        !(await store.retentionCandidateIsCurrent(retentionCandidate, cutoffMs))
+      ) {
+        return { state: "protected", reason: "changed" } as const;
+      }
+      const removeBatch = () =>
+        this.omnesisChatRuntime
+          ? this.omnesisChatRuntime.onConversationRetained(candidate.id)
+          : retainOmnesisChatConversation(
+              {
+                writeGate: this.deps.writeGate,
+                indexWriteGate: directIndexWriteGate(this.deps.indexDb),
+                readDb: this.deps.db,
+                ...(this.deps.deleteDocumentIndexBatch
+                  ? { retentionIndexDeleteBatch: this.deps.deleteDocumentIndexBatch }
+                  : {}),
+              },
+              candidate.id,
+            );
+      if (!(await removeBatch())) return { state: "pending" } as const;
+      const removed = store.deleteForRetention
+        ? await store.deleteForRetention(candidate.id)
+        : await store.delete(candidate.id);
+      if (removed) await this.conversationReadState.forget([candidate.id]);
+      return removed
+        ? { state: "removed", bytesEstimate: candidate.bytesEstimate }
+        : { state: "protected", reason: "already-removed" };
+    });
+  }
+
   async pruneConversations(
     cutoffMs: number,
     limit = 1,
@@ -802,6 +873,7 @@ export class AgentLifecycle {
       const forgotten: string[] = [];
       for (let index = 0; index < page.items.length && index < deleteLimit; index += 1) {
         const candidate = page.items[index]!;
+        if (this.historyCleanupOwners.has(candidate.id)) continue;
         if (!(await store.retentionCandidateIsCurrent(candidate, cutoffMs))) continue;
         try {
           const complete = this.omnesisChatRuntime
@@ -1274,6 +1346,8 @@ export class AgentLifecycle {
       agentService.setInteractiveWriteProfile(this.interactiveWriteProfile);
     }
 
+    if (agentService)
+      for (const id of this.historyCleanupOwners) agentService.reserveHistoryCleanup(id);
     this.routeDeps.agentService = agentService;
     this.routeDeps.answerService = agentService
       ? this.makeAnswerService(agentService, maxToolIterations)
@@ -1519,6 +1593,8 @@ export class AgentLifecycle {
     if (newService && this.interactiveWriteProfile) {
       newService.setInteractiveWriteProfile(this.interactiveWriteProfile);
     }
+    if (newService)
+      for (const id of this.historyCleanupOwners) newService.reserveHistoryCleanup(id);
     this.routeDeps.agentService = newService;
     this.routeDeps.answerService = newService
       ? this.makeAnswerService(newService, maxToolIterations)

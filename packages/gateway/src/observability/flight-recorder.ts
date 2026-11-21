@@ -8,9 +8,9 @@
  * The capture runs on the stall watchdog's thread. Its inspector session is
  * connected to the main thread in-process (`connectToMainThread`, no network
  * port), so the main thread only does what V8's profiler itself does —
- * sampling on its own thread, then serialising the profile on stop, a few
- * milliseconds — while parsing and summarising the profile, and writing the
- * summary, happen off it.
+ * recording the functions compiled so far when it starts, sampling on its own
+ * thread, then serialising the profile on stop — while parsing and summarising
+ * the profile, and writing the summary, happen off it.
  *
  * Each summary is one JSON file under the gateway's
  * `<configDir>/diagnostics/stalls/`, named by its id, which sorts by capture
@@ -62,7 +62,16 @@ const FILE_PATTERN = /^profile-[0-9TZ-]+\.json$/;
  */
 const INSPECTOR_REPLY_TIMEOUT_MS = 10_000;
 
-function post<T>(session: Session, method: string, params: object = {}): Promise<T> {
+/** The part of an inspector session the profiler uses; a test can stand in for it. */
+export type ProfilerSession = Pick<Session, "post" | "disconnect">;
+
+function connectToMainThread(): ProfilerSession {
+  const session = new Session();
+  session.connectToMainThread();
+  return session;
+}
+
+function post<T>(session: ProfilerSession, method: string, params: object = {}): Promise<T> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(
       () => reject(new Error(`${method} unanswered after ${INSPECTOR_REPLY_TIMEOUT_MS}ms`)),
@@ -80,30 +89,35 @@ function post<T>(session: Session, method: string, params: object = {}): Promise
  * Profile the main thread for `durationMs`. Call from a worker thread only.
  * The inspector reaches the main thread by interrupt, so this starts while the
  * main thread is stuck in JavaScript — but only once it returns, when stuck in
- * native code. `stillWanted`, called once profiling has started with how long
- * the main thread took to answer the first, trivial inspector call — the
- * delay before it serviced an interrupt — lets the caller abandon a profile
- * that started too late to be of use: it is stopped at once and null is
- * returned.
+ * native code. `stillWanted`, called with how long the main thread took to
+ * answer the first, trivial inspector call — the delay before it serviced an
+ * interrupt — lets the caller abandon a profile that would start too late to
+ * be of use: null is returned and the profiler is never started.
+ *
+ * The decision comes before `Profiler.start` because starting is the costly
+ * step, and it is paid on the main thread: V8 records every function compiled
+ * so far before it takes a sample, about 100 ms for the gateway's code on a
+ * fast core, and many seconds when the process is starved of CPU. A profile
+ * started for a stall that is already over, or on a thread too slow to
+ * answer, would only lengthen the stall it was meant to explain.
  */
 export async function captureMainThreadProfile(
   durationMs: number,
   samplingIntervalUs: number = PROFILE_SAMPLING_INTERVAL_US,
   stillWanted: (answerWaitMs: number) => boolean = () => true,
+  connect: () => ProfilerSession = connectToMainThread,
 ): Promise<CpuProfile | null> {
-  const session = new Session();
-  session.connectToMainThread();
+  const session = connect();
   try {
     const asked = performance.now();
     await post(session, "Profiler.enable");
     const answerWaitMs = performance.now() - asked;
-    await post(session, "Profiler.setSamplingInterval", { interval: samplingIntervalUs });
-    await post(session, "Profiler.start");
     if (!stillWanted(answerWaitMs)) {
-      await post(session, "Profiler.stop");
       await post(session, "Profiler.disable");
       return null;
     }
+    await post(session, "Profiler.setSamplingInterval", { interval: samplingIntervalUs });
+    await post(session, "Profiler.start");
     await new Promise((resolve) => setTimeout(resolve, durationMs));
     const { profile } = await post<{ profile: CpuProfile }>(session, "Profiler.stop");
     await post(session, "Profiler.disable");

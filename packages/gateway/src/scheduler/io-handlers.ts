@@ -116,7 +116,10 @@ import {
   nearDupFileLikeDocsSince,
 } from "../near-dupes/NearDupDfService.js";
 import { readNearDupDfBuiltAt, readNearDupDfMeta } from "../near-dupes/meta.js";
-import { readConversationRetentionCandidates } from "../agent/conversation-retention.js";
+import {
+  readConversationCleanupCandidates,
+  readConversationRetentionCandidates,
+} from "../agent/conversation-retention.js";
 import { knowledgeDiscoveryByMonth } from "../brain/knowledge/discovery-timeline.js";
 import {
   listOrganizationAdmissions,
@@ -234,6 +237,11 @@ export const ioHandlers = {
     dateScanPending: countPendingDateExtraction(db),
     corpusTotal: (db.prepare("SELECT COUNT(*) AS n FROM documents").get() as { n: number }).n,
   }),
+  "io.conversationCleanupCandidates": (
+    _db: Db,
+    files: readonly ConversationRetentionFile[],
+    cutoffMs: number,
+  ) => readConversationCleanupCandidates(files, cutoffMs),
   "io.conversationRetentionCandidates": (
     _db: Db,
     files: ConversationRetentionFile[],

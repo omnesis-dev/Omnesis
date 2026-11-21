@@ -351,8 +351,9 @@ jobs:
         # it fails, not skips, when the binary is missing in CI. Installed
         # through the package the suite imports (packages/collector's
         # `playwright`), so the browser revision always matches the library that
-        # asks for it; `--with-deps` adds Chromium's system libraries.
-        run: npm exec --workspace packages/collector -- playwright install --with-deps chromium
+        # asks for it. The script also installs Chromium's system libraries,
+        # trying again while an Ubuntu mirror is unreachable.
+        run: scripts/ci/playwright-chromium.sh npm exec --workspace packages/collector -- playwright
 
       - name: Set up Go
         # tailscale-embed.e2e.test.ts runs a private tailnet: headscale, and
@@ -593,7 +594,7 @@ jobs:
         run: scripts/ci/npm-ci.sh
 
       - name: Install Playwright Chromium (required dependency — fail loud)
-        run: npx playwright install --with-deps chromium
+        run: scripts/ci/playwright-chromium.sh npx playwright
 
       - name: lane [portal]
         run: exec node scripts/run-check.mjs portal

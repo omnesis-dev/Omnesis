@@ -13,7 +13,12 @@ import {
   type WindowsOwnedInvocation,
   type WindowsOwnedSyncOptions,
 } from "./windows-owned-process.js";
-import { windowsWorkerInvocation, type WindowsBootstrapRequest } from "./windows-worker-cache.js";
+import {
+  prepareWindowsNativeWorker,
+  windowsWorkerInvocation,
+  type WindowsBootstrapRequest,
+} from "./windows-worker-cache.js";
+
 import { windowsPowerShellExecutable } from "./windows-powershell.js";
 import { WindowsJobControl, type WindowsJobControlConfiguration } from "./windows-job-control.js";
 import { WINDOWS_JOB_POWERSHELL_SCRIPT } from "./native/windows-job-source.js";
@@ -59,6 +64,9 @@ function bootstrapWindowsWorker(
   request: WindowsBootstrapRequest,
   timeoutMs = 30_000,
 ): WindowsJobResult {
+  const started = performance.now();
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) return deadlineFailure("timeout");
+  const budget = Math.min(timeoutMs, 30_000);
   const invocation = {
     command: windowsPowerShellExecutable(),
     args: [
@@ -70,12 +78,23 @@ function bootstrapWindowsWorker(
     ],
   };
   const nonce = randomBytes(32).toString("hex");
+  const frame = jobFrame(
+    request.invocation.command,
+    request.invocation.args,
+    undefined,
+    undefined,
+    nonce,
+  );
+  const elapsed = performance.now() - started;
+  const remaining = Math.floor(budget - elapsed);
+  if (!Number.isFinite(remaining) || elapsed < 0 || remaining <= 0)
+    return deadlineFailure("timeout");
   return runWindowsOwnedProcessSync(
     invocation,
-    jobFrame(request.invocation.command, request.invocation.args, undefined, undefined, nonce),
+    frame,
     {
       input: request.input,
-      timeoutMs: Math.max(1, Math.min(timeoutMs, 30_000)),
+      timeoutMs: remaining,
       maxBuffer: 65_536,
     },
     { nonce },
@@ -83,29 +102,11 @@ function bootstrapWindowsWorker(
 }
 
 export function windowsJobInvocation(timeoutMs?: number): WindowsOwnedInvocation {
-  const start = Date.now();
-  return windowsWorkerInvocation(
-    "job",
-    (request) =>
-      bootstrapWindowsWorker(
-        request,
-        timeoutMs === undefined ? undefined : timeoutMs - (Date.now() - start),
-      ),
-    { timeoutMs },
-  );
+  return windowsWorkerInvocation("job", bootstrapWindowsWorker, { timeoutMs });
 }
 /** Shared filesystem workers self-contain in a Job before reading request input. */
 export function windowsFilesystemInvocation(timeoutMs?: number): WindowsOwnedInvocation {
-  const start = Date.now();
-  return windowsWorkerInvocation(
-    "filesystem",
-    (request) =>
-      bootstrapWindowsWorker(
-        request,
-        timeoutMs === undefined ? undefined : timeoutMs - (Date.now() - start),
-      ),
-    { timeoutMs },
-  );
+  return windowsWorkerInvocation("filesystem", bootstrapWindowsWorker, { timeoutMs });
 }
 /** Stop only a retained helper handle; numeric PIDs never establish ownership. */
 export function killWindowsJob(pid: number): void {
@@ -118,34 +119,29 @@ export function spawnWindowsJob(
   args: readonly string[],
   opts: Pick<WindowsJobOptions, "cwd" | "env" | "completion"> & { startupTimeoutMs?: number } = {},
 ): WindowsJobProcess {
-  const start = Date.now();
-  const expired = () =>
-    opts.startupTimeoutMs !== undefined && Date.now() - start >= opts.startupTimeoutMs;
+  prepareWindowsNativeWorker();
+  const start = performance.now();
+  const remaining = () =>
+    Math.floor(Math.min(30_000, opts.startupTimeoutMs ?? Infinity) - (performance.now() - start));
+  const expired = () => !(remaining() > 0);
   const timeout = () =>
     Object.assign(new Error("Command timed out"), { code: "ETIMEDOUT", killed: true });
   jobFrame(command, args, opts.completion);
   if (expired()) throw timeout();
   let invocation: WindowsOwnedInvocation;
   try {
-    invocation = windowsJobInvocation(
-      opts.startupTimeoutMs === undefined
-        ? undefined
-        : opts.startupTimeoutMs - (Date.now() - start),
-    );
+    invocation = windowsJobInvocation(remaining());
   } catch (error) {
     if (expired()) throw Object.assign(timeout(), cleanupFailureReceipt(error));
     throw error;
   }
   if (expired()) throw timeout();
-  const control = new WindowsJobControl(
-    invocation.parentBirth ?? "",
-    Math.min(
-      start + 30_000,
-      opts.startupTimeoutMs === undefined ? Infinity : start + opts.startupTimeoutMs,
-    ),
-  );
+  const startupMs = remaining();
+  if (!(startupMs > 0)) throw timeout();
+  const control = new WindowsJobControl(invocation.parentBirth ?? "", Date.now() + startupMs);
   try {
     const controlledFrame = jobFrame(command, args, opts.completion, control.configuration);
+    if (expired()) throw timeout();
     return spawnWindowsOwnedProcess(
       invocation,
       controlledFrame,
@@ -196,22 +192,29 @@ export function runWindowsJob(
   onSpawn?: (pid: number) => void,
 ): Promise<WindowsJobResult> {
   if (opts.signal?.aborted) return Promise.resolve(deadlineFailure("aborted"));
-  const start = Date.now();
+  prepareWindowsNativeWorker();
+  const start = performance.now();
+  const startupRemaining = () =>
+    Math.floor(Math.min(30_000, opts.timeoutMs ?? Infinity) - (performance.now() - start));
   if (opts.timeoutMs !== undefined && opts.timeoutMs <= 0)
     return Promise.resolve(deadlineFailure("timeout"));
   let frame: Buffer, invocation: WindowsOwnedInvocation;
   try {
     frame = jobFrame(command, args, opts.completion);
-    invocation = windowsJobInvocation(opts.timeoutMs);
+    const remaining = startupRemaining();
+    if (!(remaining > 0)) return Promise.resolve(deadlineFailure("timeout"));
+    invocation = windowsJobInvocation(remaining);
   } catch (error) {
     return Promise.resolve(
-      opts.timeoutMs !== undefined && Date.now() - start >= opts.timeoutMs
+      opts.timeoutMs !== undefined && performance.now() - start >= opts.timeoutMs
         ? deadlineFailure("timeout", error)
         : failedSpawn(error),
     );
   }
   const timeoutMs =
-    opts.timeoutMs === undefined ? undefined : opts.timeoutMs - (Date.now() - start);
+    opts.timeoutMs === undefined
+      ? undefined
+      : Math.floor(opts.timeoutMs - (performance.now() - start));
   if (timeoutMs !== undefined && timeoutMs <= 0) return Promise.resolve(deadlineFailure("timeout"));
   if (opts.input !== undefined && opts.inputStream !== undefined)
     return Promise.resolve(
@@ -219,14 +222,15 @@ export function runWindowsJob(
     );
   let control: WindowsJobControl | undefined;
   try {
-    control = new WindowsJobControl(
-      invocation.parentBirth ?? "",
-      Math.min(start + 30_000, opts.timeoutMs === undefined ? Infinity : start + opts.timeoutMs),
-    );
+    const startupMs = startupRemaining();
+    if (!(startupMs > 0)) return Promise.resolve(deadlineFailure("timeout"));
+    control = new WindowsJobControl(invocation.parentBirth ?? "", Date.now() + startupMs);
     frame = jobFrame(command, args, opts.completion, control.configuration);
     const remaining =
-      opts.timeoutMs === undefined ? undefined : opts.timeoutMs - (Date.now() - start);
-    if (remaining !== undefined && remaining <= 0) {
+      opts.timeoutMs === undefined
+        ? undefined
+        : Math.floor(opts.timeoutMs - (performance.now() - start));
+    if (!(startupRemaining() > 0) || (remaining !== undefined && remaining <= 0)) {
       control.abandon();
       return control.closed.catch(() => {}).then(() => deadlineFailure("timeout"));
     }
@@ -248,20 +252,28 @@ export function runWindowsJobSync(
   args: readonly string[],
   opts: WindowsOwnedSyncOptions = {},
 ): WindowsJobResult {
-  const start = Date.now();
+  prepareWindowsNativeWorker();
+  const start = performance.now();
   if (opts.timeoutMs !== undefined && opts.timeoutMs <= 0) return deadlineFailure("timeout");
   const nonce = randomBytes(32).toString("hex");
   let frame: Buffer, invocation: WindowsOwnedInvocation;
   try {
     frame = jobFrame(command, args, opts.completion, undefined, nonce);
-    invocation = windowsJobInvocation(opts.timeoutMs);
+    const remaining =
+      opts.timeoutMs === undefined
+        ? undefined
+        : Math.floor(opts.timeoutMs - (performance.now() - start));
+    if (remaining !== undefined && remaining <= 0) return deadlineFailure("timeout");
+    invocation = windowsJobInvocation(remaining);
   } catch (error) {
-    return opts.timeoutMs !== undefined && Date.now() - start >= opts.timeoutMs
+    return opts.timeoutMs !== undefined && performance.now() - start >= opts.timeoutMs
       ? deadlineFailure("timeout", error)
       : failedSpawn(error);
   }
   const timeoutMs =
-    opts.timeoutMs === undefined ? undefined : opts.timeoutMs - (Date.now() - start);
+    opts.timeoutMs === undefined
+      ? undefined
+      : Math.floor(opts.timeoutMs - (performance.now() - start));
   if (timeoutMs !== undefined && timeoutMs <= 0) return deadlineFailure("timeout");
   return runWindowsOwnedProcessSync(invocation, frame, { ...opts, timeoutMs }, { nonce });
 }

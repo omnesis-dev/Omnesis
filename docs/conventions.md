@@ -1331,6 +1331,18 @@ wrappers even when its value is `undefined`; that presence means cleanup remains
 unconfirmed. Self-contained filesystem workers have no child tree and use their
 separate process-lifetime contract.
 
+Windows native worker initialization shares one monotonic deadline across exact
+owner verification, request construction and bootstrap, capped at 30 seconds and
+the caller's remaining time. Every stage forwards only what remains; operation
+framing and initialization also count against the operation's original deadline.
+Cached or inherited verified workers require no new initialization. Before an
+operation starts its clock, the first one in a process establishes the owner's
+creation time under its own 30-second allowance, because that query is the
+process's first Windows PowerShell launch and can spend tens of seconds loading
+the engine on a freshly booted machine; a failure there leaves the owner check
+to query again inside the shared deadline. General process probes used by
+ownership locks retain their independent ten-second cap.
+
 Use `ownedProcessCleanupReceipt` from `@omnesis/platform/owned-process-cleanup`
 (re-exported by `@omnesis/core`) to recognize an explicit cleanup marker through
 an error's cause chain. The platform subpath keeps this check available during
