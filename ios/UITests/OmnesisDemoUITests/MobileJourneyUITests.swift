@@ -225,6 +225,14 @@ final class MobileJourneyUITests: XCTestCase {
     private func ask() throws {
         try gateway.deleteAllConversations()
         try launchPaired()
+        // At launch the Ask screen opens a session of its own, and adopting
+        // it replaces the composer, along with whatever was typed into it and
+        // its keyboard focus. The conversation's actions menu appears once the
+        // session is in place, so the question is typed after that.
+        XCTAssertTrue(
+            app.buttons["Chat actions"].waitForExistence(timeout: 60),
+            "the Ask screen never opened its session"
+        )
         let composer = app.textFields["agentComposer"]
         focus(composer)
         composer.typeText(Self.agentQuestion)

@@ -715,7 +715,7 @@ struct CitationsDrawer: View {
             // dark mode and light in light mode rather than staying a
             // fixed dark charcoal that clashes with the light theme.
             AdjustableBlur(
-                intensity: 0.12,
+                intensity: progress > 0 ? 0.12 : 0,
                 style: .systemUltraThinMaterial
             )
             Color.black.opacity(0.45)
@@ -917,16 +917,14 @@ struct ComposerNeedsGutterKey: PreferenceKey {
     }
 }
 
-/// Variable-intensity `UIBlurEffect` wrapper. SwiftUI's `Material`
-/// has a fixed blur radius and only exposes a coarse thickness scale
-/// (ultraThin … ultraThick) which controls tint, not blur strength.
-/// The canonical iOS hack to dial blur intensity is to drive a
-/// `UIVisualEffectView`'s `.effect` via a paused
-/// `UIViewPropertyAnimator`: setting `fractionComplete` to `x`
-/// renders the effect at `x` of its full strength.
+/// Variable-intensity `UIBlurEffect` wrapper. SwiftUI's `Material` exposes only a coarse thickness scale
+/// (tint, not blur strength), so a paused `UIViewPropertyAnimator` drives the view's `.effect`: setting
+/// `fractionComplete` to `x` renders the effect at `x` of its full strength.
 @available(iOS 17.0, *)
 private struct AdjustableBlur: UIViewRepresentable {
-    /// 0.0 = no blur, 1.0 = full Material blur.
+    /// 0.0 = no blur, 1.0 = full Material blur. At 0 no animator is kept: a paused animator never finishes,
+    /// and XCUITest, which waits for an app's animations to finish before every tap, would wait a minute on each
+    /// while a closed drawer, mounted with its conversation, held one.
     let intensity: CGFloat
     let style: UIBlurEffect.Style
 
@@ -949,7 +947,9 @@ private struct AdjustableBlur: UIViewRepresentable {
 
         func apply(to view: UIVisualEffectView, intensity: CGFloat, style: UIBlurEffect.Style) {
             animator?.stopAnimation(true)
+            animator = nil
             view.effect = nil
+            guard intensity > 0 else { return }
             let a = UIViewPropertyAnimator(duration: 1, curve: .linear) { [weak view] in
                 view?.effect = UIBlurEffect(style: style)
             }
