@@ -118,12 +118,18 @@ struct JourneyGateway {
         throw JourneyGatewayError.unexpectedResponse("/agent/conversations")
     }
 
-    /// The text of every message the user sent, across all conversations.
+    /// The text of every message the user sent, across all conversations. A
+    /// session nothing was said in is listed but has no stored transcript.
     func userMessages() throws -> [String] {
         let page = try request("GET", "/agent/conversations", body: nil)
         let ids = (page["conversations"] as? [[String: Any]] ?? []).compactMap { $0["id"] as? String }
-        return try ids.flatMap { id in
-            let record = try request("GET", "/agent/conversations/\(id)", body: nil)
+        return try ids.flatMap { id -> [String] in
+            let record: [String: Any]
+            do {
+                record = try request("GET", "/agent/conversations/\(id)", body: nil)
+            } catch JourneyGatewayError.httpStatus(_, 404, _) {
+                return []
+            }
             let messages = record["messages"] as? [[String: Any]] ?? []
             return messages.filter { $0["role"] as? String == "user" }.map { message in
                 (message["parts"] as? [[String: Any]] ?? [])
