@@ -715,8 +715,8 @@ struct CitationsDrawer: View {
             // dark mode and light in light mode rather than staying a
             // fixed dark charcoal that clashes with the light theme.
             AdjustableBlur(
-                intensity: 0.12, style: .systemUltraThinMaterial,
-                active: progress > 0
+                intensity: progress > 0 ? 0.12 : 0,
+                style: .systemUltraThinMaterial
             )
             Color.black.opacity(0.45)
         }
@@ -922,12 +922,11 @@ struct ComposerNeedsGutterKey: PreferenceKey {
 /// `fractionComplete` to `x` renders the effect at `x` of its full strength.
 @available(iOS 17.0, *)
 private struct AdjustableBlur: UIViewRepresentable {
-    /// 0.0 = no blur, 1.0 = full Material blur.
+    /// 0.0 = no blur, 1.0 = full Material blur. At 0 no animator is kept: a paused animator never finishes,
+    /// and XCUITest, which waits for an app's animations to finish before every tap, would wait a minute on each
+    /// while a closed drawer, mounted with its conversation, held one.
     let intensity: CGFloat
     let style: UIBlurEffect.Style
-    /// False while nothing shows the blur, as behind a closed drawer: a paused animator never finishes, and
-    /// XCUITest waits for an app's animations to finish before every tap, so it would wait a minute on each.
-    let active: Bool
 
     func makeUIView(context: Context) -> UIVisualEffectView {
         let view = UIVisualEffectView()
@@ -936,7 +935,7 @@ private struct AdjustableBlur: UIViewRepresentable {
     }
 
     func updateUIView(_ view: UIVisualEffectView, context: Context) {
-        context.coordinator.apply(to: view, intensity: intensity, style: style, active: active)
+        context.coordinator.apply(to: view, intensity: intensity, style: style)
     }
 
     func makeCoordinator() -> Coordinator {
@@ -946,18 +945,19 @@ private struct AdjustableBlur: UIViewRepresentable {
     final class Coordinator {
         private var animator: UIViewPropertyAnimator?
 
-        func apply(to view: UIVisualEffectView, intensity: CGFloat, style: UIBlurEffect.Style, active: Bool) {
+        func apply(to view: UIVisualEffectView, intensity: CGFloat, style: UIBlurEffect.Style) {
             animator?.stopAnimation(true)
             animator = nil
             view.effect = nil
-            guard active else { return }
+            guard intensity > 0 else { return }
             let a = UIViewPropertyAnimator(duration: 1, curve: .linear) { [weak view] in
                 view?.effect = UIBlurEffect(style: style)
             }
             a.startAnimation()
             a.pauseAnimation()
-            // Clamp slightly inside (0, 1) — fractionComplete at the exact endpoints
-            // sometimes snaps the effect to nil or to full, defeating the partial-intensity goal.
+            // Clamp slightly inside (0, 1) — fractionComplete at the
+            // exact endpoints sometimes snaps the effect to nil or to
+            // full, defeating the partial-intensity goal.
             a.fractionComplete = max(0.001, min(0.999, intensity))
             animator = a
         }
