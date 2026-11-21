@@ -327,9 +327,12 @@ private final class ProbeScript: @unchecked Sendable {
         let connection: ScriptedGatewayConnection
         let host: String
         let queue: DispatchQueue
-        let verify: @Sendable (SecTrust) -> Bool
+        let verification: GatewayTLSNetworkConnection.Verification
+        /// Admits and decides on the probe's queue and evaluates off it, as the TLS connection does.
         func evaluate(_ trust: SecTrust) -> Bool {
-            queue.sync { verify(trust) }
+            guard queue.sync(execute: verification.admits) else { return false }
+            let accepted = verification.evaluate(trust)
+            return queue.sync { verification.decide(accepted) }
         }
     }
 
@@ -341,11 +344,11 @@ private final class ProbeScript: @unchecked Sendable {
     }
 
     var connector: GatewayTLSNetworkConnection.Connector {
-        { _, host, queue, verify in
+        { _, host, queue, verification in
             let connection = ScriptedGatewayConnection()
             self.lock.lock()
             let index = self.attempts.count
-            self.attempts.append(Attempt(connection: connection, host: host, queue: queue, verify: verify))
+            self.attempts.append(Attempt(connection: connection, host: host, queue: queue, verification: verification))
             self.lock.unlock()
             queue.async {
                 if index < self.starts.count {

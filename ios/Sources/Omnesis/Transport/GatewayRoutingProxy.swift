@@ -342,13 +342,25 @@ public final class GatewayRoutingProxy: @unchecked Sendable {
             }
             let lease = probeAttempt.begin()
             probeAccepted = false
-            let connection: any GatewayByteConnection = if probe, let verifyTrust {
-                connectTLS(endpoint, route.host, queue) { [weak self] trust in
-                    guard let self, !closed, probeAttempt.isCurrent(lease) else { return false }
-                    probeAccepted = probeAttempt.record(lease, accepted: verifyTrust(trust, route.host))
-                    return probeAccepted
-                }
-            } else { transport.makeConnection(endpoint, .tcp) }
+            let connection: any GatewayByteConnection
+            if probe, let verifyTrust {
+                // The trust is evaluated off this queue, so the attempt deadline still moves on to the
+                // next candidate, and finally to the relay, while a slow evaluation is outstanding.
+                let host = route.host
+                let verification = GatewayTLSNetworkConnection.Verification(
+                    admits: { [weak self] in
+                        guard let self else { return false }
+                        return !closed && probeAttempt.isCurrent(lease)
+                    },
+                    evaluate: { verifyTrust($0, host) },
+                    decide: { [weak self] accepted in
+                        guard let self, !closed, probeAttempt.isCurrent(lease) else { return false }
+                        probeAccepted = probeAttempt.record(lease, accepted: accepted)
+                        return probeAccepted
+                    }
+                )
+                connection = connectTLS(endpoint, host, queue, verification)
+            } else { connection = transport.makeConnection(endpoint, .tcp) }
             upstream = connection
             let remainingLAN = max(0, Double(lanDeadline.uptimeNanoseconds) - Double(clock.now().uptimeNanoseconds)) / 1_000_000_000
             attemptTimer = makeTimer(isLocal ? min(limits.attempt, remainingLAN) : limits.fallback) { [weak self, weak connection] in
