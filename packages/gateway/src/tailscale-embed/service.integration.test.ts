@@ -43,7 +43,10 @@ beforeAll(async () => {
   // its own tests; these cases exercise the Tailscale device and its joins.
   schemaDir = mkdtempSync(join(tmpdir(), "ts-int-schema-"));
   schemaPath = join(schemaDir, "gateway.sqlite");
+  mark = performance.now();
   const seed = createDatabase(schemaPath);
+  lap("seedCreateDatabase");
+  flush("seed");
   try {
     seed.pragma("wal_checkpoint(TRUNCATE)");
   } finally {
@@ -71,14 +74,33 @@ const peer = (overrides: Partial<NonNullable<TailnetCaller["peer"]>> = {}) => ({
   ...overrides,
 });
 
+const PROFILE: string[] = [];
+let mark = 0;
+function lap(name: string): void {
+  const now = performance.now();
+  PROFILE.push(`${name}=${Math.round(now - mark)}`);
+  mark = now;
+}
+function flush(label: string): void {
+  process.stderr.write(
+    `[boot-profile${process.env.TS_INT_COLD_SCHEMA === "1" ? "-main" : ""}] ${label} : ${PROFILE.join(" ")}\n`,
+  );
+  PROFILE.length = 0;
+}
+
 async function boot(scenario = "connected"): Promise<void> {
+  mark = performance.now();
   dir = mkdtempSync(join(tmpdir(), "ts-int-"));
   mkdirSync(join(dir, "tailscale", "node"), { recursive: true });
   writeFileSync(join(dir, "tailscale", "node", "fake-scenario"), scenario);
+  lap("dirs");
   await writeTlsMaterial(join(dir, "cert.pem"), join(dir, "key.pem"), material, dir);
+  lap("writeTlsMaterial");
   const path = join(dir, "gateway.sqlite");
-  copyFileSync(schemaPath, path);
+  if (process.env.TS_INT_COLD_SCHEMA !== "1") copyFileSync(schemaPath, path);
+  lap("copySchema");
   db = createDatabase(path);
+  lap("createDatabase");
   const device = createDevice(db, { name: "Fictional admin CLI", kind: "cli" });
   admin = createToken(db, device.id, [SCOPE_ADMIN, SCOPE_READ]).token;
   notified = { waiting: [], joined: [] };
@@ -99,17 +121,25 @@ async function boot(scenario = "connected"): Promise<void> {
     // As the running gateway does: agents reach it by its tailnet name too.
     additionalOAuthIssuerUrls: () => [service.tailnetOrigin()].filter((o): o is string => !!o),
   });
+  lap("rest");
   await service.attach({ listener: getRequestListener(app.fetch) });
+  lap("attach");
+  flush(`boot`);
 }
 
 beforeEach(async () => {
   await boot();
 });
 afterEach(async () => {
+  mark = performance.now();
   await service.shutdown();
+  lap("shutdown");
   vi.unstubAllEnvs();
   db.close();
+  lap("dbClose");
   rmSync(dir, { recursive: true, force: true });
+  lap("rm");
+  flush("teardown");
 });
 
 async function adminCall(

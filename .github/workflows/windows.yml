@@ -56,7 +56,11 @@ jobs:
       fail-fast: false
       max-parallel: 4
       matrix:
-        include: ${{ fromJSON(github.event_name == 'pull_request' && '[{"name":"Windows focused","lane":"focused"}]' || github.event_name == 'workflow_dispatch' && inputs.lane == 'unit' && '[{"name":"Windows unit","lane":"unit"},{"name":"Windows adapters","lane":"adapters"}]' || github.event_name == 'workflow_dispatch' && inputs.lane == 'adapters' && '[{"name":"Windows adapters","lane":"adapters"}]' || github.event_name == 'workflow_dispatch' && inputs.lane == 'e2e' && inputs.e2e_files != '' && '[{"name":"Windows E2E diagnosis","lane":"e2e"}]' || github.event_name == 'workflow_dispatch' && inputs.lane == 'e2e' && '[{"name":"Windows E2E 1/2","lane":"e2e","shard":"1/2"},{"name":"Windows E2E 2/2","lane":"e2e","shard":"2/2"}]' || github.event_name == 'workflow_dispatch' && inputs.lane == 'portal' && '[{"name":"Windows portal","lane":"portal"}]' || '[{"name":"Windows unit","lane":"unit"},{"name":"Windows adapters","lane":"adapters"},{"name":"Windows E2E 1/2","lane":"e2e","shard":"1/2"},{"name":"Windows E2E 2/2","lane":"e2e","shard":"2/2"},{"name":"Windows portal","lane":"portal"}]') }}
+        include:
+          [
+            { "name": "Windows measure A", "lane": "focused" },
+            { "name": "Windows measure B", "lane": "focused" },
+          ]
     defaults:
       run:
         shell: pwsh
@@ -152,9 +156,34 @@ jobs:
           path: ${{ runner.temp }}/omnesis-test-embedder
           key: windows-test-embedder-${{ hashFiles('scripts/ci/with-test-embedder.mjs', 'scripts/ci/reference-embedder.json') }}
 
-      - name: Focused Windows runtime tests
+      - name: Repeat the Tailscale embed integration file
         if: ${{ matrix.lane == 'focused' }}
-        run: node scripts/ci/windows-checks.mjs focused
+        run: |
+          $failed = 0
+          for ($i = 1; $i -le 8; $i++) {
+            Write-Output "=== alone repeat $i ==="
+            node scripts/run-check.mjs unit packages/gateway/src/tailscale-embed/service.integration.test.ts --reporter=verbose
+            if ($LASTEXITCODE) { $failed++ }
+          }
+          for ($i = 1; $i -le 2; $i++) {
+            Write-Output "=== alongside repeat $i ==="
+            node scripts/run-check.mjs unit packages/gateway/src/tailscale-embed/service.integration.test.ts packages/gateway/src/tailscale-embed/supervisor.test.ts packages/gateway/src/tailscale-embed/socket-server.test.ts packages/collector/src/e2e/synth-harness.test.ts --reporter=verbose
+            if ($LASTEXITCODE) { $failed++ }
+          }
+          Write-Output "failed repeats: $failed"
+          $stress = @()
+          for ($k = 1; $k -le 2; $k++) { $stress += Start-Process -FilePath node -ArgumentList 'scripts/ci/tmp-stress-1203.mjs' -PassThru -NoNewWindow }
+          Start-Sleep -Seconds 5
+          for ($i = 1; $i -le 2; $i++) {
+            Write-Output "=== stressed main repeat $i ==="
+            $env:TS_INT_COLD_SCHEMA = "1"; node scripts/run-check.mjs unit packages/gateway/src/tailscale-embed/service.integration.test.ts --reporter=verbose; $code = $LASTEXITCODE; Remove-Item Env:TS_INT_COLD_SCHEMA
+            if ($code) { Write-Output "stressed main failed" }
+            Write-Output "=== stressed fix repeat $i ==="
+            node scripts/run-check.mjs unit packages/gateway/src/tailscale-embed/service.integration.test.ts --reporter=verbose
+            if ($LASTEXITCODE) { Write-Output "stressed fix failed" }
+          }
+          $stress | Stop-Process -Force
+          if ($failed) { exit 1 }
 
       - name: Verify real Go-to-Node private transport
         if: ${{ !cancelled() && (matrix.lane == 'focused' || matrix.lane == 'unit') && steps.dependencies.outcome == 'success' }}
