@@ -709,25 +709,15 @@ struct CitationsDrawer: View {
     /// `AdjustableBlur` wraps `UIVisualEffectView` + a paused
     /// `UIViewPropertyAnimator` because SwiftUI's `Material` only
     /// exposes a coarse thickness scale and not a blur radius.
-    ///
-    /// The blur exists only while some of the drawer shows. A paused
-    /// animator is an animation that never finishes, so a blur kept
-    /// mounted behind the closed drawer would hold a full-screen
-    /// effect view and an unfinished animation for as long as the
-    /// conversation is on screen; XCUITest, which waits for an app's
-    /// animations to finish before every tap, would wait out its full
-    /// timeout on each one.
     private func scrim(progress: CGFloat) -> some View {
         ZStack {
             // Adaptive material so the dimmed backdrop frosts dark in
             // dark mode and light in light mode rather than staying a
             // fixed dark charcoal that clashes with the light theme.
-            if progress > 0 {
-                AdjustableBlur(
-                    intensity: 0.12,
-                    style: .systemUltraThinMaterial
-                )
-            }
+            AdjustableBlur(
+                intensity: 0.12, style: .systemUltraThinMaterial,
+                active: progress > 0
+            )
             Color.black.opacity(0.45)
         }
         .opacity(Double(progress))
@@ -927,18 +917,17 @@ struct ComposerNeedsGutterKey: PreferenceKey {
     }
 }
 
-/// Variable-intensity `UIBlurEffect` wrapper. SwiftUI's `Material`
-/// has a fixed blur radius and only exposes a coarse thickness scale
-/// (ultraThin … ultraThick) which controls tint, not blur strength.
-/// The canonical iOS hack to dial blur intensity is to drive a
-/// `UIVisualEffectView`'s `.effect` via a paused
-/// `UIViewPropertyAnimator`: setting `fractionComplete` to `x`
-/// renders the effect at `x` of its full strength.
+/// Variable-intensity `UIBlurEffect` wrapper. SwiftUI's `Material` exposes only a coarse thickness scale
+/// (tint, not blur strength), so a paused `UIViewPropertyAnimator` drives the view's `.effect`: setting
+/// `fractionComplete` to `x` renders the effect at `x` of its full strength.
 @available(iOS 17.0, *)
 private struct AdjustableBlur: UIViewRepresentable {
     /// 0.0 = no blur, 1.0 = full Material blur.
     let intensity: CGFloat
     let style: UIBlurEffect.Style
+    /// False while nothing shows the blur, as behind a closed drawer: a paused animator never finishes, and
+    /// XCUITest waits for an app's animations to finish before every tap, so it would wait a minute on each.
+    let active: Bool
 
     func makeUIView(context: Context) -> UIVisualEffectView {
         let view = UIVisualEffectView()
@@ -947,7 +936,7 @@ private struct AdjustableBlur: UIViewRepresentable {
     }
 
     func updateUIView(_ view: UIVisualEffectView, context: Context) {
-        context.coordinator.apply(to: view, intensity: intensity, style: style)
+        context.coordinator.apply(to: view, intensity: intensity, style: style, active: active)
     }
 
     func makeCoordinator() -> Coordinator {
@@ -957,17 +946,18 @@ private struct AdjustableBlur: UIViewRepresentable {
     final class Coordinator {
         private var animator: UIViewPropertyAnimator?
 
-        func apply(to view: UIVisualEffectView, intensity: CGFloat, style: UIBlurEffect.Style) {
+        func apply(to view: UIVisualEffectView, intensity: CGFloat, style: UIBlurEffect.Style, active: Bool) {
             animator?.stopAnimation(true)
+            animator = nil
             view.effect = nil
+            guard active else { return }
             let a = UIViewPropertyAnimator(duration: 1, curve: .linear) { [weak view] in
                 view?.effect = UIBlurEffect(style: style)
             }
             a.startAnimation()
             a.pauseAnimation()
-            // Clamp slightly inside (0, 1) — fractionComplete at the
-            // exact endpoints sometimes snaps the effect to nil or to
-            // full, defeating the partial-intensity goal.
+            // Clamp slightly inside (0, 1) — fractionComplete at the exact endpoints
+            // sometimes snaps the effect to nil or to full, defeating the partial-intensity goal.
             a.fractionComplete = max(0.001, min(0.999, intensity))
             animator = a
         }

@@ -54,8 +54,10 @@ final class CitationsDrawerScrimTests: XCTestCase {
         }
     }
 
-    private func effectViews(in view: UIView) -> [UIVisualEffectView] {
-        (view as? UIVisualEffectView).map { [$0] } ?? view.subviews.flatMap(effectViews)
+    /// The effect views that draw a blur.
+    private func blurs(in view: UIView) -> [UIVisualEffectView] {
+        if let effectView = view as? UIVisualEffectView { return effectView.effect == nil ? [] : [effectView] }
+        return view.subviews.flatMap(blurs)
     }
 
     /// Animations that never finish on their own: paused, or repeating forever.
@@ -71,18 +73,18 @@ final class CitationsDrawerScrimTests: XCTestCase {
     func testAClosedDrawerKeepsNoBlurOrUnfinishedAnimation() throws {
         _ = try host(open: false)
         let window = try XCTUnwrap(window)
-        XCTAssertEqual(effectViews(in: window).count, 0, "the closed drawer still mounts its blur")
+        XCTAssertEqual(blurs(in: window).count, 0, "the closed drawer still draws its blur")
         XCTAssertEqual(unendingAnimations(in: window.layer), [])
     }
 
     func testTheOpenDrawerBlursTheConversationAndDropsTheBlurWhenClosed() throws {
         let controller = try host(open: true)
         let window = try XCTUnwrap(window)
-        XCTAssertEqual(effectViews(in: window).count, 1, "the open drawer does not blur the conversation")
+        XCTAssertEqual(blurs(in: window).count, 1, "the open drawer does not blur the conversation")
 
         controller.rootView = drawer(open: false)
         settle()
-        XCTAssertEqual(effectViews(in: window).count, 0, "closing the drawer leaves its blur behind")
+        XCTAssertEqual(blurs(in: window).count, 0, "closing the drawer leaves its blur behind")
         XCTAssertEqual(unendingAnimations(in: window.layer), [])
     }
 }
