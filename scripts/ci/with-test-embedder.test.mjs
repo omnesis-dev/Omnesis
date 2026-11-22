@@ -103,6 +103,21 @@ test("owned check joins before its real HTTP and embedding resources close", asy
   }
 });
 
+test.each([
+  [0, []],
+  [1, [["[embedder] windows-checks.mjs exited 1\n"]]],
+])("a wrapped check status of %s is reported only when non-zero", async (status, lines) => {
+  const runtime = fakeRuntime();
+  const writeStderr = vi.fn();
+  const result = await runWithEmbeddingRuntime(
+    ["scripts/ci/windows-checks.mjs", "e2e"],
+    { modelPath: "invented.gguf", port: 0, llama: runtime.llama, writeStderr },
+    async () => status,
+  );
+  expect(result).toBe(status);
+  expect(writeStderr.mock.calls).toEqual(lines);
+});
+
 test("ordinary joined command failure still disposes every independent embedding resource", async () => {
   const runtime = fakeRuntime();
   const primary = Error("invented joined command failure");

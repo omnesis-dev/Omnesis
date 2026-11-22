@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { runInNewContext } from "node:vm";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { parse } from "yaml";
 import { gatewayBootBudgetMs } from "../lib/boot-budget.mjs";
 import { hermesTestInvocation } from "../test-hermes.mjs";
@@ -514,6 +514,21 @@ test("independent Windows suites run after a failure and preserve the first nonz
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
+});
+
+test("each non-zero task status is named in this script's own log", async () => {
+  const writeStderr = vi.fn();
+  const codes = { unit: 0, smoke: 1, e2e: 7 };
+  const tasks = Object.keys(codes).map((name) => ["scripts/run-check.mjs", name]);
+  const run = async (_command, task) => codes[task[1]];
+  expect(await runWindowsCheckTasks(tasks, { run, writeStderr })).toBe(1);
+  expect(writeStderr.mock.calls).toEqual([
+    ["[windows-checks] run-check.mjs smoke exited 1\n"],
+    ["[windows-checks] run-check.mjs e2e exited 7\n"],
+  ]);
+  writeStderr.mockClear();
+  expect(await runWindowsCheckTasks([tasks[0]], { run, writeStderr })).toBe(0);
+  expect(writeStderr).not.toHaveBeenCalled();
 });
 
 describe("manual Windows E2E selection", () => {

@@ -15,8 +15,6 @@ export interface CheckCommandOptions {
   runWindows?: typeof runWindowsJob;
   detached?: boolean;
   retainUnconfirmed?: (failure: unknown) => void;
-  /** Where a non-zero Windows job status is reported; process.stderr by default. */
-  writeStderr?: (text: string) => void;
 }
 
 /** Resolves with the application exit code only after owned process cleanup. */
