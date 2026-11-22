@@ -221,18 +221,12 @@ final class MobileJourneyUITests: XCTestCase {
     // MARK: - Steps
 
     /// Asks the replayed question from a fresh Ask screen and waits for its
-    /// answer.
+    /// answer. The question is typed as soon as the composer takes the
+    /// keyboard, usually while the app is still opening its launch session,
+    /// and has to be sent word for word.
     private func ask() throws {
         try gateway.deleteAllConversations()
         try launchPaired()
-        // At launch the Ask screen opens a session of its own, and adopting
-        // it replaces the composer, along with whatever was typed into it and
-        // its keyboard focus. The conversation's actions menu appears once the
-        // session is in place, so the question is typed after that.
-        XCTAssertTrue(
-            app.buttons["Chat actions"].waitForExistence(timeout: 60),
-            "the Ask screen never opened its session"
-        )
         let composer = app.textFields["agentComposer"]
         focus(composer)
         composer.typeText(Self.agentQuestion)
@@ -240,6 +234,10 @@ final class MobileJourneyUITests: XCTestCase {
         XCTAssertTrue(
             element(containing: Self.agentAnswer).waitForExistence(timeout: 60),
             "the agent's answer did not mention \"\(Self.agentAnswer)\""
+        )
+        XCTAssertTrue(
+            app.staticTexts[Self.agentQuestion].exists,
+            "the conversation does not show the question exactly as it was typed"
         )
     }
 

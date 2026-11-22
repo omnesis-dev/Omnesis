@@ -100,29 +100,38 @@ function run(box, args, env = {}) {
 }
 
 describe("scripts/ci/macos-interactive-job.sh", () => {
-  it("runs the command as an Interactive launchd job with this shell's environment and directory", () => {
-    const box = sandbox();
-    const result = run(
-      box,
-      ["bash", "-c", 'echo "arg=$1 env=$JOURNEY_PROBE cwd=$(pwd)"; exit 3', "_", "two words"],
-      { JOURNEY_PROBE: 'it\'s "quoted"' },
-    );
-    expect(result.stdout).toContain(`arg=two words env=it's "quoted" cwd=${box.dir}`);
-    expect(result.status).toBe(3);
-    const plist = readFileSync(join(box.state, "job.plist"), "utf8");
-    expect(plist).toMatch(/<key>ProcessType<\/key>\s*<string>Interactive<\/string>/);
-    const calls = readFileSync(join(box.state, "calls"), "utf8");
-    expect(calls).toMatch(/^bootstrap gui\/\d+ /m);
-    expect(calls).toMatch(/^bootout gui\/\d+\/dev\.omnesis\.ci\./m);
-  });
+  // The launchd path runs only on macOS. Its stand-in launchd starts the job in
+  // its own POSIX session and ends it by process group, and the job reports its
+  // directory as a POSIX path, none of which the MSYS bash on Windows provides; on
+  // Windows the script takes the foreground path tested last.
+  const launchd = it.skipIf(process.platform === "win32");
 
-  it("passes a successful command's status through", () => {
+  launchd(
+    "runs the command as an Interactive launchd job with this shell's environment and directory",
+    () => {
+      const box = sandbox();
+      const result = run(
+        box,
+        ["bash", "-c", 'echo "arg=$1 env=$JOURNEY_PROBE cwd=$(pwd)"; exit 3', "_", "two words"],
+        { JOURNEY_PROBE: 'it\'s "quoted"' },
+      );
+      expect(result.stdout).toContain(`arg=two words env=it's "quoted" cwd=${box.dir}`);
+      expect(result.status).toBe(3);
+      const plist = readFileSync(join(box.state, "job.plist"), "utf8");
+      expect(plist).toMatch(/<key>ProcessType<\/key>\s*<string>Interactive<\/string>/);
+      const calls = readFileSync(join(box.state, "calls"), "utf8");
+      expect(calls).toMatch(/^bootstrap gui\/\d+ /m);
+      expect(calls).toMatch(/^bootout gui\/\d+\/dev\.omnesis\.ci\./m);
+    },
+  );
+
+  launchd("passes a successful command's status through", () => {
     const box = sandbox();
     const result = run(box, ["true"]);
     expect(result.status).toBe(0);
   });
 
-  it("fails when the job ends without reporting a status", () => {
+  launchd("fails when the job ends without reporting a status", () => {
     const box = sandbox();
     // The job kills its own shell before that shell can record a status.
     const result = run(box, ["bash", "-c", "kill -KILL $PPID"]);

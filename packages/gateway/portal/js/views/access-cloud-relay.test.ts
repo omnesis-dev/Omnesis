@@ -192,6 +192,8 @@ describe("Access page with the cloud relay", () => {
       // The gateway marks every overview without a configured public URL; a relay address is no localhost address.
       expect(host.querySelector(".access-oauth-blocker")).toBeNull();
       expect(host.querySelector(".access-connect-dialog")?.textContent).toContain("Paste it into ChatGPT, Claude, Codex");
+      // Away from home, where hosted apps are listed, their setups are named as such.
+      expect(host.querySelector(".access-agent-setup-label")?.textContent).toBe("Setup for common agents");
       expect(warned()).toEqual([]);
       for (const [id, , needs] of HOSTED) {
         const steps = await select(id);

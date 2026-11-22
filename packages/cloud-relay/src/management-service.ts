@@ -1664,6 +1664,15 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
       return this.status();
     });
   }
+  async acknowledgeConnect(): Promise<CloudRelayManagementStatus> {
+    return this.run(async () => {
+      if (this.connection.state === "done" && this.connection.existingAccount) {
+        this.connection = { state: "done" };
+        this.revision++;
+      }
+      return this.status();
+    });
+  }
   /** Ends the connection under way, telling the relay when it still waits for a sign-in. */
   private async stopConnecting(): Promise<void> {
     this.connectAbort.abort();

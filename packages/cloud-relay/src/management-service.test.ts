@@ -3396,6 +3396,20 @@ test("connecting reports each step of registering, and whether a chosen new acco
   expect(done.connect).toEqual({ state: "done", intent: "create", existingAccount: true });
   expect(f.relay.pollFeatures()).toBe("account-created");
   expect(done.publicMcp.url).toBe("https://gateway.example.test/mcp");
+  // Once the owner has been told, later reads no longer say it; acknowledging again changes nothing.
+  const acknowledged = await manager.acknowledgeConnect();
+  expect(acknowledged.connect).toEqual({ state: "done", intent: "create" });
+  expect((await manager.status()).connect).toEqual({ state: "done", intent: "create" });
+  expect((await manager.acknowledgeConnect()).connect).toEqual({ state: "done", intent: "create" });
+});
+
+test("acknowledging leaves a connection that is not done with an existing account as it was", async () => {
+  const f = await connecting();
+  manager = await GatewayCloudRelayManagement.open(f.options);
+  expect((await manager.acknowledgeConnect()).connect).toBeUndefined();
+  await manager.connect({ termsAccepted: true, intent: "create" });
+  expect((await manager.acknowledgeConnect()).connect).toMatchObject({ state: "waiting" });
+  await manager.cancelConnect();
 });
 
 test("only a chosen new account that turned out to exist is reported, and an older relay reports nothing", async () => {

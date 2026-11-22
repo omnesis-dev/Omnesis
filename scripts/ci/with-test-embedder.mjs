@@ -8,7 +8,7 @@ import { mkdir, rename, rm } from "node:fs/promises";
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { pathToFileURL } from "node:url";
@@ -137,7 +137,13 @@ export async function main(args = process.argv.slice(2)) {
 /** Keep embedding resources alive until the owned check has confirmed its cleanup. */
 export async function runWithEmbeddingRuntime(
   args,
-  { modelPath, port, llama, retainUnconfirmed = retainRuntime },
+  {
+    modelPath,
+    port,
+    llama,
+    retainUnconfirmed = retainRuntime,
+    writeStderr = (text) => process.stderr.write(text),
+  },
   run = runCheckCommand,
 ) {
   if (retainedRuntimes.size) throw retainedRuntimeError;
@@ -224,6 +230,9 @@ export async function runWithEmbeddingRuntime(
     throw error;
   }
   if (failed) throw failure;
+  // The wrapped check's status crosses a Windows job without a message; name it
+  // here, so a non-zero status after a passing check shows which level set it.
+  if (exitCode !== 0) writeStderr(`[embedder] ${basename(args[0])} exited ${exitCode}\n`);
   return exitCode;
 }
 

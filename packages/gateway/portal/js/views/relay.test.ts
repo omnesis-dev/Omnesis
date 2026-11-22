@@ -17,6 +17,11 @@ vi.mock("../lib/router.js", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   navigate,
 }));
+const acknowledge = vi.hoisted(() => vi.fn(async () => {}));
+vi.mock("../lib/cloud-relay-api.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  acknowledgeExistingAccount: acknowledge,
+}));
 vi.mock("../lib/use-relay-management.js", () => ({
   useRelayManagement: () => state,
   useAccountRefresh: accountRefresh,
@@ -25,10 +30,14 @@ vi.mock("../lib/use-relay-management.js", () => ({
 import { SETUP_COPY } from "../components/gateway-passkey-confirm.js";
 // @ts-expect-error portal JS
 import { RelayView, relayPhase } from "./relay.js";
+// @ts-expect-error portal JS
+import { closeConnectWindow } from "../lib/connect-window.js";
 
 let host: HTMLElement;
 const HOST = "northstar.relay.example.test";
 const AUTHORIZE = "https://relay.example.test/_relay/v3/signup/begin?ticket=fictional";
+/** The same link as the portal's own window opens it, marked so the finished page closes it. */
+const AUTHORIZE_IN_WINDOW = `${AUTHORIZE}&window=portal`;
 function base(): Record<string, any> {
   return {
     enabled: false,
@@ -102,6 +111,8 @@ beforeEach(() => {
 });
 afterEach(() => {
   render(null, host);
+  closeConnectWindow();
+  acknowledge.mockClear();
   vi.unstubAllGlobals();
 });
 /** The account page by default; `"relay"` for the relay page. */
@@ -348,7 +359,9 @@ describe("invite-only relay", () => {
     );
     expect(host.querySelector(".relay-private-badge")?.textContent).toBe("Private · invite only");
     expect(field()?.getAttribute("placeholder")).toBe("Paste the invite link you were sent");
-    expect(text()).toContain("Signing in to an account you already have needs no invite.");
+    // Nothing is said under the field until there is something wrong with it.
+    expect(host.querySelector("#relay-invite-problem")).toBeNull();
+    expect(text()).not.toContain("needs no invite");
     // Without an invite there is no account to create, but an existing one can still connect.
     expect(button("Create an account").disabled).toBe(true);
     await click("I already have one");
@@ -404,16 +417,74 @@ describe("invite-only relay", () => {
     ["invite-expired", "That invite has expired. Ask whoever sent it for a new one."],
     ["invite-used", "That invite was already used to create an account. Ask for a new one."],
   ] as const)
-    test(`a refused invite (${error}) says why and offers the choice again`, async () => {
+    test(`a refused invite (${error}) says why under the field and offers the choice again`, async () => {
       state.status = { ...base(), signup: { inviteOnly: true }, connect: { state: "failed", error } };
       await show();
-      expect(headline()).toBe("Couldn't connect");
-      expect(text()).toContain(words);
-      expect(field()).not.toBeNull();
+      expect(headline()).toBe("Do you want an Omnesis account?");
+      // Nothing to diagnose: the problem box with its details stays away.
+      expect(text()).not.toContain("Copy details");
+      const problem = () => host.querySelector("#relay-invite-problem");
+      expect(problem()?.textContent).toBe(words);
+      expect(problem()?.getAttribute("role")).toBe("alert");
+      expect(problem()?.previousElementSibling).toBe(field());
+      expect(field()?.getAttribute("aria-invalid")).toBe("true");
+      expect(field()?.getAttribute("aria-describedby")).toBe("relay-invite-problem");
+      // Said once, under the field, and still said after the page reads the status again.
+      expect(text().split(words)).toHaveLength(2);
+      await show();
+      expect(problem()?.textContent).toBe(words);
       expect(button("Create an account").disabled).toBe(true);
       expect(button("I already have one")).toBeDefined();
       expect(button("Try again")).toBeUndefined();
+      // Editing the invite answers it.
+      await type(LINK);
+      expect(problem()).toBeNull();
+      expect(button("Create an account").disabled).toBe(false);
+      await click("Create an account");
+      // Connecting again with the same refusal back says it again.
+      await show();
+      expect(problem()?.textContent).toBe(words);
     });
+  test("a refused invite with no invite field to show it under is said where errors always are", async () => {
+    const words = "That invite was already used to create an account. Ask for a new one.";
+    Object.assign(state, { error: words, errorCode: "invite-used" });
+    try {
+      state.status = { ...base(), signup: { inviteOnly: false } };
+      await show();
+      expect(field()).toBeNull();
+      expect(host.querySelector(".relay-notice")?.textContent).toBe(words);
+    } finally {
+      Object.assign(state, { error: "", errorCode: "" });
+    }
+    state.status = { ...base(), connect: { state: "failed", error: "invite-used" } };
+    await show();
+    expect(headline()).toBe("Couldn't connect");
+    expect(text()).toContain(words);
+  });
+  test("an invite refused as the person presses to connect is said under the field until they edit it", async () => {
+    const clearError = vi.fn();
+    Object.assign(state, {
+      error: "That invite was already used to create an account. Ask for a new one.",
+      errorCode: "invite-used",
+      clearError,
+    });
+    try {
+      state.status = { ...base(), signup: { inviteOnly: true } };
+      await show();
+      const problem = host.querySelector("#relay-invite-problem");
+      expect(problem?.textContent).toBe(state.error);
+      expect(host.querySelectorAll('[role="alert"]')).toHaveLength(1);
+      await type("https://relay.example.test/invite#another");
+      expect(clearError).toHaveBeenCalledOnce();
+      // Any other failure is still said above, where it was.
+      Object.assign(state, { error: "Couldn't load or update your Omnesis account settings.", errorCode: "" });
+      await show();
+      expect(host.querySelector(".relay-notice")?.textContent).toBe(state.error);
+      expect(host.querySelector("#relay-invite-problem")?.textContent).toBe("That isn't a whole invite link. Copy all of it, including the part after #.");
+    } finally {
+      Object.assign(state, { error: "", errorCode: "", clearError: undefined });
+    }
+  });
 });
 
 test("unavailable installations explain the situation, offer nothing to press and never show service URLs", async () => {
@@ -1284,6 +1355,106 @@ test("a new gateway's browser check precedes account sign-in and never asks for 
   expect(state.run).toHaveBeenLastCalledWith("connect/cancel", {});
 });
 
+/**
+ * A window as the browser opens it for the portal, on the portal's own page. Sent to another
+ * origin's page it can no longer be read; `back()` returns it to the portal's page.
+ */
+function connectWindow() {
+  const state = { foreign: false, sent: [] as string[] };
+  const guard = () => {
+    if (state.foreign) throw new Error("Blocked a frame from accessing a cross-origin frame.");
+  };
+  return {
+    closed: false,
+    opener: {} as unknown,
+    location: {
+      get pathname() {
+        guard();
+        return "/portal/connect-window.html";
+      },
+      set href(url: string) {
+        state.sent.push(url);
+        state.foreign = true;
+      },
+    },
+    document: {
+      get readyState() {
+        guard();
+        return "complete";
+      },
+    },
+    close: vi.fn(),
+    focus: vi.fn(),
+    sent: state.sent,
+    back: () => {
+      state.foreign = false;
+    },
+  };
+}
+/** Clicks a link as a person does, and says whether the portal kept the browser from following it. */
+async function press(anchor: HTMLAnchorElement, modifiers: Record<string, boolean> = {}) {
+  const event = new (window as any).Event("click", { bubbles: true, cancelable: true });
+  Object.assign(event, { button: 0, ...modifiers });
+  await act(async () => {
+    anchor.dispatchEvent(event);
+  });
+  return event.defaultPrevented as boolean;
+}
+
+test("the security check and then the sign-in run in one window the portal opens, cut off from the portal", async () => {
+  vi.useFakeTimers();
+  try {
+    const url = "https://dns.example.test/_dns/v2/enroll?ticket=fictional";
+    const opened = connectWindow();
+    (window as any).open = vi.fn(() => opened);
+    state.status = { ...base(), connect: { state: "waiting", intent: "create", verification: { url, expiresAt: Date.now() + 60_000 } } };
+    await show();
+    // A click with a modifier is the browser's: a new tab or window as the person asked.
+    expect(await press(link("Open security check"), { metaKey: true })).toBe(false);
+    expect((window as any).open).not.toHaveBeenCalled();
+    expect(await press(link("Open security check"))).toBe(true);
+    expect((window as any).open).toHaveBeenCalledExactlyOnceWith("/portal/connect-window.html", "omnesis-connect");
+    // The check's page can't reach back into the portal, and knows to come back when it passes.
+    expect(opened.opener).toBeNull();
+    expect(opened.sent).toEqual([`${url}#opened-by-portal`]);
+    // Once the check has passed and the window is back on the portal's page, it goes on to
+    // creating the account.
+    state.status = { ...base(), connect: { state: "waiting", intent: "create", authorizeUrl: AUTHORIZE } };
+    await show();
+    expect(opened.sent).toHaveLength(1);
+    opened.back();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(250);
+    });
+    expect(opened.sent).toEqual([`${url}#opened-by-portal`, AUTHORIZE_IN_WINDOW]);
+    // Signed in, the account's own page is the one to close it.
+    state.status = { ...base(), connect: { state: "registering", intent: "create" } };
+    await show();
+    expect(opened.close).not.toHaveBeenCalled();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("a browser that refuses the window opens the security check as an ordinary new tab", async () => {
+  const url = "https://dns.example.test/_dns/v2/enroll?ticket=fictional";
+  state.status = { ...base(), connect: { state: "waiting", verification: { url, expiresAt: Date.now() + 60_000 } } };
+  await show();
+  for (const refused of [null, { ...connectWindow(), closed: true }]) {
+    (window as any).open = vi.fn(() => refused);
+    // Not prevented: the link opens the check's own page, which says how to come back.
+    expect(await press(link("Open security check"))).toBe(false);
+  }
+  // With no window of the portal's, the sign-in is a link to press once the check has passed.
+  state.status = { ...base(), connect: { state: "waiting", intent: "create", authorizeUrl: AUTHORIZE } };
+  await show();
+  expect(link("Create your Omnesis account").getAttribute("href")).toBe(AUTHORIZE);
+  const opened = connectWindow();
+  (window as any).open = vi.fn(() => opened);
+  expect(await press(link("Create your Omnesis account"))).toBe(true);
+  expect(opened.sent).toEqual([AUTHORIZE_IN_WINDOW]);
+});
+
 test("an invalid security check URL remains visible as a recoverable setup error without a link", async () => {
   state.status = { ...base(), connect: { state: "waiting", verification: { url: "javascript:alert(1)", expiresAt: Date.now() + 60_000 } } };
   await show();
@@ -1323,15 +1494,48 @@ test("a connection that never finished leads the account page, with both ways on
   expect(state.run).toHaveBeenLastCalledWith("start-over", {});
 });
 
-test("a chosen new account that already existed is said once connected, with the invite unused", async () => {
-  state.status = connected({ connect: { state: "done", existingAccount: true } });
-  await show();
-  expect(text()).toContain(
-    "You already had an Omnesis account, so this gateway is now linked to it. Your invite wasn't used.",
-  );
-  state.status = connected({ connect: { state: "done" } });
-  await show();
-  expect(text()).not.toContain("Your invite wasn't used");
+test("a chosen new account that already existed is said once connected, with the invite unused, and only once", async () => {
+  vi.useFakeTimers();
+  try {
+    state.status = connected({ connect: { state: "done", existingAccount: true } });
+    await show();
+    const notice =
+      "You already had an Omnesis account, so this gateway is now linked to it. Your invite wasn't used.";
+    expect(text()).toContain(notice);
+    // A glance is not enough: the page in view for a few seconds is.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(4000);
+    });
+    expect(acknowledge).not.toHaveBeenCalled();
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
+    await act(async () => {
+      document.dispatchEvent(new (window as any).Event("visibilitychange"));
+      await vi.advanceTimersByTimeAsync(10_000);
+    });
+    expect(acknowledge).not.toHaveBeenCalled();
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+    await act(async () => {
+      document.dispatchEvent(new (window as any).Event("visibilitychange"));
+      await vi.advanceTimersByTimeAsync(5000);
+    });
+    expect(acknowledge).toHaveBeenCalledOnce();
+    // Acknowledged, the gateway stops saying it; this page keeps it while it shows the link.
+    state.status = connected({ connect: { state: "done" } });
+    await show();
+    expect(text()).toContain(notice);
+    // A later visit or a reload doesn't say it again.
+    render(null, host);
+    await show();
+    expect(text()).not.toContain("Your invite wasn't used");
+    // Nor once the page no longer shows a finished connection.
+    state.status = connected({ connect: { state: "done", existingAccount: true } });
+    await show();
+    state.status = connected();
+    await show();
+    expect(text()).not.toContain("Your invite wasn't used");
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 test("waiting after choosing to create an account names the button for it", async () => {

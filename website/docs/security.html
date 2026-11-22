@@ -678,6 +678,20 @@ installing it takes one command as root:
           pinned the old one need.
         </p>
         <p>
+          A gateway linked to an <a href="setup#omnesis-account">Omnesis account</a> also serves a
+          public certificate for its address on the relay. It obtains that certificate itself when
+          it connects and renews it on its own; the relay only passes the encrypted connection
+          through, and the private key never leaves the gateway.
+          <code>omnesis cloud status</code> shows the certificate, and
+          <code>omnesis cloud renew</code> retries a renewal that failed. If a certificate is issued
+          for that address with a key the gateway does not hold, the gateway records an incident:
+          until you acknowledge it, every new device waits for your approval, whatever you chose
+          under <a href="setup#new-devices">New devices</a>, and the account page says so.
+          <code>omnesis cloud incidents list</code> shows the incidents, and
+          <code>omnesis cloud incidents ack</code>, run on the gateway itself once you have looked
+          into them, lifts the hold.
+        </p>
+        <p>
           The one exception is the MCP address for agents on the gateway's own computer,
           <code>http://localhost:7601/mcp</code> by default (see
           <a href="connect#this-computer">an agent on the gateway's computer</a>). It is plain HTTP

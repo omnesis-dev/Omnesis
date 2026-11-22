@@ -45,7 +45,6 @@ import {
 } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { gunzipSync } from "node:zlib";
 
@@ -283,7 +282,7 @@ export async function main(argv, { log = (line) => process.stderr.write(`${line}
   }
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (import.meta.main) {
   main(process.argv.slice(2)).then(
     (code) => {
       process.exitCode = code;

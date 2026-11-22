@@ -34,6 +34,7 @@ import { runCheckCommand } from "./lib/check-process.mjs";
 export { waitForChild, childGroupIsAlive } from "./lib/check-process.mjs";
 
 import { progressArgs, progressEnvironment } from "./lib/check-progress.mjs";
+import { isEntryScript } from "./lib/is-entry-script.mjs";
 
 const GIB = 1024 ** 3;
 const AUTO_PARALLEL_MIN_TOTAL_BYTES = 32 * GIB;
@@ -625,7 +626,7 @@ export async function runE2E(args = process.argv.slice(2), env = process.env) {
   }
 }
 
-const invokedPath = process.argv[1] ? fileURLToPath(import.meta.url) === process.argv[1] : false;
+const invokedPath = isEntryScript(import.meta.url);
 if (invokedPath) {
   try {
     process.exitCode = await runE2E();

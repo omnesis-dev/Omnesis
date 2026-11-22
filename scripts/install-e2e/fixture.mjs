@@ -36,8 +36,8 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { parseCommand } from "./args.mjs";
+import { isEntryScript } from "../lib/is-entry-script.mjs";
 
 const STABLE_TAG = /^v(\d+)\.(\d+)\.(\d+)$/;
 const VERSION = /^\d+\.\d+\.\d+$/;
@@ -314,7 +314,7 @@ function main(argv) {
   process.stdout.write(JSON.stringify(result, null, 2) + "\n");
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isEntryScript(import.meta.url)) {
   try {
     main(process.argv.slice(2));
   } catch (err) {

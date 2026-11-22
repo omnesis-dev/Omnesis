@@ -3057,7 +3057,7 @@ test("each gateway's actions sit behind its own \u201c…\u201d menu, apart from
 const inviteToken = "aGVhZGVy.Y2xhaW1z." + "s".repeat(86);
 function inviteSetup(hash = `#${inviteToken}`) {
   const { document, window } = parseHTML(
-    '<html><body><div id="invite-missing" hidden><h1>This link has no invite in it</h1></div><div id="invite-found" hidden><h1>You\'re invited to Omnesis</h1><p id="invite-status"></p><p id="invite-value"></p><button type="button" id="invite-copy" hidden>Copy invite</button><code id="invite-command"></code></div></body></html>',
+    '<html><body><div id="invite-missing" hidden><h1>This link has no invite in it</h1></div><div id="invite-found" hidden><h1>You\'re invited to Omnesis</h1><p id="invite-status"></p><p id="invite-value"></p><button type="button" id="invite-copy" aria-label="Copy invite link" data-label="Copy invite link" hidden></button><code id="invite-command"></code><button type="button" id="command-copy" aria-label="Copy command" data-label="Copy command" hidden></button><p id="copy-status" role="status"></p></div></body></html>',
   );
   const href = `https://relay.example.test/invite${hash}`;
   const location = { origin: "https://relay.example.test", hash, href };
@@ -3072,12 +3072,26 @@ function inviteSetup(hash = `#${inviteToken}`) {
   vi.stubGlobal("fetch", request);
   const status = () => document.getElementById("invite-status")!.textContent;
   const copy = () => document.getElementById("invite-copy") as unknown as HTMLButtonElement;
+  const commandCopy = () => document.getElementById("command-copy") as unknown as HTMLButtonElement;
+  const copyStatus = () => document.getElementById("copy-status")!.textContent;
   const command = () => document.getElementById("invite-command")!.textContent;
   const shown = () => ({
     missing: !document.getElementById("invite-missing")!.hasAttribute("hidden"),
     found: !document.getElementById("invite-found")!.hasAttribute("hidden"),
   });
-  return { document, window, href, request, clipboard, status, copy, command, shown };
+  return {
+    document,
+    window,
+    href,
+    request,
+    clipboard,
+    status,
+    copy,
+    commandCopy,
+    copyStatus,
+    command,
+    shown,
+  };
 }
 
 test("the invite page checks the invite in its fragment and says until when it works", async () => {
@@ -3092,17 +3106,43 @@ test("the invite page checks the invite in its fragment and says until when it w
   expect(f.shown()).toEqual({ missing: false, found: true });
   expect(f.document.getElementById("invite-value")!.textContent).toBe(f.href);
   expect(f.command()).toBe(`omnesis cloud connect --invite '${f.href}'`);
+  // A copy button beside the link and beside the command, each saying what it copies.
   expect(f.copy().hidden).toBe(false);
-  f.copy().dispatchEvent(new f.window.Event("click"));
-  await vi.waitFor(() => expect(f.copy().textContent).toBe("Copied"));
-  expect(f.clipboard.writeText).toHaveBeenCalledWith(f.href);
+  expect(f.commandCopy().hidden).toBe(false);
+  expect(f.copy().getAttribute("aria-label")).toBe("Copy invite link");
+  expect(f.commandCopy().getAttribute("aria-label")).toBe("Copy command");
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  try {
+    f.copy().dispatchEvent(new f.window.Event("click"));
+    await vi.waitFor(() => expect(f.copy().getAttribute("aria-label")).toBe("Copied"));
+    expect(f.copy().classList.contains("copied")).toBe(true);
+    expect(f.copy().title).toBe("Copied");
+    expect(f.copyStatus()).toBe("Copied");
+    expect(f.clipboard.writeText).toHaveBeenLastCalledWith(f.href);
+    f.commandCopy().dispatchEvent(new f.window.Event("click"));
+    await vi.waitFor(() => expect(f.commandCopy().getAttribute("aria-label")).toBe("Copied"));
+    expect(f.clipboard.writeText).toHaveBeenLastCalledWith(
+      `omnesis cloud connect --invite '${f.href}'`,
+    );
+    // A moment later each says again what it copies.
+    vi.advanceTimersByTime(1500);
+    expect(f.copy().getAttribute("aria-label")).toBe("Copy invite link");
+    expect(f.copy().classList.contains("copied")).toBe(false);
+    expect(f.commandCopy().getAttribute("aria-label")).toBe("Copy command");
+  } finally {
+    vi.useRealTimers();
+  }
   const refused = inviteSetup();
   refused.clipboard.writeText.mockRejectedValueOnce(new Error("not allowed"));
   installInviteUI();
   refused.copy().dispatchEvent(new refused.window.Event("click"));
   await vi.waitFor(() =>
-    expect(refused.copy().textContent).toBe("Select the invite above and copy it"),
+    expect(refused.copy().getAttribute("aria-label")).toBe(
+      "Couldn't copy. Select the text and copy it.",
+    ),
   );
+  expect(refused.copy().classList.contains("copied")).toBe(false);
+  expect(refused.copyStatus()).toBe("Couldn't copy. Select the text and copy it.");
 });
 
 test("the invite page says plainly when an invite is missing, unusable or can't be checked", async () => {
@@ -3116,6 +3156,7 @@ test("the invite page says plainly when an invite is missing, unusable or can't 
     expect(empty.document.getElementById("invite-value")!.textContent).toBe("");
     expect(empty.request).not.toHaveBeenCalled();
     expect(empty.copy().hidden).toBe(true);
+    expect(empty.commandCopy().hidden).toBe(true);
   }
   for (const [answer, text] of [
     [() => Response.json({ status: "used" }), "already used to create an account"],
@@ -3204,6 +3245,8 @@ test("the invite script stays self-contained when served as one function", async
       fetch: f.request,
       JSON,
       Date,
+      setTimeout,
+      clearTimeout,
     }),
   ).not.toThrow();
 });

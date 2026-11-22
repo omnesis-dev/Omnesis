@@ -19,7 +19,6 @@
 import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { pathToFileURL } from "node:url";
 import { readChangelogSection } from "./changelog.mjs";
 
 const INSTALLER = "artifacts/install.sh";
@@ -106,7 +105,7 @@ export function releaseRunEvidence(jobs) {
   return { packagesPublished };
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (import.meta.main) {
   try {
     const releaseDir = process.argv[2];
     const tag = process.env.RELEASE_TAG ?? "";

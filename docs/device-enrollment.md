@@ -998,7 +998,10 @@ the gateway's admission alone, and the new account's session replaces the old. A
 the approval, true only when that sign-in created the account; the relay adds the
 field only when asked, because older gateways parse the approval strictly. The
 gateway reports `connect.existingAccount` once linked, and the portal and CLI say
-the invite wasn't used.
+the invite wasn't used. Whichever says it first acknowledges it with
+`POST /admin/cloud-relay/connect/acknowledge` (the portal once the notice has been
+in view for a few seconds, the CLI once it has printed it), and the status drops
+the field, so it is said once.
 
 `POST /admin/cloud-relay/connect` refuses a gateway already linked to an account
 (`already-connected`); it is unlinked first. Connecting reserves the hosted name

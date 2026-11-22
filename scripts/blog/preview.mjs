@@ -6,6 +6,7 @@ import { createServer } from "node:http";
 import { dirname, extname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { escapeHtml, parsePost, renderIndex, renderPost } from "./build.mjs";
+import { isEntryScript } from "../lib/is-entry-script.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const TYPES = {
@@ -139,7 +140,7 @@ export async function startPreview({ root = ROOT, port = 4173 } = {}) {
   return { server, url: `http://127.0.0.1:${server.address().port}` };
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isEntryScript(import.meta.url)) {
   const args = process.argv.slice(2);
   const valid =
     args.length === 0 || (args.length === 2 && args[0] === "--port" && /^\d+$/.test(args[1]));

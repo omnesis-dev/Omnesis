@@ -571,11 +571,8 @@ describe.skipIf(!browserReady)("connect a gateway by signing in", () => {
       expect(run.stdout()).toContain(
         "Connected to your Omnesis account.\nYou already had an Omnesis account, so this gateway is now linked to it. Your invite wasn't used.\n",
       );
-      expect((await gateway.status()).connect).toMatchObject({
-        state: "done",
-        intent: "create",
-        existingAccount: true,
-      });
+      // Said by the CLI, so the gateway's status no longer says it: the portal won't again.
+      expect((await gateway.status()).connect).toEqual({ state: "done", intent: "create" });
       expect((await signedInAccount(world, inviteOnly.session)).accountId).toBe(
         inviteOnly.accountId,
       );

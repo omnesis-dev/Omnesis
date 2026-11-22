@@ -16,13 +16,18 @@ import { html } from "htm/preact";
 /** The config keys behind the address for agents on this computer. */
 export const LOCAL_MCP_KEYS = { port: "gateway.localMcp.port", enabled: "gateway.localMcp.enabled" };
 
-/** What allowing agents on the home network means, said before the owner chooses. */
+/**
+ * What allowing agents on the home network means, said briefly where the owner turns it on.
+ * The docs (connect#home-network) carry the full explanation.
+ */
 export const HOME_NETWORK_WARNINGS = [
-  "Any device on your network can reach the sign-in page. A connection still needs your approval, here or on your phone.",
-  "The agent's computer has to trust this gateway's certificate. The setup for each agent shows how, and says when an agent can't.",
-  "An address in numbers can change when your router hands out a new one. The .local name stays the same.",
-  "ChatGPT, Claude apps and Grok bot can't use it: they connect from their own servers.",
+  "Any device on your network can reach the sign-in page. You still approve each agent.",
+  "The agent's computer has to trust this gateway's certificate.",
+  "Hosted apps such as ChatGPT can't use it.",
 ];
+
+/** Where the docs explain the home network in full. */
+export const HOME_NETWORK_DOCS = "https://omnesis.dev/docs/connect#home-network";
 
 /** The MCP endpoint at an origin. */
 const endpointAt = (origin) => (origin ? `${origin.replace(/\/$/u, "")}/mcp` : null);

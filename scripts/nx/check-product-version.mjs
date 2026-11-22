@@ -3,11 +3,11 @@
 
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { pathToFileURL } from "node:url";
 import { extractChangelogSection, PRODUCT_CHANGELOG } from "../release/changelog.mjs";
 import { checkProductVersion } from "../release/check-product-version.mjs";
 import { parseChangeset } from "../release/plan.mjs";
 import { assertTreeFingerprint } from "./tree-state.mjs";
+import { isEntryScript } from "../lib/is-entry-script.mjs";
 
 export function validateReleaseProse(version, changelog, changesets) {
   if (!extractChangelogSection(changelog, version)) {
@@ -20,7 +20,7 @@ export function validateReleaseProse(version, changelog, changesets) {
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isEntryScript(import.meta.url)) {
   if (process.env.OMNESIS_TREE_FINGERPRINT) {
     assertTreeFingerprint(process.env.OMNESIS_TREE_BASE, process.env.OMNESIS_TREE_FINGERPRINT);
   }

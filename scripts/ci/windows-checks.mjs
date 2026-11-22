@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { existsSync } from "node:fs";
+import { basename } from "node:path";
 import { runCheckCommand } from "../lib/check-process.mjs";
 import { ownedProcessCleanupReceipt } from "../../packages/platform/src/owned-process-cleanup.ts";
 
@@ -342,8 +343,8 @@ export function windowsE2EFiles(text, exists = existsSync) {
 export function windowsCheckTasks(lane, shard, files = []) {
   if (files.length && (lane !== "e2e" || shard !== undefined))
     throw new Error("Selected Windows E2E files require the unsharded E2E lane");
-  if (shard !== undefined && (lane !== "e2e" || !/^[12]\/2$/u.test(shard))) {
-    throw new Error("Only the E2E lane takes --shard=1/2 or --shard=2/2");
+  if (shard !== undefined && (lane !== "e2e" || !/^[1-4]\/4$/u.test(shard))) {
+    throw new Error("Only the E2E lane takes --shard=N/4, with N from 1 to 4");
   }
   switch (lane) {
     case "focused":
@@ -375,14 +376,25 @@ export function windowsCheckTasks(lane, shard, files = []) {
   }
 }
 
-/** Independent suites still run after a failure, and the first failure remains the verdict. */
-export async function runWindowsCheckTasks(tasks) {
+/**
+ * Independent suites still run after a failure, and the first failure remains the verdict.
+ * Each non-zero status is named here, at the script that owns this log, because a
+ * status crossing a Windows job carries no message of its own.
+ */
+export async function runWindowsCheckTasks(
+  tasks,
+  { run = runCheckCommand, writeStderr = (text) => process.stderr.write(text) } = {},
+) {
   let exitCode = 0;
   for (const task of tasks) {
-    const code = await runCheckCommand(process.execPath, task, {
+    const code = await run(process.execPath, task, {
       env: process.env,
     });
-    if (code !== 0 && exitCode === 0) exitCode = code;
+    if (code === 0) continue;
+    writeStderr(
+      `[windows-checks] ${[basename(task[0]), ...task.slice(1, 2)].join(" ")} exited ${code}\n`,
+    );
+    if (exitCode === 0) exitCode = code;
   }
   return exitCode;
 }
@@ -390,7 +402,7 @@ export async function runWindowsCheckTasks(tasks) {
 async function main(args) {
   const [lane, ...options] = args;
   if (options.some((option) => option !== "--list" && !option.startsWith("--shard="))) {
-    throw new Error("Expected --list or --shard=1/2 or --shard=2/2");
+    throw new Error("Expected --list or --shard=N/4, with N from 1 to 4");
   }
   if (options.filter((option) => option.startsWith("--shard=")).length > 1) {
     throw new Error("Pass one E2E shard");

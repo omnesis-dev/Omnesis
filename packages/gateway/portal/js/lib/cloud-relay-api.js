@@ -37,6 +37,18 @@ export function stopTrustingSignIn(id) {
   return relayManagement(`trusted-sign-ins/${encodeURIComponent(id)}`, undefined, undefined, "DELETE");
 }
 
+/**
+ * Tells the gateway the owner has seen that the sign-in already had an account, so its status
+ * stops saying so. Never throws: an acknowledgment that didn't arrive is asked again next time.
+ */
+export async function acknowledgeExistingAccount() {
+  try {
+    await relayManagement("connect/acknowledge", {});
+  } catch {
+    // Nothing else depends on it.
+  }
+}
+
 /** The gateway's version, or "" when it cannot be read. Never throws. */
 export async function gatewayVersion() {
   try {

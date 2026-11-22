@@ -581,8 +581,8 @@
           <code>gateway.publicBaseUrl</code>, the Omnesis relay, or a Tailscale address (<a
             href="#mcp-address"
             >choose the address</a
-          >). <strong>Settings → Access → Connect an agent</strong> asks where the agent runs first
-          and gives the address and the setup that go with it.
+          >). <a href="#connect-an-agent"><strong>Connect an agent</strong></a> in the portal asks
+          where the agent runs first and gives the address and the setup that go with it.
         </p>
         <table>
           <thead>
@@ -653,6 +653,45 @@
             </tr>
           </tbody>
         </table>
+
+        <h3 id="connect-an-agent">Connect an agent in the portal</h3>
+        <p>
+          <strong>Settings → Access → Connect an agent</strong> adds an agent in two steps. The
+          first asks <strong>Where does the agent run?</strong>, because that decides which address
+          it can use:
+        </p>
+        <ul>
+          <li>
+            <strong>On this computer</strong>, the one the gateway runs on: the plain address
+            <code>http://localhost:7601/mcp</code>, which needs no certificate (see
+            <a href="#this-computer">an agent on the gateway's computer</a>). While that address
+            does not answer, the dialog says why and gives the gateway's HTTPS loopback address
+            instead.
+          </li>
+          <li>
+            <strong>At home</strong>, another computer on the same network: the gateway's
+            home-network addresses, once agents there may sign in. Until then the dialog offers
+            <strong>Allow agents on my home network</strong>, with a short form of the points in
+            <a href="#home-network">an agent on your home network</a>.
+          </li>
+          <li>
+            <strong>Somewhere else</strong>, another network or a hosted app: the addresses away
+            from home, which are the Omnesis relay, a Tailscale address and your own domain, with a
+            choice between them when there are several. ChatGPT, the Claude apps and Grok bot are
+            offered only here, because they connect from their own servers, which cannot reach the
+            gateway's addresses at home.
+          </li>
+        </ul>
+        <p>
+          The dialog opens on <strong>Somewhere else</strong> when the gateway has an address away
+          from home, and on <strong>On this computer</strong> otherwise. Under the address, choose
+          your agent for its setup, with this gateway's values filled in; an agent that cannot use
+          the address is marked and says why. The second step is the
+          <strong>Authorization code</strong>. When the agent's sign-in opens in a browser already
+          signed in to the portal, you approve it there and skip this step. Otherwise the sign-in
+          page shows a short code: enter it here and press <strong>Review request</strong>, or enter
+          it on your phone (see <a href="#approving-a-connection">Approve the connection</a>).
+        </p>
 
         <h3 id="mcp-address">Choose the address</h3>
         <p>
@@ -744,12 +783,13 @@
           addresses, at the gateway's port — once you allow it under
           <strong>Settings → Connectivity → MCP server → Your home network</strong>, or from
           <strong>Connect an agent</strong>. It is off until you turn it on, and your devices pair
-          over the home network whatever you choose. Before you turn it on, know that:
+          over the home network whatever you choose. Where you turn it on, the portal lists these
+          points in short. Before you turn it on, know that:
         </p>
         <ul>
           <li>
-            Any device on your network can reach the sign-in page. A connection still needs your
-            approval, as everywhere.
+            Anyone on your network can reach these addresses and the sign-in page. A connection
+            still needs your approval, in the portal or on a paired phone, as everywhere.
           </li>
           <li>
             The agent's computer has to trust the gateway's certificate. For Claude Code with a
@@ -760,11 +800,15 @@
             either, run the agent on the gateway's computer or reach the gateway from away.
           </li>
           <li>
-            An address in numbers can change when your router hands out a new one. The
-            <code>.local</code> name stays the same; prefer it where the agent's computer resolves
-            it.
+            Prefer the <code>.local</code> name where the agent's computer resolves it. An address
+            in numbers can change when your router hands out a new one; the <code>.local</code> name
+            stays the same.
           </li>
-          <li>Hosted connectors such as ChatGPT and Claude apps cannot use it.</li>
+          <li>
+            Hosted apps such as ChatGPT, the Claude apps and Grok bot cannot use it: they connect
+            from their own servers, which cannot reach your home network. Give them an address away
+            from home instead.
+          </li>
         </ul>
         <p>
           A home-network address signs agents in at itself: it is its own sign-in address, so a
@@ -778,18 +822,62 @@
 
         <h3 id="mcp-per-address">MCP on each address</h3>
         <p>
-          The MCP server answers at every address the gateway has, as far as that address reaches.
-          <strong>Settings → Connectivity → MCP server</strong> sets it address by address. A
-          Tailscale address, of the gateway's own device or of Tailscale on its computer, has three
-          choices: off, <strong>Your Tailscale network</strong>, or
-          <strong>Your Tailscale network and the Internet</strong>, which publishes the MCP server
-          alone through Tailscale Funnel while the portal and your devices' connections stay on your
-          tailnet. Your own domain is on or off. An address where MCP does not answer returns
-          <code>404</code> for the MCP endpoint and the OAuth routes an MCP client signs in through,
-          as a gateway without them would, and its discovery documents stop listing it; the portal
-          and your devices' own connections at that address are unaffected. Agents on the gateway's
-          computer always reach the MCP server; agents on your home network do once you allow it
-          (see <a href="#home-network">home network</a>).
+          The MCP server answers at every address the gateway has, as far as that address reaches,
+          until you turn it off there; the home network is the one address that starts off.
+          <strong>Settings → Connectivity → MCP server</strong> sets it address by address, under
+          <strong>At home</strong> and <strong>Away from home</strong>. The summary's
+          <strong>MCP</strong> lines, <strong>This computer</strong>,
+          <strong>Your home network</strong> and <strong>Away from home</strong>, each open that
+          page.
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Address</th>
+                <th>Choices</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>This computer</td>
+                <td>
+                  None: agents there always connect (see
+                  <a href="#this-computer">an agent on the gateway's computer</a>)
+                </td>
+              </tr>
+              <tr>
+                <td>Your home network</td>
+                <td>
+                  <strong>Off</strong> or <strong>Agents may sign in</strong> (see
+                  <a href="#home-network">an agent on your home network</a>)
+                </td>
+              </tr>
+              <tr>
+                <td>This gateway's own Tailscale device, Tailscale on this computer</td>
+                <td>
+                  <strong>Off</strong>, <strong>Your Tailscale network</strong>, or
+                  <strong>Your Tailscale network and the Internet</strong>
+                </td>
+              </tr>
+              <tr>
+                <td>Omnesis relay, your own domain or reverse proxy</td>
+                <td><strong>On</strong> or <strong>Off</strong></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          <strong>Your Tailscale network and the Internet</strong> publishes the MCP server alone
+          through Tailscale Funnel, while the portal and your devices' connections stay on your
+          tailnet. Letting MCP answer further can ask for your passkey; narrowing it never does. A
+          port other than 443 is flagged, since some agents, such as ChatGPT, connect only there.
+          Away from home, an address where MCP is off returns <code>404</code> for the MCP endpoint
+          and the OAuth routes an MCP client signs in through, as a gateway without them would, and
+          its discovery documents stop listing it; the portal and your devices' own connections at
+          that address are unaffected. Agents on the gateway's computer always reach the MCP server;
+          agents on your home network do once you allow it (see
+          <a href="#home-network">home network</a>).
         </p>
 
         <h3 id="tailscale-funnel">Publish the gateway with Tailscale Funnel</h3>

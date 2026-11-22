@@ -52,11 +52,14 @@ jobs:
     name: ${{ matrix.name }}
     runs-on: windows-latest
     timeout-minutes: ${{ matrix.lane == 'focused' && 40 || matrix.lane == 'adapters' && 60 || matrix.lane == 'unit' && 210 || 180 }}
+    # The full E2E suite runs one file at a time on a hosted Windows runner,
+    # about 4.8 hours in all. Vitest shards by file count, not duration, so
+    # four shards keep the heaviest one well inside the 180-minute job limit.
     strategy:
       fail-fast: false
       max-parallel: 4
       matrix:
-        include: ${{ fromJSON(github.event_name == 'pull_request' && '[{"name":"Windows focused","lane":"focused"}]' || github.event_name == 'workflow_dispatch' && inputs.lane == 'unit' && '[{"name":"Windows unit","lane":"unit"},{"name":"Windows adapters","lane":"adapters"}]' || github.event_name == 'workflow_dispatch' && inputs.lane == 'adapters' && '[{"name":"Windows adapters","lane":"adapters"}]' || github.event_name == 'workflow_dispatch' && inputs.lane == 'e2e' && inputs.e2e_files != '' && '[{"name":"Windows E2E diagnosis","lane":"e2e"}]' || github.event_name == 'workflow_dispatch' && inputs.lane == 'e2e' && '[{"name":"Windows E2E 1/2","lane":"e2e","shard":"1/2"},{"name":"Windows E2E 2/2","lane":"e2e","shard":"2/2"}]' || github.event_name == 'workflow_dispatch' && inputs.lane == 'portal' && '[{"name":"Windows portal","lane":"portal"}]' || '[{"name":"Windows unit","lane":"unit"},{"name":"Windows adapters","lane":"adapters"},{"name":"Windows E2E 1/2","lane":"e2e","shard":"1/2"},{"name":"Windows E2E 2/2","lane":"e2e","shard":"2/2"},{"name":"Windows portal","lane":"portal"}]') }}
+        include: ${{ fromJSON(github.event_name == 'pull_request' && '[{"name":"Windows focused","lane":"focused"}]' || github.event_name == 'workflow_dispatch' && inputs.lane == 'unit' && '[{"name":"Windows unit","lane":"unit"},{"name":"Windows adapters","lane":"adapters"}]' || github.event_name == 'workflow_dispatch' && inputs.lane == 'adapters' && '[{"name":"Windows adapters","lane":"adapters"}]' || github.event_name == 'workflow_dispatch' && inputs.lane == 'e2e' && inputs.e2e_files != '' && '[{"name":"Windows E2E diagnosis","lane":"e2e"}]' || github.event_name == 'workflow_dispatch' && inputs.lane == 'e2e' && '[{"name":"Windows E2E 1/4","lane":"e2e","shard":"1/4"},{"name":"Windows E2E 2/4","lane":"e2e","shard":"2/4"},{"name":"Windows E2E 3/4","lane":"e2e","shard":"3/4"},{"name":"Windows E2E 4/4","lane":"e2e","shard":"4/4"}]' || github.event_name == 'workflow_dispatch' && inputs.lane == 'portal' && '[{"name":"Windows portal","lane":"portal"}]' || '[{"name":"Windows unit","lane":"unit"},{"name":"Windows adapters","lane":"adapters"},{"name":"Windows E2E 1/4","lane":"e2e","shard":"1/4"},{"name":"Windows E2E 2/4","lane":"e2e","shard":"2/4"},{"name":"Windows E2E 3/4","lane":"e2e","shard":"3/4"},{"name":"Windows E2E 4/4","lane":"e2e","shard":"4/4"},{"name":"Windows portal","lane":"portal"}]') }}
     defaults:
       run:
         shell: pwsh
@@ -195,8 +198,8 @@ jobs:
         run: node scripts/ci/windows-checks.mjs adapters
 
       - name: Prove real portable network fixture transports
-        # Run once per full sweep; both E2E shards use these native tools.
-        if: ${{ matrix.lane == 'e2e' && matrix.shard != '2/2' }}
+        # Run once per full sweep; every E2E shard uses these native tools.
+        if: ${{ matrix.lane == 'e2e' && matrix.shard != '2/4' && matrix.shard != '3/4' && matrix.shard != '4/4' }}
         env:
           OMNESIS_TAILNET_TOOLS_DIR: ${{ runner.temp }}/omnesis-tailnet-tools
           GOMAXPROCS: "2"

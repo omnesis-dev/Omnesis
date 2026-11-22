@@ -497,6 +497,10 @@ class AgentCoordinator @Inject constructor(private val composerStore: AgentCompo
         _state.value = initial
     }
 
+    /** Test seam: run the launch path [rebuild] starts, and return once it has chosen. */
+    @VisibleForTesting
+    internal suspend fun bootstrapForTesting() = bootstrap()
+
     /**
      * Re-run bootstrap after a transient fatal. Preserves resume-most-recent so the
      * user's open transcript isn't skipped past (a fresh `newConversation()` would).
@@ -508,10 +512,19 @@ class AgentCoordinator @Inject constructor(private val composerStore: AgentCompo
 
     private suspend fun bootstrap() {
         val choice = sessionChoice
+        val blankDraft = composerStore.read(composerAccount, null).takeIf { _state.value.sessionId == null }
         refreshConversations()
         // An explicit open that landed while the list was loading owns the surface — skip the
         // default resume entirely.
         if (sessionChoice != choice) return
+        // So do words typed into the blank conversation meanwhile: the person has started a new
+        // conversation, so it stays on screen with its composer as it is, rather than a stored
+        // one being swapped in or the field being rebuilt under their fingers.
+        if (blankDraft != null && _state.value.sessionId == null &&
+            composerStore.read(composerAccount, null) != blankDraft
+        ) {
+            return
+        }
         // Resume the most recent transcript so the app re-opens where the user left off; fall
         // through to a fresh (empty, lazily-minted) session on the very first launch. Keyed on
         // updatedAt, not list order — the list is sorted pinned-first, so the first row may be an

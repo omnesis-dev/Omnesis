@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { readFileSync } from "node:fs";
-import { pathToFileURL } from "node:url";
+import { isEntryScript } from "../lib/is-entry-script.mjs";
 
 /** Verify each selected XCTest class independently, including intentional opt-in skips. */
 export function verifyIOSE2EResults(report, suites) {
@@ -34,7 +34,7 @@ export function verifyIOSE2EResults(report, suites) {
   });
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isEntryScript(import.meta.url)) {
   const [reportPath, gatewaySource, captureSource, captureFixture] = process.argv.slice(2);
   const names = (source) =>
     [...readFileSync(source, "utf8").matchAll(/^\s*func (test\w*)\s*\(/gm)].map(

@@ -2,10 +2,11 @@
 // Copyright (c) 2026 Adrien Conrath
 
 // Settings → Connectivity: what is on and what is not, one line each with a
-// tick or a dash — how agents connect at home, the account, every way in from
-// away from home, and the answer for new devices. Each line opens its own page to set it up or manage
-// it, the order and the answer for new devices change in place, and the
-// guided setup can be walked from here at will.
+// tick or a dash, in the guided setup's order — the account, every way in from
+// away from home, where agents may reach the MCP server, and the answer for new
+// devices where there is one to give. Each line opens its own page to set it up
+// or manage it, the order and the answer for new devices change in place, and
+// the guided setup can be walked from here at will.
 
 import { html } from "htm/preact";
 import { relayInviteOnly } from "../../lib/cloud-relay-api.js";
@@ -88,6 +89,9 @@ export function Summary({ remote, setRemote, relay, tailscale, headingRef, onSta
   const ownAddress = remote.publicBaseUrl?.way ? null : remote.publicBaseUrl?.configured;
   const hostServes = host?.state === "available" && host.servesGateway;
   const policies = devicePolicies(relay, tailscale);
+  // New devices has an answer to give only while one can ask to join: by signing in with the
+  // linked account, or from the Tailscale network. Otherwise pairing codes are the only way in,
+  // which Settings, Devices explains, so the section is left out.
   const applies = policies.relayLinked || policies.tailscaleOn;
   const accountNow = accountState(relayStatus);
   const [accountMark, accountTitle, plainDetail] = ACCOUNT_ITEMS[accountNow];
@@ -114,22 +118,6 @@ export function Summary({ remote, setRemote, relay, tailscale, headingRef, onSta
       <h3 ref=${headingRef} tabIndex="-1">Connectivity</h3>
       <p>What is on, and how your devices and agents reach this gateway, at home and when you are away.</p>
     </div>
-    <${Row} title="At home">
-      <ul class="remote-access-items">
-        <${Item}
-          mark=${thisComputer.mark}
-          title="Agents on this computer"
-          detail=${html`<${Parts} parts=${thisComputer.detail} />`}
-          action=${html`<${ItemManage} href=${MCP_PAGE} label="Agents on this computer" onManage=${onManage} />`}
-        />
-        <${Item}
-          mark=${homeNetwork.mark}
-          title="Agents on your home network"
-          detail=${html`<${Parts} parts=${homeNetwork.detail} />`}
-          action=${html`<${ItemManage} href=${MCP_PAGE} label="Agents on your home network" on=${homeNetwork.mark === "on"} onManage=${onManage} />`}
-        />
-      </ul>
-    <//>
     ${relay &&
     html`<${Row} title="Omnesis account">
       <ul class="remote-access-items">
@@ -201,9 +189,26 @@ export function Summary({ remote, setRemote, relay, tailscale, headingRef, onSta
           detail=${ownAddress ? html`<${AddressLink} url=${ownAddress} />.` : "None."}
           action=${html`<${ItemManage} href=${OWN_ADDRESS_PAGE} label="Your own domain" on=${Boolean(ownAddress)} onManage=${onManage} />`}
         />
+      </ul>
+      ${tailscaleOn && relayOn && html`<${FirstChoice} remote=${remote} setRemote=${setRemote} />`}
+    <//>
+    <${Row} title="MCP">
+      <ul class="remote-access-items">
+        <${Item}
+          mark=${thisComputer.mark}
+          title="This computer"
+          detail=${html`<${Parts} parts=${thisComputer.detail} />`}
+          action=${html`<${ItemManage} href=${MCP_PAGE} label="MCP on this computer" on=${thisComputer.mark !== "off"} onManage=${onManage} />`}
+        />
+        <${Item}
+          mark=${homeNetwork.mark}
+          title=${MCP_ADDRESS_LABELS.home}
+          detail=${html`<${Parts} parts=${homeNetwork.detail} />`}
+          action=${html`<${ItemManage} href=${MCP_PAGE} label="MCP on your home network" on=${homeNetwork.mark === "on"} onManage=${onManage} />`}
+        />
         <${Item}
           mark=${mcpOn.length > 0 ? "on" : "off"}
-          title="MCP server"
+          title="Away from home"
           detail=${mcp.length === 0
             ? "No address away from home yet."
             : mcpOn.length > 0
@@ -214,21 +219,16 @@ export function Summary({ remote, setRemote, relay, tailscale, headingRef, onSta
                   }),
                 )}.`
               : "Off on every address away from home."}
-          action=${html`<${ItemManage} href=${MCP_PAGE} label="MCP server" on=${mcpOn.length > 0} onManage=${onManage} />`}
+          action=${html`<${ItemManage} href=${MCP_PAGE} label="MCP away from home" on=${mcpOn.length > 0} onManage=${onManage} />`}
         />
       </ul>
-      ${tailscaleOn && relayOn && html`<${FirstChoice} remote=${remote} setRemote=${setRemote} />`}
     <//>
-    ${(relay || tailscale) &&
+    ${applies &&
     html`<${Row} title="New devices">
-      ${applies
-        ? html`<p class="remote-access-row-hint">
-              One answer for ${joinWays.join(" and ")}. A pairing code from Settings, Devices always works too.
-            </p>
-            <${DevicesChoice} relay=${relay} tailscale=${tailscale} name="remote-access-summary-policy" />`
-        : html`<ul class="remote-access-items">
-            <${Item} mark="off" title="Only with a pairing code" detail="From Settings, Devices." />
-          </ul>`}
+      <p class="remote-access-row-hint">
+        One answer for ${joinWays.join(" and ")}. A pairing code from Settings, Devices always works too.
+      </p>
+      <${DevicesChoice} relay=${relay} tailscale=${tailscale} name="remote-access-summary-policy" />
     <//>`}
     <div class="remote-access-buttons">
       <button type="button" class="btn-secondary" onClick=${() => onStart(anything ? "review" : "setup")}>

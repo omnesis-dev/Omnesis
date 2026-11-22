@@ -7,7 +7,6 @@ import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync }
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 
 const PROBE = `
@@ -384,7 +383,7 @@ export async function ensureNativeVectorCompatibility({
   }
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+if (import.meta.main) {
   const index = process.argv.indexOf("--package-dir");
   try {
     if (index < 0 || !process.argv[index + 1] || process.argv.length !== 4)
