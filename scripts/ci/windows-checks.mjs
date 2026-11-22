@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { existsSync } from "node:fs";
+import { basename } from "node:path";
 import { runCheckCommand } from "../lib/check-process.mjs";
 import { ownedProcessCleanupReceipt } from "../../packages/platform/src/owned-process-cleanup.ts";
 
@@ -375,14 +376,25 @@ export function windowsCheckTasks(lane, shard, files = []) {
   }
 }
 
-/** Independent suites still run after a failure, and the first failure remains the verdict. */
-export async function runWindowsCheckTasks(tasks) {
+/**
+ * Independent suites still run after a failure, and the first failure remains the verdict.
+ * Each non-zero status is named here, at the script that owns this log, because a
+ * status crossing a Windows job carries no message of its own.
+ */
+export async function runWindowsCheckTasks(
+  tasks,
+  { run = runCheckCommand, writeStderr = (text) => process.stderr.write(text) } = {},
+) {
   let exitCode = 0;
   for (const task of tasks) {
-    const code = await runCheckCommand(process.execPath, task, {
+    const code = await run(process.execPath, task, {
       env: process.env,
     });
-    if (code !== 0 && exitCode === 0) exitCode = code;
+    if (code === 0) continue;
+    writeStderr(
+      `[windows-checks] ${[basename(task[0]), ...task.slice(1, 2)].join(" ")} exited ${code}\n`,
+    );
+    if (exitCode === 0) exitCode = code;
   }
   return exitCode;
 }
