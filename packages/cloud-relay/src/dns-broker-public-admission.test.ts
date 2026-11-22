@@ -263,7 +263,7 @@ async function checkPage(
   await callback("accepted");
   return {
     message: () => document.querySelector("#message")!.textContent,
-    widgetHidden: () => document.querySelector("#widget")!.hidden,
+    widgetHidden: () => document.querySelector<HTMLElement>("#widget")!.hidden,
     elapse: () => timers.splice(0).forEach((run) => run()),
     close: win.close as ReturnType<typeof vi.fn>,
     back: history.back,

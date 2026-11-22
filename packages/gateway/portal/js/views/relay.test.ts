@@ -1394,7 +1394,9 @@ function connectWindow() {
 async function press(anchor: HTMLAnchorElement, modifiers: Record<string, boolean> = {}) {
   const event = new (window as any).Event("click", { bubbles: true, cancelable: true });
   Object.assign(event, { button: 0, ...modifiers });
-  await act(async () => anchor.dispatchEvent(event));
+  await act(async () => {
+    anchor.dispatchEvent(event);
+  });
   return event.defaultPrevented as boolean;
 }
 
