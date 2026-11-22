@@ -147,6 +147,9 @@ public actor CollectorCore {
     /// How long a page read takes, per source, so a bounded pass declines a
     /// read it could not also deliver in time.
     private var readEstimates: [String: WorkEstimate] = [:]
+    /// A page read is a local query; one slower than the ceiling still never
+    /// stops a background wake (~30 s) from trying the next.
+    static let initialReadEstimate = WorkEstimate(initial: 2, ceiling: 5)
     private var directDrains = 0
     private var lastSyncAt: [String: Date] = [:]
     private var acceptingSyncs = true
@@ -352,6 +355,9 @@ public actor CollectorCore {
         var pass = PassTally()
         var errorMessage: String?
         var wasCancelled = false
+        // A bounded pass that had no time to read even one page did no sync;
+        // reporting it complete would show "synced just now" for nothing.
+        var outOfTimeUnread = false
         let startedAt = Date()
 
         await emitProgress(Progress(
@@ -387,6 +393,7 @@ public actor CollectorCore {
                 let budget = passBudget(for: source.id)
                 guard await budget.allows(readEstimate(source.id).expected + uploader.expectedBatchDuration()) else {
                     log.notice("Pass for \(source.id, privacy: .private) stopped for time after \(pages, privacy: .public) pages")
+                    outOfTimeUnread = pages == 0
                     break
                 }
                 guard await makeRoom(for: source, budget: budget, pass: &pass) else {
@@ -397,7 +404,7 @@ public actor CollectorCore {
                 runs[source.id]?.readingStarted = true
                 let readStarted = budget.clock.now()
                 let result = try await source.sync(cursor: cursor)
-                readEstimates[source.id, default: WorkEstimate(initial: 2)]
+                readEstimates[source.id, default: Self.initialReadEstimate]
                     .record(budget.clock.now().timeIntervalSince(readStarted))
                 pages += 1
 
@@ -479,7 +486,7 @@ public actor CollectorCore {
                 displayName: source.displayName,
                 message: errorMessage
             ))
-        } else if wasCancelled {
+        } else if wasCancelled || outOfTimeUnread {
             await emitLifecycle(.idle(sourceId: source.id, displayName: source.displayName))
         } else {
             await emitLifecycle(.completed(
@@ -533,7 +540,7 @@ extension CollectorCore {
     }
 
     private func readEstimate(_ sourceId: String) -> WorkEstimate {
-        readEstimates[sourceId] ?? WorkEstimate(initial: 2)
+        readEstimates[sourceId] ?? Self.initialReadEstimate
     }
 
     /// Deliver what is queued, within the budget, and fold the result into

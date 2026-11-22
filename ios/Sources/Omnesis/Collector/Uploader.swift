@@ -179,7 +179,9 @@ public actor Uploader {
     /// How long one batch takes to deliver, so a bounded drain can decline a
     /// batch that would not finish before the wake ends. Starts generous
     /// and follows what is measured.
-    private var batchEstimate = WorkEstimate(initial: 3)
+    /// Capped so that, with a page read and the safety margin, a background
+    /// wake always has room to try one more batch.
+    private var batchEstimate = WorkEstimate(initial: 3, ceiling: 10)
 
     public struct Stats: Equatable, Sendable {
         public var uploaded: Int

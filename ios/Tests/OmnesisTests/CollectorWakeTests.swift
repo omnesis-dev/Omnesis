@@ -216,7 +216,8 @@ final class CollectorWakeTests: XCTestCase {
     private func makeCore(
         _ sources: [any OmnesisSource],
         gateway session: FakeGateway,
-        bufferConfig: OfflineBuffer.Config = .default
+        bufferConfig: OfflineBuffer.Config = .default,
+        onLifecycle: CollectorCore.LifecycleHandler? = nil
     ) throws
         -> (CollectorCore, OfflineBuffer) {
         let gateway = try GatewayClient(
@@ -230,7 +231,8 @@ final class CollectorWakeTests: XCTestCase {
             buffer: buffer,
             cursorStore: CursorStore(gateway: gateway),
             uploader: Uploader(gateway: gateway, buffer: buffer),
-            sources: sources
+            sources: sources,
+            onLifecycle: onLifecycle
         )
         return (core, buffer)
     }
@@ -350,6 +352,53 @@ final class CollectorWakeTests: XCTestCase {
         let queued = try await buffer.count()
         XCTAssertEqual(queued, 0)
         XCTAssertEqual(savedPage(session.savedCursors.last), source.pagesRead.count, "the next wake resumes after the last page")
+    }
+
+    /// One upload that hits a long timeout must not leave every later
+    /// background wake judging itself too short to start: the estimate only
+    /// falls when something is measured, and nothing is measured in a wake
+    /// that declines to start.
+    func testOneSlowUploadDoesNotCloseLaterBackgroundWakes() async throws {
+        let clock = FakeClock()
+        defer { clock.releaseAll() }
+        let session = FakeGateway()
+        session.clock = clock
+        session.ingestCost = 60
+        let source = PagedSource(pageCount: 20)
+        source.clock = clock
+        source.readCost = 1
+        let (core, _) = try makeCore([source], gateway: session)
+
+        _ = await core.sync(sourceId: source.id, budget: .seconds(100, clock: clock))
+        let readBefore = source.pagesRead.count
+        XCTAssertGreaterThan(readBefore, 0)
+
+        session.ingestCost = 1
+        _ = await core.sync(sourceId: source.id, budget: .seconds(25, clock: clock))
+        XCTAssertGreaterThan(source.pagesRead.count, readBefore, "a normal background wake still reads after one slow upload")
+        XCTAssertEqual(session.deliveredCount, source.pagesRead.count * 4)
+    }
+
+    actor LifecycleLog {
+        private(set) var events: [CollectorCore.Lifecycle] = []
+        func record(_ event: CollectorCore.Lifecycle) {
+            events.append(event)
+        }
+    }
+
+    func testAWakeTooShortToReadReportsIdleNotCompleted() async throws {
+        let clock = FakeClock()
+        defer { clock.releaseAll() }
+        let log = LifecycleLog()
+        let source = PagedSource(pageCount: 3)
+        let (core, _) = try makeCore([source], gateway: FakeGateway(), onLifecycle: { await log.record($0) })
+
+        _ = await core.sync(sourceId: source.id, budget: .seconds(3, clock: clock))
+
+        XCTAssertTrue(source.pagesRead.isEmpty)
+        let events = await log.events
+        XCTAssertTrue(events.contains(.idle(sourceId: source.id, displayName: source.displayName)), "\(events)")
+        XCTAssertFalse(events.contains { if case .completed = $0 { true } else { false } }, "no sync happened")
     }
 
     // MARK: - Backpressure

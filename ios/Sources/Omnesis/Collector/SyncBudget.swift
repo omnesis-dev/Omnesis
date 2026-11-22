@@ -80,16 +80,24 @@ public struct SyncBudget: Sendable {
 /// A running estimate of how long one unit of work takes, so a budget check
 /// can ask about the next unit before starting it. Starts from a
 /// conservative guess and follows what is measured, never below the most
-/// recent observation.
+/// recent observation — and never above `ceiling`.
+///
+/// The ceiling is what keeps one slow request from closing every later
+/// wake. The estimate only moves when something is measured, and nothing is
+/// measured in a wake the estimate says is too short; without a cap, a single
+/// 60-second upload timeout would leave every ~30-second background wake
+/// declining to start, and the estimate would never come back down.
 struct WorkEstimate: Sendable {
     private(set) var expected: TimeInterval
+    let ceiling: TimeInterval
 
-    init(initial: TimeInterval) {
-        expected = initial
+    init(initial: TimeInterval, ceiling: TimeInterval) {
+        self.ceiling = ceiling
+        expected = min(initial, ceiling)
     }
 
     mutating func record(_ duration: TimeInterval) {
-        expected = max(duration, (expected + duration) / 2)
+        expected = min(ceiling, max(duration, (expected + duration) / 2))
     }
 }
 
