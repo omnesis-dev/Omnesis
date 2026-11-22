@@ -191,6 +191,20 @@ public final class AgentCoordinator {
             + ":" + (sessionId ?? "new")
     }
 
+    /// The composer view's identity. It changes when the composer moves to
+    /// another conversation, which gives that conversation a fresh field. A
+    /// blank conversation that adopts a session is still the same
+    /// conversation, so the field keeps its words and the keyboard focus.
+    private(set) var composerIdentity = 0
+    /// The draft key a blank conversation had before it adopted the session
+    /// it is now. An edit the view still files under that key belongs here.
+    @ObservationIgnored private var adoptedBlankDraftKey: String?
+
+    private func composerMovesToAnotherConversation() {
+        composerIdentity &+= 1
+        adoptedBlankDraftKey = nil
+    }
+
     func draft(for key: String) -> String {
         draftStore.read(key)?.text ?? ""
     }
@@ -492,6 +506,7 @@ public final class AgentCoordinator {
 
     private func bootstrap() async {
         let choice = sessionChoiceCount
+        let blankDraft = sessionId == nil ? draft(for: composerDraftKey) : nil
         await refreshConversations()
         // An explicit open that landed while the list was loading (e.g. a
         // push deep-open racing a cold start) owns the surface — skip the
@@ -504,13 +519,17 @@ public final class AgentCoordinator {
         // Falls through to a fresh session only on the very first launch
         // (or if loading fails).
         let mostRecent = conversations.max(by: { $0.updatedAt < $1.updatedAt })
-        await applyDefaultSession(resumeFromId: mostRecent?.sessionId, ifStillAt: choice)
+        await applyDefaultSession(resumeFromId: mostRecent?.sessionId, ifStillAt: choice, blankDraft: blankDraft)
     }
 
     /// The bootstrap default: create (or resume) a session and apply it —
     /// unless an explicit session choice superseded it while the request
     /// was in flight, in which case the result (or error) is discarded.
-    private func applyDefaultSession(resumeFromId: String?, ifStillAt choice: Int) async {
+    /// Typing into the blank conversation while it was on the way supersedes
+    /// a resume too: the person has started a new conversation, and swapping
+    /// a stored one in would take their words and keyboard away. A fresh
+    /// session is the blank conversation's own and takes its draft along.
+    private func applyDefaultSession(resumeFromId: String?, ifStillAt choice: Int, blankDraft: String?) async {
         guard let client else { return }
         let handoff = resumeFromId.map { beginSnapshotHandoff(targetSessionId: $0) }
         do {
@@ -519,11 +538,13 @@ public final class AgentCoordinator {
                 resumeFromId: resumeFromId,
                 transcriptLimit: resumeFromId == nil ? nil : 25
             )
-            guard sessionChoiceCount == choice, snapshotHandoffIsCurrent(handoff) else {
+            let typedMeanwhile = resumeFromId != nil && sessionId == nil
+                && blankDraft.map { draft(for: composerDraftKey) != $0 } == true
+            guard sessionChoiceCount == choice, snapshotHandoffIsCurrent(handoff), !typedMeanwhile else {
                 discardSnapshotHandoff(handoff)
                 return
             }
-            await applyCreatedSession(session)
+            await applyCreatedSession(session, carryingBlankDraft: resumeFromId == nil)
             await finishSnapshotHandoff(handoff, after: session.eventCursor)
         } catch {
             guard sessionChoiceCount == choice, snapshotHandoffIsCurrent(handoff) else {
@@ -560,6 +581,7 @@ public final class AgentCoordinator {
         client = nil
         pairing = nil
         sessionId = nil
+        composerMovesToAnotherConversation()
         queueHandoff = ConversationQueueHandoff()
         submitting = false
         draftSubmissionID = nil
@@ -621,7 +643,8 @@ public final class AgentCoordinator {
     /// Persist explicit editor changes, never a coordinator-driven session reset.
     func updateComposerDraft(_ text: String, for key: String?) {
         composerDraft = text
-        if let key, key == composerDraftKey, !submitting { saveDraft(text, for: key) }
+        guard let key, key == composerDraftKey || key == adoptedBlankDraftKey, !submitting else { return }
+        saveDraft(text, for: composerDraftKey)
     }
 
     /// Send the composer's words. The composer empties at once; a send the
@@ -866,6 +889,7 @@ public final class AgentCoordinator {
         snapshotHandoff = nil
         clearTranscriptState()
         composerDraft = ""
+        if sessionId != nil { composerMovesToAnotherConversation() }
         sessionId = nil
         queueHandoff = ConversationQueueHandoff()
         submitting = false
@@ -890,6 +914,7 @@ public final class AgentCoordinator {
     private func beginResume(to id: String) {
         clearTranscriptState()
         let summary = conversations.first { $0.sessionId == id }
+        if sessionId != id { composerMovesToAnotherConversation() }
         sessionId = id
         model = summary?.model
         backend = summary?.backend
@@ -922,7 +947,7 @@ public final class AgentCoordinator {
                 resumeFromId: resumeTarget
             )
             guard sessionChoiceCount == choice else { return .superseded }
-            await applyCreatedSession(session, preserving: optimisticSend)
+            await applyCreatedSession(session, preserving: optimisticSend, carryingBlankDraft: submitting)
             return .ready
         } catch {
             guard sessionChoiceCount == choice else { return .superseded }
@@ -930,27 +955,34 @@ public final class AgentCoordinator {
         }
     }
 
-    private func adoptConversationId(_ id: String) {
+    /// A blank conversation adopting a session keeps its composer. When the
+    /// session is the blank conversation's own, created for it rather than a
+    /// stored one resumed, its unsent words move to the session's draft key.
+    private func adoptConversationId(_ id: String, carryingBlankDraft: Bool) {
         if sessionId != id {
             queueHandoff = ConversationQueueHandoff()
             conversationControls = nil
             conversationControlsSupported = false
+            if sessionId != nil { composerMovesToAnotherConversation() }
         }
         let previousDraftKey = composerDraftKey
         let wasNewConversation = sessionId == nil
         sessionId = id
-        if wasNewConversation, submitting { draftStore.move(from: previousDraftKey, to: composerDraftKey) }
+        guard wasNewConversation, carryingBlankDraft else { return }
+        draftStore.move(from: previousDraftKey, to: composerDraftKey)
+        adoptedBlankDraftKey = previousDraftKey
     }
 
     private func applyCreatedSession(
         _ session: CreateSessionResponse,
-        preserving optimisticSend: PendingSessionMint? = nil
+        preserving optimisticSend: PendingSessionMint? = nil,
+        carryingBlankDraft: Bool = false
     ) async {
         sendOperationGeneration &+= 1
         turnGeneration &+= 1
         cancelOperationGeneration &+= 1
         cancelError = nil
-        adoptConversationId(session.sessionId)
+        adoptConversationId(session.sessionId, carryingBlankDraft: carryingBlankDraft)
         activeConversationPinned = conversations
             .first(where: { $0.sessionId == session.sessionId })?.pinned ?? activeConversationPinned
         // The surface now shows this conversation — covers an explicit open,
