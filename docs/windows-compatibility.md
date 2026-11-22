@@ -22,7 +22,7 @@ below do not establish general Windows support.
 
 The proposed workflow runs focused Windows tests on pull requests and a broad
 sweep daily at 04:43 UTC. The daily sweep includes units, adapter tests,
-typechecks, two spawned-gateway shards and portal browser tests. The complete unit
+typechecks, four spawned-gateway shards and portal browser tests. The complete unit
 lane also enables the default indexer benchmark and requires real native Whisper
 and Tesseract acceptance inputs. A separate job runs the real pinned OpenClaw and
 Hermes enrollment, plugin-host, tool and uninstallation contracts sequentially
@@ -61,7 +61,7 @@ runner admission waited 4 seconds.
 `node scripts/ci/windows-checks.mjs unit --list` prints the broad unit plan.
 The same entrypoint accepts `focused`, `e2e` and `portal`. Installer exclusions
 have explicit reasons. Manual dispatch defaults to the complete sweep and can
-select units, both E2E shards, or the portal for diagnosis. An E2E-only manual
+select units, the four E2E shards, or the portal for diagnosis. An E2E-only manual
 run can also supply `e2e_files`, a JSON array of one to sixteen existing
 repository E2E paths. This creates one unsharded diagnostic job; it does not
 change pull-request or daily coverage. Paths are validated and passed as literal

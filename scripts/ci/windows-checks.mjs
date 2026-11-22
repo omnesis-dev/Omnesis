@@ -342,8 +342,8 @@ export function windowsE2EFiles(text, exists = existsSync) {
 export function windowsCheckTasks(lane, shard, files = []) {
   if (files.length && (lane !== "e2e" || shard !== undefined))
     throw new Error("Selected Windows E2E files require the unsharded E2E lane");
-  if (shard !== undefined && (lane !== "e2e" || !/^[12]\/2$/u.test(shard))) {
-    throw new Error("Only the E2E lane takes --shard=1/2 or --shard=2/2");
+  if (shard !== undefined && (lane !== "e2e" || !/^[1-4]\/4$/u.test(shard))) {
+    throw new Error("Only the E2E lane takes --shard=N/4, with N from 1 to 4");
   }
   switch (lane) {
     case "focused":
@@ -390,7 +390,7 @@ export async function runWindowsCheckTasks(tasks) {
 async function main(args) {
   const [lane, ...options] = args;
   if (options.some((option) => option !== "--list" && !option.startsWith("--shard="))) {
-    throw new Error("Expected --list or --shard=1/2 or --shard=2/2");
+    throw new Error("Expected --list or --shard=N/4, with N from 1 to 4");
   }
   if (options.filter((option) => option.startsWith("--shard=")).length > 1) {
     throw new Error("Pass one E2E shard");
