@@ -199,6 +199,8 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
   private connected = false;
   /** The owner's choice behind the connection under way, for its progress and its outcome. */
   private connectIntent: "create" | "existing" | undefined;
+  /** The invite the connection under way brought, as the owner pasted it. */
+  private connectInvite: string | undefined;
   /** What the launch under way is doing, shown while connecting registers this gateway. */
   private launchStep: NonNullable<NonNullable<CloudRelayManagementStatus["connect"]>["step"]> =
     "registering";
@@ -1438,6 +1440,12 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
    * Connecting accepts the certificate authority's terms the page states; only an explicit
    * `termsAccepted: false` refuses them. A gateway already linked to an account is refused: it
    * is unlinked first.
+   *
+   * A connection still waiting for its sign-in carries on when asked again with nothing new. One
+   * asked for another choice or another invite starts again with them, keeping the reserved name:
+   * the relay's operation names the choice and the invite it was started with, so carrying on
+   * would sign in without the invite, or create what the owner no longer asked for. Past the
+   * sign-in, a connection always carries on.
    */
   async connect(input: {
     termsAccepted?: boolean;
@@ -1454,10 +1462,16 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
       if (
         ["waiting", "registering", "linking"].includes(this.connection.state) &&
         (this.connection.state !== "waiting" || this.connectPreparation || this.signup)
-      )
-        return this.status();
+      ) {
+        const changed =
+          (input.intent !== undefined && input.intent !== this.connectIntent) ||
+          (input.invite !== undefined && input.invite !== this.connectInvite);
+        if (this.connection.state !== "waiting" || !changed) return this.status();
+        await this.admitted(() => this.stopConnecting());
+      }
       const intent = input.intent ?? "existing";
       this.connectIntent = intent;
+      this.connectInvite = input.invite;
       this.connectAbort = new AbortController();
       const controller = this.connectAbort;
       const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(10 * 60_000)]);
@@ -1684,6 +1698,7 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
       await this.admitted(() => signup.client.cancel(signup.pending));
     this.connection = { state: "idle" };
     this.connectIntent = undefined;
+    this.connectInvite = undefined;
   }
   /** After the sign-in: registering this gateway, then linking it. Starting over waits for it. */
   private linkingUnderWay(): boolean {

@@ -1114,6 +1114,36 @@ describe("new devices", () => {
 
 describe("trusted sign-ins and confirming a passkey", () => {
   const ORIGIN = "https://g-abcdefgh.relay.example.test";
+  test("a sign-in shows its state first and when it was added, and a passkey setup waits for reads as a step to take, not a failure", async () => {
+    const added = Date.UTC(2028, 0, 3, 12) / 1000;
+    state.status = connected({
+      deviceEnrollment: {
+        policy: "automatic",
+        confirmOrigin: ORIGIN,
+        trustedSignIns: [
+          { type: "google", id: "googlefictional2", addedAt: added, source: "link-page" },
+          { type: "passkey", id: "passkeyfictional3a", addedAt: added, source: "endorsed" },
+          { type: "passkey", id: "passkeyfictional3b", addedAt: added, source: "endorsed" },
+        ],
+        confirmedSignIns: [],
+      },
+    });
+    await show();
+    const rows = [...host.querySelectorAll(".relay-sign-in")].map((x) =>
+      [...x.children].map((line) => (line.textContent ?? "").replace(/\s+/g, " ").trim()).join(" | "),
+    );
+    const day = new Date(added * 1000).toLocaleDateString(undefined, {
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+    });
+    expect(rows).toEqual([
+      `Google account · added ${day} | Not confirmed on this gateway yet: devices that sign in with it wait for your OK · Used to connect this gateway`,
+      `Passkey · added ${day} · ending al3a | Waiting for you to use it once on this gateway · Added to your account later, vouched for by a sign-in trusted here`,
+      `Passkey · added ${day} · ending al3b | Waiting for you to use it once on this gateway · Added to your account later, vouched for by a sign-in trusted here`,
+    ]);
+  });
+
   test("each trusted sign-in says where it came from and whether it is confirmed here", async () => {
     state.status = connected({
       deviceEnrollment: {
@@ -1133,15 +1163,20 @@ describe("trusted sign-ins and confirming a passkey", () => {
     await show();
     // Each row is two lines: what the sign-in is, then where it came from.
     const rows = [...host.querySelectorAll(".relay-sign-in")].map((x) =>
-      [...x.children].map((line) => (line.textContent ?? "").replace(/\s+/g, " ").trim()).join(" "),
+      [...x.children].map((line) => (line.textContent ?? "").replace(/\s+/g, " ").trim()).join(" | "),
     );
+    // No raw id is shown, only its end where nothing else tells two rows apart (these carry no
+    // real add time); the whole id is kept for a hover.
     expect(rows).toEqual([
-      "Passkey passkeyficti Used to connect this gateway · Confirmed on this gateway",
-      "Google account googlefictio Already on your account, vouched for by one of your passkeys · Not confirmed on this gateway: devices using it wait for your approval",
-      "Passkey passkeyficti Source not recorded · Not confirmed on this gateway: devices using it wait for your approval",
-      "Passkey passkeyficti Confirmed in the Android app",
-      "Passkey passkeyficti Confirmed",
+      "Passkey · ending nal1 | Confirmed on this gateway · Used to connect this gateway",
+      "Google account | Not confirmed on this gateway yet: devices that sign in with it wait for your OK · Already on your account, vouched for by one of your passkeys",
+      "Passkey · ending nal3 | Not confirmed on this gateway yet: devices that sign in with it wait for your OK · Source not recorded",
+      "Passkey · ending nal4 | Confirmed in the Android app",
+      "Passkey · ending nal5 | Confirmed",
     ]);
+    expect(host.querySelector(".relay-sign-in .relay-row-value")?.getAttribute("title")).toBe(
+      "Passkey passkeyfictional1",
+    );
     // A passkey is confirmed already, so there is nothing to confirm.
     expect(text()).not.toContain("Confirm your passkey on this gateway");
     state.status = connected({ deviceEnrollment: { policy: "ask", trustedSignIns: [] } });

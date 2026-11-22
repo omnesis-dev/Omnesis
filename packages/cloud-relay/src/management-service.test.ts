@@ -1673,6 +1673,46 @@ test("an invite is checked with the relay before anything else, then goes with t
   expect(f.relay.started()).toMatchObject({ intent: "create", invite: fictionalInvite });
 });
 
+test("asked again while waiting for the sign-in, a connection carries on only when nothing changed, and starts again with a new choice or invite", async () => {
+  const f = await connecting();
+  f.relay.handle("/_relay/v3/signup/invite", inviteAnswer("valid"));
+  manager = await GatewayCloudRelayManagement.open(f.options);
+  const starts = () => f.relay.calls.filter((path) => path === "/_relay/v3/signup/start").length;
+  const cancels = () => f.relay.calls.filter((path) => path === "/_relay/v3/signup/cancel").length;
+  // Signing in to an account the owner has, then left waiting (the terminal was closed).
+  const first = await manager.connect({ termsAccepted: true, intent: "existing" });
+  expect(first.connect).toMatchObject({ state: "waiting", intent: "existing" });
+  const gatewayId = first.gatewayId;
+  // Asked again the same way, or with nothing new, it carries on with the same sign-in.
+  for (const again of [{ intent: "existing" as const }, {}]) {
+    const same = await manager.connect({ termsAccepted: true, ...again });
+    expect(same.connect).toMatchObject({ code: first.connect!.code, intent: "existing" });
+  }
+  expect([starts(), cancels()]).toEqual([1, 0]);
+  // Asked to create an account with an invite: the relay's sign-up is replaced by one that names
+  // them, and the gateway keeps the name it reserved.
+  const link = `https://relay.example.test/invite#${fictionalInvite}`;
+  const created = await manager.connect({ termsAccepted: true, intent: "create", invite: link });
+  expect(created.connect).toMatchObject({ state: "waiting", intent: "create" });
+  expect(created.gatewayId).toBe(gatewayId);
+  expect([starts(), cancels()]).toEqual([2, 1]);
+  expect(f.relay.started()).toMatchObject({ intent: "create", invite: fictionalInvite });
+  // Another invite starts again too; the same one carries on.
+  const other = signInvite(generateKeyPairSync("ed25519").privateKey, {
+    origin: "https://relay.example.test",
+    expiresAt: Math.floor(Date.now() / 1000) + 3600,
+  });
+  await manager.connect({ termsAccepted: true, intent: "create", invite: link });
+  expect(starts()).toBe(2);
+  await manager.connect({ termsAccepted: true, intent: "create", invite: other });
+  expect([starts(), cancels()]).toEqual([3, 2]);
+  expect(f.relay.started()).toMatchObject({ intent: "create", invite: other });
+  // The approval then says whether the account was new, against the choice now under way.
+  f.relay.poll({ status: "approved", accountCreated: false });
+  const done = await settled("done");
+  expect(done.connect).toEqual({ state: "done", intent: "create", existingAccount: true });
+});
+
 for (const status of ["invalid", "expired", "used"] as const)
   test(`an ${status} invite stops connecting before this gateway claims anything`, async () => {
     const f = await connecting();

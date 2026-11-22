@@ -261,6 +261,11 @@ export class GatewayAccountLink {
    * them. `unreadable` means a link file exists that this version can't read; it is left alone.
    */
   private hold?: { since: number; certificates: string[] };
+  /**
+   * Whether the linked account listed a passkey when this gateway last read its listing. Only for
+   * what setup offers: confirming still checks the assertion against the listing it reads then.
+   */
+  private listedPasskey = false;
   private acknowledged: string[] = [];
   private unreadable = false;
   constructor(
@@ -1114,6 +1119,7 @@ export class GatewayAccountLink {
       input.signal,
     );
     this.bound = true;
+    this.listedPasskey = false;
     this.lastError = undefined;
   }
   enrollmentStatus() {
@@ -1135,6 +1141,7 @@ export class GatewayAccountLink {
       confirmedSignIns: confirmed.map(({ type, id, at, via }) => ({ type, id, at, via })),
       // Where the owner can confirm a passkey: only this gateway's own origin.
       ...(origin ? { confirmOrigin: origin } : {}),
+      ...(record && this.listedPasskey ? { accountPasskey: true as const } : {}),
     };
   }
   /**
@@ -1157,6 +1164,7 @@ export class GatewayAccountLink {
     // A listing for another account says nothing about this one.
     if (!current || (current.accountId !== undefined && current.accountId !== record.accountId))
       return;
+    this.listedPasskey = current.passkeys.length > 0;
     const now = () => Math.floor(Date.now() / 1000);
     const listed = listedSignIns(current);
     const withdrawn = new Set(record.withdrawnSignIns);
@@ -1379,6 +1387,7 @@ export class GatewayAccountLink {
         signal,
       );
       this.bound = true;
+      this.listedPasskey = false;
       this.lastError = undefined;
     } catch {
       this.lastError = "account-link-failed";
