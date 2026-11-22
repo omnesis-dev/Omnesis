@@ -13,9 +13,8 @@
 //
 // Usage: node scripts/ci/xcodebuild-ui-tests.mjs --log <file> -- <xcodebuild arguments>
 import { spawn } from "node:child_process";
-import { createWriteStream, existsSync, renameSync, rmSync } from "node:fs";
+import { createWriteStream, existsSync, realpathSync, renameSync, rmSync } from "node:fs";
 import { constants } from "node:os";
-import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 /** xcodebuild's exit status when testing failed. */
@@ -113,7 +112,14 @@ export async function runXcodebuildUITests({
   }
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+// Node loads the entry script from its real path, so a path reached through a
+// symlink (macOS's /var/folders temporary directories live under /private/var)
+// is compared by its real path too; otherwise the script would exit 0 without
+// running xcodebuild.
+if (
+  process.argv[1] &&
+  realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))
+) {
   const argv = process.argv.slice(2);
   const separator = argv.indexOf("--");
   if (argv[0] !== "--log" || !argv[1] || separator !== 2 || separator === argv.length - 1) {
