@@ -196,7 +196,7 @@ describe.skipIf(!browserReady)("passkeys on the gateway's own page", () => {
       expect(confirmed.deviceEnrollment.trustedSignIns).toEqual([
         expect.objectContaining({ source: "link-page", confirmed: true }),
       ]);
-      await expectText(page, /(?:^| · )Confirmed on this gateway$/);
+      await expectText(page, /^Confirmed on this gateway(?: · |$)/);
       await page.locator("#relay-setup-title").waitFor({ state: "detached", timeout: 20_000 });
       // Set up: the checklist gives way to the account itself.
       await expectText(page, "This gateway is linked to your Omnesis account.");
