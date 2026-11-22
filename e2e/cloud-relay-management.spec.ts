@@ -643,6 +643,8 @@ test("a freshly linked gateway shows its account at once, and Connectivity's ans
       },
       deviceEnrollment: {
         policy: "automatic",
+        // The gateway's own address, where its last setup step uses the passkey.
+        confirmOrigin: "https://g-fictional.relay.example.test",
         trustedSignIns: [
           {
             type: "passkey",
