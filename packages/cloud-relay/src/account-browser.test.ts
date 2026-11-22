@@ -1424,7 +1424,7 @@ test("the confirmation names each of the account's passkeys, offers Google first
   expect(f.button("Confirm with Google").className).toBe("");
   expect(f.button(newest).className).toBe("secondary");
   expect(f.document.querySelector(".confirm .note")!.textContent).toBe(
-    "Don't have those passkeys here? Confirm with Google instead",
+    "If your browser shows a QR code, those passkeys are on another device. Confirm with Google instead",
   );
   // A named passkey is the only one the browser is asked for.
   f.credentials.get.mockRejectedValueOnce(named("NotAllowedError"));
@@ -1474,7 +1474,7 @@ test("a passkey added from a gateway's setup counts the gateway's step, through 
   await press(f, existingPasskey);
   await vi.waitFor(() =>
     expect(f.status()).toBe(
-      "Passkey added. To finish, go back to your gateway's page and use the new passkey once there.",
+      "Passkey added. To finish, go back to your gateway's page and use the new passkey once there. You can close this tab.",
     ),
   );
   expect(storage.has("omnesis.adding-passkey")).toBe(false);

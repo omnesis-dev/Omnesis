@@ -146,3 +146,11 @@ export function gatewaySignupTranscript(
     ]),
   );
 }
+
+/**
+ * How a gateway's portal says its sign-in link opens in a window the portal opened by script: the
+ * link's `window` field with this value. It decides nothing but whether the page the sign-up ends
+ * on closes that window, which it names with `fragment`: a browser closes only a window a script
+ * opened, so a link that carries it anywhere else just leaves the page as it is.
+ */
+export const SIGNUP_WINDOW_MARKER = { value: "portal", fragment: "#opened-by-portal" } as const;

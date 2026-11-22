@@ -1173,6 +1173,16 @@ const VIRTUAL_AUTHENTICATOR = {
   automaticPresenceSimulation: true,
 } as const;
 
+/**
+ * Gives `page`, another page of `session`'s profile such as a window a page opened, a virtual
+ * authenticator of its own: the profile's authenticator belongs to its first page only.
+ */
+export async function pageAuthenticator(session: PasskeySession, page: Page): Promise<void> {
+  const cdp = await session.context.newCDPSession(page);
+  await cdp.send("WebAuthn.enable");
+  await cdp.send("WebAuthn.addVirtualAuthenticator", { options: VIRTUAL_AUTHENTICATOR });
+}
+
 /** A virtual authenticator's passkey, as the DevTools protocol exports and imports it. */
 interface VirtualCredential {
   credentialId: string;

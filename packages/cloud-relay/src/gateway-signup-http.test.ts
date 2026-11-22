@@ -160,11 +160,18 @@ async function fixture(
       redemption: { operationId: unsigned.operationId, redemptionSecret },
     };
   };
-  const launched = async (intent?: "create" | "existing", invite?: string, gateway?: Gateway) => {
+  const launched = async (
+    intent?: "create" | "existing",
+    invite?: string,
+    gateway?: Gateway,
+    /** The link's `window` field, as a gateway's portal adds it for the window it opened. */
+    window?: string,
+  ) => {
     const op = await start({}, intent, invite, gateway);
     expect(op.response.status).toBe(200);
     const started = await op.response.json(),
       target = new URL(started.authorizeUrl);
+    if (window !== undefined) target.searchParams.set("window", window);
     // Opening the link only shows a Continue button; the press binds this browser (F43).
     const opened = await fetch(url + target.pathname + target.search, { redirect: "manual" });
     expect(opened.status).toBe(200);
@@ -329,6 +336,13 @@ test("a new gateway connects end to end: passkey account, proof, invitation, reg
   expect(await confirmed.json()).toEqual({ location: `${origin}/_relay/v3/signup/complete` });
   const finished = await fetch(`${f.url}/_relay/v3/signup/complete`);
   expect(await finished.text()).toContain("Go back to your gateway");
+  // Its one script runs under this response's own nonce, and does nothing without the marker.
+  const policy = finished.headers.get("content-security-policy")!;
+  const nonce = /script-src 'nonce-([A-Za-z0-9_-]{22})'/.exec(policy)![1];
+  expect(policy).toContain("default-src 'none'");
+  expect(policy).toContain("frame-ancestors 'none'");
+  const again = await fetch(`${f.url}/_relay/v3/signup/complete`);
+  expect(again.headers.get("content-security-policy")).not.toContain(nonce);
 
   const polled = await (await f.post("poll", op.redemption)).json();
   expect(polled.status).toBe("approved");
@@ -384,6 +398,34 @@ test("a new gateway connects end to end: passkey account, proof, invitation, reg
       { id: authenticator.id, publicKey: (registered!.pin as { publicKey: string }).publicKey },
     ],
   });
+});
+
+test("a sign-up opened in the portal's own window ends on a page that closes that window, and the marker does nothing else", async () => {
+  const f = await fixture({ policy: "open" });
+  // The portal adds its marker to the link of the window it opened by script.
+  const op = await f.launched("create", undefined, undefined, "portal");
+  const signIn = await f.google(op);
+  const confirmed = await f.api("continue", op.query, `${op.cookie}; ${signIn.cookie}`);
+  expect(await confirmed.json()).toEqual({
+    location: `${origin}/_relay/v3/signup/complete#opened-by-portal`,
+  });
+  // The page closes the window only for that fragment, which no server ever receives.
+  const page = await (await fetch(`${f.url}/_relay/v3/signup/complete`)).text();
+  expect(page).toMatch(
+    /<script nonce="[A-Za-z0-9_-]{22}">if\(location\.hash==="#opened-by-portal"\)\{history\.replaceState\(null,"",location\.pathname\);window\.close\(\)\}<\/script>/,
+  );
+  // Only that one value is a marker: anything else is no sign-in link at all.
+  const other = await f.start({}, "create");
+  const target = new URL((await other.response.json()).authorizeUrl);
+  const opened = (link: URL) => fetch(f.url + link.pathname + link.search, { redirect: "manual" });
+  for (const value of ["tab", "portal&window=portal", ""]) {
+    const link = new URL(target);
+    link.searchParams.set("window", value);
+    expect((await opened(link)).status).toBe(400);
+  }
+  target.searchParams.append("window", "portal");
+  target.searchParams.append("window", "portal");
+  expect((await opened(target)).status).toBe(400);
 });
 
 test("an invited Google sign-up creates an account and connects, and its digest is what a gateway computes", async () => {

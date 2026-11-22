@@ -961,6 +961,16 @@ certificate. Only a matching comparison and gateway approval let it redeem a cre
 The gateway registers with the invitation, then `POST /_relay/v3/signup/link`
 binds the account using its new owner session.
 
+A portal that opens the sign-in link in a window of its own, by script, adds
+`window=portal` to it (`SIGNUP_WINDOW_MARKER`). The Continue press carries it to
+the operation, and the finished sign-up then ends on
+`/_relay/v3/signup/complete#opened-by-portal`, whose page closes its window
+when it has that fragment. The marker decides nothing else: only that one value
+is accepted (any other makes the link invalid), it is never reflected into a
+page, it does not change where the sign-up goes, and a browser closes only a
+window a script opened, so a link that carries it anywhere else leaves the page
+as it is.
+
 On the relay's page, signing in (or creating the account) does not connect the
 gateway by itself, for a signup or an owner link alike: the page shows the
 gateway's name and code and connects it only when the person presses "Connect

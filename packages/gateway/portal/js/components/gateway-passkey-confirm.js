@@ -45,7 +45,7 @@ export const SETUP_COPY = {
   startFailed: "Couldn't use your passkey. Try again.",
   addStep: "Add a passkey (optional)",
   addBody:
-    "Once you have used a passkey here, a new device that signs in with it on this gateway's secure address joins without waiting for your OK. Adding one takes three steps: create it, confirm with a sign-in you already use, then use it once here.",
+    "Let new devices join without waiting for your OK when they sign in with your passkey on this gateway's secure address. Three steps: create the passkey on your Omnesis account page, which opens in a new tab, confirm with a sign-in you already use, then come back here and use it once.",
   addButton: "Add a passkey",
   addWaiting:
     "Finish adding the passkey on the Omnesis account page that opened, then come back to this page.",

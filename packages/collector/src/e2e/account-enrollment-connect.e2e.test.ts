@@ -45,6 +45,7 @@ import {
   expectPasskeySignInRefused,
   expectText,
   finishedConnect,
+  pageAuthenticator,
   passkeyIds,
   runCli,
   signedInAccount,
@@ -628,6 +629,41 @@ describe.skipIf(!browserReady)("connect a gateway by signing in", () => {
       expect((await again.status()).account.linked).toBe(false);
     },
     2 * gatewayBootBudgetMs() + 180_000,
+  );
+
+  test(
+    "the window a portal opened by script for the sign-in closes itself once the gateway is connected",
+    async () => {
+      const gateway = await EnrollmentGateway.start(world, "portal-window");
+      gateways.push(gateway);
+      const started = await gateway.connect("create");
+      expect(started.connect?.state).toBe("waiting");
+      // The portal opens its window by script, cuts it off from its own tab, and marks the link.
+      const link = new URL(started.connect!.authorizeUrl!);
+      link.searchParams.set("window", "portal");
+      const session = await browser.session();
+      try {
+        const [popup] = await Promise.all([
+          session.context.waitForEvent("page"),
+          session.page.evaluate((url) => {
+            const opened = window.open(url, "omnesis-connect");
+            if (opened) opened.opener = null;
+          }, link.href),
+        ]);
+        await pageAuthenticator(session, popup);
+        await clickFirst(popup, ["Continue"]);
+        await popup.getByRole("heading", { name: CREATE_ACCOUNT_HEADING, exact: true }).waitFor();
+        await clickFirst(popup, ["Create with a passkey"]);
+        const closed = popup.waitForEvent("close", { timeout: 60_000 });
+        await clickFirst(popup, ["Connect this gateway"]);
+        await closed;
+        expect(popup.isClosed()).toBe(true);
+        expect((await finishedConnect(gateway)).connect?.state).toBe("done");
+      } finally {
+        await session.context.close();
+      }
+    },
+    gatewayBootBudgetMs() + 180_000,
   );
 
   test(

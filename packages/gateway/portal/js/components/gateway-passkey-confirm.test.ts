@@ -135,7 +135,7 @@ test("without a passkey, the last step offers to add one, optional and about not
   expect(text()).toContain("Secure address g-abcdefgh.relay.example.test");
   expect(text()).toContain("Add a passkey (optional)");
   expect(text()).toContain(
-    "Adding one takes three steps: create it, confirm with a sign-in you already use, then use it once here.",
+    "Three steps: create the passkey on your Omnesis account page, which opens in a new tab, confirm with a sign-in you already use, then come back here and use it once.",
   );
   // Phones are added from Devices: this step says nothing about them.
   expect(text()).not.toMatch(/phone|app|Google/i);

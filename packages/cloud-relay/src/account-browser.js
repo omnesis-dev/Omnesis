@@ -102,7 +102,7 @@ export function installAccountUI() {
   const addingKey = "omnesis.adding-passkey";
   const passkeyAdded = "Passkey added. You can now use it to sign in.";
   const passkeyAddedForGateway =
-    "Passkey added. To finish, go back to your gateway's page and use the new passkey once there.";
+    "Passkey added. To finish, go back to your gateway's page and use the new passkey once there. You can close this tab.";
   const day = new Intl.DateTimeFormat(undefined, { dateStyle: "medium" });
   // One persistent element, so a result is announced where the person is looking.
   const status = document.createElement("p");
@@ -1146,8 +1146,8 @@ export function installAccountUI() {
           instead.addEventListener("click", () => ui.run(confirmWithGoogle));
           elsewhere.append(
             passkeys.length === 1
-              ? "Don't have that passkey here? "
-              : "Don't have those passkeys here? ",
+              ? "If your browser shows a QR code, that passkey is on another device. "
+              : "If your browser shows a QR code, those passkeys are on another device. ",
             instead,
           );
         } else

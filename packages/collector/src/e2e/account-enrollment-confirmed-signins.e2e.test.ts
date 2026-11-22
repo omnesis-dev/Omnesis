@@ -313,7 +313,7 @@ describe.skipIf(!browserReady)(
       await clickFirst(page, ["Confirm with Google"]);
       await expectText(
         page,
-        "Passkey added. To finish, go back to your gateway's page and use the new passkey once there.",
+        "Passkey added. To finish, go back to your gateway's page and use the new passkey once there. You can close this tab.",
       );
       await shot(page, "relay-added");
       [passkey] = await passkeyIds(owner);
