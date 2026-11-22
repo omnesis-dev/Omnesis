@@ -24,6 +24,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -42,10 +43,14 @@ class LaunchDraftTest {
     private lateinit var server: MockWebServer
     private val paths = CopyOnWriteArrayList<String>()
     private val store = AgentComposerStore()
-    private val coordinator = AgentCoordinator(store)
+    private lateinit var coordinator: AgentCoordinator
 
     @Before fun setUp() {
         Dispatchers.setMain(Dispatchers.Unconfined)
+        // Built after Main is replaced: the coordinator's scope takes `Dispatchers.Main.immediate`
+        // when it is constructed, and one built earlier would run its launches on the test's
+        // main looper, which nothing here drains.
+        coordinator = AgentCoordinator(store)
         server = MockWebServer()
         server.start()
         coordinator.attachForTesting(
@@ -56,8 +61,8 @@ class LaunchDraftTest {
     }
 
     @After fun tearDown() {
-        // The resume's own request can outlive the assertions; join the coordinator's scope
-        // before resetting Main.
+        // Join the coordinator's scope before resetting Main, so nothing it launched outlives
+        // the test.
         coordinator.teardown()
         val scope = AgentCoordinator::class.java.getDeclaredField("scope").apply { isAccessible = true }
         try {
@@ -130,6 +135,22 @@ class LaunchDraftTest {
         assertEquals("s_stored", coordinator.state.value.sessionId)
         assertEquals("The stored conversation's own draft", coordinator.state.value.composer.text)
         assertEquals("An earlier unsent question", store.read("", null).text)
+        assertTrue(
+            "the stored conversation's transcript loads",
+            await { !coordinator.state.value.transcriptLoading },
+        )
+        assertEquals("s_stored", coordinator.state.value.sessionId)
+        assertEquals("The stored conversation's own draft", coordinator.state.value.composer.text)
+    }
+
+    /** The resume's session request answers on MockWebServer's thread; wait for its effect. */
+    private fun await(predicate: () -> Boolean): Boolean {
+        val deadline = System.currentTimeMillis() + 3_000
+        while (System.currentTimeMillis() < deadline) {
+            if (predicate()) return true
+            Thread.sleep(10)
+        }
+        return predicate()
     }
 
     private companion object {
