@@ -580,8 +580,19 @@ test("an account another gateway still uses is kept whole when the gateway that 
     expect(accounts.activeSession(first, 1, session)).toBe(true);
     expect(accounts.passkey("first-passkey")?.accountId).toBe(first);
     expect(accounts.passkeyKeys(first)).toEqual([
-      { id: "first-passkey", publicKey: "AQID" },
-      { id: "vouched", publicKey: "AQID", endorsement },
+      {
+        id: "first-passkey",
+        publicKey: "AQID",
+        label: "Test passkey",
+        createdAt: expect.any(Number),
+      },
+      {
+        id: "vouched",
+        publicKey: "AQID",
+        label: "Test passkey",
+        createdAt: expect.any(Number),
+        endorsement,
+      },
     ]);
     expect(accounts.gatewayLinks(first)).toEqual([
       { ownerAccount: otherGateway, seal: "d".repeat(43) },
@@ -640,8 +651,14 @@ test("a passkey keeps the sign-in that vouched for it until the passkey is remov
     accounts.registerPasskey(account, passkey("first"), false);
     accounts.registerPasskey(account, passkey("vouched"), false, 1, undefined, endorsement);
     expect(accounts.passkeyKeys(account)).toEqual([
-      { id: "first", publicKey: "AQID" },
-      { id: "vouched", publicKey: "AQID", endorsement },
+      { id: "first", publicKey: "AQID", label: "Test passkey", createdAt: expect.any(Number) },
+      {
+        id: "vouched",
+        publicKey: "AQID",
+        label: "Test passkey",
+        createdAt: expect.any(Number),
+        endorsement,
+      },
     ]);
     // Only a sign-in proof is kept; anything else stores neither it nor the passkey.
     expect(() =>
@@ -658,6 +675,8 @@ test("a passkey keeps the sign-in that vouched for it until the passkey is remov
     expect(accounts.passkeyKeys(account)[1]).toEqual({
       id: "vouched",
       publicKey: "AQID",
+      label: "Test passkey",
+      createdAt: expect.any(Number),
       endorsement,
     });
     accounts.removePasskey(account, "first", [], 1);
@@ -668,7 +687,9 @@ test("a passkey keeps the sign-in that vouched for it until the passkey is remov
     expect(accounts.passkeyKeys(account)).toEqual([]);
     // The same credential added again starts with whatever vouches for it then.
     accounts.registerPasskey(account, passkey("vouched"), false);
-    expect(accounts.passkeyKeys(account)).toEqual([{ id: "vouched", publicKey: "AQID" }]);
+    expect(accounts.passkeyKeys(account)).toEqual([
+      { id: "vouched", publicKey: "AQID", label: "Test passkey", createdAt: expect.any(Number) },
+    ]);
   } finally {
     db.close();
   }
@@ -721,6 +742,26 @@ test("an invite-only store creates an account only with an unused, unexpired inv
     // Signing in to an account that exists needs nothing.
     expect(accounts.signInFederated("google", "a".repeat(64))).toBe(created);
   } finally {
+    db.close();
+  }
+});
+
+test("each passkey is listed with its label and the second it was added, for the owner to tell them apart", () => {
+  const { db, accounts } = fixture();
+  vi.useFakeTimers({ now: Date.UTC(2028, 0, 21, 12, 0, 0, 750) });
+  try {
+    const account = accounts.signInFederated("google", "e".repeat(64));
+    accounts.registerPasskey(account, { ...passkey("laptop"), label: "Passkey on Mac" }, false);
+    expect(accounts.passkeyKeys(account)).toEqual([
+      {
+        id: "laptop",
+        publicKey: "AQID",
+        label: "Passkey on Mac",
+        createdAt: Date.UTC(2028, 0, 21, 12) / 1000,
+      },
+    ]);
+  } finally {
+    vi.useRealTimers();
     db.close();
   }
 });

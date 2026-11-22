@@ -64,7 +64,14 @@ export class AccountBrowserBroker implements AccountOperationBroker {
       unlinkAccount(owner: string): void;
       accountCredentials(account: string): {
         google: string[];
-        passkeys: { id: string; publicKey: string; countersignature?: unknown }[];
+        passkeys: {
+          id: string;
+          publicKey: string;
+          endorsement?: unknown;
+          countersignature?: unknown;
+          label?: string;
+          createdAt?: number;
+        }[];
       };
       maxOperations?: number;
       maxPerOwner?: number;
@@ -294,10 +301,12 @@ export class AccountBrowserBroker implements AccountOperationBroker {
 
   /**
    * The account's current sign-ins; what a gateway checks its pinned sign-ins against. Passkeys'
-   * countersignatures go only to a gateway that asked for them (`ACCOUNT_CREDENTIALS_EVIDENCE`):
-   * a gateway from before them parses this listing strictly and would refuse the whole of it.
+   * countersignatures, labels and creation times go only to a gateway that sends
+   * `ACCOUNT_CREDENTIALS_EVIDENCE` (`lenient`): such a gateway drops fields it doesn't know,
+   * whereas one from before that header parses each passkey strictly and would refuse the whole
+   * listing.
    */
-  credentials(owner: AccountBrowserOwner, options: { countersignatures?: boolean } = {}) {
+  credentials(owner: AccountBrowserOwner, options: { lenient?: boolean } = {}) {
     if (this.closed) throw new RelayError(503, "Account browser is unavailable");
     this.assertOwner(owner);
     const accountId = this.options.linkedAccount(owner.ownerAccountId);
@@ -306,9 +315,13 @@ export class AccountBrowserBroker implements AccountOperationBroker {
     return {
       accountId,
       google,
-      passkeys: options.countersignatures
+      passkeys: options.lenient
         ? passkeys
-        : passkeys.map(({ countersignature: _, ...passkey }) => passkey),
+        : passkeys.map(({ id, publicKey, endorsement }) => ({
+            id,
+            publicKey,
+            ...(endorsement === undefined ? {} : { endorsement }),
+          })),
     };
   }
 

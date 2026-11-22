@@ -606,15 +606,23 @@
           with the account, check that it shows the same code as the request, then choose
           <strong>Yes, approve</strong> or <strong>No, deny</strong>; you can also remember that
           passkey or Google account so the next device that uses it joins without asking. After a
-          deny, <strong>Make new devices always ask me</strong> switches to Ask me first. The
-          account page lists the <strong>Trusted sign-ins</strong>.
+          deny, <strong>Make new devices always ask me</strong> switches to Ask me first.
+        </p>
+        <p>
+          The account page lists the <strong>Sign-ins on your account</strong> that the gateway has
+          on record, and whether each is confirmed there. A passkey shows the name the account page
+          gave it and the day it was added. A passkey you have not used on this gateway yet, such as
+          one added after setup, offers <strong>Use it now</strong>, which asks for that passkey on
+          the gateway's secure address (opening it first when you are on another address); after
+          that, a device that signs in with it joins without waiting. Once one passkey is confirmed,
+          confirming another away from home also asks for the confirmed one.
         </p>
         <p>
           From a terminal, <code>omnesis cloud policy automatic</code> or <code>ask</code> sets the
           account's answer, <code>omnesis cloud requests</code> lists waiting devices with their
           codes, and <code>omnesis cloud approve &lt;id&gt; --code &lt;code&gt;</code> or
           <code>omnesis cloud deny &lt;id&gt;</code> decides one.
-          <code>omnesis cloud trusted-sign-ins</code> lists the trusted sign-ins and
+          <code>omnesis cloud trusted-sign-ins</code> lists the same sign-ins and
           <code>omnesis cloud remove-sign-in &lt;id&gt;</code> removes one;
           <code>--revoke-devices</code> also revokes the devices that joined with it. On a CLI or
           collector machine, <code>omnesis cloud pair --kind cli</code> (or <code>collector</code>)

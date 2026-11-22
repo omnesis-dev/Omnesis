@@ -62,11 +62,19 @@ function fixture(limits: { maxOperations?: number; maxPerOwner?: number } = {}) 
     accountCredentials: () => ({
       google: ["d".repeat(64)],
       passkeys: [
-        { id: "fictional-passkey", publicKey: "fictional-key" },
+        {
+          id: "fictional-passkey",
+          publicKey: "fictional-key",
+          endorsement: { fixture: "endorsement" },
+          label: "Passkey on Mac",
+          createdAt: 1_800_000_000,
+        },
         {
           id: "fictional-countersigner",
           publicKey: "fictional-key",
           countersignature: { fixture: "countersignature" },
+          label: "Work laptop",
+          createdAt: 1_800_000_001,
         },
       ],
     }),
@@ -572,20 +580,36 @@ test("gateway owners read the current credentials of their linked account only",
   const f = fixture();
   expect(() => f.broker.credentials(f.owner)).toThrow("not linked");
   f.linked.set(f.owner.ownerAccountId, f.actor.accountId);
-  // A countersignature is listed only for a gateway that asked for one.
+  // A gateway that reads the listing strictly gets each passkey's id, key and endorsement only:
+  // no countersignature, label or creation time, which it would refuse the whole listing over.
   expect(f.broker.credentials(f.owner)).toEqual({
     accountId: f.actor.accountId,
     google: ["d".repeat(64)],
     passkeys: [
-      { id: "fictional-passkey", publicKey: "fictional-key" },
+      {
+        id: "fictional-passkey",
+        publicKey: "fictional-key",
+        endorsement: { fixture: "endorsement" },
+      },
       { id: "fictional-countersigner", publicKey: "fictional-key" },
     ],
   });
-  expect(f.broker.credentials(f.owner, { countersignatures: true }).passkeys[1]).toEqual({
-    id: "fictional-countersigner",
-    publicKey: "fictional-key",
-    countersignature: { fixture: "countersignature" },
-  });
+  expect(f.broker.credentials(f.owner, { lenient: true }).passkeys).toEqual([
+    {
+      id: "fictional-passkey",
+      publicKey: "fictional-key",
+      endorsement: { fixture: "endorsement" },
+      label: "Passkey on Mac",
+      createdAt: 1_800_000_000,
+    },
+    {
+      id: "fictional-countersigner",
+      publicKey: "fictional-key",
+      countersignature: { fixture: "countersignature" },
+      label: "Work laptop",
+      createdAt: 1_800_000_001,
+    },
+  ]);
   expect(() => f.broker.credentials({ ...f.owner, gatewayId: randomUUID() })).toThrow(
     "authorization changed",
   );

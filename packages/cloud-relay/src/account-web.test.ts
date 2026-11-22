@@ -361,6 +361,8 @@ test("a Google sign-in vouches for a new passkey through its round trip, bound t
     {
       id: added.authenticator.id,
       publicKey: expect.any(String),
+      label: expect.any(String),
+      createdAt: expect.any(Number),
       endorsement: { type: "google", idToken: "fixture-token", salt: expect.any(String) },
     },
   ]);

@@ -70,7 +70,7 @@ export class AccountBrowserHttp {
       const credentials = this.options.broker.credentials(
         await this.options.authenticateOwner(req),
         {
-          countersignatures:
+          lenient:
             req.headers[ACCOUNT_CREDENTIALS_EVIDENCE.header] ===
             ACCOUNT_CREDENTIALS_EVIDENCE.countersignatures,
         },

@@ -237,6 +237,8 @@ test("a passkey is stored with the sign-in that vouched for it, and the relay as
     expect(listed).toEqual({
       id: first.authenticator.id,
       publicKey: expect.any(String),
+      label: "Passkey 1",
+      createdAt: expect.any(Number),
       endorsement: { type: "google", idToken: "fictional-google-token", salt: expect.any(String) },
     });
     // The passkey countersigns the account's other sign-ins on each gateway's own page instead.

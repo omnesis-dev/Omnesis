@@ -513,10 +513,13 @@ test("credentials list the linked account's current sign-ins and answer nothing 
   expect(listed).toMatchObject({ accountId: f.accountId });
   expect(listed!.google).toEqual(expect.any(Array));
   expect(listed!.passkeys.length).toBeGreaterThan(0);
-  // The passkey was added to an existing account, so it comes with the sign-in that vouched for it.
+  // The passkey was added to an existing account, so it comes with the sign-in that vouched for it,
+  // and with the label and creation time the owner tells it apart by.
   expect(listed!.passkeys[0]).toEqual({
     id: expect.any(String),
     publicKey: expect.stringMatching(/^[A-Za-z0-9_-]+$/),
+    label: expect.any(String),
+    createdAt: expect.any(Number),
     endorsement: { type: "google", idToken: "fixture-google-token", salt: expect.any(String) },
   });
   const request = f.transport.mock.calls.at(-1)!;
@@ -555,6 +558,48 @@ test("credentials list the linked account's current sign-ins and answer nothing 
   // Once it has disconnected, the relay no longer knows it at all.
   await f.client.unlink();
   await expect(f.client.credentials()).rejects.toThrow("no longer has a registration");
+});
+
+test("a passkey's label and creation time are read as text to show, and a bad one is dropped, never the listing", async () => {
+  const f = await fixture();
+  const pending = await f.start();
+  await f.client.redeem(pending, await f.confirm(pending));
+  const original = f.transport.getMockImplementation()!;
+  const read = async (label: unknown, createdAt: unknown) => {
+    f.transport.mockImplementation(async (target, init) =>
+      new URL(String(target)).pathname.endsWith("/credentials")
+        ? Response.json({
+            accountId: f.accountId,
+            google: [],
+            passkeys: [{ id: "fictional", publicKey: "ZmljdGlvbmFs", label, createdAt }],
+          })
+        : original(target, init),
+    );
+    const [passkey] = (await f.client.credentials())!.passkeys;
+    return JSON.parse(JSON.stringify({ label: passkey!.label, createdAt: passkey!.createdAt }));
+  };
+  expect(await read("  Passkey on Mac ", 1_800_000_000)).toEqual({
+    label: "Passkey on Mac",
+    createdAt: 1_800_000_000,
+  });
+  // Terminal and layout controls, bidirectional overrides, zero-width and line separators become
+  // spaces, so a label can't rearrange or hide the text around it.
+  expect(await read("Work\u001b[2J\u202eptop\u200b\u2028laptop\n", 1)).toEqual({
+    label: "Work [2J ptop laptop",
+    createdAt: 1,
+  });
+  // It is cut to the relay's own limit, by characters.
+  expect((await read("é".repeat(81) + "x", undefined)).label).toBe("é".repeat(80));
+  // What isn't a label or a time is no label or time; the passkey is still listed.
+  for (const [label, createdAt] of [
+    [undefined, undefined],
+    ["\u0000\u200b ", 0],
+    [42, -1],
+    ["x".repeat(1025), 1.5],
+    [{ text: "Passkey" }, "1800000000"],
+  ] as const)
+    expect(await read(label, createdAt)).toEqual({});
+  f.transport.mockImplementation(original);
 });
 
 /** Base64url text of a given length, standing in for signed bytes whose content is not checked here. */
@@ -612,7 +657,7 @@ const strictListing = z
   })
   .strict();
 
-test("countersignatures reach only a gateway that asks for them, so one from before them still reads the listing", async () => {
+test("countersignatures, labels and creation times reach only a gateway that asks for them, so one from before them still reads the listing", async () => {
   const f = await fixture();
   const pending = await f.start();
   await f.client.redeem(pending, await f.confirm(pending));
@@ -632,8 +677,10 @@ test("countersignatures reach only a gateway that asks for them, so one from bef
     signIns: [signInDigest({ type: "google", id: "a".repeat(64) })],
   });
   const listed = await f.client.credentials();
-  expect(listed!.passkeys.find((passkey) => passkey.id === id)!.countersignature).toMatchObject({
-    signIns: [expect.any(String)],
+  expect(listed!.passkeys.find((passkey) => passkey.id === id)).toMatchObject({
+    countersignature: { signIns: [expect.any(String)] },
+    label: "Fixture passkey",
+    createdAt: expect.any(Number),
   });
   const [, init] = f.transport.mock.calls.at(-1)!;
   const headers = new Headers(init!.headers);
@@ -646,6 +693,8 @@ test("countersignatures reach only a gateway that asks for them, so one from bef
   const older = await (await f.transport(origin + path, { headers, redirect: "error" })).json();
   expect(strictListing.parse(older).passkeys.map((passkey) => passkey.id)).toContain(id);
   expect(JSON.stringify(older)).not.toContain("countersignature");
+  // Nor any passkey field added since: no label or creation time.
+  expect(JSON.stringify(older)).not.toMatch(/"label"|"createdAt"|Fixture passkey/);
   // Sent to it anyway, the listing would have been refused whole: that is why it asks.
   headers.set(ACCOUNT_CREDENTIALS_EVIDENCE.header, ACCOUNT_CREDENTIALS_EVIDENCE.countersignatures);
   const newer = await (await f.transport(origin + path, { headers, redirect: "error" })).json();

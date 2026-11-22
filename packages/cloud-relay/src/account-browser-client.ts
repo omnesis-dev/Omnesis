@@ -117,6 +117,9 @@ export interface AccountBrowserPort {
           publicKey: string;
           endorsement?: SignInProof;
           countersignature?: PasskeyCountersignature;
+          /** Shown to the owner only; see `accountCredentialsListing`. */
+          label?: string;
+          createdAt?: number;
         }>;
       }
     | undefined
@@ -149,6 +152,32 @@ const evidence = <T extends z.ZodTypeAny>(schema: T) =>
       const parsed = schema.safeParse(value);
       return parsed.success ? parsed.data : undefined;
     });
+/** The longest passkey label shown, in characters: the relay's own limit for one. */
+const MAX_PASSKEY_LABEL = 80;
+/**
+ * A passkey's label as the relay names it, made safe to show: control, format (bidirectional
+ * overrides, zero-width) and separator characters become spaces, runs of space collapse, and it
+ * is cut to `MAX_PASSKEY_LABEL` characters. Anything else, or nothing left, is no label. It is
+ * shown to the owner and never part of a trust decision, and a bad one never refuses the listing.
+ */
+const passkeyLabel = z
+  .unknown()
+  .optional()
+  .transform((value): string | undefined => {
+    if (typeof value !== "string" || value.length > 1024) return undefined;
+    const text = value
+      .replace(/[\p{C}\p{Zl}\p{Zp}]/gu, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    return text ? [...text].slice(0, MAX_PASSKEY_LABEL).join("") : undefined;
+  });
+/** When the passkey was added to the account, in Unix seconds, or nothing. For display only. */
+const passkeyCreatedAt = z
+  .unknown()
+  .optional()
+  .transform((value): number | undefined =>
+    Number.isSafeInteger(value) && (value as number) > 0 ? (value as number) : undefined,
+  );
 /**
  * The account's sign-ins as the relay lists them. Fields this version does not know are dropped,
  * not refused, so the relay can add one without cutting off gateways that predate it.
@@ -163,6 +192,8 @@ export const accountCredentialsListing = z.object({
         publicKey: z.string().max(4096),
         endorsement: evidence(signInProofSchema),
         countersignature: evidence(passkeyCountersignatureSchema),
+        label: passkeyLabel,
+        createdAt: passkeyCreatedAt,
       }),
     )
     .max(64),

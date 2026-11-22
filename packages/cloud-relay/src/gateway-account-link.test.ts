@@ -845,7 +845,13 @@ beforeAll(async () => {
   const jwk: JWK = { ...(await exportJWK(pair.publicKey)), kid: "1", alg: "RS256" };
   googleKeys = createLocalJWKSet({ keys: [jwk] });
 });
-type Listed = { id: string; publicKey: string; endorsement?: SignInProof };
+type Listed = {
+  id: string;
+  publicKey: string;
+  endorsement?: SignInProof;
+  label?: string;
+  createdAt?: number;
+};
 /** A real passkey, with the public key the relay lists for it. */
 async function passkeyDevice() {
   const authenticator = passkeyAuthenticator(),
@@ -2767,6 +2773,55 @@ test("the status says the account lists a passkey this gateway could confirm, pi
     signal: new AbortController().signal,
   });
   expect(f.manager.enrollmentStatus()).not.toHaveProperty("accountPasskey");
+});
+
+test("a passkey row carries the name and creation time the account last listed, to show and nothing else", async () => {
+  const f = await confirming();
+  const owner = await passkeyDevice();
+  const other = await passkeyDevice();
+  const named = { label: "Passkey on Mac", createdAt: 1_800_000_000 };
+  f.list({ id: owner.id, publicKey: owner.publicKey, ...named });
+  // Nothing has been read yet: the passkey confirmed here has no name to show.
+  const ceremony = f.manager.passkeyConfirmation();
+  await f.manager.confirmPasskey(f.assert(owner, ceremony));
+  expect(f.manager.enrollmentStatus().confirmedSignIns).toEqual([
+    { type: "passkey", id: owner.id, at: expect.any(Number), via: "gateway-origin" },
+  ]);
+  await f.manager.refresh();
+  const status = f.manager.enrollmentStatus();
+  expect(status.confirmedSignIns).toEqual([
+    { type: "passkey", id: owner.id, at: expect.any(Number), via: "gateway-origin", ...named },
+  ]);
+  // A Google account has no passkey name, whatever is listed.
+  expect(status.trustedSignIns).toEqual([
+    expect.not.objectContaining({ label: expect.anything() }),
+  ]);
+  // Names are never saved with what this gateway trusts, and change nothing it trusts.
+  const saved = await readFile(f.options.metadataFile, "utf8");
+  expect(saved).not.toContain("Passkey on Mac");
+  expect(f.manager.confirmedSignIns()).toHaveLength(1);
+  // A later listing's name replaces it, and a name without a time shows alone.
+  f.list(
+    { id: owner.id, publicKey: owner.publicKey, label: "Work laptop" },
+    { id: other.id, publicKey: other.publicKey, label: "Not on record here" },
+  );
+  await f.manager.refresh();
+  expect(f.manager.enrollmentStatus().confirmedSignIns).toEqual([
+    {
+      type: "passkey",
+      id: owner.id,
+      at: expect.any(Number),
+      via: "gateway-origin",
+      label: "Work laptop",
+    },
+  ]);
+  // Linking again forgets them until the account is read again.
+  await f.manager.completeSignup({
+    accountId: f.accountId,
+    nonce: opaque(),
+    signal: new AbortController().signal,
+  });
+  expect(JSON.stringify(f.manager.enrollmentStatus())).not.toContain("Work laptop");
 });
 
 test("TM-01: a relay page, another gateway's page or a relay-chosen origin cannot confirm a passkey", async () => {

@@ -8,6 +8,9 @@
 // add a passkey on the account page, which then comes back here for that same last prompt. Phones
 // are added from Settings → Devices.
 //
+// Once setup is done, a passkey the account has that isn't confirmed here yet is used once the same
+// way from its row under Sign-ins on your account ("Use it now", see `usePasskeyConfirmation`).
+//
 // Which step is shown comes from what the relay lists, so it only decides the words: a relay that
 // lies can make the step fail, never make anything confirmed.
 
@@ -55,6 +58,8 @@ export const SETUP_COPY = {
   notNow: "Not now",
   reminder: "New devices wait for your OK until you finish setup.",
   finish: "Finish setup",
+  /** On a passkey row that waits to be used once here. */
+  useNow: "Use it now",
 };
 
 /** Asks the page opened by a handoff to start the passkey prompt as soon as it loads. */
@@ -129,21 +134,32 @@ function Step({ done, number, title, detail, children }) {
   </li>`;
 }
 
-function PasskeyStep({ enrollment, ready, busy, run, request, prove, open, location, supported, adding, onDismiss }) {
+/**
+ * Using a passkey once on this gateway's own page (`pin-passkey`), or getting there: shared by the
+ * setup step and a passkey row under Sign-ins on your account. `confirm(auto, only)` runs the
+ * prompt here; `only` names the passkey a row stands for, so the browser offers that one when the
+ * account lists it (a hint for the prompt only: the gateway checks whichever passkey answers).
+ * `openThere()` opens the gateway's own page signed in, which starts the prompt on load. `working`
+ * is "confirm", "open" or "", and `confirming` the passkey `only` named while its prompt runs.
+ * With `autoStart`, a page that a handoff opened to confirm starts the prompt once by itself.
+ */
+export function usePasskeyConfirmation({ origin, run, request, prove, open, location, supported, autoStart }) {
   const [working, setWorking] = useState("");
+  const [confirming, setConfirming] = useState("");
   const [error, setError] = useState("");
-  const origin = enrollment.confirmOrigin;
   const here = onGatewayOrigin(origin, location);
-  const held = Boolean(working) || (Boolean(busy) && busy !== "refresh");
-  const confirm = async (auto) => {
+  const confirm = async (auto, only) => {
     setWorking("confirm");
+    setConfirming(only ?? "");
     setError("");
     try {
-      const ceremony = await request("passkeys/confirm/options", {});
+      let ceremony = await request("passkeys/confirm/options", {});
+      if (only && Array.isArray(ceremony?.allowCredentials) && ceremony.allowCredentials.includes(only))
+        ceremony = { ...ceremony, allowCredentials: [only] };
       const proof = await prove(ceremony, { location });
       await request("passkeys/confirm", { proof });
       rememberAdding(false);
-      // The page's own status refresh ends setup.
+      // The page's own status refresh shows the passkey confirmed.
       await run();
     } catch (failure) {
       // A prompt that started by itself and was closed just leaves the button.
@@ -159,16 +175,17 @@ function PasskeyStep({ enrollment, ready, busy, run, request, prove, open, locat
       );
     } finally {
       setWorking("");
+      setConfirming("");
     }
   };
-  // Opened by the button on another address: start the prompt straight away, once.
+  // Opened by a button on another address: start the prompt straight away, once.
   const started = useRef(false);
   useEffect(() => {
-    if (started.current || !here || !supported) return;
+    if (started.current || !autoStart || !here || !supported) return;
     started.current = true;
     if (takeHandoffNext() === CONFIRM_ON_LOAD) void confirm(true);
-  }, [here, supported]);
-  const openHere = async () => {
+  }, [autoStart, here, supported]);
+  const openThere = async () => {
     setWorking("open");
     setError("");
     try {
@@ -178,6 +195,21 @@ function PasskeyStep({ enrollment, ready, busy, run, request, prove, open, locat
       setWorking("");
     }
   };
+  return { here, working, confirming, error, confirm, openThere };
+}
+
+function PasskeyStep({ enrollment, ready, busy, run, request, prove, open, location, supported, adding, onDismiss }) {
+  const { here, working, error, confirm, openThere } = usePasskeyConfirmation({
+    origin: enrollment.confirmOrigin,
+    run,
+    request,
+    prove,
+    open,
+    location,
+    supported,
+    autoStart: true,
+  });
+  const held = Boolean(working) || (Boolean(busy) && busy !== "refresh");
   return html`<p class="relay-hint">${adding ? SETUP_COPY.addingBody : SETUP_COPY.passkeyBody}</p>
     ${
       here && !supported
@@ -188,7 +220,7 @@ function PasskeyStep({ enrollment, ready, busy, run, request, prove, open, locat
               type="button"
               class="btn-primary"
               disabled=${held || (!here && !ready)}
-              onClick=${() => (here ? confirm(false) : openHere())}
+              onClick=${() => (here ? confirm(false) : openThere())}
             >
               ${
                 working === "confirm"

@@ -363,11 +363,14 @@ export class OmnesisAccounts {
   /**
    * Each passkey's id and public key: what a gateway pins and checks a pin against. A passkey
    * added to an existing account also carries the sign-in that vouched for it, and its own
-   * countersignature of the sign-ins the account had then.
+   * countersignature of the sign-ins the account had then. Its label and when it was added (Unix
+   * seconds) are for the gateway's owner to tell passkeys apart; a gateway trusts nothing by them.
    */
   passkeyKeys(account: string): {
     id: string;
     publicKey: string;
+    label: string;
+    createdAt: number;
     endorsement?: SignInProof;
     countersignature?: PasskeyCountersignature;
   }[] {
@@ -375,17 +378,21 @@ export class OmnesisAccounts {
     return (
       this.db
         .prepare(
-          "SELECT p.credential_id AS id, p.public_key, e.proof, c.countersignature FROM omnesis_passkeys AS p LEFT JOIN omnesis_passkey_endorsements AS e USING(credential_id) LEFT JOIN omnesis_passkey_countersignatures AS c USING(credential_id) WHERE p.account_id=? ORDER BY p.created_at,p.credential_id",
+          "SELECT p.credential_id AS id, p.public_key, p.label, p.created_at, e.proof, c.countersignature FROM omnesis_passkeys AS p LEFT JOIN omnesis_passkey_endorsements AS e USING(credential_id) LEFT JOIN omnesis_passkey_countersignatures AS c USING(credential_id) WHERE p.account_id=? ORDER BY p.created_at,p.credential_id",
         )
         .all(account) as {
         id: string;
         public_key: Buffer;
+        label: string;
+        created_at: number;
         proof: string | null;
         countersignature: string | null;
       }[]
     ).map((row) => ({
       id: row.id,
       publicKey: row.public_key.toString("base64url"),
+      label: row.label,
+      createdAt: Math.floor(row.created_at / 1000),
       ...(row.proof ? { endorsement: signInProofSchema.parse(JSON.parse(row.proof)) } : {}),
       ...(row.countersignature
         ? {
