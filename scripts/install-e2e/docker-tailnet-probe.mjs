@@ -5,12 +5,12 @@
 /** Exact, model-free identity assertions for the Docker/native tailnet lane. */
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import tls from "node:tls";
 import { createRedactor, readSecretsFile } from "./redact.mjs";
 import { parseCommand } from "./args.mjs";
+import { isEntryScript } from "../lib/is-entry-script.mjs";
 
 const nonempty = (value) => typeof value === "string" && value.length > 0;
 export function projectSnapshot(health, status, roster, documents, { version, title }) {
@@ -271,7 +271,7 @@ async function main() {
     { mode: 0o600 },
   );
 }
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isEntryScript(import.meta.url)) {
   main().catch((error) => {
     const redact = createRedactor(readSecretsFile(process.env.INSTALL_E2E_SECRETS_FILE));
     console.error(

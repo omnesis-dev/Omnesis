@@ -172,7 +172,7 @@ function parseFlags(argv) {
   return flags;
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (import.meta.main) {
   const flags = parseFlags(process.argv.slice(2));
   const surface = await cliSurface(flags.tree ?? repoRoot);
   if (flags.check) {

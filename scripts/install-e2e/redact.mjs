@@ -21,9 +21,8 @@
  */
 
 import { existsSync, readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { createInterface } from "node:readline";
-import { fileURLToPath } from "node:url";
+import { isEntryScript } from "../lib/is-entry-script.mjs";
 
 const RULES = [
   // Authorization headers and their JSON/env spellings.
@@ -81,7 +80,7 @@ async function main() {
   for await (const line of lines) process.stdout.write(redact(line) + "\n");
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isEntryScript(import.meta.url)) {
   main().catch((err) => {
     process.stderr.write(`redact: ${err instanceof Error ? err.message : String(err)}\n`);
     process.exit(1);

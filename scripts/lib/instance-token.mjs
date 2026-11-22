@@ -2,8 +2,8 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
 import { readSecretTextFileSync } from "../../packages/core/src/secret-file.ts";
+import { isEntryScript } from "./is-entry-script.mjs";
 
 /** Read only the explicitly selected instance, using its configured secret backend. */
 export function readInstanceToken(configDir) {
@@ -18,7 +18,7 @@ export function readInstanceToken(configDir) {
   return token;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+if (isEntryScript(import.meta.url)) {
   try {
     const token = readInstanceToken(process.argv[2]);
     if (process.argv[3]) {

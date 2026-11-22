@@ -3,6 +3,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { fileURLToPath } from "node:url";
+import { realpathSync } from "node:fs";
 
 export const MINIMUM_GLIBC = Object.freeze({ major: 2, minor: 35 });
 
@@ -33,7 +34,10 @@ export function assertNativeRuntimeSupported({
   }
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+if (
+  process.argv[1] &&
+  realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))
+) {
   try {
     assertNativeRuntimeSupported();
   } catch (error) {

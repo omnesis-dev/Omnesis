@@ -15,11 +15,12 @@ import {
 } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { homedir } from "node:os";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import { createServer } from "node:net";
 import { request } from "node:https";
 import { londonToday, recordingWeek } from "../evals/universes/sacha-bellamy/_build/shared.mjs";
+import { isEntryScript } from "./lib/is-entry-script.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const marker = "sacha-demo-instance.json";
@@ -318,7 +319,7 @@ export async function waitReady(
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+if (isEntryScript(import.meta.url)) {
   const [command, ...args] = process.argv.slice(2),
     options = {};
   for (let i = 0; i < args.length; i += 2) {

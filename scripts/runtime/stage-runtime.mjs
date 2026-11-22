@@ -147,7 +147,7 @@ function flagValues(argv, flag) {
   return values;
 }
 
-const isEntrypoint = process.argv[1] === fileURLToPath(import.meta.url);
+const isEntrypoint = import.meta.main;
 if (isEntrypoint) {
   const outDirs = flagValues(process.argv, "--out");
   if (outDirs.length > 1) throw new Error("--out may be given only once");

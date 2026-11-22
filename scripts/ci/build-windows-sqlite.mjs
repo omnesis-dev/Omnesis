@@ -7,11 +7,12 @@ import { copyFile, mkdir, mkdtemp, readFile, realpath, rename, rm } from "node:f
 import { randomUUID, createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { installParentShutdownHandler } from "../../packages/core/src/parent-shutdown.ts";
 import { completeNodeHeaders, hasCleanupFailure, npmJavaScriptEntry } from "./npm-ci.mjs";
 import { prepareWindowsNodeBuild, runWindowsBuildNode } from "./windows-native-build.mjs";
+import { isEntryScript } from "../lib/is-entry-script.mjs";
 
 const PACKAGES = [
   ["better-sqlite3", "13.1.1"],
@@ -156,7 +157,7 @@ export async function buildWindowsSqlite({
   }
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isEntryScript(import.meta.url)) {
   const controller = new AbortController();
   const stop = () => controller.abort(new Error("Windows SQLite preparation stopped by its owner"));
   const removeShutdown = installParentShutdownHandler(stop);

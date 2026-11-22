@@ -594,7 +594,7 @@ function parseArgs(argv) {
   return flags;
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (import.meta.main) {
   const flags = parseArgs(process.argv.slice(2));
   const { cliSurface, readReleasedSurface } = await import("./cli-surface.mjs");
   const text = readFileSync(flags.installer, "utf8");
