@@ -4,11 +4,13 @@
 import { spawnSync } from "node:child_process";
 import {
   chmodSync,
+  copyFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -86,9 +88,21 @@ case "$outcome" in
 esac
 `;
 
-function run(outcomes) {
+/**
+ * Runs the wrapper with a stand-in xcodebuild playing `outcomes`. `entry`
+ * picks the wrapper's path: the checkout's own, or a copy reached through a
+ * symlinked directory, as every path under macOS's temporary directory is.
+ */
+function run(outcomes, { entry = "checkout" } = {}) {
   const sandbox = mkdtempSync(join(tmpdir(), "omnesis-xcodebuild-ui-tests-"));
   sandboxes.push(sandbox);
+  let wrapper = script;
+  if (entry === "symlinked") {
+    mkdirSync(join(sandbox, "real"));
+    copyFileSync(script, join(sandbox, "real", "xcodebuild-ui-tests.mjs"));
+    symlinkSync(join(sandbox, "real"), join(sandbox, "linked"));
+    wrapper = join(sandbox, "linked", "xcodebuild-ui-tests.mjs");
+  }
   const bin = join(sandbox, "bin");
   const results = join(sandbox, "results");
   mkdirSync(bin);
@@ -101,7 +115,7 @@ function run(outcomes) {
   const result = spawnSync(
     process.execPath,
     [
-      script,
+      wrapper,
       "--log",
       log,
       "--",
@@ -139,6 +153,12 @@ describe.skipIf(process.platform === "win32")("scripts/ci/xcodebuild-ui-tests.mj
     expect(result.calls).toEqual([`xcodebuild ${ARGS} ${result.bundle} => passed`]);
     expect(result.stdout).toContain("** TEST SUCCEEDED **");
     expect(result.log).toBe(result.stdout);
+  });
+
+  it("runs xcodebuild when started through a symlinked directory", () => {
+    const result = run(["failed"], { entry: "symlinked" });
+    expect(result.status).toBe(65);
+    expect(result.calls).toEqual([`xcodebuild ${ARGS} ${result.bundle} => failed`]);
   });
 
   it("runs once more when the UI test runner never initialized, keeping both result bundles", () => {
