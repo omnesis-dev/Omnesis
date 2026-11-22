@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
+import { realpathSync } from "node:fs";
 
 /**
  * Commit authors that are a contributor's coding agent rather than a person.
@@ -73,7 +74,10 @@ async function main(env) {
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (
+  process.argv[1] &&
+  realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))
+) {
   const allowlist = await main(process.env);
   console.error(`CLA allowlist: ${allowlist}`);
   console.log(`allowlist=${allowlist}`);

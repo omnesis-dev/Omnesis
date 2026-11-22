@@ -3,7 +3,7 @@
 
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import {
   PLUGIN_MANIFESTS,
   PRODUCT_VERSION_CONTRACTS,
@@ -128,7 +128,7 @@ export function checkProductVersion(root = defaultRoot, expectedTag) {
   return productVersion;
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (import.meta.main) {
   const version = checkProductVersion(defaultRoot, process.argv[2]);
   process.stdout.write(`Product version ${version} is consistent.\n`);
 }

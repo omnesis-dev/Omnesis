@@ -29,7 +29,7 @@
 import * as ts from "typescript";
 import { readFileSync, writeFileSync, readdirSync, statSync } from "node:fs";
 import { join, resolve, relative } from "node:path";
-import { pathToFileURL } from "node:url";
+import { isEntryScript } from "./lib/is-entry-script.mjs";
 
 const NARROW = {
   "@omnesis/types": "packages/types/src/index.ts",
@@ -230,6 +230,6 @@ function runCli() {
     console.log(`  ${pkg}: ${[...set].sort().join(", ")}`);
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isEntryScript(import.meta.url)) {
   runCli();
 }

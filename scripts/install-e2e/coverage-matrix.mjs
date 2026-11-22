@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { appendFileSync } from "node:fs";
-import { pathToFileURL } from "node:url";
+import { isEntryScript } from "../lib/is-entry-script.mjs";
 
 /** Keep the PR floor small; nightly/manual runs exercise both architectures. */
 export function installerCoverageMatrix(extended) {
@@ -21,7 +21,7 @@ export function installerCoverageMatrix(extended) {
   };
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isEntryScript(import.meta.url)) {
   if (!["true", "false"].includes(process.env.EXTENDED)) {
     throw new Error("EXTENDED must be exactly true or false");
   }

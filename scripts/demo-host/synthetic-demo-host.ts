@@ -6,7 +6,7 @@ import { readFileSync, existsSync, realpathSync } from "node:fs";
 import { join, resolve, dirname, basename, relative, isAbsolute, sep } from "node:path";
 import { homedir } from "node:os";
 import { setTimeout as delay } from "node:timers/promises";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { createLogger, type SourceConfig } from "@omnesis/core";
 import { HttpGatewayClient, GatewayWsClient } from "@omnesis/gateway-client";
 import { loadUniverse } from "@omnesis/providers-synth-common";
@@ -310,7 +310,10 @@ export async function seedDemoUniverse(options: {
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+if (
+  process.argv[1] &&
+  realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))
+) {
   const configDir = process.env.OMNESIS_CONFIG_DIR,
     gatewayUrl = process.env.OMNESIS_GATEWAY_URL,
     universe = process.env.OMNESIS_SYNTH_UNIVERSE;

@@ -29,9 +29,9 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { parseCommand } from "./args.mjs";
 import { startReleaseTag } from "./fixture.mjs";
+import { isEntryScript } from "../lib/is-entry-script.mjs";
 
 const NPM_CI = ["ci", "--ignore-scripts", "--no-audit", "--no-fund"];
 
@@ -98,7 +98,7 @@ export function check({ repo = process.cwd(), from, to = "HEAD", work }) {
   }
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isEntryScript(import.meta.url)) {
   const { flags } = parseCommand(process.argv.slice(2), {
     check: { values: ["from", "to", "work"] },
   });

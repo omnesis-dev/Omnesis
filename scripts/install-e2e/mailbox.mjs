@@ -35,9 +35,8 @@
 
 import { createServer } from "node:http";
 import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { parseCommand } from "./args.mjs";
+import { isEntryScript } from "../lib/is-entry-script.mjs";
 
 export const ABORT_KEY = "abort";
 /** The one key a run rewrites as it moves along. */
@@ -206,7 +205,7 @@ async function main(argv) {
   process.exit(EXIT_TIMEOUT);
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isEntryScript(import.meta.url)) {
   main(process.argv.slice(2)).catch((err) => {
     process.stderr.write(`mailbox: ${err instanceof Error ? err.message : String(err)}\n`);
     process.exit(1);

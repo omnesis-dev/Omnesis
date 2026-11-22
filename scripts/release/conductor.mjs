@@ -29,7 +29,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { extractChangelogSection, readChangelogSection } from "./changelog.mjs";
 import { checkProductVersion } from "./check-product-version.mjs";
 import {
@@ -552,7 +552,7 @@ function usage() {
   ].join("\n");
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (import.meta.main) {
   try {
     const { subcommand, options } = parseArgs(process.argv.slice(2));
     const handler = SUBCOMMANDS[subcommand];
