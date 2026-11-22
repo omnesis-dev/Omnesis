@@ -76,3 +76,46 @@ describe("each Gradle cache entry has one job that saves it", () => {
     expect(linux.map(([, ids]) => ids)).toEqual([["android.yml build-and-test"]]);
   });
 });
+
+// Online, Gradle checks again before its first task every dependency result it
+// cached more than a day ago that it may not keep forever, so a slow repository
+// can hold a lane silent for many minutes even on an exact cache hit (#1228).
+// The entry build-and-test saves was saved by a run that resolved everything,
+// and its key covers every input that decides what the lanes resolve, so on an
+// exact hit the lanes resolve offline.
+describe("build-and-test resolves offline from an exact Gradle cache entry", () => {
+  const job = gradleJobs.find(({ id }) => id === "android.yml build-and-test");
+  const cache = job.steps.find(isGradleCache);
+
+  test("the key covers the build files, gradle.properties and the lanes' command lines", () => {
+    for (const input of [
+      "android/**/*.gradle*",
+      "android/gradle/libs.versions.toml",
+      "android/gradle/wrapper/gradle-wrapper.properties",
+      "android/gradle.properties",
+      ".github/workflows/android.yml",
+    ]) {
+      expect(cache.with.key).toContain(`'${input}'`);
+    }
+  });
+
+  test("every job that restores the Linux entry names the same key", () => {
+    const linux = gradleJobs.filter(({ runsOn }) => runsOn === "ubuntu-latest");
+    expect(linux.length).toBeGreaterThan(1);
+    for (const { steps } of linux) expect(steps.find(isGradleCache).with.key).toBe(cache.with.key);
+  });
+
+  test("an exact hit, and only an exact hit, switches the lanes offline", () => {
+    const offline = job.steps.find((step) => /OMNESIS_GRADLE_OFFLINE=true/u.test(step.run ?? ""));
+    expect(offline?.if).toBe(`steps.${cache.id}.outputs.cache-hit == 'true'`);
+    expect(job.steps.indexOf(offline)).toBeGreaterThan(job.steps.indexOf(cache));
+    const lanes = job.steps.filter(runsGradle);
+    expect(lanes.length).toBeGreaterThan(0);
+    for (const step of lanes) {
+      expect(job.steps.indexOf(step)).toBeGreaterThan(job.steps.indexOf(offline));
+      for (const line of step.run.split("\n").filter((l) => /\bgradlew\b/u.test(l))) {
+        expect(line.trim()).toMatch(/^\$GITHUB_WORKSPACE\/scripts\/ci\/gradlew\.sh /u);
+      }
+    }
+  });
+});
