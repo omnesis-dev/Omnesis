@@ -11,8 +11,9 @@
 // trustd can load the asset. Until that new trustd starts, evaluations wait:
 // on a hosted runner the handover has taken from seconds to more than five
 // minutes, and it lands 20 to 25 minutes after the boot, when the journeys
-// begin. A client whose handshake is waiting keeps trustd from exiting, so the
-// stall ends only when some client gives up its connection (#1206).
+// begin. A client whose handshake is waiting can keep trustd from being
+// clean; such stalls have ended only when the gateway dropped a handshake
+// that had waited two minutes (#1206).
 //
 // The trust service is settled once its newest process has made its startup
 // decision about the trust store (it logs the store's status) and has not
