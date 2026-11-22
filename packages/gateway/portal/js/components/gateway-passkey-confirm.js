@@ -4,8 +4,9 @@
 // "Finish setting up": the last step of connecting this gateway to an Omnesis account, shown on
 // the account page until something is confirmed here. It follows the account. With a passkey, the
 // owner uses it once on this gateway's own page (`pin-passkey`); from any other address one button
-// opens that page already signed in and starts the prompt there. With Google only, the first phone
-// that signs in with Google in the app waits, and approving it is what confirms Google here.
+// opens that page already signed in and starts the prompt there. Without one, the step offers to
+// add a passkey on the account page, which then comes back here for that same last prompt. Phones
+// are added from Settings → Devices.
 //
 // Which step is shown comes from what the relay lists, so it only decides the words: a relay that
 // lies can make the step fail, never make anything confirmed.
@@ -42,32 +43,54 @@ export const SETUP_COPY = {
   openFailed: "Couldn't open your gateway's secure address. Try again.",
   noPasskeys: "This browser can't use passkeys. Open this page in a browser that can.",
   startFailed: "Couldn't use your passkey. Try again.",
-  googleStep: "Connect your phone",
-  googleBody:
-    "Install the Omnesis app and sign in with Google. Your phone will ask to join; approve it here and this gateway will remember your Google account.",
-  getApp: "Get the app",
-  addPasskey: "Add a passkey instead",
+  addStep: "Add a passkey (optional)",
+  addBody:
+    "Once you have used a passkey here, a new device that signs in with it on this gateway's secure address joins without waiting for your OK. Adding one takes three steps: create it, confirm with a sign-in you already use, then use it once here.",
+  addButton: "Add a passkey",
+  addWaiting:
+    "Finish adding the passkey on the Omnesis account page that opened, then come back to this page.",
+  addingStep: "Adding a passkey · step 3 of 3",
+  addingBody:
+    "Use your new passkey once on your gateway's secure address. After that, a new device that signs in with it connects straight away.",
   notNow: "Not now",
   reminder: "New devices wait for your OK until you finish setup.",
   finish: "Finish setup",
 };
 
-/** Where the apps are described, with links to the stores. */
-const APPS_URL = "https://omnesis.dev/docs/apps";
 /** Asks the page opened by a handoff to start the passkey prompt as soon as it loads. */
 export const CONFIRM_ON_LOAD = "confirm-passkey";
+/** Set in this browser while a passkey this step started adding waits for its last prompt here. */
+const ADDING_KEY = "omnesis.relay.adding-passkey";
+
+/** Whether this browser started adding a passkey from the setup step and hasn't finished. */
+export function addingPasskey(storage = globalThis.sessionStorage) {
+  try {
+    return storage?.getItem(ADDING_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+function rememberAdding(value, storage = globalThis.sessionStorage) {
+  try {
+    if (value) storage?.setItem(ADDING_KEY, "1");
+    else storage?.removeItem(ADDING_KEY);
+  } catch {
+    // Without storage the last step reads as setup's usual passkey step.
+  }
+}
 
 /**
- * Which last step setup still needs: `"passkey"` when the account has a passkey this gateway knows
- * and a page of its own to use it on, `"google"` when the gateway adds devices automatically and
- * the owner confirms Google by approving a phone, and null once anything is confirmed (or under
- * "ask me first" with no passkey, where every device waits by choice).
+ * Which last step setup still needs, on a gateway with a page of its own to use a passkey on:
+ * `"passkey"` when the account has a passkey this gateway knows, `"add-passkey"` when it has none
+ * yet and the gateway adds devices automatically. Null once anything is confirmed, under "ask me
+ * first" with no passkey (every device waits by choice), and on a gateway with no page of its own
+ * (a custom domain), where no passkey can be used: its devices are approved from Devices.
  */
 export function accountConfirmation(enrollment) {
-  if (!enrollment || (enrollment.confirmedSignIns ?? []).length > 0) return null;
-  const passkey = (enrollment.trustedSignIns ?? []).some((signIn) => signIn.type === "passkey");
-  if (passkey && enrollment.confirmOrigin) return "passkey";
-  return enrollment.policy === "automatic" ? "google" : null;
+  if (!enrollment?.confirmOrigin || (enrollment.confirmedSignIns ?? []).length > 0) return null;
+  if ((enrollment.trustedSignIns ?? []).some((signIn) => signIn.type === "passkey"))
+    return "passkey";
+  return enrollment.policy === "automatic" ? "add-passkey" : null;
 }
 
 /**
@@ -101,7 +124,7 @@ function Step({ done, number, title, detail, children }) {
   </li>`;
 }
 
-function PasskeyStep({ enrollment, ready, busy, run, request, prove, open, location, supported, onDismiss }) {
+function PasskeyStep({ enrollment, ready, busy, run, request, prove, open, location, supported, adding, onDismiss }) {
   const [working, setWorking] = useState("");
   const [error, setError] = useState("");
   const origin = enrollment.confirmOrigin;
@@ -114,6 +137,7 @@ function PasskeyStep({ enrollment, ready, busy, run, request, prove, open, locat
       const ceremony = await request("passkeys/confirm/options", {});
       const proof = await prove(ceremony, { location });
       await request("passkeys/confirm", { proof });
+      rememberAdding(false);
       // The page's own status refresh ends setup.
       await run();
     } catch (failure) {
@@ -149,7 +173,7 @@ function PasskeyStep({ enrollment, ready, busy, run, request, prove, open, locat
       setWorking("");
     }
   };
-  return html`<p class="relay-hint">${SETUP_COPY.passkeyBody}</p>
+  return html`<p class="relay-hint">${adding ? SETUP_COPY.addingBody : SETUP_COPY.passkeyBody}</p>
     ${
       here && !supported
         ? html`<p class="relay-hint">${SETUP_COPY.noPasskeys}</p>`
@@ -175,25 +199,33 @@ function PasskeyStep({ enrollment, ready, busy, run, request, prove, open, locat
     ${error && html`<p role="alert" class="relay-notice">${error}</p>`}`;
 }
 
-function GoogleStep({ serviceUrl, onDismiss }) {
+/**
+ * No passkey yet: one button opens the account page, which adds a passkey in two steps and sends
+ * the person back here for the third. This page notices the new passkey when it is shown again.
+ */
+function AddPasskeyStep({ serviceUrl, onDismiss }) {
+  const [started, setStarted] = useState(false);
   const service = relayHttpsUrl(serviceUrl);
-  return html`<p class="relay-hint">${SETUP_COPY.googleBody}</p>
+  const href = service && `${new URL("/_relay/account", service).href}?add=passkey`;
+  return html`<p class="relay-hint">${SETUP_COPY.addBody}</p>
     <div class="relay-actions">
-      <a class="btn-primary relay-button-link" href=${APPS_URL} target="_blank" rel="noopener noreferrer"
-        >${SETUP_COPY.getApp}</a
-      >
       ${
-        service &&
+        href &&
         html`<a
-          class="relay-link"
-          href=${new URL("/_relay/account", service).href}
+          class="btn-primary relay-button-link"
+          href=${href}
           target="_blank"
           rel="noopener noreferrer"
-          >${SETUP_COPY.addPasskey}</a
+          onClick=${() => {
+            rememberAdding(true);
+            setStarted(true);
+          }}
+          >${SETUP_COPY.addButton}</a
         >`
       }
       <button type="button" class="relay-quiet" onClick=${onDismiss}>${SETUP_COPY.notNow}</button>
-    </div>`;
+    </div>
+    ${started && html`<p class="relay-hint" role="status">${SETUP_COPY.addWaiting}</p>`}`;
 }
 
 /**
@@ -202,7 +234,6 @@ function GoogleStep({ serviceUrl, onDismiss }) {
  */
 export function FinishSetup({
   enrollment,
-  hostname,
   ready,
   serviceUrl,
   busy,
@@ -216,7 +247,8 @@ export function FinishSetup({
 }) {
   const kind = accountConfirmation(enrollment);
   if (!kind) return null;
-  const host = enrollment.confirmOrigin ? new URL(enrollment.confirmOrigin).host : hostname;
+  const adding = kind === "passkey" && addingPasskey();
+  const host = new URL(enrollment.confirmOrigin).host;
   return html`<section class="relay-setup" aria-labelledby="relay-setup-title">
     <h2 class="relay-headline" id="relay-setup-title">${SETUP_COPY.title}</h2>
     <ol class="relay-setup-steps">
@@ -227,7 +259,16 @@ export function FinishSetup({
         title=${SETUP_COPY.address}
         detail=${ready ? host : SETUP_COPY.addressWaiting}
       />
-      <${Step} number="3" title=${kind === "passkey" ? SETUP_COPY.passkeyStep : SETUP_COPY.googleStep}>
+      <${Step}
+        number="3"
+        title=${
+          kind === "passkey"
+            ? adding
+              ? SETUP_COPY.addingStep
+              : SETUP_COPY.passkeyStep
+            : SETUP_COPY.addStep
+        }
+      >
         ${
           kind === "passkey"
             ? html`<${PasskeyStep}
@@ -240,9 +281,10 @@ export function FinishSetup({
                 open=${open}
                 location=${location}
                 supported=${supported}
+                adding=${adding}
                 onDismiss=${onDismiss}
               />`
-            : html`<${GoogleStep} serviceUrl=${serviceUrl} onDismiss=${onDismiss} />`
+            : html`<${AddPasskeyStep} serviceUrl=${serviceUrl} onDismiss=${onDismiss} />`
         }
       <//>
     </ol>

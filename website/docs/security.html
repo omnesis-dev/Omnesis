@@ -136,6 +136,7 @@
               <ul class="side-sub">
                 <li><a href="#encryption">Encryption at rest</a></li>
                 <li><a href="#posture">Security checks</a></li>
+                <li><a href="#account-passkeys">Account passkeys</a></li>
                 <li><a href="#hardened-gateway">Hardened gateway</a></li>
                 <li><a href="#tls">TLS certificate</a></li>
               </ul>
@@ -463,6 +464,29 @@
           current object owner are evaluated against the verified owner; they do not grant access to
           another account. This also recognizes private temporary directories created by Python
           without rewriting their access rules.
+        </p>
+
+        <h2 id="account-passkeys">Account passkeys</h2>
+        <p>
+          A gateway linked to an Omnesis account lets a new device join by itself only with a
+          sign-in you confirmed on that gateway, made where the relay could not have made it: your
+          passkey on the gateway's own secure address (the <code>g-…</code> name under the relay's
+          domain) or in the Android app, or Google in an official Omnesis app. The relay serves
+          every other sign-in page, so a sign-in made on one of them, however genuine, waits for
+          your approval with a comparison code. The gateway checks each passkey against a key it
+          chose itself, with a one-time challenge it issued for that gateway and that account, so
+          neither the relay nor another gateway can use the assertion.
+        </p>
+        <p>
+          Adding a passkey takes three prompts when the account already has a sign-in: creating it
+          on the account page, confirming with a sign-in the account already had (so that someone
+          else using the browser cannot add their own), and using it once on the gateway's own
+          secure address. That last prompt makes the passkey trusted on that gateway and, in the
+          same assertion, vouches for the account's other sign-ins there; the gateway only lists
+          those as suggestions, which trust nothing by themselves. A passkey that creates the
+          account needs the first and last prompts only. Each gateway trusts a passkey only once it
+          has been used on that gateway's own address. A gateway that saw a sign-in leave the
+          account, or where you removed it, does not take it back on anything the relay lists later.
         </p>
 
         <h2 id="hardened-gateway">Hardened gateway</h2>

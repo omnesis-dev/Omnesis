@@ -1066,7 +1066,7 @@ describe("trusted sign-ins and confirming a passkey", () => {
     );
     expect(rows).toEqual([
       "Passkey passkeyficti Used to connect this gateway · Confirmed on this gateway",
-      "Google account googlefictio Already on your account, vouched for by a passkey added later · Not confirmed on this gateway: devices using it wait for your approval",
+      "Google account googlefictio Already on your account, vouched for by one of your passkeys · Not confirmed on this gateway: devices using it wait for your approval",
       "Passkey passkeyficti Source not recorded · Not confirmed on this gateway: devices using it wait for your approval",
       "Passkey passkeyficti Confirmed in the Android app",
       "Passkey passkeyficti Confirmed",
@@ -1126,22 +1126,21 @@ describe("trusted sign-ins and confirming a passkey", () => {
     expect(open).toHaveBeenCalledExactlyOnceWith(ORIGIN, { next: "confirm-passkey", location });
   });
 
-  test("an account with Google only is never asked for a passkey: its last step is a phone", async () => {
+  test("an account with Google only is offered a passkey to add, and asked for none it doesn't have", async () => {
     state.status = fresh([GOOGLE]);
     await show();
     expect(text()).not.toMatch(/passkey on this gateway/i);
     expect(button("Continue with passkey")).toBeUndefined();
-    expect(text()).toContain("Connect your phone");
-    expect(text()).toContain("Install the Omnesis app and sign in with Google.");
-    expect(link("Get the app")?.getAttribute("href")).toBe("https://omnesis.dev/docs/apps");
-    expect(link(SETUP_COPY.addPasskey)?.getAttribute("href")).toBe(
-      "https://relay.example.test/_relay/account",
+    expect(text()).toContain(SETUP_COPY.addStep);
+    expect(text()).not.toMatch(/phone|Get the app/i);
+    expect(link(SETUP_COPY.addButton)?.getAttribute("href")).toBe(
+      "https://relay.example.test/_relay/account?add=passkey",
     );
-    // A gateway with no address of its own (a custom domain) says the same, whatever the account has.
+    // A gateway with no address of its own (a custom domain) can use no passkey: no checklist.
     state.status = fresh([PASSKEY]);
     delete state.status.deviceEnrollment.confirmOrigin;
     await show();
-    expect(text()).toContain("Connect your phone");
+    expect(host.querySelector("#relay-setup-title")).toBeNull();
     // Under "ask me first" every device waits by choice: nothing is left to set up.
     state.status = fresh([GOOGLE]);
     state.status.deviceEnrollment.policy = "ask";
@@ -1159,7 +1158,7 @@ describe("trusted sign-ins and confirming a passkey", () => {
 
   test("Not now with no sign-in on record yet leaves the reminder alone under Trusted sign-ins", async () => {
     // A Google account linked under automatic joins, before the gateway lists any sign-in.
-    state.status = connected({ deviceEnrollment: { policy: "automatic" } });
+    state.status = connected({ deviceEnrollment: { policy: "automatic", confirmOrigin: ORIGIN } });
     await show();
     await click("Not now");
     expect(host.querySelector("#relay-sign-ins-title")?.textContent).toBe("Trusted sign-ins");

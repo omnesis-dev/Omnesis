@@ -438,6 +438,18 @@
               account is unlinked first, with <code>omnesis cloud unlink</code>.
             </p>
             <p>
+              Once connected, <strong>Settings → Omnesis account</strong> shows
+              <strong>Finish setting up</strong> until the gateway trusts a sign-in. Its last step
+              asks you to use your passkey once on the gateway's own secure address; after that, a
+              new device that signs in with that passkey there joins without waiting for your
+              approval. Without a passkey, the step offers
+              <strong>Add a passkey (optional)</strong>: the account page creates it and asks you to
+              confirm with a sign-in you already have, and back on the gateway you use it once.
+              Until then, and for any other sign-in, a new device waits for your approval with a
+              comparison code. Phones are added from <strong>Settings → Devices</strong>. See
+              <a href="security#account-passkeys">account passkeys</a>.
+            </p>
+            <p>
               A connection that stops before it finishes leaves the gateway with an address it
               reserved but can't be reached at, and that address is offered nowhere, not even to
               agents. The page says why it stopped: <strong>Try again</strong> continues with the

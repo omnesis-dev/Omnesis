@@ -52,6 +52,8 @@ import type { GatewayBrowserCallbackOrigins } from "./gateway-browser-callback.j
 const digest = z.string().regex(/^[a-f0-9]{64}$/);
 const MAX_TRUSTED_SIGN_INS = 32;
 const MAX_CONFIRMED_SIGN_INS = 32;
+/** An account holds at most 16 sign-ins, so a confirmation countersigns no more than that. */
+const MAX_COUNTERSIGNED_SIGN_INS = 16;
 /**
  * Sign-ins the owner confirmed on this gateway (`ConfirmedSignIn`). A top-level field on purpose:
  * a version that predates it drops it when it saves, so going back a version fails closed to
@@ -184,6 +186,42 @@ function unknownPasskey(
   );
 }
 
+/** Every sign-in a listing names, by the name a countersignature and the withdrawn set use. */
+function listedSignIns(listing: {
+  google: readonly string[];
+  passkeys: readonly { id: string; publicKey: string }[];
+}): Map<string, SignInPin> {
+  const listed = new Map<string, SignInPin>();
+  for (const id of listing.google)
+    listed.set(signInDigest({ type: "google", id }), { type: "google", id, addedAt: 0 });
+  for (const { id, publicKey } of listing.passkeys)
+    listed.set(signInDigest({ type: "passkey", id, publicKey }), {
+      type: "passkey",
+      id,
+      publicKey,
+      addedAt: 0,
+    });
+  return listed;
+}
+
+/**
+ * Whether `signIn` is a passkey under the id of one the owner confirmed here, with whatever key.
+ * Evidence never pins one: the confirmed key is the only key this gateway holds for that id.
+ */
+function confirmedId(record: Extract<Record, { linked: true }>, signIn: SignInPin): boolean {
+  return (
+    signIn.type === "passkey" &&
+    record.confirmedSignIns.some((value) => value.type === "passkey" && value.id === signIn.id)
+  );
+}
+
+/** Whether the owner removed `signIn` on this gateway, so no evidence pins it here again. */
+function declined(record: Extract<Record, { linked: true }>, signIn: SignInPin): boolean {
+  return (signIn.type === "google" ? record.declinedGoogle : record.declinedPasskeys).includes(
+    signIn.id,
+  );
+}
+
 /** What a page or app needs to run a passkey ceremony on this gateway (`gateway-passkey`). */
 export interface GatewayPasskeyCeremony {
   purpose: GatewayPasskeyPurpose;
@@ -255,7 +293,20 @@ export class GatewayAccountLink {
             .filter((value) => /^android:apk-key-hash:[A-Za-z0-9_-]{43}$/.test(value)),
         ]),
       ],
-      trusted: () => (this.record?.linked ? this.record.trustedSignIns : []),
+      // A confirmed passkey's key is the only one for its id: no pin under another key stands in.
+      trusted: () => {
+        const record = this.record?.linked ? this.record : undefined;
+        return (record?.trustedSignIns ?? []).filter(
+          (pin) =>
+            pin.type !== "passkey" ||
+            !record!.confirmedSignIns.some(
+              (value) =>
+                value.type === "passkey" &&
+                value.id === pin.id &&
+                value.publicKey !== pin.publicKey,
+            ),
+        );
+      },
       gatewayOrigin: () => this.gatewayOrigin(),
       nativeGoogleClients: () => googleBrowserTrust(this.options.googleTrust?.()).nativeClients!,
     });
@@ -383,41 +434,61 @@ export class GatewayAccountLink {
         : [];
     return [...new Set([...this.confirmedPasskeys(), ...pinned])];
   }
-  private pinBinding(record: Extract<Record, { linked: true }>): string {
+  private pinBinding(
+    record: Extract<Record, { linked: true }>,
+    signIns: readonly string[],
+  ): string {
     return gatewayPasskeyPinBinding({
       gatewayId: record.binding.gatewayId,
       accountId: record.accountId,
+      signIns,
     });
+  }
+  /** This gateway's own origin for confirming a passkey, or the reason there is none. */
+  private confirmationOrigin(): string {
+    this.requireLinked();
+    const origin = this.gatewayOrigin();
+    if (!origin) throw new CloudRelayManagementFailure(409, "passkey-origin-unavailable");
+    return origin;
   }
   /**
    * Starts confirming one of the account's passkeys on this gateway's own page. Only a gateway
    * with an origin of its own can: on any other origin, the relay could have served the page.
+   * The same assertion countersigns `signIns` (`signInDigest`s of the account's sign-ins), which
+   * the gateway then suggests: see `confirmPasskey`.
    */
-  passkeyConfirmation(): GatewayPasskeyCeremony {
-    const record = this.requireLinked(),
-      origin = this.gatewayOrigin();
-    if (!origin) throw new CloudRelayManagementFailure(409, "passkey-origin-unavailable");
-    const binding = this.pinBinding(record);
+  passkeyConfirmation(signIns: readonly string[] = []): GatewayPasskeyCeremony {
+    const origin = this.confirmationOrigin(),
+      binding = this.pinBinding(this.requireLinked(), signIns);
     return this.ceremony(
       "pin-passkey",
       origin,
-      this.ceremonies.issue("pin-passkey", binding),
+      this.ceremonies.issue("pin-passkey", binding, signIns),
       binding,
     );
   }
   /**
-   * `passkeyConfirmation`, naming the passkeys the account lists so the browser offers only those.
-   * The listing only steers the prompt: confirming still checks the assertion against it.
+   * `passkeyConfirmation` for the sign-ins the account lists now, less those the owner removed
+   * here or the account withdrew, naming the listed passkeys so the browser offers only those.
+   * The listing only steers the prompt and says what the passkey countersigns: confirming still
+   * checks the assertion against it, and a sign-in the passkey countersigns is only a suggestion.
+   * Without a listing the passkey countersigns nothing.
    */
   async passkeyConfirmationOptions(): Promise<GatewayPasskeyCeremony> {
-    const ceremony = this.passkeyConfirmation();
+    this.confirmationOrigin();
     const listing = await this.browser.credentials?.(this.abort.signal).catch((error: unknown) => {
       if (ownedProcessCleanupReceipt(error) !== undefined) throw error;
       return undefined;
     });
     const record = this.requireLinked();
     if (!listing || (listing.accountId !== undefined && listing.accountId !== record.accountId))
-      return ceremony;
+      return this.passkeyConfirmation();
+    const withdrawn = new Set(record.withdrawnSignIns);
+    const signIns = [...listedSignIns(listing)]
+      .filter(([name, signIn]) => !withdrawn.has(name) && !declined(record, signIn))
+      .map(([name]) => name)
+      .slice(0, MAX_COUNTERSIGNED_SIGN_INS);
+    const ceremony = this.passkeyConfirmation(signIns);
     const allowCredentials = listing.passkeys.map((value) => value.id);
     return allowCredentials.length > 0 ? { ...ceremony, allowCredentials } : ceremony;
   }
@@ -426,12 +497,21 @@ export class GatewayAccountLink {
    * from the account's listing: a relay that lists a key of its own for this id only makes the
    * assertion fail, since the private key stays in the owner's authenticator. Confirming is an
    * owner action, so it lifts a decline or withdrawal of that passkey.
+   *
+   * The assertion also countersigned the sign-ins its ceremony named. Each one the account still
+   * lists is suggested (`countersigned`), as a countersignature made when the passkey was added
+   * would be, unless the owner removed it here or the account withdrew it; one the account no
+   * longer lists is withdrawn. A suggestion trusts nothing: only a confirmation does.
    */
   async confirmPasskey(input: unknown): Promise<void> {
-    const record = this.requireLinked(),
-      binding = this.pinBinding(record);
+    const record = this.requireLinked();
     const parsed = gatewayPasskeySignInProofSchema.safeParse(input);
-    if (!parsed.success || !this.ceremonies.take("pin-passkey", parsed.data.challenge, binding))
+    const issued = parsed.success
+      ? this.ceremonies.claim("pin-passkey", parsed.data.challenge)
+      : undefined;
+    const signIns = issued?.context ?? [];
+    const binding = this.pinBinding(record, signIns);
+    if (!parsed.success || issued?.binding !== binding)
       throw new CloudRelayManagementFailure(409, "passkey-not-confirmed");
     const listing = await this.browser.credentials?.(this.abort.signal).catch((error: unknown) => {
       if (ownedProcessCleanupReceipt(error) !== undefined) throw error;
@@ -464,23 +544,48 @@ export class GatewayAccountLink {
     });
     if (!verified) throw new CloudRelayManagementFailure(403, "passkey-not-confirmed");
     const current = this.requireLinked();
+    if (current.accountId !== record.accountId)
+      throw new CloudRelayManagementFailure(409, "passkey-not-confirmed");
     const name = signInDigest({ type: "passkey", id: verified.id, publicKey: verified.publicKey });
+    const listed = listedSignIns(listing),
+      withdrawn = new Set(current.withdrawnSignIns.filter((value) => value !== name)),
+      at = Math.floor(Date.now() / 1000);
+    const gone = new Set<string>();
+    let trustedSignIns = current.trustedSignIns;
+    for (const named of signIns) {
+      const signIn = listed.get(named);
+      // Countersigned but gone from the account: withdrawn, with any pin or confirmation of it.
+      if (!signIn) gone.add(named);
+      else if (
+        signIn.id !== verified.id &&
+        !confirmedId(current, signIn) &&
+        trustedSignIns.length < MAX_TRUSTED_SIGN_INS &&
+        !trustedSignIns.some((value) => value.id === signIn.id) &&
+        !declined(current, signIn) &&
+        !withdrawn.has(named)
+      )
+        trustedSignIns = [...trustedSignIns, { ...signIn, addedAt: at, source: "countersigned" }];
+    }
+    for (const named of gone) withdrawn.add(named);
     await this.save(
       {
         ...current,
+        trustedSignIns: trustedSignIns.filter((value) => !gone.has(signInDigest(value))),
         confirmedSignIns: [
-          ...current.confirmedSignIns.filter((value) => value.id !== verified.id),
+          ...current.confirmedSignIns.filter(
+            (value) => value.id !== verified.id && !gone.has(signInDigest(value)),
+          ),
           {
             type: "passkey" as const,
             id: verified.id,
             publicKey: verified.publicKey,
             counter: verified.counter,
-            at: Math.floor(Date.now() / 1000),
+            at,
             via: verified.channel,
           },
         ].slice(-MAX_CONFIRMED_SIGN_INS),
         declinedPasskeys: current.declinedPasskeys.filter((id) => id !== verified.id),
-        withdrawnSignIns: current.withdrawnSignIns.filter((value) => value !== name),
+        withdrawnSignIns: [...withdrawn].slice(-MAX_WITHDRAWN_SIGN_INS),
       },
       this.abort.signal,
       current,
@@ -1053,17 +1158,7 @@ export class GatewayAccountLink {
     if (!current || (current.accountId !== undefined && current.accountId !== record.accountId))
       return;
     const now = () => Math.floor(Date.now() / 1000);
-    // What the account lists now, by the name a countersignature and the withdrawn set use.
-    const listed = new Map<string, SignInPin>();
-    for (const id of current.google)
-      listed.set(signInDigest({ type: "google", id }), { type: "google", id, addedAt: 0 });
-    for (const { id, publicKey } of current.passkeys)
-      listed.set(signInDigest({ type: "passkey", id, publicKey }), {
-        type: "passkey",
-        id,
-        publicKey,
-        addedAt: 0,
-      });
+    const listed = listedSignIns(current);
     const withdrawn = new Set(record.withdrawnSignIns);
     let trusted = record.trustedSignIns.filter((value) => {
       const name = signInDigest(value);
@@ -1087,9 +1182,8 @@ export class GatewayAccountLink {
     const open = (signIn: SignInPin) =>
       trusted.length < MAX_TRUSTED_SIGN_INS &&
       !trusted.some((value) => value.id === signIn.id) &&
-      !(signIn.type === "google" ? record.declinedGoogle : record.declinedPasskeys).includes(
-        signIn.id,
-      ) &&
+      !confirmedId(record, signIn) &&
+      !declined(record, signIn) &&
       !withdrawn.has(signInDigest(signIn));
     const pin = (signIn: SignInPin, source: TrustedSignInSource) => {
       if (!open(signIn)) return;

@@ -127,8 +127,8 @@ export function passkeyCountersignatureNonce(
  * - `device-enrollment`: a device joins. The gateway value is the `/devices/account/challenge`
  *   the request answers; the binding is the device's `enrollmentNonce`.
  * - `approve-request`: a person approves a held request (`gatewayPasskeyApprovalBinding`).
- * - `pin-passkey`: the owner confirms that a passkey the account lists is theirs
- *   (`gatewayPasskeyPinBinding`).
+ * - `pin-passkey`: the owner confirms that a passkey the account lists is theirs, and with it
+ *   countersigns the account's other sign-ins (`gatewayPasskeyPinBinding`).
  * - `step-up`: the owner confirms one administrative action (`gatewayPasskeyStepUpBinding`).
  */
 export const gatewayPasskeyPurposeSchema = z.enum([
@@ -173,9 +173,24 @@ export function gatewayPasskeyApprovalBinding(input: {
   ]);
 }
 
-/** What confirming a passkey commits to: this gateway and the account it is linked to. */
-export function gatewayPasskeyPinBinding(input: { gatewayId: string; accountId: string }): string {
-  return digestUrl(["omnesis-gateway-pin-v1", input.gatewayId.toLowerCase(), input.accountId]);
+/**
+ * What confirming a passkey commits to: this gateway, the account it is linked to, and the
+ * account's sign-ins as the gateway read them (`signIns`, their `signInDigest`s in any order). The
+ * same assertion is the passkey's countersignature of those sign-ins
+ * (`passkeyCountersignatureNonce`), so the gateway can suggest them without asking for a second
+ * prompt.
+ */
+export function gatewayPasskeyPinBinding(input: {
+  gatewayId: string;
+  accountId: string;
+  signIns: readonly string[];
+}): string {
+  return digestUrl([
+    "omnesis-gateway-pin-v2",
+    input.gatewayId.toLowerCase(),
+    input.accountId,
+    passkeyCountersignatureNonce(input.accountId, input.signIns),
+  ]);
 }
 
 /**

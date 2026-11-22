@@ -13,6 +13,7 @@ import {
   gatewayPasskeyStepUpBinding,
   googleProofNonce,
   passkeyProofChallenge,
+  signInDigest,
   signInProofSchema,
   type GatewayPasskeyPurpose,
 } from "./device-enrollment.js";
@@ -69,14 +70,31 @@ describe("gateway passkey vectors", () => {
     expect(
       gatewayPasskeyChallenge("approve-request", VECTOR_ORIGIN, VECTOR_CHALLENGE, approval),
     ).toBe("s4TEruSndQL9XUX4vOZB8gLvPAjWmLWDn4hs6rqiev8");
+    // Confirming also countersigns the account's sign-ins: they are part of the binding.
+    const google = signInDigest({ type: "google", id: "b".repeat(64) });
+    expect(google).toBe("bO7CQ9iPNVhBma1QpBC1DsBxnASYtuYY1soQ2ymHBi8");
     const pin = gatewayPasskeyPinBinding({
       gatewayId: "AAAAAAAA-BBBB-4CCC-8DDD-EEEEEEEEEEEE",
       accountId: "a".repeat(64),
+      signIns: [google],
     });
-    expect(pin).toBe("EAANDVb7NFK6CvK8jvrrt_qCOpVZtuhWoCGrICUHhsM");
-    expect(gatewayPasskeyChallenge("pin-passkey", VECTOR_ORIGIN, VECTOR_CHALLENGE, pin)).toBe(
-      "mofVzFt_O3rjnPh-MGYHJ_17o3SpvObuqvY5jOi1uX4",
-    );
+    expect(pin).toBe("AJTAM3j9z2TF9SuuE7JZTTJySF2yn9l0M2NwawVpAlY");
+    expect(
+      gatewayPasskeyPinBinding({
+        gatewayId: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+        accountId: "a".repeat(64),
+        signIns: [],
+      }),
+    ).toBe("JxNCKlKK3lZQHHO9OH-EfmKZXlEDkmQ_ufJwPid1wQw");
+    // The binding is opaque to the challenge: this vector is the one the Android tests share.
+    expect(
+      gatewayPasskeyChallenge(
+        "pin-passkey",
+        VECTOR_ORIGIN,
+        VECTOR_CHALLENGE,
+        "EAANDVb7NFK6CvK8jvrrt_qCOpVZtuhWoCGrICUHhsM",
+      ),
+    ).toBe("mofVzFt_O3rjnPh-MGYHJ_17o3SpvObuqvY5jOi1uX4");
     const stepUp = gatewayPasskeyStepUpBinding({
       method: "post",
       path: "/admin/devices/pair",

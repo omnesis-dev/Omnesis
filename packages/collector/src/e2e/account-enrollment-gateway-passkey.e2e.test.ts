@@ -167,7 +167,7 @@ describe.skipIf(!browserReady)("passkeys on the gateway's own page", () => {
     expect((await gateway.status()).deviceEnrollment.confirmedSignIns).toEqual([]);
   }, 120_000);
 
-  test("right after linking, the owner confirms the passkey from the setup checklist on the gateway's own page", async () => {
+  test("right after linking, the owner confirms the passkey from the setup checklist on the gateway's own page: a new account's second and last prompt", async () => {
     const slotsBefore = (await relayMetrics()).slots;
     const confirmer = await browser.session();
     try {

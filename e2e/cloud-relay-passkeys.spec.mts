@@ -336,26 +336,19 @@ test("real browser WebAuthn creates an account, signs in, adds a second passkey 
     };
     const original = await swap();
     expect(original).toHaveLength(1);
-    // Adding asks for nothing first, even on a session this old: the passkey is created at once,
-    // then signs once with its own key for the account's other sign-ins...
+    // Adding asks for nothing first, even on a session this old: the first step says what adding
+    // takes, and the passkey is created on its button...
     await page.getByRole("button", { name: "Add a passkey", exact: true }).click();
     await expect(
-      page.getByRole("heading", { name: "Use your new passkey once", exact: true }),
+      page.getByRole("heading", { name: "Adding a passkey · step 1 of 2", exact: true }),
+    ).toBeVisible();
+    await page.getByRole("button", { name: "Create passkey", exact: true }).click();
+    await expect(
+      page.getByRole("heading", { name: "Adding a passkey · step 2 of 2", exact: true }),
     ).toBeVisible();
     await expect(
       page.getByText(
-        "Your new passkey is ready. Use it once now, so that your gateways can tell it belongs with the sign-in methods you already have.",
-        { exact: true },
-      ),
-    ).toBeVisible();
-    await expect(page.getByRole("button", { name: "Confirm with passkey" })).toHaveCount(0);
-    await page.getByRole("button", { name: "Use new passkey", exact: true }).click();
-    await expect(
-      page.getByRole("heading", { name: "Confirm it's you to finish", exact: true }),
-    ).toBeVisible();
-    await expect(
-      page.getByText(
-        "Now confirm with a sign-in you already use, so that someone else using this browser can't add their own passkey. Your gateways check both steps themselves before they trust a sign-in.",
+        "Confirm with a sign-in you already use, so that someone else using this browser can't add a passkey of their own.",
         { exact: true },
       ),
     ).toBeVisible();
@@ -363,8 +356,12 @@ test("real browser WebAuthn creates an account, signs in, adds a second passkey 
       0,
     );
     await expect(page.getByRole("button", { name: "Add a passkey", exact: true })).toHaveCount(0);
-    // This account has no Google sign-in, so only its passkey can confirm.
+    // This account has no Google sign-in, so only its passkey can confirm, named as the account
+    // lists it, with what to expect if it is on another device.
     await expect(page.getByRole("button", { name: "Confirm with Google" })).toHaveCount(0);
+    const existing = page.getByRole("button", { name: /^Confirm with your passkey “/ });
+    await expect(existing).toHaveCount(1);
+    await expect(page.getByText(/^If that passkey is on another device/)).toBeVisible();
     // ...but the account does not have it until a sign-in it already had vouches for it.
     expect(accounts.identities.list(account.accountId).passkeys).toHaveLength(1);
     await expect(page.locator(".credential")).toHaveCount(1);
@@ -379,30 +376,27 @@ test("real browser WebAuthn creates an account, signs in, adds a second passkey 
     await swap();
     // Again, this time confirmed with the first passkey.
     await page.getByRole("button", { name: "Add a passkey", exact: true }).click();
-    await page.getByRole("button", { name: "Use new passkey", exact: true }).click();
+    await page.getByRole("button", { name: "Create passkey", exact: true }).click();
     await expect(
-      page.getByRole("heading", { name: "Confirm it's you to finish", exact: true }),
+      page.getByRole("heading", { name: "Adding a passkey · step 2 of 2", exact: true }),
     ).toBeVisible();
     const added = await swap(original);
     expect(added).toHaveLength(1);
     expect(added[0]!.credentialId).not.toBe(original[0]!.credentialId);
-    await page.getByRole("button", { name: "Confirm with passkey", exact: true }).click();
+    await existing.click();
     await expect(page.getByRole("status")).toHaveText(
       "Passkey added. You can now use it to sign in.",
     );
     await expect(
-      page.getByRole("heading", { name: "Confirm it's you to finish", exact: true }),
+      page.getByRole("heading", { name: "Adding a passkey · step 2 of 2", exact: true }),
     ).toHaveCount(0);
     // The account keeps the confirmation beside the passkey, for each gateway to verify itself.
+    // The new passkey signs for the account's other sign-ins on each gateway's own page instead.
     const listed = accounts.identities.passkeyKeys(account.accountId);
     expect(listed).toHaveLength(2);
     expect(listed[0]).not.toHaveProperty("endorsement");
     expect(listed[1]!.endorsement).toMatchObject({ type: "passkey" });
-    // And the new passkey's own signature naming the one the account already had.
-    expect(listed[1]!.countersignature).toMatchObject({
-      proof: { type: "passkey", credential: { id: listed[1]!.id } },
-      signIns: [expect.any(String)],
-    });
+    expect(listed[1]).not.toHaveProperty("countersignature");
     // From here on this browser holds only the new passkey.
     await swap(added);
     await expect(page.getByRole("button", { name: "Remove", exact: true })).toHaveCount(2);

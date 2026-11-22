@@ -98,6 +98,11 @@ export function installAccountUI() {
     "To use it from outside your home network again, connect it again from its settings.",
   ];
   const handoffKey = "omnesis.portal-handoff";
+  // Set while a passkey is being added from a gateway's setup: its last step is on that gateway.
+  const addingKey = "omnesis.adding-passkey";
+  const passkeyAdded = "Passkey added. You can now use it to sign in.";
+  const passkeyAddedForGateway =
+    "Passkey added. To finish, go back to your gateway's page and use the new passkey once there.";
   const day = new Intl.DateTimeFormat(undefined, { dateStyle: "medium" });
   // One persistent element, so a result is announced where the person is looking.
   const status = document.createElement("p");
@@ -108,6 +113,8 @@ export function installAccountUI() {
     current,
     confirming,
     endorsing,
+    // The first step of adding a passkey is on screen: what happens next, and the button to start.
+    adding = false,
     continued = false,
     // The "more options" menu of the account view on screen, if that is the view.
     more,
@@ -271,11 +278,11 @@ export function installAccountUI() {
             ].find(([, pattern]) => pattern.test(platform))?.[0];
       return family ? `Passkey on ${family}` : "Passkey";
     },
-    /** `countersign` signs with the passkey being added, which `endorse` names. */
-    async passkey(register, createAccount = false, endorse, countersign = false) {
+    /** `only` names the one passkey the browser should offer, such as the one a button names. */
+    async passkey(register, createAccount = false, endorse, only) {
       if (!window.PublicKeyCredential || !navigator.credentials)
         throw new Error("Passkeys unavailable");
-      const step = countersign ? "countersign" : register ? "register" : "authenticate";
+      const step = register ? "register" : "authenticate";
       const ceremony = await ui.api(
         `passkeys/${step}/options`,
         register ? { createAccount, label: ui.label() } : {},
@@ -292,7 +299,9 @@ export function installAccountUI() {
         }));
         result = await navigator.credentials.create({ publicKey: options });
       } else {
-        options.allowCredentials = (options.allowCredentials ?? []).map((credential) => ({
+        const allowed = options.allowCredentials ?? [],
+          named = allowed.filter((credential) => credential.id === only);
+        options.allowCredentials = (named.length > 0 ? named : allowed).map((credential) => ({
           ...credential,
           id: ui.decode(credential.id),
         }));
@@ -343,6 +352,27 @@ export function installAccountUI() {
     async signIn(createAccount = false) {
       await ui.passkey(createAccount, createAccount);
       await ui.refresh();
+    },
+    /** Whether the passkey being added came from a gateway's setup, which this browser remembers. */
+    fromGateway() {
+      try {
+        return window.sessionStorage.getItem(addingKey) === "gateway";
+      } catch {
+        return false;
+      }
+    },
+    /** Remembers, or forgets, that the passkey being added came from a gateway's setup. */
+    rememberGateway(value) {
+      try {
+        if (value) window.sessionStorage.setItem(addingKey, "gateway");
+        else window.sessionStorage.removeItem(addingKey);
+      } catch {
+        // Without storage the page just doesn't count the gateway's step.
+      }
+    },
+    /** "Adding a passkey · step N of M": the gateway's own step counts when it started here. */
+    stepHeading(step) {
+      return ui.node("h3", `Adding a passkey · step ${step} of ${ui.fromGateway() ? 3 : 2}`);
     },
     forget() {
       handoff = undefined;
@@ -503,9 +533,10 @@ export function installAccountUI() {
           : "This device already has a passkey for your Omnesis account.";
         return ui.render();
       }
-      // The passkey exists on this device; the account keeps it once it has signed for the
-      // account's other sign-ins and one of them has vouched for it.
-      endorsing = { id: made.endorse, credential: made.id, countersigned: false };
+      // The passkey exists on this device; the account keeps it once a sign-in it already has
+      // vouches for it.
+      adding = false;
+      endorsing = { id: made.endorse, credential: made.id };
       ui.render();
     },
     /** Stores the new passkey once a sign-in the account already had has vouched for it. */
@@ -521,24 +552,26 @@ export function installAccountUI() {
       }
       endorsing = undefined;
       fresh.add(added.id);
+      const gateway = ui.fromGateway();
+      ui.rememberGateway(false);
       await ui.refresh();
-      ui.say("Passkey added. You can now use it to sign in.");
+      ui.say(gateway ? passkeyAddedForGateway : passkeyAdded);
     },
-    async endorse() {
+    /** One of the account's own passkeys vouches for the new one: `credential` names which. */
+    async endorse(credential) {
       const { id } = endorsing;
-      await ui.passkey(false, false, id);
+      await ui.passkey(false, false, id, credential);
       await ui.finishEndorsement(id);
     },
-    /** The new passkey's own signature, which lets a gateway that trusts it trust the others. */
-    async countersign() {
-      failure = "The new passkey could not be used. Try again, or cancel.";
-      await ui.passkey(false, false, endorsing.id, true);
-      endorsing.countersigned = true;
+    cancelAdding() {
+      adding = false;
+      ui.rememberGateway(false);
       ui.render();
     },
     async cancelEndorsement() {
       const { id, credential } = endorsing;
       endorsing = undefined;
+      ui.rememberGateway(false);
       // Best effort: the passkey was never stored, so its leftovers are only tidied up.
       await ui.api("passkeys/register/cancel", {}, id).catch(() => {});
       if (credential) await ui.forgetPasskey(credential);
@@ -1054,45 +1087,74 @@ export function installAccountUI() {
       );
       root.append(more.wrapper);
     },
+    /** The first step of adding a passkey: what the steps are, then creating it on this device. */
+    creation(parent) {
+      const panel = document.createElement("div");
+      panel.className = "confirm";
+      panel.append(
+        ui.stepHeading(1),
+        ui.node("p", "Your browser or password manager will ask where to save the new passkey."),
+        ui.node(
+          "p",
+          ui.fromGateway()
+            ? "Next, you'll confirm with a sign-in you already use, then use the new passkey once on your gateway."
+            : "Next, you'll confirm with a sign-in you already use.",
+        ),
+      );
+      ui.button("Create passkey", () => ui.change({ kind: "add" }), false, panel);
+      ui.button("Cancel", ui.cancelAdding, true, panel);
+      parent.append(panel);
+    },
     /**
-     * The rest of adding a passkey: the new passkey signs for the sign-ins the account already
-     * has, then one of those vouches for it.
+     * The rest of adding a passkey: a sign-in the account already has vouches for it. Each of the
+     * account's passkeys is named, so the person knows which one the browser will ask for, and
+     * Google comes first where the account has it, since a passkey may be on another device.
      */
     endorsement(session, parent) {
       const panel = document.createElement("div"),
-        hasPasskey = session.credentials.passkeys.length > 0;
+        google =
+          session.googleAvailable &&
+          session.credentials.federated.some((credential) => credential.provider === "google"),
+        passkeys = session.credentials.passkeys
+          .filter((credential) => credential.id !== endorsing.credential)
+          .sort((a, b) => b.createdAt - a.createdAt);
       panel.className = "confirm";
-      if (!endorsing.countersigned) {
-        panel.append(
-          ui.node("h3", "Use your new passkey once"),
-          ui.node(
-            "p",
-            "Your new passkey is ready. Use it once now, so that your gateways can tell it belongs with the sign-in methods you already have.",
-          ),
-        );
-        ui.button("Use new passkey", ui.countersign, false, panel);
-        ui.button("Cancel", ui.cancelEndorsement, true, panel);
-        parent.append(panel);
-        return;
-      }
       panel.append(
-        ui.node("h3", "Confirm it's you to finish"),
+        ui.stepHeading(2),
         ui.node(
           "p",
-          "Now confirm with a sign-in you already use, so that someone else using this browser can't add their own passkey. Your gateways check both steps themselves before they trust a sign-in.",
+          "Confirm with a sign-in you already use, so that someone else using this browser can't add a passkey of their own.",
         ),
       );
-      if (hasPasskey) ui.button("Confirm with passkey", ui.endorse, false, panel);
-      if (
-        session.googleAvailable &&
-        session.credentials.federated.some((credential) => credential.provider === "google")
-      )
-        ui.googleButton(
-          "Confirm with Google",
-          () => ui.google(false, undefined, endorsing.id),
-          hasPasskey,
+      const confirmWithGoogle = () => ui.google(false, undefined, endorsing.id);
+      if (google) ui.googleButton("Confirm with Google", confirmWithGoogle, false, panel);
+      for (const credential of passkeys)
+        ui.button(
+          `Confirm with your passkey “${credential.label}”, added ${ui.date(credential.createdAt)}`,
+          () => ui.endorse(credential.id),
+          google,
           panel,
         );
+      if (passkeys.length > 0) {
+        const elsewhere = document.createElement("p");
+        elsewhere.className = "note";
+        if (google) {
+          const instead = ui.node("button", "Confirm with Google instead");
+          instead.type = "button";
+          instead.className = "link";
+          instead.disabled = busy;
+          instead.addEventListener("click", () => ui.run(confirmWithGoogle));
+          elsewhere.append(
+            passkeys.length === 1
+              ? "Don't have that passkey here? "
+              : "Don't have those passkeys here? ",
+            instead,
+          );
+        } else
+          elsewhere.textContent =
+            "If that passkey is on another device, your browser will offer to use it from there, for example with a QR code.";
+        panel.append(elsewhere);
+      }
       ui.button("Cancel", ui.cancelEndorsement, true, panel);
       parent.append(panel);
     },
@@ -1106,6 +1168,7 @@ export function installAccountUI() {
       if (!session.authenticated) {
         confirming = undefined;
         endorsing = undefined;
+        adding = false;
         fresh.clear();
         root.append(ui.node("h1", "Sign in to your Omnesis account"));
         ui.signInChoices(session);
@@ -1226,12 +1289,20 @@ export function installAccountUI() {
       if (noticeAt !== "gateways") signIn.append(status);
       if (endorsing) ui.endorsement(session, signIn);
       else if (confirming && confirming.kind !== "unlink") ui.confirmation(session, signIn);
+      else if (adding || ui.fromGateway()) ui.creation(signIn);
       else {
         // Quiet on purpose: adding a sign-in method is occasional, not what the page is for.
         const actions = document.createElement("div");
         actions.className = "list-actions";
-        ui.button("Add a passkey", () => ui.change({ kind: "add" }), true, actions).className =
-          "quiet add";
+        ui.button(
+          "Add a passkey",
+          () => {
+            adding = true;
+            ui.render();
+          },
+          true,
+          actions,
+        ).className = "quiet add";
         if (session.googleAvailable && !hasGoogle)
           ui.googleButton(
             "Link Google",
@@ -1251,6 +1322,8 @@ export function installAccountUI() {
   });
   ui.run(async () => {
     ui.restore();
+    // A gateway's setup opens this page to add a passkey; the request is kept across a sign-in.
+    if (query.getAll("add").includes("passkey")) ui.rememberGateway(true);
     await ui.refresh();
     if (query.get("failed") === "google")
       alert.textContent = "Google sign-in did not complete. Try again or use a passkey.";
@@ -1263,11 +1336,12 @@ export function installAccountUI() {
     const linked = query.get("linked") === "google",
       thens = query.getAll("then"),
       endorsed = query.getAll("endorse");
-    if (query.has("linked") || query.has("then") || query.has("endorse")) {
+    if (query.has("linked") || query.has("then") || query.has("endorse") || query.has("add")) {
       // A reload must not repeat the message or the change.
       query.delete("linked");
       query.delete("then");
       query.delete("endorse");
+      query.delete("add");
       const rest = query.toString();
       window.history.replaceState(null, "", "/_relay/account" + (rest ? `?${rest}` : ""));
     }
@@ -1275,8 +1349,7 @@ export function installAccountUI() {
     if (endorsed.length === 1) {
       // Back from Google, which either vouched for the new passkey or did not complete.
       if (!query.has("failed")) return ui.finishEndorsement(endorsed[0]);
-      // The new passkey signed before the person chose Google.
-      endorsing = { id: endorsed[0], countersigned: true };
+      endorsing = { id: endorsed[0] };
       return ui.render();
     }
     if (current.credentialsRequireSignIn) return;

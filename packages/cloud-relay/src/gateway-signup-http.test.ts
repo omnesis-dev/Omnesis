@@ -827,6 +827,60 @@ test("an existing account signs in with a passkey and connects without an invite
   });
 });
 
+test("a browser already signed in to an account can still create one with a passkey, which spends the invite", async () => {
+  const f = await fixture(inviteOnly());
+  f.identities.invitesRequired = false;
+  const existing = f.identities.signInFederated("google", "a".repeat(64));
+  f.identities.invitesRequired = true;
+  const keyed = await registeredPasskey(f.identities, { accountId: existing, version: 1 });
+  // An earlier sign-in left this browser with a session for the existing account.
+  const earlier = await f.launched();
+  const session = await signInOnOperation(f.url, earlier.query, earlier.cookie, keyed);
+  const value = invite(),
+    op = await f.launched("create", value);
+  // The create view still offers a passkey, not only Google, which would find that account.
+  expect(await f.session(op, `; ${session}`)).toMatchObject({
+    authenticated: true,
+    canCreateAccount: true,
+    pending: { intent: "create", canCreate: true, needsProof: true },
+  });
+  const browser = fixtureBrowser(),
+    cookie = `${op.cookie}; ${browser}; ${session}`,
+    authenticator = passkeyAuthenticator();
+  const options = await f.api("passkeys/register/options", op.query, cookie, {
+    createAccount: true,
+  });
+  expect(options.status).toBe(200);
+  const begun = await options.json();
+  const completed = await f.api("passkeys/register/complete", op.query, cookie, {
+    ceremonyId: begun.ceremonyId,
+    credential: authenticator.registration(begun.options.challenge),
+  });
+  expect(completed.status).toBe(200);
+  // The new account's session takes the place of the old one.
+  const created = completed.headers.getSetCookie()[0]!.split(";")[0]!;
+  expect(created).not.toBe(session);
+  expect((await f.api("continue", op.query, `${op.cookie}; ${browser}; ${created}`)).status).toBe(
+    200,
+  );
+  const polled = await (await f.post("poll", op.redemption, CREATION_FEATURE)).json();
+  expect(polled.accountCreated).toBe(true);
+  expect(polled.accountId).not.toBe(existing);
+  // The invite created that account and is spent.
+  expect(await (await f.post("invite", { invite: value })).json()).toEqual({ status: "used" });
+  const reused = await f.start({}, "create", value);
+  expect(reused.response.status).toBe(403);
+  expect(await reused.response.json()).toEqual({ error: "invite-used" });
+  // Outside a sign-up, a signed-in browser adds a passkey to its own account instead.
+  expect(
+    (
+      await f.api("passkeys/register/options", "", `${browser}; ${session}`, {
+        createAccount: true,
+      })
+    ).status,
+  ).toBe(409);
+});
+
 test("a session from one account cannot spend a proof from another", async () => {
   const f = await fixture({ policy: "open" });
   const first = f.identities.signInFederated("google", "a".repeat(64)),

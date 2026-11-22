@@ -314,7 +314,6 @@ export function AccountStep({
       ${checklist &&
       html`<${FinishSetup}
         enrollment=${enrollment}
-        hostname=${status.hostname}
         ready=${ready}
         serviceUrl=${status.config?.relayUrl}
         busy=${busy}

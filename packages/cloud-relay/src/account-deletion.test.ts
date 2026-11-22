@@ -9,6 +9,7 @@ import Database from "better-sqlite3";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { WebSocket } from "ws";
 import { listen, tlsFiles } from "../test/support.js";
+import { storeCountersignature } from "../test/stored-countersignature.js";
 import { signInDigest } from "./device-enrollment.js";
 import { AccountEnrollmentAuthority } from "./account-enrollment-proof.js";
 import { RelayAccounts } from "./accounts.js";
@@ -119,27 +120,28 @@ test("deleting an account removes every row about it and its gateways, in every 
       undefined,
       undefined,
       { type: "google", idToken: "fixture-token", salt: "c".repeat(43) },
-      {
-        proof: {
-          type: "passkey",
-          salt: "d".repeat(43),
-          issuedAt: "1793318400",
-          credential: {
-            id: passkey,
-            rawId: passkey,
-            type: "public-key",
-            clientExtensionResults: {},
-            response: {
-              clientDataJSON: "Zml4dHVyZQ",
-              authenticatorData: "Zml4dHVyZQ",
-              signature: "Zml4dHVyZQ",
-              userHandle: "Zml4dHVyZQ",
-            },
+    );
+    // Stored by an earlier relay, which asked a new passkey to countersign on the account page.
+    storeCountersignature(identities, passkey, {
+      proof: {
+        type: "passkey",
+        salt: "d".repeat(43),
+        issuedAt: "1793318400",
+        credential: {
+          id: passkey,
+          rawId: passkey,
+          type: "public-key",
+          clientExtensionResults: {},
+          response: {
+            clientDataJSON: "Zml4dHVyZQ",
+            authenticatorData: "Zml4dHVyZQ",
+            signature: "Zml4dHVyZQ",
+            userHandle: "Zml4dHVyZQ",
           },
         },
-        signIns: [signInDigest({ type: "google", id: digest })],
       },
-    );
+      signIns: [signInDigest({ type: "google", id: digest })],
+    });
     identities.registerSession(account, 1, randomUUID(), Math.floor(Date.now() / 1000) + 600);
     for (const gateway of [first, second])
       identities.linkGateway(

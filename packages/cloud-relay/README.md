@@ -158,7 +158,7 @@ it, in one transaction, and closes those gateways' tunnels. What each table keep
 | `omnesis_federated_credentials`, `omnesis_google_aliases`  | Its Google sign-in and that sign-in's aliases are deleted       |
 | `omnesis_passkeys`, `omnesis_passkey_endorsements`         | Its passkeys and the sign-ins that vouched for them are deleted |
 | `omnesis_deleted_passkeys`                                 | Keeps a SHA-256 digest of each of its passkeys' credential ids  |
-| `omnesis_passkey_countersignatures`                        | Each passkey's countersignature of the account is deleted       |
+| `omnesis_passkey_countersignatures`                        | Each countersignature an earlier relay stored is deleted        |
 | `omnesis_gateway_links`, `omnesis_account_admissions`      | Rows of the account and of each of its gateways are deleted     |
 | `relay_accounts`, `relay_gateway_bindings`                 | Each gateway's owner row and binding are deleted                |
 | `relay_gateway_recovery`                                   | Each gateway's recovery receipt is deleted                      |

@@ -299,7 +299,8 @@ export class AccountWeb {
         googleAvailable: this.options.googleAvailable,
         credentials: this.options.accounts.list(session.accountId),
         gateways: this.options.choices(session.accountId),
-        ...(pending ? { pending } : {}),
+        // A browser signed in to one account may still create another for the gateway it connects.
+        ...(pending ? { pending, canCreateAccount: Boolean(this.creationAdmission(req)) } : {}),
         ...(handoff ? { handoff } : {}),
       });
     }
@@ -443,7 +444,14 @@ export class AccountWeb {
     if (path === "/_relay/account/api/passkeys/register/options") {
       const value = parse(registrationBody, body);
       const token = cookie(req, sessionCookie);
-      const account = token ? await this.options.authentication.authenticate(token) : undefined;
+      const signedIn = token ? await this.options.authentication.authenticate(token) : undefined;
+      // Creating an account for a gateway's sign-up rests on that gateway's admission alone, so a
+      // browser already signed in to another account creates it the same way; finishing replaces
+      // the session with the new account's.
+      const creating =
+        value.createAccount &&
+        (!signedIn || target?.kind === "signup" || target?.kind === "operation");
+      const account = creating ? undefined : signedIn;
       if (!account && !value.createAccount)
         throw new RelayError(401, "Sign in or explicitly create an account");
       if (account && value.createAccount)
@@ -496,26 +504,6 @@ export class AccountWeb {
             : undefined,
         ),
       );
-    }
-    if (path === "/_relay/account/api/passkeys/countersign/options") {
-      parse(emptyBody, body);
-      if (target?.kind !== "endorse") throw new RelayError(400, "No passkey is being added");
-      return respond(
-        res,
-        await this.options.passkeys.beginCountersignature(browser, target.id, cookieHeader),
-      );
-    }
-    if (path === "/_relay/account/api/passkeys/countersign/complete") {
-      const value = parse(completionBody, body);
-      if (target?.kind !== "endorse") throw new RelayError(400, "No passkey is being added");
-      await this.options.passkeys.finishCountersignature(
-        value.ceremonyId,
-        browser,
-        target.id,
-        cookieHeader,
-        value.credential,
-      );
-      return respond(res, { ok: true });
     }
     if (
       path === "/_relay/account/api/passkeys/register/confirm" ||
