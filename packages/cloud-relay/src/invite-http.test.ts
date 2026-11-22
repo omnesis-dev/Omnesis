@@ -41,6 +41,25 @@ test("the invite page and its script are served with a strict policy, and nothin
   expect(html).toContain('<div id="invite-missing" hidden><h1>This link has no invite in it</h1>');
   expect(html).toContain('<div id="invite-found"><h1>You\'re invited to Omnesis</h1>');
   expect(html).toContain('<code id="invite-command"></code>');
+  // A small copy button sits beside the invite and beside the command, not a large one below.
+  expect(html).toContain(
+    '<p id="invite-value" class="code long"></p><button type="button" id="invite-copy" class="copy" aria-label="Copy invite link"',
+  );
+  expect(html).toContain(
+    '<code id="invite-command"></code></p><button type="button" id="command-copy" class="copy" aria-label="Copy command"',
+  );
+  expect(html).not.toContain(">Copy invite<");
+  // The terminal's way stands apart from the portal's steps.
+  expect(html).toContain(
+    '<p class="terminal">Or, on the computer that runs your gateway, connect from a terminal:</p>',
+  );
+  expect(html).toContain('<link rel="stylesheet" href="/invite/style.css">');
+  const style = await fetch(`${url}/invite/style.css`);
+  expect(style.headers.get("content-type")).toBe("text/css; charset=utf-8");
+  expect(style.headers.get("content-security-policy")).toContain("style-src 'self'");
+  const css = await style.text();
+  expect(css).toContain(".terminal{margin-top:2.5rem}");
+  expect(css).toContain("button.copy{");
   const script = await fetch(`${url}/invite/script.js`);
   expect(script.headers.get("content-type")).toBe("application/javascript; charset=utf-8");
   expect(await script.text()).toMatch(/^\(function installInviteUI\(\)/);

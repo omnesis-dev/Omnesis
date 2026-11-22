@@ -222,6 +222,11 @@ export interface CloudRelayManagement {
   }): Promise<CloudRelayManagementStatus>;
   cancelConnect?(): Promise<CloudRelayManagementStatus>;
   /**
+   * Says the owner has been told that the sign-in already had an account: `existingAccount`
+   * leaves the status, so it is said once when connecting completes and not on later visits.
+   */
+  acknowledgeConnect?(): Promise<CloudRelayManagementStatus>;
+  /**
    * Discards a connection that never finished: the reserved address, the gateway id, its keys and
    * the saved choices, so the gateway is as if it had never connected. Refused once the gateway
    * has connected; unlinking is the way out then.

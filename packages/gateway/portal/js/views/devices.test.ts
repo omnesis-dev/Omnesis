@@ -36,6 +36,10 @@ vi.mock("../lib/router.js", async (importOriginal) => ({
 }));
 
 // @ts-expect-error — portal is plain JS without sibling declarations.
+import { TESTFLIGHT_URL } from "../lib/ios-links.js";
+// @ts-expect-error — portal is plain JS without sibling declarations.
+import { ANDROID_OPT_IN_URL, ANDROID_TESTER_GROUP_URL } from "../lib/android-links.js";
+// @ts-expect-error — portal is plain JS without sibling declarations.
 import {
   agentConnectCommands,
   agentGatewayUrl,
@@ -887,6 +891,44 @@ describe("browser extension pairing", () => {
     expect(host.querySelector(".devices-pair-page")).toBeNull();
     expect(host.querySelector(".devices-header")).not.toBeNull();
     expect(routerMocks.replaceRoute).toHaveBeenCalledWith("/portal/settings/devices");
+  });
+
+  test("choosing a phone says how to install its app, from the same links as the Sources cards", async () => {
+    const install = () => host.querySelector(".devices-app-install");
+    const links = () =>
+      [...(install()?.querySelectorAll("a") ?? [])].map((a) => [a.textContent?.trim(), a.getAttribute("href")]);
+    await act(async () => {
+      render(h(DevicesView, { pairKindRequest: "ios" }), host);
+    });
+    expect(install()?.textContent).toContain("Don't have the Omnesis app yet?");
+    expect(links()).toEqual([
+      ["Install it with TestFlight", TESTFLIGHT_URL],
+      ["Getting the apps in the docs", "https://omnesis.dev/docs/apps#getting-the-apps"],
+    ]);
+    // Said before the code is made, above the button that makes it.
+    expect(install()?.nextElementSibling?.matches(".devices-pair-actions, .devices-banner, .form-group")).toBe(true);
+    const choose = async (kind: string) =>
+      act(async () => {
+        const radio = host.querySelector(`input[name="pair-kind"][value="${kind}"]`) as HTMLInputElement;
+        radio.checked = true;
+        radio.dispatchEvent(new window.Event("change", { bubbles: true }));
+      });
+    await choose("android");
+    expect(links().map(([, href]) => href)).toEqual([
+      ANDROID_TESTER_GROUP_URL,
+      ANDROID_OPT_IN_URL,
+      "https://omnesis.dev/docs/apps#getting-the-apps",
+    ]);
+    expect(install()?.textContent?.replace(/\s+/g, " ")).toContain(
+      "Join the tester group, then opt in",
+    );
+    expect(install()?.textContent).toContain("with the same Google account.");
+    for (const a of install()!.querySelectorAll("a")) expect(a.getAttribute("rel")).toBe("noopener noreferrer");
+    // Anything but a phone has no app to install.
+    for (const kind of ["cli", "browser", "collector"]) {
+      await choose(kind);
+      expect(install()).toBeNull();
+    }
   });
 
   test("an unknown pair kind leaves the device list showing", async () => {

@@ -27,7 +27,7 @@ import {
   mainCertificatePending,
   servesUntrustedCertificate,
 } from "./client-setup.js";
-import { DOCS, NO_RELAY, NO_TAILSCALE } from "./public-address.js";
+import { NO_RELAY, NO_TAILSCALE } from "./public-address.js";
 import {
   AGENT_LOCATIONS,
   LOCATION_LABELS,
@@ -41,7 +41,7 @@ import {
 } from "./agent-location.js";
 import { AgentIcon } from "./agent-brand.js";
 import { CONNECTIVITY_PAGE, OWN_ADDRESS_PAGE } from "../remote-access/manage.js";
-import { HOME_NETWORK_WARNINGS } from "../remote-access/at-home.js";
+import { HOME_NETWORK_DOCS, HOME_NETWORK_WARNINGS } from "../remote-access/at-home.js";
 import { updateRemoteAccess } from "../../lib/remote-access-api.js";
 import { errorMessage } from "./shared.js";
 
@@ -437,12 +437,7 @@ function AgentSetupPicker({ oauth, relay, tailscale, addressSelectable, location
   }
 
   return html`<div class="access-agent-setup">
-    <p class="access-agent-setup-label">Setup for common agents</p>
-    ${location !== "away" &&
-    html`<p class="access-agent-elsewhere">
-      ChatGPT, Claude apps and Grok bot connect from their own servers, which can't reach this address.${" "}
-      <button type="button" class="access-link-button" onClick=${() => onLocation("away")}>Set them up under Somewhere else</button>.
-    </p>`}
+    ${location === "away" && html`<p class="access-agent-setup-label">Setup for common agents</p>`}
     <div class="backend-opt-grid access-agent-grid">
       ${agents.map(
         (agent) => html`<button
@@ -616,7 +611,7 @@ function AllowHomeNetwork({ onAllowed }) {
       <button type="button" class="btn-primary" disabled=${busy} onClick=${allow}>
         ${busy ? "Allowing…" : "Allow agents on my home network"}
       </button>
-      <${ExternalLink} href=${`${DOCS}/connect#home-network`}>Home network in the docs<//>
+      <${ExternalLink} href=${HOME_NETWORK_DOCS}>Home network in the docs<//>
     </div>
     ${error && html`<p class="access-error" role="alert">${error}</p>`}
   </div>`;
@@ -714,19 +709,11 @@ export function ConnectAgentDialog({ oauth: overviewOauth, relay = NO_RELAY, tai
       (problem
         ? html`<${AddressNote} warning parts=${problem} />`
         : html`<${AddressNote} parts=${["Only programs on this computer can use this address, and it needs no certificate step."]} />`)}
-      ${location === "home" &&
-      html`<${AddressNote}
-        parts=${[
-          options.length > 1 ? "Prefer the .local name: an address in numbers can change when your router hands out a new one. " : "",
-          "Anyone on your network can reach this address; a connection still needs your approval.",
-        ]}
-      />`}
 `;
   })();
 
   return html`<${Modal} open title="Connect an agent" onClose=${close}>
     <div class="access-connect-dialog">
-      <p class="access-explainer">MCP is how agents such as Claude Code or ChatGPT plug into this gateway. An agent connects in two steps, and you approve it.</p>
       <${ConnectStep} number="1" title="Add this MCP server to the client">
         <${LocationPicker} location=${location} onLocation=${setLocation} />
         ${addressBlock}

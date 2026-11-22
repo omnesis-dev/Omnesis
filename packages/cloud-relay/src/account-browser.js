@@ -1358,7 +1358,8 @@ export function installConnectUI() {
 
 /**
  * The invite page: says whether the invite in the link still works, and lets the person copy it
- * or the command that connects with it. A link with no invite in it shows only that.
+ * or the command that connects with it, each with the copy button beside it. A link with no
+ * invite in it shows only that.
  */
 export function installInviteUI() {
   const missing = document.getElementById("invite-missing");
@@ -1367,6 +1368,8 @@ export function installInviteUI() {
   const value = document.getElementById("invite-value");
   const copy = document.getElementById("invite-copy");
   const command = document.getElementById("invite-command");
+  const commandCopy = document.getElementById("command-copy");
+  const copyStatus = document.getElementById("copy-status");
   const say = (text) => {
     status.textContent = text;
   };
@@ -1375,21 +1378,42 @@ export function installInviteUI() {
     expired: "This invite has expired. Ask for a new one.",
     used: "This invite was already used to create an account. Ask for a new one.",
   };
-  copy.addEventListener("click", async () => {
-    try {
-      await navigator.clipboard.writeText(window.location.href);
-      copy.textContent = "Copied";
-    } catch {
-      copy.textContent = "Select the invite above and copy it";
-    }
-  });
+  // Each button says what it copies; for a moment after copying it shows a check and says so.
+  const label = (button, text) => {
+    button.setAttribute("aria-label", text);
+    button.title = text;
+  };
+  const reset = (button) => {
+    clearTimeout(button.resetTimer);
+    button.classList.remove("copied");
+    label(button, button.dataset.label);
+  };
+  for (const [button, text] of [
+    [copy, () => window.location.href],
+    [commandCopy, () => command.textContent],
+  ])
+    button.addEventListener("click", async () => {
+      reset(button);
+      try {
+        await navigator.clipboard.writeText(text());
+        button.classList.add("copied");
+        label(button, "Copied");
+        copyStatus.textContent = "Copied";
+        button.resetTimer = setTimeout(() => reset(button), 1500);
+      } catch {
+        label(button, "Couldn't copy. Select the text and copy it.");
+        copyStatus.textContent = "Couldn't copy. Select the text and copy it.";
+      }
+    });
   // Pasting another link into the address bar changes only the fragment, which reloads nothing,
   // so the page checks again on every change and shows only the newest answer.
   let latest = 0;
   const check = () => {
     const attempt = ++latest;
     const invite = window.location.hash.slice(1).trim();
-    copy.textContent = "Copy invite";
+    reset(copy);
+    reset(commandCopy);
+    copyStatus.textContent = "";
     // An invite is made of letters, digits and `-_.`; a fragment with anything else holds none.
     const present = /^[A-Za-z0-9_.-]+$/.test(invite);
     missing.hidden = present;
@@ -1398,6 +1422,7 @@ export function installInviteUI() {
       value.textContent = "";
       command.textContent = "";
       copy.hidden = true;
+      commandCopy.hidden = true;
       say("");
       return;
     }
@@ -1405,6 +1430,7 @@ export function installInviteUI() {
     // Single-quoted for the shell, with any quote in the link closed, escaped and reopened.
     command.textContent = `omnesis cloud connect --invite '${window.location.href.replaceAll("'", "'\\''")}'`;
     copy.hidden = false;
+    commandCopy.hidden = false;
     say("Checking your invite…");
     fetch("/_relay/v3/signup/invite", {
       method: "POST",

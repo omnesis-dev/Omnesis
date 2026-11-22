@@ -281,7 +281,14 @@ export async function connectGateway(options: {
   // A sign-in that finished between two looks still says it was seen.
   if (announced && !signedIn) process.stdout.write("Signed in.\n");
   process.stdout.write("Connected to your Omnesis account.\n");
-  if (status.connect.existingAccount) process.stdout.write(`${EXISTING_ACCOUNT}\n`);
+  if (status.connect.existingAccount) {
+    process.stdout.write(`${EXISTING_ACCOUNT}\n`);
+    // Said here, so the portal doesn't say it again. Failing to record that changes nothing else.
+    await gatewayJson("/admin/cloud-relay/connect/acknowledge", {
+      method: "POST",
+      body: "{}",
+    }).catch(() => undefined);
+  }
   const origin = httpsAddress(status.publicOrigin);
   if (origin) {
     const mcp = httpsAddress(status.publicMcp?.url) ?? new URL("/mcp", origin).href;
@@ -300,7 +307,7 @@ export async function connectGateway(options: {
     });
   process.stdout.write(
     policy === "automatic"
-      ? "New devices join when you sign in to your Omnesis account with a sign-in this gateway trusts. You're notified of each one and can remove it.\nTo approve each new device yourself, choose Ask me first under Settings > Omnesis account in the portal.\n"
+      ? "New devices join when you sign in to your Omnesis account with a sign-in this gateway trusts. You're notified of each one and can remove it.\nTo approve each new device yourself, choose Ask me first under Settings > Connectivity, New devices in the portal.\n"
       : "New devices will wait for your approval.\n",
   );
 }
@@ -392,7 +399,7 @@ export const cloudManagementCommands = {
     meta: {
       name: "unlink",
       description:
-        "Unlink this gateway from your Omnesis account. Remote access and paired devices are kept",
+        "Unlink this gateway from your Omnesis account. Paired devices keep working on your home network",
     },
     run: () => manageCloud("account/unlink"),
   }),

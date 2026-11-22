@@ -14,6 +14,7 @@ import {
   relayInvite,
   relayInviteOnly,
   stopTrustingSignIn,
+  acknowledgeExistingAccount,
   // @ts-expect-error portal JS
 } from "./cloud-relay-api.js";
 afterEach(() => vi.clearAllMocks());
@@ -303,4 +304,17 @@ test("DNS verification links accept long broker tickets and reject ambiguous bro
     "https://:password@dns.example.test/_dns/v2/enroll?ticket=one",
     "https://dns.example.test/elsewhere?ticket=one",
   ]) expect(dnsVerificationUrl(value), String(value)).toBeNull();
+});
+
+test("acknowledging the existing-account notice posts once and never throws", async () => {
+  request.mockResolvedValueOnce({ ok: true, json: async () => ({}) });
+  await expect(acknowledgeExistingAccount()).resolves.toBeUndefined();
+  expect(request).toHaveBeenLastCalledWith("/admin/cloud-relay/connect/acknowledge", {
+    cache: "no-store",
+    signal: undefined,
+    method: "POST",
+    body: "{}",
+  });
+  request.mockRejectedValueOnce(new Error("offline"));
+  await expect(acknowledgeExistingAccount()).resolves.toBeUndefined();
 });
