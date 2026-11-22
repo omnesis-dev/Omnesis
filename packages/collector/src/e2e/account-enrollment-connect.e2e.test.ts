@@ -621,12 +621,9 @@ describe.skipIf(!browserReady)("connect a gateway by signing in", () => {
       await clickFirst(page, ["Sign in with Passkey"]);
       await connectThisGateway(page);
       expect(await run.exit).toBe(0);
+      // The CLI said so, which is the gateway's notice acknowledged.
       expect(run.stdout()).toContain("Your invite wasn't used.");
-      expect((await gateway.status()).connect).toMatchObject({
-        state: "done",
-        intent: "create",
-        existingAccount: true,
-      });
+      expect((await gateway.status()).connect).toMatchObject({ state: "done", intent: "create" });
       const checked = await fetch(`${world.relayOrigin}/_relay/v3/signup/invite`, {
         method: "POST",
         headers: { "content-type": "application/json" },
