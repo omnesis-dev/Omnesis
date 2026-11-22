@@ -83,6 +83,8 @@ describe("a new passkey waiting on the relay", () => {
       {
         id: passkey.credential.id,
         publicKey,
+        label: expect.any(String),
+        createdAt: expect.any(Number),
         endorsement: { type: "google", idToken: "fictional-google-token", salt: commitment.salt },
       },
     ]);

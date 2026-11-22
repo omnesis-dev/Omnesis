@@ -66,7 +66,7 @@ test("status shows the hold among the error codes and on its own line", () => {
   const text = formatCloudStatus(held as never);
   expect(text).toContain("incident-hold (new devices)");
   expect(text).toContain(
-    "  Incident hold:          since 2028-01-02T00:00:00.000Z: every new device waits for approval until `omnesis cloud incidents ack` on the gateway host\n",
+    "  Incident hold:            since 2028-01-02T00:00:00.000Z: every new device waits for approval until `omnesis cloud incidents ack` on the gateway host\n",
   );
   expect(formatCloudStatus({ enabled: true })).not.toContain("Incident hold");
 });

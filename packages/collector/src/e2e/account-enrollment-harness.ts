@@ -802,8 +802,17 @@ export interface CloudRelayStatus {
       addedAt: number;
       source?: string;
       confirmed?: boolean;
+      label?: string;
+      createdAt?: number;
     }>;
-    confirmedSignIns?: Array<{ type: string; id: string; at: number; via: string }>;
+    confirmedSignIns?: Array<{
+      type: string;
+      id: string;
+      at: number;
+      via: string;
+      label?: string;
+      createdAt?: number;
+    }>;
     confirmOrigin?: string;
   };
   certificateMonitor?: { state: string; incidents: Array<{ certificateFingerprint: string }> };

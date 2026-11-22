@@ -262,10 +262,17 @@ export class GatewayAccountLink {
    */
   private hold?: { since: number; certificates: string[] };
   /**
-   * Whether the linked account listed a passkey when this gateway last read its listing. Only for
-   * what setup offers: confirming still checks the assertion against the listing it reads then.
+   * The passkeys the linked account listed when this gateway last read its listing, with the
+   * labels and creation times shown beside them. Only for what setup offers and what the owner
+   * reads: confirming still checks the assertion against the listing it reads then, and nothing
+   * here is saved or trusted.
    */
-  private listedPasskey = false;
+  private listedPasskeys: {
+    id: string;
+    publicKey: string;
+    label?: string;
+    createdAt?: number;
+  }[] = [];
   private acknowledged: string[] = [];
   private unreadable = false;
   constructor(
@@ -1119,8 +1126,22 @@ export class GatewayAccountLink {
       input.signal,
     );
     this.bound = true;
-    this.listedPasskey = false;
+    this.listedPasskeys = [];
     this.lastError = undefined;
+  }
+  /**
+   * The label and creation time the account's listing gave a pinned or confirmed passkey, under
+   * the same id and key. Shown to the owner only: nothing decides trust by them.
+   */
+  private passkeyName(signIn: TrustedSignIn | ConfirmedSignIn) {
+    if (signIn.type !== "passkey") return {};
+    const listed = this.listedPasskeys.find(
+      ({ id, publicKey }) => id === signIn.id && publicKey === signIn.publicKey,
+    );
+    return {
+      ...(listed?.label ? { label: listed.label } : {}),
+      ...(listed?.createdAt ? { createdAt: listed.createdAt } : {}),
+    };
   }
   enrollmentStatus() {
     const record = this.record?.linked ? this.record : undefined;
@@ -1131,17 +1152,24 @@ export class GatewayAccountLink {
       policy: this.enrollmentPolicy(),
       // Linked with nothing confirmed: every new device waits for a person.
       confirmationNeeded: Boolean(record) && confirmed.length === 0,
-      trustedSignIns: (record?.trustedSignIns ?? []).map(({ type, id, addedAt, source }) => ({
-        type,
-        id,
-        addedAt,
-        source,
-        confirmed: confirmedNames.has(`${type}:${id}`),
+      trustedSignIns: (record?.trustedSignIns ?? []).map((signIn) => ({
+        type: signIn.type,
+        id: signIn.id,
+        addedAt: signIn.addedAt,
+        source: signIn.source,
+        confirmed: confirmedNames.has(`${signIn.type}:${signIn.id}`),
+        ...this.passkeyName(signIn),
       })),
-      confirmedSignIns: confirmed.map(({ type, id, at, via }) => ({ type, id, at, via })),
+      confirmedSignIns: confirmed.map((signIn) => ({
+        type: signIn.type,
+        id: signIn.id,
+        at: signIn.at,
+        via: signIn.via,
+        ...this.passkeyName(signIn),
+      })),
       // Where the owner can confirm a passkey: only this gateway's own origin.
       ...(origin ? { confirmOrigin: origin } : {}),
-      ...(record && this.listedPasskey ? { accountPasskey: true as const } : {}),
+      ...(record && this.listedPasskeys.length > 0 ? { accountPasskey: true as const } : {}),
     };
   }
   /**
@@ -1164,7 +1192,12 @@ export class GatewayAccountLink {
     // A listing for another account says nothing about this one.
     if (!current || (current.accountId !== undefined && current.accountId !== record.accountId))
       return;
-    this.listedPasskey = current.passkeys.length > 0;
+    this.listedPasskeys = current.passkeys.map(({ id, publicKey, label, createdAt }) => ({
+      id,
+      publicKey,
+      label,
+      createdAt,
+    }));
     const now = () => Math.floor(Date.now() / 1000);
     const listed = listedSignIns(current);
     const withdrawn = new Set(record.withdrawnSignIns);
@@ -1387,7 +1420,7 @@ export class GatewayAccountLink {
         signal,
       );
       this.bound = true;
-      this.listedPasskey = false;
+      this.listedPasskeys = [];
       this.lastError = undefined;
     } catch {
       this.lastError = "account-link-failed";

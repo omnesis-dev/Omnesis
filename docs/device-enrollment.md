@@ -213,9 +213,21 @@ that lies about it can only make the step fail:
 A gateway with no origin of its own shows no checklist: no passkey can be used
 there, and its devices are approved from Devices (a phone that signs in with
 Google in an official app and is approved with its sign-in trusted confirms that
-Google account). "Not now" keeps a one-line reminder under Trusted sign-ins.
+Google account). "Not now" keeps a one-line reminder under Sign-ins on your account.
 Connecting from another address ends on the gateway's own page once its
 certificate is valid, for an account with a passkey.
+
+Outside setup, every passkey row under Sign-ins on your account that is not
+confirmed here, on a gateway with an origin of its own and no incident hold,
+reads "Waiting for you to use it once on this gateway" and, where the browser
+supports passkeys, offers "Use it now". It runs the same `pin-passkey` ceremony
+for that passkey: on the gateway's own page the prompt's `allowCredentials` is
+narrowed to the row's id when the listing names it (a hint for the browser
+only), and from any other address it opens the gateway's own page signed in, as
+the checklist does, where the prompt starts on load. This is how a passkey added
+after setup is confirmed on a gateway; through the relay, confirming it then also
+needs a step-up with a passkey already confirmed here, which the portal's
+step-up sheet asks for. While the checklist shows, the rows leave the step to it.
 
 The ceremony itself:
 
@@ -247,8 +259,8 @@ origin, challenge, binding, webauthnChallenge, expiresAt, allowCredentials? }`.
 
 A confirmation goes away when the account stops listing the sign-in, or when the
 owner removes it. `GET /admin/cloud-relay/trusted-sign-ins` lists each pin with
-its source and whether it is confirmed (and how); the portal's New devices section
-and `omnesis cloud trusted-sign-ins` show the same.
+its source and whether it is confirmed (and how); the portal's Sign-ins on your
+account section and `omnesis cloud trusted-sign-ins` show the same.
 
 A device joins with a passkey on the gateway's own page the same way, without
 the relay's account page:
@@ -623,6 +635,21 @@ flows deliver one proof, verified and pinned locally. Gateways poll
 `GET /_relay/v3/account-browser/credentials`, which lists Google subject digests
 and passkeys as `{id, publicKey, endorsement?}`; a pin missing from that list, or a
 passkey pin whose key differs from the listed one, is dropped.
+
+To a gateway that sends `omnesis-credential-evidence` (one that drops passkey
+fields it doesn't know), each passkey also carries its `label` and `createdAt`
+(Unix seconds), so the owner can tell passkeys apart. The relay chooses both, so
+they are display only: the gateway reads a label as text (control, format and
+separator characters become spaces, at most 80 characters, anything else is no
+label), keeps them in memory with the last listing it read, never in
+`account-link.json`, and adds them to a pinned or confirmed passkey's status row
+only under the same id and key. No trust decision reads them. The portal shows a
+label as it is only when it is one of the account page's own ("Passkey on Mac"),
+quotes any other, and tells two rows of a kind apart by the end of their ids
+whatever their labels or dates, so a label can't pass for the row's own words or
+hide a lookalike. A relay from before
+them lists neither, and the row reads as before ("Passkey · added" the day this
+gateway pinned it).
 
 A link with no stored policy behaves as `automatic`: linking is the owner's
 consent, and there is no separate first choice. Only an explicit `ask` holds

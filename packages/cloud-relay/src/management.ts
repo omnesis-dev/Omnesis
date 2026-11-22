@@ -41,6 +41,16 @@ export interface CloudRelayNetworkIdentity {
   pinPolicy: "existing-device-policy" | "strict-key-pin-or-public-pki";
 }
 
+/**
+ * A passkey's label and when it was added to the account (Unix seconds), as the account's listing
+ * last gave them. The relay chooses both, so they are shown to the owner and decide nothing.
+ * Absent for a Google account, and when the relay gave none (one from before labels).
+ */
+interface PasskeyName {
+  label?: string;
+  createdAt?: number;
+}
+
 export interface CloudRelayManagementStatus {
   certificateMonitor?: import("./gateway-certificate-monitor.js").GatewayCertificateMonitorStatus;
   recovery?: import("./gateway-recovery-status.js").GatewayRecoveryReceiptStatus;
@@ -142,21 +152,21 @@ export interface CloudRelayManagementStatus {
     policy: "automatic" | "ask";
     /** Linked, and no sign-in confirmed here yet: every new device waits for a person. */
     confirmationNeeded: boolean;
-    trustedSignIns: {
+    trustedSignIns: ({
       type: "google" | "passkey";
       id: string;
       addedAt: number;
       source: import("./gateway-sign-in-proof.js").TrustedSignInSource;
       /** Whether the owner also confirmed it on this gateway (`confirmedSignIns`). */
       confirmed: boolean;
-    }[];
+    } & PasskeyName)[];
     /** Sign-ins the owner confirmed on this gateway, and how. */
-    confirmedSignIns: {
+    confirmedSignIns: ({
       type: "google" | "passkey";
       id: string;
       at: number;
       via: import("./gateway-sign-in-proof.js").ConfirmedSignInVia;
-    }[];
+    } & PasskeyName)[];
     /** The gateway's own origin, where a passkey can be confirmed; absent when it has none. */
     confirmOrigin?: string;
     /**

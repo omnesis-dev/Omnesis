@@ -15,7 +15,9 @@ export const ACCOUNT_BROWSER_METHODS = ["google", "passkey"] as const;
 export type AccountBrowserMethod = (typeof ACCOUNT_BROWSER_METHODS)[number];
 /**
  * A gateway that reads passkeys' countersignatures in the credentials listing sends this header
- * with this value. Without it the relay leaves them out.
+ * with this value, and drops passkey fields it doesn't know instead of refusing the listing.
+ * Without it the relay lists each passkey's id, key and endorsement only: no countersignature,
+ * label or creation time.
  */
 export const ACCOUNT_CREDENTIALS_EVIDENCE = {
   header: "omnesis-credential-evidence",

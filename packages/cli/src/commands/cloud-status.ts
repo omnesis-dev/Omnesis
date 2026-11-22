@@ -14,11 +14,21 @@ export type CloudStatus = Partial<Omit<CloudRelayManagementStatus, "deviceEnroll
   deviceEnrollment?: {
     policy?: string;
     confirmationNeeded?: boolean;
-    trustedSignIns?: { type?: string; id?: string; addedAt?: number; source?: string }[];
+    trustedSignIns?: ({
+      type?: string;
+      id?: string;
+      addedAt?: number;
+      source?: string;
+    } & SignInName)[];
     /** Absent from a gateway that predates confirming sign-ins on its own page. */
-    confirmedSignIns?: { type?: string; id?: string; at?: number; via?: string }[];
+    confirmedSignIns?: ({ type?: string; id?: string; at?: number; via?: string } & SignInName)[];
   };
 };
+/**
+ * A passkey's label and when it was created, as the relay lists them: shown only. Absent from a
+ * gateway or relay that predates them.
+ */
+type SignInName = { label?: string; createdAt?: number };
 
 function iso(value: string | number | undefined): string {
   if (value === undefined || value === "") return "not recorded";
@@ -99,20 +109,24 @@ export function trustedSignInLines(status: CloudStatus): string[] {
     if (!found) return ", not confirmed on this gateway";
     return `, ${Object.hasOwn(CONFIRMED_VIA, found.via ?? "") ? CONFIRMED_VIA[found.via!] : "confirmed"} ${iso(found.at)}`;
   };
-  const kind = (type: string | undefined) => (type === "passkey" ? "passkey" : "Google account");
+  // A passkey is named by the label its account gave it and when it was created, where known.
+  const kind = (signIn: { type?: string } & SignInName) =>
+    signIn.type !== "passkey"
+      ? "Google account"
+      : `passkey${signIn.label ? ` "${plain(signIn.label)}"` : ""}${signIn.createdAt ? `, created ${iso(signIn.createdAt)}` : ""}`;
   const pinned = enrollment?.trustedSignIns ?? [];
   return [
     ...pinned.map((signIn) => {
       const source = Object.hasOwn(SIGN_IN_SOURCES, signIn.source ?? "")
         ? SIGN_IN_SOURCES[signIn.source!]
         : "source not recorded";
-      return `${plain(signIn.id)}  ${kind(signIn.type)}, ${source}, added ${iso(signIn.addedAt)}${confirmation(signIn)}`;
+      return `${plain(signIn.id)}  ${kind(signIn)}, ${source}, added ${iso(signIn.addedAt)}${confirmation(signIn)}`;
     }),
     ...(confirmations ?? [])
       .filter(
         (value) => !pinned.some((signIn) => signIn.type === value.type && signIn.id === value.id),
       )
-      .map((value) => `${plain(value.id)}  ${kind(value.type)}${confirmation(value)}`),
+      .map((value) => `${plain(value.id)}  ${kind(value)}${confirmation(value)}`),
   ];
 }
 
@@ -238,7 +252,7 @@ export function formatCloudStatus(status: CloudStatus, version?: string): string
             : "join automatically with a sign-in confirmed here"
           : "not reported",
     ],
-    ["Trusted sign-ins", String(signIns.length)],
+    ["Sign-ins on your account", String(signIns.length)],
     ...(signupInviteOnly(status)
       ? [["Sign-up", "invite-only: a new account needs an invite link"] as [string, string]]
       : []),
@@ -257,7 +271,7 @@ export function formatCloudStatus(status: CloudStatus, version?: string): string
   return (
     "Omnesis account status\n" +
     rows
-      .map(([label, value]) => (label ? `  ${`${label}:`.padEnd(24)}${value}` : `    ${value}`))
+      .map(([label, value]) => (label ? `  ${`${label}:`.padEnd(26)}${value}` : `    ${value}`))
       .join("\n") +
     "\n"
   );

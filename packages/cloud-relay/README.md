@@ -1253,8 +1253,8 @@ The portal page shows the account link, the address, the on/off control and the
 new-device choice, plus one box when something is wrong. `omnesis cloud status`
 prints the full record in plain text (address, registration, tunnel, both
 certificates, the certificate monitor, the account link, the new-device policy,
-trusted sign-ins and every reported error code); `--json` prints the gateway's
-status as sent. `disconnect` removes the gateway from the account and leaves
+the sign-ins on the account and every reported error code); `--json` prints the
+gateway's status as sent. `disconnect` removes the gateway from the account and leaves
 remote access and paired devices as they are.
 
 Preparation obtains the hosted hostname from the relay's bounded public

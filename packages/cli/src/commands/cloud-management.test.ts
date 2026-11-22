@@ -180,24 +180,24 @@ test("status prints everything the portal's old connection record showed, as pla
   expect(output.mock.calls).toHaveLength(1);
   expect(String(output.mock.calls[0]![0]).split("\n")).toEqual([
     "Omnesis account status",
-    "  Gateway version:        9.8.7",
-    "  Error codes:            enrollment-refused (registration), tunnel-disconnected (tunnel), certificate-renewal-failed (certificate), public-endpoint-unreachable (address), ct-provider-unavailable (certificate monitor), account-link-failed (account), certificate-expiring (certificate), unexpected-certificate (certificate monitor)",
-    "  Remote access:          on",
-    "  Address:                https://northstar.relay.example.test/mcp (not answering)",
-    "  Registration:           enrolled, gateway ID 00000000-0000-4000-8000-000000000001",
-    "  Tunnel:                 online, last connected 2028-01-01T00:00:00.000Z",
-    "  Public certificate:     expiring, expires 2028-05-01T00:00:00.000Z, last renewed 2028-02-01T00:00:00.000Z",
-    "  Home certificate:       self-signed, valid, expires 2029-01-01T00:00:00.000Z, names home.example.test 10.0.0.7",
-    "  Certificate monitor:    incident, last checked 2028-01-02T00:00:00.000Z",
-    `  Unexpected certificate: name northstar.relay.example.test, public key ${FINGERPRINT}, certificate ${"e".repeat(64)}, issuer Fictional test issuer, serial ABCD, valid 2028-01-01T00:00:00.000Z to 2028-02-01T00:00:00.000Z, seen 2028-01-02T00:00:00.000Z, log entry fixture-entry-1`,
-    "  Account:                linked",
-    "  New devices:            ask first",
-    "  Trusted sign-ins:       2",
+    "  Gateway version:          9.8.7",
+    "  Error codes:              enrollment-refused (registration), tunnel-disconnected (tunnel), certificate-renewal-failed (certificate), public-endpoint-unreachable (address), ct-provider-unavailable (certificate monitor), account-link-failed (account), certificate-expiring (certificate), unexpected-certificate (certificate monitor)",
+    "  Remote access:            on",
+    "  Address:                  https://northstar.relay.example.test/mcp (not answering)",
+    "  Registration:             enrolled, gateway ID 00000000-0000-4000-8000-000000000001",
+    "  Tunnel:                   online, last connected 2028-01-01T00:00:00.000Z",
+    "  Public certificate:       expiring, expires 2028-05-01T00:00:00.000Z, last renewed 2028-02-01T00:00:00.000Z",
+    "  Home certificate:         self-signed, valid, expires 2029-01-01T00:00:00.000Z, names home.example.test 10.0.0.7",
+    "  Certificate monitor:      incident, last checked 2028-01-02T00:00:00.000Z",
+    `  Unexpected certificate:   name northstar.relay.example.test, public key ${FINGERPRINT}, certificate ${"e".repeat(64)}, issuer Fictional test issuer, serial ABCD, valid 2028-01-01T00:00:00.000Z to 2028-02-01T00:00:00.000Z, seen 2028-01-02T00:00:00.000Z, log entry fixture-entry-1`,
+    "  Account:                  linked",
+    "  New devices:              ask first",
+    "  Sign-ins on your account: 2",
     "    google:fictional-subject  Google account, signed in in the app, trusted when a device was approved, added 2028-01-03T00:00:00.000Z",
     "    passkey:fictional [31m  passkey, source not recorded, added 2028-01-05T00:00:00.000Z",
-    "  Recovery receipt:       present, expires 2030-01-01T00:00:00.000Z",
-    "  Relay:                  https://relay.example.test",
-    "  Certificate provider:   https://ca.example.test/directory",
+    "  Recovery receipt:         present, expires 2030-01-01T00:00:00.000Z",
+    "  Relay:                    https://relay.example.test",
+    "  Certificate provider:     https://ca.example.test/directory",
     "",
   ]);
 });
@@ -209,16 +209,16 @@ test("status of a gateway that reports almost nothing still prints every line, a
   });
   await manageCloud("status");
   const text = String(output.mock.calls[0]![0]);
-  expect(text).toContain("  Gateway version:        unknown\n");
-  expect(text).toContain("  Error codes:            certificate-expired (certificate)\n");
-  expect(text).toContain("  Remote access:          off\n");
-  expect(text).toContain("  Address:                none (not confirmed)\n");
-  expect(text).toContain("  Tunnel:                 unknown, last connected not recorded\n");
-  expect(text).toContain("  Account:                unlinked here, account not updated yet\n");
-  expect(text).toContain("  New devices:            not reported\n");
-  expect(text).toContain("  Trusted sign-ins:       0\n");
+  expect(text).toContain("  Gateway version:          unknown\n");
+  expect(text).toContain("  Error codes:              certificate-expired (certificate)\n");
+  expect(text).toContain("  Remote access:            off\n");
+  expect(text).toContain("  Address:                  none (not confirmed)\n");
+  expect(text).toContain("  Tunnel:                   unknown, last connected not recorded\n");
+  expect(text).toContain("  Account:                  unlinked here, account not updated yet\n");
+  expect(text).toContain("  New devices:              not reported\n");
+  expect(text).toContain("  Sign-ins on your account: 0\n");
   expect(text).not.toContain("Recovery receipt");
-  expect(formatCloudStatus({})).toContain("  Error codes:            none\n");
+  expect(formatCloudStatus({})).toContain("  Error codes:              none\n");
 });
 test("the page's remaining actions each have a command: unlink, policy, and listing or removing a trusted sign-in", async () => {
   const output = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
@@ -287,18 +287,27 @@ test("the page's remaining actions each have a command: unlink, policy, and list
   }
   gatewayJson.mockImplementation(async () => ({ deviceEnrollment: { policy: "automatic" } }));
   await listTrustedSignIns();
-  expect(printed()).toBe("No trusted sign-ins. New devices wait for your approval.\n");
+  expect(printed()).toBe(
+    "No sign-ins on your account are recorded here. New devices wait for your approval.\n",
+  );
   output.mockClear();
   await runCommand(cloudManagementCommands.policy, { rawArgs: ["automatic"] });
   expect(printed()).toContain("New devices join when you sign in to your Omnesis account");
 });
-test("trusted sign-ins say whether, and how, the owner confirmed each on this gateway", async () => {
+test("sign-ins on the account say what each passkey is called, and whether and how the owner confirmed each here", async () => {
   const output = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
   gatewayJson.mockImplementation(async () => ({
     deviceEnrollment: {
       policy: "automatic",
       trustedSignIns: [
-        { type: "passkey", id: "passkey-one", addedAt: Date.UTC(2028, 0, 3), source: "link-page" },
+        {
+          type: "passkey",
+          id: "passkey-one",
+          addedAt: Date.UTC(2028, 0, 3),
+          source: "link-page",
+          label: "Passkey on Mac",
+          createdAt: Date.UTC(2028, 0, 2) / 1000,
+        },
         {
           type: "google",
           id: "google-two",
@@ -318,6 +327,8 @@ test("trusted sign-ins say whether, and how, the owner confirmed each on this ga
           id: "passkey-three",
           at: Date.UTC(2028, 0, 6) / 1000,
           via: "android-app",
+          // Status is data from the gateway: never terminal control in a label.
+          label: "Work\u001b[2Jlaptop",
         },
         { type: "passkey", id: "passkey-four", at: Date.UTC(2028, 0, 7) / 1000, via: "later" },
       ],
@@ -325,9 +336,9 @@ test("trusted sign-ins say whether, and how, the owner confirmed each on this ga
   }));
   await listTrustedSignIns();
   expect(String(output.mock.calls[0]![0]).split("\n")).toEqual([
-    "passkey-one  passkey, signed in on the Omnesis account page, added 2028-01-03T00:00:00.000Z, confirmed on this gateway's own page 2028-01-05T00:00:00.000Z",
+    'passkey-one  passkey "Passkey on Mac", created 2028-01-02T00:00:00.000Z, signed in on the Omnesis account page, added 2028-01-03T00:00:00.000Z, confirmed on this gateway\'s own page 2028-01-05T00:00:00.000Z',
     "google-two  Google account, already on the account, signed for by one of its passkeys, added 2028-01-04T00:00:00.000Z, not confirmed on this gateway",
-    "passkey-three  passkey, confirmed in the Android app 2028-01-06T00:00:00.000Z",
+    'passkey-three  passkey "Work [2Jlaptop", confirmed in the Android app 2028-01-06T00:00:00.000Z',
     "passkey-four  passkey, confirmed 2028-01-07T00:00:00.000Z",
     "",
   ]);
@@ -336,11 +347,11 @@ test("status says whether new devices can join yet: only once a sign-in is confi
   expect(
     formatCloudStatus({ deviceEnrollment: { policy: "automatic", confirmationNeeded: true } }),
   ).toContain(
-    "  New devices:            join automatically once a sign-in is confirmed here; until then each waits for approval\n",
+    "  New devices:              join automatically once a sign-in is confirmed here; until then each waits for approval\n",
   );
   expect(
     formatCloudStatus({ deviceEnrollment: { policy: "automatic", confirmationNeeded: false } }),
-  ).toContain("  New devices:            join automatically with a sign-in confirmed here\n");
+  ).toContain("  New devices:              join automatically with a sign-in confirmed here\n");
 });
 test("enrollment reads bounded private invitation JSON, never a token in command history or output", async () => {
   const output = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
@@ -706,7 +717,7 @@ test("status says when the relay creates new accounts only with an invite", asyn
   );
   await manageCloud("status");
   expect(String(output.mock.calls[0]![0])).toContain(
-    "  Sign-up:                invite-only: a new account needs an invite link\n",
+    "  Sign-up:                  invite-only: a new account needs an invite link\n",
   );
   for (const status of [{ enabled: false }, { enabled: false, signup: { inviteOnly: "yes" } }]) {
     output.mockClear();
@@ -780,7 +791,7 @@ test("start-over discards an unfinished connection, and a connected gateway is p
 
 test("status says when connecting didn't finish, why, and both ways on", () => {
   expect(formatCloudStatus({ unfinished: {} })).toContain(
-    "  Connecting:             didn't finish, it was interrupted. Run `omnesis cloud connect` to try again, or `omnesis cloud start-over` to discard it\n",
+    "  Connecting:               didn't finish, it was interrupted. Run `omnesis cloud connect` to try again, or `omnesis cloud start-over` to discard it\n",
   );
   expect(formatCloudStatus({ unfinished: { error: "enrollment-refused" } })).toContain(
     "didn't finish (enrollment-refused). Run `omnesis cloud connect`",

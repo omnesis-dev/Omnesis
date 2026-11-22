@@ -220,7 +220,7 @@ export function mountCloudRelayManagementRoutes(
           })),
           ...enrollment.confirmedSignIns
             .filter(({ type, id }) => !pinned.has(`${type}:${id}`))
-            .map(({ type, id, at, via }) => ({ type, id, addedAt: at, confirmed: true, via })),
+            .map(({ at, ...signIn }) => ({ ...signIn, addedAt: at, confirmed: true })),
         ],
         ...(enrollment.confirmOrigin ? { confirmOrigin: enrollment.confirmOrigin } : {}),
       };

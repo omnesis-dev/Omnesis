@@ -29,11 +29,13 @@ import {
   EnrollmentWorld,
   PasskeyBrowser,
   RELAY_HOST,
+  addSecondPasskey,
   assertionOn,
   browserSuiteAvailable,
   clickFirst,
   connectGatewayBySignIn,
   copyPasskey,
+  swapAuthenticator,
   syncPasskey,
   expectText,
   passkeyIds,
@@ -186,12 +188,12 @@ describe.skipIf(!browserReady)("passkeys on the gateway's own page", () => {
         return status.deviceEnrollment.confirmedSignIns?.length ? status : undefined;
       }, "the passkey to be confirmed");
       expect(confirmed.deviceEnrollment.confirmedSignIns).toEqual([
-        {
+        expect.objectContaining({
           type: "passkey",
           id: (await passkeyIds(owner))[0],
           at: expect.any(Number),
           via: "gateway-origin",
-        },
+        }),
       ]);
       expect(confirmed.deviceEnrollment.trustedSignIns).toEqual([
         expect.objectContaining({ source: "link-page", confirmed: true }),
@@ -606,6 +608,80 @@ describe.skipIf(!browserReady)("passkeys on the gateway's own page", () => {
       ).toBe(false);
     } finally {
       await rogue.close();
+    }
+  }, 300_000);
+
+  test("a passkey added after setup is named as the account lists it, and used once from its row with Use it now", async () => {
+    const added = await addSecondPasskey(browser, world, owner);
+    try {
+      const [id] = await passkeyIds(added);
+      const page = await ownerPortal(added);
+      await page.goto(`${gateway.publicOrigin}/portal/settings/account`);
+      await page
+        .getByRole("heading", { name: "Sign-ins on your account", exact: true })
+        .waitFor({ timeout: 20_000 });
+      // Opening the page reads the account, which pins the new passkey from its endorsement and
+      // gives each passkey the name and creation time the account lists for it.
+      const listed = await waitFor(async () => {
+        const status = await gateway.status();
+        return status.deviceEnrollment.trustedSignIns.find((pin) => pin.id === id)
+          ? status
+          : undefined;
+      }, "the new passkey to be on record here");
+      const row = listed.deviceEnrollment.trustedSignIns.find((pin) => pin.id === id)!;
+      expect(row).toMatchObject({
+        type: "passkey",
+        source: "endorsed",
+        confirmed: false,
+        label: expect.stringMatching(/^Passkey/),
+        createdAt: expect.any(Number),
+      });
+      // Set up already, so no checklist: the row itself offers the step.
+      expect(await page.locator("#relay-setup-title").count()).toBe(0);
+      const waiting = page.locator(".relay-sign-in", { hasText: "Waiting for you to use it once" });
+      await waiting.waitFor({ timeout: 20_000 });
+      await shot(page, "use-it-now");
+      // The page is reached through the relay, so confirming another passkey once one is confirmed
+      // also asks for the confirmed one (a step-up). The new passkey answers the row's prompt; the
+      // owner then holds the confirmed one when the step-up asks for it.
+      const [confirmedKey] = (
+        await owner.cdp.send("WebAuthn.getCredentials", { authenticatorId: owner.authenticatorId })
+      ).credentials;
+      await waiting.getByRole("button", { name: "Use it now", exact: true }).click();
+      const sheet = page.getByRole("dialog", { name: "Confirm it's you" });
+      await sheet.waitFor({ timeout: 20_000 });
+      await shot(page, "use-it-now-step-up");
+      const made = await swapAuthenticator(added, [confirmedKey!]);
+      await sheet.getByRole("button", { name: "Continue", exact: true }).click();
+      const confirmed = await waitFor(async () => {
+        const status = await gateway.status();
+        return status.deviceEnrollment.confirmedSignIns?.some((signIn) => signIn.id === id)
+          ? status
+          : undefined;
+      }, "the added passkey to be confirmed");
+      // The owner's own copy catches up with the signature counter the step-up moved on.
+      const [used] = await swapAuthenticator(added, made);
+      await owner.cdp.send("WebAuthn.removeCredential", {
+        authenticatorId: owner.authenticatorId,
+        credentialId: used!.credentialId,
+      });
+      await owner.cdp.send("WebAuthn.addCredential", {
+        authenticatorId: owner.authenticatorId,
+        credential: used!,
+      });
+      expect(
+        confirmed.deviceEnrollment.confirmedSignIns?.find((signIn) => signIn.id === id),
+      ).toMatchObject({ via: "gateway-origin", label: row.label, createdAt: row.createdAt });
+      // Both passkeys are confirmed now, and nothing is left waiting.
+      await waitFor(
+        async () => (await page.locator(".relay-sign-in-action").count()) === 0,
+        "the row to show the passkey confirmed",
+      );
+      await expectText(page, /^Confirmed on this gateway/);
+      await shot(page, "use-it-now-confirmed");
+      expect(added.errors).toEqual([]);
+    } finally {
+      await added.context.close();
     }
   }, 300_000);
 });

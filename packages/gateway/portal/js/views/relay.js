@@ -17,9 +17,11 @@ import {
   CONFIRM_ON_LOAD,
   FinishSetup,
   openOnGateway,
+  SETUP_COPY,
   SetupReminder,
+  usePasskeyConfirmation,
 } from "../components/gateway-passkey-confirm.js";
-import { onGatewayOrigin } from "../lib/gateway-passkey.js";
+import { gatewayPasskeyProof, onGatewayOrigin, passkeysSupported } from "../lib/gateway-passkey.js";
 import {
   inConnectWindow,
   OPENED_BY_PORTAL,
@@ -34,6 +36,7 @@ import {
   relayClock,
   relayDate,
   relayHttpsUrl,
+  relayManagement,
 } from "../lib/cloud-relay-api.js";
 import { AccountConnect, ExistingAccountNotice } from "./remote-access/account-step.js";
 import { ACCOUNT_PAGE } from "./remote-access/manage.js";
@@ -261,7 +264,7 @@ function ManageAccountLink({ serviceUrl }) {
 
 /**
  * Leaving the account is asked twice, in the page. The text follows what the
- * gateway does: it drops the account link and its trusted sign-ins, and leaves
+ * gateway does: it drops the account link and its sign-ins on record, and leaves
  * remote access and paired devices alone.
  */
 /** Unlinking is confirmed first, in these words, wherever it is offered. */
@@ -520,21 +523,55 @@ const CONFIRMED_VIA = {
 
 /**
  * What a sign-in on record means for a new device here: confirmed (and how), a passkey the owner
- * still has to use once on this gateway while `setup` waits for one, or one whose devices wait.
+ * can still use once on this gateway (`waiting`), or one whose devices wait.
  */
-function signInState(signIn, setup) {
+function signInState(signIn, waiting) {
   if (signIn.via) return CONFIRMED_VIA[signIn.via] ?? "Confirmed";
-  if (signIn.type === "passkey" && setup) return "Waiting for you to use it once on this gateway";
+  if (waiting) return "Waiting for you to use it once on this gateway";
   return "Not confirmed on this gateway yet: devices that sign in with it wait for your OK";
 }
 
+/** The labels the Omnesis account page gives a passkey it adds, which already read as a name. */
+const DEFAULT_PASSKEY_LABEL = /^Passkey(?: on (?:iPhone|iPad|Android|Mac|Windows))?$/;
+
 /**
- * The sign-ins this gateway trusts: what each is, when it was added, where it came from, and
- * whether it's confirmed, its state first. The account's listing names a sign-in only by its id,
- * which no person reads, so the id is kept for a hover, and two of a kind added the same day are
- * told apart by its last characters.
+ * What a row calls a sign-in. A passkey goes by the label its account gave it: one of the account
+ * page's own ("Passkey on Mac") as it is, any other quoted after the word, so a label can't pass
+ * for the row's own words. The relay chooses labels, so one is only ever text on the page and
+ * decides nothing.
  */
-function TrustedSignIns({ enrollment }) {
+function signInName(signIn) {
+  if (signIn.type !== "passkey") return "Google account";
+  const label = typeof signIn.label === "string" ? signIn.label.trim() : "";
+  if (!label) return "Passkey";
+  return DEFAULT_PASSKEY_LABEL.test(label) ? label : `Passkey “${label}”`;
+}
+
+/** A day to show, or nothing for a time from before 2001, which is no real time. */
+function day(at) {
+  return at > 1e9 ? relayDate(at) : "";
+}
+
+/**
+ * The sign-ins on the account that this gateway has on record: what each is called, when it was
+ * added, whether it's confirmed here, and where it came from, its state first. A passkey that can
+ * still be confirmed here offers "Use it now" (`confirmable`), which runs the same passkey step as
+ * setup for that passkey, on the gateway's own page or by opening it. While the setup checklist
+ * shows, it offers that step instead (`actions` is false). A sign-in's id, and the day this
+ * gateway put it on record, are kept for a hover, and two of a kind are told apart by the id's
+ * last characters.
+ */
+function SignInList({ enrollment, confirmable, actions, ready, busy, run, request, prove, open, location, supported }) {
+  const passkey = usePasskeyConfirmation({
+    origin: enrollment.confirmOrigin,
+    run,
+    request,
+    prove,
+    open,
+    location,
+    supported,
+    autoStart: actions && confirmable,
+  });
   const pinned = enrollment.trustedSignIns ?? [];
   const confirmed = enrollment.confirmedSignIns ?? [];
   const rows = [
@@ -547,20 +584,24 @@ function TrustedSignIns({ enrollment }) {
       .map((value) => ({ ...value, addedAt: value.at, confirmed: true })),
   ];
   if (rows.length === 0) return null;
-  // Nothing confirmed yet and a page of its own: setup's last step asks for a passkey here.
-  const setup = confirmed.length === 0 && Boolean(enrollment.confirmOrigin);
+  const held = Boolean(passkey.working) || (Boolean(busy) && busy !== "refresh");
+  // Not while the setup checklist above offers the same step, and from another address only once
+  // the gateway's own page has its certificate.
+  const offer = actions && confirmable && supported && (passkey.here || ready);
   return html`<div class="relay-sign-ins">
     <ul class="relay-sign-in-list">
       ${rows.map((signIn, index) => {
-        const kind = signIn.type === "passkey" ? "Passkey" : "Google account";
-        // An add time from before 2001 is no real time: such a row says nothing about when.
-        const added = signIn.addedAt > 1e9 ? relayDate(signIn.addedAt) : "";
-        // Two of a kind added the same day are told apart by the end of their ids.
+        const name = signInName(signIn);
+        // Added to the account, where the listing says when; otherwise to this gateway.
+        const added = day(signIn.createdAt ?? signIn.addedAt);
+        // Two of a kind this gateway added the same day are told apart by the end of their ids,
+        // whatever the relay calls them or dates them.
         const twin = rows.some(
           (other, at) =>
             at !== index &&
             other.type === signIn.type &&
-            (other.addedAt > 1e9 ? relayDate(other.addedAt) : "") === added,
+            (day(other.addedAt) === day(signIn.addedAt) ||
+              day(other.createdAt ?? other.addedAt) === added),
         );
         const detail = [added && `added ${added}`, twin && `ending ${String(signIn.id).slice(-4)}`]
           .filter(Boolean)
@@ -568,30 +609,57 @@ function TrustedSignIns({ enrollment }) {
         const source = signIn.source
           ? (SIGN_IN_SOURCES[signIn.source] ?? "Source not recorded")
           : undefined;
+        const waiting = confirmable && signIn.type === "passkey" && !signIn.via;
         return html`<li class="relay-sign-in" key=${`${signIn.type}:${signIn.id}`}>
-          <span class="relay-row-value" title=${`${kind} ${signIn.id}`}>
-            ${kind}${detail && html`<span class="relay-hint">${` · ${detail}`}</span>`}
+          <span
+            class="relay-row-value"
+            title=${`${signIn.type === "passkey" ? "Passkey" : "Google account"} ${signIn.id}${day(signIn.addedAt) && `, on this gateway since ${day(signIn.addedAt)}`}`}
+          >
+            ${name}${detail && html`<span class="relay-hint">${` · ${detail}`}</span>`}
           </span>
-          <span class="relay-hint">${[signInState(signIn, setup), source].filter(Boolean).join(" · ")}</span>
+          <span class="relay-hint">${[signInState(signIn, waiting), source].filter(Boolean).join(" · ")}</span>
+          ${
+            waiting &&
+            offer &&
+            html`<button
+              type="button"
+              class="relay-quiet relay-sign-in-action"
+              disabled=${held}
+              onClick=${() => (passkey.here ? passkey.confirm(false, signIn.id) : passkey.openThere())}
+            >
+              ${
+                passkey.confirming === signIn.id
+                  ? SETUP_COPY.passkeyWorking
+                  : passkey.working === "open"
+                    ? SETUP_COPY.opening
+                    : SETUP_COPY.useNow
+              }
+            </button>`
+          }
         </li>`;
       })}
     </ul>
+    ${passkey.error && html`<p role="alert" class="relay-notice">${passkey.error}</p>`}
   </div>`;
 }
 
 /**
- * The sign-ins this gateway trusts, with the setup reminder above them. What
- * new devices may do is one answer for every way in, set in Settings →
- * Connectivity, so this page does not repeat it.
+ * The sign-ins on the account that this gateway has on record, with the setup reminder above
+ * them. Not every one is trusted here, which each row says. What new devices may do is one answer
+ * for every way in, set in Settings → Connectivity, so this page does not repeat it.
  */
-function SignIns({ enrollment, reminder, onFinish, held }) {
+function SignIns({ enrollment, reminder, onFinish, held, ...list }) {
   const showReminder = !held && reminder;
   const hasSignIns = (enrollment.trustedSignIns ?? []).length + (enrollment.confirmedSignIns ?? []).length > 0;
   if (!showReminder && !hasSignIns) return null;
   return html`<section class="relay-section" aria-labelledby="relay-sign-ins-title">
-    <h3 class="relay-section-title" id="relay-sign-ins-title">Trusted sign-ins</h3>
+    <h3 class="relay-section-title" id="relay-sign-ins-title">Sign-ins on your account</h3>
     ${showReminder && html`<${SetupReminder} onFinish=${onFinish} />`}
-    <${TrustedSignIns} enrollment=${enrollment} />
+    <${SignInList}
+      enrollment=${enrollment}
+      confirmable=${!held && Boolean(enrollment.confirmOrigin)}
+      ...${list}
+    />
   </section>`;
 }
 
@@ -680,12 +748,19 @@ export function usePasskeyHandoff({ phase, enrollment, setup, ready, later, open
 /**
  * One of the two pages behind Settings → Connectivity that the relay's status
  * feeds. `part` "account" is the Omnesis account — connecting and signing in,
- * the link, finishing setup and the trusted sign-ins: how devices find and
+ * the link, finishing setup and the sign-ins on the account: how devices find and
  * join this gateway. `part` "relay" is the Omnesis relay — its connection,
  * problems, the addresses it serves and turning it off and on: how devices
  * reach this gateway from anywhere.
  */
-export function RelayView({ part = "account", open = openOnGateway, location = globalThis.location } = {}) {
+export function RelayView({
+  part = "account",
+  open = openOnGateway,
+  location = globalThis.location,
+  request = relayManagement,
+  prove = gatewayPasskeyProof,
+  supported = passkeysSupported(),
+} = {}) {
   const { status, error, errorCode, clearError, busy, run, version } = useRelayManagement();
   // A sign-in added on the account page shows here within seconds, not at the hourly check-in.
   useAccountRefresh(() => void run());
@@ -766,8 +841,11 @@ export function RelayView({ part = "account", open = openOnGateway, location = g
             serviceUrl=${status.config?.relayUrl}
             busy=${busy}
             run=${run}
+            request=${request}
+            prove=${prove}
             open=${open}
             location=${location}
+            supported=${supported}
             onDismiss=${() => chooseLater(true)}
           />`
         : !established &&
@@ -800,6 +878,15 @@ export function RelayView({ part = "account", open = openOnGateway, location = g
         reminder=${Boolean(setup) && later}
         onFinish=${() => chooseLater(false)}
         held=${Boolean(status.incidentHold)}
+        actions=${!checklist}
+        ready=${ready}
+        busy=${busy}
+        run=${run}
+        request=${request}
+        prove=${prove}
+        open=${open}
+        location=${location}
+        supported=${supported}
       />`
     }
   </div>`;

@@ -93,7 +93,7 @@ export async function listTrustedSignIns(): Promise<void> {
   process.stdout.write(
     lines.length > 0
       ? lines.join("\n") + "\n"
-      : "No trusted sign-ins. New devices wait for your approval.\n",
+      : "No sign-ins on your account are recorded here. New devices wait for your approval.\n",
   );
 }
 

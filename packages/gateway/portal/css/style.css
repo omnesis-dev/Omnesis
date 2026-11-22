@@ -19859,6 +19859,7 @@ summary.decision-card-head {
 .relay-sign-in-list { list-style: none; margin: 6px 0 0; padding: 0; }
 .relay-sign-in { display: flex; flex-direction: column; gap: 2px; padding: 7px 0; border-top: 1px solid var(--border); }
 .relay-sign-in:first-child { border-top: none; }
+.relay-sign-in .relay-sign-in-action { align-self: flex-start; min-height: 24px; padding: 0; color: var(--accent); font-weight: 500; }
 .relay-row-action .relay-copy { margin-top: -6px; }
 .relay-row-action:empty { display: none; }
 .relay-address { font-size: 13px; }
@@ -19885,6 +19886,7 @@ summary.decision-card-head {
   .relay-row-label { grid-column: 1 / -1; font-size: 12px; }
   .relay-code { font-size: 22px; }
   .relay-view .btn-primary, .relay-view .btn-secondary, .relay-quiet { min-height: 44px; }
+  .relay-sign-in .relay-sign-in-action { min-height: 44px; }
 }
 
 /* Devices: how a device joined. */

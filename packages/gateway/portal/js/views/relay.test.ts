@@ -32,6 +32,8 @@ import { SETUP_COPY } from "../components/gateway-passkey-confirm.js";
 import { RelayView, relayPhase } from "./relay.js";
 // @ts-expect-error portal JS
 import { closeConnectWindow } from "../lib/connect-window.js";
+// @ts-expect-error portal JS
+import { captureAccountSignIn, takePortalHandoff } from "../lib/cloud-pairing-handoff.js";
 
 let host: HTMLElement;
 const HOST = "northstar.relay.example.test";
@@ -534,7 +536,7 @@ test("connected: the account page holds the account, the relay page the connecti
   await show();
   expect([...host.querySelectorAll(".relay-section-title")].map((x) => x.textContent)).toEqual([
     "Account",
-    "Trusted sign-ins",
+    "Sign-ins on your account",
   ]);
   expect([...host.querySelectorAll(".relay-row-label")].map((x) => x.textContent)).toEqual(["This gateway"]);
   expect(
@@ -1093,7 +1095,7 @@ describe("certificate incident hold", () => {
 });
 
 describe("new devices", () => {
-  test("the account page lists the trusted sign-ins, with nothing to remove, and leaves the new-device choice to Connectivity", async () => {
+  test("the account page lists the sign-ins on the account, with nothing to remove, and leaves the new-device choice to Connectivity", async () => {
     state.status = connected();
     await show();
     expect(host.querySelectorAll(".relay-sign-in")).toHaveLength(2);
@@ -1102,17 +1104,17 @@ describe("new devices", () => {
     expect(host.querySelector('[role="radiogroup"]')).toBeNull();
     expect(text()).not.toContain("What happens when a new device signs in");
   });
-  test("has no Trusted sign-ins section without an enrollment status or any sign-in", async () => {
+  test("has no Sign-ins on your account section without an enrollment status or any sign-in", async () => {
     state.status = connected({ deviceEnrollment: undefined });
     await show();
-    expect(text()).not.toContain("Trusted sign-ins");
+    expect(text()).not.toContain("Sign-ins on your account");
     state.status = connected({ deviceEnrollment: { policy: "ask", trustedSignIns: [] } });
     await show();
-    expect(text()).not.toContain("Trusted sign-ins");
+    expect(text()).not.toContain("Sign-ins on your account");
   });
 });
 
-describe("trusted sign-ins and confirming a passkey", () => {
+describe("sign-ins on the account and confirming a passkey", () => {
   const ORIGIN = "https://g-abcdefgh.relay.example.test";
   test("a sign-in shows its state first and when it was added, and a passkey setup waits for reads as a step to take, not a failure", async () => {
     const added = Date.UTC(2028, 0, 3, 12) / 1000;
@@ -1144,7 +1146,7 @@ describe("trusted sign-ins and confirming a passkey", () => {
     ]);
   });
 
-  test("each trusted sign-in says where it came from and whether it is confirmed here", async () => {
+  test("each sign-in on record says where it came from and whether it is confirmed here", async () => {
     state.status = connected({
       deviceEnrollment: {
         policy: "automatic",
@@ -1262,17 +1264,17 @@ describe("trusted sign-ins and confirming a passkey", () => {
     expect(text()).toContain("This gateway is linked to your Omnesis account.");
   });
 
-  test("Not now with no sign-in on record yet leaves the reminder alone under Trusted sign-ins", async () => {
+  test("Not now with no sign-in on record yet leaves the reminder alone under Sign-ins on your account", async () => {
     // A Google account linked under automatic joins, before the gateway lists any sign-in.
     state.status = connected({ deviceEnrollment: { policy: "automatic", confirmOrigin: ORIGIN } });
     await show();
     await click("Not now");
-    expect(host.querySelector("#relay-sign-ins-title")?.textContent).toBe("Trusted sign-ins");
+    expect(host.querySelector("#relay-sign-ins-title")?.textContent).toBe("Sign-ins on your account");
     expect(text()).toContain("New devices wait for your OK until you finish setup.");
     expect(host.querySelector(".relay-sign-ins")).toBeNull();
   });
 
-  test("Not now leaves one amber line under Trusted sign-ins, remembered here, and Finish setup brings it back", async () => {
+  test("Not now leaves one amber line under Sign-ins on your account, remembered here, and Finish setup brings it back", async () => {
     state.status = fresh([GOOGLE]);
     await show();
     await click("Not now");
@@ -1588,4 +1590,327 @@ test("waiting after choosing to create an account names the button for it", asyn
   expect(headline()).toBe("Create your Omnesis account");
   expect(link("Create your Omnesis account").getAttribute("href")).toBe(AUTHORIZE);
   expect(link("Sign in to your Omnesis account")).toBeUndefined();
+});
+
+describe("passkey names and using a passkey from its row", () => {
+  const ORIGIN = "https://g-abcdefgh.relay.example.test";
+  const HOME = { origin: "https://192.0.2.1:7600" };
+  const day = (seconds: number) =>
+    new Date(seconds * 1000).toLocaleDateString(undefined, {
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+    });
+  const CREATED = Date.UTC(2028, 0, 21, 12) / 1000;
+  const PINNED = Date.UTC(2028, 1, 2, 12) / 1000;
+  /** Set up with one passkey, and a second one the account added later, not used here yet. */
+  const twoPasskeys = (over: Record<string, any> = {}, enrollment: Record<string, any> = {}) =>
+    connected({
+      deviceEnrollment: {
+        policy: "automatic",
+        confirmationNeeded: false,
+        confirmOrigin: ORIGIN,
+        trustedSignIns: [
+          {
+            type: "passkey",
+            id: "fictional-one",
+            addedAt: PINNED,
+            source: "link-page",
+            label: "Passkey on Mac",
+            createdAt: CREATED,
+          },
+          {
+            type: "passkey",
+            id: "fictional-two",
+            addedAt: PINNED,
+            source: "endorsed",
+            label: "Work laptop",
+            createdAt: CREATED,
+          },
+        ],
+        confirmedSignIns: [
+          {
+            type: "passkey",
+            id: "fictional-one",
+            at: PINNED,
+            via: "gateway-origin",
+            label: "Passkey on Mac",
+            createdAt: CREATED,
+          },
+        ],
+        ...enrollment,
+      },
+      ...over,
+    });
+  const rows = () =>
+    [...host.querySelectorAll(".relay-sign-in")].map((x) =>
+      [...x.children].map((line) => (line.textContent ?? "").replace(/\s+/g, " ").trim()).join(" | "),
+    );
+  const settle = () => act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
+  async function showWith(props: Record<string, unknown> = {}) {
+    await act(async () =>
+      render(h(RelayView, { location: { origin: ORIGIN }, supported: true, ...props }), host),
+    );
+  }
+  const proof = { type: "gateway-passkey", credential: { id: "fictional-two" } };
+  const ceremony = {
+    challenge: "c".repeat(43),
+    allowCredentials: ["fictional-one", "fictional-two"],
+  };
+  const confirming = (failure?: unknown) =>
+    vi.fn().mockImplementation(async (operation: string) => {
+      if (operation === "passkeys/confirm/options") return ceremony;
+      if (failure) throw failure;
+      return {};
+    });
+
+  test("a passkey reads by its account's name and the day it was added to the account", async () => {
+    state.status = twoPasskeys();
+    await showWith({ supported: false });
+    expect(host.querySelector("#relay-sign-ins-title")?.textContent).toBe("Sign-ins on your account");
+    // This gateway put both on record the same day, so each also shows the end of its id.
+    expect(rows()).toEqual([
+      `Passkey on Mac · added ${day(CREATED)} · ending -one | Confirmed on this gateway · Used to connect this gateway`,
+      `Passkey “Work laptop” · added ${day(CREATED)} · ending -two | Waiting for you to use it once on this gateway · Added to your account later, vouched for by a sign-in trusted here`,
+    ]);
+    // The day this gateway put it on record is kept for a hover.
+    expect(host.querySelector(".relay-sign-in .relay-row-value")?.getAttribute("title")).toBe(
+      `Passkey fictional-one, on this gateway since ${day(PINNED)}`,
+    );
+    // Without a name or a creation time, a row reads as before: when this gateway added it.
+    state.status = twoPasskeys(
+      {},
+      {
+        trustedSignIns: [
+          { type: "passkey", id: "fictional-one", addedAt: PINNED, source: "link-page" },
+          { type: "passkey", id: "fictional-two", addedAt: PINNED, source: "endorsed", label: "  " },
+        ],
+        confirmedSignIns: [{ type: "passkey", id: "fictional-one", at: PINNED, via: "gateway-origin" }],
+      },
+    );
+    await showWith({ supported: false });
+    expect(rows()).toEqual([
+      `Passkey · added ${day(PINNED)} · ending -one | Confirmed on this gateway · Used to connect this gateway`,
+      `Passkey · added ${day(PINNED)} · ending -two | Waiting for you to use it once on this gateway · Added to your account later, vouched for by a sign-in trusted here`,
+    ]);
+  });
+
+  test("a label the relay chose can't pass for the row's own words or hide a twin", async () => {
+    const lookalike = (id: string, label: string, createdAt: number) => ({
+      type: "passkey",
+      id,
+      addedAt: PINNED + (id === "fictional-two" ? 86_400 * 3 : 0),
+      source: "endorsed",
+      label,
+      createdAt,
+    });
+    state.status = twoPasskeys(
+      {},
+      {
+        trustedSignIns: [
+          // Labels that read like the account page's own, or like a state, are quoted.
+          lookalike("fictional-one", "Passkey · Confirmed on this gateway", CREATED),
+          // A Cyrillic "а" looks the same as the Latin one; the same claimed day still tells them apart.
+          lookalike("fictional-two", "Passkey on M\u0430c", CREATED),
+        ],
+        confirmedSignIns: [],
+      },
+    );
+    await showWith({ supported: false });
+    expect(rows().map((row) => row.split(" | ")[0])).toEqual([
+      `Passkey “Passkey · Confirmed on this gateway” · added ${day(CREATED)} · ending -one`,
+      `Passkey “Passkey on M\u0430c” · added ${day(CREATED)} · ending -two`,
+    ]);
+    // Rows that differ in kind or in every day carry no ending.
+    state.status = twoPasskeys(
+      {},
+      {
+        trustedSignIns: [
+          lookalike("fictional-one", "Passkey on Windows", CREATED),
+          { ...lookalike("fictional-two", "Passkey on iPhone", CREATED + 86_400 * 9) },
+          { type: "google", id: "google-fictional", addedAt: PINNED, source: "link-page" },
+        ],
+        confirmedSignIns: [],
+      },
+    );
+    await showWith({ supported: false });
+    expect(rows().map((row) => row.split(" | ")[0])).toEqual([
+      `Passkey on Windows · added ${day(CREATED)}`,
+      `Passkey on iPhone · added ${day(CREATED + 86_400 * 9)}`,
+      `Google account · added ${day(PINNED)}`,
+    ]);
+    // A row that claims the day another was put on record here reads as its twin too.
+    state.status = twoPasskeys(
+      {},
+      {
+        trustedSignIns: [
+          { type: "passkey", id: "fictional-one", addedAt: CREATED, source: "link-page" },
+          lookalike("fictional-two", "Passkey on Android", CREATED),
+        ],
+        confirmedSignIns: [],
+      },
+    );
+    await showWith({ supported: false });
+    expect(rows().map((row) => row.split(" | ")[0])).toEqual([
+      `Passkey · added ${day(CREATED)} · ending -one`,
+      `Passkey on Android · added ${day(CREATED)} · ending -two`,
+    ]);
+  });
+
+  test("a name is only ever text: markup in it renders as written", async () => {
+    state.status = twoPasskeys(
+      {},
+      {
+        trustedSignIns: [
+          {
+            type: "passkey",
+            id: "fictional-two",
+            addedAt: PINNED,
+            source: "endorsed",
+            label: '<img src="x" onerror="alert(1)">',
+          },
+        ],
+        confirmedSignIns: [],
+        confirmationNeeded: true,
+      },
+    );
+    await showWith({ supported: false });
+    expect(host.querySelector(".relay-sign-in img")).toBeNull();
+    expect(host.querySelector(".relay-sign-in .relay-row-value")?.textContent).toContain(
+      'Passkey “<img src="x" onerror="alert(1)">”',
+    );
+  });
+
+  test("on the gateway's own page, Use it now asks for that passkey and shows it confirmed", async () => {
+    state.status = twoPasskeys();
+    const request = confirming();
+    const prove = vi.fn().mockResolvedValue(proof);
+    await showWith({ request, prove });
+    // Only the row still waiting offers it.
+    const actions = [...host.querySelectorAll(".relay-sign-in-action")];
+    expect(actions.map((item) => item.textContent?.trim())).toEqual(["Use it now"]);
+    state.run.mockClear();
+    let answer: (value: unknown) => void = () => {};
+    prove.mockReturnValueOnce(new Promise((resolve) => (answer = resolve)));
+    await act(async () => (actions[0] as HTMLButtonElement).click());
+    await settle();
+    expect(button("Waiting for your passkey…")?.disabled).toBe(true);
+    // The browser is asked for that one passkey; the gateway still checks whichever answers.
+    expect(prove).toHaveBeenCalledExactlyOnceWith(
+      { ...ceremony, allowCredentials: ["fictional-two"] },
+      { location: { origin: ORIGIN } },
+    );
+    await act(async () => answer(proof));
+    await settle();
+    expect(request.mock.calls).toEqual([
+      ["passkeys/confirm/options", {}],
+      ["passkeys/confirm", { proof }],
+    ]);
+    expect(state.run).toHaveBeenCalledOnce();
+    expect(button("Use it now")?.disabled).toBe(false);
+    // A passkey the gateway's prompt doesn't name is left to the browser.
+    request.mockImplementation(async (operation: string) =>
+      operation === "passkeys/confirm/options" ? { challenge: "c".repeat(43) } : {},
+    );
+    prove.mockClear();
+    await click("Use it now");
+    await settle();
+    expect(prove).toHaveBeenCalledExactlyOnceWith(
+      { challenge: "c".repeat(43) },
+      { location: { origin: ORIGIN } },
+    );
+  });
+
+  test("a refusal is said under the list, and a closed prompt only leaves the link", async () => {
+    state.status = twoPasskeys();
+    const refusal = Object.assign(new Error("refused"), { code: "passkey-not-on-account" });
+    await showWith({ request: confirming(refusal), prove: vi.fn().mockResolvedValue(proof) });
+    await click("Use it now");
+    await settle();
+    expect(host.querySelector('.relay-sign-ins [role="alert"]')?.textContent).toBe(
+      "That passkey is for a different Omnesis account. It may be from an account you deleted. Choose another passkey, or continue with Google.",
+    );
+    const closed = Object.assign(new Error("Closed"), { code: "passkey-not-confirmed" });
+    render(null, host);
+    await showWith({ request: confirming(closed), prove: vi.fn().mockResolvedValue(proof) });
+    await click("Use it now");
+    await settle();
+    expect(host.querySelector('.relay-sign-ins [role="alert"]')?.textContent).toBe(
+      "Your gateway couldn't check that passkey. Try again.",
+    );
+  });
+
+  test("from a home address it opens the gateway's own page the way setup does", async () => {
+    state.status = twoPasskeys();
+    const open = vi.fn().mockResolvedValue(undefined);
+    await showWith({ location: HOME, open });
+    await click("Use it now");
+    expect(open).toHaveBeenCalledExactlyOnceWith(ORIGIN, { next: "confirm-passkey", location: HOME });
+    expect(button("Opening…")?.disabled).toBe(true);
+    // A failure to open is said, and the link comes back.
+    render(null, host);
+    await showWith({ location: HOME, open: vi.fn().mockRejectedValue(new Error("nope")) });
+    await click("Use it now");
+    expect(host.querySelector('.relay-sign-ins [role="alert"]')?.textContent).toBe(
+      "Couldn't open your gateway's secure address. Try again.",
+    );
+    expect(button("Use it now")?.disabled).toBe(false);
+    // Another change in progress holds it; a refresh does not.
+    state.busy = "enrollment";
+    await showWith({ location: HOME, open });
+    expect(button("Use it now")?.disabled).toBe(true);
+    state.busy = "refresh";
+    await showWith({ location: HOME, open });
+    expect(button("Use it now")?.disabled).toBe(false);
+  });
+
+  test("it's offered only where the passkey can be used: a secure address, passkeys, no lock", async () => {
+    // A browser without passkeys.
+    state.status = twoPasskeys();
+    await showWith({ supported: false });
+    expect(button("Use it now")).toBeUndefined();
+    expect(text()).toContain("Waiting for you to use it once on this gateway");
+    // From a home address, before the secure address has its certificate.
+    state.status = twoPasskeys({ certificate: { state: "pending" } });
+    await showWith({ location: HOME });
+    expect(button("Use it now")).toBeUndefined();
+    // No address of its own: no passkey can be used here, and its devices wait.
+    state.status = twoPasskeys({}, { confirmOrigin: undefined });
+    await showWith();
+    expect(button("Use it now")).toBeUndefined();
+    expect(text()).not.toContain("Waiting for you to use it once");
+    expect(text()).toContain("Not confirmed on this gateway yet: devices that sign in with it wait for your OK");
+    // During a security lock nothing can be confirmed here.
+    state.status = twoPasskeys({ incidentHold: { since: "2028-01-02T00:00:00Z", certificates: ["e"] } });
+    await showWith();
+    expect(button("Use it now")).toBeUndefined();
+    expect(text()).not.toContain("Waiting for you to use it once");
+    // While the setup checklist offers the step, the rows don't repeat it.
+    state.status = twoPasskeys({}, { confirmedSignIns: [], confirmationNeeded: true });
+    await showWith();
+    expect(host.querySelector("#relay-setup-title")?.textContent).toBe("Finish setting up");
+    expect(button("Use it now")).toBeUndefined();
+    expect(button("Continue with passkey")).toBeDefined();
+  });
+
+  test("opened from another address to use a passkey, the page starts the prompt once by itself", async () => {
+    // The handoff that opened this page asked for the passkey prompt.
+    captureAccountSignIn(
+      { hash: `#portal-handoff=${"a".repeat(43)}&next=confirm-passkey`, pathname: "/portal/", search: "" },
+      { state: null, replaceState: () => {} },
+    );
+    expect(takePortalHandoff()).toBe("a".repeat(43));
+    state.status = twoPasskeys();
+    const request = confirming();
+    const prove = vi.fn().mockResolvedValue(proof);
+    await showWith({ request, prove });
+    await settle();
+    expect(prove).toHaveBeenCalledOnce();
+    expect(request).toHaveBeenLastCalledWith("passkeys/confirm", { proof });
+    // Once only: showing the page again starts nothing.
+    render(null, host);
+    await showWith({ request, prove });
+    await settle();
+    expect(prove).toHaveBeenCalledOnce();
+  });
 });

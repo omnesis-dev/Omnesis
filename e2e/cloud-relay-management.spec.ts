@@ -675,7 +675,7 @@ test("a freshly linked gateway shows its account at once, and Connectivity's ans
   await expect(page.getByRole("button", { name: "← Connectivity", exact: true })).toBeVisible();
   await expect(page.locator(".relay-view").getByRole("heading", { level: 3 })).toHaveText([
     "Account",
-    "Trusted sign-ins",
+    "Sign-ins on your account",
   ]);
   await expect(page.getByRole("radiogroup")).toHaveCount(0);
   // The sign-ins on record are listed with where each came from and whether the owner confirmed
@@ -711,4 +711,95 @@ test("a freshly linked gateway shows its account at once, and Connectivity's ans
     fullPage: true,
   });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+});
+
+test("once set up, each passkey reads by its name, and one not used here yet offers Use it now, which opens the gateway's own address", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  const own = "https://g-fictional.relay.example.test";
+  const created = Date.UTC(2028, 0, 21, 12) / 1000;
+  const named = (id: string, label: string) => ({ id, label, createdAt: created });
+  await management(
+    page,
+    { configured: false },
+    {
+      ...CONNECTED,
+      publicMcp: { ready: true, url: `${own}/mcp` },
+      config: {
+        relayUrl: "https://relay.example.test",
+        termsAccepted: true,
+        invitationRequired: false,
+      },
+      account: ACCOUNT,
+      deviceEnrollment: {
+        policy: "automatic",
+        confirmationNeeded: false,
+        confirmOrigin: own,
+        trustedSignIns: [
+          {
+            type: "passkey",
+            ...named("fictional-credential", "Passkey on Mac"),
+            addedAt: Date.UTC(2028, 0, 21) / 1000,
+            source: "link-page",
+            confirmed: true,
+          },
+          {
+            type: "passkey",
+            ...named("fictional-added-credential", "MacBook Chrome"),
+            addedAt: Date.UTC(2028, 0, 22) / 1000,
+            source: "endorsed",
+            confirmed: false,
+          },
+        ],
+        confirmedSignIns: [
+          {
+            type: "passkey",
+            ...named("fictional-credential", "Passkey on Mac"),
+            at: Date.UTC(2028, 0, 21) / 1000,
+            via: "gateway-origin",
+          },
+        ],
+      },
+    },
+  );
+  const rows = page.locator(".relay-sign-in");
+  await expect(
+    page.getByRole("heading", { name: "Sign-ins on your account", exact: true }),
+  ).toBeVisible();
+  await expect(rows).toHaveCount(2);
+  await expect(rows.nth(0)).toContainText("Passkey on Mac · added");
+  await expect(rows.nth(0)).toContainText(
+    "Confirmed on this gateway · Used to connect this gateway",
+  );
+  await expect(rows.nth(1)).toContainText("Passkey “MacBook Chrome” · added");
+  await expect(rows.nth(1)).toContainText("Waiting for you to use it once on this gateway");
+  const useNow = rows.nth(1).getByRole("button", { name: "Use it now", exact: true });
+  await expect(useNow).toBeVisible();
+  await expect(rows.nth(0).getByRole("button")).toHaveCount(0);
+  await page.screenshot({
+    path: test.info().outputPath("sign-ins-use-it-now-desktop.png"),
+    fullPage: true,
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({
+    path: test.info().outputPath("sign-ins-use-it-now-mobile.png"),
+    fullPage: true,
+  });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  // From this address it asks the gateway for a signed-in link to its own page, as setup does,
+  // and opens it with the passkey prompt to start there.
+  const handoff: unknown[] = [];
+  await page.route("**/portal/api/handoff", async (route) => {
+    handoff.push(route.request().postDataJSON());
+    await route.fulfill({
+      json: { url: `${own}/portal/#portal-handoff=${"a".repeat(43)}&next=confirm-passkey` },
+    });
+  });
+  await page.route(`${own}/**`, (route) =>
+    route.fulfill({ contentType: "text/html", body: "<p>The gateway's own page</p>" }),
+  );
+  await useNow.click();
+  await page.waitForURL(`${own}/portal/#portal-handoff=*`);
+  expect(handoff).toEqual([{ next: "confirm-passkey" }]);
 });
