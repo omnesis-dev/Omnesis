@@ -281,7 +281,7 @@ public final class PinnedSession: NSObject, URLSessionDelegate, GatewaySocketRou
     }
 
     /// Preflight is advisory; the application TLS challenge also checks lease retirement.
-    /// Immutable trust inputs avoid acquiring the session lock on the routing queue.
+    /// Immutable trust inputs keep a preflight's key check off the session lock.
     private func verdictForPeer(_ trust: SecTrust, challengeHost: String, expiredAccepted: Bool) -> Verdict {
         Self.verdict(
             trust: trust,

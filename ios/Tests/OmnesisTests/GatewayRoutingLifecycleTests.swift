@@ -616,7 +616,7 @@ private final class ListenerRepairFixture: @unchecked Sendable {
 
 private final class ScriptedPreflight: @unchecked Sendable {
     private var pending: [ScriptedGatewayConnection]
-    private var attempts: [(ScriptedGatewayConnection, @Sendable (SecTrust) -> Bool)] = []
+    private var attempts: [(ScriptedGatewayConnection, GatewayTLSNetworkConnection.Verification)] = []
     init(_ connections: [ScriptedGatewayConnection]) {
         pending = connections
     }
@@ -626,17 +626,22 @@ private final class ScriptedPreflight: @unchecked Sendable {
     }
 
     var connector: GatewayTLSNetworkConnection.Connector {
-        { _, _, _, verify in
+        { _, _, _, verification in
             let connection = self.pending.removeFirst()
-            self.attempts.append((connection, verify))
+            self.attempts.append((connection, verification))
             return connection
         }
     }
 
+    /// Admits and decides on the proxy's queue and evaluates off it, as the TLS connection does.
     func verify(_ index: Int, trust: SecTrust) -> Bool {
-        let (connection, verify) = attempts[index]
+        let (connection, verification) = attempts[index]
+        var admitted = false
+        connection.onQueue { admitted = verification.admits() }
+        guard admitted else { return false }
+        let evaluated = verification.evaluate(trust)
         var accepted = false
-        connection.onQueue { accepted = verify(trust) }
+        connection.onQueue { accepted = verification.decide(evaluated) }
         return accepted
     }
 }
