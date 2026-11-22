@@ -590,6 +590,47 @@ describe.skipIf(!browserReady)("connect a gateway by signing in", () => {
   );
 
   test(
+    "a browser already signed in to an account still creates a new one with a passkey from the CLI, which spends the invite",
+    async () => {
+      const gateway = await EnrollmentGateway.start(world, "invite-passkey");
+      gateways.push(gateway);
+      const invite = world.invite();
+      const run = cloudConnect(gateway, ["--invite", invite]);
+      const printed = await printedGatewayCode(run);
+      // This browser holds a session for the account that already exists.
+      const page = inviteOnly.session.page;
+      await enterConnectCode(page, printed.connectUrl, printed.code);
+      await page.getByRole("heading", { name: CREATE_ACCOUNT_HEADING, exact: true }).waitFor();
+      await clickFirst(page, ["Create with a passkey"]);
+      await connectThisGateway(page);
+      expect(await run.exit).toBe(0);
+      expect(run.stdout()).not.toContain("Your invite wasn't used");
+      const status = await gateway.status();
+      expect(status.connect).toMatchObject({ state: "done", intent: "create" });
+      expect(status.connect).not.toHaveProperty("existingAccount");
+      // A new account, now this browser's, and the invite created it.
+      const created = (await signedInAccount(world, inviteOnly.session)).accountId;
+      expect(created).not.toBe(inviteOnly.accountId);
+      const checked = await fetch(`${world.relayOrigin}/_relay/v3/signup/invite`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ invite: invite.slice(invite.indexOf("#") + 1) }),
+      });
+      expect(await checked.json()).toMatchObject({ status: "used" });
+      // Using it again is refused before anyone signs in.
+      const again = await EnrollmentGateway.start(world, "invite-reused");
+      gateways.push(again);
+      const reused = cloudConnect(again, ["--invite", invite]);
+      expect(await reused.exit).not.toBe(0);
+      expect(reused.stdout() + reused.stderr()).toContain(
+        "The invite was already used to create an account",
+      );
+      expect((await again.status()).account.linked).toBe(false);
+    },
+    2 * gatewayBootBudgetMs() + 180_000,
+  );
+
+  test(
     "a connection that never finished offers its reserved address nowhere, and starting over returns the gateway to never connected",
     async () => {
       const fresh = new E2EHarness({

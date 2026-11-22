@@ -981,7 +981,9 @@ signing in to an account that exists, which may connect any number of gateways.
 
 A person who chose to create an account may still sign in with one they already
 have (the page lets them switch, and a Google sign-in with an account signs in to
-it). The invite is then not used. A gateway that sends
+it). The invite is then not used. A browser already signed in to an account is
+offered "Create with a passkey" too: creating an account for a sign-up rests on
+the gateway's admission alone, and the new account's session replaces the old. A gateway that sends
 `omnesis-signup-features: account-created` with its poll gets `accountCreated` on
 the approval, true only when that sign-in created the account; the relay adds the
 field only when asked, because older gateways parse the approval strictly. The

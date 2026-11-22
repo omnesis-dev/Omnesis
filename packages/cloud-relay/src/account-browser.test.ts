@@ -1992,7 +1992,7 @@ test("a Google confirmation carries a removal, or the passkey it vouches for, th
   expect(shown(add)).toEqual([
     ["Confirm with Google", ""],
     [existingPasskey, "secondary"],
-    ["Confirm with Google instead", "link"],
+    ["Confirm with Google instead", "quiet"],
     ["Cancel", "secondary"],
   ]);
   expect(add.location.assign).not.toHaveBeenCalled();

@@ -1141,7 +1141,7 @@ export function installAccountUI() {
         if (google) {
           const instead = ui.node("button", "Confirm with Google instead");
           instead.type = "button";
-          instead.className = "link";
+          instead.className = "quiet";
           instead.disabled = busy;
           instead.addEventListener("click", () => ui.run(confirmWithGoogle));
           elsewhere.append(
