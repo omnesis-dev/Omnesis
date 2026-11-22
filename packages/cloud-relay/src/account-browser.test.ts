@@ -81,8 +81,6 @@ function setup() {
       return Response.json({ endorse: parked });
     if (path.endsWith("/register/confirm")) return Response.json({ id: "AQID" });
     if (path.endsWith("/register/cancel")) return Response.json({ ok: true });
-    // The new passkey's own signature changes no session.
-    if (path.endsWith("/countersign/complete")) return Response.json({ ok: true });
     if (path.endsWith("/complete")) {
       if (completions.length > 0) session = completions.shift();
       else if (!(session as { authenticated: boolean }).authenticated) session = authenticated;
@@ -824,6 +822,7 @@ test("credential allow and exclude lists are decoded and requests cannot overlap
   release(f.credential);
   await f.wait("Sign-in methods");
   f.button("Add a passkey").click();
+  await press(f, "Create passkey");
   await vi.waitFor(() => expect(f.credentials.create).toHaveBeenCalledOnce());
   const create = f.credentials.create.mock.calls[0] as unknown as [
     { publicKey: { excludeCredentials: { id: Uint8Array }[] } },
@@ -953,6 +952,7 @@ test("existing credentials can be removed and a new passkey joins the authentica
   );
   await vi.waitFor(() => expect(f.button("Add a passkey").disabled).toBe(false));
   f.button("Add a passkey").click();
+  await press(f, "Create passkey");
   await vi.waitFor(() => expect(f.credentials.create).toHaveBeenCalledOnce());
   const [request] = f.request.mock.calls.filter(([url]) =>
     String(url).endsWith("register/options"),
@@ -1187,7 +1187,7 @@ test("back from a Google start the browser didn't vouch for, the page asks for o
   endorsing.location.search = `?endorse=${parked}&failed=again`;
   endorsing.session(authenticated);
   installAccountUI();
-  await endorsing.wait("Confirm it's you to finish");
+  await endorsing.wait("Adding a passkey · step 2 of 2");
   expect(endorsing.status()).toBe(again);
   expect(endorsing.endorsed("register/confirm")).toEqual([]);
 });
@@ -1292,23 +1292,21 @@ async function press(f: Page, text: string) {
   await vi.waitFor(() => expect(f.button(text)?.disabled).toBe(false));
   f.button(text).click();
 }
-/** Creates a passkey, which then waits to sign for the account's other sign-ins. */
-async function createdPasskey(f: Page) {
-  await press(f, "Add a passkey");
-  await f.wait("Use your new passkey once");
-  await vi.waitFor(() => expect(f.button("Cancel").disabled).toBe(false));
-}
-/** Creates a passkey and signs with it, which then waits for a sign-in the account already has. */
+/** What the endorsement step calls the fixture account's one passkey. */
+const existingPasskey = `Confirm with your passkey “Test passkey”, added ${day(
+  authenticated.credentials.passkeys[0]!.createdAt,
+)}`;
+/** Creates a passkey, which then waits for a sign-in the account already has. */
 async function createPasskey(f: Page) {
-  await createdPasskey(f);
-  await press(f, "Use new passkey");
-  await f.wait("Confirm it's you to finish");
+  await press(f, "Add a passkey");
+  await press(f, "Create passkey");
+  await f.wait("Adding a passkey · step 2 of 2");
   await vi.waitFor(() => expect(f.button("Cancel").disabled).toBe(false));
 }
 /** Creates a passkey and vouches for it with the passkey the account already has. */
 async function addPasskey(f: Page) {
   await createPasskey(f);
-  await press(f, "Confirm with passkey");
+  await press(f, existingPasskey);
 }
 const buttons = (f: Page, within = ".confirm") =>
   [...f.document.querySelectorAll(`${within} button`)].map((button) => button.textContent);
@@ -1320,37 +1318,43 @@ test("a new passkey is added once a sign-in the account already has vouches for 
   await f.wait("Add a passkey");
   expect(f.status()).toBe("");
   expect(f.document.body.textContent).not.toContain("Confirm");
-  await createdPasskey(f);
-  // The passkey exists on the device, and the account does not have it yet.
+  // The first press says what adding takes; nothing is created yet.
+  await press(f, "Add a passkey");
+  await f.wait("Adding a passkey · step 1 of 2");
+  expect(f.credentials.create).not.toHaveBeenCalled();
+  expect([...f.document.querySelectorAll(".confirm p")].map((line) => line.textContent)).toEqual([
+    "Your browser or password manager will ask where to save the new passkey.",
+    "Next, you'll confirm with a sign-in you already use.",
+  ]);
+  expect(buttons(f)).toEqual(["Create passkey", "Cancel"]);
+  expect(f.button("Add a passkey")).toBeUndefined();
+  await press(f, "Create passkey");
+  await f.wait("Adding a passkey · step 2 of 2");
+  // The passkey exists on the device, and the account does not have it yet. It signed nothing.
   expect(f.credentials.create).toHaveBeenCalledOnce();
   expect(f.credentials.get).not.toHaveBeenCalled();
-  expect(f.document.querySelector(".confirm h3")!.textContent).toBe("Use your new passkey once");
-  expect(f.document.querySelector(".confirm p")!.textContent).toBe(
-    "Your new passkey is ready. Use it once now, so that your gateways can tell it belongs with the sign-in methods you already have.",
-  );
-  expect(buttons(f)).toEqual(["Use new passkey", "Cancel"]);
-  expect(f.button("Add a passkey")).toBeUndefined();
-  await press(f, "Use new passkey");
-  await f.wait("Confirm it's you to finish");
-  // The new passkey signed for the account's other sign-ins, and the relay knows which one it is.
-  expect(f.credentials.get).toHaveBeenCalledOnce();
-  expect(f.endorsed("countersign/options")).toEqual([parked]);
-  expect(f.endorsed("countersign/complete")).toEqual([parked]);
   expect(f.endorsed("authenticate/options")).toEqual([]);
-  expect(f.document.querySelector(".confirm p")!.textContent).toBe(
-    "Now confirm with a sign-in you already use, so that someone else using this browser can't add their own passkey. Your gateways check both steps themselves before they trust a sign-in.",
+  expect(f.document.querySelector(".confirm h3")!.textContent).toBe(
+    "Adding a passkey · step 2 of 2",
   );
-  expect(buttons(f)).toEqual(["Confirm with passkey", "Cancel"]);
+  expect(f.document.querySelector(".confirm p")!.textContent).toBe(
+    "Confirm with a sign-in you already use, so that someone else using this browser can't add a passkey of their own.",
+  );
+  // The account's passkey is named, with where to turn if it is on another device.
+  expect(buttons(f)).toEqual([existingPasskey, "Cancel"]);
+  expect(f.document.querySelector(".confirm .note")!.textContent).toBe(
+    "If that passkey is on another device, your browser will offer to use it from there, for example with a QR code.",
+  );
   expect(f.button("Add a passkey")).toBeUndefined();
   expect(f.button("Link Google")).toBeUndefined();
   expect(f.status()).toBe("");
   expect(f.document.querySelector(".badge")).toBeNull();
   expect(f.endorsed("register/confirm")).toEqual([]);
   f.session(withAdded);
-  await press(f, "Confirm with passkey");
+  await press(f, existingPasskey);
   await vi.waitFor(() => expect(f.status()).toBe("Passkey added. You can now use it to sign in."));
   // The confirming sign-in names the passkey it vouches for, and so does storing it.
-  expect(f.credentials.get).toHaveBeenCalledTimes(2);
+  expect(f.credentials.get).toHaveBeenCalledOnce();
   expect(f.endorsed("register/options")).toEqual([null]);
   expect(f.endorsed("register/complete")).toEqual([null]);
   expect(f.endorsed("authenticate/options")).toEqual([parked]);
@@ -1382,37 +1386,127 @@ test("a new passkey is added once a sign-in the account already has vouches for 
   expect(f.status()).toBe("");
 });
 
-test("the new passkey must sign before a sign-in can vouch for it, and a cancelled sheet keeps it waiting", async () => {
+test("the confirmation names each of the account's passkeys, offers Google first, and only the named passkey is asked for", async () => {
+  const older = {
+    ...authenticated.credentials.passkeys[0]!,
+    id: "BAUG",
+    label: "Passkey on iPhone",
+    createdAt: Date.UTC(2025, 8, 1, 12),
+  };
   const f = setup();
-  f.session(authenticated);
+  f.session({
+    ...authenticated,
+    credentials: {
+      federated: [google],
+      passkeys: [older, ...authenticated.credentials.passkeys],
+    },
+  });
+  Object.assign(f.options, {
+    allowCredentials: [
+      { type: "public-key", id: "AQID" },
+      { type: "public-key", id: "BAUG" },
+    ],
+  });
   installAccountUI();
   await f.wait("Add a passkey");
-  await createdPasskey(f);
-  // Nothing can vouch yet: the only ways on are the new passkey itself, or giving up.
-  expect(f.button("Confirm with passkey")).toBeUndefined();
-  f.credentials.get.mockRejectedValueOnce(named("NotAllowedError"));
-  f.button("Use new passkey").click();
-  await vi.waitFor(() => expect(f.alert()).toContain("No passkey was used."));
-  expect(f.document.querySelector(".confirm h3")!.textContent).toBe("Use your new passkey once");
-  expect(f.endorsed("countersign/complete")).toEqual([]);
-  // A refusal from the relay keeps the step too, with a plain error.
-  f.request.mockResolvedValueOnce(new Response("", { status: 400 }));
-  await press(f, "Use new passkey");
-  await vi.waitFor(() =>
-    expect(f.alert()).toBe("The new passkey could not be used. Try again, or cancel."),
+  await createPasskey(f);
+  // Google first, then each passkey newest first by its name and date, then Google again for a
+  // passkey that lives on another device.
+  const newest = existingPasskey,
+    oldest = `Confirm with your passkey “Passkey on iPhone”, added ${day(older.createdAt)}`;
+  expect(buttons(f)).toEqual([
+    "Confirm with Google",
+    newest,
+    oldest,
+    "Confirm with Google instead",
+    "Cancel",
+  ]);
+  expect(f.button("Confirm with Google").className).toBe("");
+  expect(f.button(newest).className).toBe("secondary");
+  expect(f.document.querySelector(".confirm .note")!.textContent).toBe(
+    "If your browser shows a QR code, those passkeys are on another device. Confirm with Google instead",
   );
-  expect(f.document.querySelector(".confirm h3")!.textContent).toBe("Use your new passkey once");
-  // The next try signs and moves on, with the same passkey.
-  await press(f, "Use new passkey");
-  await f.wait("Confirm it's you to finish");
-  expect(f.alert()).toBe("");
-  expect(f.credentials.create).toHaveBeenCalledOnce();
-  expect(f.endorsed("countersign/complete")).toEqual([parked]);
-  // Cancelling after it signed still adds nothing.
+  // A named passkey is the only one the browser is asked for.
+  f.credentials.get.mockRejectedValueOnce(named("NotAllowedError"));
+  await press(f, oldest);
+  await vi.waitFor(() => expect(f.alert()).toContain("No passkey was used."));
+  const [asked] = f.credentials.get.mock.calls[0] as unknown as [
+    { publicKey: { allowCredentials: { id: Uint8Array }[] } },
+  ];
+  expect(asked.publicKey.allowCredentials.map((credential) => [...credential.id])).toEqual([
+    [4, 5, 6],
+  ]);
+  // The step stays, and Google instead takes the round trip that vouches for the new passkey.
+  expect(f.document.querySelector(".confirm h3")!.textContent).toBe(
+    "Adding a passkey · step 2 of 2",
+  );
+  await press(f, "Confirm with Google instead");
+  expect(f.location.assign).toHaveBeenCalledWith(
+    `https://relay.example.test/_relay/web/start?endorse=${parked}`,
+  );
+});
+
+test("a passkey added from a gateway's setup counts the gateway's step, through sign-in and back", async () => {
+  const storage = new Map<string, string>();
+  const sessionStorage = {
+    getItem: (key: string) => storage.get(key) ?? null,
+    setItem: (key: string, value: string) => void storage.set(key, value),
+    removeItem: (key: string) => void storage.delete(key),
+  };
+  const f = setup();
+  Object.assign(f.window, { sessionStorage });
+  f.location.search = "?add=passkey";
+  installAccountUI();
+  // Signed out, the page signs in first, and remembers the request.
+  await f.wait("Sign in with Passkey");
+  expect(storage.get("omnesis.adding-passkey")).toBe("gateway");
+  expect(f.history.replaceState).toHaveBeenCalledWith(null, "", "/_relay/account");
+  await press(f, "Sign in with Passkey");
+  // Signed in, the first step is already on screen, and counts three steps.
+  await f.wait("Adding a passkey · step 1 of 3");
+  expect([...f.document.querySelectorAll(".confirm p")].map((line) => line.textContent)).toEqual([
+    "Your browser or password manager will ask where to save the new passkey.",
+    "Next, you'll confirm with a sign-in you already use, then use the new passkey once on your gateway.",
+  ]);
+  await press(f, "Create passkey");
+  await f.wait("Adding a passkey · step 2 of 3");
+  f.session(withAdded);
+  await press(f, existingPasskey);
+  await vi.waitFor(() =>
+    expect(f.status()).toBe(
+      "Passkey added. To finish, go back to your gateway's page and use the new passkey once there. You can close this tab.",
+    ),
+  );
+  expect(storage.has("omnesis.adding-passkey")).toBe(false);
+  expect(f.document.querySelector(".confirm")).toBeNull();
+  // Cancelling either step forgets the gateway too.
+  storage.set("omnesis.adding-passkey", "gateway");
+  await press(f, "Add a passkey");
+  await f.wait("Adding a passkey · step 1 of 3");
   await press(f, "Cancel");
-  await vi.waitFor(() => expect(f.status()).toBe("No passkey was added."));
-  expect(f.endorsed("register/cancel")).toEqual([parked]);
-  expect(f.endorsed("register/confirm")).toEqual([]);
+  await vi.waitFor(() => expect(f.document.querySelector(".confirm")).toBeNull());
+  expect(storage.has("omnesis.adding-passkey")).toBe(false);
+  // Without storage the page still works; it just counts the relay's own steps.
+  const blocked = setup();
+  Object.assign(blocked.window, {
+    sessionStorage: {
+      getItem: () => {
+        throw new Error("blocked");
+      },
+      setItem: () => {
+        throw new Error("blocked");
+      },
+    },
+  });
+  blocked.location.search = "?add=passkey";
+  blocked.session(authenticated);
+  installAccountUI();
+  await blocked.wait("Add a passkey");
+  await press(blocked, "Add a passkey");
+  await blocked.wait("Adding a passkey · step 1 of 2");
+  // The fixture windows share their globals: later pages run without storage, as before.
+  for (const page of [f, blocked])
+    delete (page.window as { sessionStorage?: unknown }).sessionStorage;
 });
 
 test("cancelling before confirming adds nothing and asks the browser to forget the unused passkey", async () => {
@@ -1428,7 +1522,7 @@ test("cancelling before confirming adds nothing and asks the browser to forget t
     f.session(authenticated);
     installAccountUI();
     await f.wait("Add a passkey");
-    await createdPasskey(f);
+    await createPasskey(f);
     if (mode === "relay-fails") f.request.mockResolvedValueOnce(new Response("", { status: 503 }));
     f.button("Cancel").click();
     await vi.waitFor(() => expect(f.status()).toBe("No passkey was added."));
@@ -1454,14 +1548,16 @@ test("a confirmation that is cancelled keeps the new passkey waiting, and one th
   await f.wait("Add a passkey");
   await createPasskey(f);
   f.credentials.get.mockRejectedValueOnce(named("NotAllowedError"));
-  f.button("Confirm with passkey").click();
+  f.button(existingPasskey).click();
   await vi.waitFor(() => expect(f.alert()).toContain("No passkey was used."));
-  expect(f.document.querySelector(".confirm h3")!.textContent).toBe("Confirm it's you to finish");
+  expect(f.document.querySelector(".confirm h3")!.textContent).toBe(
+    "Adding a passkey · step 2 of 2",
+  );
   expect(f.endorsed("register/confirm")).toEqual([]);
   expect(f.status()).toBe("");
   // The same passkey is confirmed on the next try, without creating another.
   f.session(withAdded);
-  await press(f, "Confirm with passkey");
+  await press(f, existingPasskey);
   await vi.waitFor(() => expect(f.status()).toBe("Passkey added. You can now use it to sign in."));
   expect(f.credentials.create).toHaveBeenCalledOnce();
   expect(f.alert()).toBe("");
@@ -1483,7 +1579,7 @@ test("a confirmation that is cancelled keeps the new passkey waiting, and one th
           ),
     ),
   );
-  refused.button("Confirm with passkey").click();
+  refused.button(existingPasskey).click();
   await vi.waitFor(() =>
     expect(refused.alert()).toBe("The passkey could not be added. Please try again."),
   );
@@ -1509,7 +1605,7 @@ test("a confirmation that is cancelled keeps the new passkey waiting, and one th
           ),
     ),
   );
-  ended.button("Confirm with passkey").click();
+  ended.button(existingPasskey).click();
   await ended.wait("Sign in with Passkey");
   await vi.waitFor(() => expect(ended.alert()).toContain("Sign in again"));
   await vi.waitFor(() => expect(ended.button("Sign in with Passkey").disabled).toBe(false));
@@ -1529,17 +1625,22 @@ test("a cancelled passkey sheet is reported plainly and a real failure keeps a r
     installAccountUI();
     await f.wait("Add a passkey");
     f.credentials.create.mockRejectedValueOnce(named(name));
-    f.button("Add a passkey").click();
+    await press(f, "Add a passkey");
+    await press(f, "Create passkey");
     await vi.waitFor(() => expect(f.status() + f.alert()).toBe(status + alert));
-    await vi.waitFor(() => expect(f.button("Add a passkey").disabled).toBe(false));
+    await vi.waitFor(() => expect(f.button("Create passkey").disabled).toBe(false));
     expect(f.status()).toBe(status);
     expect(f.alert()).toBe(alert);
     expect(f.document.querySelector(".badge")).toBeNull();
     expect(f.posted("register/complete")).toEqual([]);
-    expect(f.document.querySelector(".confirm")).toBeNull();
-    // The next attempt starts clean.
+    // The first step stays, so the next attempt is one press, and it starts clean.
+    expect(f.document.querySelector(".confirm h3")!.textContent).toBe(
+      "Adding a passkey · step 1 of 2",
+    );
     f.session(withAdded);
-    await addPasskey(f);
+    await press(f, "Create passkey");
+    await f.wait("Adding a passkey · step 2 of 2");
+    await press(f, existingPasskey);
     await vi.waitFor(() => expect(f.status()).toContain("Passkey added."));
     expect(f.alert()).toBe("");
   }
@@ -1794,15 +1895,15 @@ test("a stale sign-in can still create a passkey, because the confirmation comes
   f.session(stale);
   installAccountUI();
   await f.wait("Add a passkey");
-  await createdPasskey(f);
+  await createPasskey(f);
   // No confirmation was asked before the passkey sheet opened.
   expect(f.credentials.create).toHaveBeenCalledOnce();
   expect(f.credentials.get).not.toHaveBeenCalled();
-  await press(f, "Use new passkey");
-  await f.wait("Confirm it's you to finish");
-  expect(f.document.querySelector(".confirm h3")!.textContent).toBe("Confirm it's you to finish");
+  expect(f.document.querySelector(".confirm h3")!.textContent).toBe(
+    "Adding a passkey · step 2 of 2",
+  );
   f.afterCeremony(withAdded);
-  await press(f, "Confirm with passkey");
+  await press(f, existingPasskey);
   await vi.waitFor(() => expect(f.status()).toBe("Passkey added. You can now use it to sign in."));
   expect(f.endorsed("register/confirm")).toEqual([parked]);
 });
@@ -1887,7 +1988,13 @@ test("a Google confirmation carries a removal, or the passkey it vouches for, th
   installAccountUI();
   await add.wait("Add a passkey");
   await createPasskey(add);
-  expect(shown(add)).toEqual(choices);
+  // Google first, then the account's passkey by name, and Google again for a passkey elsewhere.
+  expect(shown(add)).toEqual([
+    ["Confirm with Google", ""],
+    [existingPasskey, "secondary"],
+    ["Confirm with Google instead", "quiet"],
+    ["Cancel", "secondary"],
+  ]);
   expect(add.location.assign).not.toHaveBeenCalled();
   add.button("Confirm with Google").click();
   expect(add.location.assign).toHaveBeenCalledExactlyOnceWith(
@@ -1942,7 +2049,7 @@ test("returning from Google stores the passkey it vouched for, and a failed retu
   failed.location.search = `?endorse=${parked}&failed=google`;
   failed.session(authenticated);
   installAccountUI();
-  await failed.wait("Confirm it's you to finish");
+  await failed.wait("Adding a passkey · step 2 of 2");
   expect(failed.alert()).toBe("Google sign-in did not complete. Try again or use a passkey.");
   expect(failed.history.replaceState).toHaveBeenCalledExactlyOnceWith(
     null,
@@ -1952,7 +2059,7 @@ test("returning from Google stores the passkey it vouched for, and a failed retu
   expect(failed.endorsed("register/confirm")).toEqual([]);
   // The same passkey can still be confirmed with a passkey, or given up.
   failed.session(withAdded);
-  await press(failed, "Confirm with passkey");
+  await press(failed, existingPasskey);
   await vi.waitFor(() =>
     expect(failed.status()).toBe("Passkey added. You can now use it to sign in."),
   );
@@ -1966,7 +2073,7 @@ test("returning from Google stores the passkey it vouched for, and a failed retu
   abandoned.location.search = `?endorse=${parked}&failed=google`;
   abandoned.session(authenticated);
   installAccountUI();
-  await abandoned.wait("Confirm it's you to finish");
+  await abandoned.wait("Adding a passkey · step 2 of 2");
   await press(abandoned, "Cancel");
   await vi.waitFor(() => expect(abandoned.status()).toBe("No passkey was added."));
   expect(abandoned.endorsed("register/cancel")).toEqual([parked]);
@@ -2062,10 +2169,14 @@ test("a confirmation that lapses while the page is open asks again instead of fa
   installAccountUI();
   await adding.wait("Add a passkey");
   adding.session(stale);
+  await press(adding, "Add a passkey");
   adding.request.mockResolvedValueOnce(new Response("{}", { status: 401 }));
-  adding.button("Add a passkey").click();
+  await press(adding, "Create passkey");
   await vi.waitFor(() => expect(adding.alert()).toContain("Sign in again"));
-  expect(adding.document.querySelector(".confirm")).toBeNull();
+  // The first step stays on screen for the retry.
+  expect(adding.document.querySelector(".confirm h3")!.textContent).toBe(
+    "Adding a passkey · step 1 of 2",
+  );
   expect(adding.credentials.create).not.toHaveBeenCalled();
 
   // A session that ended altogether is a sign-in, with the change left to retry.
@@ -2074,8 +2185,9 @@ test("a confirmation that lapses while the page is open asks again instead of fa
   installAccountUI();
   await ended.wait("Add a passkey");
   ended.session(signedOut);
+  await press(ended, "Add a passkey");
   ended.request.mockResolvedValueOnce(new Response("{}", { status: 401 }));
-  ended.button("Add a passkey").click();
+  await press(ended, "Create passkey");
   await ended.wait("Sign in with Passkey");
   await vi.waitFor(() => expect(ended.alert()).toContain("Sign in again"));
   expect(ended.credentials.create).not.toHaveBeenCalled();

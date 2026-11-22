@@ -20,7 +20,12 @@ import {
   SetupReminder,
 } from "../components/gateway-passkey-confirm.js";
 import { onGatewayOrigin } from "../lib/gateway-passkey.js";
-import { OPENED_BY_PORTAL, openConnectWindow, useConnectWindow } from "../lib/connect-window.js";
+import {
+  inConnectWindow,
+  OPENED_BY_PORTAL,
+  openConnectWindow,
+  useConnectWindow,
+} from "../lib/connect-window.js";
 import { navigate } from "../lib/router.js";
 import { useAccountRefresh, useRelayManagement } from "../lib/use-relay-management.js";
 import {
@@ -197,7 +202,7 @@ export function Waiting({ connect, busy, run }) {
           href=${authorizeUrl}
           target="_blank"
           rel="noopener noreferrer"
-          onClick=${(event) => openInConnectWindow(event, authorizeUrl)}
+          onClick=${(event) => openInConnectWindow(event, inConnectWindow(authorizeUrl))}
         >
           ${signInLabel}
         </a>`
@@ -503,7 +508,7 @@ const SIGN_IN_SOURCES = {
   approval: "Trusted when you approved a device",
   "native-app": "Trusted when you approved a device that signed in in the app",
   endorsed: "Added to your account later, vouched for by a sign-in trusted here",
-  countersigned: "Already on your account, vouched for by a passkey added later",
+  countersigned: "Already on your account, vouched for by one of your passkeys",
 };
 const CONFIRMED_VIA = {
   "gateway-origin": "Confirmed on this gateway",
@@ -730,7 +735,6 @@ export function RelayView({ part = "account", open = openOnGateway, location = g
       checklist
         ? html`<${FinishSetup}
             enrollment=${enrollment}
-            hostname=${status.hostname}
             ready=${ready}
             serviceUrl=${status.config?.relayUrl}
             busy=${busy}

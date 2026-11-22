@@ -10,19 +10,21 @@
  * are verified by the product unchanged.
  *
  * The account is created with Google on the first gateway. A passkey is added
- * on the account page: it signs once for the account's Google sign-in, and
- * Google vouches for it. The second gateway is linked with that passkey, so
- * the passkey is all it saw for itself. The gateway verifies the passkey's own
- * signature naming that Google account and suggests it, but the relay keeps
- * that evidence and a relay page could have produced it, so a device that signs
- * in with Google there still waits for the owner. Then the relay turns against
- * the owner: it adds a Google account of its own choosing to the account, first
- * with no evidence and then written into the passkey's signed list, and a
- * device signing in with it is held for approval each time.
+ * on the account page in two prompts: creating it, and Google vouching for it.
+ * The third and last prompt is on the gateway's own page: one assertion that
+ * confirms the passkey there and countersigns the account's other sign-ins.
+ * The second gateway is linked with that passkey, so the passkey is all it saw
+ * for itself until the owner confirms it on that gateway's page too, which
+ * makes it suggest the Google account the passkey countersigned there. A device
+ * that signs in with Google on a relay page still waits for the owner. Then the
+ * relay turns against the owner: it adds a Google account of its own choosing
+ * to the account, first with no evidence and then written into a countersignature
+ * it makes up, and a device signing in with it is held for approval each time.
  *
  * The scenarios run in order, each leaving the world as the next expects.
  */
 
+import { randomBytes } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -30,18 +32,17 @@ import Database from "better-sqlite3";
 import { authorizeAccountDesktop, pairAccountDevice, signInDigest } from "@omnesis/cloud-relay";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import {
-  COUNTERSIGN_HEADING,
-  ENDORSEMENT_HEADING,
   EnrollmentGateway,
   EnrollmentWorld,
   FakeGoogle,
-  PASSKEY_ADDED,
   PasskeyBrowser,
   addSecondPasskey,
+  assertionOn,
   browserSuiteAvailable,
   clickFirst,
   connectGatewayBySignIn,
   devicePinnedJson,
+  confirmPasskeyHere,
   connectThisGateway,
   enterConnectCode,
   expectText,
@@ -52,8 +53,16 @@ import {
   type PasskeySession,
 } from "./account-enrollment-harness.js";
 import { gatewayBootBudgetMs } from "./gateway-env.js";
+import type { Page } from "playwright";
 
 const browserReady = browserSuiteAvailable("account-enrollment-confirmed-signins.e2e");
+
+/** Saves a screenshot for review when `OMNESIS_E2E_SHOT_DIR` names a directory; otherwise nothing. */
+async function shot(page: Page, name: string): Promise<void> {
+  const target = process.env.OMNESIS_E2E_SHOT_DIR;
+  if (target)
+    await page.screenshot({ path: join(target, `confirmed-signins-${name}.png`), fullPage: true });
+}
 
 /** Local status can refresh before the public tunnel is ready for a new TLS client. */
 async function waitForPublicTlsHealth(gateway: EnrollmentGateway): Promise<void> {
@@ -242,22 +251,77 @@ describe.skipIf(!browserReady)(
       expect(linked.deviceEnrollment).toMatchObject({ confirmationNeeded: true });
     }, 180_000);
 
-    test("a passkey added on the account page signs for the Google account, and Google vouches for it", async () => {
+    /** What the relay stored beside `credential` as that passkey's countersignature, if anything. */
+    const storedCountersignatures = (credential: string) =>
+      asTheRelay(
+        (db) =>
+          (
+            db
+              .prepare(
+                "SELECT count(*) AS count FROM omnesis_passkey_countersignatures WHERE credential_id = ?",
+              )
+              .get(credential) as { count: number }
+          ).count,
+      );
+    /**
+     * A relay page asks the owner's passkey to sign `gateway`'s confirmation ceremony on the
+     * relay's own origin (TM-01). Returns the gateway's answer.
+     */
+    async function steeredConfirmation(gateway: EnrollmentGateway) {
+      const ceremony = await gateway.passkeyConfirmation();
+      return gateway.confirmPasskey({
+        type: "gateway-passkey",
+        challenge: ceremony.challenge,
+        credential: await assertionOn(owner, world.relayOrigin, ceremony.webauthnChallenge),
+      });
+    }
+
+    test("from the first gateway's setup, a passkey added to an account that has Google takes two prompts on the account page: creating it, and Google vouching for it", async () => {
       const page = owner.page;
-      await page.goto(`${world.relayOrigin}/_relay/account`);
-      await page.getByRole("heading", { name: "Sign-in methods", exact: true }).waitFor();
-      await clickFirst(page, ["Add a passkey"]);
-      await page.getByRole("heading", { name: COUNTERSIGN_HEADING, exact: true }).waitFor();
-      await clickFirst(page, ["Use new passkey"]);
-      await page.getByRole("heading", { name: ENDORSEMENT_HEADING, exact: true }).waitFor();
+      // The gateway's own page, signed in with its admin token: nothing is confirmed yet and the
+      // account has no passkey, so the last step offers to add one, and says nothing about phones.
+      await page.goto(
+        `${home.publicOrigin}/portal/settings/account?token=${encodeURIComponent(home.harness.apiKey)}`,
+      );
+      await expectText(page, "Finish setting up");
+      await expectText(page, "Add a passkey (optional)");
+      expect(await page.getByText(/phone/i).count()).toBe(0);
+      await shot(page, "portal-add-passkey-step");
+      // Its one button opens the account page in a new tab, remembering in this tab that the last
+      // step comes back here. This test continues in this tab, which holds the passkey device.
+      const [opened] = await Promise.all([
+        page.waitForEvent("popup"),
+        page.getByRole("link", { name: "Add a passkey", exact: true }).click(),
+      ]);
+      expect(new URL(opened.url()).searchParams.get("add")).toBe("passkey");
+      await opened.close();
+      await page.goto(`${world.relayOrigin}/_relay/account?add=passkey`);
+      // Prompt one creates it.
+      await page
+        .getByRole("heading", { name: "Adding a passkey · step 1 of 3", exact: true })
+        .waitFor();
+      await shot(page, "relay-step-1");
+      await clickFirst(page, ["Create passkey"]);
+      await page
+        .getByRole("heading", { name: "Adding a passkey · step 2 of 3", exact: true })
+        .waitFor();
+      // The page names what can vouch for it: the account's Google sign-in, as it has no passkey.
+      await page.getByRole("button", { name: "Confirm with Google", exact: true }).waitFor();
+      await shot(page, "relay-step-2");
+      // Prompt two: Google vouches for it, and that is all the account page asks for.
       await clickFirst(page, ["Confirm with Google"]);
-      await expectText(page, PASSKEY_ADDED);
+      await expectText(
+        page,
+        "Passkey added. To finish, go back to your gateway's page and use the new passkey once there. You can close this tab.",
+      );
+      await shot(page, "relay-added");
       [passkey] = await passkeyIds(owner);
       expect(passkey).toBeDefined();
-      expect(owner.errors).toEqual([]);
+      // The passkey signed nothing on the relay's page.
+      expect(storedCountersignatures(passkey!)).toBe(0);
       // The first gateway learns the passkey forwards, from the Google sign-in it pinned, as soon
       // as the owner comes back to its account page: the portal asks it to read the account.
-      await home.json("/admin/cloud-relay/account/refresh", { method: "POST", body: "{}" });
+      await page.goto(`${home.publicOrigin}/portal/settings/account`);
       await waitFor(
         async () => (await pins(home)).some((pin) => pin.id === passkey),
         "the first gateway to pin the added passkey",
@@ -266,35 +330,65 @@ describe.skipIf(!browserReady)(
         { type: "google", id: FakeGoogle.digest(OWNER_GOOGLE), source: "link-page" },
         { type: "passkey", id: passkey, source: "endorsed" },
       ]);
+      expect(owner.errors).toEqual([]);
     }, 180_000);
 
-    test("TM-02: the second gateway, linked with the passkey, suggests the Google account it countersigned, and holds a device that signs in with it", async () => {
+    test("TM-01: the third prompt is on the gateway's own page, where one assertion confirms the passkey, and a relay page can't make it", async () => {
+      // The relay steers the gateway's own ceremony to its page: the gateway refuses it.
+      const steered = await steeredConfirmation(home);
+      expect(steered.status).toBe(403);
+      expect((await home.status()).deviceEnrollment.confirmedSignIns).toEqual([]);
+      // Back on the gateway's page, the step is the sequence's third, and one prompt confirms it.
+      const page = owner.page;
+      await page.goto(`${home.publicOrigin}/portal/settings/account`);
+      await expectText(page, "Adding a passkey · step 3 of 3");
+      await shot(page, "portal-step-3");
+      await clickFirst(page, ["Continue with passkey"]);
+      const status = await waitFor(async () => {
+        const value = await home.status();
+        return value.deviceEnrollment.confirmedSignIns?.length ? value : undefined;
+      }, "the passkey to be confirmed");
+      expect(status.deviceEnrollment.confirmedSignIns).toEqual([
+        expect.objectContaining({ type: "passkey", id: passkey, via: "gateway-origin" }),
+      ]);
+      await page.locator("#relay-setup-title").waitFor({ state: "detached", timeout: 20_000 });
+      // It countersigned the Google account, which the gateway already had: nothing more to suggest.
+      expect(await pins(home)).toEqual([
+        { type: "google", id: FakeGoogle.digest(OWNER_GOOGLE), source: "link-page" },
+        { type: "passkey", id: passkey, source: "endorsed" },
+      ]);
+      // Nothing of it is stored on the relay.
+      expect(storedCountersignatures(passkey!)).toBe(0);
+      expect(owner.errors).toEqual([]);
+    }, 180_000);
+
+    test("TM-02: the second gateway, linked with the passkey, suggests the Google account once the passkey countersigns it there, and holds a device that signs in with it", async () => {
       const linked = await connectGatewayBySignIn(cabin, owner, "existing");
       expect(linked.connect?.state).toBe("done");
-      // The passkey is the only sign-in this gateway saw for itself. Anything else it learns, it
-      // learns from the passkey's countersignature: it may already have fetched it at the link.
-      expect((await pins(cabin)).filter((pin) => pin.source !== "countersigned")).toEqual([
-        { type: "passkey", id: passkey, source: "link-page" },
-      ]);
-      expect((await cabin.status()).deviceEnrollment.policy).toBe("automatic");
+      // The passkey is the only sign-in this gateway saw for itself, and the relay holds nothing
+      // that signs for the account's others.
       await cabin.json("/admin/cloud-relay/reconnect", { method: "POST", body: "{}" });
-      await waitFor(
-        async () => (await pins(cabin)).some((pin) => pin.source === "countersigned"),
-        "the countersigned Google account to be suggested",
-        60_000,
-      );
-      // The passkey's own signature names the Google account, so it is suggested...
+      await cabin.json("/admin/cloud-relay/account/refresh", { method: "POST", body: "{}" });
+      expect(await pins(cabin)).toEqual([{ type: "passkey", id: passkey, source: "link-page" }]);
+      expect((await cabin.status()).deviceEnrollment.policy).toBe("automatic");
+      // A relay page can't make the confirmation here either, and pins nothing by trying.
+      expect((await steeredConfirmation(cabin)).status).toBe(403);
+      expect(await pins(cabin)).toEqual([{ type: "passkey", id: passkey, source: "link-page" }]);
+      // The owner's one prompt on this gateway's page confirms the passkey and countersigns the
+      // account's other sign-ins, so the Google account is suggested...
+      const ceremony = await cabin.passkeyConfirmation();
+      expect(ceremony.allowCredentials).toEqual([passkey]);
+      await confirmPasskeyHere(cabin, owner);
       expect(await pins(cabin)).toEqual([
         { type: "passkey", id: passkey, source: "link-page" },
         { type: "google", id: FakeGoogle.digest(OWNER_GOOGLE), source: "countersigned" },
       ]);
       expect((await cabin.status()).deviceEnrollment).toMatchObject({
-        confirmationNeeded: true,
-        confirmedSignIns: [],
+        confirmationNeeded: false,
+        confirmedSignIns: [expect.objectContaining({ type: "passkey", id: passkey })],
       });
-      // ...but the relay keeps that countersignature and a relay page could have produced it, so a
-      // device signing in with Google (on the relay's page) waits for the owner, who can't confirm
-      // a web sign-in by approving it.
+      // ...but a suggestion trusts nothing: a device signing in with Google on the relay's page
+      // waits for the owner, who can't confirm a web sign-in by approving it.
       const name = "Fictional cabin CLI";
       const pairing = await pairWithGoogle(cabin, name, OWNER_GOOGLE);
       const held = await heldRequest(cabin, name, pairing);
@@ -313,13 +407,25 @@ describe.skipIf(!browserReady)(
           enrollment: { method: "approved", signIn: "google" },
         },
       );
-      // Approving it confirmed nothing.
-      expect((await cabin.status()).deviceEnrollment.confirmedSignIns).toEqual([]);
+      // Approving it confirmed nothing more.
+      expect(
+        (await cabin.status()).deviceEnrollment.confirmedSignIns?.map((value) => value.id),
+      ).toEqual([passkey]);
     }, 300_000);
 
     test("a passkey removed from the account stays out when a relay compromised later lists it again with its evidence", async () => {
       // A second passkey, added on the account page and vouched for by the first.
-      const second = await addSecondPasskey(browser, world, owner);
+      const second = await addSecondPasskey(browser, world, owner, {
+        // The account has Google and one passkey: Google first, the passkey by name, and Google
+        // again for a passkey that lives on another device.
+        atConfirmation: async (page) => {
+          const choices = await page.locator(".confirm button").allTextContents();
+          expect(choices[0]).toBe("Confirm with Google");
+          expect(choices[1]).toMatch(/^Confirm with your passkey “.+”, added /);
+          expect(choices.slice(2)).toEqual(["Confirm with Google instead", "Cancel"]);
+          await shot(page, "relay-step-2-named-passkey");
+        },
+      });
       const [added] = await passkeyIds(second);
       await cabin.json("/admin/cloud-relay/reconnect", { method: "POST", body: "{}" });
       await waitFor(
@@ -329,16 +435,12 @@ describe.skipIf(!browserReady)(
       expect((await pins(cabin)).find((pin) => pin.id === added)?.source).toBe("endorsed");
       // What the relay holds about it, which a compromised relay would keep.
       const kept = asTheRelay((db) =>
-        [
-          "omnesis_passkeys",
-          "omnesis_passkey_endorsements",
-          "omnesis_passkey_countersignatures",
-        ].map((table) => ({
+        ["omnesis_passkeys", "omnesis_passkey_endorsements"].map((table) => ({
           table,
           rows: db.prepare(`SELECT * FROM ${table} WHERE credential_id = ?`).all(added),
         })),
       );
-      expect(kept.map(({ rows }) => rows.length)).toEqual([1, 1, 1]);
+      expect(kept.map(({ rows }) => rows.length)).toEqual([1, 1]);
       // The owner removes it on the account page, and the gateway sees it gone.
       await freshAccountSignIn(world, owner);
       const remove = owner.page.getByRole("button", { name: "Remove", exact: true });
@@ -352,8 +454,8 @@ describe.skipIf(!browserReady)(
         60_000,
       );
       const before = await pins(cabin);
-      // The relay turns: it puts the passkey back, with the endorsement and countersignature that
-      // made it a suggestion, and a device signs in with it.
+      // The relay turns: it puts the passkey back, with the endorsement that made it a suggestion,
+      // and a device signs in with it.
       asTheRelay((db) => {
         for (const { table, rows } of kept)
           for (const row of rows as Record<string, unknown>[]) {
@@ -405,22 +507,27 @@ describe.skipIf(!browserReady)(
       await expect(first.result).rejects.toThrow(/denied/);
       expect(await pins(cabin)).toEqual(before);
 
-      // The relay then rewrites the passkey's countersignature to name its Google account too.
-      asTheRelay((db) => {
-        const row = db
-          .prepare(
-            "SELECT countersignature FROM omnesis_passkey_countersignatures WHERE credential_id = ?",
-          )
-          .get(passkey) as { countersignature: string };
-        const value = JSON.parse(row.countersignature) as { signIns: string[] };
-        expect(value.signIns).toEqual([
-          signInDigest({ type: "google", id: FakeGoogle.digest(OWNER_GOOGLE) }),
-        ]);
-        value.signIns.push(signInDigest({ type: "google", id: injected }));
-        db.prepare(
-          "UPDATE omnesis_passkey_countersignatures SET countersignature = ? WHERE credential_id = ?",
-        ).run(JSON.stringify(value), passkey);
-      });
+      // The relay then makes up a countersignature by the owner's passkey naming its Google account
+      // too, from an assertion it got that passkey to make on its own page for something else.
+      const salt = randomBytes(32).toString("base64url"),
+        issuedAt = String(Math.floor(Date.now() / 1000));
+      const credential = await assertionOn(
+        owner,
+        world.relayOrigin,
+        randomBytes(32).toString("base64url"),
+      );
+      asTheRelay((db) =>
+        db.prepare("INSERT OR REPLACE INTO omnesis_passkey_countersignatures VALUES (?,?)").run(
+          passkey,
+          JSON.stringify({
+            proof: { type: "passkey", salt, issuedAt, credential },
+            signIns: [
+              signInDigest({ type: "google", id: FakeGoogle.digest(OWNER_GOOGLE) }),
+              signInDigest({ type: "google", id: injected }),
+            ],
+          }),
+        ),
+      );
       const written = "Fictional rewritten CLI";
       const second = await pairWithGoogle(cabin, written, RELAY_GOOGLE);
       const heldAgain = await heldRequest(cabin, written, second);

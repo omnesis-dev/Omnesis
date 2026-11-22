@@ -326,7 +326,7 @@ test("trusted sign-ins say whether, and how, the owner confirmed each on this ga
   await listTrustedSignIns();
   expect(String(output.mock.calls[0]![0]).split("\n")).toEqual([
     "passkey-one  passkey, signed in on the Omnesis account page, added 2028-01-03T00:00:00.000Z, confirmed on this gateway's own page 2028-01-05T00:00:00.000Z",
-    "google-two  Google account, already on the account when a passkey trusted here was added, signed for by that passkey, added 2028-01-04T00:00:00.000Z, not confirmed on this gateway",
+    "google-two  Google account, already on the account, signed for by one of its passkeys, added 2028-01-04T00:00:00.000Z, not confirmed on this gateway",
     "passkey-three  passkey, confirmed in the Android app 2028-01-06T00:00:00.000Z",
     "passkey-four  passkey, confirmed 2028-01-07T00:00:00.000Z",
     "",

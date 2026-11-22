@@ -398,7 +398,10 @@ describe.skipIf(!ready)("public DNS enrollment", () => {
       // Neither the check's page nor the relay's could ever reach back into the portal's tab.
       expect(await popup.evaluate(() => window.opener === null)).toBe(true);
       expect(portal.page.url()).toBe(`${gateway.gatewayUrl}/portal/settings/account`);
-      await connectThisGateway(popup);
+      // The portal opened the sign-in marked as its own window, so the last page closes it.
+      const closed = popup.waitForEvent("close", { timeout: 60_000 });
+      await clickFirst(popup, ["Connect this gateway"]);
+      await closed;
       await finish(gateway);
       expect(portal.errors).toEqual([]);
     },

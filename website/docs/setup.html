@@ -482,11 +482,11 @@
           </li>
           <li>
             <strong>Sign in.</strong> Once the check passes, the same tab moves on to the Omnesis
-            account page, where you create the account or sign in; once it says you are all set,
-            close it. Where the browser keeps the portal from opening that tab, the link opens as an
-            ordinary tab, which says when you can close it, and the portal then offers the account
-            page as a button. On another device, visit the short address the page shows and enter
-            its code.
+            account page, where you create the account or sign in; once you are all set, the tab
+            closes itself (or, where the browser keeps it open, says you can close it). Where the
+            browser keeps the portal from opening that tab, the link opens as an ordinary tab, which
+            says when you can close it, and the portal then offers the account page as a button. On
+            another device, visit the short address the page shows and enter its code.
           </li>
           <li>
             <strong>Registering.</strong> The gateway gets its certificate, usually in under a
@@ -498,6 +498,18 @@
           If you chose to create an account but signed in to one you already had, the gateway links
           to that account and the invite is not used. The portal says so once when connecting
           completes, and the CLI prints it.
+        </p>
+        <p>
+          Once connected, <strong>Settings → Omnesis account</strong> shows
+          <strong>Finish setting up</strong> until the gateway trusts a sign-in. Its last step asks
+          you to use your passkey once on the gateway's own secure address; after that, a new device
+          that signs in with that passkey there joins without waiting for your approval. Without a
+          passkey, the step offers <strong>Add a passkey (optional)</strong>: the account page
+          creates it and asks you to confirm with a sign-in you already have, and back on the
+          gateway you use it once. Until then, and for any other sign-in, a new device waits for
+          your approval with a comparison code. Phones are added from
+          <strong>Settings → Devices</strong>. See
+          <a href="security#account-passkeys">account passkeys</a>.
         </p>
         <p>
           From a terminal, <code>omnesis cloud connect</code> asks whether you already have an

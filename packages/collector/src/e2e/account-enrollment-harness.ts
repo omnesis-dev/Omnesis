@@ -819,6 +819,7 @@ export interface GatewayPasskeyCeremony {
   binding: string;
   webauthnChallenge: string;
   expiresAt: number;
+  allowCredentials?: string[];
 }
 
 export interface DeviceRow {
@@ -1171,6 +1172,16 @@ export const VIRTUAL_AUTHENTICATOR = {
   isUserVerified: true,
   automaticPresenceSimulation: true,
 } as const;
+
+/**
+ * Gives `page`, another page of `session`'s profile such as a window a page opened, a virtual
+ * authenticator of its own: the profile's authenticator belongs to its first page only.
+ */
+export async function pageAuthenticator(session: PasskeySession, page: Page): Promise<void> {
+  const cdp = await session.context.newCDPSession(page);
+  await cdp.send("WebAuthn.enable");
+  await cdp.send("WebAuthn.addVirtualAuthenticator", { options: VIRTUAL_AUTHENTICATOR });
+}
 
 /** A virtual authenticator's passkey, as the DevTools protocol exports and imports it. */
 interface VirtualCredential {
@@ -1797,11 +1808,27 @@ export async function passkeyIds(session: PasskeySession): Promise<string[]> {
   );
 }
 
-/** The account page's panel right after a new passkey is created, before it has signed. */
-export const COUNTERSIGN_HEADING = "Use your new passkey once";
-/** The account page's panel after a new passkey signed and before a sign-in vouches for it. */
-export const ENDORSEMENT_HEADING = "Confirm it's you to finish";
+/** The account page's panel right after a new passkey is created, before a sign-in vouches for it. */
+const ENDORSEMENT_HEADING = "Adding a passkey · step 2 of 2";
 export const PASSKEY_ADDED = "Passkey added. You can now use it to sign in.";
+
+/**
+ * Creates a passkey on the account page `page` shows, in the authenticator its profile has now:
+ * "Add a passkey", then "Create passkey". The page then waits for a sign-in to vouch for it.
+ */
+export async function createPasskeyOnAccountPage(page: Page) {
+  await clickFirst(page, ["Add a passkey"]);
+  await clickFirst(page, ["Create passkey"]);
+  await page.getByRole("heading", { name: ENDORSEMENT_HEADING, exact: true }).waitFor();
+}
+
+/** Vouches for the passkey being added with one of the account's passkeys, as the page names it. */
+export async function confirmWithExistingPasskey(page: Page) {
+  await page
+    .getByRole("button", { name: /^Confirm with your passkey “/ })
+    .first()
+    .click();
+}
 
 /**
  * Adds a second passkey to the account `signedIn` belongs to, held only by a
@@ -1811,13 +1838,13 @@ export const PASSKEY_ADDED = "Passkey added. You can now use it to sign in.";
  * would, and is dropped once the new passkey is listed.
  *
  * `confirm: false` stops at the confirmation panel and cancels: the passkey the
- * browser made is never stored on the account.
+ * browser made is never stored on the account. `atConfirmation` runs while that panel is shown.
  */
 export async function addSecondPasskey(
   browser: PasskeyBrowser,
   world: EnrollmentWorld,
   signedIn: PasskeySession,
-  options: { confirm?: boolean } = {},
+  options: { confirm?: boolean; atConfirmation?: (page: Page) => Promise<void> } = {},
 ): Promise<PasskeySession> {
   const second = await browser.session();
   const page = second.page;
@@ -1832,14 +1859,11 @@ export async function addSecondPasskey(
   await page.waitForTimeout(1100);
   const remove = page.getByRole("button", { name: "Remove", exact: true });
   const before = await remove.count();
-  await clickFirst(page, ["Add a passkey"]);
-  // The browser has made the passkey, which signs once for the account's other sign-ins; the
-  // account keeps it only once one of those vouches for it.
-  await page.getByRole("heading", { name: COUNTERSIGN_HEADING, exact: true }).waitFor();
-  await clickFirst(page, ["Use new passkey"]);
-  await page.getByRole("heading", { name: ENDORSEMENT_HEADING, exact: true }).waitFor();
+  // The browser makes the passkey; the account keeps it only once a sign-in it has vouches for it.
+  await createPasskeyOnAccountPage(page);
   if ((await remove.count()) !== before)
     throw new Error("The new passkey was listed before anyone confirmed it");
+  await options.atConfirmation?.(page);
   if (options.confirm === false) {
     await clickFirst(page, ["Cancel"]);
     await expectText(page, "No passkey was added.");
@@ -1849,7 +1873,7 @@ export async function addSecondPasskey(
   }
   const made = await swapAuthenticator(second, copy);
   if (made.length !== 1) throw new Error(`Expected one new passkey, found ${made.length}`);
-  await clickFirst(page, ["Confirm with passkey"]);
+  await confirmWithExistingPasskey(page);
   await expectText(page, PASSKEY_ADDED);
   await waitFor(async () => (await remove.count()) === before + 1, "the new passkey to be listed");
   await syncPasskey(second, signedIn, copied);

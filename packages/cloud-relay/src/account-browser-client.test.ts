@@ -11,6 +11,7 @@ import { z } from "zod";
 import { tlsFiles, listen } from "../test/support.js";
 import { registeredPasskey, signInOnOperation } from "../test/operation-sign-in.js";
 import { openLaunch } from "../test/browser-launch.js";
+import { storeCountersignature } from "../test/stored-countersignature.js";
 import { ManagedAccountBrowser } from "./account-browser-client.js";
 import { ACCOUNT_CREDENTIALS_EVIDENCE } from "./account-browser-contract.js";
 import { signInDigest, signInProofSchema } from "./device-enrollment.js";
@@ -625,14 +626,11 @@ test("countersignatures reach only a gateway that asks for them, so one from bef
       label: "Fixture passkey",
     },
     false,
-    undefined,
-    undefined,
-    undefined,
-    {
-      proof: assertionShape(id),
-      signIns: [signInDigest({ type: "google", id: "a".repeat(64) })],
-    },
   );
+  storeCountersignature(f.accounts.identities, id, {
+    proof: assertionShape(id),
+    signIns: [signInDigest({ type: "google", id: "a".repeat(64) })],
+  });
   const listed = await f.client.credentials();
   expect(listed!.passkeys.find((passkey) => passkey.id === id)!.countersignature).toMatchObject({
     signIns: [expect.any(String)],
@@ -695,17 +693,18 @@ test("a full account of RSA passkeys with the longest ids lists within the bound
       undefined,
       undefined,
       { ...assertionShape(endorser), credentialPublicKey: rsaCoseKey().toString("base64url") },
-      // Signed for every sign-in already on the account, as the account page has it.
-      {
-        proof: assertionShape(id),
-        signIns: [
-          signInDigest({ type: "google", id: "a".repeat(64) }),
-          ...f.accounts.identities
-            .passkeyKeys(f.accountId)
-            .map(({ id, publicKey }) => signInDigest({ type: "passkey", id, publicKey })),
-        ],
-      },
     );
+    // Signed for every sign-in already on the account, as an earlier relay's account page had it.
+    storeCountersignature(f.accounts.identities, id, {
+      proof: assertionShape(id),
+      signIns: [
+        signInDigest({ type: "google", id: "a".repeat(64) }),
+        ...f.accounts.identities
+          .passkeyKeys(f.accountId)
+          .filter((passkey) => passkey.id !== id)
+          .map(({ id, publicKey }) => signInDigest({ type: "passkey", id, publicKey })),
+      ],
+    });
     ids.push(id);
   }
   expect(() =>

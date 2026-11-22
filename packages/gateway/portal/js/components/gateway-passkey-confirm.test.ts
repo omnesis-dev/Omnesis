@@ -54,7 +54,6 @@ async function show(props: Record<string, unknown>) {
     render(
       h(FinishSetup, {
         enrollment,
-        hostname: "g-abcdefgh.relay.example.test",
         ready: true,
         serviceUrl: "https://relay.example.test",
         busy: "",
@@ -84,14 +83,17 @@ const confirming = (failure?: unknown) =>
     return { revision: 2 };
   });
 
-test("the last step follows the account: a passkey to use, a phone to approve, or nothing", () => {
+test("the last step follows the account: a passkey to use, one to add, or nothing", () => {
   expect(accountConfirmation(enrollment)).toBe("passkey");
-  // The account has no passkey: never ask for one.
-  expect(accountConfirmation({ ...enrollment, trustedSignIns: [GOOGLE] })).toBe("google");
-  expect(accountConfirmation({ ...enrollment, trustedSignIns: undefined })).toBe("google");
-  // A passkey with no address of its own to use it on can't be asked for either.
-  expect(accountConfirmation({ ...enrollment, confirmOrigin: undefined })).toBe("google");
-  // Under "ask me first" every device waits by choice: the phone step has nothing to add.
+  // No passkey known here: offer to add one.
+  expect(accountConfirmation({ ...enrollment, trustedSignIns: [GOOGLE] })).toBe("add-passkey");
+  expect(accountConfirmation({ ...enrollment, trustedSignIns: undefined })).toBe("add-passkey");
+  // Without an address of its own no passkey can be used or added here: devices are approved.
+  expect(accountConfirmation({ ...enrollment, confirmOrigin: undefined })).toBeNull();
+  expect(
+    accountConfirmation({ ...enrollment, trustedSignIns: [GOOGLE], confirmOrigin: undefined }),
+  ).toBeNull();
+  // Under "ask me first" every device waits by choice: adding a passkey changes nothing then.
   expect(accountConfirmation({ ...enrollment, trustedSignIns: [GOOGLE], policy: "ask" })).toBeNull();
   expect(accountConfirmation({ ...enrollment, policy: "ask" })).toBe("passkey");
   // Once anything is confirmed, setup is done.
@@ -104,8 +106,24 @@ test("the last step follows the account: a passkey to use, a phone to approve, o
   expect(accountConfirmation(undefined)).toBeNull();
 });
 
-test("the checklist: account and address done, then one step for a Google-only account", async () => {
-  const onDismiss = vi.fn();
+/** A per-tab store like the browser's, or one that refuses every call. */
+function storage(blocked = false) {
+  const values = new Map<string, string>();
+  const refuse = () => {
+    throw new Error("blocked");
+  };
+  return {
+    values,
+    getItem: blocked ? refuse : (key: string) => values.get(key) ?? null,
+    setItem: blocked ? refuse : (key: string, value: string) => void values.set(key, value),
+    removeItem: blocked ? refuse : (key: string) => void values.delete(key),
+  };
+}
+
+test("without a passkey, the last step offers to add one, optional and about nothing else", async () => {
+  const onDismiss = vi.fn(),
+    session = storage();
+  vi.stubGlobal("sessionStorage", session);
   await show({ enrollment: { ...enrollment, trustedSignIns: [GOOGLE] }, onDismiss });
   expect(host.querySelector("#relay-setup-title")?.textContent).toBe("Finish setting up");
   const steps = [...host.querySelectorAll(".relay-setup-step")];
@@ -115,28 +133,62 @@ test("the checklist: account and address done, then one step for a Google-only a
     false,
   ]);
   expect(text()).toContain("Secure address g-abcdefgh.relay.example.test");
-  expect(text()).toContain("Connect your phone");
-  expect(text()).toContain("approve it here and this gateway will remember your Google account");
-  // The account has no passkey yet: the only mention is the link to add one.
-  expect(text().replace("Add a passkey instead", "")).not.toMatch(/passkey/i);
-  expect(links()).toEqual([
-    "https://omnesis.dev/docs/apps",
-    "https://relay.example.test/_relay/account",
+  expect(text()).toContain("Add a passkey (optional)");
+  expect(text()).toContain(
+    "Three steps: create the passkey on your Omnesis account page, which opens in a new tab, confirm with a sign-in you already use, then come back here and use it once.",
+  );
+  // Phones are added from Devices: this step says nothing about them.
+  expect(text()).not.toMatch(/phone|app|Google/i);
+  // One primary action, which opens the account page to add a passkey, and Not now.
+  expect(links()).toEqual(["https://relay.example.test/_relay/account?add=passkey"]);
+  const add = host.querySelector("a.btn-primary") as HTMLAnchorElement;
+  expect(add.textContent?.trim()).toBe("Add a passkey");
+  expect(add.getAttribute("target")).toBe("_blank");
+  expect([...host.querySelectorAll("button")].map((item) => item.textContent?.trim())).toEqual([
+    "Not now",
   ]);
+  // Pressing it remembers, in this tab, that the passkey's last step comes back here.
+  await click(add);
+  expect(session.values.get("omnesis.relay.adding-passkey")).toBe("1");
+  expect(host.querySelector('[role="status"]')?.textContent).toBe(
+    "Finish adding the passkey on the Omnesis account page that opened, then come back to this page.",
+  );
   await click(button("Not now"));
   expect(onDismiss).toHaveBeenCalledOnce();
-  // Without a usable relay address there's no link to add a passkey; the gateway's name stands in
-  // for an address of its own.
-  await show({
-    enrollment: { ...enrollment, trustedSignIns: [GOOGLE], confirmOrigin: undefined },
-    serviceUrl: "http://x",
-    hostname: "gateway.example.test",
-  });
-  expect(links()).toEqual(["https://omnesis.dev/docs/apps"]);
-  expect(text()).toContain("Secure address gateway.example.test");
+  // Without a usable relay address there's nothing to open.
+  await show({ enrollment: { ...enrollment, trustedSignIns: [GOOGLE] }, serviceUrl: "http://x" });
+  expect(links()).toEqual([]);
   // Done: nothing to show.
   await show({ enrollment: { ...enrollment, confirmedSignIns: [{ type: "google", id: "g" }] } });
   expect(host.innerHTML).toBe("");
+});
+
+test("back from adding a passkey, the last step is the sequence's third, and using it ends it", async () => {
+  const session = storage();
+  session.values.set("omnesis.relay.adding-passkey", "1");
+  vi.stubGlobal("sessionStorage", session);
+  const proof = { type: "gateway-passkey", credential: { id: "credential-fictional" } };
+  const request = confirming(),
+    run = vi.fn().mockResolvedValue({});
+  await show({ request, prove: vi.fn().mockResolvedValue(proof), run });
+  expect(host.querySelectorAll(".relay-setup-step .relay-strong")[2]?.textContent?.trim()).toBe(
+    "Adding a passkey · step 3 of 3",
+  );
+  expect(text()).toContain(
+    "Use your new passkey once on your gateway's secure address. After that, a new device that signs in with it connects straight away.",
+  );
+  await click(button("Continue with passkey"));
+  expect(run).toHaveBeenCalledOnce();
+  expect(session.values.has("omnesis.relay.adding-passkey")).toBe(false);
+  await show({ request, prove: vi.fn().mockResolvedValue(proof), run });
+  expect(text()).toContain("Let your passkey add devices");
+  // A browser that keeps nothing reads it as setup's usual passkey step, and the add still opens.
+  vi.stubGlobal("sessionStorage", storage(true));
+  await show({ request, run });
+  expect(text()).toContain("Let your passkey add devices");
+  await show({ enrollment: { ...enrollment, trustedSignIns: [GOOGLE] } });
+  await click(host.querySelector("a.btn-primary") as HTMLAnchorElement);
+  expect(host.querySelector('[role="status"]')).not.toBeNull();
 });
 
 test("on the gateway's own address, Continue with passkey confirms the passkey, then refreshes", async () => {

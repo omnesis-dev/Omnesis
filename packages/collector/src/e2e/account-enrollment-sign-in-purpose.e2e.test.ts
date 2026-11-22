@@ -46,8 +46,6 @@ import {
 } from "@omnesis/cloud-relay";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import {
-  COUNTERSIGN_HEADING,
-  ENDORSEMENT_HEADING,
   EnrollmentGateway,
   EnrollmentWorld,
   FakeGoogle,
@@ -57,7 +55,9 @@ import {
   browserSuiteAvailable,
   chooseAccountMenu,
   clickFirst,
+  confirmPasskeyHere,
   createAccountWithPasskey,
+  createPasskeyOnAccountPage,
   devicePinnedJson,
   enterConnectCode,
   expectText,
@@ -333,10 +333,7 @@ describe.skipIf(!browserReady)("a sign-in made to link a gateway never enrolls a
       const page = owner.page;
       await page.goto(`${world.relayOrigin}/_relay/account`);
       await page.getByRole("heading", { name: "Sign-in methods", exact: true }).waitFor();
-      await clickFirst(page, ["Add a passkey"]);
-      await page.getByRole("heading", { name: COUNTERSIGN_HEADING, exact: true }).waitFor();
-      await clickFirst(page, ["Use new passkey"]);
-      await page.getByRole("heading", { name: ENDORSEMENT_HEADING, exact: true }).waitFor();
+      await createPasskeyOnAccountPage(page);
       await clickFirst(page, ["Confirm with Google"]);
       await expectText(page, PASSKEY_ADDED);
       [passkey] = (await passkeyIds(owner)) as [string];
@@ -347,15 +344,14 @@ describe.skipIf(!browserReady)("a sign-in made to link a gateway never enrolls a
       );
       await home.setPolicy("automatic");
 
-      // Cabin is linked with the passkey and trusts the Google account on its countersignature.
+      // Cabin is linked with the passkey, which the owner confirms on cabin's own page: that one
+      // assertion countersigns the Google account, which cabin then suggests.
       const second = await link(cabin, owner, "existing", "Passkey");
       if (second.connect?.state !== "done")
         throw new Error(`Link failed: ${JSON.stringify(second.connect)}`);
-      await cabin.json("/admin/cloud-relay/reconnect", { method: "POST", body: "{}" });
-      await waitFor(
-        async () => (await pins(cabin)).some((pin) => pin.id === FakeGoogle.digest(OWNER_GOOGLE)),
-        "cabin to trust the Google account its passkey countersigned",
-      );
+      await confirmPasskeyHere(cabin, owner);
+      if (!(await pins(cabin)).some((pin) => pin.id === FakeGoogle.digest(OWNER_GOOGLE)))
+        throw new Error("Cabin should suggest the Google account its passkey countersigned");
     },
     3 * gatewayBootBudgetMs() + 300_000,
   );
@@ -521,14 +517,11 @@ describe.skipIf(!browserReady)("a sign-in made to link a gateway never enrolls a
       enrollmentPolicy: "ask",
       declinedGoogle: [google],
     });
-    // The passkey's countersignature still names the Google account, but a declined sign-in is
-    // never pinned from it again.
+    // Confirming the passkey here again countersigns the account's sign-ins, but a declined one
+    // is neither countersigned nor pinned from it again.
+    await confirmPasskeyHere(cabin, owner);
     await cabin.json("/admin/cloud-relay/reconnect", { method: "POST", body: "{}" });
-    const deadline = Date.now() + 5_000;
-    while (Date.now() < deadline) {
-      expect(await pins(cabin)).toEqual([{ type: "passkey", id: passkey, source: "link-page" }]);
-      await new Promise((resolve) => setTimeout(resolve, 500));
-    }
+    expect(await pins(cabin)).toEqual([{ type: "passkey", id: passkey, source: "link-page" }]);
     expect((await cabin.status()).deviceEnrollment.policy).toBe("ask");
   }, 240_000);
 

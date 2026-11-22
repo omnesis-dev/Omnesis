@@ -33,6 +33,17 @@ export const CONNECT_PAGE = "/portal/connect-window.html";
  */
 export const OPENED_BY_PORTAL = "#opened-by-portal";
 
+/**
+ * The account's sign-in link as this window opens it: its `window` field says the window is one a
+ * script opened, so the page the sign-in ends on closes it (the relay's `SIGNUP_WINDOW_MARKER`).
+ * The link the page shows as a plain link stays as the relay gave it.
+ */
+export function inConnectWindow(url) {
+  const marked = new URL(url);
+  marked.searchParams.set("window", "portal");
+  return marked.href;
+}
+
 /** How often the portal looks whether the window is back on its own page, while it has somewhere to send it. */
 const SEND_INTERVAL_MS = 250;
 
@@ -130,7 +141,7 @@ export function useConnectWindow(connect) {
   const signIn = waiting && !connect.verification ? relayHttpsUrl(connect.authorizeUrl) : null;
   const wasWaiting = useRef(false);
   useEffect(() => {
-    if (signIn) followConnectWindow(signIn);
+    if (signIn) followConnectWindow(inConnectWindow(signIn));
   }, [signIn]);
   useEffect(() => {
     if (waiting) wasWaiting.current = true;

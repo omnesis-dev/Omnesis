@@ -9,6 +9,7 @@ import {
   CONNECT_WINDOW_NAME,
   closeConnectWindow,
   followConnectWindow,
+  inConnectWindow,
   openConnectWindow,
   useConnectWindow,
   // @ts-expect-error portal JS
@@ -198,7 +199,8 @@ test("sends the window on to the sign-in once the check passed, and lets it go o
   expect(p.sent).toEqual([CHECK]);
   await show({ state: "waiting", authorizeUrl: SIGN_IN });
   vi.advanceTimersByTime(250);
-  expect(p.sent).toEqual([CHECK, SIGN_IN]);
+  // Marked as this window's, so the page the sign-in ends on closes it.
+  expect(p.sent).toEqual([CHECK, `${SIGN_IN}&window=portal`]);
   p.back();
   await show({ state: "registering" });
   expect(p.win.close).toHaveBeenCalledOnce();
@@ -213,4 +215,10 @@ test("a page that never saw the connection waiting leaves the window alone", asy
   await show(undefined);
   await show({ state: "done" });
   expect(p.win.close).not.toHaveBeenCalled();
+});
+
+test("the sign-in link the window opens says so in one field, and keeps everything else", () => {
+  expect(inConnectWindow(SIGN_IN)).toBe(`${SIGN_IN}&window=portal`);
+  // Set once, however often it is marked.
+  expect(inConnectWindow(inConnectWindow(SIGN_IN))).toBe(`${SIGN_IN}&window=portal`);
 });
