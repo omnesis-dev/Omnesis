@@ -138,13 +138,21 @@ export function waitForIOSTrustService({
       if (reported) log(`The simulator's trust service settled (trustd ${status.pid}).`);
       return status;
     }
+    // A simulator's processes are host processes, so the simulator log's
+    // process id is the host's. The command line is checked before any
+    // signal, so a process id the system has since reused is never signalled.
+    const gone = status.state === "replacing" && !SIMULATOR_TRUSTD.test(command(status.pid));
     // A trustd that has neither decided nor announced anything for this long
-    // logs its decision some other way; it is not on its way out.
-    if (status.state === "starting") {
+    // logs its decision some other way; it is not on its way out. A trustd
+    // that has left is replaced on the next request, by then with the asset in
+    // place, and nothing may ask for one before the journeys do.
+    if (status.state === "starting" || gone) {
       if (!undecided.has(status.pid)) undecided.set(status.pid, now());
       if (now() - undecided.get(status.pid) >= undecidedMs) {
         log(
-          `trustd ${status.pid} logged no trust store decision in ${undecidedMs / 1000}s and announced no exit; not waiting on it.`,
+          gone
+            ? `trustd ${status.pid} has exited and no new trustd started in ${undecidedMs / 1000}s; the next request starts one.`
+            : `trustd ${status.pid} logged no trust store decision in ${undecidedMs / 1000}s and announced no exit; not waiting on it.`,
         );
         return status;
       }
@@ -155,10 +163,7 @@ export function waitForIOSTrustService({
         : `The simulator's trust service (trustd ${status.pid}) is starting; waiting for it to load its trust store.`;
     if (line !== reported) log(line);
     reported = line;
-    // A simulator's processes are host processes, so the simulator log's
-    // process id is the host's. The command line is checked first, so a
-    // process id the system has since reused is never signalled.
-    if (status.state === "replacing" && SIMULATOR_TRUSTD.test(command(status.pid))) {
+    if (status.state === "replacing" && !gone) {
       if (!asked.has(status.pid)) {
         log(`Asking trustd ${status.pid} to exit now, as it announced.`);
         kill(status.pid, "SIGTERM");

@@ -106,6 +106,28 @@ describe("the simulator's trust service", () => {
     expect(calls[0]).toContain(`simctl spawn ${UDID} log show --last 2h --style ndjson`);
   });
 
+  test("stops waiting once the leaving trustd has exited and nothing has started another", () => {
+    const { run } = simulator([firstTrustd]);
+    const signals = [];
+    let alive = true;
+    const time = clock();
+    const status = waitForIOSTrustService({
+      udid: UDID,
+      run,
+      ...time,
+      undecidedMs: 120_000,
+      command: () => (alive ? TRUSTD : ""),
+      kill: (pid, name) => {
+        signals.push(`${name} ${pid}`);
+        alive = false;
+      },
+      log: () => {},
+    });
+    expect(status).toMatchObject({ state: "replacing", pid: 101 });
+    expect(signals).toEqual(["SIGTERM 101"]);
+    expect(time.now()).toBe(125_000);
+  });
+
   test("stops waiting on a trustd that neither decides nor announces anything", () => {
     const { run } = simulator([startup(101, 0).slice(0, 1)]);
     const time = clock();
