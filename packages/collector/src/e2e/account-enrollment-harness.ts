@@ -1809,17 +1809,17 @@ export async function passkeyIds(session: PasskeySession): Promise<string[]> {
 }
 
 /** The account page's panel right after a new passkey is created, before a sign-in vouches for it. */
-export const ENDORSEMENT_HEADING = "Adding a passkey · step 2 of 2";
+const ENDORSEMENT_HEADING = "Adding a passkey · step 2 of 2";
 export const PASSKEY_ADDED = "Passkey added. You can now use it to sign in.";
 
 /**
  * Creates a passkey on the account page `page` shows, in the authenticator its profile has now:
  * "Add a passkey", then "Create passkey". The page then waits for a sign-in to vouch for it.
  */
-export async function createPasskeyOnAccountPage(page: Page, heading = ENDORSEMENT_HEADING) {
+export async function createPasskeyOnAccountPage(page: Page) {
   await clickFirst(page, ["Add a passkey"]);
   await clickFirst(page, ["Create passkey"]);
-  await page.getByRole("heading", { name: heading, exact: true }).waitFor();
+  await page.getByRole("heading", { name: ENDORSEMENT_HEADING, exact: true }).waitFor();
 }
 
 /** Vouches for the passkey being added with one of the account's passkeys, as the page names it. */

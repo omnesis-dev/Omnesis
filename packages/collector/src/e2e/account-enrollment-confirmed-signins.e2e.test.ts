@@ -35,7 +35,6 @@ import {
   EnrollmentGateway,
   EnrollmentWorld,
   FakeGoogle,
-  PASSKEY_ADDED,
   PasskeyBrowser,
   addSecondPasskey,
   assertionOn,
