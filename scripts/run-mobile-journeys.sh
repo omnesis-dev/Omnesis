@@ -241,6 +241,11 @@ print(json.dumps({"gatewayURL": os.environ["URL"], "token": os.environ["TOKEN"],
   # kept on failure.
   local log_start
   log_start="$(date '+%Y-%m-%d %H:%M:%S')"
+  # What the simulator's networking and trust service are doing when a journey
+  # fails (`scripts/ci/ios-journey-stall-watch.sh`).
+  "$ROOT/scripts/ci/ios-journey-stall-watch.sh" "$udid" "$ARTIFACTS/xcodebuild.log" \
+    "$ARTIFACTS/network-stalls" >/dev/null 2>&1 &
+  local watcher=$!
   # The full xcodebuild output goes to the artifacts; the console keeps the
   # test verdicts and errors. A UI test runner that fails to initialize before
   # any journey starts gets one more attempt (`xcodebuild-ui-tests.mjs`, which
@@ -260,6 +265,8 @@ print(json.dumps({"gatewayURL": os.environ["URL"], "token": os.environ["TOKEN"],
     | grep -E --line-buffered '^(Test Case|Test Suite|Testing|Executed|\*\*)|error:'
   status="${PIPESTATUS[0]}"
   set -e
+  kill "$watcher" 2>/dev/null || true
+  wait "$watcher" 2>/dev/null || true
   stop_recording
 
   if [[ "$status" != 0 ]]; then
