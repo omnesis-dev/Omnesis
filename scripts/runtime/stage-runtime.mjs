@@ -18,7 +18,7 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, realpathSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildOneProjectAtATimeHere, buildProjects } from "../build-projects.mjs";
@@ -147,8 +147,7 @@ function flagValues(argv, flag) {
   return values;
 }
 
-const isEntrypoint =
-  process.argv[1] && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
+const isEntrypoint = import.meta.main;
 if (isEntrypoint) {
   const outDirs = flagValues(process.argv, "--out");
   if (outDirs.length > 1) throw new Error("--out may be given only once");

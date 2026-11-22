@@ -33,7 +33,7 @@
  * Exits 1 with one line per violation, naming the installer line.
  */
 
-import { readFileSync, realpathSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -594,10 +594,7 @@ function parseArgs(argv) {
   return flags;
 }
 
-if (
-  process.argv[1] &&
-  realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))
-) {
+if (import.meta.main) {
   const flags = parseArgs(process.argv.slice(2));
   const { cliSurface, readReleasedSurface } = await import("./cli-surface.mjs");
   const text = readFileSync(flags.installer, "utf8");

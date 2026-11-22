@@ -23,7 +23,7 @@
  * and the tag preflight refuses a release whose file is not its own surface.
  */
 
-import { readFileSync, writeFileSync, realpathSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -172,10 +172,7 @@ function parseFlags(argv) {
   return flags;
 }
 
-if (
-  process.argv[1] &&
-  realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))
-) {
+if (import.meta.main) {
   const flags = parseFlags(process.argv.slice(2));
   const surface = await cliSurface(flags.tree ?? repoRoot);
   if (flags.check) {

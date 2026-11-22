@@ -24,7 +24,6 @@ import {
   readFileSync,
   rmSync,
   writeFileSync,
-  realpathSync,
 } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -253,8 +252,7 @@ export function stagePackage({ dir, pkg }, outBase, opts = {}) {
   return stageDir;
 }
 
-const isEntrypoint =
-  process.argv[1] && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
+const isEntrypoint = import.meta.main;
 if (isEntrypoint) {
   const outFlag = process.argv.indexOf("--out");
   const outBase = outFlag !== -1 ? process.argv[outFlag + 1] : join(repoRoot, "release", "staging");

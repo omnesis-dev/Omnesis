@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { existsSync, readFileSync, readdirSync, realpathSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -128,10 +128,7 @@ export function checkProductVersion(root = defaultRoot, expectedTag) {
   return productVersion;
 }
 
-if (
-  process.argv[1] &&
-  realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))
-) {
+if (import.meta.main) {
   const version = checkProductVersion(defaultRoot, process.argv[2]);
   process.stdout.write(`Product version ${version} is consistent.\n`);
 }

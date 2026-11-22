@@ -14,8 +14,11 @@ import { fileURLToPath } from "node:url";
  * through a symlink (a linked checkout, or macOS's temporary directory under
  * /var -> /private/var) still counts as the entry script.
  *
- * A script that is shipped or copied on its own, without this directory, makes
- * the same comparison inline.
+ * A script shipped or copied on its own, without this directory, asks Node
+ * instead with `import.meta.main`, which follows the same rule. The few that may
+ * run under a Node predating `import.meta.main` (npm's preinstall, a workflow
+ * on the runner's own Node) or as TypeScript under tsx, where it is undefined,
+ * compare real paths inline.
  */
 export function isEntryScript(moduleUrl) {
   const entry = process.argv[1];

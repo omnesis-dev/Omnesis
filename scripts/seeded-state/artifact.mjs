@@ -17,10 +17,8 @@ import {
   rmSync,
   statSync,
   writeFileSync,
-  realpathSync,
 } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
 
 // Source checkouts and compiled package consumers use the same native ACL contract.
@@ -857,8 +855,7 @@ export function installSeededStateArtifact(artifactDirectory, stateDirectory, op
   }
 }
 
-const isEntrypoint =
-  process.argv[1] && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
+const isEntrypoint = import.meta.main;
 if (isEntrypoint) {
   const [command, first, second] = process.argv.slice(2);
   if (command === "create") {

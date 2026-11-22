@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 import { spawn } from "node:child_process";
-import { fileURLToPath } from "node:url";
-import { realpathSync } from "node:fs";
 
 // Each daemon needs its full internal shutdown budget plus time to exit.
 // Compose must allow both sequential drains before killing the container.
@@ -109,9 +107,6 @@ export async function supervise({
   return result;
 }
 
-if (
-  process.argv[1] &&
-  realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))
-) {
+if (import.meta.main) {
   process.exitCode = await supervise();
 }
