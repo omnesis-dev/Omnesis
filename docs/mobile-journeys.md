@@ -113,7 +113,24 @@ profiles the gateway kept in `gateway-logs/stall-profiles/` (see
 `docs/stall-investigation.md`). On iOS, `app-touch.log` adds where each tap
 landed, the views it hit, the state every gesture recogniser on it reached,
 and which menu actions ran: the journeys launch the app with
-`DEMO_TOUCH_LOG=1`, which only a DEBUG build reads.
+`DEMO_TOUCH_LOG=1`, which only a DEBUG build reads. `network-stalls/` holds,
+for each of the first three failures, a stack sample of the simulator's
+trustd and securityd, the app and the test runner, taken as the failure is
+reported, with the simulator's security and network log for the minutes
+before, and `network-stalls/trust-service.log` holds trustd's log since the
+simulator booted.
+
+Every TLS handshake in the simulator, the app's and the test runner's, waits
+for the simulator's trust service (trustd) to evaluate the gateway's
+certificate. A freshly booted simulator's trustd fetches trust store assets
+from Apple and then exits so that a new trustd can load them; until the new
+one starts, every handshake waits, for minutes on a hosted runner. That
+happens about 20 minutes after the boot, when the journeys begin, so before
+the first journey `scripts/ci/wait-ios-trust-service.mjs` waits until the
+newest trustd has loaded its trust store without announcing an exit. A trustd
+that has announced its exit is asked to leave at once, and the lane fails,
+naming trustd, if it has not settled within ten minutes
+(`OMNESIS_JOURNEY_TRUST_TIMEOUT`, in seconds).
 
 A touch that ends `cancelled` with `_UISystemGestureGateGestureRecognizer`
 recognised was taken by the system for one of its own gestures: the control

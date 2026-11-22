@@ -162,7 +162,7 @@ jobs:
         # The screen recording, xcresult bundle (screenshots of every failure),
         # xcodebuild log and gateway logs. A failed upload must not mask the
         # test result.
-        if: always() # DIAGNOSTIC ONLY, revert before review
+        if: failure() || cancelled()
         continue-on-error: true
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:

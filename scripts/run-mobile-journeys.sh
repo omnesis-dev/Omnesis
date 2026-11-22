@@ -28,7 +28,8 @@
 # screen is recorded for the whole run.
 # Everything worth reading after a failure lands in OMNESIS_JOURNEY_ARTIFACTS:
 # the recording, per-failure screenshots, test reports / the xcresult bundle,
-# the iOS app's touch log, and the gateway's logs and stall profiles.
+# the iOS app's touch log, the simulator's trust service and network state
+# at each failure, and the gateway's logs and stall profiles.
 #
 # Overrides:
 #   OMNESIS_CONFIG_DIR               gateway state   (default: /tmp/omnesis-mobile-journeys/gateway)
@@ -38,6 +39,7 @@
 #   OMNESIS_JOURNEY_READY_TIMEOUT    seconds to wait for the corpus to be searchable (default: 900)
 #   OMNESIS_JOURNEY_IOS_SIMULATOR    simulator device name (default: iPhone 17)
 #   OMNESIS_JOURNEY_IOS_UDID         exact prepared simulator (overrides the name)
+#   OMNESIS_JOURNEY_TRUST_TIMEOUT    seconds to wait for the simulator's trust service (default: 600)
 #   OMNESIS_JOURNEY_ONLY             run one journey: an XCTest identifier (iOS) or
 #                                    Class#method (Android)
 
@@ -232,6 +234,10 @@ print(json.dumps({"gatewayURL": os.environ["URL"], "token": os.environ["TOKEN"],
     done
   fi
 
+  # Every TLS handshake in the simulator waits on its trust service, which
+  # replaces its trust store about when the journeys begin (#1206).
+  node "$ROOT/scripts/ci/wait-ios-trust-service.mjs" "$udid" || return 1
+
   xcrun simctl io "$udid" recordVideo --codec h264 --force "$ARTIFACTS/ios-journeys.mp4" \
     >"$ARTIFACTS/recorder.log" 2>&1 &
   RECORDER_PID=$!
@@ -268,10 +274,6 @@ print(json.dumps({"gatewayURL": os.environ["URL"], "token": os.environ["TOKEN"],
   kill "$watcher" 2>/dev/null || true
   wait "$watcher" 2>/dev/null || true
   stop_recording
-  # The trust service's own account of the run, from the simulator's boot.
-  xcrun simctl spawn "$udid" log show --last 60m --info --style compact \
-    --predicate 'process == "trustd" OR process == "securityd"' \
-    >"$ARTIFACTS/network-stalls/trust-service.log" 2>&1 || true
 
   if [[ "$status" != 0 ]]; then
     mkdir -p "$ARTIFACTS/failure-attachments"
@@ -283,6 +285,9 @@ print(json.dumps({"gatewayURL": os.environ["URL"], "token": os.environ["TOKEN"],
     xcrun simctl spawn "$udid" log show --start "$log_start" --style compact \
       --predicate 'subsystem == "dev.omnesis.ios" AND category == "touch"' \
       >"$ARTIFACTS/app-touch.log" 2>&1 || true
+    # The trust service's own account of the run, from the simulator's boot.
+    xcrun simctl spawn "$udid" log show --last 60m --info --style compact \
+      --predicate 'process == "trustd"' >"$ARTIFACTS/network-stalls/trust-service.log" 2>&1 || true
     echo "✗ iOS journeys failed (xcodebuild exit $status). Artifacts: $ARTIFACTS" >&2
     return "$status"
   fi
