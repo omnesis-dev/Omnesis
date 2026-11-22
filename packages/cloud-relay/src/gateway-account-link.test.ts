@@ -2742,6 +2742,33 @@ test("the countersigned list is the gateway's: an assertion over another list, o
   expect(f.manager.confirmedSignIns()).toEqual([]);
 });
 
+test("the status says the account lists a passkey this gateway could confirm, pinned here or not", async () => {
+  const f = await confirming();
+  const owner = await passkeyDevice();
+  // Linked with Google: nothing is pinned for the passkey, and nothing has been read yet.
+  expect(f.manager.enrollmentStatus()).not.toHaveProperty("accountPasskey");
+  f.list({ id: owner.id, publicKey: owner.publicKey });
+  await f.manager.refresh();
+  expect(f.manager.enrollmentStatus()).toMatchObject({ accountPasskey: true });
+  expect(f.pins()).toEqual([[f.google, "link-page"]]);
+  // A listing for another account changes nothing; one with no passkey says so.
+  f.credentials.mockResolvedValueOnce({ accountId: "b".repeat(64), google: [], passkeys: [] });
+  await f.manager.refresh();
+  expect(f.manager.enrollmentStatus()).toMatchObject({ accountPasskey: true });
+  f.list();
+  await f.manager.refresh();
+  expect(f.manager.enrollmentStatus()).not.toHaveProperty("accountPasskey");
+  // Linking again starts from what the next read says.
+  f.list({ id: owner.id, publicKey: owner.publicKey });
+  await f.manager.refresh();
+  await f.manager.completeSignup({
+    accountId: f.accountId,
+    nonce: opaque(),
+    signal: new AbortController().signal,
+  });
+  expect(f.manager.enrollmentStatus()).not.toHaveProperty("accountPasskey");
+});
+
 test("TM-01: a relay page, another gateway's page or a relay-chosen origin cannot confirm a passkey", async () => {
   const f = await confirming();
   const owner = await passkeyDevice();

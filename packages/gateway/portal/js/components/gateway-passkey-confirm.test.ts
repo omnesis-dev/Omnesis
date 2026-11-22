@@ -87,6 +87,10 @@ test("the last step follows the account: a passkey to use, one to add, or nothin
   expect(accountConfirmation(enrollment)).toBe("passkey");
   // No passkey known here: offer to add one.
   expect(accountConfirmation({ ...enrollment, trustedSignIns: [GOOGLE] })).toBe("add-passkey");
+  // A passkey the account lists is one to use here, whether or not this gateway pinned it.
+  expect(
+    accountConfirmation({ ...enrollment, trustedSignIns: [GOOGLE], accountPasskey: true }),
+  ).toBe("passkey");
   expect(accountConfirmation({ ...enrollment, trustedSignIns: undefined })).toBe("add-passkey");
   // Without an address of its own no passkey can be used or added here: devices are approved.
   expect(accountConfirmation({ ...enrollment, confirmOrigin: undefined })).toBeNull();

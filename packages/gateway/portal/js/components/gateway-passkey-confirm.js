@@ -81,14 +81,19 @@ function rememberAdding(value, storage = globalThis.sessionStorage) {
 
 /**
  * Which last step setup still needs, on a gateway with a page of its own to use a passkey on:
- * `"passkey"` when the account has a passkey this gateway knows, `"add-passkey"` when it has none
+ * `"passkey"` when the account has a passkey this gateway could confirm (pinned here, or listed
+ * on the account when this gateway last read it), `"add-passkey"` when it has none
  * yet and the gateway adds devices automatically. Null once anything is confirmed, under "ask me
  * first" with no passkey (every device waits by choice), and on a gateway with no page of its own
  * (a custom domain), where no passkey can be used: its devices are approved from Devices.
  */
 export function accountConfirmation(enrollment) {
   if (!enrollment?.confirmOrigin || (enrollment.confirmedSignIns ?? []).length > 0) return null;
-  if ((enrollment.trustedSignIns ?? []).some((signIn) => signIn.type === "passkey"))
+  // A passkey the account lists can be confirmed here whether or not this gateway pinned it.
+  if (
+    enrollment.accountPasskey ||
+    (enrollment.trustedSignIns ?? []).some((signIn) => signIn.type === "passkey")
+  )
     return "passkey";
   return enrollment.policy === "automatic" ? "add-passkey" : null;
 }

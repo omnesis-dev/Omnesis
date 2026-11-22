@@ -159,6 +159,11 @@ export interface CloudRelayManagementStatus {
     }[];
     /** The gateway's own origin, where a passkey can be confirmed; absent when it has none. */
     confirmOrigin?: string;
+    /**
+     * The account listed a passkey when this gateway last read it, so one can be confirmed here
+     * whether or not this gateway pinned it. Only says what setup can offer; it trusts nothing.
+     */
+    accountPasskey?: true;
   };
   /**
    * The relay no longer has this gateway, so it went back to not being connected: its Omnesis

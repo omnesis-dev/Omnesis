@@ -588,6 +588,53 @@ describe.skipIf(!browserReady)("connect a gateway by signing in", () => {
   );
 
   test(
+    "a connect left waiting and run again with an invite starts again with it, and says the invite went unused when an existing account signs in",
+    async () => {
+      const gateway = await EnrollmentGateway.start(world, "invite-after-existing");
+      gateways.push(gateway);
+      // The owner starts signing in to an account they have, then closes the terminal.
+      const first = cloudConnect(gateway, ["--existing"]);
+      await printedGatewayCode(first);
+      first.proc.kill("SIGTERM");
+      await first.exit.catch(() => undefined);
+      expect((await gateway.status()).connect).toMatchObject({
+        state: "waiting",
+        intent: "existing",
+      });
+      // Run again to create an account with an invite, it starts a sign-up that carries it.
+      const invite = world.invite();
+      const run = cloudConnect(gateway, ["--invite", invite]);
+      const printed = await printedGatewayCode(run);
+      expect(run.stdout()).toContain("Waiting for you to create your Omnesis account…");
+      expect((await gateway.status()).connect).toMatchObject({
+        state: "waiting",
+        intent: "create",
+      });
+      const page = inviteOnly.session.page;
+      await enterConnectCode(page, printed.connectUrl, printed.code);
+      // The relay offers to create the account: the sign-up has the invite.
+      await page.getByRole("heading", { name: CREATE_ACCOUNT_HEADING, exact: true }).waitFor();
+      await page.getByRole("button", { name: "Create with a passkey", exact: true }).waitFor();
+      // The owner signs in to the account they have instead, and is told the invite wasn't used.
+      await clickFirst(page, ["I already have an account"]);
+      await page.getByRole("heading", { name: SIGN_IN_HEADING, exact: true }).waitFor();
+      await clickFirst(page, ["Sign in with Passkey"]);
+      await connectThisGateway(page);
+      expect(await run.exit).toBe(0);
+      // The CLI said so, which is the gateway's notice acknowledged.
+      expect(run.stdout()).toContain("Your invite wasn't used.");
+      expect((await gateway.status()).connect).toMatchObject({ state: "done", intent: "create" });
+      const checked = await fetch(`${world.relayOrigin}/_relay/v3/signup/invite`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ invite: invite.slice(invite.indexOf("#") + 1) }),
+      });
+      expect(await checked.json()).toMatchObject({ status: "valid" });
+    },
+    gatewayBootBudgetMs() + 180_000,
+  );
+
+  test(
     "a browser already signed in to an account still creates a new one with a passkey from the CLI, which spends the invite",
     async () => {
       const gateway = await EnrollmentGateway.start(world, "invite-passkey");

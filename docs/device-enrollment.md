@@ -197,7 +197,9 @@ The owner confirms a passkey as the last step of connecting: the account page
 is confirmed. What the step asks depends only on what the account has, so a relay
 that lies about it can only make the step fail:
 
-- a passkey pinned here and an origin of its own: "Continue with passkey" runs the
+- a passkey pinned here, or one the account listed when the gateway last read it
+  (`deviceEnrollment.accountPasskey`), and an origin of its own: "Continue with
+  passkey" runs the
   `pin-passkey` ceremony below on the gateway's own page. On any other address
   (the LAN or tailnet portal) the same button opens the gateway's own page
   already signed in (the portal handoff below) and the ceremony starts on load;
@@ -1013,6 +1015,14 @@ agent, OAuth resource or MCP setting, and `unfinished` says why it stopped.
 Connecting again continues with the same name; `POST /admin/cloud-relay/start-over`
 (`omnesis cloud start-over`) discards the configuration, owner key and anything
 the attempt left, and is refused once the gateway has registered.
+
+Asked again while a connection still waits for its sign-in, `connect` carries on
+with it when nothing changed. Asked for another choice (`intent`) or another
+invite, it cancels the relay's operation and starts a new one with them, keeping
+the reserved name: the relay's operation names the choice and invite it was
+started with, so carrying on would sign in without the invite, and the gateway
+could not say afterwards that an invite went unused. Past the sign-in
+(registering, linking) it always carries on.
 
 The relay says before anyone signs in whether an invite is needed:
 `GET /_relay/v3/signup/access` (public, no parameters) answers

@@ -32,6 +32,7 @@ import {
   relayError,
   dnsVerificationUrl,
   relayClock,
+  relayDate,
   relayHttpsUrl,
 } from "../lib/cloud-relay-api.js";
 import { AccountConnect, ExistingAccountNotice } from "./remote-access/account-step.js";
@@ -517,7 +518,22 @@ const CONFIRMED_VIA = {
   "admin-app-google": "Confirmed from an Omnesis app",
 };
 
-/** The sign-ins this gateway trusts: what each is, where it came from, and whether it's confirmed. */
+/**
+ * What a sign-in on record means for a new device here: confirmed (and how), a passkey the owner
+ * still has to use once on this gateway while `setup` waits for one, or one whose devices wait.
+ */
+function signInState(signIn, setup) {
+  if (signIn.via) return CONFIRMED_VIA[signIn.via] ?? "Confirmed";
+  if (signIn.type === "passkey" && setup) return "Waiting for you to use it once on this gateway";
+  return "Not confirmed on this gateway yet: devices that sign in with it wait for your OK";
+}
+
+/**
+ * The sign-ins this gateway trusts: what each is, when it was added, where it came from, and
+ * whether it's confirmed, its state first. The account's listing names a sign-in only by its id,
+ * which no person reads, so the id is kept for a hover, and two of a kind added the same day are
+ * told apart by its last characters.
+ */
 function TrustedSignIns({ enrollment }) {
   const pinned = enrollment.trustedSignIns ?? [];
   const confirmed = enrollment.confirmedSignIns ?? [];
@@ -528,24 +544,35 @@ function TrustedSignIns({ enrollment }) {
     })),
     ...confirmed
       .filter((value) => !pinned.some((signIn) => signIn.type === value.type && signIn.id === value.id))
-      .map((value) => ({ ...value, confirmed: true })),
+      .map((value) => ({ ...value, addedAt: value.at, confirmed: true })),
   ];
   if (rows.length === 0) return null;
+  // Nothing confirmed yet and a page of its own: setup's last step asks for a passkey here.
+  const setup = confirmed.length === 0 && Boolean(enrollment.confirmOrigin);
   return html`<div class="relay-sign-ins">
     <ul class="relay-sign-in-list">
-      ${rows.map((signIn) => {
+      ${rows.map((signIn, index) => {
+        const kind = signIn.type === "passkey" ? "Passkey" : "Google account";
+        // An add time from before 2001 is no real time: such a row says nothing about when.
+        const added = signIn.addedAt > 1e9 ? relayDate(signIn.addedAt) : "";
+        // Two of a kind added the same day are told apart by the end of their ids.
+        const twin = rows.some(
+          (other, at) =>
+            at !== index &&
+            other.type === signIn.type &&
+            (other.addedAt > 1e9 ? relayDate(other.addedAt) : "") === added,
+        );
+        const detail = [added && `added ${added}`, twin && `ending ${String(signIn.id).slice(-4)}`]
+          .filter(Boolean)
+          .join(" · ");
         const source = signIn.source
           ? (SIGN_IN_SOURCES[signIn.source] ?? "Source not recorded")
           : undefined;
-        const confirmation = signIn.via
-          ? (CONFIRMED_VIA[signIn.via] ?? "Confirmed")
-          : "Not confirmed on this gateway: devices using it wait for your approval";
         return html`<li class="relay-sign-in" key=${`${signIn.type}:${signIn.id}`}>
-          <span class="relay-row-value">
-            ${`${signIn.type === "passkey" ? "Passkey" : "Google account"} `}
-            <span class="relay-mono">${String(signIn.id).slice(0, 12)}</span>
+          <span class="relay-row-value" title=${`${kind} ${signIn.id}`}>
+            ${kind}${detail && html`<span class="relay-hint">${` · ${detail}`}</span>`}
           </span>
-          <span class="relay-hint">${[source, confirmation].filter(Boolean).join(" · ")}</span>
+          <span class="relay-hint">${[signInState(signIn, setup), source].filter(Boolean).join(" · ")}</span>
         </li>`;
       })}
     </ul>
