@@ -34,6 +34,19 @@ public final class BackgroundTaskCoordinator {
         "\(appBundleIdentifier).photosBackfill"
     }
 
+    /// Long-running catch-up for every source's history. A short wake
+    /// (an observer callback, the refresh task) spends its seconds on recent
+    /// data first; the deep backlog of a fresh pairing is what this
+    /// `BGProcessingTask` — minutes long, typically overnight — is for.
+    public static var backfillIdentifier: String {
+        "\(appBundleIdentifier).backfill"
+    }
+
+    /// What iOS grants a `BGAppRefreshTask`: about thirty seconds. The
+    /// expiration handler is the hard stop; this keeps the work from
+    /// running into it.
+    static let refreshBudgetSeconds: TimeInterval = 25
+
     private static var appBundleIdentifier: String {
         guard let identifier = Bundle.main.bundleIdentifier else {
             preconditionFailure("Background tasks require an app bundle identifier")
@@ -112,6 +125,19 @@ public final class BackgroundTaskCoordinator {
             }
             self.handle(task: processingTask)
         }
+        BGTaskScheduler.shared.register(
+            forTaskWithIdentifier: Self.backfillIdentifier,
+            using: nil
+        ) { [weak self] task in
+            guard let self else { task.setTaskCompleted(success: false)
+                return
+            }
+            guard let processingTask = task as? BGProcessingTask else {
+                task.setTaskCompleted(success: false)
+                return
+            }
+            self.handleBackfill(task: processingTask)
+        }
     }
 
     /// Schedule the next BG refresh. Call on `scenePhase == .background`.
@@ -171,14 +197,38 @@ public final class BackgroundTaskCoordinator {
         }
     }
 
+    /// Schedule the next history catch-up. Call on `scenePhase ==
+    /// .background`. Needs network, not power: a phone that never charges
+    /// overnight still gets its backlog read.
+    public func scheduleNextBackfill(after delay: TimeInterval = 15 * 60) {
+        let request = BGProcessingTaskRequest(identifier: Self.backfillIdentifier)
+        request.earliestBeginDate = Date(timeIntervalSinceNow: delay)
+        request.requiresNetworkConnectivity = true
+        do {
+            try BGTaskScheduler.shared.submit(request)
+            log.notice("Scheduled history backfill in \(Int(delay), privacy: .public)s")
+        } catch {
+            log.warning("Backfill BGTask submit failed: \(String(describing: error), privacy: .private)")
+        }
+    }
+
     // MARK: - Internals
 
     /// Execute the refresh body independently of `BGTask` so the buffer
     /// mutation and its observable-state refresh remain one operation.
-    func performRefresh() async {
+    func performRefresh(budget: SyncBudget = .seconds(BackgroundTaskCoordinator.refreshBudgetSeconds)) async {
         guard let core = await coreProvider() else { return }
-        _ = await core.drainPending()
-        _ = await core.syncAll()
+        _ = await core.drainPending(budget: budget)
+        _ = await core.syncAll(budget: budget)
+        await refreshCompleted()
+    }
+
+    /// Catch every source up for as long as iOS lets the processing task
+    /// run; its expiration handler cancels the pass, which stops between
+    /// pages with every finished page's cursor saved.
+    func performBackfill() async {
+        guard let core = await coreProvider() else { return }
+        _ = await core.syncAll(budget: .unbounded)
         await refreshCompleted()
     }
 
@@ -199,6 +249,21 @@ public final class BackgroundTaskCoordinator {
             // so reading the ambient `Task.isCancelled` here would always
             // read `false` and unconditionally report success regardless
             // of whether the OS expired `task` mid-work.
+            task.setTaskCompleted(success: !work.isCancelled)
+        }
+    }
+
+    private func handleBackfill(task: BGProcessingTask) {
+        log.notice("History backfill BG task fired")
+        scheduleNextBackfill()
+
+        let work = Task { [weak self] in
+            await self?.performBackfill()
+        }
+        task.expirationHandler = { work.cancel() }
+
+        Task { [work] in
+            await work.value
             task.setTaskCompleted(success: !work.isCancelled)
         }
     }

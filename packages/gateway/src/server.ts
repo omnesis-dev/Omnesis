@@ -24,6 +24,7 @@ import {
   type DeviceId,
   type DeviceRecord,
 } from "@omnesis/types";
+import { incompleteRequestBodyResponse, isIncompleteRequestBody } from "./http/incomplete-body.js";
 import { resolveRequestOAuthUrls } from "./http/oauth-request.js";
 import { PairingQrService } from "./http/services/PairingQrService.js";
 import { mountTailscaleRoutes } from "./http/routes/tailscale.js";
@@ -870,6 +871,13 @@ export function createServer(
   app.onError((err, c) => {
     if (err instanceof HttpError) {
       return errorResponse(c, err);
+    }
+    // A body cut off in transit (a phone suspended mid-upload) is "send it
+    // again", not a verdict on the payload — see `http/incomplete-body.ts`.
+    if (isIncompleteRequestBody(c, err)) {
+      const reqId = (c.get("requestId") as string | undefined) ?? "?";
+      log.warn(`408 incomplete request body on ${c.req.method} ${c.req.path} [req=${reqId}]`);
+      return incompleteRequestBodyResponse(c);
     }
     if (err instanceof HTTPException) {
       // Most commonly: validate(json) middleware encountered a malformed

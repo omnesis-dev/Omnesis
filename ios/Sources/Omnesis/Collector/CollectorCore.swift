@@ -11,19 +11,21 @@ import Foundation
 /// Per-source sync flow:
 ///
 ///   1. Load the persisted cursor from the gateway via `CursorStore`.
-///   2. Call `source.sync(cursor:)` repeatedly until `hasMore == false`.
-///      Each page is converted into a `Batch` and appended to the
-///      `OfflineBuffer`. The cursor advances per-page — so even if the
-///      phone dies mid-cycle, the next resume starts where we left off.
-///      A cursor saved for a page the buffer later has to drop is not
-///      walked back; the cycle publishes a `CoverageClaim` instead.
+///   2. Call `source.sync(cursor:)` repeatedly until `hasMore == false`,
+///      the pass's `SyncBudget` has no time for another page, or the
+///      source's share of the buffer is full. Each page is converted into
+///      a `Batch` and appended to the `OfflineBuffer`, then delivered
+///      before the next page is read. The cursor advances per page, and
+///      only once its page is safely queued — so even if the phone dies
+///      mid-cycle, the next resume starts where we left off, and a page
+///      the buffer had no room for is read again rather than lost.
 ///   3. Drain the `OfflineBuffer` into the gateway. Batches that fail
 ///      a transient error stay on disk and are retried by the next
 ///      drain invocation.
 ///
-/// Concurrency: `CollectorCore` is an actor. One sync per source at a
-/// time. Multiple sources are currently driven serially — Phase 3 can
-/// introduce parallelism once HealthKit sources are added.
+/// Concurrency: `CollectorCore` is an actor. One pass per source at a
+/// time; concurrent requests for a source share its pass (see
+/// `sync(sourceId:budget:)`). Multiple sources are driven serially.
 public actor CollectorCore {
     public struct SyncSummary: Equatable, Sendable {
         public let sourceId: String
@@ -64,6 +66,10 @@ public actor CollectorCore {
 
     /// What a sync cycle can say about the history the phone still holds for
     /// a source, published beside that cycle's status.
+    ///
+    /// No cycle makes one today: the offline buffer refuses a page rather
+    /// than drop a queued one, so a cycle never loses what it captured. The
+    /// claim stays on the wire for a source that one day bounds its history.
     ///
     /// A cycle that kept everything it captured makes no claim at all: most
     /// sources bound no history, so a coverage line on a healthy source warns
@@ -119,11 +125,31 @@ public actor CollectorCore {
     private let prepareSource: (@Sendable (String, SourceMultiDeviceMode) async throws -> Void)?
     private var preparedSourceIds: Set<String> = []
 
-    private var inFlight: Set<String> = []
-    /// One coalesced follow-up per source when an observer wakes while that
-    /// source is already running. Dropping that wake can strand data that
-    /// arrived after the active pass took its input snapshot.
-    private var pendingReruns: Set<String> = []
+    /// The pass running for each source, and the callers sharing it.
+    private struct SourceRun {
+        var budget: SyncBudget
+        /// Set once the pass reads its first page. Until then a new caller
+        /// can simply share it.
+        var readingStarted = false
+        var joiners: [CheckedContinuation<SyncSummary?, Never>] = []
+    }
+
+    /// One coalesced follow-up per source, asked for while that source's pass
+    /// was already reading. Dropping that wake can strand data that arrived
+    /// after the active pass took its input snapshot.
+    private struct FollowUp {
+        var budget: SyncBudget
+        var waiters: [CheckedContinuation<SyncSummary?, Never>] = []
+    }
+
+    private var runs: [String: SourceRun] = [:]
+    private var followUps: [String: FollowUp] = [:]
+    /// How long a page read takes, per source, so a bounded pass declines a
+    /// read it could not also deliver in time.
+    private var readEstimates: [String: WorkEstimate] = [:]
+    /// A page read is a local query; one slower than the ceiling still never
+    /// stops a background wake (~30 s) from trying the next.
+    static let initialReadEstimate = WorkEstimate(initial: 2, ceiling: 5)
     private var directDrains = 0
     private var lastSyncAt: [String: Date] = [:]
     private var acceptingSyncs = true
@@ -150,12 +176,13 @@ public actor CollectorCore {
     }
 
     /// Sync every registered source in sequence, then drain the buffer.
-    public func syncAll() async -> [SyncSummary] {
+    public func syncAll(budget: SyncBudget = .unbounded) async -> [SyncSummary] {
         guard acceptingSyncs else { return [] }
         var results: [SyncSummary] = []
         for source in sources {
             guard acceptingSyncs else { break }
-            await results.append(syncOne(source: source))
+            guard let summary = await sync(source: source, budget: budget) else { continue }
+            results.append(summary)
         }
         await emitProgress(nil)
         return results
@@ -170,20 +197,28 @@ public actor CollectorCore {
 
     /// Sync a single source by id — used by HealthKit observer callbacks
     /// to target a specific sample type efficiently.
-    public func sync(sourceId: String) async -> SyncSummary? {
+    ///
+    /// Calls for a source that is already syncing share that work instead
+    /// of starting their own: one that arrives before the running pass has
+    /// read anything joins it; one that arrives later queues a single
+    /// follow-up pass (data may have landed after the running pass read
+    /// it) and returns once that follow-up has finished. Every caller gets
+    /// the summary of the pass that covered it, or nil when the core was
+    /// retired or the running pass cancelled before a follow-up could run.
+    public func sync(sourceId: String, budget: SyncBudget = .unbounded) async -> SyncSummary? {
         guard acceptingSyncs else { return nil }
         guard let source = sources.first(where: { $0.id == sourceId }) else {
             log.warning("No registered source with id \(sourceId, privacy: .private)")
             return nil
         }
-        let summary = await syncOne(source: source)
+        let summary = await sync(source: source, budget: budget)
         await emitProgress(nil)
         return summary
     }
 
     /// Drain the offline buffer without pulling new data. Useful after
     /// network reconnects or at app launch before anything else runs.
-    public func drainPending() async -> Uploader.Stats? {
+    public func drainPending(budget: SyncBudget = .unbounded) async -> Uploader.Stats? {
         guard acceptingSyncs else { return nil }
         directDrains += 1
         defer {
@@ -191,13 +226,25 @@ public actor CollectorCore {
             resumeQuiescenceWaitersIfReady()
         }
         do {
-            let stats = try await uploader.drain()
+            let stats = try await uploader.drain(budget: budget)
             await emitRejections(stats)
             return stats
         } catch {
             log.error("Drain failed: \(String(describing: error), privacy: .private)")
             return nil
         }
+    }
+
+    /// Callers waiting on `sourceId`'s queued follow-up pass. For tests that
+    /// need to know an overlapping call has registered before they proceed.
+    func followUpWaiterCount(sourceId: String) -> Int {
+        followUps[sourceId]?.waiters.count ?? 0
+    }
+
+    /// Callers sharing `sourceId`'s running or follow-up pass, beyond the
+    /// one that started it.
+    func sharedCallerCount(sourceId: String) -> Int {
+        (runs[sourceId]?.joiners.count ?? 0) + followUpWaiterCount(sourceId: sourceId)
     }
 
     public func lastSync(sourceId: String) -> Date? {
@@ -214,7 +261,7 @@ public actor CollectorCore {
     /// authorization generation can never write after its successor.
     public func retireAndWait() async {
         acceptingSyncs = false
-        guard !inFlight.isEmpty || directDrains > 0 else { return }
+        guard !runs.isEmpty || directDrains > 0 else { return }
         await withCheckedContinuation { continuation in
             quiescenceWaiters.append(continuation)
         }
@@ -241,52 +288,76 @@ public actor CollectorCore {
 
     // MARK: - Internals
 
+    /// Run a pass for `source`, or share the one already running.
+    private func sync(source: any OmnesisSource, budget: SyncBudget) async -> SyncSummary? {
+        guard acceptingSyncs else { return nil }
+        guard var run = runs[source.id] else {
+            runs[source.id] = SourceRun(budget: budget)
+            return await executePass(source: source)
+        }
+        if !run.readingStarted {
+            // Nothing read yet: the running pass will see whatever this
+            // caller was woken for.
+            run.budget = run.budget.extended(to: budget)
+            runs[source.id] = run
+            log.debug("Join the pass about to start for \(source.id, privacy: .private)")
+            return await withCheckedContinuation { continuation in
+                runs[source.id]?.joiners.append(continuation)
+            }
+        }
+        var followUp = followUps[source.id] ?? FollowUp(budget: budget)
+        followUp.budget = followUp.budget.extended(to: budget)
+        followUps[source.id] = followUp
+        log.debug("Queue one follow-up pass for \(source.id, privacy: .private) — already syncing")
+        return await withCheckedContinuation { continuation in
+            followUps[source.id]?.waiters.append(continuation)
+        }
+    }
+
+    /// Settle a finished pass: answer every caller that joined it, and start
+    /// the follow-up pass someone asked for while it was reading.
+    private func finishPass(source: any OmnesisSource, summary: SyncSummary?) {
+        let joiners = runs.removeValue(forKey: source.id)?.joiners ?? []
+        joiners.forEach { $0.resume(returning: summary) }
+        if let followUp = followUps.removeValue(forKey: source.id) {
+            if acceptingSyncs, !Task.isCancelled {
+                // Claimed now, so a caller arriving before the task starts
+                // joins this follow-up instead of starting another pass.
+                var run = SourceRun(budget: followUp.budget)
+                run.joiners = followUp.waiters
+                runs[source.id] = run
+                Task { [weak self] in
+                    _ = await self?.executePass(source: source)
+                }
+            } else {
+                followUp.waiters.forEach { $0.resume(returning: nil) }
+            }
+        }
+        resumeQuiescenceWaitersIfReady()
+    }
+
+    // One pass over `source`, under the budget recorded in `runs`.
+    //
+    // Reads and uploads alternate: after each page is buffered it is
+    // delivered before the next is read, so a pass that runs out of time
+    // ends with what it read already at the gateway, and reading can never
+    // get ahead of delivery by more than one page. A page that the
+    // buffer has no room for is not kept: its cursor does not advance and
+    // the next pass reads it again. When delivery fails (no network) the
+    // pass keeps capturing into the buffer, up to the source's share.
+    //
     // Sync state, cursor, buffer, and lifecycle publication must remain one ordered operation.
     // swiftlint:disable:next function_body_length
-    private func syncOne(source: any OmnesisSource) async -> SyncSummary {
-        guard acceptingSyncs else {
-            return await SyncSummary(
-                sourceId: source.id,
-                batches: 0,
-                records: 0,
-                uploaded: 0,
-                remaining: bufferCount(),
-                error: nil,
-                blocked: nil
-            )
-        }
-        if inFlight.contains(source.id) {
-            pendingReruns.insert(source.id)
-            log.debug("Queue one rerun for \(source.id, privacy: .private) — already syncing")
-            return await SyncSummary(
-                sourceId: source.id,
-                batches: 0,
-                records: 0,
-                uploaded: 0,
-                remaining: bufferCount(),
-                error: nil,
-                blocked: nil
-            )
-        }
-        inFlight.insert(source.id)
-        defer {
-            inFlight.remove(source.id)
-            let rerunRequested = pendingReruns.remove(source.id) != nil
-            let shouldRerun = acceptingSyncs && !Task.isCancelled && rerunRequested
-            if shouldRerun {
-                Task { [weak self] in
-                    _ = await self?.sync(sourceId: source.id)
-                }
-            }
-            resumeQuiescenceWaitersIfReady()
-        }
+    private func executePass(source: any OmnesisSource) async -> SyncSummary {
+        var summary: SyncSummary?
+        defer { finishPass(source: source, summary: summary) }
 
-        var batchesWritten = 0
-        var batchesDropped = 0
-        var recordsProduced = 0
-        var itemsProcessed = 0
+        var pass = PassTally()
         var errorMessage: String?
         var wasCancelled = false
+        // A bounded pass that had no time to read even one page did no sync;
+        // reporting it complete would show "synced just now" for nothing.
+        var outOfTimeUnread = false
         let startedAt = Date()
 
         await emitProgress(Progress(
@@ -307,42 +378,42 @@ public actor CollectorCore {
                 try await prepareSource?(source.id, source.multiDeviceMode)
                 preparedSourceIds.insert(source.id)
             }
-            var cursor = try await cursorStore.load(for: source.id, refresh: true)
+            var cursor = try await source.beginPass(cursor: cursorStore.load(for: source.id, refresh: true))
             var pages = 0
             // Cap to avoid runaway loops while a malformed source keeps
             // claiming hasMore=true.
             let maxPages = 200
             while pages < maxPages {
+                if Task.isCancelled {
+                    wasCancelled = true
+                    break
+                }
+                // Read afresh each page: a caller that joins with a later
+                // deadline (a foreground Sync now) extends the pass.
+                let budget = passBudget(for: source.id)
+                guard await budget.allows(readEstimate(source.id).expected + uploader.expectedBatchDuration()) else {
+                    log.notice("Pass for \(source.id, privacy: .private) stopped for time after \(pages, privacy: .public) pages")
+                    outOfTimeUnread = pages == 0
+                    break
+                }
+                guard await makeRoom(for: source, budget: budget, pass: &pass) else {
+                    log.notice("Pass for \(source.id, privacy: .private) paused: its share of the offline buffer is full")
+                    break
+                }
+
+                runs[source.id]?.readingStarted = true
+                let readStarted = budget.clock.now()
                 let result = try await source.sync(cursor: cursor)
+                readEstimates[source.id, default: Self.initialReadEstimate]
+                    .record(budget.clock.now().timeIntervalSince(readStarted))
                 pages += 1
 
-                if !result.records.isEmpty || !result.deletedIds.isEmpty || !result.documents.isEmpty {
-                    let batch = Batch(
-                        id: Batch.makeId(),
-                        sourceId: source.id,
-                        multiDeviceMode: source.multiDeviceMode,
-                        tableName: result.tableName,
-                        records: result.records,
-                        schema: result.schema,
-                        deletedIds: result.deletedIds,
-                        documents: result.documents,
-                        createdAt: Date()
-                    )
-                    let evicted = try await buffer.enqueue(batch)
-                    try await source.didBuffer(result)
-                    if evicted > 0 {
-                        batchesDropped += evicted
-                        log.warning(
-                            "Buffer eviction: dropped \(evicted, privacy: .public) old batches to make room for \(source.id, privacy: .private)"
-                        )
+                let hasContent = !result.records.isEmpty || !result.deletedIds.isEmpty || !result.documents.isEmpty
+                if hasContent {
+                    guard try await buffer(result, from: source, budget: budget, pass: &pass) else {
+                        log.notice("Pass for \(source.id, privacy: .private) paused: no room to keep its next page")
+                        break
                     }
-                    batchesWritten += 1
-                    recordsProduced += result.records.count
-                    // A page may represent the same item as both an analytics
-                    // row and a searchable document. Count the larger plane so
-                    // documents-only sources such as Photos report real work
-                    // without double-counting mixed pages such as workouts.
-                    itemsProcessed += max(result.records.count, result.documents.count)
                 }
 
                 cursor = result.cursor
@@ -355,18 +426,21 @@ public actor CollectorCore {
                 await emitProgress(Progress(
                     sourceId: source.id,
                     displayName: source.displayName,
-                    records: itemsProcessed,
+                    records: pass.items,
                     pages: pages,
                     batchesBuffered: bufferCount()
                 ))
                 await emitLifecycle(.progress(
                     sourceId: source.id,
                     displayName: source.displayName,
-                    records: itemsProcessed
+                    records: pass.items
                 ))
 
                 if !result.hasMore {
                     break
+                }
+                if hasContent, !pass.deliveryStalled {
+                    await deliver(for: source.id, budget: budget, pass: &pass)
                 }
             }
             lastSyncAt[source.id] = Date()
@@ -384,7 +458,7 @@ public actor CollectorCore {
             let nsError = error as NSError
             let isCancelled = nsError.domain == NSURLErrorDomain
                 && nsError.code == NSURLErrorCancelled
-            if isCancelled {
+            if isCancelled || error is CancellationError {
                 wasCancelled = true
                 log
                     .notice(
@@ -398,8 +472,8 @@ public actor CollectorCore {
         }
 
         // Drain regardless — batches from prior cycles might be waiting.
-        let stats: Uploader.Stats? = try? await uploader.drain()
-        await emitRejections(stats)
+        await deliver(for: source.id, budget: passBudget(for: source.id), pass: &pass)
+        let stats = pass.lastDrain
         let remaining: Int = if let stats {
             stats.remaining
         } else {
@@ -412,54 +486,133 @@ public actor CollectorCore {
                 displayName: source.displayName,
                 message: errorMessage
             ))
-        } else if wasCancelled {
+        } else if wasCancelled || outOfTimeUnread {
             await emitLifecycle(.idle(sourceId: source.id, displayName: source.displayName))
         } else {
             await emitLifecycle(.completed(
                 sourceId: source.id,
                 displayName: source.displayName,
-                records: itemsProcessed,
+                records: pass.items,
                 completedAt: Date(),
-                coverage: Self.coverageClaim(droppedBatches: batchesDropped)
+                coverage: nil
             ))
         }
 
-        return SyncSummary(
+        let result = SyncSummary(
             sourceId: source.id,
-            batches: batchesWritten,
-            records: recordsProduced,
-            uploaded: stats?.uploaded ?? 0,
+            batches: pass.batches,
+            records: pass.records,
+            uploaded: pass.uploaded,
             remaining: remaining,
             error: errorMessage,
             blocked: stats?.blocked
         )
-    }
-
-    /// The claim a cycle makes once the offline buffer had to drop batches to
-    /// stay inside its size limit.
-    ///
-    /// The buffer is where a page waits between capture and upload, and the
-    /// gateway's cursor for the source moves on as soon as a page is written
-    /// there. Dropping the oldest batches therefore drops data the source will
-    /// never offer again, because the cursor is already past it. Capturing into
-    /// a full buffer is still the better trade — a phone that stopped capturing
-    /// would fall behind everything, not just its oldest pages — so the gap is
-    /// reported rather than prevented.
-    private static func coverageClaim(droppedBatches: Int) -> CoverageClaim? {
-        guard droppedBatches > 0 else { return nil }
-        return CoverageClaim(
-            coverage: .partial,
-            detail: """
-            This device ran out of room for data waiting to reach Omnesis and dropped \
-            the oldest of it, so some history is missing. Re-sync this source to fill the gap.
-            """
-        )
+        summary = result
+        return result
     }
 
     private func resumeQuiescenceWaitersIfReady() {
-        guard inFlight.isEmpty, directDrains == 0, !acceptingSyncs else { return }
+        guard runs.isEmpty, directDrains == 0, !acceptingSyncs else { return }
         let waiters = quiescenceWaiters
         quiescenceWaiters.removeAll()
         waiters.forEach { $0.resume() }
+    }
+}
+
+// MARK: - One pass's reading, buffering and delivery
+
+extension CollectorCore {
+    /// What one pass has done so far.
+    private struct PassTally {
+        var batches = 0
+        var records = 0
+        var items = 0
+        var uploaded = 0
+        /// A drain this pass could not deliver this source's batches (no
+        /// network, a busy gateway) or was refused the token. Later pages
+        /// are captured into the buffer, not delivered.
+        var deliveryStalled = false
+        var lastDrain: Uploader.Stats?
+    }
+
+    private func passBudget(for sourceId: String) -> SyncBudget {
+        runs[sourceId]?.budget ?? .unbounded
+    }
+
+    private func readEstimate(_ sourceId: String) -> WorkEstimate {
+        readEstimates[sourceId] ?? Self.initialReadEstimate
+    }
+
+    /// Deliver what is queued, within the budget, and fold the result into
+    /// the pass.
+    private func deliver(for sourceId: String, budget: SyncBudget, pass: inout PassTally) async {
+        do {
+            let stats = try await uploader.drain(budget: budget)
+            await emitRejections(stats)
+            pass.uploaded += stats.uploaded
+            // Only this source's own failures stall its pass: another source
+            // the gateway cannot take right now is no reason to stop
+            // delivering this one.
+            if stats.failedSources.contains(sourceId) { pass.deliveryStalled = true }
+            pass.lastDrain = stats
+        } catch {
+            log.error("Drain failed: \(String(describing: error), privacy: .private)")
+            pass.deliveryStalled = true
+            pass.lastDrain = nil
+        }
+    }
+
+    /// Make sure `source` may queue another page before reading one, by
+    /// delivering what is queued if its share is full. False when there is
+    /// still no room: the pass stops reading, and nothing is lost because
+    /// nothing more was read.
+    private func makeRoom(for source: any OmnesisSource, budget: SyncBudget, pass: inout PassTally) async -> Bool {
+        if await (try? buffer.hasRoom(forSourceId: source.id)) ?? false { return true }
+        guard !pass.deliveryStalled else { return false }
+        await deliver(for: source.id, budget: budget, pass: &pass)
+        return await (try? buffer.hasRoom(forSourceId: source.id)) ?? false
+    }
+
+    /// Queue one page. Returns false, without acknowledging the page, when
+    /// the buffer has no room for it even after a delivery attempt; the
+    /// caller then leaves the cursor where it was.
+    private func buffer(
+        _ result: SyncResult,
+        from source: any OmnesisSource,
+        budget: SyncBudget,
+        pass: inout PassTally
+    ) async throws
+        -> Bool {
+        let batch = Batch(
+            id: Batch.makeId(sourceId: source.id),
+            sourceId: source.id,
+            multiDeviceMode: source.multiDeviceMode,
+            tableName: result.tableName,
+            records: result.records,
+            schema: result.schema,
+            deletedIds: result.deletedIds,
+            documents: result.documents,
+            createdAt: Date()
+        )
+        do {
+            try await buffer.enqueue(batch)
+        } catch is OfflineBuffer.BufferFull {
+            guard !pass.deliveryStalled else { return false }
+            await deliver(for: source.id, budget: budget, pass: &pass)
+            do {
+                try await buffer.enqueue(batch)
+            } catch is OfflineBuffer.BufferFull {
+                return false
+            }
+        }
+        try await source.didBuffer(result)
+        pass.batches += 1
+        pass.records += result.records.count
+        // A page may represent the same item as both an analytics
+        // row and a searchable document. Count the larger plane so
+        // documents-only sources such as Photos report real work
+        // without double-counting mixed pages such as workouts.
+        pass.items += max(result.records.count, result.documents.count)
+        return true
     }
 }
