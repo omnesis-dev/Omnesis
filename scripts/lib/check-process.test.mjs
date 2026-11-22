@@ -59,6 +59,39 @@ test.skipIf(process.platform === "win32").each([false, true])(
     expect(child.group).toBe(detached ? child.pid : parent.parentGroup);
   },
 );
+test.each([
+  [["scripts/run-check.mjs", "e2e", "--shard=1/4"], 1, "[check] run-check.mjs e2e exited 1\n"],
+  [["scripts/ci/windows-checks.mjs"], 3, "[check] windows-checks.mjs exited 3\n"],
+  [["--version"], 2, "[check] invented-program exited 2\n"],
+])(
+  "a non-zero Windows job status names the command that returned it",
+  async (args, exitCode, line) => {
+    const writeStderr = vi.fn();
+    await expect(
+      runCheckCommand("invented-program", args, {
+        platform: "win32",
+        signalEmitter: new EventEmitter(),
+        writeStderr,
+        runWindows: async () => ({ ...success, exitCode }),
+      }),
+    ).resolves.toBe(exitCode);
+    expect(writeStderr.mock.calls).toEqual([[line]]);
+  },
+);
+
+test("a zero Windows job status reports nothing", async () => {
+  const writeStderr = vi.fn();
+  await expect(
+    runCheckCommand("invented-program", ["scripts/run-check.mjs", "e2e"], {
+      platform: "win32",
+      signalEmitter: new EventEmitter(),
+      writeStderr,
+      runWindows: async () => success,
+    }),
+  ).resolves.toBe(0);
+  expect(writeStderr).not.toHaveBeenCalled();
+});
+
 for (const payload of [undefined, Error("invented unconfirmed cleanup")])
   test.each([0, 7])("own cleanup marker cannot become an ordinary status %s", async (exitCode) => {
     const signals = new EventEmitter();

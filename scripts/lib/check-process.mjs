@@ -6,6 +6,7 @@ import {
   installParentShutdownHandler,
 } from "../../packages/core/src/parent-shutdown.ts";
 import { spawn } from "node:child_process";
+import { basename } from "node:path";
 import { ownedProcessCleanupReceipt } from "../../packages/platform/src/owned-process-cleanup.ts";
 import { resolveNpmInvocation } from "../../packages/core/src/node-command.ts";
 import {
@@ -28,6 +29,13 @@ export function checkFailureMessage(error) {
   return error instanceof Error ? error.message : String(error);
 }
 
+/** The script a Node check runs, or the program itself, with its first argument. */
+function checkCommandLabel(command, args) {
+  const [first, second] = args;
+  if (typeof first !== "string" || !/\.[cm]?[jt]s$/u.test(first)) return basename(command);
+  return second === undefined ? basename(first) : `${basename(first)} ${second}`;
+}
+
 /** Finite check roots own their descendants before target admission on Windows. */
 export async function runCheckCommand(
   command,
@@ -40,6 +48,7 @@ export async function runCheckCommand(
     runWindows,
     detached = true,
     retainUnconfirmed = retainUnconfirmedCheckLane,
+    writeStderr = (text) => process.stderr.write(text),
   } = {},
 ) {
   if (retainedLaneHold) throw retainedLaneError;
@@ -84,7 +93,13 @@ export async function runCheckCommand(
     }
     if (result.failure !== undefined || controller.signal.aborted || result.signal !== null)
       throw new Error("Check process did not complete normally");
-    return result.exitCode ?? 1;
+    const code = result.exitCode ?? 1;
+    // Checks nest (a wrapper runs a check script that runs the check), and each
+    // level passes a status up through its own Windows job. A non-zero status a
+    // level never explained would otherwise reach CI as a bare exit code, so
+    // each level names the command that returned it.
+    if (code !== 0) writeStderr(`[check] ${checkCommandLabel(command, args)} exited ${code}\n`);
+    return code;
   } catch (error) {
     if (ownedProcessCleanupReceipt(error) !== undefined) hold(error);
     throw error;
