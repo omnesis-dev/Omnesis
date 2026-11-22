@@ -10,7 +10,6 @@
  * counts: push and Linux-only manual runs omit macOS, and a pull-request run
  * validates a merge commit, not the commit being released.
  */
-import { pathToFileURL } from "node:url";
 
 /** The dispatch's run name records whether macOS was included. */
 function isFullRun(run) {
@@ -57,7 +56,7 @@ async function readStdin() {
 }
 
 // Reads the GitHub API's workflow-runs listing on stdin.
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (import.meta.main) {
   const targetSha = process.argv[2];
   let listing;
   try {

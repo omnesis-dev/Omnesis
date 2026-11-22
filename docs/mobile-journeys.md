@@ -10,13 +10,13 @@ something on screen.
 
 ## What they cover
 
-| Journey          | What the test does                                                                                                                                                                                                                                                                                                                                                                            |
-| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Pairing          | Starts unpaired, taps _Pair with your gateway_, gets past the camera (no camera on a simulator; the Android test declines the permission), pastes the QR payload the gateway minted, checks the confirmation names the gateway, confirms. It passes when phone setup shows _Connection verified_ and the gateway lists the new device, then skips setup and lands on the Ask screen.          |
-| Search           | Opens the menu, picks Search, types `Acme Q3 Planning` and waits for that document in the results. On iOS a second run cancels the first tap on the Search row and passes only if the journey notices and taps it again.                                                                                                                                                                      |
-| Open a document  | The search above, then a tap on the result; passes when the document's text (`Draft the migration plan by Friday`) is on screen.                                                                                                                                                                                                                                                              |
-| Ask the agent    | Deletes the gateway's conversations so the app opens on an empty Ask screen, types `Where was I on September 2?` and sends it; passes when the answer names `Studio Northstar`. On iOS a second run cancels the first tap on Send, the way the system can take a touch away, and passes only if the journey notices and sends again.                                                          |
-| Lose the network | Opens Settings and takes the network away, then brings it back. Android toggles airplane mode, so the system's network callback fires; a simulator shares its host's network, so iOS stops a local forwarder between app and gateway and returns to the app instead. Passes when the row reads as a temporary state without asking to pair again, then reads _Connected_ on the same pairing. |
+| Journey          | What the test does                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Pairing          | Starts unpaired, taps _Pair with your gateway_, gets past the camera (no camera on a simulator; the Android test declines the permission), pastes the QR payload the gateway minted, checks the confirmation names the gateway, confirms. It passes when phone setup shows _Connection verified_ and the gateway lists the new device, then skips setup and lands on the Ask screen.                                                                                                              |
+| Search           | Opens the menu, picks Search, types `Acme Q3 Planning` and waits for that document in the results. On iOS a second run cancels the first tap on the Search row and passes only if the journey notices and taps it again.                                                                                                                                                                                                                                                                          |
+| Open a document  | The search above, then a tap on the result; passes when the document's text (`Draft the migration plan by Friday`) is on screen.                                                                                                                                                                                                                                                                                                                                                                  |
+| Ask the agent    | Deletes the gateway's conversations so the app opens on an empty Ask screen, types `Where was I on September 2?` as soon as the composer takes the keyboard, while the app may still be opening its session, and sends it; passes when the answer names `Studio Northstar` (on iOS, also when the conversation shows exactly that question). On iOS a second run cancels the first tap on Send, the way the system can take a touch away, and passes only if the journey notices and sends again. |
+| Lose the network | Opens Settings and takes the network away, then brings it back. Android toggles airplane mode, so the system's network callback fires; a simulator shares its host's network, so iOS stops a local forwarder between app and gateway and returns to the app instead. Passes when the row reads as a temporary state without asking to pair again, then reads _Connected_ on the same pairing.                                                                                                     |
 
 The gateway serves the `e2e-minimal` universe (`evals/universes/e2e-minimal/`,
 see `docs/universes.md`), a corpus small enough for a hosted runner to embed in
@@ -113,7 +113,24 @@ profiles the gateway kept in `gateway-logs/stall-profiles/` (see
 `docs/stall-investigation.md`). On iOS, `app-touch.log` adds where each tap
 landed, the views it hit, the state every gesture recogniser on it reached,
 and which menu actions ran: the journeys launch the app with
-`DEMO_TOUCH_LOG=1`, which only a DEBUG build reads.
+`DEMO_TOUCH_LOG=1`, which only a DEBUG build reads. `network-stalls/` holds,
+for each of the first three failures, a stack sample of the simulator's
+trustd and securityd, the app and the test runner, taken as the failure is
+reported, with the simulator's security and network log for the minutes
+before, and `network-stalls/trust-service.log` holds trustd's log since the
+simulator booted.
+
+Every TLS handshake in the simulator, the app's and the test runner's, waits
+for the simulator's trust service (trustd) to evaluate the gateway's
+certificate. A freshly booted simulator's trustd fetches trust store assets
+from Apple and then exits so that a new trustd can load them; until the new
+one starts, every handshake waits, for minutes on a hosted runner. That
+happens about 20 minutes after the boot, when the journeys begin, so before
+the first journey `scripts/ci/wait-ios-trust-service.mjs` waits until the
+newest trustd has loaded its trust store without announcing an exit. A trustd
+that has announced its exit is asked to leave at once, and the lane fails,
+naming trustd, if it has not settled within ten minutes
+(`OMNESIS_JOURNEY_TRUST_TIMEOUT`, in seconds).
 
 A touch that ends `cancelled` with `_UISystemGestureGateGestureRecognizer`
 recognised was taken by the system for one of its own gestures: the control
@@ -143,6 +160,16 @@ API 34 emulator with KVM on `ubuntu-latest`, rendering through ANGLE
 emulator process dies while the app draws its Ask screen. Neither lane needs a
 secret.
 
+The iOS journeys run through `scripts/ci/macos-interactive-job.sh`, which
+starts the lane as an Interactive launchd job in the runner's logged-in
+session. Every process a hosted macOS runner's step starts inherits the runner
+agent's utility scheduling class (base priority 20), while the simulator's
+processes run at 31 and above. On the 3-core runner, with the simulator busy,
+a gateway in that class is runnable but gets a few percent of a core, and its
+event loop stalls for up to a minute: long enough for the app's request to time
+out. As an Interactive job, the lane, the gateway and the collector run at the
+default priority, level with the simulator.
+
 A manual run picks its platforms:
 `gh workflow run mobile-journeys.yml --ref <branch> -f platforms=android`
 (`both`, `ios` or `android`).
@@ -154,8 +181,11 @@ The lanes are not part of `full-validation`, so the README badge keeps
 reporting the full suite alone. On failure, the job uploads everything listed
 above as the `ios-journeys` or `android-journeys` artifact; the cloud pairing
 job uploads its xcresult bundle and xcodebuild log as `ios-cloud-pairing`.
-The cloud pairing job runs `xcodebuild` through `scripts/ci/xcodebuild-ui-tests.mjs`,
+Both iOS jobs run `xcodebuild` through `scripts/ci/xcodebuild-ui-tests.mjs`,
 which runs it once more only when XCTest's UI test runner failed to initialize
 before any test started (on a loaded simulator it can time out waiting for
 accessibility); the first attempt's result bundle is kept beside the second
-as `cloud-pairing-runner-not-initialized.xcresult`. A test failure is never retried.
+as `ios-journeys-runner-not-initialized.xcresult` or
+`cloud-pairing-runner-not-initialized.xcresult`. The wrapper never retries a
+test failure: a failed journey gets the one retry described above, from
+xcodebuild itself, and a failed cloud pairing test none.

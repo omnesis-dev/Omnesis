@@ -246,14 +246,19 @@ test("with no account and no Tailscale device, Connectivity offers the account, 
   await expect(page.locator(".config-tab.active")).toHaveText("Connectivity");
   await expect(heading(page)).toHaveText("Connectivity");
   await expect(page.locator(".remote-access-item-title")).toHaveText([
-    "Agents on this computer",
-    "Agents on your home network",
     "Omnesis accounts",
     "Omnesis relay",
     "Tailscale on this computer",
     "Your own domain or reverse proxy",
-    "MCP server",
-    "Only with a pairing code",
+    "This computer",
+    "Your home network",
+    "Away from home",
+  ]);
+  // No device can ask to join, so there is no answer for new devices to give.
+  await expect(page.locator(".remote-access-row h4")).toHaveText([
+    "Omnesis account",
+    "Remote connectivity",
+    "MCP",
   ]);
   expect(requested).toEqual([]);
 });

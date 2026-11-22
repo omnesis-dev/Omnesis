@@ -5,7 +5,7 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { installParentShutdownHandler } from "../../packages/core/src/parent-shutdown.ts";
 import {
@@ -15,6 +15,7 @@ import {
 export { runNode };
 import { resolveUsearch } from "../native-vector-compat.mjs";
 import { completeNodeHeaders, hasCleanupFailure, npmJavaScriptEntry } from "./npm-ci.mjs";
+import { isEntryScript } from "../lib/is-entry-script.mjs";
 
 /** Compile against this Node's complete headers, then prove the resulting installed binary. */
 export async function buildWindowsUsearch({
@@ -126,7 +127,7 @@ export async function buildWindowsUsearch({
   }
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isEntryScript(import.meta.url)) {
   const controller = new AbortController();
   const stop = () => controller.abort(new Error("Windows vector preparation stopped by its owner"));
   const removeShutdown = installParentShutdownHandler(stop);

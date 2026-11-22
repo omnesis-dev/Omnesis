@@ -4,11 +4,10 @@
 
 import { execFile } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { parseCommand } from "./args.mjs";
 import { gatewayBootBudgetMs, gatewayBootBudgetSeconds } from "../lib/boot-budget.mjs";
+import { isEntryScript } from "../lib/is-entry-script.mjs";
 
 const run = promisify(execFile);
 const components = ["gateway", "collector"];
@@ -128,7 +127,7 @@ async function main(argv) {
   });
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isEntryScript(import.meta.url)) {
   main(process.argv.slice(2)).catch((err) => {
     process.stderr.write(`services-health: ${err instanceof Error ? err.message : String(err)}\n`);
     process.exitCode = 1;

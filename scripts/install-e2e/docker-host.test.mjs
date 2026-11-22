@@ -47,10 +47,15 @@ describe("install-e2e Docker single-host lanes", () => {
     expect(runsFor(mac, "workflow_dispatch", "all")).toBe(true);
     expect(runsFor(mac, "workflow_dispatch", "docker")).toBe(true);
     for (const event of ["pull_request", "push"]) expect(runsFor(mac, event)).toBe(false);
-    expect(
-      mac.steps.some((step) => step.uses?.startsWith("douglascamata/setup-docker-macos-action@")),
-    ).toBe(true);
     expect(mac.steps.some((step) => step.run?.includes("docker-host.sh mac"))).toBe(true);
+  });
+
+  test("D2 installs its pinned Docker tools and starts Colima before the journey", () => {
+    const at = (command) => mac.steps.findIndex((step) => step.run?.includes(command));
+    expect(at("colima-up.sh install")).toBeGreaterThanOrEqual(0);
+    expect(at("colima-up.sh install")).toBeLessThan(at("colima-up.sh start"));
+    expect(at("colima-up.sh start")).toBeLessThan(at("docker-host.sh mac"));
+    expect(mac.steps.some((step) => step.uses?.includes("setup-docker"))).toBe(false);
   });
 
   test("both lanes read only, pin every action, and keep their credentials out of the checkout", () => {

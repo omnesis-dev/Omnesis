@@ -191,6 +191,10 @@
             >opt in</a
           >
           with the same Google account and install the app from the Play listing that page links to.
+          When you choose iPhone or Android to pair in the portal's
+          <strong>Settings → Devices</strong>, the pairing screen shows a short line with the app's
+          install link (TestFlight for iOS; for Android, the tester group and then the Google Play
+          opt-in) and a link to this section.
         </p>
         <div class="table-wrap">
           <table>
@@ -341,7 +345,10 @@
         </div>
 
         <h2 id="pairing">Pairing</h2>
-        <p>On the gateway host, mint a pairing QR with the CLI:</p>
+        <p>
+          Install the app first (see <a href="#getting-the-apps">Getting the apps</a>). Then, on the
+          gateway host, mint a pairing QR with the CLI:
+        </p>
         <div class="term">
           <div class="term-bar"><span></span><span></span><span></span></div>
           <div class="term-body">
@@ -384,10 +391,12 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
           <a href="setup#remote-access">Setup → Remote access</a> before pairing.
         </p>
         <p>
-          A gateway linked to an <a href="setup#connectivity">Omnesis account</a> needs no QR code:
-          on the phone, tap <strong>Sign in with cloud account</strong>, then choose a passkey or
-          Google. The phone finds the account's gateways and asks to join one; the gateway lets it
-          in by the sign-in policy you chose, or waits for your approval.
+          A gateway linked to an <a href="setup#omnesis-account">Omnesis account</a> needs no QR
+          code: on the phone, tap <strong>Sign in with cloud account</strong>, then choose a passkey
+          or Google. The phone finds the account's gateways and asks to join one. Whether it joins
+          at once or waits for your approval in <strong>Settings → Devices</strong> follows your
+          answer under <a href="setup#new-devices">New devices</a>; a pairing code from
+          <strong>Settings → Devices</strong> works either way.
         </p>
         <p>
           The gateway chooses the address to put in the QR code, and the portal and the CLI show its

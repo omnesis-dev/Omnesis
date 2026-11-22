@@ -7,11 +7,11 @@ import { createWriteStream, existsSync } from "node:fs";
 import { appendFile, mkdtemp, rm } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import { fileURLToPath } from "node:url";
 import { getCatalogEntry } from "../../packages/core/src/models/catalog.ts";
+import { isEntryScript } from "../lib/is-entry-script.mjs";
 
 const tiny = getCatalogEntry("whisper-tiny");
 if (!tiny || tiny.kind !== "gguf" || !tiny.sha256)
@@ -90,5 +90,4 @@ export async function prepareWhisperTestInputs() {
   await appendFile(process.env.GITHUB_ENV, variables.join("\n") + "\n");
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url))
-  await prepareWhisperTestInputs();
+if (isEntryScript(import.meta.url)) await prepareWhisperTestInputs();

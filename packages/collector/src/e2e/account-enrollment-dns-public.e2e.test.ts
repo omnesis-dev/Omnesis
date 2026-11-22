@@ -17,6 +17,7 @@ import {
   EnrollmentWorld,
   PasskeyBrowser,
   SCT_EXTENSION_LINE,
+  VIRTUAL_AUTHENTICATOR,
   browserSuiteAvailable,
   clickFirst,
   connectThisGateway,
@@ -284,7 +285,11 @@ describe.skipIf(!ready)("public DNS enrollment", () => {
       });
       await checker.page.setViewportSize({ width: 1280, height: 720 });
       await checker.page.getByRole("button", { name: "Confirm test browser", exact: true }).click();
-      await expectText(checker.page, "Verified. Return to Omnesis", 30_000);
+      await expectText(
+        checker.page,
+        "Done. You can close this tab. Your gateway or terminal continues on its own.",
+        30_000,
+      );
       await checker.page.screenshot({
         path: "/tmp/omnesis-dns-public-worker-verified.png",
         fullPage: true,
@@ -330,7 +335,11 @@ describe.skipIf(!ready)("public DNS enrollment", () => {
       expect(run.stdout()).not.toContain("and enter");
       const checker = await securityBrowser();
       await checker.page.goto(url);
-      await expectText(checker.page, "Verified. Return to Omnesis", 30_000);
+      await expectText(
+        checker.page,
+        "Done. You can close this tab. Your gateway or terminal continues on its own.",
+        30_000,
+      );
       const printed = await waitFor(
         () => {
           const match = /visit (\S+)\nand enter ([A-Z2-7]{4}-[A-Z2-7]{4})/.exec(run.stdout());
@@ -349,6 +358,52 @@ describe.skipIf(!ready)("public DNS enrollment", () => {
       expect(verified).toHaveLength(2);
       expect(checker.errors.concat(person.errors)).toEqual([]);
       expect(claims.every((claim) => claim.hostname.endsWith(`.${RELAY_DOMAIN}`))).toBe(true);
+    },
+    gatewayBootBudgetMs() + 180_000,
+  );
+
+  test(
+    "the portal runs the security check and the account's creation in one window it opens, cut off from the portal",
+    async () => {
+      const gateway = await freshGateway();
+      const portal = await browser.session();
+      await installSecurityWidget(portal);
+      await portal.page.goto(
+        `${gateway.gatewayUrl}/portal/?token=${encodeURIComponent(gateway.apiKey)}`,
+      );
+      await portal.page.locator("nav.sidebar-nav").waitFor();
+      await portal.page.goto(`${gateway.gatewayUrl}/portal/settings/account`);
+      await portal.page.getByRole("button", { name: "Create an account", exact: true }).click();
+      await expectText(portal.page, "Verify this gateway's setup", 30_000);
+      const opening = portal.context.waitForEvent("page");
+      await portal.page.getByRole("link", { name: "Open security check", exact: true }).click();
+      const popup = await opening;
+      const cdp = await portal.context.newCDPSession(popup);
+      await cdp.send("WebAuthn.enable");
+      await cdp.send("WebAuthn.addVirtualAuthenticator", { options: VIRTUAL_AUTHENTICATOR });
+      const checked = verified.length;
+      // The check passes on its own, goes back to the portal's own page, and the portal sends
+      // the same window on to the account's sign-in, which starts with Continue.
+      await popup
+        .getByRole("heading", { name: "Continue signing in", exact: true })
+        .waitFor({ timeout: 60_000 })
+        .catch((error: unknown) => {
+          throw new Error(`The connect window stayed at ${popup.url()}: ${String(error)}`);
+        });
+      await popup.screenshot({ path: "/tmp/omnesis-dns-public-connect-window-sign-in.png" });
+      await clickFirst(popup, ["Continue"]);
+      await createAccountWithPasskey(popup);
+      expect(verified).toHaveLength(checked + 1);
+      expect(new URL(popup.url()).origin).toBe(world.relayOrigin);
+      // Neither the check's page nor the relay's could ever reach back into the portal's tab.
+      expect(await popup.evaluate(() => window.opener === null)).toBe(true);
+      expect(portal.page.url()).toBe(`${gateway.gatewayUrl}/portal/settings/account`);
+      // The portal opened the sign-in marked as its own window, so the last page closes it.
+      const closed = popup.waitForEvent("close", { timeout: 60_000 });
+      await clickFirst(popup, ["Connect this gateway"]);
+      await closed;
+      await finish(gateway);
+      expect(portal.errors).toEqual([]);
     },
     gatewayBootBudgetMs() + 180_000,
   );

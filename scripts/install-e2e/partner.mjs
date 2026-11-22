@@ -28,9 +28,8 @@
  * runner is still the paired jobs' failure to report, so here it is a warning.
  */
 
-import { resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { parseCommand } from "./args.mjs";
+import { isEntryScript } from "../lib/is-entry-script.mjs";
 
 /** Where a job stands, for this wait: still to start, running, or over. */
 export function partnerState(jobs, prefix) {
@@ -184,7 +183,7 @@ async function main(argv) {
   process.exit(3);
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isEntryScript(import.meta.url)) {
   main(process.argv.slice(2)).catch((err) => {
     process.stderr.write(`partner: ${err instanceof Error ? err.message : String(err)}\n`);
     process.exit(1);

@@ -561,7 +561,13 @@ extension GatewayRoutingProxyTests {
         defer { session.invalidateAndCancel() }
         var request = URLRequest(url: route.origin.appendingPathComponent("probe"))
         request.setValue("Bearer device-test-token", forHTTPHeaderField: "Authorization")
-        let (data, _) = try await session.data(for: request)
+        let data: Data
+        do { data = try await session.data(for: request).0 } catch {
+            // A relay connection tells a stalled application handshake from a fallback that never started.
+            let relay = try? stats(gateway)["primary"], hint = try? stats(unrelated)["primary"]
+            XCTFail("Relay connections: \(String(describing: relay)); LAN hint connections: \(String(describing: hint))")
+            throw error
+        }
         try assertCanonicalIdentity(data)
         // The HTTP peer closes its connection after replying, so the proxy can
         // already be reconnecting when URLSession delivers the response.

@@ -30,9 +30,9 @@ const FUTURE_TOLERANCE_SECONDS = 60;
  * Where a pin came from. A relay-hosted page (`link-page`, and `approval` of a sign-in made on one)
  * is only as trustworthy as the relay; a sign-in made in a native app (`native-app`) committed to
  * a nonce the device computed itself. An `endorsed` passkey was added to the account later and
- * vouched for by a sign-in this gateway already trusted. A `countersigned` sign-in is one the
- * account already had when a passkey trusted here was added, which that passkey signed for on the
- * account page.
+ * vouched for by a sign-in this gateway already trusted. A `countersigned` sign-in is one of the
+ * account's other sign-ins that a passkey signed for: on the account page when it was added, or on
+ * this gateway's page when the owner confirmed it here.
  */
 export const trustedSignInSourceSchema = z.enum([
   "link-page",

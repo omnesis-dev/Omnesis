@@ -21,6 +21,20 @@ import type { BrokerZoneCapacity } from "./dns-broker-zone.js";
 const ENROLL_PURPOSE = "omnesis-dns-enrollment-v1";
 const OPERATION_PURPOSE = "omnesis-dns-operation-v1";
 export const DNS_TURNSTILE_ACTION = "gateway-enrollment";
+/**
+ * The fragment a gateway's portal adds when it opens this page in its connect window: once the
+ * check passes, the page goes back to the portal's own page it came from, from where the portal
+ * sends the window on to the account's sign-in, and it says it is going on rather than asking
+ * to go back. The portal cuts that window off from its own tab first, so this page has no way to
+ * reach the portal; going back in its own history is all it does. Without the fragment (a link
+ * the CLI printed, or one opened by hand) the page says the gateway or terminal goes on by itself.
+ */
+export const OPENED_BY_PORTAL = "#opened-by-portal";
+/**
+ * How long a page the portal opened waits to have gone back before it says it is done and closes
+ * itself, as a window opened by script may.
+ */
+export const PORTAL_HANDOFF_MS = 30_000;
 const enrollSchema = z
   .object({
     request: brokerRequestSchema,
@@ -301,6 +315,8 @@ const setup=${data};
 const message=document.querySelector('#message');
 const retry=document.querySelector('#retry');
 const unavailable=()=>{message.textContent='The security check is unavailable. Reload this page to try again.';retry.hidden=false};
+const openedByPortal=location.hash==='${OPENED_BY_PORTAL}';
+const done='Done. You can close this tab. Your gateway or terminal continues on its own.';
 retry.addEventListener('click',()=>location.reload());
 const sdkTimeout=setTimeout(unavailable,20000);
 window.addEventListener('error',event=>{if(event.target?.id==='turnstile-sdk'){clearTimeout(sdkTimeout);unavailable()}},true);
@@ -318,8 +334,11 @@ window.omnesisDnsCheck=()=>{
             message.textContent=result.error==='dns-capacity'?'Gateway capacity is full. Existing gateways stay connected. Try again later.':result.error==='dns-allocation-rate'?'Too many gateways were created recently. Wait before trying again.':'Verification could not finish. Reload this page to try again.';
             retry.hidden=false;return;
           }
-          message.textContent='Verified. Return to Omnesis to continue connecting your gateway.';
           document.querySelector('#widget').hidden=true;
+          if(!openedByPortal){message.textContent=done;return}
+          message.textContent='Verified. Taking you to your Omnesis account…';
+          history.back();
+          setTimeout(()=>{message.textContent=done;window.close()},${PORTAL_HANDOFF_MS});
         }catch{message.textContent='Verification could not finish. Reload this page to try again.';retry.hidden=false}
       },
       'error-callback':unavailable

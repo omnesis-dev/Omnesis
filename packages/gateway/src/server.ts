@@ -595,6 +595,7 @@ export function createServer(
      * Online-backup service. When provided, mounts the
      * `/admin/backup*` routes.
      */
+    historyCleanup?: import("./storage/history-cleanup-service.js").HistoryCleanupService;
     backupService?: import("./http/services/BackupService.js").BackupService;
     /**
      * Portable data-export service. When provided, mounts the
@@ -1590,6 +1591,7 @@ export function createServer(
       },
     });
     const storage = new StorageService({
+      historyCleanup: opts.historyCleanup,
       pressure: opts.storagePressure,
       physical: opts.getDiskUsage ?? (() => null),
       logical: opts.getStorageLogical ?? (() => null),

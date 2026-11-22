@@ -175,9 +175,12 @@
         <p>
           For a native install, the <a href="install">installer</a> registers the gateway and
           collector as user services: launchd LaunchAgents on macOS, systemd user units on Linux.
-          Both start at login and restart on failure. <code>omnesis service install</code> sets them
-          up on a machine where the installer did not. Name a component to install just one, for
-          example <code>omnesis service install collector</code> on a machine that only syncs.
+          Both start at login and restart on failure. On macOS the gateway runs as a standard
+          service rather than a background job, so macOS does not throttle the answers it gives the
+          apps, search and agents; the collector runs as a background job, so its syncing gives way
+          to the programs you are using. <code>omnesis service install</code> sets them up on a
+          machine where the installer did not. Name a component to install just one, for example
+          <code>omnesis service install collector</code> on a machine that only syncs.
         </p>
         <p>
           The other verbs are <code>start</code>, <code>stop</code>, <code>restart</code>,
@@ -400,6 +403,16 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
           are refused during this early repair.
         </p>
 
+        <p>
+          The first native operation on Windows verifies ownership and initializes a protected
+          helper. Loading Windows PowerShell for the ownership check has its own 30-second limit,
+          which does not count toward the operation; on a freshly started computer this first load
+          can take several seconds. Verification and initialization then share a 30-second deadline,
+          shortened by the operation's remaining timeout. Preparing inputs and initializing the
+          helper count toward that same operation timeout. An operation stops if its helper cannot
+          be verified.
+        </p>
+
         <h3 id="stalls">Event-loop stalls</h3>
         <p>
           The gateway answers every request on one event loop, so work that holds it for a moment
@@ -520,6 +533,79 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
           to the source's import window. The source chart shows scheduled removal in orange and
           updates in the background as data is removed. See
           <a href="sources#storage-retention">Source retention</a>.
+        </p>
+        <p>
+          The Storage page also lets you trim <strong>Brain run logs</strong> and
+          <strong>Chat history</strong>, or delete old completed <strong>Backups</strong>. Choose a
+          cutoff date and confirm to start a background cleanup of all eligible items before that
+          date. Brain logs use the run's completion date; chats use their last activity. Pinned,
+          permanent and active conversations are protected. Removing Brain log files does not delete
+          knowledge produced by those runs.
+        </p>
+        <p>
+          Backup cleanup keeps the newest completed backup by default. Clear that protection only if
+          you intend to remove your last local backup; incomplete or active backups remain
+          protected. Cleanup progress and results stay on the Storage page after a reload or
+          restart. Cancellation stops new selections after any already committed removal finishes.
+          These are one-off commands and do not change automatic retention settings.
+        </p>
+        <h3 id="storage-cli">Storage from the CLI</h3>
+        <p>
+          <code>omnesis storage</code> shows storage measurements and capacity protection. Add
+          <code>--json</code> for the gateway's structured measurements, or use
+          <code>storage status --source SOURCE_ID --history</code> to inspect one source's monthly
+          document, vector and indexed-text payloads. With <code>--source</code>, JSON output is a
+          projection of that source's measurements and jobs; otherwise it contains the full gateway
+          snapshot. Replace <code>SOURCE_ID</code> with the exact identifier from
+          <code>omnesis sources list</code>. Shared full-text index allocation is reported
+          separately: the portal's per-source totals also include an estimated share of those shared
+          pages. Pending measurements remain unavailable rather than appearing as zero.
+        </p>
+        <div class="term">
+          <pre>
+omnesis storage status
+omnesis storage status --json
+omnesis storage refresh
+omnesis storage policy --max-bytes 2147483648
+omnesis storage policy --max-bytes unlimited
+omnesis storage retention
+omnesis storage retention SOURCE_ID --days 90 --yes
+omnesis storage retention SOURCE_ID --off
+omnesis storage trim SOURCE_ID --before 2020-01-01 --yes --wait
+omnesis storage cleanup brain-transcripts --before 2020-01-01 --yes --wait
+omnesis storage cleanup conversations --before 2020-01-01 --yes --wait
+omnesis storage cleanup backups --before 2020-01-01 --yes --wait
+omnesis storage jobs
+omnesis storage jobs --watch
+omnesis storage wait JOB_ID
+omnesis storage cancel JOB_ID --yes</pre>
+        </div>
+        <p>
+          Limits are bytes: <code>2147483648</code> is 2 GiB. Removing a custom size limit leaves
+          disk protection enabled. <code>storage policy</code> also accepts
+          <code>--disk-used-percent</code> and <code>--resume-margin-percent</code>; with no options
+          it only displays the current policy. Retention with <code>--days</code> authorizes ongoing
+          deletion and requires <code>--yes</code>; <code>--off</code> disables only that source's
+          rolling policy. This does not change the source's import-age setting.
+        </p>
+        <p>
+          Cutoffs are exclusive: a date such as <code>2020-01-01</code> means midnight UTC at the
+          start of that day. A full UTC timestamp ends with <code>Z</code> and may include
+          milliseconds. The trim and cleanup commands require both a cutoff and <code>--yes</code>;
+          omitted arguments never mean “delete everything”. Backup cleanup preserves the newest
+          completed backup unless <code>--include-newest</code> is explicitly supplied. Active,
+          incomplete and protected items keep the same safeguards as in the portal.
+        </p>
+        <p>
+          Starting a command returns its durable job ID. Add <code>--wait</code>, or later use
+          <code>storage wait JOB_ID</code>, to follow it through completion, including pending
+          search cleanup. <code>--timeout</code> sets the wait in seconds (default 600); a timeout
+          or Ctrl+C stops waiting and leaves the gateway job running.
+          <code>storage cancel</code> applies to Brain log, chat and backup cleanup jobs; source
+          trims do not have a cancellation action. Cancellation can finish an already committed
+          removal before stopping. When output is piped, the CLI uses JSON;
+          <code>jobs --watch</code> emits newline-delimited JSON snapshots and follows the jobs
+          active when watching starts.
         </p>
         <p>
           Deletion frees pages inside a database for reuse; it does not guarantee a smaller file on
@@ -1829,9 +1915,23 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
                 <td><code>cloud</code></td>
                 <td>
                   Connect this gateway to your Omnesis account, unlink it, start over a connection
-                  that didn't finish, and show its status
+                  that didn't finish, and show its status; turn the relay off and on; decide how new
+                  devices join and approve the ones that wait
                 </td>
-                <td><a href="setup#connectivity">Setup → Connectivity</a></td>
+                <td>
+                  <a href="setup#omnesis-account">Setup → Omnesis account</a>,
+                  <a href="setup#new-devices">New devices</a>
+                </td>
+              </tr>
+              <tr>
+                <td><code>tailscale</code></td>
+                <td>
+                  Turn the gateway's own Tailscale device on and off, sign it in, open its public
+                  MCP address, and let collectors join from your tailnet
+                </td>
+                <td>
+                  <a href="setup#tailscale-device">Setup → The gateway's own Tailscale device</a>
+                </td>
               </tr>
               <tr>
                 <td><code>push</code></td>
@@ -1850,6 +1950,13 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
                 <td><code>config</code>, <code>self</code></td>
                 <td>Edit configuration; set your own name, emails and phone numbers</td>
                 <td><a href="#configuration">Configuration</a></td>
+              </tr>
+              <tr>
+                <td><code>storage</code></td>
+                <td>
+                  Measure storage, set limits and retention, trim data and follow cleanup jobs
+                </td>
+                <td><a href="#storage-cli">Storage from the CLI</a></td>
               </tr>
               <tr>
                 <td>

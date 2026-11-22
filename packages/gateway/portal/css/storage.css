@@ -9,6 +9,7 @@
 .storage-health, .storage-alert { border-left: 3px solid var(--highlight-border); padding: 8px 12px; }
 .storage-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; }
 .storage-chart-layout { display: flex; align-items: center; gap: 16px; margin: 12px 0; flex-wrap: wrap; }
+.storage-chart-layout:has(.storage-reconciliation) { align-items: flex-start; }
 .storage-donut { width: 116px; height: 116px; flex: 0 0 116px; }
 .storage-donut circle { fill: none; stroke-width: 17; pointer-events: visibleStroke; }
 .storage-donut .storage-donut-track { stroke: var(--bg-tertiary); pointer-events: none; }
@@ -98,6 +99,12 @@
 .storage-file-details dl > div { display: flex; justify-content: space-between; gap: 8px; margin: 6px 0; }
 .storage-file-details dd { margin: 0; white-space: nowrap; }
 .storage-store-label { display: flex; align-items: baseline; gap: 6px; }
+.storage-reconciliation-table .storage-cleanup-detail td { white-space: normal; text-align: left; }
+.storage-cleanup-progress { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
+.storage-cleanup-progress > strong { flex-basis: 100%; }
+.storage-cleanup-progress > span { flex-basis: 100%; overflow-wrap: anywhere; }
+.storage-cleanup-progress small { color: var(--text-secondary); }
+.storage-cleanup-progress .storage-trim-spinner { display: inline-block; width: 10px; height: 10px; margin-right: 6px; }
 .storage-store-label > .storage-swatch { flex: 0 0 8px; }
 @media (max-width: 670px) {
   .storage-reconciliation-table { min-width: 0; table-layout: fixed; font-size: 11px; }

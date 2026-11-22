@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 import { spawn } from "node:child_process";
-import { pathToFileURL } from "node:url";
 
 // Each daemon needs its full internal shutdown budget plus time to exit.
 // Compose must allow both sequential drains before killing the container.
@@ -108,6 +107,6 @@ export async function supervise({
   return result;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (import.meta.main) {
   process.exitCode = await supervise();
 }

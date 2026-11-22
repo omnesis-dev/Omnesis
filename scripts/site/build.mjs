@@ -41,6 +41,7 @@ import {
 import { dirname, isAbsolute, join, posix, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveNewestStableTag, STABLE_TAG } from "./stable-tag.mjs";
+import { isEntryScript } from "../lib/is-entry-script.mjs";
 
 /**
  * Published from the release tag rather than the checkout. A name goes on this
@@ -269,7 +270,7 @@ function parseArgs(argv) {
   return options;
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+if (isEntryScript(import.meta.url)) {
   const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
   const options = parseArgs(process.argv.slice(2));
   const built = buildSite({ repo, ...options, log: (line) => console.log(line) });

@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { runInNewContext } from "node:vm";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { parse } from "yaml";
 import { gatewayBootBudgetMs } from "../lib/boot-budget.mjs";
 import { hermesTestInvocation } from "../test-hermes.mjs";
@@ -25,6 +25,14 @@ const workflow = () =>
   parse(readFileSync(new URL("../../.github/workflows/windows.yml", import.meta.url), "utf8"));
 
 describe("Windows CI coverage", () => {
+  test("keeps manual history cleanup filesystem ownership in focused Windows coverage", () => {
+    for (const file of [
+      "packages/gateway/src/storage/history-cleanup.test.ts",
+      "packages/gateway/src/storage/history-cleanup-writer.test.ts",
+      "packages/gateway/src/workers/io-worker-async.test.ts",
+    ])
+      expect(FOCUSED_UNIT_FILES).toContain(file);
+  });
   test("keeps dotenv refusals, CI isolation and read ownership in focused pull-request coverage", () => {
     for (const file of [
       "scripts/ci/production-network.test.mjs",
@@ -60,8 +68,10 @@ describe("Windows CI coverage", () => {
       expect(matrix(event).map(({ lane, shard }) => [lane, shard ?? null])).toEqual([
         ["unit", null],
         ["adapters", null],
-        ["e2e", "1/2"],
-        ["e2e", "2/2"],
+        ["e2e", "1/4"],
+        ["e2e", "2/4"],
+        ["e2e", "3/4"],
+        ["e2e", "4/4"],
         ["portal", null],
       ]);
     }
@@ -75,7 +85,12 @@ describe("Windows CI coverage", () => {
       "adapters",
     ]);
     expect(matrix("workflow_dispatch", "adapters").map(({ lane }) => lane)).toEqual(["adapters"]);
-    expect(matrix("workflow_dispatch", "e2e").map(({ shard }) => shard)).toEqual(["1/2", "2/2"]);
+    expect(matrix("workflow_dispatch", "e2e").map(({ shard }) => shard)).toEqual([
+      "1/4",
+      "2/4",
+      "3/4",
+      "4/4",
+    ]);
     expect(matrix("workflow_dispatch", "portal").map(({ lane }) => lane)).toEqual(["portal"]);
     const selected = JSON.stringify(["packages/collector/src/e2e/cli.e2e.test.ts"]);
     expect(matrix("workflow_dispatch", "e2e", selected)).toEqual([
@@ -181,12 +196,16 @@ describe("Windows CI coverage", () => {
     expect(proofIndex).toBeGreaterThan(-1);
     const enabled = (step, matrix) => runInNewContext(step.if.slice(3, -2), { matrix });
     for (const matrix of [
-      { lane: "e2e", shard: "1/2" },
-      { lane: "e2e", shard: "2/2" },
+      { lane: "e2e", shard: "1/4" },
+      { lane: "e2e", shard: "2/4" },
+      { lane: "e2e", shard: "3/4" },
+      { lane: "e2e", shard: "4/4" },
       { lane: "e2e" },
     ]) {
       expect(enabled(go, matrix)).toBe(true);
-      expect(enabled(steps[proofIndex], matrix)).toBe(matrix.shard !== "2/2");
+      expect(enabled(steps[proofIndex], matrix)).toBe(
+        matrix.shard === undefined || matrix.shard === "1/4",
+      );
     }
     for (const lane of ["focused", "unit", "portal"])
       expect(enabled(steps[proofIndex], { lane })).toBe(false);
@@ -394,14 +413,15 @@ describe("Windows CI coverage", () => {
   });
 
   test("full E2E shards and portal runs have no test exclusions or name filters", () => {
-    for (const shard of ["1/2", "2/2"]) {
+    for (const shard of ["1/4", "2/4", "3/4", "4/4"]) {
       expect(windowsCheckTasks("e2e", shard)).toEqual([
         ["scripts/run-check.mjs", "e2e", `--shard=${shard}`],
       ]);
     }
     expect(windowsCheckTasks("portal")).toEqual([["scripts/run-check.mjs", "portal"]]);
-    expect(() => windowsCheckTasks("e2e", "1/3")).toThrow(/shard/);
-    expect(() => windowsCheckTasks("focused", "1/2")).toThrow(/shard/);
+    expect(() => windowsCheckTasks("e2e", "1/2")).toThrow(/shard/);
+    expect(() => windowsCheckTasks("e2e", "5/4")).toThrow(/shard/);
+    expect(() => windowsCheckTasks("focused", "1/4")).toThrow(/shard/);
     expect(() => windowsCheckTasks("unknown")).toThrow(/lane/);
   });
 
@@ -508,6 +528,21 @@ test("independent Windows suites run after a failure and preserve the first nonz
   }
 });
 
+test("each non-zero task status is named in this script's own log", async () => {
+  const writeStderr = vi.fn();
+  const codes = { unit: 0, smoke: 1, e2e: 7 };
+  const tasks = Object.keys(codes).map((name) => ["scripts/run-check.mjs", name]);
+  const run = async (_command, task) => codes[task[1]];
+  expect(await runWindowsCheckTasks(tasks, { run, writeStderr })).toBe(1);
+  expect(writeStderr.mock.calls).toEqual([
+    ["[windows-checks] run-check.mjs smoke exited 1\n"],
+    ["[windows-checks] run-check.mjs e2e exited 7\n"],
+  ]);
+  writeStderr.mockClear();
+  expect(await runWindowsCheckTasks([tasks[0]], { run, writeStderr })).toBe(0);
+  expect(writeStderr).not.toHaveBeenCalled();
+});
+
 describe("manual Windows E2E selection", () => {
   const file = "packages/collector/src/e2e/cli.e2e.test.ts";
   test("keeps default coverage and passes selected files as literal Node arguments", () => {
@@ -517,7 +552,7 @@ describe("manual Windows E2E selection", () => {
       ["scripts/run-check.mjs", "e2e", file],
     ]);
     expect(() => windowsCheckTasks("unit", undefined, files)).toThrow(/unsharded/);
-    expect(() => windowsCheckTasks("e2e", "1/2", files)).toThrow(/unsharded/);
+    expect(() => windowsCheckTasks("e2e", "1/4", files)).toThrow(/unsharded/);
   });
   test.each([
     "  ",

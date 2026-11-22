@@ -24,6 +24,7 @@ import "./synth-env.js";
 import { describe, test, expect, beforeAll, afterAll } from "vitest";
 import Database from "better-sqlite3";
 import { SyntheticE2EHarness } from "./synth-harness.js";
+import { gatewayLogTail } from "./gateway-request.js";
 import type { HistoryCoverage } from "@omnesis/source-sdk";
 import type { WhatsAppWrapsRealController } from "@omnesis/provider-whatsapp-synth";
 
@@ -58,11 +59,52 @@ function readDoc(db: InstanceType<typeof Database>, externalId: string): DocRow 
     .get(externalId) as DocRow | undefined;
 }
 
+/** How long the index may take to catch up with the arrived day-doc. */
+const INDEX_WAIT_MS = 45_000;
+/** Each later request (snapshot refresh, search) gets this long. */
+const REQUEST_MS = 10_000;
+/**
+ * Above the index wait plus both requests, so a slow step fails through its own
+ * deadline with a diagnosis rather than as a bare test timeout.
+ */
+const SEARCHABLE_TEST_MS = INDEX_WAIT_MS + 2 * REQUEST_MS + 15_000;
+
+/**
+ * Run one step of the search check under its own deadline. A failure names the
+ * step and carries the spawned gateway's log tail, which tells an indexing wake
+ * that never arrived apart from a request the gateway did not answer.
+ */
+async function diagnosed<T>(
+  harness: SyntheticE2EHarness,
+  step: string,
+  run: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await run();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`${step}: ${message}${gatewayLogTail(harness.getGatewayLogPath())}`, {
+      cause: error,
+    });
+  }
+}
+
 async function waitForIndexed(harness: SyntheticE2EHarness, timeoutMs: number): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   let last: IndexStats | undefined;
   while (Date.now() < deadline) {
-    const s = await harness.gatewayJson<IndexStats>("/index/stats");
+    let s: IndexStats;
+    try {
+      s = await harness.gatewayJson<IndexStats>("/index/stats", {
+        signal: AbortSignal.timeout(Math.max(1, deadline - Date.now())),
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(
+        `waitForIndexed: /index/stats did not answer (${message}; last: ${JSON.stringify(last)})`,
+        { cause: error },
+      );
+    }
     last = s;
     if (
       s.state === "running" &&
@@ -76,13 +118,21 @@ async function waitForIndexed(harness: SyntheticE2EHarness, timeoutMs: number): 
   throw new Error(`waitForIndexed: index never caught up (last: ${JSON.stringify(last)})`);
 }
 
+async function refreshSearchSnapshot(harness: SyntheticE2EHarness): Promise<void> {
+  const res = await harness.gatewayFetch("/admin/search-snapshot/refresh", {
+    method: "POST",
+    signal: AbortSignal.timeout(REQUEST_MS),
+  });
+  if (!res.ok) throw new Error(`gateway returned ${res.status} ${await res.text()}`);
+}
+
 async function searchDocs(
   harness: SyntheticE2EHarness,
   q: string,
 ): Promise<Array<{ id: string; source_id: string }>> {
-  const res = (await harness.gatewayJson(
-    `/documents/search?q=${encodeURIComponent(q)}&limit=200`,
-  )) as { results?: Array<{ id: string; source_id: string }> };
+  const res = (await harness.gatewayJson(`/documents/search?q=${encodeURIComponent(q)}&limit=200`, {
+    signal: AbortSignal.timeout(REQUEST_MS),
+  })) as { results?: Array<{ id: string; source_id: string }> };
   return res.results ?? [];
 }
 
@@ -96,6 +146,9 @@ describe("WhatsApp wraps-real — interrupted bootstrap (partial coverage)", () 
       gatewayMode: "stable",
       universe: "whatsapp-interrupted",
       embedderBackend: "fake",
+      // Info-level gateway logging puts indexer cycles and request handling in
+      // the log tail a failed search step reports.
+      extraGatewayEnv: { OMNESIS_LOG_LEVEL: "info" },
     });
     await harness.start();
     expect(harness.getFakeEmbedder(), "fake embedder must be wired").not.toBeNull();
@@ -124,17 +177,23 @@ describe("WhatsApp wraps-real — interrupted bootstrap (partial coverage)", () 
     expect(bootstrapCoverage).toBe("partial");
   });
 
-  test("the truncated-but-present messages are indexed and searchable", async () => {
-    await waitForIndexed(harness, 60_000);
-    await harness.refreshSearchSnapshot();
-    // A distinctive token from the day-doc that DID arrive.
-    const hits = await searchDocs(harness, "kestrel telemetry");
-    const waHits = hits.filter((h) => h.source_id === WA_SOURCE_ID);
-    expect(waHits.length, "the arrived WhatsApp day-doc must be searchable").toBeGreaterThan(0);
-    // The day-doc exists in the gateway with both arrived messages' content.
-    const doc = readDoc(db, DAVID_DAY);
-    expect(doc, "David day-doc must exist").toBeDefined();
-    expect(doc!.content).toContain("kestrel telemetry");
-    expect(doc!.content).toContain("firmware rollback");
-  });
+  test(
+    "the truncated-but-present messages are indexed and searchable",
+    async () => {
+      await diagnosed(harness, "index catch-up", () => waitForIndexed(harness, INDEX_WAIT_MS));
+      await diagnosed(harness, "search snapshot refresh", () => refreshSearchSnapshot(harness));
+      // A distinctive token from the day-doc that DID arrive.
+      const hits = await diagnosed(harness, "search", () =>
+        searchDocs(harness, "kestrel telemetry"),
+      );
+      const waHits = hits.filter((h) => h.source_id === WA_SOURCE_ID);
+      expect(waHits.length, "the arrived WhatsApp day-doc must be searchable").toBeGreaterThan(0);
+      // The day-doc exists in the gateway with both arrived messages' content.
+      const doc = readDoc(db, DAVID_DAY);
+      expect(doc, "David day-doc must exist").toBeDefined();
+      expect(doc!.content).toContain("kestrel telemetry");
+      expect(doc!.content).toContain("firmware rollback");
+    },
+    SEARCHABLE_TEST_MS,
+  );
 });

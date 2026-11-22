@@ -326,7 +326,7 @@ test("trusted sign-ins say whether, and how, the owner confirmed each on this ga
   await listTrustedSignIns();
   expect(String(output.mock.calls[0]![0]).split("\n")).toEqual([
     "passkey-one  passkey, signed in on the Omnesis account page, added 2028-01-03T00:00:00.000Z, confirmed on this gateway's own page 2028-01-05T00:00:00.000Z",
-    "google-two  Google account, already on the account when a passkey trusted here was added, signed for by that passkey, added 2028-01-04T00:00:00.000Z, not confirmed on this gateway",
+    "google-two  Google account, already on the account, signed for by one of its passkeys, added 2028-01-04T00:00:00.000Z, not confirmed on this gateway",
     "passkey-three  passkey, confirmed in the Android app 2028-01-06T00:00:00.000Z",
     "passkey-four  passkey, confirmed 2028-01-07T00:00:00.000Z",
     "",
@@ -485,7 +485,7 @@ test("an interactive connect asks whether there is an account, states the certif
   expect(text).toContain(
     "New devices join when you sign in to your Omnesis account with a sign-in this gateway trusts.",
   );
-  expect(text).toContain("choose Ask me first under Settings > Omnesis account");
+  expect(text).toContain("choose Ask me first under Settings > Connectivity, New devices");
 });
 
 test("answering no on an invite-only relay says how to use an invite and starts nothing", async () => {
@@ -545,10 +545,25 @@ test("a chosen new account that already existed is said, with the invite left un
   expect(printed(output)).toContain(
     "Connected to your Omnesis account.\nYou already had an Omnesis account, so this gateway is now linked to it. Your invite wasn't used.\n",
   );
+  // Said here, the portal is told not to say it again.
+  expect(gatewayJson).toHaveBeenCalledWith("/admin/cloud-relay/connect/acknowledge", {
+    method: "POST",
+    body: "{}",
+  });
+  // A gateway that can't record it still connected, and the command still succeeds.
+  gatewayJson.mockImplementation(async (path: string) => {
+    if (path.endsWith("/acknowledge")) throw new Error("Gateway 503");
+    return path === "/admin/cloud-relay?signup=1"
+      ? ready
+      : { ...done, connect: { state: "done", existingAccount: true } };
+  });
+  await connectGateway({ invite: "https://relay.example.test/invite#fictional.invite.token" });
   output.mockClear();
+  gatewayJson.mockClear();
   gatewayReplies(ready, waiting, done);
   await connectGateway({ invite: "https://relay.example.test/invite#fictional.invite.token" });
   expect(printed(output)).not.toContain("Your invite wasn't used");
+  expect(paths()).not.toContain("/admin/cloud-relay/connect/acknowledge");
 });
 
 test("connect prints the relay's short address in place of its own when the gateway reports one", async () => {

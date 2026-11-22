@@ -160,11 +160,18 @@ async function fixture(
       redemption: { operationId: unsigned.operationId, redemptionSecret },
     };
   };
-  const launched = async (intent?: "create" | "existing", invite?: string, gateway?: Gateway) => {
+  const launched = async (
+    intent?: "create" | "existing",
+    invite?: string,
+    gateway?: Gateway,
+    /** The link's `window` field, as a gateway's portal adds it for the window it opened. */
+    window?: string,
+  ) => {
     const op = await start({}, intent, invite, gateway);
     expect(op.response.status).toBe(200);
     const started = await op.response.json(),
       target = new URL(started.authorizeUrl);
+    if (window !== undefined) target.searchParams.set("window", window);
     // Opening the link only shows a Continue button; the press binds this browser (F43).
     const opened = await fetch(url + target.pathname + target.search, { redirect: "manual" });
     expect(opened.status).toBe(200);
@@ -329,6 +336,13 @@ test("a new gateway connects end to end: passkey account, proof, invitation, reg
   expect(await confirmed.json()).toEqual({ location: `${origin}/_relay/v3/signup/complete` });
   const finished = await fetch(`${f.url}/_relay/v3/signup/complete`);
   expect(await finished.text()).toContain("Go back to your gateway");
+  // Its one script runs under this response's own nonce, and does nothing without the marker.
+  const policy = finished.headers.get("content-security-policy")!;
+  const nonce = /script-src 'nonce-([A-Za-z0-9_-]{22})'/.exec(policy)![1];
+  expect(policy).toContain("default-src 'none'");
+  expect(policy).toContain("frame-ancestors 'none'");
+  const again = await fetch(`${f.url}/_relay/v3/signup/complete`);
+  expect(again.headers.get("content-security-policy")).not.toContain(nonce);
 
   const polled = await (await f.post("poll", op.redemption)).json();
   expect(polled.status).toBe("approved");
@@ -384,6 +398,34 @@ test("a new gateway connects end to end: passkey account, proof, invitation, reg
       { id: authenticator.id, publicKey: (registered!.pin as { publicKey: string }).publicKey },
     ],
   });
+});
+
+test("a sign-up opened in the portal's own window ends on a page that closes that window, and the marker does nothing else", async () => {
+  const f = await fixture({ policy: "open" });
+  // The portal adds its marker to the link of the window it opened by script.
+  const op = await f.launched("create", undefined, undefined, "portal");
+  const signIn = await f.google(op);
+  const confirmed = await f.api("continue", op.query, `${op.cookie}; ${signIn.cookie}`);
+  expect(await confirmed.json()).toEqual({
+    location: `${origin}/_relay/v3/signup/complete#opened-by-portal`,
+  });
+  // The page closes the window only for that fragment, which no server ever receives.
+  const page = await (await fetch(`${f.url}/_relay/v3/signup/complete`)).text();
+  expect(page).toMatch(
+    /<script nonce="[A-Za-z0-9_-]{22}">if\(location\.hash==="#opened-by-portal"\)\{history\.replaceState\(null,"",location\.pathname\);window\.close\(\)\}<\/script>/,
+  );
+  // Only that one value is a marker: anything else is no sign-in link at all.
+  const other = await f.start({}, "create");
+  const target = new URL((await other.response.json()).authorizeUrl);
+  const opened = (link: URL) => fetch(f.url + link.pathname + link.search, { redirect: "manual" });
+  for (const value of ["tab", "portal&window=portal", ""]) {
+    const link = new URL(target);
+    link.searchParams.set("window", value);
+    expect((await opened(link)).status).toBe(400);
+  }
+  target.searchParams.append("window", "portal");
+  target.searchParams.append("window", "portal");
+  expect((await opened(target)).status).toBe(400);
 });
 
 test("an invited Google sign-up creates an account and connects, and its digest is what a gateway computes", async () => {
@@ -825,6 +867,60 @@ test("an existing account signs in with a passkey and connects without an invite
     type: "passkey",
     id: keyed.authenticator.id,
   });
+});
+
+test("a browser already signed in to an account can still create one with a passkey, which spends the invite", async () => {
+  const f = await fixture(inviteOnly());
+  f.identities.invitesRequired = false;
+  const existing = f.identities.signInFederated("google", "a".repeat(64));
+  f.identities.invitesRequired = true;
+  const keyed = await registeredPasskey(f.identities, { accountId: existing, version: 1 });
+  // An earlier sign-in left this browser with a session for the existing account.
+  const earlier = await f.launched();
+  const session = await signInOnOperation(f.url, earlier.query, earlier.cookie, keyed);
+  const value = invite(),
+    op = await f.launched("create", value);
+  // The create view still offers a passkey, not only Google, which would find that account.
+  expect(await f.session(op, `; ${session}`)).toMatchObject({
+    authenticated: true,
+    canCreateAccount: true,
+    pending: { intent: "create", canCreate: true, needsProof: true },
+  });
+  const browser = fixtureBrowser(),
+    cookie = `${op.cookie}; ${browser}; ${session}`,
+    authenticator = passkeyAuthenticator();
+  const options = await f.api("passkeys/register/options", op.query, cookie, {
+    createAccount: true,
+  });
+  expect(options.status).toBe(200);
+  const begun = await options.json();
+  const completed = await f.api("passkeys/register/complete", op.query, cookie, {
+    ceremonyId: begun.ceremonyId,
+    credential: authenticator.registration(begun.options.challenge),
+  });
+  expect(completed.status).toBe(200);
+  // The new account's session takes the place of the old one.
+  const created = completed.headers.getSetCookie()[0]!.split(";")[0]!;
+  expect(created).not.toBe(session);
+  expect((await f.api("continue", op.query, `${op.cookie}; ${browser}; ${created}`)).status).toBe(
+    200,
+  );
+  const polled = await (await f.post("poll", op.redemption, CREATION_FEATURE)).json();
+  expect(polled.accountCreated).toBe(true);
+  expect(polled.accountId).not.toBe(existing);
+  // The invite created that account and is spent.
+  expect(await (await f.post("invite", { invite: value })).json()).toEqual({ status: "used" });
+  const reused = await f.start({}, "create", value);
+  expect(reused.response.status).toBe(403);
+  expect(await reused.response.json()).toEqual({ error: "invite-used" });
+  // Outside a sign-up, a signed-in browser adds a passkey to its own account instead.
+  expect(
+    (
+      await f.api("passkeys/register/options", "", `${browser}; ${session}`, {
+        createAccount: true,
+      })
+    ).status,
+  ).toBe(409);
 });
 
 test("a session from one account cannot spend a proof from another", async () => {

@@ -17,6 +17,7 @@ import { readStorageSourceIncarnation } from "./retention-bindings.js";
 import { resolveStoragePolicy, StoragePressureManager } from "./pressure.js";
 import { StorageRetentionService } from "./retention.js";
 import { StorageService } from "./service.js";
+import { HistoryCleanupService } from "./history-cleanup-service.js";
 
 let dir: string;
 let configStore: ConfigStore;
@@ -24,6 +25,7 @@ let db: ReturnType<typeof createDatabase>;
 let service: StorageService;
 let fence: SourceWriteEpochFence;
 let writer: ReturnType<typeof directWriteGate>;
+let historyCleanup: HistoryCleanupService;
 
 beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), "omnesis-storage-service-"));
@@ -48,7 +50,9 @@ beforeEach(async () => {
   });
   await pressure.refresh();
   writer = directWriteGate(db);
+  historyCleanup = new HistoryCleanupService({ db, writes: writer, adapters: {} });
   service = new StorageService({
+    historyCleanup,
     pressure,
     configStore,
     physical: () => null,
@@ -67,10 +71,47 @@ beforeEach(async () => {
     }),
   });
 });
-afterEach(() => {
+afterEach(async () => {
+  await historyCleanup.dispose();
   configStore.stop();
   db.close();
   rmSync(dir, { recursive: true, force: true });
+});
+
+test("exact job lookup delegates public trim and cleanup reads without measuring or enumerating storage", async () => {
+  const trim = await service.startTrim("fictional-notes:first", "2020-01-01T00:00:00.000Z");
+  const cleanup = await writer.startHistoryCleanupJob({
+    request: { target: "backups", before: "2020-01-01T00:00:00.000Z" },
+    now: 1,
+  });
+  await writer.updateHistoryCleanupJob({
+    expectedRevision: cleanup.revision,
+    job: {
+      ...cleanup,
+      state: "failed",
+      cursor: "private-cursor",
+      pending: {
+        id: "invented-backup",
+        identity: "private-identity",
+        bytesEstimate: 100,
+        detail: "private-details",
+      },
+    },
+  });
+  const snapshot = vi.spyOn(service, "snapshot").mockImplementation(() => {
+    throw new Error("A job lookup must not refresh or enumerate storage");
+  });
+  expect(service.job(trim.id)).toEqual({ kind: "trim", job: trim });
+  const result = service.job(cleanup.id);
+  expect(result).toMatchObject({
+    kind: "cleanup",
+    job: { id: cleanup.id, state: "failed", keepNewest: true, hasPendingRemoval: true },
+  });
+  expect(JSON.stringify(result)).not.toContain("private-");
+  expect(() => service.job("00000000-0000-4000-8000-000000000001")).toThrow(
+    "Storage job not found",
+  );
+  expect(snapshot).not.toHaveBeenCalled();
 });
 
 test("concurrent retention edits preserve siblings and quota settings on disk", async () => {

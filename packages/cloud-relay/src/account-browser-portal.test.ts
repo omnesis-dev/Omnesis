@@ -366,19 +366,21 @@ test("changes to the sign-in methods never ride on the handoff", async () => {
   installAccountUI();
   await f.wait("Your gateways");
   f.button("Add a passkey").click();
-  // The new passkey signs for the account's sign-ins, and that is no sign-in for the handoff.
-  await f.wait("Use your new passkey once");
-  await vi.waitFor(() => expect(f.button("Use new passkey").disabled).toBe(false));
-  f.button("Use new passkey").click();
-  // It then waits for a sign-in to vouch for it, which is not the handoff's sign-in either.
-  await f.wait("Confirm it's you");
+  await vi.waitFor(() => expect(f.button("Create passkey")?.disabled).toBe(false));
+  f.button("Create passkey").click();
+  // The new passkey then waits for a sign-in to vouch for it, which is not the handoff's sign-in.
+  await f.wait("Adding a passkey · step 2 of 2");
   f.button("Confirm with Google").click();
   expect(f.location.assign).toHaveBeenCalledWith(
     `https://relay.example.test/_relay/web/start?endorse=${ENDORSE}`,
   );
   // Confirming with a passkey is a sign-in of its own, not the one the handoff waits for.
-  await vi.waitFor(() => expect(f.button("Confirm with passkey").disabled).toBe(false));
-  f.button("Confirm with passkey").click();
+  const passkey = () =>
+    [...document.querySelectorAll(".confirm button")].find((button) =>
+      button.textContent!.startsWith("Confirm with your passkey"),
+    ) as unknown as HTMLButtonElement;
+  await vi.waitFor(() => expect(passkey().disabled).toBe(false));
+  passkey().click();
   await vi.waitFor(() =>
     expect(f.requests()).toContain(`passkeys/register/confirm?endorse=${ENDORSE}`),
   );
@@ -387,7 +389,6 @@ test("changes to the sign-in methods never ride on the handoff", async () => {
   ).toEqual([]);
   expect(f.requests()).toContain("passkeys/register/options");
   expect(f.requests()).toContain(`passkeys/authenticate/options?endorse=${ENDORSE}`);
-  expect(f.requests()).toContain(`passkeys/countersign/complete?endorse=${ENDORSE}`);
 
   const linking = setup({ session: ready, stored });
   installAccountUI();

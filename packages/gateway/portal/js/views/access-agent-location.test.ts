@@ -187,13 +187,18 @@ describe("where the agent runs", () => {
       expect(text()).toContain("This gateway runs in a container");
     });
 
-    test("a hosted app is a button away, under Somewhere else", async () => {
+    test("hosted apps are simply not listed here, and the dialog opens without an intro", async () => {
       api.getAccessOverview.mockResolvedValue(overview());
       await mount();
-      const elsewhere = [...host.querySelectorAll<HTMLButtonElement>(".access-agent-elsewhere button")][0]!;
-      await act(async () => { elsewhere.click(); });
-      expect(host.querySelector("input[name='access-agent-location'][value='away']")?.hasAttribute("checked")).toBe(true);
-      // With no address away from home there is nothing to give them yet, and the dialog says where to get one.
+      expect(text()).not.toContain("MCP is how agents");
+      expect(host.querySelector(".access-connect-dialog > p")).toBeNull();
+      expect(agents()).not.toContain("chatgpt");
+      expect(text()).not.toContain("Setup for common agents");
+      expect(text()).not.toContain("connect from their own servers");
+      expect(host.querySelector(".access-agent-elsewhere")).toBeNull();
+      // Somewhere else is where they are: with no address away from home yet, the dialog says
+      // where to get one.
+      await runOn("away");
       expect(text()).toContain("This gateway has no address away from home yet.");
       expect(agents()).toEqual([]);
       // With no address to give, there is no sign-in to enter a code for.
@@ -216,9 +221,15 @@ describe("where the agent runs", () => {
       await mount();
       await runOn("home");
       expect(text()).toContain("Agents on your home network can't sign in yet.");
-      expect(text()).toContain("A connection still needs your approval");
-      expect(text()).toContain("has to trust this gateway's certificate");
-      expect(text()).toContain("ChatGPT, Claude apps and Grok bot can't use it");
+      // The short form, where it is turned on; the docs say the rest.
+      expect([...host.querySelectorAll(".access-home-allow li")].map((li) => li.textContent)).toEqual([
+        "Any device on your network can reach the sign-in page. You still approve each agent.",
+        "The agent's computer has to trust this gateway's certificate.",
+        "Hosted apps such as ChatGPT can't use it.",
+      ]);
+      expect(host.querySelector(".access-home-allow a")?.getAttribute("href")).toBe(
+        "https://omnesis.dev/docs/connect#home-network",
+      );
       // No address and no agent setup until it answers.
       expect(host.querySelector(".access-mcp-resource")).toBeNull();
       expect(host.querySelector(".access-agent-setup")).toBeNull();
@@ -232,7 +243,11 @@ describe("where the agent runs", () => {
         HOME_NAME,
         HOME_IP,
       ]);
-      expect(text()).toContain("Prefer the .local name");
+      // The address alone: the warnings informed the choice and the docs keep the explanation.
+      expect(text()).not.toContain("Prefer the .local name");
+      expect(text()).not.toContain("Anyone on your network can reach this address");
+      expect(host.querySelector(".access-home-allow")).toBeNull();
+      expect(text()).not.toContain("Setup for common agents");
     });
 
     test("a refused change, such as a missing passkey, is said where it was asked", async () => {

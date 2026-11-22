@@ -159,6 +159,11 @@ export interface CloudRelayManagementStatus {
     }[];
     /** The gateway's own origin, where a passkey can be confirmed; absent when it has none. */
     confirmOrigin?: string;
+    /**
+     * The account listed a passkey when this gateway last read it, so one can be confirmed here
+     * whether or not this gateway pinned it. Only says what setup can offer; it trusts nothing.
+     */
+    accountPasskey?: true;
   };
   /**
    * The relay no longer has this gateway, so it went back to not being connected: its Omnesis
@@ -221,6 +226,11 @@ export interface CloudRelayManagement {
     invite?: string;
   }): Promise<CloudRelayManagementStatus>;
   cancelConnect?(): Promise<CloudRelayManagementStatus>;
+  /**
+   * Says the owner has been told that the sign-in already had an account: `existingAccount`
+   * leaves the status, so it is said once when connecting completes and not on later visits.
+   */
+  acknowledgeConnect?(): Promise<CloudRelayManagementStatus>;
   /**
    * Discards a connection that never finished: the reserved address, the gateway id, its keys and
    * the saved choices, so the gateway is as if it had never connected. Refused once the gateway

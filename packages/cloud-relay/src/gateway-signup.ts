@@ -26,6 +26,7 @@ import {
   type GatewaySignupDenialReason,
   type GatewaySignupIntent,
   type GatewaySignupInviteStatus,
+  SIGNUP_WINDOW_MARKER,
 } from "./gateway-signup-contract.js";
 import { NoAccount, type AccountAdmission } from "./account-admission.js";
 import { InviteRefused, type InviteVerifier, type VerifiedInvite } from "./invites.js";
@@ -87,6 +88,8 @@ interface Operation {
   approved?: { account: AccountBrowserAccount; enrollmentToken: string };
   /** The account this sign-up's sign-in created, if it created one rather than signing in. */
   createdAccount?: string;
+  /** Opened in the window a gateway's portal opened for it, which the finished page closes. */
+  portalWindow?: true;
 }
 
 /**
@@ -242,9 +245,12 @@ export class GatewaySignup implements AccountOperationBroker {
     return operation.phase === "created" ? { state: "open" } : { state: "taken" };
   }
 
-  /** The Continue press on the link's page. */
-  launch(id: string, ticket: string, cookieHeader: string) {
-    return this.bind(id, this.ticketed(id, ticket), cookieHeader);
+  /** The Continue press on the link's page; `portalWindow` when the link carried its marker. */
+  launch(id: string, ticket: string, cookieHeader: string, portalWindow = false) {
+    const operation = this.ticketed(id, ticket);
+    const bound = this.bind(id, operation, cookieHeader);
+    if (portalWindow) operation.portalWindow = true;
+    return bound;
   }
 
   describe(id: string, cookieHeader: string) {
@@ -323,10 +329,9 @@ export class GatewaySignup implements AccountOperationBroker {
       operation.approved = { account, enrollmentToken };
       operation.phase = "approved";
       operation.expiresAt = Math.floor(Date.now() / 1000) + LINK_WINDOW_SECONDS;
-      return {
-        location: new URL(GATEWAY_SIGNUP_PATH + "/complete", this.origin).href,
-        cookie: this.cookie(id, "", 0),
-      };
+      const complete = new URL(GATEWAY_SIGNUP_PATH + "/complete", this.origin);
+      if (operation.portalWindow) complete.hash = SIGNUP_WINDOW_MARKER.fragment;
+      return { location: complete.href, cookie: this.cookie(id, "", 0) };
     } catch (error) {
       if (this.operations.get(id) === operation) operation.phase = "launched";
       throw error;

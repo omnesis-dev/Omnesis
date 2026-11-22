@@ -29,6 +29,8 @@ on:
       - "android/**"
       - "scripts/run-mobile-journeys.sh"
       - "scripts/synth-gateway.sh"
+      - "scripts/ci/xcodebuild-ui-tests.mjs"
+      - "scripts/ci/macos-interactive-job.sh"
       - "evals/universes/default/agent-demos/**"
       - "evals/universes/e2e-minimal/**"
       - ".github/workflows/mobile-journeys.yml"
@@ -77,9 +79,10 @@ jobs:
           set -euo pipefail
           files="$(git diff --name-only "$BASE_SHA...$HEAD_SHA")"
           shared='^(scripts/(run-mobile-journeys|synth-gateway)\.sh|evals/universes/(default/agent-demos|e2e-minimal)/|\.github/workflows/mobile-journeys\.yml)'
+          ios_only='^(ios/|scripts/ci/(xcodebuild-ui-tests\.mjs|macos-interactive-job\.sh))'
           ios=false
           android=false
-          if grep -Eq "^ios/|$shared" <<<"$files"; then ios=true; fi
+          if grep -Eq "$ios_only|$shared" <<<"$files"; then ios=true; fi
           if grep -Eq "^android/|$shared" <<<"$files"; then android=true; fi
           echo "ios=$ios" >> "$GITHUB_OUTPUT"
           echo "android=$android" >> "$GITHUB_OUTPUT"
@@ -91,9 +94,11 @@ jobs:
     # The project requires Xcode 26; provision an available iPhone simulator
     # for that Xcode rather than assuming the image has a particular name.
     runs-on: macos-26
-    # Setup, the build, indexing the corpus and the journeys: 38 to 73 min
-    # measured, and a retried journey adds up to 9 min more. The limit stops
-    # a hung simulator or xcodebuild from holding the runner.
+    # Setup, the build, indexing the corpus and the journeys: about 31 min
+    # measured (the journeys themselves 7 to 9), and a retried journey adds
+    # up to 3 min more. A UI test runner
+    # that fails to initialize costs about 3 min before its one retry. The
+    # limit stops a hung simulator or xcodebuild from holding the runner.
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -144,10 +149,14 @@ jobs:
           key: ios-packages-${{ runner.os }}-${{ hashFiles('ios/project.yml') }}
 
       - name: lane [ios-journeys]
+        # A step's processes run at utility QoS, beneath the simulator's, and
+        # the synthetic gateway then waits up to a minute for a core while
+        # the app's request times out. As an Interactive launchd job, the lane
+        # and the gateway it starts run at the simulator's own priority.
         env:
           OMNESIS_JOURNEY_ARTIFACTS: ${{ runner.temp }}/mobile-journeys
           OMNESIS_CONFIG_DIR: ${{ runner.temp }}/mobile-journeys-gateway
-        run: scripts/run-mobile-journeys.sh ios
+        run: scripts/ci/macos-interactive-job.sh scripts/run-mobile-journeys.sh ios
 
       - name: Upload journey artifacts
         # The screen recording, xcresult bundle (screenshots of every failure),
@@ -285,8 +294,11 @@ jobs:
       # entries main's Android lane saves serve this job too. Without them every
       # run downloads Gradle itself and every dependency, and a slow
       # services.gradle.org or Maven repository fails the build before it starts.
+      # Restored only, never saved: a saved entry is never replaced, and one this
+      # job saved first would lack every module's unit-test dependencies, which
+      # the Android lane would then download from Maven Central on every run.
       - name: Restore Gradle caches
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.gradle/caches

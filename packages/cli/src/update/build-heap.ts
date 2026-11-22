@@ -7,8 +7,7 @@
  * host — not enough for `tsc --build` across every project reference, which
  * then dies with a heap OOM on a machine that had memory to spare. The build
  * claims half of what the machine can really use instead, capped, never less
- * than the heap it needs to finish, and never overrides a value the operator
- * set themselves.
+ * than a floor, and never overrides a value the operator set themselves.
  *
  * This is the one statement of that policy. The installer's shell copy,
  * `build_node_options()` in scripts/install.sh, has to keep the same
@@ -23,7 +22,11 @@ import { totalmem } from "node:os";
 
 /** Above this the build is capped: more heap buys nothing. */
 const MAX_HEAP_MB = 8192;
-/** The build does not finish with less; a smaller machine still gets this much and pages. */
+/**
+ * The smallest heap a build gets; a smaller machine still gets this much and
+ * pages. With it the build compiles one project per process
+ * (scripts/build-projects.mjs), and the largest project peaks well inside it.
+ */
 const MIN_HEAP_MB = 3072;
 /**
  * What a build needs beside its heap: the compiler's own memory outside the

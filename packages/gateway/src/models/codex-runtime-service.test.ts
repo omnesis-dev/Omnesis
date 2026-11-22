@@ -847,13 +847,14 @@ describe("CodexRuntimeService parsers", () => {
 
   it("logs out by deleting the dedicated Codex auth file even if the CLI logout command fails", async () => {
     const dir = await mkdtemp(join(tmpdir(), "omnesis-codex-logout-"));
+    let service: CodexRuntimeService | undefined;
     try {
       const codexHome = join(dir, "codex-home");
       const authPath = join(codexHome, "auth.json");
       await mkdir(codexHome, { recursive: true });
       await writeFile(authPath, "{}", { mode: 0o600 });
 
-      const service = new CodexRuntimeService({
+      service = new CodexRuntimeService({
         configDir: dir,
         command: join(dir, "missing-codex"),
       });
@@ -865,6 +866,9 @@ describe("CodexRuntimeService parsers", () => {
       expect(service.snapshot()).toEqual(result.status);
       await expect(access(authPath)).rejects.toMatchObject({ code: "ENOENT" });
     } finally {
+      // The service keeps its pool homes in this directory, which Windows keeps busy until
+      // the service is disposed.
+      await service?.dispose().catch(() => {});
       await rm(dir, { recursive: true, force: true });
     }
   });

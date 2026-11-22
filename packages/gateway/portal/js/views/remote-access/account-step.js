@@ -8,10 +8,11 @@
 // account page behind Settings → Connectivity for everything else about it.
 
 import { html } from "htm/preact";
-import { useState } from "preact/hooks";
+import { useEffect, useState } from "preact/hooks";
 import { ConfirmModal } from "../../components/confirm-modal.js";
 import { FinishSetup, openOnGateway } from "../../components/gateway-passkey-confirm.js";
 import {
+  acknowledgeExistingAccount,
   relayError,
   relayHttpsUrl,
   relayInvite,
@@ -25,6 +26,7 @@ import {
   usePasskeyHandoff,
   useSetupLater,
 } from "../relay.js";
+import { useConnectWindow } from "../../lib/connect-window.js";
 import { ACCOUNT_PAGE, ManageButton } from "./manage.js";
 import { accountState } from "./model.js";
 import { BackButton, StepFrame, nextLabel } from "./step-frame.js";
@@ -63,13 +65,19 @@ const COPY = {
 };
 
 /**
- * The invite the person is typing, and whether they chose to try an unfinished connection
- * again, kept by whichever view shows the account choice.
+ * The invite the person is typing, whether they edited it since they last pressed to connect,
+ * and whether they chose to try an unfinished connection again, kept by whichever view shows
+ * the account choice.
  */
 export function useInvite() {
-  const [invite, setInvite] = useState("");
+  const [invite, setInviteValue] = useState("");
+  const [edited, setEdited] = useState(false);
   const [retrying, setRetrying] = useState(false);
-  return { invite, setInvite, retrying, setRetrying };
+  const setInvite = (value) => {
+    setInviteValue(value);
+    setEdited(true);
+  };
+  return { invite, setInvite, edited, setEdited, retrying, setRetrying };
 }
 
 /** Why connecting didn't finish, in one sentence. */
@@ -95,20 +103,52 @@ function TermsLine({ status }) {
   </p>`;
 }
 
+/** How long the existing-account notice is in view before it counts as seen. */
+export const NOTICE_SEEN_MS = 5000;
+
 /**
  * Said once the owner chose to create an account but signed in with one that already existed:
- * the gateway is linked to that account, and the invite is still unused.
+ * the gateway is linked to that account, and the invite is still unused. It is said once:
+ * after it has been in view for `NOTICE_SEEN_MS`, the gateway is told it was seen and its status
+ * stops saying it, while this page keeps it until connecting is no longer what it shows. Seen
+ * only briefly, as when the page hands over to the gateway's own address straight away, it is
+ * said again there.
  */
-export function ExistingAccountNotice({ status }) {
-  if (status?.connect?.state !== "done" || !status.connect.existingAccount) return null;
+export function ExistingAccountNotice({ status, acknowledge = acknowledgeExistingAccount }) {
+  const done = status?.connect?.state === "done";
+  const said = done && status.connect.existingAccount === true;
+  const [shown, setShown] = useState(false);
+  useEffect(() => {
+    if (said) setShown(true);
+    else if (!done) setShown(false);
+  }, [said, done]);
+  useEffect(() => {
+    if (!said) return undefined;
+    let timer;
+    const arm = () => {
+      clearTimeout(timer);
+      if (document.visibilityState !== "hidden") timer = setTimeout(() => void acknowledge(), NOTICE_SEEN_MS);
+    };
+    arm();
+    document.addEventListener("visibilitychange", arm);
+    return () => {
+      clearTimeout(timer);
+      document.removeEventListener("visibilitychange", arm);
+    };
+  }, [said]);
+  if (!said && !(shown && done)) return null;
   return html`<p role="status" class="relay-notice">
     You already had an Omnesis account, so this gateway is now linked to it. Your invite wasn't used.
   </p>`;
 }
 
-/** Where the invite link goes. Only creating an account needs it. */
-function InviteField({ value, onInput, disabled }) {
+/**
+ * Where the invite link goes. Only creating an account needs it. What is wrong with it is said
+ * right under it: a link cut short as it is typed, or `refusal`, why the relay refused it.
+ */
+function InviteField({ value, onInput, disabled, refusal = "" }) {
   const incomplete = value.trim() !== "" && !relayInvite(value);
+  const problem = refusal || (incomplete ? "That isn't a whole invite link. Copy all of it, including the part after #." : "");
   return html`<div class="relay-invite-field">
     <label for="relay-invite-input">Invite link</label>
     <input
@@ -119,14 +159,11 @@ function InviteField({ value, onInput, disabled }) {
       placeholder="Paste the invite link you were sent"
       value=${value}
       disabled=${disabled}
-      aria-invalid=${incomplete ? "true" : "false"}
+      aria-invalid=${problem ? "true" : "false"}
+      aria-describedby=${problem ? "relay-invite-problem" : undefined}
       onInput=${(event) => onInput(event.currentTarget.value)}
     />
-    <p class="relay-hint" role=${incomplete ? "alert" : undefined}>
-      ${incomplete
-        ? "That isn't a whole invite link. Copy all of it, including the part after #."
-        : "Needed only to create a new account. Signing in to an account you already have needs no invite."}
-    </p>
+    ${problem && html`<p id="relay-invite-problem" class="relay-invite-problem" role="alert">${problem}</p>`}
   </div>`;
 }
 
@@ -139,7 +176,14 @@ function InviteField({ value, onInput, disabled }) {
  */
 export function accountConnect(
   relay,
-  { invite = "", setInvite = () => {}, retrying = false, setRetrying = () => {} } = {},
+  {
+    invite = "",
+    setInvite = () => {},
+    edited = false,
+    setEdited = () => {},
+    retrying = false,
+    setRetrying = () => {},
+  } = {},
 ) {
   const { status, busy, run } = relay;
   const state = accountState(status);
@@ -149,6 +193,7 @@ export function accountConnect(
   // Creating an account is always the person's explicit choice, here and on the sign-in page.
   const connect = (intent) => {
     setRetrying(false);
+    setEdited(false);
     return run("connect", {
       termsAccepted: true,
       intent,
@@ -163,9 +208,20 @@ export function accountConnect(
   // A refused invite brings back the choice, with the invite field to fix it.
   const inviteRefused =
     state === "failed" && /^invite-/.test(status.connect?.error ?? "");
+  // Why the invite was refused is said under it until the person edits it: refused as they
+  // pressed to connect, or once the relay had checked it.
+  const refusedNow = /^invite-/.test(relay.errorCode ?? "");
+  const refusal = refusedNow
+    ? relay.error
+    : inviteRefused && !edited
+      ? relayError(status.connect.error)
+      : "";
   // Trying an unfinished connection again is the same choice: the sign-in decides the account.
   const choosing = state === "none" || inviteRefused || (state === "unfinished" && retrying);
-  const copy = state === "waiting" && status.connect?.verification ? {
+  // The refusal is said under the invite field where there is one; elsewhere where it always was.
+  const fieldShown = choosing && inviteOnly;
+  const underField = inviteRefused && fieldShown;
+  const copy = underField ? COPY.none : state === "waiting" && status.connect?.verification ? {
     heading: "Verify this gateway's setup",
     blurb: "Open the security check to get this gateway's public address. Cloudflare usually checks automatically; it may ask you to confirm you're human. No approval from Omnesis is needed.",
   } : state === "waiting" && status.connect?.intent === "create" ? {
@@ -175,7 +231,7 @@ export function accountConnect(
   const blurb =
     state === "unavailable" && status.serviceError
       ? relayError(status.serviceError)
-      : state === "failed" && (status.connect?.error ?? status.enrollment?.error)
+      : state === "failed" && !underField && (status.connect?.error ?? status.enrollment?.error)
         ? relayError(status.connect?.error ?? status.enrollment?.error)
         : state === "unfinished"
           ? unfinishedBlurb(status)
@@ -183,7 +239,7 @@ export function accountConnect(
   // Before any account, everything to know is one paragraph: what it does, what it never
   // sees, that new accounts need an invite, and that it can wait.
   const fullBlurb =
-    state === "none"
+    state === "none" || underField
       ? html`${blurb}${inviteOnly &&
           " Omnesis accounts are private and invite-only for now: creating one needs an invite link. "}
         It's optional: skip it and set it up any time from Settings, Connectivity.`
@@ -228,12 +284,11 @@ export function accountConnect(
         Connect to your Omnesis account
       </button>`,
   }[state] ?? null;
-  const body = html`${relay.error && html`<p role="alert" class="relay-notice">${relay.error}</p>`}
+  const body = html`${relay.error && !(refusedNow && fieldShown) && html`<p role="alert" class="relay-notice">${relay.error}</p>`}
     ${state === "loading" && !busy && html`<button type="button" class="btn-secondary" onClick=${() => run()}>Try again</button>`}
-    ${choosing &&
-    inviteOnly &&
+    ${fieldShown &&
     html`<p class="relay-private-badge">Private · invite only</p>
-      <${InviteField} value=${invite} onInput=${editInvite} disabled=${disabled} />`}
+      <${InviteField} value=${invite} onInput=${editInvite} disabled=${disabled} refusal=${refusal} />`}
     ${(choosing || state === "failed") && html`<${TermsLine} status=${status} />`}
     ${state === "waiting" && html`<${Waiting} connect=${status.connect} busy=${busy} run=${run} />`}`;
   return { state, heading: copy.heading, blurb: fullBlurb, body, buttons, disabled };
@@ -272,6 +327,7 @@ export function AccountStep({
   const [later, chooseLater] = useSetupLater(status?.gatewayId);
   const { enrollment, setup, ready } = relayAccountSetup(status, phase);
   usePasskeyHandoff({ phase, enrollment, setup, ready, later, open, location });
+  useConnectWindow(status?.connect);
   const [unlinking, setUnlinking] = useState(false);
   const google = !status?.account?.linked && status?.google?.linked;
 
@@ -314,7 +370,6 @@ export function AccountStep({
       ${checklist &&
       html`<${FinishSetup}
         enrollment=${enrollment}
-        hostname=${status.hostname}
         ready=${ready}
         serviceUrl=${status.config?.relayUrl}
         busy=${busy}

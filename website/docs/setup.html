@@ -166,10 +166,12 @@
 
         <h2 id="pairing">How pairing works</h2>
         <p>
-          Every client except an external AI agent joins the gateway the same way: you mint a
+          Every client except an external AI agent can join the gateway the same way: you mint a
           pairing code on the gateway, and the new device redeems it for a token of its own. The
           token's scopes depend on the kind of device, as listed in
-          <a href="./#devices-and-tokens">Devices and connections</a>.
+          <a href="./#devices-and-tokens">Devices and connections</a>. A pairing code always works;
+          a device can also ask to join without one, by signing in to your Omnesis account or from
+          your tailnet, as <a href="#new-devices">New devices</a> describes.
         </p>
         <figure class="diagram diagram-flat diagram-compact">
           <ol class="flow">
@@ -395,114 +397,296 @@
 
         <h3 id="connectivity">Settings → Connectivity</h3>
         <p>
-          The portal's <strong>Settings → Connectivity</strong> tab lists how devices and agents
-          reach the gateway, at home and away, one line each, with what is on and the address it
-          uses. Each line opens its own page to set that way up or change it, and
-          <strong>Set up step by step</strong> walks through the same choices one question at a
-          time; its last step, the MCP server, is all someone who uses Omnesis only at home needs,
-          with no account and no remote connection. At home, devices always connect directly.
+          The portal's <strong>Settings → Connectivity</strong> tab is a summary of how your devices
+          and agents reach the gateway, at home and away. Each line is marked as on, off or needing
+          attention, and its <strong>Manage</strong> or <strong>Set up</strong> link opens the page
+          for that one thing. At home, devices always connect directly over the home network; the
+          sections cover everything else, in this order:
         </p>
         <ul>
           <li>
-            <strong>At home</strong> says how agents on the gateway's computer and on your home
-            network connect to its MCP server. Agents on the gateway's computer use
-            <code>http://localhost:7601/mcp</code>, which needs no certificate; when it cannot
-            start, for example because another program holds its port, the line says why and which
-            setting moves it. Agents on other computers at home can sign in once you allow it under
-            <strong>MCP server</strong>; your devices pair over the home network either way (see
-            <a href="connect#this-computer">an agent on the gateway's computer</a> and
-            <a href="connect#home-network">an agent on your home network</a>).
+            <strong>Omnesis account</strong>: whether the gateway is linked to an account, or how
+            far connecting one has got (see <a href="#omnesis-account">Omnesis account</a>).
           </li>
           <li>
-            <strong>Omnesis account</strong> links the gateway to an account on the Omnesis relay.
-            Your phones and computers then find the gateway by signing in to the account, with a
-            passkey or Google, instead of scanning a QR code, a new device can ask to join from
-            anywhere, and the gateway is reachable away from home through the relay. The relay
-            passes the encrypted connection through without opening it: the gateway's certificate
-            key never leaves the gateway, and your documents, searches and answers stay on it. The
-            account knows only how you sign in and which gateways are yours. Accounts are private
-            and invite-only for now: creating one needs an invite link. Paste it under
-            <strong>Settings → Connectivity → Omnesis account</strong>, or run
-            <code>omnesis cloud connect --invite &lt;link&gt;</code>. Each invite creates one
-            account and expires; signing in to an account you already have needs no invite. Opening
-            the link in a browser shows whether it still works. If you chose to create an account
-            but sign in with one you already have, the gateway links to that account and the invite
-            stays unused.
-            <p>
-              Connecting gets a certificate for the gateway's address, from Let's Encrypt unless the
-              operator names another authority; connecting accepts its Subscriber Agreement, which
-              the page links to. From a terminal, <code>omnesis cloud connect</code> asks whether
-              you already have an account; <code>--existing</code> or
-              <code>--invite &lt;link&gt;</code> answers for a script. It prints each step and, once
-              connected, the gateway's address, portal and MCP links. A gateway already linked to an
-              account is unlinked first, with <code>omnesis cloud unlink</code>.
-            </p>
-            <p>
-              A connection that stops before it finishes leaves the gateway with an address it
-              reserved but can't be reached at, and that address is offered nowhere, not even to
-              agents. The page says why it stopped: <strong>Try again</strong> continues with the
-              same address, and <strong>Start over</strong>, or
-              <code>omnesis cloud start-over</code>, discards it so the gateway is as if it had
-              never connected. A gateway that has connected can't start over; unlinking is the way
-              out then.
-            </p>
+            <strong>Remote connectivity</strong>: the four ways devices reach the gateway away from
+            home, which work side by side. They are
+            <a href="#tailscale-device">this gateway's own Tailscale device</a>, the
+            <a href="#omnesis-account">Omnesis relay</a>,
+            <a href="#tailscale-on-this-computer">Tailscale on this computer</a>, and
+            <a href="#public-domain">your own domain or reverse proxy</a>. Each line shows its
+            address once it is on, and whether that address is public on the Internet. When the
+            gateway's own Tailscale device and the relay are both on,
+            <strong>When both can answer, try first</strong> chooses which one your devices try
+            first: Tailscale keeps traffic on your tailnet and leaves the relay for devices where
+            Tailscale is off; the relay works on every device and leaves Tailscale for when it does
+            not answer.
           </li>
           <li>
-            <strong>This gateway's own Tailscale device</strong> joins your tailnet as a device of
-            its own, named <code>omnesis</code>, with no Tailscale app on the gateway machine. It
-            needs the gateway's Tailscale helper program, which the Docker image includes and a
-            source install builds when it installs or updates (see
-            <a href="install#requirements">requirements</a>); a gateway without it does not offer
-            this way. It is off until you turn it on in <strong>Settings → Tailscale</strong> and
-            sign in from the link or QR code shown there. The portal, your devices' connections and
-            the MCP server then answer at <code>https://omnesis.&lt;tailnet&gt;.ts.net</code> on
-            your tailnet only. Its public address, through Tailscale Funnel, carries the MCP server
-            alone, and is chosen under <strong>MCP server</strong>. Collectors on machines in your
-            tailnet can ask to join it without a pairing code; you choose whether each one waits for
-            your approval.
+            <strong>MCP</strong>: where agents reach the gateway's MCP server, in three lines:
+            <strong>This computer</strong>, <strong>Your home network</strong> and
+            <strong>Away from home</strong>. Each opens the <strong>MCP server</strong> page (see
+            <a href="connect#mcp-per-address">MCP on each address</a>).
           </li>
           <li>
-            <strong>Tailscale on this computer</strong> serves the gateway through the Tailscale app
-            already on the gateway machine, on your tailnet. The gateway runs the
-            <code>tailscale serve</code> or <code>tailscale funnel</code> command for you; where it
-            may not change Tailscale (on Linux that takes root or the machine's Tailscale operator),
-            it shows the command to run, with a button that checks the result once you have run it.
-            It publishes on the machine's name at port 443, or at 8443 or 10000 when another app
-            Tailscale serves already uses 443, and never replaces that app; the page lists where
-            Tailscale sends each address it skipped, and with all three in use it says so and
-            changes nothing. Some agents, such as ChatGPT, connect only on port 443.
-            <strong>Also reachable from the Internet</strong> publishes the portal and your devices'
-            connections through Funnel; the MCP server has its own choice, under
-            <strong>MCP server</strong>. Publishing one without the other needs Tailscale 1.104 or
-            later on the gateway machine. The address is one agents sign in through on its own, so
-            it is never saved as <code>gateway.publicBaseUrl</code>. Unticked in the setup while it
-            still serves the gateway, and on its own page, it offers
-            <strong>Stop serving this gateway</strong>, which runs
-            <code>tailscale serve --https=&lt;port&gt; off</code> and removes
-            <code>gateway.publicBaseUrl</code> when that names this address. The setup does not move
-            on while Tailscale differs from the choice. A gateway in a container does not offer this
-            way: Tailscale on the host cannot reach it there.
-          </li>
-          <li>
-            <strong>Your own domain or reverse proxy</strong> takes an https address you publish
-            yourself (see <a href="#public-domain">From the Internet</a>). The portal checks that
-            the name resolves, that its certificate is valid and that the gateway answers there,
-            then saves it as <code>gateway.publicBaseUrl</code>.
-          </li>
-          <li>
-            <strong>MCP server</strong> shows the address for agents on the gateway's computer,
-            whether agents on your home network may sign in, and, for each address away from home,
-            where the MCP server answers: off, on your Tailscale network, or on the Internet too
-            (see <a href="connect#mcp-per-address">MCP on each address</a>).
+            <strong>New devices</strong>: what happens when a new device asks to join. It appears
+            only when there is an answer to give, which is when an account is linked or the
+            gateway's own Tailscale device is on (see <a href="#new-devices">New devices</a>).
           </li>
         </ul>
+        <p>
+          <strong>Set up step by step</strong>, or <strong>Run the setup again</strong> once
+          something is on, asks the same questions one screen at a time:
+          <strong>Your Omnesis account</strong>, <strong>Remote connection</strong>,
+          <strong>New devices</strong>, which is shown only when a device can ask to join, and
+          <strong>MCP server</strong>. Each answer is applied as you give it, so you can leave at
+          any step. Someone who uses Omnesis only at home can skip the account and the remote
+          connection; the MCP server step is all they need.
+        </p>
+
+        <h3 id="omnesis-account">Omnesis account and the relay</h3>
+        <p>
+          An Omnesis account helps your devices find the gateway. Linked to one, the gateway is
+          reachable away from home through the Omnesis relay at an address of its own, your phones
+          and computers find it by signing in to the account with a passkey or Google instead of
+          scanning a QR code, and a new device can ask to join from anywhere. The relay passes the
+          encrypted connection through without opening it: the gateway's certificate key never
+          leaves the gateway, and your documents, searches and answers stay on it. The account knows
+          only how you sign in and which gateways are yours. It is optional; pairing codes and QR
+          codes work without it. A gateway uses the Omnesis relay unless
+          <code>OMNESIS_CLOUD_RELAY_URL</code> names another one.
+        </p>
+        <p>
+          Omnesis accounts are invite-only for now. Creating an account needs an invite link;
+          signing in to an account you already have does not. Each invite creates one account and
+          expires. Opening the link in a browser shows whether it still works, and how to use it.
+        </p>
+        <p>
+          In the portal, open <strong>Settings → Connectivity → Omnesis account</strong>, or the
+          first step of the setup, and choose <strong>Create an account</strong> or
+          <strong>I already have one</strong>. To create one, paste the invite into the
+          <strong>Invite link</strong> field first; the gateway checks it with the relay before
+          anything else and says when it is cut short, not valid, expired or already used.
+          Connecting gets the gateway a certificate for its relay address, from Let's Encrypt unless
+          the gateway is configured with another authority, and so accepts that authority's
+          Subscriber Agreement, which the page links to beside the buttons. Then:
+        </p>
+        <ol>
+          <li>
+            <strong>Security check.</strong> Before the gateway gets its public name, the page shows
+            <strong>Open security check</strong>: a Cloudflare Turnstile check on the page of the
+            Omnesis DNS service that issues the name. Cloudflare usually passes it on its own and
+            may ask you to confirm you're human. No approval from Omnesis is needed. The check opens
+            in a new tab that the portal keeps: neither that page nor the account's can reach back
+            into the portal's tab.
+          </li>
+          <li>
+            <strong>Sign in.</strong> Once the check passes, the same tab moves on to the Omnesis
+            account page, where you create the account or sign in; once you are all set, the tab
+            closes itself (or, where the browser keeps it open, says you can close it). Where the
+            browser keeps the portal from opening that tab, the link opens as an ordinary tab, which
+            says when you can close it, and the portal then offers the account page as a button. On
+            another device, visit the short address the page shows and enter its code.
+          </li>
+          <li>
+            <strong>Registering.</strong> The gateway gets its certificate, usually in under a
+            minute, opens its connection to the relay, and links itself to the account. The page
+            updates by itself.
+          </li>
+        </ol>
+        <p>
+          If you chose to create an account but signed in to one you already had, the gateway links
+          to that account and the invite is not used. The portal says so once when connecting
+          completes, and the CLI prints it.
+        </p>
+        <p>
+          Once connected, <strong>Settings → Omnesis account</strong> shows
+          <strong>Finish setting up</strong> until the gateway trusts a sign-in. Its last step asks
+          you to use your passkey once on the gateway's own secure address; after that, a new device
+          that signs in with that passkey there joins without waiting for your approval. Without a
+          passkey, the step offers <strong>Add a passkey (optional)</strong>: the account page
+          creates it and asks you to confirm with a sign-in you already have, and back on the
+          gateway you use it once. Until then, and for any other sign-in, a new device waits for
+          your approval with a comparison code. Phones are added from
+          <strong>Settings → Devices</strong>. See
+          <a href="security#account-passkeys">account passkeys</a>.
+        </p>
+        <p>
+          From a terminal, <code>omnesis cloud connect</code> asks whether you already have an
+          account. Without a terminal, <code>--existing</code> or
+          <code>--invite '&lt;link&gt;'</code> answers it; quote the link, since it contains a
+          <code>#</code>. The command prints the Subscriber Agreement line, the security check's
+          address, the address and code to sign in with, and each step, then the gateway's address,
+          portal and MCP links. <code>--ask-first</code> makes new devices wait for your approval
+          and <code>--automatic</code> keeps the default (see
+          <a href="#new-devices">New devices</a>). A gateway already linked to an account is
+          refused; unlink it first.
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p class="t-dim"># create an account with the invite you were sent</p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis cloud connect --invite '&lt;invite link&gt;'</span>
+            </p>
+            <p class="t-dim"># or sign in to the account you already have</p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis cloud connect --existing --ask-first</span>
+            </p>
+          </div>
+        </div>
+        <p>
+          A connection that stops before it finishes leaves the gateway with an address it reserved
+          but can't be reached at, and that address is offered nowhere, not even to agents. The page
+          says why it stopped: <strong>Try again</strong> brings back the account choice and
+          continues with the same address, and <strong>Start over</strong>, or
+          <code>omnesis cloud start-over</code>, discards it so the gateway is as if it had never
+          connected. A gateway that has connected can't start over; unlinking is the way out then.
+        </p>
+        <p>
+          <code>omnesis cloud status</code> shows the account link, the address, the registration,
+          the connection to the relay, the certificates and the last errors, and
+          <code>--json</code> prints them as the gateway sends them. The
+          <strong>Omnesis relay</strong> page has the gateway's portal link and MCP address on the
+          relay, and <strong>Turn off</strong>: remote access stops, while the gateway keeps its
+          address and stays in your account, and <strong>Turn on</strong> brings it back at the same
+          address. The CLI equivalents are <code>omnesis cloud disable</code> and
+          <code>enable</code>, with <code>reconnect</code> and <code>renew</code> to retry the
+          connection or the certificate.
+        </p>
+        <p>
+          <strong>Unlink this gateway</strong>, on the account page or in the setup's first step, or
+          <code>omnesis cloud unlink</code>, takes the gateway out of your account. It can no longer
+          be reached from outside your home network through the relay, and devices can no longer
+          join by signing in. Nothing on the gateway is deleted, devices already paired keep working
+          on your home network, and the gateway can connect again, to the same account or another.
+          <strong>Manage your account</strong> opens the account page on the relay, where you add or
+          remove sign-ins, unlink any of your gateways and delete the account. Add a passkey there;
+          your gateway confirms it on its secure address. Deleting the account disconnects every
+          gateway in it and deletes your sign-ins and everything the service stores about the
+          account, after a fresh confirmation; it can't be undone. Devices already paired keep
+          working on your home network, and each gateway says the account was deleted and can be
+          linked to a new one.
+        </p>
+
+        <h3 id="new-devices">New devices</h3>
+        <p>
+          A pairing code from <strong>Settings → Devices</strong> always works. A device can also
+          ask to join without one, in two ways: by signing in to the Omnesis account the gateway is
+          linked to, and, for a collector, from your tailnet through the gateway's own Tailscale
+          device. <strong>New devices</strong>, in the summary and as a step of the setup, is one
+          answer for both:
+        </p>
+        <ul>
+          <li>
+            <strong>Ask me first</strong>: each device waits until you approve it. Turning this on
+            never needs a passkey.
+          </li>
+          <li>
+            <strong>My devices join automatically</strong>: a device signed in as you joins at once,
+            and you get a notification. Through the account, that holds only for a sign-in the
+            gateway trusts; a device signed in another way still waits. Choosing it can ask for your
+            passkey.
+          </li>
+          <li>
+            <strong>Pairing code only</strong>, offered while no account is linked: Tailscale
+            devices need a code too.
+          </li>
+        </ul>
+        <p>
+          A gateway linked to an account lets its devices join automatically unless you choose
+          otherwise; the gateway's own Tailscale device asks first. If the two settings differ, the
+          summary says what each does now until you choose one answer.
+        </p>
+        <p>
+          A device that waits appears under <strong>Waiting for your OK</strong> on
+          <strong>Settings → Devices</strong>, and on your paired phone. For a device that signed in
+          with the account, check that it shows the same code as the request, then choose
+          <strong>Yes, approve</strong> or <strong>No, deny</strong>; you can also remember that
+          passkey or Google account so the next device that uses it joins without asking. After a
+          deny, <strong>Make new devices always ask me</strong> switches to Ask me first. The
+          account page lists the <strong>Trusted sign-ins</strong>.
+        </p>
+        <p>
+          From a terminal, <code>omnesis cloud policy automatic</code> or <code>ask</code> sets the
+          account's answer, <code>omnesis cloud requests</code> lists waiting devices with their
+          codes, and <code>omnesis cloud approve &lt;id&gt; --code &lt;code&gt;</code> or
+          <code>omnesis cloud deny &lt;id&gt;</code> decides one.
+          <code>omnesis cloud trusted-sign-ins</code> lists the trusted sign-ins and
+          <code>omnesis cloud remove-sign-in &lt;id&gt;</code> removes one;
+          <code>--revoke-devices</code> also revokes the devices that joined with it. On a CLI or
+          collector machine, <code>omnesis cloud pair --kind cli</code> (or <code>collector</code>)
+          signs in to the account and asks to join. The gateway's own Tailscale device has its own
+          commands: <code>omnesis tailscale joining ask|automatic|off</code>,
+          <code>omnesis tailscale requests</code>, and <code>approve</code> or <code>deny</code>; a
+          collector machine asks with <code>omnesis tailscale join</code>.
+        </p>
+        <p>
+          If a certificate is issued for the gateway's relay address with a key the gateway does not
+          hold, every new device waits for your approval until you have looked into it (see
+          <a href="security#tls">TLS certificate</a>).
+        </p>
+
+        <h3 id="tailscale-device">This gateway's own Tailscale device</h3>
+        <p>
+          The gateway can join your tailnet as a device of its own, named <code>omnesis</code>, with
+          no Tailscale app on the gateway machine. It needs the gateway's Tailscale helper program,
+          which the Docker image includes and a source install builds when it installs or updates
+          (see <a href="install#requirements">requirements</a>); a gateway without it does not offer
+          this way. It is off until you open
+          <strong>Settings → Connectivity → This gateway's own Tailscale device</strong>, press
+          <strong>Turn on</strong> and sign in to Tailscale from the link or QR code shown there, or
+          run <code>omnesis tailscale on</code>. If your tailnet requires device approval, approve
+          it in the Tailscale admin console; the page updates by itself.
+        </p>
+        <p>
+          The portal, your devices' connections and the MCP server then answer at
+          <code>https://omnesis.&lt;tailnet&gt;.ts.net</code>, on your tailnet only. With MagicDNS
+          and HTTPS certificates turned on for the tailnet, that address has a trusted certificate;
+          otherwise the gateway serves its own until you turn them on. Its public address, through
+          Tailscale Funnel, carries the MCP server alone, and is chosen under
+          <strong>MCP server</strong> or with <code>omnesis tailscale public on</code>. The page
+          also changes the device name, which is part of the address, signs the device out and turns
+          it off.
+        </p>
+
+        <h3 id="tailscale-on-this-computer">Tailscale on this computer</h3>
+        <p>
+          <strong>Tailscale on this computer</strong> serves the gateway through the Tailscale app
+          already on the gateway machine, on your tailnet. <strong>Set it up for me</strong> runs
+          the <code>tailscale serve</code> or <code>tailscale funnel</code> command for you; where
+          the gateway may not change Tailscale (on Linux that takes root or the machine's Tailscale
+          operator), it shows the command to run, with a button that checks the result once you have
+          run it. It publishes on the machine's name at port 443, or at 8443 or 10000 when another
+          app Tailscale serves already uses 443, and never replaces that app; the page lists where
+          Tailscale sends each address it skipped, and with all three in use it says so and changes
+          nothing. Some agents, such as ChatGPT, connect only on port 443.
+        </p>
+        <p>
+          <strong>Also reachable from the Internet</strong> publishes the portal and your devices'
+          connections through Funnel; the MCP server has its own choice, under
+          <strong>MCP server</strong>. Publishing one without the other needs Tailscale 1.104 or
+          later on the gateway machine. The address is one agents sign in through on its own, so it
+          is never saved as <code>gateway.publicBaseUrl</code>. Unticked in the setup while it still
+          serves the gateway, and on its own page, it offers
+          <strong>Stop serving this gateway</strong>, which runs
+          <code>tailscale serve --https=&lt;port&gt; off</code> and removes
+          <code>gateway.publicBaseUrl</code> when that names this address. The setup does not move
+          on while Tailscale differs from the choice. A gateway in a container does not offer this
+          way: Tailscale on the host cannot reach it there.
+        </p>
 
         <h3 id="away-from-home">Phones away from home</h3>
         <p>
           A phone paired to a LAN or <code>.local</code> address cannot reach the gateway once it
           leaves that network. A notification can still wake it, but the notification's text, Ask
-          and uploads all need a connection back to the gateway. Tailscale gives the phone that
-          connection without putting the gateway on the Internet:
+          and uploads all need a connection back to the gateway. An
+          <a href="#omnesis-account">Omnesis account</a> gives the phone that connection through the
+          relay, and <a href="#tailscale-device">the gateway's own Tailscale device</a> through your
+          tailnet. With Tailscale on the gateway machine itself, these steps give it that connection
+          without putting the gateway on the Internet:
         </p>
         <ol>
           <li>
@@ -539,19 +723,27 @@
         <h3 id="public-domain">From the Internet</h3>
         <p>
           A gateway on a domain of yours is supported on two routes, and neither weakens how clients
-          check the name. Omnesis obtains no certificates for public names: there is no ACME client
-          (the protocol Let's Encrypt uses) in the gateway or the installer. Both routes assume you
-          have made the host reachable yourself, with a DNS record and a port opened on whatever
-          sits between the Internet and the machine.
+          check the name. Omnesis obtains no certificate for a domain of yours: you bring it, or
+          your proxy does. The only public certificate the gateway obtains itself is the one for its
+          address on the <a href="#omnesis-account">Omnesis relay</a>. Both routes assume you have
+          made the host reachable yourself, with a DNS record and a port opened on whatever sits
+          between the Internet and the machine.
         </p>
         <p>
           Both also put the pairing endpoint on the Internet. It is rate-limited per client address,
           and a pairing code is single-use and expires in ten minutes, but a gateway only you need
-          to reach is better served by <a href="#away-from-home">Tailscale</a>. External agents that
-          run on their provider's servers, such as Claude Desktop, Claude Cowork and ChatGPT, can
-          only use a public address. For them alone, without a domain,
-          <a href="connect#tailscale-funnel">Tailscale Funnel</a> publishes the gateway's tailnet
-          name; the two routes below are for a domain you own.
+          to reach is better served by <a href="#away-from-home">Tailscale</a> or the relay.
+          External agents that run on their provider's servers, such as Claude Desktop, Claude
+          Cowork and ChatGPT, can only use a public address. For them alone, without a domain, the
+          relay's address or <a href="connect#tailscale-funnel">Tailscale Funnel</a> gives them one;
+          the two routes below are for a domain you own.
+        </p>
+        <p>
+          Once the address answers, enter it under
+          <strong>Settings → Connectivity → Your own domain or reverse proxy</strong>. The portal
+          checks that the name resolves, that its certificate is valid and that the gateway answers
+          there, then saves it as <code>gateway.publicBaseUrl</code>, which takes effect at once.
+          The steps below set the same value from a terminal.
         </p>
         <p>
           <strong>Serve a certificate you obtain.</strong> Get a certificate for the name with the

@@ -33,8 +33,21 @@ import type { TailnetCaller } from "./caller.js";
 const FAKE = fileURLToPath(new URL("./testing/fake-helper.mjs", import.meta.url));
 
 let material: { cert: string; key: string };
+let schema: Buffer;
 beforeAll(async () => {
   material = await generateSelfSigned();
+  // Every case gets its own gateway database with the complete real schema.
+  // Building that schema replays every migration. On a Windows runner that is
+  // most of a boot, and building it on disk has taken close to ten seconds.
+  // Build it once in memory and give each case its own file holding a copy.
+  // Cold schema construction has its own tests; these cases exercise the
+  // Tailscale device and its joins.
+  const seed = createDatabase(":memory:");
+  try {
+    schema = seed.serialize();
+  } finally {
+    seed.close();
+  }
 });
 let dir: string;
 let db: ReturnType<typeof createDatabase>;
@@ -60,6 +73,7 @@ async function boot(scenario = "connected"): Promise<void> {
   writeFileSync(join(dir, "tailscale", "node", "fake-scenario"), scenario);
   await writeTlsMaterial(join(dir, "cert.pem"), join(dir, "key.pem"), material, dir);
   const path = join(dir, "gateway.sqlite");
+  writeFileSync(path, schema);
   db = createDatabase(path);
   const device = createDevice(db, { name: "Fictional admin CLI", kind: "cli" });
   admin = createToken(db, device.id, [SCOPE_ADMIN, SCOPE_READ]).token;

@@ -22,7 +22,7 @@ import { useState } from "preact/hooks";
 import { CopyBlock } from "../../components/copy-button.js";
 import { getRemoteAccess, updateRemoteAccess } from "../../lib/remote-access-api.js";
 import { PageLink, TAILSCALE_PAGE } from "./manage.js";
-import { HOME_NETWORK_WARNINGS, Parts, localMcpLine } from "./at-home.js";
+import { HOME_NETWORK_DOCS, HOME_NETWORK_WARNINGS, Parts, localMcpLine } from "./at-home.js";
 import { BackButton, StepFrame, nextLabel } from "./step-frame.js";
 
 /** How each address is named, in the setup's words. */
@@ -105,14 +105,13 @@ function HomeNetwork({ row, reach, disabled, onChoose }) {
     </div>
     ${!row.available &&
     html`<small>This gateway found no address of its own on your home network. Check that this computer is connected to it.</small>`}
-    ${reach === "off" && row.available
-      ? html`<small>Before you allow it:</small>
-          <ul class="remote-access-warnings">
-            ${HOME_NETWORK_WARNINGS.map((warning) => html`<li key=${warning}>${warning}</li>`)}
-          </ul>`
-      : reach === "on" && addresses.length > 1
-        ? html`<small>Prefer the .local name: an address in numbers can change when your router hands out a new one.</small>`
-        : null}
+    ${reach === "off" &&
+    row.available &&
+    html`<small>Before you allow it:</small>
+      <ul class="remote-access-warnings">
+        ${HOME_NETWORK_WARNINGS.map((warning) => html`<li key=${warning}>${warning}</li>`)}
+      </ul>
+      <small><a href=${HOME_NETWORK_DOCS} target="_blank" rel="noopener noreferrer">Home network in the docs</a></small>`}
   </fieldset>`;
 }
 

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { randomBytes } from "node:crypto";
 import { z } from "zod";
 import {
   GATEWAY_SIGNUP_ACCESS_PATH,
@@ -8,6 +9,7 @@ import {
   GATEWAY_SIGNUP_FEATURES_HEADER,
   GATEWAY_SIGNUP_INVITE_PATH,
   GATEWAY_SIGNUP_PATH,
+  SIGNUP_WINDOW_MARKER,
 } from "./gateway-signup-contract.js";
 import { readJsonBody } from "./relay-json-body.js";
 import { RelayError } from "./tunnels.js";
@@ -19,9 +21,21 @@ import type { LoginAdmission } from "./admission.js";
 import type { GatewaySignup } from "./gateway-signup.js";
 
 const launch = z
-  .object({ operationId: z.string().uuid(), ticket: z.string().regex(/^[A-Za-z0-9_-]{43}$/) })
+  .object({
+    operationId: z.string().uuid(),
+    ticket: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
+    window: z.literal(SIGNUP_WINDOW_MARKER.value).optional(),
+  })
   .strict();
-const complete = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Omnesis account</title><link rel="stylesheet" href="/_relay/account/style.css"></head><body><main>${brand}<h1>You're all set</h1><p>Go back to your gateway. It will finish connecting to your Omnesis account on its own. You can close this page.</p></main></body></html>`;
+/**
+ * The page a finished sign-up ends on. In the window a gateway's portal opened for it, which the
+ * sign-up's completion address names with `SIGNUP_WINDOW_MARKER.fragment`, it closes itself; a
+ * window a script opened may be closed by script. Anywhere else, or where the browser keeps the
+ * window open, it stays and says what to do.
+ */
+function complete(nonce: string): string {
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Omnesis account</title><link rel="stylesheet" href="/_relay/account/style.css"></head><body><main>${brand}<h1>You're all set</h1><p>Go back to your gateway. It will finish connecting to your Omnesis account on its own. You can close this page.</p></main><script nonce="${nonce}">if(location.hash===${JSON.stringify(SIGNUP_WINDOW_MARKER.fragment)}){history.replaceState(null,"",location.pathname);window.close()}</script></body></html>`;
+}
 const refusal = JSON.stringify({
   reason: "signup-closed",
   message: "This relay is not accepting new gateways.",
@@ -88,8 +102,12 @@ export class GatewaySignupHttp {
     if (action === "complete") {
       if (req.method !== "GET") throw new RelayError(405, "Method not allowed");
       if (url.search) throw new RelayError(400, "Invalid gateway signup completion URL");
-      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-      res.end(complete);
+      const nonce = randomBytes(16).toString("base64url");
+      res.writeHead(200, {
+        "content-type": "text/html; charset=utf-8",
+        "content-security-policy": `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`,
+      });
+      res.end(complete(nonce));
       return true;
     }
     if (action === "begin") {
@@ -99,10 +117,11 @@ export class GatewaySignupHttp {
         admission,
         origin: signup.origin,
         path: GATEWAY_SIGNUP_PATH + "/begin",
-        names: { required: ["operationId", "ticket"] },
+        names: { required: ["operationId", "ticket"], optional: ["window"] },
         parse: (fields) => launch.safeParse(fields).data,
         peek: (input, cookie) => signup.peekLaunch(input.operationId, input.ticket, cookie),
-        launch: (input, cookie) => signup.launch(input.operationId, input.ticket, cookie),
+        launch: (input, cookie) =>
+          signup.launch(input.operationId, input.ticket, cookie, input.window !== undefined),
         restart,
       });
     }

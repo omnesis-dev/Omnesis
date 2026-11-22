@@ -23,10 +23,13 @@
 #
 # A journey that fails is retried once (OMNESIS_JOURNEY_RETRIES), because
 # simulators and emulators have known one-off flakes; a journey that fails
-# every attempt fails the run. The screen is recorded for the whole run.
+# every attempt fails the run. On iOS, an XCTest runner that fails to
+# initialize before any journey starts gets one more xcodebuild run. The
+# screen is recorded for the whole run.
 # Everything worth reading after a failure lands in OMNESIS_JOURNEY_ARTIFACTS:
 # the recording, per-failure screenshots, test reports / the xcresult bundle,
-# the iOS app's touch log, and the gateway's logs and stall profiles.
+# the iOS app's touch log, the simulator's trust service and network state
+# at each failure, and the gateway's logs and stall profiles.
 #
 # Overrides:
 #   OMNESIS_CONFIG_DIR               gateway state   (default: /tmp/omnesis-mobile-journeys/gateway)
@@ -36,6 +39,7 @@
 #   OMNESIS_JOURNEY_READY_TIMEOUT    seconds to wait for the corpus to be searchable (default: 900)
 #   OMNESIS_JOURNEY_IOS_SIMULATOR    simulator device name (default: iPhone 17)
 #   OMNESIS_JOURNEY_IOS_UDID         exact prepared simulator (overrides the name)
+#   OMNESIS_JOURNEY_TRUST_TIMEOUT    seconds to wait for the simulator's trust service (default: 600)
 #   OMNESIS_JOURNEY_ONLY             run one journey: an XCTest identifier (iOS) or
 #                                    Class#method (Android)
 
@@ -90,10 +94,27 @@ bounded() {
   fi
 }
 
+# `simctl io recordVideo` stops and writes its file on SIGINT, but only once
+# it has started recording: a job this script starts in the background begins
+# with SIGINT ignored, until the recorder sets up its own handler. So the stop
+# waits (briefly) for "Recording started", and a recorder that still has not
+# exited a while after the interrupt is killed rather than waited on forever.
 RECORDER_PID=""
 stop_recording() {
   if [[ -n "$RECORDER_PID" ]]; then
+    local waited=0
+    while ((waited < 30)) && kill -0 "$RECORDER_PID" 2>/dev/null \
+      && ! grep -q 'Recording started' "$ARTIFACTS/recorder.log" 2>/dev/null; do
+      sleep 1
+      waited=$((waited + 1))
+    done
     kill -INT "$RECORDER_PID" 2>/dev/null || true
+    waited=0
+    while ((waited < 60)) && kill -0 "$RECORDER_PID" 2>/dev/null; do
+      sleep 1
+      waited=$((waited + 1))
+    done
+    kill -KILL "$RECORDER_PID" 2>/dev/null || true
     wait "$RECORDER_PID" 2>/dev/null || true
     RECORDER_PID=""
   fi
@@ -107,9 +128,12 @@ cleanup() {
   cp "$OMNESIS_CONFIG_DIR"/logs/*.log "$ARTIFACTS/gateway-logs/" 2>/dev/null || true
   # The flight recorder's summaries of what held the gateway's event loop; the
   # gateway log names each one it saved (docs/stall-investigation.md).
-  if compgen -G "$OMNESIS_CONFIG_DIR/diagnostics/stalls/profile-*.json" >/dev/null; then
+  # Only the file names are a pattern: the config directory is matched as written,
+  # whatever characters its path holds (a Windows path's backslashes, brackets).
+  local profiles=("$OMNESIS_CONFIG_DIR"/diagnostics/stalls/profile-*.json)
+  if [[ -e "${profiles[0]}" ]]; then
     mkdir -p "$ARTIFACTS/gateway-logs/stall-profiles"
-    cp "$OMNESIS_CONFIG_DIR"/diagnostics/stalls/profile-*.json "$ARTIFACTS/gateway-logs/stall-profiles/" 2>/dev/null || true
+    cp "${profiles[@]}" "$ARTIFACTS/gateway-logs/stall-profiles/" 2>/dev/null || true
   fi
   exit "$status"
 }
@@ -195,6 +219,11 @@ print(json.dumps({"gatewayURL": os.environ["URL"], "token": os.environ["TOKEN"],
   local classes=(MobileJourneyUITests)
   local tests=()
   local expected=0
+  # xcodebuild refuses `-test-iterations 1`, so no retry means no flags.
+  local retry=()
+  if ((RETRIES > 0)); then
+    retry=(-retry-tests-on-failure -test-iterations $((RETRIES + 1)))
+  fi
   if [[ -n "${OMNESIS_JOURNEY_ONLY:-}" ]]; then
     tests=("-only-testing:OmnesisDemoUITests/$OMNESIS_JOURNEY_ONLY")
   else
@@ -205,6 +234,10 @@ print(json.dumps({"gatewayURL": os.environ["URL"], "token": os.environ["TOKEN"],
     done
   fi
 
+  # Every TLS handshake in the simulator waits on its trust service, which
+  # replaces its trust store about when the journeys begin (#1206).
+  node "$ROOT/scripts/ci/wait-ios-trust-service.mjs" "$udid" || return 1
+
   xcrun simctl io "$udid" recordVideo --codec h264 --force "$ARTIFACTS/ios-journeys.mp4" \
     >"$ARTIFACTS/recorder.log" 2>&1 &
   RECORDER_PID=$!
@@ -214,22 +247,32 @@ print(json.dumps({"gatewayURL": os.environ["URL"], "token": os.environ["TOKEN"],
   # kept on failure.
   local log_start
   log_start="$(date '+%Y-%m-%d %H:%M:%S')"
+  # What the simulator's networking and trust service are doing when a journey
+  # fails (`scripts/ci/ios-journey-stall-watch.sh`).
+  "$ROOT/scripts/ci/ios-journey-stall-watch.sh" "$udid" "$ARTIFACTS/xcodebuild.log" \
+    "$ARTIFACTS/network-stalls" >/dev/null 2>&1 &
+  local watcher=$!
   # The full xcodebuild output goes to the artifacts; the console keeps the
-  # test verdicts and errors.
+  # test verdicts and errors. A UI test runner that fails to initialize before
+  # any journey starts gets one more attempt (`xcodebuild-ui-tests.mjs`, which
+  # says so on stderr); a journey that fails is retried by xcodebuild itself.
   local status=0
   set +e
-  TEST_RUNNER_OMNESIS_JOURNEY_CONFIG="$config" xcodebuild test-without-building \
+  TEST_RUNNER_OMNESIS_JOURNEY_CONFIG="$config" node "$ROOT/scripts/ci/xcodebuild-ui-tests.mjs" \
+    --log "$ARTIFACTS/xcodebuild.log" -- test-without-building \
     -project "$ROOT/ios/Omnesis.xcodeproj" \
     -scheme OmnesisDemoUITests \
     -destination "platform=iOS Simulator,id=$udid" \
     -derivedDataPath "$IOS_DERIVED_DATA" \
     "${IOS_PACKAGE_FLAGS[@]}" \
     -resultBundlePath "$ARTIFACTS/ios-journeys.xcresult" \
-    -retry-tests-on-failure -test-iterations $((RETRIES + 1)) \
-    "${tests[@]}" 2>&1 | tee "$ARTIFACTS/xcodebuild.log" \
+    ${retry[@]+"${retry[@]}"} \
+    "${tests[@]}" \
     | grep -E --line-buffered '^(Test Case|Test Suite|Testing|Executed|\*\*)|error:'
   status="${PIPESTATUS[0]}"
   set -e
+  kill "$watcher" 2>/dev/null || true
+  wait "$watcher" 2>/dev/null || true
   stop_recording
 
   if [[ "$status" != 0 ]]; then
@@ -242,6 +285,9 @@ print(json.dumps({"gatewayURL": os.environ["URL"], "token": os.environ["TOKEN"],
     xcrun simctl spawn "$udid" log show --start "$log_start" --style compact \
       --predicate 'subsystem == "dev.omnesis.ios" AND category == "touch"' \
       >"$ARTIFACTS/app-touch.log" 2>&1 || true
+    # The trust service's own account of the run, from the simulator's boot.
+    xcrun simctl spawn "$udid" log show --last 60m --info --style compact \
+      --predicate 'process == "trustd"' >"$ARTIFACTS/network-stalls/trust-service.log" 2>&1 || true
     echo "✗ iOS journeys failed (xcodebuild exit $status). Artifacts: $ARTIFACTS" >&2
     return "$status"
   fi

@@ -167,7 +167,7 @@ describe.skipIf(!browserReady)("passkeys on the gateway's own page", () => {
     expect((await gateway.status()).deviceEnrollment.confirmedSignIns).toEqual([]);
   }, 120_000);
 
-  test("right after linking, the owner confirms the passkey from the setup checklist on the gateway's own page", async () => {
+  test("right after linking, the owner confirms the passkey from the setup checklist on the gateway's own page: a new account's second and last prompt", async () => {
     const slotsBefore = (await relayMetrics()).slots;
     const confirmer = await browser.session();
     try {
@@ -178,7 +178,7 @@ describe.skipIf(!browserReady)("passkeys on the gateway's own page", () => {
       // the account's passkey, used here on the gateway's own page.
       await expectText(page, "Finish setting up");
       await expectText(page, "Let your passkey add devices");
-      await expectText(page, "Not confirmed on this gateway");
+      await expectText(page, "Waiting for you to use it once on this gateway");
       await shot(page, "confirm-card");
       await clickFirst(page, ["Continue with passkey"]);
       const confirmed = await waitFor(async () => {
@@ -196,7 +196,7 @@ describe.skipIf(!browserReady)("passkeys on the gateway's own page", () => {
       expect(confirmed.deviceEnrollment.trustedSignIns).toEqual([
         expect.objectContaining({ source: "link-page", confirmed: true }),
       ]);
-      await expectText(page, /(?:^| · )Confirmed on this gateway$/);
+      await expectText(page, /^Confirmed on this gateway(?: · |$)/);
       await page.locator("#relay-setup-title").waitFor({ state: "detached", timeout: 20_000 });
       // Set up: the checklist gives way to the account itself.
       await expectText(page, "This gateway is linked to your Omnesis account.");

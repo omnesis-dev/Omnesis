@@ -20,12 +20,19 @@ import {
   SetupReminder,
 } from "../components/gateway-passkey-confirm.js";
 import { onGatewayOrigin } from "../lib/gateway-passkey.js";
+import {
+  inConnectWindow,
+  OPENED_BY_PORTAL,
+  openConnectWindow,
+  useConnectWindow,
+} from "../lib/connect-window.js";
 import { navigate } from "../lib/router.js";
 import { useAccountRefresh, useRelayManagement } from "../lib/use-relay-management.js";
 import {
   relayError,
   dnsVerificationUrl,
   relayClock,
+  relayDate,
   relayHttpsUrl,
 } from "../lib/cloud-relay-api.js";
 import { AccountConnect, ExistingAccountNotice } from "./remote-access/account-step.js";
@@ -141,13 +148,31 @@ function Hero({ status, phase, busy, run }) {
   </section>`;
 }
 
+/**
+ * A link of the connection that opens in the connect window, which the portal keeps in step
+ * (see connect-window.js). A click with a modifier or another button, or a browser that refuses
+ * that window, leaves the link to open its own page as any link does.
+ */
+function openInConnectWindow(event, url) {
+  if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+  if (openConnectWindow(url)) event.preventDefault();
+}
+
 /** Waiting for sign-in: open the relay's sign-in page, or enter the code on another device. */
 export function Waiting({ connect, busy, run }) {
   if (connect.verification) {
     const url = dnsVerificationUrl(connect.verification.url);
     return html`<div class="relay-waiting">
       <div class="relay-actions relay-hero-action">
-        ${url && html`<a class="btn-primary relay-button-link" href=${url} target="_blank" rel="noopener noreferrer">Open security check</a>`}
+        ${url &&
+        html`<a
+          class="btn-primary relay-button-link"
+          href=${url}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick=${(event) => openInConnectWindow(event, `${url}${OPENED_BY_PORTAL}`)}
+          >Open security check</a
+        >`}
         <button type="button" class="relay-quiet" disabled=${Boolean(busy) && busy !== "refresh"} onClick=${() => run("connect/cancel", {})}>
           ${busy === "connect/cancel" ? "Cancelling…" : "Cancel"}
         </button>
@@ -178,6 +203,7 @@ export function Waiting({ connect, busy, run }) {
           href=${authorizeUrl}
           target="_blank"
           rel="noopener noreferrer"
+          onClick=${(event) => openInConnectWindow(event, inConnectWindow(authorizeUrl))}
         >
           ${signInLabel}
         </a>`
@@ -483,7 +509,7 @@ const SIGN_IN_SOURCES = {
   approval: "Trusted when you approved a device",
   "native-app": "Trusted when you approved a device that signed in in the app",
   endorsed: "Added to your account later, vouched for by a sign-in trusted here",
-  countersigned: "Already on your account, vouched for by a passkey added later",
+  countersigned: "Already on your account, vouched for by one of your passkeys",
 };
 const CONFIRMED_VIA = {
   "gateway-origin": "Confirmed on this gateway",
@@ -492,7 +518,22 @@ const CONFIRMED_VIA = {
   "admin-app-google": "Confirmed from an Omnesis app",
 };
 
-/** The sign-ins this gateway trusts: what each is, where it came from, and whether it's confirmed. */
+/**
+ * What a sign-in on record means for a new device here: confirmed (and how), a passkey the owner
+ * still has to use once on this gateway while `setup` waits for one, or one whose devices wait.
+ */
+function signInState(signIn, setup) {
+  if (signIn.via) return CONFIRMED_VIA[signIn.via] ?? "Confirmed";
+  if (signIn.type === "passkey" && setup) return "Waiting for you to use it once on this gateway";
+  return "Not confirmed on this gateway yet: devices that sign in with it wait for your OK";
+}
+
+/**
+ * The sign-ins this gateway trusts: what each is, when it was added, where it came from, and
+ * whether it's confirmed, its state first. The account's listing names a sign-in only by its id,
+ * which no person reads, so the id is kept for a hover, and two of a kind added the same day are
+ * told apart by its last characters.
+ */
 function TrustedSignIns({ enrollment }) {
   const pinned = enrollment.trustedSignIns ?? [];
   const confirmed = enrollment.confirmedSignIns ?? [];
@@ -503,24 +544,35 @@ function TrustedSignIns({ enrollment }) {
     })),
     ...confirmed
       .filter((value) => !pinned.some((signIn) => signIn.type === value.type && signIn.id === value.id))
-      .map((value) => ({ ...value, confirmed: true })),
+      .map((value) => ({ ...value, addedAt: value.at, confirmed: true })),
   ];
   if (rows.length === 0) return null;
+  // Nothing confirmed yet and a page of its own: setup's last step asks for a passkey here.
+  const setup = confirmed.length === 0 && Boolean(enrollment.confirmOrigin);
   return html`<div class="relay-sign-ins">
     <ul class="relay-sign-in-list">
-      ${rows.map((signIn) => {
+      ${rows.map((signIn, index) => {
+        const kind = signIn.type === "passkey" ? "Passkey" : "Google account";
+        // An add time from before 2001 is no real time: such a row says nothing about when.
+        const added = signIn.addedAt > 1e9 ? relayDate(signIn.addedAt) : "";
+        // Two of a kind added the same day are told apart by the end of their ids.
+        const twin = rows.some(
+          (other, at) =>
+            at !== index &&
+            other.type === signIn.type &&
+            (other.addedAt > 1e9 ? relayDate(other.addedAt) : "") === added,
+        );
+        const detail = [added && `added ${added}`, twin && `ending ${String(signIn.id).slice(-4)}`]
+          .filter(Boolean)
+          .join(" · ");
         const source = signIn.source
           ? (SIGN_IN_SOURCES[signIn.source] ?? "Source not recorded")
           : undefined;
-        const confirmation = signIn.via
-          ? (CONFIRMED_VIA[signIn.via] ?? "Confirmed")
-          : "Not confirmed on this gateway: devices using it wait for your approval";
         return html`<li class="relay-sign-in" key=${`${signIn.type}:${signIn.id}`}>
-          <span class="relay-row-value">
-            ${`${signIn.type === "passkey" ? "Passkey" : "Google account"} `}
-            <span class="relay-mono">${String(signIn.id).slice(0, 12)}</span>
+          <span class="relay-row-value" title=${`${kind} ${signIn.id}`}>
+            ${kind}${detail && html`<span class="relay-hint">${` · ${detail}`}</span>`}
           </span>
-          <span class="relay-hint">${[source, confirmation].filter(Boolean).join(" · ")}</span>
+          <span class="relay-hint">${[signInState(signIn, setup), source].filter(Boolean).join(" · ")}</span>
         </li>`;
       })}
     </ul>
@@ -641,6 +693,7 @@ export function RelayView({ part = "account", open = openOnGateway, location = g
   const phase = status ? relayPhase(status) : "loading";
   const { enrollment, setup, ready } = relayAccountSetup(status, phase);
   usePasskeyHandoff({ phase, enrollment, setup, ready, later, open, location });
+  useConnectWindow(status?.connect);
   if (!status) {
     if (busy) return html`<div class="relay-view"><${Skeleton} /></div>`;
     return html`<div class="relay-view">
@@ -661,10 +714,12 @@ export function RelayView({ part = "account", open = openOnGateway, location = g
   const checklist = setup && !later && phase === "connected";
   const problems = relayProblems(status, phase);
   // A failed connect or a dropped connection is said in the headline; the details still help.
-  // A connection that was only interrupted has nothing to report beyond its headline.
+  // A connection that was only interrupted has nothing to report beyond its headline, and a
+  // refused invite is said under the invite, where it is fixed.
+  const inviteRefused = /^invite-/.test(status.connect?.error ?? "");
   const troubled =
     problems.length > 0 ||
-    phase === "failed" ||
+    (phase === "failed" && !inviteRefused) ||
     (phase === "unfinished" && Boolean(status.unfinished?.error)) ||
     phase === "disconnected";
   const problemBox =
@@ -707,7 +762,6 @@ export function RelayView({ part = "account", open = openOnGateway, location = g
       checklist
         ? html`<${FinishSetup}
             enrollment=${enrollment}
-            hostname=${status.hostname}
             ready=${ready}
             serviceUrl=${status.config?.relayUrl}
             busy=${busy}

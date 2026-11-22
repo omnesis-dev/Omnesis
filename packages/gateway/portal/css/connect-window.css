@@ -1,0 +1,40 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later */
+/* Copyright (c) 2026 Adrien Conrath */
+
+/* The connect window's own page (connect-window.html): one short message, in the portal's palette. */
+:root {
+  color-scheme: light dark;
+  --bg: #ffffff;
+  --fg: #1a1a1a;
+  --muted: #5c636e;
+  font: 16px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0d1117;
+    --fg: #e6edf3;
+    --muted: #9aa1ad;
+  }
+}
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+}
+main {
+  max-width: 28rem;
+  margin: 0 auto;
+  padding: clamp(2rem, 12vh, 6rem) 1rem 2rem;
+}
+h1 {
+  margin: 0 0 0.75rem;
+  font-size: 1.375rem;
+  font-weight: 600;
+}
+p {
+  margin: 0 0 0.75rem;
+  color: var(--muted);
+}
+.connect-window-help {
+  font-size: 0.875rem;
+}

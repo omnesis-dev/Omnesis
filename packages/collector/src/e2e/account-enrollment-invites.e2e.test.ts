@@ -131,13 +131,18 @@ describe.skipIf(!browserReady)("invite-only sign-up", () => {
     invites.push(fresh);
     await session.page.goto(fresh);
     await expectText(session.page, /This invite works until /);
+    // The invite and the command each have a small copy button beside them.
+    for (const name of ["Copy invite link", "Copy command"])
+      expect(await session.page.getByRole("button", { name, exact: true }).isVisible()).toBe(true);
+    await session.page.screenshot({ path: "/tmp/omnesis-relay-invite-page.png", fullPage: true });
     await session.page.goto(used);
     await expectText(session.page, "This invite was already used to create an account.");
     await session.page.goto(`${world.relayOrigin}/invite`);
     await expectText(session.page, "This link has no invite in it");
     // Only that: nothing to use or copy.
     expect(await session.page.getByText("You're invited to Omnesis").isVisible()).toBe(false);
-    expect(await session.page.getByRole("button", { name: "Copy invite" }).isVisible()).toBe(false);
+    for (const name of ["Copy invite link", "Copy command"])
+      expect(await session.page.getByRole("button", { name, exact: true }).isVisible()).toBe(false);
   });
 
   test("the relay keeps no invite in its log", () => {

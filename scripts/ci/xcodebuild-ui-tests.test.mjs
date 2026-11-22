@@ -4,11 +4,13 @@
 import { spawnSync } from "node:child_process";
 import {
   chmodSync,
+  copyFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -29,6 +31,8 @@ afterEach(() => {
  * bundle as Xcode does:
  * - `runner`: the UI test runner times out waiting for accessibility before
  *   any test starts (exit 65);
+ * - `runner-loading`: the same, as `test-without-building` reports it when
+ *   accessibility never finishes loading (exit 65);
  * - `passed`: every test passes (exit 0);
  * - `failed`: a test fails (exit 65);
  * - `runner-mid-run`: a test ran, then the relaunched runner failed to
@@ -58,6 +62,12 @@ case "$outcome" in
     echo "	OmnesisDemoUITests-Runner (30456) encountered an error (The test runner failed to initialize for UI testing. (Underlying Error: Timed out waiting for AX loaded notification))"
     echo "** TEST FAILED **"
     exit 65 ;;
+  runner-loading)
+    echo "OmnesisDemoUITests-Runner[34474:89579] [Default] Failed to initialize for UI testing: Error Domain=com.apple.dt.XCTest.XCTFuture Code=1000 \"Timed out while loading Accessibility.\" UserInfo={NSLocalizedDescription=Timed out while loading Accessibility.}" >&2
+    echo "Testing failed:"
+    echo "	OmnesisDemoUITests-Runner (34474) encountered an error (The test runner failed to initialize for UI testing. (Underlying Error: Timed out while loading Accessibility.))"
+    echo "** TEST EXECUTE FAILED **"
+    exit 65 ;;
   passed)
     echo "Test Case '-[OmnesisDemoUITests.CloudPairingInteractionUITests testStatusSteps]' started."
     echo "Test Case '-[OmnesisDemoUITests.CloudPairingInteractionUITests testStatusSteps]' passed (4.210 seconds)."
@@ -78,9 +88,21 @@ case "$outcome" in
 esac
 `;
 
-function run(outcomes) {
+/**
+ * Runs the wrapper with a stand-in xcodebuild playing `outcomes`. `entry`
+ * picks the wrapper's path: the checkout's own, or a copy reached through a
+ * symlinked directory, as every path under macOS's temporary directory is.
+ */
+function run(outcomes, { entry = "checkout" } = {}) {
   const sandbox = mkdtempSync(join(tmpdir(), "omnesis-xcodebuild-ui-tests-"));
   sandboxes.push(sandbox);
+  let wrapper = script;
+  if (entry === "symlinked") {
+    mkdirSync(join(sandbox, "real"));
+    copyFileSync(script, join(sandbox, "real", "xcodebuild-ui-tests.mjs"));
+    symlinkSync(join(sandbox, "real"), join(sandbox, "linked"));
+    wrapper = join(sandbox, "linked", "xcodebuild-ui-tests.mjs");
+  }
   const bin = join(sandbox, "bin");
   const results = join(sandbox, "results");
   mkdirSync(bin);
@@ -93,7 +115,7 @@ function run(outcomes) {
   const result = spawnSync(
     process.execPath,
     [
-      script,
+      wrapper,
       "--log",
       log,
       "--",
@@ -133,6 +155,12 @@ describe.skipIf(process.platform === "win32")("scripts/ci/xcodebuild-ui-tests.mj
     expect(result.log).toBe(result.stdout);
   });
 
+  it("runs xcodebuild when started through a symlinked directory", () => {
+    const result = run(["failed"], { entry: "symlinked" });
+    expect(result.status).toBe(65);
+    expect(result.calls).toEqual([`xcodebuild ${ARGS} ${result.bundle} => failed`]);
+  });
+
   it("runs once more when the UI test runner never initialized, keeping both result bundles", () => {
     const result = run(["runner", "passed"]);
     expect(result.status, result.stderr).toBe(0);
@@ -142,6 +170,14 @@ describe.skipIf(process.platform === "win32")("scripts/ci/xcodebuild-ui-tests.mj
     expect(readFileSync(join(result.bundle, "attempt"), "utf8")).toBe("attempt 2\n");
     expect(result.log).toContain("Timed out waiting for AX loaded notification");
     expect(result.log).toContain("running xcodebuild once more");
+    expect(result.log).toContain("** TEST SUCCEEDED **");
+  });
+
+  it("runs once more when accessibility never finished loading for the runner", () => {
+    const result = run(["runner-loading", "passed"]);
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.calls.map((call) => call.split(" => ")[1])).toEqual(["runner-loading", "passed"]);
+    expect(result.log).toContain("Timed out while loading Accessibility.");
     expect(result.log).toContain("** TEST SUCCEEDED **");
   });
 

@@ -643,6 +643,8 @@ test("a freshly linked gateway shows its account at once, and Connectivity's ans
       },
       deviceEnrollment: {
         policy: "automatic",
+        // The gateway's own address, where its last setup step uses the passkey.
+        confirmOrigin: "https://g-fictional.relay.example.test",
         trustedSignIns: [
           {
             type: "passkey",
@@ -680,7 +682,7 @@ test("a freshly linked gateway shows its account at once, and Connectivity's ans
   // it here; they are managed on the account page, so there is nothing to remove here.
   await expect(page.locator(".relay-sign-in")).toHaveCount(2);
   await expect(page.locator(".relay-sign-in").first()).toContainText(
-    "Used to connect this gateway · Not confirmed on this gateway: devices using it wait for your approval",
+    "Waiting for you to use it once on this gateway · Used to connect this gateway",
   );
   await expect(page.getByRole("button", { name: /^Remove/ })).toHaveCount(0);
   expect(relay.calls).toEqual([]);

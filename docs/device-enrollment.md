@@ -149,8 +149,8 @@ Whoever starts a link chooses its nonce, and anyone with an owner key can start 
 signup, so without the label a sign-in made to link a gateway could be accepted
 as a device's enrollment sign-in. With it, a link sign-in commits to a hash no
 enrollment nonce can equal, and an enrollment sign-in never pins a link. Endorsements and countersignatures commit to their own labelled
-nonces (`passkeyEndorsementNonce`, `passkeyCountersignatureNonce`) and are
-verified only as such. The native apps sign enrollment nonces only, so they are
+nonces (`passkeyEndorsementNonce`, `passkeyCountersignatureNonce`, the latter inside
+`gatewayPasskeyPinBinding` when a passkey is confirmed) and are verified only as such. The native apps sign enrollment nonces only, so they are
 unaffected.
 
 ### Passkeys on the gateway's own page
@@ -197,28 +197,41 @@ The owner confirms a passkey as the last step of connecting: the account page
 is confirmed. What the step asks depends only on what the account has, so a relay
 that lies about it can only make the step fail:
 
-- a passkey pinned here and an origin of its own: "Continue with passkey" runs the
+- a passkey pinned here, or one the account listed when the gateway last read it
+  (`deviceEnrollment.accountPasskey`), and an origin of its own: "Continue with
+  passkey" runs the
   `pin-passkey` ceremony below on the gateway's own page. On any other address
   (the LAN or tailnet portal) the same button opens the gateway's own page
   already signed in (the portal handoff below) and the ceremony starts on load;
-- otherwise, under automatic joins, "Connect your phone": the first phone that
-  signs in with Google in an official app waits, and approving it with the sign-in
-  trusted confirms that Google account.
+- otherwise, with an origin of its own and under automatic joins, "Add a passkey
+  (optional)": one button opens the relay's account page with `?add=passkey`,
+  which adds a passkey (Passkeys added later, steps 1 and 2) and sends the person
+  back. The portal reads the account again when its tab is shown, the new passkey
+  is pinned from its endorsement, and the step becomes the ceremony above, headed
+  "Adding a passkey · step 3 of 3" in the tab that started it.
 
-"Not now" keeps a one-line reminder under New devices. Connecting from another
-address ends on the gateway's own page once its certificate is valid, for an
-account with a passkey.
+A gateway with no origin of its own shows no checklist: no passkey can be used
+there, and its devices are approved from Devices (a phone that signs in with
+Google in an official app and is approved with its sign-in trusted confirms that
+Google account). "Not now" keeps a one-line reminder under Trusted sign-ins.
+Connecting from another address ends on the gateway's own page once its
+certificate is valid, for an account with a passkey.
 
 The ceremony itself:
 
-1. `POST /admin/cloud-relay/passkeys/confirm/options` (admin) issues a
-   `pin-passkey` ceremony: `{ purpose, rpId, origin, challenge, binding,
-webauthnChallenge, expiresAt }`. The binding is `gatewayPasskeyPinBinding(gatewayId,
-accountId)`.
+1. `POST /admin/cloud-relay/passkeys/confirm/options` (admin) reads the
+   account's listing and issues a `pin-passkey` ceremony: `{ purpose, rpId,
+origin, challenge, binding, webauthnChallenge, expiresAt, allowCredentials? }`.
+   The binding is `gatewayPasskeyPinBinding(gatewayId, accountId, signIns)`, where
+   `signIns` are the `signInDigest`s of every sign-in the listing names, less those
+   the owner removed here or the account withdrew (none when the listing can't be
+   read). The gateway keeps `signIns` with the one-use challenge; nothing the page
+   sends back chooses them.
 2. The page asks for one of the account's passkeys. The options name the
    passkeys the account lists (`allowCredentials`), so the browser doesn't offer
    a passkey of an older, deleted account. The list is a hint for the prompt only.
-3. `POST /admin/cloud-relay/passkeys/confirm` (`{ proof }`) verifies the assertion
+3. `POST /admin/cloud-relay/passkeys/confirm` (`{ proof }`) recomputes the binding
+   from the kept `signIns` and the link as it stands, and verifies the assertion
    against the public key the relay lists for that credential id on the linked
    account. A wrong key in the listing only makes the check fail: the private key
    never leaves the owner's authenticator. Confirming lifts the owner's own decline
@@ -226,6 +239,11 @@ accountId)`.
    gateway knows is refused as `passkey-not-on-account` (and on
    `/devices/account/request` as `PASSKEY_NOT_ON_ACCOUNT`), so a page can say it
    belongs to another account; a failed check stays `passkey-not-confirmed`.
+4. The same assertion is the passkey's countersignature of `signIns` (Passkeys
+   added later). Each one the account still lists, other than the passkey itself,
+   is pinned as `countersigned` unless the owner removed it here or the account
+   withdrew it; one the account no longer lists is withdrawn. These pins are
+   suggestions like any other: only the passkey is confirmed.
 
 A confirmation goes away when the account stops listing the sign-in, or when the
 owner removes it. `GET /admin/cloud-relay/trusted-sign-ins` lists each pin with
@@ -631,80 +649,110 @@ nothing to keep: then the file is removed.
 
 A passkey added to an existing account must be usable at once, without an
 approval, and without the gateway believing the relay's list. And one account
-should behave as one: a gateway linked with the new passkey should trust the
-sign-ins the account already had, as a gateway linked with one of those trusts
+should behave as one: a gateway linked with the new passkey should suggest the
+sign-ins the account already had, as a gateway linked with one of those suggests
 the new passkey. So the new passkey and a sign-in the account already has each
-sign for the other:
+sign for the other, in three prompts when the account already has a sign-in:
 
-1. The account page creates the passkey. The relay verifies it and holds it in
-   memory for five minutes; nothing is stored.
-2. The person uses the new passkey once ("Use new passkey"). Its assertion
-   commits to `passkeyCountersignatureNonce(accountId, signIns)`, where
-   `signIns` are the `signInDigest` of each of the account's other sign-ins as
-   they stood when the passkey was created: a Google subject digest, or a
-   passkey's id with its public key, hashed to a fixed size so the listing
-   grows linearly with the account. This is the passkey's countersignature.
-   Only that passkey is offered, and the relay checks the signature against the
-   key it was just registered with.
-3. The person confirms with Google or another of the account's passkeys. That
-   sign-in commits to `passkeyEndorsementNonce(credentialId, publicKey)` the way
-   an enrollment sign-in commits to its nonce (`googleProofNonce`,
-   `passkeyProofChallenge`). This is the endorsement, and also the proof of
-   presence, so adding asks for no earlier confirmation.
-4. The relay stores the passkey with both and lists them at
-   `GET /_relay/v3/account-browser/credentials` (`passkeys[].endorsement`, and
-   `passkeys[].countersignature` with its `proof` and `signIns`). The
-   countersignature is listed only to a gateway that sends the header
-   `omnesis-credential-evidence: countersignature-v2`: a gateway from before it
-   parses the listing strictly and would refuse the whole of it. Gateways now
-   drop fields they do not know instead, drop an endorsement or countersignature
-   they can't read (which only means trusting less), and read up to 256 KiB.
-5. A gateway pins, repeating until nothing changes:
-   - (`endorsed`) a listed passkey whose endorsement verifies against that id and
-     key, when the endorsement's signer is already pinned: a Google subject by
-     Google's signature, a passkey against its pinned key. A passkey can't vouch
-     for itself.
-   - (`countersigned`) every listed sign-in a pinned passkey countersigned, when
-     the countersignature verifies against that passkey's pinned key for this
-     gateway's own account id.
+1. The account page creates the passkey ("Adding a passkey · step 1 of N"). The
+   relay verifies it and holds it in memory for five minutes; nothing is stored.
+2. The person confirms with Google or another of the account's passkeys ("step 2
+   of N"). That sign-in commits to `passkeyEndorsementNonce(credentialId,
+publicKey)` the way an enrollment sign-in commits to its nonce
+   (`googleProofNonce`, `passkeyProofChallenge`). This is the endorsement, and
+   also the proof of presence, so adding asks for no earlier confirmation. The page
+   names each of the account's other passkeys by its label and creation date and
+   asks only for the one a button names; where the account has Google it offers
+   Google first and again under the passkeys ("Don't have that passkey here?"),
+   since WebAuthn can't tell the page which passkeys this device holds. The
+   passkey being added is never offered. The relay then stores the passkey with
+   its endorsement and lists it at `GET /_relay/v3/account-browser/credentials`
+   (`passkeys[].endorsement`).
+3. On each gateway, the owner uses the new passkey once on the gateway's own page
+   (the `pin-passkey` ceremony above, "step 3 of 3" when the gateway's setup
+   started the add). That one assertion confirms the passkey there and is its
+   countersignature: the binding commits to `passkeyCountersignatureNonce(accountId,
+signIns)`, the account's sign-ins as the gateway read them, hashed to a fixed
+   size so the binding grows linearly with the account.
 
-   Each proof is verified at most once per sync, and only once its claimed
-   signer is pinned.
+N is 3 when the page was opened from a gateway's setup (`?add=passkey`, kept in
+the page's `sessionStorage` across a Google round trip) and 2 otherwise. A passkey
+that creates an account (signup) has nothing to vouch for it: creating it and the
+gateway's step are its two prompts.
+
+A gateway pins, repeating until nothing changes:
+
+- (`endorsed`) a listed passkey whose endorsement verifies against that id and
+  key, when the endorsement's signer is already pinned: a Google subject by
+  Google's signature, a passkey against its pinned key. A passkey can't vouch
+  for itself.
+- (`countersigned`) every listed sign-in a pinned passkey countersigned, when the
+  countersignature verifies against that passkey's pinned key for this gateway's
+  own account id; and, when the owner confirms a passkey here, every listed
+  sign-in that confirmation countersigned.
+
+Each proof is verified at most once per sync, and only once its claimed signer is
+pinned.
 
 So trust runs both ways. Linked with Google, a gateway learns the passkey from
-Google's endorsement; linked with the passkey, it learns Google from the
-passkey's countersignature, and from there every passkey Google or that passkey
-later vouched for.
+Google's endorsement; linked with the passkey, it learns Google once the owner
+confirms the passkey on that gateway, which every gateway needs before anything
+joins by itself (see "Passkeys on the gateway's own page").
+
+Relays before this flow asked the new passkey to sign on the account page as a
+separate step, with the challenge `passkeyProofChallenge(salt, issuedAt,
+passkeyCountersignatureNonce(accountId, signIns))`, and stored that signature
+beside the passkey. The relay keeps, lists and removes those it holds:
+`passkeys[].countersignature` with its `proof` and `signIns`, listed only to a
+gateway that sends the header `omnesis-credential-evidence: countersignature-v2`
+(a gateway from before it parses the listing strictly and would refuse the whole
+of it). Gateways verify them as above. They drop fields they do not know, drop an
+endorsement or countersignature they can't read (which only means trusting
+less), and read up to 256 KiB. A gateway of any version keeps working with a
+relay of any version: an older relay still asks for the separate signature, which
+a newer gateway verifies; a newer relay asks for none, and an older gateway then
+learns the account's other sign-ins only by approving devices, never more trust
+than before. The confirmation's binding is computed and checked by the gateway
+alone, so its portal and it always agree.
 
 An endorsement can't be read backwards. A Google token whose nonce names passkey
 P shows only that the holder of that Google account named P, and P's id and key
 are listed to every gateway of the account: anyone holding any Google account (or
 any passkey) can make such a proof for P through a page that computes that nonce.
 A gateway that trusts P must not trust whoever did. Only P's own signature says
-that P's holder stands behind another sign-in, which is why step 2 exists.
+that P's holder stands behind another sign-in, which is why the confirmation
+countersigns.
 
 What a gateway accepts, and why a relay can't use it to add a sign-in:
 
-- The signature is checked against a key the gateway pinned itself, never one
-  the relay offers. A list, a key, or a proof by a passkey or Google account the
-  gateway does not trust adds nothing.
+- The signature is checked against a key the gateway pinned itself, or for a
+  confirmation the key the account lists for a passkey made on the gateway's own
+  origin, never one the relay offers with the proof. A list, a key, or a proof by
+  a passkey or Google account the gateway does not trust adds nothing.
 - The signed list is in the nonce. A relay that adds, drops or swaps a sign-in in
-  it, moves the countersignature to another passkey, or replays one from another
-  account (the account id is in the nonce) has a signature that no longer
-  verifies, and the gateway pins nothing from it.
+  it, moves a stored countersignature to another passkey, or replays one from
+  another account (the account id is in the nonce) has a signature that no longer
+  verifies, and the gateway pins nothing from it. A confirmation's list is the one
+  the gateway kept with its challenge.
 - It can't stand in for anything else: the nonces of a countersignature, an
-  endorsement and an enrollment are hashes under different labels.
-- A relay that withholds a countersignature or an endorsement only leaves a
-  sign-in held for approval.
+  endorsement and an enrollment are hashes under different labels, and a
+  confirmation's binding names the gateway and the account.
+- A relay that lists a sign-in of its own when the gateway builds a confirmation's
+  list gets a `countersigned` suggestion from that listing alone: the owner never
+  sees the list. That is the most it gets. A suggestion never makes a sign-in
+  trusted, a confirmation countersigns at most 16 sign-ins (an account's limit),
+  and no evidence pins a passkey under the id of one confirmed here with another
+  key: the confirmed key is the only one the gateway uses for that id.
+- A relay that withholds an endorsement only leaves a sign-in held for approval.
 
-Both are checked as of when they were made, not against the 10-minute limit:
-each names fixed sign-ins and can do nothing else, and a gateway that was offline,
-or linked months later, must still be able to accept them. A passkey's key never
-expires and nobody can retire it, so a countersignature verifies for as long as
-the gateway pins that passkey. A Google endorsement stops verifying once Google
-retires its signing key (its `kid` is no longer published): the gateway can no
-longer tell a genuine old token from a forged one, so that passkey falls back to
-approval. A future-dated proof never verifies.
+Stored signatures are checked as of when they were made, not against the
+10-minute limit: each names fixed sign-ins and can do nothing else, and a gateway
+that was offline, or linked months later, must still be able to accept them. A
+passkey's key never expires and nobody can retire it, so a countersignature
+verifies for as long as the gateway pins that passkey. A Google endorsement stops
+verifying once Google retires its signing key (its `kid` is no longer
+published): the gateway can no longer tell a genuine old token from a forged one,
+so that passkey falls back to approval. A future-dated proof never verifies.
 
 Gateways sync hourly, and when a verified sign-in they do not trust arrives,
 Google or passkey, so a device that signs in with a sign-in the account confirmed
@@ -733,9 +781,9 @@ later, so removal is recorded on both sides:
   signed in with it does, which lifts both. Linking the gateway to the same account
   again keeps both lists, except for the sign-in it links with; linking it to
   another account starts without them.
-- A countersignature that names a sign-in the account no longer has by the time
-  the new passkey is stored (removed while the passkey was being added) is not
-  stored; the passkey keeps its endorsement only.
+- A confirmation whose countersigned list names a sign-in the account no longer
+  lists by the time the assertion arrives (removed while the owner was confirming)
+  withdraws that sign-in instead of pinning it.
 
 A gateway learns of a removal only from the listing. One that did not sync
 between the removal and a later compromise of the relay can't tell a sign-in the
@@ -759,13 +807,13 @@ are, and are now joined by every relay-page sign-in:
 1. The gateway's owner chose `ask`, the request set `requireApproval`, or the
    gateway is on a certificate incident hold (below).
 2. The sign-in is new to the account, and nothing the gateway trusts vouched for it.
-3. The gateway was linked with a passkey that was added before passkeys
-   countersigned, or that was the account's first one, and the sign-in is one the
-   account had before that passkey: for example the Google account the account
-   was created with. The only evidence tying the two is Google's endorsement of
-   the passkey, which proves nothing in that direction (above). Approving one such
-   device pins the sign-in for good, and a passkey added from now on countersigns
-   the account's sign-ins, so a gateway linked with it trusts them at once.
+3. The gateway was linked with a passkey the owner has not confirmed there yet,
+   and the sign-in is one the account had before that passkey: for example the
+   Google account the account was created with. The only evidence tying the two
+   may be Google's endorsement of the passkey, which proves nothing in that
+   direction (above). Confirming the passkey on the gateway countersigns the
+   account's sign-ins, which then become suggestions; approving one such device
+   pins the sign-in for good.
 4. A Google account linked to the account later ("Link Google"): nothing signs for
    it in either direction, so each gateway learns it by one approval.
 5. A passkey vouched for by Google with a signing key Google has since retired,
@@ -776,8 +824,8 @@ are, and are now joined by every relay-page sign-in:
 Each pin records its `source`: `link-page` (the relay's link or signup page),
 `approval` (approving a request signed in on a relay page: desktop or portal),
 `endorsed` (a passkey added later that a pinned sign-in vouched for), `countersigned`
-(a sign-in the account already had, which a pinned passkey signed for on the account
-page) or
+(another of the account's sign-ins, which a passkey signed for: when it was confirmed
+here, or on an earlier relay's account page) or
 `native-app` (approving a request signed in in the iOS or Android app).
 `omnesis cloud trusted-sign-ins`, `GET /admin/cloud-relay/trusted-sign-ins` and
 the portal's New devices section list each pin with its source and whether it is
@@ -816,7 +864,7 @@ another one does.
 - `POST /_relay/v3/native/passkeys/options` also returns `salt` and `issuedAt`, with the bound challenge.
 - `POST /_relay/v3/native/passkeys/complete` also returns `credentialPublicKey`.
 - Browser and desktop operations need a fresh sign-in on that operation, even with a session cookie. Browser redemption returns `signInProof`; desktop redemption only as below.
-- `POST /_relay/account/api/passkeys/countersign/options?endorse=<id>` and `…/countersign/complete?endorse=<id>` run the new passkey's countersignature (Passkeys added later, step 2), bound to the browser that created it. They sign nobody in.
+- `POST /_relay/account/api/passkeys/authenticate/options?endorse=<id>` and `…/complete?endorse=<id>` run the endorsement (Passkeys added later, step 2), bound to the browser that created the passkey; the options offer only the account's other passkeys. `…/register/confirm?endorse=<id>` stores the passkey once that sign-in vouched for it.
 - `POST /_relay/account/api/portal/start` and `POST /_relay/account/api/portal/handoff` let the plain account page's sign-in serve a gateway's portal; see the handoff section below.
 - A sign-in link (`GET …/begin?operationId=…&ticket=…` for gateway sign-up, the account browser, Google sign-in and desktop sign-in) changes nothing: it shows a page with one Continue button that posts the same fields back to the same path, same-origin. That press binds the operation to the browser. The first browser keeps it; the same browser reopening the link or typing the connect code goes straight back, and any other browser gets 409 ("opened in another browser"). Link scanners fetch these links without cookies or scripts, so they can neither take a sign-in over nor break the person's.
 
@@ -915,6 +963,16 @@ certificate. Only a matching comparison and gateway approval let it redeem a cre
 The gateway registers with the invitation, then `POST /_relay/v3/signup/link`
 binds the account using its new owner session.
 
+A portal that opens the sign-in link in a window of its own, by script, adds
+`window=portal` to it (`SIGNUP_WINDOW_MARKER`). The Continue press carries it to
+the operation, and the finished sign-up then ends on
+`/_relay/v3/signup/complete#opened-by-portal`, whose page closes its window
+when it has that fragment. The marker decides nothing else: only that one value
+is accepted (any other makes the link invalid), it is never reflected into a
+page, it does not change where the sign-up goes, and a browser closes only a
+window a script opened, so a link that carries it anywhere else leaves the page
+as it is.
+
 On the relay's page, signing in (or creating the account) does not connect the
 gateway by itself, for a signup or an owner link alike: the page shows the
 gateway's name and code and connects it only when the person presses "Connect
@@ -935,12 +993,17 @@ signing in to an account that exists, which may connect any number of gateways.
 
 A person who chose to create an account may still sign in with one they already
 have (the page lets them switch, and a Google sign-in with an account signs in to
-it). The invite is then not used. A gateway that sends
+it). The invite is then not used. A browser already signed in to an account is
+offered "Create with a passkey" too: creating an account for a sign-up rests on
+the gateway's admission alone, and the new account's session replaces the old. A gateway that sends
 `omnesis-signup-features: account-created` with its poll gets `accountCreated` on
 the approval, true only when that sign-in created the account; the relay adds the
 field only when asked, because older gateways parse the approval strictly. The
 gateway reports `connect.existingAccount` once linked, and the portal and CLI say
-the invite wasn't used.
+the invite wasn't used. Whichever says it first acknowledges it with
+`POST /admin/cloud-relay/connect/acknowledge` (the portal once the notice has been
+in view for a few seconds, the CLI once it has printed it), and the status drops
+the field, so it is said once.
 
 `POST /admin/cloud-relay/connect` refuses a gateway already linked to an account
 (`already-connected`); it is unlinked first. Connecting reserves the hosted name
@@ -952,6 +1015,14 @@ agent, OAuth resource or MCP setting, and `unfinished` says why it stopped.
 Connecting again continues with the same name; `POST /admin/cloud-relay/start-over`
 (`omnesis cloud start-over`) discards the configuration, owner key and anything
 the attempt left, and is refused once the gateway has registered.
+
+Asked again while a connection still waits for its sign-in, `connect` carries on
+with it when nothing changed. Asked for another choice (`intent`) or another
+invite, it cancels the relay's operation and starts a new one with them, keeping
+the reserved name: the relay's operation names the choice and invite it was
+started with, so carrying on would sign in without the invite, and the gateway
+could not say afterwards that an invite went unused. Past the sign-in
+(registering, linking) it always carries on.
 
 The relay says before anyone signs in whether an invite is needed:
 `GET /_relay/v3/signup/access` (public, no parameters) answers
@@ -1099,8 +1170,9 @@ What a compromised relay can no longer do:
 - Steer an owner's sign-in on a page it serves (account page, desktop or portal
   handoff, link, signup) to a device key of its choosing and have it join: such a
   sign-in is held, even for a confirmed passkey and under `automatic`.
-- Pin its own sign-in at link time, or have a hostile page mint an endorsement or a
-  countersignature: those become suggestions, never trusted. Confirming a passkey
+- Pin its own sign-in at link time, have a hostile page mint an endorsement or a
+  countersignature, or list a sign-in of its own when a gateway builds a
+  confirmation's countersigned list: those become suggestions, never trusted. Confirming a passkey
   checks the assertion against the key the relay lists, so a substituted key only
   makes confirmation fail.
 - Choose the gateway's origin: the gateway derives its hosted name from its id and

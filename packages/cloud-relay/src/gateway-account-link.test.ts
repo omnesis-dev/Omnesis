@@ -2473,12 +2473,16 @@ test("the owner confirms a listed passkey on the gateway's own page, and nowhere
     rpId: "relay.example.test",
     origin: f.own,
     challenge: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/),
-    binding: gatewayPasskeyPinBinding({ gatewayId: f.gatewayId, accountId: f.accountId }),
+    binding: gatewayPasskeyPinBinding({
+      gatewayId: f.gatewayId,
+      accountId: f.accountId,
+      signIns: [],
+    }),
     webauthnChallenge: gatewayPasskeyChallenge(
       "pin-passkey",
       f.own,
       ceremony.challenge,
-      gatewayPasskeyPinBinding({ gatewayId: f.gatewayId, accountId: f.accountId }),
+      gatewayPasskeyPinBinding({ gatewayId: f.gatewayId, accountId: f.accountId, signIns: [] }),
     ),
     expiresAt: expect.any(Number),
   });
@@ -2518,6 +2522,251 @@ test("the owner confirms a listed passkey on the gateway's own page, and nowhere
   const restored = new GatewayAccountLink(f.options);
   await restored.initialize();
   expect(restored.confirmedSignIns()).toHaveLength(1);
+});
+
+test("one assertion confirms the passkey and countersigns the account's other sign-ins, which are suggested and trusted no further", async () => {
+  const f = await confirming();
+  const owner = await passkeyDevice(),
+    other = await passkeyDevice();
+  const name = (device: PasskeyDevice) =>
+    signInDigest({ type: "passkey", id: device.id, publicKey: device.publicKey });
+  f.list(
+    { id: owner.id, publicKey: owner.publicKey },
+    { id: other.id, publicKey: other.publicKey },
+  );
+  // The options name every sign-in the account lists, and the binding commits to them.
+  const ceremony = await f.manager.passkeyConfirmationOptions();
+  const signIns = [signInDigest({ type: "google", id: f.google }), name(owner), name(other)];
+  expect(ceremony.binding).toBe(
+    gatewayPasskeyPinBinding({ gatewayId: f.gatewayId, accountId: f.accountId, signIns }),
+  );
+  expect(ceremony.allowCredentials).toEqual([owner.id, other.id]);
+  // The owner uses the passkey just added; Google is already pinned, the other passkey is new here.
+  await f.manager.confirmPasskey(f.assert(owner, ceremony, { counter: 1 }));
+  expect(f.manager.confirmedSignIns()).toEqual([expect.objectContaining({ id: owner.id })]);
+  expect(f.pins()).toEqual([
+    [f.google, "link-page"],
+    [other.id, "countersigned"],
+  ]);
+  // A countersigned passkey is a suggestion: a device signing in with it on this page still waits.
+  const enrollment = f.manager.pairingIdentity()!.enrollment;
+  const challenge = opaque(),
+    nonce = opaque();
+  const joined = await enrollment.verifyGatewayPasskey!(
+    {
+      type: "gateway-passkey",
+      challenge,
+      credential: other.authenticator.authentication(
+        gatewayPasskeyChallenge("device-enrollment", f.own, challenge, nonce),
+        "dXNlcg",
+        1,
+        f.own,
+      ) as never,
+    },
+    challenge,
+    nonce,
+  );
+  expect(joined).toMatchObject({ id: other.id, trusted: false });
+  expect(f.manager.enrollmentStatus().confirmedSignIns).toHaveLength(1);
+});
+
+test("a confirmation countersigns nothing the owner removed here or the account withdrew, and withdraws what left meanwhile", async () => {
+  const f = await confirming();
+  const owner = await passkeyDevice(),
+    declined = await passkeyDevice(),
+    leaving = await passkeyDevice(),
+    withdrawn = await passkeyDevice();
+  const listed = (device: PasskeyDevice) => ({ id: device.id, publicKey: device.publicKey });
+  const name = (device: PasskeyDevice) =>
+    signInDigest({ type: "passkey", id: device.id, publicKey: device.publicKey });
+  await f.manager.removeTrustedSignIn(declined.id);
+  // The account once listed `withdrawn` and then stopped: this gateway remembers that.
+  await writeFile(
+    f.options.metadataFile,
+    JSON.stringify({ ...(await f.saved()), withdrawnSignIns: [name(withdrawn)] }) + "\n",
+    { mode: 0o600 },
+  );
+  await f.manager.initialize();
+  f.list(listed(owner), listed(declined), listed(leaving), listed(withdrawn));
+  const ceremony = await f.manager.passkeyConfirmationOptions();
+  expect(ceremony.binding).toBe(
+    gatewayPasskeyPinBinding({
+      gatewayId: f.gatewayId,
+      accountId: f.accountId,
+      signIns: [signInDigest({ type: "google", id: f.google }), name(owner), name(leaving)],
+    }),
+  );
+  // Before the owner finishes, `leaving` is removed from the account.
+  f.list(listed(owner), listed(declined), listed(withdrawn));
+  await f.manager.confirmPasskey(f.assert(owner, ceremony, { counter: 1 }));
+  expect(f.pins()).toEqual([[f.google, "link-page"]]);
+  const saved = await f.saved();
+  expect(saved.withdrawnSignIns).toEqual(expect.arrayContaining([name(withdrawn), name(leaving)]));
+  expect(saved.declinedPasskeys).toEqual([declined.id]);
+  // Without a listing when it starts, a confirmation countersigns nothing at all.
+  const second = await passkeyDevice();
+  f.credentials.mockRejectedValueOnce(new Error("offline"));
+  const blind = await f.manager.passkeyConfirmationOptions();
+  expect(blind.binding).toBe(
+    gatewayPasskeyPinBinding({ gatewayId: f.gatewayId, accountId: f.accountId, signIns: [] }),
+  );
+  expect(blind).not.toHaveProperty("allowCredentials");
+  f.list(listed(owner), listed(second));
+  await f.manager.confirmPasskey(f.assert(second, blind, { counter: 1 }));
+  expect(f.pins()).toEqual([[f.google, "link-page"]]);
+  expect(f.manager.confirmedSignIns().map((value) => value.id)).toEqual([owner.id, second.id]);
+});
+
+test("a confirmed passkey's id carries only its confirmed key: another key listed under it is never pinned and never stands in", async () => {
+  const f = await confirming();
+  const owner = await passkeyDevice(),
+    relay = await passkeyDevice();
+  const real = { id: owner.id, publicKey: owner.publicKey },
+    forged = { id: owner.id, publicKey: relay.publicKey };
+  // A relay lists its own key under the owner's passkey id beside the real one.
+  f.list(real, forged);
+  await f.manager.confirmPasskey(
+    f.assert(owner, await f.manager.passkeyConfirmationOptions(), { counter: 1 }),
+  );
+  expect(f.manager.confirmedSignIns()).toEqual([
+    expect.objectContaining({ id: owner.id, publicKey: owner.publicKey }),
+  ]);
+  expect(f.pins()).toEqual([[f.google, "link-page"]]);
+  // Google, pinned here, vouching for that key pins nothing either.
+  f.list(real, { ...forged, endorsement: await googleVouch(forged) });
+  await f.manager.refresh();
+  expect(f.pins()).toEqual([[f.google, "link-page"]]);
+  // A pin under that id with another key, from an earlier version, gives way to the confirmed
+  // key: a sign-in made with the relay's key is refused, and one with the owner's verifies.
+  const enrollment = f.manager.pairingIdentity()!.enrollment,
+    android = OFFICIAL_ANDROID_PASSKEY_ORIGINS[0]!,
+    nonce = opaque();
+  await pinInRecord(f.manager, f.options.metadataFile, {
+    type: "passkey",
+    ...forged,
+    addedAt: 1,
+    source: "endorsed",
+  });
+  expect(f.pins()).toEqual([
+    [f.google, "link-page"],
+    [owner.id, "endorsed"],
+  ]);
+  const impostor = assertionProof(relay.authenticator, nonce, android);
+  impostor.credential = { ...impostor.credential, id: owner.id, rawId: owner.id };
+  expect(await enrollment.verifyProof(impostor, nonce)).toBeUndefined();
+  expect(
+    await enrollment.verifyProof(assertionProof(owner.authenticator, nonce, android), nonce),
+  ).toMatchObject({ id: owner.id, trusted: true, channel: "android-app" });
+});
+
+test("a sign-in that left the account while the owner confirmed is withdrawn with its pin and confirmation", async () => {
+  const f = await confirming();
+  const owner = await passkeyDevice(),
+    second = await passkeyDevice();
+  const listed = (device: PasskeyDevice) => ({ id: device.id, publicKey: device.publicKey });
+  f.list(listed(owner), listed(second));
+  await f.manager.confirmPasskey(
+    f.assert(owner, await f.manager.passkeyConfirmationOptions(), { counter: 1 }),
+  );
+  const ceremony = await f.manager.passkeyConfirmationOptions();
+  // Before the second passkey's confirmation arrives, the account drops Google and the first.
+  f.credentials.mockResolvedValue({ google: [], passkeys: [listed(second)] });
+  await f.manager.confirmPasskey(f.assert(second, ceremony, { counter: 1 }));
+  expect(f.manager.confirmedSignIns().map((value) => value.id)).toEqual([second.id]);
+  // Only the second passkey's own suggestion is left, from the first confirmation.
+  expect(f.pins()).toEqual([[second.id, "countersigned"]]);
+  expect((await f.saved()).withdrawnSignIns).toEqual(
+    expect.arrayContaining([
+      signInDigest({ type: "google", id: f.google }),
+      signInDigest({ type: "passkey", id: owner.id, publicKey: owner.publicKey }),
+    ]),
+  );
+});
+
+test("the countersigned list is the gateway's: an assertion over another list, or for a link that changed, confirms nothing", async () => {
+  const f = await confirming();
+  const owner = await passkeyDevice(),
+    stranger = await passkeyDevice();
+  f.list({ id: owner.id, publicKey: owner.publicKey });
+  const ceremony = await f.manager.passkeyConfirmationOptions();
+  // A page that signs a list of its own choosing, here naming a stranger's passkey, is refused.
+  const swapped = gatewayPasskeyPinBinding({
+    gatewayId: f.gatewayId,
+    accountId: f.accountId,
+    signIns: [signInDigest({ type: "passkey", id: stranger.id, publicKey: stranger.publicKey })],
+  });
+  await expect(
+    f.manager.confirmPasskey({
+      type: "gateway-passkey",
+      challenge: ceremony.challenge,
+      credential: owner.authenticator.authentication(
+        gatewayPasskeyChallenge("pin-passkey", f.own, ceremony.challenge, swapped),
+        "dXNlcg",
+        1,
+        f.own,
+      ),
+    }),
+  ).rejects.toMatchObject({ status: 403, code: "passkey-not-confirmed" });
+  // A ceremony issued while linked to one account finishes nothing once the gateway is linked to
+  // another: the binding names the account.
+  const issued = await f.manager.passkeyConfirmationOptions();
+  const saved = await f.saved();
+  await writeFile(
+    f.options.metadataFile,
+    JSON.stringify({ ...saved, accountId: "e".repeat(64) }) + "\n",
+    { mode: 0o600 },
+  );
+  await f.manager.initialize();
+  await expect(f.manager.confirmPasskey(f.assert(owner, issued))).rejects.toMatchObject({
+    status: 409,
+    code: "passkey-not-confirmed",
+  });
+  expect(f.manager.confirmedSignIns()).toEqual([]);
+  // The same holds when the link changes while the gateway reads the account's listing.
+  await writeFile(f.options.metadataFile, JSON.stringify(saved) + "\n", { mode: 0o600 });
+  await f.manager.initialize();
+  const racing = await f.manager.passkeyConfirmationOptions();
+  f.credentials.mockImplementationOnce(async () => {
+    await writeFile(
+      f.options.metadataFile,
+      JSON.stringify({ ...saved, accountId: "e".repeat(64) }) + "\n",
+      { mode: 0o600 },
+    );
+    await f.manager.initialize();
+    return { google: [f.google], passkeys: [{ id: owner.id, publicKey: owner.publicKey }] };
+  });
+  await expect(f.manager.confirmPasskey(f.assert(owner, racing))).rejects.toMatchObject({
+    status: 409,
+    code: "passkey-not-confirmed",
+  });
+  expect(f.manager.confirmedSignIns()).toEqual([]);
+});
+
+test("the status says the account lists a passkey this gateway could confirm, pinned here or not", async () => {
+  const f = await confirming();
+  const owner = await passkeyDevice();
+  // Linked with Google: nothing is pinned for the passkey, and nothing has been read yet.
+  expect(f.manager.enrollmentStatus()).not.toHaveProperty("accountPasskey");
+  f.list({ id: owner.id, publicKey: owner.publicKey });
+  await f.manager.refresh();
+  expect(f.manager.enrollmentStatus()).toMatchObject({ accountPasskey: true });
+  expect(f.pins()).toEqual([[f.google, "link-page"]]);
+  // A listing for another account changes nothing; one with no passkey says so.
+  f.credentials.mockResolvedValueOnce({ accountId: "b".repeat(64), google: [], passkeys: [] });
+  await f.manager.refresh();
+  expect(f.manager.enrollmentStatus()).toMatchObject({ accountPasskey: true });
+  f.list();
+  await f.manager.refresh();
+  expect(f.manager.enrollmentStatus()).not.toHaveProperty("accountPasskey");
+  // Linking again starts from what the next read says.
+  f.list({ id: owner.id, publicKey: owner.publicKey });
+  await f.manager.refresh();
+  await f.manager.completeSignup({
+    accountId: f.accountId,
+    nonce: opaque(),
+    signal: new AbortController().signal,
+  });
+  expect(f.manager.enrollmentStatus()).not.toHaveProperty("accountPasskey");
 });
 
 test("TM-01: a relay page, another gateway's page or a relay-chosen origin cannot confirm a passkey", async () => {

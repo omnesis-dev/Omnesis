@@ -11,6 +11,7 @@ import { runCheckCommand } from "./lib/check-process.mjs";
 import { progressArgs, progressEnvironment } from "./lib/check-progress.mjs";
 import { assertTreeFingerprint } from "./nx/tree-state.mjs";
 import { resolveNpmInvocation } from "../packages/core/src/node-command.ts";
+import { isEntryScript } from "./lib/is-entry-script.mjs";
 
 export function schedulerCommand(env = process.env) {
   if (env.OMNESIS_TEST_SCHEDULER === "0") return null;
@@ -318,7 +319,7 @@ export async function main(argv = process.argv.slice(2)) {
   }
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isEntryScript(import.meta.url)) {
   main()
     .then((code) => {
       process.exitCode = code;

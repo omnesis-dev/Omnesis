@@ -19,7 +19,6 @@ import {
   writeFileSync,
 } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
 
 // Source checkouts and compiled package consumers use the same native ACL contract.
@@ -94,6 +93,7 @@ const FORBIDDEN_TABLES = new Set([
   "storage_source_incarnations",
   "storage_trim_job_cascades",
   "storage_trim_jobs",
+  "storage_cleanup_jobs",
   // A queued conversation handoff is active delivery work, not seed data.
   "note_agent_handoffs",
   // Exact unfinished source output is live write authority, never a seed.
@@ -855,7 +855,7 @@ export function installSeededStateArtifact(artifactDirectory, stateDirectory, op
   }
 }
 
-const isEntrypoint = process.argv[1] === fileURLToPath(import.meta.url);
+const isEntrypoint = import.meta.main;
 if (isEntrypoint) {
   const [command, first, second] = process.argv.slice(2);
   if (command === "create") {

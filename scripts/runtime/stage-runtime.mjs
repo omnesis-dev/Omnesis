@@ -21,6 +21,7 @@ import { execFileSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { buildOneProjectAtATimeHere, buildProjects } from "../build-projects.mjs";
 import { listPublishablePackages, stagePackage } from "../release/stage-packages.mjs";
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -52,16 +53,30 @@ export function localRuntimeClosure(roots, packages = listPublishablePackages())
   return [...closure.values()].sort((a, b) => a.dir.localeCompare(b.dir));
 }
 
+/**
+ * Compile the closure under the source build's policy (`scripts/build-projects.mjs`):
+ * one compiler process per project unless the heap and the machine leave room
+ * for a single one. The image build gives the compiler the build heap policy's
+ * floor, too small for the closure in one process, so it builds one project at
+ * a time.
+ */
 export function compileRuntimeClosure(
   entries = localRuntimeClosure(DEFAULT_RUNTIME_ROOTS),
-  runCompiler = execFileSync,
+  { oneAtATime = buildOneProjectAtATimeHere(), runCompiler = execFileSync } = {},
 ) {
   const compiler = join(repoRoot, "node_modules", "typescript", "bin", "tsc");
-  const projects = entries.map((entry) => join(repoRoot, entry.dir));
-  runCompiler(process.execPath, [compiler, "--build", ...projects], {
-    cwd: repoRoot,
-    stdio: "inherit",
-  });
+  buildProjects(
+    entries.map((entry) => join(repoRoot, entry.dir)),
+    {
+      oneAtATime,
+      root: repoRoot,
+      compile: (projects) =>
+        runCompiler(process.execPath, [compiler, "--build", ...projects], {
+          cwd: repoRoot,
+          stdio: "inherit",
+        }),
+    },
+  );
   return entries;
 }
 
@@ -132,7 +147,7 @@ function flagValues(argv, flag) {
   return values;
 }
 
-const isEntrypoint = process.argv[1] === fileURLToPath(import.meta.url);
+const isEntrypoint = import.meta.main;
 if (isEntrypoint) {
   const outDirs = flagValues(process.argv, "--out");
   if (outDirs.length > 1) throw new Error("--out may be given only once");

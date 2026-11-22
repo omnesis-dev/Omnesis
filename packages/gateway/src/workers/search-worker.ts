@@ -38,6 +38,11 @@
  * meanwhile waits for at most one culture; a call before then builds whichever
  * model it needs that is not warm yet.
  *
+ * Shutdown: once the pool raises its shared stopping flag, every call this
+ * thread has not started is refused, so its `shutdown` is answered as soon as
+ * the running call returns. The pool stops the thread only after that answer:
+ * a thread terminated inside a usearch call aborts the process.
+ *
  * Protocol: see `search-protocol.ts`. Transport is structured-clone
  * `postMessage`, never JSON — the request's `queryVector` (Float32Array) and
  * the result's `Infinity`/`NaN` scores + `bigint` usearch keys depend on it.
@@ -106,6 +111,15 @@ function openSearchIndexConn(
 /** The lexical index sent before `init` finished, attached once the handle exists. */
 let pendingLexical: LexicalIndexData | undefined;
 
+/** The pool's shutdown flag (see `SearchInit.stopping`); set from `init`. */
+let poolStopping: Int32Array | null = null;
+
+function stopRequested(): boolean {
+  return (
+    state?.shuttingDown === true || (poolStopping !== null && Atomics.load(poolStopping, 0) !== 0)
+  );
+}
+
 let state: {
   indexDb: Db;
   usearchRead: UsearchReadRegistry;
@@ -120,6 +134,7 @@ async function handleInit(init: SearchInit): Promise<void> {
     log("warn", "search-worker", "init received twice — ignoring");
     return;
   }
+  poolStopping = new Int32Array(init.stopping);
   try {
     const indexDb = openSearchIndexConn(init.indexDbPath, init.indexDbKeyHex, init.cacheSizeBytes);
     // Its own versioned read router — follows `active_version` on `maybeRefresh`
@@ -176,7 +191,7 @@ async function warmTemporalModels(): Promise<void> {
   try {
     for (const culture of TEMPORAL_INTENT_CULTURES) {
       await new Promise((resolve) => setImmediate(resolve));
-      if (!state || state.shuttingDown) return;
+      if (!state || stopRequested()) return;
       warmTemporalIntent(culture);
     }
     log("info", "search-worker", `date recognizer ready in ${Date.now() - started}ms`);
@@ -206,7 +221,7 @@ function answer(
   const dequeueMs = Date.now();
   const queueMs = Math.max(0, dequeueMs - enqueueMs);
 
-  if (!state || state.shuttingDown) {
+  if (!state || stopRequested()) {
     post({
       type: "result",
       id,

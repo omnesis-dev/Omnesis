@@ -90,6 +90,18 @@ test("management is absent without a service, and always requires admin", async 
   ).toBe(403);
   expect((await app(bearer, false).request("/admin/cloud-relay")).status).toBe(404);
   expect(service.status).not.toHaveBeenCalled();
+  // Saying the owner has seen a notice is an admin's act too.
+  service.acknowledgeConnect = vi.fn();
+  expect(
+    (
+      await app({ ...bearer, scopes: [SCOPE_READ] }).request(
+        "/admin/cloud-relay/connect/acknowledge",
+        post(),
+      )
+    ).status,
+  ).toBe(403);
+  expect(service.acknowledgeConnect).not.toHaveBeenCalled();
+  delete service.acknowledgeConnect;
 });
 test("reads and operates the lifecycle service with exact validated inputs and no caching", async () => {
   const router = app();
@@ -345,6 +357,7 @@ test("account management requires admin authority, validates bodies and confines
 test("connecting by sign-in, its cancellation, the enrollment policy and trusted sign-ins reach the service with validated inputs", async () => {
   service.connect = vi.fn().mockResolvedValue(status);
   service.cancelConnect = vi.fn().mockResolvedValue(status);
+  service.acknowledgeConnect = vi.fn().mockResolvedValue(status);
   service.setEnrollmentPolicy = vi.fn().mockResolvedValue(status);
   service.removeTrustedSignIn = vi.fn().mockResolvedValue(status);
   const router = app();
@@ -377,6 +390,11 @@ test("connecting by sign-in, its cancellation, the enrollment policy and trusted
   );
   expect((await router.request("/admin/cloud-relay/connect/cancel", post())).status).toBe(200);
   expect(service.cancelConnect).toHaveBeenCalledOnce();
+  expect(
+    (await router.request("/admin/cloud-relay/connect/acknowledge", post({ x: 1 }))).status,
+  ).toBe(400);
+  expect((await router.request("/admin/cloud-relay/connect/acknowledge", post())).status).toBe(200);
+  expect(service.acknowledgeConnect).toHaveBeenCalledOnce();
   for (const body of [{}, { policy: "open" }, { policy: "ask", extra: true }])
     expect((await router.request("/admin/cloud-relay/enrollment", put(body))).status).toBe(400);
   expect(service.setEnrollmentPolicy).not.toHaveBeenCalled();
@@ -504,6 +522,7 @@ test("sign-in connection controls are explicitly unavailable when the service ha
   for (const [path, init] of [
     ["/admin/cloud-relay/connect", post({ termsAccepted: true })],
     ["/admin/cloud-relay/connect/cancel", post()],
+    ["/admin/cloud-relay/connect/acknowledge", post()],
     ["/admin/cloud-relay/start-over", post()],
     ["/admin/cloud-relay/enrollment", { ...post({ policy: "ask" }), method: "PUT" }],
     ["/admin/cloud-relay/trusted-sign-ins/fictional-pin", { method: "DELETE" }],

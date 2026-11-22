@@ -9,10 +9,12 @@ import { inspectWindowsPrivatePathSync } from "@omnesis/core";
 import { afterEach, describe, expect, test } from "vitest";
 
 import {
+  captureMainThreadProfile,
   listProfileSummaries,
   profileIdAt,
   PROFILE_SUMMARY_VERSION,
   writeProfileSummary,
+  type ProfilerSession,
   type ProfileSummary,
 } from "./flight-recorder.js";
 
@@ -75,5 +77,70 @@ describe("the profile summary ring", () => {
     expect(profileIdAt(Date.UTC(2026, 10, 2, 14, 7, 5, 120))).toBe(
       "profile-2026-11-02T14-07-05-120Z",
     );
+  });
+});
+
+/** An inspector session that answers every call at once and records what it was asked. */
+function recordingSession(): {
+  session: ProfilerSession;
+  calls: string[];
+  disconnected: () => boolean;
+} {
+  const calls: string[] = [];
+  let disconnected = false;
+  const session = {
+    post(method: string, _params: object, callback: (err: Error | null, result?: object) => void) {
+      calls.push(method);
+      callback(
+        null,
+        method === "Profiler.stop" ? { profile: { nodes: [], startTime: 0, endTime: 0 } } : {},
+      );
+    },
+    disconnect() {
+      disconnected = true;
+    },
+  } as unknown as ProfilerSession;
+  return { session, calls, disconnected: () => disconnected };
+}
+
+describe("capturing a main-thread profile", () => {
+  // Starting V8's profiler records every compiled function on the main thread
+  // before the first sample: the costly step, and on a starved host a stall of
+  // its own. A profile the caller no longer wants must never reach it.
+  test("an unwanted profile never starts the profiler", async () => {
+    const { session, calls, disconnected } = recordingSession();
+    let asked = false;
+    const profile = await captureMainThreadProfile(
+      200,
+      1_000,
+      () => {
+        asked = true;
+        return false;
+      },
+      () => session,
+    );
+    expect(asked).toBe(true);
+    expect(profile).toBeNull();
+    expect(calls).toEqual(["Profiler.enable", "Profiler.disable"]);
+    expect(disconnected()).toBe(true);
+  });
+
+  test("a wanted profile starts, runs and stops", async () => {
+    const { session, calls, disconnected } = recordingSession();
+    const profile = await captureMainThreadProfile(
+      0,
+      1_000,
+      () => true,
+      () => session,
+    );
+    expect(profile).not.toBeNull();
+    expect(calls).toEqual([
+      "Profiler.enable",
+      "Profiler.setSamplingInterval",
+      "Profiler.start",
+      "Profiler.stop",
+      "Profiler.disable",
+    ]);
+    expect(disconnected()).toBe(true);
   });
 });

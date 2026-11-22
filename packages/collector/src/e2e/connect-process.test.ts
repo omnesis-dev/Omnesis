@@ -6,9 +6,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createConnection, createServer } from "node:net";
 import { PassThrough } from "node:stream";
-import * as owned from "./e2e-owned-process.js";
-
 import { afterEach, describe, expect, test, vi } from "vitest";
+import * as owned from "./e2e-owned-process.js";
 
 import {
   spawnConnect,
@@ -37,6 +36,22 @@ function acceptsConnections(port: number): Promise<boolean> {
 async function joinPhysicalFixture(running: SpawnedConnect): Promise<void> {
   if (Object.hasOwn(running.child, "jobClosed")) await Reflect.get(running.child, "jobClosed");
   else await reaper.killSubprocessGroup(running.child);
+}
+
+/**
+ * Wait, within a bound, for a terminated descendant's listener to stop accepting.
+ * Cleanup returns once the Windows job object reports no active processes, and the
+ * kernel drops a process from that count before it closes the process's handles,
+ * so the descendant's listening socket can still accept for a moment after a
+ * cleanup that positively joined its job.
+ */
+async function waitForPortReleased(port: number, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    if (!(await acceptsConnections(port))) return true;
+    if (Date.now() >= deadline) return false;
+    await new Promise<void>((resolve) => setTimeout(resolve, 25));
+  }
 }
 
 /** File creation can precede its contents; only a complete TCP port is ready. */
@@ -338,7 +353,7 @@ describe("spawned connect process cleanup", () => {
           output: "leader finished",
         });
       } else await terminateConnect(running);
-      expect(await acceptsConnections(port)).toBe(false);
+      expect(await waitForPortReleased(port, 5_000)).toBe(true);
       const server = createServer();
       try {
         await new Promise<void>((resolve, reject) => {

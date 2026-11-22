@@ -5,6 +5,7 @@ import { Readable } from "node:stream";
 import { beforeEach, expect, test, vi } from "vitest";
 const owned = vi.hoisted(() => ({ run: vi.fn(), sync: vi.fn() }));
 vi.mock("./windows-worker-cache.js", () => ({
+  prepareWindowsNativeWorker: () => {},
   windowsWorkerInvocation: () => ({ command: "C:\\example\\worker.exe", args: ["--private-file"] }),
 }));
 vi.mock("./windows-owned-process.js", () => ({

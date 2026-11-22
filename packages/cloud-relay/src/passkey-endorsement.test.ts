@@ -62,7 +62,6 @@ describe("a new passkey waiting on the relay", () => {
     expect(f.endorsements.describe(id, f.cookie)).toEqual({
       label: "Fictional passkey",
       needsProof: true,
-      needsCountersignature: true,
     });
     // The sign-in commits to this passkey's id and public key, and to nothing else.
     const commitment = f.endorsements.proofCommitment(id, f.cookie),
@@ -100,6 +99,13 @@ describe("a new passkey waiting on the relay", () => {
     f.accounts.registerPasskey(other, registration("another-account-passkey"), false);
     const id = f.endorsements.park(f.browser, f.account.accountId, registration());
     expect(f.endorsements.endorsers(id, f.cookie)).toEqual(["existing-passkey"]);
+    // The passkey being added never vouches for itself, even listed under the same id.
+    const again = f.endorsements.park(
+      f.browser,
+      f.account.accountId,
+      registration("existing-passkey"),
+    );
+    expect(f.endorsements.endorsers(again, f.cookie)).toEqual([]);
   });
 
   test("a sign-in of a different account, or a passkey registration, cannot vouch", () => {

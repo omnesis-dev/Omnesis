@@ -6,8 +6,9 @@ import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
+import { isEntryScript } from "../lib/is-entry-script.mjs";
 
 /** Record real CRT outcomes inside isolated Node processes, with native entry proof. */
 export function proveWindowsNativeAbort(
@@ -136,6 +137,6 @@ export async function proveWindowsUsearch(entry, dependencyRoot, mappingProof, a
   if (abortProof) proveWindowsNativeAbort(abortProof, { binding: build.path(dependencyRoot) });
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isEntryScript(import.meta.url)) {
   await proveWindowsUsearch(process.argv[2], process.argv[3], process.argv[4], process.argv[5]);
 }

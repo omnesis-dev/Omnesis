@@ -26,6 +26,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSy
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isEntryScript } from "../lib/is-entry-script.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const HELPER_DIR = join(ROOT, "packages/tailnet-helper");
@@ -137,7 +138,7 @@ export async function ensureTailnetTools() {
   };
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isEntryScript(import.meta.url)) {
   const tools = await ensureTailnetTools();
   process.stdout.write(`${JSON.stringify(tools, null, 2)}\n`);
 }

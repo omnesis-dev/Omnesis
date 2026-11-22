@@ -202,8 +202,6 @@ export class OmnesisAccounts {
     admission?: AccountAdmission,
     /** The sign-in that vouched for this passkey, kept for gateways to verify themselves. */
     endorsement?: SignInProof,
-    /** This passkey's own signature over the account's other sign-ins, likewise. */
-    countersignature?: PasskeyCountersignature,
   ): void {
     this.db.transaction(() => {
       if (newAccount) this.create(account, admission);
@@ -242,13 +240,6 @@ export class OmnesisAccounts {
         this.db
           .prepare("INSERT OR REPLACE INTO omnesis_passkey_endorsements VALUES (?,?)")
           .run(input.credential.id, JSON.stringify(signInProofSchema.parse(endorsement)));
-      if (countersignature && this.namesOnlyCurrent(account, countersignature, input.credential.id))
-        this.db
-          .prepare("INSERT OR REPLACE INTO omnesis_passkey_countersignatures VALUES (?,?)")
-          .run(
-            input.credential.id,
-            JSON.stringify(passkeyCountersignatureSchema.parse(countersignature)),
-          );
     })();
     // Told only once the account is committed.
     if (newAccount) admission?.created?.(account);
@@ -606,26 +597,6 @@ export class OmnesisAccounts {
         )
         .run(account, provider, subjectDigest).changes;
     });
-  }
-
-  /**
-   * Whether every sign-in a countersignature names is still on the account. One was signed for
-   * the account as it stood when the passkey was created; a sign-in removed before the passkey
-   * is stored must not be named by evidence stored after the removal, so the countersignature is
-   * dropped and the passkey is stored with its endorsement only.
-   */
-  private namesOnlyCurrent(
-    account: string,
-    countersignature: PasskeyCountersignature,
-    except: string,
-  ): boolean {
-    const current = new Set([
-      ...this.federatedDigests(account, "google").map((id) => signInDigest({ type: "google", id })),
-      ...this.passkeyKeys(account)
-        .filter(({ id }) => id !== except)
-        .map(({ id, publicKey }) => signInDigest({ type: "passkey", id, publicKey })),
-    ]);
-    return countersignature.signIns.every((name) => current.has(name));
   }
 
   /**

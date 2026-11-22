@@ -396,16 +396,34 @@ export function runWindowsOwnedProcessSync(
   opts: WindowsOwnedSyncOptions = {},
   receipt?: { nonce: string },
 ): WindowsJobResult {
+  const suppliedTimeout = opts.timeoutMs;
+  const started = suppliedTimeout === undefined ? 0 : performance.now();
   if (receipt && !/^[a-f0-9]{64}$/u.test(receipt.nonce))
     throw new Error("Invalid synchronous Windows job receipt expectation");
+  const timedOut = (): WindowsJobResult => ({
+    exitCode: null,
+    signal: null,
+    stdout: Buffer.alloc(0),
+    stderr: "",
+    failure: "timeout",
+  });
+  if (suppliedTimeout !== undefined && (!Number.isFinite(suppliedTimeout) || suppliedTimeout < 1))
+    return timedOut();
   const output = opts.stdout ?? (opts.captureStdout === false ? "ignore" : "capture");
+  const input = Buffer.concat([initialInput, Buffer.from(opts.input ?? [])]);
+  let timeoutMs = suppliedTimeout;
+  if (timeoutMs !== undefined) {
+    const elapsed = performance.now() - started;
+    timeoutMs = Math.floor(timeoutMs - elapsed);
+    if (!Number.isFinite(timeoutMs) || elapsed < 0 || timeoutMs <= 0) return timedOut();
+  }
   const run = spawnSync(invocation.command, invocation.args, {
     cwd: opts.cwd,
     env: opts.env,
     windowsHide: true,
-    input: Buffer.concat([initialInput, Buffer.from(opts.input ?? [])]),
+    input,
     stdio: ["pipe", output === "capture" ? "pipe" : output, "pipe"],
-    timeout: opts.timeoutMs,
+    timeout: timeoutMs,
     killSignal: "SIGKILL",
     maxBuffer: opts.maxBuffer ?? 16 * 1024 * 1024,
   });
