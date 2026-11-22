@@ -213,7 +213,12 @@ function runIosJourneys(outcomes, env = {}) {
   const scripts = join(checkout, "scripts");
   mkdirSync(join(scripts, "ci"), { recursive: true });
   mkdirSync(join(checkout, "ios"));
-  for (const file of ["run-mobile-journeys.sh", "ci/xcodebuild-ui-tests.mjs"]) {
+  for (const file of [
+    "run-mobile-journeys.sh",
+    "ci/xcodebuild-ui-tests.mjs",
+    "ci/wait-ios-trust-service.mjs",
+    "ci/ios-journey-stall-watch.sh",
+  ]) {
     copyFileSync(join(root, "scripts", file), join(scripts, file));
   }
   executable(join(scripts, "ci/resolve-ios-packages.sh"), []);
