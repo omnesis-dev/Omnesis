@@ -21,6 +21,7 @@ set -uo pipefail
 udid="${1:?simulator udid}"
 xcodebuild_log="${2:?xcodebuild log}"
 out="${3:?output directory}"
+interval="${OMNESIS_STALL_WATCH_INTERVAL:-3}"
 mkdir -p "$out"
 
 # Host process ids of a simulator process, by the path of its executable. A
@@ -70,7 +71,7 @@ capture() {
 seen=0
 captures=0
 while ((captures < 3)); do
-  sleep 3
+  sleep "$interval"
   failures="$(grep -c ': error: -\[' "$xcodebuild_log" 2>/dev/null || true)"
   failures="${failures:-0}"
   if ((failures > seen)); then

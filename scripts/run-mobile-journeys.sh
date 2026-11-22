@@ -268,6 +268,10 @@ print(json.dumps({"gatewayURL": os.environ["URL"], "token": os.environ["TOKEN"],
   kill "$watcher" 2>/dev/null || true
   wait "$watcher" 2>/dev/null || true
   stop_recording
+  # The trust service's own account of the run, from the simulator's boot.
+  xcrun simctl spawn "$udid" log show --last 60m --info --style compact \
+    --predicate 'process == "trustd" OR process == "securityd"' \
+    >"$ARTIFACTS/network-stalls/trust-service.log" 2>&1 || true
 
   if [[ "$status" != 0 ]]; then
     mkdir -p "$ARTIFACTS/failure-attachments"
