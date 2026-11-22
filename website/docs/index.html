@@ -292,10 +292,23 @@
           </li>
           <li>
             <strong>Phone wake-ups.</strong> For an official app build, after you approve it on that
-            phone, the gateway sends the hosted relay an empty request that makes the phone wake up
-            and fetch its notification from the gateway. The relay never sees notification text or
-            the gateway's address. With your own push credentials, the gateway talks to Apple's and
-            Google's push services directly instead. See <a href="notifications">Notifications</a>.
+            phone, the gateway sends the hosted push relay an empty request that makes the phone
+            wake up and fetch its notification from the gateway. The push relay never sees
+            notification text or the gateway's address. With your own push credentials, the gateway
+            talks to Apple's and Google's push services directly instead. See
+            <a href="notifications">Notifications</a>.
+          </li>
+          <li>
+            <strong>An Omnesis account, if you link one.</strong> The gateway keeps a connection to
+            the Omnesis relay, which passes your devices' encrypted connections through without
+            opening them, and gets a certificate for its relay address from a public certificate
+            authority. The account knows only how you sign in and which gateways are yours. See
+            <a href="setup#omnesis-account">Omnesis account</a>.
+          </li>
+          <li>
+            <strong>The gateway's own Tailscale device, if you turn it on.</strong> It connects to
+            Tailscale's coordination service and your tailnet like any Tailscale device. See
+            <a href="setup#tailscale-device">The gateway's own Tailscale device</a>.
           </li>
           <li>
             <strong>Models you choose.</strong> Model files are downloaded when you install one. A
@@ -329,7 +342,9 @@
           such as a voice-assistant handler). A device pairs by redeeming a single-use pairing code:
           10 characters, valid for 10 minutes by default. The gateway then issues a token limited to
           the scopes that kind of device needs. How to pair each kind is on
-          <a href="setup#pairing">Setup</a>.
+          <a href="setup#pairing">Setup</a>. A device can also ask to join without a code, by
+          signing in to your Omnesis account or from your tailnet; it then joins at once or waits
+          for your approval, as you choose under <a href="setup#new-devices">New devices</a>.
         </p>
         <div class="table-wrap">
           <table>

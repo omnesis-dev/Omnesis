@@ -1163,7 +1163,7 @@ export interface PasskeySession {
   errors: string[];
 }
 
-const VIRTUAL_AUTHENTICATOR = {
+export const VIRTUAL_AUTHENTICATOR = {
   protocol: "ctap2",
   transport: "internal",
   hasResidentKey: true,

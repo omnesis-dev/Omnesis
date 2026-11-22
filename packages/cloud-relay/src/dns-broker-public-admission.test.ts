@@ -5,6 +5,8 @@ import { expect, test, vi } from "vitest";
 import { brokerOwner, memoryStore } from "../test/dns-broker-owner.js";
 import {
   DnsPublicAdmission,
+  OPENED_BY_PORTAL,
+  PORTAL_HANDOFF_MS,
   boundedAdmissionJson,
   turnstileVerifier,
 } from "./dns-broker-public-admission.js";
@@ -208,4 +210,100 @@ test("a body timeout remains bounded when the untrusted stream also rejects canc
   } finally {
     vi.useRealTimers();
   }
+});
+
+/**
+ * The security check page's own script, run against its own markup with the Turnstile widget,
+ * the network and the window stood in for: what it says once the check passes.
+ */
+async function checkPage(
+  hash: string,
+  reply: { ok: boolean; body: unknown } = { ok: true, body: {} },
+) {
+  const { parseHTML } = await import("linkedom");
+  const f = fixture();
+  const link = await f.admission.verification(
+    brokerOwner().request({ type: "claim" }),
+    "192.0.2.2",
+  );
+  const html = await (await f.admission.page(new Request(link.url))).text();
+  const { document } = parseHTML(html);
+  const script = /<script nonce="[a-f0-9]+">([\s\S]*?)<\/script>/.exec(html)![1]!;
+  const timers: Array<() => void> = [];
+  const win: Record<string, unknown> = { addEventListener: vi.fn(), close: vi.fn() };
+  let callback!: (token: string) => Promise<void>;
+  const turnstile = {
+    render: vi.fn((_selector: string, options: { callback: (token: string) => Promise<void> }) => {
+      callback = options.callback;
+    }),
+  };
+  const fetch = vi.fn(async () => ({ ok: reply.ok, json: async () => reply.body }));
+  const history = { back: vi.fn() };
+  new Function(
+    "document",
+    "location",
+    "window",
+    "history",
+    "fetch",
+    "turnstile",
+    "setTimeout",
+    "clearTimeout",
+    script,
+  )(
+    document,
+    { hash, reload: vi.fn() },
+    win,
+    history,
+    fetch,
+    turnstile,
+    (run: () => void, ms: number) => (ms === PORTAL_HANDOFF_MS ? timers.push(run) : 0),
+    () => {},
+  );
+  (win.omnesisDnsCheck as () => void)();
+  await callback("accepted");
+  return {
+    message: () => document.querySelector("#message")!.textContent,
+    widgetHidden: () => document.querySelector("#widget")!.hidden,
+    elapse: () => timers.splice(0).forEach((run) => run()),
+    close: win.close as ReturnType<typeof vi.fn>,
+    back: history.back,
+    fetch,
+  };
+}
+
+test("a check opened by hand or from the CLI says it is done and that the gateway or terminal goes on", async () => {
+  const page = await checkPage("");
+  expect(page.fetch).toHaveBeenCalledOnce();
+  expect(page.widgetHidden()).toBe(true);
+  expect(page.message()).toBe(
+    "Done. You can close this tab. Your gateway or terminal continues on its own.",
+  );
+  page.elapse();
+  // A tab the person opened is theirs to close, and its history theirs to walk.
+  expect(page.close).not.toHaveBeenCalled();
+  expect(page.back).not.toHaveBeenCalled();
+});
+
+test("a check the portal opened goes back to the portal's page, and closes itself if it could not", async () => {
+  const page = await checkPage(OPENED_BY_PORTAL);
+  expect(page.message()).toBe("Verified. Taking you to your Omnesis account…");
+  expect(page.message()).not.toContain("Return to");
+  // Back to the portal's own page, from where the portal sends the window on.
+  expect(page.back).toHaveBeenCalledOnce();
+  expect(page.close).not.toHaveBeenCalled();
+  page.elapse();
+  expect(page.message()).toBe(
+    "Done. You can close this tab. Your gateway or terminal continues on its own.",
+  );
+  expect(page.close).toHaveBeenCalledOnce();
+});
+
+test("a refused check says why, wherever it was opened", async () => {
+  const page = await checkPage(OPENED_BY_PORTAL, { ok: false, body: { error: "dns-capacity" } });
+  expect(page.message()).toBe(
+    "Gateway capacity is full. Existing gateways stay connected. Try again later.",
+  );
+  page.elapse();
+  expect(page.close).not.toHaveBeenCalled();
+  expect(page.back).not.toHaveBeenCalled();
 });

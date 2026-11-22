@@ -80,6 +80,24 @@ test("polls visible status with single in-flight request and pauses hidden tabs"
   });
   expect(current.status).toEqual({ revision: 2 });
 });
+test("follows a connect under way even while the tab is hidden, and pauses again once it ends", async () => {
+  request.mockResolvedValueOnce({ connect: { state: "waiting" } });
+  await mount();
+  await act(async () => {});
+  expect(current.status).toEqual({ connect: { state: "waiting" } });
+  Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
+  request.mockResolvedValueOnce({ connect: { state: "done" } });
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(2500);
+  });
+  expect(request).toHaveBeenCalledTimes(2);
+  expect(current.status).toEqual({ connect: { state: "done" } });
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(10_000);
+  });
+  expect(request).toHaveBeenCalledTimes(2);
+  Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+});
 test("mutation invalidates stale poll and blocks a second mutation until it finishes", async () => {
   const old = pending(),
     mutation = pending();

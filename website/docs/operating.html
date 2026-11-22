@@ -1915,9 +1915,23 @@ omnesis storage cancel JOB_ID --yes</pre>
                 <td><code>cloud</code></td>
                 <td>
                   Connect this gateway to your Omnesis account, unlink it, start over a connection
-                  that didn't finish, and show its status
+                  that didn't finish, and show its status; turn the relay off and on; decide how new
+                  devices join and approve the ones that wait
                 </td>
-                <td><a href="setup#connectivity">Setup → Connectivity</a></td>
+                <td>
+                  <a href="setup#omnesis-account">Setup → Omnesis account</a>,
+                  <a href="setup#new-devices">New devices</a>
+                </td>
+              </tr>
+              <tr>
+                <td><code>tailscale</code></td>
+                <td>
+                  Turn the gateway's own Tailscale device on and off, sign it in, open its public
+                  MCP address, and let collectors join from your tailnet
+                </td>
+                <td>
+                  <a href="setup#tailscale-device">Setup → The gateway's own Tailscale device</a>
+                </td>
               </tr>
               <tr>
                 <td><code>push</code></td>

@@ -34,6 +34,8 @@ import { navigate, replaceRoute } from "../lib/router.js";
 import { accessLevels, accessRules, errorMessage, overviewPolicies } from "./access/shared.js";
 import { answerPrivacySummary, reachSummary } from "./access/terms.js";
 import { CHROME_WEB_STORE_URL } from "../lib/extension-links.js";
+import { TESTFLIGHT_URL } from "../lib/ios-links.js";
+import { ANDROID_OPT_IN_URL, ANDROID_TESTER_GROUP_URL } from "../lib/android-links.js";
 import { KindIcon, PairKindIcon } from "../lib/device-kind-icon.js";
 import { useVisiblePoll } from "../lib/use-visible-poll.js";
 import { WaitingDevices } from "../components/waiting-devices.js";
@@ -316,6 +318,26 @@ export function agentGatewayUrl(origin, identities, selectedIdx) {
  * serve the docs, so this is the published site, not a portal-relative path.
  */
 const AWAY_FROM_HOME_DOCS_URL = "https://omnesis.dev/docs/setup#away-from-home";
+
+/** The public docs on getting the mobile apps, for the pairing page's install line. */
+const MOBILE_APPS_DOCS_URL = "https://omnesis.dev/docs/apps#getting-the-apps";
+
+const external = (href, text) => html`<a href=${href} target="_blank" rel="noopener noreferrer">${text}</a>`;
+
+/**
+ * How to get the app before pairing a phone: the same install links as the app cards on the
+ * Sources page, and the docs. One short line above the pairing code.
+ */
+export function PhoneAppInstall({ kind }) {
+  return html`<p class="devices-pair-ext-note devices-app-install">
+    Don't have the Omnesis app yet?${" "}
+    ${kind === "ios"
+      ? html`${external(TESTFLIGHT_URL, "Install it with TestFlight")}.`
+      : html`${external(ANDROID_TESTER_GROUP_URL, "Join the tester group")}, then${" "}
+          ${external(ANDROID_OPT_IN_URL, "opt in on Google Play")} with the same Google account.`}${" "}
+    ${external(MOBILE_APPS_DOCS_URL, "Getting the apps in the docs")}
+  </p>`;
+}
 
 /** What the pairing screen calls each phone. */
 const PHONE_NOUNS = { ios: "iPhone", android: "Android phone" };
@@ -1290,6 +1312,7 @@ function PairPage({
             </label>`)}
           </div>
         </fieldset>`}
+        ${!repairTarget && isPhoneKind(pairKind) && html`<${PhoneAppInstall} kind=${pairKind} />`}
         ${!repairTarget && pairKind === "integration" && html`<div class="form-group">
           <label for="pair-name">Name</label>
           <input

@@ -100,6 +100,9 @@ export function useRelayManagement() {
     }
   };
   const interval = relayPollInterval(status);
+  // While a connect is under way the person is often in another tab (the security check, the
+  // sign-in), so the page keeps following it then even out of view.
+  const following = IN_PROGRESS.includes(status?.connect?.state);
   useEffect(() => {
     mounted.current = true;
     void run();
@@ -112,10 +115,10 @@ export function useRelayManagement() {
   }, []);
   useEffect(() => {
     const timer = setInterval(() => {
-      if (document.visibilityState !== "hidden") void run();
+      if (following || document.visibilityState !== "hidden") void run();
     }, interval);
     return () => clearInterval(timer);
-  }, [interval]);
+  }, [interval, following]);
   const clearError = () => setError(NO_ERROR);
   return { status, error: error.text, errorCode: error.code, clearError, busy, run, version };
 }

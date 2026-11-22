@@ -115,7 +115,8 @@ test("a gateway with no address away from home opens on this computer, and hoste
   expect(new URL((await shownAddress(page).textContent())!).hostname).toBe("localhost");
   // Hosted apps can never reach this computer's address, so they are not offered here.
   for (const [id] of HOSTED) await expect(agentCard(page, id)).toHaveCount(0);
-  await page.getByRole("button", { name: "Set them up under Somewhere else" }).click();
+  await expect(page.locator(".access-connect-dialog")).not.toContainText("Setup for common agents");
+  await location(page, "away").check();
   await expect(location(page, "away")).toBeChecked();
   await expect(page.locator(".access-connect-dialog")).toContainText(
     "This gateway has no address away from home yet.",

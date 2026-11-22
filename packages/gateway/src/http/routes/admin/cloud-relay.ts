@@ -124,6 +124,19 @@ export function mountCloudRelayManagementRoutes(
         return service.cancelConnect();
       }),
   );
+  // The owner has been told the sign-in already had an account, so the status stops saying it.
+  app.post(
+    "/admin/cloud-relay/connect/acknowledge",
+    scope.admin(),
+    bounded,
+    validateJson(cloudRelayActionBody),
+    async (c) =>
+      respond(c, async () => {
+        if (!service.acknowledgeConnect)
+          throw new CloudRelayManagementFailure(503, "account-unavailable");
+        return service.acknowledgeConnect();
+      }),
+  );
   // Discards a connection that never finished; refused once the gateway has connected.
   app.post(
     "/admin/cloud-relay/start-over",

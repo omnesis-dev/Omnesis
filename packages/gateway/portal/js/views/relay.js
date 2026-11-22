@@ -20,6 +20,7 @@ import {
   SetupReminder,
 } from "../components/gateway-passkey-confirm.js";
 import { onGatewayOrigin } from "../lib/gateway-passkey.js";
+import { OPENED_BY_PORTAL, openConnectWindow, useConnectWindow } from "../lib/connect-window.js";
 import { navigate } from "../lib/router.js";
 import { useAccountRefresh, useRelayManagement } from "../lib/use-relay-management.js";
 import {
@@ -141,13 +142,31 @@ function Hero({ status, phase, busy, run }) {
   </section>`;
 }
 
+/**
+ * A link of the connection that opens in the connect window, which the portal keeps in step
+ * (see connect-window.js). A click with a modifier or another button, or a browser that refuses
+ * that window, leaves the link to open its own page as any link does.
+ */
+function openInConnectWindow(event, url) {
+  if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+  if (openConnectWindow(url)) event.preventDefault();
+}
+
 /** Waiting for sign-in: open the relay's sign-in page, or enter the code on another device. */
 export function Waiting({ connect, busy, run }) {
   if (connect.verification) {
     const url = dnsVerificationUrl(connect.verification.url);
     return html`<div class="relay-waiting">
       <div class="relay-actions relay-hero-action">
-        ${url && html`<a class="btn-primary relay-button-link" href=${url} target="_blank" rel="noopener noreferrer">Open security check</a>`}
+        ${url &&
+        html`<a
+          class="btn-primary relay-button-link"
+          href=${url}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick=${(event) => openInConnectWindow(event, `${url}${OPENED_BY_PORTAL}`)}
+          >Open security check</a
+        >`}
         <button type="button" class="relay-quiet" disabled=${Boolean(busy) && busy !== "refresh"} onClick=${() => run("connect/cancel", {})}>
           ${busy === "connect/cancel" ? "Cancelling…" : "Cancel"}
         </button>
@@ -178,6 +197,7 @@ export function Waiting({ connect, busy, run }) {
           href=${authorizeUrl}
           target="_blank"
           rel="noopener noreferrer"
+          onClick=${(event) => openInConnectWindow(event, authorizeUrl)}
         >
           ${signInLabel}
         </a>`
@@ -641,6 +661,7 @@ export function RelayView({ part = "account", open = openOnGateway, location = g
   const phase = status ? relayPhase(status) : "loading";
   const { enrollment, setup, ready } = relayAccountSetup(status, phase);
   usePasskeyHandoff({ phase, enrollment, setup, ready, later, open, location });
+  useConnectWindow(status?.connect);
   if (!status) {
     if (busy) return html`<div class="relay-view"><${Skeleton} /></div>`;
     return html`<div class="relay-view">
@@ -661,10 +682,12 @@ export function RelayView({ part = "account", open = openOnGateway, location = g
   const checklist = setup && !later && phase === "connected";
   const problems = relayProblems(status, phase);
   // A failed connect or a dropped connection is said in the headline; the details still help.
-  // A connection that was only interrupted has nothing to report beyond its headline.
+  // A connection that was only interrupted has nothing to report beyond its headline, and a
+  // refused invite is said under the invite, where it is fixed.
+  const inviteRefused = /^invite-/.test(status.connect?.error ?? "");
   const troubled =
     problems.length > 0 ||
-    phase === "failed" ||
+    (phase === "failed" && !inviteRefused) ||
     (phase === "unfinished" && Boolean(status.unfinished?.error)) ||
     phase === "disconnected";
   const problemBox =
