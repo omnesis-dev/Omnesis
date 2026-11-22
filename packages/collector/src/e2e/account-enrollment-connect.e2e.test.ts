@@ -636,7 +636,8 @@ describe.skipIf(!browserReady)("connect a gateway by signing in", () => {
     async () => {
       const gateway = await EnrollmentGateway.start(world, "portal-window");
       gateways.push(gateway);
-      const started = await gateway.connect("create");
+      // Creating an account here takes an invite by now.
+      const started = await gateway.connect("create", world.invite());
       expect(started.connect?.state).toBe("waiting");
       // The portal opens its window by script, cuts it off from its own tab, and marks the link.
       const link = new URL(started.connect!.authorizeUrl!);
