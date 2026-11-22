@@ -10,7 +10,7 @@
  * holds the two to the same expression.
  */
 import { execFileSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
+import { isEntryScript } from "../lib/is-entry-script.mjs";
 
 export const STABLE_TAG = /^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 
@@ -51,6 +51,6 @@ export function resolveNewestStableTag(repo, env = process.env) {
   return tag;
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+if (isEntryScript(import.meta.url)) {
   process.stdout.write(`${resolveNewestStableTag(process.cwd())}\n`);
 }

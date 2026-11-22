@@ -384,7 +384,10 @@ export async function ensureNativeVectorCompatibility({
   }
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+if (
+  process.argv[1] &&
+  realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))
+) {
   const index = process.argv.indexOf("--package-dir");
   try {
     if (index < 0 || !process.argv[index + 1] || process.argv.length !== 4)

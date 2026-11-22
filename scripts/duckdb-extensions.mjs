@@ -42,6 +42,7 @@ import {
   renameSync,
   rmSync,
   writeFileSync,
+  realpathSync,
 } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
@@ -283,7 +284,10 @@ export async function main(argv, { log = (line) => process.stderr.write(`${line}
   }
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (
+  process.argv[1] &&
+  realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))
+) {
   main(process.argv.slice(2)).then(
     (code) => {
       process.exitCode = code;

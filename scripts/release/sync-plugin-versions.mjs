@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { readFileSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const PLUGIN_MANIFESTS = [
@@ -54,6 +54,6 @@ export function syncPluginVersions(repoRoot) {
 }
 
 const scriptPath = fileURLToPath(import.meta.url);
-if (process.argv[1] && resolve(process.argv[1]) === scriptPath) {
+if (process.argv[1] && realpathSync(process.argv[1]) === realpathSync(scriptPath)) {
   syncPluginVersions(join(dirname(scriptPath), "..", ".."));
 }

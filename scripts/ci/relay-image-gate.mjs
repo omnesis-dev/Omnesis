@@ -19,7 +19,7 @@
  * Reads GH_TOKEN and GITHUB_API_URL; prints `source_sha=…`, `validation_run=…`
  * and `run_attempt=…` lines for $GITHUB_OUTPUT.
  */
-import { pathToFileURL } from "node:url";
+import { isEntryScript } from "../lib/is-entry-script.mjs";
 
 export const REPOSITORY = "omnesis-dev/Omnesis";
 const SOURCE_STEP = "Verify fixed source revision";
@@ -184,7 +184,7 @@ export async function checkValidationRun(runId, fetchJson = github) {
   return result;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isEntryScript(import.meta.url)) {
   try {
     const result = await checkValidationRun(process.argv[2]);
     process.stdout.write(

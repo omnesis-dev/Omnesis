@@ -3,8 +3,8 @@
 // Copyright (c) 2026 Adrien Conrath
 import { lstatSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { signalOwnedProcess } from "./update-fault.mjs";
+import { isEntryScript } from "../lib/is-entry-script.mjs";
 
 /** Called before mkdir, DNS, hosts, sudo, Docker or service operations. */
 export function validateHost(
@@ -98,7 +98,7 @@ async function main([command, ...args]) {
   if (command === "stop-mailbox") return stopMailbox(JSON.parse(readFileSync(args[0], "utf8")));
   throw new Error("unknown Docker tailnet host command");
 }
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isEntryScript(import.meta.url)) {
   main(process.argv.slice(2)).catch(() => {
     console.error("T3 host ownership assertion failed");
     process.exit(1);

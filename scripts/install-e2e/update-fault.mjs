@@ -20,7 +20,7 @@ import {
   unlinkSync,
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { isEntryScript } from "../lib/is-entry-script.mjs";
 
 /** Refuse persistent hosts before the lane creates any files or services. */
 export function validateDisposableRunner(env, work, source) {
@@ -506,7 +506,7 @@ async function main([command, ...args]) {
     });
   throw new Error("expected identity, fill, or interrupt");
 }
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isEntryScript(import.meta.url)) {
   main(process.argv.slice(2))
     .then((result) => process.stdout.write(JSON.stringify(result) + "\n"))
     .catch((error) => {

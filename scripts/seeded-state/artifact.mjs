@@ -17,6 +17,7 @@ import {
   rmSync,
   statSync,
   writeFileSync,
+  realpathSync,
 } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -856,7 +857,8 @@ export function installSeededStateArtifact(artifactDirectory, stateDirectory, op
   }
 }
 
-const isEntrypoint = process.argv[1] === fileURLToPath(import.meta.url);
+const isEntrypoint =
+  process.argv[1] && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
 if (isEntrypoint) {
   const [command, first, second] = process.argv.slice(2);
   if (command === "create") {

@@ -17,9 +17,9 @@
  */
 
 import { createHash } from "node:crypto";
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync, realpathSync } from "node:fs";
 import { join } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { readChangelogSection } from "./changelog.mjs";
 
 const INSTALLER = "artifacts/install.sh";
@@ -106,7 +106,10 @@ export function releaseRunEvidence(jobs) {
   return { packagesPublished };
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (
+  process.argv[1] &&
+  realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))
+) {
   try {
     const releaseDir = process.argv[2];
     const tag = process.env.RELEASE_TAG ?? "";

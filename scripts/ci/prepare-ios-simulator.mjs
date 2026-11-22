@@ -5,8 +5,7 @@
 // platform runtime needed by the embedded Watch app has been installed.
 // Print one booted iPhone UDID for callers to use as an exact destination.
 import { execFileSync } from "node:child_process";
-import { resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { isEntryScript } from "../lib/is-entry-script.mjs";
 
 const MIN_IOS_MAJOR = 17; // ios/project.yml deployment target
 const MIN_WATCH_MAJOR = 10; // ios/project.yml Watch deployment target
@@ -148,7 +147,7 @@ export function prepareIOSSimulator({
   return device.udid;
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isEntryScript(import.meta.url)) {
   try {
     process.stdout.write(`${prepareIOSSimulator()}\n`);
   } catch (error) {

@@ -53,6 +53,7 @@ import {
   formatViolation,
   refusalsOfArgv,
 } from "../release/installer-cli-contract.mjs";
+import { isEntryScript } from "../lib/is-entry-script.mjs";
 
 const repoRoot = resolve(fileURLToPath(new URL(".", import.meta.url)), "..", "..");
 /** What the CLI prints when it refuses a command line. */
@@ -293,7 +294,7 @@ function tty({ log, timeout = 2400 }, command) {
 
 // ── entry ─────────────────────────────────────────────────────────────────
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isEntryScript(import.meta.url)) {
   const argv = process.argv.slice(2);
   const dashes = argv.indexOf("--");
   const own = dashes === -1 ? argv : argv.slice(0, dashes);

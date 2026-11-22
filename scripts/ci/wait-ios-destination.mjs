@@ -4,8 +4,7 @@
 // CoreSimulator can report a booted phone before Xcode discovers it for a
 // scheme. Wait for the selected destination without retrying any test run.
 import { execFileSync, spawnSync } from "node:child_process";
-import { resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { isEntryScript } from "../lib/is-entry-script.mjs";
 
 const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 /** Longest one Xcode query may run. A healthy cold query on a hosted runner takes up to 160 s. */
@@ -150,7 +149,7 @@ export function waitForIOSDestination({
   );
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isEntryScript(import.meta.url)) {
   try {
     waitForIOSDestination({ destination: process.argv[2], packageFlags: process.argv.slice(3) });
   } catch (error) {

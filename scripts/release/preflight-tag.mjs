@@ -3,11 +3,12 @@
 
 import { spawnSync } from "node:child_process";
 import { dirname, resolve } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { checkProductVersion } from "./check-product-version.mjs";
 import { ActionsRunsError, readWorkflowRuns, runGh } from "./actions-runs.mjs";
 import { RERUN_COMMAND, formatVerdict, fullCiVerdict } from "./ci-verdict.mjs";
 import { OVERRIDE_FLAG, checkInstallE2eGate } from "./install-e2e-gate.mjs";
+import { realpathSync } from "node:fs";
 
 const defaultRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -109,7 +110,10 @@ function releaseVerdictBlocker(tag, sha, verdict) {
 }
 
 // `node preflight-tag.mjs v<version> [--allow-failed-install-e2e]`
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (
+  process.argv[1] &&
+  realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))
+) {
   const [tag, ...flags] = process.argv.slice(2);
   const unknown = flags.filter((flag) => flag !== OVERRIDE_FLAG);
   if (!tag || unknown.length > 0) {

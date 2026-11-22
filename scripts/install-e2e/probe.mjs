@@ -27,9 +27,8 @@
  */
 
 import { readFileSync, existsSync } from "node:fs";
-import { resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { parseCommand } from "./args.mjs";
+import { isEntryScript } from "../lib/is-entry-script.mjs";
 
 /** Device kinds `omnesis update --fleet` commands; any other kind is updated with its host. */
 const FLEET_KINDS = new Set(["collector", "agent"]);
@@ -299,7 +298,7 @@ async function main(argv) {
   process.exit(1);
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isEntryScript(import.meta.url)) {
   main(process.argv.slice(2)).catch((err) => {
     process.stderr.write(`probe: ${err instanceof Error ? err.message : String(err)}\n`);
     process.exit(1);
