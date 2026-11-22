@@ -23,8 +23,6 @@
 // which loads the asset, on the next request. A runtime whose trustd logs none
 // of these messages is not waited on.
 import { execFileSync } from "node:child_process";
-import { resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 
 const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 /** The newest trustd has decided which trust store it serves. */
@@ -186,7 +184,8 @@ export function waitForIOSTrustService({
   );
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+// Copied on its own into the lane's stand-in checkout, so it asks Node itself.
+if (import.meta.main) {
   try {
     const seconds = Number(process.env.OMNESIS_JOURNEY_TRUST_TIMEOUT ?? 600);
     waitForIOSTrustService({ udid: process.argv[2], timeoutMs: seconds * 1000 });
