@@ -1,5 +1,9 @@
 # @omnesis/agent-integration
 
+## 0.8.0
+
+No changes in this release.
+
 ## 0.7.8
 
 No changes in this release.
