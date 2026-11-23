@@ -185,6 +185,13 @@ export function waitForIOSTrustService({
       if (reported) log(`The simulator's trust service settled (trustd ${status.pid}).`);
       return status;
     }
+    const line = {
+      replacing: `The simulator's trust service (trustd ${status.pid}) is replacing its trust store since ${status.since}; waiting for the new trustd before any TLS connection.`,
+      installing: `The simulator's trust service (trustd ${status.pid}) has had supplemental trust data to install since ${status.since}; every TLS connection waits while it rewrites its pinning database, so waiting for the install to finish.`,
+      starting: `The simulator's trust service (trustd ${status.pid}) is starting; waiting for it to load its trust store.`,
+    }[status.state];
+    if (line !== reported) log(line);
+    reported = line;
     const gone =
       status.state === "replacing" &&
       !askToLeave(status.pid, asked, { now, graceMs, command, kill, log });
@@ -203,13 +210,6 @@ export function waitForIOSTrustService({
         return status;
       }
     }
-    const line = {
-      replacing: `The simulator's trust service (trustd ${status.pid}) is replacing its trust store since ${status.since}; waiting for the new trustd before any TLS connection.`,
-      installing: `The simulator's trust service (trustd ${status.pid}) has had supplemental trust data to install since ${status.since}; every TLS connection waits while it rewrites its pinning database, so waiting for the install to finish.`,
-      starting: `The simulator's trust service (trustd ${status.pid}) is starting; waiting for it to load its trust store.`,
-    }[status.state];
-    if (line !== reported) log(line);
-    reported = line;
     if (now() >= deadline) break;
     wait(Math.min(pollMs, Math.max(0, deadline - now())));
   }
