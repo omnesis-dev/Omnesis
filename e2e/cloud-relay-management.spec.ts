@@ -128,6 +128,15 @@ async function management(
     }
     await route.fulfill({ json: status });
   });
+  // Connectivity's one answer for new devices, with no Tailscale device here: the account's policy.
+  await page.route("**/admin/remote-access/new-devices", async (route) => {
+    const body = route.request().postDataJSON();
+    calls.push({ operation: "new-devices", body });
+    expect(route.request().method()).toBe("PUT");
+    expect(route.request().headers()["x-omnesis-csrf"]).toBeTruthy();
+    status = { ...status, deviceEnrollment: { ...status.deviceEnrollment, policy: body.policy } };
+    await route.fulfill({ json: { relay: status } });
+  });
   await signIn(page);
   await page.goto(`/portal/settings/${part}`);
   await expect(page.locator(".relay-view").first()).toBeVisible();
@@ -701,10 +710,10 @@ test("a freshly linked gateway shows its account at once, and Connectivity's ans
   await ask.click();
   await expect(ask).toBeChecked();
   await expect(automatic).not.toBeChecked();
-  expect(relay.calls).toEqual([{ operation: "enrollment", body: { policy: "ask" } }]);
+  expect(relay.calls).toEqual([{ operation: "new-devices", body: { policy: "ask" } }]);
   await automatic.click();
   await expect(automatic).toBeChecked();
-  expect(relay.calls.at(-1)).toEqual({ operation: "enrollment", body: { policy: "automatic" } });
+  expect(relay.calls.at(-1)).toEqual({ operation: "new-devices", body: { policy: "automatic" } });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.screenshot({
     path: test.info().outputPath("new-devices-default-mobile.png"),
