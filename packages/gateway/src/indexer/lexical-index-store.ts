@@ -59,7 +59,6 @@ const RETIRED_FTS = "chunks_fts_retired";
 const ACTIVE_VOCAB = "chunks_fts_vocab";
 
 /** SQL function: `lexical_text(version, text)` cuts `text` by `version`'s rewrite. */
-// Known bug: #1250 — releases without this function fail on these triggers after a rollback.
 const LEXICAL_TEXT_FN = "lexical_text";
 
 /**
