@@ -15,29 +15,51 @@
 // clean; such stalls have ended only when the gateway dropped a handshake
 // that had waited two minutes (#1206).
 //
+// A trustd that stays then installs Apple's supplemental trust data
+// (PKITrustSupplementals), which mobileassetd announces a few minutes after the
+// boot and announces again to each new trustd. The install rewrites trustd's
+// pinning database, and every certificate evaluation waits on that database
+// until the rewrite commits: two to four minutes on a hosted runner, during
+// which every TLS connection in the simulator stalls (#1252).
+//
 // The trust service is settled once its newest process has made its startup
-// decision about the trust store (it logs the store's status) and has not
-// announced an exit or started a download. A trustd that announced its exit is
-// asked to leave at once (SIGTERM, then SIGKILL): nothing else in the
-// simulator is using it yet, and the simulator's launchd starts a new trustd,
-// which loads the asset, on the next request. A runtime whose trustd logs none
-// of these messages is not waited on.
+// decision about the trust store (it logs the store's status), has not
+// announced an exit, and no supplemental trust data announced to any trustd is
+// still waiting to be installed. A trustd that announced its exit is asked to
+// leave at once (SIGTERM, then SIGKILL): nothing else in the simulator is using
+// it yet, and the simulator's launchd starts a new trustd, which loads the
+// asset, on the next request. A trustd installing trust data is left to
+// finish. A runtime whose trustd logs none of these messages is not waited on.
+//
+// `--keep` runs the same replacement from the simulator's boot until it is
+// terminated, so the handover, and the install the new trustd then makes,
+// happen while the app builds instead of when the journeys begin.
 import { execFileSync } from "node:child_process";
 
 const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 /** The newest trustd has decided which trust store it serves. */
 const DECIDED = /Current PKITrustStore status/;
-/** The newest trustd is on its way out: it will exit to load a new asset. */
-const LEAVING =
-  /Will exit when clean|begin download of OTATrust asset|New asset path obtained|Received asset download notification/;
-const PREDICATE = 'process == "trustd" AND category == "OTATrust"';
+/**
+ * The newest trustd is on its way out: it will exit to load a new asset. A
+ * download alone is not a departure: a trustd that stays downloads the
+ * supplemental trust data it then installs.
+ */
+const LEAVING = /Will exit when clean|New asset path obtained|Received asset download notification/;
+/** Supplemental trust data was announced to a trustd, or its install began. */
+const INSTALL_DUE =
+  /Got notification about a new PKITrustSupplementals asset|Pinning database should update|updating asset version from/;
+/** A trustd finished installing supplemental trust data. */
+const INSTALLED = /finished update to version/;
+const PREDICATE = 'process == "trustd" AND (category == "OTATrust" OR category == "pinningDb")';
 /** The executable of a simulator runtime's trustd, as `ps` shows it. */
 const SIMULATOR_TRUSTD = /\/RuntimeRoot\/usr\/libexec\/trustd$/;
 
 /**
  * Classify the simulator's trustd from its trust-asset log entries, oldest
  * first: `settled`, `starting` (its newest process has not decided yet),
- * `replacing` (it announced an exit or a download), or `unknown` (no entries).
+ * `replacing` (it announced an exit), `installing` (supplemental trust data is
+ * announced or being installed and not yet installed), or `unknown` (no
+ * entries).
  */
 export function trustServiceState(entries) {
   if (entries.length === 0) return { state: "unknown" };
@@ -53,6 +75,11 @@ export function trustServiceState(entries) {
   if (leaving) return { state: "replacing", pid, since: leaving.timestamp, own };
   if (!own.some((entry) => DECIDED.test(entry.eventMessage)))
     return { state: "starting", pid, own };
+  const due = entries.findLastIndex((entry) => INSTALL_DUE.test(entry.eventMessage));
+  const installed = entries.findLastIndex((entry) => INSTALLED.test(entry.eventMessage));
+  if (due > installed) {
+    return { state: "installing", pid, since: entries[due].timestamp, own: entries.slice(due) };
+  }
   return { state: "settled", pid, own };
 }
 
@@ -104,14 +131,35 @@ function execute(command, args) {
   });
 }
 
+const sleep = (milliseconds) =>
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
+
+/**
+ * Asks a trustd that announced its exit to leave: SIGTERM at once, SIGKILL
+ * once `graceMs` has passed. A simulator's processes are host processes, so the
+ * simulator log's process id is the host's. The command line is checked before
+ * any signal, so a process id the system has since reused is never signalled.
+ * Returns false when that trustd is gone.
+ */
+function askToLeave(pid, asked, { now, graceMs, command, kill, log }) {
+  if (!SIMULATOR_TRUSTD.test(command(pid))) return false;
+  if (!asked.has(pid)) {
+    log(`Asking trustd ${pid} to exit now, as it announced.`);
+    kill(pid, "SIGTERM");
+    asked.set(pid, now());
+  } else if (now() - asked.get(pid) >= graceMs) {
+    kill(pid, "SIGKILL");
+  }
+  return true;
+}
+
 /** Substitute process and clock seams to verify the wait without a simulator. */
 export function waitForIOSTrustService({
   udid,
   run = execute,
   now = Date.now,
-  wait = (milliseconds) =>
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds),
-  timeoutMs = 600_000,
+  wait = sleep,
+  timeoutMs = 900_000,
   pollMs = 5_000,
   graceMs = 15_000,
   undecidedMs = 120_000,
@@ -137,10 +185,9 @@ export function waitForIOSTrustService({
       if (reported) log(`The simulator's trust service settled (trustd ${status.pid}).`);
       return status;
     }
-    // A simulator's processes are host processes, so the simulator log's
-    // process id is the host's. The command line is checked before any
-    // signal, so a process id the system has since reused is never signalled.
-    const gone = status.state === "replacing" && !SIMULATOR_TRUSTD.test(command(status.pid));
+    const gone =
+      status.state === "replacing" &&
+      !askToLeave(status.pid, asked, { now, graceMs, command, kill, log });
     // A trustd that has neither decided nor announced anything for this long
     // logs its decision some other way; it is not on its way out. A trustd
     // that has left is replaced on the next request, by then with the asset in
@@ -156,21 +203,13 @@ export function waitForIOSTrustService({
         return status;
       }
     }
-    const line =
-      status.state === "replacing"
-        ? `The simulator's trust service (trustd ${status.pid}) is replacing its trust store since ${status.since}; waiting for the new trustd before any TLS connection.`
-        : `The simulator's trust service (trustd ${status.pid}) is starting; waiting for it to load its trust store.`;
+    const line = {
+      replacing: `The simulator's trust service (trustd ${status.pid}) is replacing its trust store since ${status.since}; waiting for the new trustd before any TLS connection.`,
+      installing: `The simulator's trust service (trustd ${status.pid}) has had supplemental trust data to install since ${status.since}; every TLS connection waits while it rewrites its pinning database, so waiting for the install to finish.`,
+      starting: `The simulator's trust service (trustd ${status.pid}) is starting; waiting for it to load its trust store.`,
+    }[status.state];
     if (line !== reported) log(line);
     reported = line;
-    if (status.state === "replacing" && !gone) {
-      if (!asked.has(status.pid)) {
-        log(`Asking trustd ${status.pid} to exit now, as it announced.`);
-        kill(status.pid, "SIGTERM");
-        asked.set(status.pid, now());
-      } else if (now() - asked.get(status.pid) >= graceMs) {
-        kill(status.pid, "SIGKILL");
-      }
-    }
     if (now() >= deadline) break;
     wait(Math.min(pollMs, Math.max(0, deadline - now())));
   }
@@ -178,17 +217,68 @@ export function waitForIOSTrustService({
     .slice(-8)
     .map((entry) => `  ${entry.timestamp} ${entry.eventMessage}`)
     .join("\n");
+  // An install whose end is never logged is no reason to fail a lane that may
+  // well pass: the journeys start, as they did before this wait existed.
+  if (status.state === "installing") {
+    log(
+      `The simulator's trust service logged no end to its trust data install within ${timeoutMs / 1000}s; starting anyway. Its last messages:\n${tail}`,
+    );
+    return status;
+  }
   throw new Error(
     `the simulator's trust service (trustd) did not settle within ${timeoutMs / 1000}s, ` +
       `and every TLS connection in the simulator waits on it. Its last trust store messages:\n${tail}`,
   );
 }
 
+/**
+ * Replaces each trustd that announces its exit, from the simulator's boot
+ * until `stopped()` (from the command line: until terminated), and waits on
+ * nothing else. A trustd waiting to be clean leaves the supplemental trust
+ * data mobileassetd announces to it uninstalled; replacing it early lets its
+ * successor install that data while the app builds.
+ */
+export function keepIOSTrustServiceReplaced({
+  udid,
+  run = execute,
+  now = Date.now,
+  wait = sleep,
+  pollMs = 15_000,
+  graceMs = 15_000,
+  command = commandOf,
+  kill = signal,
+  log = (text) => process.stderr.write(`${text}\n`),
+  stopped = () => false,
+} = {}) {
+  if (!UUID.test(udid ?? "")) throw new Error(`Expected a simulator UDID: ${udid}`);
+  const asked = new Map();
+  let reported = "";
+  while (!stopped()) {
+    let status;
+    try {
+      status = trustServiceState(readEntries(udid, run));
+    } catch (error) {
+      status = { state: `unreadable (${error.message.split("\n")[0]})` };
+    }
+    const line = `trustd ${status.pid ?? "-"}: ${status.state}`;
+    if (line !== reported) log(`${new Date(now()).toISOString()} ${line}`);
+    reported = line;
+    if (status.state === "replacing") {
+      askToLeave(status.pid, asked, { now, graceMs, command, kill, log });
+    }
+    wait(pollMs);
+  }
+}
+
 // Copied on its own into the lane's stand-in checkout, so it asks Node itself.
 if (import.meta.main) {
   try {
-    const seconds = Number(process.env.OMNESIS_JOURNEY_TRUST_TIMEOUT ?? 600);
-    waitForIOSTrustService({ udid: process.argv[2], timeoutMs: seconds * 1000 });
+    if (process.argv[2] === "--keep") {
+      keepIOSTrustServiceReplaced({ udid: process.argv[3] });
+    } else {
+      const seconds = Number(process.env.OMNESIS_JOURNEY_TRUST_TIMEOUT ?? 900);
+      waitForIOSTrustService({ udid: process.argv[2], timeoutMs: seconds * 1000 });
+    }
   } catch (error) {
     process.stderr.write(`✗ ${error.message}\n`);
     process.exitCode = 1;

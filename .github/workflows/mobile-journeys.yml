@@ -31,6 +31,8 @@ on:
       - "scripts/synth-gateway.sh"
       - "scripts/ci/xcodebuild-ui-tests.mjs"
       - "scripts/ci/macos-interactive-job.sh"
+      - "scripts/ci/wait-ios-trust-service.mjs"
+      - "scripts/ci/ios-journey-stall-watch.sh"
       - "evals/universes/default/agent-demos/**"
       - "evals/universes/e2e-minimal/**"
       - ".github/workflows/mobile-journeys.yml"
@@ -79,7 +81,7 @@ jobs:
           set -euo pipefail
           files="$(git diff --name-only "$BASE_SHA...$HEAD_SHA")"
           shared='^(scripts/(run-mobile-journeys|synth-gateway)\.sh|evals/universes/(default/agent-demos|e2e-minimal)/|\.github/workflows/mobile-journeys\.yml)'
-          ios_only='^(ios/|scripts/ci/(xcodebuild-ui-tests\.mjs|macos-interactive-job\.sh))'
+          ios_only='^(ios/|scripts/ci/(xcodebuild-ui-tests\.mjs|macos-interactive-job\.sh|wait-ios-trust-service\.mjs|ios-journey-stall-watch\.sh))'
           ios=false
           android=false
           if grep -Eq "$ios_only|$shared" <<<"$files"; then ios=true; fi

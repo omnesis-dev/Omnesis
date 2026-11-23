@@ -39,7 +39,7 @@
 #   OMNESIS_JOURNEY_READY_TIMEOUT    seconds to wait for the corpus to be searchable (default: 900)
 #   OMNESIS_JOURNEY_IOS_SIMULATOR    simulator device name (default: iPhone 17)
 #   OMNESIS_JOURNEY_IOS_UDID         exact prepared simulator (overrides the name)
-#   OMNESIS_JOURNEY_TRUST_TIMEOUT    seconds to wait for the simulator's trust service (default: 600)
+#   OMNESIS_JOURNEY_TRUST_TIMEOUT    seconds to wait for the simulator's trust service (default: 900)
 #   OMNESIS_JOURNEY_ONLY             run one journey: an XCTest identifier (iOS) or
 #                                    Class#method (Android)
 
@@ -120,8 +120,21 @@ stop_recording() {
   fi
 }
 
+# Replaces the simulator's trustd whenever it announces its exit, from the
+# boot until the journeys' own wait takes over (`wait-ios-trust-service.mjs
+# --keep`).
+TRUST_KEEPER_PID=""
+stop_trust_keeper() {
+  if [[ -n "$TRUST_KEEPER_PID" ]]; then
+    kill "$TRUST_KEEPER_PID" 2>/dev/null || true
+    wait "$TRUST_KEEPER_PID" 2>/dev/null || true
+    TRUST_KEEPER_PID=""
+  fi
+}
+
 cleanup() {
   local status=$?
+  stop_trust_keeper
   stop_recording
   "$ROOT/scripts/synth-gateway.sh" stop >/dev/null 2>&1 || true
   mkdir -p "$ARTIFACTS/gateway-logs"
@@ -173,6 +186,13 @@ print(max(matches)[1])
   xcrun simctl boot "$udid" 2>/dev/null || true
   xcrun simctl bootstatus "$udid" -b >/dev/null
   IOS_UDID="$udid"
+  # A fresh simulator's trustd replaces its trust store, then installs
+  # supplemental trust data that stalls every TLS connection while it lands.
+  # Keeping trustd replaced from the boot lets both happen during the build
+  # and the indexing instead of during the journeys (#1206, #1252).
+  node "$ROOT/scripts/ci/wait-ios-trust-service.mjs" --keep "$udid" \
+    >"$ARTIFACTS/trust-keeper.log" 2>&1 &
+  TRUST_KEEPER_PID=$!
 
   (cd "$ROOT/ios" && xcodegen generate >/dev/null)
   export OMNESIS_IOS_PACKAGES_DIR="${OMNESIS_IOS_PACKAGES_DIR:-$ROOT/ios/build/packages}"
@@ -235,7 +255,9 @@ print(json.dumps({"gatewayURL": os.environ["URL"], "token": os.environ["TOKEN"],
   fi
 
   # Every TLS handshake in the simulator waits on its trust service, which
-  # replaces its trust store about when the journeys begin (#1206).
+  # replaces its trust store and installs supplemental trust data in the first
+  # half hour after the boot (#1206, #1252).
+  stop_trust_keeper
   node "$ROOT/scripts/ci/wait-ios-trust-service.mjs" "$udid" || return 1
 
   xcrun simctl io "$udid" recordVideo --codec h264 --force "$ARTIFACTS/ios-journeys.mp4" \

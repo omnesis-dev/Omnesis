@@ -124,13 +124,21 @@ Every TLS handshake in the simulator, the app's and the test runner's, waits
 for the simulator's trust service (trustd) to evaluate the gateway's
 certificate. A freshly booted simulator's trustd fetches trust store assets
 from Apple and then exits so that a new trustd can load them; until the new
-one starts, every handshake waits, for minutes on a hosted runner. That
-happens about 20 minutes after the boot, when the journeys begin, so before
-the first journey `scripts/ci/wait-ios-trust-service.mjs` waits until the
-newest trustd has loaded its trust store without announcing an exit. A trustd
-that has announced its exit is asked to leave at once, and the lane fails,
-naming trustd, if it has not settled within ten minutes
-(`OMNESIS_JOURNEY_TRUST_TIMEOUT`, in seconds).
+one starts, every handshake waits, for minutes on a hosted runner. The trustd
+that stays then installs supplemental trust data Apple publishes, rewriting
+its pinning database, and every handshake waits again until that is done, two
+to four minutes on a hosted runner. Left alone, both happen about 20 minutes
+after the boot, when the journeys begin.
+
+So from the boot, `scripts/ci/wait-ios-trust-service.mjs --keep` asks each
+trustd that announces its exit to leave at once, which lets the replacement
+and the install happen while the app builds and the corpus is indexed. Before
+the first journey, the same script without `--keep` waits until the newest
+trustd has loaded its trust store without announcing an exit and has installed
+any supplemental trust data announced to it. The lane fails, naming trustd, if
+a replacement has not finished within fifteen minutes
+(`OMNESIS_JOURNEY_TRUST_TIMEOUT`, in seconds); an install that logs no end by
+then lets the journeys start.
 
 A touch that ends `cancelled` with `_UISystemGestureGateGestureRecognizer`
 recognised was taken by the system for one of its own gestures: the control

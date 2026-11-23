@@ -2,7 +2,11 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { describe, expect, test } from "vitest";
-import { trustServiceState, waitForIOSTrustService } from "./wait-ios-trust-service.mjs";
+import {
+  keepIOSTrustServiceReplaced,
+  trustServiceState,
+  waitForIOSTrustService,
+} from "./wait-ios-trust-service.mjs";
 
 const UDID = "00000000-0000-4000-8000-000000000001";
 const TRUSTD = "/Library/Developer/CoreSimulator/Volumes/iOS/RuntimeRoot/usr/libexec/trustd";
@@ -28,6 +32,33 @@ const secondTrustd = [
 const thirdTrustd = [
   ...startup(303, 1250),
   entry(303, 1251, "Available version: 0, our current version: 2026040100, content locked: true"),
+];
+// Supplemental trust data, as a hosted runner's simulator logged it (#1252):
+// mobileassetd announces it to the first trustd, which is waiting to exit and
+// leaves it uninstalled, then again to the trustd that settled. Installing it
+// rewrites the pinning database, and every evaluation waits until it is done.
+const announcedToFirst = entry(
+  101,
+  300,
+  "Got notification about a new PKITrustSupplementals asset from mobileassetd.",
+);
+const installByThird = [
+  entry(303, 1330, "Got notification about a new PKITrustSupplementals asset from mobileassetd."),
+  entry(303, 1342, "begin download of OTATrust asset"),
+  entry(303, 1450, "Pinning database should update from version 121 to version 131"),
+  entry(303, 1620, "updating asset version from 1013 to 1014"),
+];
+const installedByThird = entry(
+  303,
+  1680,
+  "finished update to version 1014 from installed asset. purging asset.",
+);
+const withSupplementals = [
+  ...firstTrustd.slice(0, 4),
+  announcedToFirst,
+  ...firstTrustd.slice(4),
+  ...secondTrustd,
+  ...thirdTrustd,
 ];
 
 function entry(processID, second, eventMessage) {
@@ -75,6 +106,107 @@ describe("the simulator's trust service", () => {
       state: "settled",
       pid: 303,
     });
+  });
+
+  test("waits for announced supplemental trust data to be installed, by whichever trustd", () => {
+    expect(trustServiceState(withSupplementals)).toMatchObject({ state: "installing", pid: 303 });
+    // Downloading it is not a departure: the trustd installing it is never asked to leave.
+    expect(trustServiceState([...withSupplementals, ...installByThird.slice(0, 2)])).toMatchObject({
+      state: "installing",
+      pid: 303,
+    });
+    expect(
+      trustServiceState([...withSupplementals, ...installByThird, installedByThird]),
+    ).toMatchObject({ state: "settled", pid: 303 });
+    // A later announcement is due again.
+    expect(
+      trustServiceState([
+        ...withSupplementals,
+        ...installByThird,
+        installedByThird,
+        entry(
+          303,
+          1700,
+          "Got notification about a new PKITrustSupplementals asset from mobileassetd.",
+        ),
+      ]),
+    ).toMatchObject({ state: "installing", pid: 303 });
+    // A replacement still comes first.
+    expect(
+      trustServiceState([...firstTrustd.slice(0, 4), announcedToFirst, firstTrustd[4]]),
+    ).toMatchObject({
+      state: "replacing",
+      pid: 101,
+    });
+  });
+
+  test("waits through the install without signalling the trustd that makes it", () => {
+    const { run } = simulator([
+      withSupplementals,
+      [...withSupplementals, ...installByThird.slice(0, 2)],
+      [...withSupplementals, ...installByThird],
+      [...withSupplementals, ...installByThird, installedByThird],
+    ]);
+    const signals = [];
+    const lines = [];
+    const time = clock();
+    const status = waitForIOSTrustService({
+      udid: UDID,
+      run,
+      ...time,
+      command: () => TRUSTD,
+      kill: (pid, name) => signals.push(`${name} ${pid}`),
+      log: (text) => lines.push(text),
+    });
+    expect(status).toMatchObject({ state: "settled", pid: 303 });
+    expect(signals).toEqual([]);
+    expect(time.now()).toBe(15_000);
+    expect(lines[0]).toContain("trustd 303) has had supplemental trust data to install");
+    expect(lines.at(-1)).toBe("The simulator's trust service settled (trustd 303).");
+  });
+
+  test("starts anyway, without failing, when an install never logs its end", () => {
+    const { run } = simulator([[...withSupplementals, ...installByThird]]);
+    const lines = [];
+    const time = clock();
+    const status = waitForIOSTrustService({
+      udid: UDID,
+      run,
+      ...time,
+      timeoutMs: 60_000,
+      log: (text) => lines.push(text),
+    });
+    expect(status).toMatchObject({ state: "installing", pid: 303 });
+    expect(time.now()).toBe(60_000);
+    expect(lines.at(-1)).toMatch(
+      /no end to its trust data install within 60s; starting anyway[\s\S]*updating asset version/,
+    );
+  });
+
+  test("keeps replacing each trustd that announces its exit until stopped", () => {
+    const { run, calls } = simulator([
+      startup(101, 0),
+      firstTrustd.slice(0, 5),
+      firstTrustd.slice(0, 5),
+      [...firstTrustd, ...secondTrustd],
+      [...firstTrustd, ...secondTrustd, ...thirdTrustd],
+      withSupplementals,
+    ]);
+    const signals = [];
+    const time = clock();
+    keepIOSTrustServiceReplaced({
+      udid: UDID,
+      run,
+      ...time,
+      pollMs: 15_000,
+      graceMs: 15_000,
+      command: () => TRUSTD,
+      kill: (pid, name) => signals.push(`${name} ${pid}`),
+      log: () => {},
+      stopped: () => calls.length >= 8,
+    });
+    // The install by the trustd that stays is left alone.
+    expect(signals).toEqual(["SIGTERM 101", "SIGKILL 101", "SIGTERM 202"]);
   });
 
   test("waits through each replacement, asking each announced trustd to exit, until a new one settles", () => {

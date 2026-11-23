@@ -290,6 +290,8 @@ describe.skipIf(process.platform === "win32")(
         expect.arrayContaining([
           "ios-journeys.xcresult",
           "ios-journeys-runner-not-initialized.xcresult",
+          // The trust service keeper ran from the boot and was stopped.
+          "trust-keeper.log",
         ]),
       );
       const log = readFileSync(join(artifacts, "xcodebuild.log"), "utf8");
