@@ -69,6 +69,9 @@ describe("scripts/ci/gradle-cache-trim.sh", () => {
     expect(result.stdout.slice(after)).not.toContain("caches/build-cache-1");
     expect(result.stdout.slice(after)).toContain("caches/modules-2");
     expect(result.stdout.slice(after)).toContain("wrapper/dists/gradle-8.11.1-bin");
+    expect(result.stdout.slice(before, after)).toContain("caches/8.11.1/transforms");
+    expect(result.stdout.slice(after)).toContain("caches/8.11.1/kotlin-dsl");
+    expect(result.stdout.slice(after)).not.toContain("caches/8.11.1/transforms");
   });
 
   test("does nothing when no Gradle cache was restored or written", () => {

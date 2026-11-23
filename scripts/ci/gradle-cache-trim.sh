@@ -27,16 +27,17 @@ set -euo pipefail
 
 home="${GRADLE_USER_HOME:-$HOME/.gradle}"
 
-# Every entry one level down in caches/ and wrapper/dists/, and in Gradle's
-# per-version cache directories, largest first, in MiB.
+# Every entry one level down in caches/ and wrapper/dists/, with Gradle's
+# per-version cache directories broken down one level further, largest first,
+# in MiB. Each is measured on its own: du counts a directory once per call, so
+# one call would leave a per-version directory's children out.
 sizes() {
-  local dirs=("$home"/caches/* "$home"/caches/[0-9]*.*/* "$home"/wrapper/dists/*)
-  local existing=()
-  for dir in "${dirs[@]}"; do
-    [[ -e "$dir" ]] && existing+=("$dir")
-  done
-  ((${#existing[@]})) || return 0
-  du -sk "${existing[@]}" | sort -rn | awk -v home="$home/" '
+  local entry
+  for entry in "$home"/caches/* "$home"/caches/[0-9]*.*/* "$home"/wrapper/dists/*; do
+    [[ -e "$entry" ]] || continue
+    [[ "$entry" =~ /caches/[0-9]+\.[^/]*$ ]] && continue
+    du -sk "$entry"
+  done | sort -rn | awk -v home="$home/" '
     { sub(home, "", $2); printf "%8d MiB  %s\n", $1 / 1024, $2 }'
 }
 
