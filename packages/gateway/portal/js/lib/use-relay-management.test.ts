@@ -13,6 +13,12 @@ vi.mock("./cloud-relay-api.js", async (original) => ({
   relayManagement: request,
   gatewayVersion,
 }));
+import { Hono } from "hono";
+import { SCOPE_ADMIN } from "@omnesis/types";
+import { mountCloudRelayManagementRoutes } from "../../../src/http/routes/admin/cloud-relay.js";
+import { strictRoute } from "../../../src/http/scope.js";
+import type { AppEnv } from "../../../src/http/routes/types.js";
+import type { CloudRelayManagement, CloudRelayManagementStatus } from "@omnesis/cloud-relay";
 // @ts-expect-error portal JS
 import { useRelayManagement } from "./use-relay-management.js";
 let host: HTMLElement;
@@ -165,6 +171,44 @@ test("a step-up failure is said in its own words, and any other failure in the p
   request.mockRejectedValueOnce(Object.assign(new Error("private detail"), { stepUp: false }));
   await act(async () => current.run("enable", {}));
   expect(current.error).toContain("Couldn't load or update");
+});
+test("after another relay action, the page still says the passkey comes next", async () => {
+  // The gateway's own routes answer, for a session whose loosening actions ask for a passkey.
+  const status = { revision: 1, enabled: true } as unknown as CloudRelayManagementStatus;
+  const service = {
+    status: vi.fn(async () => status),
+    reconnect: vi.fn(async () => ({ ...status, revision: 2 })),
+  } as unknown as CloudRelayManagement;
+  const router = strictRoute(new Hono<AppEnv>());
+  router.use("*", async (c, next) => {
+    c.set("auth", { authMethod: "bearer", deviceId: null, tokenId: null, scopes: [SCOPE_ADMIN] });
+    c.set("stepUps", { required: () => true } as unknown as AppEnv["Variables"]["stepUps"]);
+    await next();
+  });
+  mountCloudRelayManagementRoutes(router, service);
+  request.mockImplementation(async (operation: string, input: unknown) => {
+    const response = await router.request(
+      `/admin/cloud-relay${operation ? `/${operation}` : ""}`,
+      operation
+        ? {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(input),
+          }
+        : {},
+    );
+    return response.json();
+  });
+  await mount();
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(0);
+  });
+  expect(current.status).toEqual({ revision: 1, enabled: true, stepUpRequired: true });
+  await act(async () => current.run("reconnect", {}));
+  expect(service.reconnect).toHaveBeenCalledOnce();
+  // The action's answer replaced the status, and the next read is five seconds away.
+  expect(current.status).toEqual({ revision: 2, enabled: true, stepUpRequired: true });
+  expect(request).toHaveBeenCalledTimes(2);
 });
 test("a status another route answered with replaces the status, and a read that started before it can't undo it", async () => {
   request.mockResolvedValueOnce({ revision: 1 });
