@@ -21,7 +21,7 @@ import { BadRequestError, NotFoundError } from "../errors.js";
 import { enforceWriteScopeForSource, scope } from "../scope.js";
 import { validateJson, validateQuery } from "../validate.js";
 import { createNoteBody, patchNoteBody, notesProvenanceQuery } from "../schemas/index.js";
-import { clientIp, isLoopbackRequest } from "./admin/internals.js";
+import { credentialRateLimitKey, isLoopbackRequest } from "./admin/internals.js";
 import type { NoteEntry, OmnesisNotesRuntime } from "../../sources/omnesis-notes/index.js";
 import type { RouteApp } from "./types.js";
 import type { NoteAgentReceipt, NoteAgentRow } from "../../brain/note-agent/storage.js";
@@ -128,11 +128,11 @@ export function mountNotesRoutes(app: RouteApp, deps: NotesRoutesDeps): void {
   };
 
   app.post("/notes", scope.writeAny(), validateJson(createNoteBody), async (c) => {
-    // Per-IP rate limit with the loopback exemption (a same-host client
+    // Per-credential rate limit with the loopback exemption (a same-host client
     // already has full local access); the check reads the raw socket so
     // a forwarded IP can't spoof it. The ceiling is human-capture-scale
     // — it stops a pathological capture loop, never a human's cadence.
-    if (!isLoopbackRequest(c) && captureLimiter.consume(clientIp(c))) {
+    if (!isLoopbackRequest(c) && captureLimiter.consume(credentialRateLimitKey(c))) {
       return c.json({ error: "Too many capture requests — try again later" }, 429, {
         "Retry-After": "60",
       });

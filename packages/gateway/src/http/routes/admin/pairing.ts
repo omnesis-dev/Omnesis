@@ -22,9 +22,13 @@ export function mountPairingRoutes(app: RouteApp, deps: AdminRoutesDeps): void {
   // `/devices/pair` is unauthenticated by design (the
   // pairing code IS the credential). A 40-bit code is brute-forceable
   // from the LAN inside its 10-minute TTL under stress; the
-  // per-source-IP token-bucket here makes that infeasible. The
-  // limiter doesn't echo refusal detail to the client — operators see
-  // failed attempts in the gateway log, not in the response.
+  // per-source-IP token-bucket here makes that infeasible. Every attempt
+  // is charged before the code is checked, so concurrent guesses can't
+  // outrun the budget, and an attempt that pairs a device is refunded: only
+  // failed codes count, so devices pairing from one shared
+  // address never lock each other out. The limiter doesn't echo refusal
+  // detail to the client — operators see failed attempts in the gateway
+  // log, not in the response.
   const pairLimiter = pairingRateLimiter();
 
   app.post("/devices/pair", scope.public(), validateJson(consumePairingBody), async (c) => {
@@ -53,6 +57,8 @@ export function mountPairingRoutes(app: RouteApp, deps: AdminRoutesDeps): void {
         ? new HttpError(409, result.code, result.error)
         : new ConflictError(result.error);
     }
+    // The code paired a device, so this attempt was no guess.
+    pairLimiter.refund(ip);
     if (result.outcome === "paired-agent") {
       return c.json({
         device: result.device,

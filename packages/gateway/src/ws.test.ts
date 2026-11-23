@@ -274,9 +274,8 @@ afterAll(async () => {
 
 describe("DeviceWsServer", () => {
   test("the production Hermes adapter completes an older wake's lifecycle on the real device route", async () => {
-    // Keep the production-adapter probe on its own server. The suite exercises
-    // the real WS authentication limiter elsewhere; sharing that limiter made
-    // this test order-dependent once enough hello attempts accumulated.
+    // Keep the production-adapter probe on its own server, isolated from the
+    // connections and authentication budget the rest of the suite shares.
     const localDbPath = join(tmpdir(), `omnesis-ws-hermes-${randomUUID()}.db`);
     const localDb = createDatabase(localDbPath);
     const agent = createDevice(localDb, { name: "fictional-hermes-agent", kind: "agent" });
@@ -1049,8 +1048,7 @@ describe("DeviceWsServer", () => {
  * every other source's batches behind them and the whole device goes silently
  * stale. Re-deriving the grant on each handshake heals it without a re-pair.
  *
- * Driven against a dedicated server so these connections don't spend the
- * shared suite's per-IP hello budget.
+ * Driven against a dedicated server, apart from the shared suite's connections.
  */
 describe("DeviceWsServer scope reconciliation on handshake", () => {
   let scopeDbPath: string;
@@ -1467,5 +1465,89 @@ describe("DeviceWsServer connection cap", () => {
     srv.onClose(readmitted.ws);
     capDb.close();
     if (existsSync(capPath)) unlinkSync(capPath);
+  });
+});
+
+describe("DeviceWsServer token-check rate limit", () => {
+  let limitDbPath: string;
+  let limitDb: ReturnType<typeof createDatabase>;
+  let srv: DeviceWsServer;
+  let validToken: string;
+  // Several of one owner's devices behind a single address: a household NAT,
+  // a container port proxy, a reverse proxy without trusted forwarding.
+  const sharedAddress = "203.0.113.7";
+
+  beforeEach(() => {
+    limitDbPath = join(tmpdir(), `omnesis-ws-limit-${randomUUID()}.db`);
+    limitDb = createDatabase(limitDbPath);
+    srv = new DeviceWsServer({
+      db: limitDb,
+      writeGate: directWriteGate(limitDb),
+      authTimeoutMs: 60_000,
+    });
+    const device = createDevice(limitDb, { name: "limit-collector", kind: "collector" });
+    validToken = createToken(limitDb, device.id, [SCOPE_WRITE_ALL]).token;
+  });
+
+  afterEach(() => {
+    limitDb.close();
+    cleanupDb(limitDbPath);
+  });
+
+  const upgrade = (token: string) => srv.authenticateUpgradeToken(sharedAddress, token);
+  const failure = (token: string) => {
+    const result = upgrade(token);
+    return result.ok ? "ok" : result.code;
+  };
+
+  test("never refuses a valid token, however often one address reconnects", () => {
+    for (let i = 0; i < 50; i++) expect(upgrade(validToken).ok).toBe(true);
+    // Fifty valid upgrades spent none of the burst budget of ten failures.
+    for (let i = 0; i < 10; i++) expect(failure(`omn_bogus${i}`)).toBe("invalid_token");
+    expect(failure("omn_bogus-next")).toBe("rate_limited");
+  });
+
+  test("an address that spent its failure budget still connects a valid token", () => {
+    for (let i = 0; i < 10; i++) expect(failure(`omn_bogus${i}`)).toBe("invalid_token");
+    expect(failure("omn_bogus-next")).toBe("rate_limited");
+
+    const valid = upgrade(validToken);
+    expect(valid.ok).toBe(true);
+    // Invalid tokens from the address stay refused as rate-limited.
+    expect(failure("omn_bogus-after")).toBe("rate_limited");
+    // Another address keeps its own budget.
+    const elsewhere = srv.authenticateUpgradeToken("198.51.100.4", "omn_bogus-elsewhere");
+    expect(elsewhere.ok ? "ok" : elsewhere.code).toBe("invalid_token");
+  });
+
+  /** Drive one legacy hello (no upgrade auth) and return its response. */
+  async function legacyHello(token: string | undefined): Promise<WsResponse> {
+    const sent: string[] = [];
+    const ws = { send: (d: string) => sent.push(d), close: () => {} };
+    srv.onOpen(ws, sharedAddress);
+    srv.onMessage(
+      ws,
+      JSON.stringify(
+        makeCommand("hello", {
+          protocolVersion: PROTOCOL_VERSION,
+          ...(token === undefined ? {} : { token }),
+        }),
+      ),
+    );
+    await vi.waitFor(() => expect(sent.length).toBeGreaterThan(0));
+    srv.onClose(ws);
+    return JSON.parse(sent[0]!) as WsResponse;
+  }
+
+  const errorCode = (res: WsResponse) => (res.ok ? "ok" : res.error.code);
+
+  test("the legacy hello charges only failed tokens", async () => {
+    for (let i = 0; i < 20; i++) expect((await legacyHello(validToken)).ok).toBe(true);
+    expect(errorCode(await legacyHello(undefined))).toBe("invalid_token");
+    for (let i = 0; i < 9; i++) {
+      expect(errorCode(await legacyHello(`omn_bogus${i}`))).toBe("invalid_token");
+    }
+    expect(errorCode(await legacyHello("omn_bogus-next"))).toBe("rate_limited");
+    expect((await legacyHello(validToken)).ok).toBe(true);
   });
 });

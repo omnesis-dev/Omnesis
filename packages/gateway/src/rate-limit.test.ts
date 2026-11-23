@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-// Direct tests for the per-IP rate limiter.
+// Direct tests for the keyed rate limiter.
 // Uses fake time via injected `now` arg so the tests are deterministic
 // without `vi.useFakeTimers()` global state.
 import { describe, expect, test } from "vitest";
 import {
-  IpRateLimiter,
+  RateLimiter,
   pairingRateLimiter,
   portalLoginRateLimiter,
   wsHelloRateLimiter,
@@ -15,9 +15,68 @@ import {
   notesRateLimiter,
 } from "./rate-limit.js";
 
-describe("IpRateLimiter", () => {
+describe("RateLimiter", () => {
+  const credentialCheck = () =>
+    new RateLimiter({
+      surface: "test",
+      burst: { capacity: 3, windowMs: 60_000 },
+      hourly: { capacity: 5, windowMs: 3_600_000 },
+    });
+
+  test("a refunded attempt costs nothing, so only failures exhaust the budget", () => {
+    const r = credentialCheck();
+    const now = 1_000_000;
+    // Fifty attempts that proved valid, all in one instant.
+    for (let i = 0; i < 50; i += 1) {
+      expect(r.consume("1.2.3.4", now)).toBeNull();
+      r.refund("1.2.3.4", now);
+    }
+    // The burst budget of failures is intact.
+    for (let i = 0; i < 3; i += 1) expect(r.consume("1.2.3.4", now)).toBeNull();
+    expect(r.consume("1.2.3.4", now)).toMatch(/burst limit exceeded/);
+  });
+
+  test("a refund restores the hourly budget too", () => {
+    const r = new RateLimiter({
+      surface: "test",
+      burst: { capacity: 100, windowMs: 60_000 },
+      hourly: { capacity: 2, windowMs: 3_600_000 },
+    });
+    const now = 1_000_000;
+    for (let i = 0; i < 10; i += 1) {
+      expect(r.consume("1.2.3.4", now)).toBeNull();
+      r.refund("1.2.3.4", now);
+    }
+    expect(r.consume("1.2.3.4", now)).toBeNull();
+    expect(r.consume("1.2.3.4", now)).toBeNull();
+    expect(r.consume("1.2.3.4", now)).toMatch(/hourly limit exceeded/);
+  });
+
+  test("a refund never raises a budget above its capacity", () => {
+    const r = credentialCheck();
+    const now = 1_000_000;
+    // Refunding a key never charged, or refunding twice, grants nothing extra.
+    r.refund("1.2.3.4", now);
+    expect(r.consume("1.2.3.4", now)).toBeNull();
+    r.refund("1.2.3.4", now);
+    r.refund("1.2.3.4", now);
+    for (let i = 0; i < 3; i += 1) expect(r.consume("1.2.3.4", now)).toBeNull();
+    expect(r.consume("1.2.3.4", now)).toMatch(/burst limit exceeded/);
+  });
+
+  test("a refund after the window has passed keeps the refill", () => {
+    const r = credentialCheck();
+    const t0 = 1_000_000;
+    for (let i = 0; i < 3; i += 1) expect(r.consume("1.2.3.4", t0)).toBeNull();
+    // A full burst window later the bucket is full again; the refund of an
+    // attempt charged long ago must not leave it short.
+    r.refund("1.2.3.4", t0 + 60_000);
+    for (let i = 0; i < 3; i += 1) expect(r.consume("1.2.3.4", t0 + 60_000)).toBeNull();
+    expect(r.consume("1.2.3.4", t0 + 60_000)).toMatch(/burst limit exceeded/);
+  });
+
   test("allows up to capacity then refuses", () => {
-    const r = new IpRateLimiter({
+    const r = new RateLimiter({
       surface: "test",
       burst: { capacity: 3, windowMs: 60_000 },
       hourly: { capacity: 100, windowMs: 3_600_000 },
@@ -31,7 +90,7 @@ describe("IpRateLimiter", () => {
   });
 
   test("refills tokens linearly over the window", () => {
-    const r = new IpRateLimiter({
+    const r = new RateLimiter({
       surface: "test",
       burst: { capacity: 4, windowMs: 60_000 },
       hourly: { capacity: 100, windowMs: 3_600_000 },
@@ -48,7 +107,7 @@ describe("IpRateLimiter", () => {
   });
 
   test("hourly limit catches a slow-roll attacker pacing under burst", () => {
-    const r = new IpRateLimiter({
+    const r = new RateLimiter({
       surface: "test",
       burst: { capacity: 100, windowMs: 60_000 },
       hourly: { capacity: 5, windowMs: 3_600_000 },
@@ -62,7 +121,7 @@ describe("IpRateLimiter", () => {
   });
 
   test("buckets are per-IP", () => {
-    const r = new IpRateLimiter({
+    const r = new RateLimiter({
       surface: "test",
       burst: { capacity: 1, windowMs: 60_000 },
       hourly: { capacity: 10, windowMs: 3_600_000 },

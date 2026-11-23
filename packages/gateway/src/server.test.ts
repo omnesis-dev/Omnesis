@@ -3619,6 +3619,32 @@ describe("device management endpoints", () => {
     expect(refusal?.headers.get("Retry-After")).toBe("60");
   });
 
+  test("pairing flow: successful pairings never spend the brute-force budget", async () => {
+    // Devices pairing from one address — a household NAT, a container port
+    // proxy — each redeem a genuine code; only failed codes count.
+    for (let i = 0; i < 12; i++) {
+      const pair = await req("/admin/devices/pair", {
+        method: "POST",
+        body: JSON.stringify({ kind: "cli", scopes: ["read"] }),
+      });
+      const { pairingCode } = (await pair.json()) as { pairingCode: string };
+      const exchange = await app.request("/devices/pair", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pairingCode }),
+      });
+      expect(exchange.status).toBe(200);
+    }
+    const bogus = () =>
+      app.request("/devices/pair", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pairingCode: "DEADBEEF99" }),
+      });
+    for (let i = 0; i < 10; i++) expect((await bogus()).status).toBe(400);
+    expect((await bogus()).status).toBe(429);
+  });
+
   test("pairing flow: an expired code is rejected at redeem (400)", async () => {
     const pair = await req("/admin/devices/pair", {
       method: "POST",
@@ -4201,6 +4227,18 @@ describe("portal login endpoint", () => {
       body: JSON.stringify({}),
     });
     expect(res.status).toBe(400);
+  });
+
+  test("successful logins never spend the brute-force budget", async () => {
+    const login = (token: string) =>
+      app.request("/portal/api/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token }),
+      });
+    for (let i = 0; i < 15; i++) expect((await login(TEST_TOKEN)).status).toBe(200);
+    for (let i = 0; i < 10; i++) expect((await login("omn_bogus")).status).toBe(401);
+    expect((await login("omn_bogus")).status).toBe(429);
   });
 
   test("accepts a valid bearer token and sets a session cookie", async () => {
@@ -12466,5 +12504,24 @@ describe("POST /admin/sources/:id/resync", () => {
       expect(modesOf(pulled.id)).toEqual(["in-place", "from-scratch"]);
       expect(modesOf(pushed.id)).toEqual([]);
     });
+  });
+});
+
+describe("authenticated rate limits", () => {
+  test("each credential has its own budget, even from one address", async () => {
+    // Two of the owner's devices reach the gateway from the same address; a
+    // runaway loop on one exhausts only its own search budget.
+    const runaway = mintToken([SCOPE_READ]).token;
+    const neighbour = mintToken([SCOPE_READ]).token;
+    const search = (token: string) =>
+      app.request("/search", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ text: "quarterly budget" }),
+      });
+    // This fixture has no search pipeline, so an admitted search answers 503.
+    for (let i = 0; i < 120; i++) expect((await search(runaway)).status).toBe(503);
+    expect((await search(runaway)).status).toBe(429);
+    expect((await search(neighbour)).status).toBe(503);
   });
 });

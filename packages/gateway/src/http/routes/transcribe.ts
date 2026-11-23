@@ -32,7 +32,7 @@ import { BadRequestError, HttpError, ServiceUnavailableError } from "../errors.j
 import { MAX_AUDIO_BYTES, type TranscribeService } from "../../transcribe/index.js";
 import { transcriptionContextSchema } from "../schemas/transcription.js";
 import { transcriptionVocabularyAllowed } from "../transcription-access.js";
-import { clientIp } from "./admin/internals.js";
+import { credentialRateLimitKey } from "./admin/internals.js";
 import type { RouteApp } from "./types.js";
 
 const log = createLogger("gateway:http").child("routes:transcribe");
@@ -68,7 +68,7 @@ export function mountTranscribeRoutes(app: RouteApp, deps: TranscribeRoutesDeps)
       if (!deps.getDictationStatus?.().active) {
         throw new HttpError(409, "DICTATION_DISABLED", "Gateway dictation is unavailable.");
       }
-      if (captureLimiter.consume(clientIp(c))) {
+      if (captureLimiter.consume(credentialRateLimitKey(c))) {
         return c.json({ error: "Too many captures" }, 429, { "Retry-After": "60" });
       }
       return next();

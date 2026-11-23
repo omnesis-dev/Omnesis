@@ -47,7 +47,7 @@ import { getExtractedDatesForDocument } from "../../enrichment/dates/storage.js"
 import { BadRequestError, NotFoundError } from "../errors.js";
 import { decodePageCursor, encodePageCursor } from "../pagination-cursor.js";
 import { documentsRateLimiter } from "../../rate-limit.js";
-import { clientIp, isLoopbackRequest } from "./admin/internals.js";
+import { credentialRateLimitKey, isLoopbackRequest } from "./admin/internals.js";
 import type { RouteApp } from "./types.js";
 import type { DocumentService } from "../services/DocumentService.js";
 import type { SourceService } from "../services/SourceService.js";
@@ -207,12 +207,12 @@ export function mountDocumentCoreRoutes(app: RouteApp, deps: DocumentRoutesDeps)
     ingestBodyLimit(DOCUMENTS_BODY_LIMIT_BYTES),
     validateJson(ingestDocumentsBody),
     async (c) => {
-      // Per-IP rate limit. The ceiling is generous (the collector is a
+      // Per-credential rate limit. The ceiling is generous (the collector is a
       // legitimate high-volume ingest client) — it only catches a pathological
       // write loop, not normal batched bootstrap ingestion. Loopback is exempt
       // (a same-host ingest client already has full local access); the check
       // reads the raw socket so a forwarded IP can't spoof it.
-      if (!isLoopbackRequest(c) && ingestLimiter.consume(clientIp(c))) {
+      if (!isLoopbackRequest(c) && ingestLimiter.consume(credentialRateLimitKey(c))) {
         return c.json({ error: "Too many ingest requests — try again later" }, 429, {
           "Retry-After": "60",
         });
@@ -447,13 +447,13 @@ export function mountDocumentCoreRoutes(app: RouteApp, deps: DocumentRoutesDeps)
     scope.writeAny(),
     validateJson(upsertWithCursorBody),
     async (c) => {
-      // Per-IP rate limit. This is the collector's PRIMARY ingest path
+      // Per-credential rate limit. This is the collector's PRIMARY ingest path
       // (it supersedes the split `POST /documents` flow), so it shares the same
       // generous ingest ceiling — catches a pathological write loop on an
       // exposed gateway without throttling legitimate batched bootstrap.
       // Loopback is exempt (a same-host ingest client already has full local
       // access); the check reads the raw socket so a forwarded IP can't spoof it.
-      if (!isLoopbackRequest(c) && ingestLimiter.consume(clientIp(c))) {
+      if (!isLoopbackRequest(c) && ingestLimiter.consume(credentialRateLimitKey(c))) {
         return c.json({ error: "Too many ingest requests — try again later" }, 429, {
           "Retry-After": "60",
         });

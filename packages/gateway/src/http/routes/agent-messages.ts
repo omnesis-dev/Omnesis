@@ -17,7 +17,7 @@ import { agentMessagesRateLimiter } from "../../rate-limit.js";
 import { enforceWriteScopeForSource, scope } from "../scope.js";
 import { validateJson } from "../validate.js";
 import { ingestAgentMessagesBody } from "../schemas/agent-messages.js";
-import { clientIp, isLoopbackRequest } from "./admin/internals.js";
+import { credentialRateLimitKey, isLoopbackRequest } from "./admin/internals.js";
 import type { AgentConversationsRuntime } from "../../sources/agent-conversations/index.js";
 import type { RouteApp } from "./types.js";
 
@@ -33,7 +33,7 @@ export function mountAgentMessagesRoutes(app: RouteApp, deps: AgentMessagesRoute
     scope.writeAny(),
     validateJson(ingestAgentMessagesBody),
     async (c) => {
-      if (!isLoopbackRequest(c) && limiter.consume(clientIp(c))) {
+      if (!isLoopbackRequest(c) && limiter.consume(credentialRateLimitKey(c))) {
         return c.json({ error: "Too many push requests — try again later" }, 429, {
           "Retry-After": "60",
         });

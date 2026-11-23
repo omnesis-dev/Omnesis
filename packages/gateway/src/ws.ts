@@ -42,8 +42,12 @@ import {
 } from "@omnesis/types";
 import { DevicePathTelemetry } from "./device-path-telemetry.js";
 import { getDevice } from "./data/repositories/DeviceRepository.js";
-import { isTokenActive, lookupToken } from "./data/repositories/TokenRepository.js";
-import { wsHelloRateLimiter, type IpRateLimiter } from "./rate-limit.js";
+import {
+  isTokenActive,
+  lookupToken,
+  type ValidatedToken,
+} from "./data/repositories/TokenRepository.js";
+import { wsHelloRateLimiter, type RateLimiter } from "./rate-limit.js";
 import { withActivity } from "./observability/main-activity.js";
 import type { WriteGate } from "./write-gate.js";
 
@@ -80,7 +84,7 @@ interface ConnectionState {
   authTimer: ReturnType<typeof setTimeout> | null;
   /** Source IP captured at upgrade time. Populated from the HTTP
    *  upgrade request by the index.ts handler. Used by the hello
-   *  handshake's per-IP rate limiter. */
+   *  handshake's budget of failed token checks. */
   clientIp: string;
   /** Ping/terminate channel, when the caller supplied the raw socket. */
   liveness: WsLiveness | null;
@@ -231,10 +235,8 @@ export class DeviceWsServer {
   private readonly onDeviceDisconnected: DeviceWsOptions["onDeviceDisconnected"];
   private readonly onCollectorConnected: DeviceWsOptions["onCollectorConnected"];
   private readonly onCollectorDisconnected: DeviceWsOptions["onCollectorDisconnected"];
-  // Per-IP rate limiter for token checks. Applied before token lookup so a
-  // brute-forcer can't run thousands of candidate tokens against the WS
-  // surface inside a window.
-  private readonly helloLimiter: IpRateLimiter = wsHelloRateLimiter();
+  // Per-address budget of failed token checks; see `checkToken`.
+  private readonly helloLimiter: RateLimiter = wsHelloRateLimiter();
   private readonly maxConnections: number;
 
   constructor(opts: DeviceWsOptions) {
@@ -258,8 +260,8 @@ export class DeviceWsServer {
    * an unauthenticated socket and waiting for an application-frame `hello`.
    */
   authenticateUpgradeToken(clientIp: string, token: string): WsUpgradeAuthResult {
-    const limit = this.helloLimiter.consume(clientIp);
-    if (limit) {
+    const check = this.checkToken(clientIp, token);
+    if (check === "rate_limited") {
       return {
         ok: false,
         status: 429,
@@ -267,17 +269,38 @@ export class DeviceWsServer {
         message: "too many WebSocket authentication attempts",
       };
     }
-
-    const info = lookupToken(this.db, token);
-    if (!info) {
+    if (check === "invalid_token") {
       log.warn(`Rejected WS upgrade from ${clientIp} — invalid token`);
       return { ok: false, status: 401, code: "invalid_token", message: "invalid token" };
     }
-
     return {
       ok: true,
-      auth: { tokenId: info.id, deviceId: info.deviceId, scopes: info.scopes },
+      auth: { tokenId: check.id, deviceId: check.deviceId, scopes: check.scopes },
     };
+  }
+
+  /**
+   * Checks a device token on behalf of `clientIp`, charging the address's
+   * budget only when the token is missing or invalid.
+   *
+   * A valid token is accepted even when the address has spent its budget.
+   * The budget is shared by everything behind one address — a household
+   * NAT, a container port proxy, a reverse proxy — so refusing valid tokens
+   * there would let one failing client (a revoked device retrying, a hostile
+   * neighbour) lock the owner's own devices out of their gateway. Accepting
+   * them leaves a guesser free to keep trying, but only at the cost of one
+   * hash and one indexed read each, against 128 random bits per token: no
+   * online rate makes guessing feasible. Past the budget, failures answer
+   * `rate_limited` so a misbehaving client backs off, and every refusal is
+   * logged for the operator.
+   */
+  private checkToken(
+    clientIp: string,
+    token: string | undefined,
+  ): ValidatedToken | "invalid_token" | "rate_limited" {
+    const info = token ? lookupToken(this.db, token) : null;
+    if (info) return info;
+    return this.helloLimiter.consume(clientIp) ? "rate_limited" : "invalid_token";
   }
 
   start(): void {
@@ -721,20 +744,19 @@ export class DeviceWsServer {
       // Legacy fallback for older local clients/tests mounted without the
       // production upgrade-auth middleware. The real /device/ws route validates
       // tokens before upgrade and passes state.upgradeAuth into onOpen().
-      const limit = this.helloLimiter.consume(state.clientIp);
-      if (limit) {
+      const check = this.checkToken(state.clientIp, payload.token);
+      if (check === "rate_limited") {
         this.sendRaw(ws, makeResponseErr(cmd.id, "rate_limited", "too many hello attempts"));
         this.closeConnection(ws, "hello rate limited");
         return;
       }
-      if (!payload.token) {
+      if (check === "invalid_token" && !payload.token) {
         this.sendRaw(ws, makeResponseErr(cmd.id, "invalid_token", "missing token"));
         this.closeConnection(ws, "missing hello token");
         return;
       }
-      const tokenInfo = lookupToken(this.db, payload.token);
-      if (tokenInfo) {
-        info = { tokenId: tokenInfo.id, deviceId: tokenInfo.deviceId, scopes: tokenInfo.scopes };
+      if (check !== "invalid_token") {
+        info = { tokenId: check.id, deviceId: check.deviceId, scopes: check.scopes };
       }
     }
     if (!info) {

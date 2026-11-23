@@ -13,7 +13,7 @@ import { bodyLimit } from "hono/body-limit";
 import { CloudPairingRuntime } from "../services/CloudPairingRuntime.js";
 import { scope } from "../scope.js";
 import { validateJson } from "../validate.js";
-import { IpRateLimiter, pairingRateLimiter } from "../../rate-limit.js";
+import { RateLimiter, pairingRateLimiter } from "../../rate-limit.js";
 import { HttpError } from "../errors.js";
 import { webGooglePairingRequest } from "../services/WebGooglePairing.js";
 import {
@@ -124,13 +124,13 @@ export function mountCloudPairingRoutes(
       });
     });
   const limiter = pairingRateLimiter();
-  const pollLimiter = new IpRateLimiter({
+  const pollLimiter = new RateLimiter({
     surface: "/devices/google/poll",
     burst: { capacity: 120, windowMs: 60_000 },
     hourly: { capacity: 3600, windowMs: 3_600_000 },
   });
   // Approving with a passkey is public: the passkey is the credential. Ten tries a minute.
-  const approvalLimiter = new IpRateLimiter({
+  const approvalLimiter = new RateLimiter({
     surface: "/devices/account/approval",
     burst: { capacity: 10, windowMs: 60_000 },
     hourly: { capacity: 120, windowMs: 3_600_000 },

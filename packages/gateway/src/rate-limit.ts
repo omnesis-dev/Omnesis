@@ -2,25 +2,34 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Per-IP rate limiter shared by the unauthenticated trust-boundary
- * endpoints — `/devices/pair` and the WebSocket upgrade token check.
- * Both surfaces accept untrusted credentials
- * (a 40-bit pairing code, an opaque bearer token) from any LAN client;
- * without rate limiting they're a brute-force oracle.
+ * Token-bucket rate limiter shared by the gateway's throttled surfaces.
+ * A bucket is keyed by a caller-chosen string, and the key decides whose
+ * traffic shares one budget:
  *
- * The implementation is a small token-bucket per source-IP:
+ *   - Credential checks — `/devices/pair`, `POST /portal/api/login` and the
+ *     `/device/ws` upgrade — key by client address. They accept untrusted
+ *     credentials (a 40-bit pairing code, an opaque bearer token) from any
+ *     client; without a limit they're a brute-force oracle. They charge only
+ *     the attempts that fail the check (`consume` on a failure, or `consume`
+ *     up front and `refund` on success), so the owner's own devices behind one
+ *     address — a NAT, a container port proxy, one household — never spend
+ *     the budget that bounds guessing.
+ *   - Authenticated surfaces (search, ingest, capture) key by the credential
+ *     that made the request, so each device has its own budget as a backstop
+ *     against a runaway client or a stolen token.
+ *   - Public surfaces with no credential to check (OAuth client
+ *     registration and authorization, join requests) key by client address.
  *
- *   - Each IP gets two limits: a short window ("burst") and a long
- *     window ("hourly"). Either limit hitting zero refuses the call.
- *   - Buckets refill linearly at `capacity / windowMs` per ms.
- *   - State is in-memory; on gateway restart the limits reset. That's
- *     fine for a single-host install — the threat model is
- *     "someone on the LAN brute-forcing for ~10 min", not "an
- *     adversary spreading attacks across multiple gateway lifetimes".
+ * Each key gets two limits: a short window ("burst") and a long window
+ * ("hourly"). Either limit hitting zero refuses the call. Buckets refill
+ * linearly at `capacity / windowMs` per ms. State is in-memory; on gateway
+ * restart the limits reset. That's fine for a single-host install — the
+ * threat model is "someone on the LAN brute-forcing for ~10 min", not "an
+ * adversary spreading attacks across multiple gateway lifetimes".
  *
  * The limiter logs every refusal at WARN so an operator can spot
  * brute-force traffic in `journalctl`. It does NOT log the candidate
- * token / pairing code — only the source IP and the rule that fired.
+ * token / pairing code — only the key and the rule that fired.
  */
 import { createLogger } from "@omnesis/core";
 
@@ -49,19 +58,19 @@ export interface RateLimiterOpts {
   surface: string;
 }
 
-export class IpRateLimiter {
+export class RateLimiter {
   private burstBuckets = new Map<string, Bucket>();
   private hourlyBuckets = new Map<string, Bucket>();
   private readonly burst: RateLimiterRule;
   private readonly hourly: RateLimiterRule;
   private readonly surface: string;
   /**
-   * Cap on the number of distinct IPs we track. Any new IP after this
-   * cap evicts the bucket least recently touched. Keeps a hostile
-   * peer from inflating us into OOM territory by spraying random
-   * spoofed IPs at the unauthenticated endpoints.
+   * Cap on the number of distinct keys we track. Any new key after this
+   * cap evicts an existing bucket. Keeps a hostile peer from inflating us
+   * into OOM territory by spraying random spoofed addresses at the
+   * unauthenticated endpoints.
    */
-  private static readonly MAX_TRACKED_IPS = 10_000;
+  private static readonly MAX_TRACKED_KEYS = 10_000;
 
   constructor(opts: RateLimiterOpts) {
     this.burst = opts.burst;
@@ -70,38 +79,49 @@ export class IpRateLimiter {
   }
 
   /**
-   * Returns `null` to allow the request, or a string explaining why
-   * the request was refused (suitable for an operator log; the HTTP /
-   * WS handler should NOT echo it to the caller — the bookkeeping is
-   * an internal signal).
+   * Charges one attempt to `key`. Returns `null` to allow the request, or a
+   * string explaining why the request was refused (suitable for an operator
+   * log; the HTTP / WS handler should NOT echo it to the caller — the
+   * bookkeeping is an internal signal).
    */
-  consume(ip: string, now: number = Date.now()): null | string {
-    if (this.refuse(this.burstBuckets, ip, this.burst, now)) {
+  consume(key: string, now: number = Date.now()): null | string {
+    if (this.refuse(this.burstBuckets, key, this.burst, now)) {
       const reason = `${this.surface}: burst limit exceeded`;
-      log.warn(`Rate-limit refusal from ${ip} — ${reason}`);
+      log.warn(`Rate-limit refusal for ${key} — ${reason}`);
       return reason;
     }
-    if (this.refuse(this.hourlyBuckets, ip, this.hourly, now)) {
+    if (this.refuse(this.hourlyBuckets, key, this.hourly, now)) {
       // Restore the burst token we just consumed since we're refusing
       // anyway — keeps the burst bucket honest for the next request
       // that might pass the hourly check (e.g. after a clean window).
-      this.refund(this.burstBuckets, ip, this.burst, now);
+      this.restore(this.burstBuckets, key, this.burst, now);
       const reason = `${this.surface}: hourly limit exceeded`;
-      log.warn(`Rate-limit refusal from ${ip} — ${reason}`);
+      log.warn(`Rate-limit refusal for ${key} — ${reason}`);
       return reason;
     }
     return null;
   }
 
+  /**
+   * Returns the attempt an allowed `consume` charged to `key`. A credential
+   * check charges before it knows the outcome — so concurrent guesses can't
+   * all slip past an unspent budget — and refunds once the credential proves
+   * valid, leaving only failed attempts counted.
+   */
+  refund(key: string, now: number = Date.now()): void {
+    this.restore(this.burstBuckets, key, this.burst, now);
+    this.restore(this.hourlyBuckets, key, this.hourly, now);
+  }
+
   private refuse(
     buckets: Map<string, Bucket>,
-    ip: string,
+    key: string,
     rule: RateLimiterRule,
     now: number,
   ): boolean {
-    let bucket = buckets.get(ip);
+    let bucket = buckets.get(key);
     if (!bucket) {
-      if (buckets.size >= IpRateLimiter.MAX_TRACKED_IPS) {
+      if (buckets.size >= RateLimiter.MAX_TRACKED_KEYS) {
         // Evict an arbitrary entry — no LRU bookkeeping; the cap
         // protects against memory exhaustion, not against a
         // concerted slow-roll attacker.
@@ -109,7 +129,7 @@ export class IpRateLimiter {
         if (firstKey !== undefined) buckets.delete(firstKey);
       }
       bucket = { tokens: rule.capacity, lastRefillMs: now };
-      buckets.set(ip, bucket);
+      buckets.set(key, bucket);
     } else {
       this.refill(bucket, rule, now);
     }
@@ -118,14 +138,15 @@ export class IpRateLimiter {
     return false;
   }
 
-  private refund(
+  private restore(
     buckets: Map<string, Bucket>,
-    ip: string,
+    key: string,
     rule: RateLimiterRule,
-    _now: number,
+    now: number,
   ): void {
-    const bucket = buckets.get(ip);
+    const bucket = buckets.get(key);
     if (!bucket) return;
+    this.refill(bucket, rule, now);
     bucket.tokens = Math.min(rule.capacity, bucket.tokens + 1);
   }
 
@@ -138,9 +159,12 @@ export class IpRateLimiter {
   }
 }
 
-/** Default config for the pairing-code endpoint. */
-export function pairingRateLimiter(): IpRateLimiter {
-  return new IpRateLimiter({
+/**
+ * Per-address limiter for the pairing-code endpoint. The route charges every
+ * attempt and refunds a redeemed code, so only failed codes count.
+ */
+export function pairingRateLimiter(): RateLimiter {
+  return new RateLimiter({
     surface: "/devices/pair",
     burst: { capacity: 10, windowMs: 60_000 },
     hourly: { capacity: 100, windowMs: 3_600_000 },
@@ -148,21 +172,25 @@ export function pairingRateLimiter(): IpRateLimiter {
 }
 
 /**
- * Per-IP limiter for `POST /portal/api/login`. The portal login accepts the
- * same 40-bit pairing codes as `/devices/pair`, so it needs the same
- * brute-force resistance; sized identically to the pairing limiter.
+ * Per-address limiter for `POST /portal/api/login`. The portal login accepts
+ * the same 40-bit pairing codes as `/devices/pair`, so it needs the same
+ * brute-force resistance; sized identically to the pairing limiter and, like
+ * it, refunded on a successful login.
  */
-export function portalLoginRateLimiter(): IpRateLimiter {
-  return new IpRateLimiter({
+export function portalLoginRateLimiter(): RateLimiter {
+  return new RateLimiter({
     surface: "/portal/api/login",
     burst: { capacity: 10, windowMs: 60_000 },
     hourly: { capacity: 100, windowMs: 3_600_000 },
   });
 }
 
-/** Default config for the WS upgrade token check. */
-export function wsHelloRateLimiter(): IpRateLimiter {
-  return new IpRateLimiter({
+/**
+ * Per-address limiter for the `/device/ws` token check. It counts only tokens
+ * that fail the check; see `DeviceWsServer.authenticateUpgradeToken`.
+ */
+export function wsHelloRateLimiter(): RateLimiter {
+  return new RateLimiter({
     surface: "/device/ws upgrade",
     burst: { capacity: 10, windowMs: 60_000 },
     hourly: { capacity: 200, windowMs: 3_600_000 },
@@ -170,13 +198,13 @@ export function wsHelloRateLimiter(): IpRateLimiter {
 }
 
 /**
- * Per-IP limiter for the authenticated `POST /search` endpoint.
+ * Per-credential limiter for the authenticated `POST /search` endpoint.
  * Defence-in-depth for a gateway exposed beyond the LAN: a stolen token or
  * a runaway client can't pin the search pipeline. Sized well above any
  * human's interactive cadence (2/s burst, ~1/s sustained).
  */
-export function searchRateLimiter(): IpRateLimiter {
-  return new IpRateLimiter({
+export function searchRateLimiter(): RateLimiter {
+  return new RateLimiter({
     surface: "POST /search",
     burst: { capacity: 120, windowMs: 60_000 },
     hourly: { capacity: 3_000, windowMs: 3_600_000 },
@@ -189,8 +217,8 @@ export function searchRateLimiter(): IpRateLimiter {
  * is one of the primary failure modes this protects against. The hosted MCP
  * resource and experimental JSON adapter intentionally share this budget.
  */
-export function directMcpRateLimiter(): IpRateLimiter {
-  return new IpRateLimiter({
+export function directMcpRateLimiter(): RateLimiter {
+  return new RateLimiter({
     surface: "Direct tool execution",
     burst: { capacity: 120, windowMs: 60_000 },
     hourly: { capacity: 3_000, windowMs: 3_600_000 },
@@ -198,8 +226,8 @@ export function directMcpRateLimiter(): IpRateLimiter {
 }
 
 /** Public OAuth client registration can otherwise grow the durable client table without bound. */
-export function oauthRegistrationRateLimiter(): IpRateLimiter {
-  return new IpRateLimiter({
+export function oauthRegistrationRateLimiter(): RateLimiter {
+  return new RateLimiter({
     surface: "POST /oauth/register",
     burst: { capacity: 20, windowMs: 60_000 },
     hourly: { capacity: 200, windowMs: 3_600_000 },
@@ -207,8 +235,8 @@ export function oauthRegistrationRateLimiter(): IpRateLimiter {
 }
 
 /** Bounds creation of short-lived authorization transactions by one network peer. */
-export function oauthAuthorizationRateLimiter(): IpRateLimiter {
-  return new IpRateLimiter({
+export function oauthAuthorizationRateLimiter(): RateLimiter {
+  return new RateLimiter({
     surface: "GET /oauth/authorize",
     burst: { capacity: 60, windowMs: 60_000 },
     hourly: { capacity: 1_000, windowMs: 3_600_000 },
@@ -227,13 +255,13 @@ export function oauthAuthorizationNotificationRateLimiter(
     burst: { capacity: 3, windowMs: 60_000 },
     hourly: { capacity: 12, windowMs: 3_600_000 },
   },
-): IpRateLimiter {
-  return new IpRateLimiter({ surface, ...limits });
+): RateLimiter {
+  return new RateLimiter({ surface, ...limits });
 }
 
 /** Brute-force and runaway-client guard for token exchange, refresh, and revocation. */
-export function oauthTokenRateLimiter(): IpRateLimiter {
-  return new IpRateLimiter({
+export function oauthTokenRateLimiter(): RateLimiter {
+  return new RateLimiter({
     surface: "OAuth token operations",
     burst: { capacity: 120, windowMs: 60_000 },
     hourly: { capacity: 3_000, windowMs: 3_600_000 },
@@ -241,14 +269,14 @@ export function oauthTokenRateLimiter(): IpRateLimiter {
 }
 
 /**
- * Per-IP limiter for the authenticated `POST /documents` ingest endpoint.
- *The collector is a legitimate high-volume client (batched
+ * Per-credential limiter for the authenticated `POST /documents` ingest
+ * endpoint. The collector is a legitimate high-volume client (batched
  * bootstrap ingestion), so the ceiling is deliberately generous — 20 req/s
  * burst — far above realistic batched ingestion, yet still a backstop
  * against a pathological write loop.
  */
-export function documentsRateLimiter(): IpRateLimiter {
-  return new IpRateLimiter({
+export function documentsRateLimiter(): RateLimiter {
+  return new RateLimiter({
     surface: "POST /documents",
     burst: { capacity: 1_200, windowMs: 60_000 },
     hourly: { capacity: 60_000, windowMs: 3_600_000 },
@@ -256,15 +284,15 @@ export function documentsRateLimiter(): IpRateLimiter {
 }
 
 /**
- * Per-IP limiter for `POST /agent-messages` — harness plugins pushing pushed
+ * Per-credential limiter for `POST /agent-messages` — harness plugins pushing
  * conversation turns. Each request carries a batch (up to a few thousand turns),
  * so the *request* ceiling can be modest while still admitting a large
  * install-time backfill: the plugin chunks its backfill into a handful of
  * batched requests, and steady-state live pushes are a trickle. Loopback is
  * exempt via the route.
  */
-export function agentMessagesRateLimiter(): IpRateLimiter {
-  return new IpRateLimiter({
+export function agentMessagesRateLimiter(): RateLimiter {
+  return new RateLimiter({
     surface: "POST /agent-messages",
     burst: { capacity: 300, windowMs: 60_000 },
     hourly: { capacity: 6_000, windowMs: 3_600_000 },
@@ -272,15 +300,16 @@ export function agentMessagesRateLimiter(): IpRateLimiter {
 }
 
 /**
- * Per-IP limiter for the authenticated `POST /notes` capture endpoint.
+ * Per-credential limiter for the authenticated capture endpoints (`POST /notes`
+ * and the other capture routes).
  * Captures are human-driven (or a phone flushing an offline buffer of a
  * few dozen notes), so the ceiling is human-capture-scale: 120/min burst
  * clears any realistic buffer flush instantly while still stopping a
- * pathological capture loop. Same-host callers bypass it entirely via
- * the route's loopback exemption.
+ * pathological capture loop. The device capture routes exempt loopback
+ * callers; the admin dictation and MCP capture routes do not.
  */
-export function notesRateLimiter(): IpRateLimiter {
-  return new IpRateLimiter({
+export function notesRateLimiter(): RateLimiter {
+  return new RateLimiter({
     surface: "POST /notes",
     burst: { capacity: 120, windowMs: 60_000 },
     hourly: { capacity: 2_000, windowMs: 3_600_000 },

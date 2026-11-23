@@ -29,7 +29,7 @@ import { BadRequestError, HttpError, ValidationError } from "../errors.js";
 import { enforceWriteScopeForSource, scope } from "../scope.js";
 import { voiceNoteMetadata } from "../schemas/index.js";
 import { transcriptionVocabularyAllowed } from "../transcription-access.js";
-import { clientIp, isLoopbackRequest } from "./admin/internals.js";
+import { credentialRateLimitKey, isLoopbackRequest } from "./admin/internals.js";
 import type { DictationFeatureStatus } from "../../dictation/index.js";
 import type { VoiceNoteService } from "../../voice-notes/index.js";
 import type { RouteApp } from "./types.js";
@@ -63,7 +63,7 @@ export function mountVoiceNoteRoutes(app: RouteApp, deps: VoiceNoteRoutesDeps): 
   const captureLimiter = notesRateLimiter();
 
   app.post("/notes/voice", scope.writeAny(), voiceNoteBodyLimit, async (c) => {
-    if (!isLoopbackRequest(c) && captureLimiter.consume(clientIp(c))) {
+    if (!isLoopbackRequest(c) && captureLimiter.consume(credentialRateLimitKey(c))) {
       return c.json({ error: "Too many capture requests — try again later" }, 429, {
         "Retry-After": "60",
       });

@@ -10,7 +10,7 @@ import {
   CaptureRoutingUnavailableError,
   type CaptureRoutingService,
 } from "../../dictation/capture-routing.js";
-import { clientIp } from "./admin/internals.js";
+import { credentialRateLimitKey } from "./admin/internals.js";
 import type { RouteApp } from "./types.js";
 
 const capture = z.object({ text: z.string().trim().min(1).max(16_000) }).strict();
@@ -26,7 +26,7 @@ export function mountCaptureRoutes(
 ): void {
   const limiter = notesRateLimiter();
   app.post(path, scope.admin(), bodyLimit({ maxSize: 128 * 1024 }), async (c) => {
-    if (limiter.consume(clientIp(c)))
+    if (limiter.consume(credentialRateLimitKey(c)))
       return c.json({ error: "Too many captures" }, 429, { "Retry-After": "60" });
     let body: unknown;
     try {
