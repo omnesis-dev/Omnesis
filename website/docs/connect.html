@@ -964,9 +964,9 @@
           endpoints under <code>/oauth/</code>, and the approval page, which loads the portal's
           styles and scripts; while the whole gateway is published, the portal's login page and the
           pairing endpoint are reachable from the Internet too. Every route that returns your data
-          still requires a device token, a portal session or an approved OAuth token. Portal login
-          and pairing are rate-limited per client address, and a pairing code is single-use and
-          expires in ten minutes. A connector's sign-in grants nothing until you
+          still requires a device token, a portal session or an approved OAuth token. Failed portal
+          logins and pairing attempts are limited per client address, and a pairing code is
+          single-use and expires in ten minutes. A connector's sign-in grants nothing until you
           <a href="#approving-a-connection">approve it</a> in a signed-in portal or a paired phone;
           the approval page alone shows only a code.
         </p>

@@ -738,13 +738,14 @@
           between the Internet and the machine.
         </p>
         <p>
-          Both also put the pairing endpoint on the Internet. It is rate-limited per client address,
-          and a pairing code is single-use and expires in ten minutes, but a gateway only you need
-          to reach is better served by <a href="#away-from-home">Tailscale</a> or the relay.
-          External agents that run on their provider's servers, such as Claude Desktop, Claude
-          Cowork and ChatGPT, can only use a public address. For them alone, without a domain, the
-          relay's address or <a href="connect#tailscale-funnel">Tailscale Funnel</a> gives them one;
-          the two routes below are for a domain you own.
+          Both also put the pairing endpoint on the Internet. Failed attempts on it are limited per
+          client address, and a pairing code is single-use and expires in ten minutes, but a gateway
+          only you need to reach is better served by <a href="#away-from-home">Tailscale</a> or the
+          relay. External agents that run on their provider's servers, such as Claude Desktop,
+          Claude Cowork and ChatGPT, can only use a public address. For them alone, without a
+          domain, the relay's address or
+          <a href="connect#tailscale-funnel">Tailscale Funnel</a> gives them one; the two routes
+          below are for a domain you own.
         </p>
         <p>
           Once the address answers, enter it under

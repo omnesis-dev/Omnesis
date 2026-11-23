@@ -9,6 +9,7 @@ import { WsCommandError, type DeviceWsServer } from "../../../ws.js";
 import type { TlsLifecycleService } from "../../../tls-lifecycle/service.js";
 import type { OmnesisConfig } from "@omnesis/config";
 import type { Context } from "hono";
+import type { AppEnv } from "../types.js";
 import type Database from "better-sqlite3";
 import type { SyncStatusRegistry } from "../../../sync-status.js";
 import type { AuthFlowRegistry } from "../../../auth-flows.js";
@@ -216,6 +217,20 @@ export { isLoopbackIp };
 /** Best-effort client address for rate limiting and audit lines; see `client-ip.ts`. */
 export function clientIp(c: Context): string {
   return clientAddress((name) => c.req.header(name), c.env);
+}
+
+/**
+ * Budget key for a rate limiter on an authenticated route: the credential that
+ * made the request, so each of the owner's devices keeps its own budget even
+ * when several reach the gateway from one address (a household NAT, a
+ * container port proxy, a reverse proxy). A request with no credential id
+ * falls back to its client address.
+ */
+export function credentialRateLimitKey(c: Context<AppEnv>): string {
+  const auth = c.get("auth");
+  if (auth.authMethod === "principal-oauth") return `credential:${auth.credentialId}`;
+  if (auth.tokenId) return `token:${auth.tokenId}`;
+  return `address:${clientIp(c)}`;
 }
 
 /**

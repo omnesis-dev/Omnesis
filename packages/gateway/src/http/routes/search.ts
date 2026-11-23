@@ -10,7 +10,7 @@ import { BadRequestError, ForbiddenError, ServiceUnavailableError } from "../err
 import { searchRateLimiter } from "../../rate-limit.js";
 import { hiddenSourceIdsToExclude } from "../../search/hidden-sources.js";
 import { likeSearchDocuments } from "../../search/like-search.js";
-import { clientIp, isLoopbackRequest } from "./admin/internals.js";
+import { credentialRateLimitKey, isLoopbackRequest } from "./admin/internals.js";
 import type { RouteApp } from "./types.js";
 import type { SearchQuery } from "../../search/types.js";
 import type { SearchPipeline } from "../../search/pipeline.js";
@@ -62,7 +62,7 @@ export function mountSearchRoutes(app: RouteApp, deps: SearchRoutesDeps): void {
         if (c.get("auth").authMethod === "principal-oauth") {
           throw new ForbiddenError("Operator credentials required for agent search context");
         }
-        if (!isLoopbackRequest(c) && searchLimiter.consume(clientIp(c))) {
+        if (!isLoopbackRequest(c) && searchLimiter.consume(credentialRateLimitKey(c))) {
           return c.json({ error: "Too many search requests — try again later" }, 429, {
             "Retry-After": "60",
           });
@@ -106,14 +106,14 @@ export function mountSearchRoutes(app: RouteApp, deps: SearchRoutesDeps): void {
   });
 
   app.post("/search", scope.read(), validateJson(searchBody), async (c) => {
-    // Per-IP rate limit: defence-in-depth against a runaway/abusive
+    // Per-credential rate limit: defence-in-depth against a runaway/abusive
     // client pinning the search pipeline on an exposed gateway. Loopback is
     // exempt — a same-host client already has full local access, so the limit
     // buys nothing there, and throttling it would break local automation like
     // the eval harness (which fires hundreds of queries back-to-back). The
     // exemption checks the raw socket, so a forwarded `127.0.0.1` can't spoof
     // it.
-    if (!isLoopbackRequest(c) && searchLimiter.consume(clientIp(c))) {
+    if (!isLoopbackRequest(c) && searchLimiter.consume(credentialRateLimitKey(c))) {
       return c.json({ error: "Too many search requests — try again later" }, 429, {
         "Retry-After": "60",
       });

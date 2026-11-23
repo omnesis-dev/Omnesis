@@ -6,7 +6,7 @@ import { notesRateLimiter } from "../../rate-limit.js";
 import { scope } from "../scope.js";
 import { validateJson } from "../validate.js";
 import { authorizationBody, browserNoteBody } from "../schemas/browser-notes.js";
-import { clientIp, isLoopbackRequest } from "./admin/internals.js";
+import { credentialRateLimitKey, isLoopbackRequest } from "./admin/internals.js";
 import type { RouteApp } from "./types.js";
 import type { BrowserNotesService } from "../services/BrowserNotesService.js";
 
@@ -52,7 +52,7 @@ export function mountBrowserNotesRoutes(app: RouteApp, service: BrowserNotesServ
   });
   app.get("/browser/notes", scope.deviceSelf(), (c) => c.json(service.status(c.get("auth"))));
   app.post("/browser/notes", scope.deviceSelf(), validateJson(browserNoteBody), async (c) => {
-    if (!isLoopbackRequest(c) && captureLimiter.consume(clientIp(c))) {
+    if (!isLoopbackRequest(c) && captureLimiter.consume(credentialRateLimitKey(c))) {
       return c.json({ error: "Too many capture requests — try again later" }, 429, {
         "Retry-After": "60",
       });

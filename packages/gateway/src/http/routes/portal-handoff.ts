@@ -27,7 +27,7 @@ import { createLogger } from "@omnesis/core";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod";
 import { lookupSession } from "../../data/repositories/TokenRepository.js";
-import { IpRateLimiter } from "../../rate-limit.js";
+import { RateLimiter } from "../../rate-limit.js";
 import { buildSessionCookieHeader, getSessionCookie, portalCsrfToken } from "../cookies.js";
 import { HttpError } from "../errors.js";
 import { scope } from "../scope.js";
@@ -105,7 +105,7 @@ export function mountPortalHandoffRoutes(app: RouteApp, deps: PortalHandoffDeps)
   const handoffs = new PortalHandoffs(deps.now);
   const ttlMs = deps.sessionTtlMs ?? 30 * 24 * 60 * 60 * 1000;
   const maxAgeS = Math.max(1, Math.floor(ttlMs / 1000));
-  const limiter = new IpRateLimiter({
+  const limiter = new RateLimiter({
     surface: "/portal/api/handoff/redeem",
     burst: { capacity: 10, windowMs: 60_000 },
     hourly: { capacity: 100, windowMs: 3_600_000 },

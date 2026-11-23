@@ -18,7 +18,7 @@
 import { assertNever, tailscaleJoinPolicySchema } from "@omnesis/core";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod";
-import { IpRateLimiter } from "../../rate-limit.js";
+import { RateLimiter } from "../../rate-limit.js";
 import { tailnetCallerAddress, tailnetCallerOfEnv } from "../../tailscale-embed/caller.js";
 import { deviceNameSchema } from "../../tailscale-embed/settings.js";
 import { deviceCapabilitySchema } from "../schemas/common.js";
@@ -130,12 +130,12 @@ export function mountTailscaleRoutes(app: RouteApp, service?: TailscaleEmbedServ
     },
   );
 
-  const joinLimiter = new IpRateLimiter({
+  const joinLimiter = new RateLimiter({
     surface: "/tailscale/join",
     burst: { capacity: 6, windowMs: 60_000 },
     hourly: { capacity: 60, windowMs: 3_600_000 },
   });
-  const pollLimiter = new IpRateLimiter({
+  const pollLimiter = new RateLimiter({
     surface: "/tailscale/join/poll",
     burst: { capacity: 30, windowMs: 60_000 },
     hourly: { capacity: 600, windowMs: 3_600_000 },

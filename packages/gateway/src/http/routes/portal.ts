@@ -317,16 +317,20 @@ export function mountPortalRoutes(app: RouteApp, deps: PortalRoutesDeps): void {
   // `/devices/pair`. Loopback is exempt: a same-host caller can already read
   // the token file, so the limit buys no security against it (mirrors the
   // search / documents limiters) and would otherwise throttle local tooling.
+  // Each attempt is charged before the credential is checked and refunded on
+  // a successful login, so only failed credentials count against an address.
   const loginLimiter = portalLoginRateLimiter();
 
   app.post("/portal/api/login", scope.public(), validateJson(portalLoginBody), async (c) => {
-    if (!isLoopbackRequest(c) && loginLimiter.consume(clientIp(c))) {
+    const limitedIp = isLoopbackRequest(c) ? null : clientIp(c);
+    if (limitedIp !== null && loginLimiter.consume(limitedIp)) {
       return c.json({ error: "Too many login attempts — try again later" }, 429, {
         "Retry-After": "60",
       });
     }
     const { token, deviceName, installId } = c.req.valid("json");
     const result = await authService.login(token, { deviceName, installId });
+    if (result.ok && limitedIp !== null) loginLimiter.refund(limitedIp);
     if (!result.ok) {
       if (result.status === 401) throw new UnauthorizedError(result.error);
       if (result.status === 409) throw new ConflictError(result.error);
