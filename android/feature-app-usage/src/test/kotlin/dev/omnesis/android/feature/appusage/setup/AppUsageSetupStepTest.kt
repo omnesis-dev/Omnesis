@@ -14,7 +14,6 @@ import dev.omnesis.android.feature.appusage.AppUsageSyncCoordinator
 import dev.omnesis.android.feature.appusage.AppUsageSyncScheduler
 import dev.omnesis.android.feature.appusage.InMemoryKeyValueStore
 import dev.omnesis.android.setup.flow.SetupOutcome
-import dev.omnesis.android.transport.ACTIVATION_COMMIT_FAILED
 import dev.omnesis.android.transport.MembershipOutbox
 import dev.omnesis.android.transport.PermissionHealthCoordinator
 import dev.omnesis.android.transport.SourceMembership
@@ -156,8 +155,8 @@ class AppUsageSetupStepTest {
     }
 
     @Test
-    fun aRefusedJoinFailsTheEnableAndLeavesAppUsageOff() {
-        assertEquals(ACTIVATION_COMMIT_FAILED, agree().message)
+    fun aRefusedJoinFailsTheEnableWithTheGatewaysReasonAndLeavesAppUsageOff() {
+        assertEquals("Already hosted", agree().message)
         assertNothingChanged()
     }
 
