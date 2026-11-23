@@ -9,6 +9,7 @@
 # Both scenarios run this checkout's installer and Docker launcher as an
 # account with a group-writable umask (Ubuntu's 002), then:
 #   1. install the newest published release's images (--docker --combined);
+#      on mac, after pulling them into Colima's VM (prefetch_images);
 #   2. capture a note and read the collector's device id;
 #   3. re-run the installer: on linux with --build, so the images become this
 #      checkout's (the upgrade a re-run makes); on mac over the published ones;
@@ -40,6 +41,12 @@ case "$SCENARIO" in linux | mac) ;; *) die "usage: docker-host.sh linux|mac" ;; 
 umask 002
 COMMON=(--docker --combined --no-tls --no-model)
 INSTALL_LOG="$E2E_WORK/install.log"
+# Where the published images live: a run without --build reads it from this
+# machine to resolve the newest release, so each one first waits for it
+# (await_registry).
+REGISTRY_HOST=ghcr.io
+# The images a --combined install pulls.
+PUBLISHED_IMAGES="omnesis-combined omnesis-updater"
 
 installer() {
   set +e
@@ -106,16 +113,42 @@ backup_count() {
   json_get "$E2E_WORK/backups.json" 'String(j.backups.length)'
 }
 
+# mac: pull the release the installer will choose into Colima's VM before it
+# runs. Pulling there takes 10 to 30 minutes, and the VM's resolver has timed
+# out for longer than the installer's own pull retries allow (about 35 s);
+# pull_image waits such an outage out. The installer then finds the layers
+# present and only checks each image's manifest. D1 keeps the installer's
+# pull from an empty daemon covered.
+PREFETCHED_TAG=""
+prefetch_images() {
+  local image
+  # shellcheck disable=SC2086 # one argument per image
+  outlast_outage "reading the newest release" "$REGISTRY_HOST" 'fetch failed' \
+    node "$E2E_DIR/registry-tag.mjs" "$REGISTRY_HOST" omnesis-dev $PUBLISHED_IMAGES
+  PREFETCHED_TAG="$(tail -n 1 "$OUTAGE_ATTEMPT_LOG")"
+  expect_shape "the newest published release" "$VERSION_SHAPE" "$PREFETCHED_TAG"
+  group "Pull the $PREFETCHED_TAG images into the Docker VM"
+  for image in $PUBLISHED_IMAGES; do
+    pull_image "$REGISTRY_HOST" "$REGISTRY_HOST/omnesis-dev/$image:$PREFETCHED_TAG"
+  done
+  endgroup
+}
+
 project_containers() {
   docker ps -a --filter "label=com.docker.compose.project=$1" -q
 }
 
+[ "$SCENARIO" = linux ] || prefetch_images
 group "Install the newest published release (Docker, combined)"
+await_registry "$REGISTRY_HOST"
 installer || die "the published install failed"
 endgroup
 serving
 PUBLISHED_TAG="$(sed -n 's/^OMNESIS_IMAGE_TAG=//p' "$CONFIG_DIR/.env")"
 log "installed image tag $PUBLISHED_TAG"
+if [ -n "$PREFETCHED_TAG" ] && [ "$PREFETCHED_TAG" != "$PUBLISHED_TAG" ]; then
+  printf '::notice::the installer chose %s, not the prefetched %s (a release published during the run)\n' "$PUBLISHED_TAG" "$PREFETCHED_TAG"
+fi
 
 group "Capture a note and read the collector's device"
 NOTE_DAY="$(date -u +%F)"
@@ -133,6 +166,7 @@ if [ "$SCENARIO" = linux ]; then
     *) die "the --build re-run did not move the install onto this checkout's images" ;;
   esac
 else
+  await_registry "$REGISTRY_HOST"
   installer || die "the re-run failed"
 fi
 endgroup
