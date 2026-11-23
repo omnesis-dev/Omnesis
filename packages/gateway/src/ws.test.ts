@@ -1200,6 +1200,73 @@ describe("DeviceWsServer collector presence lifecycle", () => {
     }
   });
 
+  // A collector that read as online while its hello was still settling could be
+  // sent an admin command before its connect-time snapshot; that snapshot,
+  // computed before the command's effect, then arrived after it.
+  test("a collector takes no command until its hello is acknowledged and its connect state is sent", async () => {
+    const localDbPath = join(tmpdir(), `omnesis-ws-ready-${randomUUID()}.db`);
+    const localDb = createDatabase(localDbPath);
+    const collector = createDevice(localDb, { name: "ready-collector", kind: "collector" });
+    const { id: tokenId } = createToken(localDb, collector.id, [SCOPE_WRITE_ALL]);
+    let releaseConnect: (() => void) | undefined;
+    const connectGate = new Promise<void>((resolve) => {
+      releaseConnect = resolve;
+    });
+    const srvRef: { current?: DeviceWsServer } = {};
+    const onlineWhenHooked: boolean[] = [];
+    const srv = new DeviceWsServer({
+      db: localDb,
+      writeGate: directWriteGate(localDb),
+      authTimeoutMs: 60_000,
+      onCollectorConnected: () => connectGate,
+      onDeviceConnected: (conn) => {
+        onlineWhenHooked.push(srvRef.current!.isConnected(conn.deviceId));
+        void srvRef
+          .current!.sendCommand(conn.deviceId, "sources.snapshot", { sources: [] }, 1_000)
+          .catch(() => {});
+      },
+    });
+    srvRef.current = srv;
+    const sent: string[] = [];
+    const ws = { send: (data: string) => sent.push(data), close: vi.fn() };
+
+    try {
+      srv.onOpen(ws, "fictional-ready-client", {
+        tokenId,
+        deviceId: collector.id,
+        scopes: [SCOPE_WRITE_ALL],
+      });
+      srv.onMessage(
+        ws,
+        JSON.stringify(makeCommand("hello", { protocolVersion: PROTOCOL_VERSION })),
+      );
+      await new Promise((resolve) => setImmediate(resolve));
+
+      // Authenticated, but the handshake has not finished.
+      expect(srv.isConnected(collector.id)).toBe(false);
+      await expect(srv.sendCommand(collector.id, "source.descriptors", {}, 1_000)).rejects.toThrow(
+        "not connected",
+      );
+      expect(sent).toEqual([]);
+
+      releaseConnect?.();
+      await vi.waitFor(() => expect(srv.isConnected(collector.id)).toBe(true));
+      expect(onlineWhenHooked).toEqual([true]);
+      void srv.sendCommand(collector.id, "source.descriptors", {}, 1_000).catch(() => {});
+
+      const frames = sent.map((data) => JSON.parse(data) as { kind: string; type?: string });
+      expect(frames.map((frame) => frame.type ?? frame.kind)).toEqual([
+        "response",
+        "sources.snapshot",
+        "source.descriptors",
+      ]);
+    } finally {
+      srv.stop();
+      localDb.close();
+      cleanupDb(localDbPath);
+    }
+  });
+
   // What a device reported over one connection is current only under that
   // connection's epoch (the collector descriptor cache relies on it), so every
   // change to the device's sockets must give a number never seen before.

@@ -57,3 +57,76 @@ test.each(["device.update", "device.doctor"])(
     expect(guard).not.toHaveBeenCalled();
   },
 );
+
+function deferred(): { promise: Promise<void>; resolve: () => void; reject: (e: Error) => void } {
+  let resolve!: () => void;
+  let reject!: (e: Error) => void;
+  const promise = new Promise<void>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+test("a command whose check answers first still waits for the command sent before it", async () => {
+  // The connect-time snapshot's check answers last; the add that followed it
+  // must not reach its handler first.
+  const slowCheck = deferred();
+  const guard = vi
+    .fn<() => Promise<void>>()
+    .mockReturnValueOnce(slowCheck.promise)
+    .mockResolvedValue(undefined);
+  const handled: string[] = [];
+  const handle = vi.fn((command: { type: string }) => {
+    handled.push(command.type);
+    return Promise.resolve({ ok: true });
+  });
+  const dispatch = createGatewayCommandHandler(guard, [{ handle }]);
+
+  const snapshot = dispatch(makeCommand("sources.snapshot", { sources: [] }));
+  const add = dispatch(
+    makeCommand("source.add", { descriptorId: "obsidian-notes", accountIds: ["a"] }),
+  );
+  // Both checks are under way at once; neither command has been handed off.
+  expect(guard).toHaveBeenCalledTimes(2);
+  await new Promise((resolve) => setImmediate(resolve));
+  expect(handled).toEqual([]);
+
+  slowCheck.resolve();
+  await expect(Promise.all([snapshot, add])).resolves.toEqual([{ ok: true }, { ok: true }]);
+  expect(handled).toEqual(["sources.snapshot", "source.add"]);
+});
+
+test("a refused command does not hold back the commands after it", async () => {
+  const refusal = deferred();
+  const guard = vi
+    .fn<() => Promise<void>>()
+    .mockReturnValueOnce(refusal.promise)
+    .mockResolvedValue(undefined);
+  const handle = vi.fn().mockResolvedValue({ ok: true });
+  const dispatch = createGatewayCommandHandler(guard, [{ handle }]);
+
+  const refused = dispatch(makeCommand("sources.snapshot", { sources: [] }));
+  const next = dispatch(makeCommand("sources.snapshot", { sources: [] }));
+  refusal.reject(new Error("Gateway upgrade required"));
+  await expect(refused).rejects.toThrow("Gateway upgrade required");
+  await expect(next).resolves.toEqual({ ok: true });
+  expect(handle).toHaveBeenCalledTimes(1);
+});
+
+test("a long-running handler does not hold back the commands after it", async () => {
+  const guard = vi.fn().mockResolvedValue(undefined);
+  const firstHandler = deferred();
+  const handle = vi
+    .fn()
+    .mockReturnValueOnce(firstHandler.promise.then(() => ({ ok: true })))
+    .mockResolvedValue({ ok: false });
+  const dispatch = createGatewayCommandHandler(guard, [{ handle }]);
+
+  const first = dispatch(makeCommand("source.add", { descriptorId: "d", accountIds: ["a"] }));
+  await expect(dispatch(makeCommand("sources.snapshot", { sources: [] }))).resolves.toEqual({
+    ok: false,
+  });
+  firstHandler.resolve();
+  await expect(first).resolves.toEqual({ ok: true });
+});
