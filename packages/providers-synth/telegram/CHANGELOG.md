@@ -1,5 +1,13 @@
 # @omnesis/provider-telegram-synth
 
+## 0.8.1
+
+### Patch Changes
+
+- @omnesis/providers-synth-common@0.8.1
+  - @omnesis/provider-telegram@0.8.1
+  - @omnesis/source-sdk@0.8.1
+
 ## 0.8.0
 
 ### Patch Changes

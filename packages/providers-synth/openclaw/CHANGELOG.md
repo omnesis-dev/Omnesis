@@ -1,5 +1,15 @@
 # @omnesis/provider-openclaw-synth
 
+## 0.8.1
+
+### Patch Changes
+
+- @omnesis/core@0.8.1
+  - @omnesis/providers-synth-common@0.8.1
+  - @omnesis/provider-openclaw@0.8.1
+  - @omnesis/source-sdk@0.8.1
+  - @omnesis/types@0.8.1
+
 ## 0.8.0
 
 ### Patch Changes

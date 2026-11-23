@@ -1,5 +1,48 @@
 # @omnesis/collector
 
+## 0.8.1
+
+### Patch Changes
+
+- @omnesis/cloud-relay@0.8.1
+  - @omnesis/config@0.8.1
+  - @omnesis/core@0.8.1
+  - @omnesis/gateway-client@0.8.1
+  - @omnesis/provider-antigravity@0.8.1
+  - @omnesis/provider-apple@0.8.1
+  - @omnesis/provider-browser-history@0.8.1
+  - @omnesis/provider-chrome@0.8.1
+  - @omnesis/provider-claude-code@0.8.1
+  - @omnesis/provider-codex@0.8.1
+  - @omnesis/provider-coinbase@0.8.1
+  - @omnesis/provider-discord@0.8.1
+  - @omnesis/provider-enable-banking@0.8.1
+  - @omnesis/provider-github@0.8.1
+  - @omnesis/provider-google@0.8.1
+  - @omnesis/provider-granola@0.8.1
+  - @omnesis/provider-hermes@0.8.1
+  - @omnesis/provider-imap@0.8.1
+  - @omnesis/provider-immich@0.8.1
+  - @omnesis/provider-local-files@0.8.1
+  - @omnesis/provider-lunchflow@0.8.1
+  - @omnesis/provider-maildir@0.8.1
+  - @omnesis/provider-notion@0.8.1
+  - @omnesis/provider-obsidian@0.8.1
+  - @omnesis/provider-openclaw@0.8.1
+  - @omnesis/provider-outlook@0.8.1
+  - @omnesis/provider-paperless@0.8.1
+  - @omnesis/provider-pi@0.8.1
+  - @omnesis/provider-plaid@0.8.1
+  - @omnesis/provider-plaud@0.8.1
+  - @omnesis/provider-screen-time@0.8.1
+  - @omnesis/provider-strava@0.8.1
+  - @omnesis/provider-telegram@0.8.1
+  - @omnesis/provider-things@0.8.1
+  - @omnesis/provider-web@0.8.1
+  - @omnesis/provider-whatsapp@0.8.1
+  - @omnesis/source-sdk@0.8.1
+  - @omnesis/types@0.8.1
+
 ## 0.8.0
 
 ### Patch Changes

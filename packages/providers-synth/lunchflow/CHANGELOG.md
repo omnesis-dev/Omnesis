@@ -1,5 +1,14 @@
 # @omnesis/provider-lunchflow-synth
 
+## 0.8.1
+
+### Patch Changes
+
+- @omnesis/providers-synth-common@0.8.1
+  - @omnesis/provider-lunchflow@0.8.1
+  - @omnesis/source-sdk@0.8.1
+  - @omnesis/types@0.8.1
+
 ## 0.8.0
 
 ### Patch Changes
