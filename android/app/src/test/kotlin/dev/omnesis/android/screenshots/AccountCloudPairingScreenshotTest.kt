@@ -60,7 +60,7 @@ class AccountCloudPairingScreenshotTest {
             }
         }
     }
-    @Test fun the_pairing_entry_offers_one_cloud_account_button_and_direct_pairing() {
+    @Test fun the_pairing_entry_lists_the_three_ways_to_pair_in_one_menu() {
         for (dark in listOf(false, true)) for (large in listOf(false, true)) {
             captureRoboImage(filePath = "src/test/roborazzi/account-pairing-entry-${if (large) "large" else "normal"}-${if (dark) "dark" else "light"}.png") {
                 pairingScreen(dark, large, PairingViewModel.State(mode = PairingViewModel.Mode.Account, googleAvailable = true, passkeyAvailable = true, account = AccountPairingState()))
@@ -68,7 +68,7 @@ class AccountCloudPairingScreenshotTest {
         }
     }
 
-    @Test fun the_cloud_account_button_opens_the_choice_of_google_or_a_passkey() {
+    @Test fun the_cloud_account_row_opens_the_choice_of_google_or_a_passkey() {
         for (dark in listOf(false, true)) for (large in listOf(false, true)) {
             captureRoboImage(filePath = "src/test/roborazzi/account-pairing-choices-${if (large) "large" else "normal"}-${if (dark) "dark" else "light"}.png") {
                 pairingScreen(dark, large, PairingViewModel.State(mode = PairingViewModel.Mode.Account, googleAvailable = true, passkeyAvailable = true, account = AccountPairingState(), choosingSignIn = true))

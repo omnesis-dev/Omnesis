@@ -158,10 +158,10 @@ Per-category toggles persist via `HealthSettings` (UserDefaults-backed). Disable
 
 ## Signing in with the cloud account
 
-Every build offers **Sign in with cloud account** on the pairing screen, beside
-scanning a QR code and entering a code manually. The button opens a second screen
-with the two ways to sign in: Google or a passkey. QR and manual pairing work
-without an account.
+The pairing screen lists three ways to pair in one menu: scanning the gateway's
+QR code, entering a code manually, and **Sign in with cloud account**, which every
+build offers. Signing in opens a second screen with the two ways to sign in: Google
+or a passkey. QR and manual pairing work without an account.
 
 `Config.xcconfig` carries the official app's public sign-in identifiers: the relay
 (`OMNESIS_CLOUD_RELAY_URL`), the iOS Google OAuth client (`OMNESIS_GOOGLE_CLIENT_ID`)

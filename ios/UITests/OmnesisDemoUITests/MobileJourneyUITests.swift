@@ -74,7 +74,7 @@ final class MobileJourneyUITests: XCTestCase {
         app.launch()
 
         tap(app.buttons["onboarding.pair"], "the onboarding Pair button")
-        // Pairing opens on its two ways in; the code is scanned from the gateway.
+        // Pairing opens on its three ways in; the code is scanned from the gateway.
         tap(app.buttons["pairing.entry.scan"], "the Scan the gateway's QR code row")
 
         // The simulator has no camera, so the scanner reports that first —

@@ -118,6 +118,7 @@ final class PreviewSnapshotTests: XCTestCase {
         }
         let small = CGSize(width: 320, height: 568)
         snapshot(entry, name: "pairing-entry-account")
+        snapshot(entry.preferredColorScheme(.dark), name: "pairing-entry-account-dark")
         snapshot(entry, name: "pairing-entry-account-small", size: small)
         snapshot(entry.dynamicTypeSize(.accessibility2), name: "pairing-entry-account-large")
         snapshot(

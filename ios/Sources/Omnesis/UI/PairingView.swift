@@ -66,7 +66,7 @@ struct PairingView: View {
         }
     }
 
-    /// With an Omnesis account available, pairing opens on the two ways to connect. The camera
+    /// With an Omnesis account available, pairing opens on the three ways to pair. The camera
     /// starts only once the person picks the QR code.
     private func accountEntry(_ configuration: AccountCloudPairingConfiguration) -> some View {
         presentations(

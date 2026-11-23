@@ -37,7 +37,7 @@ class PairingViewModelTest {
         accountPorts = ports, googleAvailable = google, passkeyAvailable = passkey,
     )
 
-    @Test fun `the entry offers one sign-in button that opens the choices and goes back to the entry`() = runTest(dispatcher) {
+    @Test fun `the cloud account row opens the choices and goes back to the entry`() = runTest(dispatcher) {
         val vm = model()
         assertEquals(PairingViewModel.Mode.Account, vm.state.value.mode)
         assertFalse(vm.state.value.choosingSignIn)

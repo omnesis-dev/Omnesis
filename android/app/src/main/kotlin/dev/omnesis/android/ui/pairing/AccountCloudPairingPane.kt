@@ -12,6 +12,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
+import androidx.compose.material.icons.outlined.AccountCircle
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Dns
 import androidx.compose.material.icons.outlined.Info
@@ -64,7 +65,7 @@ fun AccountCloudPairingPane(
     onScan: () -> Unit = {},
     onManual: () -> Unit = {},
     onCancel: () -> Unit = {},
-    /** The sign-in choices are open. Otherwise the entry offers one button that opens them, beside direct pairing. */
+    /** The sign-in choices are open. Otherwise the entry lists the three ways to pair, one of which opens them. */
     choosingSignIn: Boolean = false,
     onSignIn: () -> Unit = {},
 ) {
@@ -82,13 +83,14 @@ fun AccountCloudPairingPane(
                     else state.error?.let { EntryMessage(it, Icons.Outlined.Warning, colors.danger, "account-pairing-error") }
                 }
             } else {
-                CloudAccountSignInButton(onClick = onSignIn, modifier = Modifier.fillMaxWidth().testTag("pairing.entry.cloudAccount"))
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    SectionHeader("Pair directly", "Use a pairing code from your gateway. No account needed.")
+                    Text(PAIRING_ENTRY_DETAIL, style = MaterialTheme.typography.bodyMedium, color = colors.textSecondary)
                     Column(Modifier.fillMaxWidth().clip(CardShape).background(colors.bgSecondary)) {
                         EntryRow("Scan the gateway's QR code", Icons.Outlined.QrCodeScanner, onScan, Modifier.testTag("pairing.entry.scan"))
                         HorizontalDivider(Modifier.padding(start = 58.dp), thickness = 1.dp, color = colors.borderLight)
                         EntryRow("Enter code manually", Icons.Outlined.Keyboard, onManual, Modifier.testTag("pairing.entry.manual"))
+                        HorizontalDivider(Modifier.padding(start = 58.dp), thickness = 1.dp, color = colors.borderLight)
+                        EntryRow(CLOUD_ACCOUNT_SIGN_IN, Icons.Outlined.AccountCircle, onSignIn, Modifier.testTag("pairing.entry.cloudAccount"))
                     }
                 }
             }
@@ -292,6 +294,9 @@ internal const val PAIRING_WAITING_CONFIRM = "Codes match, connect this phone"
 internal const val PAIRING_WAITING_APPROVED = "Approved. Connecting this phone…"
 
 internal const val SIGN_IN_CHOICES_DETAIL = "Choose how to sign in."
+
+/** One line for all three ways to pair, so none of them reads as the exception. */
+internal const val PAIRING_ENTRY_DETAIL = "Choose how to connect this phone to your gateway."
 
 /** A section's bold title, over the line that explains it when there is one. */
 @Composable
