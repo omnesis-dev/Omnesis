@@ -844,9 +844,21 @@ export function createServer(
     "*",
     corsMiddleware(() => opts?.configStore?.get().gateway?.cors),
   );
-  // An address the owner turned MCP off on serves none of MCP's paths.
+  // Single-writer gate. Falls back to directWriteGate(db) when the
+  // caller didn't provide one.
+  const w: WriteGate = opts?.writeGate ?? directWriteGate(db);
+  const accessService = new AccessService(db, w);
+
+  // An address the owner turned MCP off on serves none of MCP's paths; an agent the owner
+  // connected there is told why.
   if (mcpAddresses) {
-    app.use("*", mcpAddressGate(mcpAddresses));
+    app.use(
+      "*",
+      mcpAddressGate(
+        mcpAddresses,
+        (rawToken, resource) => accessService.lookupAccessToken(rawToken, resource) !== null,
+      ),
+    );
     // Agents on the home network sign in through the address they used, once the owner allows it.
     app.use("*", homeSignInMiddleware(mcpAddresses));
   }
@@ -936,11 +948,6 @@ export function createServer(
       500,
     );
   });
-
-  // Single-writer gate. Falls back to directWriteGate(db) when the
-  // caller didn't provide one.
-  const w: WriteGate = opts?.writeGate ?? directWriteGate(db);
-  const accessService = new AccessService(db, w);
 
   // Per-port session cookie name — see `sessionCookieName` in
   // `http/cookies.ts`. The auth middleware (below) and the portal routes

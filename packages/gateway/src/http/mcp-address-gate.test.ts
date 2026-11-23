@@ -4,8 +4,10 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { Hono } from "hono";
-import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { MCP_ADDRESS_OFF_MESSAGE } from "../mcp/address-off-server.js";
 import { FUNNEL_REQUEST_HEADER, HostAccess } from "../remote-access/host-access.js";
 import { McpAddresses } from "../remote-access/mcp-addresses.js";
 import { RemoteAccessSettingsStore } from "../remote-access/settings.js";
@@ -96,4 +98,161 @@ test("only a request on the relay tunnel's own socket is the relay's, whatever i
     (await app.request(`${HOST}/portal/api/session`, { headers: funnel }, arrivingOn(41_002)))
       .status,
   ).toBe(404);
+});
+
+describe("an MCP call on an address the owner turned MCP off on", () => {
+  const RELAY = "https://gw-fictional.relay.example.net";
+  const TAILNET = "https://omnesis-gw.example-net.ts.net";
+  /** Tokens as the access store holds them: each valid for one resource only. */
+  const TOKENS: Record<string, string> = {
+    "relay-agent-token": `${RELAY}/mcp`,
+    "tailnet-agent-token": `${TAILNET}/mcp`,
+  };
+
+  /** A gateway reached through the relay and its Tailscale device, the relay's MCP turned off. */
+  function relayGateway() {
+    const settings = new RemoteAccessSettingsStore(dir);
+    const addresses = new McpAddresses({
+      settings,
+      publicBaseUrl: () => undefined,
+      relayOrigin: () => RELAY,
+    });
+    settings.update({ mcp: { relay: false } });
+    const served = vi.fn();
+    const app = new Hono<AppEnv>();
+    app.use(
+      "*",
+      mcpAddressGate(addresses, (rawToken, resource) => TOKENS[rawToken] === resource),
+    );
+    // The real endpoint, which must never run while the address is off.
+    app.all("/mcp", (c) => {
+      served();
+      return c.json({ tools: ["ask_omnesis"] });
+    });
+    app.get("*", (c) => c.json({ ok: true }));
+    return { app, settings, served };
+  }
+
+  const initialize = JSON.stringify({
+    jsonrpc: "2.0",
+    id: 1,
+    method: "initialize",
+    params: {
+      protocolVersion: "2025-11-25",
+      capabilities: {},
+      clientInfo: { name: "fictional-client", version: "1.0.0" },
+    },
+  });
+
+  function post(app: Hono<AppEnv>, headers: Record<string, string>, body = initialize) {
+    return app.request(`${RELAY}/mcp`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json, text/event-stream",
+        ...headers,
+      },
+      body,
+    });
+  }
+
+  async function connect(
+    app: Hono<AppEnv>,
+    token: string,
+    era: "2026-07-28" | "2025-11-25",
+  ): Promise<Client> {
+    const transport = new StreamableHTTPClientTransport(new URL(`${RELAY}/mcp`), {
+      authProvider: { token: () => Promise.resolve(token) },
+      fetch: (input, init) => app.fetch(new Request(input, init)),
+    });
+    const client =
+      era === "2026-07-28"
+        ? new Client(
+            { name: "fictional-client", version: "1.0.0" },
+            { versionNegotiation: { mode: { pin: era } }, defaultCacheTtlMs: 0 },
+          )
+        : new Client(
+            { name: "fictional-client", version: "1.0.0" },
+            {
+              supportedProtocolVersions: [era],
+              versionNegotiation: { mode: "legacy" },
+              defaultCacheTtlMs: 0,
+            },
+          );
+    await client.connect(transport);
+    return client;
+  }
+
+  test.each(["2026-07-28", "2025-11-25"] as const)(
+    "an agent connected there is told why, over MCP %s, and reaches no tool",
+    async (era) => {
+      const { app, served } = relayGateway();
+      const client = await connect(app, "relay-agent-token", era);
+      try {
+        expect(client.getInstructions()).toBe(MCP_ADDRESS_OFF_MESSAGE);
+        const call = await client.callTool({ name: "ask_omnesis", arguments: { question: "x" } });
+        expect(call).toMatchObject({
+          isError: true,
+          content: [{ type: "text", text: MCP_ADDRESS_OFF_MESSAGE }],
+        });
+        await expect(client.listTools()).rejects.toThrow(MCP_ADDRESS_OFF_MESSAGE);
+      } finally {
+        await client.close();
+      }
+      expect(served).not.toHaveBeenCalled();
+    },
+  );
+
+  test("the answer is an ordinary MCP exchange nothing may store", async () => {
+    const { app } = relayGateway();
+    const response = await post(app, { Authorization: "Bearer relay-agent-token" });
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
+    // A 2025-era request is answered on a stream holding its one result.
+    const data = (await response.text()).match(/^data: (.+)$/mu)?.[1];
+    expect(JSON.parse(data!)).toMatchObject({
+      id: 1,
+      result: { instructions: MCP_ADDRESS_OFF_MESSAGE },
+    });
+  });
+
+  test("without a token valid for that address, the address still has no MCP", async () => {
+    const { app, served } = relayGateway();
+    const absent = [
+      await post(app, {}),
+      await post(app, { Authorization: "Bearer not-a-token" }),
+      // A token for another of the gateway's addresses.
+      await post(app, { Authorization: "Bearer tailnet-agent-token" }),
+      await post(app, { Authorization: "relay-agent-token" }),
+      // A browser page, which the endpoint never serves.
+      await post(app, {
+        Authorization: "Bearer relay-agent-token",
+        Origin: "https://elsewhere.example.com",
+      }),
+    ];
+    for (const response of absent) {
+      expect(response.status).toBe(404);
+      expect(await response.text()).not.toContain("turned off");
+    }
+    expect(served).not.toHaveBeenCalled();
+  });
+
+  test("a token for the address opens none of the other paths MCP clients use there", async () => {
+    const { app } = relayGateway();
+    for (const path of ["/.well-known/oauth-protected-resource/mcp", "/oauth/register", "/mcp/"]) {
+      const response = await app.request(`${RELAY}${path}`, {
+        headers: { Authorization: "Bearer relay-agent-token" },
+      });
+      expect(response.status, path).toBe(404);
+    }
+  });
+
+  test("turned on again, the request reaches the endpoint as before", async () => {
+    const { app, settings, served } = relayGateway();
+    settings.update({ mcp: {} });
+    const response = await post(app, { Authorization: "Bearer relay-agent-token" });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ tools: ["ask_omnesis"] });
+    expect(served).toHaveBeenCalledTimes(1);
+  });
 });

@@ -875,8 +875,13 @@
           Away from home, an address where MCP is off returns <code>404</code> for the MCP endpoint
           and the OAuth routes an MCP client signs in through, as a gateway without them would, and
           its discovery documents stop listing it; the portal and your devices' own connections at
-          that address are unaffected. Agents on the gateway's computer always reach the MCP server;
-          agents on your home network do once you allow it (see
+          that address are unaffected. The one exception is an agent you already connected at that
+          address: while the access token it last received there is valid, its calls are told that
+          MCP is turned off for the address in the gateway's settings, so the agent can say why it
+          stopped working, and they still reach no tool. Renewing that token is one of the sign-in
+          routes, so once it expires the address looks absent to that agent too. Turning the address
+          back on lets the agent continue without signing in again. Agents on the gateway's computer
+          always reach the MCP server; agents on your home network do once you allow it (see
           <a href="#home-network">home network</a>).
         </p>
 
