@@ -711,9 +711,12 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
           offers three choices: leave it there, use both iPhones, or move it to this iPhone.
           Activity Segments, Location Visits, Health Connect, Call Log, App Usage and Photos are
           <strong>per device</strong>: turning one on for a second phone adds that phone's data
-          alongside the first and keeps the first phone's history. These choices happen in the app
-          before any system permission prompt; phone-only sources cannot be added from the portal or
-          the CLI.
+          alongside the first and keeps the first phone's history. A replacement phone needs nothing
+          done on the old one, even when the old phone is no longer paired or runs an app too old to
+          share the source: setup does not ask about it, adds this phone, and keeps everything the
+          old phone sent. The old phone sends nothing more until it is paired again or updated; the
+          source's members show which it needs. These choices happen in the app before any system
+          permission prompt; phone-only sources cannot be added from the portal or the CLI.
         </p>
         <p>
           Photos from each phone are indexed separately, so an image that several devices can see

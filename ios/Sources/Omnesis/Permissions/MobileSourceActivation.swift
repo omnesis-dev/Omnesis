@@ -11,6 +11,10 @@ public enum MobileSourceActivationPlan: Equatable, Sendable {
     case ready
     case join
     case addPartition
+    /// Share an exclusive source whose owner is dormant: convert it to the
+    /// replicated contract and join, without asking whether to keep a device
+    /// that will not contribute.
+    case addReplica
     case choose(SourceMultiDeviceMode)
     case incompatible(current: SourceMultiDeviceMode, desired: SourceMultiDeviceMode)
 }
@@ -137,7 +141,11 @@ public enum MobileSourceActivation {
             return currentMode == .exclusive ? .choose(.exclusive) : .join
         }
         if currentMode == .exclusive {
-            return desiredMode == .partitioned ? .addPartition : .choose(desiredMode)
+            if desiredMode == .partitioned { return .addPartition }
+            if desiredMode == .replicated, source.dormantHosts.contains(source.deviceId) {
+                return .addReplica
+            }
+            return .choose(desiredMode)
         }
         return .incompatible(current: currentMode, desired: desiredMode)
     }
@@ -187,7 +195,7 @@ public enum MobileSourceActivation {
         -> MobileSourceActivationOutcome {
         let activationPlan = plan(source: source, deviceId: deviceId, desiredMode: desiredMode)
         switch activationPlan {
-        case .ready, .join, .addPartition:
+        case .ready, .join, .addPartition, .addReplica:
             return .ready
         case .incompatible(let current, let desired):
             return .incompatible(current: current, desired: desired)
@@ -232,6 +240,10 @@ public enum MobileSourceActivation {
             return .ready
         case .addPartition:
             try await operations.setMode(source.id, .partitioned)
+            try await operations.join(source.id, deviceId)
+            return .ready
+        case .addReplica:
+            try await operations.setMode(source.id, .replicated)
             try await operations.join(source.id, deviceId)
             return .ready
         case .incompatible(let current, let desired):

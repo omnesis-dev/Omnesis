@@ -11,6 +11,7 @@ import {
   canonicalMemberScopedParamNames,
   advertisedMemberScopedParamNames,
   splitMemberScopedParams,
+  deviceIsDormantUnderContract,
   deviceMatchesMemberConfigContract,
   deviceSupportsMultiDeviceMode,
 } from "../../multi-device-mode.js";
@@ -156,6 +157,50 @@ export function initializeOrAssertSourceMemberConfigContractForDevice(
     );
   }
   return initializeOrAssertSourceMemberConfigContract(db, sourceId, expectedNames);
+}
+
+/**
+ * Revalidate the owner's advertisement beside a membership or member-config
+ * change made for `memberDeviceId`. When that member is not the owner, a
+ * dormant owner of a partitioned or replicated source (revoked, or unable to
+ * act under the pinned contract) is skipped: its writes are refused at
+ * execution, so it must not stop another member's change.
+ */
+export function initializeOrAssertSourceOwnerMemberConfigContract(
+  db: Db,
+  source: Pick<
+    SourceRecord,
+    "id" | "type" | "deviceId" | "multiDeviceMode" | "replicaVersionPolicy"
+  >,
+  memberDeviceId: DeviceId,
+  expectedNames: readonly string[] | undefined,
+): string[] | null {
+  const mode = source.multiDeviceMode;
+  if (
+    expectedNames !== undefined &&
+    memberDeviceId !== source.deviceId &&
+    (mode === "partitioned" || mode === "replicated")
+  ) {
+    const pinned = getSourceMemberConfigContract(db, source.id);
+    const owner = getDevice(db, source.deviceId);
+    if (
+      owner &&
+      deviceIsDormantUnderContract(owner, source.type, {
+        mode,
+        memberScopedParams: pinned,
+        replicaVersionPolicy: source.replicaVersionPolicy ?? undefined,
+      })
+    ) {
+      return pinned;
+    }
+  }
+  return initializeOrAssertSourceMemberConfigContractForDevice(
+    db,
+    source.id,
+    source.type,
+    source.deviceId,
+    expectedNames,
+  );
 }
 
 /**

@@ -80,6 +80,11 @@ public struct SourceRecord: Decodable, Hashable, Sendable, Identifiable {
     /// `from-scratch`): empty for a source that cannot be resynced. Nil on a
     /// gateway that predates resync modes, where a resync always wipes.
     public let resyncModes: [String]?
+    /// Hosts that cannot act under the source's multi-device contract: no
+    /// longer paired, or running an app too old for it. Their data stays and
+    /// they send nothing until re-paired or updated, so a new device need not
+    /// ask whether to keep using them. Empty on a gateway that predates it.
+    public let dormantHosts: [String]
 
     /// Whether `deviceId` contributes to this source, on gateways with and
     /// without membership.
@@ -108,7 +113,8 @@ public struct SourceRecord: Decodable, Hashable, Sendable, Identifiable {
         updatedAt: Int64 = 0,
         members: [String] = [],
         multiDeviceMode: String? = nil,
-        resyncModes: [String]? = nil
+        resyncModes: [String]? = nil,
+        dormantHosts: [String] = []
     ) {
         self.id = id
         self.type = type
@@ -121,11 +127,12 @@ public struct SourceRecord: Decodable, Hashable, Sendable, Identifiable {
         self.members = members
         self.multiDeviceMode = multiDeviceMode
         self.resyncModes = resyncModes
+        self.dormantHosts = dormantHosts
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, type, accountId, deviceId, config, enabled, createdAt, updatedAt
-        case members, multiDeviceMode, resyncModes
+        case members, multiDeviceMode, resyncModes, dormantHosts
     }
 
     public init(from decoder: Decoder) throws {
@@ -141,6 +148,7 @@ public struct SourceRecord: Decodable, Hashable, Sendable, Identifiable {
         members = try container.decodeIfPresent([String].self, forKey: .members) ?? []
         multiDeviceMode = try container.decodeIfPresent(String.self, forKey: .multiDeviceMode)
         resyncModes = try container.decodeIfPresent([String].self, forKey: .resyncModes)
+        dormantHosts = try container.decodeIfPresent([String].self, forKey: .dormantHosts) ?? []
     }
 }
 

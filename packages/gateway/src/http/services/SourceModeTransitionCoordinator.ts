@@ -48,6 +48,7 @@ export class SourceModeTransitionCoordinator {
     memberScopedParams: readonly string[],
     replicaVersionPolicy?: "source-updated-at",
     pairingFence?: PairingGenerationFence,
+    contractAuthorityDeviceId?: DeviceId,
   ): Promise<void> {
     const pending = await this.deps.writeGate.prepareSourceModeTransition(
       sourceId,
@@ -56,6 +57,7 @@ export class SourceModeTransitionCoordinator {
       memberScopedParams,
       replicaVersionPolicy,
       pairingFence,
+      contractAuthorityDeviceId,
     );
     if (!pending) return;
     await this.resumeOne(pending);

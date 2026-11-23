@@ -112,6 +112,46 @@ export function deviceMatchesMemberConfigContract(
 }
 
 /**
+ * The contract a member of a multi-device source acts under: its mode, the
+ * pinned member-local parameters (null: none pinned yet) and, for a
+ * replicated source, the pinned row-version policy.
+ */
+export interface MemberContract {
+  mode: "partitioned" | "replicated";
+  memberScopedParams: readonly string[] | null;
+  replicaVersionPolicy?: "source-updated-at";
+}
+
+/**
+ * Whether a device is a dormant host of a partitioned or replicated source of
+ * this type: it is revoked, or its advertisement cannot execute `contract`.
+ * Every write a host makes is checked against the persisted contract at
+ * execution, so a dormant host's data is at rest — its pushes are refused
+ * until it is re-paired or updated — and it never stands in the way of a
+ * capable device's transition or join. The member-local rule matches
+ * `deviceSupportsExistingSourceExecution`: a device that advertises every
+ * pinned parameter, and perhaps more, can still act.
+ */
+export function deviceIsDormantUnderContract(
+  device: DeviceRecord,
+  sourceType: SourceType,
+  contract: MemberContract,
+): boolean {
+  if (device.revokedAt !== null) return true;
+  if (!deviceSupportsMultiDeviceMode(device, sourceType, contract.mode)) return true;
+  if (
+    contract.mode === "replicated" &&
+    device.capabilities.replicaVersionPolicies?.[sourceType] !== contract.replicaVersionPolicy
+  ) {
+    return true;
+  }
+  const advertised = advertisedMemberScopedParamNames(device, sourceType);
+  if (advertised === null) return true;
+  const pinned = contract.memberScopedParams;
+  return pinned !== null && !pinned.every((n) => advertised.includes(n));
+}
+
+/**
  * The `sync_state` row a device's cursor writes land on: its own row when
  * the type keeps per-device cursors and the caller is a device, the shared
  * row (`""`) otherwise — which is also what a caller without a device
