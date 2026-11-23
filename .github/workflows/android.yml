@@ -59,10 +59,17 @@ jobs:
       # closest older entry rather than start empty: an empty cache downloads every
       # dependency from Maven Central, which rate-limits a runner with HTTP 429.
       #
-      # This job is the only Linux job that saves this entry. A saved entry is
-      # never replaced, so whichever job saves a key first decides what every
-      # later run restores; this job resolves every module's build and unit-test
-      # dependencies, and the other Linux jobs that run Gradle only restore it.
+      # This job is the only Linux job that saves this entry, and only on main
+      # (pushes and the scheduled sweeps; see "Save the Gradle cache" below).
+      # The repository's Actions caches share a 10 GB limit and the least
+      # recently used entry is evicted first, so an entry a pull request saved
+      # could push out main's, which every run restores. A pull request can read
+      # main's entries, so it restores main's and saves none.
+      #
+      # A saved entry is never replaced, so whichever run saves a key first
+      # decides what every later run restores; this job resolves every module's
+      # build and unit-test dependencies, and the other Linux jobs that run
+      # Gradle only restore it.
       #
       # The key covers everything that decides what the lanes resolve: the build
       # files, gradle.properties and the Gradle command lines in this workflow.
@@ -70,7 +77,7 @@ jobs:
       # needs, and the lanes resolve offline from it (scripts/ci/gradlew.sh).
       - name: Restore Gradle caches
         id: gradle-cache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.gradle/caches
@@ -157,6 +164,22 @@ jobs:
         if: ${{ always() && steps.production-network.outcome == 'success' }}
         run: $GITHUB_WORKSPACE/scripts/ci/production-network.sh verify
 
+      # Only main saves, after every lane passed, and only a key it did not
+      # restore exactly (a saved entry is never replaced). The entry keeps what
+      # avoids downloads: dependencies and the Gradle distribution.
+      - name: Trim the Gradle cache to what avoids downloads
+        if: ${{ github.ref == 'refs/heads/main' && steps.gradle-cache.outputs.cache-hit != 'true' }}
+        run: $GITHUB_WORKSPACE/scripts/ci/gradle-cache-trim.sh
+
+      - name: Save the Gradle cache
+        if: ${{ github.ref == 'refs/heads/main' && steps.gradle-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ steps.gradle-cache.outputs.cache-primary-key }}
+
   render:
     # An arm64 macOS runner: the Roborazzi goldens under src/test/roborazzi/
     # are rendered by Robolectric's native graphics on arm64 macOS, and a
@@ -195,8 +218,10 @@ jobs:
       # (a release bumps the app version in one) makes a new key, so restore the
       # closest older entry rather than start empty: an empty cache downloads every
       # dependency from Maven Central, which rate-limits a runner with HTTP 429.
+      # Saved only on main, as in build-and-test.
       - name: Restore Gradle caches
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: gradle-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.gradle/caches
@@ -267,6 +292,19 @@ jobs:
       - name: Check nothing tried to reach production Omnesis services
         if: ${{ always() && steps.production-network.outcome == 'success' }}
         run: $GITHUB_WORKSPACE/scripts/ci/production-network.sh verify
+
+      - name: Trim the Gradle cache to what avoids downloads
+        if: ${{ github.ref == 'refs/heads/main' && steps.gradle-cache.outputs.cache-hit != 'true' }}
+        run: $GITHUB_WORKSPACE/scripts/ci/gradle-cache-trim.sh
+
+      - name: Save the Gradle cache
+        if: ${{ github.ref == 'refs/heads/main' && steps.gradle-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ steps.gradle-cache.outputs.cache-primary-key }}
 
   live-gateway-e2e:
     needs: build-and-test
