@@ -176,8 +176,11 @@
         </p>
         <p>
           Upgrading preserves existing use: task history enables Tasks, an existing watch enables
-          Watches, and an existing background-agent assignment enables the Brain. An explicit Lab
-          choice is never overwritten on restart. Disabling a feature preserves its data.
+          Watches, and an existing background-agent assignment enables the Brain. These choices
+          apply only while experimental mode is on. A gateway started without
+          <code>OMNESIS_EXPERIMENTAL=1</code> keeps its tasks and watches but offers none of these
+          features until it is started with the flag. An explicit Lab choice is never overwritten on
+          restart. Disabling a feature preserves its data.
         </p>
         <p>
           Mobile apps and gateways can be updated separately. With an older gateway, updated apps

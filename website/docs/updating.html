@@ -478,6 +478,15 @@
           <a href="#restore">Restore</a>.
         </p>
         <p>
+          A release that predates the search index's current keyword rules cannot write to an index
+          a newer release built: on it, deleting a document fails and new documents are not indexed,
+          while reads and search keep working. Update to the newer release again, or stop the
+          gateway and remove <code>index.db</code> (with its <code>-wal</code> and
+          <code>-shm</code> files) and <code>index.usearch</code> from the configuration directory;
+          the older release then rebuilds the search index from the documents at its next start,
+          embedding them again.
+        </p>
+        <p>
           An older release does not know the settings a newer one added, and drops them from
           <code>omnesis.json</code> the next time it changes the configuration, for example when you
           add a source or assign a model. So before a rollback or a move to an older release, the
