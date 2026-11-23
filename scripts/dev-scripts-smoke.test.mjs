@@ -1909,7 +1909,9 @@ describe("android.yml CI workflow structure (C20)", () => {
         .split("\n");
       for (const command of commands) {
         const args = command.trim().split(/\s+/u);
-        expect(args[0]).toBe("./gradlew");
+        // build-and-test runs the wrapper through scripts/ci/gradlew.sh, which
+        // passes its arguments on unchanged.
+        expect(["./gradlew", "$GITHUB_WORKSPACE/scripts/ci/gradlew.sh"]).toContain(args[0]);
         expect(args.filter((arg) => arg === "--no-daemon")).toHaveLength(1);
         expect(args.filter((arg) => arg.startsWith("--max-workers"))).toEqual(["--max-workers=2"]);
         expect(args).not.toContain("--daemon");
@@ -1958,7 +1960,13 @@ describe("android.yml CI workflow structure (C20)", () => {
         ["--noprofile", "--norc", "-e", "-o", "pipefail", "-c", step.run],
         {
           cwd: dir,
-          env: { ...process.env, GRADLE_CALLS: calls, GRADLE_FAIL_TASK: failedTask ?? "" },
+          env: {
+            ...process.env,
+            GITHUB_WORKSPACE: repoRoot,
+            OMNESIS_GRADLE_OFFLINE: "",
+            GRADLE_CALLS: calls,
+            GRADLE_FAIL_TASK: failedTask ?? "",
+          },
           encoding: "utf8",
           timeout: 10000,
         },

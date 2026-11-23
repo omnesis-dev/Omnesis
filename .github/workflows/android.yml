@@ -63,14 +63,24 @@ jobs:
       # never replaced, so whichever job saves a key first decides what every
       # later run restores; this job resolves every module's build and unit-test
       # dependencies, and the other Linux jobs that run Gradle only restore it.
+      #
+      # The key covers everything that decides what the lanes resolve: the build
+      # files, gradle.properties and the Gradle command lines in this workflow.
+      # So an exact entry was saved by a run that resolved everything this run
+      # needs, and the lanes resolve offline from it (scripts/ci/gradlew.sh).
       - name: Restore Gradle caches
+        id: gradle-cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: gradle-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('android/**/*.gradle*', 'android/gradle/libs.versions.toml', 'android/gradle/wrapper/gradle-wrapper.properties') }}
+          key: gradle-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('android/**/*.gradle*', 'android/gradle/libs.versions.toml', 'android/gradle/wrapper/gradle-wrapper.properties', 'android/gradle.properties', '.github/workflows/android.yml') }}
           restore-keys: gradle-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Resolve offline from an exact Gradle cache entry
+        if: steps.gradle-cache.outputs.cache-hit == 'true'
+        run: echo "OMNESIS_GRADLE_OFFLINE=true" >> "$GITHUB_ENV"
 
       # Required-dependency, FAIL LOUD (never skip): the Android toolchain MUST
       # be reachable on the runner. If JDK 17 or the Android SDK is missing the
@@ -107,7 +117,7 @@ jobs:
       # heap now and then at the 2g it inherits from gradle.properties.
       - name: lane [android-jvm]
         run: |
-          ./gradlew \
+          $GITHUB_WORKSPACE/scripts/ci/gradlew.sh \
             :app:testPlayDebugUnitTest \
             :app:testFullDebugUnitTest \
             testDebugUnitTest \
@@ -132,16 +142,16 @@ jobs:
       # The public-certificate check is switched off here on purpose: a release build must ignore
       # that switch, and the policy check fails if the generated release BuildConfig honoured it.
       - name: lane [android-policy]
-        run: ./gradlew :app:verifyPlayReleasePolicy -POMNESIS_CLOUD_RELAY_PUBLIC_CERT_CHECK=0 --no-daemon --max-workers=2
+        run: $GITHUB_WORKSPACE/scripts/ci/gradlew.sh :app:verifyPlayReleasePolicy -POMNESIS_CLOUD_RELAY_PUBLIC_CERT_CHECK=0 --no-daemon --max-workers=2
 
       - name: lane [android-build]
         # Each flavor gets a fresh bounded Gradle process so release dexing
         # cannot overlap or retain the preceding flavor's build heap. The Wear
         # OS app follows: its installable debug APK and its release bundle.
         run: |
-          ./gradlew :app:bundlePlayRelease --no-daemon --max-workers=2
-          ./gradlew :app:bundleFullRelease --no-daemon --max-workers=2
-          ./gradlew :wear:assembleDebug :wear:bundleRelease --no-daemon --max-workers=2
+          $GITHUB_WORKSPACE/scripts/ci/gradlew.sh :app:bundlePlayRelease --no-daemon --max-workers=2
+          $GITHUB_WORKSPACE/scripts/ci/gradlew.sh :app:bundleFullRelease --no-daemon --max-workers=2
+          $GITHUB_WORKSPACE/scripts/ci/gradlew.sh :wear:assembleDebug :wear:bundleRelease --no-daemon --max-workers=2
 
       - name: Check nothing tried to reach production Omnesis services
         if: ${{ always() && steps.production-network.outcome == 'success' }}
@@ -191,7 +201,7 @@ jobs:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: gradle-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('android/**/*.gradle*', 'android/gradle/libs.versions.toml', 'android/gradle/wrapper/gradle-wrapper.properties') }}
+          key: gradle-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('android/**/*.gradle*', 'android/gradle/libs.versions.toml', 'android/gradle/wrapper/gradle-wrapper.properties', 'android/gradle.properties', '.github/workflows/android.yml') }}
           restore-keys: gradle-${{ runner.os }}-${{ runner.arch }}-
 
       # Required-dependency, FAIL LOUD (never skip): the Android toolchain MUST
@@ -302,7 +312,7 @@ jobs:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: gradle-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('android/**/*.gradle*', 'android/gradle/libs.versions.toml', 'android/gradle/wrapper/gradle-wrapper.properties') }}
+          key: gradle-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('android/**/*.gradle*', 'android/gradle/libs.versions.toml', 'android/gradle/wrapper/gradle-wrapper.properties', 'android/gradle.properties', '.github/workflows/android.yml') }}
           restore-keys: gradle-${{ runner.os }}-${{ runner.arch }}-
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
