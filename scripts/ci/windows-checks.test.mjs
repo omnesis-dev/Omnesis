@@ -78,8 +78,22 @@ describe("Windows CI coverage", () => {
     expect(config.on.workflow_dispatch.inputs.lane).toMatchObject({
       type: "choice",
       default: "all",
-      options: ["all", "unit", "adapters", "e2e", "portal"],
+      options: ["all", "unit", "adapters", "e2e", "portal", "agents"],
     });
+    // The agents lane runs only the native agent integrations job: the matrix
+    // job is skipped for it, and for nothing else.
+    const matrixJobRuns = (event, lane = "all") =>
+      runInNewContext(config.jobs.windows.if.slice(3, -2), {
+        github: { event_name: event },
+        inputs: { lane },
+      });
+    expect(matrixJobRuns("workflow_dispatch", "agents")).toBe(false);
+    for (const lane of ["all", "unit", "adapters", "e2e", "portal"])
+      expect(matrixJobRuns("workflow_dispatch", lane)).toBe(true);
+    for (const event of ["schedule", "pull_request"]) {
+      expect(matrixJobRuns(event)).toBe(true);
+      expect(matrixJobRuns(event, "agents")).toBe(true);
+    }
     expect(matrix("workflow_dispatch", "unit").map(({ lane }) => lane)).toEqual([
       "unit",
       "adapters",
@@ -155,7 +169,11 @@ describe("Windows CI coverage", () => {
       });
     expect(enabled("schedule")).toBe(true);
     expect(enabled("workflow_dispatch")).toBe(true);
-    for (const lane of ["unit", "e2e", "portal"]) {
+    expect(enabled("workflow_dispatch", "agents")).toBe(true);
+    expect(enabled("schedule", "agents")).toBe(true);
+    expect(enabled("pull_request", "agents")).toBe(false);
+    expect(enabled("workflow_dispatch", "agents", true)).toBe(false);
+    for (const lane of ["unit", "adapters", "e2e", "portal"]) {
       expect(enabled("workflow_dispatch", lane)).toBe(false);
       expect(enabled("schedule", lane)).toBe(true);
     }
