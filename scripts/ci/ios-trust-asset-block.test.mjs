@@ -34,7 +34,7 @@ const BLOCKED = [
 ];
 
 /** Runs `report` with a stand-in `xcrun` whose simulator log holds `lines`. */
-function report({ lines, record, baseline }) {
+function report({ lines, record, baseline, exit = 0 }) {
   const dir = mkdtempSync(join(tmpdir(), "omnesis-trust-assets-"));
   dirs.push(dir);
   const bin = join(dir, "bin");
@@ -45,7 +45,7 @@ function report({ lines, record, baseline }) {
   writeFileSync(join(dir, "args"), "");
   writeFileSync(
     join(bin, "xcrun"),
-    `#!/bin/sh\nprintf '%s\\n' "$@" > "${join(dir, "args")}"\ncat "${join(dir, "log")}"\n`,
+    `#!/bin/sh\nprintf '%s\\n' "$@" > "${join(dir, "args")}"\ncat "${join(dir, "log")}"\nexit ${exit}\n`,
   );
   chmodSync(join(bin, "xcrun"), 0o755);
   if (record) writeFileSync(join(state, "dns-sink.log"), record.join("\n") + "\n");
@@ -102,6 +102,25 @@ describe("the iOS trust asset report", () => {
     // The block's own probe (before the baseline) is not counted.
     expect(result.stdout).toMatch(/^\s+2 {2}13:29:33 {2}13:41:05 {2}mesu\.apple\.com$/m);
     expect(result.stdout).toMatch(/^\s+1 {2}13:29:34 {2}13:29:34 {2}gdmf\.apple\.com$/m);
+  });
+});
+
+describe("the iOS trust asset report never claims a quiet trust service it did not read", () => {
+  test("when the simulator's log cannot be read", () => {
+    const result = report({ lines: ["Invalid device: simulator not booted"], exit: 1 });
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain(
+      "::warning::could not read the simulator's trust service log: 2026-11-23 Invalid device: simulator not booted",
+    );
+    expect(result.stdout).not.toContain("updated none");
+  });
+
+  test("when trustd logged nothing at all", () => {
+    const result = report({ lines: [] });
+    expect(result.stdout).toContain(
+      "::warning::the simulator's trust service logged nothing about its trust data",
+    );
+    expect(result.stdout).not.toContain("updated none");
   });
 });
 

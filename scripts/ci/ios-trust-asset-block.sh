@@ -124,10 +124,17 @@ report() {
 
   local udid="${OMNESIS_JOURNEY_IOS_UDID:-}"
   [[ -n "$udid" ]] || return 0
-  local activity
-  activity="$(xcrun simctl spawn "$udid" log show --last 3h --info --style compact \
-    --predicate 'process == "trustd" AND category IN {"OTATrust", "pinningDb", "validupdate"}' \
-    2>/dev/null | grep -E "$UPDATES" || true)"
+  local log activity
+  if ! log="$(xcrun simctl spawn "$udid" log show --last 3h --info --style compact \
+    --predicate 'process == "trustd" AND category IN {"OTATrust", "pinningDb", "validupdate"}' 2>&1)"; then
+    echo "::warning::could not read the simulator's trust service log: ${log##*$'\n'}"
+    return 0
+  fi
+  if ! grep -q 'trustd\[' <<<"$log"; then
+    echo "::warning::the simulator's trust service logged nothing about its trust data"
+    return 0
+  fi
+  activity="$(grep -E "$UPDATES" <<<"$log" || true)"
   if [[ -z "$activity" ]]; then
     echo "The simulator's trust service updated none of its trust data."
     return 0
