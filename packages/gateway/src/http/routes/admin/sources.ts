@@ -507,6 +507,7 @@ export function mountSourceRoutes(app: RouteApp, deps: AdminRoutesDeps): void {
         deviceId: did,
         multiDeviceMode: body.multiDeviceMode,
         pairingFence,
+        requestingDeviceId: c.get("auth").deviceId ?? undefined,
       }),
     );
     if (!updated) throw new NotFoundError("source not found");

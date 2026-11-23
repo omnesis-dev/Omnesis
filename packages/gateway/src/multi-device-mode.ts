@@ -112,6 +112,28 @@ export function deviceMatchesMemberConfigContract(
 }
 
 /**
+ * Whether a device is a dormant contributor of a partitioned source of this
+ * type: it is revoked, or its advertisement cannot execute the partitioned
+ * contract with `memberScopedParams` (null: no contract pinned yet). A
+ * partitioned member's stream is isolated, so a dormant member is only data
+ * at rest — its pushes are refused until it is re-paired or updated — and it
+ * never stands in the way of a capable device's transition or join. The
+ * member-local rule matches `deviceSupportsExistingSourceExecution`: a device
+ * that advertises every pinned parameter, and perhaps more, can still act.
+ */
+export function deviceIsDormantUnderPartitionedContract(
+  device: DeviceRecord,
+  sourceType: SourceType,
+  memberScopedParams: readonly string[] | null,
+): boolean {
+  if (device.revokedAt !== null) return true;
+  if (!deviceSupportsMultiDeviceMode(device, sourceType, "partitioned")) return true;
+  const advertised = advertisedMemberScopedParamNames(device, sourceType);
+  if (advertised === null) return true;
+  return memberScopedParams !== null && !memberScopedParams.every((n) => advertised.includes(n));
+}
+
+/**
  * The `sync_state` row a device's cursor writes land on: its own row when
  * the type keeps per-device cursors and the caller is a device, the shared
  * row (`""`) otherwise — which is also what a caller without a device

@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { DeviceId, SourceId, type MultiDeviceMode } from "@omnesis/types";
+import { DeviceId, SourceId, type DeviceRecord, type MultiDeviceMode } from "@omnesis/types";
 import {
   advertisedMemberScopedParamNames,
+  deviceIsDormantUnderPartitionedContract,
   deviceMatchesMemberConfigContract,
   deviceSupportsMultiDeviceMode,
   splitMemberScopedParams,
@@ -379,11 +380,65 @@ export function adoptSourceModeTransitionBatch(
 }
 
 /**
- * Validate the reader-observed owner and its persisted capability contract,
- * persist the exclusive→multi-device intent, and move both cursor scopes to
- * one generation above every prior claim in a single short transaction. The
- * source row deliberately remains exclusive until every required store has
- * adopted the target mode's storage scope.
+ * The device whose advertisement a transition validates and pins: the owner,
+ * or — for a partitioned transition whose owner is dormant under the
+ * contract — the capable device that asked for it. A revoked owner without
+ * such an authority is refused, and an authority is refused while the owner
+ * can act under the contract itself.
+ */
+function contractAuthority(
+  db: Db,
+  source: SourceRecord,
+  owner: DeviceRecord,
+  toMode: MultiDeviceMode,
+  contractAuthorityDeviceId: DeviceId | undefined,
+  expectedMemberScopedParams: readonly string[] | undefined,
+): DeviceRecord {
+  if (contractAuthorityDeviceId === undefined || contractAuthorityDeviceId === owner.id) {
+    if (owner.revokedAt !== null) {
+      throw new SourceModeTransitionPrepareError(
+        "owner-revoked",
+        `source ${source.id} owner device ${owner.id} is revoked`,
+      );
+    }
+    return owner;
+  }
+  if (toMode !== "partitioned") {
+    throw new SourceModeTransitionPrepareError(
+      "unsupported",
+      `source ${source.id} takes its ${toMode} contract from its owner only`,
+    );
+  }
+  const authority = getDevice(db, contractAuthorityDeviceId);
+  if (!authority || authority.revokedAt !== null) {
+    throw new SourceModeTransitionPrepareError(
+      "unsupported",
+      `source ${source.id} contract authority ${contractAuthorityDeviceId} is unavailable or revoked`,
+    );
+  }
+  const pinned = expectedMemberScopedParams ?? getSourceMemberConfigContract(db, source.id);
+  if (!deviceIsDormantUnderPartitionedContract(owner, source.type, pinned)) {
+    throw new SourceModeTransitionPrepareError(
+      "membership-conflict",
+      `source ${source.id} owner can act under the partitioned contract; it transitions the source itself`,
+    );
+  }
+  return authority;
+}
+
+/**
+ * Validate the reader-observed owner and the contract authority's
+ * advertisement, persist the exclusive→multi-device intent, and move both
+ * cursor scopes to one generation above every prior claim in a single short
+ * transaction. The source row deliberately remains exclusive until every
+ * required store has adopted the target mode's storage scope.
+ *
+ * The contract authority is the device whose advertisement becomes the
+ * source's contract: the owner, unless `contractAuthorityDeviceId` names
+ * another device. Only a partitioned transition takes another authority, and
+ * only while the owner is dormant under that contract (revoked, or unable to
+ * act as a partitioned member): the owner's history is still adopted into the
+ * owner's own stream and the owner stays the owner.
  */
 export function prepareSourceModeTransition(
   db: Db,
@@ -393,6 +448,7 @@ export function prepareSourceModeTransition(
   preparedAt = Date.now(),
   expectedMemberScopedParams?: readonly string[],
   expectedReplicaVersionPolicy?: "source-updated-at",
+  contractAuthorityDeviceId?: DeviceId,
 ): SourceModeTransition | null {
   return db
     .transaction(() => {
@@ -465,40 +521,43 @@ export function prepareSourceModeTransition(
       if (!owner) {
         throw new Error(`source ${sourceId} owner is unavailable for mode transition`);
       }
-      if (owner.revokedAt !== null) {
-        throw new SourceModeTransitionPrepareError(
-          "owner-revoked",
-          `source ${sourceId} owner device ${owner.id} is revoked`,
-        );
-      }
-      if (!deviceSupportsMultiDeviceMode(owner, source.type, toMode)) {
+      const authority = contractAuthority(
+        db,
+        source,
+        owner,
+        toMode,
+        contractAuthorityDeviceId,
+        expectedMemberScopedParams,
+      );
+      const role = authority === owner ? "owner" : `contract authority ${authority.id}`;
+      if (!deviceSupportsMultiDeviceMode(authority, source.type, toMode)) {
         throw new Error(
-          `source ${sourceId} owner does not support the ${toMode} contract for source type ${source.type}`,
+          `source ${sourceId} ${role} does not support the ${toMode} contract for source type ${source.type}`,
         );
       }
       const advertisedReplicaVersionPolicy =
-        owner.capabilities.replicaVersionPolicies?.[source.type];
+        authority.capabilities.replicaVersionPolicies?.[source.type];
       if (
         (toMode === "replicated" ? advertisedReplicaVersionPolicy : undefined) !==
         expectedReplicaVersionPolicy
       ) {
         throw new SourceModeTransitionPrepareError(
           "unsupported",
-          `source ${sourceId} owner replica version contract changed before mode transition`,
+          `source ${sourceId} ${role} replica version contract changed before mode transition`,
         );
       }
-      const advertised = advertisedMemberScopedParamNames(owner, source.type);
+      const advertised = advertisedMemberScopedParamNames(authority, source.type);
       if (advertised === null) {
         throw new SourceModeTransitionPrepareError(
           "unsupported",
-          `source ${sourceId} owner does not advertise its member-local configuration contract`,
+          `source ${sourceId} ${role} does not advertise its member-local configuration contract`,
         );
       }
       const expected = expectedMemberScopedParams ?? advertised;
-      if (!deviceMatchesMemberConfigContract(owner, source.type, expected)) {
+      if (!deviceMatchesMemberConfigContract(authority, source.type, expected)) {
         throw new SourceModeTransitionPrepareError(
           "unsupported",
-          `source ${sourceId} owner member-local configuration contract changed before mode transition`,
+          `source ${sourceId} ${role} member-local configuration contract changed before mode transition`,
         );
       }
       initializeOrAssertSourceMemberConfigContract(db, sourceId, expected);
@@ -588,15 +647,24 @@ export function finalizeSourceModeTransition(
       }
       const ownerDevice = getDevice(db, pending.ownerDeviceId);
       const memberConfigContract = getSourceMemberConfigContract(db, sourceId);
+      // A partitioned owner that went dormant (revoked, or unable to act
+      // under the prepared contract) keeps its adopted stream at rest and is
+      // refused at execution; it does not hold the transition open.
+      const dormantPartitionedOwner =
+        ownerDevice !== null &&
+        pending.toMode === "partitioned" &&
+        memberConfigContract !== null &&
+        deviceIsDormantUnderPartitionedContract(ownerDevice, source.type, memberConfigContract);
       if (
         !ownerDevice ||
-        ownerDevice.revokedAt !== null ||
-        !deviceSupportsMultiDeviceMode(ownerDevice, source.type, pending.toMode) ||
-        (pending.toMode === "replicated" &&
-          ownerDevice.capabilities.replicaVersionPolicies?.[source.type] !==
-            (source.replicaVersionPolicy ?? undefined)) ||
-        memberConfigContract === null ||
-        !deviceMatchesMemberConfigContract(ownerDevice, source.type, memberConfigContract)
+        (!dormantPartitionedOwner &&
+          (ownerDevice.revokedAt !== null ||
+            !deviceSupportsMultiDeviceMode(ownerDevice, source.type, pending.toMode) ||
+            (pending.toMode === "replicated" &&
+              ownerDevice.capabilities.replicaVersionPolicies?.[source.type] !==
+                (source.replicaVersionPolicy ?? undefined)) ||
+            memberConfigContract === null ||
+            !deviceMatchesMemberConfigContract(ownerDevice, source.type, memberConfigContract)))
       ) {
         throw new Error(
           `source ${sourceId} owner no longer supports ${pending.toMode} or its prepared member-local configuration contract for source type ${source.type}`,

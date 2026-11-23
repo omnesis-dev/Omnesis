@@ -1685,6 +1685,11 @@ export interface WriteGate extends KnowledgeWriteGate {
     deviceId: DeviceId,
     pairingFence?: PairingGenerationFence,
   ): Promise<RemoveSourceMemberResult>;
+  /**
+   * `contractAuthorityDeviceId` names the device whose advertisement pins a
+   * partitioned contract when the owner is dormant under it; see
+   * `prepareSourceModeTransition`.
+   */
   prepareSourceModeTransition(
     id: SourceId,
     toMode: MultiDeviceMode,
@@ -1692,6 +1697,7 @@ export interface WriteGate extends KnowledgeWriteGate {
     memberScopedParams: readonly string[],
     replicaVersionPolicy?: "source-updated-at",
     pairingFence?: PairingGenerationFence,
+    contractAuthorityDeviceId?: DeviceId,
   ): Promise<SourceModeTransition | null>;
   adoptSourceModeTransitionBatch(id: SourceId): Promise<SourceModeTransitionAdoptionBatch>;
   finalizeSourceModeTransition(id: SourceId): Promise<SourceRecord>;
@@ -2793,6 +2799,7 @@ export function writeGateFromCall(call: WriterCallFn): WriteGate {
       memberScopedParams,
       replicaVersionPolicy,
       pairingFence,
+      contractAuthorityDeviceId,
     ) =>
       call("sources.prepareModeTransition", [
         id,
@@ -2801,6 +2808,7 @@ export function writeGateFromCall(call: WriterCallFn): WriteGate {
         memberScopedParams,
         replicaVersionPolicy,
         pairingFence,
+        contractAuthorityDeviceId,
       ]),
     adoptSourceModeTransitionBatch: (id) => call("sources.adoptModeTransitionBatch", [id]),
     finalizeSourceModeTransition: (id) => call("sources.finalizeModeTransition", [id]),
@@ -3464,6 +3472,7 @@ export function directWriteGate(db: Db): WriteGate {
       memberScopedParams,
       replicaVersionPolicy,
       pairingFence,
+      contractAuthorityDeviceId,
     ) =>
       withPairingGenerationFence(db, pairingFence, () =>
         prepareSourceModeTransition(
@@ -3474,6 +3483,7 @@ export function directWriteGate(db: Db): WriteGate {
           undefined,
           memberScopedParams,
           replicaVersionPolicy,
+          contractAuthorityDeviceId,
         ),
       ),
     adoptSourceModeTransitionBatch: async (id) => adoptSourceModeTransitionBatch(db, id),

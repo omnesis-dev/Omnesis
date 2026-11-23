@@ -41,22 +41,30 @@ class SourceModeTransitionNotConfirmed(mode: SourceMultiDeviceMode) :
     IllegalStateException("The gateway did not confirm ${mode.wireValue} mode. Update the gateway, then try again.")
 
 /**
- * Turns a source-contract refusal into the gateway's actionable guidance while
- * leaving connectivity, authentication, and unexpected failures to the
- * source screen's context-specific fallback. The gateway message identifies
- * the incompatible device; preserving it is more useful than misreporting a
- * deliberate 409 as a network failure.
+ * Turns a refusal the gateway answered into its own explanation — which names
+ * the device or state that stopped the change — and an authentication failure
+ * into the step that fixes it. Connectivity and unexpected failures keep the
+ * source screen's context-specific fallback: only a request that got no
+ * answer should read as a connection problem.
  */
-fun activationFailureMessage(failure: Throwable, fallback: String): String {
-    if (failure is SourceModeTransitionNotConfirmed) return failure.message ?: fallback
-    val serverError = failure as? GatewayException.ServerError ?: return fallback
-    if (serverError.code != "MULTI_DEVICE_CONTRACT_UNSUPPORTED") return fallback
-    return serverError.body
-        ?.trim()
-        ?.takeIf(String::isNotEmpty)
-        ?.replaceFirstChar { it.uppercase() }
-        ?: "Another device hosting this source must update Omnesis before this phone can join it."
+fun activationFailureMessage(failure: Throwable, fallback: String): String = when (failure) {
+    is SourceModeTransitionNotConfirmed -> failure.message ?: fallback
+    is GatewayException.Unauthorized -> "Your gateway no longer accepts this phone. Pair it again from Settings."
+    is GatewayException.Forbidden ->
+        failure.body.asSentence() ?: "This phone isn't allowed to change this source on your gateway."
+    is GatewayException.ServerError -> failure.body.takeIf { failure.code != null }.asSentence()
+        ?: if (failure.code == "MULTI_DEVICE_CONTRACT_UNSUPPORTED") {
+            "Another device hosting this source must update Omnesis before this phone can join it."
+        } else {
+            fallback
+        }
+    else -> fallback
 }
+
+private fun String?.asSentence(): String? = this
+    ?.trim()
+    ?.takeIf(String::isNotEmpty)
+    ?.replaceFirstChar { it.uppercase() }
 
 /**
  * One gateway half of a phone source's explicit enable, reduced to what the

@@ -17,6 +17,7 @@ import { setSourceAccount } from "./SourceAccountRepository.js";
 import {
   deviceSupportsPersistedSourceContract,
   initializeOrAssertSourceMemberConfigContractForDevice,
+  initializeOrAssertSourceOwnerMemberConfigContract,
 } from "./SourceMemberConfigContractRepository.js";
 import { getDevice } from "./DeviceRepository.js";
 import { bumpWipeEpoch } from "./SyncStateRepository.js";
@@ -539,13 +540,7 @@ export function updateExistingSourceMemberConfigOverride(
   return db.transaction(() => {
     const source = getSource(db, sourceId);
     if (!source || !isSourceMember(db, sourceId, deviceId)) return false;
-    initializeOrAssertSourceMemberConfigContractForDevice(
-      db,
-      sourceId,
-      source.type,
-      source.deviceId,
-      memberScopedParams,
-    );
+    initializeOrAssertSourceOwnerMemberConfigContract(db, source, deviceId, memberScopedParams);
     if (deviceId !== source.deviceId) {
       initializeOrAssertSourceMemberConfigContractForDevice(
         db,
@@ -635,13 +630,7 @@ export function addSourceMember(
       );
     }
     if (memberScopedParams !== undefined) {
-      initializeOrAssertSourceMemberConfigContractForDevice(
-        db,
-        sourceId,
-        source.type,
-        source.deviceId,
-        memberScopedParams,
-      );
+      initializeOrAssertSourceOwnerMemberConfigContract(db, source, deviceId, memberScopedParams);
       if (deviceId !== source.deviceId) {
         initializeOrAssertSourceMemberConfigContractForDevice(
           db,

@@ -123,6 +123,39 @@ class MobileSourceActivationTest {
     }
 
     @Test
+    fun `a revoked earlier owner's refusal shows the gateway's explanation`() {
+        val refusal = GatewayException.ServerError(
+            status = 409,
+            body = "device \"Hallway Phone\" is revoked — pair it again to reclaim it, or forget it",
+            code = "DEVICE_REVOKED",
+        )
+
+        assertEquals(
+            "Device \"Hallway Phone\" is revoked — pair it again to reclaim it, or forget it",
+            activationFailureMessage(refusal, "The gateway could not finish enabling this phone. Try again."),
+        )
+    }
+
+    @Test
+    fun `a response without the gateway's envelope keeps the fallback`() {
+        assertEquals(
+            "The gateway could not finish enabling this phone. Try again.",
+            activationFailureMessage(
+                GatewayException.ServerError(status = 502, body = "<html>Bad gateway</html>"),
+                "The gateway could not finish enabling this phone. Try again.",
+            ),
+        )
+    }
+
+    @Test
+    fun `an unauthorized phone is told to pair again`() {
+        assertEquals(
+            "Your gateway no longer accepts this phone. Pair it again from Settings.",
+            activationFailureMessage(GatewayException.Unauthorized(), "fallback"),
+        )
+    }
+
+    @Test
     fun `ordinary activation failure keeps the caller's actionable fallback`() {
         assertEquals(
             "The gateway could not prepare this phone. Check the connection and try again.",

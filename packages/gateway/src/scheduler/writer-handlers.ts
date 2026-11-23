@@ -1508,6 +1508,7 @@ export const writerHandlers = {
     memberScopedParams: readonly string[],
     replicaVersionPolicy?: "source-updated-at",
     pairingFence?: PairingGenerationFence,
+    contractAuthorityDeviceId?: string,
   ) =>
     withPairingGenerationFence(db, pairingFence, () =>
       prepareSourceModeTransition(
@@ -1518,6 +1519,7 @@ export const writerHandlers = {
         undefined,
         memberScopedParams,
         replicaVersionPolicy,
+        contractAuthorityDeviceId === undefined ? undefined : DeviceId(contractAuthorityDeviceId),
       ),
     ),
   "sources.adoptModeTransitionBatch": (db: Db, id: string) =>

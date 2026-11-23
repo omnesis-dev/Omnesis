@@ -157,6 +157,23 @@ final class MobileSourceActivationTests: XCTestCase {
         ))
     }
 
+    func testAnotherDevicesLegacyExclusiveSourceBecomesPartitionedThenJoined() async throws {
+        let calls = Calls()
+        let outcome = try await MobileSourceActivation.execute(
+            source: source(mode: "exclusive"),
+            deviceId: thisPhone,
+            desiredMode: .partitioned,
+            operations: .init(
+                setMode: { _, mode in await calls.record("mode:\(mode.rawValue)") },
+                join: { _, deviceId in await calls.record("join:\(deviceId)") },
+                transfer: { _, _ in await calls.record("transfer") }
+            )
+        )
+        XCTAssertEqual(outcome, .ready)
+        let values = await calls.values
+        XCTAssertEqual(values, ["mode:partitioned", "join:\(thisPhone)"])
+    }
+
     func testPartitionMigrationFailureDoesNotJoin() async {
         let calls = Calls()
         do {

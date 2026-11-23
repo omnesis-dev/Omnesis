@@ -2596,3 +2596,179 @@ describe("SourceService membership", () => {
     });
   });
 });
+
+describe("a new phone and a dormant earlier phone on a partitioned type", () => {
+  const documentsOf = (db: ReturnType<typeof createDatabase>, id: SourceId): number =>
+    db
+      .prepare<[string], { n: number }>("SELECT COUNT(*) AS n FROM documents WHERE source_id = ?")
+      .get(id)!.n;
+  /** A phone-hosted type whose current apps announce the partitioned contract. */
+  const VISITS = SourceType("core-location-visits");
+
+  function phones(opts: { revokeOld: boolean }) {
+    const ctx = fixture({ modeAdoption: async () => {} });
+    const { db } = ctx;
+    /** The earlier phone: its app predates the partitioned contract. */
+    const oldPhone = createDevice(db, {
+      name: "phone-earlier",
+      kind: "ios",
+      capabilities: { hostableSourceTypes: [VISITS], pushBasedSourceTypes: [VISITS] },
+    });
+    const newPhone = createDevice(db, {
+      name: "phone-current",
+      kind: "ios",
+      capabilities: {
+        hostableSourceTypes: [VISITS],
+        pushBasedSourceTypes: [VISITS],
+        multiDeviceModes: { [VISITS]: "partitioned" },
+      },
+    });
+    const source = createSource(db, {
+      type: VISITS,
+      accountId: AccountId("local"),
+      deviceId: oldPhone.id,
+      multiDeviceMode: "exclusive",
+    });
+    ctx.streamPage(source.id, "", ["visit-1", "visit-2"]);
+    if (opts.revokeOld) {
+      db.prepare("UPDATE devices SET revoked_at = 1 WHERE id = ?").run(oldPhone.id);
+    }
+    return { ...ctx, oldPhone, newPhone, source };
+  }
+
+  test.each([
+    { label: "revoked", revokeOld: true },
+    { label: "still paired on an app without the contract", revokeOld: false },
+  ])(
+    "the new phone converts and joins while the $label earlier phone keeps its history",
+    async ({ revokeOld }) => {
+      const { db, service, oldPhone, newPhone, source, streamIds } = phones({ revokeOld });
+
+      const updated = await service.updateSource(source.id, {
+        multiDeviceMode: "partitioned",
+        requestingDeviceId: newPhone.id,
+      });
+
+      expect(updated).toMatchObject({ deviceId: oldPhone.id, multiDeviceMode: "partitioned" });
+      expect(streamIds(source.id)).toEqual([oldPhone.id]);
+      expect(getSourceMemberConfigContract(db, source.id)).toEqual([]);
+      expect(service.listSourcesForAdmin().find((s) => s.id === source.id)).toMatchObject({
+        joinCandidates: [newPhone.id],
+      });
+
+      await service.joinSource(source.id, newPhone.id);
+
+      expect(memberIds(db, source.id)).toEqual([oldPhone.id, newPhone.id].sort());
+      expect(service.cursorRowFor(source.id, { deviceId: newPhone.id })).toBe(newPhone.id);
+      expect(service.streamFor(source.id, { deviceId: newPhone.id })).toBe(newPhone.id);
+      expect(() => service.cursorRowFor(source.id, { deviceId: oldPhone.id })).toThrowError(
+        expect.objectContaining({ code: "MULTI_DEVICE_CONTRACT_UNSUPPORTED" }),
+      );
+      expect(documentsOf(db, source.id)).toBe(2);
+    },
+  );
+
+  test("an earlier phone that updates its app resumes on its own retained stream", async () => {
+    const { db, service, oldPhone, newPhone, source, streamPage, streamIds } = phones({
+      revokeOld: false,
+    });
+    await service.updateSource(source.id, {
+      multiDeviceMode: "partitioned",
+      requestingDeviceId: newPhone.id,
+    });
+    await service.joinSource(source.id, newPhone.id);
+    streamPage(source.id, newPhone.id, ["visit-1"]);
+
+    updateDeviceCapabilities(db, oldPhone.id, {
+      hostableSourceTypes: [VISITS],
+      pushBasedSourceTypes: [VISITS],
+      multiDeviceModes: { [VISITS]: "partitioned" },
+    });
+
+    expect(service.cursorRowFor(source.id, { deviceId: oldPhone.id })).toBe(oldPhone.id);
+    expect(streamIds(source.id)).toEqual([oldPhone.id, newPhone.id].sort());
+    expect(documentsOf(db, source.id)).toBe(3);
+  });
+
+  test("the source status names what each dormant member needs without failing the source", async () => {
+    const { db, service, oldPhone, newPhone, source, streamPage } = phones({ revokeOld: true });
+    setSyncState(db, source.id, { visited: 2 });
+    await service.updateSource(source.id, {
+      multiDeviceMode: "partitioned",
+      requestingDeviceId: newPhone.id,
+    });
+    await service.joinSource(source.id, newPhone.id);
+    streamPage(source.id, newPhone.id, ["visit-3"]);
+
+    const status = service.syncStatusFor(source.id)!;
+
+    expect(status.state).not.toBe("error");
+    const earlier = status.members?.find((m) => m.deviceId === oldPhone.id);
+    expect(earlier).toMatchObject({
+      state: "error",
+      remediation: { summary: "This device needs to be paired again" },
+    });
+    expect(status.members?.find((m) => m.deviceId === newPhone.id)?.state).not.toBe("error");
+  });
+
+  test("a portal session, an incapable phone and a replicated transition are refused as before", async () => {
+    const { db, service, oldPhone, source } = phones({ revokeOld: true });
+    const otherLegacy = createDevice(db, {
+      name: "phone-another-earlier",
+      kind: "ios",
+      capabilities: { hostableSourceTypes: [VISITS], pushBasedSourceTypes: [VISITS] },
+    });
+
+    await expect(
+      service.updateSource(source.id, { multiDeviceMode: "partitioned" }),
+    ).rejects.toMatchObject({ status: 409, code: "DEVICE_REVOKED" });
+    await expect(
+      service.updateSource(source.id, {
+        multiDeviceMode: "partitioned",
+        requestingDeviceId: otherLegacy.id,
+      }),
+    ).rejects.toMatchObject({ status: 409, code: "DEVICE_REVOKED" });
+    expect(getSource(db, source.id)).toMatchObject({
+      deviceId: oldPhone.id,
+      multiDeviceMode: "exclusive",
+    });
+    expect(getSourceModeTransition(db, source.id)).toBeNull();
+  });
+
+  test("a paired earlier phone without the contract still blocks a session-initiated transition", async () => {
+    const { service, source } = phones({ revokeOld: false });
+
+    await expect(
+      service.updateSource(source.id, { multiDeviceMode: "partitioned" }),
+    ).rejects.toMatchObject({ status: 409, code: "MULTI_DEVICE_CONTRACT_UNSUPPORTED" });
+  });
+
+  test("a replicated transition never takes its contract from a requester", async () => {
+    const { db, alpha, beta, service } = fixture({ modeAdoption: async () => {} });
+    const source = createSource(db, {
+      type: REPLICATED,
+      accountId: AccountId("replicated-dormant-owner"),
+      deviceId: alpha.id,
+      multiDeviceMode: "exclusive",
+    });
+    db.prepare("UPDATE devices SET revoked_at = 1 WHERE id = ?").run(alpha.id);
+
+    await expect(
+      service.updateSource(source.id, {
+        multiDeviceMode: "replicated",
+        requestingDeviceId: beta.id,
+      }),
+    ).rejects.toMatchObject({ status: 409, code: "DEVICE_REVOKED" });
+    expect(getSourceModeTransition(db, source.id)).toBeNull();
+  });
+
+  test("a replicated source still refuses a join while a member cannot act", async () => {
+    const { db, alpha, beta, service, seed } = fixture();
+    const source = seed(REPLICATED);
+    updateDeviceCapabilities(db, alpha.id, { hostableSourceTypes: [REPLICATED] });
+
+    await expect(service.joinSource(source.id, beta.id)).rejects.toMatchObject({
+      code: "MULTI_DEVICE_CONTRACT_UNSUPPORTED",
+    });
+  });
+});
