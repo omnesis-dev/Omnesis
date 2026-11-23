@@ -177,7 +177,7 @@ android {
         minSdk = 26
         targetSdk = 36
         versionCode = 1
-        versionName = "0.7.8"
+        versionName = "0.8.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // The UI journeys (src/androidTest, run by scripts/run-mobile-journeys.sh)
         // each start from a fresh install: the orchestrator runs every test in its
