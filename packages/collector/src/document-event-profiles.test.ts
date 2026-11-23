@@ -37,7 +37,7 @@ describe("published document-event profiles", () => {
   // Transcript ingestion still works when a profile is absent, but Watch
   // compilation then guesses another source shape. Pin every agent transcript
   // source in the published catalog so that failure cannot stay silent.
-  test.each(["openclaw", "hermes", "pi", "claude-code", "codex"])(
+  test.each(["openclaw", "hermes", "pi", "claude-code", "codex", "antigravity"])(
     "the %s transcripts publish a profile",
     (sourceType) => {
       const profile = bySourceType.get(sourceType);
@@ -53,6 +53,7 @@ describe("published document-event profiles", () => {
       ["pi", "Pi"],
       ["claude-code", "Claude Code"],
       ["codex", "Codex"],
+      ["antigravity", "Antigravity"],
     ]);
     for (const [sourceType, agentName] of expected) {
       const profile = bySourceType.get(sourceType)!;

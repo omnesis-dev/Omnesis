@@ -73,6 +73,8 @@ export interface LocalAgentSessionAdapter {
   agentName: string;
   roots: readonly LocalAgentSessionRoot[];
   fileExtensions: readonly string[];
+  /** Optional relative-path filter applied during both tree scanning and read-access probes. */
+  exclude?: (relativePath: string, directory: boolean) => boolean;
   /** Bump when this adapter changes normalized session output. */
   parserVersion: number;
   /** Whether a newer immutable file supersedes older files for one session. */
@@ -314,6 +316,7 @@ export function createLocalAgentSessionSource(
         signal,
         roots: options.adapter.roots,
         fileExtensions: options.adapter.fileExtensions,
+        exclude: options.adapter.exclude,
       }),
     watchPaths: roots,
     watchDirectoryPaths: roots,
@@ -329,6 +332,7 @@ export function createLocalAgentSessionSource(
       const scan = scanLocalAgentSessionFiles(
         options.adapter.roots,
         options.adapter.fileExtensions,
+        options.adapter.exclude,
       );
       if (options.adapter.duplicateSessionPolicy === "newest") {
         scan.files.sort((a, b) => b.mtimeMs - a.mtimeMs || b.key.localeCompare(a.key));

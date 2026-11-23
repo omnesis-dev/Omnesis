@@ -49,6 +49,7 @@ it("every scoped-snapshot provider declares the host generation and deletion cap
     "claude-code",
     "codex",
     "pi",
+    "antigravity",
     "local-files",
     "apple-contacts",
   ]) {
