@@ -4,8 +4,8 @@
 #if canImport(SwiftUI) && canImport(UIKit)
 import SwiftUI
 
-/// The first pairing step of a build with an Omnesis account: one button to sign in with the
-/// cloud account, and the ways to pair directly. The button opens `AccountSignInScreen`.
+/// The first pairing step of a build with an Omnesis account: the three ways to pair. Signing in
+/// with the cloud account opens `AccountSignInScreen`.
 @available(iOS 17.0, *)
 struct AccountCloudPairingView: View {
     @Environment(\.dismiss) private var dismiss

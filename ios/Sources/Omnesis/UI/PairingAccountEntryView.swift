@@ -4,11 +4,13 @@
 #if canImport(SwiftUI) && canImport(UIKit)
 import SwiftUI
 
-/// The first pairing step: sign in with the cloud account, or pair directly. Signing in opens
+/// The first pairing step: the three ways to pair, in one list. Signing in opens
 /// `AccountSignInChoiceView`, where the person picks Google or a passkey.
 @available(iOS 17.0, *)
 struct PairingAccountEntryView: View {
     static let signInTitle = "Sign in with cloud account"
+    /// One line for all three ways, so none of them reads as the exception.
+    static let detail = "Choose how to connect this phone to your gateway."
 
     let onSignIn: () -> Void
     let onScan: () -> Void
@@ -16,36 +18,22 @@ struct PairingAccountEntryView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: Theme.Spacing.xl) {
-                Button(action: onSignIn) {
-                    Text(Self.signInTitle)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .frame(maxWidth: .infinity)
+            VStack(alignment: .leading, spacing: Theme.Spacing.md) {
+                Text(Self.detail)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                VStack(spacing: 0) {
+                    row("Scan the gateway's QR code", symbol: "qrcode.viewfinder", action: onScan)
+                        .accessibilityIdentifier("pairing.entry.scan")
+                    Divider().padding(.leading, 58)
+                    row("Enter code manually", symbol: "keyboard", action: onManual)
+                        .accessibilityIdentifier("pairing.entry.manual")
+                    Divider().padding(.leading, 58)
+                    row(Self.signInTitle, symbol: "person.crop.circle", action: onSignIn)
+                        .accessibilityIdentifier("pairing.entry.cloudAccount")
                 }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
-                .tint(Theme.accent)
-                .accessibilityIdentifier("pairing.entry.cloudAccount")
-                VStack(alignment: .leading, spacing: Theme.Spacing.md) {
-                    VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
-                        Text("Pair directly")
-                            .font(.title3.bold())
-                            .fixedSize(horizontal: false, vertical: true)
-                            .accessibilityAddTraits(.isHeader)
-                        Text("Use a pairing code from your gateway. No account needed.")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    VStack(spacing: 0) {
-                        row("Scan the gateway's QR code", symbol: "qrcode.viewfinder", action: onScan)
-                            .accessibilityIdentifier("pairing.entry.scan")
-                        Divider().padding(.leading, 58)
-                        row("Enter code manually", symbol: "keyboard", action: onManual)
-                            .accessibilityIdentifier("pairing.entry.manual")
-                    }
-                    .background(Theme.bgSecondary, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                }
+                .background(Theme.bgSecondary, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding()

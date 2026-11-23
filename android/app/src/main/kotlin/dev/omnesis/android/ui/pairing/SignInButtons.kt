@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Key
-import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -35,20 +34,6 @@ internal val SignInButtonPadding = PaddingValues(horizontal = 12.dp, vertical = 
 internal val SignInButtonMinHeight = 48.dp
 
 internal const val CLOUD_ACCOUNT_SIGN_IN = "Sign in with cloud account"
-
-/** The pairing entry's one way into the Omnesis account. The next step asks how to sign in. */
-@Composable
-internal fun CloudAccountSignInButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
-    Button(
-        onClick = onClick,
-        modifier = modifier.heightIn(min = SignInButtonMinHeight),
-        shape = SignInButtonShape,
-        colors = ButtonDefaults.buttonColors(containerColor = OmTheme.colors.accent, contentColor = Color.White),
-        contentPadding = SignInButtonPadding,
-    ) {
-        Text(CLOUD_ACCOUNT_SIGN_IN, style = MaterialTheme.typography.labelLarge, textAlign = TextAlign.Center)
-    }
-}
 
 /** Google's own sign-in button style: white, with its mark, in both themes. */
 @Composable

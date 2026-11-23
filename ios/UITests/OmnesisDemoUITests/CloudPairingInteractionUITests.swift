@@ -44,19 +44,41 @@ final class CloudPairingInteractionUITests: XCTestCase {
         XCTAssertFalse(app.staticTexts["cloud.fixture.unavailable"].exists)
     }
 
-    /// Pairing opens on one button for the cloud account beside the ways to pair directly; the
-    /// button opens the choice of Google or a passkey, and Back returns with nothing started.
-    func testTheCloudAccountButtonOpensTheSignInChoice() {
+    /// Pairing opens on one list of the three ways to pair, in this order, under one line that
+    /// fits all three; no way is set apart under a heading or as a button of its own.
+    func testTheEntryListsTheThreeWaysToPairInOneMenu() {
         launch("account")
-        XCTAssertEqual(app.buttons["pairing.entry.cloudAccount"].label, "Sign in with cloud account")
-        XCTAssertTrue(app.buttons["pairing.entry.scan"].exists)
-        XCTAssertTrue(app.buttons["pairing.entry.manual"].exists)
+        let rows = ["pairing.entry.scan", "pairing.entry.manual", "pairing.entry.cloudAccount"].map { app.buttons[$0] }
+        XCTAssertEqual(
+            rows.map(\.label),
+            ["Scan the gateway's QR code", "Enter code manually", "Sign in with cloud account"]
+        )
+        XCTAssertTrue(app.staticTexts["Choose how to connect this phone to your gateway."].exists)
+        XCTAssertFalse(app.staticTexts["Pair directly"].exists)
+        XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "No account needed")).firstMatch.exists)
+        let frames = rows.map(\.frame)
+        XCTAssertLessThan(frames[0].minY, frames[1].minY)
+        XCTAssertLessThan(frames[1].minY, frames[2].minY)
+        for frame in frames.dropFirst() {
+            XCTAssertEqual(frame.minX, frames[0].minX, accuracy: 0.5, "Every way to pair is a row of the same list")
+            XCTAssertEqual(frame.width, frames[0].width, accuracy: 0.5, "Every way to pair is a row of the same list")
+        }
+    }
+
+    /// The cloud account row opens the choice of Google or a passkey, and Back returns to the list
+    /// with nothing started.
+    func testTheCloudAccountRowOpensTheSignInChoice() {
+        launch("account")
         XCTAssertFalse(app.buttons["pairing.account.google"].exists)
         XCTAssertFalse(app.buttons["pairing.account.passkey"].exists)
         openSignInChoice()
+        XCTAssertTrue(app.staticTexts["Choose how to sign in."].exists)
         XCTAssertFalse(app.buttons["pairing.entry.scan"].exists)
+        XCTAssertFalse(app.buttons["pairing.entry.manual"].exists)
         app.navigationBars["Cloud account"].buttons.element(boundBy: 0).tap()
         XCTAssertTrue(app.buttons["pairing.entry.cloudAccount"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["pairing.entry.scan"].exists)
+        XCTAssertTrue(app.buttons["pairing.entry.manual"].exists)
         XCTAssertFalse(app.buttons["pairing.account.google"].exists)
         XCTAssertEqual(app.staticTexts["cloud.fixture.receipt"].label, "No operation")
     }
@@ -110,16 +132,29 @@ final class CloudPairingInteractionUITests: XCTestCase {
         XCTAssertTrue(app.buttons["pairing.account.google"].waitForExistence(timeout: 5))
     }
 
-    /// The QR code and the manual code keep their places on the first screen.
-    func testScanningAndEnteringACodeStillOpenFromTheFirstScreen() {
+    /// The QR code row opens the scanner, whose Back returns to the list.
+    func testTheScanRowOpensTheScanner() {
         launch("account")
         app.buttons["pairing.entry.scan"].tap()
         XCTAssertTrue(app.navigationBars["Scan the QR code"].waitForExistence(timeout: 5))
         dismissCameraAlert()
+        XCTAssertFalse(app.buttons["pairing.entry.manual"].exists)
         app.navigationBars["Scan the QR code"].buttons.element(boundBy: 0).tap()
-        XCTAssertTrue(app.buttons["pairing.entry.manual"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["pairing.entry.scan"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.staticTexts["cloud.fixture.receipt"].label, "No operation")
+    }
+
+    /// The manual row opens the code form, whose Cancel returns to the list.
+    func testTheManualRowOpensTheCodeForm() {
+        launch("account")
         app.buttons["pairing.entry.manual"].tap()
-        XCTAssertTrue(app.navigationBars["Manual entry"].waitForExistence(timeout: 5))
+        let form = app.navigationBars["Manual entry"]
+        XCTAssertTrue(form.waitForExistence(timeout: 5))
+        XCTAssertTrue(form.buttons["Pair"].exists)
+        XCTAssertFalse(form.buttons["Pair"].isEnabled, "Nothing is typed yet")
+        form.buttons["Cancel"].tap()
+        XCTAssertTrue(app.buttons["pairing.entry.manual"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.staticTexts["cloud.fixture.receipt"].label, "No operation")
     }
 
     private func openSignInChoice() {
