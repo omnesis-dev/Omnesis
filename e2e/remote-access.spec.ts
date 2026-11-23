@@ -145,6 +145,25 @@ async function remoteGateway(page: Page, flags: { tailscaleEmbed: boolean }) {
     const body = route.request().postDataJSON?.() ?? null;
     if (method !== "GET") calls.push(["remote", path, body]);
     if (path.endsWith("/host-tailscale")) return route.fulfill({ json: state.host });
+    // As the gateway does: one answer sets the account's policy and the device's, wherever each applies.
+    if (path.endsWith("/new-devices")) {
+      const answer: Json = {};
+      if (state.relay.account?.linked && body.policy !== "code") {
+        state.relay = {
+          ...state.relay,
+          deviceEnrollment: { ...state.relay.deviceEnrollment, policy: body.policy },
+        };
+        answer.relay = state.relay;
+      }
+      if (state.tailscale.enabled) {
+        state.tailscale = {
+          ...state.tailscale,
+          joinPolicy: body.policy === "code" ? "off" : body.policy,
+        };
+        answer.tailscale = state.tailscale;
+      }
+      return route.fulfill({ json: answer });
+    }
     if (path.endsWith("/publish")) {
       if (state.publish.ok)
         state.host = { ...state.host, servesGateway: true, publicGateway: body.public };
@@ -197,11 +216,6 @@ async function remoteGateway(page: Page, flags: { tailscaleEmbed: boolean }) {
       state.relay = { ...state.relay, enabled: true, tunnel: { state: "online" } };
     if (operation === "disable")
       state.relay = { ...state.relay, enabled: false, tunnel: { state: "disabled" } };
-    if (operation === "enrollment")
-      state.relay = {
-        ...state.relay,
-        deviceEnrollment: { ...state.relay.deviceEnrollment, policy: body.policy },
-      };
     return route.fulfill({ json: state.relay });
   });
   await page.route("**/admin/tailscale**", async (route) => {
@@ -305,19 +319,24 @@ test("the guided setup with both: account, connection, devices, then the summary
   await expect.poll(() => gateway.state.remote.first).toBe("relay");
   await button(page, "Continue").click();
 
-  // Step 3: one answer sets the account's policy and the Tailscale device's.
+  // Step 3: one answer, one request, sets the account's policy and the Tailscale device's.
   await expect(heading(page)).toHaveText("When a new device asks to join, what should happen?");
   await expect(page.getByRole("radio", { name: /^Pairing code only/ })).toHaveCount(0);
   await page.getByRole("radio", { name: /^My devices join automatically/ }).check();
   await expect(page.getByRole("radio", { name: /^My devices join automatically/ })).toBeChecked();
   await expect
     .poll(() =>
-      gateway.calls.filter(([, change]) => change === "enrollment" || change === "/settings"),
+      gateway.calls.filter(
+        ([kind, change]) =>
+          change === "/admin/remote-access/new-devices" ||
+          change === "enrollment" ||
+          (kind === "tailscale" && change === "/settings"),
+      ),
     )
-    .toEqual([
-      ["relay", "enrollment", { policy: "automatic" }],
-      ["tailscale", "/settings", { joinPolicy: "automatic" }],
-    ]);
+    .toEqual([["remote", "/admin/remote-access/new-devices", { policy: "automatic" }]]);
+  expect([gateway.state.relay.deviceEnrollment.policy, gateway.state.tailscale.joinPolicy]).toEqual(
+    ["automatic", "automatic"],
+  );
   await button(page, "Continue").click();
 
   // Step 4: the MCP server, at home and away, always the setup's last step.

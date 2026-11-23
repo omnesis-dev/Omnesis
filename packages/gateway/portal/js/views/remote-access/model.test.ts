@@ -10,7 +10,6 @@ import {
   joinWays,
   listSentence,
   loadSetup,
-  policyChanges,
   policyChoices,
   policyDifference,
   saveSetup,
@@ -113,39 +112,14 @@ describe("one answer for new devices", () => {
     expect(policyChoices({ relayLinked: false })).toEqual(["ask", "automatic", "code"]);
   });
 
-  test("the current answer is shared by both, or none when they differ", () => {
+  test("the current answer is shared by both, split when they differ, and none when neither applies", () => {
     expect(currentPolicy({})).toEqual({ value: null, differ: false });
     expect(currentPolicy({ relayPolicy: "ask" })).toEqual({ value: "ask", differ: false });
     expect(currentPolicy({ tailscalePolicy: "off" })).toEqual({ value: "code", differ: false });
     expect(currentPolicy({ relayPolicy: "automatic", tailscalePolicy: "automatic" })).toEqual({ value: "automatic", differ: false });
-    expect(currentPolicy({ relayPolicy: "ask", tailscalePolicy: "automatic" })).toEqual({ value: null, differ: true });
-    expect(currentPolicy({ relayPolicy: "ask", tailscalePolicy: "off" })).toEqual({ value: null, differ: true });
-  });
-
-  test("each answer maps onto the policies that apply", () => {
-    const both = { relayLinked: true, tailscaleOn: true };
-    expect(policyChanges("ask", both)).toEqual([{ target: "relay", policy: "ask" }, { target: "tailscale", policy: "ask" }]);
-    expect(policyChanges("automatic", both)).toEqual([
-      { target: "relay", policy: "automatic" },
-      { target: "tailscale", policy: "automatic" },
-    ]);
-    // The relay has no "off": only unlinking stops sign-in joins.
-    expect(policyChanges("code", both)).toEqual([{ target: "tailscale", policy: "off" }]);
-    expect(policyChanges("ask", { relayLinked: true, tailscaleOn: false })).toEqual([{ target: "relay", policy: "ask" }]);
-    expect(policyChanges("automatic", { relayLinked: false, tailscaleOn: false })).toEqual([]);
-    // Without an account, a device at pairing codes takes the answer like any other.
-    expect(policyChanges("ask", { relayLinked: false, tailscaleOn: true, tailscalePolicy: "off" })).toEqual([
-      { target: "tailscale", policy: "ask" },
-    ]);
-  });
-
-  test("the one answer reaches every way in, a Tailscale device at pairing codes included", () => {
-    const linked = { relayLinked: true, tailscaleOn: true, tailscalePolicy: "off" };
-    expect(policyChanges("ask", linked)).toEqual([{ target: "relay", policy: "ask" }, { target: "tailscale", policy: "ask" }]);
-    expect(policyChanges("automatic", linked)).toEqual([
-      { target: "relay", policy: "automatic" },
-      { target: "tailscale", policy: "automatic" },
-    ]);
+    // The two ways' own defaults: the account lets devices join, the Tailscale device asks.
+    expect(currentPolicy({ relayPolicy: "automatic", tailscalePolicy: "ask" })).toEqual({ value: "split", differ: true });
+    expect(currentPolicy({ relayPolicy: "ask", tailscalePolicy: "off" })).toEqual({ value: "split", differ: true });
   });
 
   test("the question and a difference are said in words", () => {

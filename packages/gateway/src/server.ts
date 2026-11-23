@@ -1951,6 +1951,8 @@ export function createServer(
       mcpAddresses,
       tailscaleEmbed: !!opts?.tailscaleEmbed,
       ...(opts?.localMcp ? { localMcp: opts.localMcp } : {}),
+      ...(opts?.cloudRelayManagement ? { relay: opts.cloudRelayManagement } : {}),
+      ...(opts?.tailscaleEmbed ? { tailscale: opts.tailscaleEmbed } : {}),
     });
   }
   const localSpkiFingerprint = () =>

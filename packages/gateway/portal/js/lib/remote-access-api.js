@@ -5,7 +5,8 @@
 // switch on each address, and the checks for a way in the owner runs
 // themselves. Every gateway has these routes. The account, the relay and the
 // gateway's Tailscale device keep their own routes (cloud-relay-api.js,
-// tailscale-api.js).
+// tailscale-api.js), except for the one answer for new devices, which sets
+// both their policies in one request.
 
 import { adminJsonRequest } from "./admin-request.js";
 
@@ -26,6 +27,15 @@ export const getRemoteAccess = (signal) => remoteAccessRequest("GET", "", { sign
  */
 export const updateRemoteAccess = (patch, signal) =>
   remoteAccessRequest("PATCH", "", { body: patch, signal });
+
+/**
+ * The one answer for new devices, `policy` "ask", "automatic" or "code", set on the account and
+ * the gateway's own Tailscale device wherever each applies, in one request: letting devices join
+ * automatically asks for one passkey for both. Answers `{ relay?, tailscale? }`, each as its own
+ * status route reads, for the ways it set.
+ */
+export const updateNewDevices = (policy, { signal, stepUpAnnounced = false } = {}) =>
+  remoteAccessRequest("PUT", "/new-devices", { body: { policy }, signal, stepUpAnnounced });
 
 /**
  * Checks an https address the owner publishes the gateway at:

@@ -8,14 +8,16 @@ import { apiFetch } from "../api.js";
  * with an Error whose `serverMessage` is the gateway's own sentence — for a
  * refused field, the field's message rather than the generic "Validation
  * failed" — and whose `status` and `code` are the response's. `subject` names
- * the family in the generic message.
+ * the family in the generic message. `stepUpAnnounced`: the control already
+ * said the passkey comes next, so no note is shown before it (see api.js).
  */
 export function adminJsonRequest(base, subject) {
-  return async function request(method, path, { body, signal } = {}) {
+  return async function request(method, path, { body, signal, stepUpAnnounced = false } = {}) {
     const response = await apiFetch(`${base}${path}`, {
       method,
       cache: "no-store",
       ...(signal ? { signal } : {}),
+      ...(stepUpAnnounced ? { stepUpAnnounced: true } : {}),
       ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
     });
     if (!response.ok) {

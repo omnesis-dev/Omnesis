@@ -3,9 +3,9 @@
 
 // The pure half of Settings → Connectivity: which questions the guided setup
 // asks for the gateway's features, where it stands between page loads, and
-// how one answer about new devices maps onto the relay's and the Tailscale
-// device's own policies. Nothing here decides what is trusted: every answer is
-// applied through the relay's and the device's own routes, with their checks.
+// what the relay's and the Tailscale device's own policies amount to as one
+// answer about new devices. Nothing here decides what is trusted: every answer
+// is applied by the gateway's routes, with their checks.
 
 import { relayEstablished, relayPhase } from "../relay.js";
 
@@ -131,25 +131,16 @@ export function policyChoices({ relayLinked }) {
  * The one answer the two policies amount to. `relayPolicy` is the account's
  * (`ask` | `automatic`, undefined while no account is linked) and
  * `tailscalePolicy` the device's (`ask` | `automatic` | `off`, undefined while
- * it is off). `value` is null when neither applies or when they differ;
- * `differ` says which.
+ * it is off). `value` is that answer; `split` when the two differ (their own
+ * defaults do: an account lets devices join automatically, the Tailscale
+ * device asks first), which is shown as its own answer until the owner
+ * chooses one for both; null when neither applies. `differ` says it is split.
  */
 export function currentPolicy({ relayPolicy, tailscalePolicy }) {
   const values = [relayPolicy, tailscalePolicy === "off" ? "code" : tailscalePolicy].filter(Boolean);
   if (values.length === 0) return { value: null, differ: false };
   const differ = values.some((value) => value !== values[0]);
-  return { value: differ ? null : values[0], differ };
-}
-
-/**
- * The changes one answer makes: it is the one setting for every way in, so it
- * sets the account's policy and the device's, wherever each applies.
- */
-export function policyChanges(choice, { relayLinked, tailscaleOn }) {
-  const changes = [];
-  if (relayLinked && choice !== "code") changes.push({ target: "relay", policy: choice });
-  if (tailscaleOn) changes.push({ target: "tailscale", policy: choice === "code" ? "off" : choice });
-  return changes;
+  return { value: differ ? "split" : values[0], differ };
 }
 
 /** How the devices step introduces its question, by the ways a new device can ask to join. */

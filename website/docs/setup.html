@@ -417,15 +417,17 @@
             <a href="#public-domain">your own domain or reverse proxy</a>. Each line shows its
             address once it is on, and whether that address is public on the Internet. When the
             gateway's own Tailscale device and the relay are both on,
-            <strong>When both can answer, try first</strong> chooses which one your devices try
-            first: Tailscale keeps traffic on your tailnet and leaves the relay for devices where
-            Tailscale is off; the relay works on every device and leaves Tailscale for when it does
-            not answer.
+            <strong>When both can answer, try first</strong> chooses which of the two addresses a
+            device is given when it pairs with a code: Tailscale keeps its traffic on your tailnet;
+            the relay works on every device with nothing to install. A paired device keeps the
+            address it got, so the choice applies to devices that pair from then on; pair a device
+            again to switch it.
           </li>
           <li>
             <strong>MCP</strong>: where agents reach the gateway's MCP server, in three lines:
             <strong>This computer</strong>, <strong>Your home network</strong> and
-            <strong>Away from home</strong>. Each opens the <strong>MCP server</strong> page (see
+            <strong>Away from home</strong>. <strong>Manage</strong> beside the section's title
+            opens the <strong>MCP server</strong> page (see
             <a href="connect#mcp-per-address">MCP on each address</a>).
           </li>
           <li>
@@ -597,8 +599,10 @@
         </ul>
         <p>
           A gateway linked to an account lets its devices join automatically unless you choose
-          otherwise; the gateway's own Tailscale device asks first. If the two settings differ, the
-          summary says what each does now until you choose one answer.
+          otherwise; the gateway's own Tailscale device asks first. While the two differ,
+          <strong>New devices</strong> shows <strong>Different for each way</strong> and says what
+          each does now, until you choose one answer. Choosing one changes both at once, so
+          <strong>My devices join automatically</strong> asks for your passkey only once.
         </p>
         <p>
           A device that waits appears under <strong>Waiting for your OK</strong> on

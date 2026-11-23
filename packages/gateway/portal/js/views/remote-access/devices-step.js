@@ -4,27 +4,18 @@
 // The Connectivity setup's step for new devices, also on its summary: the one
 // setting for every way a new device can ask to join — signing in with the
 // Omnesis account, or from the owner's Tailscale network. The account and
-// Tailscale pages leave it to Connectivity. The answer is
-// applied at once to the account's policy and to the Tailscale device's, each
-// through its own route; letting
-// devices join automatically asks for the owner's passkey where the gateway
-// requires it, as on the account page. Requests that wait are still decided
-// on Settings → Devices.
+// Tailscale pages leave it to Connectivity. One answer is one request
+// (PUT /admin/remote-access/new-devices), which sets the account's policy and
+// the Tailscale device's together, so letting devices join automatically asks
+// for the owner's passkey once where the gateway requires it. Requests that
+// wait are still decided on Settings → Devices.
 
 import { html } from "htm/preact";
 import { useState } from "preact/hooks";
-import { updateTailscaleSettings } from "../../lib/tailscale-api.js";
+import { updateNewDevices } from "../../lib/remote-access-api.js";
 import { relayAccountSetup, relayPhase } from "../relay.js";
-import {
-  POLICY_CHOICES,
-  currentPolicy,
-  joinWays,
-  policyChanges,
-  policyChoices,
-  policyDifference,
-} from "./model.js";
+import { POLICY_CHOICES, currentPolicy, joinWays, policyChoices, policyDifference } from "./model.js";
 import { BackButton, StepFrame, nextLabel } from "./step-frame.js";
-
 
 /** Where the relay's and the Tailscale device's own policies stand: what this step offers and shows. */
 export function devicePolicies(relay, tailscale) {
@@ -38,6 +29,8 @@ export function devicePolicies(relay, tailscale) {
     tailscaleOn,
     relayPolicy,
     tailscalePolicy,
+    // Until both feeds have answered once, which ways apply, and so the answer, is not known.
+    loading: Boolean((relay && !relay.status && !relay.error) || (tailscale && !tailscale.state && !tailscale.error)),
     held: Boolean(relay?.status?.incidentHold),
     stepUpRequired: relay?.status?.stepUpRequired === true,
     ...currentPolicy({ relayPolicy, tailscalePolicy }),
@@ -45,15 +38,17 @@ export function devicePolicies(relay, tailscale) {
 }
 
 /**
- * The one answer for new devices, changed in place: each choice is applied at
- * once to the account's policy and the Tailscale device's, each through its
- * own hook, which shows its own failure; a failure stops the rest. Step 3 and
- * the summary both show it: short choices on one line, the one picked
- * explained beneath. `onSaving` hears while a choice is being applied.
+ * The one answer for new devices, changed in place: short choices on one
+ * line, the one picked explained beneath. Exactly one is always selected:
+ * while the two ways' own policies differ, that is shown as its own answer,
+ * saying what each does, until the owner picks one for both (picking it again
+ * changes nothing). Step 3 and the
+ * summary both show it. `onSaving` hears while a choice is being applied.
  */
 export function DevicesChoice({ relay, tailscale, disabled: held = false, name = "remote-access-policy", onSaving }) {
   const policies = devicePolicies(relay, tailscale);
   const [saving, setSavingState] = useState("");
+  const [error, setError] = useState("");
   const setSaving = (choice) => {
     setSavingState(choice);
     onSaving?.(Boolean(choice));
@@ -61,33 +56,34 @@ export function DevicesChoice({ relay, tailscale, disabled: held = false, name =
   const choose = async (choice) => {
     if (choice === policies.value) return;
     setSaving(choice);
+    setError("");
     try {
-      for (const change of policyChanges(choice, policies)) {
-        // Only loosening asks for the passkey, and the choice already said so.
-        const announced = policies.stepUpRequired && change.policy === "automatic";
-        const done =
-          change.target === "relay"
-            ? await relay.run("enrollment", { policy: change.policy }, "PUT", ...(announced ? [{ stepUpAnnounced: true }] : []))
-            : await tailscale.run("join-policy", (signal) => updateTailscaleSettings({ joinPolicy: change.policy }, signal));
-        if (done === undefined) break;
-      }
+      // The choice already said the passkey comes next, so no note before the prompt.
+      const announced = policies.stepUpRequired && choice === "automatic";
+      const answer = await updateNewDevices(choice, { stepUpAnnounced: announced });
+      if (answer.relay) relay?.adopt(answer.relay);
+      if (answer.tailscale) tailscale?.adopt(answer.tailscale);
+    } catch (cause) {
+      setError((cause?.stepUp === true && cause.message) || cause?.serverMessage || "Couldn't change that. Try again.");
     } finally {
       setSaving("");
     }
   };
+  if (policies.loading) return html`<p class="remote-access-muted" role="status">Loading…</p>`;
   const value = saving || policies.value;
   const disabled = Boolean(saving) || held || policies.held;
+  const choices = [...policyChoices(policies), ...(value === "split" ? ["split"] : [])];
+  const detail = value === "split" ? policyDifference(policies) : POLICY_CHOICES[value]?.text;
   return html`<fieldset class="remote-access-choices is-compact" aria-label="When a new device asks to join">
     ${policies.held &&
     html`<p class="remote-access-problem">
       Every new device waits for your approval until the certificate problem on the Omnesis account page is dealt with.
     </p>`}
-    ${policies.differ && !saving && html`<p class="remote-access-muted">${policyDifference(policies)}</p>`}
-    ${policyChoices(policies).map(
+    ${choices.map(
       (choice) => html`<label
         key=${choice}
         class=${`remote-access-choice${value === choice ? " is-on" : ""}`}
-        title=${POLICY_CHOICES[choice].text}
+        title=${choice === "split" ? detail : POLICY_CHOICES[choice].text}
       >
         <input
           type="radio"
@@ -98,18 +94,16 @@ export function DevicesChoice({ relay, tailscale, disabled: held = false, name =
           onChange=${() => choose(choice)}
         />
         <span class="remote-access-option-text">
-          <strong>${POLICY_CHOICES[choice].short}</strong>
+          <strong>${choice === "split" ? "Different for each way" : POLICY_CHOICES[choice].short}</strong>
           ${choice === "automatic" &&
-          policies.relayLinked &&
           policies.stepUpRequired &&
-          policies.relayPolicy !== "automatic" &&
+          value !== "automatic" &&
           html`<small class="remote-access-step-up">Turns on with your passkey.</small>`}
         </span>
       </label>`,
     )}
-    ${POLICY_CHOICES[value] && html`<p class="remote-access-choice-detail">${POLICY_CHOICES[value].text}</p>`}
-    ${relay?.error && html`<p class="remote-access-problem" role="alert">${relay.error}</p>`}
-    ${tailscale?.error && html`<p class="remote-access-problem" role="alert">${tailscale.error.message}</p>`}
+    ${detail && html`<p class="remote-access-choice-detail">${detail}</p>`}
+    ${error && html`<p class="remote-access-problem" role="alert">${error}</p>`}
   </fieldset>`;
 }
 

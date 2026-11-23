@@ -288,6 +288,50 @@ describe.skipIf(!browserReady)(
       expect((await gateway.status()).deviceEnrollment.policy).toBe("ask");
     }, 240_000);
 
+    test("Connectivity's one answer for new devices steps up once through the relay, and that step-up carries it once", async () => {
+      const automatic = {
+        method: "PUT",
+        path: "/admin/remote-access/new-devices",
+        body: JSON.stringify({ policy: "automatic" }),
+      };
+      const refused = await relayed(automatic.path, { method: "PUT", body: automatic.body });
+      expect(refused.status).toBe(428);
+      expect(refused.json).toMatchObject({
+        code: "STEP_UP_REQUIRED",
+        detail: { method: "PUT", path: automatic.path, bodySha256: sha256Hex(automatic.body) },
+      });
+      expect((await gateway.status()).deviceEnrollment.policy).toBe("ask");
+      // One passkey on the gateway's page, for this one request.
+      const issued = await stepUp(automatic);
+      expect(issued.status).toBe(200);
+      const switched = await relayed(automatic.path, {
+        method: "PUT",
+        body: automatic.body,
+        stepUp: issued.json.stepUpId,
+      });
+      expect(switched.status).toBe(200);
+      // It answers with the account's status, as the account page reads it.
+      expect(switched.json.relay).toMatchObject({
+        deviceEnrollment: { policy: "automatic" },
+        stepUpRequired: true,
+      });
+      expect((await gateway.status()).deviceEnrollment.policy).toBe("automatic");
+      // Spent: the same request again needs another step-up.
+      const replayed = await relayed(automatic.path, {
+        method: "PUT",
+        body: automatic.body,
+        stepUp: issued.json.stepUpId,
+      });
+      expect(replayed.status).toBe(428);
+      // Asking first only makes the gateway stricter: no step-up.
+      const ask = await relayed(automatic.path, {
+        method: "PUT",
+        body: JSON.stringify({ policy: "ask" }),
+      });
+      expect(ask.status).toBe(200);
+      expect((await gateway.status()).deviceEnrollment.policy).toBe("ask");
+    }, 240_000);
+
     test("a step-up for one action can't be used for another", async () => {
       const pair = {
         method: "POST",

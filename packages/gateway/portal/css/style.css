@@ -19668,7 +19668,8 @@ summary.decision-card-head {
 .remote-access-actions .btn-primary,
 .remote-access-actions .btn-secondary { white-space: nowrap; }
 
-/* One way in, or one answer: a card with its control in a narrow first column. */
+/* One way in, or one answer: a card with its control in a narrow first column. What a way
+   needs sits in the card under its text, never in a box of its own, so cards never nest. */
 .remote-access-options,
 .remote-access-choices { display: grid; gap: 10px; min-width: 0; margin: 0; padding: 0; border: 0; }
 .remote-access-option,
@@ -19685,7 +19686,6 @@ summary.decision-card-head {
 .remote-access-option-text small { font-size: 12.5px; line-height: 1.5; color: var(--text-secondary); }
 .remote-access-option-text .remote-access-step-up { color: var(--accent); }
 .remote-access-option-body { display: grid; gap: 12px; min-width: 0; margin: 0 14px 14px 42px; }
-.remote-access-option > .remote-access-option-body { padding: 12px 14px; border: 1px dashed var(--border); border-radius: 8px; }
 .remote-access-first { margin-top: 12px; }
 .remote-access-first legend { margin-bottom: 8px; padding: 0; font-size: 13px; font-weight: 600; color: var(--text-primary); }
 .remote-access-check { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-primary); cursor: pointer; }
@@ -19711,11 +19711,13 @@ summary.decision-card-head {
 .remote-access-summary > .access-wizard-copy + .remote-access-row { border-top: 1px solid var(--border); }
 .remote-access-row-text { min-width: 0; }
 .remote-access-row h4 { margin: 0 0 4px; font-size: 14px; font-weight: 600; color: var(--text-primary); }
+.remote-access-row-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.remote-access-row-head > .remote-access-item-action { flex: none; }
 .remote-access-row p { margin: 0; font-size: 13px; line-height: 1.55; color: var(--text-secondary); overflow-wrap: anywhere; }
 .remote-access-manage { flex: none; white-space: nowrap; }
 .remote-access-actions > .btn-ghost { margin-right: auto; }
-/* A way in the owner runs themselves, on its own page: the setup's panel as a card. */
-.remote-access-page-body { display: grid; gap: 12px; min-width: 0; margin-top: 16px; padding: 16px 18px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-secondary); }
+/* A page behind the summary shows its step's panel as the setup does, flat, so its own cards never sit inside another. */
+.remote-access-page-body { display: grid; gap: 12px; min-width: 0; margin-top: 16px; }
 .remote-access-page-body p { margin: 0; }
 .remote-access-more { margin: 0; font-size: 13px; }
 .remote-access-summary > .remote-access-buttons { margin-top: 16px; }
@@ -19755,7 +19757,6 @@ summary.decision-card-head {
 .remote-access-mcp-row > .remote-access-problem { color: var(--warning); }
 
 @media (max-width: 760px) {
-  .remote-access-option-body { margin-left: 14px; }
   .remote-access-row { flex-direction: column; gap: 8px; }
   .remote-access-address-row { flex-wrap: wrap; }
   .remote-access-address-row input { flex-basis: 100%; min-height: 44px; }

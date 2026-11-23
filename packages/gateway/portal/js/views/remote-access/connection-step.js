@@ -7,7 +7,8 @@
 // are switched on and off here through their own routes; Tailscale already on
 // the computer (with that feature) and the owner's own domain are set up in
 // their panels. All four are independent and can all be on at once. When the Tailscale
-// device and the relay are both on, the owner says which devices try first.
+// device and the relay are both on, the owner says which of the two a device
+// that pairs is offered first.
 // Each option links to the full page that manages it.
 
 import { html } from "htm/preact";
@@ -73,16 +74,20 @@ const FIRST_CHOICES = [
   {
     value: "tailscale",
     title: "Tailscale",
-    text: "Keeps traffic on your Tailscale network; the relay steps in when Tailscale is off on the device.",
+    text: "A device that pairs gets the Tailscale address, which keeps its traffic on your Tailscale network.",
   },
   {
     value: "relay",
     title: "Omnesis relay",
-    text: "Works on every device first; Tailscale is used when the relay does not answer.",
+    text: "A device that pairs gets the relay address, which works on every device with nothing to install.",
   },
 ];
 
-/** Which way devices try first when both the Tailscale device and the relay can answer; step 2 and the summary show it. */
+/**
+ * Which address a device that pairs with a code is offered first when both the Tailscale device
+ * and the relay can answer; step 2 and the summary show it. The apps keep the one address they
+ * paired with and never read this again, so it says that it applies from now on (see #978).
+ */
 export function FirstChoice({ remote, setRemote }) {
   const [saving, setSaving] = useState("");
   const [error, setError] = useState("");
@@ -116,6 +121,10 @@ export function FirstChoice({ remote, setRemote }) {
       </label>`,
     )}
     <p class="remote-access-choice-detail">${picked ? `${picked.text} ` : ""}Your home network always comes first.</p>
+    <p class="remote-access-choice-detail">
+      Applies to devices that pair from now on. A device paired earlier keeps the address it got then; pair it again
+      to switch.
+    </p>
     ${error && html`<p class="remote-access-problem" role="alert">${error}</p>`}
   </fieldset>`;
 }

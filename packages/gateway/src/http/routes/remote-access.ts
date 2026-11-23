@@ -10,7 +10,10 @@
  *
  * The account, the relay and the gateway's Tailscale device keep their own
  * routes (cloud-relay.ts, tailscale.ts); the portal's guided setup calls them
- * directly, so their step-ups and checks apply unchanged.
+ * directly, so their step-ups and checks apply unchanged. The one exception is
+ * the answer for new devices: PUT /admin/remote-access/new-devices sets the
+ * account's policy and the Tailscale device's together, in one request, so
+ * letting devices join automatically asks for one step-up, not one per way in.
  *
  * `mcpAddresses` lists each address with where MCP answers there (see
  * mcp-addresses.ts); PATCH `{ mcp: { <id>: <reach> } }` changes it.
@@ -41,9 +44,12 @@ import {
   remoteAccessFirstSchema,
   type RemoteAccessSettingsStore,
 } from "../../remote-access/settings.js";
+import { NewDevicesService } from "../services/NewDevicesService.js";
 import { scope } from "../scope.js";
-import { requireStepUp } from "../step-up.js";
+import { requireStepUp, stepUpRequired } from "../step-up.js";
 import { validateJson } from "../validate.js";
+import type { CloudRelayManagement } from "@omnesis/cloud-relay";
+import type { TailscaleEmbedService } from "../../tailscale-embed/service.js";
 import type { PublicAddressSource } from "../../public-address.js";
 import type { HostAccess } from "../../remote-access/host-access.js";
 import type { LocalMcpState } from "../../local-mcp-listener.js";
@@ -69,6 +75,11 @@ const httpsAddress = z
 const checkBody = z.object({ url: httpsAddress }).strict();
 const publishBody = z.object({ public: z.boolean() }).strict();
 const nonceParam = /^[A-Za-z0-9_-]{16,64}$/;
+/**
+ * The one answer for new devices: "ask" and "automatic" for every way a device can ask to join,
+ * and "code", offered while no account is linked, which turns joining through Tailscale off.
+ */
+const newDevicesBody = z.object({ policy: z.enum(["ask", "automatic", "code"]) }).strict();
 
 export interface RemoteAccessRouteOptions {
   settings: RemoteAccessSettingsStore;
@@ -83,11 +94,16 @@ export interface RemoteAccessRouteOptions {
   tailscaleEmbed: boolean;
   /** Where the plain-HTTP MCP address for agents on this computer stands. */
   localMcp?: () => LocalMcpState;
+  /** The Omnesis account, whose policy the answer for new devices sets while it is linked. */
+  relay?: CloudRelayManagement;
+  /** The gateway's own Tailscale device, whose policy that answer sets while it is on. */
+  tailscale?: TailscaleEmbedService;
 }
 
 export function mountRemoteAccessRoutes(app: RouteApp, options: RemoteAccessRouteOptions): void {
   const bounded = bodyLimit({ maxSize: 4096 });
   const addresses = options.mcpAddresses;
+  const newDevices = new NewDevicesService({ relay: options.relay, tailscale: options.tailscale });
   // Built per gateway: a switch for an address this gateway does not offer is refused.
   const settingsBody = z
     .object({
@@ -162,6 +178,24 @@ export function mountRemoteAccessRoutes(app: RouteApp, options: RemoteAccessRout
         });
       }
       return c.json({ ...(await state()), ...(mcpRefusal ? { mcpRefusal } : {}) });
+    },
+  );
+
+  // One answer for every way a new device can ask to join. Only "automatic" loosens the gateway,
+  // so only it asks for a step-up, once for both ways.
+  app.put(
+    "/admin/remote-access/new-devices",
+    scope.admin(),
+    bounded,
+    requireStepUp((body) => (body as { policy?: unknown } | null)?.policy !== "automatic"),
+    validateJson(newDevicesBody),
+    async (c) => {
+      const { relay, tailscale } = await newDevices.answer(c.req.valid("json").policy);
+      return c.json({
+        // As GET /admin/cloud-relay and GET /admin/tailscale answer, for the pages that show them.
+        ...(relay ? { relay: { ...relay, stepUpRequired: stepUpRequired(c) } } : {}),
+        ...(tailscale ? { tailscale } : {}),
+      });
     },
   );
 

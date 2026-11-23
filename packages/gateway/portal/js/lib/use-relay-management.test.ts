@@ -23,7 +23,8 @@ let current: {
   clearError: () => void;
   busy: string;
   version: string;
-  run: (op?: string, input?: unknown, method?: string, options?: unknown) => Promise<void>;
+  run: (op?: string, input?: unknown) => Promise<void>;
+  adopt: (status: unknown) => void;
 };
 function Probe() {
   current = useRelayManagement();
@@ -149,48 +150,46 @@ test("errors are static, timeout aborts, and recovery clears the error", async (
   expect(current.error).toBe("");
   expect(current.status).toEqual({ revision: 4 });
 });
-test("a choice that may ask for the passkey waits for the person, and a step-up failure is said in its own words", async () => {
+test("a step-up failure is said in its own words, and any other failure in the page's", async () => {
   request.mockResolvedValueOnce({ revision: 1 });
   await mount();
-  const slow = pending();
-  request.mockReturnValueOnce(slow.promise);
-  let work!: Promise<void>;
-  await act(async () => {
-    work = current.run("enrollment", { policy: "automatic" }, "PUT", { stepUpAnnounced: true });
-  });
-  expect(request).toHaveBeenLastCalledWith(
-    "enrollment",
-    { policy: "automatic" },
-    expect.any(AbortSignal),
-    "PUT",
-    { stepUpAnnounced: true },
-  );
-  const signal = request.mock.calls[1][2] as AbortSignal;
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(60_000);
-  });
-  expect(signal.aborted).toBe(false);
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(70_000);
-  });
-  expect(signal.aborted).toBe(true);
-  await act(async () => {
-    slow.resolve({ revision: 2 });
-    await work;
-  });
   request.mockRejectedValueOnce(
     Object.assign(new Error("Security lock is on. This change can only be made on the computer running Omnesis right now."), {
       stepUp: true,
     }),
   );
-  await act(async () => current.run("enrollment", { policy: "automatic" }, "PUT"));
+  await act(async () => current.run("enable", {}));
   expect(current.error).toBe(
     "Security lock is on. This change can only be made on the computer running Omnesis right now.",
   );
-  // Any other failure keeps the page's own words.
   request.mockRejectedValueOnce(Object.assign(new Error("private detail"), { stepUp: false }));
-  await act(async () => current.run("enrollment", { policy: "automatic" }, "PUT"));
+  await act(async () => current.run("enable", {}));
   expect(current.error).toContain("Couldn't load or update");
+});
+test("a status another route answered with replaces the status, and a read that started before it can't undo it", async () => {
+  request.mockResolvedValueOnce({ revision: 1 });
+  await mount();
+  const stale = pending();
+  request.mockReturnValueOnce(stale.promise);
+  let read!: Promise<void>;
+  await act(async () => {
+    read = current.run();
+  });
+  await act(async () => current.adopt({ revision: 2 }));
+  expect(current.status).toEqual({ revision: 2 });
+  await act(async () => {
+    stale.resolve({ revision: 1 });
+    await read;
+  });
+  expect(current.status).toEqual({ revision: 2 });
+  // The next read is current again.
+  request.mockResolvedValueOnce({ revision: 3 });
+  await act(async () => current.run());
+  expect(current.status).toEqual({ revision: 3 });
+  // An answer that arrives once the page is gone changes nothing.
+  const late = current.adopt;
+  await act(async () => render(null, host));
+  expect(() => late({ revision: 4 })).not.toThrow();
 });
 test("unmount aborts and late success or rejection cannot mutate a replacement component", async () => {
   const old = pending();
@@ -280,7 +279,7 @@ test("follows a connect in progress closely and otherwise polls slowly", () => {
   for (const status of [null, {}, { connect: { state: "idle" } }, { connect: { state: "failed" } }])
     expect(relayPollInterval(status)).toBe(5000);
 });
-test("run resolves to the result, passes the method through, and switches polling speed with the connect state", async () => {
+test("run resolves to the result, posts the operation, and switches polling speed with the connect state", async () => {
   request.mockResolvedValueOnce({ connect: { state: "idle" } });
   await mount();
   request.mockResolvedValueOnce({ connect: { state: "waiting" } });
@@ -300,16 +299,11 @@ test("run resolves to the result, passes the method through, and switches pollin
     await vi.advanceTimersByTimeAsync(2000);
   });
   expect(request).toHaveBeenCalledTimes(3);
-  request.mockResolvedValueOnce({ deviceEnrollment: { policy: "ask" } });
+  request.mockResolvedValueOnce({ enabled: false });
   await act(async () => {
-    result = await current.run("enrollment", { policy: "ask" }, "PUT");
+    result = await current.run("disable", {});
   });
-  expect(request).toHaveBeenLastCalledWith(
-    "enrollment",
-    { policy: "ask" },
-    expect.any(AbortSignal),
-    "PUT",
-  );
+  expect(request).toHaveBeenLastCalledWith("disable", {}, expect.any(AbortSignal), "POST");
   const calls = request.mock.calls.length;
   await act(async () => {
     await vi.advanceTimersByTimeAsync(2000);
@@ -322,7 +316,7 @@ test("a refused operation resolves to undefined and shows a fixed message", asyn
   request.mockRejectedValueOnce(new Error("private backend detail"));
   let result: unknown = "unset";
   await act(async () => {
-    result = await current.run("enrollment", { policy: "ask" }, "PUT");
+    result = await current.run("enable", {});
   });
   expect(result).toBeUndefined();
   expect(current.error).toContain("Couldn't load or update your Omnesis account settings.");

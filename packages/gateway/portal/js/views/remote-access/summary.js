@@ -5,7 +5,8 @@
 // tick or a dash, in the guided setup's order — the account, every way in from
 // away from home, where agents may reach the MCP server, and the answer for new
 // devices where there is one to give. Each line opens its own page to set it up
-// or manage it, the order and the answer for new devices change in place, and
+// or manage it, the MCP section one page for all three of its lines, the order
+// and the answer for new devices change in place, and
 // the guided setup can be walked from here at will.
 
 import { html } from "htm/preact";
@@ -66,13 +67,16 @@ function ItemManage({ href, label, on = true, onManage }) {
   </button>`;
 }
 
-function Row({ title, children, action }) {
+/** One section of the summary; `action`, when there is one, sits beside its title. */
+function Row({ title, children, action = null }) {
   return html`<div class="remote-access-row">
     <div class="remote-access-row-text">
-      <h4>${title}</h4>
+      <div class="remote-access-row-head">
+        <h4>${title}</h4>
+        ${action}
+      </div>
       ${children}
     </div>
-    ${action}
   </div>`;
 }
 
@@ -192,19 +196,21 @@ export function Summary({ remote, setRemote, relay, tailscale, headingRef, onSta
       </ul>
       ${tailscaleOn && relayOn && html`<${FirstChoice} remote=${remote} setRemote=${setRemote} />`}
     <//>
-    <${Row} title="MCP">
+    <${Row}
+      title="MCP"
+      action=${html`<${ItemManage}
+        href=${MCP_PAGE}
+        label="MCP server"
+        on=${thisComputer.mark !== "off" || homeNetwork.mark === "on" || mcpOn.length > 0}
+        onManage=${onManage}
+      />`}
+    >
       <ul class="remote-access-items">
-        <${Item}
-          mark=${thisComputer.mark}
-          title="This computer"
-          detail=${html`<${Parts} parts=${thisComputer.detail} />`}
-          action=${html`<${ItemManage} href=${MCP_PAGE} label="MCP on this computer" on=${thisComputer.mark !== "off"} onManage=${onManage} />`}
-        />
+        <${Item} mark=${thisComputer.mark} title="This computer" detail=${html`<${Parts} parts=${thisComputer.detail} />`} />
         <${Item}
           mark=${homeNetwork.mark}
           title=${MCP_ADDRESS_LABELS.home}
           detail=${html`<${Parts} parts=${homeNetwork.detail} />`}
-          action=${html`<${ItemManage} href=${MCP_PAGE} label="MCP on your home network" on=${homeNetwork.mark === "on"} onManage=${onManage} />`}
         />
         <${Item}
           mark=${mcpOn.length > 0 ? "on" : "off"}
@@ -219,7 +225,6 @@ export function Summary({ remote, setRemote, relay, tailscale, headingRef, onSta
                   }),
                 )}.`
               : "Off on every address away from home."}
-          action=${html`<${ItemManage} href=${MCP_PAGE} label="MCP away from home" on=${mcpOn.length > 0} onManage=${onManage} />`}
         />
       </ul>
     <//>

@@ -150,7 +150,7 @@ describe("useTailscaleAdmin polling", () => {
       };
       return { call, aborted: () => signal?.aborted };
     };
-    for (const operation of ["enable", "join-policy"]) {
+    for (const operation of ["enable"]) {
       const change = pending();
       let done: Promise<unknown>;
       await act(async () => { done = admin.run(operation, change.call); });
@@ -162,9 +162,25 @@ describe("useTailscaleAdmin polling", () => {
     }
     const quick = pending();
     let done: Promise<unknown>;
+    // Joining policies are set together on Connectivity's own route, not here.
     await act(async () => { done = admin.run("device-name", quick.call); });
     await advance(10_000);
     expect(quick.aborted()).toBe(true);
     await act(async () => { await done; });
+  });
+
+  test("a state another route answered with replaces the state, and a read that started before it can't undo it", async () => {
+    await mount(base({ joinPolicy: "ask" }));
+    let answer!: (value: State) => void;
+    api.getTailscale.mockImplementation(() => new Promise((resolve) => { answer = resolve; }));
+    let read: Promise<unknown>;
+    await act(async () => { read = admin.refresh(); });
+    await act(async () => admin.adopt(base({ joinPolicy: "automatic" })));
+    expect(admin.state.joinPolicy).toBe("automatic");
+    await act(async () => { answer(base({ joinPolicy: "ask" })); await read; });
+    expect(admin.state.joinPolicy).toBe("automatic");
+    api.getTailscale.mockResolvedValue(base({ joinPolicy: "off" }));
+    await act(async () => { await admin.refresh(); });
+    expect(admin.state.joinPolicy).toBe("off");
   });
 });
