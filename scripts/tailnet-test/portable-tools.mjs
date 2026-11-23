@@ -14,6 +14,7 @@ import {
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runCheckCommand } from "../lib/check-process.mjs";
+import { helperProgram } from "../tailnet-helper/outputs.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const FIXTURE = join(ROOT, "scripts/tailnet-test/control");
@@ -116,7 +117,7 @@ export async function ensurePortableTailnetTools(cacheDirectory) {
     tailscale: cli,
     tailscaled: "",
     derper: "",
-    helper: join(HELPER, "dist", "bin", `omnesis-tailnet${suffix}`),
+    helper: join(ROOT, helperProgram(suffix === ".exe")),
     portable: { actor, cliDirectory: directory },
   };
 }

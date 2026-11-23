@@ -27,6 +27,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isEntryScript } from "../lib/is-entry-script.mjs";
+import { helperProgram } from "../tailnet-helper/outputs.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const HELPER_DIR = join(ROOT, "packages/tailnet-helper");
@@ -115,11 +116,7 @@ function tailscalePrograms(cacheDir) {
 
 function helper() {
   run(process.execPath, [join(ROOT, "scripts/tailnet-helper/build.mjs")]);
-  return join(
-    HELPER_DIR,
-    "bin",
-    process.platform === "win32" ? "omnesis-tailnet.exe" : "omnesis-tailnet",
-  );
+  return join(ROOT, helperProgram());
 }
 
 /** Provision every tool and return their paths. Builds and downloads only what is missing. */
