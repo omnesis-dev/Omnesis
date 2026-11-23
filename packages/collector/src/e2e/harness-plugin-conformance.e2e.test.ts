@@ -40,8 +40,8 @@ const windowsOpenClaw = process.platform === "win32" && requestedHarness === "op
 // On hosted Windows runners every OpenClaw CLI command that reads its plugin
 // state takes about 20 s (Linux about 2 s): the CLI starts helper processes
 // synchronously and waits on worker threads, which a compile cache does not
-// shorten. Connect runs four of them (113 to 125 s in all, measured), uninstall
-// two (62 to 75 s), and the whole test 241 to 293 s. Each limit allows about
+// shorten. Connect runs four of them (110 to 129 s in all, measured), uninstall
+// two (57 to 75 s), and the whole test 241 to 293 s. Each limit allows about
 // two and a half times its step, so a slow runner passes while a hung command
 // still fails by name well inside the test's own budget.
 const CONNECT_TIMEOUT_MS = windowsOpenClaw ? 300_000 : 90_000;

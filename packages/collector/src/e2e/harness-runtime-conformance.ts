@@ -49,7 +49,7 @@ const untimedStep: HarnessConformanceStep = (_name, run) => run();
 
 /**
  * How long `openclaw plugins inspect --runtime` may run. Hosted Windows
- * runners take 18.5 to 21.4 s for it (Linux about 2 s): the OpenClaw CLI
+ * runners take 17 to 21.4 s for it (Linux about 2 s): the OpenClaw CLI
  * starts helper processes synchronously and waits on worker threads, so a
  * warm compile cache does not shorten it. About three times the measured duration,
  * the limit the CLI itself gives `plugins inspect`, still stops a hung
