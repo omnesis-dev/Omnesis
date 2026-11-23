@@ -63,10 +63,13 @@ git commit -qm "Omnesis topology fixture base"
 # Bump every workspace manifest AND the lockfile the way a release does. The
 # installer refuses a tag whose CLI manifest disagrees with the tag name, and
 # `npm ci` refuses a lockfile that disagrees with the manifests, so this has
-# to be npm's own bump rather than a hand-edit of one file.
+# to be npm's own bump rather than a hand-edit of one file. The bump installs
+# the tree to rewrite the lockfile, but the fixture keeps only the git history,
+# so install scripts are skipped: otherwise every tag compiles the native SQLite
+# module, which downloads Node's headers from nodejs.org.
 tag_release() {
   local version="$1"
-  npm version "$version" --workspaces --no-git-tag-version --allow-same-version >/dev/null
+  npm version "$version" --workspaces --no-git-tag-version --allow-same-version --ignore-scripts >/dev/null
   git add -A
   git commit -qm "Omnesis ${version}"
   git tag -a "v${version}" -m "Omnesis ${version}"
