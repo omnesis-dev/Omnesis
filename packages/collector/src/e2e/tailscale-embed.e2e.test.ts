@@ -15,12 +15,13 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { tailnetCleanupError } from "./tailnet-command-processes.js";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { tailnetCleanupError } from "./tailnet-command-processes.js";
 import {
   fetchFrom,
   GATEWAY_TAILNET_ORIGIN,
   runCliOn,
+  TAILNET_DOMAIN,
   TailnetGateway,
   tailnetTools,
   TestTailnet,
@@ -31,9 +32,11 @@ import {
 
 interface State {
   enabled: boolean;
+  deviceName: string;
   connection: string;
   signInUrl: string | null;
   url: string | null;
+  node: { dnsName: string; name?: string; naming?: string } | null;
   owner: { login: string } | null;
   certificate: { source: string; reason?: string } | null;
   public: { wanted: boolean; state: string; reason?: string };
@@ -44,6 +47,8 @@ interface State {
 
 const SUITE = "tailscale-embed.e2e";
 const tools: TailnetTools | null = await tailnetTools(SUITE);
+/** Headscale can delete devices; the portable fixture's coordinator cannot. */
+const onHeadscale = !tools?.portable;
 
 describe.skipIf(!tools)("the gateway's own Tailscale device", () => {
   let tailnet: Awaited<ReturnType<typeof TestTailnet.start>>;
@@ -100,8 +105,8 @@ describe.skipIf(!tools)("the gateway's own Tailscale device", () => {
       throw tailnetCleanupError(removalFailures.map((result) => result.reason as unknown));
   }, 120_000);
 
-  const step = (name: string, fn: () => Promise<void>, timeoutMs = 180_000) =>
-    test(
+  const step = (name: string, fn: () => Promise<void>, timeoutMs = 180_000, run = true) =>
+    test.skipIf(!run)(
       name,
       async () => {
         try {
@@ -129,6 +134,8 @@ describe.skipIf(!tools)("the gateway's own Tailscale device", () => {
       const connected = await until((s) => s.connection === "connected", "the device to connect");
       expect(connected).toMatchObject({
         url: GATEWAY_TAILNET_ORIGIN,
+        deviceName: "omnesis",
+        node: { name: "omnesis", naming: "chosen" },
         owner: { login: tailnet.ownerLogin },
         // headscale offers no Tailscale certificates, so the gateway serves its own.
         certificate: { source: "gateway", reason: "https-disabled" },
@@ -295,6 +302,69 @@ describe.skipIf(!tools)("the gateway's own Tailscale device", () => {
       "the reapproved gateway to answer over the real tailnet",
     );
   });
+
+  step(
+    "a device deleted on the tailnet while the gateway was off asks for a sign-in, never showing its old address",
+    async () => {
+      await gateway.stop();
+      // Its node state still holds the deleted device, and a network map kept on disk.
+      await (tailnet as TestTailnet).deleteNode("omnesis");
+      await gateway.start();
+      const seen: State[] = [];
+      const waiting = await until((s) => {
+        seen.push(s);
+        return s.connection === "needs-sign-in" && !!s.signInUrl;
+      }, "a sign-in link for the deleted device");
+      expect(
+        seen.filter((s) => s.connection === "connected" || s.url !== null || s.node !== null),
+      ).toEqual([]);
+      await tailnet.approveSignIn(waiting.signInUrl!, "owner");
+      expect(
+        await until((s) => s.connection === "connected", "the device to join again"),
+      ).toMatchObject({ url: GATEWAY_TAILNET_ORIGIN, node: { name: "omnesis", naming: "chosen" } });
+      await waitFor(
+        async () => (await fromLaptop("/health")).status === 200,
+        "the gateway over the tailnet as its new device",
+      );
+    },
+    180_000,
+    onHeadscale,
+  );
+
+  step(
+    "renaming the device gives it the new name and address",
+    async () => {
+      const named = (name: string) =>
+        until(
+          (s) => s.node?.name === name && s.node.naming === "chosen",
+          `the device to be named ${name}`,
+        );
+      await gateway.admin("PATCH", "/admin/tailscale/settings", { deviceName: "gateway-home" });
+      expect(await named("gateway-home")).toMatchObject({
+        deviceName: "gateway-home",
+        url: `https://gateway-home.${TAILNET_DOMAIN}`,
+      });
+      // A name another device has gets a number, and says so.
+      await gateway.admin("PATCH", "/admin/tailscale/settings", { deviceName: "build-server" });
+      const taken = await until((s) => s.node?.naming === "taken", "the suffixed name");
+      expect(taken).toMatchObject({
+        deviceName: "build-server",
+        url: `https://build-server-1.${TAILNET_DOMAIN}`,
+        node: { name: "build-server-1" },
+      });
+      // Once that device is gone, saving the name again takes it, although the
+      // name the device asks for has not changed.
+      await (tailnet as TestTailnet).deleteNode("build-server");
+      await gateway.admin("PATCH", "/admin/tailscale/settings", { deviceName: "build-server" });
+      expect(await named("build-server")).toMatchObject({
+        url: `https://build-server.${TAILNET_DOMAIN}`,
+      });
+      await gateway.admin("PATCH", "/admin/tailscale/settings", { deviceName: "omnesis" });
+      expect(await named("omnesis")).toMatchObject({ url: GATEWAY_TAILNET_ORIGIN });
+    },
+    180_000,
+    onHeadscale,
+  );
 
   step("turning it off closes the tailnet address", async () => {
     await gateway.admin("POST", "/admin/tailscale/enable", { enabled: false });

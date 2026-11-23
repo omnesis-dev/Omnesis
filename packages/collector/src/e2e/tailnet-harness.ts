@@ -17,7 +17,9 @@
  * Tailscale's servers are never contacted. Certificates and the public
  * (Funnel) address are disabled on these local control planes, so
  * the gateway serves its own certificate on the tailnet here, as it does on
- * any tailnet with HTTPS certificates switched off.
+ * any tailnet with HTTPS certificates switched off. Headscale lets every
+ * device keep its network map on disk between runs, as Tailscale's own
+ * coordination server does.
  */
 
 import { execFile, spawn, type ChildProcess } from "node:child_process";
@@ -242,6 +244,18 @@ export class TestTailnet {
       ].join("\n"),
     );
     this.controlUrl = `http://127.0.0.1:${controlPort}`;
+    // Every device may reach every other, as with no policy at all; tagged
+    // devices need an owner; and every device may keep its network map on
+    // disk between runs, as Tailscale's own coordination server allows.
+    const policy = join(this.dir, "policy.json");
+    writeFileSync(
+      policy,
+      JSON.stringify({
+        tagOwners: { "tag:server": [`${this.ownerLogin}@`] },
+        acls: [{ action: "accept", src: ["*"], dst: ["*:*"] }],
+        nodeAttrs: [{ target: ["*"], attr: ["cache-network-maps"] }],
+      }),
+    );
     this.configFile = join(this.dir, "headscale.yaml");
     writeFileSync(
       this.configFile,
@@ -273,7 +287,7 @@ export class TestTailnet {
         "  level: warn",
         "policy:",
         "  mode: file",
-        '  path: ""',
+        `  path: ${policy}`,
         "dns:",
         "  magic_dns: true",
         `  base_domain: ${TAILNET_DOMAIN}`,
@@ -325,6 +339,17 @@ export class TestTailnet {
         ? ["preauthkeys", "create", "--user", await this.userId(owner.user), "-o", "json"]
         : ["preauthkeys", "create", "--tags", owner.tags.join(","), "-o", "json"];
     return (JSON.parse(await this.headscale(args)) as { key: string }).key;
+  }
+
+  /** Delete the device named `name` on the tailnet, as its owner does in the admin console. */
+  async deleteNode(name: string): Promise<void> {
+    const nodes = JSON.parse(await this.headscale(["nodes", "list", "-o", "json"])) as Array<{
+      id: number | string;
+      given_name: string;
+    }>;
+    const node = nodes.find((n) => n.given_name === name);
+    if (!node) throw new Error(`no device named ${name} on the test tailnet`);
+    await this.headscale(["nodes", "delete", "--identifier", String(node.id), "--force"]);
   }
 
   /** Approve an interactive sign-in link as `user`, as the person opening it would. */

@@ -339,6 +339,67 @@ describe("TailscaleView", () => {
     expect(host.querySelector(".tailscale-field-error")).toBeNull();
   });
 
+  test("a connected device shows the name Tailscale gave it, and saving the chosen one asks again", async () => {
+    await show(
+      connected({
+        url: "https://omnesis-1.example-net.ts.net",
+        node: { dnsName: "omnesis-1.example-net.ts.net", name: "omnesis-1", naming: "taken", ips: [] },
+      }),
+    );
+    const input = host.querySelector("#tailscale-device-name") as HTMLInputElement;
+    expect(input.value ?? input.getAttribute("value")).toBe("omnesis-1");
+    expect(button("Save").disabled).toBe(true);
+    expect(host.querySelector(".tailscale-name-note")?.textContent?.replace(/\s+/g, " ").trim()).toBe(
+      "Tailscale named it omnesis-1 because omnesis is already used on your Tailscale network. Remove the other machine named omnesis in the Tailscale admin console, then rename this one to omnesis here.",
+    );
+    expect(link("Tailscale admin console").getAttribute("href")).toBe("https://login.tailscale.com/admin/machines");
+    input.value = "omnesis";
+    await act(async () => {
+      input.dispatchEvent(new (window as any).Event("input"));
+    });
+    expect(button("Save").disabled).toBe(false);
+    api.updateTailscaleSettings.mockResolvedValueOnce(
+      connected({ node: { dnsName: "omnesis.example-net.ts.net", name: "omnesis", naming: "chosen", ips: [] } }),
+    );
+    await act(async () => {
+      input.closest("form")!.dispatchEvent(new (window as any).Event("submit", { cancelable: true }));
+    });
+    await act(async () => {});
+    expect(api.updateTailscaleSettings).toHaveBeenCalledWith({ deviceName: "omnesis" }, expect.anything());
+    expect(host.querySelector(".tailscale-name-note")).toBeNull();
+    expect(button("Save").disabled).toBe(true);
+  });
+
+  test("a rename Tailscale has not taken yet says so", async () => {
+    await show(
+      connected({
+        deviceName: "studio",
+        node: { dnsName: "omnesis.example-net.ts.net", name: "omnesis", naming: "pending", ips: [] },
+      }),
+    );
+    expect(text()).toContain("Renaming to studio…");
+  });
+
+  test("a name given in the Tailscale admin console is shown, with where to change it", async () => {
+    await show(
+      connected({
+        url: "https://study-box.example-net.ts.net",
+        node: { dnsName: "study-box.example-net.ts.net", name: "study-box", naming: "renamed", ips: [] },
+      }),
+    );
+    expect(host.querySelector("#tailscale-device-name")).toBeNull();
+    expect(button("Save")).toBeUndefined();
+    expect(text()).toContain("study-box");
+    expect(text()).toContain("It was renamed in the Tailscale admin console, and Tailscale keeps that name whatever is set here. Rename it there.");
+  });
+
+  test("before it connects, the field holds the name the device will ask for", async () => {
+    await show(off({ deviceName: "studio" }));
+    const input = host.querySelector("#tailscale-device-name") as HTMLInputElement;
+    expect(input.value ?? input.getAttribute("value")).toBe("studio");
+    expect(host.querySelector(".tailscale-name-note")).toBeNull();
+  });
+
   test("the main card's sign out and turn off each ask in a dialog first", async () => {
     await show(connected());
     await click("Sign out of Tailscale");

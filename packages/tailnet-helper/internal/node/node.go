@@ -10,6 +10,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"slices"
@@ -49,24 +50,32 @@ type Node struct {
 	lc    *local.Client
 	proxy *proxy.Proxy
 
-	mu          sync.Mutex
-	backend     string
-	loginURL    string
-	selfUserID  string
-	owner       *protocol.Owner
-	dnsName     string
-	tailnet     string
-	ips         []string
-	certDomains []string
-	magicDNS    bool
-	certState   protocol.CertificateStatus
-	certFetch   bool // a fetch of the Tailscale certificate is in flight
-	certRetryAt time.Time
-	public      protocol.PublicStatus
-	wantPublic  bool
-	enableURL   string
-	lastEmitted string
-	loginAsked  bool
+	mu       sync.Mutex
+	hostname string
+	backend  string
+	// confirmed is set once the device is seen online with the coordination
+	// server in this run, and cleared whenever the backend leaves Running.
+	confirmed bool
+	// controlLoginURL is the sign-in link the coordination server sent
+	// without being asked, as it does for a device it no longer knows.
+	controlLoginURL string
+	loginURL        string
+	selfUserID      string
+	owner           *protocol.Owner
+	dnsName         string
+	askedName       string
+	tailnet         string
+	ips             []string
+	certDomains     []string
+	magicDNS        bool
+	certState       protocol.CertificateStatus
+	certFetch       bool // a fetch of the Tailscale certificate is in flight
+	certRetryAt     time.Time
+	public          protocol.PublicStatus
+	wantPublic      bool
+	enableURL       string
+	lastEmitted     string
+	loginAsked      bool
 
 	tailnetServing bool
 	staleCleared   bool
@@ -82,6 +91,7 @@ func New(cfg Config) *Node {
 	}
 	n := &Node{
 		cfg:       cfg,
+		hostname:  cfg.Hostname,
 		backend:   protocol.BackendStarting,
 		certState: protocol.CertificateStatus{Source: protocol.CertificateGateway, Reason: protocol.CertificateReasonPending},
 		public:    protocol.PublicStatus{State: protocol.PublicOff},
@@ -188,8 +198,11 @@ func (n *Node) Login(ctx context.Context) error {
 // coordination server under the machine's own hostname; what tsnet applies
 // at start is applied again first.
 func (n *Node) startSignIn(ctx context.Context) error {
+	n.mu.Lock()
+	hostname := n.hostname
+	n.mu.Unlock()
 	prefs := ipn.NewPrefs()
-	prefs.Hostname = n.cfg.Hostname
+	prefs.Hostname = hostname
 	prefs.WantRunning = true
 	prefs.ControlURL = n.cfg.ControlURL
 	if prefs.ControlURL == "" {
@@ -212,6 +225,66 @@ func (n *Node) Logout(ctx context.Context) error {
 	return n.lc.Logout(ctx)
 }
 
+// renameAckTimeout bounds the wait for the coordination server to record the
+// name a two-step rename passes through.
+const renameAckTimeout = 20 * time.Second
+
+// Rename asks Tailscale to name the device hostname. Tailscale derives a
+// device's name from the name it asks for, adding a suffix while another
+// device holds it, and does so only when the asked-for name changes: asking
+// again for the same name, after that other device is gone, changes nothing.
+// So when the device already asks for hostname but carries another name, it
+// first asks for the name it carries, which Tailscale keeps, and once the
+// coordination server has recorded that, asks for hostname again.
+func (n *Node) Rename(ctx context.Context, hostname string) error {
+	n.mu.Lock()
+	n.hostname = hostname
+	connected := n.reportedBackendLocked() == protocol.BackendRunning
+	carried := firstLabel(n.dnsName)
+	asked := n.askedName
+	n.mu.Unlock()
+	defer n.poke()
+	if connected && asked == hostname && carried != "" && carried != hostname {
+		if err := n.askFor(ctx, carried); err != nil {
+			return err
+		}
+		if err := n.awaitAskedName(ctx, carried); err != nil {
+			n.cfg.Logf("tailnet: rename: %v; asking for %s anyway", err, hostname)
+		}
+	}
+	return n.askFor(ctx, hostname)
+}
+
+// askFor sets the name the device asks Tailscale for.
+func (n *Node) askFor(ctx context.Context, hostname string) error {
+	_, err := n.lc.EditPrefs(ctx, &ipn.MaskedPrefs{Prefs: ipn.Prefs{Hostname: hostname}, HostnameSet: true})
+	return err
+}
+
+// awaitAskedName waits until the coordination server's record of the name
+// the device asks for is hostname.
+func (n *Node) awaitAskedName(ctx context.Context, hostname string) error {
+	ctx, cancel := context.WithTimeout(ctx, renameAckTimeout)
+	defer cancel()
+	tick := time.NewTicker(200 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		if st, err := n.lc.StatusWithoutPeers(ctx); err == nil && st.Self != nil && st.Self.HostName == hostname {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("the coordination server did not record %s: %w", hostname, ctx.Err())
+		case <-tick.C:
+		}
+	}
+}
+
+func firstLabel(dnsName string) string {
+	label, _, _ := strings.Cut(dnsName, ".")
+	return label
+}
+
 func (n *Node) poke() {
 	select {
 	case n.kick <- struct{}{}:
@@ -226,6 +299,9 @@ func (n *Node) applyNotify(note ipn.Notify) {
 		n.loginURL = *note.BrowseToURL
 	}
 	if note.State != nil {
+		if *note.State != ipn.Running {
+			n.confirmed = false
+		}
 		switch *note.State {
 		case ipn.NeedsLogin:
 			n.backend = protocol.BackendNeedsLogin
@@ -248,7 +324,13 @@ func (n *Node) applyNotify(note ipn.Notify) {
 // latest Tailscale state and the gateway's wishes.
 func (n *Node) reconcile(ctx context.Context) {
 	n.mu.Lock()
-	backend := n.backend
+	running := n.backend == protocol.BackendRunning
+	n.mu.Unlock()
+	if running {
+		n.refreshSelf(ctx)
+	}
+	n.mu.Lock()
+	backend := n.reportedBackendLocked()
 	needLogin := backend == protocol.BackendNeedsLogin && n.loginURL == "" && !n.loginAsked
 	if needLogin {
 		n.loginAsked = true
@@ -278,7 +360,6 @@ func (n *Node) reconcile(ctx context.Context) {
 		n.staleCleared = true
 		n.mu.Unlock()
 	}
-	n.refreshSelf(ctx)
 	n.ensureTailnetListeners()
 	n.reconcileCertificate(ctx)
 	n.reconcilePublic(ctx)
@@ -291,8 +372,13 @@ func (n *Node) refreshSelf(ctx context.Context) {
 	}
 	n.mu.Lock()
 	defer n.mu.Unlock()
+	n.controlLoginURL = st.AuthURL
+	if st.Self.Online && n.backend == protocol.BackendRunning {
+		n.confirmed = true
+	}
 	n.selfUserID = strconv.FormatInt(int64(st.Self.UserID), 10)
 	n.dnsName = strings.TrimSuffix(st.Self.DNSName, ".")
+	n.askedName = st.Self.HostName
 	n.certDomains = slices.Clone(st.CertDomains)
 	n.magicDNS = st.CurrentTailnet != nil && st.CurrentTailnet.MagicDNSEnabled
 	if st.CurrentTailnet != nil {
@@ -564,22 +650,45 @@ func (n *Node) shutdown() {
 	n.srv.Close()
 }
 
+// reportedBackendLocked is the backend state as the gateway sees it.
+// Tailscale reports Running as soon as it has a network map, which can be one
+// it kept on disk from an earlier run, before the coordination server has
+// confirmed the device still exists. The device counts as connected only once
+// the server has confirmed it in this run; until then a sign-in link the
+// server sent (as it does for a device deleted in the admin console, or one
+// whose key expired) means a sign-in is needed.
+func (n *Node) reportedBackendLocked() string {
+	return reportedBackend(n.backend, n.confirmed, n.controlLoginURL)
+}
+
+func reportedBackend(backend string, confirmed bool, controlLoginURL string) string {
+	switch {
+	case backend != protocol.BackendRunning || confirmed:
+		return backend
+	case controlLoginURL != "":
+		return protocol.BackendNeedsLogin
+	default:
+		return protocol.BackendStarting
+	}
+}
+
 // Snapshot returns the current status.
 func (n *Node) Snapshot() protocol.Status {
 	n.mu.Lock()
 	defer n.mu.Unlock()
+	backend := n.reportedBackendLocked()
 	st := protocol.Status{
 		Type:        "status",
 		Protocol:    protocol.Version,
-		Backend:     n.backend,
+		Backend:     backend,
 		Certificate: n.certState,
 		Public:      n.public,
 	}
-	if n.backend == protocol.BackendNeedsLogin {
+	if backend == protocol.BackendNeedsLogin {
 		st.LoginURL = n.loginURL
 	}
-	if n.backend == protocol.BackendRunning && n.dnsName != "" {
-		st.Node = &protocol.NodeStatus{DNSName: n.dnsName, HostName: strings.SplitN(n.dnsName, ".", 2)[0], Tailnet: n.tailnet, IPs: slices.Clone(n.ips)}
+	if backend == protocol.BackendRunning && n.dnsName != "" {
+		st.Node = &protocol.NodeStatus{DNSName: n.dnsName, HostName: firstLabel(n.dnsName), AskedName: n.askedName, Tailnet: n.tailnet, IPs: slices.Clone(n.ips)}
 		if n.owner != nil {
 			o := *n.owner
 			st.Owner = &o

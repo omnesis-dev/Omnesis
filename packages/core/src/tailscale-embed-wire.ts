@@ -57,6 +57,33 @@ export const tailscalePublicSchema = z.object({
   reason: z.string().optional(),
 });
 
+/**
+ * How the connected device's name relates to the one its owner chose:
+ * - `chosen`: it carries that name;
+ * - `taken`: another device on the tailnet has that name, so Tailscale added
+ *   a number to it;
+ * - `renamed`: it was renamed in the Tailscale admin console, whose name
+ *   Tailscale keeps whatever the gateway asks for;
+ * - `pending`: Tailscale has not yet seen the name the owner chose.
+ */
+const tailscaleDeviceNamingSchema = z.enum(["chosen", "taken", "renamed", "pending"]);
+type TailscaleDeviceNaming = z.infer<typeof tailscaleDeviceNamingSchema>;
+
+/**
+ * How Tailscale's name for the device relates to `chosen`, given the name the
+ * device asks for as Tailscale has it on record (`asked`), when known.
+ */
+export function tailscaleDeviceNaming(
+  chosen: string,
+  name: string,
+  asked?: string,
+): TailscaleDeviceNaming {
+  if (asked !== undefined && asked.toLowerCase() !== chosen) return "pending";
+  if (name === chosen) return "chosen";
+  const suffix = name.startsWith(`${chosen}-`) ? name.slice(chosen.length + 1) : "";
+  return /^\d+$/u.test(suffix) ? "taken" : "renamed";
+}
+
 /** Everything the Tailscale page and `omnesis tailscale status` show. */
 export const tailscaleAdminStateSchema = z.object({
   /** The owner turned the gateway's own device on. */
@@ -80,7 +107,15 @@ export const tailscaleAdminStateSchema = z.object({
   /** The gateway's HTTPS address on the tailnet, once connected. */
   url: z.string().nullable(),
   node: z
-    .object({ dnsName: z.string(), tailnet: z.string().optional(), ips: z.array(z.string()) })
+    .object({
+      dnsName: z.string(),
+      /** The device's name on the tailnet, the first label of `dnsName`. */
+      name: z.string().optional(),
+      /** How `name` relates to `deviceName`, the name the owner chose. */
+      naming: tailscaleDeviceNamingSchema.optional(),
+      tailnet: z.string().optional(),
+      ips: z.array(z.string()),
+    })
     .nullable(),
   owner: z.object({ login: z.string(), displayName: z.string().optional() }).nullable(),
   certificate: tailscaleCertificateSchema.nullable(),

@@ -1466,6 +1466,7 @@ export {
   isTailscaleNodeIdentity,
   TAILSCALE_JOIN_POLICIES,
   tailscaleAdminStateSchema,
+  tailscaleDeviceNaming,
   tailscaleJoinAnswerSchema,
   tailscaleJoinCredentialsSchema,
   tailscaleJoinPolicySchema,

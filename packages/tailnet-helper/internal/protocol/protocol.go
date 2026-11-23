@@ -21,7 +21,7 @@ import (
 
 // Version is the protocol revision the helper speaks. The gateway refuses a
 // helper whose first status event reports a different value.
-const Version = 2
+const Version = 3
 
 // Command types the gateway may send.
 const (
@@ -29,6 +29,7 @@ const (
 	CommandConfigure          = "configure"
 	CommandLogin              = "login"
 	CommandLogout             = "logout"
+	CommandRename             = "rename"
 )
 
 // Command is one instruction from the gateway.
@@ -38,6 +39,8 @@ type Command struct {
 	// which paths it may serve.
 	Public      *PublicConfig       `json:"public,omitempty"`
 	Certificate *GatewayCertificate `json:"certificate,omitempty"`
+	// Hostname is set on rename: the name the device asks Tailscale for.
+	Hostname string `json:"hostname,omitempty"`
 }
 
 // GatewayCertificate is private parent-to-helper material, never emitted in status.
@@ -68,6 +71,9 @@ func ParseCommand(line []byte) (Command, error) {
 	if c.Type != CommandGatewayCertificate && c.Certificate != nil {
 		return Command{}, errors.New("certificate material requires gateway-certificate")
 	}
+	if c.Type != CommandRename && c.Hostname != "" {
+		return Command{}, errors.New("a hostname requires rename")
+	}
 	switch c.Type {
 	case CommandGatewayCertificate:
 		if c.Public != nil || c.Certificate == nil || len(c.Certificate.Cert) == 0 || len(c.Certificate.Cert) > 256*1024 || len(c.Certificate.Key) == 0 || len(c.Certificate.Key) > 64*1024 {
@@ -76,6 +82,10 @@ func ParseCommand(line []byte) (Command, error) {
 	case CommandLogin, CommandLogout:
 		if c.Public != nil {
 			return Command{}, fmt.Errorf("%s takes no public settings", c.Type)
+		}
+	case CommandRename:
+		if c.Public != nil || !validHostname(c.Hostname) {
+			return Command{}, errors.New("rename needs one DNS label of lowercase letters, digits and hyphens")
 		}
 	case CommandConfigure:
 		if c.Public == nil {
@@ -90,6 +100,20 @@ func ParseCommand(line []byte) (Command, error) {
 		return Command{}, fmt.Errorf("unknown command type %q", c.Type)
 	}
 	return c, nil
+}
+
+// validHostname reports whether name is one lowercase DNS label, the form the
+// gateway stores a device name in.
+func validHostname(name string) bool {
+	if len(name) == 0 || len(name) > 63 || name[0] == '-' || name[len(name)-1] == '-' {
+		return false
+	}
+	for _, r := range name {
+		if (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '-' {
+			return false
+		}
+	}
+	return true
 }
 
 // Backend states, simplified from Tailscale's own for the gateway.
@@ -142,10 +166,16 @@ type Status struct {
 
 // NodeStatus describes the helper's own tailnet device.
 type NodeStatus struct {
-	DNSName  string   `json:"dnsName"`
-	HostName string   `json:"hostName"`
-	Tailnet  string   `json:"tailnet,omitempty"`
-	IPs      []string `json:"ips"`
+	DNSName string `json:"dnsName"`
+	// HostName is the device's name on the tailnet, the first label of DNSName.
+	HostName string `json:"hostName"`
+	// AskedName is the name the device asks for, as the coordination server
+	// has it on record. Tailscale names the device after it, with a suffix
+	// while another device holds that name, unless the device was renamed in
+	// the admin console. It lags a rename until the server has seen it.
+	AskedName string   `json:"askedName,omitempty"`
+	Tailnet   string   `json:"tailnet,omitempty"`
+	IPs       []string `json:"ips"`
 }
 
 // Owner is the Tailscale user the helper's device belongs to.

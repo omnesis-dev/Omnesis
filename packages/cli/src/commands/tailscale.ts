@@ -61,6 +61,8 @@ const JOIN_POLICY_TEXT: Record<TailscaleJoinPolicy, string> = {
   off: "off (devices pair with a code)",
 };
 
+const TAILSCALE_MACHINES = "https://login.tailscale.com/admin/machines";
+
 const CERTIFICATE_TEXT: Record<string, string> = {
   "https-disabled":
     "HTTPS certificates are off in your Tailscale network; the gateway uses its own certificate. Turn them on at https://login.tailscale.com/admin/dns",
@@ -69,6 +71,22 @@ const CERTIFICATE_TEXT: Record<string, string> = {
   pending: "Getting a trusted certificate…",
   failed: "Tailscale could not issue a certificate; the gateway uses its own for now.",
 };
+
+/** Why the connected device's name is not the one chosen for it, when it is not. */
+function namingLine(state: TailscaleState): string | null {
+  const name = state.node?.name;
+  const chosen = state.deviceName;
+  switch (state.node?.naming) {
+    case "taken":
+      return `Name: Tailscale named it ${name} because ${chosen} is already used on your Tailscale network. Remove the other machine named ${chosen} at ${TAILSCALE_MACHINES}, then run \`omnesis tailscale name ${chosen}\`.`;
+    case "renamed":
+      return `Name: ${name}, given in the Tailscale admin console, which keeps it whatever name is set here. Rename it at ${TAILSCALE_MACHINES}.`;
+    case "pending":
+      return `Name: renaming to ${chosen}…`;
+    default:
+      return null;
+  }
+}
 
 /** Plain-text summary of the state, one fact per line. */
 export function describeState(state: TailscaleState): string[] {
@@ -89,11 +107,13 @@ export function describeState(state: TailscaleState): string[] {
       break;
     case "needs-approval":
       lines.push(
-        `Tailscale: an administrator of your Tailscale network must approve "${state.deviceName}" at https://login.tailscale.com/admin/machines`,
+        `Tailscale: an administrator of your Tailscale network must approve "${state.deviceName}" at ${TAILSCALE_MACHINES}`,
       );
       break;
-    case "connected":
+    case "connected": {
       lines.push(`Tailscale: connected as ${state.url}`);
+      const naming = namingLine(state);
+      if (naming) lines.push(naming);
       if (state.owner)
         lines.push(
           `Account: ${state.owner.displayName ?? state.owner.login} (${state.owner.login})`,
@@ -104,6 +124,7 @@ export function describeState(state: TailscaleState): string[] {
           `Certificate: ${CERTIFICATE_TEXT[state.certificate.reason] ?? state.certificate.reason}`,
         );
       break;
+    }
     default:
       lines.push(`Tailscale: ${state.connection}.`);
   }

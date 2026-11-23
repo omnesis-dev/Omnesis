@@ -10,14 +10,14 @@
 
 import { join } from "node:path";
 import { readFile } from "node:fs/promises";
-import { readTlsPrivateKey } from "../tls-lifecycle/persistence.js";
-import type { TlsPem } from "../tls-lifecycle/service.js";
 import {
   createLogger,
   ownedProcessCleanupReceipt,
+  tailscaleDeviceNaming,
   type TailscaleAdminState,
   type TailscaleJoinPolicy,
 } from "@omnesis/core";
+import { readTlsPrivateKey } from "../tls-lifecycle/persistence.js";
 import { PUBLIC_PATHS } from "./caller.js";
 import { resolveHelperBinary, type HelperBinary } from "./helper-binary.js";
 import { TailscaleJoinRequests, type JoinRequestDeps } from "./join-requests.js";
@@ -29,6 +29,7 @@ import {
   type TailnetSocketServer,
 } from "./socket-server.js";
 import { HelperSupervisor, type SupervisorSnapshot } from "./supervisor.js";
+import type { TlsPem } from "../tls-lifecycle/service.js";
 import type { HelperStatus } from "./protocol.js";
 import type { Duplex } from "node:stream";
 import type { IncomingMessage, Server } from "node:http";
@@ -118,13 +119,13 @@ export class TailscaleEmbedService {
   /** Give the service the app to serve; starts the device if the owner left it on. */
   async attach(app: AttachedApp): Promise<void> {
     this.app = app;
-    if (this.settings.get().enabled) await this.serial(() => this.start(false));
+    if (this.settings.get().enabled) await this.serial(() => this.start());
   }
 
   async setEnabled(enabled: boolean): Promise<TailscaleAdminState> {
     this.assertAdmitting();
     this.settings.update({ enabled });
-    await this.serial(() => (enabled ? this.start(false) : this.stopDevice()));
+    await this.serial(() => (enabled ? this.start() : this.stopDevice()));
     return this.state();
   }
 
@@ -137,9 +138,11 @@ export class TailscaleEmbedService {
     const before = this.settings.get();
     const after = this.settings.update(patch);
     if (after.publicAccess !== before.publicAccess) this.configure(after);
-    // The device name is fixed when the helper starts; a new one needs a restart.
-    if (after.deviceName !== before.deviceName && after.enabled)
-      await this.serial(() => this.start(true));
+    // Saving the name it already asks for asks Tailscale again, as the owner does
+    // once the device that held that name is gone. A helper that is not running
+    // asks for the saved name when it starts.
+    if (patch.deviceName !== undefined && after.enabled)
+      this.supervisor.send({ type: "rename", hostname: after.deviceName });
     this.options.onChange?.();
     return this.state();
   }
@@ -215,6 +218,12 @@ export class TailscaleEmbedService {
         status?.backend === "running" && status.node
           ? {
               dnsName: status.node.dnsName,
+              name: status.node.hostName,
+              naming: tailscaleDeviceNaming(
+                settings.deviceName,
+                status.node.hostName,
+                status.node.askedName,
+              ),
               ...(status.node.tailnet ? { tailnet: status.node.tailnet } : {}),
               ips: status.node.ips,
             }
@@ -359,11 +368,11 @@ export class TailscaleEmbedService {
     }
   }
 
-  /** Start the helper, or with `restart`, restart it with the current settings. */
-  private async start(restart: boolean): Promise<void> {
+  /** Start the helper with the current settings, or reconfigure the one already running. */
+  private async start(): Promise<void> {
     if (this.closed) return;
     this.assertAdmitting();
-    if (!restart && this.supervisor.snapshot().process !== "stopped") {
+    if (this.supervisor.snapshot().process !== "stopped") {
       this.configure(this.settings.get());
       return;
     }

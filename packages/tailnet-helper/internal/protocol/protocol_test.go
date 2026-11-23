@@ -12,6 +12,7 @@ func TestParseCommandAccepts(t *testing.T) {
 		`{"type":"logout"}`,
 		`{"type":"configure","public":{"enabled":false,"paths":[]}}`,
 		`{"type":"configure","public":{"enabled":true,"paths":["/mcp","/portal/vendor/"]}}`,
+		`{"type":"rename","hostname":"home-box-2"}`,
 	}
 	for _, line := range ok {
 		if _, err := ParseCommand([]byte(line)); err != nil {
@@ -38,6 +39,14 @@ func TestParseCommandRejects(t *testing.T) {
 		`{"type":"login","certificate":{"cert":"x","key":"y"}}`,
 		`{"type":"configure","certificate":{"cert":"x","key":"y"},"public":{"enabled":false,"paths":[]}}`,
 		`{"type":"login"} {"type":"logout"}`,
+		`{"type":"rename"}`,
+		`{"type":"rename","hostname":"Home-Box"}`,
+		`{"type":"rename","hostname":"-box"}`,
+		`{"type":"rename","hostname":"box-"}`,
+		`{"type":"rename","hostname":"home.box"}`,
+		`{"type":"rename","hostname":"a234567890123456789012345678901234567890123456789012345678901234"}`,
+		`{"type":"rename","hostname":"box","public":{"enabled":false,"paths":[]}}`,
+		`{"type":"login","hostname":"box"}`,
 	}
 	for _, line := range bad {
 		if _, err := ParseCommand([]byte(line)); err == nil {
