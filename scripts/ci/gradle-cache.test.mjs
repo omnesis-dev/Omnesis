@@ -152,7 +152,12 @@ describe("only main saves a Gradle cache entry, trimmed to what avoids downloads
       expect(save.if).toBe(condition);
       expect(save.with.path).toBe(restore.with.path);
       expect(save.with.key).toBe(`\${{ steps.${restore.id}.outputs.cache-primary-key }}`);
-      expect(steps.indexOf(save)).toBe(steps.length - 1);
+      // Last but for the production-network check, which every test job ends with.
+      const verify = steps.findIndex((step) =>
+        /production-network\.sh verify/u.test(step.run ?? ""),
+      );
+      expect(verify).toBe(steps.length - 1);
+      expect(steps.indexOf(save)).toBe(verify - 1);
 
       const trim = steps.find((step) => /scripts\/ci\/gradle-cache-trim\.sh/u.test(step.run ?? ""));
       expect(trim?.if).toBe(condition);

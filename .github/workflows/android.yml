@@ -160,13 +160,10 @@ jobs:
           $GITHUB_WORKSPACE/scripts/ci/gradlew.sh :app:bundleFullRelease --no-daemon --max-workers=2
           $GITHUB_WORKSPACE/scripts/ci/gradlew.sh :wear:assembleDebug :wear:bundleRelease --no-daemon --max-workers=2
 
-      - name: Check nothing tried to reach production Omnesis services
-        if: ${{ always() && steps.production-network.outcome == 'success' }}
-        run: $GITHUB_WORKSPACE/scripts/ci/production-network.sh verify
-
       # Only main saves, after every lane passed, and only a key it did not
       # restore exactly (a saved entry is never replaced). The entry keeps what
-      # avoids downloads: dependencies and the Gradle distribution.
+      # avoids downloads: dependencies and the Gradle distribution. The
+      # production-network check stays the job's last step.
       - name: Trim the Gradle cache to what avoids downloads
         if: ${{ github.ref == 'refs/heads/main' && steps.gradle-cache.outputs.cache-hit != 'true' }}
         run: $GITHUB_WORKSPACE/scripts/ci/gradle-cache-trim.sh
@@ -179,6 +176,10 @@ jobs:
             ~/.gradle/caches
             ~/.gradle/wrapper
           key: ${{ steps.gradle-cache.outputs.cache-primary-key }}
+
+      - name: Check nothing tried to reach production Omnesis services
+        if: ${{ always() && steps.production-network.outcome == 'success' }}
+        run: $GITHUB_WORKSPACE/scripts/ci/production-network.sh verify
 
   render:
     # An arm64 macOS runner: the Roborazzi goldens under src/test/roborazzi/
@@ -289,10 +290,6 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-      - name: Check nothing tried to reach production Omnesis services
-        if: ${{ always() && steps.production-network.outcome == 'success' }}
-        run: $GITHUB_WORKSPACE/scripts/ci/production-network.sh verify
-
       - name: Trim the Gradle cache to what avoids downloads
         if: ${{ github.ref == 'refs/heads/main' && steps.gradle-cache.outputs.cache-hit != 'true' }}
         run: $GITHUB_WORKSPACE/scripts/ci/gradle-cache-trim.sh
@@ -305,6 +302,10 @@ jobs:
             ~/.gradle/caches
             ~/.gradle/wrapper
           key: ${{ steps.gradle-cache.outputs.cache-primary-key }}
+
+      - name: Check nothing tried to reach production Omnesis services
+        if: ${{ always() && steps.production-network.outcome == 'success' }}
+        run: $GITHUB_WORKSPACE/scripts/ci/production-network.sh verify
 
   live-gateway-e2e:
     needs: build-and-test
