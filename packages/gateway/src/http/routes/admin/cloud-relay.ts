@@ -16,7 +16,7 @@ import {
   cloudRelayRemoveSignInQuery,
   cloudRelayConfirmPasskeyBody,
 } from "../../schemas/cloud-relay.js";
-import type { CloudRelayManagement } from "@omnesis/cloud-relay";
+import type { CloudRelayManagement, CloudRelayManagementStatus } from "@omnesis/cloud-relay";
 import type { Context } from "hono";
 import type { AppEnv, RouteApp } from "../types.js";
 
@@ -35,16 +35,12 @@ export function mountCloudRelayManagementRoutes(
   });
   const bounded = bodyLimit({ maxSize: 16_384 });
   app.get("/admin/cloud-relay", scope.admin(), async (c) =>
-    respond(c, async () => {
+    respondStatus(c, async () => {
       // Only this read asks the relay, and only for a page or command that shows how to sign up
       // (`?signup=1`): the status other pages poll never reaches the network, so a gateway that
       // was never connected contacts no relay while its owner browses the portal.
       if (c.req.query("signup") === "1") await service.refreshSignupAccess?.();
-      return {
-        ...(await service.status()),
-        // Whether loosening actions from this session ask for a passkey first. Labels only.
-        stepUpRequired: stepUpRequired(c),
-      };
+      return service.status();
     }),
   );
   app.post(
@@ -52,14 +48,14 @@ export function mountCloudRelayManagementRoutes(
     scope.admin(),
     bounded,
     validateJson(cloudRelayConfigureBody),
-    async (c) => respond(c, () => service.configure(c.req.valid("json"))),
+    async (c) => respondStatus(c, () => service.configure(c.req.valid("json"))),
   );
   app.post(
     "/admin/cloud-relay/enable",
     scope.admin(),
     bounded,
     validateJson(cloudRelayEnableBody),
-    async (c) => respond(c, () => service.enable(c.req.valid("json"))),
+    async (c) => respondStatus(c, () => service.enable(c.req.valid("json"))),
   );
   app.post(
     "/admin/cloud-relay/account/link",
@@ -83,10 +79,10 @@ export function mountCloudRelayManagementRoutes(
     bounded,
     validateJson(cloudRelayActionBody),
     async (c) =>
-      respond(c, async () => {
+      respondStatus(c, async () => {
         if (!service.refreshAccount)
           throw new CloudRelayManagementFailure(503, "account-unavailable");
-        return { ...(await service.refreshAccount()), stepUpRequired: stepUpRequired(c) };
+        return service.refreshAccount();
       }),
   );
   app.post(
@@ -95,7 +91,7 @@ export function mountCloudRelayManagementRoutes(
     bounded,
     validateJson(cloudRelayActionBody),
     async (c) =>
-      respond(c, async () => {
+      respondStatus(c, async () => {
         if (!service.accountUnlink)
           throw new CloudRelayManagementFailure(503, "account-unavailable");
         return service.accountUnlink();
@@ -107,7 +103,7 @@ export function mountCloudRelayManagementRoutes(
     bounded,
     validateJson(cloudRelayConnectBody),
     async (c) =>
-      respond(c, async () => {
+      respondStatus(c, async () => {
         if (!service.connect) throw new CloudRelayManagementFailure(503, "account-unavailable");
         return service.connect(c.req.valid("json"));
       }),
@@ -118,7 +114,7 @@ export function mountCloudRelayManagementRoutes(
     bounded,
     validateJson(cloudRelayActionBody),
     async (c) =>
-      respond(c, async () => {
+      respondStatus(c, async () => {
         if (!service.cancelConnect)
           throw new CloudRelayManagementFailure(503, "account-unavailable");
         return service.cancelConnect();
@@ -131,7 +127,7 @@ export function mountCloudRelayManagementRoutes(
     bounded,
     validateJson(cloudRelayActionBody),
     async (c) =>
-      respond(c, async () => {
+      respondStatus(c, async () => {
         if (!service.acknowledgeConnect)
           throw new CloudRelayManagementFailure(503, "account-unavailable");
         return service.acknowledgeConnect();
@@ -144,7 +140,7 @@ export function mountCloudRelayManagementRoutes(
     bounded,
     validateJson(cloudRelayActionBody),
     async (c) =>
-      respond(c, async () => {
+      respondStatus(c, async () => {
         if (!service.startOver) throw new CloudRelayManagementFailure(503, "account-unavailable");
         return service.startOver();
       }),
@@ -157,7 +153,7 @@ export function mountCloudRelayManagementRoutes(
     requireStepUp(asksFirst),
     validateJson(cloudRelayEnrollmentBody),
     async (c) =>
-      respond(c, async () => {
+      respondStatus(c, async () => {
         if (!service.setEnrollmentPolicy)
           throw new CloudRelayManagementFailure(503, "account-unavailable");
         return service.setEnrollmentPolicy(c.req.valid("json").policy);
@@ -181,7 +177,7 @@ export function mountCloudRelayManagementRoutes(
           },
           403,
         );
-      return respond(c, async () => {
+      return respondStatus(c, async () => {
         if (!service.acknowledgeIncidentHold)
           throw new CloudRelayManagementFailure(503, "account-unavailable");
         return service.acknowledgeIncidentHold();
@@ -193,7 +189,7 @@ export function mountCloudRelayManagementRoutes(
     scope.admin(),
     validateQuery(cloudRelayRemoveSignInQuery),
     async (c) =>
-      respond(c, async () => {
+      respondStatus(c, async () => {
         if (!service.removeTrustedSignIn || !devices)
           throw new CloudRelayManagementFailure(503, "account-unavailable");
         const id = c.req.param("id");
@@ -247,7 +243,7 @@ export function mountCloudRelayManagementRoutes(
     requireStepUp(),
     validateJson(cloudRelayConfirmPasskeyBody),
     async (c) =>
-      respond(c, async () => {
+      respondStatus(c, async () => {
         if (!service.confirmPasskey)
           throw new CloudRelayManagementFailure(503, "account-unavailable");
         return service.confirmPasskey(c.req.valid("json").proof);
@@ -286,7 +282,7 @@ export function mountCloudRelayManagementRoutes(
     bounded,
     validateJson(cloudRelayActionBody),
     async (c) =>
-      respond(c, async () => {
+      respondStatus(c, async () => {
         if (!service.googleUnlink) throw new CloudRelayManagementFailure(503, "google-unavailable");
         return service.googleUnlink();
       }),
@@ -310,7 +306,7 @@ export function mountCloudRelayManagementRoutes(
       scope.admin(),
       bounded,
       validateJson(cloudRelayActionBody),
-      async (c) => respond(c, () => service[operation]()),
+      async (c) => respondStatus(c, () => service[operation]()),
     );
   }
 }
@@ -321,6 +317,18 @@ async function respond(c: Context<AppEnv>, operation: () => Promise<object>) {
   } catch (error) {
     return failure(c, error);
   }
+}
+
+/**
+ * Every answer that is the account's status also says whether loosening actions from this
+ * session ask for a passkey first (labels only), so a page that takes an operation's answer as
+ * its new status keeps saying so.
+ */
+async function respondStatus(
+  c: Context<AppEnv>,
+  operation: () => Promise<CloudRelayManagementStatus>,
+) {
+  return respond(c, async () => ({ ...(await operation()), stepUpRequired: stepUpRequired(c) }));
 }
 
 function failure(c: Context<AppEnv>, error: unknown) {
