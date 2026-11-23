@@ -7,7 +7,6 @@
   "types": "src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./command-timeout": "./src/command-timeout.ts",
     "./windows-job": "./src/windows-job.ts",
     "./windows-job-exec": "./src/windows-job-exec.ts",
     "./windows-private-file": "./src/windows-private-file.ts",

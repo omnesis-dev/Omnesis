@@ -47,6 +47,16 @@ interface HarnessRuntimeConformanceOptions {
 
 const untimedStep: HarnessConformanceStep = (_name, run) => run();
 
+/**
+ * How long `openclaw plugins inspect --runtime` may run. Hosted Windows
+ * runners take 18.5 to 21.4 s for it (Linux about 2 s): the OpenClaw CLI
+ * starts helper processes synchronously and waits on worker threads, so a
+ * warm compile cache does not shorten it. About three times the measured duration,
+ * the limit the CLI itself gives `plugins inspect`, still stops a hung
+ * command well inside the test's budget and names it.
+ */
+const OPENCLAW_INSPECT_TIMEOUT_MS = 60_000;
+
 export async function assertHarnessRuntimeConformance(
   options: HarnessRuntimeConformanceOptions,
 ): Promise<void> {
@@ -69,7 +79,7 @@ async function assertOpenClawConformance(options: HarnessRuntimeConformanceOptio
     execE2EBufferedCommand(inspectionCommand.command, inspectionCommand.args, {
       cwd: options.repositoryRoot,
       env: options.environment,
-      timeout: 30_000,
+      timeout: OPENCLAW_INSPECT_TIMEOUT_MS,
       maxBuffer: 2 * 1024 * 1024,
     }),
   );

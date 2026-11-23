@@ -5,6 +5,9 @@ import { commandTimeoutError } from "./command-timeout.js";
 import { spawnWindowsJob, type WindowsJobProcess } from "./windows-job.js";
 import { prepareWindowsNativeWorker } from "./windows-worker-cache.js";
 
+// The POSIX side of a buffered run names its timeouts the same way.
+export { commandTimeoutError, describeCommandForDiagnostics } from "./command-timeout.js";
+
 /** UTF-8 execFile-style capture with kernel ownership through timeout and close. */
 export async function execWindowsJob(
   command: string,

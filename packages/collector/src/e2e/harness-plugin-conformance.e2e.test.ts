@@ -37,6 +37,17 @@ const requestedHarness = parseRequestedHarness();
 const conformanceDescribe = requestedHarness ? describe : describe.skip;
 const windowsOpenClaw = process.platform === "win32" && requestedHarness === "openclaw";
 
+// On hosted Windows runners every OpenClaw CLI command that reads its plugin
+// state takes about 20 s (Linux about 2 s): the CLI starts helper processes
+// synchronously and waits on worker threads, which a compile cache does not
+// shorten. Connect runs four of them (113 to 125 s in all, measured), uninstall
+// two (62 to 75 s), and the whole test 241 to 293 s. Each limit allows about
+// two and a half times its step, so a slow runner passes while a hung command
+// still fails by name well inside the test's own budget.
+const CONNECT_TIMEOUT_MS = windowsOpenClaw ? 300_000 : 90_000;
+const UNINSTALL_TIMEOUT_MS = windowsOpenClaw ? 180_000 : 120_000;
+const TEST_TIMEOUT_MS = windowsOpenClaw ? 720_000 : 240_000;
+
 conformanceDescribe("pinned external harness plugin conformance", () => {
   let gateway: MultiCollectorHarness;
   let previousTempDir: string | undefined;
@@ -152,7 +163,7 @@ conformanceDescribe("pinned external harness plugin conformance", () => {
             inheritConnectEnv: false,
             // Real OpenClaw installation starts several cold CLI processes:
             // capability discovery, package install, legacy removal and registry refresh.
-            connectExitTimeoutMs: windowsOpenClaw ? 180_000 : 90_000,
+            connectExitTimeoutMs: CONNECT_TIMEOUT_MS,
             createPairingCode: async () => {
               const pairing = await gateway.json<{ pairingCode: string }>("/admin/devices/pair", {
                 method: "POST",
@@ -240,7 +251,7 @@ conformanceDescribe("pinned external harness plugin conformance", () => {
       }
       if (failed) throw primaryError;
     },
-    windowsOpenClaw ? 360_000 : 240_000,
+    TEST_TIMEOUT_MS,
   );
 });
 
@@ -260,7 +271,7 @@ async function runCli(
       NO_COLOR: "1",
     },
     maxBuffer: 1024 * 1024,
-    timeout: 120_000,
+    timeout: UNINSTALL_TIMEOUT_MS,
   });
   return `${res.stdout}${res.stderr}`;
 }
