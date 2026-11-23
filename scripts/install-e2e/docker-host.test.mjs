@@ -99,6 +99,16 @@ describe("install-e2e Docker single-host lanes", () => {
     expect(lines).toContain("REGISTRY_HOST=ghcr.io");
   });
 
+  test("on mac the images are pulled into the VM before the first install", () => {
+    const script = readFileSync(join(root, "scripts/install-e2e/docker-host.sh"), "utf8");
+    const prefetch = script.indexOf('[ "$SCENARIO" = linux ] || prefetch_images');
+    expect(prefetch).toBeGreaterThan(0);
+    expect(prefetch).toBeLessThan(script.indexOf('group "Install the newest published release'));
+    expect(script).toMatch(
+      /pull_image "\$REGISTRY_HOST" "\$REGISTRY_HOST\/omnesis-dev\/\$image:\$PREFETCHED_TAG"/u,
+    );
+  });
+
   test("the lane refuses to run outside CI and names its scenarios", () => {
     const script = join(root, "scripts/install-e2e/docker-host.sh");
     const work = mkdtempSync(join(tmpdir(), "docker-host-test-"));

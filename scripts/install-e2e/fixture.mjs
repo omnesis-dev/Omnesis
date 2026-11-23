@@ -71,7 +71,7 @@ function parseStableTag(tag) {
   return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
 }
 
-function compareVersions(a, b) {
+export function compareVersions(a, b) {
   const x = a.split(".").map(Number);
   const y = b.split(".").map(Number);
   return x[0] - y[0] || x[1] - y[1] || x[2] - y[2];

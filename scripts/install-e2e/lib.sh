@@ -113,8 +113,9 @@ RESOLVER_BEFORE_COLIMA="$E2E_WORK/resolver-before-colima"
 # printed while it fails: the resolver configuration (and what changed in it
 # since Colima started), each configured nameserver and a public resolver asked
 # directly with dig, past the system's resolver daemon, and what listens on
-# port 53. A nameserver that answers dig while the system lookup times out
-# points at this machine's resolver; one that does not, at the runner's network.
+# port 53, and, with Colima running, its VM's resolver and lookup. A
+# nameserver that answers dig while the system lookup times out points at this
+# machine's resolver; one that does not, at the runner's network.
 name_resolution_diagnostics() {
   local host="$1" server answer status
   group "Name resolution while $host does not answer"
@@ -141,47 +142,78 @@ name_resolution_diagnostics() {
     fi
     echo "--- listening on port 53"
     port_53_listeners
+    if command -v colima >/dev/null 2>&1 && colima status >/dev/null 2>&1; then
+      echo "--- the resolver of Colima's VM, and its lookup of $host (30 s)"
+      perl -e 'alarm shift; exec @ARGV' 30 colima ssh -- sh -c "cat /etc/resolv.conf; getent hosts $host || echo 'getent: no answer'" || true
+    fi
   } 2>&1 | redact
   endgroup
 }
 
-# Seconds await_registry waits for a registry before it fails the lane: eight
+# Seconds a step waits out a registry outage before it fails the lane: eight
 # times the installer's own ~70 s of registry retries, while a passing D2 run
 # takes 30 to 60 minutes of its 150-minute limit.
 REGISTRY_WAIT_SECONDS="${REGISTRY_WAIT_SECONDS:-600}"
+
+# outlast_outage <what> <host> <retryable ERE> <command...>: run the command;
+# while it fails with output matching <retryable>, the mark of <host> being
+# unreachable, run it again every 5 s. Any other failure ends the lane at
+# once. The first such failure prints the name-resolution diagnostics while
+# the outage lasts; one lasting REGISTRY_WAIT_SECONDS ends the lane with them
+# printed again. An outage is timed from the failure that began it, and an
+# attempt that ran for over 30 s before failing (a pull that downloaded
+# layers) begins a new one. The output of the last attempt stays in
+# $OUTAGE_ATTEMPT_LOG.
+OUTAGE_ATTEMPT_LOG="$E2E_WORK/outage-attempt.log"
+outlast_outage() {
+  local what="$1" host="$2" retryable="$3" began=0 attempt_start now detail
+  local out="$OUTAGE_ATTEMPT_LOG"
+  shift 3
+  while :; do
+    attempt_start="$(date +%s)"
+    if "$@" >"$out" 2>&1; then
+      if [ "$began" != 0 ]; then
+        log "$what succeeded, after $host was out for $(($(date +%s) - began))s"
+      else
+        log "$what succeeded"
+      fi
+      return 0
+    fi
+    now="$(date +%s)"
+    detail="$(redact <"$out" | tail -n 1)"
+    if ! grep -Eq -- "$retryable" "$out"; then
+      redact <"$out" | tail -n 40
+      die "$what failed (${detail:-no output})"
+    fi
+    if [ "$began" = 0 ] || [ $((now - attempt_start)) -gt 30 ]; then
+      began="$now"
+      log "$what failed (${detail:-no output}); waiting up to ${REGISTRY_WAIT_SECONDS}s for $host to answer"
+      name_resolution_diagnostics "$host"
+    elif [ $((now - began)) -ge "$REGISTRY_WAIT_SECONDS" ]; then
+      name_resolution_diagnostics "$host"
+      die "$what failed for $((now - began))s (${detail:-no output}); the name resolution printed above shows where it stopped"
+    else
+      log "$what still fails after $((now - began))s (${detail:-no output})"
+    fi
+    sleep 5
+  done
+}
 
 # await_registry <host>: before an installer step that reads the registry from
 # this machine, wait until <host> resolves and answers HTTPS here, asked the
 # way the installer's curl asks it. The installer gives a registry about 70 s,
 # the right budget on a user's machine; a runner's resolver can stay out for
-# longer. The first failed probe prints the diagnostics while the outage
-# lasts; a registry that never answers within REGISTRY_WAIT_SECONDS fails the
-# lane with them printed again.
+# longer.
 await_registry() {
-  local host="$1" start elapsed error failed=0
-  start="$(date +%s)"
-  while :; do
-    if error="$(curl -sS -o /dev/null --max-time 10 "https://$host/v2/" 2>&1)"; then
-      if [ "$failed" = 1 ]; then
-        log "$host answers again, after $(($(date +%s) - start))s"
-      else
-        log "$host answers"
-      fi
-      return 0
-    fi
-    elapsed=$(($(date +%s) - start))
-    if [ "$failed" = 0 ]; then
-      failed=1
-      log "$host does not answer from this machine (${error:-no detail}); waiting up to ${REGISTRY_WAIT_SECONDS}s for it"
-      name_resolution_diagnostics "$host"
-    elif [ "$elapsed" -ge "$REGISTRY_WAIT_SECONDS" ]; then
-      name_resolution_diagnostics "$host"
-      die "$host did not answer from this machine for ${elapsed}s (${error:-no detail}); the name resolution printed above shows where it stopped"
-    else
-      log "$host still does not answer after ${elapsed}s (${error:-no detail})"
-    fi
-    sleep 5
-  done
+  outlast_outage "reaching $1" "$1" . curl -sS -o /dev/null --max-time 10 "https://$1/v2/"
+}
+
+# pull_image <host> <image reference>: pull into the Docker daemon, pulling
+# again while the daemon cannot look up a registry name (Docker's
+# "dial tcp: lookup <name> ..."), as when the resolver of Colima's VM times
+# out. Any other pull failure ends the lane.
+pull_image() {
+  outlast_outage "pulling $2" "$1" 'dial tcp: lookup ' docker pull --quiet "$2"
 }
 
 # The doctor checks that, when they do not pass, stand in for a section whose
