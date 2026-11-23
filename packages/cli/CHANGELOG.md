@@ -1,5 +1,22 @@
 # omnesis
 
+## 0.8.1
+
+### Patch Changes
+
+- The gateway's Tailscale helper program is built with `golang.org/x/net` 0.62.0, which fixes CVE-2026-78661, a denial of service through crafted HTML input. Release images and source installs both rebuild the helper with it.
+- @omnesis/agent-integration@0.8.1
+  - @omnesis/cli-shared@0.8.1
+  - @omnesis/cloud-relay@0.8.1
+  - @omnesis/collector@0.8.1
+  - @omnesis/config@0.8.1
+  - @omnesis/core@0.8.1
+  - @omnesis/eval@0.8.1
+  - @omnesis/gateway@0.8.1
+  - @omnesis/gateway-client@0.8.1
+  - @omnesis/source-sdk@0.8.1
+  - @omnesis/types@0.8.1
+
 ## 0.8.0
 
 ### Minor Changes
