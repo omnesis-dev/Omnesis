@@ -685,11 +685,12 @@ describe("a new phone and an earlier phone's legacy sources", () => {
     "a new iPhone shares a legacy exclusive apple-health source whose earlier phone is $label",
     async ({ revoke }) => {
       const type = "apple-health";
-      const id = `${type}:earlier-phone`;
+      const account = revoke ? "revoked-phone" : "outdated-phone";
+      const id = `${type}:${account}`;
       const path = `/admin/sources/${encodeURIComponent(id)}`;
       const table = revoke ? "earlier_health_revoked" : "earlier_health_outdated";
       const earlier = await pair("ios", `health-earlier-${revoke}`, [type]);
-      await contribute(earlier, type, "earlier-phone");
+      await contribute(earlier, type, account);
       expect(await source(id)).toMatchObject({
         deviceId: earlier.id,
         multiDeviceMode: "exclusive",
