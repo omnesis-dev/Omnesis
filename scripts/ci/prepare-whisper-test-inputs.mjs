@@ -33,30 +33,56 @@ export const WHISPER_TEST_ASSETS = Object.freeze([
   }),
 ]);
 
+/** An error a later attempt may not meet: the host or the network failed, not the asset. */
+function transient(error) {
+  return Object.assign(error instanceof Error ? error : new Error(String(error)), {
+    transient: true,
+  });
+}
+
 /** Bound streamed downloads and publish no unverified input to the tests. */
 export async function downloadWhisperTestAsset(asset, path, { fetchImpl = fetch } = {}) {
   const digest = createHash("sha256");
   let bytes = 0;
   let created = false;
   try {
-    const response = await fetchImpl(asset.url, { signal: AbortSignal.timeout(180_000) });
-    if (!response.ok || !response.body) throw new Error(`ASR asset HTTP ${response.status}`);
+    const host = new URL(asset.url).host;
+    const response = await fetchImpl(asset.url, { signal: AbortSignal.timeout(180_000) }).catch(
+      (error) => {
+        throw transient(new Error(`ASR asset from ${host}: ${error?.message ?? error}`));
+      },
+    );
+    if (!response.ok || !response.body) {
+      const error = new Error(`ASR asset HTTP ${response.status} from ${host}`);
+      throw [408, 429].includes(response.status) || response.status >= 500
+        ? transient(error)
+        : error;
+    }
     const destination = createWriteStream(path, { flags: "wx" });
     destination.once("open", () => {
       created = true;
     });
-    await pipeline(
-      Readable.fromWeb(response.body),
-      new Transform({
-        transform(chunk, _encoding, callback) {
-          bytes += chunk.length;
-          if (bytes > asset.sizeBytes) return callback(new Error("ASR asset exceeds pinned size"));
-          digest.update(chunk);
-          callback(null, chunk);
-        },
-      }),
-      destination,
-    );
+    let oversize;
+    try {
+      await pipeline(
+        Readable.fromWeb(response.body),
+        new Transform({
+          transform(chunk, _encoding, callback) {
+            bytes += chunk.length;
+            if (bytes > asset.sizeBytes)
+              return callback((oversize = new Error("ASR asset exceeds pinned size")));
+            digest.update(chunk);
+            callback(null, chunk);
+          },
+        }),
+        destination,
+      );
+    } catch (error) {
+      // An oversize body or a path that already exists is the asset's own
+      // failure; anything else while streaming is the connection's.
+      if (error === oversize || error?.code === "EEXIST") throw error;
+      throw transient(new Error(`ASR asset from ${host} broke off: ${error?.message ?? error}`));
+    }
     if (bytes !== asset.sizeBytes || digest.digest("hex") !== asset.sha256)
       throw new Error("ASR asset checksum or size mismatch");
     return path;
@@ -64,6 +90,33 @@ export async function downloadWhisperTestAsset(asset, path, { fetchImpl = fetch 
     if (created) await rm(path, { force: true });
     throw error;
   }
+}
+
+/**
+ * Download an asset, trying again while its host or the network fails
+ * transiently (a 5xx, 408 or 429 answer, a refused or broken connection).
+ * A missing asset, a size or checksum mismatch, or an existing path fails at once.
+ */
+export async function downloadWhisperTestAssetWithRetry(
+  asset,
+  path,
+  { fetchImpl = fetch, waitsMs = [5_000, 10_000, 20_000, 40_000], sleep = defaultSleep } = {},
+) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await downloadWhisperTestAsset(asset, path, { fetchImpl });
+    } catch (error) {
+      if (!error?.transient || attempt >= waitsMs.length) throw error;
+      console.warn(
+        `${error.message}; trying again in ${waitsMs[attempt] / 1000} s (attempt ${attempt + 2} of ${waitsMs.length + 1})`,
+      );
+      await sleep(waitsMs[attempt]);
+    }
+  }
+}
+
+function defaultSleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 export async function prepareWhisperTestInputs() {
@@ -81,7 +134,7 @@ export async function prepareWhisperTestInputs() {
   const directory = await mkdtemp(join(process.env.RUNNER_TEMP ?? tmpdir(), "native ASR inputs-"));
   const variables = [];
   for (const asset of WHISPER_TEST_ASSETS) {
-    const path = await downloadWhisperTestAsset(asset, join(directory, asset.filename));
+    const path = await downloadWhisperTestAssetWithRetry(asset, join(directory, asset.filename));
     variables.push(`${asset.variable}=${path}`);
   }
   variables.push(`OMNESIS_WHISPER_TEST_FFMPEG=${ffmpeg}`);
