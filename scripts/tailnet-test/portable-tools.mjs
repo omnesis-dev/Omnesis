@@ -14,6 +14,7 @@ import {
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runCheckCommand } from "../lib/check-process.mjs";
+import { helperProgram } from "../tailnet-helper/outputs.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const FIXTURE = join(ROOT, "scripts/tailnet-test/control");
@@ -24,7 +25,7 @@ function sourceFiles(directory) {
     .sort((left, right) => left.name.localeCompare(right.name))
     .flatMap((entry) => {
       const path = join(directory, entry.name);
-      if (entry.isDirectory()) return entry.name === "bin" ? [] : sourceFiles(path);
+      if (entry.isDirectory()) return entry.name === "dist" ? [] : sourceFiles(path);
       return entry.name.endsWith(".go") || entry.name === "go.mod" || entry.name === "go.sum"
         ? [path]
         : [];
@@ -116,7 +117,7 @@ export async function ensurePortableTailnetTools(cacheDirectory) {
     tailscale: cli,
     tailscaled: "",
     derper: "",
-    helper: join(HELPER, "bin", `omnesis-tailnet${suffix}`),
+    helper: join(ROOT, helperProgram(suffix === ".exe")),
     portable: { actor, cliDirectory: directory },
   };
 }

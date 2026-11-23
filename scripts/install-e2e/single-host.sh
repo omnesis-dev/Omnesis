@@ -51,7 +51,7 @@ installer() {
 # The source build made the Tailscale helper at `version`, and the gateway offers its own
 # Tailscale device.
 expect_tailscale_helper() {
-  local version="$1" helper="$SOURCE_DIR/packages/tailnet-helper/bin/omnesis-tailnet"
+  local version="$1" helper="$SOURCE_DIR/packages/tailnet-helper/dist/bin/omnesis-tailnet"
   [ -x "$helper" ] || die "the build left no Tailscale helper at $helper"
   [ "$("$helper" -version)" = "$version" ] || die "the Tailscale helper is not v$version"
   node -e 'fetch(process.argv[1]).then((r) => r.json()).then((h) => process.exit(h.tailscaleEmbed === true ? 0 : 1), () => process.exit(1))' \

@@ -11,7 +11,7 @@
  * module proxy and are checked against go.sum as any Go build checks them.
  *
  * Everything lives under one directory of the checkout (`packages/tailnet-
- * helper/.go`, ignored by Git): the toolchain, the module cache and the build
+ * helper/dist/go`, ignored by Git): the toolchain, the module cache and the build
  * cache, so a checkout removed on uninstall takes them with it.
  */
 

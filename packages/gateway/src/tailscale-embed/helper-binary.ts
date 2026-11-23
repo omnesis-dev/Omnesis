@@ -10,7 +10,7 @@ export type HelperBinary = { path: string } | { path: null; reason: string };
 
 const BUILT_IN_TREE = fileURLToPath(
   new URL(
-    `../../../tailnet-helper/bin/omnesis-tailnet${process.platform === "win32" ? ".exe" : ""}`,
+    `../../../tailnet-helper/dist/bin/omnesis-tailnet${process.platform === "win32" ? ".exe" : ""}`,
     import.meta.url,
   ),
 );

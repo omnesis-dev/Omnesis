@@ -3,8 +3,8 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Build the Tailscale helper program into packages/tailnet-helper/bin, where
- * the gateway finds it and offers its own Tailscale device. Go is the one
+ * Build the Tailscale helper program into packages/tailnet-helper/dist/bin,
+ * where the gateway finds it and offers its own Tailscale device. Go is the one
  * already installed when it is recent enough, else the pinned toolchain this
  * build downloads and checks (toolchain.mjs).
  *
@@ -16,6 +16,8 @@
  * OMNESIS_TAILNET_HELPER_BUILD=0 skips it, for builds that package the
  * TypeScript alone. OMNESIS_TAILNET_HELPER_GO=pinned builds with the pinned
  * toolchain even where Go is installed.
+ *
+ * Everything it writes stays under the package's dist/ (outputs.mjs).
  */
 
 import { spawnSync } from "node:child_process";
@@ -23,10 +25,11 @@ import { mkdirSync, readFileSync, renameSync, rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
+import { GO_CACHE_DIR, HELPER_DIR, helperProgram } from "./outputs.mjs";
 import { goEnv, installedGo, pinnedGo, requiredGoVersion } from "./toolchain.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
-const helperDir = join(root, "packages/tailnet-helper");
+const helperDir = join(root, HELPER_DIR);
 
 const { values } = parseArgs({
   options: {
@@ -65,7 +68,11 @@ try {
   const toolchain = JSON.parse(
     readFileSync(join(root, "scripts/tailnet-helper/go-toolchain.json"), "utf8"),
   );
-  const cacheDir = join(helperDir, ".go");
+  const cacheDir = join(root, GO_CACHE_DIR);
+  // Nothing this build makes belongs outside dist/: a bin/ or .go/ beside it is
+  // removed, so the checkout holds one toolchain and Git sees no stray files.
+  for (const stale of ["bin", ".go"])
+    rmSync(join(helperDir, stale), { recursive: true, force: true });
   const go =
     (process.env.OMNESIS_TAILNET_HELPER_GO === "pinned" ? null : installedGo(required)) ??
     (await pinnedGo({
@@ -75,8 +82,8 @@ try {
     }));
 
   const goos = values.os;
-  const exe = goos === "windows" || (!goos && process.platform === "win32") ? ".exe" : "";
-  const out = resolve(values.out ?? join(helperDir, "bin", `omnesis-tailnet${exe}`));
+  const windows = goos === "windows" || (!goos && process.platform === "win32");
+  const out = resolve(values.out ?? join(root, helperProgram(windows)));
   mkdirSync(dirname(out), { recursive: true });
   // Built beside its final name and moved into place, so a gateway starting the helper
   // meanwhile finds the old program or the new one, never half of one.

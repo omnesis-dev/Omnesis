@@ -61,8 +61,3 @@ packages/watch/eval-runs/
 # time; only their pinned manifest is tracked.
 packages/gateway/duckdb-extensions/*
 !packages/gateway/duckdb-extensions/manifest.json
-
-# The Tailscale helper program, built from packages/tailnet-helper, and the Go
-# toolchain and caches its build keeps in the checkout
-packages/tailnet-helper/bin/
-packages/tailnet-helper/.go/
