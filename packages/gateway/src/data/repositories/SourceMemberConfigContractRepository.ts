@@ -11,7 +11,7 @@ import {
   canonicalMemberScopedParamNames,
   advertisedMemberScopedParamNames,
   splitMemberScopedParams,
-  deviceIsDormantUnderPartitionedContract,
+  deviceIsDormantUnderContract,
   deviceMatchesMemberConfigContract,
   deviceSupportsMultiDeviceMode,
 } from "../../multi-device-mode.js";
@@ -162,24 +162,35 @@ export function initializeOrAssertSourceMemberConfigContractForDevice(
 /**
  * Revalidate the owner's advertisement beside a membership or member-config
  * change made for `memberDeviceId`. When that member is not the owner, a
- * dormant owner of a partitioned source (revoked, or unable to act under the
- * pinned contract) is skipped: its stream is isolated data at rest and its
- * pushes are refused, so it must not stop another member's change.
+ * dormant owner of a partitioned or replicated source (revoked, or unable to
+ * act under the pinned contract) is skipped: its writes are refused at
+ * execution, so it must not stop another member's change.
  */
 export function initializeOrAssertSourceOwnerMemberConfigContract(
   db: Db,
-  source: Pick<SourceRecord, "id" | "type" | "deviceId" | "multiDeviceMode">,
+  source: Pick<
+    SourceRecord,
+    "id" | "type" | "deviceId" | "multiDeviceMode" | "replicaVersionPolicy"
+  >,
   memberDeviceId: DeviceId,
   expectedNames: readonly string[] | undefined,
 ): string[] | null {
+  const mode = source.multiDeviceMode;
   if (
     expectedNames !== undefined &&
     memberDeviceId !== source.deviceId &&
-    source.multiDeviceMode === "partitioned"
+    (mode === "partitioned" || mode === "replicated")
   ) {
     const pinned = getSourceMemberConfigContract(db, source.id);
     const owner = getDevice(db, source.deviceId);
-    if (owner && deviceIsDormantUnderPartitionedContract(owner, source.type, pinned)) {
+    if (
+      owner &&
+      deviceIsDormantUnderContract(owner, source.type, {
+        mode,
+        memberScopedParams: pinned,
+        replicaVersionPolicy: source.replicaVersionPolicy ?? undefined,
+      })
+    ) {
       return pinned;
     }
   }

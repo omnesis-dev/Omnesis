@@ -78,7 +78,7 @@ import {
 } from "../errors.js";
 import {
   advertisedMemberScopedParamNames,
-  deviceIsDormantUnderPartitionedContract,
+  deviceIsDormantUnderContract,
   deviceMatchesMemberConfigContract,
   deviceSupportsMultiDeviceMode,
   resolveDeviceMultiDeviceMode,
@@ -317,6 +317,16 @@ export type AdminSourceListEntry = SourceRecord & {
    * empty for an `exclusive` source, which admits no second host.
    */
   joinCandidates: DeviceId[];
+  /**
+   * Hosts that cannot act under the source's multi-device contract: revoked,
+   * or running a client that cannot execute it. For a multi-device source
+   * that is the persisted contract; for an exclusive source it is the
+   * contract another paired device announces for the type, so a replacement
+   * device can tell that the current owner will not contribute alongside it.
+   * A dormant host's data stays, and its writes are refused until it is
+   * re-paired or updated.
+   */
+  dormantHosts: DeviceId[];
   pushBased: boolean;
   /**
    * The modes a resync of the whole source offers. Empty for a source that
@@ -491,6 +501,7 @@ export class SourceService {
     const expected = source.replicaVersionPolicy ?? undefined;
     for (const deviceId of this.membersOf(source)) {
       const member = getDevice(this.deps.db, deviceId);
+      if (member && this.isDormantMember(source, member)) continue;
       if (member && member.capabilities.replicaVersionPolicies?.[source.type] !== expected) {
         throw new HttpError(
           409,
@@ -591,36 +602,43 @@ export class SourceService {
   }
 
   /**
-   * The device that decides an exclusive source's partitioned contract in
-   * place of a dormant owner, or null when the owner decides. Partitioned
-   * members keep isolated streams and are refused at execution while they
-   * cannot act under the contract, so an owner that is revoked, or whose app
-   * cannot act as a partitioned member, must not stop a capable device from
-   * converting the source: the requester's advertisement becomes the
-   * contract, while the owner keeps its row and its history moves into its
-   * own stream. Only a device's own request delegates — a portal session or
-   * an operator token speaks for no device — and only a paired device that
-   * can host the type under the contract.
+   * The device that decides an exclusive source's partitioned or replicated
+   * contract in place of a dormant owner, or null when the owner decides.
+   * Every host's writes are checked against the persisted contract at
+   * execution, so an owner that is revoked, or whose app cannot act under
+   * the contract, must not stop a capable device from converting the source:
+   * the requester's advertisement becomes the contract, while the owner keeps
+   * its row and its data. Only a device's own request delegates — a portal
+   * session or an operator token speaks for no device — and only a paired
+   * device that can host the type under the contract.
    */
-  private partitionedContractAuthority(
+  private dormantOwnerContractAuthority(
     source: SourceRecord,
     owner: DeviceRecord,
+    mode: "partitioned" | "replicated",
     requestingDeviceId: DeviceId | undefined,
   ): DeviceRecord | null {
     if (!requestingDeviceId || requestingDeviceId === owner.id) return null;
-    const pinned = getSourceMemberConfigContract(this.deps.db, source.id);
-    if (!deviceIsDormantUnderPartitionedContract(owner, source.type, pinned)) return null;
     const requester = getDevice(this.deps.db, requestingDeviceId);
     if (
       !requester ||
       requester.revokedAt !== null ||
       !deviceCanHostType(requester, source.type) ||
-      !this.deviceSupportsSourceContract(requester, source.type, "partitioned")
+      !this.deviceSupportsSourceContract(requester, source.type, mode)
     ) {
       return null;
     }
+    const pinned = getSourceMemberConfigContract(this.deps.db, source.id);
     if (pinned && !deviceMatchesMemberConfigContract(requester, source.type, pinned)) return null;
-    return requester;
+    const contract = {
+      mode,
+      memberScopedParams: pinned,
+      replicaVersionPolicy:
+        mode === "replicated"
+          ? requester.capabilities.replicaVersionPolicies?.[source.type]
+          : undefined,
+    };
+    return deviceIsDormantUnderContract(owner, source.type, contract) ? requester : null;
   }
 
   private assertMemberConfigContract(
@@ -744,31 +762,36 @@ export class SourceService {
   }
 
   /**
-   * Whether `device` is a dormant member of a partitioned source (see
-   * `deviceIsDormantUnderPartitionedContract`): its isolated stream is data
-   * at rest, so it neither blocks membership changes nor reads as broken.
-   * Every other mode shares rows across members and stays strict.
+   * Whether `device` is a dormant host of a partitioned or replicated source
+   * (see `deviceIsDormantUnderContract`): its writes are refused at
+   * execution, so it neither blocks membership changes nor reads as broken.
+   * Exclusive and handoff sources stay strict.
    */
-  private isDormantPartitionedMember(
+  private isDormantMember(
     source: SourceRecord,
     device: DeviceRecord,
     pinned: readonly string[] | null = getSourceMemberConfigContract(this.deps.db, source.id),
   ): boolean {
+    const mode = source.multiDeviceMode;
     return (
-      source.multiDeviceMode === "partitioned" &&
-      deviceIsDormantUnderPartitionedContract(device, source.type, pinned)
+      (mode === "partitioned" || mode === "replicated") &&
+      deviceIsDormantUnderContract(device, source.type, {
+        mode,
+        memberScopedParams: pinned,
+        replicaVersionPolicy: source.replicaVersionPolicy ?? undefined,
+      })
     );
   }
 
   /**
    * Every existing member that can act must remain safe before membership
-   * can expand; a dormant partitioned member is skipped.
+   * can expand; a dormant member is skipped.
    */
   private assertMemberModesSupport(source: SourceRecord): void {
     const expectedReplicaPolicy = source.replicaVersionPolicy ?? undefined;
     for (const deviceId of this.membersOf(source)) {
       const device = getDevice(this.deps.db, deviceId);
-      if (device && !this.isDormantPartitionedMember(source, device)) {
+      if (device && !this.isDormantMember(source, device)) {
         this.assertModeSupport(device, source.type, source.multiDeviceMode);
         if (
           source.multiDeviceMode === "replicated" &&
@@ -788,7 +811,7 @@ export class SourceService {
   private assertMembersSupport(source: SourceRecord, memberScopedParams: readonly string[]): void {
     for (const deviceId of this.membersOf(source)) {
       const device = getDevice(this.deps.db, deviceId);
-      if (device && !this.isDormantPartitionedMember(source, device)) {
+      if (device && !this.isDormantMember(source, device)) {
         this.assertModeSupport(device, source.type, source.multiDeviceMode);
         this.assertMemberConfigContract(device, source.type, memberScopedParams);
       }
@@ -1124,8 +1147,7 @@ export class SourceService {
     this.assertModeSupport(device, source.type, mode);
     this.assertMemberModesSupport(source);
     if (mode === "replicated") {
-      const owner = getDevice(db, source.deviceId);
-      const expected = owner?.capabilities.replicaVersionPolicies?.[source.type];
+      const expected = source.replicaVersionPolicy ?? undefined;
       if (device.capabilities.replicaVersionPolicies?.[source.type] !== expected) {
         throw new HttpError(
           409,
@@ -1135,7 +1157,13 @@ export class SourceService {
         );
       }
     }
-    const memberScopedParams = this.memberConfigContractFor(source);
+    // A source without a pinned member-local contract takes it from its
+    // owner; a dormant owner cannot vouch for one, so the joiner does.
+    const owner = getDevice(db, source.deviceId);
+    const memberScopedParams = this.memberConfigContractFor(
+      source,
+      owner && this.isDormantMember(source, owner) ? device : owner,
+    );
     this.assertMemberConfigContract(device, source.type, memberScopedParams);
     this.assertMemberConfigPlacement(
       device,
@@ -1618,7 +1646,7 @@ export class SourceService {
         const device = devices.find((candidate) => candidate.id === id);
         return device
           ? this.deviceSupportsPersistedSourceContract(device, s, expectedMemberConfig) ||
-              this.isDormantPartitionedMember(s, device, expectedMemberConfig)
+              this.isDormantMember(s, device, expectedMemberConfig)
           : false;
       });
       if (!allMembersSupport) return [];
@@ -1630,6 +1658,33 @@ export class SourceService {
             this.deviceSupportsPersistedSourceContract(d, s, expectedMemberConfig),
         )
         .map((d) => d.id);
+    };
+    const dormantHostsOf = (s: SourceRecord, members: DeviceId[]): DeviceId[] => {
+      const hosts = members.flatMap((id) => {
+        const device = devices.find((candidate) => candidate.id === id);
+        return device ? [device] : [];
+      });
+      if (s.multiDeviceMode !== "exclusive") {
+        const pinned = getSourceMemberConfigContract(this.deps.db, s.id);
+        return hosts.filter((d) => this.isDormantMember(s, d, pinned)).map((d) => d.id);
+      }
+      for (const announcer of paired) {
+        if (members.includes(announcer.id)) continue;
+        const mode = resolveDeviceMultiDeviceMode(announcer, s.type);
+        if (mode !== "partitioned" && mode !== "replicated") continue;
+        const contract = {
+          mode,
+          memberScopedParams: getSourceMemberConfigContract(this.deps.db, s.id),
+          replicaVersionPolicy:
+            mode === "replicated"
+              ? announcer.capabilities.replicaVersionPolicies?.[s.type]
+              : undefined,
+        };
+        return hosts
+          .filter((d) => deviceIsDormantUnderContract(d, s.type, contract))
+          .map((d) => d.id);
+      }
+      return [];
     };
     const disputedById = countDisputedBySource(this.deps.db);
     return sources.map((s) => {
@@ -1644,6 +1699,7 @@ export class SourceService {
         leaseHolder: liveHolder(this.deps.syncLease?.holderOf(s.id)),
         disputedDeletions: disputedById.get(s.id) ?? 0,
         joinCandidates: joinCandidatesOf(s, members),
+        dormantHosts: dormantHostsOf(s, members),
         pushBased:
           (pushHostById.get(s.deviceId) ?? false) ||
           (pushTypesByDeviceId.get(s.deviceId)?.has(s.type) ?? false),
@@ -2131,9 +2187,9 @@ export class SourceService {
    * source isn't found so the caller can map to 404.
    *
    * `requestingDeviceId` is the device whose token sent the request. It
-   * matters only to an exclusive→partitioned transition whose owner is
-   * dormant under the partitioned contract (see
-   * `partitionedContractAuthority`).
+   * matters only to an exclusive→partitioned or →replicated transition whose
+   * owner is dormant under the target contract (see
+   * `dormantOwnerContractAuthority`).
    */
   async updateSource(
     id: SourceId,
@@ -2180,9 +2236,10 @@ export class SourceService {
         );
       }
       const owner = getDevice(db, current.deviceId);
+      const toMode = patch.multiDeviceMode;
       const delegate =
-        patch.multiDeviceMode === "partitioned" && owner
-          ? this.partitionedContractAuthority(current, owner, patch.requestingDeviceId)
+        (toMode === "partitioned" || toMode === "replicated") && owner
+          ? this.dormantOwnerContractAuthority(current, owner, toMode, patch.requestingDeviceId)
           : null;
       const authority = delegate ?? owner;
       if (authority && authority.revokedAt !== null) {
@@ -2886,7 +2943,7 @@ export class SourceService {
   }
 
   /**
-   * Mark a dormant member of a partitioned source on its own status entry:
+   * Mark a dormant host of a multi-device source on its own status entry:
    * what it holds stays, nothing it sends is accepted, and the step that
    * resumes it is pairing it again or updating its app. The source's
    * aggregate status is left alone — the other members keep syncing.
@@ -2904,7 +2961,7 @@ export class SourceService {
       return;
     }
     const device = getDevice(this.deps.db, row.deviceId);
-    if (!device || !this.isDormantPartitionedMember(source, device, pinned)) return;
+    if (!device || !this.isDormantMember(source, device, pinned)) return;
     const revoked = device.revokedAt !== null;
     row.state = "error";
     row.errorMessage = revoked
@@ -3052,7 +3109,10 @@ export class SourceService {
       for (const member of status.members) {
         if (applyWireRefusal(member, member.deviceId!)) applyWireRefusal(status, member.deviceId!);
       }
-      if (registered?.multiDeviceMode === "partitioned") {
+      if (
+        registered?.multiDeviceMode === "partitioned" ||
+        registered?.multiDeviceMode === "replicated"
+      ) {
         const pinned = getSourceMemberConfigContract(this.deps.db, sourceId);
         for (const member of status.members) this.applyDormancy(member, registered, pinned);
       }

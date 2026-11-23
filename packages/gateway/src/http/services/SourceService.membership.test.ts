@@ -649,9 +649,8 @@ describe("SourceService membership", () => {
       ...alpha.capabilities,
       replicaVersionPolicies: {},
     });
-    expect(() => service.replicaVersionPolicy(source.id)).toThrowError(
-      expect.objectContaining({ code: "MULTI_DEVICE_CONTRACT_UNSUPPORTED" }),
-    );
+    // The owner can no longer act; the pinned policy still governs the rows.
+    expect(service.replicaVersionPolicy(source.id)).toBe("source-updated-at");
     expect(() => service.cursorRowFor(source.id, { deviceId: alpha.id })).toThrowError(
       expect.objectContaining({ code: "MULTI_DEVICE_CONTRACT_UNSUPPORTED" }),
     );
@@ -1239,7 +1238,7 @@ describe("SourceService membership", () => {
     expect(memberIds(db, source.id)).toEqual([alpha.id]);
   });
 
-  test("push auto-join refuses to expand membership around an incompatible owner", async () => {
+  test("push auto-join expands membership around an owner that cannot act, whose writes stay refused", async () => {
     const { db, alpha, phone, service, seed } = fixture();
     const source = seed(PHONE_REPLICATED);
     updateDeviceCapabilities(db, alpha.id, {
@@ -1247,13 +1246,14 @@ describe("SourceService membership", () => {
       multiDeviceModes: { [PHONE_REPLICATED]: "partitioned" },
       syncLease: true,
     });
-    await expect(
-      service.ensurePushSourcesRegistered([source.id], {
-        deviceId: phone.id,
-        scopes: [`write:${PHONE_REPLICATED}`] as Scope[],
-      }),
-    ).rejects.toMatchObject({ code: "MULTI_DEVICE_CONTRACT_UNSUPPORTED" });
-    expect(memberIds(db, source.id)).toEqual([alpha.id]);
+    await service.ensurePushSourcesRegistered([source.id], {
+      deviceId: phone.id,
+      scopes: [`write:${PHONE_REPLICATED}`] as Scope[],
+    });
+    expect(memberIds(db, source.id)).toEqual([alpha.id, phone.id].sort());
+    expect(() => service.cursorRowFor(source.id, { deviceId: alpha.id })).toThrowError(
+      expect.objectContaining({ code: "MULTI_DEVICE_CONTRACT_UNSUPPORTED" }),
+    );
   });
 
   test("detaching a member keeps the owner; detaching the owner passes ownership on", async () => {
@@ -2597,7 +2597,7 @@ describe("SourceService membership", () => {
   });
 });
 
-describe("a new phone and a dormant earlier phone on a partitioned type", () => {
+describe("a new device and a dormant earlier host", () => {
   const documentsOf = (db: ReturnType<typeof createDatabase>, id: SourceId): number =>
     db
       .prepare<[string], { n: number }>("SELECT COUNT(*) AS n FROM documents WHERE source_id = ?")
@@ -2743,7 +2743,7 @@ describe("a new phone and a dormant earlier phone on a partitioned type", () => 
     ).rejects.toMatchObject({ status: 409, code: "MULTI_DEVICE_CONTRACT_UNSUPPORTED" });
   });
 
-  test("a replicated transition never takes its contract from a requester", async () => {
+  test("a replicated transition takes a dormant owner's contract from the requester", async () => {
     const { db, alpha, beta, service } = fixture({ modeAdoption: async () => {} });
     const source = createSource(db, {
       type: REPLICATED,
@@ -2754,21 +2754,46 @@ describe("a new phone and a dormant earlier phone on a partitioned type", () => 
     db.prepare("UPDATE devices SET revoked_at = 1 WHERE id = ?").run(alpha.id);
 
     await expect(
-      service.updateSource(source.id, {
-        multiDeviceMode: "replicated",
-        requestingDeviceId: beta.id,
-      }),
+      service.updateSource(source.id, { multiDeviceMode: "replicated" }),
     ).rejects.toMatchObject({ status: 409, code: "DEVICE_REVOKED" });
-    expect(getSourceModeTransition(db, source.id)).toBeNull();
+    const updated = await service.updateSource(source.id, {
+      multiDeviceMode: "replicated",
+      requestingDeviceId: beta.id,
+    });
+    expect(updated).toMatchObject({ deviceId: alpha.id, multiDeviceMode: "replicated" });
+
+    await service.joinSource(source.id, beta.id);
+    expect(memberIds(db, source.id)).toEqual([alpha.id, beta.id].sort());
+    expect(service.listSourcesForAdmin().find((s) => s.id === source.id)).toMatchObject({
+      dormantHosts: [alpha.id],
+    });
   });
 
-  test("a replicated source still refuses a join while a member cannot act", async () => {
+  test("a replicated source admits a join beside a member that cannot act, whose writes stay refused", async () => {
     const { db, alpha, beta, service, seed } = fixture();
     const source = seed(REPLICATED);
     updateDeviceCapabilities(db, alpha.id, { hostableSourceTypes: [REPLICATED] });
 
-    await expect(service.joinSource(source.id, beta.id)).rejects.toMatchObject({
-      code: "MULTI_DEVICE_CONTRACT_UNSUPPORTED",
-    });
+    await service.joinSource(source.id, beta.id);
+
+    expect(memberIds(db, source.id)).toEqual([alpha.id, beta.id].sort());
+    expect(service.cursorRowFor(source.id, { deviceId: beta.id })).toBe(beta.id);
+    expect(() => service.cursorRowFor(source.id, { deviceId: alpha.id })).toThrowError(
+      expect.objectContaining({ code: "MULTI_DEVICE_CONTRACT_UNSUPPORTED" }),
+    );
+  });
+
+  test("an exclusive source names the owner a device announcing the type's contract would leave behind", () => {
+    const { db, alpha, phone, service, seed } = fixture();
+    const source = seed(EXCLUSIVE);
+    const legacy = seed(PHONE_REPLICATED);
+    db.prepare("UPDATE sources SET multi_device_mode = 'exclusive' WHERE id = ?").run(legacy.id);
+    updateDeviceCapabilities(db, alpha.id, { hostableSourceTypes: [PHONE_REPLICATED] });
+
+    const listed = service.listSourcesForAdmin();
+    expect(listed.find((s) => s.id === legacy.id)?.dormantHosts).toEqual([alpha.id]);
+    // No paired device announces a multi-device contract for this type.
+    expect(listed.find((s) => s.id === source.id)?.dormantHosts).toEqual([]);
+    expect(phone.capabilities.multiDeviceModes?.[PHONE_REPLICATED]).toBe("replicated");
   });
 });

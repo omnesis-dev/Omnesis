@@ -4,7 +4,7 @@
 import { DeviceId, SourceId, type DeviceRecord, type MultiDeviceMode } from "@omnesis/types";
 import {
   advertisedMemberScopedParamNames,
-  deviceIsDormantUnderPartitionedContract,
+  deviceIsDormantUnderContract,
   deviceMatchesMemberConfigContract,
   deviceSupportsMultiDeviceMode,
   splitMemberScopedParams,
@@ -381,10 +381,10 @@ export function adoptSourceModeTransitionBatch(
 
 /**
  * The device whose advertisement a transition validates and pins: the owner,
- * or — for a partitioned transition whose owner is dormant under the
- * contract — the capable device that asked for it. A revoked owner without
- * such an authority is refused, and an authority is refused while the owner
- * can act under the contract itself.
+ * or — when the owner is dormant under the target contract — the capable
+ * device that asked for it. A revoked owner without such an authority is
+ * refused, and an authority is refused while the owner can act under the
+ * contract itself.
  */
 function contractAuthority(
   db: Db,
@@ -393,6 +393,7 @@ function contractAuthority(
   toMode: MultiDeviceMode,
   contractAuthorityDeviceId: DeviceId | undefined,
   expectedMemberScopedParams: readonly string[] | undefined,
+  expectedReplicaVersionPolicy: "source-updated-at" | undefined,
 ): DeviceRecord {
   if (contractAuthorityDeviceId === undefined || contractAuthorityDeviceId === owner.id) {
     if (owner.revokedAt !== null) {
@@ -403,7 +404,7 @@ function contractAuthority(
     }
     return owner;
   }
-  if (toMode !== "partitioned") {
+  if (toMode !== "partitioned" && toMode !== "replicated") {
     throw new SourceModeTransitionPrepareError(
       "unsupported",
       `source ${source.id} takes its ${toMode} contract from its owner only`,
@@ -416,11 +417,15 @@ function contractAuthority(
       `source ${source.id} contract authority ${contractAuthorityDeviceId} is unavailable or revoked`,
     );
   }
-  const pinned = expectedMemberScopedParams ?? getSourceMemberConfigContract(db, source.id);
-  if (!deviceIsDormantUnderPartitionedContract(owner, source.type, pinned)) {
+  const contract = {
+    mode: toMode,
+    memberScopedParams: expectedMemberScopedParams ?? getSourceMemberConfigContract(db, source.id),
+    replicaVersionPolicy: expectedReplicaVersionPolicy,
+  };
+  if (!deviceIsDormantUnderContract(owner, source.type, contract)) {
     throw new SourceModeTransitionPrepareError(
       "membership-conflict",
-      `source ${source.id} owner can act under the partitioned contract; it transitions the source itself`,
+      `source ${source.id} owner can act under the ${toMode} contract; it transitions the source itself`,
     );
   }
   return authority;
@@ -435,10 +440,10 @@ function contractAuthority(
  *
  * The contract authority is the device whose advertisement becomes the
  * source's contract: the owner, unless `contractAuthorityDeviceId` names
- * another device. Only a partitioned transition takes another authority, and
- * only while the owner is dormant under that contract (revoked, or unable to
- * act as a partitioned member): the owner's history is still adopted into the
- * owner's own stream and the owner stays the owner.
+ * another device, which it may only while the owner is dormant under that
+ * contract (revoked, or unable to act under it). The owner stays the owner:
+ * a partitioned transition adopts its history into its own stream, and a
+ * replicated one leaves the shared stream as it is.
  */
 export function prepareSourceModeTransition(
   db: Db,
@@ -528,6 +533,7 @@ export function prepareSourceModeTransition(
         toMode,
         contractAuthorityDeviceId,
         expectedMemberScopedParams,
+        expectedReplicaVersionPolicy,
       );
       const role = authority === owner ? "owner" : `contract authority ${authority.id}`;
       if (!deviceSupportsMultiDeviceMode(authority, source.type, toMode)) {
@@ -647,17 +653,21 @@ export function finalizeSourceModeTransition(
       }
       const ownerDevice = getDevice(db, pending.ownerDeviceId);
       const memberConfigContract = getSourceMemberConfigContract(db, sourceId);
-      // A partitioned owner that went dormant (revoked, or unable to act
-      // under the prepared contract) keeps its adopted stream at rest and is
-      // refused at execution; it does not hold the transition open.
-      const dormantPartitionedOwner =
+      // An owner that went dormant (revoked, or unable to act under the
+      // prepared contract) keeps its data at rest and is refused at
+      // execution; it does not hold the transition open.
+      const dormantOwner =
         ownerDevice !== null &&
-        pending.toMode === "partitioned" &&
+        (pending.toMode === "partitioned" || pending.toMode === "replicated") &&
         memberConfigContract !== null &&
-        deviceIsDormantUnderPartitionedContract(ownerDevice, source.type, memberConfigContract);
+        deviceIsDormantUnderContract(ownerDevice, source.type, {
+          mode: pending.toMode,
+          memberScopedParams: memberConfigContract,
+          replicaVersionPolicy: source.replicaVersionPolicy ?? undefined,
+        });
       if (
         !ownerDevice ||
-        (!dormantPartitionedOwner &&
+        (!dormantOwner &&
           (ownerDevice.revokedAt !== null ||
             !deviceSupportsMultiDeviceMode(ownerDevice, source.type, pending.toMode) ||
             (pending.toMode === "replicated" &&

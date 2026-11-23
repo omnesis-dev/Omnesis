@@ -79,7 +79,7 @@ const capabilities = (kind: "ios" | "android", installId: string): DeviceCapabil
 const pair = async (
   kind: "ios" | "android",
   suffix: string,
-  /** Types this device's app announces as exclusive: it predates their partitioned contract. */
+  /** Types this device's app announces as exclusive: it predates their multi-device contract. */
   legacyTypes: readonly string[] = [],
 ): Promise<MobileDevice> => {
   const staged = await request<{ pairingCode: string }>(
@@ -103,6 +103,11 @@ const pair = async (
                 ...NATIVE_MODE_ANNOUNCEMENTS[kind],
                 ...Object.fromEntries(legacyTypes.map((type) => [type, "exclusive"])),
               },
+              replicaVersionPolicies: Object.fromEntries(
+                Object.entries(capabilities(kind, suffix).replicaVersionPolicies ?? {}).filter(
+                  ([type]) => !legacyTypes.includes(type),
+                ),
+              ),
             }
           : {}),
       },
@@ -670,6 +675,111 @@ describe("a new phone and an earlier phone's legacy sources", () => {
       }
       expect(rows().filter((row) => row.stream_id === earlier.id)).toHaveLength(3);
       expect(rows().filter((row) => row.stream_id === current.id)).toHaveLength(2);
+    },
+    90_000,
+  );
+  test.each([
+    { label: "revoked", revoke: true },
+    { label: "paired on an app that predates the contract", revoke: false },
+  ])(
+    "a new iPhone shares a legacy exclusive apple-health source whose earlier phone is $label",
+    async ({ revoke }) => {
+      const type = "apple-health";
+      const id = `${type}:earlier-phone`;
+      const path = `/admin/sources/${encodeURIComponent(id)}`;
+      const table = revoke ? "earlier_health_revoked" : "earlier_health_outdated";
+      const earlier = await pair("ios", `health-earlier-${revoke}`, [type]);
+      await contribute(earlier, type, "earlier-phone");
+      expect(await source(id)).toMatchObject({
+        deviceId: earlier.id,
+        multiDeviceMode: "exclusive",
+      });
+      await ingest(earlier, id, table, "kept-row", 3);
+      await pushSourceDocument(
+        earlier,
+        id,
+        "sample:earlier",
+        "Invented sample from the earlier phone",
+        "2026-03-01T08:00:00.000Z",
+        "health-sample",
+      );
+      if (revoke) {
+        await request(`/admin/devices/${earlier.id}`, harness.bootstrapToken, {
+          method: "DELETE",
+        });
+      }
+
+      const current = await pair("ios", `health-current-${revoke}`);
+      // The new phone can tell that the current owner will not contribute.
+      expect(
+        (
+          await request<{ items: Array<SourceRow & { dormantHosts: string[] }> }>(
+            "/admin/sources",
+            current.token,
+          )
+        ).items.find((item) => item.id === id)?.dormantHosts,
+      ).toEqual([earlier.id]);
+      await request(path, current.token, {
+        method: "PATCH",
+        body: JSON.stringify({ multiDeviceMode: "replicated" }),
+      });
+      await request(`${path}/members`, current.token, {
+        method: "POST",
+        body: JSON.stringify({ deviceId: current.id }),
+      });
+      expect(await source(id)).toMatchObject({
+        deviceId: earlier.id,
+        multiDeviceMode: "replicated",
+        members: [earlier.id, current.id],
+        replicaVersionPolicy: "source-updated-at",
+      });
+
+      await ingest(current, id, table, "new-row", 5);
+      await pushSourceDocument(
+        current,
+        id,
+        "sample:current",
+        "Invented sample from the new phone",
+        "2026-03-02T08:00:00.000Z",
+        "health-sample",
+      );
+      expect(await sql(`SELECT id, value FROM ${table} ORDER BY id`)).toEqual([
+        ["kept-row", 3],
+        ["new-row", 5],
+      ]);
+      expect(documentContent(id, "sample:earlier")).toBe("Invented sample from the earlier phone");
+      expect(documentContent(id, "sample:current")).toBe("Invented sample from the new phone");
+      if (revoke) return;
+
+      // The earlier phone's outdated app cannot write to the shared rows.
+      await expect(ingest(earlier, id, table, "kept-row", 99)).rejects.toThrow(/409/);
+      await expect(
+        pushSourceDocument(
+          earlier,
+          id,
+          "sample:earlier",
+          "Overwrite from the outdated app",
+          "2026-03-09T08:00:00.000Z",
+          "health-sample",
+        ),
+      ).rejects.toThrow(/409/);
+      expect(await sql(`SELECT value FROM ${table} WHERE id = 'kept-row'`)).toEqual([[3]]);
+      expect(documentContent(id, "sample:earlier")).toBe("Invented sample from the earlier phone");
+      const updated = new GatewayWsClient(harness.gatewayUrl, earlier.token, {
+        capabilities: capabilities("ios", `fictional-install-health-earlier-${revoke}`),
+      });
+      try {
+        updated.connect();
+        await expect.poll(() => updated.isAuthenticated(), { timeout: 10_000 }).toBe(true);
+        await ingest(earlier, id, table, "updated-row", 7);
+      } finally {
+        updated.disconnect();
+      }
+      expect(await sql(`SELECT id FROM ${table} ORDER BY id`)).toEqual([
+        ["kept-row"],
+        ["new-row"],
+        ["updated-row"],
+      ]);
     },
     90_000,
   );

@@ -156,18 +156,20 @@ class AppUsageSetupStepTest {
 
     @Test
     fun aRefusedJoinFailsTheEnableWithTheGatewaysReasonAndLeavesAppUsageOff() {
-        assertEquals("Already hosted", agree().message)
+        assertEquals(
+            "Another device already sends this source, and it takes one device at a time.",
+            agree().message,
+        )
         assertNothingChanged()
     }
 
     @Test
-    fun aContractRefusalNamesTheDeviceThatMustUpdate() {
+    fun aContractRefusalSaysAnotherDeviceNeedsAnUpdate() {
         refuseContractTransition.set(true)
 
         val message = agree().message.orEmpty()
 
-        assertTrue(message.contains("Hallway Phone"))
-        assertTrue(message.contains("update the device"))
+        assertTrue(message.contains("needs an Omnesis update"))
         assertFalse(message.contains("Check the connection"))
         assertNothingChanged()
     }

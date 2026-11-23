@@ -332,7 +332,7 @@ describe("source mode transition journal", () => {
     },
   );
 
-  test("finalize refuses a replicated transition whose owner was revoked during adoption", () => {
+  test("a replicated transition finalizes on the shared stream when the owner is revoked during adoption", () => {
     const { db, owner, source } = fixture();
     updateDeviceCapabilities(db, owner.id, {
       hostableSourceTypes: [SourceType("notes-synth")],
@@ -340,15 +340,30 @@ describe("source mode transition journal", () => {
       memberScopedParams: { "notes-synth": ["dataPath"] },
       syncLease: true,
     });
+    upsertDocuments(db, [
+      {
+        providerId: ProviderId("notes-synth"),
+        sourceId: source.id,
+        externalId: "fictional-shared-note",
+        title: "Invented shared note",
+        content: "Invented shared body",
+        contentHash: "invented-shared-hash",
+        metadata: {},
+        sourceCreatedAt: "2026-01-01T00:00:00Z",
+        sourceUpdatedAt: "2026-01-01T00:00:00Z",
+      },
+    ]);
     prepareSourceModeTransition(db, source.id, "replicated", owner.id, 123);
     drainSqliteAdoption(db, source.id);
     db.prepare("UPDATE devices SET revoked_at = 1 WHERE id = ?").run(owner.id);
 
-    expect(() => finalizeSourceModeTransition(db, source.id, 456)).toThrow(
-      /owner no longer supports replicated/i,
-    );
-    expect(getSource(db, source.id)?.multiDeviceMode).toBe("exclusive");
-    expect(getSourceModeTransition(db, source.id)).not.toBeNull();
+    expect(finalizeSourceModeTransition(db, source.id, 456)).toMatchObject({
+      deviceId: owner.id,
+      multiDeviceMode: "replicated",
+    });
+    expect(
+      db.prepare("SELECT stream_id FROM documents WHERE source_id = ?").all(source.id),
+    ).toEqual([{ stream_id: "" }]);
   });
 
   test("finalize refuses an owner that can act but no longer matches the prepared contract", () => {
@@ -735,10 +750,46 @@ describe("a contract authority for a dormant owner", () => {
     expect(getSourceModeTransition(db, source.id)).toBeNull();
   });
 
-  test("a replicated transition takes its contract from the owner only", () => {
+  test("a replicated transition pins the authority's contract and leaves the shared stream", () => {
     const { db, owner, source } = legacyFixture();
     const authority = createDevice(db, {
       name: "collector-replica",
+      kind: "collector",
+      capabilities: {
+        hostableSourceTypes: [SourceType("notes-synth")],
+        multiDeviceModes: { "notes-synth": "replicated" },
+        memberScopedParams: { "notes-synth": [] },
+        replicaVersionPolicies: { "notes-synth": "source-updated-at" },
+        syncLease: true,
+      },
+    });
+
+    prepareSourceModeTransition(
+      db,
+      source.id,
+      "replicated",
+      owner.id,
+      123,
+      [],
+      "source-updated-at",
+      authority.id,
+    );
+    drainSqliteAdoption(db, source.id);
+
+    expect(finalizeSourceModeTransition(db, source.id, 456)).toMatchObject({
+      deviceId: owner.id,
+      multiDeviceMode: "replicated",
+      replicaVersionPolicy: "source-updated-at",
+    });
+    expect(
+      db.prepare("SELECT stream_id FROM documents WHERE source_id = ?").all(source.id),
+    ).toEqual([{ stream_id: "" }]);
+  });
+
+  test("an authority whose replica version policy differs from the expected one is refused", () => {
+    const { db, owner, source } = legacyFixture();
+    const authority = createDevice(db, {
+      name: "collector-unversioned",
       kind: "collector",
       capabilities: {
         hostableSourceTypes: [SourceType("notes-synth")],
@@ -757,7 +808,7 @@ describe("a contract authority for a dormant owner", () => {
           owner.id,
           123,
           [],
-          undefined,
+          "source-updated-at",
           authority.id,
         ),
       ),

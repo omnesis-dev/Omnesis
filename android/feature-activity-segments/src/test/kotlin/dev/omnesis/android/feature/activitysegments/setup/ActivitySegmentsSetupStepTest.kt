@@ -110,8 +110,7 @@ class ActivitySegmentsSetupStepTest {
 
         assertTrue(committed is ActivationStep.Failed)
         val message = (committed as ActivationStep.Failed).message
-        assertTrue(message.contains("Hallway Phone"))
-        assertTrue(message.contains("update the device"))
+        assertTrue(message.contains("needs an Omnesis update"))
         assertFalse(message.contains("Check the connection"))
         assertFalse(settings.activitySegmentsEnabled)
     }

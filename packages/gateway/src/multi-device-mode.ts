@@ -112,25 +112,43 @@ export function deviceMatchesMemberConfigContract(
 }
 
 /**
- * Whether a device is a dormant contributor of a partitioned source of this
- * type: it is revoked, or its advertisement cannot execute the partitioned
- * contract with `memberScopedParams` (null: no contract pinned yet). A
- * partitioned member's stream is isolated, so a dormant member is only data
- * at rest — its pushes are refused until it is re-paired or updated — and it
- * never stands in the way of a capable device's transition or join. The
- * member-local rule matches `deviceSupportsExistingSourceExecution`: a device
- * that advertises every pinned parameter, and perhaps more, can still act.
+ * The contract a member of a multi-device source acts under: its mode, the
+ * pinned member-local parameters (null: none pinned yet) and, for a
+ * replicated source, the pinned row-version policy.
  */
-export function deviceIsDormantUnderPartitionedContract(
+export interface MemberContract {
+  mode: "partitioned" | "replicated";
+  memberScopedParams: readonly string[] | null;
+  replicaVersionPolicy?: "source-updated-at";
+}
+
+/**
+ * Whether a device is a dormant host of a partitioned or replicated source of
+ * this type: it is revoked, or its advertisement cannot execute `contract`.
+ * Every write a host makes is checked against the persisted contract at
+ * execution, so a dormant host's data is at rest — its pushes are refused
+ * until it is re-paired or updated — and it never stands in the way of a
+ * capable device's transition or join. The member-local rule matches
+ * `deviceSupportsExistingSourceExecution`: a device that advertises every
+ * pinned parameter, and perhaps more, can still act.
+ */
+export function deviceIsDormantUnderContract(
   device: DeviceRecord,
   sourceType: SourceType,
-  memberScopedParams: readonly string[] | null,
+  contract: MemberContract,
 ): boolean {
   if (device.revokedAt !== null) return true;
-  if (!deviceSupportsMultiDeviceMode(device, sourceType, "partitioned")) return true;
+  if (!deviceSupportsMultiDeviceMode(device, sourceType, contract.mode)) return true;
+  if (
+    contract.mode === "replicated" &&
+    device.capabilities.replicaVersionPolicies?.[sourceType] !== contract.replicaVersionPolicy
+  ) {
+    return true;
+  }
   const advertised = advertisedMemberScopedParamNames(device, sourceType);
   if (advertised === null) return true;
-  return memberScopedParams !== null && !memberScopedParams.every((n) => advertised.includes(n));
+  const pinned = contract.memberScopedParams;
+  return pinned !== null && !pinned.every((n) => advertised.includes(n));
 }
 
 /**

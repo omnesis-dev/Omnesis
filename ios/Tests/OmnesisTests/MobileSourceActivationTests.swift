@@ -174,6 +174,45 @@ final class MobileSourceActivationTests: XCTestCase {
         XCTAssertEqual(values, ["mode:partitioned", "join:\(thisPhone)"])
     }
 
+    func testADormantOwnersExclusiveSourceIsSharedWithoutAChoice() async throws {
+        let dormant = SourceRecord(
+            id: "fictional-mobile:local",
+            type: "fictional-mobile",
+            accountId: "local",
+            deviceId: otherPhone,
+            members: [otherPhone],
+            multiDeviceMode: "exclusive",
+            dormantHosts: [otherPhone]
+        )
+        XCTAssertEqual(
+            MobileSourceActivation.plan(source: dormant, deviceId: thisPhone, desiredMode: .replicated),
+            .addReplica
+        )
+        XCTAssertEqual(
+            try MobileSourceActivation.inspect(source: dormant, deviceId: thisPhone, desiredMode: .replicated),
+            .ready
+        )
+        let calls = Calls()
+        let outcome = try await MobileSourceActivation.execute(
+            source: dormant,
+            deviceId: thisPhone,
+            desiredMode: .replicated,
+            operations: .init(
+                setMode: { _, mode in await calls.record("mode:\(mode.rawValue)") },
+                join: { _, deviceId in await calls.record("join:\(deviceId)") },
+                transfer: { _, _ in await calls.record("transfer") }
+            )
+        )
+        XCTAssertEqual(outcome, .ready)
+        let values = await calls.values
+        XCTAssertEqual(values, ["mode:replicated", "join:\(thisPhone)"])
+        // An owner that can still act keeps the choice.
+        XCTAssertEqual(
+            MobileSourceActivation.plan(source: source(mode: "exclusive"), deviceId: thisPhone, desiredMode: .replicated),
+            .choose(.replicated)
+        )
+    }
+
     func testPartitionMigrationFailureDoesNotJoin() async {
         let calls = Calls()
         do {

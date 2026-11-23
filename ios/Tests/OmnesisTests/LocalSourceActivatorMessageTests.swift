@@ -9,15 +9,35 @@ import XCTest
 /// got an answer reads as an unreachable gateway.
 @MainActor
 final class LocalSourceActivatorMessageTests: XCTestCase {
-    func testAGatewayRefusalShowsTheGatewaysExplanation() {
-        let refusal = GatewayClient.Error.serverError(
+    func testAKnownRefusalReadsAsPlainCopy() {
+        let revoked = GatewayClient.Error.serverError(
             status: 409,
             body: #"{"error":"device \"fictional-phone\" is revoked","code":"DEVICE_REVOKED"}"#
+        )
+        let outdated = GatewayClient.Error.serverError(
+            status: 409,
+            body: #"{"error":"device does not support the partitioned contract","code":"MULTI_DEVICE_CONTRACT_UNSUPPORTED"}"#
+        )
+
+        XCTAssertEqual(
+            LocalSourceActivator.message(for: revoked),
+            "A device that sent this source is no longer paired with your gateway. Nothing was changed."
+        )
+        XCTAssertEqual(
+            LocalSourceActivator.message(for: outdated),
+            "Another device that sends this source needs an Omnesis update first. Nothing was changed."
+        )
+    }
+
+    func testAnUnknownRefusalShowsTheGatewaysExplanation() {
+        let refusal = GatewayClient.Error.serverError(
+            status: 409,
+            body: #"{"error":"source fictional:local is paused by policy","code":"FICTIONAL_REFUSAL"}"#
         )
 
         XCTAssertEqual(
             LocalSourceActivator.message(for: refusal),
-            #"Device "fictional-phone" is revoked"#
+            "Source fictional:local is paused by policy"
         )
     }
 
