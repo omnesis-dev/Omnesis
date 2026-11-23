@@ -163,7 +163,7 @@ describe("an MCP call on an address the owner turned MCP off on", () => {
   ): Promise<Client> {
     const transport = new StreamableHTTPClientTransport(new URL(`${RELAY}/mcp`), {
       authProvider: { token: () => Promise.resolve(token) },
-      fetch: (input, init) => app.fetch(new Request(input, init)),
+      fetch: (input, init) => Promise.resolve(app.fetch(new Request(input, init))),
     });
     const client =
       era === "2026-07-28"
