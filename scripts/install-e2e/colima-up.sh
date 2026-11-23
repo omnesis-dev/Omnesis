@@ -20,7 +20,8 @@
 #   gives each boot ten minutes. A start that fails prints why (Colima's
 #   status, the host agent's log and the VM's serial console), deletes the
 #   instance and starts once more; a second failure ends the lane. Then it
-#   waits for Docker to answer through Colima's socket.
+#   waits for Docker to answer through Colima's socket, and says whether the
+#   host's resolver configuration changed while Colima started.
 #
 # Runs on a disposable CI machine: it installs into /usr/local with sudo and
 # starts a VM. Do not run it on a machine you use.
@@ -110,6 +111,7 @@ start_colima() {
   [ "$mem_gib" -ge 4 ] || mem_gib=4
   local args=(--runtime docker --arch x86_64 --vm-type vz --mount-type virtiofs --cpus "$cpus" --memory "$mem_gib")
 
+  resolver_config >"$RESOLVER_BEFORE_COLIMA"
   while :; do
     group "Start Colima, attempt $attempt of $START_ATTEMPTS: ${args[*]}"
     if colima start "${args[@]}"; then
@@ -138,6 +140,22 @@ start_colima() {
     die "Colima started, but Docker does not answer through its socket"
   fi
   log "Docker answers through Colima (context $(docker context show), ${cpus} CPUs, ${mem_gib} GiB)"
+  report_resolver_change
+}
+
+# Whether starting Colima changed the host's resolver configuration, which the
+# installer's registry lookups on this host go through.
+report_resolver_change() {
+  if resolver_config | diff -u "$RESOLVER_BEFORE_COLIMA" - >"$E2E_WORK/resolver-diff"; then
+    log "the host's resolver configuration is as it was before Colima started"
+  else
+    group "Colima changed the host's resolver configuration"
+    redact <"$E2E_WORK/resolver-diff"
+    endgroup
+  fi
+  group "Listening on port 53 with Colima up"
+  port_53_listeners | redact
+  endgroup
 }
 
 case "${1:-}" in

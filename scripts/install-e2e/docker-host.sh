@@ -40,6 +40,10 @@ case "$SCENARIO" in linux | mac) ;; *) die "usage: docker-host.sh linux|mac" ;; 
 umask 002
 COMMON=(--docker --combined --no-tls --no-model)
 INSTALL_LOG="$E2E_WORK/install.log"
+# Where the published images live: a run without --build reads it from this
+# machine to resolve the newest release, so each one first waits for it
+# (await_registry).
+REGISTRY_HOST=ghcr.io
 
 installer() {
   set +e
@@ -111,6 +115,7 @@ project_containers() {
 }
 
 group "Install the newest published release (Docker, combined)"
+await_registry "$REGISTRY_HOST"
 installer || die "the published install failed"
 endgroup
 serving
@@ -133,6 +138,7 @@ if [ "$SCENARIO" = linux ]; then
     *) die "the --build re-run did not move the install onto this checkout's images" ;;
   esac
 else
+  await_registry "$REGISTRY_HOST"
   installer || die "the re-run failed"
 fi
 endgroup

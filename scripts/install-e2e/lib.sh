@@ -89,6 +89,101 @@ fixture() { node "$E2E_DIR/fixture.mjs" "$@"; }
 probe() { node "$E2E_DIR/probe.mjs" "$@"; }
 mailbox() { node "$E2E_DIR/mailbox.mjs" "$@"; }
 
+# This machine's resolver configuration as the system reads it: `scutil --dns`
+# on macOS, /etc/resolv.conf elsewhere.
+resolver_config() {
+  if [ "$(uname -s)" = Darwin ]; then
+    scutil --dns 2>&1 || true
+  else
+    cat /etc/resolv.conf 2>&1 || true
+  fi
+}
+
+# The processes listening on port 53 on this machine. Lima forwards a DNS
+# port the VM listens on to the host's.
+port_53_listeners() {
+  sudo -n lsof -nP -iTCP:53 -sTCP:LISTEN -iUDP:53 2>/dev/null || lsof -nP -iTCP:53 -sTCP:LISTEN -iUDP:53 2>&1 || true
+}
+
+# Saved by colima-up.sh before Colima starts, so a later diagnosis can show
+# what changed in the host's resolver configuration since.
+RESOLVER_BEFORE_COLIMA="$E2E_WORK/resolver-before-colima"
+
+# What a lookup of $1 gets from each part of this machine's name resolution,
+# printed while it fails: the resolver configuration (and what changed in it
+# since Colima started), each configured nameserver and a public resolver asked
+# directly with dig, past the system's resolver daemon, and what listens on
+# port 53. A nameserver that answers dig while the system lookup times out
+# points at this machine's resolver; one that does not, at the runner's network.
+name_resolution_diagnostics() {
+  local host="$1" server answer status
+  group "Name resolution while $host does not answer"
+  {
+    if [ -f "$RESOLVER_BEFORE_COLIMA" ]; then
+      if resolver_config | diff -u "$RESOLVER_BEFORE_COLIMA" - >"$E2E_WORK/resolver-diff"; then
+        echo "--- the resolver configuration is as it was before Colima started"
+      else
+        echo "--- the resolver configuration changed since Colima started"
+        cat "$E2E_WORK/resolver-diff"
+      fi
+    fi
+    echo "--- the resolver configuration"
+    resolver_config
+    echo "--- $host asked directly (dig, 3 s per server)"
+    if command -v dig >/dev/null 2>&1; then
+      for server in $(awk '$1 == "nameserver" { print $2 }' /etc/resolv.conf 2>/dev/null | sort -u) 1.1.1.1; do
+        status=0
+        answer="$(dig +time=3 +tries=1 +short "@$server" "$host" A 2>&1)" || status=$?
+        printf '@%s: dig exit %s: %s\n' "$server" "$status" "$(printf '%s' "$answer" | tr '\n' ' ')"
+      done
+    else
+      echo "dig is not installed"
+    fi
+    echo "--- listening on port 53"
+    port_53_listeners
+  } 2>&1 | redact
+  endgroup
+}
+
+# Seconds await_registry waits for a registry before it fails the lane: eight
+# times the installer's own ~70 s of registry retries, while a passing D2 run
+# takes 30 to 60 minutes of its 150-minute limit.
+REGISTRY_WAIT_SECONDS="${REGISTRY_WAIT_SECONDS:-600}"
+
+# await_registry <host>: before an installer step that reads the registry from
+# this machine, wait until <host> resolves and answers HTTPS here, asked the
+# way the installer's curl asks it. The installer gives a registry about 70 s,
+# the right budget on a user's machine; a runner's resolver can stay out for
+# longer. The first failed probe prints the diagnostics while the outage
+# lasts; a registry that never answers within REGISTRY_WAIT_SECONDS fails the
+# lane with them printed again.
+await_registry() {
+  local host="$1" start elapsed error failed=0
+  start="$(date +%s)"
+  while :; do
+    if error="$(curl -sS -o /dev/null --max-time 10 "https://$host/v2/" 2>&1)"; then
+      if [ "$failed" = 1 ]; then
+        log "$host answers again, after $(($(date +%s) - start))s"
+      else
+        log "$host answers"
+      fi
+      return 0
+    fi
+    elapsed=$(($(date +%s) - start))
+    if [ "$failed" = 0 ]; then
+      failed=1
+      log "$host does not answer from this machine (${error:-no detail}); waiting up to ${REGISTRY_WAIT_SECONDS}s for it"
+      name_resolution_diagnostics "$host"
+    elif [ "$elapsed" -ge "$REGISTRY_WAIT_SECONDS" ]; then
+      name_resolution_diagnostics "$host"
+      die "$host did not answer from this machine for ${elapsed}s (${error:-no detail}); the name resolution printed above shows where it stopped"
+    else
+      log "$host still does not answer after ${elapsed}s (${error:-no detail})"
+    fi
+    sleep 5
+  done
+}
+
 # The doctor checks that, when they do not pass, stand in for a section whose
 # gateway read failed.
 # A section read that way has no verdict of its own, so a snapshot holding one
