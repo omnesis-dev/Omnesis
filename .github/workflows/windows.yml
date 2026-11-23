@@ -25,10 +25,10 @@ on:
   workflow_dispatch:
     inputs:
       lane:
-        description: Validation coverage (daily runs always include every lane)
+        description: Validation coverage (daily runs always include every lane; agents runs only the native agent integrations)
         type: choice
         default: all
-        options: [all, unit, adapters, e2e, portal]
+        options: [all, unit, adapters, e2e, portal, agents]
       e2e_files:
         description: Optional JSON array of E2E paths for manual e2e diagnosis (1–16 files)
         type: string
@@ -50,6 +50,7 @@ env:
 jobs:
   windows:
     name: ${{ matrix.name }}
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.lane != 'agents' }}
     runs-on: windows-latest
     timeout-minutes: ${{ matrix.lane == 'focused' && 40 || matrix.lane == 'adapters' && 60 || matrix.lane == 'unit' && 210 || 180 }}
     # The full E2E suite runs one file at a time on a hosted Windows runner,
@@ -241,7 +242,7 @@ jobs:
   native-integrations:
     name: Windows native agent integrations
     needs: windows
-    if: ${{ !cancelled() && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.lane == 'all')) }}
+    if: ${{ !cancelled() && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.lane == 'all' || inputs.lane == 'agents'))) }}
     runs-on: windows-latest
     timeout-minutes: 45
     defaults:

@@ -807,8 +807,14 @@ describe("Windows job exec capture", () => {
       return { command: "C:\\Windows\\native-worker.exe", args: ["job"], parentBirth: "123456789" };
     });
     try {
-      const run = execWindowsJob("fixture", [], { timeout: 100 });
-      const rejected = expect(run).rejects.toMatchObject({ code: "ETIMEDOUT", killed: true });
+      const run = execWindowsJob("fixture", ["plugins", "list", "--token=invented"], {
+        timeout: 100,
+      });
+      const rejected = expect(run).rejects.toMatchObject({
+        code: "ETIMEDOUT",
+        killed: true,
+        message: "Command timed out after 0.0 s (limit 0.1 s): fixture plugins list --token=…",
+      });
       helper.rawStderr.write("OMNESIS_JOB:0\n");
       vi.advanceTimersByTime(59);
       expect(helper.kill).not.toHaveBeenCalled();
