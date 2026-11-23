@@ -23,7 +23,7 @@ let current: {
   clearError: () => void;
   busy: string;
   version: string;
-  run: (op?: string, input?: unknown, method?: string, options?: unknown) => Promise<void>;
+  run: (op?: string, input?: unknown) => Promise<void>;
   adopt: (status: unknown) => void;
 };
 function Probe() {
@@ -279,7 +279,7 @@ test("follows a connect in progress closely and otherwise polls slowly", () => {
   for (const status of [null, {}, { connect: { state: "idle" } }, { connect: { state: "failed" } }])
     expect(relayPollInterval(status)).toBe(5000);
 });
-test("run resolves to the result, passes the method through, and switches polling speed with the connect state", async () => {
+test("run resolves to the result, posts the operation, and switches polling speed with the connect state", async () => {
   request.mockResolvedValueOnce({ connect: { state: "idle" } });
   await mount();
   request.mockResolvedValueOnce({ connect: { state: "waiting" } });
@@ -299,16 +299,11 @@ test("run resolves to the result, passes the method through, and switches pollin
     await vi.advanceTimersByTimeAsync(2000);
   });
   expect(request).toHaveBeenCalledTimes(3);
-  request.mockResolvedValueOnce({ deviceEnrollment: { policy: "ask" } });
+  request.mockResolvedValueOnce({ enabled: false });
   await act(async () => {
-    result = await current.run("enrollment", { policy: "ask" }, "PUT");
+    result = await current.run("disable", {});
   });
-  expect(request).toHaveBeenLastCalledWith(
-    "enrollment",
-    { policy: "ask" },
-    expect.any(AbortSignal),
-    "PUT",
-  );
+  expect(request).toHaveBeenLastCalledWith("disable", {}, expect.any(AbortSignal), "POST");
   const calls = request.mock.calls.length;
   await act(async () => {
     await vi.advanceTimersByTimeAsync(2000);
@@ -321,7 +316,7 @@ test("a refused operation resolves to undefined and shows a fixed message", asyn
   request.mockRejectedValueOnce(new Error("private backend detail"));
   let result: unknown = "unset";
   await act(async () => {
-    result = await current.run("enrollment", { policy: "ask" }, "PUT");
+    result = await current.run("enable", {});
   });
   expect(result).toBeUndefined();
   expect(current.error).toContain("Couldn't load or update your Omnesis account settings.");

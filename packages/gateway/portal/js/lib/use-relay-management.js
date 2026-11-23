@@ -38,7 +38,7 @@ export function useRelayManagement() {
   const mounted = useRef(false);
   // Bumped by `adopt`: a read that started before then answers with what it replaced.
   const adopted = useRef(0);
-  const run = async (operation = "", input = {}, method = "POST", options) => {
+  const run = async (operation = "", input = {}) => {
     if (!mounted.current) return undefined;
     if (operation && active.current?.operation) return undefined;
     if (!operation && active.current) return undefined;
@@ -56,8 +56,8 @@ export function useRelayManagement() {
         operation,
         input,
         controller.signal,
-        method,
-        ...(options ? [options] : operation ? [] : [{ signup: true }]),
+        "POST",
+        ...(operation ? [] : [{ signup: true }]),
       );
       if (controller.signal.aborted) throw new Error("Request expired");
       // Replacement and unmount both abort this request before clearing it.
