@@ -9,7 +9,7 @@ import { validateJson } from "../validate.js";
 import type { LabService } from "../../lab/service.js";
 import type { RouteApp } from "./types.js";
 
-const featureId = z.enum(["brain", "tasks", "watches"]);
+const featureId = z.enum(["brain", "tasks", "watches", "recordings"]);
 const update = z.object({ enabled: z.boolean() }).strict();
 
 export function mountLabRoutes(app: RouteApp, service: LabService): void {

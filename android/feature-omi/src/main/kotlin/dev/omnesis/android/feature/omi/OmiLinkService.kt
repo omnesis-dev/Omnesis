@@ -43,7 +43,11 @@ import kotlinx.coroutines.launch
  * ambient episodes whenever the pendant is linked and nothing records, and
  * stops them when capture is turned off.
  * Started from the Recordings screen, after an association, and by the
- * system when the pendant comes in range ([OmiPresenceService]).
+ * system when the pendant comes in range ([OmiPresenceService]). It does not
+ * run while the paired gateway takes no recordings
+ * ([RecordingSettings.gatewayTakesRecordings]), and unlinks the pendant when
+ * the gateway stops taking them, so the button stays inert with Recordings
+ * off in Omnesis Lab.
  */
 class OmiLinkService : Service() {
 
@@ -58,13 +62,14 @@ class OmiLinkService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private lateinit var link: OmiLink
     private var started = false
+    private lateinit var settings: RecordingSettings
 
     override fun onCreate() {
         super.onCreate()
         val deps = EntryPointAccessors.fromApplication(applicationContext, Deps::class.java)
         link = deps.omiLink()
         val controller = deps.recordingController()
-        val settings = deps.recordingSettings()
+        settings = deps.recordingSettings()
         val policy = OmiButtonPolicy(
             recording = controller.state,
             startRecording = {
@@ -83,6 +88,9 @@ class OmiLinkService : Service() {
             vibrate = link::vibrate,
             scope = scope,
         )
+        scope.launch {
+            settings.gatewayTakesRecordings.collect { takes -> if (!takes && started) unlink() }
+        }
         scope.launch { link.buttons.collect(policy::onButton) }
         scope.launch { link.status.collect { refreshNotification(it) } }
         scope.launch {
@@ -113,10 +121,8 @@ class OmiLinkService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         ensureChannel()
         startInForeground(notification(link.status.value))
-        if (intent?.action == ACTION_STOP) {
-            link.disconnect()
-            ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
-            stopSelf()
+        if (intent?.action == ACTION_STOP || !settings.gatewayTakesRecordings.value) {
+            unlink()
             return START_NOT_STICKY
         }
         if (!link.hasPermission()) {
@@ -130,6 +136,13 @@ class OmiLinkService : Service() {
             link.connect()
         }
         return START_STICKY
+    }
+
+    /** Drop the link and leave the foreground. */
+    private fun unlink() {
+        link.disconnect()
+        ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+        stopSelf()
     }
 
     override fun onDestroy() {

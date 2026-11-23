@@ -6,6 +6,8 @@ package dev.omnesis.android.feature.recording
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Assert.assertNull
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -22,6 +24,18 @@ class RecordingSettingsTest {
         assertEquals(RecordingInput.PHONE, RecordingSettings(prefs).preferredInput)
         settings.preferredInput = RecordingInput.WEARABLE
         assertEquals(RecordingInput.WEARABLE, RecordingSettings(prefs).preferredInput)
+    }
+
+    @Test fun theGatewaysAnswerOnRecordingsOutlivesARestart() {
+        prefs.edit().clear().commit()
+        val settings = RecordingSettings(prefs)
+        // Until the gateway first answers, a linked wearable keeps working.
+        assertTrue(settings.gatewayTakesRecordings.value)
+        settings.setGatewayTakesRecordings(false)
+        assertFalse(settings.gatewayTakesRecordings.value)
+        assertFalse(RecordingSettings(prefs).gatewayTakesRecordings.value)
+        settings.setGatewayTakesRecordings(true)
+        assertTrue(RecordingSettings(prefs).gatewayTakesRecordings.value)
     }
 
     @Test fun anUnknownStoredInputReadsAsNoChoice() {
