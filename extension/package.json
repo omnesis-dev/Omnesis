@@ -23,7 +23,7 @@
     "@omnesis/core": "*",
     "@omnesis/provider-web": "*",
     "@omnesis/types": "*",
-    "defuddle": "^0.19.6",
+    "defuddle": "^0.19.11",
     "turndown": "^7.2.5",
     "turndown-plugin-gfm": "^1.0.2"
   },

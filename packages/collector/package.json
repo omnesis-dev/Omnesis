@@ -53,12 +53,12 @@
     "mammoth": "^1.13.0",
     "postal-mime": "^2.7.4",
     "turndown": "^7.2.5",
-    "unpdf": "^2.1.0",
+    "unpdf": "^2.2.1",
     "word-extractor": "^1.0.4",
     "zod": "^4.6.7"
   },
   "devDependencies": {
-    "@hono/node-server": "^2.1.6",
+    "@hono/node-server": "^2.1.9",
     "@lydell/node-pty": "1.2.0-beta.15",
     "@omnesis/agent-integration": "*",
     "@omnesis/extension": "*",
