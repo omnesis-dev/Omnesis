@@ -460,6 +460,17 @@ async function exhaust(send: () => Promise<number>, most: number): Promise<numbe
   throw new Error(`No request was refused for its rate after ${most}`);
 }
 
+/**
+ * The relay counts sign-ins in windows aligned to the clock's minute and clears the
+ * counts when a new minute begins, so a burst that crossed into the next minute would
+ * be counted in two windows. Starting at least `margin` ms before the minute ends
+ * keeps a burst inside one window.
+ */
+async function startWellInsideAMinute(margin = 30_000): Promise<void> {
+  const left = 60_000 - (Date.now() % 60_000);
+  if (left < margin) await new Promise((resolve) => setTimeout(resolve, left + 100));
+}
+
 describe("one client cannot use up the rate limits of another", () => {
   let directory: string;
   let world: EnrollmentWorld;
@@ -505,6 +516,7 @@ describe("one client cannot use up the rate limits of another", () => {
           kind: "collector",
           name: "Fictional rate probe",
         });
+      await startWellInsideAMinute();
       expect(await exhaust(() => start("127.0.0.5"), 10)).toBe(4);
       expect(await start("127.0.0.5")).toBe(429);
       expect(await start("127.0.0.6")).not.toBe(429);
