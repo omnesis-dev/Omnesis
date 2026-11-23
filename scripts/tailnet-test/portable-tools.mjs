@@ -24,7 +24,7 @@ function sourceFiles(directory) {
     .sort((left, right) => left.name.localeCompare(right.name))
     .flatMap((entry) => {
       const path = join(directory, entry.name);
-      if (entry.isDirectory()) return entry.name === "bin" ? [] : sourceFiles(path);
+      if (entry.isDirectory()) return entry.name === "dist" ? [] : sourceFiles(path);
       return entry.name.endsWith(".go") || entry.name === "go.mod" || entry.name === "go.sum"
         ? [path]
         : [];
@@ -116,7 +116,7 @@ export async function ensurePortableTailnetTools(cacheDirectory) {
     tailscale: cli,
     tailscaled: "",
     derper: "",
-    helper: join(HELPER, "bin", `omnesis-tailnet${suffix}`),
+    helper: join(HELPER, "dist", "bin", `omnesis-tailnet${suffix}`),
     portable: { actor, cliDirectory: directory },
   };
 }
