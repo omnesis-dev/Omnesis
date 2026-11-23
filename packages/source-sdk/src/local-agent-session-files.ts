@@ -379,6 +379,7 @@ export function sameLocalAgentSessionFileRevision(
 export function scanLocalAgentSessionFiles(
   roots: readonly LocalAgentSessionRoot[],
   extensions: readonly string[],
+  exclude?: (relativePath: string, directory: boolean) => boolean,
 ): LocalAgentSessionScan {
   const files: ScannedLocalAgentSessionFile[] = [];
   let complete = true;
@@ -440,10 +441,15 @@ export function scanLocalAgentSessionFiles(
         const name = entry.name;
         const path = join(dir, name);
         if (entry.isDirectory()) {
+          if (exclude?.(relative(rootPath, path), true)) continue;
           walk(path, rootPath, rootIndex, depth + 1);
           continue;
         }
-        if (!entry.isFile() || !extensions.some((extension) => name.endsWith(extension))) {
+        if (
+          !entry.isFile() ||
+          exclude?.(relative(rootPath, path), false) ||
+          !extensions.some((extension) => name.endsWith(extension))
+        ) {
           continue;
         }
         try {

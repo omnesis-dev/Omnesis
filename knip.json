@@ -75,6 +75,8 @@
       ],
       "ignoreDependencies": [
         "@omnesis/provider-activity-segments-synth",
+        "@omnesis/provider-antigravity",
+        "@omnesis/provider-antigravity-synth",
         "@omnesis/provider-claude-code-synth",
         "@omnesis/provider-codex-synth",
         "@omnesis/provider-hermes-synth",

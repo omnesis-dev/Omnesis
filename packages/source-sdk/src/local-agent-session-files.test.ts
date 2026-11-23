@@ -50,6 +50,38 @@ describe("scanLocalAgentSessionFiles — file size", () => {
     expect(scan.complete).toBe(false);
     expect(scan.rootFailures).toEqual({ sessions: "a file in it is over the size limit" });
   });
+
+  test("excludes matching subdirectories and files without scanning their contents", () => {
+    const root = mkdtempSync(join(tmpdir(), "agent-session-exclude-"));
+    dirs.push(root);
+    mkdirSync(join(root, "conv-1", ".system_generated", "logs", "chunks"), { recursive: true });
+    mkdirSync(join(root, "conv-1", ".system_generated", "steps"), { recursive: true });
+    writeFileSync(
+      join(root, "conv-1", ".system_generated", "logs", "transcript_full.jsonl"),
+      '{"type":"USER_INPUT"}\n',
+    );
+    writeFileSync(
+      join(root, "conv-1", ".system_generated", "logs", "chunks", "00000000.jsonl"),
+      '{"type":"USER_INPUT"}\n',
+    );
+    writeFileSync(
+      join(root, "conv-1", ".system_generated", "steps", "output.jsonl"),
+      '{"type":"GENERIC"}\n',
+    );
+
+    const scan = scanLocalAgentSessionFiles(
+      [{ id: "brain", path: root }],
+      [".jsonl"],
+      (relativePath, isDirectory) => {
+        if (isDirectory) return relativePath.endsWith("steps") || relativePath.endsWith("chunks");
+        return !relativePath.endsWith("transcript_full.jsonl");
+      },
+    );
+
+    expect(scan.complete).toBe(true);
+    expect(scan.files).toHaveLength(1);
+    expect(scan.files[0]?.path).toContain("transcript_full.jsonl");
+  });
 });
 
 describe("readJsonLines — crash residue", () => {

@@ -185,6 +185,7 @@ const current: Record<string, unknown> = {
   "claude-code": agentCursor,
   codex: agentCursor,
   pi: agentCursor,
+  antigravity: agentCursor,
   coinbase: { phase: "orders", pageCursor: "page-2", ledgerWatermarks: { account: timestamp } },
   github: githubCursor,
   "github-commits": githubCursor,
@@ -349,6 +350,7 @@ const incompatible: Record<string, unknown> = {
   "claude-code": { ...agentCursor, version: 999 },
   codex: { ...agentCursor, version: 999 },
   pi: { ...agentCursor, version: 999 },
+  antigravity: { ...agentCursor, version: 999 },
   // A sweep in progress without what it has listed would end by vouching for
   // an empty archive.
   "paperless-documents": { phase: "snapshot", watermark: timestamp, pending: [7, 3] },
@@ -375,50 +377,56 @@ function options(id: string, version?: number): SourceConformanceOptions {
 describe("registered provider contract conformance", () => {
   // Factory checks deliberately use explicit temporary roots. Discovery and
   // default local paths must never inspect the test operator's real stores.
-  it.each(["local-files", "obsidian-notes", "chrome-bookmarks", "claude-code", "codex", "pi"])(
-    "%s: declaration matches its actual isolated factory",
-    async (id) => {
-      const definition = allDefinitions.find(
-        (candidate) => candidate.type === "source" && candidate.id === id,
-      );
-      if (!definition || definition.type !== "source" || !definition.create)
-        throw new Error(`Missing factory for ${id}`);
-      // Windows' OS temp directory is inside protected AppData. Use a fresh
-      // home child, as the provider's security fixtures do, without reading any
-      // existing operator directory or weakening the production boundary.
-      const root = await mkdtemp(
-        join(process.platform === "win32" ? homedir() : tmpdir(), "omnesis-conformance-"),
-      );
-      let instance: SourceInstance | undefined;
-      try {
-        const configs: Record<string, Record<string, unknown>> = {
-          "local-files": { roots: [root], exclude: [] },
-          "obsidian-notes": { vaultPath: root, exclude: [] },
-          "chrome-bookmarks": { basePath: root, profileDir: "Default" },
-          "claude-code": { sessionsPath: root },
-          codex: { codexHome: root },
-          pi: { sessionsPath: root },
-        };
-        if (id === "obsidian-notes") await mkdir(join(root, ".obsidian"));
-        const report = await runSourceConformance(definition, {
-          ...options(id, definition.contract?.state?.version),
-          instantiate: async () => {
-            instance = await definition.create!({
-              sourceId: SourceId(`${id}:fixture`),
-              providerId: ProviderId(`${id}:fixture`),
-              accountId: "fixture",
-              config: configs[id],
-            });
-            return instance;
-          },
-        });
-        expect(report.findings, formatConformanceReport(report)).toEqual([]);
-      } finally {
-        await instance?.dispose?.();
-        await rm(root, { recursive: true, force: true });
-      }
-    },
-  );
+  it.each([
+    "local-files",
+    "obsidian-notes",
+    "chrome-bookmarks",
+    "claude-code",
+    "codex",
+    "pi",
+    "antigravity",
+  ])("%s: declaration matches its actual isolated factory", async (id) => {
+    const definition = allDefinitions.find(
+      (candidate) => candidate.type === "source" && candidate.id === id,
+    );
+    if (!definition || definition.type !== "source" || !definition.create)
+      throw new Error(`Missing factory for ${id}`);
+    // Windows' OS temp directory is inside protected AppData. Use a fresh
+    // home child, as the provider's security fixtures do, without reading any
+    // existing operator directory or weakening the production boundary.
+    const root = await mkdtemp(
+      join(process.platform === "win32" ? homedir() : tmpdir(), "omnesis-conformance-"),
+    );
+    let instance: SourceInstance | undefined;
+    try {
+      const configs: Record<string, Record<string, unknown>> = {
+        "local-files": { roots: [root], exclude: [] },
+        "obsidian-notes": { vaultPath: root, exclude: [] },
+        "chrome-bookmarks": { basePath: root, profileDir: "Default" },
+        "claude-code": { sessionsPath: root },
+        codex: { codexHome: root },
+        pi: { sessionsPath: root },
+        antigravity: { antigravityHome: root },
+      };
+      if (id === "obsidian-notes") await mkdir(join(root, ".obsidian"));
+      const report = await runSourceConformance(definition, {
+        ...options(id, definition.contract?.state?.version),
+        instantiate: async () => {
+          instance = await definition.create!({
+            sourceId: SourceId(`${id}:fixture`),
+            providerId: ProviderId(`${id}:fixture`),
+            accountId: "fixture",
+            config: configs[id],
+          });
+          return instance;
+        },
+      });
+      expect(report.findings, formatConformanceReport(report)).toEqual([]);
+    } finally {
+      await instance?.dispose?.();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 
   it.each(
     Object.entries(installed).flatMap(([id, states]) =>
