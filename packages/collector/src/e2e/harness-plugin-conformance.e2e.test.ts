@@ -24,6 +24,7 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import {
   assertHarnessRuntimeConformance,
   isolatedHarnessEnvironment,
+  type HarnessConformanceStep,
 } from "./harness-runtime-conformance.js";
 import { e2eTsxCommand } from "./gateway-env.js";
 import { execE2EBufferedCommand } from "./e2e-buffered-command.js";
@@ -101,6 +102,22 @@ conformanceDescribe("pinned external harness plugin conformance", () => {
         );
       }
 
+      // Each step's duration is printed when the test ends, passed or failed,
+      // so a slow run shows which command took its time.
+      const timeline: string[] = [];
+      const step: HarnessConformanceStep = async (name, run) => {
+        const started = performance.now();
+        let outcome = "failed";
+        try {
+          const result = await run();
+          outcome = "";
+          return result;
+        } finally {
+          const seconds = ((performance.now() - started) / 1000).toFixed(1);
+          timeline.push(`${name} ${seconds} s${outcome ? ` (${outcome})` : ""}`);
+        }
+      };
+
       let primaryError: unknown;
       let failed = false;
       let retainInputs = false;
@@ -120,33 +137,35 @@ conformanceDescribe("pinned external harness plugin conformance", () => {
             if (directory) mkdirSync(directory, { recursive: true });
         }
         const { fingerprint } = await fetchPeerCert("localhost", gateway.gatewayPort);
-        const enrollment = await enrollManagedIntegration({
-          harness: requestedHarness,
-          repositoryRoot,
-          gatewayUrl: gateway.gatewayUrl,
-          portalApiKey: gateway.bootstrapToken,
-          gatewayDbPath: gateway.getDbPath(),
-          home,
-          fakeBin,
-          cliConfigDir: cliConfig,
-          trustFingerprint: fingerprint,
-          connectEnv: environment,
-          inheritConnectEnv: false,
-          // Real OpenClaw installation starts several cold CLI processes:
-          // capability discovery, package install, legacy removal and registry refresh.
-          connectExitTimeoutMs: windowsOpenClaw ? 180_000 : 90_000,
-          createPairingCode: async () => {
-            const pairing = await gateway.json<{ pairingCode: string }>("/admin/devices/pair", {
-              method: "POST",
-              body: JSON.stringify({
-                name: `Fictional ${requestedHarness} conformance integration`,
-                kind: "agent",
-                scopes: ["subscriptions:receive"],
-              }),
-            });
-            return pairing.pairingCode;
-          },
-        });
+        const enrollment = await step("connect", () =>
+          enrollManagedIntegration({
+            harness: requestedHarness,
+            repositoryRoot,
+            gatewayUrl: gateway.gatewayUrl,
+            portalApiKey: gateway.bootstrapToken,
+            gatewayDbPath: gateway.getDbPath(),
+            home,
+            fakeBin,
+            cliConfigDir: cliConfig,
+            trustFingerprint: fingerprint,
+            connectEnv: environment,
+            inheritConnectEnv: false,
+            // Real OpenClaw installation starts several cold CLI processes:
+            // capability discovery, package install, legacy removal and registry refresh.
+            connectExitTimeoutMs: windowsOpenClaw ? 180_000 : 90_000,
+            createPairingCode: async () => {
+              const pairing = await gateway.json<{ pairingCode: string }>("/admin/devices/pair", {
+                method: "POST",
+                body: JSON.stringify({
+                  name: `Fictional ${requestedHarness} conformance integration`,
+                  kind: "agent",
+                  scopes: ["subscriptions:receive"],
+                }),
+              });
+              return pairing.pairingCode;
+            },
+          }),
+        );
 
         expect(existsSync(openerMarker)).toBe(true);
         if (process.platform === "win32") {
@@ -160,13 +179,16 @@ conformanceDescribe("pinned external harness plugin conformance", () => {
           repositoryRoot,
           home,
           environment,
+          step,
         });
         expect(toolInvocationAuditCount(gateway.getDbPath())).toBe(0);
 
         // `omnesis uninstall <harness>` against the same real host: the plugin
         // is unregistered through the harness's own CLI, every file connect
         // wrote is gone, and the operator's own settings are untouched.
-        await runCli(["uninstall", requestedHarness, "--yes"], environment, cliConfig);
+        await step("uninstall", () =>
+          runCli(["uninstall", requestedHarness, "--yes"], environment, cliConfig),
+        );
         expect(installedPluginExists(requestedHarness, home)).toBe(false);
         expect(existsSync(join(home, "omnesis"))).toBe(false);
         const skill =
@@ -181,22 +203,22 @@ conformanceDescribe("pinned external harness plugin conformance", () => {
           const command = resolveHarnessCommand("openclaw", ["plugins", "list"], {
             env: environment,
           });
-          const listed = await execE2EBufferedCommand(command.command, command.args, {
-            cwd: repositoryRoot,
-            env: environment,
-            timeout: 30_000,
-            maxBuffer: 2 * 1024 * 1024,
-          });
+          const listed = await step("plugins list", () =>
+            execE2EBufferedCommand(command.command, command.args, {
+              cwd: repositoryRoot,
+              env: environment,
+              timeout: 30_000,
+              maxBuffer: 2 * 1024 * 1024,
+            }),
+          );
           expect(listed.stdout).not.toContain("omnesis-integration");
         } else {
           const config = readFileSync(join(home, "config.yaml"), "utf8");
           expect(config).toContain("background_process_notifications: all");
           expect(config).not.toContain("omnesis-integration");
         }
-        const again = await runCli(
-          ["uninstall", requestedHarness, "--yes"],
-          environment,
-          cliConfig,
+        const again = await step("uninstall again", () =>
+          runCli(["uninstall", requestedHarness, "--yes"], environment, cliConfig),
         );
         expect(again).toContain("Nothing of Omnesis to remove");
       } catch (error) {
@@ -204,6 +226,7 @@ conformanceDescribe("pinned external harness plugin conformance", () => {
         primaryError = error;
         retainInputs = ownedProcessCleanupReceipt(error) !== undefined;
       } finally {
+        console.info(`[harness-conformance] ${requestedHarness} steps: ${timeline.join(", ")}`);
         if (!retainInputs) {
           try {
             rmSync(root, { recursive: true, force: true });

@@ -1441,6 +1441,7 @@ export { connectionPathSchema, parseConnectionPath } from "./connection-path.js"
 export type { ConnectionPath } from "./connection-path.js";
 
 export { execWindowsJob } from "./windows-job-exec.js";
+export { commandTimeoutError, describeCommandForDiagnostics } from "./command-timeout.js";
 export { ownedProcessCleanupReceipt } from "./owned-process-cleanup.js";
 export {
   OwnedProcessShutdownFence,

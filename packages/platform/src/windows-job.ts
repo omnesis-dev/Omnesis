@@ -19,6 +19,7 @@ import {
   type WindowsBootstrapRequest,
 } from "./windows-worker-cache.js";
 
+import { commandTimeoutError } from "./command-timeout.js";
 import { windowsPowerShellExecutable } from "./windows-powershell.js";
 import { WindowsJobControl, type WindowsJobControlConfiguration } from "./windows-job-control.js";
 import { WINDOWS_JOB_POWERSHELL_SCRIPT } from "./native/windows-job-source.js";
@@ -121,11 +122,11 @@ export function spawnWindowsJob(
 ): WindowsJobProcess {
   prepareWindowsNativeWorker();
   const start = performance.now();
-  const remaining = () =>
-    Math.floor(Math.min(30_000, opts.startupTimeoutMs ?? Infinity) - (performance.now() - start));
+  const startupLimit = Math.min(30_000, opts.startupTimeoutMs ?? Infinity);
+  const remaining = () => Math.floor(startupLimit - (performance.now() - start));
   const expired = () => !(remaining() > 0);
   const timeout = () =>
-    Object.assign(new Error("Command timed out"), { code: "ETIMEDOUT", killed: true });
+    commandTimeoutError(command, args, startupLimit, performance.now() - start, "starting");
   jobFrame(command, args, opts.completion);
   if (expired()) throw timeout();
   let invocation: WindowsOwnedInvocation;
