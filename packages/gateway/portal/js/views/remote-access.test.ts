@@ -27,6 +27,7 @@ const gateway = vi.hoisted(() => ({
   failRemote: false,
   hangHost: false,
   failConfig: false,
+  failNewDevices: null as Json | null,
   calls: [] as unknown[][],
 }));
 const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
@@ -42,7 +43,6 @@ vi.mock("../lib/cloud-relay-api.js", async (importOriginal) => ({
     if (operation === "connect/cancel" || operation === "start-over") gateway.relay = relayNone();
     if (operation === "enable") gateway.relay = { ...relay, enabled: true, tunnel: { state: "online" }, can: { ...relay.can, enable: false, disable: true } };
     if (operation === "disable") gateway.relay = { ...relay, enabled: false, tunnel: { state: "disabled" }, can: { ...relay.can, enable: true, disable: false } };
-    if (operation === "enrollment") gateway.relay = { ...relay, deviceEnrollment: { ...relay.deviceEnrollment, policy: (input as Json).policy } };
     if (operation === "account/unlink") gateway.relay = relayNone();
     return clone(gateway.relay);
   }),
@@ -74,6 +74,21 @@ vi.mock("../lib/remote-access-api.js", () => ({
     for (const [id, reach] of Object.entries((patch.mcp ?? {}) as Record<string, string>))
       gateway.remote!.mcpAddresses = gateway.remote!.mcpAddresses.map((row: Json) => (row.id === id ? { ...row, reach } : row));
     return clone(gateway.remote);
+  }),
+  // As the gateway's route does: one request sets the account's policy and the device's, wherever each applies.
+  updateNewDevices: vi.fn(async (policy: string, options: Json = {}) => {
+    gateway.calls.push(["new-devices", policy, options]);
+    if (gateway.failNewDevices) throw Object.assign(new Error("refused"), gateway.failNewDevices);
+    const answer: Json = {};
+    if (gateway.relay?.account?.linked && policy !== "code") {
+      gateway.relay = { ...gateway.relay, deviceEnrollment: { ...gateway.relay.deviceEnrollment, policy } };
+      answer.relay = clone(gateway.relay);
+    }
+    if (gateway.tailscale?.enabled) {
+      gateway.tailscale = { ...gateway.tailscale, joinPolicy: policy === "code" ? "off" : policy };
+      answer.tailscale = clone(gateway.tailscale);
+    }
+    return answer;
   }),
   getHostTailscale: vi.fn(async () => {
     if (gateway.hangHost) return new Promise(() => {});
@@ -207,6 +222,7 @@ beforeEach(() => {
     failRemote: false,
     hangHost: false,
     failConfig: false,
+    failNewDevices: null,
     calls: [],
   });
 });
@@ -301,6 +317,12 @@ const item = (title: string) => items().find((li) => li.querySelector(".remote-a
 const mark = (title: string) => item(title)?.className.replace("remote-access-item is-", "");
 const detail = (title: string) => item(title)?.querySelector(".remote-access-item-detail")?.textContent?.replace(/\s+/g, " ").trim();
 const action = (title: string) => item(title)?.querySelector(".remote-access-item-action")?.textContent?.trim();
+/** The MCP section's one link, beside its title. */
+const mcpAction = () =>
+  [...host.querySelectorAll(".remote-access-row-head")]
+    .find((head) => head.querySelector("h4")?.textContent === "MCP")
+    ?.querySelector(".remote-access-item-action")
+    ?.textContent?.trim();
 const MCP_CHOICES: Record<string, string[]> = {
   home: ["off", "on"],
   relay: ["off", "public"],
@@ -428,9 +450,7 @@ describe("the summary", () => {
       ["Omnesis relay", "/portal/settings/relay"],
       ["Tailscale on this computer", "/portal/settings/host-tailscale"],
       ["Your own domain", "/portal/settings/own-address"],
-      ["MCP on this computer", "/portal/settings/mcp"],
-      ["MCP on your home network", "/portal/settings/mcp"],
-      ["MCP away from home", "/portal/settings/mcp"],
+      ["MCP server", "/portal/settings/mcp"],
     ]) {
       await act(async () => (host.querySelector(`button[aria-label="${label}"]`) as HTMLButtonElement).click());
       expect(router.navigate).toHaveBeenLastCalledWith(page);
@@ -729,10 +749,12 @@ describe("with the gateway's own Tailscale device and no account", () => {
     expect(isChecked(radio("ask"))).toBe(true);
     for (const [choice, policy] of [["automatic", "automatic"], ["code", "off"], ["ask", "ask"]]) {
       await toggle(`input[name="remote-access-policy"][value="${choice}"]`, true);
-      expect(calls("tailscale").at(-1)).toEqual(["tailscale", "settings", { joinPolicy: policy }]);
+      expect(calls("new-devices").at(-1)).toEqual(["new-devices", choice, { stepUpAnnounced: false }]);
+      expect(gateway.tailscale!.joinPolicy).toBe(policy);
       expect(isChecked(radio(choice))).toBe(true);
     }
     expect(calls("relay")).toEqual([]);
+    expect(calls("tailscale")).toEqual([]);
   });
 });
 
@@ -743,6 +765,10 @@ describe("both", () => {
     savedSetup("connection");
     await mount(FLAGS.both);
     expect(text()).toContain("When both can answer, try first");
+    // A paired device keeps the address it got, so the order is said to apply from now on.
+    expect(text()).toContain(
+      "Applies to devices that pair from now on. A device paired earlier keeps the address it got then; pair it again to switch.",
+    );
     await toggle('input[name="remote-access-first"][value="relay"]', true);
     expect(calls("remote")).toEqual([["remote", { first: "relay" }]]);
     expect(isChecked(host.querySelector('input[name="remote-access-first"][value="relay"]'))).toBe(true);
@@ -757,28 +783,72 @@ describe("both", () => {
     expect(text()).toContain("Turns on with your passkey.");
     expect(host.querySelector('input[name="remote-access-policy"][value="code"]')).toBeNull();
     await toggle('input[name="remote-access-policy"][value="automatic"]', true);
+    // One request for both ways, so one passkey: the two policies are never set one by one.
     expect(gateway.calls.filter((call) => call[0] !== "remote" && call[0] !== "host")).toEqual([
-      ["relay", "enrollment", { policy: "automatic" }, "PUT", { stepUpAnnounced: true }],
-      ["tailscale", "settings", { joinPolicy: "automatic" }],
+      ["new-devices", "automatic", { stepUpAnnounced: true }],
     ]);
+    expect([gateway.relay!.deviceEnrollment.policy, gateway.tailscale!.joinPolicy]).toEqual(["automatic", "automatic"]);
+    expect(isChecked(host.querySelector('input[name="remote-access-policy"][value="automatic"]'))).toBe(true);
+    expect(text()).not.toContain("Turns on with your passkey.");
     gateway.calls = [];
     await toggle('input[name="remote-access-policy"][value="ask"]', true);
-    expect(gateway.calls.filter((call) => call[0] !== "host")).toEqual([
-      ["relay", "enrollment", { policy: "ask" }, "PUT"],
-      ["tailscale", "settings", { joinPolicy: "ask" }],
-    ]);
+    expect(gateway.calls.filter((call) => call[0] !== "host")).toEqual([["new-devices", "ask", { stepUpAnnounced: false }]]);
   });
 
-  test("devices: when the two differ nothing is preselected, the difference is said, and one answer sets both", async () => {
+  test("devices: when the two differ that is the one answer selected, said in full, until one answer sets both", async () => {
     gateway.relay = relayLinked({ policy: "ask" });
     gateway.tailscale = { ...tailscaleConnected(), joinPolicy: "off" };
     savedSetup("devices");
     await mount(FLAGS.both);
-    expect([...host.querySelectorAll('input[name="remote-access-policy"]')].some((r) => isChecked(r))).toBe(false);
+    const radios = () => [...host.querySelectorAll('input[name="remote-access-policy"]')] as HTMLInputElement[];
+    expect(radios().filter((r) => isChecked(r)).map((r) => r.value)).toEqual(["split"]);
+    expect(text()).toContain("Different for each way");
+    // Picking it again changes nothing: it is left only by choosing an answer for both.
+    await toggle('input[name="remote-access-policy"][value="split"]', true);
+    expect(calls("new-devices")).toEqual([]);
     expect(text()).toContain("Right now devices that sign in wait for you and Tailscale devices need a pairing code.");
     await toggle('input[name="remote-access-policy"][value="ask"]', true);
-    expect(calls("tailscale")).toEqual([["tailscale", "settings", { joinPolicy: "ask" }]]);
+    expect(calls("new-devices")).toEqual([["new-devices", "ask", { stepUpAnnounced: false }]]);
+    expect(radios().filter((r) => isChecked(r)).map((r) => r.value)).toEqual(["ask"]);
     expect(text()).not.toContain("Right now");
+    expect(text()).not.toContain("Different for each way");
+  });
+
+  test("devices: an account and the Tailscale device start out different, and the summary still selects exactly one", async () => {
+    // Their own defaults: a linked account lets devices join automatically, the device asks first.
+    gateway.relay = relayLinked({ policy: "automatic", stepUpRequired: true });
+    gateway.tailscale = tailscaleConnected("ask");
+    await mount(FLAGS.both);
+    const radios = () => [...host.querySelectorAll('input[name="remote-access-summary-policy"]')] as HTMLInputElement[];
+    expect(radios().filter((r) => isChecked(r)).map((r) => r.value)).toEqual(["split"]);
+    expect(text()).toContain("Right now devices that sign in join automatically and Tailscale devices wait for you.");
+    // Automatic still loosens the Tailscale device, so the passkey is announced on it.
+    expect(text()).toContain("Turns on with your passkey.");
+    await toggle('input[name="remote-access-summary-policy"][value="automatic"]', true);
+    expect(calls("new-devices")).toEqual([["new-devices", "automatic", { stepUpAnnounced: true }]]);
+    expect(radios().filter((r) => isChecked(r)).map((r) => r.value)).toEqual(["automatic"]);
+  });
+
+  test("devices: a refused answer says why and leaves what each way does as it was", async () => {
+    gateway.relay = relayLinked({ policy: "ask" });
+    gateway.tailscale = tailscaleConnected("ask");
+    gateway.failNewDevices = { stepUp: true, message: "Nothing changed." };
+    await mount(FLAGS.both);
+    await toggle('input[name="remote-access-summary-policy"][value="automatic"]', true);
+    expect(host.querySelector('.remote-access-choices [role="alert"]')?.textContent).toBe("Nothing changed.");
+    expect(
+      ([...host.querySelectorAll('input[name="remote-access-summary-policy"]')] as HTMLInputElement[])
+        .filter((r) => isChecked(r))
+        .map((r) => r.value),
+    ).toEqual(["ask"]);
+    gateway.failNewDevices = { serverMessage: "Couldn't change that. Nothing changed. Try again." };
+    await toggle('input[name="remote-access-summary-policy"][value="automatic"]', true);
+    expect(host.querySelector('.remote-access-choices [role="alert"]')?.textContent).toBe(
+      "Couldn't change that. Nothing changed. Try again.",
+    );
+    gateway.failNewDevices = {};
+    await toggle('input[name="remote-access-summary-policy"][value="automatic"]', true);
+    expect(host.querySelector('.remote-access-choices [role="alert"]')?.textContent).toBe("Couldn't change that. Try again.");
   });
 
   test("every way in sits beside the others, and each that is set up opens its own page", async () => {
@@ -1256,8 +1326,8 @@ describe("at home", () => {
       "Couldn't start: port 7601 is in use by another program. Set gateway.localMcp.port to a free port in Settings, Config, then restart the gateway.",
     );
     expect(detail("This computer")).not.toContain("http://");
-    // Something to fix there, so it is managed, not set up.
-    expect(action("This computer")).toBe("Manage");
+    // Something to fix there, so the section is managed, not set up.
+    expect(mcpAction()).toBe("Manage");
   });
 
   test("the MCP section has one line each for this computer, the home network and away from home", async () => {
@@ -1270,16 +1340,20 @@ describe("at home", () => {
       "Your home network",
       "Away from home",
     ]);
-    expect([mark("This computer"), action("This computer")]).toEqual(["on", "Manage"]);
-    expect([mark("Your home network"), action("Your home network")]).toEqual(["off", "Set up"]);
-    expect([mark("Away from home"), action("Away from home")]).toEqual(["off", "Set up"]);
+    // The lines only say where things stand; one link beside the title opens the MCP server page.
+    expect(["This computer", "Your home network", "Away from home"].map(action)).toEqual([undefined, undefined, undefined]);
+    expect([mark("This computer"), mark("Your home network"), mark("Away from home")]).toEqual(["on", "off", "off"]);
+    expect(mcpAction()).toBe("Manage");
     expect(detail("Away from home")).toBe("Off on every address away from home.");
     gateway.remote!.localMcp = { state: "off" };
+    gateway.remote!.mcpAddresses = [homeRow(), mcpRow("host", { reach: "off" })];
+    await remount(FLAGS.relay);
+    // Nothing answers anywhere: the section is set up.
+    expect(mcpAction()).toBe("Set up");
     gateway.remote!.mcpAddresses = [homeRow({ reach: "on" }), mcpRow("host", { reach: "public" })];
     await remount(FLAGS.relay);
-    expect([mark("This computer"), action("This computer")]).toEqual(["off", "Set up"]);
-    expect([mark("Your home network"), action("Your home network")]).toEqual(["on", "Manage"]);
-    expect([mark("Away from home"), action("Away from home")]).toEqual(["on", "Manage"]);
+    expect([mark("This computer"), mark("Your home network"), mark("Away from home")]).toEqual(["off", "on", "on"]);
+    expect(mcpAction()).toBe("Manage");
     expect(detail("Away from home")).toMatch(/^On .*this computer \(also on the Internet\)\.$/u);
   });
 

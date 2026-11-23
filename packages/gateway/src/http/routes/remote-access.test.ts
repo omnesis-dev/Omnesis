@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,6 +9,7 @@ import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { SCOPE_ADMIN } from "@omnesis/types";
+import { CloudRelayManagementFailure } from "@omnesis/cloud-relay";
 import { AddressChecks } from "../../remote-access/address-check.js";
 import { HostAccess } from "../../remote-access/host-access.js";
 import { McpAddresses } from "../../remote-access/mcp-addresses.js";
@@ -19,7 +21,8 @@ import { mountStepUp } from "../step-up.js";
 import { mountRemoteAccessRoutes } from "./remote-access.js";
 import type { HostTailscaleService } from "../../remote-access/host-tailscale.js";
 import type { DeviceId, TokenId } from "@omnesis/types";
-import type { GatewayEnrollment } from "@omnesis/cloud-relay";
+import type { CloudRelayManagement, GatewayEnrollment } from "@omnesis/cloud-relay";
+import type { TailscaleEmbedService } from "../../tailscale-embed/service.js";
 import type { AppEnv } from "./types.js";
 import type { LocalMcpState } from "../../local-mcp-listener.js";
 
@@ -41,6 +44,8 @@ function app({
   publicAddress = fixedPublicAddress(configured ?? undefined) as PublicAddressSource,
   home = null as string[] | null,
   localMcp = undefined as LocalMcpState | undefined,
+  account = undefined as ReturnType<typeof linkedAccount> | undefined,
+  joining = undefined as ReturnType<typeof tailscaleDevice> | undefined,
 } = {}) {
   const host = {
     status: vi.fn(async () =>
@@ -88,6 +93,14 @@ function app({
         ({
           stepUpRequired: () => true,
           gatewayPasskey: () => ({ rpId: "relay.example.test", origin: "https://g.example.test" }),
+          // Every ceremony is answered: what matters here is which requests ask for one.
+          stepUpCeremony: (binding: string) => ({
+            purpose: "step-up",
+            challenge: "c".repeat(43),
+            binding,
+            webauthnChallenge: "w".repeat(43),
+          }),
+          verifyStepUp: async () => true,
         }) as unknown as GatewayEnrollment,
       enrollmentMethod: () => undefined,
     });
@@ -130,6 +143,8 @@ function app({
     publicAddress,
     tailscaleEmbed: device,
     ...(localMcp ? { localMcp: () => localMcp } : {}),
+    ...(account ? { relay: account.service } : {}),
+    ...(joining ? { tailscale: joining.service } : {}),
   });
   const send = (
     method: string,
@@ -146,6 +161,37 @@ function app({
       ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
     });
   return { send, host, checks, settings, tailscale };
+}
+
+/** The linked Omnesis account's policy for new devices, as the relay's management service keeps it. */
+function linkedAccount({ linked = true } = {}) {
+  const state = { policy: "automatic" as "ask" | "automatic", fails: false };
+  const setEnrollmentPolicy = vi.fn(async (policy: "ask" | "automatic") => {
+    if (state.fails) throw new CloudRelayManagementFailure(503, "account-unavailable");
+    state.policy = policy;
+    return { deviceEnrollment: { policy } };
+  });
+  const service = {
+    accountPairingIdentity: () => (linked ? {} : undefined),
+    setEnrollmentPolicy,
+  } as unknown as CloudRelayManagement;
+  return { service, state, setEnrollmentPolicy };
+}
+
+/** The gateway's own Tailscale device's policy for new devices. */
+function tailscaleDevice({ enabled = true, fails = false } = {}) {
+  const state = { joinPolicy: "ask" as "ask" | "automatic" | "off" };
+  const updateSettings = vi.fn(async (patch: { joinPolicy?: "ask" | "automatic" | "off" }) => {
+    if (fails) throw new Error("shutting down");
+    state.joinPolicy = patch.joinPolicy ?? state.joinPolicy;
+    return {};
+  });
+  const service = {
+    state: () => ({ enabled, joinPolicy: state.joinPolicy, connection: "connected" }),
+    joinPolicy: () => state.joinPolicy,
+    updateSettings,
+  } as unknown as TailscaleEmbedService;
+  return { service, state, updateSettings };
 }
 
 describe("remote access routes", () => {
@@ -506,5 +552,164 @@ describe("remote access routes", () => {
     expect((await send("PATCH", "/admin/remote-access", { first: "relay" }, viaRelay)).status).toBe(
       200,
     );
+  });
+
+  describe("the answer for new devices", () => {
+    const RELAYED = { "x-omnesis-cloud-relay": "1" };
+    const sha256 = (value: string) => createHash("sha256").update(value).digest("hex");
+
+    test("sets the account's and the Tailscale device's policies in one request", async () => {
+      const account = linkedAccount();
+      const joining = tailscaleDevice();
+      const { send } = app({ account, joining });
+      const response = await send("PUT", "/admin/remote-access/new-devices", { policy: "ask" });
+      expect(response.status).toBe(200);
+      expect(account.state.policy).toBe("ask");
+      expect(joining.state.joinPolicy).toBe("ask");
+      // Both pages read what each way does now from the answer.
+      expect(await response.json()).toEqual({
+        relay: { deviceEnrollment: { policy: "ask" }, stepUpRequired: false },
+        tailscale: { enabled: true, joinPolicy: "ask", connection: "connected" },
+      });
+    });
+
+    test("letting devices join automatically asks for one step-up for both ways, which carries that one request once", async () => {
+      const account = linkedAccount();
+      account.state.policy = "ask";
+      const joining = tailscaleDevice();
+      const { send } = app({ stepUp: true, account, joining });
+      const body = JSON.stringify({ policy: "automatic" });
+      const refused = await send(
+        "PUT",
+        "/admin/remote-access/new-devices",
+        { policy: "automatic" },
+        RELAYED,
+      );
+      expect(refused.status).toBe(428);
+      const { detail } = (await refused.json()) as { detail: { path: string } };
+      expect(detail.path).toBe("/admin/remote-access/new-devices");
+      expect(account.setEnrollmentPolicy).not.toHaveBeenCalled();
+      expect(joining.updateSettings).not.toHaveBeenCalled();
+
+      const target = { method: "PUT", path: detail.path, bodySha256: sha256(body) };
+      const proof = {
+        type: "gateway-passkey",
+        challenge: "c".repeat(43),
+        credential: {
+          id: "Y3JlZA",
+          rawId: "Y3JlZA",
+          type: "public-key",
+          clientExtensionResults: {},
+          response: {
+            clientDataJSON: "e30",
+            authenticatorData: "AA",
+            signature: "AA",
+            userHandle: "dQ",
+          },
+        },
+      };
+      const issued = await send("POST", "/admin/step-up", { ...target, proof }, RELAYED);
+      expect(issued.status).toBe(200);
+      const { stepUpId } = (await issued.json()) as { stepUpId: string };
+      const withStepUp = { ...RELAYED, "X-Omnesis-Step-Up": stepUpId };
+      const done = await send(
+        "PUT",
+        "/admin/remote-access/new-devices",
+        { policy: "automatic" },
+        withStepUp,
+      );
+      expect(done.status).toBe(200);
+      // One passkey changed both ways.
+      expect(account.state.policy).toBe("automatic");
+      expect(joining.state.joinPolicy).toBe("automatic");
+      expect(
+        ((await done.json()) as { relay: { stepUpRequired: boolean } }).relay.stepUpRequired,
+      ).toBe(true);
+      // The id is spent: the same request again needs a new step-up.
+      expect(
+        (await send("PUT", "/admin/remote-access/new-devices", { policy: "automatic" }, withStepUp))
+          .status,
+      ).toBe(428);
+    });
+
+    test("asking first or needing a code only makes the gateway stricter, so it never asks for a step-up", async () => {
+      const joining = tailscaleDevice();
+      joining.state.joinPolicy = "automatic";
+      const { send } = app({ stepUp: true, joining });
+      expect(
+        (await send("PUT", "/admin/remote-access/new-devices", { policy: "ask" }, RELAYED)).status,
+      ).toBe(200);
+      expect(joining.state.joinPolicy).toBe("ask");
+      // Without an account, a pairing code only turns joining through Tailscale off.
+      expect(
+        (await send("PUT", "/admin/remote-access/new-devices", { policy: "code" }, RELAYED)).status,
+      ).toBe(200);
+      expect(joining.state.joinPolicy).toBe("off");
+    });
+
+    test("only the ways that apply are set, and a code is refused while an account lets devices ask", async () => {
+      const account = linkedAccount();
+      const off = tailscaleDevice({ enabled: false });
+      const { send } = app({ account, joining: off });
+      const response = await send("PUT", "/admin/remote-access/new-devices", { policy: "ask" });
+      expect(await response.json()).toEqual({
+        relay: { deviceEnrollment: { policy: "ask" }, stepUpRequired: false },
+      });
+      expect(off.updateSettings).not.toHaveBeenCalled();
+      const code = await send("PUT", "/admin/remote-access/new-devices", { policy: "code" });
+      expect(code.status).toBe(409);
+      expect((await code.json()).code).toBe("ACCOUNT_LETS_DEVICES_ASK");
+      expect(account.state.policy).toBe("ask");
+    });
+
+    test("with no way for a device to ask, or an unknown answer, nothing is set", async () => {
+      const unlinked = linkedAccount({ linked: false });
+      const off = tailscaleDevice({ enabled: false });
+      const { send } = app({ account: unlinked, joining: off });
+      const none = await send("PUT", "/admin/remote-access/new-devices", { policy: "ask" });
+      expect(none.status).toBe(409);
+      expect((await none.json()).code).toBe("NO_WAY_TO_ASK");
+      expect(
+        (await send("PUT", "/admin/remote-access/new-devices", { policy: "sometimes" })).status,
+      ).toBe(400);
+      expect(unlinked.setEnrollmentPolicy).not.toHaveBeenCalled();
+      expect(off.updateSettings).not.toHaveBeenCalled();
+    });
+
+    test("when the account's policy can't be saved, the Tailscale device's is put back, so the two never split", async () => {
+      const account = linkedAccount();
+      account.state.fails = true;
+      const joining = tailscaleDevice();
+      const { send } = app({ account, joining });
+      const response = await send("PUT", "/admin/remote-access/new-devices", {
+        policy: "automatic",
+      });
+      expect(response.status).toBe(503);
+      expect(await response.json()).toMatchObject({ code: "account-unavailable" });
+      expect(joining.state.joinPolicy).toBe("ask");
+      expect(joining.updateSettings).toHaveBeenLastCalledWith({ joinPolicy: "ask" });
+    });
+
+    test("when the Tailscale device's policy can't be saved, the account's is never touched", async () => {
+      const account = linkedAccount();
+      const joining = tailscaleDevice({ fails: true });
+      const { send } = app({ account, joining });
+      const response = await send("PUT", "/admin/remote-access/new-devices", { policy: "ask" });
+      expect(response.status).toBe(503);
+      expect((await response.json()).code).toBe("NEW_DEVICES_UNAVAILABLE");
+      expect(account.setEnrollmentPolicy).not.toHaveBeenCalled();
+    });
+
+    test("an account that fails for any other reason also leaves both as they were", async () => {
+      const account = linkedAccount();
+      account.setEnrollmentPolicy.mockRejectedValueOnce(new Error("disk full"));
+      const joining = tailscaleDevice();
+      joining.state.joinPolicy = "automatic";
+      const { send } = app({ account, joining });
+      const response = await send("PUT", "/admin/remote-access/new-devices", { policy: "ask" });
+      expect(response.status).toBe(503);
+      expect((await response.json()).code).toBe("NEW_DEVICES_UNAVAILABLE");
+      expect(joining.state.joinPolicy).toBe("automatic");
+    });
   });
 });

@@ -27,11 +27,10 @@ export function tailscalePollInterval(state) {
 
 const TIMEOUT_MS = 10_000;
 /**
- * Changes that may ask for the owner's passkey first (turning the device on,
- * letting devices join automatically) wait for the person, not only for the
- * network, as the relay's own hook does.
+ * A change that may ask for the owner's passkey first (turning the device on)
+ * waits for the person, not only for the network.
  */
-const STEP_UP_OPERATIONS = new Set(["enable", "join-policy"]);
+const STEP_UP_OPERATIONS = new Set(["enable"]);
 const STEP_UP_TIMEOUT_MS = 130_000;
 
 function messageOf(error, timedOut) {
@@ -49,6 +48,10 @@ function messageOf(error, timedOut) {
  * A result shaped like the page's state replaces it. `onError(error)` may
  * return true to say it showed the failure itself; otherwise the page shows
  * it with a "Try again" that repeats the same call.
+ *
+ * `adopt(state)` takes a state another route answered with (Connectivity's
+ * answer for new devices); a read that started before it can no longer
+ * replace it.
  */
 export function useTailscaleAdmin() {
   const [state, setState] = useState(null);
@@ -56,6 +59,8 @@ export function useTailscaleAdmin() {
   const [busy, setBusy] = useState("");
   const active = useRef(null);
   const mounted = useRef(false);
+  // Bumped by `adopt`: a read that started before then answers with what it replaced.
+  const adopted = useRef(0);
 
   const run = async (operation, call, options = {}) => {
     if (!mounted.current) return undefined;
@@ -63,7 +68,7 @@ export function useTailscaleAdmin() {
     if (!operation && active.current) return undefined;
     active.current?.controller.abort();
     const controller = new AbortController();
-    const attempt = { controller, operation, timedOut: false };
+    const attempt = { controller, operation, timedOut: false, adopted: adopted.current };
     active.current = attempt;
     setBusy(operation || "refresh");
     if (operation) setError(null);
@@ -75,7 +80,8 @@ export function useTailscaleAdmin() {
       const result = await call(controller.signal);
       if (controller.signal.aborted) throw new Error("aborted");
       if (!mounted.current || active.current !== attempt) return undefined;
-      if (result && typeof result === "object" && "connection" in result) setState(result);
+      const current = operation || attempt.adopted === adopted.current;
+      if (current && result && typeof result === "object" && "connection" in result) setState(result);
       // A read that succeeds clears an earlier failed read, never a failed change.
       if (!operation) setError((current) => (current && !current.operation ? null : current));
       return result;
@@ -100,6 +106,11 @@ export function useTailscaleAdmin() {
   };
 
   const refresh = () => run("", getTailscale);
+  const adopt = (next) => {
+    if (!mounted.current) return;
+    adopted.current += 1;
+    setState(next);
+  };
 
   useEffect(() => {
     mounted.current = true;
@@ -112,5 +123,5 @@ export function useTailscaleAdmin() {
   }, []);
   useVisiblePoll(() => void refresh(), tailscalePollInterval(state));
 
-  return { state, error, busy, run, refresh };
+  return { state, error, busy, run, refresh, adopt };
 }

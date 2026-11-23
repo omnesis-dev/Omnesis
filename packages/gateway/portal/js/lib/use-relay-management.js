@@ -11,8 +11,6 @@ import {
 } from "./cloud-relay-api.js";
 
 /** While a connect is under way the page follows it closely; otherwise a slow poll is enough. */
-// An operation that may ask for the passkey first waits for the person, not only for the network.
-const STEP_UP_OPERATIONS = new Set(["enrollment"]);
 const IN_PROGRESS = ["waiting", "registering", "linking"];
 export function relayPollInterval(status) {
   return IN_PROGRESS.includes(status?.connect?.state) ? 2000 : 5000;
@@ -23,6 +21,8 @@ const NO_ERROR = Object.freeze({ text: "", code: "", operation: false });
 /**
  * One request at a time; a mutation invalidates any older status read.
  * `run` resolves to the operation's result, or undefined when it failed or was superseded.
+ * `adopt(status)` takes a status another route answered with (Connectivity's answer for new
+ * devices); a read that started before it can no longer replace it.
  *
  * An invite the gateway refused stays said until the next operation or `clearError`: the page's
  * own status reads, every few seconds, never take it away. Any other failure is said only until a
@@ -36,20 +36,19 @@ export function useRelayManagement() {
   const [busy, setBusy] = useState("");
   const active = useRef(null);
   const mounted = useRef(false);
+  // Bumped by `adopt`: a read that started before then answers with what it replaced.
+  const adopted = useRef(0);
   const run = async (operation = "", input = {}, method = "POST", options) => {
     if (!mounted.current) return undefined;
     if (operation && active.current?.operation) return undefined;
     if (!operation && active.current) return undefined;
     active.current?.controller.abort();
     const controller = new AbortController();
-    const attempt = { controller, operation };
+    const attempt = { controller, operation, adopted: adopted.current };
     active.current = attempt;
     setBusy(operation || "refresh");
     setError((current) => (operation || !current.operation ? NO_ERROR : current));
-    const timeout = setTimeout(
-      () => controller.abort(),
-      STEP_UP_OPERATIONS.has(operation) ? 130_000 : 10_000,
-    );
+    const timeout = setTimeout(() => controller.abort(), 10_000);
     try {
       // The account page and Connectivity's account step show how to sign up; a plain status
       // read here asks for that too.
@@ -70,7 +69,7 @@ export function useRelayManagement() {
         window.location.assign(
           accountAuthorizationUrl(result.authorizeUrl, status?.config?.relayUrl),
         );
-      else setStatus(result);
+      else if (operation || attempt.adopted === adopted.current) setStatus(result);
       return result;
     } catch (error) {
       if (mounted.current && active.current === attempt)
@@ -120,7 +119,12 @@ export function useRelayManagement() {
     return () => clearInterval(timer);
   }, [interval, following]);
   const clearError = () => setError(NO_ERROR);
-  return { status, error: error.text, errorCode: error.code, clearError, busy, run, version };
+  const adopt = (next) => {
+    if (!mounted.current) return;
+    adopted.current += 1;
+    setStatus(next);
+  };
+  return { status, error: error.text, errorCode: error.code, clearError, busy, run, adopt, version };
 }
 
 /** How long one account refresh may take, and the least time between two the page starts. */
