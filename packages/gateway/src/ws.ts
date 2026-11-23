@@ -77,6 +77,15 @@ export interface WsLiveness {
 
 interface ConnectionState {
   authenticated: boolean;
+  /**
+   * The hello has been acknowledged and the connect hooks have run, so the
+   * device holds its connect-time state (a collector's `sources.snapshot` is
+   * already on the wire). Only such a socket counts as connected and takes
+   * commands: one dispatched earlier would reach the device ahead of that
+   * state, and a snapshot computed before the command's effect would then
+   * arrive after it.
+   */
+  ready: boolean;
   deviceId: DeviceId | null;
   deviceKind: DeviceKind | null;
   scopes: Scope[];
@@ -367,6 +376,7 @@ export class DeviceWsServer {
 
     this.connections.set(ws, {
       authenticated: false,
+      ready: false,
       deviceId: null,
       deviceKind: null,
       scopes: [],
@@ -622,14 +632,14 @@ export class DeviceWsServer {
     timeoutMs?: number,
     requiredScope?: Scope,
   ): Promise<WsResponsePayload<K>> {
-    const sockets = this.byDevice.get(deviceId);
-    if (!sockets || sockets.size === 0) {
+    const sockets = this.readySockets(deviceId);
+    if (sockets.length === 0) {
       return Promise.reject(new Error(`device ${deviceId} not connected`));
     }
     // Pick a connection carrying the required delivery credential. A device
     // can have multiple simultaneous sockets under distinct least-privilege
     // tokens, so choosing an arbitrary one would bypass the receive scope.
-    const ws = [...sockets].find((socket) => {
+    const ws = sockets.find((socket) => {
       if (!requiredScope) return true;
       const state = this.connections.get(socket);
       return !!state && state.scopes.includes(requiredScope);
@@ -666,13 +676,18 @@ export class DeviceWsServer {
 
   /** Is the given device connected, optionally under a token with an exact scope? */
   isConnected(deviceId: DeviceId, requiredScope?: Scope): boolean {
-    const set = this.byDevice.get(deviceId);
-    if (!set || set.size === 0) return false;
-    if (!requiredScope) return true;
-    return [...set].some((socket) => {
+    return this.readySockets(deviceId).some((socket) => {
+      if (!requiredScope) return true;
       const state = this.connections.get(socket);
       return !!state && state.scopes.includes(requiredScope);
     });
+  }
+
+  /** A device's sockets whose handshake has completed; see `ConnectionState.ready`. */
+  private readySockets(deviceId: DeviceId): WsHandle[] {
+    const set = this.byDevice.get(deviceId);
+    if (!set) return [];
+    return [...set].filter((socket) => this.connections.get(socket)?.ready === true);
   }
 
   /**
@@ -869,6 +884,9 @@ export class DeviceWsServer {
       if (this.connections.get(ws) !== state) return;
     }
 
+    // From here to the connect hook below runs without yielding, so no
+    // command can be dispatched to this socket ahead of what that hook sends.
+    state.ready = true;
     this.paths.open(ws, auth.deviceId, state.upgradeAuth?.connectionPath);
     this.sendRaw(
       ws,
