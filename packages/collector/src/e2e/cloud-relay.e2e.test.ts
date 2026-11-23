@@ -644,6 +644,41 @@ describe("native cloud tunnel with real gateway, collector sync engine and CLI",
         "A synthetic note transported through the native cloud tunnel.",
       ])
         expect(ciphertext.includes(Buffer.from(secret))).toBe(false);
+
+      // The owner turns MCP off on the relay address: the connected agent is told why and
+      // reaches no tool, while to anyone else the address still has no MCP endpoint.
+      const setRelayMcp = (relay: "off" | "public") =>
+        harness.gatewayJson("/admin/remote-access", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ mcp: { relay } }),
+        });
+      await setRelayMcp("off");
+      const refused = await authorized.client.callTool({
+        name: "fetch_many",
+        arguments: { documents: [{ documentId: allowedDocument.id }] },
+      });
+      expect(refused.isError).toBe(true);
+      expect(JSON.stringify(refused.content)).toContain(
+        "MCP is turned off for this address in the gateway's settings (Settings → Connectivity → MCP server).",
+      );
+      expect(JSON.stringify(refused)).not.toContain("A synthetic note");
+      await expect(authorized.client.listTools()).rejects.toThrow(/MCP is turned off/u);
+      const stranger = await fetch(`${publicOrigin}/mcp`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+        },
+        body: "{}",
+      });
+      expect(stranger.status).toBe(404);
+      expect(await stranger.text()).not.toContain("turned off");
+      await setRelayMcp("public");
+      expect((await authorized.client.listTools()).tools.map((tool) => tool.name)).toContain(
+        "fetch_many",
+      );
+
       await revokeAccess(publicOrigin, authorized.portal, {
         kind: "credential",
         id: authorized.credentialId,

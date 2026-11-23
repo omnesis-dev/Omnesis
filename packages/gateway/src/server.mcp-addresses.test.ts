@@ -22,6 +22,7 @@ import { ownedProcessCleanupReceipt } from "@omnesis/core";
 import { SCOPE_ADMIN, SCOPE_READ } from "@omnesis/types";
 import { authorizeInteractiveAccess } from "./access/test-utils.js";
 import { MCP_ACCESS_SCOPE } from "./access/types.js";
+import { MCP_ADDRESS_OFF_MESSAGE } from "./mcp/address-off-server.js";
 import { AnalyticsDb } from "./analytics-db.js";
 import { createDevice } from "./data/repositories/DeviceRepository.js";
 import { createToken } from "./data/repositories/TokenRepository.js";
@@ -200,6 +201,33 @@ async function listTools(
   origin: string,
   token: string,
 ): Promise<string[]> {
+  const client = await connect(send, origin, token);
+  return (await client.listTools()).tools.map((tool) => tool.name);
+}
+
+/**
+ * What an agent connected at `origin` hears there once the owner turned MCP off: why, from
+ * a server whose tool calls reach no tool.
+ */
+async function expectToldMcpIsOff(
+  send: ReturnType<typeof gateway>["send"],
+  origin: string,
+  token: string,
+): Promise<void> {
+  const client = await connect(send, origin, token);
+  expect(client.getInstructions()).toBe(MCP_ADDRESS_OFF_MESSAGE);
+  expect(await client.callTool({ name: "run_sql", arguments: { sql: "SELECT 1" } })).toMatchObject({
+    isError: true,
+    content: [{ type: "text", text: MCP_ADDRESS_OFF_MESSAGE }],
+  });
+  await expect(client.listTools()).rejects.toThrow(MCP_ADDRESS_OFF_MESSAGE);
+}
+
+async function connect(
+  send: ReturnType<typeof gateway>["send"],
+  origin: string,
+  token: string,
+): Promise<Client> {
   const transport = new StreamableHTTPClientTransport(new URL(`${origin}/mcp`), {
     authProvider: { token: async () => token },
     fetch: async (input, init) =>
@@ -215,7 +243,7 @@ async function listTools(
   );
   closeables.push(transport, client);
   await client.connect(transport);
-  return (await client.listTools()).tools.map((tool) => tool.name);
+  return client;
 }
 
 const initialize = (token: string) => ({
@@ -302,7 +330,12 @@ describe("an address the owner turned MCP off on", () => {
     expect(off.status).toBe(200);
     expect(reachById(await off.json())).toMatchObject({ domain: "off", relay: "public" });
 
-    expect((await send(`${DOMAIN}/mcp`, initialize(domainToken))).status).toBe(404);
+    // The agent connected there is told why; anyone else finds no MCP endpoint, even with a
+    // token the gateway issued for another of its addresses.
+    await expectToldMcpIsOff(send, DOMAIN, domainToken);
+    for (const token of ["no-token", relayToken])
+      expect((await send(`${DOMAIN}/mcp`, initialize(token))).status).toBe(404);
+    expect((await send(`${DOMAIN}/mcp`, { method: "POST" })).status).toBe(404);
     for (const path of [
       "/.well-known/oauth-protected-resource/mcp",
       "/.well-known/oauth-authorization-server",
@@ -348,7 +381,8 @@ describe("an address the owner turned MCP off on", () => {
     const { send, adminRequest } = gateway();
     const token = connectedAgent(TAILNET);
     expect((await adminRequest("PATCH", { mcp: { tailnet: "off" } })).status).toBe(200);
-    expect((await send(`${TAILNET}/mcp`, initialize(token), true)).status).toBe(404);
+    expect((await send(`${TAILNET}/mcp`, initialize("no-token"), true)).status).toBe(404);
+    await expectToldMcpIsOff(send, TAILNET, token);
     expect((await send(`${TAILNET}/health`, {}, true)).status).toBe(200);
     expect((await listedResources(send)).resources).toEqual([
       `${DOMAIN}/mcp`,
@@ -361,7 +395,8 @@ describe("an address the owner turned MCP off on", () => {
     const { send, adminRequest } = gateway();
     const token = connectedAgent(HOST);
     expect((await adminRequest("PATCH", { mcp: { host: "off" } })).status).toBe(200);
-    expect((await send(`${HOST}/mcp`, initialize(token))).status).toBe(404);
+    expect((await send(`${HOST}/mcp`, initialize("no-token"))).status).toBe(404);
+    await expectToldMcpIsOff(send, HOST, token);
     expect((await send(`${HOST}/.well-known/oauth-protected-resource/mcp`)).status).toBe(404);
     expect((await send(`${HOST}/health`)).status).toBe(200);
     expect((await listedResources(send)).resources).toEqual([
@@ -371,7 +406,8 @@ describe("an address the owner turned MCP off on", () => {
     ]);
     // A gateway started again on the same file refuses from its first request.
     const restarted = gateway();
-    expect((await restarted.send(`${HOST}/mcp`, initialize(token))).status).toBe(404);
+    expect((await restarted.send(`${HOST}/mcp`, initialize("no-token"))).status).toBe(404);
+    await expectToldMcpIsOff(restarted.send, HOST, token);
     expect((await restarted.adminRequest("PATCH", { mcp: { host: "private" } })).status).toBe(200);
     expect(await listTools(restarted.send, HOST, token)).toContain("run_sql");
   });

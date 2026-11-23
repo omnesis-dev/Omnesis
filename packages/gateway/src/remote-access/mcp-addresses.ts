@@ -6,7 +6,10 @@
  * owner turns MCP off on an address, or keeps it to their Tailscale network,
  * and from then on a request reaching the gateway that way finds no MCP
  * endpoint and none of the OAuth routes an MCP client signs in through: they
- * answer 404, as on a gateway without them. The portal, device APIs and
+ * answer 404, as on a gateway without them. Only an agent the owner connected
+ * at that address, calling the endpoint with its token for the address's own
+ * resource (`resourceAt`), is told instead that MCP is off there, and still
+ * reaches no tool (http/mcp-address-gate.ts). The portal, device APIs and
  * everything else on that address are unaffected, except through Funnel on
  * this computer, whose pages and API have their own choice (host-access.ts).
  *
@@ -427,6 +430,33 @@ export class McpAddresses {
     if (!isMcpClientPath(request.path)) return null;
     await this.settle();
     return this.addressesOf(request).find((id) => !this.answers(id)) ?? null;
+  }
+
+  /**
+   * The MCP resource an agent signs in to at an address away from home, `<origin>/mcp`,
+   * once the address is known. An agent the owner connected at an address holds a token
+   * for exactly this resource. Null for the home network, which `refusal` never refuses.
+   */
+  resourceAt(id: McpAddressId): string | null {
+    const origin = this.originAt(id);
+    return origin ? `${origin}/mcp` : null;
+  }
+
+  private originAt(id: McpAddressId): string | null {
+    switch (id) {
+      case "home":
+        return null;
+      case "relay":
+        return originOf(this.options.relayOrigin?.());
+      case "tailnet":
+        return originOf(this.options.tailscale?.tailnetOrigin());
+      case "host":
+        return originOf(this.hostLookup?.url);
+      case "domain":
+        return originOf(this.options.publicBaseUrl());
+      default:
+        return assertNever(id);
+    }
   }
 
   /**

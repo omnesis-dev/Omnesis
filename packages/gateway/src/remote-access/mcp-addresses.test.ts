@@ -861,3 +861,31 @@ describe("the home network", () => {
     expect(origins).toHaveBeenCalledTimes(2);
   });
 });
+
+describe("each address's own MCP resource", () => {
+  test("is the address's origin and /mcp, once the address is known", async () => {
+    const { policy, host } = addresses();
+    // This computer's name is not known until Tailscale there has been asked.
+    expect(policy.resourceAt("host")).toBeNull();
+    await policy.settle();
+    expect(policy.resourceAt("relay")).toBe(`${RELAY}/mcp`);
+    expect(policy.resourceAt("tailnet")).toBe(`${TAILNET}/mcp`);
+    expect(policy.resourceAt("host")).toBe(`${HOST}/mcp`);
+    expect(policy.resourceAt("domain")).toBe(`${DOMAIN}/mcp`);
+    expect(policy.resourceAt("home")).toBeNull();
+    host.state.port = 8443;
+    await policy.list();
+    expect(policy.resourceAt("host")).toBe(`${HOST}:8443/mcp`);
+  });
+
+  test("is none for an address the gateway does not have", () => {
+    const { policy } = addresses({
+      relayOrigin: () => undefined,
+      publicBaseUrl: () => undefined,
+      tailscale: undefined,
+      host: undefined,
+    });
+    for (const id of ["relay", "tailnet", "host", "domain"] as const)
+      expect(policy.resourceAt(id)).toBeNull();
+  });
+});
