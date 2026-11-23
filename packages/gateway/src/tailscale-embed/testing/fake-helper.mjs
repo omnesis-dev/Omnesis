@@ -16,7 +16,10 @@
  *   certificate-pending  signed in, Tailscale still issuing the certificate
  *   needs-approval    signed in, waiting for a tailnet admin to approve
  *   public-needs-enable  like connected, but the public address needs allowing
- * The public address follows the gateway's configure commands.
+ *   name-taken        connected, but another machine holds the name it asks for,
+ *                     so Tailscale adds a suffix to it
+ * The public address follows the gateway's configure commands, and the name
+ * its rename commands.
  */
 
 import { readFileSync } from "node:fs";
@@ -38,17 +41,20 @@ function scenarioFile() {
   }
 }
 const scenario = scenarioFile() || process.env.OMNESIS_FAKE_TAILNET_SCENARIO || "connected";
-const hostname = flag("hostname") ?? "omnesis";
-const dnsName = `${hostname}.example-net.ts.net`;
+let asked = flag("hostname") ?? "omnesis";
+const taken = new Set(scenario === "name-taken" ? [asked] : []);
+const deviceName = () => (taken.has(asked) ? `${asked}-1` : asked);
 
 let signedIn = !["needs-sign-in"].includes(scenario);
 let loginCount = 0;
 let wantPublic = false;
 
 function status() {
+  const name = deviceName();
+  const dnsName = `${name}.example-net.ts.net`;
   const base = {
     type: "status",
-    protocol: Number(process.env.OMNESIS_FAKE_TAILNET_PROTOCOL ?? 2),
+    protocol: Number(process.env.OMNESIS_FAKE_TAILNET_PROTOCOL ?? 3),
     certificate: { source: "gateway", reason: "pending" },
     public: { state: "off" },
   };
@@ -82,7 +88,13 @@ function status() {
   return {
     ...base,
     backend: "running",
-    node: { dnsName, hostName: hostname, tailnet: "example-net.ts.net", ips: ["100.64.0.7"] },
+    node: {
+      dnsName,
+      hostName: name,
+      askedName: asked,
+      tailnet: "example-net.ts.net",
+      ips: ["100.64.0.7"],
+    },
     owner: { id: "7", login: "maya@example.com", displayName: "Maya Reeves" },
     certificate,
     public: pub,
@@ -105,6 +117,7 @@ lines.on("line", (line) => {
     loginCount += 1;
     if (loginCount >= 2) signedIn = true;
   }
+  if (command.type === "rename") asked = command.hostname;
   if (command.type === "logout") {
     signedIn = false;
     loginCount = 0;

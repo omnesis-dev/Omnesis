@@ -87,6 +87,23 @@ describe("describeState", () => {
     ]);
   });
 
+  test("a name other than the chosen one says why, and what to do", () => {
+    const named = (name: string, naming: "chosen" | "taken" | "renamed" | "pending") =>
+      describeState({
+        ...base,
+        url: `https://${name}.example-net.ts.net`,
+        node: { dnsName: `${name}.example-net.ts.net`, name, naming, ips: ["100.64.0.1"] },
+      })[1];
+    expect(named("omnesis", "chosen")).toBe("Account: Maya Reeves (maya@example.com)");
+    expect(named("omnesis-1", "taken")).toBe(
+      "Name: Tailscale named it omnesis-1 because omnesis is already used on your Tailscale network. Remove the other machine named omnesis at https://login.tailscale.com/admin/machines, then run `omnesis tailscale name omnesis`.",
+    );
+    expect(named("study-box", "renamed")).toMatch(
+      /^Name: study-box, given in the Tailscale admin console/,
+    );
+    expect(named("omnesis-1", "pending")).toBe("Name: renaming to omnesis…");
+  });
+
   test("sign-in, approval, missing HTTPS certificates and a public address that needs allowing", () => {
     expect(
       describeState({

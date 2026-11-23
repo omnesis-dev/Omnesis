@@ -20069,6 +20069,8 @@ summary.decision-card-head {
 .tailscale-name-row { display: flex; gap: 8px; }
 .tailscale-input[aria-invalid="true"] { border-color: var(--danger); }
 .tailscale-field-error { margin-top: 6px !important; font-size: 12px; color: var(--danger); }
+.tailscale-name-note { max-width: 62ch; margin-top: 8px !important; padding: 2px 0 2px 12px; border-left: 2px solid var(--warning); font-size: 13px; line-height: 1.55; color: var(--text-primary); }
+.tailscale-row-body > .tailscale-waiting { margin-top: 8px; }
 .tailscale-field > .tailscale-hint { margin-top: 6px; }
 .tailscale-device .tailscale-device-actions { margin-top: 16px; margin-left: 170px; }
 

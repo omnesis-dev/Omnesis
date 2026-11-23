@@ -393,16 +393,57 @@ export function turnOffConfirm(state) {
 }
 
 /**
+ * The device's name as Tailscale shows it once connected, and otherwise the
+ * name it will ask for. Saving a name asks Tailscale for it, so the field holds
+ * the name a rename starts from.
+ */
+function shownDeviceName(state, phase) {
+  return (phase === "connected" && state.node?.name) || state.deviceName;
+}
+
+function AdminConsoleLink() {
+  return html`<a href=${TAILSCALE_ADMIN.machines} target="_blank" rel="noopener noreferrer"
+    >Tailscale admin console</a
+  >`;
+}
+
+/** Why the connected device carries another name than the one chosen for it, while it does. */
+function NameNote({ state }) {
+  const name = state.node?.name;
+  const chosen = state.deviceName;
+  switch (state.node?.naming) {
+    case "taken":
+      return html`<p class="tailscale-name-note" role="status">
+        Tailscale named it <strong>${name}</strong> because <strong>${chosen}</strong> is already
+        used on your Tailscale network. Remove the other machine named ${chosen} in the
+        ${" "}<${AdminConsoleLink} />, then rename this one to ${chosen} here.
+      </p>`;
+    case "renamed":
+      return html`<p class="tailscale-name-note" role="status">
+        It was renamed in the <${AdminConsoleLink} />, and Tailscale keeps that name whatever is set here.
+        Rename it there.
+      </p>`;
+    case "pending":
+      return html`<${Waiting} hint>Renaming to <strong>${chosen}</strong>…<//>`;
+    default:
+      return null;
+  }
+}
+
+/**
  * The device's own settings at the foot of the main card: its name on the
  * tailnet, and signing it out or turning it off, each confirmed first.
  */
 function DeviceSettings({ state, phase, busy, run }) {
-  const [draft, setDraft] = useState(state.deviceName);
+  const current = shownDeviceName(state, phase);
+  const [draft, setDraft] = useState(current);
   const [nameError, setNameError] = useState("");
   const [confirming, setConfirming] = useState("");
-  useEffect(() => setDraft(state.deviceName), [state.deviceName]);
+  useEffect(() => setDraft(current), [current]);
   const disabled = Boolean(busy) && busy !== "refresh";
   const trimmed = draft.trim();
+  // A name given in the admin console is one Tailscale keeps; only a rename there changes it.
+  const renamedInTailscale = phase === "connected" && state.node?.naming === "renamed";
   const save = async (event) => {
     event.preventDefault();
     const problem = nameProblem(trimmed);
@@ -424,7 +465,15 @@ function DeviceSettings({ state, phase, busy, run }) {
     if (which === "disable") await run("disable", (signal) => setTailscaleEnabled(false, signal));
   };
   return html`<div class="tailscale-device">
-    <form class="tailscale-row tailscale-device-name" onSubmit=${save}>
+    ${renamedInTailscale
+      ? html`<div class="tailscale-row tailscale-device-name">
+          <div class="tailscale-row-label">Device name</div>
+          <div class="tailscale-row-body">
+            <p class="tailscale-value">${current}</p>
+            <${NameNote} state=${state} />
+          </div>
+        </div>`
+      : html`<form class="tailscale-row tailscale-device-name" onSubmit=${save}>
       <label class="tailscale-row-label" for="tailscale-device-name">Device name</label>
       <div class="tailscale-row-body">
       <div class="tailscale-name-row">
@@ -446,18 +495,19 @@ function DeviceSettings({ state, phase, busy, run }) {
         <button
           type="submit"
           class="btn-secondary"
-          disabled=${disabled || trimmed === state.deviceName}
+          disabled=${disabled || trimmed === current}
         >
           ${busy === "device-name" ? "Saving…" : "Save"}
         </button>
       </div>
       ${nameError && html`<p class="tailscale-field-error" role="alert">${nameError}</p>`}
+      ${phase === "connected" && html`<${NameNote} state=${state} />`}
       <p class="tailscale-hint" id="tailscale-device-name-hint">
         Your devices see the gateway under this name on Tailscale, and it is part of its address.
         Changing it changes the address.
       </p>
       </div>
-    </form>
+    </form>`}
     ${(signedIn || state.enabled) &&
     html`<div class="tailscale-actions tailscale-device-actions">
       ${signedIn &&

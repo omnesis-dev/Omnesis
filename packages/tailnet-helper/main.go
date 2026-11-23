@@ -126,6 +126,12 @@ func isolateFromEnvironment() {
 			os.Unsetenv(name)
 		}
 	}
+	// Tailscale keeps the last network map on disk when the coordination
+	// server allows it, and starts from it before the server has answered.
+	// For this device that would bring it up under its old name and address
+	// even when the owner has since deleted it in the admin console, so it
+	// always starts from what the server says now.
+	os.Setenv("TS_USE_CACHED_NETMAP", "false")
 	// Tailscale clients upload their logs to Tailscale by default. This device
 	// carries the owner's private traffic, so its logs never leave the machine.
 	envknob.SetNoLogsNoSupport()
@@ -138,6 +144,7 @@ type commander interface {
 	Configure(protocol.PublicConfig)
 	Login(context.Context) error
 	Logout(context.Context) error
+	Rename(context.Context, string) error
 }
 
 // commandScanner bounds every private input frame.
@@ -190,6 +197,10 @@ func readCommandScanner(ctx context.Context, sc *bufio.Scanner, n commander, log
 		case protocol.CommandLogout:
 			if err := n.Logout(ctx); err != nil {
 				logger.Printf("omnesis-tailnet: sign-out: %v", err)
+			}
+		case protocol.CommandRename:
+			if err := n.Rename(ctx, cmd.Hostname); err != nil {
+				logger.Printf("omnesis-tailnet: rename: %v", err)
 			}
 		}
 	}

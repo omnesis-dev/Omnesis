@@ -659,6 +659,16 @@
           also changes the device name, which is part of the address, signs the device out and turns
           it off.
         </p>
+        <p>
+          The page shows the name Tailscale gave the device. When another machine on your tailnet
+          already has the name you chose, Tailscale adds a number, such as
+          <code>omnesis-1</code>, and the page says so; once you remove that machine in the
+          Tailscale admin console, save the name again (or run
+          <code>omnesis tailscale name omnesis</code>) to take it. A name given to the device in the
+          admin console stays until it is changed there. The gateway shows an address only once
+          Tailscale has confirmed the device: if the device was deleted in the admin console or its
+          key expired, turning it on asks you to sign in again.
+        </p>
 
         <h3 id="tailscale-on-this-computer">Tailscale on this computer</h3>
         <p>

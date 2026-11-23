@@ -11,7 +11,7 @@
 import { z } from "zod";
 
 /** The protocol revision this gateway speaks; a helper reporting another is stopped. */
-export const HELPER_PROTOCOL_VERSION = 2;
+export const HELPER_PROTOCOL_VERSION = 3;
 
 export const helperBackendSchema = z.enum([
   "starting",
@@ -56,7 +56,14 @@ export const helperStatusSchema = z
     node: z
       .object({
         dnsName: hostnameSchema,
+        /** The device's name on the tailnet: the first label of `dnsName`. */
         hostName: z.string().min(1).max(63),
+        /**
+         * The name the device asks for, as the coordination server has it on
+         * record; Tailscale names the device after it unless another device
+         * holds that name or the device was renamed in the admin console.
+         */
+        askedName: z.string().min(1).max(63).optional(),
         tailnet: z.string().max(253).optional(),
         ips: z.array(z.string().max(64)).max(8),
       })
@@ -106,7 +113,9 @@ export type HelperCommand =
   | { type: "configure"; public: { enabled: boolean; paths: readonly string[] } }
   | { type: "gateway-certificate"; certificate: HelperGatewayCertificate }
   | { type: "login" }
-  | { type: "logout" };
+  | { type: "logout" }
+  /** Ask Tailscale for this device name, retrying it when Tailscale suffixed it earlier. */
+  | { type: "rename"; hostname: string };
 
 /** Parse one line from the helper; null for anything that is not a valid event. */
 export function parseHelperEvent(line: string): HelperEvent | null {

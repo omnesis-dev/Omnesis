@@ -55,6 +55,11 @@ func (r *recorder) Logout(context.Context) error {
 	return nil
 }
 
+func (r *recorder) Rename(_ context.Context, hostname string) error {
+	r.calls = append(r.calls, "rename:"+hostname)
+	return nil
+}
+
 func TestReadCommandsAppliesEachLineAndSkipsWhatItCannotParse(t *testing.T) {
 	input := strings.Join([]string{
 		`{"type":"configure","public":{"enabled":true,"paths":["/mcp"]}}`,
@@ -63,11 +68,13 @@ func TestReadCommandsAppliesEachLineAndSkipsWhatItCannotParse(t *testing.T) {
 		`{"type":"reboot"}`,
 		`{"type":"login"}`,
 		`{"type":"logout"}`,
+		`{"type":"rename","hostname":"Not A Name"}`,
+		`{"type":"rename","hostname":"home-box"}`,
 	}, "\n")
 	var logs bytes.Buffer
 	rec := &recorder{fail: true}
 	readCommands(context.Background(), strings.NewReader(input), rec, log.New(&logs, "", 0))
-	want := []string{"configure:/mcp", "login", "logout"}
+	want := []string{"configure:/mcp", "login", "logout", "rename:home-box"}
 	if strings.Join(rec.calls, " ") != strings.Join(want, " ") {
 		t.Fatalf("calls = %v, want %v", rec.calls, want)
 	}
@@ -103,6 +110,9 @@ func TestEnvironmentIsolationIncludesCaseInsensitiveWindowsNames(t *testing.T) {
 	}
 	if os.Getenv("OMNESIS_INVENTED_TEST_VARIABLE") != "keep" {
 		t.Fatal("unrelated environment changed")
+	}
+	if os.Getenv("TS_USE_CACHED_NETMAP") != "false" {
+		t.Fatal("the device may start from a network map kept by an earlier run")
 	}
 }
 

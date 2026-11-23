@@ -27,16 +27,21 @@
     },
     {
       "type": "logout"
+    },
+    {
+      "type": "rename",
+      "hostname": "home-box"
     }
   ],
   "events": [
     {
       "type": "status",
-      "protocol": 2,
+      "protocol": 3,
       "backend": "running",
       "node": {
-        "dnsName": "omnesis.example-net.ts.net",
-        "hostName": "omnesis",
+        "dnsName": "omnesis-1.example-net.ts.net",
+        "hostName": "omnesis-1",
+        "askedName": "omnesis",
         "tailnet": "example-net.ts.net",
         "ips": ["100.64.0.1", "fd7a:115c:a1e0::1"]
       },
@@ -50,12 +55,12 @@
       },
       "public": {
         "state": "on",
-        "url": "https://omnesis.example-net.ts.net"
+        "url": "https://omnesis-1.example-net.ts.net"
       }
     },
     {
       "type": "status",
-      "protocol": 2,
+      "protocol": 3,
       "backend": "running",
       "node": {
         "dnsName": "omnesis.example-net.ts.net",
@@ -74,7 +79,7 @@
     },
     {
       "type": "status",
-      "protocol": 2,
+      "protocol": 3,
       "backend": "needs-login",
       "loginUrl": "https://login.tailscale.com/a/0123456789abcd",
       "certificate": {

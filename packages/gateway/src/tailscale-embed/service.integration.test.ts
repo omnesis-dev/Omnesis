@@ -243,6 +243,62 @@ describe("owner controls", () => {
   });
 });
 
+describe("the device's name", () => {
+  test("is the one Tailscale gives it, which says when another device has the chosen one", async () => {
+    await service.shutdown();
+    await boot("name-taken");
+    await adminCall("POST", "/admin/tailscale/enable", { enabled: true });
+    const on = await until((s) => s.connection === "connected");
+    expect(on).toMatchObject({
+      deviceName: "omnesis",
+      url: "https://omnesis-1.example-net.ts.net",
+      node: { dnsName: "omnesis-1.example-net.ts.net", name: "omnesis-1", naming: "taken" },
+    });
+  });
+
+  test("renames the running device without restarting it", async () => {
+    await adminCall("POST", "/admin/tailscale/enable", { enabled: true });
+    await until((s) => s.connection === "connected");
+    const started = vi.spyOn(
+      (service as unknown as { supervisor: HelperSupervisor }).supervisor,
+      "start",
+    );
+    expect(
+      (await adminCall("PATCH", "/admin/tailscale/settings", { deviceName: "Home-Box" })).status,
+    ).toBe(200);
+    const renamed = await until((s) => s.node?.name === "home-box");
+    expect(renamed).toMatchObject({
+      deviceName: "home-box",
+      url: "https://home-box.example-net.ts.net",
+      node: { naming: "chosen" },
+    });
+    expect(started).not.toHaveBeenCalled();
+  });
+
+  test("saving the name it already has asks Tailscale for it again", async () => {
+    await adminCall("POST", "/admin/tailscale/enable", { enabled: true });
+    await until((s) => s.connection === "connected");
+    const sent = vi.spyOn(
+      (service as unknown as { supervisor: HelperSupervisor }).supervisor,
+      "send",
+    );
+    await adminCall("PATCH", "/admin/tailscale/settings", { deviceName: "omnesis" });
+    expect(sent).toHaveBeenCalledWith({ type: "rename", hostname: "omnesis" });
+    sent.mockClear();
+    await adminCall("PATCH", "/admin/tailscale/settings", { joinPolicy: "automatic" });
+    expect(sent).not.toHaveBeenCalledWith(expect.objectContaining({ type: "rename" }));
+  });
+
+  test("a name saved while the device is off is the one it asks for when turned on", async () => {
+    await adminCall("PATCH", "/admin/tailscale/settings", { deviceName: "home-box" });
+    await adminCall("POST", "/admin/tailscale/enable", { enabled: true });
+    expect(await until((s) => s.connection === "connected")).toMatchObject({
+      url: "https://home-box.example-net.ts.net",
+      node: { name: "home-box", naming: "chosen" },
+    });
+  });
+});
+
 describe("collectors joining through Tailscale", () => {
   beforeEach(async () => {
     await adminCall("POST", "/admin/tailscale/enable", { enabled: true });
