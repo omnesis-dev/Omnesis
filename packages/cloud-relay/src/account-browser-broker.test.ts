@@ -411,8 +411,12 @@ test("bounded capacity, deadlines and failed signers remain recoverable", async 
 
 test("expired owner sessions and requests outside their authorized time window cannot start a handoff", () => {
   const f = fixture(),
-    value = f.make(),
-    now = Math.floor(Date.now() / 1000);
+    value = f.make();
+  // The window checks compare against the broker's own reading of the clock, so
+  // the clock is held still: otherwise a second that ticks over between this
+  // reading and the broker's moves `now + 31` back inside the 30 s allowance.
+  vi.useFakeTimers({ toFake: ["Date"], now: Date.now() });
+  const now = Math.floor(Date.now() / 1000);
   expect(() =>
     f.broker.start({ ...f.authorizedOwner(), sessionExpiresAt: now }, f.signed(value.unsigned)),
   ).toThrow("session expired");
