@@ -179,6 +179,10 @@ websockets = types.ModuleType("websockets")
 websockets.connect = lambda url, **kwargs: LoopbackWebSocket(url, **kwargs)
 sys.modules["websockets"] = websockets
 
+# The gateway test waits for this probe to exit for this long plus a margin;
+# keep the two in step (packages/gateway/src/ws.test.ts).
+ANSWER_THREAD_HANG_SECONDS = 10
+
 
 async def main():
     adapter_path = Path(os.environ["OMNESIS_HERMES_ADAPTER_PATH"])
@@ -265,11 +269,22 @@ async def main():
         answer_thread = threading.Thread(
             target=lambda: answer_result.append(
                 instance.answer({"question": "probe question"}, "session_probe")
-            )
+            ),
+            # A hung answer must not hold the probe open past its own error.
+            daemon=True,
         )
         answer_thread.start()
-        answer_thread.join(timeout=2)
-        if answer_thread.is_alive() or not answer_result:
+        # A hang guard, not a speed bound. On Windows the answer opens its own
+        # state connection, and opening one first runs the private-file bridge:
+        # a Node process whose native file worker secures the state directory's
+        # access rules. That took 1.2 to 3.2 s on a hosted runner, slowest the
+        # first time.
+        answer_thread.join(timeout=ANSWER_THREAD_HANG_SECONDS)
+        if answer_thread.is_alive():
+            raise RuntimeError(
+                f"worker-thread Omnesis answer did not finish within {ANSWER_THREAD_HANG_SECONDS} s"
+            )
+        if not answer_result:
             raise RuntimeError("worker-thread Omnesis answer failed")
         parsed_answer = json.loads(answer_result[0])
         if parsed_answer.get("taskId") != "task_probe_answer" or parsed_answer.get("status") != "released":
