@@ -3,7 +3,7 @@
 
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { dirname, join, relative, resolve } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "vitest";
 import { GO_CACHE_DIR, OUTPUT_DIR, helperProgram } from "./outputs.mjs";
@@ -43,10 +43,13 @@ describe("the Tailscale helper's build outputs", () => {
       join(root, "packages/gateway/src/tailscale-embed/helper-binary.ts"),
       "utf8",
     );
+    // The source names the program in a URL, which always uses "/".
     const fromGatewaySrc = relative(
       join(root, "packages/gateway/src/tailscale-embed"),
       join(root, helperProgram(false)),
-    );
+    )
+      .split(sep)
+      .join("/");
     expect(source).toContain(`\`${fromGatewaySrc}\${`);
   });
 });
