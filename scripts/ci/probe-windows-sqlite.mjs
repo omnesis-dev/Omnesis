@@ -24,9 +24,16 @@ for (const [index, root] of roots.entries()) {
     assert.deepEqual(db.prepare("SELECT body FROM notes").all(), [
       { body: "invented durable note" },
     ]);
+    const published = join(root, "prebuilds", `win32-${process.arch}.node`);
+    // The plain binding prefers a local build; the cipher prefers prebuilds.
+    // Either default loader must use the exact bytes this preparation published.
+    const loaded = [published, join(root, "build/Release/better_sqlite3.node")].find(
+      (path) => existsSync(path) && require.cache[require.resolve(path)],
+    );
+    assert.ok(loaded, "the default package must load a verified native binding");
     assert.ok(
-      require.cache[require.resolve(join(root, "prebuilds", `win32-${process.arch}.node`))],
-      "the default package must load the newly published prebuilt path",
+      readFileSync(loaded).equals(readFileSync(published)),
+      "the default native binding must match the newly published build",
     );
   } finally {
     db.close();
