@@ -74,6 +74,7 @@ import { MemberPickerModal } from "../components/member-picker-modal.js";
 import { joinCandidates } from "../lib/join-candidates.js";
 import { ImportHistoryModal } from "../components/import-history-modal.js";
 import { useVisiblePoll } from "../lib/use-visible-poll.js";
+import { sourcesRefreshIntervalMs } from "../lib/sources-poll.js";
 import { KindIcon } from "../lib/device-kind-icon.js";
 import { SourceNoticeIcons, noticesForDevice } from "../components/source-notices.js";
 import {
@@ -85,7 +86,6 @@ import {
   sourceStateLabel,
 } from "../lib/source-grouping.js";
 
-const REFRESH_MS = 2000;
 // How long the "Sync sent to …" note stays on a row after a manual sync.
 const SYNC_NOTE_MS = 6000;
 
@@ -792,7 +792,7 @@ export function SourcesView({ demo = false } = {}) {
       for (const t of timers.values()) clearTimeout(t);
     };
   }, []);
-  useVisiblePoll(refresh, REFRESH_MS);
+  useVisiblePoll(refresh, sourcesRefreshIntervalMs({ sources, indexStats, busy }));
 
   const deviceById = new Map(devices.map((d) => [d.id, d]));
 
