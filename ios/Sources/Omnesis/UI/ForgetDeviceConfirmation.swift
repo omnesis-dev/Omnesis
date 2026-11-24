@@ -11,12 +11,14 @@ struct ForgetDeviceConfirmation: View {
     let device: DeviceRecord
     let onRefresh: () async throws -> DeviceForgetImpact
     let onForget: (DeviceForgetData, String) async throws -> Void
+    @Environment(AppStore.self) private var store
     @Environment(\.dismiss) private var dismiss
     @State private var impact: DeviceForgetImpact
     @State private var data = DeviceForgetData.keep
     @State private var busy = false
     @State private var error: String?
     @State private var needsRefresh = false
+    @State private var contentHeight: CGFloat = 560
 
     init(
         device: DeviceRecord,
@@ -33,55 +35,128 @@ struct ForgetDeviceConfirmation: View {
     }
 
     var body: some View {
-        NavigationStack {
-            Form {
-                Section {
-                    Text("Forget \(device.name) permanently. It will stop syncing and will no longer report device or source errors.")
-                    if impact.hasSources {
-                        Text("\(impact.sources.count) source\(impact.sources.count == 1 ? "" : "s") hosted by this device.")
-                        Picker("Historical data", selection: $data) {
-                            ForEach(DeviceForgetData.allCases, id: \.self) { option in
-                                Text(option.title).tag(option)
-                            }
+        ScrollView {
+            VStack(alignment: .leading, spacing: Theme.Spacing.lg) {
+                Text("Forget \(device.name)?")
+                    .font(.title2.bold())
+                    .foregroundStyle(Theme.textPrimary)
+                    .accessibilityAddTraits(.isHeader)
+                Text("This device will stop syncing and will no longer report device or source errors.")
+                    .foregroundStyle(Theme.textSecondary)
+                if impact.hasSources {
+                    affectedSources
+                    VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+                        Text("What happens to its data?")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(Theme.textPrimary)
+                        VStack(alignment: .leading, spacing: 0) {
+                            choice(.keep)
+                            Divider().background(Theme.borderLight)
+                            choice(.delete)
                         }
-                        .pickerStyle(.inline)
-                        Text(data == .keep
-                            ? "Previously indexed data stays searchable. Sources still used by other devices keep syncing."
-                            :
-                            "Deletes this device’s data where it can be attributed to it. " +
-                            "Other devices’ data, shared data still in use and history kept " +
-                            "from earlier forgotten devices will stay.")
+                        Text("Other devices keep syncing. Their data and history already kept from forgotten devices are preserved.")
                             .font(.footnote)
-                            .foregroundStyle(Theme.textMuted)
+                            .foregroundStyle(Theme.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
                 if let error {
-                    Section { Text(error).foregroundStyle(Theme.danger).accessibilityIdentifier("devices.forget.error") }
+                    Text(error)
+                        .foregroundStyle(Theme.danger)
+                        .accessibilityIdentifier("devices.forget.error")
                 }
-                Section {
-                    Button(role: data == .delete ? .destructive : nil) {
-                        Task { await submit() }
-                    } label: {
-                        HStack {
-                            if busy { ProgressView() }
-                            Text(needsRefresh ? "Review sources again" : data == .delete && impact
-                                .hasSources ? "Forget and delete data" : "Forget device")
-                        }
-                    }
-                    .disabled(busy)
-                    .accessibilityIdentifier("devices.forget.confirm")
-                }
+                actions
             }
-            .navigationTitle("Forget device?")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }.disabled(busy)
-                }
-            }
-            .disabled(busy)
-            .interactiveDismissDisabled(busy)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(Theme.Spacing.lg)
+            .background(GeometryReader { proxy in
+                Color.clear.preference(key: ForgetDeviceHeightKey.self, value: proxy.size.height)
+            })
         }
+        .scrollBounceBehavior(.basedOnSize)
+        .onPreferenceChange(ForgetDeviceHeightKey.self) { contentHeight = $0 }
+        .background(Theme.bgPrimary.ignoresSafeArea())
+        .omnesisColorScheme()
+        .presentationDetents([.height(contentHeight), .large])
+        .presentationDragIndicator(.visible)
+        .interactiveDismissDisabled(busy)
+    }
+
+    private var affectedSources: some View {
+        VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+            Text("Affected sources (\(impact.sources.count))")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Theme.textPrimary)
+            ForEach(impact.sources, id: \.id) { source in
+                HStack(spacing: Theme.Spacing.sm) {
+                    SourceIconView(sourceId: source.id, store: store, size: 22)
+                        .accessibilityHidden(true)
+                    Text(store.sourceLabel(forSourceId: source.id) ?? humanName(for: source.type))
+                        .font(.subheadline)
+                        .foregroundStyle(Theme.textPrimary)
+                    Spacer(minLength: 0)
+                }
+                .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private func choice(_ option: DeviceForgetData) -> some View {
+        let selected = data == option
+        return Button { data = option } label: {
+            HStack(alignment: .top, spacing: Theme.Spacing.sm) {
+                Image(systemName: selected ? "largecircle.fill.circle" : "circle")
+                    .font(.system(size: 20))
+                    .foregroundStyle(selected ? Theme.accent : Theme.textSecondary)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(option.title)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Theme.textPrimary)
+                    Text(option == .keep
+                        ? "Keep previously indexed data searchable."
+                        : "Remove data held only by this device.")
+                        .font(.footnote)
+                        .foregroundStyle(Theme.textSecondary)
+                }
+                .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+            }
+            .multilineTextAlignment(.leading)
+            .frame(minHeight: Theme.tapTarget, alignment: .leading)
+            .padding(.vertical, Theme.Spacing.sm)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(busy)
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(selected ? [.isSelected] : [])
+    }
+
+    private var actions: some View {
+        HStack(spacing: Theme.Spacing.lg) {
+            Spacer(minLength: 0)
+            Button("Cancel") { dismiss() }
+                .frame(minHeight: Theme.tapTarget)
+                .foregroundStyle(Theme.textSecondary)
+            Button {
+                Task { await submit() }
+            } label: {
+                HStack {
+                    if busy { ProgressView() }
+                    Text(needsRefresh ? "Review sources again" : data == .delete && impact.hasSources
+                        ? "Forget and delete data" : "Forget device")
+                        .font(.subheadline.weight(.semibold))
+                }
+                .foregroundStyle(Theme.bgPrimary)
+                .padding(.horizontal, Theme.Spacing.md)
+                .frame(minHeight: Theme.tapTarget)
+                .background(data == .delete ? Theme.danger : Theme.accent, in: Capsule())
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("devices.forget.confirm")
+        }
+        .disabled(busy)
     }
 
     private func submit() async {
@@ -117,26 +192,47 @@ struct ForgetDeviceConfirmation: View {
     }
 }
 
+private struct ForgetDeviceHeightKey: PreferenceKey {
+    static let defaultValue: CGFloat = 560
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
+    }
+}
+
 #if DEBUG
 @available(iOS 17.0, *)
 #Preview("Forget device — keep history") {
     ForgetDeviceConfirmation(
         device: PreviewMocks.deviceRevoked,
-        impact: PreviewMocks.deviceForgetImpact,
-        onRefresh: { PreviewMocks.deviceForgetImpact },
+        impact: PreviewMocks.deviceForgetCatalogImpact,
+        onRefresh: { PreviewMocks.deviceForgetCatalogImpact },
         onForget: { _, _ in }
     )
+    .environment(AppStore.preview(sourceIconByType: PreviewMocks.deviceForgetIcons))
 }
 
 @available(iOS 17.0, *)
 #Preview("Forget device — delete data") {
     ForgetDeviceConfirmation(
         device: PreviewMocks.deviceRevoked,
-        impact: PreviewMocks.deviceForgetImpact,
+        impact: PreviewMocks.deviceForgetCatalogImpact,
         initialData: .delete,
-        onRefresh: { PreviewMocks.deviceForgetImpact },
+        onRefresh: { PreviewMocks.deviceForgetCatalogImpact },
         onForget: { _, _ in }
     )
+    .environment(AppStore.preview(sourceIconByType: PreviewMocks.deviceForgetIcons))
+}
+
+@available(iOS 17.0, *)
+#Preview("Forget device — larger text") {
+    ForgetDeviceConfirmation(
+        device: PreviewMocks.deviceRevoked,
+        impact: PreviewMocks.deviceForgetCatalogImpact,
+        onRefresh: { PreviewMocks.deviceForgetCatalogImpact },
+        onForget: { _, _ in }
+    )
+    .environment(AppStore.preview(sourceIconByType: PreviewMocks.deviceForgetIcons))
+    .dynamicTypeSize(.accessibility2)
 }
 
 #endif

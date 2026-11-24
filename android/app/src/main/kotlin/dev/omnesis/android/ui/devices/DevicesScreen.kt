@@ -5,6 +5,10 @@ package dev.omnesis.android.ui.devices
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.ui.semantics.Role
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -17,6 +21,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -75,6 +80,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import dev.omnesis.android.designsystem.components.SourceIcon
+import dev.omnesis.android.designsystem.components.SourceIconModel
 import dev.omnesis.android.designsystem.components.LoadingView
 import dev.omnesis.android.designsystem.components.OmSpinner
 import dev.omnesis.android.designsystem.theme.OmRadius
@@ -141,6 +148,8 @@ fun DevicesScreen(
         onRevokeDevice = vm::revokeDevice,
         onOpenForgetDevice = { vm.openForget(it) },
         forget = forget,
+        sourceLabel = vm::sourceLabel,
+        sourceIcon = vm::sourceIcon,
         onForgetDevice = vm::forgetDevice,
         onDismissForgetDevice = vm::closeForget,
         onRepairDevice = vm::openRepair,
@@ -201,6 +210,8 @@ fun DevicesContent(
     onOpenSettings: () -> Unit = {},
     otherExpanded: Boolean = false,
     focusedDeviceId: String? = null,
+    sourceLabel: (String) -> String = { it.substringBefore(":") },
+    sourceIcon: (String) -> SourceIconModel = { SourceIconModel() },
 ) {
     val c = OmTheme.colors
     // Destructive-confirm targets (null = no dialog open).
@@ -285,6 +296,8 @@ fun DevicesContent(
     forget?.let { state ->
         ForgetDeviceDialog(
             state = state,
+            sourceLabel = sourceLabel,
+            sourceIcon = sourceIcon,
             onConfirm = onForgetDevice,
             onRetry = { onOpenForgetDevice(state.device) },
             onDismiss = onDismissForgetDevice,
@@ -308,6 +321,8 @@ internal fun ForgetDeviceDialog(
     onRetry: () -> Unit,
     onDismiss: () -> Unit,
     initialData: DeviceForgetData = DeviceForgetData.Keep,
+    sourceLabel: (String) -> String = { it.substringBefore(":") },
+    sourceIcon: (String) -> SourceIconModel = { SourceIconModel() },
 ) {
     val c = OmTheme.colors
     var data by remember(state.impact?.fingerprint) { mutableStateOf(initialData) }
@@ -317,31 +332,56 @@ internal fun ForgetDeviceDialog(
         containerColor = c.bgSecondary,
         title = { Text("Forget ${state.device.name}?", color = c.textPrimary) },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(OmSpacing.md)) {
-                Text("This device will stop syncing and will no longer report device or source errors.", color = c.textPrimary)
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(OmSpacing.md),
+            ) {
+                Text("This device will stop syncing and will no longer report device or source errors.", color = c.textSecondary)
                 if (state.loading) {
                     OmSpinner()
                     Text("Reviewing this device’s sources…", color = c.textSecondary)
                 }
                 if (impact?.hasSources == true) {
-                    Text("${impact.sources.size} source${if (impact.sources.size == 1) "" else "s"} hosted by this device.", color = c.textPrimary)
-                    DeviceForgetData.entries.forEach { option ->
-                        Row(
-                            modifier = Modifier.fillMaxWidth().clickable(enabled = !state.submitting) { data = option },
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            RadioButton(selected = data == option, onClick = { data = option }, enabled = !state.submitting)
-                            Text(option.title, color = c.textPrimary)
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Affected sources (${impact.sources.size})", fontWeight = FontWeight.SemiBold, color = c.textPrimary)
+                        impact.sources.forEach { source ->
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                SourceIcon(sourceIcon(source.id), size = 22.dp)
+                                Text(sourceLabel(source.id), color = c.textPrimary, style = MaterialTheme.typography.bodyMedium)
+                            }
                         }
                     }
-                    Text(
-                        if (data == DeviceForgetData.Keep) {
-                            "Previously indexed data stays searchable. Sources still used by other devices keep syncing."
-                        } else {
-                            "Deletes this device’s data where it can be attributed to it. Other devices’ data, shared data still in use and history kept from earlier forgotten devices will stay."
-                        },
-                        color = c.textSecondary,
-                    )
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("What happens to its data?", fontWeight = FontWeight.SemiBold, color = c.textPrimary)
+                        DeviceForgetData.entries.forEach { option ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth()
+                                    .selectable(selected = data == option, enabled = !state.submitting, role = Role.RadioButton) { data = option }
+                                    .heightIn(min = 48.dp)
+                                    .padding(vertical = 6.dp),
+                                verticalAlignment = Alignment.Top,
+                            ) {
+                                RadioButton(selected = data == option, onClick = null, enabled = !state.submitting)
+                                Column(modifier = Modifier.padding(start = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    Text(option.title, color = c.textPrimary, fontWeight = FontWeight.SemiBold)
+                                    Text(
+                                        if (option == DeviceForgetData.Keep) {
+                                            "Keep previously indexed data searchable."
+                                        } else {
+                                            "Remove data held only by this device."
+                                        },
+                                        color = c.textSecondary,
+                                        style = MaterialTheme.typography.bodySmall,
+                                    )
+                                }
+                            }
+                        }
+                        Text(
+                            "Other devices keep syncing. Their data and history already kept from forgotten devices are preserved.",
+                            color = c.textSecondary,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
                 }
                 state.error?.let { Text(it, color = c.danger) }
             }

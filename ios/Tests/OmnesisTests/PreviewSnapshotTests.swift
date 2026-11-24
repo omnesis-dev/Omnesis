@@ -3215,28 +3215,30 @@ final class PreviewSnapshotTests: XCTestCase {
     }
 
     func testForgetDeviceKeepHistory() {
-        snapshot(
-            ForgetDeviceConfirmation(
-                device: PreviewMocks.deviceRevoked,
-                impact: PreviewMocks.deviceForgetImpact,
-                onRefresh: { PreviewMocks.deviceForgetImpact },
-                onForget: { _, _ in }
-            ),
-            name: "192d-devices-forget-keep"
-        )
+        snapshotPresented(forgetDeviceSheet(data: .keep), name: "192d-devices-forget-keep")
     }
 
     func testForgetDeviceDeleteData() {
-        snapshot(
+        snapshotPresented(forgetDeviceSheet(data: .delete), name: "192e-devices-forget-delete")
+    }
+
+    private func forgetDeviceSheet(data: DeviceForgetData) -> some View {
+        NavigationStack {
+            DevicesList(devices: PreviewMocks.devicesWithRevoked, tokensByDevice: [:])
+                .background(Theme.bgPrimary)
+                .navigationTitle("Devices")
+                .navigationBarTitleDisplayMode(.inline)
+        }
+        .sheet(isPresented: .constant(true)) {
             ForgetDeviceConfirmation(
                 device: PreviewMocks.deviceRevoked,
-                impact: PreviewMocks.deviceForgetImpact,
-                initialData: .delete,
-                onRefresh: { PreviewMocks.deviceForgetImpact },
+                impact: PreviewMocks.deviceForgetCatalogImpact,
+                initialData: data,
+                onRefresh: { PreviewMocks.deviceForgetCatalogImpact },
                 onForget: { _, _ in }
-            ),
-            name: "192e-devices-forget-delete"
-        )
+            )
+        }
+        .environment(AppStore.preview(sourceIconByType: PreviewMocks.deviceForgetIcons))
     }
 
     func testDevicesEmpty() {

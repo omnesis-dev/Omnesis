@@ -95,6 +95,8 @@ const WOUND_BACK = [
   // 221 admits Recordings into lab_features, which windBack drops; its effect
   // on a table from before it is covered in lab.test.ts.
   221,
+  // 222 adds device retirement and sync-error attribution, removed by windBack.
+  222,
 ];
 
 let dir: string;
@@ -305,6 +307,9 @@ function undoStickyRevocation(db: Db): void {
 }
 
 function windBack(db: Db): void {
+  db.exec("DROP TABLE source_device_archives");
+  db.exec("DROP TABLE forgotten_devices");
+  db.exec("ALTER TABLE sync_state DROP COLUMN last_error_device_id");
   db.exec("DROP TABLE storage_cleanup_jobs");
   db.exec("DROP TABLE storage_trim_job_cascades");
   db.exec("DROP TABLE storage_trim_jobs");
@@ -676,6 +681,16 @@ describe("an install several versions behind, upgrading", () => {
 
   test("the tail runs in order and lands on the head version", () => {
     seedOlderInstall((old) => {
+      expect(old.prepare("SELECT name FROM pragma_table_info('sync_state')").all()).not.toEqual(
+        expect.arrayContaining([{ name: "last_error_device_id" }]),
+      );
+      expect(
+        old
+          .prepare(
+            "SELECT name FROM sqlite_master WHERE name IN ('forgotten_devices', 'source_device_archives')",
+          )
+          .all(),
+      ).toEqual([]);
       expect(
         old.prepare("SELECT name FROM sqlite_master WHERE name='storage_cleanup_jobs'").get(),
       ).toBeUndefined();
@@ -706,6 +721,12 @@ describe("an install several versions behind, upgrading", () => {
         .all()
         .map((row) => row.version);
       expect(recorded).toEqual(TAIL_VERSIONS);
+      expect(db.prepare("SELECT name FROM pragma_table_info('sync_state')").all()).toEqual(
+        expect.arrayContaining([{ name: "last_error_device_id" }]),
+      );
+      for (const table of ["forgotten_devices", "source_device_archives"]) {
+        expect(db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get()).toEqual({ n: 0 });
+      }
       expect(db.prepare("SELECT COUNT(*) AS n FROM storage_cleanup_jobs").get()).toEqual({ n: 0 });
       expect(
         db

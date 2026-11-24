@@ -19,6 +19,15 @@ import dev.omnesis.android.transport.dto.DeviceForgetData
 import dev.omnesis.android.transport.dto.DeviceForgetImpact
 import dev.omnesis.android.transport.dto.DeviceForgetSourceImpact
 import dev.omnesis.android.ui.devices.ForgetDeviceDialog
+import dev.omnesis.android.sources.SourceCatalog
+import androidx.test.core.app.ApplicationProvider
+import android.content.Context
+import coil.Coil
+import coil.memory.MemoryCache
+import android.graphics.BitmapFactory
+import android.util.Base64
+import dev.omnesis.android.transport.dto.SourceMetaEntry
+import kotlinx.coroutines.runBlocking
 import dev.omnesis.android.transport.dto.DeviceRecord
 import dev.omnesis.android.transport.dto.AwayFromHomeHint
 import dev.omnesis.android.transport.dto.PairingAddressOption
@@ -67,9 +76,21 @@ class DevicesScreenshotTest {
         const val OLD_EPOCH_2: Long = 1_771_424_400_000L
     }
 
-    private fun capture(name: String, dark: Boolean, content: @Composable () -> Unit) {
+    private fun capture(name: String, dark: Boolean, inspection: Boolean = true, content: @Composable () -> Unit) {
+        if (!inspection) {
+            val context = ApplicationProvider.getApplicationContext<Context>()
+            val cache = requireNotNull(Coil.imageLoader(context).memoryCache)
+            // Seed the real provider bytes synchronously; Coil's main-looper lifecycle
+            // is covered separately from the dialog layout snapshots.
+            forgetImpact.sources.forEach { source ->
+                val art = requireNotNull(forgetCatalog.iconModel(source.id).imageData)
+                val bytes = Base64.decode(art.substringAfter(","), Base64.DEFAULT)
+                val bitmap = requireNotNull(BitmapFactory.decodeByteArray(bytes, 0, bytes.size))
+                cache[MemoryCache.Key(art)] = MemoryCache.Value(bitmap)
+            }
+        }
         captureRoboImage(filePath = "src/test/roborazzi/$name.png") {
-            CompositionLocalProvider(LocalInspectionMode provides true) {
+            CompositionLocalProvider(LocalInspectionMode provides inspection) {
                 OmnesisTheme(darkTheme = dark) { content() }
             }
         }
@@ -219,32 +240,67 @@ class DevicesScreenshotTest {
         )
     }
 
+    // Rasterized provider-owned Lucide glyphs from providers/apple/src/icons.ts (ISC; TRADEMARKS.md).
+    private val forgetCatalog = SourceCatalog().apply {
+        runBlocking {
+            load({ emptyList() }, {
+                mapOf(
+                    "apple-notes" to SourceMetaEntry(label = "Apple Notes", icon =
+                        "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAAABmJLR0QA/wD/AP+gvaeTAAADkElEQV"
+                            + "Roge2ay2tTURCHv+nDJ7SC+EDFoiAVRRdNfOBOUdDSRRGttUWtbiyoKxH8M1yJClJQ66PVhaAVRHBlaU0i0lbQleCjKy0UFeujGR"
+                            + "e5ae69zbk5MbmJQn5QOGeYe+eb9syZc5JCReWV5HLQQeYzh1NAJ7ARqC0g3huENokwYow3zBqqOIvQDDQA34A4wlWauCVC0joBjb"
+                            + "MaeARsKADaK+GRRGjOGi9BG0oPsMDw7BOUAxJlMm2qMsXRQeZTbPgAaZwOlJuY4AGU3UC/aobbmICzbIoN/wY4P4srTgdwDai2eM"
+                            + "ceErSnJzUBjh2emXCP35yUbXy2Y7WTAf43ymkW0MNPGpjmGrA98xAngJspLPOLp4C5LtMSifKpJPDQIVH6Z/xiNCK8dvlMSpRFEL"
+                            + "SEvPAUHT7GYSzgU8F573t8YXoQlEBo0hiHEa5jAw8gHPdZ3qYHMzWgCVpQLgMrsgaNo85wHOGkRHhQCniNcxDlgtfIw/RQXI4fgJ"
+                            + "WWHB8lyqp8wOEv4VPF6t5svpJkg2xNLauSLaG84RO0MRt+GqUrDQ/uBIRuYNyCZdzxLRxe6DTCK72z4OGobOGe2zdoG1WPYzT3uc"
+                            + "nwnp3AYx9MCj5CnzW8ckS2cMvvH+oSclr+RUKCh7BrIMZ2YL0Hxgx/KF94CDuBat+pU7kbAH+DPOEh7D6gtPgs97O892BWeKFLos"
+                            + "HwEGIf0CFWUcM7V4xpfrJUdjAx4xOj3dmdvDWS+s3ftgEJOo0Wplr2oZ6da0h2MKHDLKaGvSitwH68yzgveHAnIHQHLSGX7PqAzr"
+                            + "p1zdMEz1C2oVnP/XnDQ4h9QONMAnWW7r8QjkiEO/nEgHB3Ic3tAsAYsMsPrwk2a4IB52ez6eHwaiB11j+Txa7AS4QB4AFNDItkSV"
+                            + "bpAxqd2Vq8/WRG4SVQzzkmSQLHHMtTYIAqBqTJ6szVaBh7lNlGc/QBlwq6D9jKtgYzNaBcIjc8wArH959QWa6UxVRJ7gNhKvT7wN"
+                            + "8q/xr4T1VJoNwq+edCxValD5RblT4Qlip9APjhnugLloTMkon1nOU+03eTb1ACrzyzJFd0iGUFcFlJh1hGNZc9RmHM5B90oekFml"
+                            + "zzVmpo1XhhgFby389Sn9hllfkv8IWLYM68hBqh3tx3jAnITqZI0kx5kxglSYus89ajW7n/1eAp86ijmySdCJvwffkXgqYQRlF6qe"
+                            + "dSEHxF/4L+AJRFZa5O9qYGAAAAAElFTkSuQmCC"
+                    ),
+                    "apple-reminders" to SourceMetaEntry(label = "Apple Reminders", icon =
+                        "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAAABmJLR0QA/wD/AP+gvaeTAAABbUlEQV"
+                            + "Roge2XzUrEMBRGT8o8RfGR3IhiEQZ0p9AZX8Yp6H7EURQ3PlOfwpm4aLGtSX9jaGDu2TUJt99Nb5PvgiAIgnDMKNcAesMZik3xwK"
+                            + "1a8fVn/hTFExA7viq3xY9cIuqMBMUbhbgYxaOxqBhzFU9b/MkJ6IwE2AILF1WuTEqgRfw3mrW5mDsgn6SuSV7GamD8A7WahQP3as"
+                            + "1HY75NPCxVyus/CB2F+QWqmo2J2JWCgfDEQ3/9LoCtzn6fgxIPthJ64JyIHaZQLGOzioeWe2DACROEeOi4yDqSCEY89NzEOuMCeK"
+                            + "FKYg9cq5Rn38KG0mslGlbBcqwKx46zG+0jaDc6iFDdaCj4T8CzGxXmxntP7BundtDwS8UpceIuazjSE9eG7T2xZ4zdc+qJV3x61G"
+                            + "pFemKkJ3bDe088ixsthS2pdr7OuJ2fy42WAq9oJrEHbuYumzqd94BKeUdzSeEmcw4koxt6caOCIAiCR34AK36ov59pDroAAAAASU"
+                            + "VORK5CYII="
+                    ),
+                )
+            })
+        }
+    }
+
     private val forgetImpact = DeviceForgetImpact(
         listOf(
-            DeviceForgetSourceImpact("activity:local", "activity", "partitioned", 1, "partition"),
-            DeviceForgetSourceImpact("notes:local", "notes", "replicated", 1, "none"),
+            DeviceForgetSourceImpact("apple-notes:local", "apple-notes", "replicated", 1, "none"),
+            DeviceForgetSourceImpact("apple-reminders:local", "apple-reminders", "replicated", 1, "none"),
         ),
         "preview-device-impact",
     )
 
     @Test
-    fun devices_forget_keep_dark() = capture("devices_forget_keep_dark", dark = true) {
-        ForgetDeviceDialog(DevicesViewModel.ForgetState(revokedDevice(), forgetImpact, loading = false), {}, {}, {})
+    fun devices_forget_keep_dark() = capture("devices_forget_keep_dark", dark = true, inspection = false) {
+        ForgetDeviceDialog(DevicesViewModel.ForgetState(revokedDevice(), forgetImpact, loading = false), {}, {}, {}, sourceLabel = forgetCatalog::label, sourceIcon = forgetCatalog::iconModel)
     }
 
     @Test
-    fun devices_forget_keep_light() = capture("devices_forget_keep_light", dark = false) {
-        ForgetDeviceDialog(DevicesViewModel.ForgetState(revokedDevice(), forgetImpact, loading = false), {}, {}, {})
+    fun devices_forget_keep_light() = capture("devices_forget_keep_light", dark = false, inspection = false) {
+        ForgetDeviceDialog(DevicesViewModel.ForgetState(revokedDevice(), forgetImpact, loading = false), {}, {}, {}, sourceLabel = forgetCatalog::label, sourceIcon = forgetCatalog::iconModel)
     }
 
     @Test
-    fun devices_forget_delete_dark() = capture("devices_forget_delete_dark", dark = true) {
-        ForgetDeviceDialog(DevicesViewModel.ForgetState(revokedDevice(), forgetImpact, loading = false), {}, {}, {}, initialData = DeviceForgetData.Delete)
+    fun devices_forget_delete_dark() = capture("devices_forget_delete_dark", dark = true, inspection = false) {
+        ForgetDeviceDialog(DevicesViewModel.ForgetState(revokedDevice(), forgetImpact, loading = false), {}, {}, {}, initialData = DeviceForgetData.Delete, sourceLabel = forgetCatalog::label, sourceIcon = forgetCatalog::iconModel)
     }
 
     @Test
-    fun devices_forget_delete_light() = capture("devices_forget_delete_light", dark = false) {
-        ForgetDeviceDialog(DevicesViewModel.ForgetState(revokedDevice(), forgetImpact, loading = false), {}, {}, {}, initialData = DeviceForgetData.Delete)
+    fun devices_forget_delete_light() = capture("devices_forget_delete_light", dark = false, inspection = false) {
+        ForgetDeviceDialog(DevicesViewModel.ForgetState(revokedDevice(), forgetImpact, loading = false), {}, {}, {}, initialData = DeviceForgetData.Delete, sourceLabel = forgetCatalog::label, sourceIcon = forgetCatalog::iconModel)
     }
 
     @Test

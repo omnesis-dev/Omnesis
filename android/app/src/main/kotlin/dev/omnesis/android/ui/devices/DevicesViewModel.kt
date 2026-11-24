@@ -10,6 +10,8 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.omnesis.android.access.PairingPendingRequests
 import dev.omnesis.android.transport.dto.GatewayPairingApprovalRequest
 import dev.omnesis.android.session.SessionManager
+import dev.omnesis.android.sources.SourceCatalog
+import dev.omnesis.android.designsystem.components.SourceIconModel
 import dev.omnesis.android.transport.dto.GatewayPairingApproving
 import dev.omnesis.android.transport.GatewayException
 import dev.omnesis.android.transport.dto.DeviceForgetImpact
@@ -57,6 +59,7 @@ internal class DevicesPairRequestGate {
 class DevicesViewModel @Inject constructor(
     private val session: SessionManager,
     private val pairingPendingRequests: PairingPendingRequests,
+    private val catalog: SourceCatalog = SourceCatalog(),
 ) : ViewModel() {
 
     private val _devices = MutableStateFlow<Loadable<List<DeviceRecord>>>(Loadable.Loading)
@@ -216,12 +219,19 @@ class DevicesViewModel @Inject constructor(
         }
     }
 
+    fun sourceLabel(sourceId: String): String = catalog.label(sourceId)
+    fun sourceIcon(sourceId: String): SourceIconModel = catalog.iconModel(sourceId)
+
     fun openForget(device: DeviceRecord, message: String? = null) {
         if (_forget.value?.submitting == true) return
         val generation = ++forgetGeneration
         _forget.value = ForgetState(device, error = message)
         viewModelScope.launch {
-            runCatching { session.requireSession().admin.forgetDeviceImpact(device.id) }.fold(
+            runCatching {
+                val admin = session.requireSession().admin
+                catalog.ensureLoaded(admin)
+                admin.forgetDeviceImpact(device.id)
+            }.fold(
                 onSuccess = { impact ->
                     if (forgetGeneration == generation) _forget.value = ForgetState(device, impact, loading = false, error = message)
                 },
