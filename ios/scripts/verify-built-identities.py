@@ -26,7 +26,7 @@ info = read_plist(app)
 expect(info["CFBundleIdentifier"], base, "app bundle ID")
 expect(
     info["BGTaskSchedulerPermittedIdentifiers"],
-    [f"{base}.refresh", f"{base}.photosBackfill"],
+    [f"{base}.refresh", f"{base}.photosBackfill", f"{base}.backfill"],
     "app background task IDs",
 )
 
