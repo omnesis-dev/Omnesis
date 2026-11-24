@@ -334,6 +334,13 @@ const areas = [
     bundles: ["ingestion-providers", "source-lifecycle"],
   },
   {
+    // The gateway's own audio intake: recorded conversations, transcription and
+    // voice notes, whose E2E suites sit in the ingestion bundle.
+    test: (p) =>
+      /^packages\/gateway\/src\/.*(?:recordings|transcrib|transcription|voice-notes)/.test(p),
+    bundles: ["ingestion-providers"],
+  },
+  {
     test: (p) =>
       p.startsWith("packages/") &&
       /(?:source|sync|collector|device|lease|replica|membership|ownership|cursor|snapshot)/.test(p),
@@ -367,6 +374,9 @@ export function behavioralBundles(files) {
       selected.add(nativeBundle);
       continue;
     }
+    // A changed E2E suite runs in the bundle that owns it, whatever its path says.
+    if (file.endsWith(".e2e.test.ts"))
+      for (const name of allE2EBundles) if (bundleTestArgs(name, [file]).length) selected.add(name);
     for (const area of areas)
       if (area.test(file)) area.bundles.forEach((name) => selected.add(name));
   }
