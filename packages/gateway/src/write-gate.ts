@@ -574,6 +574,8 @@ import {
   abandonRecordingSession,
   rescheduleRecordingChunk,
   settleRecordingChunk,
+  purgeRecordingAudio,
+  type RecordingChunkSettling,
   markRecordingSessionProjected,
   assignRecordingVoices,
   setRecordingSpeaker,
@@ -2347,7 +2349,10 @@ export interface WriteGate extends KnowledgeWriteGate {
     sessionId: string,
     seq: number,
     outcome: RecordingChunkSettlement,
+    settling: RecordingChunkSettling,
   ): Promise<boolean>;
+  /** Drop the kept audio of chunks settled at or before this instant; how many lost it. */
+  purgeRecordingAudio(settledBefore: string): Promise<number>;
   /** Stamp when a session's document was last written. */
   markRecordingSessionProjected(id: string, revision: number): Promise<void>;
   /** Record a session's grouped speakers and delete its voice vectors. */
@@ -3093,8 +3098,9 @@ export function writeGateFromCall(call: WriterCallFn): WriteGate {
     abandonRecordingSession: (id, now) => call("recordings.abandonSession", [id, now]),
     rescheduleRecordingChunk: (sessionId, seq, attempts, nextAttemptAt) =>
       call("recordings.rescheduleChunk", [sessionId, seq, attempts, nextAttemptAt]),
-    settleRecordingChunk: (sessionId, seq, outcome) =>
-      call("recordings.settleChunk", [sessionId, seq, outcome]),
+    settleRecordingChunk: (sessionId, seq, outcome, settling) =>
+      call("recordings.settleChunk", [sessionId, seq, outcome, settling]),
+    purgeRecordingAudio: (settledBefore) => call("recordings.purgeAudio", [settledBefore]),
     markRecordingSessionProjected: (id, revision) =>
       call("recordings.markProjected", [id, revision]),
     assignRecordingVoices: (sessionId, chunks) =>
@@ -3845,8 +3851,9 @@ export function directWriteGate(db: Db): WriteGate {
     abandonRecordingSession: async (id, now) => abandonRecordingSession(db, id, now),
     rescheduleRecordingChunk: async (sessionId, seq, attempts, nextAttemptAt) =>
       rescheduleRecordingChunk(db, sessionId, seq, attempts, nextAttemptAt),
-    settleRecordingChunk: async (sessionId, seq, outcome) =>
-      settleRecordingChunk(db, sessionId, seq, outcome),
+    settleRecordingChunk: async (sessionId, seq, outcome, settling) =>
+      settleRecordingChunk(db, sessionId, seq, outcome, settling),
+    purgeRecordingAudio: async (settledBefore) => purgeRecordingAudio(db, settledBefore),
     markRecordingSessionProjected: async (id, revision) =>
       markRecordingSessionProjected(db, id, revision),
     assignRecordingVoices: async (sessionId, chunks) =>

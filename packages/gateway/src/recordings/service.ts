@@ -30,7 +30,9 @@
  */
 
 import { assertNever, createLogger } from "@omnesis/core";
+import { findDocumentIdBySourceExternalId } from "../data/repositories/DocumentRepository.js";
 import { getPersonNames } from "../data/repositories/PersonRepository.js";
+import { OMNESIS_RECORDINGS_SOURCE_ID } from "../sources/omnesis-recordings/index.js";
 import { recordingTitle, speakerTurns } from "../sources/omnesis-recordings/render.js";
 import {
   listRecentRecordingSessions,
@@ -45,11 +47,13 @@ import {
   listUnprojectedRecordingSessions,
   countRecordingChunks,
   readRecordingChunkAudio,
+  sumRecordingChunkDurations,
   type FinishRecordingOutcome,
   type InsertRecordingChunkOutcome,
   type RecordingChunk,
   type RecordingMark,
   type RecordingOrigin,
+  type RecordingChunkStatus,
   type RecordingSession,
   type RecordingSpeakerMapping,
 } from "./storage.js";
@@ -95,6 +99,7 @@ export interface RecordingServiceDeps {
     | "abandonRecordingSession"
     | "rescheduleRecordingChunk"
     | "settleRecordingChunk"
+    | "purgeRecordingAudio"
     | "markRecordingSessionProjected"
     | "addRecordingMark"
     | "assignRecordingVoices"
@@ -121,8 +126,18 @@ export interface RecordingServiceDeps {
   ) => DocumentInput | null;
   /** The voice separator, or null while speakers are not told apart. */
   voices?: () => VoiceSeparator | null;
+  /**
+   * Days a chunk's audio is kept once it is settled; 0 (the default) drops
+   * it at once. Read on every pass, so a changed setting applies without a
+   * restart, and lowering it drops what is now past it.
+   */
+  keepAudioDays?: () => number;
   now?: () => Date;
 }
+
+/** The longest an operator may keep a recording's audio. */
+const MAX_KEEP_AUDIO_DAYS = 365;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** One speaker of a session, as the owner reviews it. */
 export interface RecordingSpeakerView extends SpeakerIdentity {
@@ -138,9 +153,30 @@ export interface RecordingSummary {
   title: string;
   startedAt: string;
   state: RecordingState;
+  /** The chunk count the device declared; null while it records. */
+  chunkCount: number | null;
+  chunks: RecordingStatus["chunks"];
+  /** The recorded time of the chunks received, ms. */
+  durationMs: number;
   speakers: number;
   /** Speakers the owner has said who they are. */
   namedSpeakers: number;
+  /** The session's document, once written; null before, or when nothing in it was speech. */
+  documentId: string | null;
+}
+
+/** One chunk of a session, as the owner reviews it. */
+export interface RecordingChunkView {
+  seq: number;
+  startedAt: string;
+  durationMs: number;
+  status: RecordingChunkStatus;
+  /** The microphone was taken from the recorder during the chunk. */
+  interrupted: boolean;
+  /** Whether the gateway still holds the chunk's audio. */
+  audio: boolean;
+  /** When kept audio is due to be deleted; null when none is kept, or the chunk is pending. */
+  audioDeletedAt: string | null;
 }
 
 export type SetSpeakerOutcome = "set" | "missing" | "no-such-person";
@@ -295,17 +331,64 @@ export class RecordingTranscriptionService {
 
   /** The most recently started sessions, newest first. */
   recent(limit: number): RecordingSummary[] {
-    return listRecentRecordingSessions(this.deps.readDb, limit).map((session) => {
-      const speakers = listRecordingSpeakers(this.deps.readDb, session.id);
-      return {
-        id: session.id,
-        title: recordingTitle(session),
-        startedAt: session.startedAt,
-        state: this.status(session.id)?.state ?? "recording",
-        speakers: speakers.length,
-        namedSpeakers: speakers.filter((s) => s.isSelf || s.personId || s.name).length,
-      };
-    });
+    return listRecentRecordingSessions(this.deps.readDb, limit).map((session) =>
+      this.summarize(session),
+    );
+  }
+
+  /** One session as the list shows it, or null when it does not exist. */
+  summary(id: string): RecordingSummary | null {
+    const session = getRecordingSession(this.deps.readDb, id);
+    return session ? this.summarize(session) : null;
+  }
+
+  private summarize(session: RecordingSession): RecordingSummary {
+    const speakers = listRecordingSpeakers(this.deps.readDb, session.id);
+    const status = this.status(session.id);
+    return {
+      id: session.id,
+      title: recordingTitle(session),
+      startedAt: session.startedAt,
+      state: status?.state ?? "recording",
+      chunkCount: session.chunkCount,
+      chunks: status?.chunks ?? { received: 0, pending: 0, transcribed: 0, failed: 0, silent: 0 },
+      durationMs: sumRecordingChunkDurations(this.deps.readDb, session.id),
+      speakers: speakers.length,
+      namedSpeakers: speakers.filter((s) => s.isSelf || s.personId || s.name).length,
+      documentId: findDocumentIdBySourceExternalId(
+        this.deps.readDb,
+        OMNESIS_RECORDINGS_SOURCE_ID,
+        session.id,
+      ),
+    };
+  }
+
+  /** A session's chunks in recording order, or null when the session does not exist. */
+  chunks(id: string): RecordingChunkView[] | null {
+    if (!getRecordingSession(this.deps.readDb, id)) return null;
+    const keepMs = this.keepAudioDays() * DAY_MS;
+    return listRecordingChunks(this.deps.readDb, id).map((chunk) => ({
+      seq: chunk.seq,
+      startedAt: chunk.startedAt,
+      durationMs: chunk.durationMs,
+      status: chunk.status,
+      interrupted: chunk.interrupted,
+      audio: chunk.hasAudio,
+      audioDeletedAt:
+        chunk.hasAudio && chunk.status !== "pending" && chunk.settledAt !== null
+          ? new Date(Date.parse(chunk.settledAt) + keepMs).toISOString()
+          : null,
+    }));
+  }
+
+  /** A settled chunk's kept audio, or null when the gateway holds none. */
+  chunkAudio(id: string, seq: number): { audio: Uint8Array<ArrayBuffer>; mimeType: string } | null {
+    const chunk = getRecordingChunk(this.deps.readDb, id, seq);
+    // A pending chunk's audio is the transcriber's until it settles.
+    if (!chunk || chunk.status === "pending" || !chunk.hasAudio) return null;
+    const audio = readRecordingChunkAudio(this.deps.readDb, id, seq);
+    if (!audio) return null;
+    return { audio: new Uint8Array(audio), mimeType: chunk.mimeType ?? "application/octet-stream" };
   }
 
   /** A session's speakers with what each said, or null when the session does not exist. */
@@ -407,6 +490,7 @@ export class RecordingTranscriptionService {
 
   private async pass(): Promise<void> {
     await this.finishAbandoned();
+    await this.purgeExpiredAudio();
     for (;;) {
       if (this.disposed) return;
       const [next] = listDueRecordingChunks(this.deps.readDb, this.now().toISOString(), 1);
@@ -426,6 +510,25 @@ export class RecordingTranscriptionService {
       await this.projectReady();
     }
     await this.projectReady();
+  }
+
+  /** Days the audio is kept, within bounds whatever the setting says. */
+  private keepAudioDays(): number {
+    const days = this.deps.keepAudioDays?.() ?? 0;
+    if (!Number.isFinite(days) || days <= 0) return 0;
+    return Math.min(Math.floor(days), MAX_KEEP_AUDIO_DAYS);
+  }
+
+  /** How a chunk settled now is settled: its time, and whether its audio stays. */
+  private settling(): { settledAt: string; keepAudio: boolean } {
+    return { settledAt: this.now().toISOString(), keepAudio: this.keepAudioDays() > 0 };
+  }
+
+  private async purgeExpiredAudio(): Promise<void> {
+    const purged = await this.deps.writeGate.purgeRecordingAudio(
+      this.later(-this.keepAudioDays() * DAY_MS),
+    );
+    if (purged > 0) log.info(`Deleted the kept audio of ${purged} recording chunks`);
   }
 
   private async finishAbandoned(): Promise<void> {
@@ -613,12 +716,17 @@ export class RecordingTranscriptionService {
 
     switch (outcome.kind) {
       case "transcribed":
-        await this.deps.writeGate.settleRecordingChunk(chunk.sessionId, chunk.seq, {
-          status: "transcribed",
-          text: outcome.result.text.trim(),
-          ...(outcome.result.segments ? { segments: outcome.result.segments } : {}),
-          ...(voices && voices.windows.length > 0 ? { voices } : {}),
-        });
+        await this.deps.writeGate.settleRecordingChunk(
+          chunk.sessionId,
+          chunk.seq,
+          {
+            status: "transcribed",
+            text: outcome.result.text.trim(),
+            ...(outcome.result.segments ? { segments: outcome.result.segments } : {}),
+            ...(voices && voices.windows.length > 0 ? { voices } : {}),
+          },
+          this.settling(),
+        );
         return;
       case "unreadable":
         // No retry turns bytes that decode to no audio into speech.
@@ -657,9 +765,12 @@ export class RecordingTranscriptionService {
   }
 
   private async giveUp(chunk: RecordingChunk, why: string): Promise<void> {
-    await this.deps.writeGate.settleRecordingChunk(chunk.sessionId, chunk.seq, {
-      status: "failed",
-    });
+    await this.deps.writeGate.settleRecordingChunk(
+      chunk.sessionId,
+      chunk.seq,
+      { status: "failed" },
+      this.settling(),
+    );
     log.warn(`Recording ${chunk.sessionId} chunk ${chunk.seq} not transcribed (${why})`);
   }
 
