@@ -197,6 +197,27 @@ describe("decisions waiting, marked on the nav item where each is decided", () =
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
   }
 
+  test("in experimental mode, Recordings stays hidden until its Lab opt-in is on", async () => {
+    getStatus.mockResolvedValue({
+      experimental: true, developer: false, labAvailable: true,
+      lab: { brain: false, tasks: false, watches: true, recordings: false },
+    } as never);
+    await mount();
+    // Watches, on in Lab, shows once the status has been read.
+    await vi.waitFor(() => expect(itemNamed("Watches")).toBeDefined());
+    expect(itemNamed("Recordings")).toBeUndefined();
+  });
+
+  test("Recordings appears once its Lab opt-in is on", async () => {
+    getStatus.mockResolvedValue({
+      experimental: true, developer: false, labAvailable: true,
+      lab: { brain: false, tasks: false, watches: false, recordings: true },
+    } as never);
+    await mount();
+    await vi.waitFor(() => expect(itemNamed("Recordings")?.getAttribute("href")).toBe("/portal/recordings"));
+    expect(itemNamed("Watches")).toBeUndefined();
+  });
+
   test("flags Settings and routes directly to Models until runtime health recovers", async () => {
     getStatus.mockResolvedValue({
       experimental: false, developer: false,
@@ -464,12 +485,6 @@ describe("decisions waiting, marked on the nav item where each is decided", () =
     expect(itemNamed("Tasks")).toBeUndefined();
     expect(itemNamed("Watches")).toBeUndefined();
     expect(listSubscriptionApprovals).not.toHaveBeenCalled();
-  });
-
-  test("experimental mode offers Recordings", async () => {
-    getStatus.mockResolvedValue({ experimental: true, lab: { brain: false, tasks: false, watches: false } });
-    await mount();
-    await vi.waitFor(() => expect(itemNamed("Recordings")?.getAttribute("href")).toBe("/portal/recordings"));
   });
 
 });

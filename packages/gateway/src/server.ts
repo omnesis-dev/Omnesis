@@ -2348,8 +2348,9 @@ export function createServer(
       recordingsEnabled,
     });
 
-    // The source is listed only in experimental mode; its display identity
-    // is seeded then, so the row never shows without its label and icon.
+    // The source is listed only while Recordings is on in Omnesis Lab, which
+    // can be switched on without a restart; its display identity is seeded in
+    // experimental mode, so the row never shows without its label and icon.
     if (experimentalEnabled()) {
       seedOmnesisRecordingsSourceMeta(w).catch((err: unknown) => {
         log.warn(
