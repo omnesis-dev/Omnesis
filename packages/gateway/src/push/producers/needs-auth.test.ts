@@ -137,8 +137,8 @@ describe("NeedsAuthNotifier.notify", () => {
     // The in-flight key is (principal, device): the laptop's second lapse
     // joins its first; the studio machine's is a separate episode.
     expect(reserve.mock.calls).toEqual([
-      ["provider:account", LAPTOP],
-      ["provider:account", STUDIO],
+      ["provider:account", LAPTOP, "fictional-mail:a"],
+      ["provider:account", STUDIO, "fictional-mail:a"],
     ]);
     settle();
     await inFlight;
@@ -169,8 +169,8 @@ describe("NeedsAuthNotifier.notify", () => {
       deviceId: LAPTOP,
     });
     expect(reserve.mock.calls).toEqual([
-      ["provider:account", LAPTOP],
-      ["provider:account", LAPTOP],
+      ["provider:account", LAPTOP, "fictional-mail:a"],
+      ["provider:account", LAPTOP, "fictional-calendar:a"],
     ]);
   });
 
@@ -187,8 +187,8 @@ describe("NeedsAuthNotifier.notify", () => {
       deviceId: STUDIO,
     });
     expect(reserve.mock.calls).toEqual([
-      ["provider:account", LAPTOP],
-      ["provider:account", STUDIO],
+      ["provider:account", LAPTOP, "fictional-mail:a"],
+      ["provider:account", STUDIO, "fictional-mail:a"],
     ]);
     const [laptop, studio] = retain.mock.calls.map((call) => call[1]);
     expect(laptop?.body).toBe("Sign in again on Maya-Laptop to keep provider:account syncing.");
