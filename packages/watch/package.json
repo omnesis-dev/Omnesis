@@ -10,7 +10,7 @@
     "./journal": "./src/subpath/journal.ts"
   },
   "dependencies": {
-    "@duckdb/node-api": "1.5.6-r.1",
+    "@duckdb/node-api": "1.5.6-r.2",
     "@omnesis/types": "*",
     "better-sqlite3": "^13.2.0",
     "zod": "^4.6.7"
