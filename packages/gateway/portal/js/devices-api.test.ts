@@ -9,6 +9,7 @@ const {
   buildPairQrPayload,
   checkSession,
   getFleetDoctor,
+  listTokens,
   getHostFleetUpdate,
   getPairAddresses,
   pairDevice,
@@ -106,6 +107,16 @@ describe("device API wrappers", () => {
       "/admin/fleet/doctor",
       expect.objectContaining({ method: "GET" }),
     );
+  });
+
+  test("roster token and health reads carry the view's cancellation signal", async () => {
+    const controller = new AbortController();
+    const fetchMock = vi.fn(async () => Response.json({ items: [], devices: [] }));
+    vi.stubGlobal("fetch", fetchMock);
+    await listTokens(undefined, controller.signal);
+    await getFleetDoctor(controller.signal);
+    expect(fetchMock).toHaveBeenCalledWith("/admin/tokens", expect.objectContaining({ signal: controller.signal }));
+    expect(fetchMock).toHaveBeenCalledWith("/admin/fleet/doctor", expect.objectContaining({ signal: controller.signal }));
   });
 
   test("requests all devices when ids are omitted and preserves an explicit empty subset", async () => {

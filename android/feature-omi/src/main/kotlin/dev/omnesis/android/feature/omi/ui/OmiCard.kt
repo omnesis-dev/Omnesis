@@ -63,6 +63,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 
 data class OmiCardState(
     val status: OmiStatus = OmiStatus.NotPaired,
@@ -70,6 +71,11 @@ data class OmiCardState(
     val error: String? = null,
     /** The pendant captures all day, and a tap marks a moment. */
     val alwaysOn: Boolean = false,
+    /**
+     * The paired gateway takes no recordings (Recordings off in Omnesis Lab):
+     * a linked pendant stays unlinked and can only be forgotten.
+     */
+    val recordingsOff: Boolean = false,
 )
 
 @HiltViewModel
@@ -86,18 +92,33 @@ class OmiViewModel @Inject constructor(
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
     private val local = MutableStateFlow(OmiCardState())
-    val state: StateFlow<OmiCardState> = combine(link.status, settings.alwaysOn, local) { status, alwaysOn, l ->
-        l.copy(status = status, alwaysOn = alwaysOn)
-    }.stateIn(viewModelScope, SharingStarted.Eagerly, OmiCardState(status = link.status.value, alwaysOn = settings.alwaysOn.value))
+    val state: StateFlow<OmiCardState> =
+        combine(link.status, settings.alwaysOn, settings.gatewayTakesRecordings, local) { status, alwaysOn, takes, l ->
+            l.copy(status = status, alwaysOn = alwaysOn, recordingsOff = !takes)
+        }.stateIn(
+            viewModelScope,
+            SharingStarted.Eagerly,
+            OmiCardState(
+                status = link.status.value,
+                alwaysOn = settings.alwaysOn.value,
+                recordingsOff = !settings.gatewayTakesRecordings.value,
+            ),
+        )
 
     /** Turn all-day capture on or off; the link service starts or stops the episodes. */
     fun setAlwaysOn(on: Boolean) = settings.setAlwaysOn(on)
 
     init {
-        // The screen opening brings the link back after the app was stopped.
-        if (link.status.value != OmiStatus.NotPaired && link.hasPermission()) {
-            pairing.observeStored()
-            OmiLinkService.start(context)
+        // The screen opening brings the link back after the app was stopped, and
+        // so does the gateway taking recordings again; the service declines to
+        // link while it takes none.
+        viewModelScope.launch {
+            settings.gatewayTakesRecordings.collect { takes ->
+                if (takes && link.status.value != OmiStatus.NotPaired && link.hasPermission()) {
+                    pairing.observeStored()
+                    OmiLinkService.start(context)
+                }
+            }
         }
     }
 
@@ -200,7 +221,16 @@ fun OmiCardContent(
                     Text(if (state.associating) "Looking for the pendant…" else "Link an Omi")
                 }
             }
-            else -> {
+            else -> if (state.recordingsOff) {
+                Text(
+                    "Recordings are off in Omnesis Lab, so the pendant stays unlinked: its button does nothing " +
+                        "until they are turned back on.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = c.textSecondary,
+                )
+                Spacer(Modifier.height(OmSpacing.sm))
+                TextButton(onClick = onForget) { Text("Forget this pendant") }
+            } else {
                 StatusRow(status)
                 Spacer(Modifier.height(OmSpacing.xs))
                 Text(
@@ -286,7 +316,8 @@ private fun detail(status: OmiStatus, alwaysOn: Boolean): String = when (status)
 /**
  * The pendant's section in Settings, beside the watch: link it, see its state
  * and details, forget it. Shown while the gateway takes recordings, and while
- * a pendant is linked so it can always be forgotten.
+ * a pendant is linked so it can always be forgotten; with recordings off it
+ * offers only that.
  */
 @Composable
 fun OmiSettingsSection(vm: OmiViewModel = hiltViewModel()) {

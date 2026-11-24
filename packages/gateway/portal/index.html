@@ -93,7 +93,33 @@
   <link rel="modulepreload" href="/portal/js/views/search.js">
 </head>
 <body>
-  <div id="app"></div>
+  <div id="app">
+    <div id="portal-bootstrap" class="login-container">
+      <div class="login-card" role="status">
+        <h1 id="portal-bootstrap-title">Opening Omnesis…</h1>
+        <p id="portal-bootstrap-message">If this takes longer than expected, reload the page.</p>
+        <button id="portal-bootstrap-reload" type="button" class="btn-secondary">Reload</button>
+      </div>
+    </div>
+  </div>
+  <!-- This recovery path must run without any downloaded JavaScript modules. -->
+  <script id="portal-bootstrap-script">
+    (function () {
+      var fallback = document.getElementById("portal-bootstrap");
+      document.getElementById("portal-bootstrap-reload").addEventListener("click", function () {
+        location.reload();
+      });
+      function failed() {
+        if (!fallback.isConnected) return;
+        fallback.firstElementChild.setAttribute("role", "alert");
+        document.getElementById("portal-bootstrap-title").textContent = "Couldn't open Omnesis";
+        document.getElementById("portal-bootstrap-message").textContent =
+          "Check your connection and reload the page to try again.";
+      }
+      window.addEventListener("error", failed, true);
+      window.addEventListener("unhandledrejection", failed);
+    })();
+  </script>
   <script type="module" src="/portal/js/app.js"></script>
 </body>
 </html>

@@ -8,7 +8,14 @@ import { SCOPE_ADMIN, SCOPE_READ } from "@omnesis/types";
 import { mountLabRoutes } from "../http/routes/lab.js";
 import { HttpError, errorResponse } from "../http/errors.js";
 import { MIGRATIONS } from "../data/migrations.js";
-import { createLabTable, initializeLabFlags, labFlags, labOptIns, setLabFlag } from "./store.js";
+import {
+  addRecordingsLabFeature,
+  createLabTable,
+  initializeLabFlags,
+  labFlags,
+  labOptIns,
+  setLabFlag,
+} from "./store.js";
 import { LabService } from "./service.js";
 import type { AppEnv } from "../http/routes/types.js";
 
@@ -26,17 +33,49 @@ afterEach(() => {
 
 describe("Omnesis Lab opt-ins", () => {
   test("experimental mode alone enables no feature", () => {
-    expect(labFlags(db)).toEqual({ brain: false, tasks: false, watches: false });
+    expect(labFlags(db)).toEqual({ brain: false, tasks: false, watches: false, recordings: false });
   });
   test("feature choices persist independently; restart initialization preserves explicit opt-outs", () => {
-    initializeLabFlags(db, { brain: true, tasks: true, watches: true });
+    initializeLabFlags(db, { brain: true, tasks: true, watches: true, recordings: true });
     setLabFlag(db, "tasks", false);
-    initializeLabFlags(db, { brain: false, tasks: true, watches: false });
-    expect(labFlags(db)).toEqual({ brain: true, tasks: false, watches: true });
+    setLabFlag(db, "recordings", false);
+    initializeLabFlags(db, { brain: false, tasks: true, watches: false, recordings: true });
+    expect(labFlags(db)).toEqual({ brain: true, tasks: false, watches: true, recordings: false });
     vi.stubEnv("OMNESIS_EXPERIMENTAL", "0");
     vi.stubEnv("OMNESIS_SYNTHETIC", "1");
-    expect(labFlags(db)).toEqual({ brain: false, tasks: false, watches: false });
-    expect(labOptIns(db)).toEqual({ brain: true, tasks: false, watches: true });
+    expect(labFlags(db)).toEqual({ brain: false, tasks: false, watches: false, recordings: false });
+    expect(labOptIns(db)).toEqual({ brain: true, tasks: false, watches: true, recordings: false });
+  });
+  test.each([false, true])(
+    "upgrade admits Recordings, on where one was recorded: %s",
+    (recorded) => {
+      db.exec("DROP TABLE lab_features");
+      db.exec(`CREATE TABLE lab_features (
+      id TEXT PRIMARY KEY CHECK (id IN ('brain', 'tasks', 'watches')),
+      enabled INTEGER NOT NULL CHECK (enabled IN (0, 1))
+    )`);
+      db.exec("INSERT INTO lab_features VALUES ('tasks', 1), ('watches', 0)");
+      db.exec("CREATE TABLE recording_sessions (id TEXT)");
+      if (recorded) db.exec("INSERT INTO recording_sessions VALUES ('earlier-session')");
+      const migration = MIGRATIONS.find((m) => m.version === 221)!;
+      migration.up(db);
+      migration.up(db);
+      expect(labOptIns(db)).toEqual({
+        brain: false,
+        tasks: true,
+        watches: false,
+        recordings: recorded,
+      });
+      setLabFlag(db, "recordings", !recorded);
+      expect(labOptIns(db).recordings).toBe(!recorded);
+    },
+  );
+  test("an upgrade keeps an explicit Recordings opt-out", () => {
+    db.exec("CREATE TABLE recording_sessions (id TEXT)");
+    db.exec("INSERT INTO recording_sessions VALUES ('earlier-session')");
+    setLabFlag(db, "recordings", false);
+    addRecordingsLabFeature(db);
+    expect(labOptIns(db).recordings).toBe(false);
   });
   test.each([false, true])("upgrade recognizes task history: %s", (history) => {
     db.exec("CREATE TABLE open_loops (id TEXT); CREATE TABLE open_loop_ledger (id TEXT)");
@@ -56,6 +95,7 @@ describe("Omnesis Lab opt-ins", () => {
       ["brain", false],
       ["tasks", true],
       ["watches", false],
+      ["recordings", false],
     ]);
     for (const feature of state.features) {
       expect(feature.description.length).toBeGreaterThan(30);
@@ -127,7 +167,7 @@ describe("Lab HTTP boundary", () => {
     });
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe("no-store");
-    expect(labFlags(db)).toEqual({ brain: false, tasks: true, watches: false });
+    expect(labFlags(db)).toEqual({ brain: false, tasks: true, watches: false, recordings: false });
   });
   test("experimental env gates the complete surface, including previously saved choices", async () => {
     setLabFlag(db, "tasks", true);

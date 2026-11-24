@@ -444,7 +444,7 @@ describe("gateway-hosted Streamable HTTP MCP", () => {
   });
 
   it("refreshes the same client's Direct catalogue for rapid Lab changes, including instruction-only dependencies", async () => {
-    const flags = { brain: false, tasks: false, watches: false };
+    const flags = { brain: false, tasks: false, watches: false, recordings: false };
     const direct = service(undefined, [], (id) => flags[id]);
     vi.spyOn(direct, "instructions").mockImplementation(
       async () => `Fictional direct instructions: watches=${flags.watches}`,
@@ -472,7 +472,7 @@ describe("gateway-hosted Streamable HTTP MCP", () => {
   });
 
   it("rebuilds a suspended Direct catalogue after Lab changes without another request", async () => {
-    const flags = { brain: true, tasks: true, watches: false };
+    const flags = { brain: true, tasks: true, watches: false, recordings: false };
     const direct = service(undefined, [], (id) => flags[id]);
     let resolveOld!: (instructions: string) => void;
     const instructions = vi
@@ -501,7 +501,7 @@ describe("gateway-hosted Streamable HTTP MCP", () => {
   });
 
   it("keeps a fresh Direct catalogue cached when an older instruction load fails", async () => {
-    const flags = { brain: false, tasks: false, watches: false };
+    const flags = { brain: false, tasks: false, watches: false, recordings: false };
     const direct = service(undefined, [], (id) => flags[id]);
     let rejectOld!: (error: Error) => void;
     const instructions = vi

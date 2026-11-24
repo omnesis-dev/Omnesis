@@ -758,7 +758,12 @@ export function createCloudRelay(options: CloudRelayOptions): {
             : new RelayError(401, "This gateway is not registered");
         controls.handleUpgrade(req, socket, head, (ws) => {
           metrics.http("GET", req.url, 101, 0);
-          broker.attach(session.accountId, ws, session.expiresAt);
+          broker.attach(
+            session.accountId,
+            ws,
+            session.expiresAt,
+            req.headers["x-omnesis-reject-channels"] === "1",
+          );
         });
         return;
       }

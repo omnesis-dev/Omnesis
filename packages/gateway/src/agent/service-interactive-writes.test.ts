@@ -147,7 +147,7 @@ describe("interactive-agent substrate write access", () => {
   });
 
   it("refreshes an existing chat after a Lab toggle without enabling the Brain", async () => {
-    const flags = { brain: false, tasks: false, watches: false };
+    const flags = { brain: false, tasks: false, watches: false, recordings: false };
     const { service, backend } = makeService({}, true, (id) => flags[id]);
     const taskTool: ToolHandle = {
       name: "task_list",
