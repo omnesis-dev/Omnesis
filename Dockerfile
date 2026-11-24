@@ -6,7 +6,11 @@
 # binary for the target platform. The published images below start from a plain
 # `node:24-slim` and never carry a compiler.
 FROM node:24-slim AS base
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# scripts/docker/apt-get-bounded.sh bounds each package download, so a stalled
+# mirror fails the build with an error instead of holding it indefinitely.
+RUN --mount=type=bind,source=scripts/docker/apt-get-bounded.sh,target=/tmp/apt-get-bounded.sh \
+    sh /tmp/apt-get-bounded.sh update \
+    && sh /tmp/apt-get-bounded.sh install -y --no-install-recommends \
       ca-certificates python3 build-essential \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
@@ -144,8 +148,11 @@ FROM node:24-slim AS runtime-base
 # executable code and dependency trees without serving a production purpose.
 # The upgrade applies Debian security fixes published after the node:24-slim
 # tag was last rebuilt, so a published image never ships a fixed vulnerability.
-RUN apt-get update && apt-get upgrade -y --no-install-recommends \
-    && apt-get install -y --no-install-recommends curl ca-certificates tini \
+# The bounded apt-get is bind-mounted for this step only (see the base stage).
+RUN --mount=type=bind,source=scripts/docker/apt-get-bounded.sh,target=/tmp/apt-get-bounded.sh \
+    sh /tmp/apt-get-bounded.sh update \
+    && sh /tmp/apt-get-bounded.sh upgrade -y --no-install-recommends \
+    && sh /tmp/apt-get-bounded.sh install -y --no-install-recommends curl ca-certificates tini \
     && rm -rf /var/lib/apt/lists/* \
     && rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack /opt/yarn-v* \
     && rm -f /usr/local/bin/npm /usr/local/bin/npx \
