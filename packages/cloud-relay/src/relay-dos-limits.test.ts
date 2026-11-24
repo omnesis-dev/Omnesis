@@ -181,7 +181,8 @@ onLoopbackHost(
       );
       for (const socket of attempts) if (socket) held.push(socket);
       // Half of them: the default per-client share of one gateway.
-      expect(held.length).toBe(8);
+      expect(held.length).toBe(DEFAULT_TUNNEL_LIMITS.maxStreamsPerClientPerGateway);
+      expect(held.length).toBeLessThanOrEqual(DEFAULT_TUNNEL_LIMITS.maxStreamsPerGateway / 2);
       // Someone else still reaches the gateway.
       expect(await ready(f.dataPort, "127.0.0.3")).toBe(200);
     } finally {

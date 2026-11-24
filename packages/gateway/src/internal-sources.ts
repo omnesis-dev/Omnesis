@@ -25,11 +25,11 @@
  * `internalSources` instead.
  */
 
-import { experimentalEnabled } from "@omnesis/core";
 import { HttpError } from "./http/errors.js";
 import { OMNESIS_NOTES_SOURCE_ID } from "./sources/omnesis-notes/index.js";
 import { OMNESIS_RECORDINGS_SOURCE_ID } from "./sources/omnesis-recordings/index.js";
 import type { SourceId } from "@omnesis/types";
+import type { LabFeatureId } from "./lab/catalog.js";
 
 /** Every gateway-internal source id, in list order. */
 export const GATEWAY_INTERNAL_SOURCE_IDS: readonly string[] = [
@@ -37,10 +37,10 @@ export const GATEWAY_INTERNAL_SOURCE_IDS: readonly string[] = [
   OMNESIS_RECORDINGS_SOURCE_ID,
 ];
 
-/** Internal sources only listed while the gateway runs experimental mode. */
-const EXPERIMENTAL_INTERNAL_SOURCE_IDS: ReadonlySet<string> = new Set([
-  OMNESIS_RECORDINGS_SOURCE_ID,
-]);
+/** Internal sources listed only while their Omnesis Lab feature is on. */
+const LAB_INTERNAL_SOURCES: Readonly<Record<string, LabFeatureId>> = {
+  [OMNESIS_RECORDINGS_SOURCE_ID]: "recordings",
+};
 
 export function isGatewayInternalSource(id: string): boolean {
   return GATEWAY_INTERNAL_SOURCE_IDS.includes(id);
@@ -110,13 +110,17 @@ export interface InternalSourceEntry {
 /**
  * The internal sources to advertise. Notes are unconditional: the seed runs
  * at every boot, and the row is how operators discover the capture surface
- * even before the first note lands. An experimental one is listed only in
- * experimental mode. Counts, activity and display identity ride on the
- * existing `/status`, `/index/stats` and source-meta feeds keyed by the same
- * id.
+ * even before the first note lands. One that belongs to an Omnesis Lab
+ * feature is listed only while that feature is on, so an operator who has
+ * not opted in sees nothing of it. Counts, activity and display identity ride
+ * on the existing `/status`, `/index/stats` and source-meta feeds keyed by the
+ * same id.
  */
-export function listInternalSources(): InternalSourceEntry[] {
-  return GATEWAY_INTERNAL_SOURCE_IDS.filter(
-    (id) => !EXPERIMENTAL_INTERNAL_SOURCE_IDS.has(id) || experimentalEnabled(),
-  ).map((id) => ({ id }));
+export function listInternalSources(
+  labFeatureOn: (id: LabFeatureId) => boolean,
+): InternalSourceEntry[] {
+  return GATEWAY_INTERNAL_SOURCE_IDS.filter((id) => {
+    const feature = LAB_INTERNAL_SOURCES[id];
+    return feature === undefined || labFeatureOn(feature);
+  }).map((id) => ({ id }));
 }

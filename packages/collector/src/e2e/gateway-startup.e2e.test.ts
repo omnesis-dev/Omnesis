@@ -343,11 +343,9 @@ describe("gateway startup through its production entrypoint", () => {
         authenticated: false,
       });
       if (page) {
-        await page.waitForFunction(
-          () => (document.getElementById("app")?.childElementCount ?? 0) > 0,
-          undefined,
-          { timeout: BOOT_BUDGET },
-        );
+        // The dependency-free recovery screen fills #app before sign-in initializes.
+        // Wait for the requested view before inspecting the consumed token and session.
+        await page.locator(".models-overview").waitFor({ timeout: BOOT_BUDGET });
         const final = new URL(page.url());
         expect(final.pathname).toBe("/portal/settings/models");
         expect(final.searchParams.get("startup-fixture")).toBe("fictional");
@@ -359,7 +357,6 @@ describe("gateway startup through its production entrypoint", () => {
           fetch("/portal/api/session").then((response) => response.json()),
         );
         expect(session).toMatchObject({ authenticated: true });
-        await page.locator(".models-overview").waitFor({ timeout: BOOT_BUDGET });
         await page.screenshot({
           path: join(tmpdir(), "omnesis-gateway-startup-portal.png"),
           fullPage: true,

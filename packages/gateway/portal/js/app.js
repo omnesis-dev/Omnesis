@@ -186,8 +186,9 @@ function LoginView({ reason } = {}) {
   `;
 }
 
-// Experimental destinations still appear only when the gateway runs in
-// experimental mode. Privacy is a standard control surface because an Answer
+// A destination that belongs to an Omnesis Lab feature (`lab`) appears only
+// while /status reports that feature on, which also needs experimental mode;
+// an operator who has not opted in sees nothing of it. Privacy is a standard control surface because an Answer
 // integration can require an operator decision in normal operation. Tasks
 // appear once /status says the gateway serves them (`tasks.available`).
 const NAV_ITEMS = [
@@ -196,9 +197,9 @@ const NAV_ITEMS = [
   { view: "sources", href: "/portal/sources", label: "Sources", icon: "sources" },
   { view: "people", href: "/portal/people", label: "People", icon: "people" },
   { view: "capture", href: "/portal/capture", label: "Tell Omnesis", icon: "capture" },
-  { view: "recordings", href: "/portal/recordings", label: "Recordings", icon: "recordings", experimental: true },
+  { view: "recordings", href: "/portal/recordings", label: "Recordings", icon: "recordings", lab: "recordings" },
   { view: "tasks", href: "/portal/tasks", label: "Tasks", icon: "tasks", requiresTasks: true },
-  { view: "watches", href: "/portal/watches", label: "Watches", icon: "watches", experimental: true },
+  { view: "watches", href: "/portal/watches", label: "Watches", icon: "watches", lab: "watches" },
   { view: "privacy", href: "/portal/audit", label: "Audit", icon: "privacy" },
   { view: "debug", href: "/portal/debug", label: "Debug", icon: "debug" },
   { view: "settings", href: "/portal/settings", label: "Settings", icon: "settings" },
@@ -311,7 +312,7 @@ function App() {
   // release result.
   const [experimental, setExperimental] = useState(false);
   const [labAvailable, setLabAvailable] = useState(false);
-  const [lab, setLab] = useState({ brain: false, tasks: false, watches: false });
+  const [lab, setLab] = useState({ brain: false, tasks: false, watches: false, recordings: false });
   // Whether the gateway has its own Tailscale device: its installation includes the helper program.
   const [tailscaleEmbed, setTailscaleEmbed] = useState(false);
 
@@ -383,7 +384,12 @@ function App() {
       setStoragePressure(status?.storagePressure ?? null);
       setExperimental(status?.experimental === true);
       setLabAvailable(status?.labAvailable === true);
-      setLab({ brain: status?.lab?.brain === true, tasks: status?.lab?.tasks === true, watches: status?.lab?.watches === true });
+      setLab({
+        brain: status?.lab?.brain === true,
+        tasks: status?.lab?.tasks === true,
+        watches: status?.lab?.watches === true,
+        recordings: status?.lab?.recordings === true,
+      });
       setTailscaleEmbed(status?.tailscaleEmbed === true);
       setDeveloper(status?.developer === true);
       setDemo(status?.demo === true);
@@ -652,7 +658,7 @@ function App() {
 
         <nav class="sidebar-nav" aria-label="Main navigation">
           ${NAV_ITEMS.filter(
-            (item) => (!item.experimental || (item.view === "watches" ? lab.watches : experimental)) && (!item.requiresTasks || tasksAvailable),
+            (item) => (!item.lab || lab[item.lab]) && (!item.requiresTasks || tasksAvailable),
           ).map((item) => {
             // "Ask" (the agent landing) is special: it navigates AND
             // dispatches the fresh-session event, so clicking it from
@@ -849,7 +855,7 @@ function App() {
               directSessionId=${route.directSessionId ?? null}
               waitingAnswers=${attention.answers.count}
             />`
-          : route.view === "recordings" && experimental
+          : route.view === "recordings" && lab.recordings
           ? html`<${RecordingsView} recordingId=${route.recordingId ?? null} />`
           : route.view === "watches" && lab.watches
           ? html`<${WatchesView}

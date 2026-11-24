@@ -30,15 +30,18 @@ home="${GRADLE_USER_HOME:-$HOME/.gradle}"
 # Every entry one level down in caches/ and wrapper/dists/, with Gradle's
 # per-version cache directories broken down one level further, largest first,
 # in MiB. Each is measured on its own: du counts a directory once per call, so
-# one call would leave a per-version directory's children out.
+# one call would leave a per-version directory's children out. The shell strips
+# the home prefix as a literal string: handed to awk, a Windows path's
+# backslashes would be read as escape sequences and the path as a regular
+# expression.
 sizes() {
-  local entry
+  local entry kib
   for entry in "$home"/caches/* "$home"/caches/[0-9]*.*/* "$home"/wrapper/dists/*; do
     [[ -e "$entry" ]] || continue
     [[ "$entry" =~ /caches/[0-9]+\.[^/]*$ ]] && continue
-    du -sk "$entry"
-  done | sort -rn | awk -v home="$home/" '
-    { sub(home, "", $2); printf "%8d MiB  %s\n", $1 / 1024, $2 }'
+    kib=$(du -sk "$entry" | cut -f1)
+    printf '%s\t%s\n' "$kib" "${entry#"$home"/}"
+  done | sort -rn | awk -F '\t' '{ printf "%8d MiB  %s\n", $1 / 1024, $2 }'
 }
 
 total() {

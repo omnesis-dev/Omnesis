@@ -100,6 +100,35 @@ describe("Nx change selection", () => {
     expect(behavioralBundles(["docs/brain.md", "website/docs/search.html"])).toEqual([]);
   });
 
+  test("a changed E2E suite selects the bundle that owns it", () => {
+    expect(behavioralBundles(["packages/collector/src/e2e/recordings.e2e.test.ts"])).toContain(
+      "ingestion-providers",
+    );
+    expect(
+      behavioralBundles(["packages/providers/example/src/example-sync.e2e.test.ts"]),
+    ).toContain("ingestion-providers");
+    expect(behavioralBundles(["packages/collector/src/e2e/portal.e2e.test.ts"])).toContain(
+      "portal",
+    );
+  });
+
+  test("the gateway's audio intake selects the ingestion bundle", () => {
+    for (const file of [
+      "packages/gateway/src/http/routes/recordings.ts",
+      "packages/gateway/src/recordings/service.ts",
+      "packages/gateway/src/transcribe/queue.ts",
+      "packages/gateway/src/http/routes/transcription-vocabulary.ts",
+      "packages/gateway/src/http/routes/voice-notes.ts",
+    ])
+      expect(behavioralBundles([file])).toContain("ingestion-providers");
+    for (const file of [
+      "packages/gateway/src/brain/transcripts.ts",
+      "packages/gateway/src/observability/flight-recorder.ts",
+      "packages/gateway/src/brain/record-check/check.ts",
+    ])
+      expect(behavioralBundles([file])).not.toContain("ingestion-providers");
+  });
+
   test("the subscription runtime services select the agent bundle", () => {
     for (const file of [
       "packages/gateway/src/models/codex-runtime-service.ts",

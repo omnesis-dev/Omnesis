@@ -32,6 +32,7 @@ vi.mock("ws", async () => {
     close(): void {
       this.terminate();
     }
+    send = vi.fn();
     open(): void {
       this.readyState = 1;
       this.emit("open");
@@ -50,6 +51,7 @@ interface Socket extends EventEmitter {
   readyState: number;
   open(): void;
   terminate(): void;
+  send: ReturnType<typeof vi.fn>;
 }
 const sockets = (): Socket[] => mocks.sockets as Socket[];
 const options = (): GatewayTunnelOptions => ({
@@ -185,24 +187,57 @@ test("watchdog reconnects a half-open connection without needing the remote serv
   tunnel.stop();
 });
 
-test("data channels are bounded and cancelled with their owner control session", async () => {
-  const tunnel = new GatewayTunnel({ ...options(), maxChannels: 1 });
-  tunnel.start();
-  await flush();
-  const control = sockets()[0];
-  control.open();
-  const message = Buffer.from(JSON.stringify({ type: "open", version: 1, ticket: "a".repeat(64) }));
-  control.emit("message", message);
-  expect(sockets()).toHaveLength(2);
-  expect(sockets()[1].options.headers["x-omnesis-relay-ticket"]).toBe("a".repeat(64));
-  sockets()[1].open();
-  await flush();
-  const destination = (await mocks.connect.mock.results[0].value) as PassThrough;
-  control.emit("message", message);
-  expect(control.readyState).toBe(3);
-  expect(destination.destroyed).toBe(true);
-  tunnel.stop();
-});
+test.each([false, true])(
+  "channel overflow preserves existing streams (rejections negotiated: %s)",
+  async (rejectChannels) => {
+    const tunnel = new GatewayTunnel({ ...options(), maxChannels: 1 });
+    tunnel.start();
+    await flush();
+    const control = sockets()[0];
+    control.open();
+    expect(control.options.headers["x-omnesis-reject-channels"]).toBe("1");
+    control.emit(
+      "message",
+      Buffer.from(
+        JSON.stringify({
+          type: "ready",
+          version: 1,
+          heartbeatMs: 30_000,
+          ...(rejectChannels ? { rejectChannels: true } : {}),
+        }),
+      ),
+    );
+    const message = Buffer.from(
+      JSON.stringify({ type: "open", version: 1, ticket: "a".repeat(64) }),
+    );
+    control.emit("message", message);
+    expect(sockets()).toHaveLength(2);
+    expect(sockets()[1].options.headers["x-omnesis-relay-ticket"]).toBe("a".repeat(64));
+    sockets()[1].open();
+    await flush();
+    const destination = (await mocks.connect.mock.results[0].value) as PassThrough;
+    const overflow = { type: "open", version: 1, ticket: "b".repeat(64) };
+    control.emit("message", Buffer.from(JSON.stringify(overflow)));
+    expect(control.readyState).toBe(1);
+    expect(tunnel.status().state).toBe("online");
+    expect(destination.destroyed).toBe(false);
+    expect(sockets()).toHaveLength(2);
+    if (rejectChannels)
+      expect(control.send).toHaveBeenCalledExactlyOnceWith(
+        JSON.stringify({ type: "reject", version: 1, ticket: overflow.ticket }),
+      );
+    else expect(control.send).not.toHaveBeenCalled();
+    // Once the first channel closes, admission recovers without reconnecting the control socket.
+    sockets()[1].terminate();
+    control.emit("message", Buffer.from(JSON.stringify(overflow)));
+    expect(sockets()).toHaveLength(3);
+    sockets()[2].open();
+    await flush();
+    const nextDestination = (await mocks.connect.mock.results[1].value) as PassThrough;
+    tunnel.stop();
+    expect(nextDestination.destroyed).toBe(true);
+  },
+);
 
 test("destination failures and stream errors are contained, with no leaked pending connections", async () => {
   const tunnel = new GatewayTunnel(options());

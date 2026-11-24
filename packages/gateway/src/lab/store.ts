@@ -10,9 +10,37 @@ export type LabFlags = Record<LabFeatureId, boolean>;
 
 export function createLabTable(db: Database.Database): void {
   db.exec(`CREATE TABLE IF NOT EXISTS lab_features (
-    id TEXT PRIMARY KEY CHECK (id IN ('brain', 'tasks', 'watches')),
+    id TEXT PRIMARY KEY CHECK (id IN ('brain', 'tasks', 'watches', 'recordings')),
     enabled INTEGER NOT NULL CHECK (enabled IN (0, 1))
   )`);
+}
+
+/**
+ * Admit the `recordings` experiment into an existing `lab_features` table,
+ * whose CHECK named only the first three, and opt in an install that has
+ * already recorded a conversation. No table references `lab_features`, so the
+ * rebuild runs inside the migration's transaction.
+ */
+export function addRecordingsLabFeature(db: Database.Database): void {
+  const table = db
+    .prepare<[], { sql: string }>(
+      "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'lab_features'",
+    )
+    .get();
+  if (table && !table.sql.includes("'recordings'")) {
+    db.exec("ALTER TABLE lab_features RENAME TO lab_features_old");
+    createLabTable(db);
+    db.exec("INSERT INTO lab_features (id, enabled) SELECT id, enabled FROM lab_features_old");
+    db.exec("DROP TABLE lab_features_old");
+  } else if (!table) {
+    createLabTable(db);
+  }
+  const recorded =
+    db
+      .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'recording_sessions'")
+      .get() !== undefined &&
+    db.prepare("SELECT 1 FROM recording_sessions LIMIT 1").get() !== undefined;
+  if (recorded) initializeLabFlags(db, { recordings: true });
 }
 
 /** Insert once: subsequent restarts must preserve explicit opt-outs. */
@@ -30,7 +58,7 @@ export function setLabFlag(db: Database.Database, id: LabFeatureId, enabled: boo
 }
 
 export function labOptIns(db: Database.Database): LabFlags {
-  const flags: LabFlags = { brain: false, tasks: false, watches: false };
+  const flags: LabFlags = { brain: false, tasks: false, watches: false, recordings: false };
   for (const row of db
     .prepare<[], { id: LabFeatureId; enabled: number }>("SELECT id, enabled FROM lab_features")
     .all())
@@ -55,5 +83,6 @@ export function labFlags(db: Database.Database): LabFlags {
     brain: enabled && flags.brain,
     tasks: enabled && flags.tasks,
     watches: enabled && flags.watches,
+    recordings: enabled && flags.recordings,
   };
 }

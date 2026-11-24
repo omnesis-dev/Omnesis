@@ -29,6 +29,7 @@ describe("lazy view loader", () => {
 
   afterEach(() => {
     render(null, host);
+    vi.unstubAllGlobals();
     if (originalDocument === undefined) delete (globalThis as { document?: unknown }).document;
     else globalThis.document = originalDocument;
     if (originalWindow === undefined) delete (globalThis as { window?: unknown }).window;
@@ -90,8 +91,9 @@ describe("lazy view loader", () => {
     expect(host.querySelectorAll(".greeting")).toHaveLength(2);
   });
 
-  test("a module that fails to load leaves the placeholder up rather than throwing", async () => {
-    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+  test("a failed module shows an error with a full-document reload action", async () => {
+    const reload = vi.fn();
+    vi.stubGlobal("location", { reload });
     const View = lazy(async () => {
       throw new Error("network down");
     });
@@ -99,10 +101,48 @@ describe("lazy view loader", () => {
     await act(async () => {
       render(h(View, {}), host);
     });
-    await act(async () => {});
 
-    expect(host.querySelector(".lazy-view-loading")).not.toBeNull();
-    expect(consoleError).toHaveBeenCalled();
-    consoleError.mockRestore();
+    await act(async () => {});
+    expect(host.querySelector(".lazy-view-loading")).toBeNull();
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain("Couldn't load this page");
+    host.querySelector("button")!.click();
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+
+  test("a failed view stays recoverable after navigating away and back", async () => {
+    const loader = vi.fn(async () => { throw new Error("network down"); });
+    const View = lazy(loader);
+    await act(async () => { render(h(View, {}), host); });
+    await act(async () => { render(null, host); });
+    await act(async () => { render(h(View, {}), host); });
+    await act(async () => {});
+    expect(host.querySelector('[role="alert"]')).not.toBeNull();
+    expect(host.querySelector(".lazy-view-loading")).toBeNull();
+    expect(loader).toHaveBeenCalledTimes(1);
+  });
+
+  test("a synchronous loader failure shows the same recovery", async () => {
+    const View = lazy(() => { throw new Error("loader failed"); });
+    await act(async () => { render(h(View, {}), host); });
+    await act(async () => {});
+    expect(host.querySelector('[role="alert"]')).not.toBeNull();
+  });
+
+  test.each(["resolve", "reject"])("an import can %s after unmount without replacing the next page", async (outcome) => {
+    let resolve: (component: unknown) => void = () => {};
+    let reject: (cause: Error) => void = () => {};
+    const loader = vi.fn(() => new Promise((yes, no) => { resolve = yes; reject = no; }));
+    const View = lazy(loader);
+    await act(async () => { render(h(View, {}), host); });
+    await act(async () => { render(h("p", null, "Another page"), host); });
+    await act(async () => {
+      if (outcome === "resolve") resolve(Greeting);
+      else reject(new Error("network down"));
+    });
+    expect(host.textContent).toBe("Another page");
+    await act(async () => { render(h(View, { name: "Maya" }), host); });
+    expect(host.querySelector(".lazy-view-loading")).toBeNull();
+    expect(host.querySelector(outcome === "resolve" ? ".greeting" : '[role="alert"]')).not.toBeNull();
+    expect(loader).toHaveBeenCalledTimes(1);
   });
 });

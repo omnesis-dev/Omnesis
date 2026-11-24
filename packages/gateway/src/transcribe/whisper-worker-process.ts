@@ -35,6 +35,17 @@ const workerMessage = z.discriminatedUnion("type", [
       text: z.string(),
       language: z.string().optional(),
       durationSec: z.number().finite().nonnegative().optional(),
+      segments: z
+        .array(
+          z
+            .object({
+              startMs: z.number().finite().nonnegative(),
+              endMs: z.number().finite().nonnegative(),
+              text: z.string(),
+            })
+            .strict(),
+        )
+        .optional(),
     })
     .strict(),
   z

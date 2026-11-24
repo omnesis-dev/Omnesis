@@ -127,7 +127,7 @@ function BackLink() {
 function Unavailable() {
   return html`<div class="privacy-empty-state">
     <strong>Recordings are off</strong>
-    <span>Recorded conversations are available when the gateway runs in experimental mode.</span>
+    <span>Turn on Recordings in Settings → Omnesis Lab to record conversations.</span>
   </div>`;
 }
 

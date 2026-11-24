@@ -590,6 +590,8 @@ export function SourcesView({ demo = false } = {}) {
   const [syncNotes, dispatchSyncNote] = useReducer(syncNotesReducer, {});
   const syncNoteTimers = useRef(new Map());
   const refreshing = useRef(false);
+  const activeRefresh = useRef(null);
+  const mounted = useRef(true);
   // Synced source ids the icon meta cache already reflects; null until the
   // first poll, whose rows the startup load covers.
   const metaCoveredSynced = useRef(null);
@@ -598,18 +600,24 @@ export function SourcesView({ demo = false } = {}) {
   const [groupToggles, setGroupToggles] = useState({});
 
   async function refresh() {
-    if (refreshing.current) return;
+    if (!mounted.current || refreshing.current) return;
     refreshing.current = true;
+    const controller = new AbortController();
+    activeRefresh.current = controller;
+    const timeout = setTimeout(() => controller.abort(), 10_000);
+    const signal = controller.signal;
     try {
       const [registeredRes, syncRes, statusRes, devicesRes, indexRes, descriptorsRes] =
         await Promise.all([
-          getAdminSources(),
-          getAdminSyncStatus(),
-          getOverallStatus(),
-          listDevices().catch(() => ({ items: [] })),
-          getIndexStats().catch(() => null),
-          getSourceDescriptorsUnion().catch(() => ({ items: [] })),
+          getAdminSources(signal),
+          getAdminSyncStatus(signal),
+          getOverallStatus(signal),
+          listDevices(signal).catch(() => ({ items: [] })),
+          getIndexStats(signal).catch(() => null),
+          getSourceDescriptorsUnion(signal).catch(() => ({ items: [] })),
         ]);
+      if (!mounted.current) return;
+      signal.throwIfAborted();
 
       // Map sourceType → historyImport spec for sources that advertise the
       // generic one-time-import capability. Empty when no collector is
@@ -760,8 +768,10 @@ export function SourcesView({ demo = false } = {}) {
       });
 
       const metaRefresh = sourceMetaRefresh(merged, metaCoveredSynced.current);
+      if (metaRefresh.refresh) await refreshSourceMeta(signal);
+      if (!mounted.current) return;
+      signal.throwIfAborted();
       metaCoveredSynced.current = metaRefresh.covered;
-      if (metaRefresh.refresh) await refreshSourceMeta();
 
       setSources(merged);
       setDevices(devices);
@@ -778,17 +788,26 @@ export function SourcesView({ demo = false } = {}) {
       setIndexStats(indexRes ?? null);
       dispatchError({ type: "refresh-succeeded" });
     } catch (e) {
-      dispatchError({ type: "refresh-failed", message: String(e.message || e) });
+      if (mounted.current) dispatchError({
+        type: "refresh-failed",
+        message: signal.aborted ? "Sources took too long to load. Check the connection and try again." : String(e.message || e),
+      });
     } finally {
-      setLoading(false);
+      clearTimeout(timeout);
+      controller.abort();
+      activeRefresh.current = null;
+      if (mounted.current) setLoading(false);
       refreshing.current = false;
     }
   }
 
   useEffect(() => {
+    mounted.current = true;
     refresh();
     const timers = syncNoteTimers.current;
     return () => {
+      mounted.current = false;
+      activeRefresh.current?.abort();
       for (const t of timers.values()) clearTimeout(t);
     };
   }, []);

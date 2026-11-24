@@ -21,7 +21,7 @@
 // one click away from the summary and from each step.
 
 import { html } from "htm/preact";
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import { useStepFocus } from "../components/step-nav.js";
 import { navigate } from "../lib/router.js";
 import { getRemoteAccess, updateRemoteAccess } from "../lib/remote-access-api.js";
@@ -155,15 +155,32 @@ function Flow({ remote, setRemote, relay, tailscale, tailscaleEmbed }) {
 export function useRemoteAccess() {
   const [remote, setRemote] = useState(null);
   const [error, setError] = useState("");
+  const active = useRef(null);
   const load = async () => {
+    active.current?.abort();
+    const controller = new AbortController();
+    active.current = controller;
+    const timeout = setTimeout(() => controller.abort(), 10_000);
     setError("");
     try {
-      setRemote(await getRemoteAccess());
+      const next = await getRemoteAccess(controller.signal);
+      if (active.current === controller && !controller.signal.aborted) setRemote(next);
     } catch (cause) {
-      setError(cause?.serverMessage || "Couldn't load the remote access settings. Check the connection and try again.");
+      if (active.current === controller)
+        setError(cause?.serverMessage || "Couldn't load the remote access settings. Check the connection and try again.");
+    } finally {
+      clearTimeout(timeout);
+      if (active.current === controller) active.current = null;
     }
   };
-  useEffect(() => void load(), []);
+  useEffect(() => {
+    void load();
+    return () => {
+      const controller = active.current;
+      active.current = null;
+      controller?.abort();
+    };
+  }, []);
   return { remote, setRemote, error, load };
 }
 
