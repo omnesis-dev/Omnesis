@@ -1391,6 +1391,8 @@ export function DevicesView({ pairKindRequest = null, focusDeviceId = null, tail
   const [doctorError, setDoctorError] = useState(null);
   const doctorRequestGeneration = useRef(0);
   const refreshSequence = useRef(0);
+  const activeRefresh = useRef(null);
+  const mounted = useRef(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -1456,19 +1458,32 @@ export function DevicesView({ pairKindRequest = null, focusDeviceId = null, tail
     );
   }
 
-  async function refresh() {
+  async function refresh({ passive = false } = {}) {
+    if (!mounted.current) return;
+    // A slow read keeps its deadline: the three-second poll must not repeatedly
+    // replace it before it can answer. Changes still replace an older snapshot.
+    if (passive && activeRefresh.current && !activeRefresh.current.signal.aborted) return;
+    activeRefresh.current?.abort();
+    const controller = new AbortController();
+    activeRefresh.current = controller;
     const sequence = ++refreshSequence.current;
     const doctorGeneration = doctorRequestGeneration.current;
+    let timedOut = false;
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, 10_000);
     try {
       const [d, t, doctorResult] = await Promise.all([
-        listDevices(),
-        listTokens(),
-        getFleetDoctor().then(
+        listDevices(controller.signal),
+        listTokens(undefined, controller.signal),
+        getFleetDoctor(controller.signal).then(
           (value) => ({ value, error: null }),
           (error) => ({ value: null, error }),
         ),
       ]);
       if (sequence !== refreshSequence.current) return;
+      if (controller.signal.aborted) throw new Error("Request aborted");
       setDevices(d.items || []);
       setTokens(t.items || []);
       if (doctorResult.value && doctorGeneration === doctorRequestGeneration.current) {
@@ -1477,18 +1492,26 @@ export function DevicesView({ pairKindRequest = null, focusDeviceId = null, tail
       if (doctorGeneration === doctorRequestGeneration.current) {
         setDoctorError(
           doctorResult.error
-            ? `Health status: ${String(doctorResult.error.message || doctorResult.error)}`
+            ? timedOut
+              ? "Health status: The gateway didn't answer in time."
+              : `Health status: ${String(doctorResult.error.message || doctorResult.error)}`
             : null,
         );
       }
       setError(null);
     } catch (e) {
-      if (sequence === refreshSequence.current) setError(String(e.message || e));
+      if (sequence === refreshSequence.current)
+        setError(timedOut ? "The gateway didn't answer in time. Check the connection and try again." : String(e.message || e));
+    } finally {
+      clearTimeout(timeout);
+      controller.abort();
+      if (activeRefresh.current === controller) activeRefresh.current = null;
+      if (sequence === refreshSequence.current) setLoading(false);
     }
-    if (sequence === refreshSequence.current) setLoading(false);
   }
 
   useEffect(() => {
+    mounted.current = true;
     refresh();
     // Best effort, and deliberately not fatal: without it the update actions
     // are simply absent, which is a far better failure than a Devices page
@@ -1496,8 +1519,15 @@ export function DevicesView({ pairKindRequest = null, focusDeviceId = null, tail
     fleetUpdateTarget()
       .then((res) => setUpdateTarget(res.targetVersion))
       .catch(() => setUpdateTarget(null));
+    return () => {
+      mounted.current = false;
+      refreshSequence.current += 1;
+      const controller = activeRefresh.current;
+      activeRefresh.current = null;
+      controller?.abort();
+    };
   }, []);
-  useVisiblePoll(refresh, 3000);
+  useVisiblePoll(() => refresh({ passive: true }), 3000);
 
   useEffect(() => {
     (async () => {
@@ -1523,8 +1553,10 @@ export function DevicesView({ pairKindRequest = null, focusDeviceId = null, tail
   }, []);
 
   async function refreshAccessOverview() {
+    if (!mounted.current) return;
     try {
-      setAccessOverview(await getAccessOverview());
+      const next = await getAccessOverview();
+      if (mounted.current) setAccessOverview(next);
     } catch {
       // Non-fatal — without the overview the access-level picker stays hidden.
     }
@@ -1942,7 +1974,10 @@ export function DevicesView({ pairKindRequest = null, focusDeviceId = null, tail
           </div>
 
           <${WaitingDevices} tailscaleEmbed=${tailscaleEmbed} />
-          ${error && html`<div class="devices-banner error">${error}</div>`}
+          ${error && html`<div class="devices-banner error" role="alert">
+            <span>${error}</span>
+            <button type="button" class="btn-secondary" onClick=${() => refresh()}>Try again</button>
+          </div>`}
           ${doctorError && html`<div class="devices-banner error">${doctorError}</div>`}
           ${showHealthProgress && !doctorError && html`
             <${FleetHealthProgress} healthByDevice=${doctorByDevice} requesting=${doctorRequesting} />

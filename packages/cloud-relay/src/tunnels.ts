@@ -5,9 +5,18 @@ import { randomBytes } from "node:crypto";
 import { isIP } from "node:net";
 import { type Duplex } from "node:stream";
 import { createWebSocketStream, WebSocket } from "ws";
+import { z } from "zod";
 import { CloudRelayMetrics } from "./metrics.js";
 import { clientBucket } from "./client-bucket.js";
 import { hasStreamCapacity } from "./stream-admission.js";
+
+const channelRejection = z
+  .object({
+    type: z.literal("reject"),
+    version: z.literal(1),
+    ticket: z.string().regex(/^[a-f0-9]{64}$/),
+  })
+  .strict();
 
 export class RelayError extends Error {
   /** `code`, when set, is the one word the response body carries for the client to act on. */
@@ -37,11 +46,12 @@ export interface TunnelLimits {
 export const DEFAULT_TUNNEL_LIMITS: TunnelLimits = {
   maxGateways: 100,
   maxStreams: 256,
-  maxStreamsPerGateway: 16,
-  // An eighth of the relay's, and half of one gateway's, so one client never holds them all.
-  // A browser opens up to six connections to one name.
-  maxStreamsPerClient: 32,
-  maxStreamsPerClientPerGateway: 8,
+  maxStreamsPerGateway: 64,
+  // A browser may hold six HTTP connections as well as upgraded sockets. Leave room
+  // for several browsers, native devices and reconnects sharing one public address.
+  // Per-client limits and the reserved quarter still bound one address's share.
+  maxStreamsPerClient: 64,
+  maxStreamsPerClientPerGateway: 32,
   connectTimeoutMs: 10_000,
   heartbeatMs: 30_000,
   // Gateways ping device WebSockets and send SSE keep-alives every 15 to 30 seconds.
@@ -58,6 +68,8 @@ interface Pending {
 
 interface Tunnel {
   socket: WebSocket;
+  maxStreams: number;
+  maxStreamsPerClient: number;
   streams: Set<Duplex>;
   pending: Set<string>;
   /** Streams and pending reservations by client bucket. */
@@ -89,14 +101,23 @@ export class TunnelBroker {
       throw new RelayError(503, "Gateway capacity reached");
   }
 
-  attach(account: string, socket: WebSocket, expiresAt: number): void {
+  attach(account: string, socket: WebSocket, expiresAt: number, rejectChannels = false): void {
     this.admit(account);
     let alive = true;
     const tunnel: Tunnel = {
       socket,
+      // Legacy gateways close their whole tunnel above sixteen channels. Preserve
+      // their admission budget until they can refuse an individual channel safely.
+      maxStreams: rejectChannels
+        ? this.limits.maxStreamsPerGateway
+        : Math.min(this.limits.maxStreamsPerGateway, 16),
+      maxStreamsPerClient: rejectChannels
+        ? this.limits.maxStreamsPerClientPerGateway
+        : Math.min(this.limits.maxStreamsPerClientPerGateway, 8),
       streams: new Set(),
       pending: new Set(),
       clients: new Map(),
+      // See #1283 — renew routing sessions without interrupting active requests.
       expiry: setTimeout(
         () => {
           this.metrics.tunnel("session_expired");
@@ -138,13 +159,36 @@ export class TunnelBroker {
       this.metrics.tunnel("socket_error");
       socket.terminate();
     });
-    socket.on("message", () => {
+    socket.on("message", (raw) => {
+      if (rejectChannels) {
+        try {
+          const message = channelRejection.safeParse(JSON.parse(raw.toString()));
+          if (message.success) {
+            // A stale or foreign ticket is harmless; it cannot cancel another owner.
+            if (this.pending.get(message.data.ticket)?.owner === tunnel) {
+              this.metrics.stream("rejected");
+              this.fail(
+                message.data.ticket,
+                new RelayError(503, "Gateway channel capacity reached"),
+              );
+            }
+            return;
+          }
+        } catch {
+          // Invalid control input follows the ordinary protocol violation path.
+        }
+      }
       this.metrics.tunnel("unexpected_message");
       socket.close(1008, "Unexpected control message");
     });
     socket.once("close", tunnel.revoke);
     socket.send(
-      JSON.stringify({ type: "ready", version: 1, heartbeatMs: this.limits.heartbeatMs }),
+      JSON.stringify({
+        type: "ready",
+        version: 1,
+        heartbeatMs: this.limits.heartbeatMs,
+        ...(rejectChannels ? { rejectChannels: true } : {}),
+      }),
     );
   }
 
@@ -169,16 +213,12 @@ export class TunnelBroker {
     const held = tunnel.clients.get(bucket) ?? 0;
     if (
       this.activeStreams + this.pending.size >= this.limits.maxStreams ||
-      !hasStreamCapacity(
-        this.limits.maxStreamsPerGateway,
-        tunnel.streams.size + tunnel.pending.size,
-        held,
-      )
+      !hasStreamCapacity(tunnel.maxStreams, tunnel.streams.size + tunnel.pending.size, held)
     ) {
       this.metrics.stream("capacity");
       throw new RelayError(429, "Stream capacity reached");
     }
-    if (held >= this.limits.maxStreamsPerClientPerGateway) {
+    if (held >= tunnel.maxStreamsPerClient) {
       this.metrics.stream("client_capacity");
       throw new RelayError(429, "Stream capacity reached for this client");
     }
