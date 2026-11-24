@@ -83,6 +83,7 @@ test("the default owned spawner exchanges real framed PCM and joins physical wor
   expect(await transcriber.transcribe(new Uint8Array([1]), "audio/wav")).toMatchObject({
     text: "Invented physical worker transcript.",
     language: "en",
+    segments: [{ startMs: 0, endMs: 1200, text: "Invented physical worker transcript." }],
   });
   await transcriber.dispose();
   expect(transcriber.cleanupFailure()).toBeUndefined();
