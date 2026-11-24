@@ -98,7 +98,7 @@ A daily Claude Code routine audits the previous day's commits and opens one GitH
 
 ## Experimental features
 
-Ship not-yet-battle-tested work in the tree but gate it so it cannot surprise an operator. `OMNESIS_EXPERIMENTAL` reveals **Settings → Omnesis Lab** on the portal and native apps. Brain, Tasks, and Watches require independent persisted Lab opt-ins; the environment flag alone never enables them on a fresh install. Gateway `GET /status` advertises effective flags as `lab.{brain,tasks,watches}`. Lab choices are internal database state, separate from feature settings. Existing task history, existing watches, and an assigned background-agent model preserve the corresponding opt-in during upgrade. Explicit opt-outs survive restart and disabling experimental mode.
+Ship not-yet-battle-tested work in the tree but gate it so it cannot surprise an operator. `OMNESIS_EXPERIMENTAL` reveals **Settings → Omnesis Lab** on the portal and native apps. Brain, Tasks, Watches, and Recordings require independent persisted Lab opt-ins; the environment flag alone never enables them on a fresh install. Gateway `GET /status` advertises effective flags as `lab.{brain,tasks,watches,recordings}`. Lab choices are internal database state, separate from feature settings. Existing task history, existing watches, an assigned background-agent model, and a recorded conversation preserve the corresponding opt-in during upgrade. Explicit opt-outs survive restart and disabling experimental mode.
 
 The Brain processes data autonomously in the background and uses the internal `background-agent` model role. Chat and the bounded Tell Omnesis note agent use the ordinary `agent` role independently. Tasks can run without the Brain (manual changes and user-requested task tools); background task suggestions and updates require both. When Tasks is disabled, agent prompts, tools, task context, and background task producers omit it. Watches run independently of the Brain. Settings → Sweeps and Debug → Brain require the Brain opt-in; old `/portal/debug/cognition` links remain compatible.
 
@@ -198,11 +198,12 @@ the dev box (warm = the project already built/transformed once this session):
   tightest loop; use it while iterating on a single unit.
 - **One package** — `npm run test:unit:vitest -- packages/<pkg>` ≈ **1.3s** wall for a ~40-file package.
   Use it once a file passes, to catch cross-file fallout within the package.
-- **A portal-only change** — `npx vitest run packages/gateway/portal` (~2s) is the whole
-  gate, together with `npm run typecheck`, lint, the PII scan and the mandatory screenshot.
-  Skip `test:e2e`: `portal.e2e.test.ts` checks that the portal's files are served and that
-  routes fall back to `index.html`, and no E2E suite renders a portal view, so the lane
-  costs tens of minutes (plus whatever it queues behind) and covers none of the change.
+- **A portal-only change** — start with `npx vitest run packages/gateway/portal` (~2s),
+  then use the affected gate for typechecks, lint, privacy and the declared portal bundle.
+  The portal bundle checks file serving and route fallback in `portal.e2e.test.ts`.
+  For bootstrap or sign-in changes, also run `gateway-startup.e2e.test.ts`: it checks browser
+  startup, token consumption and the requested view through the production entrypoint.
+  Keep the mandatory screenshot for the affected view.
   The portal lane does read the stylesheet — `js/stylesheet.test.ts` parses `css/style.css`
   and fails on an unbalanced brace, which otherwise silently drops every rule after it — so
   a CSS-only change is not untested, but a screenshot is still the only check on what it

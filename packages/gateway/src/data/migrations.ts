@@ -35,7 +35,7 @@
 
 import { createHash, randomUUID } from "node:crypto";
 import { createLogger, type Logger } from "@omnesis/core";
-import { createLabTable } from "../lab/store.js";
+import { addRecordingsLabFeature, createLabTable } from "../lab/store.js";
 import { createKnowledgeTables } from "../brain/knowledge/schema.js";
 import { createKnowledgePendingReadIndexes } from "../brain/knowledge/pending-work-query.js";
 import { createKnowledgeBatchReadIndexes } from "../brain/knowledge/batch-query.js";
@@ -5024,6 +5024,11 @@ export const MIGRATIONS: readonly Migration[] = [
     version: 220,
     description: "persist bounded history cleanup commands and restart authority",
     up: addHistoryCleanup,
+  },
+  {
+    version: 221,
+    description: "offer Recordings in Omnesis Lab, kept on where conversations were recorded",
+    up: addRecordingsLabFeature,
   },
 ];
 

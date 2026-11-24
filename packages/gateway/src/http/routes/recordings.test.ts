@@ -17,6 +17,7 @@ import { SCOPE_ADMIN, SCOPE_READ, type Scope } from "@omnesis/types";
 import { createDatabase } from "../../db.js";
 import { getRecordingSession } from "../../recordings/storage.js";
 import { createServer } from "../../server.js";
+import { setLabFlag } from "../../lab/store.js";
 import { createToken } from "../../data/repositories/TokenRepository.js";
 import { createDevice } from "../../data/repositories/DeviceRepository.js";
 import { TranscribeService } from "../../transcribe/index.js";
@@ -101,6 +102,7 @@ beforeEach(() => {
   process.env.OMNESIS_EXPERIMENTAL = "1";
   dbPath = `/tmp/omnesis-test-${randomUUID()}.db`;
   db = createDatabase(dbPath);
+  setLabFlag(db, "recordings", true);
   ADMIN_TOKEN = mintToken([SCOPE_ADMIN, SCOPE_READ]);
   optedIn = undefined;
   keepAudioDays = undefined;
@@ -551,6 +553,18 @@ describe("recordings routes", () => {
       readOnly,
     );
     expect(res.status).toBe(403);
+  });
+
+  test("is advertised, and served, only while the recordings opt-in is on", async () => {
+    const health = await (await app.request("/health")).json();
+    expect(health.capabilities.recordings).toEqual({ min: 1, max: 1 });
+
+    setLabFlag(db, "recordings", false);
+    expect((await startRecording()).status).toBe(404);
+    const off = await (await app.request("/health")).json();
+    expect(off.capabilities.recordings).toBeUndefined();
+    setLabFlag(db, "recordings", true);
+    expect((await startRecording()).status).toBe(201);
   });
 
   test("is advertised, and served, only in experimental mode", async () => {

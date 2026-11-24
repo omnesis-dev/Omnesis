@@ -32,9 +32,10 @@ const REMOVED = [
   "caches/modules-2/gc.properties",
 ];
 
-function gradleHome() {
-  const home = mkdtempSync(join(tmpdir(), "omnesis-gradle-trim-"));
-  dirs.push(home);
+function gradleHome(name = "") {
+  const root = mkdtempSync(join(tmpdir(), "omnesis-gradle-trim-"));
+  dirs.push(root);
+  const home = join(root, name);
   for (const file of [...KEPT, ...REMOVED]) {
     mkdirSync(join(home, dirname(file)), { recursive: true });
     writeFileSync(join(home, file), "x".repeat(4096));
@@ -72,6 +73,19 @@ describe("scripts/ci/gradle-cache-trim.sh", () => {
     expect(result.stdout.slice(before, after)).toContain("caches/8.11.1/transforms");
     expect(result.stdout.slice(after)).toContain("caches/8.11.1/kotlin-dsl");
     expect(result.stdout.slice(after)).not.toContain("caches/8.11.1/transforms");
+  });
+
+  test("names each entry relative to a Gradle home whose path awk would misread", () => {
+    // A Windows path carries backslashes, which awk reads as escape sequences in
+    // a -v assignment, and any path can carry characters that are special in a
+    // regular expression. Neither may reach the printed names.
+    const name = process.platform === "win32" ? "gradle [home]+" : "gradle\\Users [home]+";
+    const result = trim(gradleHome(name));
+    expect(result.stderr).toBe("");
+    expect(result.status).toBe(0);
+    expect(result.stdout).toMatch(/^ +\d+ MiB {2}caches\/modules-2$/mu);
+    expect(result.stdout).toMatch(/^ +\d+ MiB {2}wrapper\/dists\/gradle-8\.11\.1-bin$/mu);
+    expect(result.stdout).not.toContain("[home]");
   });
 
   test("does nothing when no Gradle cache was restored or written", () => {

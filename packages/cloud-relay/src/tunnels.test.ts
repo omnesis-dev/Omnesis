@@ -44,6 +44,126 @@ test("validates all admission limits and supports defaults", () => {
   }
 });
 
+test("default admission fits browsers, native devices and reconnects sharing one address, while staying bounded", async () => {
+  const broker = new TunnelBroker();
+  const control = new Control();
+  broker.attach("account", control.socket, 3600, true);
+  const pending: Promise<unknown>[] = [];
+  const reserve = (address: string) => {
+    const controller = new AbortController();
+    pending.push(broker.open("account", controller.signal, address).catch(() => undefined));
+    return controller;
+  };
+  try {
+    // Three browsers (six HTTP sockets each), two native devices, then a reconnect
+    // burst while the old connections have not closed yet: one public NAT address.
+    const existing = Array.from({ length: 20 }, () => reserve("192.0.2.1"));
+    const reconnecting = Array.from({ length: 6 }, () => reserve("192.0.2.1"));
+    expect(broker.snapshot().pendingStreams).toBe(26);
+    existing.slice(0, 6).forEach((controller) => controller.abort());
+    reconnecting.forEach((controller) => controller.abort());
+    for (let i = 14; i < DEFAULT_TUNNEL_LIMITS.maxStreamsPerClientPerGateway; i++)
+      reserve("192.0.2.1");
+    expect(() => reserve("192.0.2.1")).toThrow("this client");
+    // Another address can still connect, but represented clients stop at the
+    // gateway's reserved quarter; entirely new clients retain the final slots.
+    while (broker.snapshot().pendingStreams < 48) reserve("192.0.2.2");
+    expect(() => reserve("192.0.2.2")).toThrow("capacity");
+    for (let i = 0; i < 16; i++) reserve(`198.51.100.${i + 1}`);
+    expect(broker.snapshot().pendingStreams).toBe(64);
+    expect(() => reserve("203.0.113.1")).toThrow("capacity");
+    expect(control.terminate).not.toHaveBeenCalled();
+  } finally {
+    broker.close();
+    await Promise.all(pending);
+  }
+});
+
+test("channel rejection is advertised only to a gateway that negotiated it", () => {
+  const broker = new TunnelBroker();
+  const oldGateway = new Control();
+  const newGateway = new Control();
+  broker.attach("old", oldGateway.socket, 3600);
+  broker.attach("new", newGateway.socket, 3600, true);
+  expect(JSON.parse(oldGateway.sent[0]!)).toEqual({
+    type: "ready",
+    version: 1,
+    heartbeatMs: 30_000,
+  });
+  expect(JSON.parse(newGateway.sent[0]!)).toEqual({
+    type: "ready",
+    version: 1,
+    heartbeatMs: 30_000,
+    rejectChannels: true,
+  });
+  broker.close();
+});
+
+test("an older gateway keeps its sixteen-channel budget and eight-channel client share during rollout", async () => {
+  const broker = new TunnelBroker();
+  const control = new Control();
+  broker.attach("legacy", control.socket, 3600);
+  const pending: Promise<unknown>[] = [];
+  const reserve = (address: string) =>
+    pending.push(
+      broker.open("legacy", new AbortController().signal, address).catch(() => undefined),
+    );
+  try {
+    for (let i = 0; i < 8; i++) reserve("192.0.2.1");
+    expect(() => reserve("192.0.2.1")).toThrow("this client");
+    for (let i = 0; i < 4; i++) reserve("192.0.2.2");
+    expect(() => reserve("192.0.2.2")).toThrow("capacity");
+    for (let i = 0; i < 4; i++) reserve(`198.51.100.${i + 1}`);
+    expect(broker.snapshot().pendingStreams).toBe(16);
+    expect(() => reserve("203.0.113.1")).toThrow("capacity");
+    expect(control.terminate).not.toHaveBeenCalled();
+  } finally {
+    broker.close();
+    await Promise.all(pending);
+  }
+});
+
+test("a negotiated refusal releases only that gateway's pending channel and leaves its control connected", async () => {
+  const broker = new TunnelBroker({ ...DEFAULT_TUNNEL_LIMITS, maxStreamsPerGateway: 1 });
+  const first = new Control();
+  const second = new Control();
+  broker.attach("first", first.socket, 3600, true);
+  broker.attach("second", second.socket, 3600, true);
+  const pending = broker.open("first", new AbortController().signal);
+  const refused = expect(pending).rejects.toThrow("Gateway channel capacity reached");
+  const ticket = JSON.parse(first.sent.at(-1)!).ticket as string;
+  const rejection = JSON.stringify({ type: "reject", version: 1, ticket });
+  second.emit("message", Buffer.from(rejection));
+  expect(broker.snapshot().pendingStreams).toBe(1);
+  first.emit("message", Buffer.from(rejection));
+  await refused;
+  expect(broker.snapshot().pendingStreams).toBe(0);
+  // A duplicate refusal cannot affect an unrelated later reservation.
+  const next = broker.open("first", new AbortController().signal).catch(() => undefined);
+  first.emit("message", Buffer.from(rejection));
+  expect(broker.snapshot().pendingStreams).toBe(1);
+  expect(first.close).not.toHaveBeenCalled();
+  expect(second.close).not.toHaveBeenCalled();
+  broker.close();
+  await next;
+});
+
+test.each([
+  "not json",
+  JSON.stringify({ type: "reject", version: 1, ticket: "invalid" }),
+  JSON.stringify({ type: "reject", version: 1, ticket: "a".repeat(64), extra: true }),
+])("invalid negotiated control input closes only its own gateway: %s", (input) => {
+  const broker = new TunnelBroker();
+  const first = new Control();
+  const second = new Control();
+  broker.attach("first", first.socket, 3600, true);
+  broker.attach("second", second.socket, 3600, true);
+  first.emit("message", Buffer.from(input));
+  expect(first.close).toHaveBeenCalledWith(1008, "Unexpected control message");
+  expect(second.close).not.toHaveBeenCalled();
+  broker.close();
+});
+
 test("aborted requests never reserve a channel and pending disconnects release admission", async () => {
   const broker = new TunnelBroker();
   const control = new Control();

@@ -110,14 +110,17 @@ describe.skipIf(process.platform === "win32")(
       await until(() => existsSync(captured(out, 1)), "the first capture");
       const dir = join(out, "failure-1");
       await until(() => readdirSync(dir).length >= 7, "every sample");
-
-      expect(readFileSync(join(dir, "sample-securityd-102.txt"), "utf8")).toContain("stack of 102");
-      expect(readFileSync(join(dir, "sample-app-103.txt"), "utf8")).toContain("stack of 103");
-      expect(readFileSync(join(dir, "sample-runner-104.txt"), "utf8")).toContain("stack of 104");
+      // A sampler creates its file before it writes the stack, so each one is
+      // read once it holds what it was asked to write.
+      const written = (file, text) => {
+        const path = join(dir, file);
+        return existsSync(path) && readFileSync(path, "utf8").includes(text);
+      };
+      await until(() => written("sample-securityd-102.txt", "stack of 102"), "securityd's sample");
+      await until(() => written("sample-app-103.txt", "stack of 103"), "the app's sample");
+      await until(() => written("sample-runner-104.txt", "stack of 104"), "the runner's sample");
       // trustd refuses `sample`; root's spindump takes it instead.
-      expect(readFileSync(join(dir, "spindump-trustd-101.txt"), "utf8")).toContain(
-        "spindump of 101",
-      );
+      await until(() => written("spindump-trustd-101.txt", "spindump of 101"), "trustd's spindump");
       expect(readFileSync(captured(out, 1), "utf8")).toContain("trustd: evaluating");
       // The predicate spans lines, so the recorded call does too.
       const log = readFileSync(calls, "utf8");

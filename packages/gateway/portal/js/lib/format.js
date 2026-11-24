@@ -153,7 +153,18 @@ export function setSourceMeta(entries) {
 }
 
 /** Prefetch source metadata from gateway. Call once on app startup. */
-export async function loadSourceMeta() {
+export async function loadSourceMeta(signal) {
+  if (signal) return readSourceMeta(signal);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10_000);
+  try {
+    await readSourceMeta(controller.signal);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function readSourceMeta(signal) {
   const generation = ++_metaGeneration;
   // `/portal/source-meta.json` is the sync_state-backed map: it only carries
   // an entry for sources that have already synced at least once. A
@@ -174,10 +185,10 @@ export async function loadSourceMeta() {
   // right icon immediately via the descriptor lookup, and once it syncs
   // the more-specific sync_state entry takes over (relevant for sources
   // whose icon varies per account, e.g. browser-history chrome vs safari).
-  const [synced, fromDescriptors] = await Promise.all([fetchSyncedMeta(), fetchDescriptorMeta()]);
+  const [synced, fromDescriptors] = await Promise.all([fetchSyncedMeta(signal), fetchDescriptorMeta(signal)]);
   // A source change can refresh metadata while the shell's first request is
   // still in flight. Only the newest request may publish its snapshot.
-  if (generation !== _metaGeneration) return;
+  if (signal?.aborted || generation !== _metaGeneration) return;
   // Per-key merge so synced entries (icon/label per account) layer over
   // descriptor entries (unitName, plus type-level icon/label) WITHOUT
   // dropping fields the synced row doesn't carry. A naive spread of
@@ -203,9 +214,9 @@ export async function loadSourceMeta() {
   _metaCache = merged;
 }
 
-async function fetchSyncedMeta() {
+async function fetchSyncedMeta(signal) {
   try {
-    const res = await fetch("/portal/source-meta.json");
+    const res = await fetch("/portal/source-meta.json", signal ? { signal } : undefined);
     if (res.ok) return await res.json();
   } catch {
     /* fall through to empty map; descriptor cache may still cover us */
@@ -213,9 +224,9 @@ async function fetchSyncedMeta() {
   return {};
 }
 
-async function fetchDescriptorMeta() {
+async function fetchDescriptorMeta(signal) {
   try {
-    const res = await fetch("/admin/source-descriptors");
+    const res = await fetch("/admin/source-descriptors", signal ? { signal } : undefined);
     if (!res.ok) return {};
     const body = await res.json();
     const items = Array.isArray(body?.items) ? body.items : [];
@@ -254,8 +265,8 @@ async function fetchDescriptorMeta() {
  * portal picks up the new icon without a hard refresh — closes
  * portal-source-icon-meta-cache-not-refreshed.
  */
-export async function refreshSourceMeta() {
-  await loadSourceMeta();
+export async function refreshSourceMeta(signal) {
+  await loadSourceMeta(signal);
 }
 
 function lookupMeta(sourceId) {

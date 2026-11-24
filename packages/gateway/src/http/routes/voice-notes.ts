@@ -68,6 +68,8 @@ export interface VoiceNoteRoutesDeps {
    * then saved alone.
    */
   markRecording?: (recordingId: string, noteId: string, markedAt: string) => Promise<void>;
+  /** Whether Recordings is on in Omnesis Lab; a mark is ignored while it is off. */
+  recordingsEnabled?: () => boolean;
 }
 
 export function mountVoiceNoteRoutes(app: RouteApp, deps: VoiceNoteRoutesDeps): void {
@@ -115,7 +117,8 @@ export function mountVoiceNoteRoutes(app: RouteApp, deps: VoiceNoteRoutesDeps): 
     const parsed = voiceNoteMetadata.safeParse(raw);
     if (!parsed.success) throw new ValidationError("Validation failed", parsed.error.issues);
     const note = parsed.data;
-    const markRecording = note.recordingId ? deps.markRecording : undefined;
+    const markRecording =
+      note.recordingId && (deps.recordingsEnabled?.() ?? true) ? deps.markRecording : undefined;
     if (markRecording) {
       enforceWriteScopeForSource(c.get("auth").scopes, OMNESIS_RECORDINGS_SOURCE_ID);
     }

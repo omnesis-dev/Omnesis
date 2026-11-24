@@ -48,6 +48,7 @@ import type { ConfigStore } from "../../config-store.js";
 import type { StatusCache } from "../services/StatusCache.js";
 import type { RouteApp } from "./types.js";
 import type Database from "better-sqlite3";
+import type { LabFlags } from "../../lab/store.js";
 
 type Db = Database.Database;
 
@@ -56,7 +57,7 @@ const log = createLogger("gateway:http").child("routes:status");
 export interface StatusRoutesDeps {
   /** Whether this installation has the gateway's own Tailscale device (its helper program). */
   tailscaleEmbed?: boolean;
-  getLabStatus?: () => { brain: boolean; tasks: boolean; watches: boolean };
+  getLabStatus?: () => LabFlags;
   db: Db;
   dbPath?: string;
   config?: OmnesisConfig;
@@ -128,13 +129,16 @@ const GENERAL_CAPABILITIES = {
 /**
  * The general capabilities plus the experimental wire features an
  * authenticated app decides about. `recordings`: the chunked
- * conversation-recording routes, served in experimental mode where a
- * transcriber is wired.
+ * conversation-recording routes, served once Recordings is on in Omnesis Lab
+ * and a transcriber is wired.
  */
-function appCapabilities(transcriberWired: boolean): Record<string, { min: number; max: number }> {
+function appCapabilities(
+  transcriberWired: boolean,
+  lab: LabFlags,
+): Record<string, { min: number; max: number }> {
   return {
     ...GENERAL_CAPABILITIES,
-    ...(experimentalEnabled() && transcriberWired ? { recordings: { min: 1, max: 1 } } : {}),
+    ...(lab.recordings && transcriberWired ? { recordings: { min: 1, max: 1 } } : {}),
   };
 }
 
@@ -161,6 +165,8 @@ export function mountStatusRoutes(app: RouteApp, deps: StatusRoutesDeps): void {
     getDiskUsage,
     vetAssignment,
   } = deps;
+  const labStatus = (): LabFlags =>
+    deps.getLabStatus?.() ?? { brain: false, tasks: false, watches: false, recordings: false };
 
   /**
    * Refuse a config write whose capability assignments include one the
@@ -206,7 +212,7 @@ export function mountStatusRoutes(app: RouteApp, deps: StatusRoutesDeps): void {
       ...(deps.tailscaleEmbed ? { tailscaleEmbed: true } : {}),
       capabilities: {
         sourceContract: SOURCE_CONTRACT_WIRE_RANGE,
-        ...appCapabilities(getDictationStatus !== undefined),
+        ...appCapabilities(getDictationStatus !== undefined, labStatus()),
         ...(experimentalEnabled()
           ? {
               browserFeatures: { min: 1, max: 1 },
@@ -222,8 +228,7 @@ export function mountStatusRoutes(app: RouteApp, deps: StatusRoutesDeps): void {
         // integration — transcript ingestion and Answer through /mcp — is
         // generally available, so this is the seam that keeps a default
         // gateway's integration honest instead of half-installed.
-        subscriptions: (deps.getLabStatus?.() ?? { brain: false, tasks: false, watches: false })
-          .watches,
+        subscriptions: labStatus().watches,
       },
       compat: {
         schema: GATEWAY_COMPAT.stores.mainDb.version,
@@ -544,7 +549,7 @@ export function mountStatusRoutes(app: RouteApp, deps: StatusRoutesDeps): void {
       ? getConfigHealth()
       : { degradedRoles: [], lastConfigError: null };
 
-    const lab = deps.getLabStatus?.() ?? { brain: false, tasks: false, watches: false };
+    const lab = labStatus();
     const brainGate = getBriefsStatus
       ? getBriefsStatus()
       : {
@@ -622,7 +627,7 @@ export function mountStatusRoutes(app: RouteApp, deps: StatusRoutesDeps): void {
       noteAgent,
       // The optional wire features an authenticated client decides about,
       // the same entries `/health` names.
-      capabilities: appCapabilities(getDictationStatus !== undefined),
+      capabilities: appCapabilities(getDictationStatus !== undefined, lab),
       transcriptionVocabulary: getTranscriptionVocabularyEnabled?.() ?? false,
       // How long the gateway believes a client's "I am showing this
       // conversation" mark without a refresh. Clients pace their own refresh

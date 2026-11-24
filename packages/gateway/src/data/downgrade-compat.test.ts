@@ -353,7 +353,7 @@ describe("a downgrade across migrations that leave cursors alone", () => {
 describe("the cursor-compatibility version", () => {
   /** Every migration through this version has been decided on. */
   // Storage cleanup authority does not change provider sync-state interpretation.
-  const REVIEWED_THROUGH = 220;
+  const REVIEWED_THROUGH = 221;
   const FLAGGED = [131, 133, 134, 139, 141, 146, 178];
 
   test("every migration has been decided on", () => {

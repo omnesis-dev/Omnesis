@@ -2311,10 +2311,11 @@ export function createServer(
     });
     voiceNotes.start();
     opts.onVoiceNoteService?.(voiceNotes);
-    // Recorded conversations (experimental): a phone uploads a long
-    // recording in chunks and the gateway transcribes them as they arrive.
-    // The queue runs whatever the mode, so sessions accepted before the mode
-    // was switched off still converge; the routes 404 without it.
+    // Recorded conversations (Omnesis Lab): a phone uploads a long recording
+    // in chunks and the gateway transcribes them as they arrive. The queue
+    // runs whatever the Lab choice, so sessions accepted before Recordings was
+    // switched off still converge; the routes 404 without it.
+    const recordingsEnabled = () => labFeatureEnabled(db, "recordings");
     const recordings = new RecordingTranscriptionService({
       writeGate: w,
       readDb: db,
@@ -2352,17 +2353,15 @@ export function createServer(
         return getDictationStatus();
       },
       // A moment marked in a recorded conversation is recorded only while
-      // the feature is on, as its routes are.
-      ...(experimentalEnabled()
-        ? {
-            markRecording: (recordingId: string, noteId: string, markedAt: string) =>
-              recordings.mark(recordingId, noteId, markedAt),
-          }
-        : {}),
+      // Recordings is on, as its routes are.
+      markRecording: (recordingId: string, noteId: string, markedAt: string) =>
+        recordings.mark(recordingId, noteId, markedAt),
+      recordingsEnabled,
     });
 
-    // The source is listed only in experimental mode; its display identity
-    // is seeded then, so the row never shows without its label and icon.
+    // The source is listed only while Recordings is on in Omnesis Lab, which
+    // can be switched on without a restart; its display identity is seeded in
+    // experimental mode, so the row never shows without its label and icon.
     if (experimentalEnabled()) {
       seedOmnesisRecordingsSourceMeta(w).catch((err: unknown) => {
         log.warn(
@@ -2373,6 +2372,7 @@ export function createServer(
     opts.onRecordingService?.(recordings);
     mountRecordingRoutes(app, {
       service: recordings,
+      enabled: recordingsEnabled,
       getStatus: async () => {
         await transcribeService.settledReadiness();
         return getDictationStatus();

@@ -10,6 +10,8 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import { SCOPE_ADMIN, SCOPE_READ, type Scope } from "@omnesis/types";
@@ -22,13 +24,12 @@ import { LOCAL_WHISPER_UNAVAILABLE } from "../../transcribe/whisper-transcriber.
 import { dictationFeatureStatus } from "../../dictation/index.js";
 import { TRANSCRIBING_PLACEHOLDER, type VoiceNoteService } from "../../voice-notes/index.js";
 import { listRecordingMarks } from "../../recordings/storage.js";
+import { setLabFlag } from "../../lab/store.js";
 import { languageHint } from "./voice-notes.js";
 import type { OmnesisConfig } from "@omnesis/config";
 import type { ResolvedAssignment } from "@omnesis/core";
 import type { OmnesisNotesRuntime } from "../../sources/omnesis-notes/index.js";
 import type Database from "better-sqlite3";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 let db: Database.Database;
 let dbPath: string;
@@ -348,6 +349,7 @@ describe("POST /notes/voice naming a recording", () => {
 
   test("records the marked moment in the recording when recorded conversations are on", async () => {
     process.env.OMNESIS_EXPERIMENTAL = "1";
+    setLabFlag(db, "recordings", true);
     app = createServer(db, dbPath, serverOpts);
     const id = randomUUID();
     const res = await post(voiceNoteForm({ id, text: "", capturedAt: markedAt, recordingId }));
@@ -359,6 +361,7 @@ describe("POST /notes/voice naming a recording", () => {
 
   test("needs the recordings scope as well as the notes one", async () => {
     process.env.OMNESIS_EXPERIMENTAL = "1";
+    setLabFlag(db, "recordings", true);
     app = createServer(db, dbPath, serverOpts);
     const notesOnly = mintToken(["write:omnesis-notes" as Scope]);
     const res = await post(
@@ -366,6 +369,16 @@ describe("POST /notes/voice naming a recording", () => {
       notesOnly,
     );
     expect(res.status).toBe(403);
+    expect(listRecordingMarks(db, recordingId)).toEqual([]);
+  });
+
+  test("saves the note alone while the recordings opt-in is off", async () => {
+    process.env.OMNESIS_EXPERIMENTAL = "1";
+    app = createServer(db, dbPath, serverOpts);
+    const id = randomUUID();
+    const res = await post(voiceNoteForm({ id, text: "", recordingId }));
+    expect(res.status).toBe(202);
+    expect(noteText(id)).toBeDefined();
     expect(listRecordingMarks(db, recordingId)).toEqual([]);
   });
 
