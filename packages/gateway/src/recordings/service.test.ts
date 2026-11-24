@@ -9,6 +9,8 @@
  */
 
 import { existsSync, unlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 
@@ -112,7 +114,7 @@ function chunk(sessionId: string, seq: number, overrides: Partial<RecordingChunk
 }
 
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-test-${randomUUID()}.db`;
+  dbPath = join(tmpdir(), `omnesis-test-${randomUUID()}.db`);
   db = createDatabase(dbPath);
   now = new Date(at(10 * 60_000));
   readiness = { runnable: true };

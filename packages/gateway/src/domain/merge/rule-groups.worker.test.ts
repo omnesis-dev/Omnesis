@@ -11,6 +11,8 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createDatabase } from "../../db.js";
 import { Scheduler } from "../../scheduler/scheduler.js";
@@ -37,7 +39,7 @@ describe.each(["empty", "edge", "large"])("the %s rule groups on the io worker",
   let gate: IoGate;
 
   beforeAll(async () => {
-    dbPath = `/tmp/omnesis-test-${randomUUID()}.db`;
+    dbPath = join(tmpdir(), `omnesis-test-${randomUUID()}.db`);
     db = createDatabase(dbPath);
     if (fixture === "edge") seedEdgeRuleGroups(db);
     if (fixture === "large") seedLargeRuleGroups(db, 40);
