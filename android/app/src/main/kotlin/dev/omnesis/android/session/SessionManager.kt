@@ -53,7 +53,11 @@ import dev.omnesis.android.transport.dto.NoteAgentStatusDto
 import dev.omnesis.android.transport.dto.DictationStatusDto
 import dev.omnesis.android.transport.dto.WatchCaptureStatusDto
 import dev.omnesis.android.transport.dto.PushPlan
+import dev.omnesis.android.transport.dto.StatusSnapshot
 import dev.omnesis.android.transport.http.GatewayHttp
+import dev.omnesis.android.feature.recording.RecordingAvailabilityMemory
+import dev.omnesis.android.feature.recording.ui.RecordingAvailability
+import dev.omnesis.android.transport.client.RecordingsClient
 import dev.omnesis.android.transport.ws.DeviceSocket
 import dev.omnesis.android.ui.agent.AgentCoordinator
 import dev.omnesis.android.voice.SpeechVocabulary
@@ -225,6 +229,7 @@ class SessionManager @Inject constructor(
     private val phoneSetupRecord: PhoneSetupRecord,
     // A provider, because the steps that start first syncs ask this manager for the session scope.
     private val phoneSetupSteps: Provider<Set<@JvmSuppressWildcards PhoneSetupStep>>,
+    private val recordingAvailabilityMemory: RecordingAvailabilityMemory,
 ) : SessionScopeProvider, RelayConsentActions {
     sealed interface AppState {
         data object Unpaired : AppState
@@ -248,6 +253,7 @@ class SessionManager @Inject constructor(
         val admin: AdminClient,
         val agent: AgentClient,
         val notes: NotesClient,
+        val recordings: RecordingsClient,
         val watches: WatchesClient,
         val tasks: TasksClient,
         val socket: DeviceSocket,
@@ -324,6 +330,15 @@ class SessionManager @Inject constructor(
 
     private val _experimentalEnabled = MutableStateFlow(false)
     val experimentalEnabled: StateFlow<Boolean> = _experimentalEnabled.asStateFlow()
+
+    /**
+     * Whether the gateway takes conversations recorded on this phone
+     * (experimental): experimental mode, the `recordings` capability, and
+     * whether the operator left gateway transcription on. Reset on every
+     * rebuild like the other status-derived gates.
+     */
+    private val _recordingAvailability = MutableStateFlow(RecordingAvailability.Availability.UNAVAILABLE)
+    val recordingAvailability: StateFlow<RecordingAvailability.Availability> = _recordingAvailability.asStateFlow()
 
     /**
      * Whether the connected gateway runs in developer mode (`OMNESIS_DEV_MODE=1`),
@@ -600,9 +615,16 @@ class SessionManager @Inject constructor(
             relayEnroller.clearAll()
             sourceCatalog.clear()
             agentCoordinator.teardown()
+            recordingAvailabilityMemory.forget()
+            _recordingAvailability.value = RecordingAvailability.Availability.UNAVAILABLE
             _state.value = AppState.Unpaired
             return
         }
+        // Unlike the gates cleared above, recordings start from this pairing's last
+        // answer: a conversation can be recorded while the gateway is out of reach, and
+        // the outbox holds it until the gateway is back. The status probe corrects it.
+        // Set once per branch, so the tile and the shortcut never see a passing UNAVAILABLE.
+        _recordingAvailability.value = recordingAvailabilityMemory.lastKnown(pairing.recordingKey())
         settleLocalState(pairing, atLaunch)
         val upgrade = { onSystemTrustVerified(pairing) }
         val routes = PairedGatewayRoutes(pairing, pairingService, { paired, route -> GatewayDirectCandidateDiscovery.fetch(paired, route) }, ::acceptDirectCandidates)
@@ -667,6 +689,7 @@ class SessionManager @Inject constructor(
             admin = admin,
             agent = agent,
             notes = NotesClient(http),
+            recordings = RecordingsClient(http),
             watches = WatchesClient(http),
             tasks = TasksClient(http),
             socket = socket,
@@ -944,6 +967,9 @@ class SessionManager @Inject constructor(
         _experimentalEnabled.value = status.experimental
         _labAvailable.value = status.labAvailable
         _lab.value = status.effectiveLabFlags
+        _recordingAvailability.value = recordingAvailability(status).also {
+            recordingAvailabilityMemory.remember(current.pairing.recordingKey(), it)
+        }
         _developerEnabled.value = status.developer
         _tailscaleEmbed.value = status.tailscaleEmbed || tailscaleJoinNotified
         val tasksWereAvailable = _tasksAvailable.value
@@ -1192,4 +1218,18 @@ class SessionManager @Inject constructor(
             scope.launch(Dispatchers.Main) { if (session === current) rebuild() }
         }
     }
+}
+
+/**
+ * Which pairing a remembered recordings answer belongs to. The token-row id changes with
+ * every pairing, even to the same gateway; an older pairing without one falls back to the
+ * gateway and device it names.
+ */
+internal fun Pairing.recordingKey(): String = pairingGeneration ?: "$url\u001f${deviceId.orEmpty()}"
+
+/** Recordings need experimental mode and the `recordings` capability, and transcription left on. */
+internal fun recordingAvailability(status: StatusSnapshot): RecordingAvailability.Availability = when {
+    !status.experimental || !status.recordings -> RecordingAvailability.Availability.UNAVAILABLE
+    status.dictation?.enabled == false -> RecordingAvailability.Availability.TRANSCRIPTION_OFF
+    else -> RecordingAvailability.Availability.AVAILABLE
 }

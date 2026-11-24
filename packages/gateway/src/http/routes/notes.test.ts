@@ -3,10 +3,13 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { Scope, SCOPE_ADMIN, SCOPE_READ, SCOPE_WRITE_ALL } from "@omnesis/types";
 import { createDatabase } from "../../db.js";
 import { createServer } from "../../server.js";
+import { directWriteGate } from "../../write-gate.js";
 import { createDevice } from "../../data/repositories/DeviceRepository.js";
 import { createToken } from "../../data/repositories/TokenRepository.js";
 import {
@@ -16,8 +19,6 @@ import {
   type NoteEntry,
 } from "../../sources/omnesis-notes/index.js";
 import type Database from "better-sqlite3";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 type Db = Database.Database;
 
@@ -126,7 +127,23 @@ describe("/notes availability", () => {
     try {
       const device = createDevice(lazyDb, { name: "lazy-notes-test", kind: "cli" });
       const lazyToken = createToken(lazyDb, device.id, [SCOPE_READ]).token;
-      const lazyApp = createServer(lazyDb, lazyPath);
+      // The boot seeds the notes source's display row in the background,
+      // after the response that triggered it. Observe that write through the
+      // write gate so the test waits for the seed itself, however slow.
+      const gate = directWriteGate(lazyDb);
+      let notesSeedWritten!: () => void;
+      const notesSeeded = new Promise<void>((resolve) => {
+        notesSeedWritten = resolve;
+      });
+      const lazyApp = createServer(lazyDb, lazyPath, {
+        writeGate: {
+          ...gate,
+          setSourceMeta: async (sourceId, meta) => {
+            await gate.setSourceMeta(sourceId, meta);
+            if (sourceId === OMNESIS_NOTES_SOURCE_ID) notesSeedWritten();
+          },
+        },
+      });
       const seededCount = (): number =>
         lazyDb
           .prepare<[], { count: number }>(
@@ -143,7 +160,8 @@ describe("/notes availability", () => {
         headers: { Authorization: `Bearer ${lazyToken}` },
       });
       expect(authorized.status).toBe(200);
-      await expect.poll(seededCount).toBe(1);
+      await notesSeeded;
+      expect(seededCount()).toBe(1);
     } finally {
       lazyDb.close();
       cleanupDb(lazyPath);

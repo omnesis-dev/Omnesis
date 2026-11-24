@@ -1838,3 +1838,52 @@ export const refreshStorage = () => request("POST", "/admin/storage/refresh", { 
 export const getStorageCleanupJobs = () => request("GET", "/admin/storage/cleanup/jobs", { cache: "no-store" });
 export const startStorageCleanup = (body) => request("POST", "/admin/storage/cleanup/jobs", { body });
 export const cancelStorageCleanup = (id) => request("POST", `/admin/storage/cleanup/jobs/${encodeURIComponent(id)}/cancel`, { body: {} });
+
+// --- Recorded conversations (experimental) ---
+// A phone on the table records a conversation and the gateway transcribes it.
+// Every route 404s when experimental mode is off.
+
+const recordingPath = (id) => `/recordings/${encodeURIComponent(id)}`;
+
+/** The most recent recordings, newest first: `{ recordings }`. */
+export const listRecordings = (limit = 100) => request("GET", "/recordings", { query: { limit } });
+
+/** One recording as the list shows it, with its chunks: `{ recording, chunks }`. */
+export const getRecordingChunks = (id) => request("GET", `${recordingPath(id)}/chunks`);
+
+/** A recording's speakers, with how long each spoke and what they said first: `{ speakers }`. */
+export const getRecordingSpeakers = (id) => request("GET", `${recordingPath(id)}/speakers`);
+
+/**
+ * Say who speaker `speaker` is: `{ self: true }`, `{ personId }`, `{ name }`
+ * or `{ clear: true }`. Answers the session's speakers after the change.
+ */
+export const setRecordingSpeaker = (id, speaker, mapping) =>
+  request("PUT", `${recordingPath(id)}/speakers/${encodeURIComponent(String(speaker))}`, {
+    body: mapping,
+  });
+
+/** Delete a recording with its chunks, any kept audio, and its document. */
+export const deleteRecording = (id) => request("DELETE", recordingPath(id));
+
+/** A chunk's kept audio as a Blob; throws with `status` 404 when none is kept. */
+export async function getRecordingChunkAudio(id, seq) {
+  const res = await request("GET", `${recordingPath(id)}/chunks/${encodeURIComponent(String(seq))}/audio`, {
+    raw: true,
+  });
+  return res.blob();
+}
+
+/**
+ * Who likely took part in a recording and what it was, from the owner's
+ * calendar and names heard in it: `{ suggestions }`. Nothing is applied.
+ */
+export const getRecordingSuggestions = (id) => request("GET", `${recordingPath(id)}/suggestions`);
+
+/** Stop offering one suggestion for a recording. */
+export const dismissRecordingSuggestion = (id, key) =>
+  request("POST", `${recordingPath(id)}/suggestions/dismiss`, { body: { key } });
+
+/** Give a recording the owner's title; null goes back to the date-based one. Answers its summary. */
+export const setRecordingTitle = (id, title) =>
+  request("PUT", `${recordingPath(id)}/title`, { body: { title } });

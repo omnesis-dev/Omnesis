@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Conversation-recording manifest (experimental). Merged into :app by the
+  manifest merger, keeping the foreground-service declaration in this module.
+
+  The service records with the screen off, so it runs as a foreground service
+  with a persistent notification: of type microphone for the phone's own
+  microphone (Android 14+ only lets it start while the app is visible, which
+  is the only way it is started that way), of type connectedDevice for a
+  paired wearable, whose own button may start it.
+
+  The phone-microphone start comes from the Recordings screen, or from
+  RecordingStartActivity, the window the Quick Settings tile and the launcher
+  shortcut open for a moment.
+
+  The tile is disabled here; RecordingEntryPoints enables it while the paired
+  gateway takes recordings, so it is offered only then.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <application>
+        <service
+            android:name=".RecordingForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="microphone|connectedDevice" />
+
+        <!-- No window of its own: it starts the recording and closes. Not exported, so no
+             other app can start a recording; the tile and the shortcut are the app's own. -->
+        <activity
+            android:name=".RecordingStartActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
+        <service
+            android:name=".RecordingTileService"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@drawable/ic_recording_mic"
+            android:label="Record conversation"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.service.quicksettings.TOGGLEABLE_TILE"
+                android:value="true" />
+        </service>
+    </application>
+
+</manifest>

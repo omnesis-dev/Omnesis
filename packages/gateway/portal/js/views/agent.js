@@ -165,6 +165,9 @@ export function scheduleReplayGapReconcile(
 import { DevAnnotateButton } from "../components/dev-annotate-button.js";
 import { LoadMore } from "../components/load-more.js";
 import { anchorScrollTop, readingAnchor, replyEnded } from "../lib/reading-anchor.js";
+import { useVisiblePoll } from "../lib/use-visible-poll.js";
+
+const CONTROLS_POLL_MS = 2000;
 
 // Pushpin glyph marking a pinned conversation in the rail. The pin/unpin
 // action itself lives in the global sidebar's "…" menu (app.js); the rail
@@ -334,10 +337,10 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
   useEffect(() => {
     const savedEdit = readConversationDraft(`${composerDraftKey}:edit`);
     setEditPrompt(savedEdit.text ? { text: savedEdit.text } : null);
-    refreshControls(state.sessionId);
-    const timer = setInterval(() => refreshControls(state.sessionId), 2000);
-    return () => clearInterval(timer);
+    if (state.sessionId) refreshControls(state.sessionId);
   }, [state.sessionId]);
+  const controlsUnsupported = Boolean(state.sessionId && controls?.sessionId === state.sessionId && controls.unsupported);
+  useVisiblePoll(() => refreshControls(state.sessionId), CONTROLS_POLL_MS, { enabled: Boolean(state.sessionId) && !controlsUnsupported });
 
   // The model that would answer right now — the current agent assignment,
   // independent of any one conversation's history. Shown in a small header

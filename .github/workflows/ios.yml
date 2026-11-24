@@ -48,11 +48,45 @@ jobs:
           udid="$(node scripts/ci/prepare-ios-simulator.mjs)"
           echo "IOS_DESTINATION=platform=iOS Simulator,id=$udid" >> "$GITHUB_ENV"
 
+      # SwiftPM clones ios/Package.swift's dependencies anonymously from
+      # GitHub, which now and then refuses a hosted runner with HTTP 403. With
+      # this entry's four paths restored, resolution needs no network; the key
+      # is the manifest, which pins every version exactly. Only main saves, as
+      # for the Gradle caches, so a pull request never evicts main's entries.
+      - name: Restore SwiftPM packages
+        id: swiftpm-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ios/.build/repositories
+            ios/.build/checkouts
+            ios/.build/workspace-state.json
+            ios/Package.resolved
+          key: swiftpm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('ios/Package.swift') }}
+          restore-keys: swiftpm-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Resolve SwiftPM packages
+        run: scripts/ci/resolve-swift-packages.sh ios
+
+      # Saved as soon as resolution succeeds, so a later lane's failure does
+      # not cost the next run its entry. A saved entry is never replaced, so
+      # an exact hit saves nothing.
+      - name: Save SwiftPM packages
+        if: ${{ github.ref == 'refs/heads/main' && steps.swiftpm-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ios/.build/repositories
+            ios/.build/checkouts
+            ios/.build/workspace-state.json
+            ios/Package.resolved
+          key: ${{ steps.swiftpm-cache.outputs.cache-primary-key }}
+
       # These real-network proxy tests compile only on macOS, so the simulator
       # suite below cannot exercise their route-selection assertions.
       - name: lane [ios-proxy-logic]
         working-directory: ios
-        run: swift test --filter GatewayRoutingProxyTests
+        run: swift test --disable-automatic-resolution --filter GatewayRoutingProxyTests
 
       - name: Install XcodeGen
         run: brew install xcodegen

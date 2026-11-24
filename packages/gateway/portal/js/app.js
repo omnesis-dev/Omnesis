@@ -59,6 +59,7 @@ const AccessView = lazy(() => import("./views/access.js").then((m) => m.AccessVi
 const DebugView = lazy(() => import("./views/debug.js").then((m) => m.DebugView));
 const PrivacyView = lazy(() => import("./views/privacy.js").then((m) => m.PrivacyView));
 const WatchesView = lazy(() => import("./views/watches.js").then((m) => m.WatchesView));
+const RecordingsView = lazy(() => import("./views/recordings.js").then((m) => m.RecordingsView));
 const AgentView = lazy(() => import("./views/agent.js").then((m) => m.AgentView));
 const BrowserNotesApprovalView = lazy(() => import("./views/browser-notes.js").then((m) => m.BrowserNotesApprovalView));
 const CaptureView = lazy(() => import("./views/capture.js").then((m) => m.CaptureView));
@@ -195,6 +196,7 @@ const NAV_ITEMS = [
   { view: "sources", href: "/portal/sources", label: "Sources", icon: "sources" },
   { view: "people", href: "/portal/people", label: "People", icon: "people" },
   { view: "capture", href: "/portal/capture", label: "Tell Omnesis", icon: "capture" },
+  { view: "recordings", href: "/portal/recordings", label: "Recordings", icon: "recordings", experimental: true },
   { view: "tasks", href: "/portal/tasks", label: "Tasks", icon: "tasks", requiresTasks: true },
   { view: "watches", href: "/portal/watches", label: "Watches", icon: "watches", experimental: true },
   { view: "privacy", href: "/portal/audit", label: "Audit", icon: "privacy" },
@@ -220,6 +222,9 @@ const ICONS = {
   // "Tell Omnesis" — a microphone (Lucide `mic`), the glyph the iOS
   // (`mic.fill`) and Android capture rows wear. The portal captures typed
   // text only, but the row is the same destination on every client.
+  // Recorded conversations: Lucide `audio-lines`, a waveform, apart from the
+  // microphone that Tell Omnesis already uses.
+  recordings: html`<svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"><path d="M2 10v3"/><path d="M6 6v11"/><path d="M10 3v18"/><path d="M14 8v7"/><path d="M18 5v13"/><path d="M22 10v3"/></svg>`,
   capture: html`<svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>`,
   watches: html`<svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"><path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"/><circle cx="12" cy="12" r="3"/></svg>`,
   // "New conversation" — a compose glyph (Lucide `square-pen`), matching the
@@ -844,6 +849,8 @@ function App() {
               directSessionId=${route.directSessionId ?? null}
               waitingAnswers=${attention.answers.count}
             />`
+          : route.view === "recordings" && experimental
+          ? html`<${RecordingsView} recordingId=${route.recordingId ?? null} />`
           : route.view === "watches" && lab.watches
           ? html`<${WatchesView}
               watchApprovalId=${route.watchApprovalId}

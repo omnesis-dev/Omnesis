@@ -21,6 +21,7 @@ import { TranscribeService, MAX_AUDIO_BYTES } from "../../transcribe/index.js";
 import { LOCAL_WHISPER_UNAVAILABLE } from "../../transcribe/whisper-transcriber.js";
 import { dictationFeatureStatus } from "../../dictation/index.js";
 import { TRANSCRIBING_PLACEHOLDER, type VoiceNoteService } from "../../voice-notes/index.js";
+import { listRecordingMarks } from "../../recordings/storage.js";
 import { languageHint } from "./voice-notes.js";
 import type { OmnesisConfig } from "@omnesis/config";
 import type { ResolvedAssignment } from "@omnesis/core";
@@ -32,6 +33,7 @@ import { tmpdir as fixtureTmpdir } from "node:os";
 let db: Database.Database;
 let dbPath: string;
 let app: ReturnType<typeof createServer>;
+let serverOpts: Parameters<typeof createServer>[2];
 let ADMIN_TOKEN: string;
 let resolved: ResolvedAssignment;
 /** The operator's setting; undefined leaves it unset (which means on). */
@@ -102,7 +104,7 @@ beforeEach(() => {
     if (held) await held;
     return transcribe(audio, mime, opts);
   };
-  app = createServer(db, dbPath, {
+  serverOpts = {
     transcribeService,
     getDictationStatus: () =>
       dictationFeatureStatus({
@@ -118,7 +120,8 @@ beforeEach(() => {
     onOmnesisNotesRuntime: (runtime) => {
       notesRuntime = runtime;
     },
-  });
+  };
+  app = createServer(db, dbPath, serverOpts);
 });
 
 afterEach(async () => {
@@ -336,6 +339,42 @@ describe("GET /status dictation", () => {
       active: false,
       maxAudioBytes: MAX_AUDIO_BYTES,
     });
+  });
+});
+
+describe("POST /notes/voice naming a recording", () => {
+  const recordingId = "4f0c1e8e-2b7a-4c55-9a51-3d2f6b7c8e90";
+  const markedAt = "2026-03-02T09:05:00.000Z";
+
+  test("records the marked moment in the recording when recorded conversations are on", async () => {
+    process.env.OMNESIS_EXPERIMENTAL = "1";
+    app = createServer(db, dbPath, serverOpts);
+    const id = randomUUID();
+    const res = await post(voiceNoteForm({ id, text: "", capturedAt: markedAt, recordingId }));
+    expect(res.status).toBe(202);
+    expect(listRecordingMarks(db, recordingId)).toEqual([
+      { sessionId: recordingId, noteId: id, markedAt },
+    ]);
+  });
+
+  test("needs the recordings scope as well as the notes one", async () => {
+    process.env.OMNESIS_EXPERIMENTAL = "1";
+    app = createServer(db, dbPath, serverOpts);
+    const notesOnly = mintToken(["write:omnesis-notes" as Scope]);
+    const res = await post(
+      voiceNoteForm({ id: randomUUID(), text: "", capturedAt: markedAt, recordingId }),
+      notesOnly,
+    );
+    expect(res.status).toBe(403);
+    expect(listRecordingMarks(db, recordingId)).toEqual([]);
+  });
+
+  test("saves the note alone when recorded conversations are off", async () => {
+    const id = randomUUID();
+    const res = await post(voiceNoteForm({ id, text: "", recordingId }));
+    expect(res.status).toBe(202);
+    expect(noteText(id)).toBeDefined();
+    expect(listRecordingMarks(db, recordingId)).toEqual([]);
   });
 });
 

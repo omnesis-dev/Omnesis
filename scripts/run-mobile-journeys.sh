@@ -235,7 +235,9 @@ print(json.dumps({"gatewayURL": os.environ["URL"], "token": os.environ["TOKEN"],
   fi
 
   # Every TLS handshake in the simulator waits on its trust service, which
-  # replaces its trust store about when the journeys begin (#1206).
+  # replaces its trust store when it gets a new one from Apple (#1206). CI
+  # keeps it from getting any (`scripts/ci/ios-trust-asset-block.sh`); a run
+  # without that block waits here for a replacement in progress.
   node "$ROOT/scripts/ci/wait-ios-trust-service.mjs" "$udid" || return 1
 
   xcrun simctl io "$udid" recordVideo --codec h264 --force "$ARTIFACTS/ios-journeys.mp4" \
