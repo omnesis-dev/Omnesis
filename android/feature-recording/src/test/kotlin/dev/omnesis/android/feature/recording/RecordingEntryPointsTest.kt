@@ -30,7 +30,12 @@ class RecordingEntryPointsTest {
         val availability = object : RecordingAvailability {
             override val state: StateFlow<Availability> = MutableStateFlow(Availability.UNAVAILABLE)
         }
-        val controller = RecordingController(InMemoryRecordingOutbox(), RecordingFiles(context.cacheDir.resolve("rec")), onWorkQueued = {})
+        val controller = RecordingController(
+            outbox = InMemoryRecordingOutbox(),
+            files = RecordingFiles(context.cacheDir.resolve("rec")),
+            onWorkQueued = {},
+            speechCheck = { ChunkSpeech(SpeechVerdict.Speech, speechAtEnd = false) },
+        )
         return RecordingEntryPoints(context, availability, controller)
     }
 
