@@ -9,6 +9,7 @@ import { gatewayIdSchema } from "./accounts.js";
 import { connectOrigin, relayOrigin, SESSION_HEADER, websocketUrl } from "./network.js";
 import { recordRelayedClient } from "./relay-client-address.js";
 import { OwnedCleanupLifecycle } from "./owned-cleanup-lifecycle.js";
+import { DEFAULT_TUNNEL_LIMITS } from "./tunnels.js";
 import type { ClientRequest, IncomingMessage } from "node:http";
 import type { Socket } from "node:net";
 
@@ -23,6 +24,7 @@ const controlMessage = z.discriminatedUnion("type", [
       type: z.literal("ready"),
       version: z.literal(1),
       heartbeatMs: z.number().int().positive().max(715_827_882),
+      rejectChannels: z.literal(true).optional(),
     })
     .strict(),
   z
@@ -96,7 +98,7 @@ export class GatewayTunnel {
       throw new Error("Tunnel destination must be a local gateway");
     }
     this.gatewayId = gatewayIdSchema.parse(options.gatewayId);
-    this.maxChannels = options.maxChannels ?? 16;
+    this.maxChannels = options.maxChannels ?? DEFAULT_TUNNEL_LIMITS.maxStreamsPerGateway;
     this.reconnectMs = options.reconnectMs ?? 1000;
     for (const value of [this.maxChannels, this.reconnectMs]) {
       if (!Number.isSafeInteger(value) || value <= 0)
@@ -150,6 +152,7 @@ export class GatewayTunnel {
             [SESSION_HEADER]: session,
             "x-omnesis-gateway-id": this.gatewayId,
             "x-omnesis-tunnel-protocol": "2",
+            "x-omnesis-reject-channels": "1",
             ...(endpoint === this.relay && Date.now() >= this.directRefusedUntil
               ? { [DIRECT_HEADER]: "1" }
               : {}),
@@ -163,6 +166,7 @@ export class GatewayTunnel {
         this.control = control;
         let watchdogMs = 90_000;
         let ready = false;
+        let rejectChannels = false;
         const heartbeat = (): void => {
           clearTimeout(this.watchdog);
           this.watchdog = setTimeout(() => control.terminate(), watchdogMs);
@@ -184,6 +188,7 @@ export class GatewayTunnel {
           }
           if (message.type === "ready") {
             ready = true;
+            rejectChannels = message.rejectChannels === true;
             this.connectionState = "online";
             this.lastConnectedAt = new Date().toISOString();
             this.lastError = undefined;
@@ -194,7 +199,12 @@ export class GatewayTunnel {
           }
           if (message.type === "open") {
             if (this.channels.size >= this.maxChannels) {
-              control.close(1013, "Channel limit reached");
+              // Capacity accounting closes asynchronously at each end. Refuse only this ticket;
+              // a relay without rejection support expires its reservation on its own deadline.
+              if (rejectChannels)
+                control.send(
+                  JSON.stringify({ type: "reject", version: 1, ticket: message.ticket }),
+                );
               return;
             }
             this.openChannel(endpoint, message.ticket, session, generation, message.client);

@@ -126,7 +126,7 @@ const router = vi.hoisted(() => ({ navigate: vi.fn() }));
 vi.mock("../lib/router.js", () => router);
 
 // @ts-expect-error — portal modules are plain JS.
-import { RemoteAccessView } from "./remote-access.js";
+import { RemoteAccessView, useRemoteAccess } from "./remote-access.js";
 // @ts-expect-error — portal modules are plain JS.
 import { HostTailscaleView } from "./remote-access/own-pages.js";
 
@@ -228,6 +228,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   render(null, host);
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
@@ -1473,5 +1474,69 @@ describe("Tailscale on this computer's own page", () => {
     expect(calls("config")).toEqual([["config", { gateway: { publicBaseUrl: null } }]]);
     expect(button("Stop serving this gateway")).toBeUndefined();
     expect(button("Set it up for me")).toBeTruthy();
+  });
+});
+
+
+describe("Connectivity initial-read lifecycle", () => {
+  function Reader() {
+    const { remote, error, load } = useRemoteAccess();
+    return h("div", null,
+      h("output", null, error || remote?.label || "Loading"),
+      h("button", { onClick: load }, "Retry"),
+    );
+  }
+  async function remoteApi() {
+    // @ts-expect-error — portal modules are plain JS.
+    return import("../lib/remote-access-api.js");
+  }
+
+  test("a stalled initial read times out and can be retried", async () => {
+    vi.useFakeTimers();
+    const api = await remoteApi();
+    let signal: AbortSignal | undefined;
+    api.getRemoteAccess.mockImplementationOnce((next: AbortSignal) => {
+      signal = next;
+      return new Promise((_resolve, reject) => next.addEventListener("abort", () => reject(new Error("aborted"))));
+    });
+    await act(async () => { render(h(Reader, {}), host); });
+    expect(host.querySelector("output")?.textContent).toBe("Loading");
+    await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+    expect(signal?.aborted).toBe(true);
+    expect(host.querySelector("output")?.textContent).toContain("Check the connection and try again");
+    api.getRemoteAccess.mockResolvedValueOnce({ label: "Connected" });
+    await act(async () => { host.querySelector("button")!.click(); });
+    expect(host.querySelector("output")?.textContent).toBe("Connected");
+  });
+
+  test("retry aborts an older read and an older answer cannot replace it", async () => {
+    const api = await remoteApi();
+    let oldSignal: AbortSignal | undefined;
+    let finish: (value: unknown) => void = () => {};
+    api.getRemoteAccess.mockImplementationOnce((signal: AbortSignal) => {
+      oldSignal = signal;
+      return new Promise((resolve) => { finish = resolve; });
+    });
+    await act(async () => { render(h(Reader, {}), host); });
+    api.getRemoteAccess.mockResolvedValueOnce({ label: "New answer" });
+    await act(async () => { host.querySelector("button")!.click(); });
+    expect(oldSignal?.aborted).toBe(true);
+    await act(async () => { finish({ label: "Old answer" }); });
+    expect(host.querySelector("output")?.textContent).toBe("New answer");
+  });
+
+  test("leaving the page aborts its read and a late answer leaves the next page intact", async () => {
+    const api = await remoteApi();
+    let signal: AbortSignal | undefined;
+    let finish: (value: unknown) => void = () => {};
+    api.getRemoteAccess.mockImplementationOnce((next: AbortSignal) => {
+      signal = next;
+      return new Promise((resolve) => { finish = resolve; });
+    });
+    await act(async () => { render(h(Reader, {}), host); });
+    await act(async () => { render(h("p", null, "Another page"), host); });
+    expect(signal?.aborted).toBe(true);
+    await act(async () => { finish({ label: "Late answer" }); });
+    expect(host.textContent).toBe("Another page");
   });
 });

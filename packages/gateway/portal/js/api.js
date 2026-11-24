@@ -157,13 +157,19 @@ export async function checkSession() {
   // expected on first paint, not a session that just expired. Use raw
   // fetch so we don't trip the session-expired event before the user
   // has even logged in.
-  const res = await fetch("/portal/api/session", { credentials: "same-origin" });
-  const data = await res.json();
-  _authenticated = data.authenticated;
-  _scope = data.scope ?? null;
-  _csrfToken = data.authenticated ? (data.csrfToken ?? null) : null;
-  if (data.authenticated) resetSessionExpired();
-  return data;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10_000);
+  try {
+    const res = await fetch("/portal/api/session", { credentials: "same-origin", signal: controller.signal });
+    const data = await res.json();
+    _authenticated = data.authenticated;
+    _scope = data.scope ?? null;
+    _csrfToken = data.authenticated ? (data.csrfToken ?? null) : null;
+    if (data.authenticated) resetSessionExpired();
+    return data;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 /**
@@ -254,6 +260,7 @@ const fetchOpts = (init = {}) => ({ credentials: "same-origin", ...init });
 async function request(method, path, opts = {}) {
   const init = {
     method,
+    ...(opts.signal ? { signal: opts.signal } : {}),
     ...(opts.cache ? { cache: opts.cache } : {}),
     headers:
       opts.body !== undefined || (opts.csrf && _csrfToken)
@@ -899,8 +906,8 @@ export const getCalendarItem = (id, timeZone) =>
 // that shape so view code can always destructure `.items` regardless
 // of which endpoint it consumes.
 
-export async function listDevices() {
-  const data = await request("GET", "/admin/devices");
+export async function listDevices(signal) {
+  const data = await request("GET", "/admin/devices", { signal });
   return { items: data.items ?? data.devices ?? [], pageInfo: data.pageInfo };
 }
 
@@ -978,7 +985,7 @@ export const withdrawRelayPushConsent = (deviceId) =>
 export const fleetUpdateTarget = () => request("GET", "/admin/fleet/target");
 
 /** Read the latest per-device health-check state and completed reports. */
-export const getFleetDoctor = () => request("GET", "/admin/fleet/doctor");
+export const getFleetDoctor = (signal) => request("GET", "/admin/fleet/doctor", { signal });
 
 /**
  * Ask every applicable device, or an explicit subset, to run its local
@@ -1009,8 +1016,9 @@ export const getHostFleetUpdate = () =>
 export const startHostFleetUpdate = (planId) =>
   request("POST", "/admin/fleet/host-update", { body: { planId } });
 
-export async function listTokens(deviceId) {
+export async function listTokens(deviceId, signal) {
   const data = await request("GET", "/admin/tokens", {
+    signal,
     query: deviceId ? { deviceId } : undefined,
   });
   return { items: data.items ?? data.tokens ?? [], pageInfo: data.pageInfo };
@@ -1123,11 +1131,11 @@ export const getSourceRecent = (sourceId, limit = 25, cursor) =>
 
 // --- Sources (gateway admin API + sync status) ---
 
-export async function getAdminSources() {
+export async function getAdminSources(signal) {
   // The canonical Page<T> shape — { items, pageInfo } — plus `pendingRemovals`,
   // the sources that have been removed but whose data is still being deleted.
   // Those have no `sources` row left to appear in `items`.
-  const data = await request("GET", "/admin/sources");
+  const data = await request("GET", "/admin/sources", { signal });
   return {
     items: data.items ?? data.sources ?? [],
     pageInfo: data.pageInfo,
@@ -1135,9 +1143,9 @@ export async function getAdminSources() {
     internalSources: data.internalSources ?? [],
   };
 }
-export const getAdminSyncStatus = () => request("GET", "/admin/sync/status");
-export const getOverallStatus = () => request("GET", "/status");
-export const getIndexStats = () => request("GET", "/index/stats");
+export const getAdminSyncStatus = (signal) => request("GET", "/admin/sync/status", { signal });
+export const getOverallStatus = (signal) => request("GET", "/status", { signal });
+export const getIndexStats = (signal) => request("GET", "/index/stats", { signal });
 
 /**
  * Trigger a sync. A source one device syncs answers
@@ -1233,7 +1241,7 @@ export const resumeSource = (sourceId) =>
  * so the Add Source modal can route the selection to the right collector when
  * more than one advertises the same descriptor.
  */
-export const getSourceDescriptorsUnion = () => request("GET", "/admin/source-descriptors");
+export const getSourceDescriptorsUnion = (signal) => request("GET", "/admin/source-descriptors", { signal });
 
 export const getSourcesSnapshot = (deviceId) =>
   request("GET", "/admin/sources/snapshot", { query: deviceId ? { deviceId } : undefined });

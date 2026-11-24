@@ -150,7 +150,9 @@ const BENGALI_ENDINGS =
   "গুলোর গুলির গুলোতে গুলিতে গুলোকে গুলিকে গুলো গুলি দের টির টিকে টার েরা ের কে তে টি টা রা য় ে র".split(
     " ",
   );
-const TELUGU_ENDINGS = "లలో లకు లను లతో లోని లోకి నుండి నుంచి లో లు కు కి ను ని తో గా పై".split(" ");
+const TELUGU_ENDINGS = "లలో లకు లను లతో లోని లోకి నుండి నుంచి లో లు కు కి ను ని తో గా పై".split(
+  " ",
+);
 
 const SCRIPT_STEMMERS: readonly ScriptStemmer[] = [
   new ScriptStemmer(/\p{sc=Cyrillic}+/gu, snowball("russian")),
