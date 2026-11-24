@@ -584,7 +584,7 @@ struct SourceDetailView: View {
                     statusCard(source: source)
                     actionsCard(source: source)
 
-                    if !store.isInternalSource(source.id) {
+                    if !store.isInternalSource(source.id), !source.archived {
                         Text(
                             "Pause stops ingestion for the whole source and keeps its data and cursors. "
                                 + "Remove purges the entire source for all devices."
