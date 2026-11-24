@@ -10,7 +10,7 @@
     "@omnesis/source-sdk": "*",
     "@omnesis/types": "*",
     "better-sqlite3": "^13.2.0",
-    "better-sqlite3-multiple-ciphers": "^13.2.0",
+    "better-sqlite3-multiple-ciphers": "13.0.3",
     "libphonenumber-js": "^1.13.17",
     "zod": "^4.6.7"
   },

@@ -30,7 +30,7 @@ function fixture({ failAt = 0, uncertainAt = 0, arch = "x64", patched = true } =
     mkdirSync(join(root, "prebuilds"));
     writeFileSync(
       join(root, "package.json"),
-      JSON.stringify({ name: names[index], version: "13.2.0" }),
+      JSON.stringify({ name: names[index], version: index === 0 ? "13.2.0" : "13.0.3" }),
     );
     writeFileSync(
       join(root, "deps/sqlite3/sqlite3.c"),
@@ -160,14 +160,14 @@ test("resolves the upstream plain binding and the retained cipher version from t
   );
 });
 
-test("refuses the obsolete cipher binding before rebuilding", async () => {
+test("refuses the incompatible cipher binding before rebuilding", async () => {
   const f = fixture();
   writeFileSync(
     join(f.roots[1], "package.json"),
-    JSON.stringify({ name: "better-sqlite3-multiple-ciphers", version: "13.0.3" }),
+    JSON.stringify({ name: "better-sqlite3-multiple-ciphers", version: "13.2.0" }),
   );
   await expect(resolveSqlitePackages(f.options.cwd)).rejects.toThrow(
-    "requires better-sqlite3-multiple-ciphers@13.2.0",
+    "requires better-sqlite3-multiple-ciphers@13.0.3",
   );
 });
 

@@ -16,7 +16,7 @@ import { isEntryScript } from "../lib/is-entry-script.mjs";
 
 const PACKAGES = [
   ["better-sqlite3", "13.2.0"],
-  ["better-sqlite3-multiple-ciphers", "13.2.0"],
+  ["better-sqlite3-multiple-ciphers", "13.0.3"],
 ];
 
 export async function resolveSqlitePackages(cwd) {

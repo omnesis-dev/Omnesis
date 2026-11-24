@@ -27,7 +27,7 @@
     "@omnesis/watch": "*",
     "@resvg/resvg-js": "^2.6.2",
     "better-sqlite3": "^13.2.0",
-    "better-sqlite3-multiple-ciphers": "^13.2.0",
+    "better-sqlite3-multiple-ciphers": "13.0.3",
     "hono": "^4.13.19",
     "marked": "^18.2.1",
     "multicast-dns": "^7.2.5",
