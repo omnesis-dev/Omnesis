@@ -225,6 +225,16 @@ export function createRecordingTables(db: Db): void {
   if (!chunkColumns.some((column) => column.name === "settled_at")) {
     db.exec("ALTER TABLE recording_chunks ADD COLUMN settled_at TEXT");
   }
+  // Suggestions the owner dismissed for a session (calendar attendees, names
+  // heard in the transcript, a calendar title), so they are not offered again.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS recording_suggestion_dismissals (
+      session_id TEXT NOT NULL REFERENCES recording_sessions(id) ON DELETE CASCADE,
+      key TEXT NOT NULL,
+      dismissed_at TEXT NOT NULL,
+      PRIMARY KEY (session_id, key)
+    );
+  `);
   // Only settled chunks whose audio is kept: what the retention sweep reads.
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_recording_chunks_kept_audio
@@ -817,6 +827,46 @@ export function setRecordingSpeaker(
   if (changed === 0) return false;
   db.prepare(`UPDATE recording_sessions SET revision = revision + 1 WHERE id = ?`).run(sessionId);
   return true;
+}
+
+/**
+ * Give a session the title the owner chose; null clears it, back to the
+ * date-based one. Marks the session changed so its document is written again.
+ * False when the session does not exist.
+ */
+export function setRecordingTitle(db: Db, id: string, title: string | null): boolean {
+  return (
+    db
+      .prepare(`UPDATE recording_sessions SET title = ?, revision = revision + 1 WHERE id = ?`)
+      .run(title, id).changes > 0
+  );
+}
+
+/** Remember that the owner dismissed a suggestion. False when the session does not exist. */
+export function dismissRecordingSuggestion(
+  db: Db,
+  sessionId: string,
+  key: string,
+  dismissedAt: string,
+): boolean {
+  if (!getRecordingSession(db, sessionId)) return false;
+  db.prepare(
+    `INSERT OR IGNORE INTO recording_suggestion_dismissals (session_id, key, dismissed_at)
+     VALUES (?, ?, ?)`,
+  ).run(sessionId, key, dismissedAt);
+  return true;
+}
+
+/** The keys of the suggestions the owner dismissed for a session. */
+export function listDismissedRecordingSuggestions(db: Db, sessionId: string): Set<string> {
+  return new Set(
+    db
+      .prepare<[string], { key: string }>(
+        `SELECT key FROM recording_suggestion_dismissals WHERE session_id = ?`,
+      )
+      .all(sessionId)
+      .map((row) => row.key),
+  );
 }
 
 /** The most recently started sessions, newest first. */

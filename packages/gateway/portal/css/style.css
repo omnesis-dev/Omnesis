@@ -6933,6 +6933,59 @@ p.devices-pair-expiry {
   color: var(--danger);
 }
 
+/* Suggestions: offered beside what they would change, never applied alone. */
+.recording-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 10px;
+}
+
+.recording-suggestions-label {
+  color: var(--text-muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.recording-suggestion-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+
+.recording-suggestion {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+}
+
+.recording-suggestion-accept {
+  border: 1px dashed var(--accent);
+}
+
+.recording-suggestion-why {
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.recording-title-suggestion {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 8px 12px;
+  border-left: 2px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+  border-radius: var(--radius-sm);
+}
+
 .privacy-subscription-exact {
   margin: 0;
   padding: 14px;

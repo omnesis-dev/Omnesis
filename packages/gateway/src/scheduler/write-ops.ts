@@ -660,6 +660,8 @@ const WRITE_OP_DEFS: readonly WriteOpDef[] = [
   // Bounded by one session's chunks: a four-hour recording has 240.
   { name: "recordings.assignVoices", priority: "background" },
   { name: "recordings.setSpeaker", priority: "user" },
+  { name: "recordings.setTitle", priority: "user" },
+  { name: "recordings.dismissSuggestion", priority: "user" },
 
   // Pushed agent-conversation turns (experimental). Small single-row writes;
   // a plugin's live push must not sit behind a bulk backfill.

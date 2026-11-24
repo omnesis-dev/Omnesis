@@ -26,6 +26,7 @@ import {
 import { getRecordingChunk, readRecordingChunkAudio } from "./storage.js";
 import { ReplayVoiceSeparator } from "./voices/replay-voice-separator.js";
 import type { VoiceSeparator } from "./voices/voices.js";
+import type { CalendarEventCandidate } from "./suggestions.js";
 import type {
   TranscriberReadiness,
   TranscribeOptions,
@@ -55,6 +56,8 @@ let separator: VoiceSeparator | null;
 let release: () => void;
 /** The operator's `inference.recordings.keepAudioDays`. */
 let keepDays: number;
+/** What the owner's calendar holds for any window; a function to see the window asked for. */
+let calendar: (from: string, to: string) => CalendarEventCandidate[];
 
 const START = "2026-03-02T09:00:00.000Z";
 const at = (offsetMs: number) => new Date(Date.parse(START) + offsetMs).toISOString();
@@ -120,6 +123,7 @@ beforeEach(() => {
   held = null;
   separator = null;
   keepDays = 0;
+  calendar = () => [];
   service = new RecordingTranscriptionService({
     writeGate: directWriteGate(db),
     readDb: db,
@@ -145,6 +149,7 @@ beforeEach(() => {
     buildDocument: buildRecordingDocument,
     voices: () => separator,
     keepAudioDays: () => keepDays,
+    calendarEvents: async (from, to) => calendar(from, to),
     now: () => now,
   });
 });
@@ -716,6 +721,121 @@ describe("RecordingTranscriptionService speakers", () => {
     expect(docs.get(id)!.metadata.people).toEqual([
       { name: "You", role: "participant", isSelf: true },
     ]);
+  });
+
+  test("suggests the overlapping event's title and attendees, and who was addressed", async () => {
+    separator = new ReplayVoiceSeparator();
+    const jamie = findOrCreatePerson(
+      db,
+      { role: "sender", name: "Jamie R.", emails: ["jamie@example.com"] },
+      "gmail:test",
+      "2026-01-01",
+    )!;
+    const asked: string[][] = [];
+    calendar = (from, to) => {
+      asked.push([from, to]);
+      return [
+        // Overlaps half a minute; the sync below overlaps the whole recording.
+        {
+          documentId: "doc-coffee",
+          title: "Coffee",
+          start: at(-30 * 60_000),
+          end: at(30_000),
+          attendees: [],
+        },
+        {
+          documentId: "doc-sync",
+          title: "Weekly sync",
+          start: at(-5 * 60_000),
+          end: at(55 * 60_000),
+          attendees: [{ personId: "p-priya", name: "Priya S." }],
+        },
+        // Ends before the recording starts: not taken, whatever the reader says.
+        {
+          documentId: "doc-early",
+          title: "Standup",
+          start: at(-60 * 60_000),
+          end: at(-30 * 60_000),
+          attendees: [],
+        },
+      ];
+    };
+    const id = await start();
+    await service.addChunk(
+      spoken(id, 0, [
+        { startMs: 0, endMs: 3_000, text: "Thanks, Jamie. Where are we?", voice: "owner" },
+        { startMs: 4_000, endMs: 7_000, text: "Nearly done.", voice: "jamie" },
+      ]),
+    );
+    await service.finish(id, 1, at(60_000));
+    await service.idle();
+
+    const result = await service.suggestions(id);
+    expect(asked).toEqual([[START, at(60_000)]]);
+    expect(result?.suggestions).toEqual([
+      {
+        key: "title:doc-sync",
+        kind: "title",
+        source: "calendar",
+        title: "Weekly sync",
+        documentId: "doc-sync",
+      },
+      {
+        key: `mention:2:${jamie}`,
+        kind: "person",
+        source: "mention",
+        speaker: 2,
+        personId: jamie,
+        name: "Jamie R.",
+        evidence: "Thanks, Jamie.",
+      },
+      {
+        key: "person:p-priya",
+        kind: "person",
+        source: "calendar",
+        speaker: null,
+        personId: "p-priya",
+        name: "Priya S.",
+        evidence: "Weekly sync",
+      },
+      // The coffee overlaps too, with nobody invited.
+    ]);
+
+    // Accepting is the mapping and title routes; each suggestion then goes.
+    expect(await service.setSpeaker(id, 2, { kind: "person", personId: jamie })).toBe("set");
+    expect(await service.setTitle(id, "  Weekly sync ")).toBe(true);
+    expect(await service.dismissSuggestion(id, "person:p-priya")).toBe(true);
+    expect((await service.suggestions(id))?.suggestions).toEqual([]);
+    await service.idle();
+    expect(docs.get(id)!.title).toBe("Weekly sync");
+
+    // Clearing the title goes back to the date-based one and brings the suggestion back.
+    expect(await service.setTitle(id, null)).toBe(true);
+    expect((await service.suggestions(id))?.suggestions.map((s) => s.key)).toEqual([
+      "title:doc-sync",
+    ]);
+  });
+
+  test("a calendar that cannot be read leaves the mentions; an unknown recording has none", async () => {
+    separator = new ReplayVoiceSeparator();
+    calendar = () => {
+      throw new Error("analytics offline");
+    };
+    const id = await start();
+    await service.addChunk(
+      spoken(id, 0, [
+        { startMs: 0, endMs: 3_000, text: "Alex, your turn.", voice: "owner" },
+        { startMs: 4_000, endMs: 7_000, text: "Right.", voice: "alex" },
+      ]),
+    );
+    await service.finish(id, 1, at(60_000));
+    await service.idle();
+    expect((await service.suggestions(id))?.suggestions).toMatchObject([
+      { key: "mention:2:alex", speaker: 2, personId: null, name: "Alex" },
+    ]);
+    expect(await service.suggestions(randomUUID())).toBeNull();
+    expect(await service.dismissSuggestion(randomUUID(), "x")).toBe(false);
+    expect(await service.setTitle(randomUUID(), "x")).toBe(false);
   });
 
   test("refuses a speaker the session does not have and a person nobody is", async () => {

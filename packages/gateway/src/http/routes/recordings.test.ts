@@ -351,6 +351,109 @@ describe("recordings routes", () => {
     expect((await request("GET", `/recordings/${id}/chunks/0/audio`)).status).toBe(404);
   });
 
+  test("suggests from the calendar and the transcript; the owner accepts or dismisses", async () => {
+    // A meeting on the owner's calendar across the recording, with one invitee.
+    const priya = findOrCreatePerson(
+      db,
+      { role: "attendee", name: "Priya", emails: ["priya@example.com"] },
+      "google-calendar",
+      "2026-01-01",
+    )!;
+    db.prepare(
+      `INSERT INTO documents (id, provider_id, source_id, external_id, title, content, content_hash, metadata, source_created_at, source_updated_at, ingested_at, updated_at)
+       VALUES ('doc-sync', 'google', 'google-calendar', 'cal:sync', 'Weekly sync', 'body', 'hash-sync', '{"documentType":"event"}', '2026-03-01', '2026-03-01', '2026-03-01', '2026-03-01')`,
+    ).run();
+    db.prepare(
+      `INSERT INTO document_people (document_id, person_id, role) VALUES ('doc-sync', ?, 'attendee')`,
+    ).run(priya);
+    db.prepare(
+      `INSERT INTO document_temporal_projections
+         (id, source_id, document_id, document_external_id, slot, start_ms, end_exclusive_ms,
+          start_canonical, end_canonical, precision, all_day, time_zone, label, kind, modality,
+          status, projected_at)
+       VALUES ('tp_sync', 'google-calendar', 'doc-sync', 'cal:sync', 'calendar', ?, ?,
+               '2026-03-02T08:55:00.000Z', '2026-03-02T09:30:00.000Z', 'instant', 0, 'UTC',
+               'Weekly sync', 'appointment', 'scheduled', 'active', '2026-03-01')`,
+    ).run(Date.parse("2026-03-02T08:55:00.000Z"), Date.parse("2026-03-02T09:30:00.000Z"));
+    db.prepare(
+      `INSERT INTO document_temporal_projection_sources (source_id, slots_json, last_sync_at)
+       VALUES ('google-calendar', '["calendar"]', '2026-03-01')`,
+    ).run();
+
+    const id = randomUUID();
+    await startRecording(id);
+    const script = JSON.stringify({
+      segments: [
+        { startMs: 0, endMs: 3_000, text: "Thanks, Alex.", voice: "owner" },
+        { startMs: 4_000, endMs: 6_000, text: "Happy to help.", voice: "alex" },
+      ],
+    });
+    await request("PUT", `/recordings/${id}/chunks/0`, chunkForm(0, script));
+    await request("POST", `/recordings/${id}/finish`, {
+      chunkCount: 1,
+      endedAt: "2026-03-02T09:01:00.000Z",
+    });
+    await vi.waitFor(async () => {
+      expect(await (await request("GET", `/recordings/${id}`)).json()).toMatchObject({
+        state: "done",
+      });
+    });
+
+    const res = await request("GET", `/recordings/${id}/suggestions`);
+    expect(res.headers.get("cache-control")).toBe("no-store");
+    expect(await res.json()).toEqual({
+      suggestions: [
+        {
+          key: "title:doc-sync",
+          kind: "title",
+          source: "calendar",
+          title: "Weekly sync",
+          documentId: "doc-sync",
+        },
+        {
+          key: "mention:2:alex",
+          kind: "person",
+          source: "mention",
+          speaker: 2,
+          personId: null,
+          name: "Alex",
+          evidence: "Thanks, Alex.",
+        },
+        {
+          key: `person:${priya}`,
+          kind: "person",
+          source: "calendar",
+          speaker: null,
+          personId: priya,
+          name: "Priya",
+          evidence: "Weekly sync",
+        },
+      ],
+    });
+
+    // Accept the title, dismiss the rest: nothing is left to offer.
+    const titled = await request("PUT", `/recordings/${id}/title`, { title: "Weekly sync" });
+    expect(await titled.json()).toMatchObject({ id, title: "Weekly sync" });
+    for (const key of ["mention:2:alex", `person:${priya}`]) {
+      expect((await request("POST", `/recordings/${id}/suggestions/dismiss`, { key })).status).toBe(
+        204,
+      );
+    }
+    expect(await (await request("GET", `/recordings/${id}/suggestions`)).json()).toEqual({
+      suggestions: [],
+    });
+    await vi.waitFor(() => expect(documentContent(id)).toContain("# Weekly sync"));
+
+    expect((await request("PUT", `/recordings/${id}/title`, { title: 7 })).status).toBe(400);
+    expect((await request("POST", `/recordings/${id}/suggestions/dismiss`, {})).status).toBe(400);
+    const missing = randomUUID();
+    expect((await request("GET", `/recordings/${missing}/suggestions`)).status).toBe(404);
+    expect((await request("PUT", `/recordings/${missing}/title`, { title: "x" })).status).toBe(404);
+    expect(
+      (await request("POST", `/recordings/${missing}/suggestions/dismiss`, { key: "x" })).status,
+    ).toBe(404);
+  });
+
   test("retries are idempotent", async () => {
     const id = randomUUID();
     expect((await startRecording(id)).status).toBe(201);

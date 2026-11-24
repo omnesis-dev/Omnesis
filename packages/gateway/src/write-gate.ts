@@ -575,6 +575,8 @@ import {
   rescheduleRecordingChunk,
   settleRecordingChunk,
   purgeRecordingAudio,
+  setRecordingTitle,
+  dismissRecordingSuggestion,
   type RecordingChunkSettling,
   markRecordingSessionProjected,
   assignRecordingVoices,
@@ -2353,6 +2355,10 @@ export interface WriteGate extends KnowledgeWriteGate {
   ): Promise<boolean>;
   /** Drop the kept audio of chunks settled at or before this instant; how many lost it. */
   purgeRecordingAudio(settledBefore: string): Promise<number>;
+  /** Give a session the owner's title (null: the date-based one); false when it does not exist. */
+  setRecordingTitle(id: string, title: string | null): Promise<boolean>;
+  /** Remember a dismissed suggestion; false when the session does not exist. */
+  dismissRecordingSuggestion(sessionId: string, key: string, dismissedAt: string): Promise<boolean>;
   /** Stamp when a session's document was last written. */
   markRecordingSessionProjected(id: string, revision: number): Promise<void>;
   /** Record a session's grouped speakers and delete its voice vectors. */
@@ -3101,6 +3107,9 @@ export function writeGateFromCall(call: WriterCallFn): WriteGate {
     settleRecordingChunk: (sessionId, seq, outcome, settling) =>
       call("recordings.settleChunk", [sessionId, seq, outcome, settling]),
     purgeRecordingAudio: (settledBefore) => call("recordings.purgeAudio", [settledBefore]),
+    setRecordingTitle: (id, title) => call("recordings.setTitle", [id, title]),
+    dismissRecordingSuggestion: (sessionId, key, dismissedAt) =>
+      call("recordings.dismissSuggestion", [sessionId, key, dismissedAt]),
     markRecordingSessionProjected: (id, revision) =>
       call("recordings.markProjected", [id, revision]),
     assignRecordingVoices: (sessionId, chunks) =>
@@ -3854,6 +3863,9 @@ export function directWriteGate(db: Db): WriteGate {
     settleRecordingChunk: async (sessionId, seq, outcome, settling) =>
       settleRecordingChunk(db, sessionId, seq, outcome, settling),
     purgeRecordingAudio: async (settledBefore) => purgeRecordingAudio(db, settledBefore),
+    setRecordingTitle: async (id, title) => setRecordingTitle(db, id, title),
+    dismissRecordingSuggestion: async (sessionId, key, dismissedAt) =>
+      dismissRecordingSuggestion(db, sessionId, key, dismissedAt),
     markRecordingSessionProjected: async (id, revision) =>
       markRecordingSessionProjected(db, id, revision),
     assignRecordingVoices: async (sessionId, chunks) =>

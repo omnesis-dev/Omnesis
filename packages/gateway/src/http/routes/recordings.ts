@@ -28,6 +28,15 @@
  *   - `GET /recordings/:id/chunks/:seq/audio` answers a settled chunk's kept
  *     audio; 404 when none is kept (the default: audio is deleted once the
  *     chunk is transcribed) or the chunk is still waiting for the transcriber.
+ *   - `PUT /recordings/:id/title` gives the recording the owner's title
+ *     (`{title}`; null goes back to the date-based one), and the document is
+ *     written again.
+ *   - `GET /recordings/:id/suggestions` offers who likely took part and what
+ *     the recording was: attendees and the title of calendar events it
+ *     overlaps, and names addressed in the transcript, each for the speaker
+ *     who answered. Nothing is applied: the owner accepts one through the
+ *     speaker and title routes, or dismisses it with
+ *     `POST /recordings/:id/suggestions/dismiss` (`{key}`).
  *   - `GET /recordings/:id/speakers` lists a session's speakers with how long
  *     each spoke and the first things they said.
  *   - `PUT /recordings/:id/speakers/:n` says who speaker `n` is — `{self:
@@ -51,7 +60,9 @@ import {
 } from "../errors.js";
 import { enforceWriteScopeForSource, scope } from "../scope.js";
 import {
+  dismissRecordingSuggestionBody,
   finishRecordingBody,
+  setRecordingTitleBody,
   listRecordingsQuery,
   recordingChunkMetadata,
   recordingSpeakerNumber,
@@ -264,6 +275,42 @@ export function mountRecordingRoutes(app: RouteApp, deps: RecordingRoutesDeps): 
       "X-Content-Type-Options": "nosniff",
     });
   });
+
+  app.put(
+    "/recordings/:id/title",
+    scope.writeAny(),
+    validateJson(setRecordingTitleBody),
+    async (c) => {
+      enforceScope(c);
+      const id = parseId(c.req.param("id"));
+      if (!(await deps.service.setTitle(id, c.req.valid("json").title))) {
+        throw new NotFoundError("recording not found");
+      }
+      return c.json(deps.service.summary(id));
+    },
+  );
+
+  app.get("/recordings/:id/suggestions", scope.writeAny(), async (c) => {
+    enforceScope(c);
+    const suggestions = await deps.service.suggestions(parseId(c.req.param("id")));
+    if (!suggestions) throw new NotFoundError("recording not found");
+    c.header("Cache-Control", "no-store");
+    return c.json(suggestions);
+  });
+
+  app.post(
+    "/recordings/:id/suggestions/dismiss",
+    scope.writeAny(),
+    validateJson(dismissRecordingSuggestionBody),
+    async (c) => {
+      enforceScope(c);
+      const id = parseId(c.req.param("id"));
+      if (!(await deps.service.dismissSuggestion(id, c.req.valid("json").key))) {
+        throw new NotFoundError("recording not found");
+      }
+      return c.body(null, 204);
+    },
+  );
 
   app.get("/recordings/:id/speakers", scope.writeAny(), (c) => {
     enforceScope(c);
