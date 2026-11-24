@@ -541,10 +541,14 @@ describe("DeviceWsServer", () => {
         ),
       ).rejects.toMatchObject({ code: "cancelled" });
 
+      // After the last command the probe still asks one answer on a worker
+      // thread, which it allows 10 s (ANSWER_THREAD_HANG_SECONDS in the probe):
+      // on Windows that answer first runs a Node file bridge to secure its state
+      // directory. This hang guard covers that allowance and the exit after it.
       const exited = await Promise.race([
         probeExit,
         new Promise<never>((_, reject) => {
-          setTimeout(() => reject(new Error("Hermes protocol probe exit timeout")), 5_000);
+          setTimeout(() => reject(new Error("Hermes protocol probe exit timeout")), 15_000);
         }),
       ]);
       expect(exited, probeStderr).toEqual({ code: 0, signal: null });
