@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { request, type ClientRequest } from "node:https";
+import { request } from "node:https";
 import { expect, test } from "vitest";
 import { WebSocket } from "ws";
 import { echoGateway, fixture } from "../test/support.js";
 import { SESSION_HEADER } from "./network.js";
-import type { IncomingMessage } from "node:http";
+import type { ClientRequest, IncomingMessage } from "node:http";
 
 test("same-address native streams and a browser's six parallel module requests coexist through opaque TLS", async () => {
   const gateway = await echoGateway();
