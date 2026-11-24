@@ -23,8 +23,9 @@ const MAX_NAMESAKES = 1;
  */
 export function resolveGivenName(db: Db, name: string): NameResolution {
   const lower = name.toLowerCase();
-  // One range on the lowercased-name index: from "jamie" up to "jamie!", the
-  // byte after the space, holds "jamie" and "jamie rowe" but not "jamieson".
+  // One range on the lowercased-name index: the keys between "jamie" and
+  // "jamie!" (the byte after the space) hold "jamie" and "jamie rowe" but not
+  // "jamieson".
   // The planner prefers the covering (alias_type, alias) index without
   // statistics, so the name index is named, as migration 218 asks.
   const rows = db
