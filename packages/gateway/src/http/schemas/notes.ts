@@ -133,6 +133,11 @@ export const voiceNoteMetadata = z
     text: z.string().max(8192).optional(),
     /** Locale or language tag the audio was recorded in, e.g. "en-GB". */
     language: z.string().max(35).optional(),
+    /**
+     * The recorded conversation this audio was clipped from, when the owner
+     * marked a moment of it; the note's `capturedAt` is the mark.
+     */
+    recordingId: z.string().uuid().optional(),
   })
   .strict()
   .superRefine(checkNoteFields);

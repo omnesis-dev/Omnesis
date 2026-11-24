@@ -13,6 +13,7 @@ import {
 } from "@omnesis/config";
 import {
   createLogger,
+  experimentalEnabled,
   parseDuration,
   ownedProcessCleanupReceipt,
   type HostNetwork,
@@ -99,6 +100,14 @@ import { mountTranscribeRoutes } from "./http/routes/transcribe.js";
 import { mountTranscriptionVocabularyRoutes } from "./http/routes/transcription-vocabulary.js";
 import { mountVoiceNoteRoutes } from "./http/routes/voice-notes.js";
 import { VoiceNoteService, pendingVoiceNoteIds } from "./voice-notes/index.js";
+import { mountRecordingRoutes } from "./http/routes/recordings.js";
+import { RecordingTranscriptionService } from "./recordings/index.js";
+import {
+  OMNESIS_RECORDINGS_PROVIDER_ID,
+  OMNESIS_RECORDINGS_SOURCE_ID,
+  buildRecordingDocument,
+  seedOmnesisRecordingsSourceMeta,
+} from "./sources/omnesis-recordings/index.js";
 import { mountOcrRoutes } from "./http/routes/ocr.js";
 import { ForbiddenError, HttpError, errorResponse } from "./http/errors.js";
 import { credentialedCorsOrigins, portalSessionMayAct } from "./http/session-origin.js";
@@ -505,6 +514,9 @@ export function createServer(
     taskEffects?: import("./brain/tasks/service.js").TaskEffects;
     /** Receives the voice-note queue so the composition root can stop it on shutdown. */
     onVoiceNoteService?: (service: import("./voice-notes/index.js").VoiceNoteService) => void;
+    onRecordingService?: (
+      service: import("./recordings/index.js").RecordingTranscriptionService,
+    ) => void;
     /** Replay-only settable briefs decision clock (backtest mirror). */
     briefsClock?: import("./brain/virtual-clock.js").MutableClock;
     /** The interest ledger, for the Debug → Cognition tab. Omitted ⇒ the tab's routes 404. */
@@ -2295,11 +2307,56 @@ export function createServer(
     });
     voiceNotes.start();
     opts.onVoiceNoteService?.(voiceNotes);
+    // Recorded conversations (experimental): a phone uploads a long
+    // recording in chunks and the gateway transcribes them as they arrive.
+    // The queue runs whatever the mode, so sessions accepted before the mode
+    // was switched off still converge; the routes 404 without it.
+    const recordings = new RecordingTranscriptionService({
+      writeGate: w,
+      readDb: db,
+      transcribe: (audio, mimeType, transcribeOpts) =>
+        transcribeService.transcribeOutcome(audio, mimeType, transcribeOpts),
+      readiness: () => transcribeService.settledReadiness(),
+      ingest: (docs) => documentService.ingest(docs),
+      deleteDocument: (externalId) =>
+        documentService.deleteByIds(OMNESIS_RECORDINGS_PROVIDER_ID, OMNESIS_RECORDINGS_SOURCE_ID, [
+          externalId,
+        ]),
+      buildDocument: buildRecordingDocument,
+    });
+    recordings.start();
+
     const getDictationStatus = opts.getDictationStatus;
     mountVoiceNoteRoutes(app, {
       service: voiceNotes,
       // A recording that arrives while the Whisper runtime probe is still
       // running waits for its answer rather than being refused on a "not yet".
+      getStatus: async () => {
+        await transcribeService.settledReadiness();
+        return getDictationStatus();
+      },
+      // A moment marked in a recorded conversation is recorded only while
+      // the feature is on, as its routes are.
+      ...(experimentalEnabled()
+        ? {
+            markRecording: (recordingId: string, noteId: string, markedAt: string) =>
+              recordings.mark(recordingId, noteId, markedAt),
+          }
+        : {}),
+    });
+
+    // The source is listed only in experimental mode; its display identity
+    // is seeded then, so the row never shows without its label and icon.
+    if (experimentalEnabled()) {
+      seedOmnesisRecordingsSourceMeta(w).catch((err: unknown) => {
+        log.warn(
+          `Recordings source-meta seed failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      });
+    }
+    opts.onRecordingService?.(recordings);
+    mountRecordingRoutes(app, {
+      service: recordings,
       getStatus: async () => {
         await transcribeService.settledReadiness();
         return getDictationStatus();

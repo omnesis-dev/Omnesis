@@ -68,6 +68,8 @@ data class VoiceNoteBody(
     val taskId: String? = null,
     val capturedTimeZoneId: String? = null,
     val capturedUtcOffsetSeconds: Int? = null,
+    /** The recorded conversation this audio was clipped from, for a marked moment. */
+    val recordingId: String? = null,
 )
 
 /** `POST /notes/voice` 202: the note is saved and its transcription queued. */
