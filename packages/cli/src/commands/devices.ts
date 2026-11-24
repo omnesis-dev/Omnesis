@@ -63,6 +63,7 @@ import {
   pickGatewayExitCode,
   GATEWAY_REQUEST_URL,
 } from "../utils.js";
+import { forgetDeviceFromCli } from "./device-forget.js";
 import { showPhonePairing } from "./phone-pairing.js";
 
 export interface DeviceCorpusCredential {
@@ -423,7 +424,7 @@ export function alignColumns(rows: readonly (readonly TableCell[])[]): string[] 
   );
 }
 
-/** The DELETE path for one device: revoke by default, hard-delete on `forget`. */
+/** The DELETE path for one device: revoke by default, permanently forget on `forget`. */
 export const deviceRevokePath = (
   id: string,
   forget: boolean,
@@ -1545,13 +1546,17 @@ const devicesRevokeCommand = defineCommand({
     },
     forget: {
       type: "boolean",
+      description: "Permanently forget the device, choosing whether to keep its source history.",
+    },
+    data: {
+      type: "string",
       description:
-        "Permanently delete the device row instead of revoking. Refused while the device still hosts sources.",
+        "With --forget: keep historical data (default) or delete data held only by this device",
     },
     yes: {
       type: "boolean",
       alias: "y",
-      description: "Skip the connection sign-in confirmation and print its consequence summary",
+      description: "Confirm the device action without an interactive prompt",
     },
   },
   async run(ctx) {
@@ -1571,6 +1576,12 @@ const devicesRevokeCommand = defineCommand({
       throw new CliError(`${c.red}No device matching '${target}'${c.reset}`, EXIT_USER_ERROR);
     }
     const safeDeviceName = terminalSafeDeviceRevocationLabel(dev.name);
+    if (forget) {
+      await forgetDeviceFromCli(dev.id, safeDeviceName, { data: ctx.args.data, yes: ctx.args.yes });
+      return;
+    }
+    if (ctx.args.data !== undefined)
+      throw new CliError("--data requires --forget.", EXIT_USER_ERROR);
     const corpusImpact = deviceCorpusCredentialImpact(dev);
     if (
       deviceRevocationNeedsConfirmation({
@@ -1616,40 +1627,36 @@ const devicesRevokeCommand = defineCommand({
         pickGatewayExitCode(res.status),
       );
     }
-    if (forget) {
-      console.log(`Forgot device ${safeDeviceName} (${dev.id}) — the row is deleted.`);
-    } else {
-      console.log(`Revoked device ${safeDeviceName} (${dev.id}).`);
+    console.log(`Revoked device ${safeDeviceName} (${dev.id}).`);
+    console.log(
+      `${c.dim}Its tokens are invalidated; its sources and data stay. Bring it back with \`omnesis devices repair ${dev.id}\`; \`--forget\` retires the device instead.${c.reset}`,
+    );
+    if (corpusImpact.credentials.length > 0) {
+      console.log("Connection sign-ins revoked for this device:");
+      for (const credential of corpusImpact.credentials) {
+        console.log(`  ${deviceCorpusCredentialLabel(credential)}`);
+      }
+    }
+    if (!corpusImpact.complete) {
       console.log(
-        `${c.dim}Its tokens are invalidated; its sources and data stay. Bring it back with \`omnesis devices repair ${dev.id}\`; \`--forget\` deletes the row instead.${c.reset}`,
+        `${c.yellow}This gateway could not report every connection sign-in; update it before relying on this summary.${c.reset}`,
       );
-      if (corpusImpact.credentials.length > 0) {
-        console.log("Connection sign-ins revoked for this device:");
-        for (const credential of corpusImpact.credentials) {
-          console.log(`  ${deviceCorpusCredentialLabel(credential)}`);
-        }
-      }
-      if (!corpusImpact.complete) {
-        console.log(
-          `${c.yellow}This gateway could not report every connection sign-in; update it before relying on this summary.${c.reset}`,
-        );
-      }
-      if (
-        revokedCollectorReRegisters({
-          kind: dev.kind,
-          deviceHostname: dev.capabilities?.hostname,
-          localHostname: collectorHostname(),
-          hasLocalAdminToken: hasAdminTokenFile(),
-        })
-      ) {
-        console.log();
-        console.log(
-          `${c.yellow}This will not keep ${safeDeviceName} down.${c.reset} It runs beside the gateway and registers itself with the admin token in ${process.env.OMNESIS_CONFIG_DIR ?? DEFAULT_CONFIG_DIR}, so it reclaims this same device on its next start.`,
-        );
-        console.log(
-          `${c.dim}To actually stop it collecting, stop the service: ${c.reset}omnesis service stop collector`,
-        );
-      }
+    }
+    if (
+      revokedCollectorReRegisters({
+        kind: dev.kind,
+        deviceHostname: dev.capabilities?.hostname,
+        localHostname: collectorHostname(),
+        hasLocalAdminToken: hasAdminTokenFile(),
+      })
+    ) {
+      console.log();
+      console.log(
+        `${c.yellow}This will not keep ${safeDeviceName} down.${c.reset} It runs beside the gateway and registers itself with the admin token in ${process.env.OMNESIS_CONFIG_DIR ?? DEFAULT_CONFIG_DIR}, so it reclaims this same device on its next start.`,
+      );
+      console.log(
+        `${c.dim}To actually stop it collecting, stop the service: ${c.reset}omnesis service stop collector`,
+      );
     }
   },
 });

@@ -85,16 +85,19 @@ public struct SourceRecord: Decodable, Hashable, Sendable, Identifiable {
     /// they send nothing until re-paired or updated, so a new device need not
     /// ask whether to keep using them. Empty on a gateway that predates it.
     public let dormantHosts: [String]
+    public let archived: Bool
+    public let archivedDevices: [ArchivedSourceDevice]
 
     /// Whether `deviceId` contributes to this source, on gateways with and
     /// without membership.
     public func hosts(_ deviceId: String) -> Bool {
-        deviceId == self.deviceId || members.contains(deviceId)
+        !archived && (deviceId == self.deviceId || members.contains(deviceId))
     }
 
     /// Every device hosting this source, owner first. Older gateways omit
     /// `members`, so the source's owner remains the sole host in that case.
     public var hostDeviceIds: [String] {
+        guard !archived else { return [] }
         let advertised = members.isEmpty ? [deviceId] : members
         return advertised.reduce(into: [String]()) { result, id in
             guard !id.isEmpty, !result.contains(id) else { return }
@@ -114,7 +117,9 @@ public struct SourceRecord: Decodable, Hashable, Sendable, Identifiable {
         members: [String] = [],
         multiDeviceMode: String? = nil,
         resyncModes: [String]? = nil,
-        dormantHosts: [String] = []
+        dormantHosts: [String] = [],
+        archived: Bool = false,
+        archivedDevices: [ArchivedSourceDevice] = []
     ) {
         self.id = id
         self.type = type
@@ -128,11 +133,13 @@ public struct SourceRecord: Decodable, Hashable, Sendable, Identifiable {
         self.multiDeviceMode = multiDeviceMode
         self.resyncModes = resyncModes
         self.dormantHosts = dormantHosts
+        self.archived = archived
+        self.archivedDevices = archivedDevices
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, type, accountId, deviceId, config, enabled, createdAt, updatedAt
-        case members, multiDeviceMode, resyncModes, dormantHosts
+        case members, multiDeviceMode, resyncModes, dormantHosts, archived, archivedDevices
     }
 
     public init(from decoder: Decoder) throws {
@@ -149,7 +156,17 @@ public struct SourceRecord: Decodable, Hashable, Sendable, Identifiable {
         multiDeviceMode = try container.decodeIfPresent(String.self, forKey: .multiDeviceMode)
         resyncModes = try container.decodeIfPresent([String].self, forKey: .resyncModes)
         dormantHosts = try container.decodeIfPresent([String].self, forKey: .dormantHosts) ?? []
+        archived = try container.decodeIfPresent(Bool.self, forKey: .archived) ?? false
+        archivedDevices = try container.decodeIfPresent([ArchivedSourceDevice].self, forKey: .archivedDevices) ?? []
     }
+}
+
+/// Forgotten device provenance attached to retained historical source data.
+public struct ArchivedSourceDevice: Decodable, Hashable, Sendable {
+    public let deviceId: String
+    public let name: String
+    public let kind: String
+    public let forgottenAt: Int64
 }
 
 /// One gateway-internal source from `GET /admin/sources`' `internalSources`
@@ -229,6 +246,40 @@ public struct DeviceRecord: Decodable, Equatable, Sendable, Identifiable {
         self.online = online
         self.connectionPath = connectionPath
         self.enrollment = enrollment
+    }
+}
+
+/// Reviewed source impact for permanently forgetting a device.
+public struct DeviceForgetImpact: Decodable, Equatable, Sendable {
+    public struct Source: Decodable, Equatable, Sendable {
+        public let id: String
+        public let type: String
+        public let multiDeviceMode: String
+        public let otherDeviceCount: Int
+        /// `source`, `partition`, or `none`; unknown future scopes stay display-only.
+        public let deleteScope: String
+    }
+
+    public let sources: [Source]
+    public let fingerprint: String
+    public var hasSources: Bool {
+        !sources.isEmpty
+    }
+
+    public var keepsSharedData: Bool {
+        sources.contains { $0.deleteScope == "none" }
+    }
+}
+
+/// Historical data is kept unless the owner explicitly chooses deletion.
+public enum DeviceForgetData: String, CaseIterable, Hashable, Sendable {
+    case keep, delete
+
+    public var title: String {
+        switch self {
+        case .keep: "Keep historical data"
+        case .delete: "Delete this device’s data"
+        }
     }
 }
 

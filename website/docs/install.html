@@ -1801,12 +1801,12 @@ node --import tsx packages/cli/src/index.ts status</pre>
         </p>
         <ul>
           <li>
-            On a second machine, remove its device from the gateway as well. For a collector, first
-            move or detach the sources it hosts (see
-            <a href="sources#managing-sources">Managing sources</a>); then, on the gateway host, run
-            <code>omnesis devices revoke &lt;device&gt; --forget</code>; the uninstall prints the
-            device's name. Revoking a harness machine's device also signs its agent out of its
-            connection.
+            On a second machine, forget its device from the gateway as well. On the gateway host,
+            run <code>omnesis devices revoke &lt;device&gt; --forget</code>; the uninstall prints
+            the device's name. If it hosts sources, choose whether to keep its indexed history (the
+            default) or remove data held only by that device. The portal and mobile apps offer the
+            same choice under <a href="setup#tokens">Settings → Devices</a>. Revoking a harness
+            machine's device also signs its agent out of its connection.
           </li>
           <li>Restart OpenClaw or Hermes so the running harness stops loading the plugin.</li>
           <li>

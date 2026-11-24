@@ -335,22 +335,41 @@ export function mountDeviceRoutes(app: RouteApp, deps: AdminRoutesDeps): void {
     c.json({ revoked: await w.revokePairing(c.req.valid("json").pairingCode) }),
   );
 
+  app.get("/admin/devices/:id/forget-impact", scope.admin(), (c) => {
+    const id = tryDeviceId(c.req.param("id"));
+    const impact = id ? deviceService.forgetImpact(id) : null;
+    if (!impact) throw new NotFoundError("device not found");
+    return c.json(impact);
+  });
+
   app.delete("/admin/devices/:id", scope.admin(), validateQuery(deleteDeviceQuery), async (c) => {
     const id = tryDeviceId(c.req.param("id"));
     if (!id) return c.json({ error: "device not found" }, 404);
     const existing = deviceService.getById(id);
     if (!existing) throw new NotFoundError("device not found");
-    // Unpairing REVOKES by default: tokens and push registrations are
-    // invalidated, but the device row, its sources and their data stay —
-    // the id is a durable identity that cursors and stream keys hang off,
-    // and pairing the same device again adopts it. `?forget=true` is
-    // the explicit destructive act; the writer refuses it while sources
-    // still point at the device, so removing a device can never silently
-    // take a corpus with it.
+    // Revocation preserves a repairable identity. Forgetting ends the identity
+    // permanently; hosted sources need an explicit reviewed retention choice.
     if (c.req.valid("query").forget === "true") {
-      const result = await w.deleteDevice(id);
+      const query = c.req.valid("query");
+      if (query.data && !query.impactFingerprint)
+        throw new BadRequestError("Review the device's source impact before forgetting it");
+      const result = await sourceService.forgetDevice(
+        id,
+        query.data && query.impactFingerprint
+          ? { data: query.data, impactFingerprint: query.impactFingerprint }
+          : undefined,
+      );
       if (!result.deleted) {
         if (result.reason === "not-found") throw new NotFoundError("device not found");
+        if (result.reason === "impact-changed")
+          return c.json(
+            {
+              code: "DEVICE_FORGET_IMPACT_CHANGED",
+              error:
+                "The device's sources changed. Review what will be kept or removed and confirm again.",
+            },
+            409,
+          );
         return c.json(
           {
             code: "DEVICE_STILL_HOSTS_SOURCES",

@@ -305,3 +305,14 @@ test("Lab follows Config and Sweeps requires the Brain", () => {
   expect(tabs.map((tab: {key: string}) => tab.key)).not.toContain("sweeps");
   expect(settingsTabs({ experimental: false }).map((tab: {key: string}) => tab.key)).not.toContain("lab");
 });
+
+test("device actions travel with the device, only on the Devices tab", () => {
+  for (const action of ["repair", "forget"]) {
+    expect(route("/portal/settings/devices", `?device=device%26one&deviceAction=${action}`)).toMatchObject({
+      device: "device&one", deviceAction: action,
+    });
+  }
+  expect(route("/portal/settings/devices", "?deviceAction=repair")).not.toHaveProperty("deviceAction");
+  expect(route("/portal/settings/devices", "?device=one&deviceAction=delete")).not.toHaveProperty("deviceAction");
+  expect(route("/portal/settings/config", "?device=one&deviceAction=forget")).not.toHaveProperty("deviceAction");
+});

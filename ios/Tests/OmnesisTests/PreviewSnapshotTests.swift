@@ -2090,6 +2090,14 @@ final class PreviewSnapshotTests: XCTestCase {
         snapshot(SourcesView(menuOpen: .constant(false)).environment(store), name: "02d-sources-internal-row")
     }
 
+    func testSourceDetailHistorical() {
+        let store = AppStore.preview(sources: [PreviewMocks.sourceHistorical])
+        snapshot(
+            NavigationStack { SourceDetailView(sourceId: PreviewMocks.sourceHistorical.id) }.environment(store),
+            name: "03a-source-detail-historical"
+        )
+    }
+
     func testSourceDetailSyncing() {
         let store = AppStore.preview(
             sources: PreviewMocks.sources,
@@ -3204,6 +3212,31 @@ final class PreviewSnapshotTests: XCTestCase {
             .navigationBarTitleDisplayMode(.inline)
         }
         snapshot(list.environment(store), name: "192c-devices-forget-refused")
+    }
+
+    func testForgetDeviceKeepHistory() {
+        snapshot(
+            ForgetDeviceConfirmation(
+                device: PreviewMocks.deviceRevoked,
+                impact: PreviewMocks.deviceForgetImpact,
+                onRefresh: { PreviewMocks.deviceForgetImpact },
+                onForget: { _, _ in }
+            ),
+            name: "192d-devices-forget-keep"
+        )
+    }
+
+    func testForgetDeviceDeleteData() {
+        snapshot(
+            ForgetDeviceConfirmation(
+                device: PreviewMocks.deviceRevoked,
+                impact: PreviewMocks.deviceForgetImpact,
+                initialData: .delete,
+                onRefresh: { PreviewMocks.deviceForgetImpact },
+                onForget: { _, _ in }
+            ),
+            name: "192e-devices-forget-delete"
+        )
     }
 
     func testDevicesEmpty() {

@@ -30,13 +30,19 @@ data class SourceRecord(
      * resync always wipes.
      */
     val resyncModes: List<String>? = null,
+    val archived: Boolean = false,
+    val archivedDevices: List<ArchivedSourceDevice> = emptyList(),
 ) {
     /** Whether [deviceId] contributes to this source, on gateways with and without membership. */
-    fun hosts(deviceId: String): Boolean = deviceId == this.deviceId || deviceId in members
+    fun hosts(deviceId: String): Boolean = !archived && (deviceId == this.deviceId || deviceId in members)
 
     /** Every host, owner first, with compatibility for gateways that omit [members]. */
-    fun hostDeviceIds(): List<String> = (if (members.isEmpty()) listOf(deviceId) else members).distinct().filter(String::isNotBlank)
+    fun hostDeviceIds(): List<String> = if (archived) emptyList() else (if (members.isEmpty()) listOf(deviceId) else members).distinct().filter(String::isNotBlank)
 }
+
+/** Forgotten device provenance for retained historical source data. */
+@Serializable
+data class ArchivedSourceDevice(val deviceId: String, val name: String, val kind: String, val forgottenAt: Long)
 
 /**
  * One entry of `internalSources` on `GET /admin/sources` — a dataset the

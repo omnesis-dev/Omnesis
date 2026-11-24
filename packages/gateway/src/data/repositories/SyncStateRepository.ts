@@ -362,7 +362,23 @@ export function setSyncError(
   /** The row to stamp: `""` (shared) or a member device's own row. */
   deviceId = "",
   remediation?: SyncRemediation,
+  /** The authenticated reporter, fenced at write time independently of its cursor row. */
+  reporterDeviceId?: string,
 ): void {
+  if (
+    reporterDeviceId &&
+    !db
+      .prepare(
+        `SELECT 1 FROM devices d JOIN sources s ON s.id = ?
+      WHERE d.id = ? AND d.revoked_at IS NULL
+        AND NOT EXISTS (SELECT 1 FROM forgotten_devices f WHERE f.device_id = d.id)
+        AND (s.device_id = d.id OR EXISTS (
+          SELECT 1 FROM source_devices m WHERE m.source_id = s.id AND m.device_id = d.id
+        ))`,
+      )
+      .get(sourceId, reporterDeviceId)
+  )
+    return;
   const now = new Date().toISOString();
   // Cap the message at a sane size — the column is unbounded TEXT but
   // there's no point persisting a 50KB stack trace.
@@ -372,14 +388,15 @@ export function setSyncError(
     () =>
       db
         .prepare(
-          `INSERT INTO sync_state (source_id, device_id, cursor, last_synced_at, last_error, errored_at, last_error_remediation)
-       VALUES (?, ?, '{}', NULL, ?, ?, ?)
+          `INSERT INTO sync_state (source_id, device_id, cursor, last_synced_at, last_error, errored_at, last_error_remediation, last_error_device_id)
+       VALUES (?, ?, '{}', NULL, ?, ?, ?, ?)
        ON CONFLICT(source_id, device_id) DO UPDATE SET
          last_error = excluded.last_error,
          errored_at = excluded.errored_at,
-         last_error_remediation = excluded.last_error_remediation`,
+         last_error_remediation = excluded.last_error_remediation,
+         last_error_device_id = excluded.last_error_device_id`,
         )
-        .run(sourceId, deviceId, truncated, now, remediationJson),
+        .run(sourceId, deviceId, truncated, now, remediationJson, reporterDeviceId ?? null),
     { op: "setSyncError" },
   );
 }

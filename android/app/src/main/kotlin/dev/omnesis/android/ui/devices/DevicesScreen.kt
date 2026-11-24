@@ -49,6 +49,8 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
@@ -82,6 +84,7 @@ import dev.omnesis.android.designsystem.theme.OmnesisTheme
 import dev.omnesis.android.transport.dto.AgentIntegrationCapability
 import dev.omnesis.android.transport.dto.DeviceCapabilities
 import dev.omnesis.android.transport.dto.DeviceEnrollmentRecord
+import dev.omnesis.android.transport.dto.DeviceForgetData
 import dev.omnesis.android.transport.dto.DeviceRecord
 import dev.omnesis.android.transport.dto.TokenRecord
 import dev.omnesis.android.ui.common.GatewayErrorView
@@ -114,6 +117,7 @@ fun DevicesScreen(
     val tokens by vm.tokens.collectAsStateWithLifecycle()
     val notice by vm.notice.collectAsStateWithLifecycle()
     val pair by vm.pair.collectAsStateWithLifecycle()
+    val forget by vm.forget.collectAsStateWithLifecycle()
     var showApprovals by remember { mutableStateOf(false) }
     val approvalClient = vm.pairingApprovalClient()
     val thisDeviceId by vm.thisDeviceId.collectAsStateWithLifecycle()
@@ -135,7 +139,10 @@ fun DevicesScreen(
         onExpand = vm::loadTokens,
         onRevokeToken = vm::revokeToken,
         onRevokeDevice = vm::revokeDevice,
+        onOpenForgetDevice = { vm.openForget(it) },
+        forget = forget,
         onForgetDevice = vm::forgetDevice,
+        onDismissForgetDevice = vm::closeForget,
         onRepairDevice = vm::openRepair,
         onPair = vm::openPair,
         onPairingRequests = if (deviceApprovalsOffered(approvalClient, joins.available)) {
@@ -183,7 +190,10 @@ fun DevicesContent(
     onExpand: (String) -> Unit = {},
     onRevokeToken: (String, String) -> Unit = { _, _ -> },
     onRevokeDevice: (DeviceRecord) -> Unit = {},
-    onForgetDevice: (DeviceRecord) -> Unit = {},
+    onOpenForgetDevice: (DeviceRecord) -> Unit = {},
+    forget: DevicesViewModel.ForgetState? = null,
+    onForgetDevice: (DeviceForgetData) -> Unit = {},
+    onDismissForgetDevice: () -> Unit = {},
     onRepairDevice: (DeviceRecord) -> Unit = {},
     onPair: () -> Unit = {},
     onPairingRequests: (() -> Unit)? = null,
@@ -195,7 +205,6 @@ fun DevicesContent(
     val c = OmTheme.colors
     // Destructive-confirm targets (null = no dialog open).
     var revokeDeviceConfirm by remember { mutableStateOf<DeviceRecord?>(null) }
-    var forgetDeviceConfirm by remember { mutableStateOf<DeviceRecord?>(null) }
     var revokeTokenConfirm by remember { mutableStateOf<Pair<String, String>?>(null) }
 
     Scaffold(
@@ -250,7 +259,7 @@ fun DevicesContent(
                                 notice = notice,
                                 onExpand = onExpand,
                                 onRevokeDevice = { revokeDeviceConfirm = it },
-                                onForgetDevice = { forgetDeviceConfirm = it },
+                                onForgetDevice = onOpenForgetDevice,
                                 onRepairDevice = onRepairDevice,
                                 onRevokeToken = { tokenId, deviceId -> revokeTokenConfirm = tokenId to deviceId },
                                 onDismissNotice = onDismissNotice,
@@ -273,13 +282,12 @@ fun DevicesContent(
             onDismiss = { revokeDeviceConfirm = null },
         )
     }
-    forgetDeviceConfirm?.let { device ->
-        ConfirmDialog(
-            title = "Forget device?",
-            body = forgetDeviceBody(device),
-            confirmLabel = "Forget",
-            onConfirm = { onForgetDevice(device); forgetDeviceConfirm = null },
-            onDismiss = { forgetDeviceConfirm = null },
+    forget?.let { state ->
+        ForgetDeviceDialog(
+            state = state,
+            onConfirm = onForgetDevice,
+            onRetry = { onOpenForgetDevice(state.device) },
+            onDismiss = onDismissForgetDevice,
         )
     }
     revokeTokenConfirm?.let { (tokenId, deviceId) ->
@@ -293,8 +301,68 @@ fun DevicesContent(
     }
 }
 
-internal fun forgetDeviceBody(device: DeviceRecord): String =
-    "This forgets ${device.name} for good. A device that still hosts sources is refused — remove those sources first."
+@Composable
+internal fun ForgetDeviceDialog(
+    state: DevicesViewModel.ForgetState,
+    onConfirm: (DeviceForgetData) -> Unit,
+    onRetry: () -> Unit,
+    onDismiss: () -> Unit,
+    initialData: DeviceForgetData = DeviceForgetData.Keep,
+) {
+    val c = OmTheme.colors
+    var data by remember(state.impact?.fingerprint) { mutableStateOf(initialData) }
+    val impact = state.impact
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = { if (!state.submitting) onDismiss() },
+        containerColor = c.bgSecondary,
+        title = { Text("Forget ${state.device.name}?", color = c.textPrimary) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(OmSpacing.md)) {
+                Text("This device will stop syncing and will no longer report device or source errors.", color = c.textPrimary)
+                if (state.loading) {
+                    OmSpinner()
+                    Text("Reviewing this device’s sources…", color = c.textSecondary)
+                }
+                if (impact?.hasSources == true) {
+                    Text("${impact.sources.size} source${if (impact.sources.size == 1) "" else "s"} hosted by this device.", color = c.textPrimary)
+                    DeviceForgetData.entries.forEach { option ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth().clickable(enabled = !state.submitting) { data = option },
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            RadioButton(selected = data == option, onClick = { data = option }, enabled = !state.submitting)
+                            Text(option.title, color = c.textPrimary)
+                        }
+                    }
+                    Text(
+                        if (data == DeviceForgetData.Keep) {
+                            "Previously indexed data stays searchable. Sources still used by other devices keep syncing."
+                        } else {
+                            "Deletes this device’s data where it can be attributed to it. Other devices’ data, shared data still in use and history kept from earlier forgotten devices will stay."
+                        },
+                        color = c.textSecondary,
+                    )
+                }
+                state.error?.let { Text(it, color = c.danger) }
+            }
+        },
+        confirmButton = {
+            if (impact != null) {
+                TextButton(onClick = { onConfirm(data) }, enabled = !state.submitting && !state.loading) {
+                    Text(
+                        if (state.submitting) "Forgetting…" else if (data == DeviceForgetData.Delete && impact.hasSources) "Forget and delete data" else "Forget device",
+                        color = if (data == DeviceForgetData.Delete) c.danger else c.accent,
+                    )
+                }
+            } else if (!state.loading) {
+                TextButton(onClick = onRetry) { Text("Try again", color = c.accent) }
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss, enabled = !state.submitting) { Text("Cancel", color = c.textSecondary) }
+        },
+    )
+}
 
 @Composable
 private fun ConfirmDialog(

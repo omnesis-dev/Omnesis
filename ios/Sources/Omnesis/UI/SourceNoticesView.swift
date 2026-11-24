@@ -64,7 +64,8 @@ extension AppStore {
     /// as the Sources screens name devices ("Gateway" for an internal source,
     /// "Unknown device" when the gateway named none).
     func noticeSections(for status: SourceSyncStatus, source: SourceRecord) -> [SourceNoticeSection] {
-        status.noticesByDevice(fallbackDeviceId: source.deviceId)
+        guard !source.archived else { return [] }
+        return status.noticesByDevice(fallbackDeviceId: source.deviceId)
             .enumerated()
             .filter { !$0.element.notices.isEmpty }
             .map { index, group in
@@ -85,11 +86,14 @@ extension AppStore {
         if isInternalSource(source.id) {
             return [SourceHostEntry(id: "gateway", name: "Gateway", isResolved: true, notices: status?.allDisplayNotices ?? [])]
         }
-        let groups = status?.noticesByDevice(fallbackDeviceId: source.deviceId) ?? []
+        let groups = source.archived ? [] : (status?.noticesByDevice(fallbackDeviceId: source.deviceId) ?? [])
         var entries = source.hostDeviceIds.map { id in
             let display = deviceDisplayName(id)
             let notices = groups.first(where: { $0.deviceId == id })?.notices ?? []
             return SourceHostEntry(id: id, name: display.name, isResolved: display.isResolved, notices: notices)
+        }
+        entries += source.archivedDevices.map { device in
+            SourceHostEntry(id: device.deviceId, name: "\(device.name) (forgotten)", isResolved: true, notices: [])
         }
         for (index, group) in groups.enumerated() where !group.notices.isEmpty {
             if let id = group.deviceId, source.hostDeviceIds.contains(id) { continue }
@@ -108,6 +112,7 @@ extension AppStore {
     /// "N devices" for one several devices contribute to, otherwise the host.
     func sourceRowHostLabel(for source: SourceRecord, status: SourceSyncStatus?) -> String? {
         if isInternalSource(source.id) { return "Gateway" }
+        if source.archived { return source.archivedDevices.map(\.name).joined(separator: ", ") }
         let deviceCount = max(status?.members?.count ?? 0, source.hostDeviceIds.count)
         return deviceCount > 1 ? "\(deviceCount) devices" : deviceNamesById[source.deviceId]
     }
@@ -394,5 +399,12 @@ struct SourceNoticeIconsGallery: View {
 #Preview("Notice icons") {
     SourceNoticeIconsGallery()
 }
+
+@available(iOS 17.0, *)
+#Preview("Source — historical data") {
+    NavigationStack { SourceDetailView(sourceId: PreviewMocks.sourceHistorical.id) }
+        .environment(AppStore.preview(sources: [PreviewMocks.sourceHistorical]))
+}
+
 #endif
 #endif

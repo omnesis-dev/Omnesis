@@ -274,6 +274,9 @@ export function parseRoute() {
       modelsSection,
       ...(pairRequest ? { pair: pairRequest } : {}),
       ...(deviceRequest ? { device: deviceRequest } : {}),
+      ...(deviceRequest && ["repair", "forget"].includes(new URLSearchParams(location.search).get("deviceAction"))
+        ? { deviceAction: new URLSearchParams(location.search).get("deviceAction") }
+        : {}),
       // Carry the query string across the rewrite: a tab that grows URL-carried
       // state must not lose it just because the caller used an older spelling.
       ...(isCanonical ? {} : { redirectTo: `${canonicalPath}${location.search}` }),

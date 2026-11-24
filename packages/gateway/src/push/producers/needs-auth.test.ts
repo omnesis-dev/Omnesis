@@ -64,7 +64,11 @@ describe("NeedsAuthNotifier.notify", () => {
       providerId: "fictional-provider:account@example.com",
       deviceId: LAPTOP,
     });
-    expect(reserve).toHaveBeenCalledWith("fictional-provider:account@example.com", LAPTOP);
+    expect(reserve).toHaveBeenCalledWith(
+      "fictional-provider:account@example.com",
+      LAPTOP,
+      "fictional-mail:account@example.com",
+    );
     const message = {
       kind: "needs-auth",
       title: "Re-auth needed",
@@ -214,6 +218,14 @@ describe("NeedsAuthNotifier.notify", () => {
 
   test("recovery between reservation and atomic retention creates no delivery or wake", async () => {
     const db = createDatabase(":memory:");
+    for (const [id, name] of [
+      [LAPTOP, "Fixture laptop origin"],
+      [STUDIO, "Fixture studio origin"],
+    ]) {
+      db.prepare(
+        "INSERT INTO devices (id, name, kind, paired_at) VALUES (?, ?, 'collector', 1)",
+      ).run(id, name);
+    }
     databases.push(db);
     const device = createDevice(db, { name: "Fictional alert phone", kind: "ios" });
     db.prepare("UPDATE devices SET push_transport = 'direct-apns' WHERE id = ?").run(device.id);
@@ -267,6 +279,14 @@ describe("NeedsAuthNotifier.notify", () => {
 
   test("a retry after a post-commit wake failure leaves one pending delivery", async () => {
     const db = createDatabase(":memory:");
+    for (const [id, name] of [
+      [LAPTOP, "Fixture laptop origin"],
+      [STUDIO, "Fixture studio origin"],
+    ]) {
+      db.prepare(
+        "INSERT INTO devices (id, name, kind, paired_at) VALUES (?, ?, 'collector', 1)",
+      ).run(id, name);
+    }
     databases.push(db);
     const device = createDevice(db, { name: "Fictional alert phone", kind: "ios" });
     db.prepare("UPDATE devices SET push_transport = 'direct-apns' WHERE id = ?").run(device.id);
@@ -321,6 +341,14 @@ describe("NeedsAuthNotifier.notify", () => {
 
   test("one device's recovery supersedes only its own pending reminder", async () => {
     const db = createDatabase(":memory:");
+    for (const [id, name] of [
+      [LAPTOP, "Fixture laptop origin"],
+      [STUDIO, "Fixture studio origin"],
+    ]) {
+      db.prepare(
+        "INSERT INTO devices (id, name, kind, paired_at) VALUES (?, ?, 'collector', 1)",
+      ).run(id, name);
+    }
     databases.push(db);
     const device = createDevice(db, { name: "Fictional alert phone", kind: "ios" });
     db.prepare("UPDATE devices SET push_transport = 'direct-apns' WHERE id = ?").run(device.id);

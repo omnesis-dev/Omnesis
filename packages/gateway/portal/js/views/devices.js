@@ -13,7 +13,6 @@ import {
   listDevices,
   pairDevice,
   revokeDevice,
-  forgetDevice,
   listTokens,
   revokeTokenById,
   getNetworkIdentities,
@@ -28,6 +27,7 @@ import {
   getAccessOverview,
   setDeviceAccessLevel,
 } from "../api.js";
+import { DeviceForgetDialog } from "./device-forget.js";
 import { ConfirmModal } from "../components/confirm-modal.js";
 import { CopyBlock, CopyValue } from "../components/copy-button.js";
 import { navigate, replaceRoute } from "../lib/router.js";
@@ -1381,7 +1381,7 @@ export function resolvePairKindRequest(pairKindRequest) {
   return DEVICE_KINDS.includes(pairKindRequest) ? pairKindRequest : null;
 }
 
-export function DevicesView({ pairKindRequest = null, focusDeviceId = null, tailscaleEmbed = false } = {}) {
+export function DevicesView({ pairKindRequest = null, focusDeviceId = null, deviceActionRequest = null, tailscaleEmbed = false } = {}) {
   const requestedPairKind = resolvePairKindRequest(pairKindRequest);
   const [devices, setDevices] = useState([]);
   const [tokens, setTokens] = useState([]);
@@ -1415,6 +1415,7 @@ export function DevicesView({ pairKindRequest = null, focusDeviceId = null, tail
 
   // Confirmation state also holds action errors, independently of roster polling.
   const [confirmState, setConfirmState] = useState(null);
+  const [forgetTarget, setForgetTarget] = useState(null);
   const confirmPending = useRef(false);
 
   // Device id backing the current portal session (from /whoami) — pins the
@@ -1608,6 +1609,34 @@ export function DevicesView({ pairKindRequest = null, focusDeviceId = null, tail
     }, 0);
   }, [focusDeviceId, devices]);
 
+  // Consume action links before opening a flow, so refresh and polling cannot
+  // mint another code or reopen a dismissed confirmation.
+  const deviceActionRef = useRef(null);
+  useEffect(() => {
+    if (!deviceActionRequest) {
+      deviceActionRef.current = null;
+      return;
+    }
+    if (loading || !focusDeviceId || !["repair", "forget"].includes(deviceActionRequest)) return;
+    const key = `${focusDeviceId}:${deviceActionRequest}`;
+    if (deviceActionRef.current === key) return;
+    deviceActionRef.current = key;
+    replaceRoute(`${DEVICES_PATH}?device=${encodeURIComponent(focusDeviceId)}`);
+    const device = devices.find((d) => d.id === focusDeviceId);
+    if (!device) {
+      setError("This device is no longer available.");
+      return;
+    }
+    if (deviceActionRequest === "forget") {
+      handleForgetDevice(device.id, device.name);
+    } else if (device.kind !== "portal" && (device.revokedAt || !device.online)) {
+      openRepairPage(device);
+      handlePair(null, device);
+    } else {
+      setError("This device cannot be repaired. Stop or revoke it first; browser sessions must be paired again.");
+    }
+  }, [deviceActionRequest, focusDeviceId, loading, devices]);
+
   function toggleExpand(id) {
     setExpandedIds((prev) => {
       const next = new Set(prev);
@@ -1617,39 +1646,38 @@ export function DevicesView({ pairKindRequest = null, focusDeviceId = null, tail
     });
   }
 
-  async function handlePair(e) {
-    e.preventDefault();
+  async function handlePair(e, target = repairTarget) {
+    e?.preventDefault();
     const generation = ++pairRequestGeneration.current;
-    const targetId = repairTarget?.id ?? null;
     setPairResult(null);
     setPairError(null);
     setPairing(true);
     try {
       // Other than an integration, the device names itself at redeem;
       // `omnesis devices rename` changes the display name afterwards.
-      const kind = repairTarget?.kind ?? pairKind;
+      const kind = target?.kind ?? pairKind;
       // An integration's access level is chosen with its code, from this portal session.
       const level =
-        kind === "integration" && !repairTarget && accessOverview
+        kind === "integration" && !target && accessOverview
           ? answerLevelsOf(accessOverview).find((candidate) => candidate.id === pairLevelId)
           : undefined;
       // An integration is named for what it is; other kinds name themselves at redeem.
-      const name = kind === "integration" && !repairTarget ? pairName.trim() : "";
+      const name = kind === "integration" && !target ? pairName.trim() : "";
       const res = await pairDevice({
         kind,
-        ...(repairTarget ? { repairDeviceId: repairTarget.id } : {}),
+        ...(target ? { repairDeviceId: target.id } : {}),
         ...(name ? { name } : {}),
         ...(level ? { accessLevelId: level.id } : {}),
       });
       // Stash `kind` on the result so the UI knows whether to render the
       // iOS QR flow vs. the curl snippet.
-      if (pairRequestGeneration.current === generation && (repairTarget?.id ?? null) === targetId) {
+      if (pairRequestGeneration.current === generation) {
         // A repaired integration comes back on the level it kept.
         const kept =
-          repairTarget && accessOverview
-            ? answerLevelsOf(accessOverview).find((candidate) => candidate.id === repairTarget.accessLevelId)
+          target && accessOverview
+            ? answerLevelsOf(accessOverview).find((candidate) => candidate.id === target.accessLevelId)
             : undefined;
-        setPairResult({ ...res, kind, repair: !!repairTarget, accessLevelName: (level ?? kept)?.name ?? null });
+        setPairResult({ ...res, kind, repair: !!target, accessLevelName: (level ?? kept)?.name ?? null });
       }
     } catch (e) {
       if (pairRequestGeneration.current === generation) {
@@ -1690,16 +1718,7 @@ export function DevicesView({ pairKindRequest = null, focusDeviceId = null, tail
   }
 
   function handleForgetDevice(id, name) {
-    setConfirmState({
-      title: `Forget device "${name}"?`,
-      body: "Deletes the device permanently. Refused while it still hosts sources — move or remove them first.",
-      confirmLabel: "Forget",
-      destructive: true,
-      onConfirm: async () => {
-        await forgetDevice(id);
-        await refresh();
-      },
-    });
+    setForgetTarget({ id, name });
   }
 
   function handleWithdrawRelayConsent(device) {
@@ -2022,6 +2041,12 @@ export function DevicesView({ pairKindRequest = null, focusDeviceId = null, tail
                 </div>
               `}
         `}
+      ${forgetTarget && html`<${DeviceForgetDialog}
+        key=${forgetTarget.id}
+        device=${forgetTarget}
+        onClose=${() => setForgetTarget(null)}
+        onForgotten=${async () => { setForgetTarget(null); await refresh(); }}
+      />`}
       <${ConfirmModal}
         open=${!!confirmState}
         title=${confirmState?.title}
@@ -2045,9 +2070,7 @@ export function DevicesView({ pairKindRequest = null, focusDeviceId = null, tail
             setConfirmState((state) => ({
               ...state,
               pending: false,
-              error: err?.code === "DEVICE_STILL_HOSTS_SOURCES"
-                ? "This device still hosts sources. Move or remove them from Sources before forgetting it."
-                : sentence(errorMessage(err, "The action could not be completed.")),
+              error: sentence(errorMessage(err, "The action could not be completed.")),
             }));
           } finally {
             confirmPending.current = false;

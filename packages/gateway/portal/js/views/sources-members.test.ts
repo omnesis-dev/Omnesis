@@ -553,3 +553,12 @@ describe("source removal consequences", () => {
     for (const text of ["every device", "offline members", "background", "Re-add is blocked", "retained backups", "exported copies", "not physical secure erasure"]) expect(body).toContain(text);
   });
 });
+
+test("retained history never becomes an active device line or inherits its old error", () => {
+  const source = { deviceId: "retired", members: ["retired", laptop.id], archivedDevices: [{ deviceId: "retired", name: "Old notebook" }] };
+  const status = { members: [{ deviceId: "retired", state: "error" }, { deviceId: laptop.id, state: "synced" }] };
+  const lines = buildMemberLines(source, deviceById, status, NOW);
+  expect(lines).toHaveLength(1);
+  expect(lines[0].deviceId).toBe(laptop.id);
+  expect(buildMemberLines({ ...source, archived: true }, deviceById, status, NOW)).toEqual([]);
+});

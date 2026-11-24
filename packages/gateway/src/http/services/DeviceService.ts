@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import {
+  deviceForgetImpact,
+  type DeviceForgetImpact,
+} from "../../data/repositories/DeviceRetirementRepository.js";
 import { getDevice, listDevices } from "../../data/repositories/DeviceRepository.js";
 import {
   deviceIdForToken,
@@ -40,6 +44,10 @@ export class DeviceService {
 
   getById(id: DeviceId): DeviceRecord | null {
     return getDevice(this.db, id);
+  }
+
+  forgetImpact(id: DeviceId): DeviceForgetImpact | null {
+    return deviceForgetImpact(this.db, id);
   }
 
   /** Names are unique per gateway; revoked rows keep theirs. */

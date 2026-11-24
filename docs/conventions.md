@@ -84,6 +84,25 @@ reclamation remain runnable while growth is paused.
 - Atomic deletion: `packages/gateway/src/storage/retention-store.ts`
 - Index coordination: `packages/gateway/src/indexer/index-write-gate.ts`
 
+### Forgetting a device retires its sync authority
+
+The forget preview lists each source's deletion scope and a fingerprint of its
+stable ownership, membership, retained origins and credential authority. The
+writer revalidates that fingerprint in the same transaction that revokes access,
+retires membership and records cleanup obligations. Ordinary sync progress must
+not make a reviewed choice stale.
+
+Keeping history preserves stream keys and a minimal forgotten-device provenance
+record behind existing foreign keys. Archived origins have no active membership,
+repairable identity, credentials or sync-health duties. A source with no active
+host remains historical until a new device explicitly takes it on. Deletion uses
+the existing durable source or partition cleanup journal, and preserves other
+devices' contributions and previously retained history. Delayed error reports
+must revalidate the reporting device's authority on the writer.
+
+- Retirement and impact: `packages/gateway/src/data/repositories/DeviceRetirementRepository.ts`
+- Orchestration and operational filtering: `packages/gateway/src/http/services/SourceService.ts`
+
 ### `defineSource()` over `class … implements Source`
 
 Source providers expose a `defineSource<Cursor>({...})` factory call rather than implementing a `Source` interface — there is no such interface; structural typing on the descriptor object is the contract. Compact providers (Things, Browser History) live in a single `index.ts`; larger providers (Apple, Google) compose sub-modules behind the descriptor.

@@ -316,9 +316,9 @@ class SourcesViewModel @Inject constructor(
                     accountId = record.accountId,
                     icon = catalog.iconModel(record.id),
                     countLabel = unitCount?.let { catalog.unitLabel(record.id, it) },
-                    syncState = st?.state ?: "idle",
+                    syncState = if (record.archived) "historical" else st?.state ?: "idle",
                     percentIndexed = index?.bySource?.get(record.id)?.percentIndexed,
-                    hostDevice = rowDeviceLabel(
+                    hostDevice = if (record.archived) record.archivedDevices.joinToString { it.name } else rowDeviceLabel(
                         st,
                         snap.deviceNames[record.deviceId]?.takeIf { it.isNotBlank() }
                             ?: if (record.id in internalIds) "Gateway" else null,
@@ -326,12 +326,12 @@ class SourcesViewModel @Inject constructor(
                     lastActivity = activity?.let { activityTitle(it) },
                     progressPercent = st?.progress?.let { progressPercent(it) },
                     progressMessage = st?.progress?.message?.takeIf { it.isNotBlank() },
-                    paused = !record.enabled,
+                    paused = !record.enabled && !record.archived,
                     count = unitCount,
                     unit = unitCount?.let { pluralizeUnit(unit, it) },
                     activityAgo = activity?.let { formatTimeAgo(it.latestActivityAt) },
                     isInternal = record.id in internalIds,
-                    noticeGroups = noticeGroups(st) { snap.deviceNames[it] },
+                    noticeGroups = if (record.archived) emptyList() else noticeGroups(st) { snap.deviceNames[it] },
                 )
             }
             .sortedWith(compareBy({ it.label.lowercase() }, { it.accountId.lowercase() }))

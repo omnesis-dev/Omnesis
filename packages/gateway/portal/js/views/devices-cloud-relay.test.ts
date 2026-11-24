@@ -17,6 +17,7 @@ const apiMocks = vi.hoisted(() => ({
   getPairAddresses: vi.fn(),
   fleetUpdateTarget: vi.fn(async () => ({ targetVersion: null })),
   forgetDevice: vi.fn(),
+  getDeviceForgetImpact: vi.fn(async () => ({ sources: [], fingerprint: "fictional-impact" })),
   getFleetDoctor: vi.fn(async () => ({ devices: [] })),
   getNetworkIdentities: vi.fn(async () => ({ items: [] })),
   getDoctorReport: vi.fn(),

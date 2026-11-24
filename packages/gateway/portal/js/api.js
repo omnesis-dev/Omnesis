@@ -966,10 +966,17 @@ export const revokeDevice = (deviceId, impactFingerprint) => {
   );
 };
 
-// Permanent delete of a revoked device's row. The gateway refuses while the
-// device still hosts sources.
-export const forgetDevice = (deviceId) =>
-  request("DELETE", `/admin/devices/${encodeURIComponent(deviceId)}?forget=true`).then(() => true);
+/** Review the source history affected by permanently forgetting a device. */
+export const getDeviceForgetImpact = (deviceId) =>
+  request("GET", `/admin/devices/${encodeURIComponent(deviceId)}/forget-impact`);
+
+/** Forget a device, applying the explicitly reviewed history choice when supplied. */
+export const forgetDevice = (deviceId, options = {}) => {
+  const query = new URLSearchParams({ forget: "true" });
+  if (options.data) query.set("data", options.data);
+  if (options.impactFingerprint) query.set("impactFingerprint", options.impactFingerprint);
+  return request("DELETE", `/admin/devices/${encodeURIComponent(deviceId)}?${query}`).then(() => true);
+};
 
 /** Withdraw one phone's relay consent and invalidate its opaque relay credential. */
 export const withdrawRelayPushConsent = (deviceId) =>

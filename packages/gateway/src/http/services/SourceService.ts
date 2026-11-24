@@ -51,6 +51,13 @@ import {
   countRestoredByMember,
   listDeletersByRestorer,
 } from "../../data/repositories/ReplicaDeletionClaimRepository.js";
+import {
+  deviceForgetImpact,
+  isDeviceForgotten,
+  sourceArchivedDevices,
+  type ArchivedSourceDevice,
+  type DeviceForgetOptions,
+} from "../../data/repositories/DeviceRetirementRepository.js";
 import { getDevice } from "../../data/repositories/DeviceRepository.js";
 import { sourceWireFloor } from "../../data/repositories/SourceWireContractRepository.js";
 import {
@@ -114,6 +121,7 @@ import {
   SourceModeTransitionCoordinator,
   type SourceModeTransitionAdoption,
 } from "./SourceModeTransitionCoordinator.js";
+import type { DeleteDeviceResult } from "../../push/mobile-permission-operations.js";
 import type { LegacyOwnershipAction, LegacyOwnershipTable } from "../../analytics-db.js";
 import type { AccountDescriptor } from "@omnesis/source-sdk";
 import type { SourceWriteEpochFence } from "../../source-write-epoch-fence.js";
@@ -299,6 +307,9 @@ function cannotHostTypeError(device: DeviceRecord, sourceType: SourceType): Http
 }
 
 export type AdminSourceListEntry = SourceRecord & {
+  /** No device remains to sync this source; its retained content is historical. */
+  archived?: boolean;
+  archivedDevices?: ArchivedSourceDevice[];
   lastSyncedAt: string | null;
   /** Every device contributing to the source, the owner first. */
   members: DeviceId[];
@@ -820,7 +831,7 @@ export class SourceService {
 
   /** The owner first, then every other member — the devices a source's events reach. */
   membersOf(source: SourceRecord): DeviceId[] {
-    const members = [source.deviceId];
+    const members = isDeviceForgotten(this.deps.db, source.deviceId) ? [] : [source.deviceId];
     for (const m of listSourceMembers(this.deps.db, source.id)) {
       if (!members.includes(m.deviceId)) members.push(m.deviceId);
     }
@@ -1162,7 +1173,7 @@ export class SourceService {
     const owner = getDevice(db, source.deviceId);
     const memberScopedParams = this.memberConfigContractFor(
       source,
-      owner && this.isDormantMember(source, owner) ? device : owner,
+      !owner || this.isDormantMember(source, owner) ? device : owner,
     );
     this.assertMemberConfigContract(device, source.type, memberScopedParams);
     this.assertMemberConfigPlacement(
@@ -1609,7 +1620,7 @@ export class SourceService {
       ]),
     );
     const membersOf = (s: SourceRecord): DeviceId[] => [
-      s.deviceId,
+      ...(isDeviceForgotten(this.deps.db, s.deviceId) ? [] : [s.deviceId]),
       ...(membersById.get(s.id) ?? []).filter((d) => d !== s.deviceId),
     ];
     const member = opts.deviceId;
@@ -1691,8 +1702,11 @@ export class SourceService {
       const members = membersOf(s);
       const transition = transitionsById.get(s.id);
       const host = devices.find((d) => d.id === s.deviceId);
+      const archivedDevices = sourceArchivedDevices(this.deps.db, s.id);
       return {
         ...s,
+        ...(members.length === 0 && archivedDevices.length > 0 ? { archived: true } : {}),
+        ...(archivedDevices.length > 0 ? { archivedDevices } : {}),
         lastSyncedAt: lastSyncByKey.get(s.id) ?? null,
         members,
         multiDeviceMode: this.modeFor(s),
@@ -2280,6 +2294,18 @@ export class SourceService {
       return getSource(db, id)!;
     }
     this.assertNoModeTransition(id);
+    if (
+      current &&
+      patch.enabled === true &&
+      patch.deviceId === undefined &&
+      isDeviceForgotten(db, current.deviceId)
+    ) {
+      throw new HttpError(
+        409,
+        "SOURCE_IS_HISTORICAL",
+        "This source contains historical data. Attach a paired device before resuming sync.",
+      );
+    }
     let validatedMemberScopedParams: readonly string[] | undefined;
     if (patch.config !== undefined && current) {
       const owner = getDevice(db, current.deviceId);
@@ -2582,6 +2608,54 @@ export class SourceService {
         log.warn(`Failed to push sources.snapshot to device ${deviceId}: ${msg}`);
       }
     });
+  }
+
+  /** Permanently forget a device while explicitly retaining or removing its contribution. */
+  async forgetDevice(id: DeviceId, options?: DeviceForgetOptions): Promise<DeleteDeviceResult> {
+    const { db, writeGate: w, statusCache, syncStatus, wsServer } = this.deps;
+    const impact = deviceForgetImpact(db, id);
+    if (!impact) return { deleted: false, reason: "not-found" };
+    for (const source of impact.sources) this.assertNoModeTransition(source.id);
+    const commit = async (): Promise<DeleteDeviceResult> => {
+      if (options?.data === "delete") {
+        for (const source of impact.sources) {
+          if (source.deleteScope === "source")
+            await this.deps.sourceDataRemoval.prepareSourceRemoval(source.id);
+          else if (source.deleteScope === "partition")
+            await this.deps.sourceDataRemoval.prepareSourceRemoval(source.id, id);
+        }
+      }
+      return w.deleteDevice(id, options);
+    };
+    const locked = (index: number): Promise<DeleteDeviceResult> => {
+      const source = impact.sources[index];
+      return source ? this.withLeaseMutation(source.id, () => locked(index + 1)) : commit();
+    };
+    const result = await locked(0);
+    if (!result.deleted) return result;
+    wsServer?.disconnectDevice(id);
+    await this.releaseDeviceLeases(id);
+    for (const sourceId of result.affectedSourceIds ?? []) {
+      syncStatus?.removeMember(sourceId, id);
+      const current = getSource(db, sourceId);
+      if (!current || this.membersOf(current).length === 0) syncStatus?.remove(sourceId);
+      await this.forgetAnalyticsObserver(sourceId, id);
+      if (current) this.notifyMembers(current);
+    }
+    for (const sourceId of result.removedSourceIds ?? []) {
+      this.deps.syncLease?.forgetSource(sourceId);
+      try {
+        await this.deps.syncSourceSettingsToConfig(sourceId, null);
+      } catch (error) {
+        log.warn(
+          `Could not remove source settings for ${sourceId}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+      void this.sweepRemovedSource(sourceId);
+    }
+    for (const job of result.streamCleanups ?? []) void this.streamCleanup.cleanup(job);
+    statusCache.bump();
+    return result;
   }
 
   /**
@@ -3017,6 +3091,11 @@ export class SourceService {
     permissions: readonly MobilePermissionReportRow[],
     now: number,
   ): DisplaySyncStatus {
+    const active = (deviceId: string | null | undefined) =>
+      !deviceId || !isDeviceForgotten(this.deps.db, deviceId);
+    if (!active(inMem?.deviceId)) inMem = undefined;
+    rows = rows.filter((row) => active(row.device_id));
+    permissions = permissions.filter((row) => active(row.deviceId));
     // A row's stamp is its latest sync or error, so a member whose first
     // sync failed still stands for the source over a metadata-only shared row.
     const stampOf = (p: SyncStateSummary | undefined): string =>
@@ -3038,8 +3117,11 @@ export class SourceService {
       now,
       registered?.enabled === true ? permission?.health : undefined,
     );
-    const memberReports = this.deps.syncStatus?.listMembers(sourceId) ?? [];
+    const memberReports = (this.deps.syncStatus?.listMembers(sourceId) ?? []).filter(
+      (row) => !row.deviceId || !isDeviceForgotten(this.deps.db, row.deviceId),
+    );
     const issuesBy = listSourceSyncIssues(this.deps.db, sourceId);
+    for (const id of issuesBy.keys()) if (!active(id)) issuesBy.delete(id);
     const issues = [...issuesBy.values()].flat();
     if (issues.length > 0) {
       status.issues = issues;
@@ -3059,6 +3141,7 @@ export class SourceService {
       for (const member of listSourceMembers(this.deps.db, sourceId))
         memberIds.add(member.deviceId);
     }
+    for (const id of memberIds) if (isDeviceForgotten(this.deps.db, id)) memberIds.delete(id);
     const applyWireRefusal = (row: DisplaySyncStatus, deviceId: string): boolean => {
       if (row.state === "paused") return false;
       try {

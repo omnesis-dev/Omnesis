@@ -33,9 +33,10 @@ export const stallsQuery = z.object({
 });
 
 // POST /admin/devices
-// DELETE /admin/devices/:id — revoke by default; `forget=true` hard-deletes.
+// DELETE /admin/devices/:id — revoke by default; forget reviews source retention.
 export const deleteDeviceQuery = z.object({
   forget: z.enum(["true", "false"]).optional(),
+  data: z.enum(["keep", "delete"]).optional(),
   impactFingerprint: z
     .string()
     .regex(/^[a-f0-9]{64}$/u)

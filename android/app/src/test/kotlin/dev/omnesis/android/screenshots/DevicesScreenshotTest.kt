@@ -15,6 +15,10 @@ import dev.omnesis.android.designsystem.theme.OmSpacing
 import dev.omnesis.android.designsystem.theme.OmTheme
 import dev.omnesis.android.designsystem.theme.OmnesisTheme
 import dev.omnesis.android.transport.dto.DeviceCapabilities
+import dev.omnesis.android.transport.dto.DeviceForgetData
+import dev.omnesis.android.transport.dto.DeviceForgetImpact
+import dev.omnesis.android.transport.dto.DeviceForgetSourceImpact
+import dev.omnesis.android.ui.devices.ForgetDeviceDialog
 import dev.omnesis.android.transport.dto.DeviceRecord
 import dev.omnesis.android.transport.dto.AwayFromHomeHint
 import dev.omnesis.android.transport.dto.PairingAddressOption
@@ -213,6 +217,34 @@ class DevicesScreenshotTest {
             onRetry = {},
             otherExpanded = true,
         )
+    }
+
+    private val forgetImpact = DeviceForgetImpact(
+        listOf(
+            DeviceForgetSourceImpact("activity:local", "activity", "partitioned", 1, "partition"),
+            DeviceForgetSourceImpact("notes:local", "notes", "replicated", 1, "none"),
+        ),
+        "preview-device-impact",
+    )
+
+    @Test
+    fun devices_forget_keep_dark() = capture("devices_forget_keep_dark", dark = true) {
+        ForgetDeviceDialog(DevicesViewModel.ForgetState(revokedDevice(), forgetImpact, loading = false), {}, {}, {})
+    }
+
+    @Test
+    fun devices_forget_keep_light() = capture("devices_forget_keep_light", dark = false) {
+        ForgetDeviceDialog(DevicesViewModel.ForgetState(revokedDevice(), forgetImpact, loading = false), {}, {}, {})
+    }
+
+    @Test
+    fun devices_forget_delete_dark() = capture("devices_forget_delete_dark", dark = true) {
+        ForgetDeviceDialog(DevicesViewModel.ForgetState(revokedDevice(), forgetImpact, loading = false), {}, {}, {}, initialData = DeviceForgetData.Delete)
+    }
+
+    @Test
+    fun devices_forget_delete_light() = capture("devices_forget_delete_light", dark = false) {
+        ForgetDeviceDialog(DevicesViewModel.ForgetState(revokedDevice(), forgetImpact, loading = false), {}, {}, {}, initialData = DeviceForgetData.Delete)
     }
 
     @Test

@@ -8752,14 +8752,23 @@ p.privacy-diff-note {
 }
 /*
  * A failure the operator has to act on, on the collector's host. Same amber
- * as needs-auth — a terminal state with a known fix — but no button: the fix
- * is a system setting on another machine, so the card is the procedure.
+ * as needs-auth — a terminal state with a known fix. Pairing failures also
+ * offer the device actions available from Settings.
  */
 .sources-banner-v2.needs-access {
   background: rgba(210, 153, 34, 0.08);
   border: 1px solid rgba(210, 153, 34, 0.55);
   color: var(--text-primary);
 }
+.remediation-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+.remediation-actions a.btn-primary { color: var(--on-accent); }
+.remediation-actions a.btn-secondary { color: var(--text-primary); }
+.remediation-actions a:hover { text-decoration: none; }
 .remediation-steps {
   margin: 6px 0 0;
   padding-left: 20px;
@@ -20278,3 +20287,17 @@ summary.decision-card-head {
 .relay-invite-field input { width: 100%; box-sizing: border-box; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-primary); color: var(--text-primary); font: inherit; font-size: 14px; }
 .relay-invite-field input[aria-invalid="true"] { border-color: var(--danger, var(--accent)); }
 .relay-invite-problem { margin: 0; font-size: 12.5px; line-height: 1.5; color: var(--danger, var(--accent)); }
+
+.device-forget-options {
+  display: grid;
+  gap: 8px;
+  border: 0;
+  padding: 0;
+  margin-top: 16px;
+}
+.device-forget-options legend { margin-bottom: 12px; }
+.device-forget-options label { display: flex; gap: 8px; align-items: center; }
+.device-forget-options p { margin: 0 0 8px 24px; color: var(--text-secondary); }
+.device-forget-sources { max-height: 180px; overflow-y: auto; padding-left: 20px; }
+
+.source-history-label { color: var(--text-secondary); font-size: 12px; margin-top: 4px; }

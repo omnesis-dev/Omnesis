@@ -136,7 +136,13 @@ struct DevicesView: View {
                 onExpand: { deviceId in await loadTokens(for: deviceId) },
                 onRevokeToken: { tokenId, deviceId in try await revokeToken(tokenId, deviceId: deviceId) },
                 onRevokeDevice: { device in try await revokeDevice(device) },
-                onForgetDevice: { device in try await forgetDevice(device) },
+                onForgetImpact: { device in
+                    guard let client = store.admin else { throw URLError(.cannotConnectToHost) }
+                    return try await client.forgetDeviceImpact(id: device.id)
+                },
+                onForgetDevice: { device, data, fingerprint in
+                    try await forgetDevice(device, data: data, fingerprint: fingerprint)
+                },
                 onRepairDevice: { device in repairTarget = device }
             )
         }
@@ -173,12 +179,9 @@ struct DevicesView: View {
         return "Revoked \(device.name)."
     }
 
-    /// Delete a revoked device's row for good, then reload the list. The
-    /// gateway refuses while the device still hosts sources; that refusal
-    /// reaches the banner as the gateway's own message.
-    private func forgetDevice(_ device: DeviceRecord) async throws -> String {
+    private func forgetDevice(_ device: DeviceRecord, data: DeviceForgetData, fingerprint: String) async throws -> String {
         guard let client = store.admin else { throw URLError(.cannotConnectToHost) }
-        try await client.forgetDevice(id: device.id)
+        try await client.forgetDevice(id: device.id, data: data, impactFingerprint: fingerprint)
         tokensByDevice[device.id] = nil
         await load()
         return "Forgot \(device.name)."
@@ -254,8 +257,8 @@ struct DevicesList: View {
     var onRevokeToken: (String, String) async throws -> String = { _, _ in "" }
     /// Revoke a device; returns the banner text or throws.
     var onRevokeDevice: (DeviceRecord) async throws -> String = { _ in "" }
-    /// Forget a revoked device for good; returns the banner text or throws.
-    var onForgetDevice: (DeviceRecord) async throws -> String = { _ in "" }
+    var onForgetImpact: (DeviceRecord) async throws -> DeviceForgetImpact
+    var onForgetDevice: (DeviceRecord, DeviceForgetData, String) async throws -> String
     var onRepairDevice: (DeviceRecord) -> Void = { _ in }
 
     @State private var notice: Notice?
@@ -265,6 +268,7 @@ struct DevicesList: View {
     @State private var revokeDeviceConfirm: DeviceRecord?
     /// Revoked device queued for a forget confirm.
     @State private var forgetDeviceConfirm: DeviceRecord?
+    @State private var forgetImpact: DeviceForgetImpact?
     /// (tokenId, deviceId) queued for a revoke confirm.
     @State private var revokeTokenConfirm: TokenRef?
     @State private var busy = false
@@ -304,7 +308,10 @@ struct DevicesList: View {
         onExpand: @escaping (String) async -> Void = { _ in },
         onRevokeToken: @escaping (String, String) async throws -> String = { _, _ in "" },
         onRevokeDevice: @escaping (DeviceRecord) async throws -> String = { _ in "" },
-        onForgetDevice: @escaping (DeviceRecord) async throws -> String = { _ in "" },
+        onForgetImpact: @escaping (DeviceRecord) async throws -> DeviceForgetImpact = { _ in
+            throw URLError(.cannotConnectToHost)
+        },
+        onForgetDevice: @escaping (DeviceRecord, DeviceForgetData, String) async throws -> String = { _, _, _ in "" },
         onRepairDevice: @escaping (DeviceRecord) -> Void = { _ in },
         startOtherExpanded: Bool = false,
         seededFailure: SeededFailure? = nil
@@ -315,6 +322,7 @@ struct DevicesList: View {
         self.onExpand = onExpand
         self.onRevokeToken = onRevokeToken
         self.onRevokeDevice = onRevokeDevice
+        self.onForgetImpact = onForgetImpact
         self.onForgetDevice = onForgetDevice
         self.onRepairDevice = onRepairDevice
         self._showOther = State(initialValue: startOtherExpanded)
@@ -374,20 +382,19 @@ struct DevicesList: View {
             } message: { device in
                 Text("This revokes \(device.name) and all of its tokens. It must be re-paired to talk to the gateway again.")
             }
-            .alert(
-                "Forget device?",
-                isPresented: Binding(
-                    get: { forgetDeviceConfirm != nil },
-                    set: { if !$0 { forgetDeviceConfirm = nil } }
-                ),
-                presenting: forgetDeviceConfirm
-            ) { device in
-                Button("Forget", role: .destructive) { runForgetDevice(device) }
-                Button("Cancel", role: .cancel) {}
-            } message: { device in
-                Text(
-                    "This forgets \(device.name) for good. A device that still hosts sources is refused — remove those sources first."
-                )
+            .sheet(item: $forgetDeviceConfirm) { device in
+                if let forgetImpact {
+                    ForgetDeviceConfirmation(
+                        device: device,
+                        impact: forgetImpact,
+                        onRefresh: { try await onForgetImpact(device) },
+                        onForget: { data, fingerprint in
+                            let text = try await onForgetDevice(device, data, fingerprint)
+                            notice = Notice(ok: true, text: text)
+                        }
+                    )
+                    .omnesisColorScheme()
+                }
             }
             .alert(
                 "Revoke token?",
@@ -413,7 +420,7 @@ struct DevicesList: View {
             failure: failure(for: device),
             onExpand: { await onExpand(device.id) },
             onRevokeDevice: { revokeDeviceConfirm = device },
-            onForgetDevice: { forgetDeviceConfirm = device },
+            onForgetDevice: { prepareForgetDevice(device) },
             onRepairDevice: { onRepairDevice(device) },
             onRevokeToken: { tokenId in
                 revokeTokenConfirm = TokenRef(tokenId: tokenId, deviceId: device.id)
@@ -492,15 +499,17 @@ struct DevicesList: View {
         }
     }
 
-    private func runForgetDevice(_ device: DeviceRecord) {
+    private func prepareForgetDevice(_ device: DeviceRecord) {
+        guard !busy else { return }
         busy = true
         notice = nil
         Task {
             defer { busy = false }
             do {
-                notice = try await Notice(ok: true, text: onForgetDevice(device))
+                forgetImpact = try await onForgetImpact(device)
+                forgetDeviceConfirm = device
             } catch {
-                notice = Notice(ok: false, text: forgetFailureText(error), deviceId: device.id)
+                notice = Notice(ok: false, text: "Cannot review device sources: \(deviceGatewayMessage(error))", deviceId: device.id)
             }
         }
     }
@@ -521,22 +530,6 @@ struct DevicesList: View {
             }
         }
     }
-
-    /// The gateway refuses to delete a device that still hosts sources. Its
-    /// own message names the sources by id and points at a CLI command, which
-    /// is neither readable nor actionable on a phone: the remedy here is the
-    /// Sources screen. Every other refusal keeps the gateway's wording.
-    private func forgetFailureText(_ error: Error) -> String {
-        if let gatewayError = error as? GatewayClient.Error,
-           gatewayError.gatewayCode == Self.deviceStillHostsSourcesCode {
-            return "This device still hosts sources. Remove them from the Sources screen first, then forget it."
-        }
-        return "Forget failed: \(deviceGatewayMessage(error))"
-    }
-
-    /// The gateway's refusal code for forgetting a device that sources still
-    /// point at (`DELETE /admin/devices/:id?forget=true`).
-    private static let deviceStillHostsSourcesCode = "DEVICE_STILL_HOSTS_SOURCES"
 
     private func noticeBanner(_ notice: Notice) -> some View {
         Text(notice.text)

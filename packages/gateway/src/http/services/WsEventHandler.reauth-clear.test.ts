@@ -17,6 +17,8 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import { SCOPE_WRITE_ALL, SourceId, parseSourceId } from "@omnesis/types";
@@ -30,8 +32,6 @@ import type { NeedsAuthNotifier } from "../../push/producers/needs-auth.js";
 import type { WriteGate } from "../../write-gate.js";
 import type { AuthFlowRegistry } from "../../auth-flows.js";
 import type { DeviceConnection } from "../../ws.js";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 let dbPath: string;
 let db: ReturnType<typeof createDatabase>;
@@ -134,6 +134,7 @@ describe("WsEventHandler — completed clears a previously-needs-auth source (at
       "needs reauth: token expired",
       "",
       undefined,
+      conn.deviceId,
     );
 
     // Re-auth → collector re-registers the provider and broadcasts
