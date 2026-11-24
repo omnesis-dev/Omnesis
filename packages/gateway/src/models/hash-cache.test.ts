@@ -10,6 +10,7 @@
 
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readdirSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -39,7 +40,7 @@ function writeModel(name: string, contents: string): string {
 }
 
 beforeEach(() => {
-  root = join("/tmp", `omnesis-test-${randomUUID()}`);
+  root = join(tmpdir(), `omnesis-test-${randomUUID()}`);
   cacheDir = join(root, "cache");
   mkdirSync(root, { recursive: true });
   previousCacheDir = process.env.OMNESIS_MODEL_HASH_CACHE_DIR;

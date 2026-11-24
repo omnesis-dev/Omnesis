@@ -10,6 +10,8 @@
  */
 
 import { existsSync, unlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createDatabase } from "../../db.js";
@@ -23,7 +25,7 @@ type Db = Database.Database;
 let path: string;
 let db: Db;
 beforeEach(() => {
-  path = `/tmp/omnesis-test-${randomUUID()}.db`;
+  path = join(tmpdir(), `omnesis-test-${randomUUID()}.db`);
   db = createDatabase(path);
 });
 afterEach(() => {

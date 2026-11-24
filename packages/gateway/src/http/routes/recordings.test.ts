@@ -10,6 +10,8 @@
  */
 
 import { existsSync, unlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
@@ -99,7 +101,7 @@ function documentContent(id: string): string | undefined {
 beforeEach(() => {
   priorExperimental = process.env.OMNESIS_EXPERIMENTAL;
   process.env.OMNESIS_EXPERIMENTAL = "1";
-  dbPath = `/tmp/omnesis-test-${randomUUID()}.db`;
+  dbPath = join(tmpdir(), `omnesis-test-${randomUUID()}.db`);
   db = createDatabase(dbPath);
   ADMIN_TOKEN = mintToken([SCOPE_ADMIN, SCOPE_READ]);
   optedIn = undefined;
