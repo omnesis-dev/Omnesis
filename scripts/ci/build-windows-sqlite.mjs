@@ -15,8 +15,8 @@ import { prepareWindowsNodeBuild, runWindowsBuildNode } from "./windows-native-b
 import { isEntryScript } from "../lib/is-entry-script.mjs";
 
 const PACKAGES = [
-  ["better-sqlite3", "13.1.1"],
-  ["better-sqlite3-multiple-ciphers", "13.0.3"],
+  ["better-sqlite3", "13.2.0"],
+  ["better-sqlite3-multiple-ciphers", "13.2.0"],
 ];
 
 export async function resolveSqlitePackages(cwd) {
