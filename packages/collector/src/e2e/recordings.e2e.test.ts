@@ -183,6 +183,11 @@ describe("recorded conversation speakers in experimental mode (E2E)", () => {
       extraGatewayConfig: { inference: { recordings: { speakers: "replay" } } },
     });
     await harness.start();
+    // Experimental mode alone takes no recording: Recordings is its own Lab opt-in.
+    await harness.gatewayJson("/admin/lab/recordings", {
+      method: "PUT",
+      body: JSON.stringify({ enabled: true }),
+    });
     // The universe's people, one of whom stands in for the guest.
     await harness.syncAllSources();
     await harness.waitForPeopleResolution();
@@ -194,15 +199,16 @@ describe("recorded conversation speakers in experimental mode (E2E)", () => {
 
   test("speakers mapped to people name the transcript and link the conversation to them", async () => {
     const id = randomUUID();
-    await harness.gatewayFetch("/recordings", {
+    const start = await harness.gatewayFetch("/recordings", {
       method: "POST",
       body: JSON.stringify({ id, title: "Design sync", startedAt: START, language: "en-GB" }),
     });
+    expect(start.status).toBe(201);
     const script = (lines: Array<[number, number, string, string]>) =>
       JSON.stringify({
         segments: lines.map(([startMs, endMs, voice, text]) => ({ startMs, endMs, voice, text })),
       });
-    await putChunk(
+    const first = await putChunk(
       harness,
       id,
       0,
@@ -211,11 +217,16 @@ describe("recorded conversation speakers in experimental mode (E2E)", () => {
         [4_000, 6_000, "owner", "Send them over today."],
       ]),
     );
-    await putChunk(harness, id, 1, script([[0, 4_000, "guest", "Done, check your inbox."]]));
-    await harness.gatewayFetch(`/recordings/${id}/finish`, {
+    expect(first.status).toBe(200);
+    expect(
+      (await putChunk(harness, id, 1, script([[0, 4_000, "guest", "Done, check your inbox."]])))
+        .status,
+    ).toBe(200);
+    const finished = await harness.gatewayFetch(`/recordings/${id}/finish`, {
       method: "POST",
       body: JSON.stringify({ chunkCount: 2, endedAt: "2026-03-02T09:02:00.000Z" }),
     });
+    expect(finished.status).toBe(200);
     await vi.waitFor(
       async () => {
         expect(await harness.gatewayJson<RecordingStatus>(`/recordings/${id}`)).toMatchObject({
