@@ -20298,6 +20298,15 @@ summary.decision-card-head {
 .device-forget-options legend { margin-bottom: 12px; }
 .device-forget-options label { display: flex; gap: 8px; align-items: center; }
 .device-forget-options p { margin: 0 0 8px 24px; color: var(--text-secondary); }
-.device-forget-sources { max-height: 180px; overflow-y: auto; padding-left: 20px; }
+.device-forget-sources {
+  display: grid;
+  gap: 8px;
+  max-height: 180px;
+  overflow-y: auto;
+  padding: 0;
+  list-style: none;
+}
+.device-forget-sources li { display: flex; align-items: center; gap: 8px; }
+.device-forget-source-name { min-width: 0; }
 
 .source-history-label { color: var(--text-secondary); font-size: 12px; margin-top: 4px; }

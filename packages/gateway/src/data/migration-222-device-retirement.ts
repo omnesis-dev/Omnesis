@@ -13,6 +13,11 @@ export function addDeviceRetirement(db: Database.Database): void {
   ) {
     db.exec("ALTER TABLE sync_state ADD COLUMN last_error_device_id TEXT");
   }
+  createDeviceRetirementTables(db);
+}
+
+/** Schema setup must leave old cursor shapes to the ordered migration chain. */
+export function createDeviceRetirementTables(db: Database.Database): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS forgotten_devices (
       device_id TEXT PRIMARY KEY REFERENCES devices(id) ON DELETE CASCADE,

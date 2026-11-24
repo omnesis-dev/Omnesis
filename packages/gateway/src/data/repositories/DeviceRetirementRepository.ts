@@ -2,20 +2,12 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { createHash } from "node:crypto";
-import type {
-  SourceId
-
-
-
-} from "@omnesis/types";
+import type { SourceId } from "@omnesis/types";
 import {
   DeviceId,
   hasPerDeviceCursor,
   type DeviceKind,
-  type MultiDeviceMode
-
-
-
+  type MultiDeviceMode,
 } from "@omnesis/types";
 import { agentDeviceRevocationImpact } from "../../access/agent-device-authorization.js";
 import { getDevice } from "./DeviceRepository.js";

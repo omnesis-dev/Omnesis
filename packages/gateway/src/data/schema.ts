@@ -37,7 +37,7 @@ import { createAnswerPrivacyTables, createDirectAuditTables } from "../privacy/s
 import { createSubscriptionTables } from "../subscriptions/store-schema.js";
 import { createTranscriptionVocabularyTables } from "../transcribe/vocabulary/storage.js";
 import { addStorageAuthority } from "./migration-219-storage-authority.js";
-import { addDeviceRetirement } from "./migration-222-device-retirement.js";
+import { createDeviceRetirementTables } from "./migration-222-device-retirement.js";
 import { addHistoryCleanup } from "./migration-220-history-cleanup.js";
 import { REVOKED_DEVICE_KEYS_TABLE } from "./migration-217-sticky-revocation.js";
 import { DEVICE_ENROLLMENT_PUBLIC_KEY_INDEX } from "./migration-214-device-enrollment.js";
@@ -585,7 +585,7 @@ function runSchemaSetupInTxn(db: Db): void {
     )
   `);
   db.exec("CREATE INDEX IF NOT EXISTS idx_source_devices_device ON source_devices(device_id)");
-  addDeviceRetirement(db);
+  createDeviceRetirementTables(db);
   createSourceMemberConfigContractTable(db);
   createSourceStreamCleanupTable(db);
   createSourceModeTransitionTable(db);

@@ -5,7 +5,7 @@ import { html } from "htm/preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { getDeviceForgetImpact, forgetDevice } from "../api.js";
 import { ConfirmModal } from "../components/confirm-modal.js";
-import { sourceLabel } from "../lib/format.js";
+import { sourceIcon, sourceLabel } from "../lib/format.js";
 import { errorMessage } from "./access/shared.js";
 
 /** One device's current source impact is reviewed before its identity is forgotten. */
@@ -70,9 +70,12 @@ export function DeviceForgetDialog({ device, onClose, onForgotten }) {
       ${impact && sources.length === 0 && html`<p>This device hosts no sources.</p>`}
       ${sources.length > 0 && html`
         <p>${sources.length} source${sources.length === 1 ? "" : "s"} affected:</p>
-        <ul class="device-forget-sources">
-          ${sources.map((source) => html`<li key=${source.id}>${sourceLabel(source.id)}
-            ${source.deleteScope === "none" && html`<span class="text-muted"> — shared or previously kept history stays</span>`}
+        <ul class="device-forget-sources" role="list">
+          ${sources.map((source) => html`<li key=${source.id}>
+            <span class="source-icon-wrap" aria-hidden="true">${sourceIcon(source.id)}</span>
+            <span class="device-forget-source-name">${sourceLabel(source.id)}
+              ${source.deleteScope === "none" && html`<span class="text-muted"> — shared or previously kept history stays</span>`}
+            </span>
           </li>`)}
         </ul>
         ${confirmDelete ? html`

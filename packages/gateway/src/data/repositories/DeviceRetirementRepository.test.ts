@@ -12,6 +12,7 @@ import { collapseId as permissionCollapseId } from "../../push/producers/source-
 import { createDevice, getDevice, findDeviceByName, listDevices } from "./DeviceRepository.js";
 import { createSource, getSource, addSourceMember, listSourceMembers } from "./SourceRepository.js";
 import { deviceForgetImpact, sourceArchivedDevices } from "./DeviceRetirementRepository.js";
+import { getRecentDocuments } from "./DocumentRepository.js";
 import { setSyncError } from "./SyncStateRepository.js";
 import { listPendingSourceStreamCleanups } from "./SourceStreamCleanupRepository.js";
 import { reserveActiveReauthReminder } from "./ReauthRemindersRepository.js";
@@ -286,6 +287,22 @@ describe("device retirement", () => {
         state: "superseded",
       },
     ]);
+  });
+
+  test("recent retained documents preserve their original device label", () => {
+    const { device, source } = fixture("partitioned", false);
+    db.prepare(
+      `INSERT INTO documents (id, provider_id, source_id, external_id, stream_id, title, content, content_hash, source_created_at, source_updated_at, ingested_at, updated_at)
+      VALUES ('fictional-document', 'fictional-provider', ?, 'fictional-item', ?, 'Example note', 'An invented note.', 'fictional-hash', '2026-01-01', '2026-01-01', '2026-01-01', '2026-01-01')`,
+    ).run(source.id, device.id);
+    expect(getRecentDocuments(db, source.id)[0]?.device_name).toBe(device.name);
+    expect(forget(device.id, "keep")).toMatchObject({ deleted: true });
+    expect(getRecentDocuments(db, source.id)[0]).toMatchObject({
+      device_id: device.id,
+      device_name: device.name,
+      title: "Example note",
+    });
+    expect(getDevice(db, device.id)).toBeNull();
   });
 
   test("a changed impact refuses before revoking or detaching anything", () => {
