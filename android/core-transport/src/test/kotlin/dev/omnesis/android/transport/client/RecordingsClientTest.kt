@@ -7,6 +7,7 @@ import dev.omnesis.android.transport.GatewayException
 import dev.omnesis.android.transport.dto.FinishRecordingBody
 import dev.omnesis.android.transport.dto.OmnesisJson
 import dev.omnesis.android.transport.dto.RecordingChunkMetadata
+import dev.omnesis.android.transport.dto.SpeakerMapping
 import dev.omnesis.android.transport.dto.StartRecordingBody
 import dev.omnesis.android.transport.dto.StatusSnapshot
 import dev.omnesis.android.transport.http.GatewayHttp
@@ -110,6 +111,84 @@ class RecordingsClientTest {
         val request = server.takeRequest()
         assertEquals("/recordings/3f1c2a9e-0000-4000-8000-000000000001/finish", request.path)
         assertEquals("""{"chunkCount":4,"endedAt":"2026-03-02T10:00:00Z"}""", request.body.readUtf8())
+    }
+
+    @Test fun listAsksForTheNewestRecordingsAndDecodesThem() = runTest {
+        server.enqueue(
+            MockResponse().setBody(
+                """{"recordings":[
+                |{"id":"r2","title":"Design sync","startedAt":"2026-03-03T10:00:00Z","state":"done","speakers":3,"namedSpeakers":2},
+                |{"id":"r1","title":"Conversation","startedAt":"2026-03-02T09:00:00Z","state":"transcribing","speakers":0,"namedSpeakers":0,"future":1}
+                |]}""".trimMargin(),
+            ),
+        )
+        val list = client.list(limit = 20)
+        assertEquals(listOf("r2", "r1"), list.map { it.id })
+        assertEquals(3, list[0].speakers)
+        assertEquals(2, list[0].namedSpeakers)
+        assertEquals("transcribing", list[1].state)
+        val request = server.takeRequest()
+        assertEquals("GET", request.method)
+        assertEquals("/recordings?limit=20", request.path)
+        assertEquals("no-store", request.getHeader("Cache-Control"))
+    }
+
+    @Test fun speakersDecodesMappedAndUnmappedSpeakers() = runTest {
+        server.enqueue(
+            MockResponse().setBody(
+                """{"speakers":[
+                |{"speaker":1,"isSelf":true,"personId":null,"name":null,"talkMs":240000,"samples":["Shall we start?"]},
+                |{"speaker":2,"isSelf":false,"personId":"p-1","name":"Maya","talkMs":61000,"samples":["Sounds good.","Next item."]},
+                |{"speaker":3,"isSelf":false,"personId":null,"name":null,"talkMs":5000,"samples":[]}
+                |]}""".trimMargin(),
+            ),
+        )
+        val speakers = client.speakers("3f1c2a9e-0000-4000-8000-000000000001")
+        assertEquals(3, speakers.size)
+        assertTrue(speakers[0].isSelf && speakers[0].mapped)
+        assertEquals("p-1", speakers[1].personId)
+        assertEquals("Maya", speakers[1].name)
+        assertEquals(listOf("Sounds good.", "Next item."), speakers[1].samples)
+        assertFalse(speakers[2].mapped)
+        assertEquals("/recordings/3f1c2a9e-0000-4000-8000-000000000001/speakers", server.takeRequest().path)
+    }
+
+    @Test fun speakersOfAnUnknownRecordingIsNotFound() = runTest {
+        server.enqueue(MockResponse().setResponseCode(404).setBody("""{"error":"recording not found"}"""))
+        try {
+            client.speakers("3f1c2a9e-0000-4000-8000-000000000009")
+            fail("expected not found")
+        } catch (_: GatewayException.NotFound) {
+        }
+    }
+
+    @Test fun setSpeakerSendsExactlyOneMappingKey() = runTest {
+        val reply = """{"speakers":[{"speaker":2,"isSelf":false,"personId":null,"name":"Jamie","talkMs":1000,"samples":[]}]}"""
+        val cases = listOf(
+            SpeakerMapping.Self to """{"self":true}""",
+            SpeakerMapping.Person("p-7") to """{"personId":"p-7"}""",
+            SpeakerMapping.Name("Jamie") to """{"name":"Jamie"}""",
+            SpeakerMapping.Clear to """{"clear":true}""",
+        )
+        for ((mapping, body) in cases) {
+            server.enqueue(MockResponse().setBody(reply))
+            val speakers = client.setSpeaker("3f1c2a9e-0000-4000-8000-000000000001", 2, mapping)
+            assertEquals("Jamie", speakers.single().name)
+            val request = server.takeRequest()
+            assertEquals("PUT", request.method)
+            assertEquals("/recordings/3f1c2a9e-0000-4000-8000-000000000001/speakers/2", request.path)
+            assertEquals(body, request.body.readUtf8())
+        }
+    }
+
+    @Test fun setSpeakerWithAnUnknownPersonIsABadRequest() = runTest {
+        server.enqueue(MockResponse().setResponseCode(400).setBody("""{"error":"no such person"}"""))
+        try {
+            client.setSpeaker("3f1c2a9e-0000-4000-8000-000000000001", 1, SpeakerMapping.Person("missing"))
+            fail("expected a bad request")
+        } catch (e: GatewayException.ServerError) {
+            assertEquals(400, e.status)
+        }
     }
 
     @Test fun statusAdvertisesRecordingsOnlyWithTheCapability() {

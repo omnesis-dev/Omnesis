@@ -87,6 +87,8 @@ import dev.omnesis.android.ui.privacy.PoliciesListScreen
 import dev.omnesis.android.ui.privacy.PrivacyPolicyScreen
 import dev.omnesis.android.feature.omi.ui.OmiRecordingRow
 import dev.omnesis.android.feature.recording.ui.RecordingScreen
+import dev.omnesis.android.feature.recording.ui.RecordingSpeakersScreen
+import dev.omnesis.android.feature.recording.ui.RecordingSpeakersViewModel
 import dev.omnesis.android.ui.watches.WatchDetailScreen
 import dev.omnesis.android.ui.watches.WatchesScreen
 import dev.omnesis.android.ui.privacy.PrivacyScreen
@@ -799,7 +801,27 @@ fun HomeScaffold(
                 )
             }
             composable("recordings") {
-                RecordingScreen(onOpenMenu = { openDrawer() }, wearableCard = { OmiRecordingRow(onOpenSettings = openSettings) })
+                RecordingScreen(
+                    onOpenMenu = { openDrawer() },
+                    wearableCard = { OmiRecordingRow(onOpenSettings = openSettings) },
+                    onOpenSpeakers = { id, title ->
+                        nav.navigate("recordings/${Uri.encode(id)}/speakers?title=${Uri.encode(title)}")
+                    },
+                )
+            }
+            composable(
+                route = "recordings/{${RecordingSpeakersViewModel.ARG_RECORDING_ID}}/speakers" +
+                    "?title={${RecordingSpeakersViewModel.ARG_TITLE}}",
+                arguments = listOf(
+                    navArgument(RecordingSpeakersViewModel.ARG_RECORDING_ID) { type = NavType.StringType },
+                    navArgument(RecordingSpeakersViewModel.ARG_TITLE) {
+                        type = NavType.StringType
+                        nullable = true
+                        defaultValue = null
+                    },
+                ),
+            ) {
+                RecordingSpeakersScreen(onBack = { nav.popBackStack() })
             }
             composable("watches") {
                 WatchesScreen(

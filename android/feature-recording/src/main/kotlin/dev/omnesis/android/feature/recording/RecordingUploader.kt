@@ -4,6 +4,10 @@
 package dev.omnesis.android.feature.recording
 
 import dev.omnesis.android.transport.GatewayException
+import dev.omnesis.android.transport.dto.PersonSummary
+import dev.omnesis.android.transport.dto.RecordingSpeakerDto
+import dev.omnesis.android.transport.dto.RecordingSummaryDto
+import dev.omnesis.android.transport.dto.SpeakerMapping
 
 /**
  * What the uploader needs of the gateway; the app binds it to
@@ -17,6 +21,18 @@ interface RecordingsGateway {
     suspend fun putChunk(chunk: OutboxChunk)
     suspend fun finish(sessionId: String, chunkCount: Int, endedAt: String)
     suspend fun delete(sessionId: String)
+
+    /** The gateway's most recent recordings, newest first. */
+    suspend fun recent(limit: Int): List<RecordingSummaryDto>
+
+    /** Who spoke in a recording; empty when the gateway did not tell them apart. */
+    suspend fun speakers(sessionId: String): List<RecordingSpeakerDto>
+
+    /** Say who [speaker] is; answers the recording's speakers as they now stand. */
+    suspend fun setSpeaker(sessionId: String, speaker: Int, mapping: SpeakerMapping): List<RecordingSpeakerDto>
+
+    /** People matching [query] (`GET /people?q=`), for choosing who a speaker is. */
+    suspend fun searchPeople(query: String, limit: Int): List<PersonSummary>
 }
 
 /**
