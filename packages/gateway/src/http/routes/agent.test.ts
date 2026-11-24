@@ -2225,3 +2225,131 @@ describe("conversation submission compatibility", () => {
     }
   });
 });
+
+describe("GET /agent/sessions/:id/controls for a conversation that is not in memory", () => {
+  const clarification = {
+    id: "budget-question",
+    question: "Which budget should I compare?",
+    choices: [{ label: "This year" }, { label: "Last year" }],
+  };
+  const restoredControls = {
+    busy: false,
+    capabilities: { coalescedQueue: true, queueSendNow: true },
+    pendingClarification: clarification,
+    queuedMessages: [
+      {
+        id: "cut-off",
+        clientMessageId: "cut-off",
+        text: "Interrupted prompt",
+        mode: "queue",
+        status: "failed",
+        error:
+          "The gateway stopped during this message. Review the conversation before sending it again.",
+      },
+      {
+        id: "waiting",
+        clientMessageId: "waiting",
+        text: "Queued prompt",
+        mode: "queue",
+        status: "queued",
+      },
+    ],
+  };
+
+  async function withStoredConversation(
+    run: (store: FsConversationStore) => Promise<void>,
+  ): Promise<void> {
+    const dir = await mkdtemp(join(tmpdir(), "omnesis-stored-controls-"));
+    try {
+      const store = new FsConversationStore(join(dir, "conversations"));
+      await store.save({
+        id: "stored-conversation",
+        callerId: "token:tokenA",
+        model: "fictional-model",
+        backend: "replay",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:01:00.000Z",
+        title: "Saved question",
+        pinned: false,
+        messages: [
+          { role: "user", parts: [{ kind: "text", text: "Saved question" }] },
+          { role: "assistant", parts: [{ kind: "text", text: "Saved answer" }] },
+        ],
+        controls: {
+          pendingClarification: clarification,
+          submissions: [
+            {
+              id: "done",
+              clientMessageId: "done",
+              text: "Finished prompt",
+              mode: "queue",
+              status: "completed",
+            },
+            {
+              id: "cut-off",
+              clientMessageId: "cut-off",
+              text: "Interrupted prompt",
+              mode: "queue",
+              status: "running",
+            },
+            {
+              id: "waiting",
+              clientMessageId: "waiting",
+              text: "Queued prompt",
+              mode: "queue",
+              status: "queued",
+            },
+          ],
+        },
+      });
+      await run(store);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  }
+
+  test("serves the saved controls of a conversation evicted from memory", async () => {
+    await withStoredConversation(async (store) => {
+      const stored = new AgentService({
+        backendFactory: () => new ReplayBackend({ fixtures: [] }),
+        ports: { search: stubSearch, document: stubDocument },
+        systemPrompt: "test",
+        store,
+      });
+      try {
+        const res = await buildApp(stored).request("/agent/sessions/stored-conversation/controls");
+        expect(res.status).toBe(200);
+        expect(await res.json()).toEqual(restoredControls);
+      } finally {
+        await stored.dispose();
+      }
+    });
+  });
+
+  test("serves saved controls on a gateway that only reads conversations", async () => {
+    await withStoredConversation(async (store) => {
+      const readOnly = buildDisabledApp(
+        "Backend probe failed.",
+        { backend: "replay", enabled: false, disabledReason: "Backend probe failed." },
+        new StoredConversationReader(store),
+      );
+      const res = await readOnly.request("/agent/sessions/stored-conversation/controls");
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual(restoredControls);
+    });
+  });
+
+  test("still reports an unknown conversation as not found", async () => {
+    await withStoredConversation(async (store) => {
+      const readOnly = buildDisabledApp(
+        "Backend probe failed.",
+        { backend: "replay", enabled: false, disabledReason: "Backend probe failed." },
+        new StoredConversationReader(store),
+      );
+      expect((await readOnly.request("/agent/sessions/unknown-conversation/controls")).status).toBe(
+        404,
+      );
+      expect((await app.request("/agent/sessions/unknown-conversation/controls")).status).toBe(404);
+    });
+  });
+});

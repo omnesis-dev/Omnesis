@@ -93,6 +93,8 @@ import {
   submissionInputSchema,
   sendQueuedInputSchema,
   ConversationControlError,
+  restoreConversationControls,
+  snapshotConversationControls,
 } from "../../agent/conversation-controls.js";
 
 const messageBody = z.object({
@@ -829,10 +831,15 @@ export function mountAgentRoutes(app: RouteApp, deps: AgentRoutesDeps): void {
     },
   );
 
-  app.get("/agent/sessions/:id/controls", scope.admin(), (c) => {
+  app.get("/agent/sessions/:id/controls", scope.admin(), async (c) => {
     callerOf(c);
+    const id = c.req.param("id");
     try {
-      return c.json(requireService().conversationControls(c.req.param("id")));
+      const live = deps.agentService?.liveConversationControls(id);
+      if (live) return c.json(live);
+      const rec = await requireConversationReader().loadConversation(id);
+      if (!rec) throw new NotFoundError(`no session ${id}`);
+      return c.json(snapshotConversationControls(restoreConversationControls(rec.controls), false));
     } catch (error) {
       throw mapAgentError(error);
     }

@@ -128,6 +128,7 @@ import {
   ConversationControls,
   restoreConversationControls,
   type ConversationControlState,
+  type ConversationControlsSnapshot,
   type SubmissionInput,
   type ConversationSubmission,
   submissionInputSchema,
@@ -4158,6 +4159,10 @@ export class AgentService {
 
   conversationControls(sessionId: string) {
     return this.controls.snapshot(sessionId);
+  }
+
+  liveConversationControls(sessionId: string): ConversationControlsSnapshot | null {
+    return this.sessions.has(sessionId) ? this.controls.snapshot(sessionId) : null;
   }
 
   async submitMessage(callerId: CallerId, sessionId: string, input: SubmissionInput) {

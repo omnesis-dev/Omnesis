@@ -210,15 +210,10 @@ export class ConversationControls {
   }
 
   snapshot(id: string): ConversationControlsSnapshot {
-    const state = this.host.state(id);
-    return structuredClone({
-      busy: this.host.busy(id) || this.running.has(id),
-      capabilities: { coalescedQueue: true, queueSendNow: true } as const,
-      ...(state.pendingClarification ? { pendingClarification: state.pendingClarification } : {}),
-      queuedMessages: state.submissions.filter(
-        (s) => s.status === "queued" || s.status === "failed",
-      ),
-    });
+    return snapshotConversationControls(
+      this.host.state(id),
+      this.host.busy(id) || this.running.has(id),
+    );
   }
 
   async submit(
@@ -566,6 +561,18 @@ export class ConversationControls {
       if (this.tails.get(id) === current) this.tails.delete(id);
     }
   }
+}
+
+export function snapshotConversationControls(
+  state: ConversationControlState,
+  busy: boolean,
+): ConversationControlsSnapshot {
+  return structuredClone({
+    busy,
+    capabilities: { coalescedQueue: true, queueSendNow: true } as const,
+    ...(state.pendingClarification ? { pendingClarification: state.pendingClarification } : {}),
+    queuedMessages: state.submissions.filter((s) => s.status === "queued" || s.status === "failed"),
+  });
 }
 
 export function restoreConversationControls(value: unknown): ConversationControlState {
