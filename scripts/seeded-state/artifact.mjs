@@ -108,6 +108,7 @@ const FORBIDDEN_TABLES = new Set([
   "recording_chunks",
   "recording_marks",
   "recording_sessions",
+  "recording_speakers",
   "access_audit_events",
   "access_grant_capabilities",
   "access_grants",
