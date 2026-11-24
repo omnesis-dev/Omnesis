@@ -337,6 +337,17 @@ esac
 exit 0
 `;
 
+/*
+ * Every installer run a test makes gets 30 s of its timeout, the default that a
+ * one-run test already has: a test that runs the installer n times passes
+ * n × 30_000 as its timeout. One run against these fakes is a few seconds of
+ * process launches (the CI unit lanes' median is about 2.7 s on macOS and
+ * 2.5 s on Linux), but the macOS runner's tail is long: single runs there have
+ * taken up to 20 s, seven times the median, where Linux's slowest stay under
+ * 8 s. One such run takes three runs past a single 30 s budget, and 30 s per
+ * run still leaves each one half again the slowest seen.
+ */
+
 /**
  * Every run in this suite reads the model catalog, which is this suite's
  * fixture rather than the harness's; a test that wants a different catalog
@@ -1128,13 +1139,11 @@ describe("install.sh service registration", () => {
     const line = `export PATH="${join(run.home, ".local", "bin")}:$PATH"`;
     const profile = readFileSync(join(run.home, ".zshrc"), "utf8");
     expect(profile.split("\n").filter((l) => l === line)).toHaveLength(1);
-  });
+  }, 60_000);
 
   // Registering a service leaves a running one on its build (systemd's
   // `enable --now`), so a re-run that moves the checkout has to restart both
   // daemons and wait for the gateway to report the version it just built.
-  // Five installer runs, a couple of them waiting out the gateway: on a macOS
-  // runner that is over the 30 s default.
   test("a re-run that moves the source checkout restarts the services on the new build", () => {
     const args = ["--no-tls", "--embedder", EMBED_IDS[1]];
     const env = {
@@ -1163,7 +1172,7 @@ describe("install.sh service registration", () => {
     });
     expect(staleRerun.status).not.toBe(0);
     expect(staleRerun.output).toContain("Gateway did not answer /health");
-  }, 120_000);
+  }, 150_000);
 
   // A machine this installer set up is updated in place by a plain re-run: the
   // recorded checkout moves and is rebuilt, the registered services restart on
@@ -1219,7 +1228,7 @@ describe("install.sh service registration", () => {
       expect(checkoutGit("update-in-place", "config", "--get-all", "remote.origin.fetch")).toBe(
         "+refs/heads/main:refs/remotes/origin/main",
       );
-    });
+    }, 60_000);
 
     test("passes --version and --edge through to the updater", () => {
       installFirst("update-flags");
@@ -1229,7 +1238,7 @@ describe("install.sh service registration", () => {
       const edge = runInstaller("update-flags", ["--edge"], env);
       expect(edge.status, edge.output).toBe(0);
       expect(updates(edge)).toEqual(["update --yes --edge"]);
-    });
+    }, 90_000);
 
     test("forces an updater older than 0.5.6 toward a release that is not older", () => {
       tagRelease("0.5.5");
@@ -1237,7 +1246,7 @@ describe("install.sh service registration", () => {
       const updated = runInstaller("update-old", [], env);
       expect(updated.status, updated.output).toBe(0);
       expect(updates(updated)).toEqual(["update --yes --force"]);
-    });
+    }, 60_000);
 
     test("never forces an old updater toward an older release", () => {
       tagRelease("0.5.5");
@@ -1254,7 +1263,7 @@ describe("install.sh service registration", () => {
       const forced = runInstaller("update-old-pin", ["--version", "0.5.0", "--force"], env);
       expect(forced.status, forced.output).toBe(0);
       expect(updates(forced)).toEqual(["update --yes --target-version 0.5.0 --force"]);
-    });
+    }, 90_000);
 
     test("judges an interrupted update by the build it returns to", () => {
       tagRelease("0.5.5");
@@ -1294,7 +1303,7 @@ describe("install.sh service registration", () => {
       });
       expect(viaLink.status, viaLink.output).toBe(0);
       expect(updates(viaLink)).toEqual(["update --yes --force"]);
-    });
+    }, 90_000);
 
     test("matches the recorded checkout however its path is spelled", () => {
       // macOS resolves /var to /private/var, so the record can name the same
@@ -1324,7 +1333,7 @@ describe("install.sh service registration", () => {
       const resumed = runInstaller("update-spelled", ["--source-dir", alias], env);
       expect(resumed.status, resumed.output).toBe(0);
       expect(updates(resumed)).toEqual(["update --yes --force"]);
-    });
+    }, 60_000);
 
     test("a record the updater cannot use runs the full install", () => {
       const first = installFirst("update-bad-record");
@@ -1334,7 +1343,7 @@ describe("install.sh service registration", () => {
       const again = runInstaller("update-bad-record", ["--no-tls", "--no-model"], env);
       expect(again.status, again.output).toBe(0);
       expect(updates(again)).toEqual([]);
-    });
+    }, 60_000);
 
     test("a dry run names the update and changes nothing", () => {
       installFirst("update-dry");
@@ -1343,7 +1352,7 @@ describe("install.sh service registration", () => {
       expect(dry.output).toContain("update of this machine's existing install");
       expect(dry.output).not.toContain("Gateway:");
       expect(updates(dry)).toEqual([]);
-    });
+    }, 60_000);
 
     test("leaves a checkout that already fetches its branches alone", () => {
       installFirst("update-heads");
@@ -1359,7 +1368,7 @@ describe("install.sh service registration", () => {
       expect(checkoutGit("update-heads", "config", "--get-all", "remote.origin.fetch")).toBe(
         "+refs/heads/*:refs/remotes/origin/*",
       );
-    });
+    }, 60_000);
 
     test("a failed update fails the installer and says so", () => {
       installFirst("update-fails");
@@ -1370,7 +1379,7 @@ describe("install.sh service registration", () => {
       expect(failed.status).not.toBe(0);
       expect(failed.output).toContain("The update did not finish (exit 1)");
       expect(failed.output).not.toContain("Omnesis is up to date.");
-    });
+    }, 60_000);
 
     test("a repeated --collector updates a collector machine without pairing again", () => {
       installFirst("update-collector", firstArgs, ["collector"]);
@@ -1378,21 +1387,21 @@ describe("install.sh service registration", () => {
       expect(updated.status, updated.output).toBe(0);
       expect(updates(updated)).toEqual(["update --yes"]);
       expect(setUp(updated)).toEqual([]);
-    });
+    }, 60_000);
 
     test("a repeated --client-only updates a machine that runs no services", () => {
       installFirst("update-client", ["--client-only", "--no-keyring", "--version", "0.9.0"], []);
       const updated = runInstaller("update-client", ["--client-only"], env);
       expect(updated.status, updated.output).toBe(0);
       expect(updates(updated)).toEqual(["update --yes"]);
-    });
+    }, 60_000);
 
     test("a plain re-run updates a collector machine too", () => {
       installFirst("update-collector-plain", firstArgs, ["collector"]);
       const updated = runInstaller("update-collector-plain", [], env);
       expect(updated.status, updated.output).toBe(0);
       expect(updates(updated)).toEqual(["update --yes"]);
-    });
+    }, 60_000);
 
     test("a flag that sets a kept choice, or another checkout, runs the full install", () => {
       installFirst("update-flagged");
@@ -1413,7 +1422,7 @@ describe("install.sh service registration", () => {
       expect(elsewhere.status, elsewhere.output).toBe(0);
       expect(updates(elsewhere)).toEqual([]);
       expect(existsSync(fixturePath("checkout-update-elsewhere", ".git"))).toBe(true);
-    });
+    }, 90_000);
 
     test("finds the recorded checkout when the re-run names none", () => {
       installFirst("update-recorded");
@@ -1436,7 +1445,7 @@ describe("install.sh service registration", () => {
         "+refs/heads/main:refs/remotes/origin/main",
       );
       expect(existsSync(join(updated.home, "omnesis"))).toBe(false);
-    });
+    }, 60_000);
 
     test("a different role on a machine with services runs the full install", () => {
       installFirst("update-demote");
@@ -1448,7 +1457,7 @@ describe("install.sh service registration", () => {
       const collector = runInstaller("update-demote", ["--collector"], env);
       expect(updates(collector)).toEqual([]);
       expect(collector.output).not.toContain("update of this machine's existing install");
-    });
+    }, 90_000);
 
     test("a first install that never registered its services runs in full again", () => {
       const first = runInstaller("update-unfinished", firstArgs, env);
@@ -1457,7 +1466,7 @@ describe("install.sh service registration", () => {
       expect(again.status, again.output).toBe(0);
       expect(updates(again)).toEqual([]);
       expect(again.calls.some((c) => c.startsWith("service install"))).toBe(true);
-    });
+    }, 60_000);
 
     test("a role change runs the full install for the new role", () => {
       installFirst("update-role", ["--client-only", "--no-keyring", "--version", "0.9.0"], []);
@@ -1465,7 +1474,7 @@ describe("install.sh service registration", () => {
       expect(gateway.status, gateway.output).toBe(0);
       expect(updates(gateway)).toEqual([]);
       expect(gateway.calls.some((c) => c.startsWith("service install"))).toBe(true);
-    });
+    }, 60_000);
 
     test("--reconfigure runs the full install and restarts the services it had", () => {
       installFirst("update-reconfigure");
@@ -1480,7 +1489,7 @@ describe("install.sh service registration", () => {
       expect(full.calls.some((c) => c.startsWith("service install"))).toBe(true);
       expect(full.output).toContain("Restarting the gateway on its refreshed service definition");
       expect(restarts(full)).toEqual(["service restart gateway", "service restart collector"]);
-    });
+    }, 60_000);
 
     // Every device paired on another machine stored the old port, and a
     // remote collector's unit carries it: moving the gateway strands them
@@ -1553,7 +1562,7 @@ describe("install.sh service registration", () => {
             `omnesis devices repair ${devices.items[5].id} --gateway-url https://\\S+:7601`,
           ),
         );
-      });
+      }, 60_000);
 
       test("says so when the device list cannot be read", () => {
         installWithCollector("port-move-unread");
@@ -1561,7 +1570,7 @@ describe("install.sh service registration", () => {
         expect(moved.status, moved.output).toBe(0);
         expect(moved.output).toContain("Its paired devices could not be listed");
         expect(moved.output).toContain("omnesis devices repair <device> --gateway-url");
-      });
+      }, 60_000);
 
       test("says nothing when no other device is paired, or the port does not change", () => {
         installWithCollector("port-move-alone");
@@ -1580,7 +1589,7 @@ describe("install.sh service registration", () => {
         expect(again.status, again.output).toBe(0);
         expect(again.calls).not.toContain("devices list --json");
         expect(again.output).not.toContain("Point paired devices");
-      });
+      }, 90_000);
     });
   });
 
@@ -1653,7 +1662,7 @@ describe("install.sh workspace build", () => {
     expect(sized("build-heap-container", 8192)).toBe("--max-old-space-size=4096");
     // A workstation: capped, not half of everything.
     expect(sized("build-heap-large", 131_072)).toBe("--max-old-space-size=8192");
-  });
+  }, 90_000);
 
   test("a machine too small to build from source is refused before anything is installed", () => {
     const run = runInstaller("build-too-small", ["--no-tls", "--embedder", EMBED_IDS[0]], {
@@ -1878,7 +1887,7 @@ fs.writeFileSync(path.join(dir, "..", "..", "installVersion"), "11\\n");
     expect(failed.output).toMatch(/reinstalling them from scratch/i);
     expect(failed.output).toMatch(/reinstalled from scratch first/i);
     expect(failed.output).not.toMatch(/remove .*node_modules/i);
-  });
+  }, 60_000);
 
   test("npm ci runs with the trust preload, which the installer removes afterwards", () => {
     // A preload directory named in the environment is not the installer's:
@@ -1982,7 +1991,7 @@ describe("install.sh gateway URL", () => {
     // Rewriting one key must not take the rest of the file with it.
     expect(second.envFile()).toContain("OMNESIS_GATEWAY_PORT=8443");
     expect(second.envFile()).toContain("OMNESIS_TLS_CERT=");
-  });
+  }, 60_000);
 
   test("a port change keeps the installer-owned Tailscale trust origin aligned", () => {
     installFakeTailscale("workstation.example-tailnet.ts.net");
@@ -2007,7 +2016,7 @@ describe("install.sh gateway URL", () => {
     expect(rerun.output).toContain(
       "Tailscale is unavailable — keeping the existing Tailscale certificate",
     );
-  });
+  }, 60_000);
 
   test("a temporary Tailscale outage preserves the proven origin", () => {
     installFakeTailscale("workstation.example-tailnet.ts.net");
@@ -2028,7 +2037,7 @@ describe("install.sh gateway URL", () => {
       "Tailscale is unavailable — keeping the existing Tailscale certificate",
     );
     expect(rerun.output).not.toContain("will use its self-signed certificate");
-  });
+  }, 60_000);
 
   test("a failed Tailscale renewal preserves the previously proven origin", () => {
     installFakeTailscale("workstation.example-tailnet.ts.net");
@@ -2050,7 +2059,7 @@ describe("install.sh gateway URL", () => {
     expect(rerun.output).toContain("Nothing on your tailnet was changed");
     expect(rerun.output).not.toContain("A Tailscale certificate needs MagicDNS");
     expect(rerun.output).not.toContain("Continuing with the self-signed cert");
-  });
+  }, 60_000);
 
   test("a self-signed fallback removes stale installer-owned system trust", () => {
     installFakeTailscale("workstation.example-tailnet.ts.net");
@@ -2075,7 +2084,7 @@ describe("install.sh gateway URL", () => {
     expect(rerun.status).toBe(0);
     expect(rerun.envFile()).not.toContain("OMNESIS_PAIRING_SYSTEM_TRUST_ORIGIN");
     expect(rerun.output).toContain("will use its self-signed certificate");
-  });
+  }, 60_000);
 
   test("a first Tailscale certificate failure removes stale system trust", () => {
     installAbsentTailscale();
@@ -2102,7 +2111,7 @@ describe("install.sh gateway URL", () => {
     if (process.platform === "linux") {
       expect(rerun.output).toContain("sudo tailscale set --operator=$USER");
     }
-  });
+  }, 60_000);
 
   // tailscaled issues certificates only to root or to the account named as this
   // machine's Tailscale operator. The gateway runs as the installing account and
@@ -2198,7 +2207,7 @@ describe("install.sh gateway URL", () => {
       "Tailscale reported no MagicDNS name — continuing with the self-signed certificate",
     );
     expect(rerun.output).toContain("A Tailscale certificate needs MagicDNS");
-  });
+  }, 60_000);
 
   test("localhost is the fallback when no named certificate was minted", () => {
     installAbsentTailscale();
@@ -2361,7 +2370,7 @@ describe("install.sh: the Tailscale certificate without a terminal", () => {
       "Portal:  https://workstation.example-tailnet.ts.net:7600/portal/",
     );
     expect(rerun.output).not.toContain("WARNING: no trusted HTTPS certificate");
-  });
+  }, 60_000);
 });
 
 describe("install.sh embedding model question", () => {
@@ -2379,7 +2388,7 @@ describe("install.sh embedding model question", () => {
     });
     expect(env.status).toBe(0);
     expect(env.calls).toContain(`model install ${EMBED_IDS[1]}`);
-  });
+  }, 60_000);
 
   test("--no-model skips both the question and the download", () => {
     const run = runInstaller("embed-none", ["--no-tls", "--no-model"], {
@@ -2725,37 +2734,42 @@ describe("install.sh second-machine banner", () => {
       expect(rerun.envFile()).toContain("OMNESIS_GATEWAY_URL=https://192.0.2.46:7600");
       expect(rerun.output).toContain("--gateway-url https://192.0.2.46:7600");
     },
+    60_000,
   );
 
-  test.skipIf(!HAS_PTY)("an explicit port change moves the selected address", () => {
-    installAbsentTailscale();
-    plantGatewayCert(
-      "banner-san-port-rerun",
-      "DNS:localhost, DNS:omnesis.local, DNS:studio-northstar.local, IP:192.0.2.52",
-    );
-    const first = runInstallerOnTty(
-      "banner-san-port-rerun",
-      ["--no-tls", "--embedder", EMBED_IDS[0]],
-      ["3"],
-      { OMNESIS_TEST_KEYRING: "ready" },
-    );
-    expect(first.status).toBe(0);
-    expect(first.envFile()).toContain("OMNESIS_GATEWAY_URL=https://192.0.2.52:7600");
+  test.skipIf(!HAS_PTY)(
+    "an explicit port change moves the selected address",
+    () => {
+      installAbsentTailscale();
+      plantGatewayCert(
+        "banner-san-port-rerun",
+        "DNS:localhost, DNS:omnesis.local, DNS:studio-northstar.local, IP:192.0.2.52",
+      );
+      const first = runInstallerOnTty(
+        "banner-san-port-rerun",
+        ["--no-tls", "--embedder", EMBED_IDS[0]],
+        ["3"],
+        { OMNESIS_TEST_KEYRING: "ready" },
+      );
+      expect(first.status).toBe(0);
+      expect(first.envFile()).toContain("OMNESIS_GATEWAY_URL=https://192.0.2.52:7600");
 
-    const rerun = runInstallerOnTty(
-      "banner-san-port-rerun",
-      ["--no-tls", "--port", "7601", "--embedder", EMBED_IDS[0]],
-      [],
-      { OMNESIS_TEST_KEYRING: "ready" },
-    );
-    expect(rerun.status).toBe(0);
-    expect(rerun.output).not.toContain("Which address should another machine use");
-    expect(rerun.envFile()).toContain("OMNESIS_GATEWAY_PORT=7601");
-    expect(rerun.envFile()).toContain("OMNESIS_GATEWAY_URL=https://192.0.2.52:7601");
-    expect(rerun.envFile()).not.toContain("https://192.0.2.52:7600");
-    expect(rerun.envFile().match(/OMNESIS_GATEWAY_URL/g)).toHaveLength(1);
-    expect(rerun.output).toContain("--gateway-url https://192.0.2.52:7601");
-  });
+      const rerun = runInstallerOnTty(
+        "banner-san-port-rerun",
+        ["--no-tls", "--port", "7601", "--embedder", EMBED_IDS[0]],
+        [],
+        { OMNESIS_TEST_KEYRING: "ready" },
+      );
+      expect(rerun.status).toBe(0);
+      expect(rerun.output).not.toContain("Which address should another machine use");
+      expect(rerun.envFile()).toContain("OMNESIS_GATEWAY_PORT=7601");
+      expect(rerun.envFile()).toContain("OMNESIS_GATEWAY_URL=https://192.0.2.52:7601");
+      expect(rerun.envFile()).not.toContain("https://192.0.2.52:7600");
+      expect(rerun.envFile().match(/OMNESIS_GATEWAY_URL/g)).toHaveLength(1);
+      expect(rerun.output).toContain("--gateway-url https://192.0.2.52:7601");
+    },
+    60_000,
+  );
 
   test.skipIf(!HAS_PTY)("preserves a quoted export-style remote URL", () => {
     const home = prepareHome("banner-san-export");
@@ -2841,7 +2855,7 @@ describe("install.sh second-machine banner", () => {
       }
     },
     // Seven whole installs on a terminal, one per variant.
-    180_000,
+    210_000,
   );
 
   test("a Tailscale certificate makes the banner name the tailnet address", () => {
@@ -3024,165 +3038,193 @@ os.networkInterfaces = () => ({
     expect(run.envFile()).toContain("OMNESIS_GATEWAY_URL=https://omnesis.local:7600");
   });
 
-  test.skipIf(!HAS_PTY)("an mkcert install offers and records a covered direct IP", () => {
-    installAbsentTailscale();
-    const mkcert = installDeterministicMkcertHost("banner-mkcert-pick");
-    const run = runInstallerOnTty(
-      "banner-mkcert-pick",
-      ["--mkcert", "--embedder", EMBED_IDS[0]],
-      ["2"],
-      { OMNESIS_TEST_KEYRING: "ready", NODE_OPTIONS: mkcert.nodeOptions },
-    );
+  test.skipIf(!HAS_PTY)(
+    "an mkcert install offers and records a covered direct IP",
+    () => {
+      installAbsentTailscale();
+      const mkcert = installDeterministicMkcertHost("banner-mkcert-pick");
+      const run = runInstallerOnTty(
+        "banner-mkcert-pick",
+        ["--mkcert", "--embedder", EMBED_IDS[0]],
+        ["2"],
+        { OMNESIS_TEST_KEYRING: "ready", NODE_OPTIONS: mkcert.nodeOptions },
+      );
 
-    expect(run.status).toBe(0);
-    const menuStart = run.output.indexOf("Which address should another machine use");
-    const menuEnd = run.output.indexOf("Second-machine address:");
-    expect(menuStart).toBeGreaterThan(-1);
-    expect(menuEnd).toBeGreaterThan(menuStart);
-    const menu = run.output.slice(menuStart, menuEnd);
-    expect(menu).toContain("1) https://studio-northstar.local:7600");
-    expect(menu).toContain("2) https://192.0.2.60:7600");
-    expect(menu).toContain("3) https://[2001:db8::60]:7600");
-    expect(menu).not.toContain("https://127.0.0.1:");
-    expect(menu).not.toContain("fe80");
-    expect(run.envFile()).toContain("OMNESIS_GATEWAY_URL=https://192.0.2.60:7600");
-    expect(run.output).toContain("--gateway-url https://192.0.2.60:7600");
-    expect(run.output).toContain(`--trust-fingerprint sha256:${mkcert.fingerprint}`);
+      expect(run.status).toBe(0);
+      const menuStart = run.output.indexOf("Which address should another machine use");
+      const menuEnd = run.output.indexOf("Second-machine address:");
+      expect(menuStart).toBeGreaterThan(-1);
+      expect(menuEnd).toBeGreaterThan(menuStart);
+      const menu = run.output.slice(menuStart, menuEnd);
+      expect(menu).toContain("1) https://studio-northstar.local:7600");
+      expect(menu).toContain("2) https://192.0.2.60:7600");
+      expect(menu).toContain("3) https://[2001:db8::60]:7600");
+      expect(menu).not.toContain("https://127.0.0.1:");
+      expect(menu).not.toContain("fe80");
+      expect(run.envFile()).toContain("OMNESIS_GATEWAY_URL=https://192.0.2.60:7600");
+      expect(run.output).toContain("--gateway-url https://192.0.2.60:7600");
+      expect(run.output).toContain(`--trust-fingerprint sha256:${mkcert.fingerprint}`);
 
-    const rerun = runInstallerOnTty(
-      "banner-mkcert-pick",
-      ["--mkcert", "--embedder", EMBED_IDS[0]],
-      [],
-      { OMNESIS_TEST_KEYRING: "ready", NODE_OPTIONS: mkcert.nodeOptions },
-    );
-    expect(rerun.status).toBe(0);
-    expect(rerun.output).not.toContain("Which address should another machine use");
-    expect(rerun.envFile()).toContain("OMNESIS_GATEWAY_URL=https://192.0.2.60:7600");
-    expect(rerun.envFile().match(/OMNESIS_GATEWAY_URL/g)).toHaveLength(1);
-  });
+      const rerun = runInstallerOnTty(
+        "banner-mkcert-pick",
+        ["--mkcert", "--embedder", EMBED_IDS[0]],
+        [],
+        { OMNESIS_TEST_KEYRING: "ready", NODE_OPTIONS: mkcert.nodeOptions },
+      );
+      expect(rerun.status).toBe(0);
+      expect(rerun.output).not.toContain("Which address should another machine use");
+      expect(rerun.envFile()).toContain("OMNESIS_GATEWAY_URL=https://192.0.2.60:7600");
+      expect(rerun.envFile().match(/OMNESIS_GATEWAY_URL/g)).toHaveLength(1);
+    },
+    60_000,
+  );
 
-  test.skipIf(!HAS_PTY)("an mkcert rerun preserves a covered IPv6 choice across ports", () => {
-    installAbsentTailscale();
-    const mkcert = installDeterministicMkcertHost("banner-mkcert-ipv6-rerun");
-    const first = runInstallerOnTty(
-      "banner-mkcert-ipv6-rerun",
-      ["--mkcert", "--embedder", EMBED_IDS[0]],
-      ["3"],
-      { OMNESIS_TEST_KEYRING: "ready", NODE_OPTIONS: mkcert.nodeOptions },
-    );
-    expect(first.status).toBe(0);
-    expect(first.envFile()).toContain("OMNESIS_GATEWAY_URL=https://[2001:db8::60]:7600");
+  test.skipIf(!HAS_PTY)(
+    "an mkcert rerun preserves a covered IPv6 choice across ports",
+    () => {
+      installAbsentTailscale();
+      const mkcert = installDeterministicMkcertHost("banner-mkcert-ipv6-rerun");
+      const first = runInstallerOnTty(
+        "banner-mkcert-ipv6-rerun",
+        ["--mkcert", "--embedder", EMBED_IDS[0]],
+        ["3"],
+        { OMNESIS_TEST_KEYRING: "ready", NODE_OPTIONS: mkcert.nodeOptions },
+      );
+      expect(first.status).toBe(0);
+      expect(first.envFile()).toContain("OMNESIS_GATEWAY_URL=https://[2001:db8::60]:7600");
 
-    const rerun = runInstaller(
-      "banner-mkcert-ipv6-rerun",
-      ["--mkcert", "--port", "7601", "--embedder", EMBED_IDS[0]],
-      { OMNESIS_TEST_KEYRING: "ready", NODE_OPTIONS: mkcert.nodeOptions },
-    );
-    expect(rerun.status).toBe(0);
-    expect(rerun.envFile()).toContain("OMNESIS_GATEWAY_URL=https://[2001:db8::60]:7601");
-    expect(rerun.envFile().match(/OMNESIS_GATEWAY_URL/g)).toHaveLength(1);
-  });
+      const rerun = runInstaller(
+        "banner-mkcert-ipv6-rerun",
+        ["--mkcert", "--port", "7601", "--embedder", EMBED_IDS[0]],
+        { OMNESIS_TEST_KEYRING: "ready", NODE_OPTIONS: mkcert.nodeOptions },
+      );
+      expect(rerun.status).toBe(0);
+      expect(rerun.envFile()).toContain("OMNESIS_GATEWAY_URL=https://[2001:db8::60]:7601");
+      expect(rerun.envFile().match(/OMNESIS_GATEWAY_URL/g)).toHaveLength(1);
+    },
+    60_000,
+  );
 
-  test.skipIf(!HAS_PTY)("a later interactive mkcert run still offers a headless default", () => {
-    installAbsentTailscale();
-    const mkcert = installDeterministicMkcertHost("banner-mkcert-headless-then-tty");
-    const first = runInstaller(
-      "banner-mkcert-headless-then-tty",
-      ["--mkcert", "--embedder", EMBED_IDS[0]],
-      { OMNESIS_TEST_KEYRING: "ready", NODE_OPTIONS: mkcert.nodeOptions },
-    );
-    expect(first.status).toBe(0);
-    expect(first.envFile()).toContain("OMNESIS_GATEWAY_URL=https://studio-northstar.local:7600");
+  test.skipIf(!HAS_PTY)(
+    "a later interactive mkcert run still offers a headless default",
+    () => {
+      installAbsentTailscale();
+      const mkcert = installDeterministicMkcertHost("banner-mkcert-headless-then-tty");
+      const first = runInstaller(
+        "banner-mkcert-headless-then-tty",
+        ["--mkcert", "--embedder", EMBED_IDS[0]],
+        { OMNESIS_TEST_KEYRING: "ready", NODE_OPTIONS: mkcert.nodeOptions },
+      );
+      expect(first.status).toBe(0);
+      expect(first.envFile()).toContain("OMNESIS_GATEWAY_URL=https://studio-northstar.local:7600");
 
-    const rerun = runInstallerOnTty(
-      "banner-mkcert-headless-then-tty",
-      ["--mkcert", "--embedder", EMBED_IDS[0]],
-      ["2"],
-      { OMNESIS_TEST_KEYRING: "ready", NODE_OPTIONS: mkcert.nodeOptions },
-    );
-    expect(rerun.status).toBe(0);
-    expect(rerun.output).toContain("Which address should another machine use");
-    expect(rerun.envFile()).toContain("OMNESIS_GATEWAY_URL=https://192.0.2.60:7600");
-  });
+      const rerun = runInstallerOnTty(
+        "banner-mkcert-headless-then-tty",
+        ["--mkcert", "--embedder", EMBED_IDS[0]],
+        ["2"],
+        { OMNESIS_TEST_KEYRING: "ready", NODE_OPTIONS: mkcert.nodeOptions },
+      );
+      expect(rerun.status).toBe(0);
+      expect(rerun.output).toContain("Which address should another machine use");
+      expect(rerun.envFile()).toContain("OMNESIS_GATEWAY_URL=https://192.0.2.60:7600");
+    },
+    60_000,
+  );
 
-  test.skipIf(!HAS_PTY)("an mkcert rerun drops an address absent from the new certificate", () => {
-    installAbsentTailscale();
-    const firstHost = installDeterministicMkcertHost("banner-mkcert-address-removed");
-    const first = runInstallerOnTty(
-      "banner-mkcert-address-removed",
-      ["--mkcert", "--embedder", EMBED_IDS[0]],
-      ["2"],
-      { OMNESIS_TEST_KEYRING: "ready", NODE_OPTIONS: firstHost.nodeOptions },
-    );
-    expect(first.status).toBe(0);
+  test.skipIf(!HAS_PTY)(
+    "an mkcert rerun drops an address absent from the new certificate",
+    () => {
+      installAbsentTailscale();
+      const firstHost = installDeterministicMkcertHost("banner-mkcert-address-removed");
+      const first = runInstallerOnTty(
+        "banner-mkcert-address-removed",
+        ["--mkcert", "--embedder", EMBED_IDS[0]],
+        ["2"],
+        { OMNESIS_TEST_KEYRING: "ready", NODE_OPTIONS: firstHost.nodeOptions },
+      );
+      expect(first.status).toBe(0);
 
-    const changedHost = installDeterministicMkcertHost("banner-mkcert-address-removed", {
-      ipv4: "192.0.2.61",
-      ipv6: "2001:db8::61",
-    });
-    const rerun = runInstaller(
-      "banner-mkcert-address-removed",
-      ["--mkcert", "--embedder", EMBED_IDS[0]],
-      { OMNESIS_TEST_KEYRING: "ready", NODE_OPTIONS: changedHost.nodeOptions },
-    );
-    expect(rerun.status).toBe(0);
-    expect(rerun.envFile()).toContain("OMNESIS_GATEWAY_URL=https://studio-northstar.local:7600");
-    expect(rerun.envFile()).not.toContain("https://192.0.2.60:7600");
-  });
+      const changedHost = installDeterministicMkcertHost("banner-mkcert-address-removed", {
+        ipv4: "192.0.2.61",
+        ipv6: "2001:db8::61",
+      });
+      const rerun = runInstaller(
+        "banner-mkcert-address-removed",
+        ["--mkcert", "--embedder", EMBED_IDS[0]],
+        { OMNESIS_TEST_KEYRING: "ready", NODE_OPTIONS: changedHost.nodeOptions },
+      );
+      expect(rerun.status).toBe(0);
+      expect(rerun.envFile()).toContain("OMNESIS_GATEWAY_URL=https://studio-northstar.local:7600");
+      expect(rerun.envFile()).not.toContain("https://192.0.2.60:7600");
+    },
+    60_000,
+  );
 
-  test.skipIf(!HAS_PTY)("a failed gateway restart cannot erase a covered mkcert choice", () => {
-    installAbsentTailscale();
-    const mkcert = installDeterministicMkcertHost("banner-mkcert-health-failure");
-    const first = runInstallerOnTty(
-      "banner-mkcert-health-failure",
-      ["--mkcert", "--embedder", EMBED_IDS[0]],
-      ["2"],
-      { OMNESIS_TEST_KEYRING: "ready", NODE_OPTIONS: mkcert.nodeOptions },
-    );
-    expect(first.status).toBe(0);
+  test.skipIf(!HAS_PTY)(
+    "a failed gateway restart cannot erase a covered mkcert choice",
+    () => {
+      installAbsentTailscale();
+      const mkcert = installDeterministicMkcertHost("banner-mkcert-health-failure");
+      const first = runInstallerOnTty(
+        "banner-mkcert-health-failure",
+        ["--mkcert", "--embedder", EMBED_IDS[0]],
+        ["2"],
+        { OMNESIS_TEST_KEYRING: "ready", NODE_OPTIONS: mkcert.nodeOptions },
+      );
+      expect(first.status).toBe(0);
 
-    const rerun = runInstaller(
-      "banner-mkcert-health-failure",
-      ["--mkcert", "--embedder", EMBED_IDS[0]],
-      {
-        OMNESIS_TEST_KEYRING: "ready",
-        NODE_OPTIONS: mkcert.nodeOptions,
-        OMNESIS_TEST_CURL_EXIT: "7",
-        OMNESIS_GATEWAY_WAIT_SECONDS: "1",
-      },
-    );
-    expect(rerun.status).toBe(1);
-    expect(rerun.output).toContain("Gateway stopped running after 1s without answering /health");
-    expect(rerun.envFile()).toContain("OMNESIS_GATEWAY_URL=https://192.0.2.60:7600");
-  });
+      const rerun = runInstaller(
+        "banner-mkcert-health-failure",
+        ["--mkcert", "--embedder", EMBED_IDS[0]],
+        {
+          OMNESIS_TEST_KEYRING: "ready",
+          NODE_OPTIONS: mkcert.nodeOptions,
+          OMNESIS_TEST_CURL_EXIT: "7",
+          OMNESIS_GATEWAY_WAIT_SECONDS: "1",
+        },
+      );
+      expect(rerun.status).toBe(1);
+      expect(rerun.output).toContain("Gateway stopped running after 1s without answering /health");
+      expect(rerun.envFile()).toContain("OMNESIS_GATEWAY_URL=https://192.0.2.60:7600");
+    },
+    60_000,
+  );
 
-  test.skipIf(!HAS_PTY)("a mkcert upgrade replaces a selected self-signed address", () => {
-    installAbsentTailscale();
-    plantGatewayCert(
-      "banner-mkcert-upgrade",
-      "DNS:localhost, DNS:omnesis.local, DNS:studio-northstar.local, IP:192.0.2.53",
-    );
-    const first = runInstallerOnTty(
-      "banner-mkcert-upgrade",
-      ["--no-tls", "--embedder", EMBED_IDS[0]],
-      ["3"],
-      { OMNESIS_TEST_KEYRING: "ready" },
-    );
-    expect(first.status).toBe(0);
-    expect(first.envFile()).toContain("OMNESIS_GATEWAY_URL=https://192.0.2.53:7600");
+  test.skipIf(!HAS_PTY)(
+    "a mkcert upgrade replaces a selected self-signed address",
+    () => {
+      installAbsentTailscale();
+      plantGatewayCert(
+        "banner-mkcert-upgrade",
+        "DNS:localhost, DNS:omnesis.local, DNS:studio-northstar.local, IP:192.0.2.53",
+      );
+      const first = runInstallerOnTty(
+        "banner-mkcert-upgrade",
+        ["--no-tls", "--embedder", EMBED_IDS[0]],
+        ["3"],
+        { OMNESIS_TEST_KEYRING: "ready" },
+      );
+      expect(first.status).toBe(0);
+      expect(first.envFile()).toContain("OMNESIS_GATEWAY_URL=https://192.0.2.53:7600");
 
-    const mkcert = installDeterministicMkcertHost("banner-mkcert-upgrade");
-    const rerun = runInstaller("banner-mkcert-upgrade", ["--mkcert", "--embedder", EMBED_IDS[0]], {
-      OMNESIS_TEST_KEYRING: "ready",
-      NODE_OPTIONS: mkcert.nodeOptions,
-    });
+      const mkcert = installDeterministicMkcertHost("banner-mkcert-upgrade");
+      const rerun = runInstaller(
+        "banner-mkcert-upgrade",
+        ["--mkcert", "--embedder", EMBED_IDS[0]],
+        {
+          OMNESIS_TEST_KEYRING: "ready",
+          NODE_OPTIONS: mkcert.nodeOptions,
+        },
+      );
 
-    expect(rerun.status).toBe(0);
-    expect(rerun.envFile()).toContain(`OMNESIS_GATEWAY_URL=https://${MKCERT_HOST_LOCAL}:7600`);
-    expect(rerun.envFile()).not.toContain("https://192.0.2.53:7600");
-    expect(rerun.envFile().match(/OMNESIS_GATEWAY_URL/g)).toHaveLength(1);
-    expect(rerun.output).toContain(`--gateway-url https://${MKCERT_HOST_LOCAL}:7600`);
-  });
+      expect(rerun.status).toBe(0);
+      expect(rerun.envFile()).toContain(`OMNESIS_GATEWAY_URL=https://${MKCERT_HOST_LOCAL}:7600`);
+      expect(rerun.envFile()).not.toContain("https://192.0.2.53:7600");
+      expect(rerun.envFile().match(/OMNESIS_GATEWAY_URL/g)).toHaveLength(1);
+      expect(rerun.output).toContain(`--gateway-url https://${MKCERT_HOST_LOCAL}:7600`);
+    },
+    60_000,
+  );
 
   test("a mkcert upgrade replaces the complete Tailscale certificate configuration", () => {
     installFakeTailscale("workstation.example-tailnet.ts.net");
@@ -3219,7 +3261,7 @@ os.networkInterfaces = () => ({
     expect(env.match(/OMNESIS_TLS_CERT/g)).toHaveLength(1);
     expect(env.match(/OMNESIS_TLS_KEY/g)).toHaveLength(1);
     expect(env.match(/OMNESIS_GATEWAY_URL/g)).toHaveLength(1);
-  });
+  }, 60_000);
 
   test("automatic Tailscale provisioning preserves an operator-managed certificate", () => {
     const home = prepareHome("banner-custom-cert-rerun");
