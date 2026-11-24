@@ -197,3 +197,31 @@ describe("fresh conversation lifetime", () => {
   });
 
 });
+
+describe("controls polling", () => {
+  function setHidden(hidden) {
+    Object.defineProperty(document, "hidden", { configurable: true, value: hidden });
+    document.dispatchEvent(new window.Event("visibilitychange"));
+  }
+
+  it("stops polling a conversation whose controls are not found", async () => {
+    const request = await open();
+    request.client.getControls.mockRejectedValue(Object.assign(new Error("Not found"), { status: 404 }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
+    const calls = request.client.getControls.mock.calls.length;
+    await act(async () => { await vi.advanceTimersByTimeAsync(3 * 2000); });
+    expect(request.client.getControls).toHaveBeenCalledTimes(calls);
+  });
+
+  it("pauses while the tab is hidden and refreshes when it returns", async () => {
+    const request = await open();
+    const calls = request.client.getControls.mock.calls.length;
+    await act(async () => { setHidden(true); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(3 * 2000); });
+    expect(request.client.getControls).toHaveBeenCalledTimes(calls);
+    await act(async () => { setHidden(false); });
+    expect(request.client.getControls).toHaveBeenCalledTimes(calls + 1);
+    await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
+    expect(request.client.getControls).toHaveBeenCalledTimes(calls + 2);
+  });
+});
