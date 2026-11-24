@@ -3,7 +3,7 @@
 
 /** Forgetting a collector retires its contribution, independently of live siblings. */
 import "./synth-env.js";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { SyntheticE2EHarness, type HarnessDevice } from "./synth-harness.js";
 import {
@@ -261,22 +261,56 @@ describe("forgetting a device and its source contributions", () => {
           ),
         ).toMatchObject({ granted: true });
       }
-      await harness.pushDocuments(scenario.sibling, [
-        {
-          sourceId: scenario.ids[kind],
-          externalId: "future-record",
-          title: "New workshop schedule",
-          content: "A newly created fictional workshop schedule after retirement.",
-        },
-      ]);
-      expect(await count(scenario.ids[kind])).toBe(
+      const sourceId = scenario.ids[kind];
+      const { wipeEpoch } = await asDevice<{ wipeEpoch: number }>(
+        scenario.sibling,
+        `/sync-state/${encodeURIComponent(sourceId)}/begin`,
+        { method: "POST", body: JSON.stringify({ attemptId: randomUUID() }) },
+      );
+      const content = `A newly created fictional ${kind} workshop schedule after retirement.`;
+      const stamp = new Date().toISOString();
+      const push = (epoch: number) =>
+        asDevice<{
+          ingested: number;
+          rejectedSourceIds?: string[];
+        }>(scenario.sibling, "/documents", {
+          method: "POST",
+          body: JSON.stringify({
+            documents: [
+              {
+                providerId: sourceId,
+                sourceId,
+                externalId: `future-${kind}`,
+                title: `New ${kind} workshop schedule`,
+                content,
+                contentHash: `sha256:${createHash("sha256").update(content).digest("hex")}`,
+                metadata: {},
+                sourceCreatedAt: stamp,
+                sourceUpdatedAt: stamp,
+              },
+            ],
+            writeEpochs: { [sourceId]: epoch },
+          }),
+        });
+      const context = `${scenario.label}/${kind}, current write epoch ${wipeEpoch}`;
+      if (kind === "handoff") {
+        expect(wipeEpoch, context).toBeGreaterThan(0);
+        const before = await count(sourceId);
+        const stale = await push(wipeEpoch - 1);
+        expect(stale, context).toMatchObject({ ingested: 0, rejectedSourceIds: [sourceId] });
+        expect(await count(sourceId), `${context}: stale page changed history`).toBe(before);
+      }
+      const receipt = await push(wipeEpoch);
+      expect(receipt, context).toMatchObject({ ingested: 1 });
+      expect(receipt.rejectedSourceIds ?? [], context).toEqual([]);
+      expect(await count(sourceId), context).toBe(
         kind === "partition" && scenario.label === "keep" ? 3 : 2,
       );
       expect(await recent(scenario.ids[kind])).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
             deviceId: kind === "partition" ? scenario.sibling.deviceId : null,
-            contentPreview: "A newly created fictional workshop schedule after retirement.",
+            contentPreview: content,
           }),
         ]),
       );
