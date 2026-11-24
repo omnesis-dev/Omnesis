@@ -158,12 +158,18 @@ export class HttpTranscriber implements TranscribeCapability {
       signal,
     );
     if (verbose && FORMAT_REFUSAL_STATUSES.has(res.status)) {
+      // The same status also refuses one bad request, such as an upload the
+      // server cannot read. Ask again for plain `json`: only a server that
+      // answers that has refused the format, and only then is `verbose_json`
+      // left off for later requests. A refusal of both is this request's
+      // failure and leaves timings on for the next one.
       await res.text().catch(() => "");
+      const plain = await this.transcribeChunk(pcm, fields, signal, false);
       this.verboseRefused = true;
       log.info(
         `transcription backend ${this.model} refused verbose_json; transcripts carry no timings`,
       );
-      return this.transcribeChunk(pcm, fields, signal, false);
+      return plain;
     }
 
     if (!res.ok) {
@@ -181,7 +187,10 @@ export class HttpTranscriber implements TranscribeCapability {
     }
     const parsed = parseTranscriptText(json.text);
     const language = typeof json.language === "string" ? json.language : parsed.language;
-    const segments = verbose ? parseVerboseSegments(json.segments) : undefined;
+    let segments = verbose ? parseVerboseSegments(json.segments) : undefined;
+    // An empty list is a piece with no speech, unless the server sent words
+    // without timing them.
+    if (segments?.length === 0 && parsed.text) segments = undefined;
     return {
       text: parsed.text,
       ...(language ? { language } : {}),
@@ -247,8 +256,10 @@ export class HttpTranscriber implements TranscribeCapability {
 const QWEN3_ASR_PREFIX = /^\s*language\s+([A-Za-z-]+)\s*<asr_text>/;
 
 /**
- * The timed segments of a `verbose_json` answer (seconds → ms), or undefined
- * when the server sent none or sent them malformed.
+ * The timed segments of a `verbose_json` answer (seconds → ms), without empty
+ * ones, or undefined when the server sent no segment list or sent it
+ * malformed. A list with nothing spoken in it is empty, as the in-process
+ * Whisper worker reports a silent clip.
  */
 export function parseVerboseSegments(raw: unknown): TranscriptSegment[] | undefined {
   if (!Array.isArray(raw)) return undefined;
@@ -267,7 +278,7 @@ export function parseVerboseSegments(raw: unknown): TranscriptSegment[] | undefi
       text: words,
     });
   }
-  return out.length > 0 ? out : undefined;
+  return out;
 }
 
 /** The transcript's words, and a language the model wrote ahead of them. */
