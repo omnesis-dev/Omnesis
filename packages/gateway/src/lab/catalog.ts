@@ -33,6 +33,15 @@ export const LAB_FEATURES = [
       '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/><path d="M12 1v2m0 18v2"/>',
     ),
   },
+  {
+    id: "recordings",
+    name: "Recordings",
+    description:
+      "Record in-person conversations with the Android app or an Omi pendant, and keep each one as a searchable transcript.",
+    iconSvg: icon(
+      '<rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v4m-4 0h8"/><path d="M2 8v4m20-4v4"/>',
+    ),
+  },
 ] as const;
 
 export type LabFeatureId = (typeof LAB_FEATURES)[number]["id"];

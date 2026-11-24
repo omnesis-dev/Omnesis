@@ -162,10 +162,10 @@
         <p>
           Start the gateway with <code>OMNESIS_EXPERIMENTAL=1</code>, then open
           <strong>Settings → Omnesis Lab</strong> in the portal, iOS app, or Android app. Turn on
-          <strong>Brain</strong>, <strong>Tasks</strong>, and <strong>Watches</strong>
-          individually. They start off on new installs. Choices are shared by all clients and saved
-          independently of feature settings; switching experimental mode off hides them and stops
-          their runtime without forgetting your choices.
+          <strong>Brain</strong>, <strong>Tasks</strong>, <strong>Watches</strong>, and
+          <strong>Recordings</strong> individually. They start off on new installs. Choices are
+          shared by all clients and saved independently of feature settings; switching experimental
+          mode off hides them and stops their runtime without forgetting your choices.
         </p>
         <p>
           Tasks works without the Brain: keep your task journal manually or ask Omnesis in chat or
@@ -178,11 +178,12 @@
         </p>
         <p>
           Upgrading preserves existing use: task history enables Tasks, an existing watch enables
-          Watches, and an existing background-agent assignment enables the Brain. These choices
-          apply only while experimental mode is on. A gateway started without
-          <code>OMNESIS_EXPERIMENTAL=1</code> keeps its tasks and watches but offers none of these
-          features until it is started with the flag. An explicit Lab choice is never overwritten on
-          restart. Disabling a feature preserves its data.
+          Watches, an existing background-agent assignment enables the Brain, and a conversation
+          already recorded enables Recordings. These choices apply only while experimental mode is
+          on. A gateway started without <code>OMNESIS_EXPERIMENTAL=1</code> keeps its tasks, watches
+          and recordings but offers none of these features until it is started with the flag. An
+          explicit Lab choice is never overwritten on restart. Disabling a feature preserves its
+          data.
         </p>
         <p>
           Mobile apps and gateways can be updated separately. With an older gateway, updated apps
@@ -607,10 +608,12 @@
 
         <h2 id="recordings">Recording conversations on Android</h2>
         <p>
-          With <code>OMNESIS_EXPERIMENTAL=1</code> on the gateway, the Android app can record an
-          in-person conversation or meeting with the phone lying on the table, and the gateway turns
-          it into one searchable document. The app shows <strong>Recordings</strong> in its menu
-          only when the gateway advertises it, which also needs a runnable
+          With <code>OMNESIS_EXPERIMENTAL=1</code> on the gateway and
+          <strong>Recordings</strong> turned on in <a href="#lab">Omnesis Lab</a>, the Android app
+          can record an in-person conversation or meeting with the phone lying on the table, and the
+          gateway turns it into one searchable document. The app shows
+          <strong>Recordings</strong> in its menu only when the gateway advertises it, which also
+          needs a runnable
           <strong>Transcriber</strong>
           assignment and gateway transcription switched on (the setting Tell Omnesis voice notes
           use).
@@ -664,9 +667,9 @@
           name. The document is rewritten with those names, and every person you choose is listed as
           a participant, so the conversation appears with that person like their messages and emails
           do. Two speakers can be the same person when one voice was split. The portal's
-          <strong>Recordings</strong> page, shown in experimental mode, does the same, and also
-          lists every recording with its state (recording, transcribing, done), its chunks and any
-          that could not be transcribed.
+          <strong>Recordings</strong> page, shown while Recordings is on in Omnesis Lab, does the
+          same, and also lists every recording with its state (recording, transcribing, done), its
+          chunks and any that could not be transcribed.
         </p>
         <p>
           The portal also suggests who each speaker is and what the recording was, and applies a
@@ -687,8 +690,10 @@
         <p>
           The document is read-only in the corpus. Deleting the recording from the app or the portal
           removes its document and anything still stored for it on the gateway, kept audio included.
-          Recording other people is your responsibility: tell them, and follow the law where you
-          record.
+          Turning Recordings off in Omnesis Lab stops the gateway taking new recordings and keeps
+          the documents it already wrote; parts a phone has not uploaded yet stay on the phone until
+          Recordings is turned back on. Recording other people is your responsibility: tell them,
+          and follow the law where you record.
         </p>
         <h3 id="recordings-omi">Recording with an Omi pendant</h3>
         <p>
@@ -704,7 +709,9 @@
         <p>
           A tap on the pendant starts a recording, and one short vibration confirms it. Another tap
           stops it, with two short vibrations. If a recording cannot start, the pendant gives one
-          long vibration. A long press switches the pendant off. The pendant's light is the
+          long vibration. A long press switches the pendant off. While Recordings is off in Omnesis
+          Lab the app unlinks the pendant, so its button does nothing, and Settings offers only to
+          forget it; the link returns when Recordings is turned back on. The pendant's light is the
           firmware's: blue while linked, red while not, green while charging; it does not show
           whether a recording runs. On the Recordings screen you can also choose the pendant as the
           input and start from the phone. When the pendant's clock is not set, the app sets it as it

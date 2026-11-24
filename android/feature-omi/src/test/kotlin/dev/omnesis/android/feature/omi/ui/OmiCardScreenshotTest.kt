@@ -27,7 +27,7 @@ import org.robolectric.annotation.GraphicsMode
 /**
  * Render-review screenshots for the Omi pendant: its Settings card (not
  * linked, linking, connected with and without encryption or a capture mute,
- * out of reach, firmware the app cannot read), the details panel and the
+ * out of reach, firmware the app cannot read, Recordings off in Omnesis Lab), the details panel and the
  * one-line status on the Recordings screen, light + dark.
  *
  *   ./gradlew :feature-omi:recordRoborazziDebug   ->   feature-omi/src/test/roborazzi/
@@ -83,6 +83,8 @@ class OmiCardScreenshotTest {
 
     @Test fun always_on_light() = capture("omi_card_always_on_light", false, OmiCardState(OmiStatus.Ready(89, true), alwaysOn = true))
     @Test fun always_on_dark() = capture("omi_card_always_on_dark", true, OmiCardState(OmiStatus.Ready(89, true), alwaysOn = true))
+    @Test fun recordings_off_light() = capture("omi_card_recordings_off_light", false, OmiCardState(OmiStatus.Disconnected, recordingsOff = true))
+    @Test fun recordings_off_dark() = capture("omi_card_recordings_off_dark", true, OmiCardState(OmiStatus.Disconnected, recordingsOff = true))
 
     @Test fun details_light() = captureDetails("omi_details_light", false, OmiStatus.Ready(89, true, canMute = false), details)
     @Test fun details_dark() = captureDetails("omi_details_dark", true, OmiStatus.Ready(89, true, canMute = false), details)

@@ -77,6 +77,31 @@ describe("recorded conversations in experimental mode (E2E)", () => {
     await harness.destroy();
   });
 
+  test("experimental mode alone takes no recording until the recordings opt-in is on", async () => {
+    const health = await harness.gatewayJson<{ capabilities: Record<string, unknown> }>("/health");
+    expect(health.capabilities.recordings).toBeUndefined();
+    const status = await harness.gatewayJson<{ lab: Record<string, boolean> }>("/status");
+    expect(status.lab.recordings).toBe(false);
+    const refused = await harness.gatewayFetch("/recordings", {
+      method: "POST",
+      body: JSON.stringify({ id: randomUUID(), startedAt: START }),
+    });
+    expect(refused.status).toBe(404);
+    const listedSources = async () =>
+      (
+        await harness.gatewayJson<{ internalSources: Array<{ id: string }> }>("/admin/sources")
+      ).internalSources.map((s) => s.id);
+    expect(await listedSources()).not.toContain("omnesis-recordings");
+
+    await harness.gatewayJson("/admin/lab/recordings", {
+      method: "PUT",
+      body: JSON.stringify({ enabled: true }),
+    });
+    const on = await harness.gatewayJson<{ lab: Record<string, boolean> }>("/status");
+    expect(on.lab.recordings).toBe(true);
+    expect(await listedSources()).toContain("omnesis-recordings");
+  });
+
   test("a conversation uploaded in chunks becomes one searchable document, and deleting it removes it", async () => {
     const health = await harness.gatewayJson<{ capabilities: Record<string, unknown> }>("/health");
     expect(health.capabilities.recordings).toEqual({ min: 1, max: 1 });

@@ -92,6 +92,9 @@ const WOUND_BACK = [
   219,
   // 220 stores background cleanup jobs, dropped by windBack.
   220,
+  // 221 admits Recordings into lab_features, which windBack drops; its effect
+  // on a table from before it is covered in lab.test.ts.
+  221,
 ];
 
 let dir: string;

@@ -61,7 +61,7 @@ function handles(invoke: ToolHandle["invoke"] = async () => success): ToolHandle
 
 describe("DirectMcpService", () => {
   it("updates its manifest and instructions live when Tasks or the Brain is disabled", async () => {
-    const flags = { brain: true, tasks: true, watches: true };
+    const flags = { brain: true, tasks: true, watches: true, recordings: true };
     const invoke = vi.fn(async () => success);
     const service = new DirectMcpService(handles(invoke), undefined, undefined, (id) => flags[id]);
     expect(service.manifest().some((tool) => tool.name === "entity_context")).toBe(true);

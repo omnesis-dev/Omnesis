@@ -38,11 +38,28 @@ class RecordingSettings(private val prefs: SharedPreferences) {
         _alwaysOn.value = on
     }
 
+    private val _gatewayTakesRecordings = MutableStateFlow(prefs.getBoolean(KEY_GATEWAY_TAKES_RECORDINGS, true))
+
+    /**
+     * The paired gateway's last answer on whether it takes recordings
+     * (experimental mode, with Recordings on in Omnesis Lab). Kept across
+     * restarts so a wearable woken in the background, before the app has read
+     * the gateway's status, knows whether to link; true until a first answer.
+     */
+    val gatewayTakesRecordings: StateFlow<Boolean> = _gatewayTakesRecordings.asStateFlow()
+
+    fun setGatewayTakesRecordings(takes: Boolean) {
+        if (_gatewayTakesRecordings.value == takes) return
+        prefs.edit().putBoolean(KEY_GATEWAY_TAKES_RECORDINGS, takes).apply()
+        _gatewayTakesRecordings.value = takes
+    }
+
     companion object {
         const val PREFS_NAME = "omnesis.recording"
         private const val KEY_WIFI_ONLY = "wifiOnly"
         private const val KEY_INPUT = "input"
         private const val KEY_ALWAYS_ON = "alwaysOn"
+        private const val KEY_GATEWAY_TAKES_RECORDINGS = "gatewayTakesRecordings"
         /** A session stops on its own after this long. */
         const val MAX_SESSION_MS = 4L * 60 * 60 * 1000
     }

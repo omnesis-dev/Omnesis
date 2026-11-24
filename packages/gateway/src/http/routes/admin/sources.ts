@@ -40,6 +40,7 @@ import {
 import { normalizeIcon } from "../../../icon-normalizer.js";
 import { gatewayHostedDescriptors } from "../../../internal-source-descriptors.js";
 import { assertMutableSource, listInternalSources } from "../../../internal-sources.js";
+import { labFeatureEnabled } from "../../../lab/store.js";
 import { log, wsProxy, type AdminRoutesDeps } from "./internals.js";
 import type { Context } from "hono";
 import type { AppEnv, RouteApp } from "../types.js";
@@ -407,7 +408,7 @@ export function mountSourceRoutes(app: RouteApp, deps: AdminRoutesDeps): void {
       // removals do — a client that ignores the field sees exactly what it
       // saw before, and one that reads it renders a read-only row with
       // counters and recent documents.
-      internalSources: listInternalSources(),
+      internalSources: listInternalSources((feature) => labFeatureEnabled(deps.db, feature)),
     });
   });
 
