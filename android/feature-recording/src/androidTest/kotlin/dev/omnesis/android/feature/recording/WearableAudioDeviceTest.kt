@@ -21,7 +21,7 @@ import org.junit.runner.RunWith
 
 /**
  * The platform codecs a wearable's audio goes through, on a device: speech is
- * encoded to 20 ms Opus frames at 16 kHz mono (what an Omi pendant sends),
+ * encoded to 20 ms Opus frames at 16 kHz mono (what a wearable sends),
  * decoded by [MediaCodecOpusDecoder], written by [MediaCodecAacChunkEncoder],
  * and the resulting chunk must read as speech to the recorder's own check.
  */

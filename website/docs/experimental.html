@@ -695,54 +695,6 @@
           Recordings is turned back on. Recording other people is your responsibility: tell them,
           and follow the law where you record.
         </p>
-        <h3 id="recordings-omi">Recording with an Omi pendant</h3>
-        <p>
-          The Android app can record from an Omi pendant worn on you instead of the phone's
-          microphone. Link it under <strong>Settings → Omi pendant</strong>: the system's
-          companion-device dialog finds it, and the app pairs with it so the Bluetooth link is
-          encrypted. The same section shows what the pendant reports about itself: model, firmware,
-          battery, signal, its settings and what it holds on its own storage. If pairing does not
-          complete, the app still records and shows the link as not encrypted. Disconnect the
-          pendant from the Omi app first. That app sends its audio to its own service, and the
-          pendant takes one connection at a time.
-        </p>
-        <p>
-          A tap on the pendant starts a recording, and one short vibration confirms it. Another tap
-          stops it, with two short vibrations. If a recording cannot start, the pendant gives one
-          long vibration. A long press switches the pendant off. While Recordings is off in Omnesis
-          Lab the app unlinks the pendant, so its button does nothing, and Settings offers only to
-          forget it; the link returns when Recordings is turned back on. The pendant's light is the
-          firmware's: blue while linked, red while not, green while charging; it does not show
-          whether a recording runs. On the Recordings screen you can also choose the pendant as the
-          input and start from the phone. When the pendant's clock is not set, the app sets it as it
-          links. Between recordings the app turns the pendant's microphone off, so it captures
-          nothing and stores nothing on itself. Older pendant firmware cannot turn the microphone
-          off: while linked, the pendant discards what it hears, but out of range it keeps audio on
-          its own storage. Settings says so when that is the case. Update the firmware to avoid it.
-        </p>
-        <p>
-          While a recording runs, the pendant streams its audio to the phone, and the phone stores
-          it in the same chunks as the microphone. A pause in the stream, such as a stretch the
-          pendant heard nothing, appears in the document as silence. If the pendant goes out of
-          range or switches off, the recording pauses and resumes when it is back. After ten minutes
-          without it, the recording is stopped and filed. Audio the pendant keeps on its own storage
-          while it is disconnected is not downloaded.
-        </p>
-        <p>
-          With <strong>Capture all day</strong> switched on in the same section, the pendant records
-          whenever it is linked. Each conversation becomes a recording of its own: one ends after
-          three minutes without speech, and the next starts on its own. A stretch with no speech at
-          all never leaves the phone. The documents say the conversation was captured by a wearable,
-          and the Brain reads them like any other recording. A tap on the pendant then marks a
-          moment instead of starting or stopping, confirmed by one short vibration. The moment is
-          saved as a Tell Omnesis note with its audio: about 30 seconds from before the tap, and
-          what follows until the next pause in speech, for at most a minute. The gateway transcribes
-          the note, and the conversation's document shows a ★ line where the moment was marked. A
-          recording started from the Recordings screen still stops on a tap, and capture resumes
-          when it ends. <strong>Turn off</strong> on the notification or the Recordings screen
-          switches all-day capture off. Hours of speech a day need a transcriber that keeps up, such
-          as one on a GPU or an HTTP backend.
-        </p>
 
         <h2 id="brain">Omnesis Brain</h2>
         <p>
