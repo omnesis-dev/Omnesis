@@ -71,7 +71,7 @@ class WearableAudioDeviceTest {
         return ShortArray(data.remaining()).also { data.get(it) }
     }
 
-    /** The platform Opus encoder (Android 10+), standing in for the pendant's firmware encoder. */
+    /** The platform Opus encoder (Android 10+), standing in for a wearable's firmware encoder. */
     private fun opusFrames(pcm: ShortArray): List<ByteArray> {
         val codec = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_OPUS)
         val format = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_OPUS, ChunkPolicy.SAMPLE_RATE_HZ, 1)

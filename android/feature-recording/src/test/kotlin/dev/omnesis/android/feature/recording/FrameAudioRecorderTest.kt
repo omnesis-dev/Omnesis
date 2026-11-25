@@ -182,7 +182,7 @@ class FrameAudioRecorderTest {
         assertFalse(recorder.markMoment())
     }
 
-    @Test fun aMarkedMomentRunsUntilThePendantFallsSilent() {
+    @Test fun aMarkedMomentRunsUntilTheWearableFallsSilent() {
         val marking = recorder(clipper())
         assertFalse(marking.markMoment()) // not recording yet
         marking.start()
@@ -190,7 +190,7 @@ class FrameAudioRecorderTest {
         assertTrue(marking.markMoment())
         frames(50, fromMs = 2_020) // 2000..3000
         assertTrue(clips.isEmpty())
-        frames(1, fromMs = 8_020) // the pendant heard nothing for five seconds
+        frames(1, fromMs = 8_020) // the wearable heard nothing for five seconds
         // The moment: the two seconds held before the mark and the one after.
         assertEquals(3_000L, clips.single().durationMs)
         assertEquals(0L, clips.single().startedAtMs)
@@ -221,7 +221,7 @@ class FrameAudioRecorderTest {
         var accept = true
         var sink: WearableAudio.FrameSink? = null
         var streaming = false
-        override val name = "Pendant"
+        override val name = "Wearable"
         override val ready = MutableStateFlow(true)
         override fun startStreaming(sink: WearableAudio.FrameSink): Boolean {
             if (!accept) return false

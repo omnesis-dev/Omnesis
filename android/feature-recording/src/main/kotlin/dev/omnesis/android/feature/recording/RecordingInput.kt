@@ -35,7 +35,7 @@ interface ChunkRecorder {
 }
 
 /**
- * An audio input worn by the user: a pendant that streams 20 ms Opus frames
+ * An audio input worn by the user that streams 20 ms Opus frames
  * of 16 kHz mono speech. The device-specific link implements it; the recorder
  * only sees frames and whether the link holds.
  */

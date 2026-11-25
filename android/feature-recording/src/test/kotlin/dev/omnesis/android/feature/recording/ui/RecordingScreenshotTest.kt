@@ -150,7 +150,7 @@ class RecordingScreenshotTest {
         RecordingUiState(availability = RecordingAvailability.Availability.TRANSCRIPTION_OFF, recent = recent),
     )
 
-    private val wearableReady = ready.copy(wearableName = "Pendant", wearableReady = true, input = RecordingInput.WEARABLE, recent = emptyList())
+    private val wearableReady = ready.copy(wearableName = "Wearable", wearableReady = true, input = RecordingInput.WEARABLE, recent = emptyList())
 
     @Test fun wearable_ready_light() = capture("recording_wearable_ready_light", false, wearableReady) {
         androidx.compose.material3.Text("Wearable card slot")
@@ -158,17 +158,17 @@ class RecordingScreenshotTest {
     @Test fun wearable_ready_dark() = capture("recording_wearable_ready_dark", true, wearableReady)
 
     private val wearableLost = recording.copy(
-        wearableName = "Pendant",
+        wearableName = "Wearable",
         recording = recording.recording!!.copy(runningSinceMs = null, micLost = true, input = RecordingInput.WEARABLE),
     )
 
     @Test fun wearable_recording_light() = capture(
         "recording_wearable_active_light",
         false,
-        recording.copy(wearableName = "Pendant", recording = recording.recording!!.copy(input = RecordingInput.WEARABLE)),
+        recording.copy(wearableName = "Wearable", recording = recording.recording!!.copy(input = RecordingInput.WEARABLE)),
     )
     private val wearableAmbient = recording.copy(
-        wearableName = "Pendant",
+        wearableName = "Wearable",
         wearableReady = true,
         title = "",
         recent = emptyList(),
