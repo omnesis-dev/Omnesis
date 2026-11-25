@@ -727,6 +727,15 @@ describe("migration 131 — source membership", () => {
   test("backfills membership, re-keys sync_state to the shared row, and adds revoked_at", () => {
     seedPre131(db);
     runSchemaSetup(db);
+    // Later provenance metadata must not enter the legacy cursor table
+    // before migration 131 has copied its original columns without loss.
+    expect(
+      db
+        .prepare(
+          "SELECT name FROM pragma_table_info('sync_state') WHERE name = 'last_error_device_id'",
+        )
+        .get(),
+    ).toBeUndefined();
     runMigrations(db);
 
     // Membership backfilled from the owning device.
@@ -751,6 +760,15 @@ describe("migration 131 — source membership", () => {
         label: "fixture label",
       },
     ]);
+
+    expect(
+      db
+        .prepare(
+          "SELECT last_error_device_id FROM sync_state WHERE source_id = ? AND device_id = ''",
+        )
+        .get("test-source:acct1"),
+    ).toEqual({ last_error_device_id: null });
+    expect(() => runMigrations(db)).not.toThrow();
 
     // Devices grew the revocation stamp.
     const deviceCols = db

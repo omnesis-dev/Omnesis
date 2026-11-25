@@ -8254,6 +8254,17 @@ describe("GET /documents/:id", () => {
     const data = await res.json();
     expect(data.stream_id).toBe(device.id);
     expect(data.device_name).toBe("Studio-Mini");
+    db.prepare(
+      "INSERT INTO forgotten_devices (device_id, name, kind, forgotten_at) VALUES (?, ?, ?, 1)",
+    ).run(device.id, device.name, device.kind);
+    db.prepare("UPDATE devices SET name = ? WHERE id = ?").run(`forgotten:${device.id}`, device.id);
+    for (const id of [row.id, row.id.slice(0, 8)]) {
+      const archived = await req(`/documents/${id}`);
+      expect(archived.status).toBe(200);
+      const detail = await archived.json();
+      expect(detail.device_name).toBe("Studio-Mini");
+      expect(detail.stream_id).toBe(device.id);
+    }
   });
 
   test("returns 400 for ambiguous ID prefix", async () => {

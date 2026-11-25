@@ -56,3 +56,28 @@ data class AgentIntegrationCapability(
     val deliveryProtocolMax: Int = 2,
     val maxConcurrentRuns: Int = 1,
 )
+
+/** Reviewed `GET /admin/devices/:id/forget-impact` source impact. */
+@Serializable
+data class DeviceForgetImpact(
+    val sources: List<DeviceForgetSourceImpact> = emptyList(),
+    val fingerprint: String,
+) {
+    val hasSources: Boolean get() = sources.isNotEmpty()
+    val keepsSharedData: Boolean get() = sources.any { it.deleteScope == "none" }
+}
+
+@Serializable
+data class DeviceForgetSourceImpact(
+    val id: String,
+    val type: String,
+    val multiDeviceMode: String,
+    val otherDeviceCount: Int,
+    val deleteScope: String,
+)
+
+/** Historical data is kept unless the owner explicitly chooses deletion. */
+enum class DeviceForgetData(val wireValue: String, val title: String) {
+    Keep("keep", "Keep historical data"),
+    Delete("delete", "Delete this device’s data"),
+}

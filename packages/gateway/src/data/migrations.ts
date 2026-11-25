@@ -167,6 +167,7 @@ import { addDeviceEnrollment } from "./migration-214-device-enrollment.js";
 import { indexDocumentsByIdAndType } from "./migration-216-documents-id-type-index.js";
 import { addStickyDeviceRevocation } from "./migration-217-sticky-revocation.js";
 import { indexPersonNameAliases } from "./migration-218-person-name-alias-index.js";
+import { addDeviceRetirement } from "./migration-222-device-retirement.js";
 import { LATEST_SCHEMA_VERSION } from "./schema-version.js";
 import type { Db } from "./types.js";
 
@@ -5029,6 +5030,11 @@ export const MIGRATIONS: readonly Migration[] = [
     version: 221,
     description: "offer Recordings in Omnesis Lab, kept on where conversations were recorded",
     up: addRecordingsLabFeature,
+  },
+  {
+    version: 222,
+    description: "retain forgotten device provenance independently of active source membership",
+    up: addDeviceRetirement,
   },
 ];
 

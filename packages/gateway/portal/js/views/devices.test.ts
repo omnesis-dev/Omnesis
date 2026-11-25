@@ -11,6 +11,7 @@ const apiMocks = vi.hoisted(() => ({
   getPairAddresses: vi.fn(),
   fleetUpdateTarget: vi.fn(async () => ({ targetVersion: null })),
   forgetDevice: vi.fn(),
+  getDeviceForgetImpact: vi.fn(async () => ({ sources: [], fingerprint: "fictional-impact" })),
   getFleetDoctor: vi.fn(async () => ({ devices: [] })),
   getNetworkIdentities: vi.fn(async () => ({ items: [] })),
   getDoctorReport: vi.fn(),
@@ -86,11 +87,55 @@ describe("per-device health", () => {
   });
 
   afterEach(() => {
+    vi.unstubAllGlobals();
     render(null, host);
     if (originalDocument === undefined) delete (globalThis as { document?: unknown }).document;
     else globalThis.document = originalDocument;
     if (originalWindow === undefined) delete (globalThis as { window?: unknown }).window;
     else globalThis.window = originalWindow;
+  });
+
+  test("repair link generates one code for its device and survives rerenders", async () => {
+    vi.stubGlobal("location", { origin: "https://gateway.example.org" });
+    const device = { id: "device-retired", name: "Retired notebook", kind: "collector",
+      pairedAt: 1, lastSeenAt: 2, revokedAt: 3, online: false, capabilities: {} };
+    apiMocks.listDevices.mockResolvedValue({ items: [device] });
+    apiMocks.pairDevice.mockReset();
+    apiMocks.pairDevice.mockResolvedValue({ pairingCode: "FICTION-2486" });
+    const props = { focusDeviceId: device.id, deviceActionRequest: "repair" };
+    await act(async () => { render(h(DevicesView, props), host); });
+    await vi.waitFor(() => expect(host.textContent).toContain("FICTION-2486"));
+    expect(apiMocks.pairDevice).toHaveBeenCalledExactlyOnceWith({ kind: "collector", repairDeviceId: device.id });
+    expect(routerMocks.replaceRoute).toHaveBeenCalledWith("/portal/settings/devices?device=device-retired");
+    await act(async () => { render(h(DevicesView, { ...props }), host); });
+    expect(apiMocks.pairDevice).toHaveBeenCalledTimes(1);
+    const done = [...host.querySelectorAll("button")].find((b) => b.textContent?.trim() === "Done") as HTMLButtonElement;
+    await act(async () => done.click());
+    expect(host.textContent).not.toContain("FICTION-2486");
+    expect(apiMocks.pairDevice).toHaveBeenCalledTimes(1);
+  });
+
+  test("forget link opens the selected device's confirmation without deleting it", async () => {
+    apiMocks.listDevices.mockResolvedValue({ items: [
+      { id: "device-retired", name: "Retired notebook", kind: "collector", pairedAt: 1,
+        lastSeenAt: 2, revokedAt: 3, online: false, capabilities: {} },
+    ] });
+    apiMocks.forgetDevice.mockReset();
+    await act(async () => { render(h(DevicesView, { focusDeviceId: "device-retired", deviceActionRequest: "forget" }), host); });
+    await vi.waitFor(() => expect(host.querySelector(".confirm-modal")?.textContent).toContain('Forget device "Retired notebook"?'));
+    expect(apiMocks.forgetDevice).not.toHaveBeenCalled();
+    expect(host.querySelector("#device-device-retired")?.className).toContain("expanded");
+  });
+
+  test.each([
+    ["missing", []],
+    ["device-online", [{ id: "device-online", name: "Online notebook", kind: "collector", online: true, capabilities: {} }]],
+  ])("repair link refuses unavailable target %s", async (id, items) => {
+    apiMocks.listDevices.mockResolvedValue({ items });
+    apiMocks.pairDevice.mockReset();
+    await act(async () => { render(h(DevicesView, { focusDeviceId: id, deviceActionRequest: "repair" }), host); });
+    await vi.waitFor(() => expect(host.textContent).toContain(id === "missing" ? "no longer available" : "cannot be repaired"));
+    expect(apiMocks.pairDevice).not.toHaveBeenCalled();
   });
 
   async function renderHealth(health: Record<string, unknown>, onRun = vi.fn()) {
@@ -215,21 +260,21 @@ describe("fleet health action", () => {
       }));
       const confirm = await openForgetDialog();
       await act(async () => confirm.click());
-      await vi.waitFor(() => expect(host.querySelector('[role="alert"]')?.textContent).toContain("still hosts sources"));
-      expect(host.querySelector('[role="alert"]')?.textContent).toContain("Move or remove them from Sources");
+      await vi.waitFor(() => expect(host.querySelector('[role="alert"]')?.textContent).toContain("sources changed"));
+      expect(host.querySelector('[role="alert"]')?.textContent).toContain("Review them again");
       expect(host.querySelector('[role="alert"]')?.textContent).not.toContain("private-account");
       expect(host.querySelector(".confirm-modal")).not.toBeNull();
       const refreshCount = apiMocks.listDevices.mock.calls.length;
       await act(async () => { await vi.advanceTimersByTimeAsync(3000); });
       expect(apiMocks.listDevices.mock.calls.length).toBeGreaterThan(refreshCount);
-      await vi.waitFor(() => expect(host.querySelector('[role="alert"]')?.textContent).toContain("still hosts sources"));
+      await vi.waitFor(() => expect(host.querySelector('[role="alert"]')?.textContent).toContain("sources changed"));
       apiMocks.forgetDevice.mockResolvedValueOnce(true);
       apiMocks.listDevices.mockResolvedValue({ items: [] });
       await act(async () => confirm.click());
       expect(apiMocks.forgetDevice).toHaveBeenCalledTimes(2);
-      expect(apiMocks.forgetDevice).toHaveBeenLastCalledWith("device-retired");
+      expect(apiMocks.forgetDevice).toHaveBeenLastCalledWith("device-retired", { data: "keep", impactFingerprint: "fictional-impact" });
       await vi.waitFor(() => expect(host.querySelector(".confirm-modal")).toBeNull());
-      expect(host.querySelector(".devices-card")).toBeNull();
+      await vi.waitFor(() => expect(host.querySelector(".devices-card")).toBeNull());
     } finally {
       vi.useRealTimers();
     }
@@ -255,7 +300,7 @@ describe("fleet health action", () => {
     apiMocks.listDevices.mockResolvedValue({ items: [] });
     await act(async () => resolveForget(true));
     await vi.waitFor(() => expect(host.querySelector(".confirm-modal")).toBeNull());
-    expect(host.querySelector(".devices-card")).toBeNull();
+    await vi.waitFor(() => expect(host.querySelector(".devices-card")).toBeNull());
   });
 
   test("the global action requests all devices by omitting ids", async () => {

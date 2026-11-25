@@ -62,3 +62,22 @@ describe("RemediationCard", () => {
     expect(text).not.toContain("Executable");
   });
 });
+
+test("pairing cards link to their own device flows only when the roster needs pairing", () => {
+  const props = {
+    group: { deviceId: "device&one", affectedSourceIds: ["example:local"],
+      remediation: { summary: "Pairing required", steps: ["Pair again."], restartRequired: false } },
+    deviceName: "Fictional notebook",
+  };
+  function links(vnode: any): string[] {
+    if (vnode == null || typeof vnode !== "object") return [];
+    if (Array.isArray(vnode)) return vnode.flatMap(links);
+    return [...(vnode.type === "a" ? [vnode.props.href] : []), ...links(vnode.props?.children)];
+  }
+  expect(links(RemediationCard({ ...props, device: { kind: "collector", revokedAt: 1, needsPairing: true } }))).toEqual([
+    "/portal/settings/devices?device=device%26one&deviceAction=repair",
+    "/portal/settings/devices?device=device%26one&deviceAction=forget",
+  ]);
+  expect(links(RemediationCard(props))).toEqual([]);
+  expect(links(RemediationCard({ ...props, device: { kind: "collector", needsPairing: false } }))).toEqual([]);
+});

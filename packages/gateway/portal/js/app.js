@@ -827,6 +827,7 @@ function App() {
               accessConnect=${route.accessConnect}
               pair=${route.pair ?? null}
               device=${route.device ?? null}
+              deviceAction=${route.deviceAction ?? null}
               policyId=${route.policyId}
               completeAccessInPortal=${route.completeAccessInPortal}
               tailscaleEmbed=${tailscaleEmbed}

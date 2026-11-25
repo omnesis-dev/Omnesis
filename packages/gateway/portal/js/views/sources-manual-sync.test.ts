@@ -102,3 +102,8 @@ describe("sourcesErrorReducer", () => {
     });
   });
 });
+
+test("historical sources expose history and removal without sync or resume", () => {
+  expect(sourceCanManualSync({ archived: true, pushBased: false })).toBe(false);
+  expect(sourceActionMenuItems({ archived: true, paused: true }).map((item) => item.label)).toEqual(["See recent", "Debug", "Remove"]);
+});

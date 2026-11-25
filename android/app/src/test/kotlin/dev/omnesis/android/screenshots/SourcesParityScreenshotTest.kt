@@ -275,6 +275,31 @@ class SourcesParityScreenshotTest {
 
     // --- Detail states (03 / 04 / 05) ---
 
+    @Test fun sources_historical_dark() = capture("sources_historical_dark", dark = true) {
+        SourcesContent(Loadable.Content(populated().copy(sources = listOf(populated().sources.first().copy(
+            syncState = "historical", paused = false, hostDevice = "Retired phone", noticeGroups = emptyList(),
+        )))), connected, onOpenMenu = {}, onRetry = {}, onOpenSource = {})
+    }
+
+    @Test fun sources_historical_light() = capture("sources_historical_light", dark = false) {
+        SourcesContent(Loadable.Content(populated().copy(sources = listOf(populated().sources.first().copy(
+            syncState = "historical", paused = false, hostDevice = "Retired phone", noticeGroups = emptyList(),
+        )))), connected, onOpenMenu = {}, onRetry = {}, onOpenSource = {})
+    }
+
+    private fun detailHistorical() = detailSynced().copy(
+        archived = true, syncState = "historical", resync = ResyncOffer.Unavailable,
+        hostDevices = listOf(SourceHostDeviceUi("retired-phone", "Retired phone (forgotten)")),
+    )
+
+    @Test fun source_detail_historical_dark() = capture("source_detail_historical_dark", dark = true) {
+        SourceDetailContent(Loadable.Content(detailHistorical()), onBack = {}, onRetry = {}, onOpenRecent = {})
+    }
+
+    @Test fun source_detail_historical_light() = capture("source_detail_historical_light", dark = false) {
+        SourceDetailContent(Loadable.Content(detailHistorical()), onBack = {}, onRetry = {}, onOpenRecent = {})
+    }
+
     private fun detailSynced() = SourceDetailUi(
         sourceId = "apple-notes:user@example.com", label = "Apple Notes", accountId = "user@example.com",
         icon = SourceIconModel(fallbackInitial = "N"), type = "apple-notes",

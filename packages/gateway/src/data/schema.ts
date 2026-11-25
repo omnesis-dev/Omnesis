@@ -37,6 +37,7 @@ import { createAnswerPrivacyTables, createDirectAuditTables } from "../privacy/s
 import { createSubscriptionTables } from "../subscriptions/store-schema.js";
 import { createTranscriptionVocabularyTables } from "../transcribe/vocabulary/storage.js";
 import { addStorageAuthority } from "./migration-219-storage-authority.js";
+import { createDeviceRetirementTables } from "./migration-222-device-retirement.js";
 import { addHistoryCleanup } from "./migration-220-history-cleanup.js";
 import { REVOKED_DEVICE_KEYS_TABLE } from "./migration-217-sticky-revocation.js";
 import { DEVICE_ENROLLMENT_PUBLIC_KEY_INDEX } from "./migration-214-device-enrollment.js";
@@ -280,6 +281,7 @@ function runSchemaSetupInTxn(db: Db): void {
       last_error TEXT,
       errored_at TEXT,
       last_error_remediation TEXT,
+      last_error_device_id TEXT,
       bg_color TEXT,
       accent_color TEXT,
       content_retention TEXT,
@@ -401,7 +403,8 @@ function runSchemaSetupInTxn(db: Db): void {
   // the id is a durable identity (per-device cursors, and — for partitioned
   // sources — external-id stream keys hang off it), so unpairing keeps the
   // row with its tokens dead, and a later pair under the same name adopts
-  // it, id intact. Hard delete is a separate explicit "forget forever" act.
+  // it, id intact. Forgetting retires the identity permanently; retained
+  // source streams keep only an immutable provenance anchor.
   db.exec(`
     CREATE TABLE IF NOT EXISTS devices (
       id TEXT PRIMARY KEY,
@@ -570,7 +573,8 @@ function runSchemaSetupInTxn(db: Db): void {
   // unpairing a device revokes it (see devices.revoked_at) and leaves its
   // memberships in place, dormant — device removal must never destroy a
   // source or its standing. Deleting a source removes its membership rows;
-  // forgetting a device (hard delete) is refused while it hosts sources.
+  // forgetting a source host retires its membership with a reviewed choice
+  // to preserve history or queue that device's contribution for deletion.
   db.exec(`
     CREATE TABLE IF NOT EXISTS source_devices (
       source_id TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
@@ -581,6 +585,7 @@ function runSchemaSetupInTxn(db: Db): void {
     )
   `);
   db.exec("CREATE INDEX IF NOT EXISTS idx_source_devices_device ON source_devices(device_id)");
+  createDeviceRetirementTables(db);
   createSourceMemberConfigContractTable(db);
   createSourceStreamCleanupTable(db);
   createSourceModeTransitionTable(db);

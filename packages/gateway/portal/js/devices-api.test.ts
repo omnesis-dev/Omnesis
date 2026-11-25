@@ -232,3 +232,14 @@ describe("device API wrappers", () => {
     ]);
   });
 });
+
+test("forget reviews the selected device and submits its explicit history choice", async () => {
+  const fetchMock = vi.fn(async () => new Response(JSON.stringify({ sources: [], fingerprint: "reviewed" }), {
+    status: 200, headers: { "Content-Type": "application/json" },
+  }));
+  vi.stubGlobal("fetch", fetchMock);
+  await deviceApi.getDeviceForgetImpact("old/phone");
+  expect(fetchMock).toHaveBeenLastCalledWith("/admin/devices/old%2Fphone/forget-impact", expect.objectContaining({ method: "GET" }));
+  await deviceApi.forgetDevice("old/phone", { data: "keep", impactFingerprint: "reviewed" });
+  expect(fetchMock).toHaveBeenLastCalledWith("/admin/devices/old%2Fphone?forget=true&data=keep&impactFingerprint=reviewed", expect.objectContaining({ method: "DELETE" }));
+});

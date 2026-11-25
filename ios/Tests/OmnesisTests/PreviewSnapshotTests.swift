@@ -2090,6 +2090,14 @@ final class PreviewSnapshotTests: XCTestCase {
         snapshot(SourcesView(menuOpen: .constant(false)).environment(store), name: "02d-sources-internal-row")
     }
 
+    func testSourceDetailHistorical() {
+        let store = AppStore.preview(sources: [PreviewMocks.sourceHistorical])
+        snapshot(
+            NavigationStack { SourceDetailView(sourceId: PreviewMocks.sourceHistorical.id) }.environment(store),
+            name: "03a-source-detail-historical"
+        )
+    }
+
     func testSourceDetailSyncing() {
         let store = AppStore.preview(
             sources: PreviewMocks.sources,
@@ -3204,6 +3212,33 @@ final class PreviewSnapshotTests: XCTestCase {
             .navigationBarTitleDisplayMode(.inline)
         }
         snapshot(list.environment(store), name: "192c-devices-forget-refused")
+    }
+
+    func testForgetDeviceKeepHistory() {
+        snapshotPresented(forgetDeviceSheet(data: .keep), name: "192d-devices-forget-keep")
+    }
+
+    func testForgetDeviceDeleteData() {
+        snapshotPresented(forgetDeviceSheet(data: .delete), name: "192e-devices-forget-delete")
+    }
+
+    private func forgetDeviceSheet(data: DeviceForgetData) -> some View {
+        NavigationStack {
+            DevicesList(devices: PreviewMocks.devicesWithRevoked, tokensByDevice: [:])
+                .background(Theme.bgPrimary)
+                .navigationTitle("Devices")
+                .navigationBarTitleDisplayMode(.inline)
+        }
+        .sheet(isPresented: .constant(true)) {
+            ForgetDeviceConfirmation(
+                device: PreviewMocks.deviceRevoked,
+                impact: PreviewMocks.deviceForgetCatalogImpact,
+                initialData: data,
+                onRefresh: { PreviewMocks.deviceForgetCatalogImpact },
+                onForget: { _, _ in }
+            )
+        }
+        .environment(AppStore.preview(sourceIconByType: PreviewMocks.deviceForgetIcons))
     }
 
     func testDevicesEmpty() {

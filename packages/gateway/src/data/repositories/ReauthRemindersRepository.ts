@@ -113,6 +113,37 @@ export function rekeyReauthRemindersByDevice(db: Db): void {
   `);
 }
 
+/** A queued producer may reserve only while its reporting origin can still sync. */
+export function reserveActiveReauthReminder(
+  db: Db,
+  principal: string,
+  deviceId: string,
+  now: number,
+  reservationTtlMs: number,
+  isDue: (existing: ReauthReminderRow | null) => boolean,
+  sourceId?: string,
+): string | null {
+  return db
+    .transaction(() => {
+      if (!db.prepare("SELECT 1 FROM devices WHERE id = ? AND revoked_at IS NULL").get(deviceId))
+        return null;
+      if (
+        sourceId &&
+        !db
+          .prepare(
+            `SELECT 1 FROM sources s WHERE s.id = ? AND s.enabled = 1
+        AND (s.device_id = ? OR EXISTS (
+          SELECT 1 FROM source_devices m WHERE m.source_id = s.id AND m.device_id = ?
+        ))`,
+          )
+          .get(sourceId, deviceId, deviceId)
+      )
+        return null;
+      return reserveReauthReminder(db, principal, deviceId, now, reservationTtlMs, isDue);
+    })
+    .immediate();
+}
+
 export function reserveReauthReminder(
   db: Db,
   principal: string,

@@ -10,8 +10,12 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.omnesis.android.access.PairingPendingRequests
 import dev.omnesis.android.transport.dto.GatewayPairingApprovalRequest
 import dev.omnesis.android.session.SessionManager
+import dev.omnesis.android.sources.SourceCatalog
+import dev.omnesis.android.designsystem.components.SourceIconModel
 import dev.omnesis.android.transport.dto.GatewayPairingApproving
 import dev.omnesis.android.transport.GatewayException
+import dev.omnesis.android.transport.dto.DeviceForgetImpact
+import dev.omnesis.android.transport.dto.DeviceForgetData
 import dev.omnesis.android.transport.dto.DeviceRecord
 import dev.omnesis.android.transport.dto.PairingAddressPlan
 import dev.omnesis.android.transport.dto.PendingPairing
@@ -55,6 +59,7 @@ internal class DevicesPairRequestGate {
 class DevicesViewModel @Inject constructor(
     private val session: SessionManager,
     private val pairingPendingRequests: PairingPendingRequests,
+    private val catalog: SourceCatalog = SourceCatalog(),
 ) : ViewModel() {
 
     private val _devices = MutableStateFlow<Loadable<List<DeviceRecord>>>(Loadable.Loading)
@@ -73,6 +78,17 @@ class DevicesViewModel @Inject constructor(
     val notice = _notice.asStateFlow()
 
     /** Pair sheet state. */
+    data class ForgetState(
+        val device: DeviceRecord,
+        val impact: DeviceForgetImpact? = null,
+        val loading: Boolean = true,
+        val submitting: Boolean = false,
+        val error: String? = null,
+    )
+    private val _forget = MutableStateFlow<ForgetState?>(null)
+    val forget = _forget.asStateFlow()
+    private var forgetGeneration = 0L
+
     private val _pair = MutableStateFlow<PairState?>(null)
     val pair = _pair.asStateFlow()
     private val pairRequests = DevicesPairRequestGate()
@@ -203,22 +219,61 @@ class DevicesViewModel @Inject constructor(
         }
     }
 
-    /**
-     * Delete a revoked device's row for good. The gateway refuses while the
-     * device still hosts sources; that refusal is rewritten for a phone by
-     * [forgetFailure] and lands on the device's own card.
-     */
-    fun forgetDevice(device: DeviceRecord) {
-        _notice.update { null }
+    fun sourceLabel(sourceId: String): String = catalog.label(sourceId)
+    fun sourceIcon(sourceId: String): SourceIconModel = catalog.iconModel(sourceId)
+
+    fun openForget(device: DeviceRecord, message: String? = null) {
+        if (_forget.value?.submitting == true) return
+        val generation = ++forgetGeneration
+        _forget.value = ForgetState(device, error = message)
         viewModelScope.launch {
-            runCatching { session.requireSession().admin.forgetDevice(device.id) }
-                .fold(
-                    onSuccess = {
+            runCatching {
+                val admin = session.requireSession().admin
+                catalog.ensureLoaded(admin)
+                admin.forgetDeviceImpact(device.id)
+            }.fold(
+                onSuccess = { impact ->
+                    if (forgetGeneration == generation) _forget.value = ForgetState(device, impact, loading = false, error = message)
+                },
+                onFailure = { error ->
+                    if (forgetGeneration == generation) _forget.value = ForgetState(device, loading = false, error = failureText("Cannot review device sources", error))
+                },
+            )
+        }
+    }
+
+    fun closeForget() {
+        if (_forget.value?.submitting == true) return
+        forgetGeneration += 1
+        _forget.value = null
+    }
+
+    fun forgetDevice(data: DeviceForgetData) {
+        val current = _forget.value ?: return
+        val impact = current.impact ?: return
+        if (current.submitting) return
+        val generation = forgetGeneration
+        _forget.value = current.copy(submitting = true, error = null)
+        viewModelScope.launch {
+            runCatching { session.requireSession().admin.forgetDevice(current.device.id, data, impact.fingerprint) }.fold(
+                onSuccess = {
+                    if (forgetGeneration == generation) {
+                        _forget.value = null
                         load()
-                        _notice.update { Notice(true, "Forgot ${device.name}.") }
-                    },
-                    onFailure = { e -> _notice.update { Notice(false, forgetFailure(e), device.id) } },
-                )
+                        _notice.update { Notice(true, "Forgot ${current.device.name}.") }
+                    }
+                },
+                onFailure = { error ->
+                    if (forgetGeneration == generation) {
+                        if (error is GatewayException.ServerError && error.code == "DEVICE_FORGET_IMPACT_CHANGED") {
+                            _forget.value = current.copy(submitting = false)
+                            openForget(current.device, "This device’s sources changed. Review the data choice and confirm again.")
+                        } else {
+                            _forget.value = current.copy(submitting = false, error = forgetFailure(error))
+                        }
+                    }
+                },
+            )
         }
     }
 

@@ -206,6 +206,8 @@ const SAFE_TABLES = new Set([
   "dev_annotations",
   "device_doctor_runs",
   "devices",
+  // Forgotten identities and retained source origins are canonical history, not credentials.
+  "forgotten_devices",
   "doc_annotation_evidence",
   "doc_annotations",
   "date_mention_judgements",
@@ -325,6 +327,7 @@ const SAFE_TABLES = new Set([
   "schema_migrations",
   "source_document_profiles",
   "source_devices",
+  "source_device_archives",
   "source_inventories",
   "source_inventory_documents",
   // A source family's declared name and glyph: product strings the

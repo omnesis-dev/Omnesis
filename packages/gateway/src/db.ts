@@ -152,6 +152,7 @@ export {
   getReauthReminder,
   clearReauthReminder,
   reserveReauthReminder,
+  reserveActiveReauthReminder,
   commitReauthReminder,
   releaseReauthReminder,
 } from "./data/repositories/ReauthRemindersRepository.js";

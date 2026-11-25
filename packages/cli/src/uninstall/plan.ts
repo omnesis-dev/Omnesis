@@ -447,7 +447,7 @@ export function planUninstall(inv: Inventory, request: UninstallRequest): Plan {
         }
         if (!present.includes("gateway") || !selected("gateway")) {
           followUps.push(
-            "On the gateway host, move or detach this collector's sources, then remove its device: omnesis devices revoke <device> --forget",
+            "On the gateway host, forget this collector's device and choose whether to keep its source history: omnesis devices revoke <device> --forget",
           );
         }
         if (inv.platform === "darwin") {

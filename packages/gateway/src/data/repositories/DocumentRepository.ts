@@ -1344,11 +1344,12 @@ export function getRecentDocuments(
   return db
     .prepare<(string | number)[], RecentDocument>(
       `SELECT document.id, document.source_id, document.external_id,
-              document.stream_id AS device_id, origin_device.name AS device_name,
+              document.stream_id AS device_id, COALESCE(archived_origin.name, origin_device.name) AS device_name,
               document.title, SUBSTR(document.content, 1, 150) AS content_preview,
               document.metadata, document.source_created_at, document.source_updated_at
        FROM documents AS document
        LEFT JOIN devices AS origin_device ON origin_device.id = document.stream_id
+       LEFT JOIN forgotten_devices AS archived_origin ON archived_origin.device_id = document.stream_id
        WHERE document.source_id = ?
          ${cursorPredicate}
        ORDER BY document.source_created_at DESC, document.id DESC

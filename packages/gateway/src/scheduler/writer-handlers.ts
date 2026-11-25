@@ -28,13 +28,6 @@ import {
   type BindStorageRetentionPolicyInput,
 } from "../storage/retention-bindings.js";
 import {
-  startHistoryCleanupJob,
-  updateHistoryCleanupJob,
-  cancelHistoryCleanupJob,
-  type StartHistoryCleanupJob,
-  type UpdateHistoryCleanupJob,
-} from "../storage/history-cleanup-store.js";
-import {
   startStorageTrimJob,
   applyStorageTrimPage,
   failStorageTrimJob,
@@ -108,6 +101,13 @@ function sliceDeadline(token: PreemptToken, sliceMs: number): () => boolean {
 const NEAR_DUP_APPLY_SLICE_MS = 100;
 
 import { type SourceSyncMeta, type SyncCursor } from "@omnesis/source-sdk";
+import {
+  startHistoryCleanupJob,
+  updateHistoryCleanupJob,
+  cancelHistoryCleanupJob,
+  type StartHistoryCleanupJob,
+  type UpdateHistoryCleanupJob,
+} from "../storage/history-cleanup-store.js";
 import { finalizeSubscriptionCompletionEgress } from "../subscriptions/store-completion-egress.js";
 import { recordLiveVoiceUsage, type LiveVoiceUsageSample } from "../realtime/live-voice-usage.js";
 import {
@@ -387,7 +387,7 @@ import {
   revokeSyncAttempt,
   resetMemberCursor,
   resetSourceCursors,
-  reserveReauthReminder,
+  reserveActiveReauthReminder,
   releaseReauthReminder,
   type SourceStatsAggregation,
   type UpsertWithCursorArgs,
@@ -680,6 +680,7 @@ import {
 } from "../data/pairing-generation-fence.js";
 import { applyTranscriptionVocabularyBatch } from "../transcribe/vocabulary/storage.js";
 import { advanceTranscriptionVocabularyRebuild } from "../transcribe/vocabulary/rebuild.js";
+import type { DeviceForgetOptions } from "../data/repositories/DeviceRetirementRepository.js";
 import type { VoiceWindow } from "../recordings/voices/voices.js";
 import type { WorthAnswer } from "../worth/answers.js";
 import type { SelfIdentitySource } from "../self-identity-sources.js";
@@ -959,8 +960,9 @@ export const writerHandlers = {
     errorMessage: string,
     deviceId?: string,
     remediation?: SyncRemediation,
+    reporterDeviceId?: string,
   ): void => {
-    setSyncError(db, sourceId, errorMessage, deviceId ?? "", remediation);
+    setSyncError(db, sourceId, errorMessage, deviceId ?? "", remediation, reporterDeviceId);
   },
 
   "db.recoverReauthReminder": (
@@ -982,9 +984,16 @@ export const writerHandlers = {
     deviceId: string,
     now: number,
     cfg: ReauthBackoffConfig,
+    sourceId?: string,
   ) =>
-    reserveReauthReminder(db, principal, deviceId, now, cfg.reservationTtlMs, (existing) =>
-      isReminderDue(existing, now, cfg),
+    reserveActiveReauthReminder(
+      db,
+      principal,
+      deviceId,
+      now,
+      cfg.reservationTtlMs,
+      (existing) => isReminderDue(existing, now, cfg),
+      sourceId,
     ),
   "db.releaseReauthReminder": (db: Db, token: string) => releaseReauthReminder(db, token),
   "notifications.commitReauthReminder": (
@@ -1214,8 +1223,8 @@ export const writerHandlers = {
       onlineDeviceIds?: readonly DeviceId[];
     },
   ) => createOrAdoptDevice(db, input),
-  "devices.deleteDevice": (db: Db, id: string) =>
-    forgetDeviceWithPermissionInvalidation(db, DeviceId(id)),
+  "devices.deleteDevice": (db: Db, id: string, options?: DeviceForgetOptions) =>
+    forgetDeviceWithPermissionInvalidation(db, DeviceId(id), options),
   "devices.revokeDevice": (
     db: Db,
     id: string,

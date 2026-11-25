@@ -19,7 +19,17 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createBriefsStorageTables } from "../../packages/gateway/src/brain/storage/schema.js";
 import { runSchemaSetup } from "../../packages/gateway/src/data/schema.js";
 import { createDatabase, upsertDocuments } from "../../packages/gateway/src/db.js";
-import { createDevice } from "../../packages/gateway/src/data/repositories/DeviceRepository.js";
+import {
+  createDevice,
+  getDevice,
+} from "../../packages/gateway/src/data/repositories/DeviceRepository.js";
+import { createToken } from "../../packages/gateway/src/data/repositories/TokenRepository.js";
+import {
+  deviceForgetImpact,
+  sourceArchivedDevices,
+} from "../../packages/gateway/src/data/repositories/DeviceRetirementRepository.js";
+import { getRecentDocuments } from "../../packages/gateway/src/data/repositories/DocumentRepository.js";
+import { forgetDeviceWithPermissionInvalidation } from "../../packages/gateway/src/push/mobile-permission-operations.js";
 import { createSource } from "../../packages/gateway/src/data/repositories/SourceRepository.js";
 import {
   bindStorageRetentionPolicy,
@@ -373,6 +383,106 @@ describe("seeded-state artifacts", () => {
       });
       expect(unclassified).toEqual([]);
       database.close();
+    }
+  });
+
+  it("round-trips forgotten source provenance without reviving device credentials", () => {
+    const paths = fixture();
+    const sourcePath = join(paths.root, "retained-history.db");
+    const source = createDatabase(sourcePath);
+    const device = createDevice(source, { name: "Fictional retired phone", kind: "android" });
+    createToken(source, device.id, ["read"]);
+    const current = createDevice(source, { name: "Fictional current client", kind: "cli" });
+    createToken(source, current.id, ["read"]);
+    const account = createSource(source, {
+      type: "fictional-activity",
+      accountId: "local",
+      deviceId: device.id,
+      multiDeviceMode: "partitioned",
+    });
+    source
+      .prepare(
+        `
+      INSERT INTO documents (id, provider_id, source_id, external_id, stream_id, title,
+        content, content_hash, source_created_at, source_updated_at, ingested_at, updated_at)
+      VALUES ('retained-document', 'fictional-provider', ?, 'retained-item', ?,
+        'Invented activity', 'Fictional historical entry.', 'retained-hash',
+        '2026-01-01', '2026-01-01', '2026-01-01', '2026-01-01')
+    `,
+      )
+      .run(account.id, device.id);
+    const impact = deviceForgetImpact(source, device.id);
+    expect(
+      forgetDeviceWithPermissionInvalidation(source, device.id, {
+        data: "keep",
+        impactFingerprint: impact.fingerprint,
+      }),
+    ).toMatchObject({ deleted: true });
+    expect(source.prepare("SELECT COUNT(*) AS n FROM tokens").get().n).toBe(1);
+    const tables = source
+      .prepare(
+        "SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
+      )
+      .pluck()
+      .all()
+      .map((name) =>
+        seededStateTableSpec(
+          name,
+          source.prepare("SELECT name FROM pragma_table_info(?)").pluck().all(name),
+        ),
+      )
+      .filter(Boolean);
+    expect(tables).toContain("forgotten_devices");
+    expect(tables).toContain("source_device_archives");
+    source.close();
+    createSeededStateArtifact(
+      {
+        ...spec(paths),
+        schemaVersion: LATEST_SCHEMA_VERSION,
+        databases: [{ source: sourcePath, target: "omnesis.db", tables }],
+        expected: {
+          rowCounts: {
+            "omnesis.db": {
+              devices: 2,
+              forgotten_devices: 1,
+              source_device_archives: 1,
+              sources: 1,
+              documents: 1,
+            },
+          },
+        },
+      },
+      paths.artifact,
+    );
+    installSeededStateArtifact(
+      paths.artifact,
+      paths.state,
+      installOptions(paths, { maxSchemaVersion: LATEST_SCHEMA_VERSION }),
+    );
+    const installed = createDatabase(join(paths.state, "omnesis.db"));
+    try {
+      expect(installed.pragma("foreign_key_check")).toEqual([]);
+      expect(getDevice(installed, device.id)).toBeNull();
+      expect(installed.prepare("SELECT enabled FROM sources WHERE id = ?").get(account.id)).toEqual(
+        { enabled: 0 },
+      );
+      expect(installed.prepare("SELECT COUNT(*) AS n FROM source_devices").get().n).toBe(0);
+      expect(installed.prepare("SELECT COUNT(*) AS n FROM tokens").get().n).toBe(0);
+      expect(sourceArchivedDevices(installed, account.id)).toEqual([
+        {
+          deviceId: device.id,
+          name: device.name,
+          kind: device.kind,
+          forgottenAt: expect.any(Number),
+        },
+      ]);
+      expect(getRecentDocuments(installed, account.id)[0]).toMatchObject({
+        device_id: device.id,
+        device_name: device.name,
+        title: "Invented activity",
+      });
+    } finally {
+      installed.close();
     }
   });
 

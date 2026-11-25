@@ -15,7 +15,6 @@ import {
   type StartHistoryCleanupJob,
   type UpdateHistoryCleanupJob,
 } from "./storage/history-cleanup-store.js";
-import type { StoredHistoryCleanupJob } from "./storage/history-cleanup-types.js";
 import {
   startStorageTrimJob,
   applyStorageTrimPage,
@@ -71,11 +70,6 @@ import {
   type TaskCommand,
   type TaskCommandResult,
 } from "./brain/storage/tasks.js";
-import type {
-  ProposedTaskChange,
-  ObservationClaim,
-  ObservationScores,
-} from "./brain/storage/types.js";
 import type { ConversationEvidenceProjection } from "./sources/omnesis-chat/evidence-projection.js";
 import {
   assertPersonProfileReceipt,
@@ -229,7 +223,7 @@ import {
   revokeSyncAttempt,
   resetMemberCursor,
   resetSourceCursors,
-  reserveReauthReminder,
+  reserveActiveReauthReminder,
   releaseReauthReminder,
   applySnapshotAbsencePlan,
   applyReplicaOmissions,
@@ -681,6 +675,7 @@ import {
   type MobilePermissionBackoffConfig,
   type MobilePermissionReminderReservation,
 } from "./data/repositories/MobilePermissionHealthRepository.js";
+import type { DeviceForgetOptions } from "./data/repositories/DeviceRetirementRepository.js";
 import type { MobilePermissionHealthReport } from "@omnesis/types/mobile-permission-health";
 import {
   createSourceWithPermissionInvalidation,
@@ -987,6 +982,7 @@ export interface WriteGate extends KnowledgeWriteGate {
     errorMessage: string,
     deviceId?: string,
     remediation?: SyncRemediation,
+    reporterDeviceId?: string,
   ): Promise<void>;
   /** Clear the persisted sync error on one row, or on every row of the source when no device is given. */
   clearSyncError(sourceId: string, deviceId?: string): Promise<void>;
@@ -1002,6 +998,7 @@ export interface WriteGate extends KnowledgeWriteGate {
     deviceId: string,
     now: number,
     cfg: ReauthBackoffConfig,
+    sourceId?: string,
   ): Promise<string | null>;
   releaseReauthReminder(token: string): Promise<boolean>;
   commitReauthReminderNotification(
@@ -1428,11 +1425,11 @@ export interface WriteGate extends KnowledgeWriteGate {
     onlineDeviceIds?: readonly DeviceId[];
   }): Promise<CreateOrAdoptDeviceResult>;
   /**
-   * Hard-delete a device ("forget"). Refused inside the write transaction
-   * while any source is owned by or shared with the device. See
-   * forgetDeviceWithPermissionInvalidation.
+   * Forget a device, with an explicit reviewed retention choice when it hosts
+   * sources. Credential revocation and membership retirement commit together.
+   * See forgetDeviceWithPermissionInvalidation.
    */
-  deleteDevice(id: DeviceId): Promise<DeleteDeviceResult>;
+  deleteDevice(id: DeviceId, options?: DeviceForgetOptions): Promise<DeleteDeviceResult>;
   /**
    * Revoke a device — the default unpair. Device tokens, push registrations,
    * and principal credentials bound to the device are invalidated; the row,
@@ -2455,6 +2452,12 @@ import {
   type WriterOpName,
   type WriterReturn,
 } from "./scheduler/writer-handlers.js";
+import type {
+  ProposedTaskChange,
+  ObservationClaim,
+  ObservationScores,
+} from "./brain/storage/types.js";
+import type { StoredHistoryCleanupJob } from "./storage/history-cleanup-types.js";
 import type { KnowledgeCanonicalFence } from "./brain/knowledge/canonical-fence.js";
 import type { AccountDescriptor, SourceSyncMeta, SyncCursor } from "@omnesis/source-sdk";
 import type Database from "better-sqlite3";
@@ -2635,13 +2638,13 @@ export function writeGateFromCall(call: WriterCallFn): WriteGate {
       call("db.applySourceUrlRecanonicalizationPage", [cursor, mutations]),
     finishSourceUrlRecanonicalization: (cursor) =>
       call("db.finishSourceUrlRecanonicalization", [cursor]),
-    setSyncError: (sourceId, errorMessage, deviceId, remediation) =>
-      call("db.setSyncError", [sourceId, errorMessage, deviceId, remediation]),
+    setSyncError: (sourceId, errorMessage, deviceId, remediation, reporterDeviceId) =>
+      call("db.setSyncError", [sourceId, errorMessage, deviceId, remediation, reporterDeviceId]),
     clearSyncError: (sourceId, deviceId) => call("db.clearSyncError", [sourceId, deviceId]),
     recoverReauthReminder: (principal, deviceId, collapsePrefix, now) =>
       call("db.recoverReauthReminder", [principal, deviceId, collapsePrefix, now]),
-    reserveReauthReminder: (principal, deviceId, now, cfg) =>
-      call("db.reserveReauthReminder", [principal, deviceId, now, cfg]),
+    reserveReauthReminder: (principal, deviceId, now, cfg, sourceId) =>
+      call("db.reserveReauthReminder", [principal, deviceId, now, cfg, sourceId]),
     releaseReauthReminder: (token) => call("db.releaseReauthReminder", [token]),
     commitReauthReminderNotification: (token, now, input) =>
       call("notifications.commitReauthReminder", [token, now, input]),
@@ -2750,7 +2753,7 @@ export function writeGateFromCall(call: WriterCallFn): WriteGate {
 
     createDevice: (opts) => call("devices.createDevice", [opts]),
     createOrAdoptDevice: (input) => call("devices.createOrAdoptDevice", [input]),
-    deleteDevice: (id) => call("devices.deleteDevice", [id]),
+    deleteDevice: (id, options) => call("devices.deleteDevice", [id, options]),
     revokeDevice: (id, pairingFence, expectedImpactFingerprint) =>
       call("devices.revokeDevice", [id, pairingFence, expectedImpactFingerprint]),
     renameDevice: (id, name) => call("devices.renameDevice", [id, name]),
@@ -3259,8 +3262,8 @@ export function directWriteGate(db: Db): WriteGate {
       writerHandlers["db.applySourceUrlRecanonicalizationPage"](db, cursor, mutations),
     finishSourceUrlRecanonicalization: async (cursor) =>
       writerHandlers["db.finishSourceUrlRecanonicalization"](db, cursor),
-    setSyncError: async (sourceId, errorMessage, deviceId, remediation) => {
-      setSyncError(db, sourceId, errorMessage, deviceId ?? "", remediation);
+    setSyncError: async (sourceId, errorMessage, deviceId, remediation, reporterDeviceId) => {
+      setSyncError(db, sourceId, errorMessage, deviceId ?? "", remediation, reporterDeviceId);
     },
     clearSyncError: async (sourceId, deviceId) => {
       clearSyncError(db, sourceId, deviceId);
@@ -3272,9 +3275,15 @@ export function directWriteGate(db: Db): WriteGate {
           return supersedeNotificationsByCollapseIdPrefix(db, collapsePrefix, now);
         })
         .immediate(),
-    reserveReauthReminder: async (principal, deviceId, now, cfg) =>
-      reserveReauthReminder(db, principal, deviceId, now, cfg.reservationTtlMs, (existing) =>
-        isReminderDue(existing, now, cfg),
+    reserveReauthReminder: async (principal, deviceId, now, cfg, sourceId) =>
+      reserveActiveReauthReminder(
+        db,
+        principal,
+        deviceId,
+        now,
+        cfg.reservationTtlMs,
+        (existing) => isReminderDue(existing, now, cfg),
+        sourceId,
       ),
     releaseReauthReminder: async (token) => releaseReauthReminder(db, token),
     commitReauthReminderNotification: async (token, now, input) =>
@@ -3408,7 +3417,7 @@ export function directWriteGate(db: Db): WriteGate {
 
     createDevice: async (opts) => createDevice(db, opts),
     createOrAdoptDevice: async (input) => createOrAdoptDevice(db, input),
-    deleteDevice: async (id) => forgetDeviceWithPermissionInvalidation(db, id),
+    deleteDevice: async (id, options) => forgetDeviceWithPermissionInvalidation(db, id, options),
     revokeDevice: async (id, pairingFence, expectedImpactFingerprint) =>
       withPairingGenerationFence(db, pairingFence, () =>
         revokeDeviceWithPermissionInvalidation(db, id, Date.now(), expectedImpactFingerprint),

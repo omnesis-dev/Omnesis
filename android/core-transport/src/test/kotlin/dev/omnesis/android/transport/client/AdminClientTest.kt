@@ -539,6 +539,38 @@ class AdminClientTest {
     }
 
     @Test
+    fun forget_device_reviews_current_sources_and_sends_explicit_data_choice_and_fence() = runTest {
+        server.enqueue(MockResponse().setBody("""{"sources":[{"id":"activity:local","type":"activity","multiDeviceMode":"partitioned","otherDeviceCount":1,"deleteScope":"partition"}],"fingerprint":"review-1"}"""))
+        val impact = client().forgetDeviceImpact("dev-old")
+        assertTrue(impact.hasSources)
+        assertEquals("partition", impact.sources.single().deleteScope)
+        assertEquals("/admin/devices/dev-old/forget-impact", server.takeRequest().path)
+        for (data in dev.omnesis.android.transport.dto.DeviceForgetData.entries) {
+            server.enqueue(MockResponse().setBody("""{"ok":true,"forgotten":true}"""))
+            client().forgetDevice("dev-old", data, impact.fingerprint)
+            assertEquals("/admin/devices/dev-old?forget=true&data=${data.wireValue}&impactFingerprint=review-1", server.takeRequest().path)
+        }
+    }
+
+    @Test
+    fun forget_device_keeps_changed_impact_refusal_for_another_review() = runTest {
+        server.enqueue(MockResponse().setResponseCode(409).setBody("""{"code":"DEVICE_FORGET_IMPACT_CHANGED","error":"Review the source impact again."}"""))
+        val error = runCatching { client().forgetDevice("dev-old", dev.omnesis.android.transport.dto.DeviceForgetData.Delete, "stale") }.exceptionOrNull() as GatewayException.ServerError
+        assertEquals("DEVICE_FORGET_IMPACT_CHANGED", error.code)
+        assertEquals(1, server.requestCount)
+    }
+
+    @Test
+    fun historical_source_keeps_provenance_without_an_active_host() = runTest {
+        server.enqueue(MockResponse().setBody("""{"items":[{"id":"activity:local","type":"activity","deviceId":"retired-phone","archived":true,"archivedDevices":[{"deviceId":"retired-phone","name":"Retired phone","kind":"android","forgottenAt":3}]}]}"""))
+        val source = client().sources().single()
+        assertTrue(source.archived)
+        assertTrue(source.hostDeviceIds().isEmpty())
+        assertFalse(source.hosts("retired-phone"))
+        assertEquals("Retired phone", source.archivedDevices.single().name)
+    }
+
+    @Test
     fun forget_device_surfaces_the_still_hosts_sources_refusal() = runTest {
         server.enqueue(
             MockResponse().setResponseCode(409).setBody(

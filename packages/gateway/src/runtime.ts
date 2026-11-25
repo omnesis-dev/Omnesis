@@ -787,8 +787,14 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
   const reauthBackoffConfig = resolveReauthBackoffConfig(config.gateway?.reauthReminders);
   const needsAuthNotifier = new NeedsAuthNotifier({
     publisher: pushBroadcaster,
-    reserve: (principal, deviceId) =>
-      writeGate.reserveReauthReminder(principal, deviceId, Date.now(), reauthBackoffConfig),
+    reserve: (principal, deviceId, sourceId) =>
+      writeGate.reserveReauthReminder(
+        principal,
+        deviceId,
+        Date.now(),
+        reauthBackoffConfig,
+        sourceId,
+      ),
     retain: async (reservation, message, deviceIds) => {
       const now = Date.now();
       const retained = await writeGate.commitReauthReminderNotification(reservation, now, {

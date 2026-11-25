@@ -8,6 +8,12 @@ import {
   type DeviceId,
   type SourceType,
 } from "@omnesis/types";
+import {
+  deviceForgetImpact,
+  retireDeviceSources,
+  type DeviceForgetOptions,
+  type RetiredDeviceSources,
+} from "../data/repositories/DeviceRetirementRepository.js";
 import { getDevice, deleteDevice, revokeDevice } from "../data/repositories/DeviceRepository.js";
 import {
   clearSourceRemoved,
@@ -38,6 +44,7 @@ import {
   agentDeviceRevocationImpact,
   STALE_DEVICE_REVOCATION_IMPACT_ERROR,
 } from "../access/agent-device-authorization.js";
+import { needsAuthCollapsePrefix } from "./producers/needs-auth.js";
 import { supersedeDeliveriesForDevice, supersedeNotificationsByCollapseIdPrefix } from "./queue.js";
 import {
   collapsePrefix,
@@ -187,13 +194,15 @@ export function moveSourceWithPermissionInvalidation(
       }
       if (memberScopedParams !== undefined) {
         const targetDeviceId = fields.deviceId ?? before.deviceId;
-        initializeOrAssertSourceMemberConfigContractForDevice(
-          db,
-          id,
-          before.type,
-          before.deviceId,
-          memberScopedParams,
-        );
+        if (getDevice(db, before.deviceId)) {
+          initializeOrAssertSourceMemberConfigContractForDevice(
+            db,
+            id,
+            before.type,
+            before.deviceId,
+            memberScopedParams,
+          );
+        }
         initializeOrAssertSourceMemberConfigContractForDevice(
           db,
           id,
@@ -347,6 +356,19 @@ export function revokeDeviceWithPermissionInvalidation(
       const revoked = revokeDevice(db, id);
       if (!revoked) return false;
       supersedeDeliveriesForDevice(db, id);
+      // The origin and the recipients are different devices: retire reminders
+      // about this origin even when they were queued for another phone.
+      for (const row of db
+        .prepare<[string], { principal: string }>(
+          "SELECT principal FROM reauth_reminders WHERE device_id = ?",
+        )
+        .all(id)) {
+        supersedeNotificationsByCollapseIdPrefix(
+          db,
+          needsAuthCollapsePrefix(row.principal, id),
+          now,
+        );
+      }
       const healthSourceIds = deleteMobilePermissionHealthForDevice(db, id);
       for (const sourceId of new Set([...sourceIds, ...healthSourceIds])) {
         supersedeNotificationsByCollapseIdPrefix(db, memberCollapsePrefix(sourceId, id), now);
@@ -357,21 +379,24 @@ export function revokeDeviceWithPermissionInvalidation(
     .immediate();
 }
 
-/** Outcome of a hard device delete, decided inside the write transaction. */
+/** Outcome of forgetting a device, decided inside the write transaction. */
 export type DeleteDeviceResult =
-  | { deleted: true }
+  | ({ deleted: true } & Partial<RetiredDeviceSources>)
+  | { deleted: false; reason: "impact-changed" }
   | { deleted: false; reason: "not-found" }
   | { deleted: false; reason: "hosts-sources"; sourceIds: SourceId[] };
 
 /**
- * Hard-delete a device ("forget"). Refuses — atomically with the check —
- * while any source still points at the device, so removing a device can
- * never take a corpus with it; the caller surfaces the hosted ids. A
- * device with no sources has no live memberships either (membership
- * mirrors the owning device), but stale rows are swept regardless so the
- * FK on source_devices can't block the delete.
+ * Forget an operational identity. Sources require an explicit reviewed data
+ * choice; legacy callers with no choice retain the source-hosting refusal.
+ * Credential revocation, source retirement and durable cleanup journals share
+ * one transaction. Devices without provenance can be deleted outright.
  */
-export function forgetDeviceWithPermissionInvalidation(db: Db, id: DeviceId): DeleteDeviceResult {
+export function forgetDeviceWithPermissionInvalidation(
+  db: Db,
+  id: DeviceId,
+  options?: DeviceForgetOptions,
+): DeleteDeviceResult {
   return db
     .transaction((): DeleteDeviceResult => {
       // Ownership and membership both count: a device that is a member of
@@ -384,8 +409,22 @@ export function forgetDeviceWithPermissionInvalidation(db: Db, id: DeviceId): De
         )
         .all(id, id)
         .map((row) => SourceId(row.id));
+      if (!getDevice(db, id)) return { deleted: false, reason: "not-found" };
+      if (options) {
+        const impact = deviceForgetImpact(db, id);
+        if (impact?.fingerprint !== options.impactFingerprint)
+          return { deleted: false, reason: "impact-changed" };
+        if (hosted.length > 0) {
+          // Authority changes in the same transaction as membership retirement.
+          revokeDeviceWithPermissionInvalidation(db, id);
+          const retired = retireDeviceSources(db, id, options.data);
+          for (const sourceId of retired.removedSourceIds)
+            invalidateMobilePermissionHealth(db, sourceId, Date.now());
+          return { deleted: true, ...retired };
+        }
+      }
       if (hosted.length > 0) return { deleted: false, reason: "hosts-sources", sourceIds: hosted };
-      supersedeDeliveriesForDevice(db, id);
+      revokeDeviceWithPermissionInvalidation(db, id);
       const deleted = deleteDevice(db, id);
       if (!deleted) return { deleted: false, reason: "not-found" };
       return { deleted: true };

@@ -64,7 +64,11 @@ describe("NeedsAuthNotifier.notify", () => {
       providerId: "fictional-provider:account@example.com",
       deviceId: LAPTOP,
     });
-    expect(reserve).toHaveBeenCalledWith("fictional-provider:account@example.com", LAPTOP);
+    expect(reserve).toHaveBeenCalledWith(
+      "fictional-provider:account@example.com",
+      LAPTOP,
+      "fictional-mail:account@example.com",
+    );
     const message = {
       kind: "needs-auth",
       title: "Re-auth needed",
@@ -133,8 +137,8 @@ describe("NeedsAuthNotifier.notify", () => {
     // The in-flight key is (principal, device): the laptop's second lapse
     // joins its first; the studio machine's is a separate episode.
     expect(reserve.mock.calls).toEqual([
-      ["provider:account", LAPTOP],
-      ["provider:account", STUDIO],
+      ["provider:account", LAPTOP, "fictional-mail:a"],
+      ["provider:account", STUDIO, "fictional-mail:a"],
     ]);
     settle();
     await inFlight;
@@ -165,8 +169,8 @@ describe("NeedsAuthNotifier.notify", () => {
       deviceId: LAPTOP,
     });
     expect(reserve.mock.calls).toEqual([
-      ["provider:account", LAPTOP],
-      ["provider:account", LAPTOP],
+      ["provider:account", LAPTOP, "fictional-mail:a"],
+      ["provider:account", LAPTOP, "fictional-calendar:a"],
     ]);
   });
 
@@ -183,8 +187,8 @@ describe("NeedsAuthNotifier.notify", () => {
       deviceId: STUDIO,
     });
     expect(reserve.mock.calls).toEqual([
-      ["provider:account", LAPTOP],
-      ["provider:account", STUDIO],
+      ["provider:account", LAPTOP, "fictional-mail:a"],
+      ["provider:account", STUDIO, "fictional-mail:a"],
     ]);
     const [laptop, studio] = retain.mock.calls.map((call) => call[1]);
     expect(laptop?.body).toBe("Sign in again on Maya-Laptop to keep provider:account syncing.");
@@ -214,6 +218,14 @@ describe("NeedsAuthNotifier.notify", () => {
 
   test("recovery between reservation and atomic retention creates no delivery or wake", async () => {
     const db = createDatabase(":memory:");
+    for (const [id, name] of [
+      [LAPTOP, "Fixture laptop origin"],
+      [STUDIO, "Fixture studio origin"],
+    ]) {
+      db.prepare(
+        "INSERT INTO devices (id, name, kind, paired_at) VALUES (?, ?, 'collector', 1)",
+      ).run(id, name);
+    }
     databases.push(db);
     const device = createDevice(db, { name: "Fictional alert phone", kind: "ios" });
     db.prepare("UPDATE devices SET push_transport = 'direct-apns' WHERE id = ?").run(device.id);
@@ -267,6 +279,14 @@ describe("NeedsAuthNotifier.notify", () => {
 
   test("a retry after a post-commit wake failure leaves one pending delivery", async () => {
     const db = createDatabase(":memory:");
+    for (const [id, name] of [
+      [LAPTOP, "Fixture laptop origin"],
+      [STUDIO, "Fixture studio origin"],
+    ]) {
+      db.prepare(
+        "INSERT INTO devices (id, name, kind, paired_at) VALUES (?, ?, 'collector', 1)",
+      ).run(id, name);
+    }
     databases.push(db);
     const device = createDevice(db, { name: "Fictional alert phone", kind: "ios" });
     db.prepare("UPDATE devices SET push_transport = 'direct-apns' WHERE id = ?").run(device.id);
@@ -321,6 +341,14 @@ describe("NeedsAuthNotifier.notify", () => {
 
   test("one device's recovery supersedes only its own pending reminder", async () => {
     const db = createDatabase(":memory:");
+    for (const [id, name] of [
+      [LAPTOP, "Fixture laptop origin"],
+      [STUDIO, "Fixture studio origin"],
+    ]) {
+      db.prepare(
+        "INSERT INTO devices (id, name, kind, paired_at) VALUES (?, ?, 'collector', 1)",
+      ).run(id, name);
+    }
     databases.push(db);
     const device = createDevice(db, { name: "Fictional alert phone", kind: "ios" });
     db.prepare("UPDATE devices SET push_transport = 'direct-apns' WHERE id = ?").run(device.id);
