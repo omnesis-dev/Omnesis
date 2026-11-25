@@ -18,6 +18,14 @@ const channelRejection = z
   })
   .strict();
 
+const sessionRenewal = z
+  .object({
+    type: z.literal("renew"),
+    version: z.literal(1),
+    session: z.string().min(1).max(4096),
+  })
+  .strict();
+
 export class RelayError extends Error {
   /** `code`, when set, is the one word the response body carries for the client to act on. */
   constructor(
@@ -101,9 +109,29 @@ export class TunnelBroker {
       throw new RelayError(503, "Gateway capacity reached");
   }
 
-  attach(account: string, socket: WebSocket, expiresAt: number, rejectChannels = false): void {
+  attach(
+    account: string,
+    socket: WebSocket,
+    expiresAt: number,
+    rejectChannels = false,
+    renewSession?: (token: string) => Promise<number>,
+  ): void {
     this.admit(account);
     let alive = true;
+    let deadline = expiresAt;
+    let renewing = false;
+    const expiryDelay = (): number =>
+      Math.min(2_147_483_647, Math.max(0, deadline * 1000 - Date.now()));
+    const expire = (): void => {
+      // Node timers are bounded; a distant authoritative deadline needs another slice.
+      if (Date.now() < deadline * 1000) {
+        tunnel.expiry = setTimeout(expire, expiryDelay());
+        return;
+      }
+      this.metrics.tunnel("session_expired");
+      tunnel.revoke();
+      socket.terminate();
+    };
     const tunnel: Tunnel = {
       socket,
       // Legacy gateways close their whole tunnel above sixteen channels. Preserve
@@ -117,15 +145,7 @@ export class TunnelBroker {
       streams: new Set(),
       pending: new Set(),
       clients: new Map(),
-      // See #1283 — renew routing sessions without interrupting active requests.
-      expiry: setTimeout(
-        () => {
-          this.metrics.tunnel("session_expired");
-          tunnel.revoke();
-          socket.terminate();
-        },
-        Math.max(0, expiresAt * 1000 - Date.now()),
-      ),
+      expiry: setTimeout(expire, expiryDelay()),
       heartbeat: setInterval(() => {
         if (!alive) {
           this.metrics.tunnel("heartbeat_timeout");
@@ -159,10 +179,58 @@ export class TunnelBroker {
       this.metrics.tunnel("socket_error");
       socket.terminate();
     });
+    const terminateRenewal = (): void => {
+      if (this.gateways.get(account) === tunnel) this.metrics.tunnel("session_renewal_refused");
+      tunnel.revoke();
+      socket.terminate();
+    };
+    const current = (): boolean =>
+      this.gateways.get(account) === tunnel && socket.readyState === WebSocket.OPEN;
+    const renew = async (
+      session: string,
+      verify: (token: string) => Promise<number>,
+    ): Promise<void> => {
+      if (renewing || !current() || Date.now() >= deadline * 1000) {
+        terminateRenewal();
+        return;
+      }
+      renewing = true;
+      try {
+        const next = await verify(session);
+        // Expiry, revocation and a replacement socket always win over verification.
+        if (!current()) return;
+        if (
+          Date.now() >= deadline * 1000 ||
+          !Number.isSafeInteger(next) ||
+          !Number.isSafeInteger(next * 1000) ||
+          next <= deadline
+        ) {
+          terminateRenewal();
+          return;
+        }
+        deadline = next;
+        clearTimeout(tunnel.expiry);
+        tunnel.expiry = setTimeout(expire, expiryDelay());
+        socket.send(JSON.stringify({ type: "renewed", version: 1, expiresAt: deadline }));
+        this.metrics.tunnel("session_renewed");
+      } catch {
+        if (current()) terminateRenewal();
+      } finally {
+        renewing = false;
+      }
+    };
     socket.on("message", (raw) => {
-      if (rejectChannels) {
-        try {
-          const message = channelRejection.safeParse(JSON.parse(raw.toString()));
+      try {
+        const parsed: unknown = JSON.parse(raw.toString());
+        if (renewSession) {
+          const message = sessionRenewal.safeParse(parsed);
+          if (message.success) {
+            void renew(message.data.session, renewSession);
+            return;
+          }
+        }
+        if (rejectChannels) {
+          const message = channelRejection.safeParse(parsed);
           if (message.success) {
             // A stale or foreign ticket is harmless; it cannot cancel another owner.
             if (this.pending.get(message.data.ticket)?.owner === tunnel) {
@@ -174,12 +242,13 @@ export class TunnelBroker {
             }
             return;
           }
-        } catch {
-          // Invalid control input follows the ordinary protocol violation path.
         }
+      } catch {
+        // Invalid control input follows the ordinary protocol violation path.
       }
       this.metrics.tunnel("unexpected_message");
-      socket.close(1008, "Unexpected control message");
+      if (renewSession) terminateRenewal();
+      else socket.close(1008, "Unexpected control message");
     });
     socket.once("close", tunnel.revoke);
     socket.send(
@@ -188,6 +257,7 @@ export class TunnelBroker {
         version: 1,
         heartbeatMs: this.limits.heartbeatMs,
         ...(rejectChannels ? { rejectChannels: true } : {}),
+        ...(renewSession ? { sessionExpiresAt: expiresAt } : {}),
       }),
     );
   }

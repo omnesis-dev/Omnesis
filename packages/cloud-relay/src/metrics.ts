@@ -74,6 +74,8 @@ export type TunnelEvent =
   | "disconnected"
   | "heartbeat_timeout"
   | "session_expired"
+  | "session_renewed"
+  | "session_renewal_refused"
   | "socket_error"
   | "unexpected_message";
 export type StreamEvent =

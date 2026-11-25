@@ -344,6 +344,15 @@ their existing wire format. Until a gateway advertises that capability, the rela
 keeps its previous budget of 16 streams and eight streams per client address,
 so upgrading the relay first cannot overflow an older gateway.
 
+Gateways negotiate routing-session renewal on their existing control connection.
+Before the accepted credential expires, the gateway proves its owner and TLS keys
+again and submits the fresh routing credential. The relay checks the same live
+owner and gateway registration before extending the connection's deadline; the
+gateway uses the acknowledged credential for subsequent data channels. Active
+HTTP responses, WebSockets and server-sent events keep their existing channels.
+Failed authentication, revocation and missed expiry deadlines still close access.
+Older peers retain their normal expiry behavior until both sides support renewal.
+
 A connection over a limit is closed before it reaches a gateway. So one client
 cannot fill a gateway's streams or the relay's. The last quarter of the relay's
 data connections and each gateway's streams is reserved for client address buckets

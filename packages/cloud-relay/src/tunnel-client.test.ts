@@ -141,6 +141,158 @@ test("online settles when the relay accepts the tunnel, at once when it already 
   await expect(tunnel.online(AbortSignal.abort(new Error("stopped")))).rejects.toThrow("stopped");
 });
 
+test("negotiated renewal preserves active channels across expiry and authenticates new ones with the acknowledged token", async () => {
+  vi.setSystemTime(0);
+  const session = vi
+    .fn<GatewayTunnelOptions["session"]>()
+    .mockResolvedValueOnce("initial-session")
+    .mockResolvedValue("fresh-session");
+  const invalidateSession = vi.fn();
+  const tunnel = new GatewayTunnel({ ...options(), session, invalidateSession });
+  tunnel.start();
+  await flush();
+  const control = sockets()[0];
+  control.open();
+  control.emit(
+    "message",
+    Buffer.from(
+      JSON.stringify({ type: "ready", version: 1, heartbeatMs: 21_600_000, sessionExpiresAt: 120 }),
+    ),
+  );
+  control.emit(
+    "message",
+    Buffer.from(JSON.stringify({ type: "open", version: 1, ticket: "a".repeat(64) })),
+  );
+  const existing = sockets()[1];
+  existing.open();
+  await flush();
+  await vi.advanceTimersByTimeAsync(80_000);
+  expect(invalidateSession).toHaveBeenCalledOnce();
+  expect(control.send).toHaveBeenCalledWith(
+    JSON.stringify({ type: "renew", version: 1, session: "fresh-session" }),
+  );
+  expect(existing.readyState).toBe(1);
+  control.emit(
+    "message",
+    Buffer.from(JSON.stringify({ type: "renewed", version: 1, expiresAt: 240 })),
+  );
+  await vi.advanceTimersByTimeAsync(41_000);
+  expect(tunnel.status().state).toBe("online");
+  expect(existing.readyState).toBe(1);
+  control.emit(
+    "message",
+    Buffer.from(JSON.stringify({ type: "open", version: 1, ticket: "b".repeat(64) })),
+  );
+  expect(sockets()[2].options.headers["x-omnesis-relay-session"]).toBe("fresh-session");
+  expect(session).toHaveBeenCalledTimes(2);
+  tunnel.stop();
+});
+
+test("an older relay keeps its ordinary lifecycle without starting credential renewal", async () => {
+  vi.setSystemTime(0);
+  const session = vi.fn<GatewayTunnelOptions["session"]>().mockResolvedValue("initial-session");
+  const invalidateSession = vi.fn();
+  const tunnel = new GatewayTunnel({ ...options(), session, invalidateSession });
+  tunnel.start();
+  await flush();
+  const control = sockets()[0];
+  control.open();
+  expect(control.options.headers["x-omnesis-tunnel-renewal"]).toBe("1");
+  control.emit(
+    "message",
+    Buffer.from(JSON.stringify({ type: "ready", version: 1, heartbeatMs: 21_600_000 })),
+  );
+  await vi.advanceTimersByTimeAsync(7_200_000);
+  expect(session).toHaveBeenCalledOnce();
+  expect(invalidateSession).not.toHaveBeenCalled();
+  expect(control.send).not.toHaveBeenCalled();
+  expect(tunnel.status().state).toBe("online");
+  tunnel.stop();
+});
+
+test("a late refusal of an old data credential cannot invalidate an acknowledged renewal", async () => {
+  vi.setSystemTime(0);
+  const session = vi
+    .fn<GatewayTunnelOptions["session"]>()
+    .mockResolvedValueOnce("initial-session")
+    .mockResolvedValue("fresh-session");
+  const invalidateSession = vi.fn();
+  const tunnel = new GatewayTunnel({ ...options(), session, invalidateSession });
+  tunnel.start();
+  await flush();
+  const control = sockets()[0];
+  control.open();
+  control.emit(
+    "message",
+    Buffer.from(
+      JSON.stringify({ type: "ready", version: 1, heartbeatMs: 21_600_000, sessionExpiresAt: 120 }),
+    ),
+  );
+  control.emit(
+    "message",
+    Buffer.from(JSON.stringify({ type: "open", version: 1, ticket: "a".repeat(64) })),
+  );
+  const old = sockets()[1];
+  await vi.advanceTimersByTimeAsync(80_000);
+  control.emit(
+    "message",
+    Buffer.from(JSON.stringify({ type: "renewed", version: 1, expiresAt: 240 })),
+  );
+  old.emit("unexpected-response", { destroy: vi.fn() }, { statusCode: 401, destroy: vi.fn() });
+  expect(old.readyState).toBe(3);
+  expect(control.readyState).toBe(1);
+  expect(invalidateSession).toHaveBeenCalledOnce();
+  control.emit(
+    "message",
+    Buffer.from(JSON.stringify({ type: "open", version: 1, ticket: "b".repeat(64) })),
+  );
+  sockets()[2].emit(
+    "unexpected-response",
+    { destroy: vi.fn() },
+    { statusCode: 401, destroy: vi.fn() },
+  );
+  expect(control.readyState).toBe(3);
+  expect(invalidateSession).toHaveBeenCalledTimes(2);
+  tunnel.stop();
+});
+
+test("reconnection joins an aborted renewal source before starting another credential exchange", async () => {
+  vi.setSystemTime(0);
+  let complete!: (value: string) => void;
+  const session = vi
+    .fn<GatewayTunnelOptions["session"]>()
+    .mockResolvedValueOnce("initial-session")
+    .mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          complete = resolve;
+        }),
+    )
+    .mockResolvedValue("reconnected-session");
+  const tunnel = new GatewayTunnel({ ...options(), session });
+  tunnel.start();
+  await flush();
+  const control = sockets()[0];
+  control.open();
+  control.emit(
+    "message",
+    Buffer.from(
+      JSON.stringify({ type: "ready", version: 1, heartbeatMs: 21_600_000, sessionExpiresAt: 120 }),
+    ),
+  );
+  await vi.advanceTimersByTimeAsync(80_000);
+  expect(session).toHaveBeenCalledTimes(2);
+  control.terminate();
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(session).toHaveBeenCalledTimes(2);
+  expect(sockets()).toHaveLength(1);
+  complete("discarded-late-session");
+  await flush();
+  expect(session).toHaveBeenCalledTimes(3);
+  expect(sockets()[1].options.headers["x-omnesis-relay-session"]).toBe("reconnected-session");
+  tunnel.stop();
+});
+
 test("synchronous/asynchronous session failures retry and stopping cancels an in-flight credential read", async () => {
   const session = vi
     .fn<GatewayTunnelOptions["session"]>()
@@ -723,4 +875,294 @@ test("a destination that closes before its asynchronous handoff already supplies
   expect(mocks.connect).toHaveBeenCalledOnce();
   await tunnel.close();
   expect(tunnel.cleanupFailure()).toBeUndefined();
+});
+
+test("a second ready frame cannot reset an accepted session or preserve its active channels", async () => {
+  vi.setSystemTime(0);
+  const session = vi.fn<GatewayTunnelOptions["session"]>().mockResolvedValue("initial-session");
+  const tunnel = new GatewayTunnel({ ...options(), session });
+  tunnel.start();
+  await flush();
+  const control = sockets()[0];
+  control.open();
+  const ready = Buffer.from(
+    JSON.stringify({
+      type: "ready",
+      version: 1,
+      heartbeatMs: 21_600_000,
+      sessionExpiresAt: 120,
+    }),
+  );
+  control.emit("message", ready);
+  control.emit(
+    "message",
+    Buffer.from(JSON.stringify({ type: "open", version: 1, ticket: "f".repeat(64) })),
+  );
+  const channel = sockets()[1];
+  channel.open();
+  await flush();
+  expect(tunnel.status().state).toBe("online");
+  control.emit("message", ready);
+  expect(control.readyState).toBe(3);
+  expect(channel.readyState).toBe(3);
+  expect(tunnel.status().state).toBe("offline");
+  expect(session).toHaveBeenCalledOnce();
+  await tunnel.close();
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+test.each([false, true])(
+  "an unsolicited renewal acknowledgement terminates the control (renewal negotiated: %s)",
+  async (negotiated) => {
+    vi.setSystemTime(0);
+    const tunnel = new GatewayTunnel(options());
+    tunnel.start();
+    await flush();
+    const control = sockets()[0];
+    control.open();
+    control.emit(
+      "message",
+      Buffer.from(
+        JSON.stringify({
+          type: "ready",
+          version: 1,
+          heartbeatMs: 21_600_000,
+          ...(negotiated ? { sessionExpiresAt: 120 } : {}),
+        }),
+      ),
+    );
+    // No credential exchange is outstanding, so an unsolicited grant cannot authorize data.
+    control.emit(
+      "message",
+      Buffer.from(JSON.stringify({ type: "renewed", version: 1, expiresAt: 240 })),
+    );
+    expect(control.readyState).toBe(3);
+    expect(tunnel.status().state).toBe("offline");
+    expect(control.send).not.toHaveBeenCalled();
+    await tunnel.close();
+    expect(vi.getTimerCount()).toBe(0);
+  },
+);
+
+test("a refused renewal deadline terminates the tunnel rather than installing its fresh credential", async () => {
+  vi.setSystemTime(0);
+  const session = vi
+    .fn<GatewayTunnelOptions["session"]>()
+    .mockResolvedValueOnce("initial-session")
+    .mockResolvedValue("fresh-session");
+  const tunnel = new GatewayTunnel({ ...options(), session });
+  tunnel.start();
+  await flush();
+  const control = sockets()[0];
+  control.open();
+  control.emit(
+    "message",
+    Buffer.from(
+      JSON.stringify({
+        type: "ready",
+        version: 1,
+        heartbeatMs: 21_600_000,
+        sessionExpiresAt: 120,
+      }),
+    ),
+  );
+  await vi.advanceTimersByTimeAsync(80_000);
+  expect(control.send).toHaveBeenCalledWith(
+    JSON.stringify({ type: "renew", version: 1, session: "fresh-session" }),
+  );
+  control.emit(
+    "message",
+    Buffer.from(JSON.stringify({ type: "renewed", version: 1, expiresAt: 120 })),
+  );
+  expect(control.readyState).toBe(3);
+  expect(tunnel.status().state).toBe("offline");
+  await tunnel.close();
+});
+
+test("an unavailable renewal source keeps existing channels alive and retries without reconnecting the control", async () => {
+  vi.setSystemTime(0);
+  const session = vi
+    .fn<GatewayTunnelOptions["session"]>()
+    .mockResolvedValueOnce("initial-session")
+    .mockRejectedValueOnce(new Error("Fictional credential service unavailable"))
+    .mockResolvedValue("fresh-session");
+  const tunnel = new GatewayTunnel({ ...options(), session });
+  tunnel.start();
+  await flush();
+  const control = sockets()[0];
+  control.open();
+  control.emit(
+    "message",
+    Buffer.from(
+      JSON.stringify({
+        type: "ready",
+        version: 1,
+        heartbeatMs: 21_600_000,
+        sessionExpiresAt: 120,
+      }),
+    ),
+  );
+  control.emit(
+    "message",
+    Buffer.from(JSON.stringify({ type: "open", version: 1, ticket: "f".repeat(64) })),
+  );
+  const channel = sockets()[1];
+  channel.open();
+  await flush();
+  await vi.advanceTimersByTimeAsync(80_000);
+  expect(control.readyState).toBe(1);
+  expect(channel.readyState).toBe(1);
+  expect(tunnel.status().state).toBe("online");
+  expect(control.send).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(session).toHaveBeenCalledTimes(3);
+  expect(sockets()).toHaveLength(2);
+  expect(control.send).toHaveBeenCalledWith(
+    JSON.stringify({ type: "renew", version: 1, session: "fresh-session" }),
+  );
+  control.emit(
+    "message",
+    Buffer.from(JSON.stringify({ type: "renewed", version: 1, expiresAt: 240 })),
+  );
+  expect(tunnel.status().state).toBe("online");
+  await tunnel.close();
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+test("an unanswered renewal terminates the original control and its channels at the acknowledgement deadline", async () => {
+  vi.setSystemTime(0);
+  const session = vi
+    .fn<GatewayTunnelOptions["session"]>()
+    .mockResolvedValueOnce("initial-session")
+    .mockResolvedValue("fresh-session");
+  const tunnel = new GatewayTunnel({ ...options(), session });
+  tunnel.start();
+  await flush();
+  const control = sockets()[0];
+  control.open();
+  control.emit(
+    "message",
+    Buffer.from(
+      JSON.stringify({
+        type: "ready",
+        version: 1,
+        heartbeatMs: 21_600_000,
+        sessionExpiresAt: 120,
+      }),
+    ),
+  );
+  control.emit(
+    "message",
+    Buffer.from(JSON.stringify({ type: "open", version: 1, ticket: "f".repeat(64) })),
+  );
+  const channel = sockets()[1];
+  channel.open();
+  await flush();
+  await vi.advanceTimersByTimeAsync(80_000);
+  expect(control.send).toHaveBeenCalledOnce();
+  await vi.advanceTimersByTimeAsync(10_000);
+  expect(control.readyState).toBe(3);
+  expect(channel.readyState).toBe(3);
+  expect(tunnel.status().state).toBe("offline");
+  await tunnel.close();
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+test("a marked renewal acquisition failure remains terminal without admitting another helper", async () => {
+  vi.setSystemTime(0);
+  const marker = Object.assign(new Error("Fictional credential cleanup failed"), {
+    cleanupFailure: true,
+  });
+  const session = vi
+    .fn<GatewayTunnelOptions["session"]>()
+    .mockResolvedValueOnce("initial-session")
+    .mockRejectedValue(marker);
+  const tunnel = new GatewayTunnel({ ...options(), session });
+  tunnel.start();
+  await flush();
+  const control = sockets()[0];
+  control.open();
+  control.emit(
+    "message",
+    Buffer.from(
+      JSON.stringify({
+        type: "ready",
+        version: 1,
+        heartbeatMs: 21_600_000,
+        sessionExpiresAt: 120,
+      }),
+    ),
+  );
+  await vi.advanceTimersByTimeAsync(80_000);
+  expect(control.readyState).toBe(3);
+  expect(tunnel.status().state).toBe("disabled");
+  await vi.advanceTimersByTimeAsync(60_000);
+  expect(session).toHaveBeenCalledTimes(2);
+  expect(sockets()).toHaveLength(1);
+  expect(ownedProcessCleanupReceipt(tunnel.cleanupFailure())).toEqual({
+    failure: true,
+    pending: false,
+  });
+  await expect(tunnel.close()).rejects.toBe(marker);
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+test("stopping during renewal joins its late failure and leaves no retry timers", async () => {
+  vi.setSystemTime(0);
+  let fail!: (error: Error) => void;
+  const session = vi
+    .fn<GatewayTunnelOptions["session"]>()
+    .mockResolvedValueOnce("initial-session")
+    .mockImplementationOnce(
+      () =>
+        new Promise((_resolve, reject) => {
+          fail = reject;
+        }),
+    );
+  const tunnel = new GatewayTunnel({ ...options(), session });
+  tunnel.start();
+  await flush();
+  const control = sockets()[0];
+  control.open();
+  control.emit(
+    "message",
+    Buffer.from(
+      JSON.stringify({
+        type: "ready",
+        version: 1,
+        heartbeatMs: 21_600_000,
+        sessionExpiresAt: 120,
+      }),
+    ),
+  );
+  await vi.advanceTimersByTimeAsync(80_000);
+  const closing = tunnel.close();
+  let joined = false;
+  void closing.then(() => {
+    joined = true;
+  });
+  await flush();
+  expect(joined).toBe(false);
+  fail(new Error("Fictional late credential failure"));
+  await closing;
+  expect(tunnel.status().state).toBe("disabled");
+  expect(session).toHaveBeenCalledTimes(2);
+  expect(sockets()).toHaveLength(1);
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+test("an omitted reconnect interval uses the ordinary one-second backoff", async () => {
+  const defaults = options();
+  delete defaults.reconnectMs;
+  const tunnel = new GatewayTunnel(defaults);
+  tunnel.start();
+  await flush();
+  sockets()[0].terminate();
+  await vi.advanceTimersByTimeAsync(999);
+  expect(sockets()).toHaveLength(1);
+  await vi.advanceTimersByTimeAsync(1);
+  expect(sockets()).toHaveLength(2);
+  expect(sockets()[1].options.headers["x-omnesis-relay-session"]).toBe("relay-test-session");
+  await tunnel.close();
+  expect(vi.getTimerCount()).toBe(0);
 });

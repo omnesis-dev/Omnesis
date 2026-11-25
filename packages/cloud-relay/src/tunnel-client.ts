@@ -10,6 +10,7 @@ import { connectOrigin, relayOrigin, SESSION_HEADER, websocketUrl } from "./netw
 import { recordRelayedClient } from "./relay-client-address.js";
 import { OwnedCleanupLifecycle } from "./owned-cleanup-lifecycle.js";
 import { DEFAULT_TUNNEL_LIMITS } from "./tunnels.js";
+import { TunnelSessionRenewal } from "./tunnel-session-renewal.js";
 import type { ClientRequest, IncomingMessage } from "node:http";
 import type { Socket } from "node:net";
 
@@ -25,6 +26,23 @@ const controlMessage = z.discriminatedUnion("type", [
       version: z.literal(1),
       heartbeatMs: z.number().int().positive().max(715_827_882),
       rejectChannels: z.literal(true).optional(),
+      sessionExpiresAt: z
+        .number()
+        .int()
+        .positive()
+        .max(Math.floor(Number.MAX_SAFE_INTEGER / 1000))
+        .optional(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("renewed"),
+      version: z.literal(1),
+      expiresAt: z
+        .number()
+        .int()
+        .positive()
+        .max(Math.floor(Number.MAX_SAFE_INTEGER / 1000)),
     })
     .strict(),
   z
@@ -81,6 +99,7 @@ export class GatewayTunnel {
   private readonly cleanup = new OwnedCleanupLifecycle(() => this.stop());
   private sessionJoin: Promise<void> = Promise.resolve();
   private connectionAttempt: Promise<void> | undefined;
+  private renewal: TunnelSessionRenewal | undefined;
   private readonly connections = new Set<Promise<void>>();
   private readonly resourceClosures = new Set<Promise<void>>();
   /**
@@ -143,16 +162,23 @@ export class GatewayTunnel {
     const sessionAbort = new AbortController();
     this.sessionAbort = sessionAbort;
     this.connectionAttempt = Promise.resolve()
-      .then(() => this.acquireSession(sessionAbort))
+      .then(async () => {
+        await this.sessionJoin;
+        sessionAbort.signal.throwIfAborted();
+        return this.acquireSession(sessionAbort);
+      })
       .then((session) => {
         if (this.stopped || generation !== this.generation) return;
         const endpoint = this.direct ?? this.relay;
+        let routingSession = session;
+        this.renewal = undefined;
         const control = new WebSocket(websocketUrl(endpoint, "/_relay/v1/tunnel"), {
           headers: {
             [SESSION_HEADER]: session,
             "x-omnesis-gateway-id": this.gatewayId,
             "x-omnesis-tunnel-protocol": "2",
             "x-omnesis-reject-channels": "1",
+            "x-omnesis-tunnel-renewal": "1",
             ...(endpoint === this.relay && Date.now() >= this.directRefusedUntil
               ? { [DIRECT_HEADER]: "1" }
               : {}),
@@ -187,6 +213,10 @@ export class GatewayTunnel {
             return;
           }
           if (message.type === "ready") {
+            if (ready) {
+              control.terminate();
+              return;
+            }
             ready = true;
             rejectChannels = message.rejectChannels === true;
             this.connectionState = "online";
@@ -194,8 +224,32 @@ export class GatewayTunnel {
             this.lastError = undefined;
             watchdogMs = message.heartbeatMs * 3;
             heartbeat();
+            if (message.sessionExpiresAt !== undefined) {
+              this.renewal = new TunnelSessionRenewal({
+                expiresAt: message.sessionExpiresAt,
+                session: routingSession,
+                acquire: (controller) => this.acquireSession(controller),
+                joined: () => this.sessionJoin,
+                invalidate: () => this.options.invalidateSession?.(),
+                send: (token) =>
+                  control.send(JSON.stringify({ type: "renew", version: 1, session: token })),
+                adopt: (token) => {
+                  routingSession = token;
+                },
+                observe: (error) => {
+                  if (!this.cleanup.observe(error) && !this.stopped)
+                    log.warn(
+                      "Cloud relay session renewal unavailable; retaining the accepted deadline",
+                    );
+                },
+                terminate: () => control.terminate(),
+              });
+            }
             for (const accepted of this.onlineWaiters) accepted();
             this.onlineWaiters.clear();
+          }
+          if (message.type === "renewed") {
+            if (!this.renewal?.accept(message.expiresAt)) control.terminate();
           }
           if (message.type === "open") {
             if (this.channels.size >= this.maxChannels) {
@@ -207,7 +261,14 @@ export class GatewayTunnel {
                 );
               return;
             }
-            this.openChannel(endpoint, message.ticket, session, generation, message.client);
+            this.openChannel(
+              endpoint,
+              message.ticket,
+              routingSession,
+              generation,
+              message.client,
+              () => routingSession,
+            );
           }
         });
         control.on("error", () => {
@@ -216,6 +277,7 @@ export class GatewayTunnel {
         control.once("close", () => {
           if (generation !== this.generation || this.control !== control) return;
           sessionAbort.abort();
+          this.renewal?.stop();
           clearTimeout(this.watchdog);
           this.control = undefined;
           if (endpoint !== this.relay && !ready) {
@@ -278,6 +340,7 @@ export class GatewayTunnel {
     session: string,
     generation: number,
     client: string | undefined,
+    currentSession: () => string,
   ): void {
     const ws = new WebSocket(websocketUrl(endpoint, "/_relay/v1/data"), {
       headers: { [SESSION_HEADER]: session, "x-omnesis-relay-ticket": ticket },
@@ -288,7 +351,7 @@ export class GatewayTunnel {
     });
     this.retainClose(ws);
     ws.once("unexpected-response", (request, response) =>
-      this.refusedHandshake(ws, request, response, generation),
+      this.refusedHandshake(ws, request, response, generation, session === currentSession()),
     );
     const dial = new AbortController();
     this.dialing.add(dial);
@@ -355,10 +418,12 @@ export class GatewayTunnel {
     request: ClientRequest,
     response: IncomingMessage,
     generation: number,
+    currentSession = true,
   ): void {
     try {
       if (
         response.statusCode === 401 &&
+        currentSession &&
         !this.stopped &&
         generation === this.generation &&
         this.invalidatedGeneration !== generation
@@ -391,6 +456,7 @@ export class GatewayTunnel {
     this.stopped = true;
     this.generation++;
     this.sessionAbort?.abort();
+    this.renewal?.stop();
     clearTimeout(this.reconnect);
     clearTimeout(this.watchdog);
     for (const dial of this.dialing) dial.abort();
@@ -408,6 +474,7 @@ export class GatewayTunnel {
     this.stop();
     return this.cleanup.close(async () => {
       await this.connectionAttempt;
+      await this.renewal?.close();
       await Promise.all([...this.connections]);
       await Promise.all([...this.resourceClosures]);
     });
