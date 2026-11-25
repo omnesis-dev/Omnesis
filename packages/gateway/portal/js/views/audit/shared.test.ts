@@ -4,24 +4,36 @@
 import { h, render } from "preact";
 import { act } from "preact/test-utils";
 import { parseHTML } from "linkedom";
-import { describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 // @ts-expect-error — portal modules are plain JS without sibling declarations.
 import { AGENT_ICONS } from "../access/agent-brand.js";
 // @ts-expect-error — portal modules are plain JS without sibling declarations.
 import { CallerMark, externalAgentAppIcon } from "./shared.js";
 
-function renderCaller(caller) {
-  const { document } = parseHTML("<!DOCTYPE html><body></body>");
+function renderCaller(caller: { externalAgent: { clientName: string } }) {
   const container = document.createElement("div");
   document.body.appendChild(container);
-  act(() => {
-    render(h(CallerMark, { caller, size: 14 }), container);
-  });
-  return container.innerHTML;
+  try {
+    act(() => {
+      render(h(CallerMark, { caller, size: 14 }), container);
+    });
+    return container.innerHTML;
+  } finally {
+    act(() => render(null, container));
+    container.remove();
+  }
 }
 
 describe("audit caller logos", () => {
+  beforeEach(() => {
+    const { document, window } = parseHTML("<!DOCTYPE html><html><body></body></html>");
+    vi.stubGlobal("document", document);
+    vi.stubGlobal("window", window);
+  });
+
+  afterEach(() => vi.unstubAllGlobals());
+
   test.each([
     ["Muse", "muse"],
     ["ChatGPT", "chatgpt"],

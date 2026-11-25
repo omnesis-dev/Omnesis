@@ -505,17 +505,17 @@ describe("agentSetups with the relay", () => {
 
 describe("hostedClientsHint", () => {
   test("without the relay or the device, points at publishing the gateway in Connectivity", () => {
-    const hint = "ChatGPT, Claude apps and Grok bot need an Internet-reachable address: publish the gateway with Tailscale on this computer or a domain of your own.";
+    const hint = "ChatGPT, Claude apps, Grok bot and Muse need an Internet-reachable address: publish the gateway with Tailscale on this computer or a domain of your own.";
     expect(text(hostedClientsHint()!)).toBe(hint);
     expect(text(hostedClientsHint({ state: "none" })!)).toBe(hint);
     expect(hostedClientsHint()!.flatMap((part) => (typeof part === "object" && "route" in part ? [part.route] : []))).toEqual(PUBLISH_ROUTES);
   });
 
   test.each([
-    ["ready", "ChatGPT, Claude apps and Grok bot can use this gateway's Omnesis address."],
-    ["off", "ChatGPT, Claude apps and Grok bot can use this gateway's Omnesis address. Remote access is turned off. Turn it on in Settings, Connectivity."],
-    ["checking", "ChatGPT, Claude apps and Grok bot can use this gateway's Omnesis address. This gateway's Omnesis address is still being checked. This takes up to a minute. Follow it in Settings, Connectivity."],
-    ["not-connected", "ChatGPT, Claude apps and Grok bot need an Internet-reachable address. Connecting this gateway to an Omnesis account in Settings, Connectivity gives it one."],
+    ["ready", "ChatGPT, Claude apps, Grok bot and Muse can use this gateway's Omnesis address."],
+    ["off", "ChatGPT, Claude apps, Grok bot and Muse can use this gateway's Omnesis address. Remote access is turned off. Turn it on in Settings, Connectivity."],
+    ["checking", "ChatGPT, Claude apps, Grok bot and Muse can use this gateway's Omnesis address. This gateway's Omnesis address is still being checked. This takes up to a minute. Follow it in Settings, Connectivity."],
+    ["not-connected", "ChatGPT, Claude apps, Grok bot and Muse need an Internet-reachable address. Connecting this gateway to an Omnesis account in Settings, Connectivity gives it one."],
   ])("%s", (state, expected) => {
     expect(text(hostedClientsHint({ state, url: RELAY })!)).toBe(expected);
   });
@@ -637,22 +637,22 @@ describe("the gateway's own Tailscale device", () => {
   });
 
   test("a localhost-led page names the device's address to hosted apps, the relay's wording first", () => {
-    expect(text(hostedClientsHint(NO_RELAY_FOR_TEST, NONE)!)).toMatch(/^ChatGPT, Claude apps and Grok bot need an Internet-reachable address: publish/u);
+    expect(text(hostedClientsHint(NO_RELAY_FOR_TEST, NONE)!)).toMatch(/^ChatGPT, Claude apps, Grok bot and Muse need an Internet-reachable address: publish/u);
     expect(text(hostedClientsHint(NO_RELAY_FOR_TEST, ON)!)).toBe(
-      "ChatGPT, Claude apps and Grok bot can use this gateway's Tailscale public address.",
+      "ChatGPT, Claude apps, Grok bot and Muse can use this gateway's Tailscale public address.",
     );
     expect(text(hostedClientsHint(NO_RELAY_FOR_TEST, OFF)!)).toBe(
-      "ChatGPT, Claude apps and Grok bot need an Internet-reachable address. Putting the MCP server of this gateway's Tailscale device on the Internet, in Settings, MCP server, gives it one.",
+      "ChatGPT, Claude apps, Grok bot and Muse need an Internet-reachable address. Putting the MCP server of this gateway's Tailscale device on the Internet, in Settings, MCP server, gives it one.",
     );
     expect(text(hostedClientsHint({ state: "ready", url: RELAY }, OFF)!)).toBe(
-      "ChatGPT, Claude apps and Grok bot can use this gateway's Omnesis address.",
+      "ChatGPT, Claude apps, Grok bot and Muse can use this gateway's Omnesis address.",
     );
     // A relay that cannot serve yet does not hide a device address that already works.
     expect(text(hostedClientsHint({ state: "not-connected" }, ON)!)).toBe(
-      "ChatGPT, Claude apps and Grok bot can use this gateway's Tailscale public address.",
+      "ChatGPT, Claude apps, Grok bot and Muse can use this gateway's Tailscale public address.",
     );
     expect(text(hostedClientsHint({ state: "ready", url: RELAY }, ON)!)).toBe(
-      "ChatGPT, Claude apps and Grok bot can use this gateway's Omnesis address.",
+      "ChatGPT, Claude apps, Grok bot and Muse can use this gateway's Omnesis address.",
     );
   });
 

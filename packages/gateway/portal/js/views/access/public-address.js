@@ -508,12 +508,12 @@ export function localClientAddress(resource, relay = NO_RELAY, choices = { optio
  */
 export function hostedClientsHint(relay = NO_RELAY, tailscale = NO_TAILSCALE) {
   if (tailscale.state === "on" && relay.state !== "ready") {
-    return ["ChatGPT, Claude apps and Grok bot can use this gateway's Tailscale public address."];
+    return ["ChatGPT, Claude apps, Grok bot and Muse can use this gateway's Tailscale public address."];
   }
   if (relay.state === "none") {
     if (tailscale.state === "none") {
       return [
-        "ChatGPT, Claude apps and Grok bot need an Internet-reachable address: publish the gateway with ",
+        "ChatGPT, Claude apps, Grok bot and Muse need an Internet-reachable address: publish the gateway with ",
         { route: HOST_TAILSCALE_PAGE, text: "Tailscale on this computer" },
         " or ",
         { route: OWN_ADDRESS_PAGE, text: "a domain of your own" },
@@ -521,19 +521,19 @@ export function hostedClientsHint(relay = NO_RELAY, tailscale = NO_TAILSCALE) {
       ];
     }
     return [
-      "ChatGPT, Claude apps and Grok bot need an Internet-reachable address. Putting the MCP server of this gateway's Tailscale device on the Internet, in ",
+      "ChatGPT, Claude apps, Grok bot and Muse need an Internet-reachable address. Putting the MCP server of this gateway's Tailscale device on the Internet, in ",
       MCP_SETTINGS,
       ", gives it one.",
     ];
   }
   if (relay.state === "not-connected") {
     return [
-      "ChatGPT, Claude apps and Grok bot need an Internet-reachable address. Connecting this gateway to an Omnesis account in ",
+      "ChatGPT, Claude apps, Grok bot and Muse need an Internet-reachable address. Connecting this gateway to an Omnesis account in ",
       ACCOUNT_SETTINGS,
       " gives it one.",
     ];
   }
-  const uses = "ChatGPT, Claude apps and Grok bot can use this gateway's Omnesis address.";
+  const uses = "ChatGPT, Claude apps, Grok bot and Muse can use this gateway's Omnesis address.";
   const unavailable = RELAY_UNAVAILABLE[relay.state];
   return unavailable ? [`${uses} ${unavailable.headline} `, ...unavailable.action] : [uses];
 }
