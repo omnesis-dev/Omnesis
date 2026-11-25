@@ -6,6 +6,7 @@ import { PassThrough } from "node:stream";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { WebSocket } from "ws";
 import { DEFAULT_TUNNEL_LIMITS, TunnelBroker } from "./tunnels.js";
+import { CloudRelayMetrics } from "./metrics.js";
 import { validateTarget, rejectUpgrade } from "./server.js";
 import type { IncomingMessage } from "node:http";
 
@@ -741,4 +742,30 @@ test("channel rejection still works independently while renewal verification is 
   await vi.advanceTimersByTimeAsync(0);
   expect(JSON.parse(control.sent.at(-1)!)).toEqual({ type: "renewed", version: 1, expiresAt: 4 });
   broker.close();
+});
+
+test("a queued renewal on a replaced control cannot revoke its successor or attribute a refusal to it", async () => {
+  const metrics = new CloudRelayMetrics();
+  const events = vi.spyOn(metrics, "tunnel");
+  const broker = new TunnelBroker(DEFAULT_TUNNEL_LIMITS, metrics);
+  const previous = new Control();
+  const verify = vi.fn(async () => 10);
+  broker.attach("account", previous.socket, 2, false, verify);
+  previous.terminate();
+  const successor = new Control();
+  broker.attach("account", successor.socket, 5, false, async () => 10);
+  const pending = broker.open("account", new AbortController().signal).catch(() => undefined);
+  const ticket = JSON.parse(successor.sent.at(-1)!).ticket as string;
+  // A frame already queued on the old socket must remain owned by that socket.
+  sendRenewal(previous);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(verify).not.toHaveBeenCalled();
+  expect(broker.online("account")).toBe(true);
+  expect(broker.canClaim("account", ticket)).toBe(true);
+  expect(successor.terminate).not.toHaveBeenCalled();
+  expect(events).not.toHaveBeenCalledWith("session_renewal_refused");
+  expect(broker.snapshot().pendingStreams).toBe(1);
+  broker.close();
+  await pending;
+  expect(vi.getTimerCount()).toBe(0);
 });

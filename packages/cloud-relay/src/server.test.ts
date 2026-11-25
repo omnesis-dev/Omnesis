@@ -320,6 +320,7 @@ describe("gateway directory boundary", () => {
         { authorization: "Bearer" },
         { authorization: "Bearer invalid extra" },
         { authorization: "Bearer invalid" },
+        { [SESSION_HEADER]: "" },
         { authorization: `Bearer ${"a".repeat(4097)}` },
         { authorization: [`Bearer ${f.session.token}`, `Bearer ${f.session.token}`] },
         { [SESSION_HEADER]: [f.session.token, f.session.token] },

@@ -85,6 +85,10 @@ test("tunnel renewal waits through the real Google session cache without replayi
   const sent = vi.fn();
   const terminate = vi.fn();
   const adopt = vi.fn();
+  let acknowledge!: () => void;
+  const acknowledged = new Promise<void>((resolve) => {
+    acknowledge = resolve;
+  });
   const renewal = new TunnelSessionRenewal({
     expiresAt: expiry,
     session: initial,
@@ -94,6 +98,7 @@ test("tunnel renewal waits through the real Google session cache without replayi
     send: (token) => {
       sent(token);
       expect(renewal.accept(expiry)).toBe(true);
+      acknowledge();
     },
     adopt,
     observe: (error) => {
@@ -107,7 +112,8 @@ test("tunnel renewal waits through the real Google session cache without replayi
     expect(sent).not.toHaveBeenCalled();
     expect(terminate).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(11_000);
-    await vi.waitFor(() => expect(sent).toHaveBeenCalledExactlyOnceWith("routing-session-2"));
+    await acknowledged;
+    expect(sent).toHaveBeenCalledExactlyOnceWith("routing-session-2");
     expect(adopt).toHaveBeenCalledExactlyOnceWith("routing-session-2");
     await vi.advanceTimersByTimeAsync(originalExpiry * 1000 - Date.now() + 1000);
     expect(terminate).not.toHaveBeenCalled();

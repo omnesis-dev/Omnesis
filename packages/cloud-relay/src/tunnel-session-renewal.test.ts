@@ -252,3 +252,125 @@ test("a synchronously acknowledged send cancels its deadline before the next ren
   await vi.advanceTimersByTimeAsync(10_000);
   expect(f.terminate).not.toHaveBeenCalled();
 });
+
+test("proof resolved after a forward clock jump cannot send before the delayed expiry timer runs", async () => {
+  const f = fixture(90);
+  const proof = deferred<string>();
+  f.acquire.mockImplementationOnce(() => proof.promise);
+  await vi.advanceTimersByTimeAsync(60_000);
+  // The wall clock can move while credential work is awaiting I/O. Expiry must
+  // be checked at handoff even if the event loop has not dispatched its timer.
+  vi.setSystemTime(90_000);
+  proof.resolve("expired-before-handoff");
+  await flush();
+  expect(f.terminate).toHaveBeenCalledTimes(1);
+  expect(f.send).not.toHaveBeenCalled();
+  expect(f.adopt).not.toHaveBeenCalled();
+});
+
+test("an acknowledgement cannot extend authority after a forward clock jump past the accepted deadline", async () => {
+  const f = fixture();
+  await due();
+  vi.setSystemTime(3_600_000);
+  expect(f.renewal.accept(7200)).toBe(false);
+  expect(f.adopt).not.toHaveBeenCalled();
+});
+
+test("a backward clock adjustment re-arms timers until their actual renewal and expiry deadlines", async () => {
+  const f = fixture();
+  vi.setSystemTime(-3_600_000);
+  await vi.advanceTimersByTimeAsync(3_600_000);
+  expect(Date.now()).toBe(0);
+  expect(f.acquire).not.toHaveBeenCalled();
+  expect(f.terminate).not.toHaveBeenCalled();
+  await due();
+  expect(f.send).toHaveBeenCalledExactlyOnceWith("fresh-routing-session");
+  expect(f.renewal.accept(7200)).toBe(true);
+  await vi.advanceTimersByTimeAsync(60_001);
+  expect(f.terminate).not.toHaveBeenCalled();
+});
+
+test("re-delivered renewal timer callbacks cannot overlap proofs, resend a pending token or restart after stop", async () => {
+  const scheduled = vi.spyOn(globalThis, "setTimeout");
+  try {
+    const f = fixture();
+    const callback = scheduled.mock.calls.find((call) => call[1] === 3_540_000)![0];
+    const proof = deferred<string>();
+    f.acquire.mockImplementationOnce(() => proof.promise);
+    await due();
+    callback();
+    expect(f.acquire).toHaveBeenCalledTimes(1);
+    proof.resolve("single-pending-session");
+    await flush();
+    callback();
+    expect(f.send).toHaveBeenCalledExactlyOnceWith("single-pending-session");
+    f.renewal.stop();
+    callback();
+    // A cancelled callback already queued before a backward clock adjustment
+    // must neither re-arm its timer nor create a new credential operation.
+    vi.setSystemTime(0);
+    callback();
+    expect(f.acquire).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
+  } finally {
+    scheduled.mockRestore();
+  }
+});
+
+test("stopping while an unchanged credential's underlying work joins prevents a later retry", async () => {
+  const f = fixture();
+  const joined = deferred<void>();
+  f.acquire.mockResolvedValueOnce("initial-routing-session");
+  f.joined.mockReturnValueOnce(joined.promise);
+  await due();
+  const closed = vi.fn();
+  const close = f.renewal.close().then(closed);
+  await flush();
+  expect(closed).not.toHaveBeenCalled();
+  joined.resolve();
+  await close;
+  await vi.advanceTimersByTimeAsync(3_600_000);
+  expect(f.acquire).toHaveBeenCalledTimes(1);
+  expect(f.send).not.toHaveBeenCalled();
+  expect(f.adopt).not.toHaveBeenCalled();
+  expect(f.terminate).not.toHaveBeenCalled();
+});
+
+test("a send failure retries a freshly acquired proof without adopting the refused handoff", async () => {
+  const f = fixture();
+  const failure = new Error("fictional control socket write failed");
+  f.send.mockImplementationOnce(() => {
+    throw failure;
+  });
+  f.acquire.mockResolvedValueOnce("failed-handoff-session").mockResolvedValueOnce("retry-session");
+  await due();
+  expect(f.observe).toHaveBeenCalledExactlyOnceWith(failure);
+  expect(f.renewal.accept(7200)).toBe(false);
+  expect(f.adopt).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(f.send.mock.calls).toEqual([["failed-handoff-session"], ["retry-session"]]);
+  expect(f.renewal.accept(7200)).toBe(true);
+  expect(f.adopt).toHaveBeenCalledExactlyOnceWith("retry-session");
+  expect(f.terminate).not.toHaveBeenCalled();
+});
+
+test("expiry and a later credential join failure close only once while retaining the cleanup failure", async () => {
+  const f = fixture(90);
+  const proof = deferred<string>();
+  const joinFailure = Object.assign(new Error("fixture expired proof could not be joined"), {
+    cleanupFailure: undefined,
+  });
+  f.acquire.mockImplementationOnce(() => proof.promise);
+  f.joined.mockRejectedValueOnce(joinFailure);
+  await vi.advanceTimersByTimeAsync(90_000);
+  expect(f.terminate).toHaveBeenCalledTimes(1);
+  const close = f.renewal.close();
+  const rejected = expect(close).rejects.toBe(joinFailure);
+  proof.reject(new Error("fixture proof rejected after expiry"));
+  await rejected;
+  await flush();
+  expect(f.terminate).toHaveBeenCalledTimes(1);
+  expect(f.send).not.toHaveBeenCalled();
+  expect(f.adopt).not.toHaveBeenCalled();
+  expect(vi.getTimerCount()).toBe(0);
+});

@@ -127,7 +127,7 @@ export class TunnelSessionRenewal {
       if (!this.closed) this.schedule(Math.min(Date.now() + RETRY_MS, this.expiresAt * 1000));
     } finally {
       this.acquiring = false;
-      if (this.abort === controller) this.abort = undefined;
+      this.abort = undefined;
     }
   }
 

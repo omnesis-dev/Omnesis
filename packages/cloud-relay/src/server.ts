@@ -330,8 +330,7 @@ export function createCloudRelay(options: CloudRelayOptions): {
       authorization === undefined
         ? req.headers[SESSION_HEADER]
         : /^Bearer ([A-Za-z0-9._~-]+)$/i.exec(authorization)?.[1];
-    if (typeof token !== "string" || token.length > 4096)
-      throw new RelayError(401, "Relay authentication required");
+    if (typeof token !== "string") throw new RelayError(401, "Relay authentication required");
     return authenticateToken(token, discovery);
   };
 
