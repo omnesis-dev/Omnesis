@@ -31,11 +31,12 @@ describe("installation telemetry lifecycle", () => {
   async function create(
     send = vi.fn(async (_payload: TelemetryPayload, _signal: AbortSignal) => {}),
     env: NodeJS.ProcessEnv = {},
+    version = "0.1.0",
   ) {
     service = new InstallationTelemetry({
       configDir: directory,
       configStore: store,
-      version: "0.1.0",
+      version,
       transport: { send },
       env,
       random: () => 0,
@@ -108,11 +109,13 @@ describe("installation telemetry lifecycle", () => {
     await advance(60_000);
     await vi.waitFor(() => expect(send).toHaveBeenCalledOnce());
     service!.stop();
-    await create(send);
+    await create(send, {}, "0.2.0");
     await vi.advanceTimersByTimeAsync(DAY - 1_000);
     expect(send).toHaveBeenCalledOnce();
     await advance(1_000);
     await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(2));
+    expect(send.mock.calls[1]![0].installationId).toBe(send.mock.calls[0]![0].installationId);
+    expect(send.mock.calls[1]![0].gatewayVersion).toBe("0.2.0");
     expect(await readFile(join(directory, "telemetry-last-attempt-v1"), "utf8")).toMatch(/^\d+$/);
   });
 

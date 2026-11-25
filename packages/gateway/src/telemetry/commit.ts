@@ -35,7 +35,9 @@ export async function publicGatewayCommit(signal: AbortSignal): Promise<string> 
     maxBuffer: 65_536,
     signal,
     env: {
-      ...Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("GIT_"))),
+      ...Object.fromEntries(
+        Object.entries(process.env).filter(([key]) => !key.toUpperCase().startsWith("GIT_")),
+      ),
       GIT_CONFIG_NOSYSTEM: "1",
       GIT_CONFIG_GLOBAL: devNull,
       GIT_CONFIG_SYSTEM: devNull,

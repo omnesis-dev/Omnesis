@@ -63,6 +63,7 @@ describe("public upstream commit disclosure", () => {
     vi.stubEnv("GIT_CONFIG_KEY_0", "url.file:///private/.insteadOf");
     vi.stubEnv("GIT_CONFIG_VALUE_0", "https://github.com/omnesis-dev/Omnesis.git");
     vi.stubEnv("GIT_DIR", "/private/.git");
+    vi.stubEnv("Git_Config_Parameters", "private rewrite");
     try {
       expect(await publicGatewayCommit(new AbortController().signal)).toBe(local);
       const remote = mocks.execFile.mock.calls.find((call) => call[1][0] === "ls-remote")!;
@@ -70,6 +71,7 @@ describe("public upstream commit disclosure", () => {
       expect(remote[2].env).not.toHaveProperty("GIT_DIR");
       expect(remote[2].env).not.toHaveProperty("GIT_CONFIG_COUNT");
       expect(remote[2].env).not.toHaveProperty("GIT_CONFIG_KEY_0");
+      expect(remote[2].env).not.toHaveProperty("Git_Config_Parameters");
       expect(remote[2].env).toMatchObject({
         GIT_CONFIG_NOSYSTEM: "1",
         GIT_TERMINAL_PROMPT: "0",
