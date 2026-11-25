@@ -7,7 +7,7 @@ type Db = Database.Database;
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { createDatabase } from "../db.js";
+import { createFreshTestDatabase } from "../testing/fresh-database.js";
 import { findOrCreatePerson } from "../people.js";
 import { loadNonIdentifyingEmails } from "../data/repositories/PersonRepository.js";
 import { pruneNoreplyAliases } from "../bootstrap/prune-noreply-aliases.js";
@@ -26,7 +26,7 @@ let db: Db;
 
 beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), "omnesis-shared-address-test-"));
-  db = createDatabase(join(tmpDir, "test.db"));
+  db = createFreshTestDatabase(join(tmpDir, "test.db"));
 });
 
 afterEach(() => {

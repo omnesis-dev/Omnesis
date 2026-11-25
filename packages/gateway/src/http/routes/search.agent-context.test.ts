@@ -3,11 +3,13 @@
 
 import { randomUUID } from "node:crypto";
 import { rmSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { toolResultSchema, type SearchProvenance } from "@omnesis/core";
 import { SCOPE_ADMIN, SCOPE_READ, type Scope } from "@omnesis/types";
-import { createDatabase } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import { createServer } from "../../server.js";
 import { createDevice } from "../../data/repositories/DeviceRepository.js";
 import { createToken } from "../../data/repositories/TokenRepository.js";
@@ -19,8 +21,6 @@ import type { SearchPort, SearchPortInput } from "@omnesis/agent";
 import type { AppEnv, AuthContext } from "./types.js";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import type Database from "better-sqlite3";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 const PATH = "/admin/search/agent-context";
 const provenance: SearchProvenance = {
@@ -51,7 +51,7 @@ let db: Database.Database;
 let dbPath: string;
 beforeEach(() => {
   dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
-  db = createDatabase(dbPath);
+  db = createFreshTestDatabase(dbPath);
 });
 afterEach(() => {
   vi.restoreAllMocks();

@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import Database from "better-sqlite3";
 import { createDatabase } from "../db.js";
+import { createFreshTestDatabase } from "../testing/fresh-database.js";
 import { pruneActivityRetentionBatch, reclaimActivityRetentionPages } from "./store.js";
 import type { Db } from "../data/types.js";
 
@@ -41,7 +42,7 @@ describe("activity retention storage", () => {
 
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "omnesis-activity-retention-"));
-    db = createDatabase(join(dir, "omnesis.db"));
+    db = createFreshTestDatabase(join(dir, "omnesis.db"));
   });
 
   afterEach(() => {

@@ -13,7 +13,7 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { SCOPE_ADMIN, SCOPE_READ } from "@omnesis/types";
-import { createDatabase } from "../../../db.js";
+import { createFreshTestDatabase } from "../../../testing/fresh-database.js";
 import { createServer } from "../../../server.js";
 import { createDevice } from "../../../data/repositories/DeviceRepository.js";
 import { createToken } from "../../../data/repositories/TokenRepository.js";
@@ -77,7 +77,7 @@ function token(scopes: readonly import("@omnesis/types").Scope[]): string {
 beforeEach(() => {
   fixtureDir = mkdtempSync(join(tmpdir(), "omnesis-tls-route-"));
   dbPath = join(fixtureDir, "gateway.db");
-  db = createDatabase(dbPath);
+  db = createFreshTestDatabase(dbPath);
   app = createServer(db, dbPath, { tlsLifecycle });
   calls = [];
 });

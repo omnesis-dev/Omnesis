@@ -3,16 +3,16 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { SCOPE_ADMIN, SCOPE_READ, SCOPE_WRITE_ALL, type Scope } from "@omnesis/types";
-import { createDatabase } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import { createServer } from "../../server.js";
 import { createIndexDatabase, setIndexedDocument } from "../../indexer/db.js";
 import { createDevice } from "../../data/repositories/DeviceRepository.js";
 import { createToken } from "../../data/repositories/TokenRepository.js";
 import type Database from "better-sqlite3";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 type Db = Database.Database;
 
@@ -75,7 +75,7 @@ async function ingest(externalId: string, contentHash: string): Promise<string> 
 beforeEach(() => {
   dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-content-hash-test-${randomUUID()}.db`);
   indexDbPath = fixtureJoin(fixtureTmpdir(), `omnesis-content-hash-index-${randomUUID()}.db`);
-  db = createDatabase(dbPath);
+  db = createFreshTestDatabase(dbPath);
   indexDb = createIndexDatabase(indexDbPath);
   token = mintToken([SCOPE_ADMIN, SCOPE_READ, SCOPE_WRITE_ALL]);
   app = createServer(db, dbPath, { indexDb });
@@ -246,7 +246,7 @@ describe("POST /documents/content-hash-siblings without an index DB", () => {
 
   beforeEach(() => {
     dbPath2 = fixtureJoin(fixtureTmpdir(), `omnesis-content-hash-noindex-${randomUUID()}.db`);
-    db2 = createDatabase(dbPath2);
+    db2 = createFreshTestDatabase(dbPath2);
     const dev = createDevice(db2, { name: "x", kind: "cli" });
     token2 = createToken(db2, dev.id, [SCOPE_READ, SCOPE_WRITE_ALL]).token;
     // No indexDb passed — exercises the early-return path.

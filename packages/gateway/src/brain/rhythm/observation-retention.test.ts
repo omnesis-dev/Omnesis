@@ -10,10 +10,13 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createLogger } from "@omnesis/core";
 import { ProviderId, SourceId } from "@omnesis/types";
-import { createDatabase, upsertDocuments } from "../../db.js";
+import { upsertDocuments } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import { directWriteGate } from "../../write-gate.js";
 import {
   createObservation,
@@ -25,8 +28,6 @@ import { createCognitionRhythmTasks, type CognitionRhythmOpts } from "./rhythm-t
 import type Database from "better-sqlite3";
 import type { Scheduler } from "../../scheduler/scheduler.js";
 import type { TaskContext } from "../../scheduler/types.js";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 const log = createLogger("test:observation-retention");
 const taskCtx = { signal: new AbortController().signal } as TaskContext;
@@ -91,7 +92,7 @@ const outcomeIds = () =>
 
 beforeEach(() => {
   path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
-  db = createDatabase(path);
+  db = createFreshTestDatabase(path);
 });
 afterEach(() => {
   db.close();

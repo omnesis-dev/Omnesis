@@ -3,16 +3,16 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { createDatabase } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import { createObservation, transitionObservation } from "../storage/observations.js";
 import { upsertBriefItemReaction } from "../storage/interest.js";
 import { markMorningBriefSent, replaceMorningBriefItems } from "../storage/morning-brief-items.js";
 import { createOpenLoop } from "../storage/open-loops.js";
 import { readDailyBriefDetail, shippedBriefItems } from "./brief-detail.js";
 import type Database from "better-sqlite3";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 const NOW = Date.parse("2026-07-02T06:02:40.055Z");
 const DAY = "2026-07-02";
@@ -40,7 +40,7 @@ describe("morning brief detail", () => {
 
   beforeEach(() => {
     path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
-    db = createDatabase(path);
+    db = createFreshTestDatabase(path);
     insertDoc("doc_offer", "gmail:work", "Loan offer letter", "2026-06-28T09:00:00.000Z");
     insertDoc("doc_untitled", "notion:home", "", "2026-06-29T10:30:00.000Z");
     createOpenLoop(

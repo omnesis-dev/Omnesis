@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 
-import { createDatabase } from "../db.js";
+import { createFreshTestDatabase } from "../testing/fresh-database.js";
 import { createCorpusAuthorization } from "./corpus-authorization.js";
 import { permittedSourceIds } from "./permitted-sources.js";
 import type Database from "better-sqlite3";
@@ -16,7 +16,7 @@ let db: Database.Database;
 
 beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), "omnesis-permitted-sources-"));
-  db = createDatabase(join(tmpDir, "test.db"));
+  db = createFreshTestDatabase(join(tmpDir, "test.db"));
   db.prepare(
     "INSERT INTO devices (id, name, kind, paired_at) VALUES ('00000000-0000-4000-8000-000000000001', 'Test device', 'desktop', 1)",
   ).run();

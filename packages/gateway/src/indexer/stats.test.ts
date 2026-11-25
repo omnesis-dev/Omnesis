@@ -18,7 +18,7 @@ import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { createDatabase } from "../db.js";
+import { createFreshTestDatabase } from "../testing/fresh-database.js";
 import { createIndexDatabase, upsertChunksAndMarkIndexed } from "./db.js";
 import { computeIndexStats } from "./stats.js";
 import { writeScanProgress } from "./scan-progress.js";
@@ -40,7 +40,7 @@ let indexDb: Db;
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "omnesis-index-stats-"));
-  db = createDatabase(join(dir, "omnesis.db"));
+  db = createFreshTestDatabase(join(dir, "omnesis.db"));
   indexDb = createIndexDatabase(join(dir, "index.db"));
 });
 

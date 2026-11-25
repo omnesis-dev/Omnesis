@@ -8,6 +8,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createDatabase } from "./db.js";
+import { createFreshTestDatabase } from "./testing/fresh-database.js";
 import { deleteAllBySource } from "./data/repositories/DocumentRepository.js";
 import {
   findOrCreatePerson,
@@ -89,7 +90,7 @@ function connectSource(sourceId: string): void {
 
 beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), "omnesis-people-test-"));
-  db = createDatabase(join(tmpDir, "test.db"));
+  db = createFreshTestDatabase(join(tmpDir, "test.db"));
 });
 
 afterEach(() => {

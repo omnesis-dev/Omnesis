@@ -3,9 +3,11 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { SCOPE_ADMIN, SCOPE_READ } from "@omnesis/types";
-import { createDatabase } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import { createServer } from "../../server.js";
 import { createToken } from "../../data/repositories/TokenRepository.js";
 import { createDevice } from "../../data/repositories/DeviceRepository.js";
@@ -15,8 +17,6 @@ import { insertTemporalAnnotation } from "../../enrichment/temporal-annotations/
 import type { StatusCache } from "../services/StatusCache.js";
 import type { DocumentInput } from "@omnesis/types";
 import type Database from "better-sqlite3";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 describe("GET /temporal/window", () => {
   let db: Database.Database;
@@ -28,7 +28,7 @@ describe("GET /temporal/window", () => {
 
   beforeEach(() => {
     dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
-    db = createDatabase(dbPath);
+    db = createFreshTestDatabase(dbPath);
     const device = createDevice(db, { name: `test-${randomUUID()}`, kind: "cli" });
     token = createToken(db, device.id, [SCOPE_ADMIN]).token;
     gateActive = false;

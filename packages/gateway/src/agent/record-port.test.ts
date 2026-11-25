@@ -16,21 +16,21 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import { RecordPortError } from "@omnesis/agent";
 import { recordReference, REDACTED_VALUE } from "@omnesis/core";
 import { ProviderId, SourceId } from "@omnesis/types";
 
 import { AnalyticsDb } from "../analytics-db.js";
-import { createDatabase } from "../db.js";
+import { createFreshTestDatabase } from "../testing/fresh-database.js";
 import { directWriteGate } from "../write-gate.js";
 import { captureActivity, nameStall } from "../observability/stall-test-utils.js";
 import { createGatewayRecordPort } from "./ports.js";
 import type Database from "better-sqlite3";
 import type { AnalyticsTableSchema } from "@omnesis/source-sdk";
 import type { ActivitySample } from "../observability/stall-protocol.js";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 type Db = Database.Database;
 
@@ -120,7 +120,7 @@ beforeEach(async () => {
   await analytics.ensureTable(txnSchema, "demo:acct1");
   await analytics.ensureTable(profileSchema, "demo:acct1");
   sqlitePath = fixtureJoin(fixtureTmpdir(), `omnesis-test-record-port-sqlite-${randomUUID()}.db`);
-  db = createDatabase(sqlitePath);
+  db = createFreshTestDatabase(sqlitePath);
 });
 
 afterEach(async () => {

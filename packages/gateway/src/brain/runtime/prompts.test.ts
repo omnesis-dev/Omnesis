@@ -5,10 +5,13 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import { ProviderId, SourceId } from "@omnesis/types";
 import { parseCognitionRunEnvelope, type TemporalItem, type TemporalKind } from "@omnesis/core";
-import { createDatabase, upsertDocuments } from "../../db.js";
+import { upsertDocuments } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import { createOpenLoop, updateOpenLoop, appendOpenLoopLedger } from "../storage/open-loops.js";
 import { retireLoop } from "../storage/retired-loops.js";
 import { createObservation } from "../storage/observations.js";
@@ -44,8 +47,6 @@ import {
 } from "./prompts.js";
 import type Database from "better-sqlite3";
 import type { ClaimedCognitionRun } from "../storage/types.js";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 type Db = Database.Database;
 
@@ -340,7 +341,7 @@ describe("Brain run prompts", () => {
 
   beforeEach(() => {
     path = testDbPath();
-    db = createDatabase(path);
+    db = createFreshTestDatabase(path);
   });
   afterEach(() => {
     db.close();
@@ -2425,7 +2426,7 @@ describe("digest and decay-check prompt flavours", () => {
 
   beforeEach(() => {
     path = testDbPath();
-    db = createDatabase(path);
+    db = createFreshTestDatabase(path);
   });
   afterEach(() => {
     db.close();
@@ -2572,7 +2573,7 @@ describe("provenance-recheck + multi-evidence prompt flavours", () => {
 
   beforeEach(() => {
     path = testDbPath();
-    db = createDatabase(path);
+    db = createFreshTestDatabase(path);
   });
   afterEach(() => {
     db.close();
@@ -2782,7 +2783,7 @@ describe("merge-adjudication run prompts", () => {
 
   beforeEach(() => {
     path = testDbPath();
-    db = createDatabase(path);
+    db = createFreshTestDatabase(path);
   });
   afterEach(() => {
     db.close();

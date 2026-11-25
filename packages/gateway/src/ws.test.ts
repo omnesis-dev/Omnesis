@@ -37,6 +37,7 @@ import {
   type DeviceKind,
 } from "@omnesis/types";
 import { createDatabase } from "./db.js";
+import { createFreshTestDatabase } from "./testing/fresh-database.js";
 import { createServer } from "./server.js";
 import { DeviceWsServer } from "./ws.js";
 import { mountDeviceWsRoute } from "./device-ws-route.js";
@@ -222,7 +223,7 @@ async function waitForCondition(fn: () => boolean, timeoutMs = 3000, pollMs = 10
 
 beforeAll(async () => {
   dbPath = join(tmpdir(), `omnesis-ws-test-${randomUUID()}.db`);
-  db = createDatabase(dbPath);
+  db = createFreshTestDatabase(dbPath);
 
   const collector = createDevice(db, { name: "collector", kind: "collector" });
   COLLECTOR_ID = collector.id;
@@ -1061,7 +1062,7 @@ describe("DeviceWsServer scope reconciliation on handshake", () => {
 
   beforeEach(() => {
     scopeDbPath = join(tmpdir(), `omnesis-ws-scope-${randomUUID()}.db`);
-    scopeDb = createDatabase(scopeDbPath);
+    scopeDb = createFreshTestDatabase(scopeDbPath);
     srv = new DeviceWsServer({
       db: scopeDb,
       writeGate: directWriteGate(scopeDb),
@@ -1352,7 +1353,7 @@ describe("DeviceWsServer socket liveness", () => {
 
   beforeEach(() => {
     livenessDbPath = join(tmpdir(), `omnesis-ws-liveness-${randomUUID()}.db`);
-    livenessDb = createDatabase(livenessDbPath);
+    livenessDb = createFreshTestDatabase(livenessDbPath);
     srv = new DeviceWsServer({
       db: livenessDb,
       writeGate: directWriteGate(livenessDb),
@@ -1550,7 +1551,7 @@ describe("DeviceWsServer token-check rate limit", () => {
 
   beforeEach(() => {
     limitDbPath = join(tmpdir(), `omnesis-ws-limit-${randomUUID()}.db`);
-    limitDb = createDatabase(limitDbPath);
+    limitDb = createFreshTestDatabase(limitDbPath);
     srv = new DeviceWsServer({
       db: limitDb,
       writeGate: directWriteGate(limitDb),

@@ -13,6 +13,8 @@
 
 import { existsSync, rmSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import {
   DEFAULT_WEB_CAPTURE_RULES,
@@ -21,7 +23,7 @@ import {
 } from "@omnesis/provider-web/capture-policy";
 import { SCOPE_ADMIN, SCOPE_READ, SCOPE_WRITE_ALL, SourceType, writeScope } from "@omnesis/types";
 import { SourceId, type Scope } from "@omnesis/types";
-import { createDatabase } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import { createServer } from "../../server.js";
 import { AnalyticsDb } from "../../analytics-db.js";
 import { resetOwnedWebDomains, setOwnedWebDomains } from "../../owned-web-domains.js";
@@ -30,8 +32,6 @@ import { getSource } from "../../data/repositories/SourceRepository.js";
 import { createToken } from "../../data/repositories/TokenRepository.js";
 import type { AnalyticsTableSchema } from "@omnesis/source-sdk";
 import type Database from "better-sqlite3";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 type Db = Database.Database;
 
@@ -110,7 +110,7 @@ beforeEach(async () => {
     fixtureTmpdir(),
     `omnesis-capture-policy-test-${randomUUID()}.duckdb`,
   );
-  db = createDatabase(dbPath);
+  db = createFreshTestDatabase(dbPath);
   analyticsDb = new AnalyticsDb(analyticsPath);
   await analyticsDb.open();
   app = createServer(db, undefined, { analyticsDb });

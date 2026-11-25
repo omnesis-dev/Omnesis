@@ -7,7 +7,7 @@ import { describe, test, expect, beforeEach, afterEach } from "vitest";
 type Db = Database.Database;
 import { type OmnesisConfig } from "@omnesis/config";
 import { AccountId, SourceType } from "@omnesis/types";
-import { createDatabase } from "./db.js";
+import { createFreshTestDatabase } from "./testing/fresh-database.js";
 import {
   addSourceMember,
   createSource,
@@ -30,7 +30,7 @@ let w: WriteGate;
 
 beforeEach(() => {
   dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-reconcile-${randomUUID()}.db`);
-  db = createDatabase(dbPath);
+  db = createFreshTestDatabase(dbPath);
   w = directWriteGate(db);
 });
 

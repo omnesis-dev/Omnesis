@@ -9,6 +9,8 @@
 
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test, vi, type Mock } from "vitest";
 import {
   createLogger,
@@ -17,14 +19,13 @@ import {
   type DecisionResult,
 } from "@omnesis/core";
 import { ProviderId, SourceId } from "@omnesis/types";
-import { createDatabase, upsertDocuments } from "../../db.js";
+import { upsertDocuments } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import { createObservationScorer, type ObservationScorerDeps } from "./noting.js";
 import { DEFAULT_SALIENCE_THRESHOLDS } from "./salience.js";
 import type { CognitionDecisionRecord } from "../storage/decisions.js";
 import type { OwnerInterest } from "../interest/lookup.js";
 import type Database from "better-sqlite3";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 const log = createLogger("test").child("observation-noting");
 const NOTED_AT = Date.parse("2026-07-02T15:00:00.000Z");
@@ -86,7 +87,7 @@ describe("createObservationScorer", () => {
 
   beforeEach(() => {
     path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
-    db = createDatabase(path);
+    db = createFreshTestDatabase(path);
     decisions = [];
     recordSpend = vi.fn(async () => {});
     nextBriefAt = vi.fn(() => NEXT_BRIEF);

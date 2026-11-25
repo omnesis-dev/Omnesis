@@ -30,6 +30,7 @@ import { existsSync, unlinkSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { runWithPriority } from "../priority.js";
 import { createDatabase } from "../db.js";
+import { createFreshTestDatabase } from "../testing/fresh-database.js";
 import { setActiveAlgoVersion } from "../near-dupes/meta.js";
 import { Scheduler } from "./scheduler.js";
 import { WriterTaskRunner } from "./runners/writer.js";
@@ -134,7 +135,7 @@ describe("near-dup applyBatch — no-starvation preempt", () => {
 
   beforeEach(async () => {
     dbPath = testDbPath();
-    const db = createDatabase(dbPath);
+    const db = createFreshTestDatabase(dbPath);
     // Seed the active algo and 50 placeholder document rows so the
     // applyBatch's signature/bucket FKs resolve. Edges are not FK'd
     // to documents in this test path — we drop them post-write via

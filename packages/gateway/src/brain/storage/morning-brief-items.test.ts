@@ -9,8 +9,11 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createDatabase } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import {
   getSentMorningBrief,
   latestSentMorningBrief,
@@ -24,8 +27,6 @@ import {
 } from "./morning-brief-items.js";
 import { createObservation, getObservation, transitionObservation } from "./observations.js";
 import type Database from "better-sqlite3";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 const T0 = Date.parse("2026-07-02T07:00:00.000Z");
 const DAY1 = "2026-07-02";
@@ -49,7 +50,7 @@ describe("morning brief items", () => {
 
   beforeEach(() => {
     path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
-    db = createDatabase(path);
+    db = createFreshTestDatabase(path);
     for (const id of ["obs_1", "obs_2", "obs_3", "obs_4"]) note(id);
   });
 

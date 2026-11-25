@@ -8,7 +8,7 @@ import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { signDeviceTranscript, tokenRotationTranscript } from "@omnesis/cloud-relay";
 import { defaultScopesForDeviceKind } from "@omnesis/types";
-import { createDatabase } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import {
   createDevice,
   createPairing,
@@ -43,7 +43,7 @@ function boot(): void {
 
 beforeEach(() => {
   dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-device-enrollment-${randomUUID()}.db`);
-  db = createDatabase(dbPath);
+  db = createFreshTestDatabase(dbPath);
   const admin = createDevice(db, { name: "Admin phone", kind: "ios" });
   adminToken = createToken(db, admin.id, defaultScopesForDeviceKind("ios")).token;
   boot();

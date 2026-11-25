@@ -9,6 +9,8 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import {
   AccountId,
   SourceType,
@@ -17,12 +19,8 @@ import {
   type SourceId,
 } from "@omnesis/types";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import {
-  createDatabase,
-  deleteAllBySource,
-  upsertWithCursor,
-  upsertWithCursorYieldable,
-} from "../../db.js";
+import { deleteAllBySource, upsertWithCursor, upsertWithCursorYieldable } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import { createDevice } from "./DeviceRepository.js";
 import {
   addSourceMember,
@@ -33,8 +31,6 @@ import {
 import { getWipeEpoch, resetMemberCursor } from "./SyncStateRepository.js";
 import { recordDeletionClaims, recordPresenceClaims } from "./ReplicaDeletionClaimRepository.js";
 import type { Db } from "../types.js";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 const TYPE = SourceType("apple-notes");
 const PROVIDER = "apple";
@@ -81,7 +77,7 @@ describe("replica deletion claims across the member lifecycle", () => {
 
   beforeEach(() => {
     dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
-    db = createDatabase(dbPath);
+    db = createFreshTestDatabase(dbPath);
     macA = host("mac-a");
     macB = host("mac-b");
     sourceId = createSource(db, {

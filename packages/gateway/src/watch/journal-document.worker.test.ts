@@ -17,7 +17,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { openEncryptedSqlite } from "../sqlite-encryption.js";
-import { createDatabase } from "../db.js";
+import { createFreshTestDatabase } from "../testing/fresh-database.js";
 import { Scheduler } from "../scheduler/scheduler.js";
 import { IoTaskRunner } from "../scheduler/runners/io.js";
 import { ioGateFromScheduler } from "../scheduler/io-ops.js";
@@ -87,7 +87,7 @@ let scheduler: Scheduler | null = null;
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "omnesis-watch-journal-worker-"));
   gatewayDbPath = join(tmpdir(), `omnesis-test-${randomUUID()}.db`);
-  createDatabase(gatewayDbPath).close();
+  createFreshTestDatabase(gatewayDbPath).close();
 });
 
 afterEach(async () => {

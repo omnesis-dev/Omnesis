@@ -8,6 +8,7 @@ import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, expect, test } from "vitest";
 import { AccountId, ProviderId, SourceType } from "@omnesis/types";
 import { createDatabase } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import { createDevice } from "./DeviceRepository.js";
 import {
   addSourceMember,
@@ -35,7 +36,7 @@ let source: ReturnType<typeof createSource>;
 let device: ReturnType<typeof createDevice>;
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "omnesis-pending-page-"));
-  db = createDatabase(join(dir, "state.db"));
+  db = createFreshTestDatabase(join(dir, "state.db"));
   device = createDevice(db, { name: "Example collector", kind: "collector" });
   source = createSource(db, {
     type: SourceType("example"),

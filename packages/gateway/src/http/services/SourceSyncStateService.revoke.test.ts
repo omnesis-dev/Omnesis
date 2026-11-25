@@ -3,17 +3,18 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { AccountId, SourceType } from "@omnesis/types";
-import { createDatabase, getSyncState, setSyncError } from "../../db.js";
+import { getSyncState, setSyncError } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import { createDevice } from "../../data/repositories/DeviceRepository.js";
 import { createSource } from "../../data/repositories/SourceRepository.js";
 import { SourceWriteEpochFence } from "../../source-write-epoch-fence.js";
 import { directWriteGate, type WriteGate } from "../../write-gate.js";
 import { SourceSyncStateService } from "./SourceSyncStateService.js";
 import type Database from "better-sqlite3";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 describe("SourceSyncStateService attempt revocation", () => {
   let sqlite: Database.Database;
@@ -22,7 +23,7 @@ describe("SourceSyncStateService attempt revocation", () => {
 
   beforeEach(() => {
     sqlitePath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
-    sqlite = createDatabase(sqlitePath);
+    sqlite = createFreshTestDatabase(sqlitePath);
     gate = directWriteGate(sqlite);
   });
 

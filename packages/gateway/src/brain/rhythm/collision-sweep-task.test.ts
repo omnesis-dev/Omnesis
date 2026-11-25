@@ -11,9 +11,11 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { createLogger } from "@omnesis/core";
-import { createDatabase } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import { directWriteGate } from "../../write-gate.js";
 import { createOpenLoop } from "../storage/open-loops.js";
 import { listCognitionRuns } from "../storage/run-queue.js";
@@ -26,8 +28,6 @@ import type { CollisionSweepReads } from "./collision-sweep-reads.js";
 import type Database from "better-sqlite3";
 import type { Scheduler } from "../../scheduler/scheduler.js";
 import type { PeriodicTask, TaskContext } from "../../scheduler/types.js";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 type Db = Database.Database;
 
@@ -47,7 +47,7 @@ let calls: string[];
 
 beforeEach(() => {
   path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
-  db = createDatabase(path);
+  db = createFreshTestDatabase(path);
   // A collision on the main handle: a sweep that read it would enqueue L1+L2.
   for (const id of ["L1", "L2"])
     createOpenLoop(

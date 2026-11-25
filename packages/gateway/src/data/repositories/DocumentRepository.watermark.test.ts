@@ -3,19 +3,20 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { createDatabase } from "../../db.js";
-import { getSourceWatermark } from "./WatermarkRepository.js";
-import { deleteAllBySource, upsertWithCursor } from "./DocumentRepository.js";
 import { join as fixtureJoin } from "node:path";
 import { tmpdir as fixtureTmpdir } from "node:os";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
+import { getSourceWatermark } from "./WatermarkRepository.js";
+import { deleteAllBySource, upsertWithCursor } from "./DocumentRepository.js";
+import type { createDatabase } from "../../db.js";
 
 let path: string;
 let db: ReturnType<typeof createDatabase>;
 
 beforeEach(() => {
   path = fixtureJoin(fixtureTmpdir(), `omnesis-document-watermark-${randomUUID()}.db`);
-  db = createDatabase(path);
+  db = createFreshTestDatabase(path);
 });
 
 afterEach(() => {

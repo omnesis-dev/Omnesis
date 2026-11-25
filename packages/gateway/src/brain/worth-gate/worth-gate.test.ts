@@ -13,7 +13,7 @@ import {
   type DecisionRequest,
   type DecisionResult,
 } from "@omnesis/core";
-import { createDatabase } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import { directWriteGate } from "../../write-gate.js";
 import { upsertDocuments } from "../../data/repositories/DocumentRepository.js";
 import { applyExtractedDates } from "../../enrichment/dates/storage.js";
@@ -84,7 +84,7 @@ describe("worth gate", () => {
 
   beforeEach(() => {
     dbPath = join(tmpdir(), `omnesis-test-${randomUUID()}.db`);
-    db = createDatabase(dbPath);
+    db = createFreshTestDatabase(dbPath);
     dir = mkdtempSync(join(tmpdir(), "omnesis-worth-gate-"));
     now = Date.parse("2026-09-01T09:00:00.000Z");
   });

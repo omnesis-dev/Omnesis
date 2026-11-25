@@ -17,15 +17,15 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { Scheduler } from "../scheduler.js";
 import { TaskExecutionError } from "../types.js";
-import { createDatabase } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import { WriterTaskRunner } from "./writer.js";
 import type { Task, TaskOutcome } from "../types.js";
 import type { WalCheckpointRun } from "../../workers/wal-checkpoint.js";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 function testDbPath(): string {
   return fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
@@ -51,7 +51,7 @@ describe("WriterTaskRunner — end-to-end with Scheduler", () => {
     dbPath = testDbPath();
     // Create + migrate the DB on main thread first; the worker opens
     // with fileMustExist:true.
-    const db = createDatabase(dbPath);
+    const db = createFreshTestDatabase(dbPath);
     db.close();
 
     runner = new WriterTaskRunner({

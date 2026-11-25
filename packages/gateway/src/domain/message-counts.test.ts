@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 
-import { createDatabase } from "../db.js";
+import { createFreshTestDatabase } from "../testing/fresh-database.js";
 import { upsertSourceDocumentProfiles } from "../data/repositories/SourceDocumentProfileRepository.js";
 import { countMessagesByPerson, type MessageCountsQuery } from "./message-counts.js";
 import type Database from "better-sqlite3";
@@ -18,7 +18,7 @@ let db: Db;
 
 beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), "omnesis-message-counts-test-"));
-  db = createDatabase(join(tmpDir, "test.db"));
+  db = createFreshTestDatabase(join(tmpDir, "test.db"));
 });
 
 afterEach(() => {

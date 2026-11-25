@@ -3,15 +3,15 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { createDatabase } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import { transitionObservation, createObservation } from "../storage/observations.js";
 import { markMorningBriefSent, replaceMorningBriefItems } from "../storage/morning-brief-items.js";
 import { createOpenLoop } from "../storage/open-loops.js";
 import { renderDailyBriefContext } from "./brief-thread-context.js";
 import type Database from "better-sqlite3";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 const NOW = Date.parse("2026-07-02T07:00:00.000Z");
 const DAY = "2026-07-02";
@@ -31,7 +31,7 @@ describe("renderDailyBriefContext", () => {
 
   beforeEach(() => {
     path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
-    db = createDatabase(path);
+    db = createFreshTestDatabase(path);
     createOpenLoop(
       db,
       {

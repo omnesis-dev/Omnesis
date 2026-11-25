@@ -4,15 +4,15 @@
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { createDatabase } from "../db.js";
+import { createFreshTestDatabase } from "../testing/fresh-database.js";
 import { deleteDocumentsByIds, upsertDocuments } from "../data/repositories/DocumentRepository.js";
 import { findWorthAnswer, recordWorthAnswers, type WorthAnswer } from "./answers.js";
 import type { Db } from "../data/types.js";
 import type { DocumentInput } from "@omnesis/types";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 describe("worth answers", () => {
   let db: Db;
@@ -20,7 +20,7 @@ describe("worth answers", () => {
 
   beforeEach(() => {
     dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
-    db = createDatabase(dbPath);
+    db = createFreshTestDatabase(dbPath);
   });
   afterEach(() => {
     db.close();

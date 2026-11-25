@@ -10,10 +10,12 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { computeContentHash } from "@omnesis/core";
-import { createDatabase } from "../db.js";
+import { createFreshTestDatabase } from "../testing/fresh-database.js";
 import { saveKnowledgeNode } from "../brain/knowledge/storage.js";
 import { buildKnowledgeDocumentInput } from "../brain/knowledge/mirror.js";
 import {
@@ -29,8 +31,6 @@ import {
 } from "../indexer/db.js";
 import { SearchPipeline } from "./pipeline.js";
 import { closeTempDb } from "./test-utils.js";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 const BODY =
   "The invented Riverside telescope rota assigns two observers per night and a spare lens kit.";
@@ -95,7 +95,7 @@ function addDocument(
 
 beforeEach(() => {
   const path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
-  gateway = createDatabase(path);
+  gateway = createFreshTestDatabase(path);
   index = createIndexDatabase(fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`));
   for (const id of ["rota", "rota-copy"])
     addDocument(id, SOURCE, id, "Telescope rota", BODY, { documentType: "file" });

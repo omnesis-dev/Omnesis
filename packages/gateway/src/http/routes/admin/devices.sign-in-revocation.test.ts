@@ -7,7 +7,7 @@ import { join as fixtureJoin } from "node:path";
 import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { defaultScopesForDeviceKind } from "@omnesis/types";
-import { createDatabase } from "../../../db.js";
+import { createFreshTestDatabase } from "../../../testing/fresh-database.js";
 import {
   createPairing,
   getDevice,
@@ -23,7 +23,7 @@ let path: string;
 
 beforeEach(() => {
   path = fixtureJoin(fixtureTmpdir(), `omnesis-sign-in-revocation-${randomUUID()}.db`);
-  db = createDatabase(path);
+  db = createFreshTestDatabase(path);
 });
 
 afterEach(() => {

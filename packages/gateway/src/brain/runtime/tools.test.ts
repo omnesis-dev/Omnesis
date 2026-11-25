@@ -12,11 +12,14 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID, createHash } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import { z } from "zod";
 import { createLogger, TEMPORAL_KINDS } from "@omnesis/core";
 import { ProviderId, SourceId, type DocumentInput } from "@omnesis/types";
-import { createDatabase, upsertDocuments } from "../../db.js";
+import { upsertDocuments } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import { directWriteGate } from "../../write-gate.js";
 import { getOpenLoop, listOpenLoopLedger, updateOpenLoop } from "../storage/open-loops.js";
 import { applyTaskCommand } from "../storage/tasks.js";
@@ -47,8 +50,6 @@ import {
 import type Database from "better-sqlite3";
 import type { SearchPort, TemporalReadPort, ToolHandle } from "@omnesis/agent";
 import type { ToolResult } from "@omnesis/core";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 type Db = Database.Database;
 
@@ -171,7 +172,7 @@ describe("Brain tools", () => {
 
   beforeEach(() => {
     path = testDbPath();
-    db = createDatabase(path);
+    db = createFreshTestDatabase(path);
     nowMs = Date.parse("2026-07-02T10:00:00.000Z");
     seq = 0;
     tools = buildTools();

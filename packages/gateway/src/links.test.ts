@@ -61,6 +61,7 @@ import {
   setSyncState,
   invalidateUrlIdPatternCache,
 } from "./db.js";
+import { createFreshTestDatabase } from "./testing/fresh-database.js";
 import type { DocumentInput } from "@omnesis/types";
 
 const reconcileUnresolvedLinks = (database: Db, limit?: number): number =>
@@ -136,7 +137,7 @@ function keepUrlLinks(db: Db): void {
 beforeEach(() => {
   testDir = mkdtempSync(join(tmpdir(), "omnesis-links-test-"));
   dbPath = join(testDir, `omnesis-links-test-${randomUUID()}.db`);
-  db = createDatabase(dbPath);
+  db = createFreshTestDatabase(dbPath);
 });
 
 describe("known-source matcher lifecycle on periodic reconciliation", () => {

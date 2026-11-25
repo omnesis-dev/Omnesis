@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, afterEach, expect, test } from "vitest";
 import { AccountId, SourceType } from "@omnesis/types";
-import { createDatabase } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import { createDevice, getDevice, updateDeviceCapabilities } from "./DeviceRepository.js";
 import {
   addSourceMember,
@@ -20,6 +20,7 @@ import {
   deviceSupportsPersistedSourceContract,
   getSourceMemberConfigContract,
 } from "./SourceMemberConfigContractRepository.js";
+import type { createDatabase } from "../../db.js";
 
 let db: ReturnType<typeof createDatabase>;
 let dir: string;
@@ -32,7 +33,7 @@ const caps = (names: string[]) => ({
 });
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "omnesis-member-contract-"));
-  db = createDatabase(join(dir, "gateway.db"));
+  db = createFreshTestDatabase(join(dir, "gateway.db"));
 });
 afterEach(() => {
   db.close();

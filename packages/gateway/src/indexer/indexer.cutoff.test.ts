@@ -22,7 +22,8 @@ import { join } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { SCOPE_READ } from "@omnesis/types";
-import { createDatabase, upsertDocuments } from "../db.js";
+import { upsertDocuments } from "../db.js";
+import { createFreshTestDatabase } from "../testing/fresh-database.js";
 import { createServer } from "../server.js";
 import { createDevice } from "../data/repositories/DeviceRepository.js";
 import { createToken } from "../data/repositories/TokenRepository.js";
@@ -76,7 +77,7 @@ class FixedEmbedder implements Embedder {
 beforeEach(() => {
   directory = mkdtempSync(join(tmpdir(), "omnesis-indexer-cutoff-"));
   const path = join(directory, "gateway.db");
-  writer = createDatabase(path);
+  writer = createFreshTestDatabase(path);
   reader = new Database(path, { readonly: true });
   indexDb = createIndexDatabase(join(directory, "index.db"));
   source = new DirectDocumentSource(reader);

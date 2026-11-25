@@ -39,7 +39,7 @@ import {
   KNOWLEDGE_CASCADE_NEXT_JOB_SQL,
   KNOWLEDGE_CASCADE_NEXT_ROW_SQL,
 } from "../brain/knowledge/storage-invalidation.js";
-import { createDatabase } from "../db.js";
+import { createFreshTestDatabase } from "../testing/fresh-database.js";
 import { runWithPriority } from "../priority.js";
 import { Scheduler } from "./scheduler.js";
 import { WriterTaskRunner } from "./runners/writer.js";
@@ -66,7 +66,7 @@ function cleanupDb(path: string): void {
 
 /** Seed with a plain handle and close it before the writer opens the file. */
 function seedBacklog(path: string): void {
-  const db = createDatabase(path);
+  const db = createFreshTestDatabase(path);
   try {
     const insertJob = db.prepare(
       "INSERT INTO knowledge_cascade_jobs(kind,target_kind,target_id,revision,created_at) VALUES(?,'source',?,?,?)",

@@ -13,9 +13,11 @@
 
 import { existsSync, rmSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { AccountId, SourceId, SourceType, type DeviceId } from "@omnesis/types";
-import { createDatabase } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import { createDevice } from "../../data/repositories/DeviceRepository.js";
 import {
   isSourceCleanupPending,
@@ -31,8 +33,6 @@ import {
 import { SourceService } from "./SourceService.js";
 import { StatusCache } from "./StatusCache.js";
 import type Database from "better-sqlite3";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 let DEVICE: DeviceId;
 const SOURCE = SourceId("gmail:maya.reeves@example.com");
@@ -98,7 +98,7 @@ async function seedSource(service: SourceService): Promise<void> {
 
 beforeEach(() => {
   dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
-  db = createDatabase(dbPath);
+  db = createFreshTestDatabase(dbPath);
   DEVICE = createDevice(db, { name: "test-host", kind: "collector" }).id;
 });
 

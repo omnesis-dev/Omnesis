@@ -12,13 +12,16 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID, createHash } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import { createLogger } from "@omnesis/core";
 import { ProviderId, SourceId, type DocumentInput } from "@omnesis/types";
 import { annotationEvidenceFrame } from "../annotation-verification.js";
 import { withPersonProfileRead } from "../person-profile-test-tools.js";
 import { deleteDocumentsByIds } from "../../data/repositories/DocumentRepository.js";
-import { createDatabase, upsertDocuments } from "../../db.js";
+import { upsertDocuments } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import { directWriteGate, type WriteGate } from "../../write-gate.js";
 import { createOpenLoopMirror } from "../runtime/mirror.js";
 import { buildCognitionOwnTools, COGNITION_MUTATING_TOOL_NAMES } from "../runtime/tools.js";
@@ -54,8 +57,6 @@ import {
 import type Database from "better-sqlite3";
 import type { EntailCapability, ToolResult } from "@omnesis/core";
 import type { SearchPort, ToolHandle } from "@omnesis/agent";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 type Db = Database.Database;
 
@@ -122,7 +123,7 @@ describe("doc annotation store", () => {
   let db: Db;
   beforeEach(() => {
     path = testDbPath();
-    db = createDatabase(path);
+    db = createFreshTestDatabase(path);
   });
   afterEach(() => {
     db.close();
@@ -549,7 +550,7 @@ describe("annotate_durable firewall", () => {
   let seq: number;
   beforeEach(() => {
     path = testDbPath();
-    db = createDatabase(path);
+    db = createFreshTestDatabase(path);
     seq = 0;
   });
   afterEach(() => {
@@ -858,7 +859,7 @@ describe("annotation invalidator subscription", () => {
   let db: Db;
   beforeEach(() => {
     path = testDbPath();
-    db = createDatabase(path);
+    db = createFreshTestDatabase(path);
   });
   afterEach(() => {
     db.close();
@@ -960,7 +961,7 @@ describe("person annotation invalidator subscription", () => {
   let db: Db;
   beforeEach(() => {
     path = testDbPath();
-    db = createDatabase(path);
+    db = createFreshTestDatabase(path);
   });
   afterEach(() => {
     db.close();
@@ -1100,7 +1101,7 @@ describe("annotation_revise / annotation_retract", () => {
   let seq: number;
   beforeEach(() => {
     path = testDbPath();
-    db = createDatabase(path);
+    db = createFreshTestDatabase(path);
     seq = 0;
   });
   afterEach(() => {
@@ -1285,7 +1286,7 @@ describe("annotate_person firewall", () => {
   let seq: number;
   beforeEach(() => {
     path = testDbPath();
-    db = createDatabase(path);
+    db = createFreshTestDatabase(path);
     seq = 0;
   });
   afterEach(() => {
@@ -1498,7 +1499,7 @@ describe("annotation_search", () => {
   let seq: number;
   beforeEach(() => {
     path = testDbPath();
-    db = createDatabase(path);
+    db = createFreshTestDatabase(path);
     seq = 0;
   });
   afterEach(() => {
@@ -1658,7 +1659,7 @@ describe("entailment gate (firewall 5)", () => {
   let seq: number;
   beforeEach(() => {
     path = testDbPath();
-    db = createDatabase(path);
+    db = createFreshTestDatabase(path);
     seq = 0;
   });
   afterEach(() => {
@@ -2158,7 +2159,7 @@ describe("annotation supersession + reconcile-before-create", () => {
   let seq: number;
   beforeEach(() => {
     path = testDbPath();
-    db = createDatabase(path);
+    db = createFreshTestDatabase(path);
     seq = 0;
   });
   afterEach(() => {
@@ -2564,7 +2565,7 @@ describe("annotation supersede tools + probe hardening", () => {
   let seq: number;
   beforeEach(() => {
     path = testDbPath();
-    db = createDatabase(path);
+    db = createFreshTestDatabase(path);
     seq = 0;
   });
   afterEach(() => {
@@ -2950,7 +2951,7 @@ describe("multi-evidence grounding", () => {
   let db: Db;
   beforeEach(() => {
     path = testDbPath();
-    db = createDatabase(path);
+    db = createFreshTestDatabase(path);
   });
   afterEach(() => {
     db.close();

@@ -11,7 +11,7 @@ import { createCorpusAuthorization } from "../access/corpus-authorization.js";
 
 type Db = Database.Database;
 
-import { createDatabase } from "../db.js";
+import { createFreshTestDatabase } from "../testing/fresh-database.js";
 import { createDocAnnotation } from "../brain/storage/annotations.js";
 import { createOpenLoop } from "../brain/storage/open-loops.js";
 import { OMNESIS_CHAT_SOURCE_ID } from "../sources/omnesis-chat/ids.js";
@@ -63,7 +63,7 @@ let db: Db;
 
 beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), "omnesis-ports-test-"));
-  db = createDatabase(join(tmpDir, "test.db"));
+  db = createFreshTestDatabase(join(tmpDir, "test.db"));
   for (const id of ["brain", "tasks", "watches"] as const) setLabFlag(db, id, true);
 });
 

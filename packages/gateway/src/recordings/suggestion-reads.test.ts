@@ -11,7 +11,7 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 
-import { createDatabase } from "../db.js";
+import { createFreshTestDatabase } from "../testing/fresh-database.js";
 import { calendarEventsFrom, type TemporalWindowReader } from "./calendar.js";
 import { eventAttendees, resolveGivenName } from "./suggestion-reads.js";
 import type { TemporalItem, TemporalQueryInput } from "@omnesis/core";
@@ -22,7 +22,7 @@ let db: Database.Database;
 
 beforeEach(() => {
   dbPath = join(tmpdir(), `omnesis-test-${randomUUID()}.db`);
-  db = createDatabase(dbPath);
+  db = createFreshTestDatabase(dbPath);
 });
 
 afterEach(() => {

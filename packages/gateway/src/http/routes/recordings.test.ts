@@ -16,7 +16,7 @@ import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import { SCOPE_ADMIN, SCOPE_READ, type Scope } from "@omnesis/types";
-import { createDatabase } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import { getRecordingSession } from "../../recordings/storage.js";
 import { createServer } from "../../server.js";
 import { setLabFlag } from "../../lab/store.js";
@@ -103,7 +103,7 @@ beforeEach(() => {
   priorExperimental = process.env.OMNESIS_EXPERIMENTAL;
   process.env.OMNESIS_EXPERIMENTAL = "1";
   dbPath = join(tmpdir(), `omnesis-test-${randomUUID()}.db`);
-  db = createDatabase(dbPath);
+  db = createFreshTestDatabase(dbPath);
   setLabFlag(db, "recordings", true);
   ADMIN_TOKEN = mintToken([SCOPE_ADMIN, SCOPE_READ]);
   optedIn = undefined;

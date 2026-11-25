@@ -29,7 +29,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createLogger, type AgentEvent } from "@omnesis/core";
 import { parseFixture, RoutingReplayBackend } from "@omnesis/agent";
-import { createDatabase } from "../db.js";
+import { createFreshTestDatabase } from "../testing/fresh-database.js";
 import { makeReplayBackendFactory } from "./replay-factory.js";
 import type { ChatBackend, ReplayScenario, TurnInput } from "@omnesis/agent";
 import type Database from "better-sqlite3";
@@ -84,7 +84,7 @@ function setup(): Harness {
   const dir = join(tmpRoot, "demos");
   mkdirSync(dir, { recursive: true });
   writeScenario(dir, "alpha", "alpha greeting");
-  const db = createDatabase(join(tmpRoot, "test.db"));
+  const db = createFreshTestDatabase(join(tmpRoot, "test.db"));
   return {
     db,
     dir,

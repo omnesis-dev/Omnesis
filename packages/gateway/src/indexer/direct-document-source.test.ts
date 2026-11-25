@@ -9,7 +9,8 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { renderConversationDay } from "@omnesis/core";
 import { ProviderId, SourceId } from "@omnesis/types";
 import { marked, type Tokens } from "marked";
-import { createDatabase, upsertDocuments, listDocuments } from "../db.js";
+import { upsertDocuments, listDocuments } from "../db.js";
+import { createFreshTestDatabase } from "../testing/fresh-database.js";
 import { toListedDocument } from "../data/document-mappers.js";
 import { buildNotesDayDocument } from "../sources/omnesis-notes/upsert.js";
 import { DocumentChunker } from "./chunker.js";
@@ -26,7 +27,7 @@ let queries: string[];
 beforeEach(() => {
   directory = mkdtempSync(join(tmpdir(), "omnesis-indexer-boundary-"));
   const path = join(directory, "gateway.db");
-  writer = createDatabase(path);
+  writer = createFreshTestDatabase(path);
   queries = [];
   reader = new Database(path, {
     readonly: true,
