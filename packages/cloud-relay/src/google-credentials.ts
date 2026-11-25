@@ -4,7 +4,14 @@
 import { mkdir } from "node:fs/promises";
 import { createReadStream } from "node:fs";
 import { dirname } from "node:path";
-import { atomicWriteFile, atomicWriteFileSync, readWindowsPrivateFile } from "@omnesis/core";
+import {
+  atomicWriteFile,
+  atomicWriteFileSync,
+  readWindowsPrivateFile,
+  decodeSecretTextFileValue,
+  writeSecretJsonFile,
+  type SecretFileOptions,
+} from "@omnesis/core";
 import { z } from "zod";
 import { accountId, googleIdentityProvider, type IdentityProvider } from "./identity.js";
 import { refreshGoogleAuthorization, type GoogleCredentials } from "./google-oauth.js";
@@ -25,26 +32,48 @@ const relaySessionSchema = z.object({
   accountId: z.string().regex(/^[a-f0-9]{64}$/),
 });
 
-export async function readPrivateJson(path: string): Promise<unknown> {
+export async function readPrivateText(path: string, options?: SecretFileOptions): Promise<string> {
+  // A wrapped 64 KiB credential needs base64/envelope headroom. Both the
+  // serialized read and the decoded logical credential remain bounded.
+  const limit = options ? 131_072 : 65_536;
   const chunks: Buffer[] = [];
   let size = 0;
   if (process.platform === "win32") {
-    chunks.push(await readWindowsPrivateFile(path, 65_536));
+    chunks.push(await readWindowsPrivateFile(path, limit));
   } else {
     for await (const chunk of createReadStream(path)) {
       size += chunk.length;
-      if (size > 65_536) throw new Error("Credential file is too large");
+      if (size > limit) throw new Error("Credential file is too large");
       chunks.push(chunk);
     }
   }
+  const serialized = Buffer.concat(chunks).toString("utf8");
+  const decoded = options ? await decodeSecretTextFileValue(path, serialized, options) : serialized;
+  if (Buffer.byteLength(decoded) > 65_536) throw new Error("Credential file is too large");
+  return decoded;
+}
+
+export async function readPrivateJson(path: string, options?: SecretFileOptions): Promise<unknown> {
+  const decoded = await readPrivateText(path, options);
   try {
-    return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    return JSON.parse(decoded);
   } catch {
     throw new Error("Invalid private credential file");
   }
 }
 
-export async function savePrivateJson(path: string, value: unknown): Promise<void> {
+export async function savePrivateJson(
+  path: string,
+  value: unknown,
+  options?: SecretFileOptions,
+): Promise<void> {
+  if (options) {
+    const serialized = JSON.stringify(value, null, 2);
+    if (serialized === undefined || Buffer.byteLength(serialized) > 65_536)
+      throw new Error("Credential file is too large");
+    await writeSecretJsonFile(path, value, options);
+    return;
+  }
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   await atomicWriteFile(path, JSON.stringify(value) + "\n", { mode: 0o600 });
 }

@@ -643,6 +643,7 @@ export {
   PassphraseMismatchError,
   createSecretStore,
   parseSecretStoreBackend,
+  resolveSecretStoreService,
   inspectInstallRootKey,
   ensureInstallRootKey,
   readInstallRootKey,

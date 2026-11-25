@@ -133,3 +133,35 @@ test("cancellation stops selection even if its callback ignores the abort and de
   expect(await selectGoogleGateway(rest)).toEqual(binding());
   expect(defaults.select).not.toHaveBeenCalled();
 });
+
+test("account directory returns validated empty metadata without trying to enroll", async () => {
+  const { listAccountGateways } = await import("./gateway-choice-client.js");
+  const config = options();
+  config.fetch.mockResolvedValue(Response.json({ gateways: [] }));
+  expect(await listAccountGateways(config)).toEqual([]);
+  expect(String(config.fetch.mock.calls[0]![0])).toBe(
+    "https://relay.example.test/_relay/v3/gateways",
+  );
+  expect(config.select).not.toHaveBeenCalled();
+});
+
+test("account directory keeps offline homes, validates every page and fails on outage", async () => {
+  const { listAccountGateways } = await import("./gateway-choice-client.js");
+  const config = options();
+  config.fetch
+    .mockResolvedValueOnce(Response.json({ gateways: [choice(1)], nextCursor: id(1) }))
+    .mockResolvedValueOnce(Response.json({ gateways: [choice(2)] }));
+  const homes = await listAccountGateways(config);
+  expect(homes).toEqual([choice(1), choice(2)]);
+  expect(Object.isFrozen(homes)).toBe(true);
+  expect(homes[1]!.online).toBe(false);
+  expect(config.select).not.toHaveBeenCalled();
+  for (const response of [
+    new Response("", { status: 503 }),
+    Response.json({ gateways: "unavailable" }),
+  ]) {
+    const failed = options();
+    failed.fetch.mockResolvedValue(response);
+    await expect(listAccountGateways(failed)).rejects.toThrow();
+  }
+});

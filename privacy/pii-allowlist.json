@@ -2323,7 +2323,8 @@
       "paths": [
         "packages/cloud-relay/src/adaptive-path.test.ts",
         "packages/cloud-relay/src/device-file-hints.test.ts",
-        "packages/cloud-relay/src/direct-path.test.ts"
+        "packages/cloud-relay/src/direct-path.test.ts",
+        "packages/cloud-relay/src/paired-device-storage.test.ts"
       ],
       "reason": "Invented routing hints and invalid-address counterexamples for isolated LAN classification tests."
     },

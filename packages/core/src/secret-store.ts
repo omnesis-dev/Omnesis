@@ -79,7 +79,7 @@ const PASSPHRASE_ENVELOPE_MARKER = "omnesis.passphrase-secret";
 /**
  * Every environment variable the secret store reads to reach its keys — the
  * three sources {@link resolveKeyringPassphrase} consults, plus the backend
- * selector.
+ * and service namespace selectors.
  *
  * Anything that hands a child process a curated environment instead of
  * inheriting one must forward these, or the child selects a backend it has no
@@ -88,8 +88,8 @@ const PASSPHRASE_ENVELOPE_MARKER = "omnesis.passphrase-secret";
  * it: a new source added to the resolver is added here in the same change and
  * every restricted environment picks it up.
  *
- * Note what forwarding all of them means. Three are locators — a backend name
- * and two paths — but `OMNESIS_KEYRING_PASSPHRASE` is the passphrase itself,
+ * Note what forwarding all of them means. Backend/service names and paths
+ * are locators, but `OMNESIS_KEYRING_PASSPHRASE` is the passphrase itself,
  * so a child given the whole list can read it out of its own environment. That
  * is the right trade for a child that must open the same keys as its parent;
  * it is the wrong one for a child that must not, and such a caller should take
@@ -97,6 +97,7 @@ const PASSPHRASE_ENVELOPE_MARKER = "omnesis.passphrase-secret";
  */
 export const KEYRING_ENV_KEYS: readonly string[] = [
   "OMNESIS_SECRET_STORE",
+  "OMNESIS_SECRET_SERVICE",
   PASSPHRASE_ENV,
   PASSPHRASE_FILE_ENV,
   // Set by systemd for a unit with `LoadCredential=`; the passphrase file
@@ -173,10 +174,21 @@ export function parseSecretStoreBackend(raw: string | undefined): SecretStoreBac
   );
 }
 
+/** Resolve an install namespace without letting environment input escape a file backend. */
+export function resolveSecretStoreService(raw = process.env.OMNESIS_SECRET_SERVICE): string {
+  if (raw === undefined) return OMNESIS_SECRET_SERVICE;
+  if (raw.length > 255 || !/^[A-Za-z0-9]/.test(raw) || /[^A-Za-z0-9._-]/.test(raw)) {
+    throw new Error(
+      "Invalid OMNESIS_SECRET_SERVICE: expected a service identifier using letters, digits, dots, underscores or dashes.",
+    );
+  }
+  return raw;
+}
+
 export function createSecretStore(opts: CreateSecretStoreOptions = {}): SecretStore {
   const requestedBackend =
     opts.backend ?? parseSecretStoreBackend(process.env.OMNESIS_SECRET_STORE);
-  const service = opts.service ?? OMNESIS_SECRET_SERVICE;
+  const service = opts.service ?? resolveSecretStoreService();
   const platform = opts.platform ?? process.platform;
   const runCommand = opts.runCommand ?? defaultSecretCommandRunner;
   const configDir = opts.configDir ?? DEFAULT_CONFIG_DIR;
@@ -248,7 +260,7 @@ export function readInstallRootKeySync(opts: CreateSecretStoreOptions = {}): str
   const requestedBackend =
     opts.backend ?? parseSecretStoreBackend(process.env.OMNESIS_SECRET_STORE);
   const platform = opts.platform ?? process.platform;
-  const service = opts.service ?? OMNESIS_SECRET_SERVICE;
+  const service = opts.service ?? resolveSecretStoreService();
   const configDir = opts.configDir ?? DEFAULT_CONFIG_DIR;
   const backend =
     requestedBackend === "auto"

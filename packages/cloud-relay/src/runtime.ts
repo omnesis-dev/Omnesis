@@ -17,10 +17,10 @@ import { RelayAccounts } from "./accounts.js";
 import { googleIdentityProvider, localIdentityProvider, RelaySessions } from "./identity.js";
 import { createCloudRelay } from "./server.js";
 import { createRelayClientProxy } from "./client-proxy.js";
-import { directCandidateSchema } from "./direct-path.js";
 import { tlsSpkiFingerprint } from "./pinned-key.js";
 import { AdaptiveGatewayPath } from "./adaptive-path.js";
 import { saveDirectCandidates } from "./device-file-hints.js";
+import { pairedDeviceSecretOptions, readPairedDeviceFile } from "./paired-device-storage.js";
 import { probeGatewayDevice } from "./adaptive-probe.js";
 import { discoverDirectCandidates, pinnedGatewayJson } from "./google-device-pairing.js";
 import { relayOrigin } from "./network.js";
@@ -598,24 +598,9 @@ export async function runRelayCommand(
     .max(65535)
     .default(8788)
     .parse(env.OMNESIS_CLOUD_RELAY_CLIENT_PORT);
+  const secretOptions = pairedDeviceSecretOptions(env);
   const paired = env.OMNESIS_CLOUD_RELAY_DEVICE_FILE
-    ? z
-        .object({
-          gatewayUrl: z.string().min(1).max(2048),
-          gatewayFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
-          gatewayCertificate: z.string().min(1).max(16_384),
-          tlsSpkiFingerprint: z
-            .string()
-            .regex(/^[a-f0-9]{64}$/)
-            .optional(),
-          directCandidates: z.array(directCandidateSchema).max(8).optional(),
-          token: z.string().regex(/^[A-Za-z0-9._~-]{1,4096}$/),
-          deviceId: z.string().uuid(),
-          kind: z.enum(["cli", "collector"]),
-          scopes: z.array(z.string().min(1).max(128)).max(128),
-        })
-        .strict()
-        .parse(await readPrivateJson(env.OMNESIS_CLOUD_RELAY_DEVICE_FILE))
+    ? await readPairedDeviceFile(env.OMNESIS_CLOUD_RELAY_DEVICE_FILE, secretOptions)
     : undefined;
   if (paired) {
     const certificate = publicLeafCertificate(paired.gatewayCertificate);
@@ -651,7 +636,8 @@ export async function runRelayCommand(
               paired.tlsSpkiFingerprint,
               dial,
             ),
-          persist: (candidates) => saveDirectCandidates(deviceFile!, paired, candidates),
+          persist: (candidates) =>
+            saveDirectCandidates(deviceFile!, paired, candidates, secretOptions),
           reverify:
             paired.tlsSpkiFingerprint === undefined
               ? undefined

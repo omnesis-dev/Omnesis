@@ -353,5 +353,12 @@ describe("what a backup owns", () => {
     expect(restoredDotEnv(null, null)).toBeNull();
     // A machine key only the backup has does not come back.
     expect(restoredDotEnv("OMNESIS_SECRET_STORE=passphrase\n", null)).toBeNull();
+    expect(restoredDotEnv("OMNESIS_SECRET_SERVICE=dev.omnesis.desktop.old\n", null)).toBeNull();
+    expect(
+      restoredDotEnv(
+        "OMNESIS_SECRET_SERVICE=dev.omnesis.desktop.old\n",
+        "OMNESIS_SECRET_SERVICE=dev.omnesis.desktop.current\n",
+      ),
+    ).toBe("OMNESIS_SECRET_SERVICE=dev.omnesis.desktop.current\n");
   });
 });

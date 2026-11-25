@@ -265,6 +265,7 @@ describe("writing secrets while the keyring directory is unreadable", () => {
       try {
         const result = await writeSecretTextFile(path, JSON.stringify({ token: "abc" }), {
           configDir,
+          backend: "auto",
         });
         expect(result.encrypted).toBe(true);
         expect(isEncryptedSecretFile(readFileSync(path, "utf8"))).toBe(true);

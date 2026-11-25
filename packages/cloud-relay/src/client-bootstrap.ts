@@ -2,6 +2,9 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { existsSync } from "node:fs";
+import { join } from "node:path";
+import { readSecretTextFile } from "@omnesis/core";
+import { pairedDeviceSecretOptions } from "./paired-device-storage.js";
 
 /** Start only for explicitly configured paired native components, before URL constants freeze. */
 export async function initializePairedDeviceTransport(
@@ -80,14 +83,23 @@ export async function defaultCloudDeviceFile(
   const config = cloudClientDefaults({ ...env, OMNESIS_CLOUD_RELAY_DEVICE_KIND: component });
   const path = config.OMNESIS_CLOUD_RELAY_DEVICE_FILE!;
   if (!existsSync(path)) return undefined;
-  const { readTokenFile, readCollectorTokenFile } = await import("@omnesis/core");
-  const token =
-    component === "cli"
-      ? readTokenFile(config.OMNESIS_CONFIG_DIR)
-      : readCollectorTokenFile(config.OMNESIS_CONFIG_DIR);
+  const options = pairedDeviceSecretOptions(config);
+  let token: string | null;
+  try {
+    token =
+      (
+        await readSecretTextFile(
+          join(config.OMNESIS_CONFIG_DIR!, component === "cli" ? "token" : "collector-token"),
+          options,
+        )
+      )?.trim() ?? null;
+  } catch {
+    // Automatic transport selection never substitutes authority when the active token is unreadable.
+    return undefined;
+  }
   if (!token) return undefined;
   const { readPrivateJson } = await import("./google-credentials.js");
-  const saved = await readPrivateJson(path);
+  const saved = await readPrivateJson(path, options);
   return saved &&
     typeof saved === "object" &&
     "kind" in saved &&

@@ -15,6 +15,7 @@ import {
   secretFileScope,
 } from "@omnesis/core";
 import { z } from "zod";
+import { withPairedDeviceFileLock } from "./paired-device-lock.js";
 import {
   cloudClientDefaults,
   requireGoogleDesktopClient,
@@ -223,13 +224,13 @@ async function runDevicePairing(
       ((choices, signal) =>
         chooseGateway(choices, signal, env.OMNESIS_CLOUD_RELAY_TARGET_GATEWAY_ID)),
   });
-  unchanged();
-  await savePrivateJson(config.OMNESIS_CLOUD_RELAY_DEVICE_FILE, result);
-  unchanged();
-  if (result.kind === "collector") writeCollectorTokenFile(result.token, configDir);
-  else {
-    publishCliToken(result.token, configDir);
-  }
+  await withPairedDeviceFileLock(config.OMNESIS_CLOUD_RELAY_DEVICE_FILE, async () => {
+    unchanged();
+    await savePrivateJson(config.OMNESIS_CLOUD_RELAY_DEVICE_FILE, result);
+    unchanged();
+    if (result.kind === "collector") writeCollectorTokenFile(result.token, configDir);
+    else publishCliToken(result.token, configDir);
+  });
 }
 
 /** Publish a fresh CLI credential without replacing a file created by another process. */

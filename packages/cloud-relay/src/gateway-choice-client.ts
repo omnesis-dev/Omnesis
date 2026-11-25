@@ -24,13 +24,23 @@ const pageSchema = z
   .strict();
 
 /** Metadata is an untrusted discovery hint. Selection must still match the leaf binding and pass SAS approval. */
-interface GatewaySelectionOptions {
+export interface GatewayDirectoryOptions {
   relay: URL;
   token: string;
   signal: AbortSignal;
-  select(choices: readonly GatewayChoice[], signal: AbortSignal): Promise<string>;
   fetch?: typeof fetch;
 }
+interface GatewaySelectionOptions extends GatewayDirectoryOptions {
+  select(choices: readonly GatewayChoice[], signal: AbortSignal): Promise<string>;
+}
+
+/** Returns untrusted account routing hints, including an explicit empty directory response. */
+export async function listAccountGateways(
+  options: GatewayDirectoryOptions,
+): Promise<readonly GatewayChoice[]> {
+  return listGateways(options, "v3");
+}
+
 export async function selectGoogleGateway(
   options: GatewaySelectionOptions,
 ): Promise<GatewayBinding> {
@@ -61,37 +71,7 @@ async function selectGateway(
   options: GatewaySelectionOptions,
   version: "v2" | "v3",
 ): Promise<{ binding: GatewayBinding; raw: unknown }> {
-  const request = async (path: string) => {
-    options.signal.throwIfAborted();
-    const response = await (options.fetch ?? fetch)(new URL(path, options.relay), {
-      headers: { authorization: `Bearer ${options.token}` },
-      redirect: "error",
-      signal: AbortSignal.any([options.signal, AbortSignal.timeout(10_000)]),
-    });
-    if (!response.ok)
-      throw new Error("Gateway discovery is unavailable; try again or pair by QR code");
-    return readBoundedJson(response);
-  };
-  const choices: GatewayChoice[] = [];
-  const seen = new Set<string>();
-  let cursor: string | undefined;
-  for (let page = 0; ; page++) {
-    if (page >= 20) throw new Error("Gateway directory is too large");
-    const response = pageSchema.parse(
-      await request(`/_relay/${version}/gateways${cursor === undefined ? "" : `?after=${cursor}`}`),
-    );
-    for (const choice of response.gateways) {
-      bindingOrigin(choice.publicOrigin);
-      if (seen.has(choice.gatewayId))
-        throw new Error("Gateway directory changed; refresh the choices");
-      seen.add(choice.gatewayId);
-      choices.push(Object.freeze(choice));
-    }
-    if (response.nextCursor === undefined) break;
-    if (response.gateways.at(-1)?.gatewayId !== response.nextCursor)
-      throw new Error("Invalid gateway directory cursor");
-    cursor = response.nextCursor;
-  }
+  const choices = await listGateways(options, version);
   if (choices.length === 0)
     throw new Error("No gateways are connected to your Omnesis account yet");
   options.signal.throwIfAborted();
@@ -106,7 +86,10 @@ async function selectGateway(
   options.signal.throwIfAborted();
   const choice = choices.find((choice) => choice.gatewayId === selected);
   if (!choice) throw new Error("Choose one of the discovered gateways");
-  const raw = await request(`/_relay/${version}/gateway?gatewayId=${choice.gatewayId}`);
+  const raw = await directoryRequest(
+    options,
+    `/_relay/${version}/gateway?gatewayId=${choice.gatewayId}`,
+  );
   const binding = gatewayBindingSchema.parse(
     version === "v2" ? raw : z.object({ binding: gatewayBindingSchema }).parse(raw).binding,
   );
@@ -116,6 +99,50 @@ async function selectGateway(
   )
     throw new Error("Gateway selection changed; start sign-in again");
   return { binding, raw };
+}
+
+async function directoryRequest(options: GatewayDirectoryOptions, path: string): Promise<unknown> {
+  options.signal.throwIfAborted();
+  const response = await (options.fetch ?? fetch)(new URL(path, options.relay), {
+    headers: { authorization: `Bearer ${options.token}` },
+    redirect: "error",
+    signal: AbortSignal.any([options.signal, AbortSignal.timeout(10_000)]),
+  });
+  options.signal.throwIfAborted();
+  if (!response.ok)
+    throw new Error("Gateway discovery is unavailable; try again or pair by QR code");
+  return readBoundedJson(response);
+}
+
+async function listGateways(
+  options: GatewayDirectoryOptions,
+  version: "v2" | "v3",
+): Promise<readonly GatewayChoice[]> {
+  const choices: GatewayChoice[] = [];
+  const seen = new Set<string>();
+  let cursor: string | undefined;
+  for (let page = 0; ; page++) {
+    if (page >= 20) throw new Error("Gateway directory is too large");
+    const response = pageSchema.parse(
+      await directoryRequest(
+        options,
+        `/_relay/${version}/gateways${cursor === undefined ? "" : `?after=${cursor}`}`,
+      ),
+    );
+    for (const choice of response.gateways) {
+      bindingOrigin(choice.publicOrigin);
+      if (seen.has(choice.gatewayId))
+        throw new Error("Gateway directory changed; refresh the choices");
+      seen.add(choice.gatewayId);
+      choices.push(Object.freeze(choice));
+    }
+    if (response.nextCursor === undefined) break;
+    if (response.gateways.at(-1)?.gatewayId !== response.nextCursor)
+      throw new Error("Invalid gateway directory cursor");
+    cursor = response.nextCursor;
+  }
+  options.signal.throwIfAborted();
+  return Object.freeze(choices);
 }
 
 async function selectBeforeAbort(

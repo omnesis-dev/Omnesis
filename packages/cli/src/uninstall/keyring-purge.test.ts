@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { join } from "node:path";
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { purgeConfigDirKeyring, type KeyringPurgeDeps } from "./keyring-purge.js";
 
 const HOME = process.platform === "win32" ? String.raw`C:\AuditFixture\Home` : "/Users/maya";
@@ -26,6 +26,8 @@ function deps(files: Record<string, string>, entries = ["omnesis", "omnesis-coll
   };
   return { d, calls };
 }
+
+afterEach(() => vi.unstubAllEnvs());
 
 describe("purgeConfigDirKeyring", () => {
   // The machine the coexistence was built for: a Docker install in ~/.config/omnesis
@@ -69,5 +71,34 @@ describe("purgeConfigDirKeyring", () => {
     const result = await purgeConfigDirKeyring(HOME, COLLECTOR, d);
     expect(result.rootKey).toBe("kept");
     expect(result.notes.join(" ")).toContain("the keychain is locked");
+  });
+
+  test("keeps an unowned custom service root while clearing only its markers", async () => {
+    vi.stubEnv("OMNESIS_SECRET_SERVICE", "dev.omnesis.desktop.example");
+    const { d, calls } = deps({});
+    const services: Array<string | undefined> = [];
+    d.clearMarker = (_kind, options) => {
+      services.push(options.service);
+      return Promise.resolve();
+    };
+    const result = await purgeConfigDirKeyring(HOME, COLLECTOR, d);
+    expect(result.rootKey).toBe("kept");
+    expect(services).toEqual(["dev.omnesis.desktop.example", "dev.omnesis.desktop.example"]);
+    expect(calls).not.toContain("root-key");
+  });
+
+  test("an exclusively owned custom scope can purge without touching a headless key", async () => {
+    const { d } = deps({ [join(DOCKER, "omnesis.json")]: "{}" });
+    const deleted: Array<string | undefined> = [];
+    d.deleteRootKey = async (options) => {
+      deleted.push(options.service);
+      return true;
+    };
+    const result = await purgeConfigDirKeyring(HOME, COLLECTOR, d, {
+      service: "dev.omnesis.desktop.example",
+      exclusiveService: true,
+    });
+    expect(result.rootKey).toBe("deleted");
+    expect(deleted).toEqual(["dev.omnesis.desktop.example"]);
   });
 });

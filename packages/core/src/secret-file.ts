@@ -18,7 +18,7 @@ import { SecretPathUnreadableError, secretPathExists } from "./security-files.js
 import { atomicWriteFile, atomicWriteFileSync } from "./atomic-write.js";
 import {
   installRootKeyBytes,
-  OMNESIS_SECRET_SERVICE,
+  resolveSecretStoreService,
   parseSecretStoreBackend,
   readInstallRootKey,
   readInstallRootKeySync,
@@ -96,7 +96,7 @@ let cachedInstallRootKey: { scope: RootKeyScope; value: string } | undefined;
 function rootKeyScope(opts: CreateSecretStoreOptions): RootKeyScope {
   return {
     configDir: resolve(opts.configDir ?? DEFAULT_CONFIG_DIR),
-    service: opts.service ?? OMNESIS_SECRET_SERVICE,
+    service: opts.service ?? resolveSecretStoreService(),
     platform: opts.platform ?? process.platform,
     backend: opts.backend ?? parseSecretStoreBackend(process.env.OMNESIS_SECRET_STORE),
     runCommand: opts.runCommand,

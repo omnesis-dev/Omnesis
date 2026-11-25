@@ -15,13 +15,16 @@
  * keyring of its own. A Docker install's directory does not count — its
  * containers have no OS keyring and seal their secrets with a passphrase file
  * inside that directory — so it is never what keeps the key, and nothing of
- * it is touched.
+ * it is touched. Custom service namespaces retain their root key unless the
+ * caller proves the removed installation owns that namespace exclusively.
  */
 
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import {
   OMNESIS_INSTALL_ROOT_KEY,
+  OMNESIS_SECRET_SERVICE,
+  resolveSecretStoreService,
   clearMarkerKeyringState,
   createSecretStore,
   type CreateSecretStoreOptions,
@@ -66,12 +69,20 @@ export function otherKeyringConfigDirs(
     .filter((dir) => deps.readText(join(dir, "install-method"))?.trim() !== "docker");
 }
 
+export interface KeyringPurgeOptions {
+  service?: string;
+  /** The caller proved this service belongs exclusively to the removed installation. */
+  exclusiveService?: boolean;
+}
+
 export async function purgeConfigDirKeyring(
   home: string,
   configDir: string,
   deps: KeyringPurgeDeps = defaultKeyringPurgeDeps(home),
+  options: KeyringPurgeOptions = {},
 ): Promise<KeyringPurgeResult> {
-  const opts: CreateSecretStoreOptions = { configDir };
+  const service = options.service ?? resolveSecretStoreService();
+  const opts: CreateSecretStoreOptions = { configDir, service };
   const notes: string[] = [];
   let markersCleared = true;
   for (const kind of MARKER_KINDS) {
@@ -84,7 +95,16 @@ export async function purgeConfigDirKeyring(
       );
     }
   }
-  const keptFor = otherKeyringConfigDirs(home, configDir, deps);
+  // Custom namespaces may be shared outside the legacy config parent. Only
+  // their owner can prove that removing this directory retires the root key.
+  const customService = service !== OMNESIS_SECRET_SERVICE;
+  if (customService && !options.exclusiveService) {
+    notes.push(
+      "The custom secret-service root key is retained because its exclusive ownership was not established.",
+    );
+    return { markersCleared, rootKey: "kept", keptFor: [], notes };
+  }
+  const keptFor = customService ? [] : otherKeyringConfigDirs(home, configDir, deps);
   if (keptFor.length > 0) return { markersCleared, rootKey: "kept", keptFor, notes };
   try {
     const deleted = await deps.deleteRootKey(opts);

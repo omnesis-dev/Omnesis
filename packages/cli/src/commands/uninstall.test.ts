@@ -841,6 +841,23 @@ describe("services", () => {
 });
 
 describe("macOS", () => {
+  test("a scoped purge sweeps only the effective Keychain service", async () => {
+    vi.stubEnv("OMNESIS_SECRET_SERVICE", "dev.omnesis.desktop.example");
+    const m = new Machine("darwin").config().services().packageInstall();
+    m.on(["security", "find-generic-password"], { code: 44 });
+    m.on(["security", "delete-generic-password"], { code: 44 });
+    expect((await uninstall(m, { purge: true })).code).toBe(0);
+    const commands = [
+      ...m.ran("security", "find-generic-password"),
+      ...m.ran("security", "delete-generic-password"),
+    ];
+    expect(commands.length).toBeGreaterThan(0);
+    for (const command of commands) {
+      expect(command.argv).toContain("dev.omnesis.desktop.example");
+      expect(command.argv).not.toContain("dev.omnesis");
+    }
+  });
+
   test("LaunchAgents are booted out and removed; the keychain is swept on --purge", async () => {
     const m = new Machine("darwin").config().services().packageInstall();
     m.profile(".bash_profile");

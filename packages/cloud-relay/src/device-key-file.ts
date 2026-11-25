@@ -5,7 +5,15 @@ import { generateKeyPairSync, createPrivateKey, createPublicKey, randomUUID } fr
 import { link, mkdir, open, readFile, rm } from "node:fs/promises";
 import { dirname } from "node:path";
 import { Readable } from "node:stream";
-import { readWindowsPrivateFile, writeWindowsPrivateFileAtomicStream } from "@omnesis/core";
+import {
+  readWindowsPrivateFile,
+  writeWindowsPrivateFileAtomicStream,
+  readInstallRootKey,
+  writeSecretTextFile,
+  type SecretFileOptions,
+} from "@omnesis/core";
+import { readPrivateText } from "./google-credentials.js";
+import { withPairedDeviceFileLock } from "./paired-device-lock.js";
 import { isJoinedPrivateFileError } from "./private-file-errors.js";
 import type { KeyObject } from "node:crypto";
 
@@ -32,7 +40,11 @@ function toDeviceKey(privateKey: KeyObject): DeviceKey {
 }
 
 /** One P-256 key per client install. A desktop has no secure element, so this is a private file. */
-export async function readOrCreateDeviceKey(path: string): Promise<DeviceKey> {
+export async function readOrCreateDeviceKey(
+  path: string,
+  options?: SecretFileOptions,
+): Promise<DeviceKey> {
+  if (options) return readOrCreateEncryptedDeviceKey(path, options);
   try {
     return toDeviceKey(await readDeviceKey(path));
   } catch (error) {
@@ -79,4 +91,31 @@ export async function readOrCreateDeviceKey(path: string): Promise<DeviceKey> {
     if (stagedCreated) await rm(staged, { force: true });
   }
   return toDeviceKey(privateKey);
+}
+
+/** Managed installs fail closed and serialize key creation; legacy callers retain their file contract. */
+async function readOrCreateEncryptedDeviceKey(
+  path: string,
+  options: SecretFileOptions,
+): Promise<DeviceKey> {
+  return withPairedDeviceFileLock(path, async () => {
+    if (!(await readInstallRootKey(options)))
+      throw new Error("The device identity requires an unlocked installation key");
+    let privateKey: KeyObject;
+    try {
+      privateKey = createPrivateKey(await readPrivateText(path, options));
+    } catch (error) {
+      if (!isJoinedPrivateFileError(error, "ENOENT"))
+        throw new Error("The saved device key could not be read", { cause: error });
+      privateKey = generateKeyPairSync("ec", { namedCurve: "prime256v1" }).privateKey;
+    }
+    // This also upgrades an already existing private PEM before it can be used
+    // by a managed application; no plaintext copy is staged at any point.
+    await writeSecretTextFile(
+      path,
+      privateKey.export({ type: "pkcs8", format: "pem" }).toString(),
+      options,
+    );
+    return toDeviceKey(privateKey);
+  });
 }

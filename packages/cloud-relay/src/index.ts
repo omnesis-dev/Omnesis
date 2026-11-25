@@ -189,3 +189,8 @@ export {
   signInvite,
 } from "./invites.js";
 export type { InviteRefusal, VerifiedInvite } from "./invites.js";
+
+export { listAccountGateways, type GatewayDirectoryOptions } from "./gateway-choice-client.js";
+
+export { readPairedDeviceFile, savePairedDeviceFile } from "./paired-device-storage.js";
+export { installationRelayUrl } from "./installation-relay.js";
