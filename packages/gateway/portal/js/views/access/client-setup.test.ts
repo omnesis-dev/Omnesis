@@ -79,6 +79,7 @@ describe("agentSetups", () => {
       "chatgpt",
       "claude-apps",
       "grok-bot",
+      "muse",
       "antigravity",
       "openclaw",
       "hermes",
@@ -109,6 +110,19 @@ describe("agentSetups", () => {
     },
   );
 
+  test.each([RESOURCE, "https://gateway.example.org:17600/mcp"])(
+    "gives Muse a prompt to install the MCP server at %s with OAuth",
+    (resource) => {
+      const setup = agent("muse", { resource });
+      expect(setup.name).toBe("Muse");
+      expect(setup.commands).toEqual([{
+        label: "Paste this into Muse",
+        value: `Please install this MCP server in Muse: ${resource} (Omnesis). Authenticate with OAuth.`,
+      }]);
+      expect(setup.pairs).toBeUndefined();
+    },
+  );
+
   test("builds the terminal commands each CLI documents", () => {
     expect(commands("claude-code")).toEqual([
       "claude plugin marketplace add omnesis-dev/Omnesis --sparse .claude-plugin plugins/omnesis-claude" +
@@ -132,7 +146,7 @@ describe("agentSetups", () => {
     const needsPublic = agentSetups({ resource: RESOURCE })
       .filter((entry) => entry.needsPublicAddress)
       .map((entry) => entry.id);
-    expect(needsPublic).toEqual(["chatgpt", "claude-apps", "grok-bot"]);
+    expect(needsPublic).toEqual(["chatgpt", "claude-apps", "grok-bot", "muse"]);
     expect(agent("chatgpt").commands).toEqual([]);
     expect(agent("claude-apps").commands).toEqual([]);
   });
@@ -431,6 +445,7 @@ describe("connection app logos", () => {
     ["hermes agent", "hermes"],
     ["Grok", "grok-bot"], ["Grok bot", "grok-bot"],
     ["grok_bot", "grok-bot"], ["GrokBot", "grok-bot"],
+    ["Muse", "muse"],
   ])("reuses the setup logo for %s", (name, id) => {
     expect(agentIconForApp(name)).toBe(AGENT_ICONS[id]);
   });

@@ -452,6 +452,7 @@ describe("agentSetups with the relay", () => {
       "chatgpt",
       "claude-apps",
       "grok-bot",
+      "muse",
     ]);
   });
 
@@ -471,7 +472,7 @@ describe("agentSetups with the relay", () => {
 
   test("with a private address selected, hosted agents are blocked and the others are written for it", () => {
     const setups = agentSetups(trusted(TAILNET), { relay: READY });
-    expect(blocked(setups)).toEqual(["chatgpt", "claude-apps", "grok-bot"]);
+    expect(blocked(setups)).toEqual(["chatgpt", "claude-apps", "grok-bot", "muse"]);
     expect(setups.find((agent) => agent.id === "claude-code")!.commands[0]!.value).toContain(TAILNET);
     expect(JSON.stringify(setups.filter((agent) => !agent.addressNotice))).not.toContain("relay.example.test");
   });
@@ -497,7 +498,7 @@ describe("agentSetups with the relay", () => {
   test("without the relay every agent is what it was", () => {
     for (const resource of [TAILNET, LOCAL, OWN]) {
       expect(agentSetups(trusted(resource, []), { relay: { state: "none" } })).toEqual(agentSetups(trusted(resource, [])));
-      expect(agentSetups(trusted(resource, [])).some((agent) => !agent.addressNotice === Boolean(agent.id.match(/^(chatgpt|claude-apps|grok-bot)$/u)))).toBe(false);
+      expect(agentSetups(trusted(resource, [])).some((agent) => !agent.addressNotice === Boolean(agent.id.match(/^(chatgpt|claude-apps|grok-bot|muse)$/u)))).toBe(false);
     }
   });
 });

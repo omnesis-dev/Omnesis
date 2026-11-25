@@ -280,6 +280,18 @@ export function agentSetups(oauth, { harnessAddress, pairingCode, relay, tailsca
       docs: `${DOCS}/connect#grok-bot`,
     },
     {
+      id: "muse",
+      name: "Muse",
+      icon: AGENT_ICONS["muse"],
+      commands: [{
+        label: "Paste this into Muse",
+        value: `Please install this MCP server in Muse: ${oauth.resource} (Omnesis). Authenticate with OAuth.`,
+      }],
+      note: [],
+      needsPublicAddress: "Muse connects from Meta's servers",
+      docs: `${DOCS}/connect#muse`,
+    },
+    {
       id: "antigravity",
       name: "Antigravity",
       icon: AGENT_ICONS["antigravity"],

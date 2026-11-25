@@ -212,7 +212,7 @@ describe("Access page with the cloud relay", () => {
       api.getAccessOverview.mockResolvedValue(unanswered);
       await mount();
       expect(addressSelect()).toBeNull();
-      expect(warned()).toEqual(["claude-code", "codex", "chatgpt", "claude-apps", "grok-bot", "antigravity", "openclaw", "hermes"]);
+      expect(warned()).toEqual(["claude-code", "codex", "chatgpt", "claude-apps", "grok-bot", "muse", "antigravity", "openclaw", "hermes"]);
       await select("claude-apps");
       expect(noticeParagraphs()).toEqual([
         "Remote access is turned off. Claude connects from Anthropic's servers, so it cannot reach this address right now.",
@@ -233,7 +233,7 @@ describe("Access page with the cloud relay", () => {
       api.getAccessOverview.mockResolvedValue(overview(TAILNET, {}, []));
       await mount();
       expect(addressSelect()).toBeNull();
-      expect(warned()).toEqual(["chatgpt", "claude-apps", "grok-bot"]);
+      expect(warned()).toEqual(["chatgpt", "claude-apps", "grok-bot", "muse"]);
       await select("claude-apps");
       expect(noticeParagraphs()).toEqual([
         "This address is private. Claude connects from Anthropic's servers, so it cannot reach this gateway until you publish it.",
@@ -358,7 +358,7 @@ describe("Access page with the cloud relay", () => {
         `${RELAY}`,
       ]);
       expect(shownAddress()).toBe(TAILNET);
-      expect(warned()).toEqual(["chatgpt", "claude-apps", "grok-bot"]);
+      expect(warned()).toEqual(["chatgpt", "claude-apps", "grok-bot", "muse"]);
       for (const [id, , needs] of HOSTED) {
         const steps = await select(id);
         expect(noticeParagraphs()).toEqual([
@@ -374,7 +374,7 @@ describe("Access page with the cloud relay", () => {
       // Still selectable: selecting it says what is wrong with it, for every agent.
       await pick(RELAY);
       expect(shownAddress()).toBe(RELAY);
-      expect(warned().length).toBe(8);
+      expect(warned().length).toBe(9);
       await select("chatgpt");
       expect(noticeParagraphs()).toEqual([
         `${headline} ChatGPT connects from OpenAI's servers, so it cannot reach this address right now.`,

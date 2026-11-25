@@ -1661,6 +1661,7 @@ describe("AccessView", () => {
       "chatgpt",
       "claude-apps",
       "grok-bot",
+      "muse",
       "antigravity",
       "openclaw",
       "hermes",
@@ -1711,6 +1712,26 @@ describe("AccessView", () => {
     expect(api.pairDevice).not.toHaveBeenCalled();
   });
 
+  test("selecting Muse shows a copyable install prompt for this gateway", async () => {
+    api.getAccessOverview.mockResolvedValue({ principals: [], oauth: OAUTH });
+    await mount({ connectOpen: true });
+    const card = host.querySelector<HTMLButtonElement>("button[data-agent='muse']")!;
+    expect(card.textContent).toContain("Muse");
+    expect(card.querySelector(".provider-icon")?.getAttribute("style")).toContain("/model-logos/meta.svg");
+    await act(async () => { card.click(); });
+    const steps = host.querySelector(".access-agent-steps")!;
+    expect(steps.getAttribute("data-agent")).toBe("muse");
+    expect(steps.textContent).toContain("Paste this into Muse");
+    expect(steps.querySelector("code")?.textContent).toBe(
+      "Please install this MCP server in Muse: https://gateway.example.org/mcp (Omnesis). Authenticate with OAuth.",
+    );
+    expect(steps.querySelector("button[title='Copy command for Muse']")).not.toBeNull();
+    expect(steps.querySelector(".access-agent-docs a")?.getAttribute("href")).toBe(
+      "https://omnesis.dev/docs/connect#muse",
+    );
+    expect(api.pairDevice).not.toHaveBeenCalled();
+  });
+
   test("points a hosted app at publishing the gateway in Connectivity, and warns about a private address", async () => {
     api.getAccessOverview.mockResolvedValue({
       principals: [],
@@ -1720,7 +1741,7 @@ describe("AccessView", () => {
     const warned = [...host.querySelectorAll("button[data-agent]")]
       .filter((card) => card.querySelector(".access-agent-warning"))
       .map((card) => card.getAttribute("data-agent"));
-    expect(warned).toEqual(["chatgpt", "claude-apps", "grok-bot"]);
+    expect(warned).toEqual(["chatgpt", "claude-apps", "grok-bot", "muse"]);
     expect(host.querySelector("button[data-agent='chatgpt'] .access-agent-warning")?.getAttribute("aria-label")).toBe(
       "Cannot connect to this gateway",
     );
