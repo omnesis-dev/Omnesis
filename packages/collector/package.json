@@ -60,7 +60,7 @@
   },
   "devDependencies": {
     "@hono/node-server": "^2.1.11",
-    "@lydell/node-pty": "1.2.0-beta.15",
+    "@lydell/node-pty": "1.2.0-beta.18",
     "@omnesis/agent-integration": "*",
     "@omnesis/extension": "*",
     "@omnesis/gateway": "*",
