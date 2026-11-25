@@ -171,7 +171,7 @@ describe("Access page with the cloud relay", () => {
       api.getAccessOverview.mockResolvedValue(overview(LOCAL, { loopbackOnly: true }, []));
       await mount();
       expect(host.querySelector(".access-oauth-blocker")?.textContent?.replace(/\s+/gu, " ")).toContain(
-        "Settings, Connectivity. This can be a private network address. ChatGPT, Claude apps and Grok bot need an Internet-reachable address. Connecting this gateway to an Omnesis account in Settings, Connectivity gives it one.",
+        "Settings, Connectivity. This can be a private network address. ChatGPT, Claude apps, Grok bot and Muse need an Internet-reachable address. Connecting this gateway to an Omnesis account in Settings, Connectivity gives it one.",
       );
       // With no address away from home the dialog opens on this computer, where hosted apps are not offered.
       expect(host.querySelector(".access-connect-dialog")?.textContent).toContain(
@@ -212,7 +212,7 @@ describe("Access page with the cloud relay", () => {
       api.getAccessOverview.mockResolvedValue(unanswered);
       await mount();
       expect(addressSelect()).toBeNull();
-      expect(warned()).toEqual(["claude-code", "codex", "chatgpt", "claude-apps", "grok-bot", "antigravity", "openclaw", "hermes"]);
+      expect(warned()).toEqual(["claude-code", "codex", "chatgpt", "claude-apps", "grok-bot", "muse", "antigravity", "openclaw", "hermes"]);
       await select("claude-apps");
       expect(noticeParagraphs()).toEqual([
         "Remote access is turned off. Claude connects from Anthropic's servers, so it cannot reach this address right now.",
@@ -233,7 +233,7 @@ describe("Access page with the cloud relay", () => {
       api.getAccessOverview.mockResolvedValue(overview(TAILNET, {}, []));
       await mount();
       expect(addressSelect()).toBeNull();
-      expect(warned()).toEqual(["chatgpt", "claude-apps", "grok-bot"]);
+      expect(warned()).toEqual(["chatgpt", "claude-apps", "grok-bot", "muse"]);
       await select("claude-apps");
       expect(noticeParagraphs()).toEqual([
         "This address is private. Claude connects from Anthropic's servers, so it cannot reach this gateway until you publish it.",
@@ -322,11 +322,33 @@ describe("Access page with the cloud relay", () => {
   });
 
   describe("a private address and an Omnesis address", () => {
+    test("Muse offers its install prompt only for the selected public address", async () => {
+      api.getAccessOverview.mockResolvedValue(overview(TAILNET));
+      await mount();
+      await select("muse");
+      expect(commands()).toEqual([
+        `Please install this MCP server in Muse: ${RELAY} (Omnesis). Authenticate with OAuth.`,
+      ]);
+      await pick(TAILNET);
+      expect(noticeParagraphs()[0]).toBe(
+        "This address is private. Muse connects from Meta's servers, so it cannot reach this gateway until you publish it.",
+      );
+      expect(commands()).toEqual([]);
+      await pick(RELAY);
+      expect(commands()).toEqual([
+        `Please install this MCP server in Muse: ${RELAY} (Omnesis). Authenticate with OAuth.`,
+      ]);
+      expect(noticeParagraphs()).toEqual([
+        "Muse connects from Meta's servers, and this address is reachable from the Internet.",
+      ]);
+      expect(api.pairDevice).not.toHaveBeenCalled();
+    });
+
     test("ready: the dialog starts on the Omnesis address, and a hosted app on the private one is sent back to the list", async () => {
       api.getAccessOverview.mockResolvedValue(overview(LOCAL, { loopbackOnly: true }));
       await mount();
       expect(host.querySelector(".access-oauth-blocker")?.textContent?.replace(/\s+/gu, " ")).toContain(
-        "Settings, Connectivity. This can be a private network address. ChatGPT, Claude apps and Grok bot can use this gateway's Omnesis address.",
+        "Settings, Connectivity. This can be a private network address. ChatGPT, Claude apps, Grok bot and Muse can use this gateway's Omnesis address.",
       );
       // The loopback address is this computer's, not a choice away from home.
       expect(addressSelect()).toBeNull();
@@ -358,7 +380,7 @@ describe("Access page with the cloud relay", () => {
         `${RELAY}`,
       ]);
       expect(shownAddress()).toBe(TAILNET);
-      expect(warned()).toEqual(["chatgpt", "claude-apps", "grok-bot"]);
+      expect(warned()).toEqual(["chatgpt", "claude-apps", "grok-bot", "muse"]);
       for (const [id, , needs] of HOSTED) {
         const steps = await select(id);
         expect(noticeParagraphs()).toEqual([
@@ -374,7 +396,7 @@ describe("Access page with the cloud relay", () => {
       // Still selectable: selecting it says what is wrong with it, for every agent.
       await pick(RELAY);
       expect(shownAddress()).toBe(RELAY);
-      expect(warned().length).toBe(8);
+      expect(warned().length).toBe(9);
       await select("chatgpt");
       expect(noticeParagraphs()).toEqual([
         `${headline} ChatGPT connects from OpenAI's servers, so it cannot reach this address right now.`,

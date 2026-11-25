@@ -20,6 +20,7 @@ const AGENT_MARKS = [
   { name: "Claude", src: "/portal/img/agents/claude.svg" },
   { name: "ChatGPT and Codex", providerId: "openai" },
   { name: "Grok bot", providerId: "xai" },
+  { name: "Muse", providerId: "meta" },
   { name: "Antigravity", src: "/portal/img/agents/antigravity.svg" },
   { name: "OpenClaw", src: "/portal/img/agents/openclaw.svg" },
   { name: "Hermes", src: "/portal/img/agents/hermes.png" },
