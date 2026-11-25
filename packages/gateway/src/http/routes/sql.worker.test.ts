@@ -16,6 +16,7 @@ import { existsSync, unlinkSync } from "node:fs";
 import { SCOPE_ADMIN } from "@omnesis/types";
 import { Hono } from "hono";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { createDatabase } from "../../db.js";
 import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import { Scheduler } from "../../scheduler/scheduler.js";
 import { IoTaskRunner } from "../../scheduler/runners/io.js";
@@ -162,7 +163,7 @@ beforeAll(async () => {
   const writer = createFreshTestDatabase(dbPath);
   seed(writer);
   writer.close();
-  db = createFreshTestDatabase(dbPath);
+  db = createDatabase(dbPath);
   scheduler = new Scheduler({ enablePreemption: false });
   scheduler.registerRunner(
     new IoTaskRunner({
