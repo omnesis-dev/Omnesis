@@ -62,10 +62,11 @@ test("tunnel renewal waits through the real Google session cache without replayi
   const first = await credentials();
   await saveGoogleCredentials(file, clientId, first);
   let expiry = 0;
+  let issued = 0;
   const transport = vi.fn<typeof fetch>(async () => {
     expiry = Math.floor(Date.now() / 1000) + 120;
     return Response.json({
-      token: `routing-session-${transport.mock.calls.length}`,
+      token: `routing-session-${++issued}`,
       accountId: accountId(first.identity),
       expiresAt: expiry,
     });
