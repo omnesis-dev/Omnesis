@@ -12,10 +12,12 @@ ENV DEBIAN_FRONTEND=noninteractive
 # toolchain for native modules without a prebuilt binary; sudo, because an
 # operator runs the admin command through it; curl and procps for the
 # scenario's probes. apt retries a failed mirror request instead of failing
-# the build on one dropped connection.
-RUN printf 'Acquire::Retries "5";\n' > /etc/apt/apt.conf.d/80-retries \
-  && apt-get update \
-  && apt-get install -y --no-install-recommends \
+# the build on one dropped connection, and scripts/docker/apt-get-bounded.sh
+# fails a stalled mirror instead of hanging.
+RUN --mount=type=bind,source=scripts/docker/apt-get-bounded.sh,target=/tmp/apt-get-bounded.sh \
+  printf 'Acquire::Retries "5";\n' > /etc/apt/apt.conf.d/80-retries \
+  && sh /tmp/apt-get-bounded.sh update \
+  && sh /tmp/apt-get-bounded.sh install -y --no-install-recommends \
     systemd systemd-sysv dbus ca-certificates curl git python3 make g++ procps sudo \
   && rm -rf /var/lib/apt/lists/*
 

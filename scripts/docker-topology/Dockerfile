@@ -13,8 +13,11 @@ FROM node:24-bookworm
 
 # curl drives the health probes and pipes the installer; git is what the
 # installer clones with; procps supplies `pkill` for the daemon helpers;
-# ca-certificates keeps outbound HTTPS honest.
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# ca-certificates keeps outbound HTTPS honest. scripts/docker/apt-get-bounded.sh
+# fails a stalled mirror instead of hanging.
+RUN --mount=type=bind,source=scripts/docker/apt-get-bounded.sh,target=/tmp/apt-get-bounded.sh \
+  sh /tmp/apt-get-bounded.sh update \
+  && sh /tmp/apt-get-bounded.sh install -y --no-install-recommends \
       curl git procps ca-certificates \
   && rm -rf /var/lib/apt/lists/*
 
