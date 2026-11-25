@@ -13,9 +13,10 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { devNull, tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
+import { isEntryScript } from "../lib/is-entry-script.mjs";
 
 const UPSTREAM = "https://github.com/omnesis-dev/Omnesis.git";
 const SHA = /^[a-f0-9]{40}$/;
@@ -177,7 +178,7 @@ export function writeTelemetryBuildProof(root, options = {}) {
   return proof.gitCommit;
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isEntryScript(import.meta.url)) {
   if (process.argv[2] !== "--write-proof") throw new Error("Expected --write-proof");
   try {
     writeTelemetryBuildProof(fileURLToPath(new URL("../../", import.meta.url)));
