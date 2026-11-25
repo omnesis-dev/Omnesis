@@ -19872,8 +19872,13 @@ summary.decision-card-head {
 .remote-access-option-text small { font-size: 12.5px; line-height: 1.5; color: var(--text-secondary); }
 .remote-access-option-text .remote-access-step-up { color: var(--accent); }
 .remote-access-option-body { display: grid; gap: 12px; min-width: 0; margin: 0 14px 14px 42px; }
-.remote-access-first { margin-top: 12px; }
-.remote-access-first legend { margin-bottom: 8px; padding: 0; font-size: 13px; font-weight: 600; color: var(--text-primary); }
+/* Network priority is a configurable row alongside the connectivity status rows. */
+.remote-access-first { display: grid; grid-template-columns: 20px minmax(0, 1fr); align-items: center; gap: 8px 10px; margin-top: 12px; }
+.remote-access-first > .remote-access-mark { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); }
+.remote-access-first-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 20px; min-width: 0; }
+.remote-access-first-choice { display: inline-flex; align-items: center; gap: 7px; min-height: 24px; color: var(--text-primary); font-size: 13px; cursor: pointer; white-space: nowrap; }
+.remote-access-first-choice input { width: 14px; height: 14px; margin: 0; accent-color: var(--accent); }
+.remote-access-first > .remote-access-problem { grid-column: 2; }
 .remote-access-check { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-primary); cursor: pointer; }
 .remote-access-check input { accent-color: var(--accent); }
 
