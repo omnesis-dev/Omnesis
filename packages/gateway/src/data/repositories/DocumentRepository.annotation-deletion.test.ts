@@ -25,7 +25,7 @@ import {
   deleteDocuments,
   deleteDocumentsByIds,
 } from "./DocumentRepository.js";
-import type { createDatabase} from "../../db.js";
+import type { createDatabase } from "../../db.js";
 
 const PROVIDER = "example-provider";
 const SOURCE = "example-notes:memory";

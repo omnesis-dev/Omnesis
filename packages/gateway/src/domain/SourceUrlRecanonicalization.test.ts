@@ -19,7 +19,7 @@ import {
   finishSourceUrlRecanonicalization,
   planSourceUrlRecanonicalization,
 } from "./SourceUrlRecanonicalization.js";
-import type { createDatabase} from "../db.js";
+import type { createDatabase } from "../db.js";
 import type { UrlCanonicalizerSpec } from "@omnesis/core";
 
 describe("source URL recanonicalization", () => {

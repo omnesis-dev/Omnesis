@@ -19,7 +19,7 @@ import {
 } from "./LinkExtraction.js";
 import { computeLinkResolutions, upsertLinkResolutions } from "./LinkGraphService.js";
 import { hasRetainedUrlMetadata, retainAttachedUrls } from "./RetainedLinkUrls.js";
-import type { createDatabase} from "../db.js";
+import type { createDatabase } from "../db.js";
 
 test("only explicit valid HTTP URLs receive retention", () => {
   const links = extractLinks("https://example.org/attached https://example.org/incidental");
