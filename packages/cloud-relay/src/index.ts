@@ -36,6 +36,7 @@ export {
   exchangeRelayIdentity,
 } from "./google-credentials.js";
 export { pairGoogleDevice } from "./google-device-pairing.js";
+export { readOrCreateDeviceKey } from "./device-key-file.js";
 export type { GoogleDevicePairing } from "./google-device-pairing.js";
 
 export {

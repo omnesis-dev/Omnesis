@@ -48,6 +48,19 @@ final class DesktopRenderTests: XCTestCase {
         try render(DesktopDevicesView().environment(DesktopStore.preview()), name: "devices-empty")
     }
 
+    func testRemovalPreservesDataByDefault() throws {
+        try render(DesktopRemovalView().environment(DesktopStore.preview()), name: "removal-preserve-default")
+    }
+
+    func testRemovalWithPendingKeyCleanup() throws {
+        let store = DesktopStore.preview()
+        store.removalOutcome = try JSONDecoder().decode(
+            DesktopRemovalOutcome.self,
+            from: Data(#"{"status":"key-cleanup-pending","data":"erased","keyring":"pending"}"#.utf8)
+        )
+        try render(DesktopRemovalView().environment(store), name: "removal-key-cleanup-pending")
+    }
+
     private func render(_ view: some View, name: String) throws {
         let output = URL(fileURLWithPath: "/tmp/omnesis-macos-snapshots", isDirectory: true)
         try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)

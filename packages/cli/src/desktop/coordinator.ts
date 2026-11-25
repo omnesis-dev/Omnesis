@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { join } from "node:path";
+import { assertNever } from "@omnesis/core";
 import { z } from "zod";
 import {
   DesktopAccountFailure,
@@ -15,6 +16,8 @@ import {
   type CoordinatorDependencies,
   type DesktopSessionTransport,
 } from "./coordinator-runtime.js";
+import type { DesktopRemovalPlan, DesktopRemovalResult } from "./removal.js";
+import type { DesktopRetirement } from "./retirement.js";
 import type { DesktopProtocolContext, DesktopProtocolRequest } from "./protocol.js";
 import type { DesktopSearchModel } from "./search-model.js";
 import type { DesktopConnection } from "./gateway-access.js";
@@ -29,7 +32,18 @@ export interface DesktopState {
   encrypted?: boolean;
   signup?: { policy?: "invite" | "open"; acmeTermsUrl?: string };
   searchModel?: DesktopSearchModel;
+  retired?: true;
+  retirement?: Pick<DesktopRetirement, "mode" | "phase">;
 }
+export type DesktopStateCommand = Exclude<
+  DesktopProtocolRequest["command"],
+  "removePreview" | "remove"
+>;
+export type DesktopCoordinatorResult = DesktopState | DesktopRemovalPlan | DesktopRemovalResult;
+const removalParams = z.object({ eraseData: z.boolean().optional() }).strict();
+const removeParams = removalParams
+  .extend({ confirmationId: z.string().regex(/^[a-f0-9]{64}$/) })
+  .strict();
 const prepareParams = z
   .object({ mode: z.enum(["home", "joined"]), name: z.string().trim().min(1).max(80).optional() })
   .strict();
@@ -55,13 +69,39 @@ export class DesktopCoordinator {
     this.deps = { ...defaults, ...dependencies };
   }
 
+  handle(
+    request: DesktopProtocolRequest & { command: "removePreview" },
+    context: DesktopProtocolContext,
+  ): Promise<DesktopRemovalPlan>;
+  handle(
+    request: DesktopProtocolRequest & { command: "remove" },
+    context: DesktopProtocolContext,
+  ): Promise<DesktopRemovalResult>;
+  handle(
+    request: DesktopProtocolRequest & { command: DesktopStateCommand },
+    context: DesktopProtocolContext,
+  ): Promise<DesktopState>;
+  handle(
+    request: DesktopProtocolRequest,
+    context: DesktopProtocolContext,
+  ): Promise<DesktopCoordinatorResult>;
   async handle(
     request: DesktopProtocolRequest,
     context: DesktopProtocolContext,
-  ): Promise<DesktopState> {
+  ): Promise<DesktopCoordinatorResult> {
     try {
       context.signal.throwIfAborted();
       switch (request.command) {
+        case "removePreview": {
+          const params = removalParams.parse(request.params ?? {});
+          return this.deps.removalPreview(this.profile, { ...params, signal: context.signal });
+        }
+        case "remove": {
+          const params = removeParams.parse(request.params);
+          await this.close();
+          context.signal.throwIfAborted();
+          return this.deps.removeInstall(this.profile, { ...params, signal: context.signal });
+        }
         case "status":
           return await this.status(context.signal);
         case "prepare":
@@ -89,14 +129,20 @@ export class DesktopCoordinator {
         case "respond":
         case "cancel":
           throw new Error("Interactions are handled by the desktop connection");
+        default:
+          return assertNever(request.command);
       }
     } catch (error) {
-      if (context.signal.aborted) throw error;
+      if (
+        context.signal.aborted ||
+        request.command === "remove" ||
+        request.command === "removePreview"
+      )
+        throw error;
       if (error instanceof DesktopAccountFailure) return { phase: "error", message: error.message };
       return {
         phase: "error",
-        message:
-          "Omnesis could not finish this step. Unlock your Mac and try again. Your existing library has been kept.",
+        message: "Omnesis could not finish this step. Unlock your Mac and try again.",
       };
     }
   }
@@ -124,6 +170,8 @@ export class DesktopCoordinator {
   }
 
   private async status(signal: AbortSignal): Promise<DesktopState> {
+    const retirement = await this.currentRetirement();
+    if (retirement) return retirement;
     const install = await this.deps.readInstall(this.profile);
     if (!install) return this.firstHomeOffered ? { phase: "chooseHome" } : { phase: "welcome" };
     if (install.phase !== "configured" || !(await this.deps.protected(this.profile)))
@@ -181,6 +229,9 @@ export class DesktopCoordinator {
           message: "Local search needs its model. Choose Prepare library to retry the download.",
         };
       const connection = await this.deps.connection(this.profile);
+      const collectorDeviceId = await this.deps.localCollectorDeviceId(this.profile);
+      const removed = await this.currentRetirement();
+      if (removed) return removed;
       signal.throwIfAborted();
       return {
         phase: "ready",
@@ -188,7 +239,7 @@ export class DesktopCoordinator {
         encrypted: true,
         connection: {
           ...connection,
-          collectorDeviceId: await this.deps.localCollectorDeviceId(this.profile),
+          collectorDeviceId,
         },
       };
     } catch (error) {
@@ -203,6 +254,8 @@ export class DesktopCoordinator {
 
   private async prepare(params: unknown, context: DesktopProtocolContext): Promise<DesktopState> {
     const input = prepareParams.parse(params);
+    const blocked = await this.resumeKeptLibrary(context.signal, input.mode);
+    if (blocked) return blocked;
     const existing = await this.deps.readInstall(this.profile);
     if (input.mode === "joined" && !existing)
       return {
@@ -239,6 +292,9 @@ export class DesktopCoordinator {
   }
 
   private async connect(params: unknown, context: DesktopProtocolContext): Promise<DesktopState> {
+    discoveryParams.parse(params ?? {});
+    const blocked = await this.resumeKeptLibrary(context.signal);
+    if (blocked) return blocked;
     const install = await this.deps.readInstall(this.profile);
     if (install?.mode === "home") {
       if (!(await this.deps.protected(this.profile)))
@@ -254,7 +310,6 @@ export class DesktopCoordinator {
       await this.deps.connectAccount(this.profile, params, context, { request: this.deps.request });
       return this.status(context.signal);
     }
-    discoveryParams.parse(params ?? {});
     if (install) {
       await this.deps.prepareInstall(this.profile, {
         mode: "joined",
@@ -303,6 +358,7 @@ export class DesktopCoordinator {
         deviceKeyFile: join(this.profile.configDir, "cloud-relay", "collector.key"),
         signal: context.signal,
         deviceKeySecretOptions: this.secretOptions(),
+        deviceKeyPublication: (work) => this.deps.publish(this.profile, context.signal, work),
         ui,
         onEvent: () => {},
       });
@@ -344,6 +400,7 @@ export class DesktopCoordinator {
       ),
       signal: context.signal,
       deviceKeySecretOptions: this.secretOptions(),
+      deviceKeyPublication: (work) => this.deps.publish(this.profile, context.signal, work),
       ui,
       onEvent: () => {},
     });
@@ -357,13 +414,15 @@ export class DesktopCoordinator {
     signal: AbortSignal,
   ): Promise<void> {
     signal.throwIfAborted();
-    await this.deps.savePair(this.pairPath(role), pairing, this.secretOptions());
-    signal.throwIfAborted();
-    await this.deps.saveToken(
-      join(this.profile.configDir, role === "interactive" ? "token" : "collector-token"),
-      pairing.token,
-      this.secretOptions(),
-    );
+    await this.deps.publish(this.profile, signal, async () => {
+      await this.deps.savePair(this.pairPath(role), pairing, this.secretOptions());
+      signal.throwIfAborted();
+      await this.deps.saveToken(
+        join(this.profile.configDir, role === "interactive" ? "token" : "collector-token"),
+        pairing.token,
+        this.secretOptions(),
+      );
+    });
   }
 
   private async joinedState(signal: AbortSignal): Promise<DesktopState> {
@@ -407,6 +466,8 @@ export class DesktopCoordinator {
         message: "Open Omnesis on the Mac that keeps your library, then try again.",
       };
     }
+    const removed = await this.currentRetirement();
+    if (removed) return removed;
     signal.throwIfAborted();
     return {
       phase: "ready",
@@ -420,6 +481,33 @@ export class DesktopCoordinator {
         certificatePEM: pairing.gatewayCertificate,
       },
     };
+  }
+
+  private async currentRetirement(): Promise<DesktopState | null> {
+    const record = await this.deps.readRetirement(this.profile);
+    if (!record) return null;
+    await this.close();
+    return retiredState(record);
+  }
+
+  private async resumeKeptLibrary(
+    signal: AbortSignal,
+    expectedMode?: "home" | "joined",
+  ): Promise<DesktopState | null> {
+    const retirement = await this.deps.readRetirement(this.profile);
+    if (!retirement) return null;
+    if (retirement.mode !== "keep-data" || retirement.phase !== "complete")
+      return retiredState(retirement);
+    if (expectedMode && (await this.deps.readInstall(this.profile))?.mode !== expectedMode)
+      return {
+        phase: "error",
+        retired: true,
+        retirement: { mode: retirement.mode, phase: retirement.phase },
+        message: "This library already has a home. Reconnect using its existing role.",
+      };
+    await this.deps.resumeRetirement(this.profile, signal);
+    signal.throwIfAborted();
+    return null;
   }
 
   private async openPortal(context: DesktopProtocolContext): Promise<DesktopState> {
@@ -461,4 +549,22 @@ function sameLibrary(first: DesktopPairing, second: DesktopPairing): boolean {
       ? first.tlsSpkiFingerprint === second.tlsSpkiFingerprint
       : first.gatewayFingerprint === second.gatewayFingerprint)
   );
+}
+
+function retiredState(record: DesktopRetirement): DesktopState {
+  let message = "Removal has not finished. Finish removing Omnesis before starting it again.";
+  if (record.phase === "keyCleanupPending")
+    message =
+      "Your local data was erased, but its Keychain cleanup still needs attention. Finish removal before starting Omnesis again.";
+  else if (record.phase === "complete")
+    message =
+      record.mode === "keep-data"
+        ? "Omnesis has stopped on this Mac. Your encrypted library was kept. Choose Look again to use it again."
+        : "Your local Omnesis data and its protection key have been removed. You can now remove the app.";
+  return {
+    phase: "waiting",
+    retired: true,
+    retirement: { mode: record.mode, phase: record.phase },
+    message,
+  };
 }

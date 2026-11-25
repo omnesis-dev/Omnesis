@@ -21,7 +21,14 @@ configured native test queue when one is installed.
 The complete app bundles the compiled runtime under
 `Omnesis.app/Contents/Resources/runtime/`: `node` and
 `packages/cli/dist/index.js` plus its package closure. A development build can
-point at that same staged layout with `OMNESIS_DESKTOP_RUNTIME_DIR`. The app
+point at that same staged layout with `OMNESIS_DESKTOP_RUNTIME_DIR` in Debug
+builds only. Before launch, the native shell verifies and copies the full payload
+into a separate, non-purgeable Application Support cache, keyed by the runtime manifest's hash. Both the app and
+login helper run from that stable path even if Finder moves or replaces the app.
+Release builds require the source app's valid signature to match the executing
+shell's signing team and the desktop bundle identity. Cached payloads are
+retained until a future process-lifetime-aware cleanup policy can prove them idle.
+The app
 refuses to launch an incomplete bundle; it never substitutes a globally installed
 CLI or another checkout.
 
@@ -39,7 +46,12 @@ library. Removing data is a separate explicit operation.
 
 Native sources use provider descriptors and the existing discovery, validation,
 credentials, authorization and add endpoints. Chat shares the Apple `AgentClient`
-for HTTP/SSE and conversation persistence. App Intents expose a new conversation
+for HTTP/SSE and conversation persistence. Source setup renders provider credential
+instructions and typed sign-in forms. Per-account keys remain available for retry
+until the connection succeeds. Hosted provider widgets use a separate ephemeral
+browser view pinned to the library’s public certificate, with outgoing cookies
+blocked. The browser receives no library administration credential; bounded
+widget results return through the native authenticated API. App Intents expose a new conversation
 and a question prepared in the composer; Spotlight availability depends on the
 macOS version. Personal library contents are not indexed into system Spotlight.
 
@@ -61,4 +73,12 @@ confirmation uses the library's secure browser page; the app never bypasses it.
 
 The native process clears inherited headless configuration, Node loader/trust
 settings and inference API keys before launching Node. Its runtime environment
-keeps the real user home for Keychain and prefixes the bundled `runtime/bin`.
+keeps the real user home for Keychain and prefixes the cached runtime directory.
+
+To remove the managed installation, choose **Settings → General → Remove Omnesis
+from this Mac**. Keeping the local data and encryption key is the default. Erasing
+local Omnesis data requires a separate confirmation. The app asks the runtime for
+an ownership-bound removal preview, unregisters its own login item, and displays
+the actual outcome. An unfinished saved-key cleanup remains visible and can be
+retried. After successful removal, quit Omnesis and move the app to Trash. The app
+never removes your original source files or another installation.

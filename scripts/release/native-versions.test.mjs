@@ -10,6 +10,7 @@ import {
   ANDROID_GRADLE,
   IOS_PLISTS,
   IOS_PROJECT,
+  MACOS_PROJECT,
   NATIVE_VERSION_FILES,
   applyAndroidVersionName,
   applyIosProjectVersion,
@@ -31,10 +32,15 @@ let fixture;
 
 function writeFixture(version) {
   mkdirSync(join(fixture, "ios"), { recursive: true });
+  mkdirSync(join(fixture, "macos"), { recursive: true });
   mkdirSync(join(fixture, "android", "app"), { recursive: true });
   writeFileSync(
     join(fixture, "ios/project.yml"),
     `settings:\n    MARKETING_VERSION: "${version}"\n    CURRENT_PROJECT_VERSION: "243"\n`,
+  );
+  writeFileSync(
+    join(fixture, MACOS_PROJECT),
+    `settings:\n    MARKETING_VERSION: "${version}"\n    CURRENT_PROJECT_VERSION: "1"\n`,
   );
   for (const plist of ["ios/Info.plist", "ios/Info-Demo.plist"]) {
     writeFileSync(
@@ -101,7 +107,7 @@ test("only strict SemVer is accepted", () => {
 });
 
 test("writes the new version into every native file, and only the version", () => {
-  expect(NATIVE_VERSION_FILES).toEqual([IOS_PROJECT, ...IOS_PLISTS, ANDROID_GRADLE]);
+  expect(NATIVE_VERSION_FILES).toEqual([IOS_PROJECT, ...IOS_PLISTS, MACOS_PROJECT, ANDROID_GRADLE]);
   expect(writeNativeVersions(fixture, "1.2.3")).toEqual(NATIVE_VERSION_FILES);
   for (const path of NATIVE_VERSION_FILES) expect(readFixture(path)).toContain("1.2.3");
   expect(readFixture(IOS_PROJECT)).toContain('CURRENT_PROJECT_VERSION: "243"');
@@ -122,6 +128,7 @@ test("writes only the files that are behind", () => {
   expect(writeNativeVersions(fixture, "1.2.3")).toEqual([
     "ios/Info.plist",
     "ios/Info-Demo.plist",
+    MACOS_PROJECT,
     ANDROID_GRADLE,
   ]);
 });

@@ -20,6 +20,7 @@ import { createRelayClientProxy } from "./client-proxy.js";
 import { tlsSpkiFingerprint } from "./pinned-key.js";
 import { AdaptiveGatewayPath } from "./adaptive-path.js";
 import { saveDirectCandidates } from "./device-file-hints.js";
+export { saveDirectCandidates } from "./device-file-hints.js";
 import { pairedDeviceSecretOptions, readPairedDeviceFile } from "./paired-device-storage.js";
 import { probeGatewayDevice } from "./adaptive-probe.js";
 import { discoverDirectCandidates, pinnedGatewayJson } from "./google-device-pairing.js";
@@ -428,6 +429,7 @@ export async function loginRelay(options: {
 export async function runRelayCommand(
   command: string,
   env: NodeJS.ProcessEnv,
+  dependencies: { persistDirectCandidates?: typeof saveDirectCandidates } = {},
 ): Promise<{ url: string; gatewayUrl?: string; close(): Promise<void> } | undefined> {
   if (await runRelayRecoveryCommand(command, env)) return undefined;
   if (command === "serve-dns-broker") return startIndependentDnsDaemon(env);
@@ -637,7 +639,12 @@ export async function runRelayCommand(
               dial,
             ),
           persist: (candidates) =>
-            saveDirectCandidates(deviceFile!, paired, candidates, secretOptions),
+            (dependencies.persistDirectCandidates ?? saveDirectCandidates)(
+              deviceFile!,
+              paired,
+              candidates,
+              secretOptions,
+            ),
           reverify:
             paired.tlsSpkiFingerprint === undefined
               ? undefined

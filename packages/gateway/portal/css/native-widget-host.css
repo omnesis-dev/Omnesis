@@ -1,0 +1,19 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later
+ * Copyright (c) 2026 Adrien Conrath */
+:root {
+  color-scheme: light dark;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 14px;
+}
+body {
+  margin: 0;
+  background: Canvas;
+  color: CanvasText;
+}
+#widget-status {
+  max-width: 32rem;
+  margin: 2rem auto;
+  padding: 0 1.5rem;
+  line-height: 1.6;
+  text-align: center;
+}

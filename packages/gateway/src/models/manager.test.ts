@@ -6,8 +6,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { CATALOG, type InferenceOverview } from "@omnesis/core";
 import { ModelManager, type ProgressBroadcast } from "./manager.js";
-import type { InferenceOverview } from "@omnesis/core";
 
 let dir: string;
 let originalFetch: typeof globalThis.fetch;
@@ -47,7 +47,7 @@ function sha256Hex(buf: Buffer): string {
   return createHash("sha256").update(buf).digest("hex");
 }
 
-/** Install id whose catalog entry pins no sha — any served bytes verify. */
+/** Real catalog identity; successful fixture downloads inject their own exact byte pin. */
 const GGUF_ID = "bge-small-en-v1.5.Q8_0";
 const GGUF_FILENAME = "bge-small-en-v1.5.Q8_0.gguf";
 
@@ -363,7 +363,16 @@ describe("ModelManager", () => {
       })) as typeof globalThis.fetch;
 
     const { events, terminal, onBroadcast } = broadcastCollector();
-    const mgr = new ModelManager({ modelsDir: dir, onBroadcast });
+    const mgr = new ModelManager({
+      modelsDir: dir,
+      onBroadcast,
+      catalog: () =>
+        CATALOG.map((entry) =>
+          entry.id === GGUF_ID && entry.kind === "gguf"
+            ? { ...entry, sha256: sha256Hex(served), sizeBytes: served.byteLength }
+            : entry,
+        ),
+    });
 
     const { downloadId } = mgr.install(GGUF_ID);
     // While the fetch streams, the catalog id is reported as downloading.
@@ -478,7 +487,16 @@ describe("ModelManager", () => {
         headers: { "content-length": String(served.byteLength) },
       })) as typeof globalThis.fetch;
     const { terminal, onBroadcast } = broadcastCollector();
-    const mgr = new ModelManager({ modelsDir: dir, onBroadcast });
+    const mgr = new ModelManager({
+      modelsDir: dir,
+      onBroadcast,
+      catalog: () =>
+        CATALOG.map((entry) =>
+          entry.id === GGUF_ID && entry.kind === "gguf"
+            ? { ...entry, sha256: sha256Hex(served), sizeBytes: served.byteLength }
+            : entry,
+        ),
+    });
     mgr.install(GGUF_ID);
     await terminal;
 

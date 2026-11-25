@@ -334,3 +334,37 @@ test("EOF aborts active non-interactive work and prevents queued lifecycle mutat
   expect(observed).toEqual(["active"]);
   expect(f.messages.filter((message) => message.error?.code === "CANCELLED")).toHaveLength(2);
 });
+
+test("version-one removal commands preserve structured preview and result envelopes", async () => {
+  const preview = {
+    available: true,
+    mode: "erase-data",
+    confirmationId: "a".repeat(64),
+    summary: "Fictional removal plan",
+    dataKept: false,
+    keyKept: false,
+  };
+  const removed = { status: "retired", data: "erased", keyring: "cleared" };
+  const calls: string[] = [];
+  const f = fixture(
+    (request) => {
+      calls.push(request.command);
+      if (request.command === "removePreview") return preview;
+      expect(request.params).toEqual({ eraseData: true, confirmationId: preview.confirmationId });
+      return removed;
+    },
+    (message, input) => {
+      if (message.id === "preview")
+        send(input, "remove", "remove", {
+          eraseData: true,
+          confirmationId: preview.confirmationId,
+        });
+      if (message.id === "remove") input.end();
+    },
+  );
+  send(f.input, "preview", "removePreview", { eraseData: true });
+  await f.run;
+  expect(calls).toEqual(["removePreview", "remove"]);
+  expect(f.messages).toContainEqual({ version: 1, id: "preview", ok: true, result: preview });
+  expect(f.messages).toContainEqual({ version: 1, id: "remove", ok: true, result: removed });
+});

@@ -44,6 +44,7 @@ function makeFixture() {
   for (const path of yamlPlugins) write(path, "name: fixture\nversion: 0.3.0\n");
   for (const path of productVersionContracts) writeJson(path, { productVersion: "0.3.0" });
   write("ios/project.yml", 'MARKETING_VERSION: "0.3.0"\nCURRENT_PROJECT_VERSION: "236"\n');
+  write("macos/project.yml", 'MARKETING_VERSION: "0.3.0"\nCURRENT_PROJECT_VERSION: "1"\n');
   for (const path of ["ios/Info.plist", "ios/Info-Demo.plist"]) {
     write(
       path,
@@ -142,6 +143,12 @@ test("requires strict SemVer and an explicit tag", () => {
   expect(() => checkProductVersion(fixture)).toThrow(/Expected release tag/u);
   writeJson("packages/cli/package.json", { version: "01.3.0" });
   expect(() => checkProductVersion(fixture, "v01.3.0")).toThrow(/not strict SemVer/u);
+});
+
+test("requires the macOS shell and bundled runtime to share the product version", () => {
+  makeFixture();
+  write("macos/project.yml", 'MARKETING_VERSION: "0.2.0"\nCURRENT_PROJECT_VERSION: "1"\n');
+  expect(() => checkProductVersion(fixture, "v0.3.0")).toThrow(/macos\/project.yml: 0\.2\.0/u);
 });
 
 test("rejects platform-invalid native build counters before native tests are omitted", () => {

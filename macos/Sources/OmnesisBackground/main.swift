@@ -11,7 +11,17 @@ final class BackgroundDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         let mainBundle = Bundle.main.bundleURL.deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent()
-        let runtime = mainBundle.appendingPathComponent("Contents/Resources/runtime", isDirectory: true)
+        Task {
+            do {
+                let runtime = try await Task.detached(priority: .utility) {
+                    try DesktopRuntimeBootstrap.prepare(appBundle: mainBundle)
+                }.value
+                launch(runtime)
+            } catch { NSApp.terminate(nil) }
+        }
+    }
+
+    private func launch(_ runtime: URL) {
         let child = Process()
         child.executableURL = runtime.appendingPathComponent("node")
         child.arguments = [runtime.appendingPathComponent("packages/cli/dist/index.js").path, "desktop", "daemon"]

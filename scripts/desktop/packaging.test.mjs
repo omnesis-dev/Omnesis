@@ -253,3 +253,57 @@ describe("packaging command boundary", () => {
     expect(() => parseArguments([], schema)).toThrow(/Missing/);
   });
 });
+
+describe("signed runtime inventory", () => {
+  test("records changed code bytes and remains stable across repeated refreshes", async () => {
+    const { refreshRuntimeInventory } = await import("./native-inventory.mjs");
+    const options = await inputs();
+    const original = await readFile(join(options.runtime, "desktop-runtime.json"), "utf8");
+    await put(options.runtime, "node", Buffer.concat([thin("arm64"), Buffer.from("signed-code")]));
+    await refreshRuntimeInventory(options.runtime, "arm64");
+    const refreshed = await readFile(join(options.runtime, "desktop-runtime.json"), "utf8");
+    expect(refreshed).not.toBe(original);
+    const manifest = JSON.parse(refreshed);
+    expect(manifest.inventory).toEqual(
+      (await inventoryBundle(options.runtime, "arm64")).filter(
+        (entry) => entry.path !== "desktop-runtime.json",
+      ),
+    );
+    expect(manifest.productVersion).toBe(options.version);
+    await refreshRuntimeInventory(options.runtime, "arm64");
+    expect(await readFile(join(options.runtime, "desktop-runtime.json"), "utf8")).toBe(refreshed);
+    await expect(refreshRuntimeInventory(options.runtime, "x64")).rejects.toThrow(/does not match/);
+  });
+});
+
+describe("inert update compatibility metadata", () => {
+  test("embeds the exact compiled schema and version before inventory sealing", async () => {
+    const { writeDesktopUpdateMetadata } = await import("./update-metadata.mjs");
+    const root = await temporary();
+    for (const name of ["core", "gateway"])
+      await put(
+        root,
+        `packages/${name}/package.json`,
+        JSON.stringify({ type: "module", version: "0.7.8" }),
+      );
+    await put(
+      root,
+      "packages/core/dist/compat.js",
+      "export const buildCompatManifest = ({productVersion,mainDbSchemaVersion}) => ({productVersion,stores:{mainDb:{policy:'numbered-migrations',version:mainDbSchemaVersion}},protocols:{ws:3}});\n",
+    );
+    await put(
+      root,
+      "packages/gateway/dist/data/schema-version.js",
+      "export const LATEST_SCHEMA_VERSION = 17;\n",
+    );
+    const metadata = await writeDesktopUpdateMetadata(root, "arm64", "0.7.8");
+    expect(metadata.compat.stores.mainDb.version).toBe(17);
+    expect(metadata.bundleIdentifier).toBe("dev.omnesis.desktop");
+    expect(JSON.parse(await readFile(join(root, "desktop-update.json"), "utf8"))).toEqual(metadata);
+    expect(
+      (await inventoryBundle(root, "arm64")).some((item) => item.path === "desktop-update.json"),
+    ).toBe(true);
+    await expect(writeDesktopUpdateMetadata(root, "arm64", "0.7.9")).rejects.toThrow(/lockstep/);
+    await expect(writeDesktopUpdateMetadata(root, "arm64", "0.7.8")).rejects.toThrow();
+  });
+});

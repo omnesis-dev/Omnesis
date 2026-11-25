@@ -2,9 +2,8 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * The four native version fields that carry the product version into the
- * mobile builds: the XcodeGen project's `MARKETING_VERSION`, the short
- * version string in both iOS Info plists, and the Android `versionName`.
+ * Native product versions: the iOS/macOS XcodeGen `MARKETING_VERSION`, the
+ * short version string in both iOS Info plists, and Android `versionName`.
  *
  * Changesets bumps every `package.json`, `sync-plugin-versions.mjs` bumps the
  * plugin manifests, and this module bumps what is left — so a release never
@@ -24,11 +23,12 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 export const IOS_PROJECT = "ios/project.yml";
+export const MACOS_PROJECT = "macos/project.yml";
 export const IOS_PLISTS = ["ios/Info.plist", "ios/Info-Demo.plist"];
 export const ANDROID_GRADLE = "android/app/build.gradle.kts";
 
 /** Every file a `release version` run rewrites, in the order it rewrites them. */
-export const NATIVE_VERSION_FILES = [IOS_PROJECT, ...IOS_PLISTS, ANDROID_GRADLE];
+export const NATIVE_VERSION_FILES = [IOS_PROJECT, ...IOS_PLISTS, MACOS_PROJECT, ANDROID_GRADLE];
 
 export function assertStrictSemver(version) {
   if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(version ?? "")) {
@@ -46,11 +46,15 @@ function replaceOnce(text, pattern, replacement, label) {
 
 /** `MARKETING_VERSION: "0.4.0"` in the XcodeGen project spec. */
 export function applyIosProjectVersion(text, version) {
+  return applyAppleProjectVersion(text, version, IOS_PROJECT);
+}
+
+function applyAppleProjectVersion(text, version, project) {
   return replaceOnce(
     text,
     /(MARKETING_VERSION:\s*)(["']?)[^"'\s]+\2/u,
     `$1"${version}"`,
-    `${IOS_PROJECT} MARKETING_VERSION`,
+    `${project} MARKETING_VERSION`,
   );
 }
 
@@ -76,6 +80,8 @@ export function applyAndroidVersionName(text, version) {
 
 function transformFor(relativePath) {
   if (relativePath === IOS_PROJECT) return applyIosProjectVersion;
+  if (relativePath === MACOS_PROJECT)
+    return (text, version) => applyAppleProjectVersion(text, version, MACOS_PROJECT);
   if (relativePath === ANDROID_GRADLE) return applyAndroidVersionName;
   return (text, version) => applyPlistShortVersion(text, version, relativePath);
 }

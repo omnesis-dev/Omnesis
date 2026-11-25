@@ -12,7 +12,17 @@ const requestSchema = z
   .object({
     version: z.literal(1).default(1),
     id: z.string().min(1).max(128),
-    command: z.enum(["status", "prepare", "connect", "stop", "openPortal", "respond", "cancel"]),
+    command: z.enum([
+      "status",
+      "prepare",
+      "connect",
+      "stop",
+      "openPortal",
+      "respond",
+      "cancel",
+      "removePreview",
+      "remove",
+    ]),
     params: z.unknown().optional(),
   })
   .strict();

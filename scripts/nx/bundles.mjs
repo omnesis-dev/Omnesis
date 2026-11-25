@@ -156,6 +156,9 @@ export const bundles = {
     ],
   },
   "ios-logic": { kind: "native", nativeKind: "ios-logic" },
+  "macos-logic": { kind: "native", nativeKind: "macos-logic" },
+  "macos-test": { kind: "native", nativeKind: "macos-test" },
+  "macos-build": { kind: "native", nativeKind: "macos-build" },
   "ios-snapshot": { kind: "native", nativeKind: "ios-snapshot" },
   "android-logic": { kind: "native", nativeKind: "android-logic" },
   "android-render": { kind: "native", nativeKind: "android-render" },
@@ -198,6 +201,8 @@ export function uncoveredE2ETests() {
 }
 
 const nativeBridgeBundles = new Map([
+  ["scripts/macos-logic.sh", "macos-logic"],
+  ["scripts/macos-test.sh", "macos-test"],
   ["scripts/ios-logic.sh", "ios-logic"],
   ["scripts/ios-snapshot.sh", "ios-snapshot"],
   ["scripts/run-ios-e2e.sh", "ios-e2e"],
@@ -278,6 +283,18 @@ const areas = [
     bundles: ["gateway-core"],
   },
   { test: (p) => p.startsWith("ios/"), bundles: ["ios-logic"] },
+  { test: (p) => p.startsWith("macos/"), bundles: ["macos-logic", "macos-test"] },
+  {
+    test: (p) => /^scripts\/desktop\/native-check(?:\.test)?\.mjs$/.test(p),
+    bundles: ["macos-logic", "macos-test"],
+  },
+  {
+    test: (p) =>
+      /^scripts\/desktop\/(?:prepare-runtime|assemble-app|native-inventory|node-runtime|runtime-assets|distribute)/.test(
+        p,
+      ),
+    bundles: ["macos-build"],
+  },
   {
     test: (p) => p.startsWith("ios/") && /(?:UI|View|Screen|Snapshot|Preview)/.test(p),
     bundles: ["ios-snapshot"],

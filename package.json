@@ -248,6 +248,18 @@
         "command": "node scripts/nx/run-bundle.mjs ios-logic",
         "cache": false
       },
+      "nx-bundle-macos-logic": {
+        "command": "node scripts/nx/run-bundle.mjs macos-logic",
+        "cache": false
+      },
+      "nx-bundle-macos-test": {
+        "command": "node scripts/nx/run-bundle.mjs macos-test",
+        "cache": false
+      },
+      "nx-bundle-macos-build": {
+        "command": "node scripts/nx/run-bundle.mjs macos-build",
+        "cache": false
+      },
       "nx-bundle-ios-snapshot": {
         "command": "node scripts/nx/run-bundle.mjs ios-snapshot",
         "cache": false

@@ -277,14 +277,14 @@ exists on origin — rather than failing on one at a time.
 
 **`version <x.y.z>`** runs `changeset version`, synchronizes the plugin,
 extension and contract manifests, refreshes the lockfile with
-`npm install --package-lock-only`, writes the version into the four native
+`npm install --package-lock-only`, writes the version into the native
 project files, records the release's CLI surface in
 `scripts/release/released-cli-surface.json` (see
 [Installer and release skew](#installer-and-release-skew)), and reruns the
 lockstep guard. It refuses when no pending
 changeset could produce the version you asked for, and it refuses when the
 changesets produce a different one — naming the version they do produce. The
-native files are `ios/project.yml` (`MARKETING_VERSION`), both iOS Info plists
+native files are `ios/project.yml` and `macos/project.yml` (`MARKETING_VERSION`), both iOS Info plists
 (`CFBundleShortVersionString`) and `android/app/build.gradle.kts`
 (`versionName`). Their build counters — `CURRENT_PROJECT_VERSION`,
 `CFBundleVersion`, `versionCode` — are deliberately untouched: they advance per

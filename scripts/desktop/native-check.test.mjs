@@ -37,7 +37,7 @@ function fixture() {
 function runner(calls) {
   return (command, args, options) => {
     calls.push({ command, args, options });
-    if (command === "ssh" && options.input?.includes("python3")) {
+    if (command === "ssh" && options.input?.includes("marker =")) {
       return spawnSync("sh", ["-c", args[1]], { input: options.input, encoding: "utf8" });
     }
     return { status: 0 };
@@ -115,7 +115,7 @@ posixTest("real rsync preserves a remote filespec with spaces and quotes", () =>
   mkdirSync(join(source, "macos"), { recursive: true });
   writeFileSync(join(source, "macos", "Package.swift"), "// fixture package\n");
   const ssh = join(root, "fixture-ssh");
-  writeFileSync(ssh, '#!/bin/sh\nshift\nexec "$@"\n', { mode: 0o700 });
+  writeFileSync(ssh, '#!/bin/sh\nshift\nexec /bin/sh -c "$*"\n', { mode: 0o700 });
   const calls = [];
   const mock = runner(calls);
   const run = (command, args, config) =>
@@ -123,7 +123,7 @@ posixTest("real rsync preserves a remote filespec with spaces and quotes", () =>
       ? spawnSync(command, args, {
           ...config,
           stdio: "pipe",
-          env: { ...process.env, RSYNC_RSH: ssh },
+          env: { ...process.env, ...config.env, RSYNC_RSH: ssh },
         })
       : mock(command, args, config);
   const worktree = join(root, "scratch with 'quote'");
@@ -146,3 +146,16 @@ posixTest("artifact retrieval does not replace the original native check failure
     "Desktop native ssh failed",
   );
 });
+
+posixTest(
+  "the remote check script has valid shell syntax and retains failure-aware screenshot collection",
+  () => {
+    const { options } = fixture();
+    const calls = [];
+    runNativeCheck({ ...options, lane: "test" }, runner(calls));
+    const script = calls.filter((call) => call.command === "ssh").at(-1).options.input;
+    expect(spawnSync("bash", ["-n", "-c", script], { encoding: "utf8" }).status).toBe(0);
+    expect(script).toContain("trap collect_screenshots EXIT");
+    expect(script).toContain('exit "$status"');
+  },
+);

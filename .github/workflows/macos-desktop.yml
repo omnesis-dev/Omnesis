@@ -2,31 +2,11 @@
 # Copyright (c) 2026 Adrien Conrath
 name: macOS desktop
 on:
-  pull_request:
-    paths:
-      - macos/**
-      - ios/Package.swift
-      - ios/Sources/Omnesis/**
-      - packages/cli/src/desktop/**
-      - packages/cli/src/commands/desktop.ts
-      - packages/core/src/secret-store*
-      - packages/core/src/secret-file*
-      - packages/core/src/models/**
-      - scripts/desktop/**
-      - .github/workflows/macos-desktop.yml
-  push:
-    branches: [main]
-    paths:
-      - macos/**
-      - ios/Package.swift
-      - ios/Sources/Omnesis/**
-      - packages/cli/src/desktop/**
-      - packages/cli/src/commands/desktop.ts
-      - packages/core/src/secret-store*
-      - packages/core/src/secret-file*
-      - packages/core/src/models/**
-      - scripts/desktop/**
-      - .github/workflows/macos-desktop.yml
+  workflow_call:
+    inputs:
+      target_sha:
+        type: string
+        required: true
   workflow_dispatch:
 permissions:
   contents: read
@@ -41,6 +21,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          ref: ${{ inputs.target_sha || github.sha }}
       - name: Keep tests off production services
         id: production-network
         run: scripts/ci/production-network.sh isolate
@@ -48,8 +29,32 @@ jobs:
         run: |
           xcodebuild -version
           swift --version
+      - name: Restore SwiftPM packages
+        id: swiftpm-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            macos/.build/repositories
+            macos/.build/checkouts
+            macos/.build/workspace-state.json
+            macos/Package.resolved
+          key: desktop-swiftpm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('macos/Package.swift') }}
+          restore-keys: desktop-swiftpm-${{ runner.os }}-${{ runner.arch }}-
+      - name: Resolve SwiftPM packages
+        run: scripts/ci/resolve-swift-packages.sh macos
+      - name: Save SwiftPM packages
+        if: ${{ github.ref == 'refs/heads/main' && steps.swiftpm-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            macos/.build/repositories
+            macos/.build/checkouts
+            macos/.build/workspace-state.json
+            macos/Package.resolved
+          key: ${{ steps.swiftpm-cache.outputs.cache-primary-key }}
       - name: Test portable native models
-        run: swift test --package-path macos
+        working-directory: macos
+        run: swift test --disable-automatic-resolution
       - name: Install XcodeGen
         run: brew install xcodegen
       - name: Generate native project
@@ -69,6 +74,28 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
             test
+      - name: Read pinned runtime version
+        id: runtime
+        run: |
+          echo "node=$(python3 -c 'import json; print(json.load(open("scripts/desktop/node-runtime.json"))["version"])')" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ steps.runtime.outputs.node }}
+          cache: npm
+      - name: Install build dependencies
+        run: scripts/ci/npm-ci.sh
+      - name: Assemble complete unsigned app and exercise bundled runtime
+        run: |
+          node scripts/desktop/prepare-runtime.mjs --out "$RUNNER_TEMP/desktop-runtime" --cache "$RUNNER_TEMP/desktop-node-cache"
+          node scripts/desktop/smoke-runtime.mjs --runtime "$RUNNER_TEMP/desktop-runtime"
+          node scripts/desktop/assemble-app.mjs --runtime "$RUNNER_TEMP/desktop-runtime" --shell-app macos/build/Build/Products/Debug/Omnesis.app --out "$RUNNER_TEMP/Omnesis.app" --arch "$(node -p process.arch)" --version "$(node -p 'JSON.parse(require("fs").readFileSync("packages/core/package.json")).version')"
+          ditto -c -k --keepParent "$RUNNER_TEMP/Omnesis.app" "$RUNNER_TEMP/Omnesis-unsigned.zip"
+      - name: Upload unsigned app for isolated QA
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: macos-desktop-unsigned
+          path: ${{ runner.temp }}/Omnesis-unsigned.zip
+          retention-days: 7
       - name: Upload native renders and test results
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7

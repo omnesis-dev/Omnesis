@@ -8,6 +8,7 @@ import SwiftUI
 
 struct DesktopSettingsView: View {
     @Environment(DesktopStore.self) private var store
+    @Environment(\.openWindow) private var openWindow
     @State private var backgroundEnabled = false
     @State private var showStopConfirmation = false
     @State private var error: String?
@@ -15,8 +16,9 @@ struct DesktopSettingsView: View {
         TabView {
             Form {
                 Section("Background operation") {
-                    Toggle("Keep Omnesis running when I sign in", isOn: $backgroundEnabled)
-                        .onChange(of: backgroundEnabled) { _, enabled in configureBackground(enabled) }
+                    Toggle("Keep Omnesis running when I sign in", isOn: Binding(
+                        get: { backgroundEnabled }, set: { configureBackground($0) }
+                    ))
                     Text(
                         "Omnesis keeps connected sources up to date while its window is closed. This Mac must be awake for a library stored here to serve your other devices."
                     )
@@ -30,6 +32,12 @@ struct DesktopSettingsView: View {
                     if let name = store.state.homeName { LabeledContent("Library Mac", value: name) }
                     if store.state.encrypted == true { Label("Encrypted storage is on", systemImage: "lock.shield") }
                     Button("Stop Omnesis on this Mac", role: .destructive) { showStopConfirmation = true }
+                    Button("Remove Omnesis from this Mac…", role: .destructive) {
+                        store.removalPlan = nil
+                        store.removalOutcome = nil
+                        store.presentRemoval = true
+                        openWindow(id: "main")
+                    }.disabled(store.busy)
                 }
                 if let error { Text(error).foregroundStyle(.red) }
             }.formStyle(.grouped).tabItem { Label("General", systemImage: "gearshape") }
@@ -59,6 +67,7 @@ struct DesktopSettingsView: View {
         do {
             let service = SMAppService.loginItem(identifier: "dev.omnesis.desktop.background")
             if enabled { try service.register() } else { try service.unregister() }
+            backgroundEnabled = enabled
             error = nil
         } catch { self.error = error.localizedDescription }
     }

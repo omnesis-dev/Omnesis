@@ -3,7 +3,7 @@
 
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { lstat, open, readdir, readlink, realpath } from "node:fs/promises";
+import { lstat, open, readdir, readFile, readlink, realpath, writeFile } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 
 const CPU = new Map([
@@ -35,7 +35,7 @@ export function machoArchitectures(bytes) {
   });
 }
 
-export function assertWithin(root, path) {
+function assertWithin(root, path) {
   const rel = relative(resolve(root), resolve(path));
   if (rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel))
     throw new Error(`Bundle path escapes its root: ${path}`);
@@ -94,4 +94,16 @@ export async function inventoryBundle(root, architecture) {
   };
   await visit(root);
   return records;
+}
+
+/** Recompute signed bytes before the containing app resource seal is made. */
+export async function refreshRuntimeInventory(runtime, architecture) {
+  const path = join(runtime, "desktop-runtime.json");
+  const manifest = JSON.parse(await readFile(path, "utf8"));
+  if (manifest.format !== 1 || manifest.architecture !== architecture)
+    throw new Error("Runtime inventory format or architecture does not match");
+  const inventory = (await inventoryBundle(runtime, architecture)).filter(
+    (entry) => entry.path !== "desktop-runtime.json",
+  );
+  await writeFile(path, `${JSON.stringify({ ...manifest, inventory }, null, 2)}\n`);
 }

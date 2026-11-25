@@ -23,6 +23,8 @@ import {
 } from "@omnesis/cloud-relay";
 import { prepareDesktopInstall, readDesktopInstall } from "./bootstrap.js";
 import { desktopSearchModel } from "./search-model.js";
+import { previewDesktopRemoval, removeDesktopInstall, resumeRetiredDesktop } from "./removal.js";
+import { readDesktopRetirement } from "./retirement.js";
 import { stopDesktopDaemon } from "./daemon-control.js";
 import { prepareDesktopRuntime } from "./runtime-state.js";
 import { readDesktopConnection, requestDesktopGateway } from "./gateway-access.js";
@@ -30,6 +32,7 @@ import { desktopEnvironment, type DesktopProfile } from "./environment.js";
 import { discoverDesktopHomes } from "./discovery.js";
 import { enrollDesktopRole, type DesktopPairing } from "./enrollment.js";
 import { connectDesktopAccount } from "./account-connect.js";
+import { withDesktopPublication, publishDesktopHint } from "./publication.js";
 
 export interface DesktopSessionTransport {
   url: string;
@@ -37,6 +40,7 @@ export interface DesktopSessionTransport {
   close(): Promise<void>;
 }
 export interface CoordinatorDependencies {
+  publish: typeof withDesktopPublication;
   readInstall: typeof readDesktopInstall;
   prepareInstall: typeof prepareDesktopInstall;
   prepareRuntime: typeof prepareDesktopRuntime;
@@ -54,6 +58,10 @@ export interface CoordinatorDependencies {
   localCollectorDeviceId(profile: DesktopProfile): Promise<string | undefined>;
   startDaemon(profile: DesktopProfile): Promise<void>;
   stopDaemon: typeof stopDesktopDaemon;
+  readRetirement: typeof readDesktopRetirement;
+  resumeRetirement: typeof resumeRetiredDesktop;
+  removalPreview: typeof previewDesktopRemoval;
+  removeInstall: typeof removeDesktopInstall;
   startTransport(profile: DesktopProfile): Promise<DesktopSessionTransport>;
   verifyTransport(
     transport: DesktopSessionTransport,
@@ -66,6 +74,7 @@ export interface CoordinatorDependencies {
   sleep(signal: AbortSignal): Promise<void>;
 }
 export const desktopCoordinatorDefaults: CoordinatorDependencies = {
+  publish: withDesktopPublication,
   readInstall: readDesktopInstall,
   prepareInstall: prepareDesktopInstall,
   prepareRuntime: prepareDesktopRuntime,
@@ -109,6 +118,10 @@ export const desktopCoordinatorDefaults: CoordinatorDependencies = {
     return z.string().uuid().safeParse(state.deviceId).success ? state.deviceId : undefined;
   },
   stopDaemon: stopDesktopDaemon,
+  readRetirement: readDesktopRetirement,
+  resumeRetirement: resumeRetiredDesktop,
+  removalPreview: previewDesktopRemoval,
+  removeInstall: removeDesktopInstall,
   startDaemon: async (profile) => {
     const entry = resolveSubprocessEntry("../index.ts", import.meta.url);
     const env = desktopEnvironment(profile);
@@ -126,12 +139,21 @@ export const desktopCoordinatorDefaults: CoordinatorDependencies = {
   },
   startTransport: async (profile) => {
     const { runRelayCommand } = await import("@omnesis/cloud-relay/runtime");
-    const transport = await runRelayCommand("client", {
-      ...desktopEnvironment(profile),
-      OMNESIS_CLOUD_RELAY_DEVICE_FILE: join(profile.configDir, "cloud-relay", "cli-device.json"),
-      OMNESIS_CLOUD_RELAY_CLIENT_PORT: "0",
-      OMNESIS_CLOUD_RELAY_CLIENT_UNREF: "1",
-    });
+    const transport = await runRelayCommand(
+      "client",
+      {
+        ...desktopEnvironment(profile),
+        OMNESIS_CLOUD_RELAY_DEVICE_FILE: join(profile.configDir, "cloud-relay", "cli-device.json"),
+        OMNESIS_CLOUD_RELAY_CLIENT_PORT: "0",
+        OMNESIS_CLOUD_RELAY_CLIENT_UNREF: "1",
+      },
+      {
+        persistDirectCandidates: async (...args) => {
+          const { saveDirectCandidates } = await import("@omnesis/cloud-relay/runtime");
+          await publishDesktopHint(profile, () => saveDirectCandidates(...args));
+        },
+      },
+    );
     if (!transport?.gatewayUrl) {
       await transport?.close();
       throw new Error("The paired connection is unavailable");

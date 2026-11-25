@@ -31,6 +31,9 @@ final class DesktopStore {
     var destination: Destination? = .ask
     var interaction: RuntimeInteraction?
     var failure: String?
+    var presentRemoval = false
+    var removalPlan: DesktopRemovalPlan?
+    var removalOutcome: DesktopRemovalOutcome?
     var busy: Bool {
         requests.busy
     }
@@ -57,11 +60,13 @@ final class DesktopStore {
     }
 
     func start() {
-        do {
-            try runtime.start()
-            command("status")
-            startStatusUpdates()
-        } catch { failure = error.localizedDescription }
+        Task {
+            do {
+                try await runtime.start()
+                command("status")
+                startStatusUpdates()
+            } catch { failure = error.localizedDescription }
+        }
     }
 
     func command(_ name: String, params: [String: BridgeValue] = [:]) {
@@ -90,7 +95,29 @@ final class DesktopStore {
 
     private func receive(_ envelope: BridgeEnvelope) {
         if let error = envelope.error { failure = error.message }
+        let command = envelope.id.flatMap { requests.command(for: $0) }
         if let id = envelope.id { requests.completed(id: id) }
+        if command == "remove", envelope.ok == false { removalPlan = nil }
+        if envelope.ok == true, command == "removePreview" {
+            guard let plan = envelope.removalPlan else { failure = "Omnesis could not review this removal. Try again."
+                return
+            }
+            removalPlan = plan
+        }
+        if envelope.ok == true, command == "remove" {
+            guard let outcome = envelope.removalOutcome else { failure = "Omnesis could not confirm the removal outcome. Keep the app and try again."
+                return
+            }
+            removalOutcome = outcome
+            removalPlan = nil
+            configuredConnection = nil
+            api = nil
+            sources = []
+            devices = []
+            descriptors = []
+            conversations = []
+            state = DesktopState(phase: .waiting, message: outcome.message, retired: true)
+        }
         if let prompt = envelope.interaction { interaction = prompt }
         if let next = envelope.state ?? envelope.result {
             state = next

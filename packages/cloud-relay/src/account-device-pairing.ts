@@ -24,6 +24,7 @@ export async function pairAccountDevice(
     onConnectCode?(value: { connectUrl: string; connectShortUrl?: string; code: string }): void;
   },
   dependencies: {
+    readDeviceKey?: typeof readOrCreateDeviceKey;
     authorize?: typeof authorizeAccountDesktop;
     fetch?: typeof fetch;
     gatewayJson?: typeof pinnedGatewayJson;
@@ -34,7 +35,10 @@ export async function pairAccountDevice(
   return pairCloudDevice(options, {
     gatewayJson: dependencies.gatewayJson,
     wait: dependencies.wait,
-    deviceKey: await readOrCreateDeviceKey(options.deviceKeyFile, options.deviceKeySecretOptions),
+    deviceKey: await (dependencies.readDeviceKey ?? readOrCreateDeviceKey)(
+      options.deviceKeyFile,
+      options.deviceKeySecretOptions,
+    ),
     discover: async (request, signal) => {
       const discovery = await (dependencies.authorize ?? authorizeAccountDesktop)(
         {

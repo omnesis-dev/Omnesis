@@ -19,6 +19,7 @@ import {
 import { readDesktopInstall } from "./bootstrap.js";
 import { desktopEnvironment, type DesktopProfile } from "./environment.js";
 import { requestDesktopGateway } from "./gateway-access.js";
+import { readDesktopRetirement } from "./retirement.js";
 import { startDesktopDaemonControl } from "./daemon-control.js";
 import { readDesktopRuntime } from "./runtime-state.js";
 
@@ -39,6 +40,7 @@ export interface DesktopDaemonEvent {
 
 interface DaemonDependencies {
   readInstall: typeof readDesktopInstall;
+  retired(profile: DesktopProfile): Promise<boolean>;
   readRuntime: typeof readDesktopRuntime;
   request: typeof requestDesktopGateway;
   lock: typeof acquireGatewayLock;
@@ -64,6 +66,7 @@ const STABLE_MS = 60_000;
 
 const defaults: DaemonDependencies = {
   readInstall: readDesktopInstall,
+  retired: async (profile) => (await readDesktopRetirement(profile)) !== null,
   readRuntime: readDesktopRuntime,
   request: requestDesktopGateway,
   lock: acquireGatewayLock,
@@ -94,12 +97,11 @@ const defaults: DaemonDependencies = {
   },
   control: startDesktopDaemonControl,
   spawn: (component, env) => {
-    const entry = resolveSubprocessEntry("../index.ts", import.meta.url);
-    const child = spawn(
-      entry.command,
-      [...entry.args, component, component === "gateway" ? "serve" : "run"],
-      { env, stdio: "ignore" },
-    );
+    const entry = resolveSubprocessEntry("./component-process.ts", import.meta.url);
+    const child = spawn(entry.command, [...entry.args, component], {
+      env,
+      stdio: ["ignore", "ignore", "ignore", "ipc"],
+    });
     const exited = new Promise<DesktopChildExit>((resolve, reject) => {
       child.on("error", (error) => {
         if (child.pid === undefined) reject(error);
@@ -132,12 +134,17 @@ export async function runDesktopDaemon(
 ): Promise<"stopped" | "already-running"> {
   const deps = { ...defaults, ...overrides };
   options.signal.throwIfAborted();
+  if (await deps.retired(profile)) return "stopped";
   const install = await deps.readInstall(profile);
   if (!install || install.phase !== "configured" || !deps.encrypted(profile)) {
     throw new Error("The desktop installation must be configured and encrypted before starting");
   }
   const owner = join(profile.configDir, "runtime-owner");
-  await mkdir(owner, { recursive: true, mode: 0o700 });
+  try {
+    await mkdir(owner, { mode: 0o700 });
+  } catch (error) {
+    if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) throw error;
+  }
   const ownerStat = await lstat(owner);
   if (
     !ownerStat.isDirectory() ||
@@ -164,6 +171,15 @@ export async function runDesktopDaemon(
   });
   let control: Awaited<ReturnType<typeof startDesktopDaemonControl>> | undefined;
   try {
+    if (await deps.retired(profile)) return "stopped";
+    const current = await deps.readInstall(profile);
+    if (
+      !current ||
+      current.phase !== "configured" ||
+      current.mode !== install.mode ||
+      !deps.encrypted(profile)
+    )
+      throw new Error("The desktop installation changed before it could start");
     const runtime = await deps.readRuntime(profile);
     if (!runtime) throw new Error("The desktop runtime port has not been assigned");
     control = await deps.control(profile, { stop: () => stop.abort(), drained: stopped });

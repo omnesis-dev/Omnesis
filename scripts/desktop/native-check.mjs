@@ -75,6 +75,22 @@ else
   action=test
   if [ "$3" = yes ]; then action=build; fi
   result="../evidence/Desktop-$(date +%s)-$$.xcresult"
+  started=$(date +%s)
+  collect_screenshots() {
+    status=$?
+    trap - EXIT
+    python3 - "$started" "../evidence/snapshots" <<'PYSCREEN' || true
+import pathlib, shutil, sys
+source = pathlib.Path('/tmp/omnesis-macos-snapshots')
+target = pathlib.Path(sys.argv[2])
+for path in source.glob('*.png'):
+    if not path.is_symlink() and path.stat().st_mtime >= int(sys.argv[1]):
+        target.mkdir(mode=0o700, parents=True, exist_ok=True)
+        shutil.copy2(path, target / path.name)
+PYSCREEN
+    exit "$status"
+  }
+  trap collect_screenshots EXIT
   xcodebuild -project OmnesisDesktop.xcodeproj -scheme OmnesisDesktop \\
     -configuration Debug -destination 'platform=macOS' -derivedDataPath build \\
     -resultBundlePath "$result" CODE_SIGN_IDENTITY='' CODE_SIGNING_REQUIRED=NO \\
@@ -84,7 +100,12 @@ fi
 
 export function runNativeCheck(options, run = spawnSync, sourceRoot = root) {
   const exec = (command, args, extra = {}) => {
-    const result = run(command, args, { cwd: root, stdio: "inherit", ...extra });
+    const result = run(command, args, {
+      cwd: root,
+      stdio: "inherit",
+      ...(command === "rsync" ? { env: { ...process.env, RSYNC_OLD_ARGS: "1" } } : {}),
+      ...extra,
+    });
     if (result.error) throw result.error;
     if (result.status !== 0) throw new Error(`Desktop native ${command} failed`);
   };
@@ -109,11 +130,10 @@ export function runNativeCheck(options, run = spawnSync, sourceRoot = root) {
   for (const directory of options.lane === "logic" ? ["macos"] : ["macos", "ios"]) {
     exec("rsync", [
       "-a",
-      "-s",
       "--delete",
       ...exclusions.flatMap((value) => ["--exclude", value]),
       `${join(sourceRoot, directory)}/`,
-      `${options.host}:${join(options.worktree, directory)}/`,
+      `${options.host}:${shellArgument(join(options.worktree, directory) + "/")}`,
     ]);
   }
   let failure;
@@ -127,8 +147,7 @@ export function runNativeCheck(options, run = spawnSync, sourceRoot = root) {
       mkdirSync(options.output, { recursive: true, mode: 0o700 });
       exec("rsync", [
         "-a",
-        "-s",
-        `${options.host}:${join(options.worktree, "evidence")}/`,
+        `${options.host}:${shellArgument(join(options.worktree, "evidence") + "/")}`,
         `${resolve(options.output)}/`,
       ]);
     }

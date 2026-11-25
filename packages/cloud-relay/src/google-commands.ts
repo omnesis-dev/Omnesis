@@ -9,12 +9,13 @@ import { randomBytes, randomUUID, X509Certificate } from "node:crypto";
 import {
   ensurePrivateDirSync,
   writeSecretTextFileSync,
-  writeCollectorTokenFile,
-  readTokenFile,
-  readCollectorTokenFile,
+  readSecretTextFileSync,
+  type SecretFileOptions,
   secretFileScope,
+  readInstallRootKey,
 } from "@omnesis/core";
 import { z } from "zod";
+import { pairedDeviceSecretOptions } from "./paired-device-storage.js";
 import { withPairedDeviceFileLock } from "./paired-device-lock.js";
 import {
   cloudClientDefaults,
@@ -185,10 +186,15 @@ async function runDevicePairing(
     })
     .parse(env);
   const configDir = config.OMNESIS_CONFIG_DIR;
-  const activeToken = () =>
-    config.OMNESIS_CLOUD_RELAY_DEVICE_KIND === "cli"
-      ? readTokenFile(configDir)
-      : readCollectorTokenFile(configDir);
+  const secretOptions = pairedDeviceSecretOptions(env);
+  const rootKey = secretOptions && (await readInstallRootKey(secretOptions));
+  if (env.OMNESIS_SECRET_SERVICE && !rootKey)
+    throw new Error("The scoped installation key must be unlocked before pairing");
+  const tokenPath = join(
+    configDir,
+    config.OMNESIS_CLOUD_RELAY_DEVICE_KIND === "cli" ? "token" : "collector-token",
+  );
+  const activeToken = () => (readSecretTextFileSync(tokenPath, secretOptions) ?? "").trim() || null;
   const before = activeToken();
   if (
     config.OMNESIS_CLOUD_RELAY_DEVICE_KIND === "cli" &&
@@ -213,6 +219,7 @@ async function runDevicePairing(
     kind: config.OMNESIS_CLOUD_RELAY_DEVICE_KIND,
     name: config.OMNESIS_CLOUD_RELAY_DEVICE_NAME,
     deviceKeyFile: `${config.OMNESIS_CLOUD_RELAY_DEVICE_FILE}.key`,
+    ...(rootKey ? { deviceKeySecretOptions: secretOptions } : {}),
     onConnectCode: ({ connectUrl, connectShortUrl, code }) =>
       process.stderr.write(
         `Sign in to your Omnesis account to connect this ${config.OMNESIS_CLOUD_RELAY_DEVICE_KIND}. If no browser opens, visit ${connectShortUrl ?? connectUrl} on any device and enter ${code}\n` +
@@ -226,20 +233,27 @@ async function runDevicePairing(
   });
   await withPairedDeviceFileLock(config.OMNESIS_CLOUD_RELAY_DEVICE_FILE, async () => {
     unchanged();
-    await savePrivateJson(config.OMNESIS_CLOUD_RELAY_DEVICE_FILE, result);
+    await savePrivateJson(config.OMNESIS_CLOUD_RELAY_DEVICE_FILE, result, secretOptions);
     unchanged();
-    if (result.kind === "collector") writeCollectorTokenFile(result.token, configDir);
-    else publishCliToken(result.token, configDir);
+    if (result.kind === "collector") {
+      ensurePrivateDirSync(configDir);
+      writeSecretTextFileSync(tokenPath, result.token, secretOptions);
+    } else publishCliToken(result.token, configDir, secretOptions);
   });
 }
 
 /** Publish a fresh CLI credential without replacing a file created by another process. */
-export function publishCliToken(token: string, configDir: string): void {
+export function publishCliToken(
+  token: string,
+  configDir: string,
+  options?: SecretFileOptions,
+): void {
   ensurePrivateDirSync(configDir);
   const target = join(configDir, "token");
   const staged = join(configDir, `.cloud-client-token-${randomUUID()}`);
   try {
     writeSecretTextFileSync(staged, token + "\n", {
+      ...options,
       configDir,
       scope: secretFileScope(target, configDir),
     });

@@ -25,7 +25,7 @@ export const desktopAccountSchema = z.object({
     .optional(),
 });
 export type DesktopAccount = z.infer<typeof desktopAccountSchema>;
-export const accountConnectParams = z
+const accountConnectParams = z
   .object({
     intent: z.enum(["create", "existing"]).default("existing"),
     termsAccepted: z.literal(true),

@@ -14,6 +14,7 @@ import {
 import { acquireNodeArchive, extractNodeArchive, NODE_RUNTIME } from "./node-runtime.mjs";
 import { inventoryBundle } from "./native-inventory.mjs";
 import { copyNodeTools, copyProductionDependencies } from "./runtime-assets.mjs";
+import { writeDesktopUpdateMetadata } from "./update-metadata.mjs";
 import { parseArguments } from "./arguments.mjs";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
@@ -98,6 +99,7 @@ export async function prepareRuntime({ architecture = process.arch, output, cach
     copyNodeTools(distribution, target);
     for (const notice of ["LICENSE", "THIRD_PARTY_NOTICES.md", "TRADEMARKS.md"])
       cpSync(join(repo, notice), join(target, notice));
+    await writeDesktopUpdateMetadata(target, architecture, staged.productVersion);
     const inventory = await inventoryBundle(target, architecture);
     writeFileSync(
       join(target, "desktop-runtime.json"),

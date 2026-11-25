@@ -7,7 +7,7 @@ import { cp, lstat, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { hashFile, inventoryBundle } from "./native-inventory.mjs";
+import { hashFile, inventoryBundle, refreshRuntimeInventory } from "./native-inventory.mjs";
 import { parseArguments } from "./arguments.mjs";
 
 /** Bundle containers must be sealed after the native code they enclose. */
@@ -25,7 +25,7 @@ export function nestedCodeBundles(entries) {
 }
 
 /** Signing and notarization are explicit build operations; this never publishes an artifact. */
-export async function distribute({
+async function distribute({
   app,
   architecture,
   identity,
@@ -69,6 +69,9 @@ export async function distribute({
       identity,
       join(app, bundle),
     ]);
+  // codesign changes Mach-O bytes, so the unsigned build inventory is stale.
+  // Seal these updated runtime hashes inside the outer app signature.
+  await refreshRuntimeInventory(join(app, "Contents/Resources/runtime"), architecture);
   exec("codesign", ["--force", "--options", "runtime", "--timestamp", "--sign", identity, app]);
   exec("codesign", ["--verify", "--deep", "--strict", "--verbose=2", app]);
   const temporary = await mkdtemp(join(tmpdir(), "omnesis-desktop-package-"));

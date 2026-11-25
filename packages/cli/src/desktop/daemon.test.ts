@@ -65,6 +65,7 @@ async function fixture(mode: "home" | "joined" = "home") {
       memoryLimitMb: 512,
       phase: "configured" as const,
     })),
+    retired: vi.fn(async () => false),
     readRuntime: vi.fn(async () => ({ version: 1 as const, port: 18601 })),
     request: vi.fn(async (_profile, path) =>
       path === "/health" ? { status: "ok" } : { account: { linked } },
@@ -367,3 +368,15 @@ test.skipIf(process.platform === "win32")(
     expect(f.release).toHaveBeenCalledOnce();
   },
 );
+
+test("a retired installation cannot restart before or after the ownership lease", async () => {
+  const f = await fixture();
+  f.deps.retired.mockResolvedValue(true);
+  expect(await f.run()).toBe("stopped");
+  expect(f.deps.lock).not.toHaveBeenCalled();
+  expect(f.deps.spawn).not.toHaveBeenCalled();
+  f.deps.retired.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+  expect(await f.run()).toBe("stopped");
+  expect(f.deps.spawn).not.toHaveBeenCalled();
+  expect(f.release).toHaveBeenCalledOnce();
+});

@@ -67,9 +67,15 @@ final class DesktopAPI: @unchecked Sendable {
         let (data, response) = try await session.data(for: request)
         guard let response = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
         guard (200 ..< 300).contains(response.statusCode) else {
-            struct Refusal: Decodable { let error: String? }
-            let message = (try? JSONDecoder().decode(Refusal.self, from: data))?.error
-            throw DesktopAPIError.message(message ?? "Omnesis could not complete this request (\(response.statusCode)).")
+            struct Refusal: Decodable { let error: String?
+                let code: String?
+            }
+            let refusal = try? JSONDecoder().decode(Refusal.self, from: data)
+            throw DesktopAPIError.refusal(
+                status: response.statusCode,
+                code: refusal?.code,
+                message: refusal?.error ?? "Omnesis could not complete this request (\(response.statusCode))."
+            )
         }
         return try JSONDecoder().decode(T.self, from: data)
     }
@@ -99,9 +105,11 @@ final class DesktopAPI: @unchecked Sendable {
 
 enum DesktopAPIError: LocalizedError {
     case message(String)
+    case refusal(status: Int, code: String?, message: String)
     var errorDescription: String? {
-        if case .message(let text) = self { return text }
-        return nil
+        switch self {
+        case .message(let text), .refusal(_, _, let text): text
+        }
     }
 }
 
@@ -132,10 +140,29 @@ struct DesktopDescriptor: Decodable, Identifiable {
     let hasResolveAccountId: Bool?
     let acceptsAuthCode: Bool?
     let multiDeviceMode: String?
+    let singleInstance: Bool?
+    let authType: String?
+    let experimental: Bool?
+    let provider: Provider?
+    struct Provider: Decodable { let id: String
+        let name: String
+    }
+
     let memberScopedParamNames: [String]?
     let params: [Param]?
     let devices: [Host]?
     let credentials: Credentials?
+    let setupGuide: String?
+    let gatewayHosted: Bool?
+    let pushBased: Bool?
+    let widgetOrigins: WidgetOrigins?
+
+    struct WidgetOrigins: Decodable {
+        let script: [String]?
+        let frame: [String]?
+        let connect: [String]?
+    }
+
     struct Host: Decodable, Identifiable { let id: String
         let name: String?
     }
@@ -148,6 +175,11 @@ struct DesktopDescriptor: Decodable, Identifiable {
         let placeholder: String?
         let help: String?
         let options: [Option]?
+        let scope: String?
+        let pattern: String?
+        let patternHint: String?
+        let validateWhenEmpty: Bool?
+        let provesLocalAvailabilityForAccount: String?
         var id: String {
             name
         }
@@ -165,11 +197,30 @@ struct DesktopDescriptor: Decodable, Identifiable {
         let fields: [Field]
         let required: Bool?
         let perAccount: Bool?
+        let publicClient: Bool?
+        let wizard: Wizard?
+        struct Wizard: Decodable {
+            let intro: String
+            let why: String
+            let estMinutes: Int
+            let steps: [Step]
+            struct Step: Decodable {
+                let kind: String
+                let title: String
+                let body: String
+                let url: URL?
+            }
+        }
+
         struct Field: Decodable, Identifiable {
             let name: String
             let label: String
             let secret: Bool?
             let placeholder: String?
+            let `default`: String?
+            let required: Bool?
+            let pattern: String?
+            let patternHint: String?
             var id: String {
                 name
             }

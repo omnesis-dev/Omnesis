@@ -18,6 +18,10 @@ public struct BridgeCommandTracker: Sendable {
         pending[id] = command
     }
 
+    public func command(for id: String) -> String? {
+        pending[id]
+    }
+
     public mutating func completed(id: String) {
         pending.removeValue(forKey: id)
     }

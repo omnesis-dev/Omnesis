@@ -3,9 +3,10 @@
 
 import { join } from "node:path";
 import { expect, test, vi } from "vitest";
-import { DesktopCoordinator } from "./coordinator.js";
-import { DesktopInteractionBroker, type DesktopProtocolRequest } from "./protocol.js";
+import { DesktopCoordinator, type DesktopStateCommand } from "./coordinator.js";
+import { DesktopInteractionBroker } from "./protocol.js";
 import { desktopProfile } from "./environment.js";
+import type { DesktopRetirement } from "./retirement.js";
 import type { DesktopInstall } from "./bootstrap.js";
 import type { DesktopPairing } from "./enrollment.js";
 
@@ -40,6 +41,7 @@ function fixture(mode?: "home" | "joined") {
       }
     : null;
   let linked = false;
+  let retirement: DesktopRetirement | null = null;
   const pairs = new Map<string, DesktopPairing>(),
     tokens = new Map<string, string>();
   const calls: string[] = [];
@@ -80,6 +82,26 @@ function fixture(mode?: "home" | "joined") {
       },
     ),
     prepareRuntime: vi.fn(async () => ({ version: 1 as const, port: 18601 })),
+    readRetirement: vi.fn(async () => retirement),
+    resumeRetirement: vi.fn(async () => {
+      retirement = null;
+      return true;
+    }),
+    removalPreview: vi.fn<NonNullable<Dependencies["removalPreview"]>>(
+      async (_profile, options) => ({
+        available: true,
+        mode: options.eraseData ? "erase-data" : "keep-data",
+        confirmationId: "a".repeat(64),
+        summary: "Fictional removal plan",
+        dataKept: !options.eraseData,
+        keyKept: !options.eraseData,
+      }),
+    ),
+    removeInstall: vi.fn<NonNullable<Dependencies["removeInstall"]>>(async (_profile, options) => ({
+      status: "retired",
+      data: options.eraseData ? "erased" : "retained",
+      keyring: options.eraseData ? "cleared" : "retained",
+    })),
     protected: vi.fn(async () => true),
     localCollectorDeviceId: vi.fn(async () => "00000000-0000-4000-8000-000000000004"),
     connection: vi.fn(async () => ({
@@ -114,6 +136,7 @@ function fixture(mode?: "home" | "joined") {
       if (value) return value;
       throw Object.assign(new Error("missing"), { code: "ENOENT" });
     }),
+    publish: async (_profile, _signal, work) => work(),
     savePair: vi.fn<NonNullable<Dependencies["savePair"]>>(async (path, value) => {
       pairs.set(path, value);
     }),
@@ -136,7 +159,7 @@ function fixture(mode?: "home" | "joined") {
     sleep: vi.fn(async () => {}),
   } satisfies Dependencies;
   const coordinator = new DesktopCoordinator(profile, deps);
-  const run = (command: DesktopProtocolRequest["command"], params?: unknown) =>
+  const run = (command: DesktopStateCommand, params?: unknown) =>
     coordinator.handle({ version: 1, id: "fixture", command, params }, context);
   const save = (kind: "cli" | "collector") => {
     const value = pairing(kind);
@@ -159,6 +182,13 @@ function fixture(mode?: "home" | "joined") {
     setLinked: (value: boolean) => {
       linked = value;
     },
+    setRetirement: (value: DesktopRetirement | null) => {
+      retirement = value;
+    },
+    preview: (params?: unknown) =>
+      coordinator.handle({ version: 1, id: "preview", command: "removePreview", params }, context),
+    remove: (params?: unknown) =>
+      coordinator.handle({ version: 1, id: "remove", command: "remove", params }, context),
   };
 }
 
@@ -377,4 +407,164 @@ test("existing joined setup cannot bypass encryption protection through Connect"
   expect(f.deps.enroll).not.toHaveBeenCalled();
   expect(f.deps.startDaemon).not.toHaveBeenCalled();
   expect(f.deps.startTransport).not.toHaveBeenCalled();
+});
+
+function retired(
+  profile: ReturnType<typeof desktopProfile>,
+  mode: DesktopRetirement["mode"] = "keep-data",
+  phase: DesktopRetirement["phase"] = "complete",
+): DesktopRetirement {
+  return {
+    version: 1,
+    owner: "omnesis-desktop",
+    instance: profile.instance,
+    secretService: profile.secretService,
+    operationId: "00000000-0000-4000-8000-000000000005",
+    mode,
+    phase,
+    root: { device: "1", inode: "2" },
+  };
+}
+
+test("removal preview defaults to keeping data and does not stop or restart background work", async () => {
+  const f = fixture("home");
+  expect(await f.preview()).toMatchObject({
+    available: true,
+    mode: "keep-data",
+    dataKept: true,
+    keyKept: true,
+  });
+  expect(f.deps.removeInstall).not.toHaveBeenCalled();
+  expect(f.deps.stopDaemon).not.toHaveBeenCalled();
+  expect(f.deps.startDaemon).not.toHaveBeenCalled();
+});
+
+test("erase cannot reach the backend without the matching structured confirmation", async () => {
+  const f = fixture("joined");
+  f.save("cli");
+  f.save("collector");
+  await f.run("status");
+  for (const params of [{ eraseData: true }, { eraseData: true, confirmationId: "yes" }])
+    await expect(f.remove(params)).rejects.toThrow();
+  expect(f.deps.removeInstall).not.toHaveBeenCalled();
+  expect(f.transport.close).not.toHaveBeenCalled();
+});
+
+test("confirmed removal closes only the session proxy before backend retirement and never starts a daemon", async () => {
+  const f = fixture("joined");
+  f.save("cli");
+  f.save("collector");
+  await f.run("status");
+  const plan = await f.preview({ eraseData: true });
+  const result = await f.remove({ eraseData: true, confirmationId: plan.confirmationId });
+  expect(result).toEqual({ status: "retired", data: "erased", keyring: "cleared" });
+  expect(f.transport.close.mock.invocationCallOrder[0]).toBeLessThan(
+    f.deps.removeInstall.mock.invocationCallOrder[0]!,
+  );
+  expect(f.deps.startDaemon).not.toHaveBeenCalled();
+});
+
+test("status honors retirement before reading absent data and never auto-resumes a kept library", async () => {
+  const f = fixture();
+  f.setRetirement(retired(f.profile));
+  expect(await f.run("status")).toMatchObject({
+    phase: "waiting",
+    retired: true,
+    retirement: { mode: "keep-data", phase: "complete" },
+  });
+  expect(f.deps.readInstall).not.toHaveBeenCalled();
+  expect(f.deps.resumeRetirement).not.toHaveBeenCalled();
+  expect(f.deps.startDaemon).not.toHaveBeenCalled();
+});
+
+test.each(["connect", "prepare"] as const)(
+  "explicit %s may resume a completed kept library",
+  async (command) => {
+    const f = fixture("joined");
+    f.save("cli");
+    f.save("collector");
+    f.setRetirement(retired(f.profile));
+    expect(
+      await f.run(command, command === "prepare" ? { mode: "joined" } : undefined),
+    ).toMatchObject({ phase: "ready", mode: "joined" });
+    expect(f.deps.resumeRetirement).toHaveBeenCalledOnce();
+    expect(f.deps.startDaemon).toHaveBeenCalledOnce();
+  },
+);
+
+test.each([
+  ["keep-data", "requested"],
+  ["keep-data", "stopped"],
+  ["erase-data", "requested"],
+  ["erase-data", "dataRemoved"],
+  ["erase-data", "keyCleanupPending"],
+  ["erase-data", "complete"],
+] as const)("%s retirement at %s cannot be cleared by Connect or Prepare", async (mode, phase) => {
+  const f = fixture("home");
+  f.setRetirement(retired(f.profile, mode, phase));
+  expect(await f.run("connect")).toMatchObject({ phase: "waiting", retired: true });
+  expect(await f.run("prepare", { mode: "home" })).toMatchObject({
+    phase: "waiting",
+    retired: true,
+  });
+  expect(f.deps.resumeRetirement).not.toHaveBeenCalled();
+  expect(f.deps.prepareInstall).not.toHaveBeenCalled();
+  expect(f.deps.startDaemon).not.toHaveBeenCalled();
+});
+
+test("cancellation after durable removal intent remains retired rather than falsely ready", async () => {
+  const f = fixture("home");
+  f.deps.removeInstall.mockImplementation(async () => {
+    f.setRetirement(retired(f.profile, "erase-data", "requested"));
+    f.controller.abort();
+    throw new Error("cancelled removal");
+  });
+  await expect(f.remove({ eraseData: true, confirmationId: "a".repeat(64) })).rejects.toThrow();
+  const state = await f.coordinator.handle(
+    { version: 1, id: "after-cancel", command: "status" },
+    { signal: new AbortController().signal, interactions: f.context.interactions },
+  );
+  expect(state).toMatchObject({
+    phase: "waiting",
+    retired: true,
+    retirement: { phase: "requested" },
+  });
+  expect(f.deps.startDaemon).not.toHaveBeenCalled();
+});
+
+test("pending key cleanup stays a structured removal result rather than a success claim", async () => {
+  const f = fixture("home");
+  f.deps.removeInstall.mockResolvedValue({
+    status: "key-cleanup-pending",
+    data: "erased",
+    keyring: "pending",
+  });
+  expect(await f.remove({ eraseData: true, confirmationId: "a".repeat(64) })).toEqual({
+    status: "key-cleanup-pending",
+    data: "erased",
+    keyring: "pending",
+  });
+});
+
+test("retirement beginning during trusted connection verification cannot yield stale ready state", async () => {
+  const f = fixture("joined");
+  f.save("cli");
+  f.save("collector");
+  f.deps.verifyTransport.mockImplementation(async () => {
+    f.setRetirement(retired(f.profile, "erase-data", "requested"));
+  });
+  expect(await f.run("status")).toMatchObject({ phase: "waiting", retired: true });
+  expect(f.transport.close).toHaveBeenCalledOnce();
+  expect(f.deps.startDaemon).not.toHaveBeenCalled();
+});
+
+test("a conflicting preparation role cannot clear a kept library's retirement", async () => {
+  const f = fixture("home");
+  f.setRetirement(retired(f.profile));
+  expect(await f.run("prepare", { mode: "joined" })).toMatchObject({
+    phase: "error",
+    retired: true,
+  });
+  expect(f.deps.resumeRetirement).not.toHaveBeenCalled();
+  expect(f.deps.startDaemon).not.toHaveBeenCalled();
 });

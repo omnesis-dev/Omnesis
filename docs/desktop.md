@@ -161,6 +161,17 @@ computers and revoke only the app's own collection/interactive credentials.
 Deleting or retaining data must be tested across interrupted removal and a
 concurrent second installation.
 
+The portable desktop removal service persists retirement outside the data root
+before requesting daemon stop. It then acquires runtime, component and gateway
+store leases before deleting anything. The default keeps the library and keys;
+automatic login startup stays retired until an explicit reconnect. Erase binds
+confirmation to the ownership journal and root inode, deletes owned data first,
+then clears its exclusive Keychain namespace. Interrupted key cleanup remains
+an explicit pending operation. Credential publication and transport hint writes
+share the external installation lease and recheck retirement before writing.
+The native helper unregister/app-to-Trash adapter and packaged removal proof
+remain separate qualification work.
+
 ## Resource defaults and remediation
 
 The existing embedder in `packages/gateway/src/indexer/embedder.ts` runs
@@ -212,17 +223,25 @@ existing release transformation.
 
 The app carries a pinned Node 24 archive with a committed official SHA-256
 for each supported architecture. Archives are verified before extraction.
-`Resources/runtime/node` starts the compiled CLI; its private npm launcher
-resolves that Node directly. Recipients need no compiler, Git, Node or npm.
+The native launcher stages `Resources/runtime` into a private content-addressed
+cache in a separate, non-purgeable Application Support directory before starting Node. Both the window bridge and login helper use that
+same immutable payload path, so moving or replacing the app cannot change code
+under running workers. Cache publication verifies every listed hash, rejects
+extra files and escaping links, and reserves staging capacity. Release launch
+authenticates the source app against the executing shell's signing team and
+bundle identity. A runtime-directory environment override is available only in
+debug builds. Old payloads are retained conservatively; safe garbage collection
+and a native app replacement updater still need implementation and proof.
+The private npm launcher resolves the cached Node directly. Recipients need no compiler, Git, Node or npm.
 Native modules and executables must match the target macOS architecture.
 
 `native-inventory.mjs` inventories file hashes and Mach-O architectures,
 rejects escaping or dangling symlinks, and rejects non-macOS native binaries.
 `assemble-app.mjs` checks the runtime's version, architecture and inventory
 before creating a new app bundle. A prebuilt shell preserves its native assets,
-privacy metadata and embedded background login item. The manifest's hashes describe unsigned
-inputs; the signed artifact is subsequently verified by code signing, and the
-finished DMG receives a checksum.
+privacy metadata and embedded background login item. Nested signing refreshes
+the runtime manifest from the signed bytes before the outer app seals it;
+the finished DMG receives a checksum.
 
 The direct-download channel uses Developer ID signing, hardened runtime,
 notarization and stapled tickets. Nested native code is signed individually;

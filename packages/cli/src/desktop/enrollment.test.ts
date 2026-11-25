@@ -192,3 +192,21 @@ test("a late pairing result after cancellation cannot be saved as connected", as
   await expect(enrollDesktopRole(f.options, { pair })).rejects.toThrow();
   expect(f.events.map((event) => event.phase)).toEqual(["signing-in", "cancelled"]);
 });
+
+test("retirement can refuse signing-key publication before enrollment opens a browser", async () => {
+  const f = fixture();
+  const retired = new Error("The managed installation retired");
+  const publication = vi.fn(async () => {
+    throw retired;
+  });
+  const pair = vi.fn<typeof pairAccountDevice>(async (options, deps) => {
+    await deps!.readDeviceKey!(options.deviceKeyFile, options.deviceKeySecretOptions);
+    return credential;
+  });
+  await expect(
+    enrollDesktopRole({ ...f.options, deviceKeyPublication: publication }, { pair }),
+  ).rejects.toBe(retired);
+  expect(publication).toHaveBeenCalledOnce();
+  expect(f.ui.openBrowser).not.toHaveBeenCalled();
+  expect(f.events.at(-1)?.phase).toBe("failed");
+});

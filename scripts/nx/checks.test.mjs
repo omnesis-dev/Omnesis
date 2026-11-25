@@ -143,6 +143,8 @@ describe("Nx change selection", () => {
 
   test("runs each native bridge in its native lane without unrelated backend E2E", () => {
     const bridges = {
+      "scripts/macos-logic.sh": "macos-logic",
+      "scripts/macos-test.sh": "macos-test",
       "scripts/ios-logic.sh": "ios-logic",
       "scripts/ios-snapshot.sh": "ios-snapshot",
       "scripts/run-ios-e2e.sh": "ios-e2e",
@@ -246,6 +248,32 @@ describe("Nx change selection", () => {
     const plan = buildFixturePlan(["packages/core/src/index.ts"]);
     expect(plan.tasks.filter((task) => task.endsWith(":nx-lint"))).toEqual([
       "omnesis-workspace:nx-lint",
+    ]);
+  });
+
+  test("desktop source is known and selects only desktop native checks", () => {
+    process.chdir(originalCwd);
+    const plan = buildFixturePlan(["macos/Sources/OmnesisDesktop/AskView.swift"]);
+    expect(plan.fallback).toBeNull();
+    expect(plan.bundles).toEqual(["macos-logic", "macos-test"]);
+    expect(plan.tasks).toEqual(
+      expect.arrayContaining([
+        "omnesis-workspace:nx-bundle-macos-logic",
+        "omnesis-workspace:nx-bundle-macos-test",
+      ]),
+    );
+    expect(plan.bundles.some((name) => /^(?:ios|android)-/.test(name))).toBe(false);
+  });
+
+  test("shared tooling runs broad Linux coverage while native checks follow actual paths", () => {
+    process.chdir(originalCwd);
+    const shared = buildFixturePlan(["knip.json"]);
+    expect(shared.tasks).toContain("omnesis-workspace:nx-unit-all");
+    expect(shared.bundles.some((name) => /^(?:ios|macos|android)-/.test(name))).toBe(false);
+    const desktop = buildFixturePlan(["knip.json", "macos/Sources/OmnesisDesktop/AskView.swift"]);
+    expect(desktop.bundles.filter((name) => /^(?:ios|macos|android)-/.test(name))).toEqual([
+      "macos-logic",
+      "macos-test",
     ]);
   });
 

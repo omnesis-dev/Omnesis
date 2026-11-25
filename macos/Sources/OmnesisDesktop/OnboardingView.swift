@@ -101,14 +101,31 @@ struct DesktopOnboardingView: View {
                         "Omnesis is protecting your library and preparing local search. This may take a few minutes. You can keep this window open to follow its progress."
                     )
                 case .waiting:
-                    ContentUnavailableView(
-                        "Your library is not connected yet",
-                        systemImage: "laptopcomputer",
-                        description: Text(
-                            "Open Omnesis on the Mac that keeps your library. If it has not been set up yet, start there first."
+                    if store.state.retired == true {
+                        ContentUnavailableView(
+                            "Omnesis is stopped on this Mac",
+                            systemImage: "app.badge.checkmark",
+                            description: Text(store.state
+                                .message ?? "Your removal choice is kept. Omnesis will not start in the background.")
                         )
-                    )
-                    Button("Look again") { store.command("connect") }.buttonStyle(.borderedProminent)
+                        Button("Review removal") {
+                            store.removalPlan = nil
+                            store.removalOutcome = nil
+                            store.presentRemoval = true
+                        }
+                        if store.state.retirement?.mode == "keep-data", store.state.retirement?.phase == "complete" {
+                            Button("Set up Omnesis again") { store.command("connect") }.buttonStyle(.borderedProminent)
+                        }
+                    } else {
+                        ContentUnavailableView(
+                            "Your library is not connected yet",
+                            systemImage: "laptopcomputer",
+                            description: Text(
+                                "Open Omnesis on the Mac that keeps your library. If it has not been set up yet, start there first."
+                            )
+                        )
+                        Button("Look again") { store.command("connect") }.buttonStyle(.borderedProminent)
+                    }
                 case .ready:
                     ProgressView("Verifying your protected library…")
                 case .error:

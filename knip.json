@@ -5,6 +5,11 @@
       "entry": [
         "scripts/*.{ts,mts,mjs}",
         "scripts/release/*.mjs",
+        "scripts/desktop/prepare-runtime.mjs",
+        "scripts/desktop/assemble-app.mjs",
+        "scripts/desktop/distribute.mjs",
+        "scripts/desktop/native-check.mjs",
+        "scripts/desktop/smoke-runtime.mjs",
         "scripts/site/*.mjs",
         "scripts/install-e2e/cli-trace.cjs",
         "scripts/tailnet-helper/*.mjs",

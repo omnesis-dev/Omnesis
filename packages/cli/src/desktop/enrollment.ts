@@ -1,14 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { authorizeAccountDesktop, pairAccountDevice } from "@omnesis/cloud-relay";
+import {
+  authorizeAccountDesktop,
+  pairAccountDevice,
+  readOrCreateDeviceKey,
+} from "@omnesis/cloud-relay";
 
 export type DesktopEnrollmentRole = "interactive" | "collector";
 type PairOptions = Parameters<typeof pairAccountDevice>[0];
 export type DesktopGatewayChoice = Parameters<PairOptions["selectGateway"]>[0][number];
 export type DesktopPairing = Awaited<ReturnType<typeof pairAccountDevice>>;
-export type DesktopConnectCode = Parameters<NonNullable<PairOptions["onConnectCode"]>>[0];
-export type DesktopCodeComparison = Parameters<PairOptions["confirm"]>[0];
+type DesktopConnectCode = Parameters<NonNullable<PairOptions["onConnectCode"]>>[0];
+type DesktopCodeComparison = Parameters<PairOptions["confirm"]>[0];
 
 export interface DesktopEnrollmentUI {
   openBrowser(url: string, signal: AbortSignal): Promise<void>;
@@ -35,6 +39,7 @@ export async function enrollDesktopRole(
     name: string;
     deviceKeyFile: string;
     deviceKeySecretOptions?: PairOptions["deviceKeySecretOptions"];
+    deviceKeyPublication?<T>(work: () => Promise<T>): Promise<T>;
     signal: AbortSignal;
     ui: DesktopEnrollmentUI;
     onEvent(event: DesktopEnrollmentEvent): void;
@@ -87,6 +92,10 @@ export async function enrollDesktopRole(
               );
             },
           }),
+        readDeviceKey: (path, secretOptions) =>
+          options.deviceKeyPublication
+            ? options.deviceKeyPublication(() => readOrCreateDeviceKey(path, secretOptions))
+            : readOrCreateDeviceKey(path, secretOptions),
       },
     );
     signal.throwIfAborted();

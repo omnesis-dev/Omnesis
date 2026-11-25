@@ -15,6 +15,15 @@ struct OmnesisDesktopApp: App {
         }
         .defaultSize(width: 1080, height: 740)
         .commands {
+            CommandGroup(after: .appSettings) {
+                Button("Remove Omnesis from This Mac…") {
+                    store.removalPlan = nil
+                    store.removalOutcome = nil
+                    store.presentRemoval = true
+                    openWindow(id: "main")
+                    NSApp.activate(ignoringOtherApps: true)
+                }.disabled(store.busy)
+            }
             CommandGroup(replacing: .newItem) {
                 Button("New Conversation") {
                     store.destination = .ask
@@ -91,6 +100,7 @@ struct DesktopRootView: View {
                 }
             }
         }
+        .sheet(isPresented: $store.presentRemoval) { DesktopRemovalView().environment(store) }
         .sheet(item: $store.interaction) { interaction in
             RuntimeInteractionView(interaction: interaction).environment(store)
         }

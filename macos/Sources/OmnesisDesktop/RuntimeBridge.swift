@@ -12,11 +12,21 @@ final class RuntimeBridge {
     private var input: FileHandle?
     private var reader: Task<Void, Never>?
 
-    func start() throws {
+    private var launching = false
+    private var launchEpoch = UUID()
+
+    func start() async throws {
         guard process == nil else { return }
-        guard let resources = Bundle.main.resourceURL else { throw BridgeLaunchError.missingRuntime }
-        let runtime = ProcessInfo.processInfo.environment["OMNESIS_DESKTOP_RUNTIME_DIR"].map { URL(fileURLWithPath: $0, isDirectory: true) }
-            ?? resources.appendingPathComponent("runtime", isDirectory: true)
+        guard !launching else { return }
+        launching = true
+        let epoch = launchEpoch
+        defer { launching = false }
+        let app = Bundle.main.bundleURL
+        let runtime = try await Task.detached(priority: .userInitiated) {
+            try DesktopRuntimeBootstrap.prepare(appBundle: app)
+        }.value
+        try Task.checkCancellation()
+        guard epoch == launchEpoch else { throw CancellationError() }
         let executable = runtime.appendingPathComponent("node")
         let script = runtime.appendingPathComponent("packages/cli/dist/index.js")
         guard FileManager.default.isExecutableFile(atPath: executable.path),
@@ -75,6 +85,7 @@ final class RuntimeBridge {
     }
 
     func disconnect() {
+        launchEpoch = UUID()
         reader?.cancel()
         reader = nil
         try? input?.close()

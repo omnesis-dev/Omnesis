@@ -35,6 +35,7 @@ export const E2E_SHARDS = 8;
  */
 export const MACOS_LANES = [
   "node_macos",
+  "desktop",
   "apple",
   "swift_lint",
   "android_render",
@@ -53,6 +54,7 @@ export const LANES = [
   "portal",
   "embedder",
   "node_macos",
+  "desktop",
   "knip",
   "apple",
   "swift_lint",
@@ -145,6 +147,10 @@ export function pathLanes(files) {
   const deploys = any(files, deployment);
   return {
     node_macos: any(files, nodeMacOS),
+    desktop: any(
+      files,
+      /^(?:macos\/|ios\/Package\.swift$|ios\/Sources\/Omnesis\/|packages\/cli\/src\/desktop\/|packages\/cli\/src\/commands\/desktop\.ts$|packages\/core\/src\/(?:secret-store|secret-file|models\/)|scripts\/(?:desktop\/|macos-)|\.github\/workflows\/macos-desktop\.yml$)/,
+    ),
     apple: any(files, appleOnly),
     swift_lint: any(files, appleOnly),
     android_render: any(files, /^android\//),
@@ -231,7 +237,7 @@ export function pullRequestScope(files, plan, bundleFiles, projectCount) {
 }
 
 function isNativeBundle(name) {
-  return /^(?:ios|android)-/.test(name);
+  return /^(?:ios|macos|android)-/.test(name);
 }
 
 /** The pull-request scope of the checked-out merge commit against its first parent. */

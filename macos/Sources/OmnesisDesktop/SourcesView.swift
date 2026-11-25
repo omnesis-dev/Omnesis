@@ -8,6 +8,7 @@ import SwiftUI
 struct DesktopSourcesView: View {
     @Environment(DesktopStore.self) private var store
     @State private var showPicker = false
+    @State private var repairing: DesktopSource?
     var body: some View {
         Group {
             if store.sources.isEmpty {
@@ -24,6 +25,9 @@ struct DesktopSourcesView: View {
                         }
                         Spacer()
                         Text(source.enabled ? "Connected" : "Paused").foregroundStyle(source.enabled ? Color.green : Color.secondary)
+                        if let descriptor = store.descriptors.first(where: { $0.id == source.type }), descriptor.hasAuthFlow {
+                            Button("Sign in again") { repairing = source }
+                        }
                         Button(source.enabled ? "Pause" : "Resume") {
                             Task {
                                 do {
@@ -45,6 +49,19 @@ struct DesktopSourcesView: View {
                 Button("Add a source", systemImage: "plus") { showPicker = true }.accessibilityIdentifier("add-source")
             }
             .sheet(isPresented: $showPicker) { SourcePickerView().environment(store) }
+            .sheet(item: $repairing) { source in
+                if let api = store.api, let descriptor = store.descriptors.first(where: { $0.id == source.type }) {
+                    NavigationStack {
+                        SourceSetupView(flow: DesktopSourceFlow(
+                            descriptor: descriptor,
+                            api: api,
+                            accountId: source.accountId,
+                            hostId: source.deviceId
+                        )).environment(store)
+                            .toolbar { Button("Done") { repairing = nil } }
+                    }.frame(width: 680, height: 620)
+                }
+            }
     }
 }
 
@@ -54,7 +71,7 @@ struct SourcePickerView: View {
     @State private var selected: String?
     var body: some View {
         NavigationStack {
-            List(store.descriptors) { descriptor in
+            List(store.descriptors.filter { $0.setupGuide != nil || $0.pushBased != true }) { descriptor in
                 NavigationLink {
                     if let api = store.api { SourceSetupView(flow: DesktopSourceFlow(descriptor: descriptor, api: api)).environment(store) }
                 } label: {
@@ -86,6 +103,27 @@ struct SourceSetupView: View {
                 if flow.complete {
                     Label("Connected", systemImage: "checkmark.circle.fill").font(.title2).foregroundStyle(.green)
                     Text("Omnesis will keep this source up to date.")
+                } else if flow.descriptor.setupGuide != nil {
+                    if flow.descriptor.setupGuide == "browser-extension" {
+                        Label("Install the browser extension", systemImage: "puzzlepiece.extension").font(.title2)
+                        Text(
+                            "Install Omnesis Browser Capture in Chrome or a compatible browser, then pair it with this library from the extension’s settings. Pages appear in your library after the extension connects."
+                        )
+                        Button("Install browser extension") {
+                            if let url =
+                                URL(
+                                    string: "https://chromewebstore.google.com/detail/omnesis-browser-capture/akojepkcdbncipjdonhnnfmjacknplmn"
+                                ) {
+                                store.openBrowser(url)
+                            }
+                        }.buttonStyle(.borderedProminent)
+                        Text("The extension uses its own scoped device credential. It does not receive this app’s administrative access.")
+                            .font(.callout).foregroundStyle(.secondary)
+                    } else {
+                        Text("This companion setup guide needs a newer version of Omnesis.")
+                    }
+                } else if flow.needsCredentials {
+                    SourceCredentialsView(flow: flow)
                 } else if let auth = flow.auth {
                     authView(auth)
                 } else if !flow.accounts.isEmpty {
@@ -95,12 +133,15 @@ struct SourceSetupView: View {
                             if selected { flow.selectedAccounts.insert(account) } else { flow.selectedAccounts.remove(account) }
                         }))
                     }
+                    if flow.descriptor.hasAuthFlow {
+                        Button("Sign in to another account") { Task { await flow.authenticateAnotherAccount() } }
+                    }
                     Button("Connect selected accounts") { Task { await flow.add()
                         await store.refresh()
                     } }.buttonStyle(.borderedProminent)
                 } else {
                     if let hosts = flow.descriptor.devices, hosts.count > 1 {
-                        Picker("Connect from", selection: $flow.deviceId) {
+                        Picker("Connect from", selection: Binding(get: { flow.deviceId }, set: { flow.selectHost($0) })) {
                             ForEach(hosts) { host in Text(host.name ?? "My Mac").tag(host.id) }
                         }
                     }
@@ -111,30 +152,20 @@ struct SourceSetupView: View {
                             allowsFilePicker: flow.deviceId == flow.api.connection.collectorDeviceId
                         )
                     }
-                    if let spec = flow.descriptor.credentials {
-                        Text("Account access").font(.headline)
-                        Text("If this provider needs an application key, enter it here. Keys are sent securely and are never shown again.")
-                            .font(.callout).foregroundStyle(.secondary)
-                        ForEach(spec.fields) { field in
-                            VStack(alignment: .leading) {
-                                Text(field.label)
-                                if field.secret != false {
-                                    SecureField(
-                                        field.placeholder ?? field.label,
-                                        text: binding(flow.credentials, key: field.name) { flow.credentials = $0 }
-                                    )
-                                } else {
-                                    TextField(
-                                        field.placeholder ?? field.label,
-                                        text: binding(flow.credentials, key: field.name) { flow.credentials = $0 }
-                                    )
-                                }
-                            }
-                        }
-                    }
                     Button("Continue") { Task { await flow.begin() } }.buttonStyle(.borderedProminent)
                 }
-                if let error = flow.error { Text(error).foregroundStyle(.red).textSelection(.enabled) }
+                ForEach(Array(flow.notices.enumerated()), id: \.offset) { _, notice in
+                    Label(notice.title, systemImage: "info.circle")
+                    if let detail = notice.detail { Text(detail).foregroundStyle(.secondary) }
+                }
+                if let error = flow.error {
+                    Text(error).foregroundStyle(.red).textSelection(.enabled)
+                    if flow.auth?.state == "error" {
+                        if flow.canRetryAuthentication { Button("Try sign-in again") { Task { await flow.retry() } } }
+                        if flow.descriptor
+                            .credentials != nil { Button("Review account access") { Task { await flow.reviewCredentials() } } }
+                    }
+                }
                 if flow.busy { ProgressView("Connecting…") }
                 Button("Open advanced setup") { store.openPortal() }.font(.callout)
             }.padding(28).frame(maxWidth: .infinity, alignment: .leading)
@@ -144,12 +175,33 @@ struct SourceSetupView: View {
     }
 
     @ViewBuilder private func authView(_ auth: AuthSnapshot) -> some View {
-        if let pending = auth.pendingChallenge {
+        if auth.state == "error" {
+            Text("Sign-in needs attention").font(.headline)
+        } else if let widget = auth.widget {
+            SourceWidgetView(flow: flow, widget: widget)
+        } else if let challenge = auth.pendingChallenge?.challenge, challenge.kind == "widget",
+                  let renderer = challenge.renderer, let payload = challenge.payload {
+            SourceWidgetView(flow: flow, widget: AuthSnapshot.Widget(kind: renderer, payload: payload))
+        } else if let pending = auth.pendingChallenge {
             let challenge = pending.challenge
             Text(challenge.title).font(.headline)
-            if let instructions = challenge.instructions { Text(instructions) }
+            if let instructions = challenge.instructions { Text(.init(instructions)) }
+            if challenge.via == "loopback", flow.deviceId != flow.api.connection.collectorDeviceId {
+                Label(
+                    "This sign-in finishes on the device hosting this source. You can complete it there, or paste the completed link below.",
+                    systemImage: "desktopcomputer"
+                )
+                .font(.callout).foregroundStyle(.secondary)
+            }
             if let url = challenge.url { Button("Continue in your browser") { store.openBrowser(url) }.buttonStyle(.borderedProminent) }
             if let data = challenge.data { QRCodeView(payload: data) }
+            if let schema = challenge.schema {
+                ForEach(schema.keys.sorted(), id: \.self) { name in
+                    if let field = schema[name] {
+                        SourceChallengeField(field: field, value: binding(flow.answer, key: name) { flow.answer = $0 })
+                    }
+                }
+            }
             ForEach(challenge.fields ?? []) { param in
                 SourceParameterField(
                     param: param,
@@ -157,7 +209,7 @@ struct SourceSetupView: View {
                     allowsFilePicker: false
                 )
             }
-            if pending.expectsAnswer {
+            if pending.expectsAnswer, ["redirect", "code", "fields"].contains(challenge.kind) {
                 if challenge.kind == "code" || challenge.kind == "redirect" {
                     SecureField(
                         challenge.kind == "code" ? "Confirmation code" : "Completed sign-in link",
@@ -165,10 +217,15 @@ struct SourceSetupView: View {
                     )
                 }
                 Button("Continue") { Task { await flow.submitAnswer() } }.buttonStyle(.borderedProminent)
-            } else { ProgressView("Waiting for confirmation…") }
+            } else if challenge.kind != "widget" { ProgressView("Waiting for confirmation…") }
         } else {
             if let url = auth.authUrl { Button("Continue in your browser") { store.openBrowser(url) } }
             if let data = auth.qrData { QRCodeView(payload: data) }
+            if flow.descriptor.acceptsAuthCode == true {
+                SecureField("Completed sign-in link or confirmation code", text: binding(flow.answer, key: "code") { flow.answer = $0 })
+                Button("Continue") { Task { await flow.submitLegacyCode() } }
+            }
+            if let message = auth.message { Text(message).foregroundStyle(.secondary) }
             ProgressView("Waiting for confirmation…")
         }
         Button("Cancel sign-in") { Task { await flow.cancel() } }

@@ -24,10 +24,17 @@ public struct DesktopState: Codable, Equatable, Sendable {
     public let encrypted: Bool?
     public let signup: Signup?
     public let searchModel: SearchModel?
+    public let retired: Bool?
+    public let retirement: Retirement?
 
     public struct Signup: Codable, Equatable, Sendable {
         public let policy: String?
         public let acmeTermsUrl: URL?
+    }
+
+    public struct Retirement: Codable, Equatable, Sendable {
+        public let mode: String
+        public let phase: String
     }
 
     public struct SearchModel: Codable, Equatable, Sendable {
@@ -44,7 +51,9 @@ public struct DesktopState: Codable, Equatable, Sendable {
         homeName: String? = nil,
         encrypted: Bool? = nil,
         signup: Signup? = nil,
-        searchModel: SearchModel? = nil
+        searchModel: SearchModel? = nil,
+        retired: Bool? = nil,
+        retirement: Retirement? = nil
     ) {
         self.phase = phase
         self.mode = mode
@@ -54,15 +63,18 @@ public struct DesktopState: Codable, Equatable, Sendable {
         self.encrypted = encrypted
         self.signup = signup
         self.searchModel = searchModel
+        self.retired = retired
+        self.retirement = retirement
     }
 
     /// A home cannot ingest data until its runtime confirms encryption.
     public var canOpenLibrary: Bool {
-        phase == .ready && connection != nil && (mode != "home" || encrypted == true)
+        retired != true && phase == .ready && connection != nil && (mode != "home" || encrypted == true)
     }
 
     public var statusLabel: String {
-        switch phase {
+        if retired == true { return "Omnesis is stopped" }
+        return switch phase {
         case .welcome: "Welcome to Omnesis"
         case .accountRequired: "Connect your Omnesis account"
         case .chooseHome: "Choose where your library lives"
@@ -131,6 +143,8 @@ public struct BridgeEnvelope: Decodable, Sendable {
     public let id: String?
     public let ok: Bool?
     public let result: DesktopState?
+    public let removalPlan: DesktopRemovalPlan?
+    public let removalOutcome: DesktopRemovalOutcome?
     public let event: String?
     public let state: DesktopState?
     public let interaction: RuntimeInteraction?
@@ -147,6 +161,8 @@ public struct BridgeEnvelope: Decodable, Sendable {
         ok = try c.decodeIfPresent(Bool.self, forKey: .ok)
         // Commands such as cancel/respond may acknowledge without returning a state.
         result = try? c.decodeIfPresent(DesktopState.self, forKey: .result)
+        removalPlan = try? c.decodeIfPresent(DesktopRemovalPlan.self, forKey: .result)
+        removalOutcome = try? c.decodeIfPresent(DesktopRemovalOutcome.self, forKey: .result)
         event = try c.decodeIfPresent(String.self, forKey: .event)
         state = try c.decodeIfPresent(DesktopState.self, forKey: .state)
         interaction = try c.decodeIfPresent(RuntimeInteraction.self, forKey: .interaction)
