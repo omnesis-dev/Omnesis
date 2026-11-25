@@ -145,7 +145,7 @@ jobs:
           docker pull "$IMAGE@$DIGEST"
           revision=$(docker image inspect "$IMAGE@$DIGEST" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')
           test "$revision" = "$SOURCE_SHA"
-          docker run --rm --network none --entrypoint node "$IMAGE@$DIGEST" --import tsx --input-type=module -e \
+          docker run --rm --network none --workdir /app/packages/cloud-relay --entrypoint node "$IMAGE@$DIGEST" --import tsx --input-type=module -e \
             "import Database from 'better-sqlite3'; const db = new Database(':memory:'); db.exec('CREATE TABLE t(id INTEGER)'); db.close(); await import('@omnesis/core'); await import('@omnesis/cloud-relay'); console.log('imports and native SQLite load');"
 
   sign-cloud-relay:
@@ -282,7 +282,7 @@ jobs:
           revision=$(docker image inspect "$IMAGE@$DIGEST" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')
           test "$revision" = "$SOURCE_SHA"
           test "$(docker image inspect "$IMAGE@$DIGEST" --format '{{ .Config.User }}')" = "node"
-          docker run --rm --network none --entrypoint node "$IMAGE@$DIGEST" --import tsx --input-type=module -e \
+          docker run --rm --network none --workdir /app/packages/relay --entrypoint node "$IMAGE@$DIGEST" --import tsx --input-type=module -e \
             "import Database from 'better-sqlite3'; const db = new Database(':memory:'); db.exec('CREATE TABLE t(id INTEGER)'); db.close(); await import('@omnesis/core'); await import('@omnesis/relay'); console.log('imports and native SQLite load');"
 
   sign-push-relay:
