@@ -36,7 +36,78 @@ async function digest(path) {
   return hash.digest("hex");
 }
 
-export async function fetchModel(cache, { model = REFERENCE_MODEL, fetchImpl = fetch } = {}) {
+// A whole download of the reference model takes a few seconds on a hosted
+// runner, so a transfer that delivers no bytes for this long has stalled: the
+// connection is abandoned and the download starts again, instead of waiting on
+// a socket that will never finish.
+export const DOWNLOAD_STALL_MS = 30_000;
+export const DOWNLOAD_ATTEMPTS = 3;
+
+class TransientDownloadError extends Error {}
+
+/** Download `url` to `destination`, aborting when no bytes arrive for `stallMs`. */
+async function downloadOnce(url, destination, { fetchImpl, stallMs }) {
+  const controller = new AbortController();
+  let received = 0;
+  let timer;
+  const watch = () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => controller.abort(), stallMs);
+  };
+  watch();
+  try {
+    let response;
+    try {
+      response = await fetchImpl(url, { signal: controller.signal });
+    } catch (error) {
+      if (controller.signal.aborted)
+        throw new TransientDownloadError(`no response within ${stallMs} ms`);
+      const cause = error?.cause?.message ? ` (${error.cause.message})` : "";
+      throw new TransientDownloadError(`request failed: ${error?.message ?? error}${cause}`);
+    }
+    if (!response.ok || !response.body) {
+      const message = `HTTP ${response.status}`;
+      throw response.status === 429 || response.status >= 500
+        ? new TransientDownloadError(message)
+        : new Error(message);
+    }
+    const expected = Number(response.headers.get("content-length")) || undefined;
+    try {
+      await pipeline(
+        Readable.fromWeb(response.body),
+        async function* (source) {
+          for await (const chunk of source) {
+            received += chunk.length;
+            watch();
+            yield chunk;
+          }
+        },
+        createWriteStream(destination, { flags: "wx" }),
+        { signal: controller.signal },
+      );
+    } catch (error) {
+      const progress = `${received}${expected ? ` of ${expected}` : ""} bytes`;
+      if (controller.signal.aborted)
+        throw new TransientDownloadError(`no data for ${stallMs} ms after ${progress}`);
+      throw new TransientDownloadError(`transfer failed after ${progress}: ${error.message}`);
+    }
+    return received;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export async function fetchModel(
+  cache,
+  {
+    model = REFERENCE_MODEL,
+    fetchImpl = fetch,
+    stallMs = DOWNLOAD_STALL_MS,
+    attempts = DOWNLOAD_ATTEMPTS,
+    retryDelayMs = 2_000,
+    writeStderr = (text) => process.stderr.write(text),
+  } = {},
+) {
   await mkdir(cache, { recursive: true });
   const path = join(cache, model.file);
   try {
@@ -44,19 +115,28 @@ export async function fetchModel(cache, { model = REFERENCE_MODEL, fetchImpl = f
   } catch (error) {
     if (error.code !== "ENOENT") throw error;
   }
-  const partial = `${path}.${randomUUID()}.partial`;
-  try {
-    const url = `https://huggingface.co/${model.repository}/resolve/${model.revision}/${model.file}`;
-    const response = await fetchImpl(url, { signal: AbortSignal.timeout(300_000) });
-    if (!response.ok || !response.body)
-      throw new Error(`Model download failed: HTTP ${response.status}`);
-    await pipeline(Readable.fromWeb(response.body), createWriteStream(partial, { flags: "wx" }));
-    if ((await digest(partial)) !== model.sha256)
-      throw new Error("Reference model checksum mismatch");
-    await rename(partial, path);
-    return path;
-  } finally {
-    await rm(partial, { force: true });
+  const url = `https://huggingface.co/${model.repository}/resolve/${model.revision}/${model.file}`;
+  for (let attempt = 1; ; attempt++) {
+    const partial = `${path}.${randomUUID()}.partial`;
+    const started = Date.now();
+    try {
+      const bytes = await downloadOnce(url, partial, { fetchImpl, stallMs });
+      if ((await digest(partial)) !== model.sha256)
+        throw new Error("Reference model checksum mismatch");
+      await rename(partial, path);
+      writeStderr(
+        `[embedder] downloaded ${model.file}: ${bytes} bytes in ${Date.now() - started} ms\n`,
+      );
+      return path;
+    } catch (error) {
+      const reason = `Reference model download from ${url}, attempt ${attempt} of ${attempts}: ${error.message}`;
+      if (!(error instanceof TransientDownloadError) || attempt >= attempts)
+        throw new Error(reason, { cause: error });
+      writeStderr(`[embedder] ${reason}; retrying\n`);
+    } finally {
+      await rm(partial, { force: true });
+    }
+    await new Promise((resolve) => setTimeout(resolve, retryDelayMs * attempt));
   }
 }
 

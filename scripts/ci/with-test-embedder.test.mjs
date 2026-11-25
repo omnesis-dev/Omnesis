@@ -215,6 +215,72 @@ test("repairs a corrupted cache and rejects an unverified replacement", async ()
   expect(await readFile(join(root, model.file))).toEqual(binary);
 });
 
+/** A response that sends the first half of the model and then goes silent. */
+function stalledResponse() {
+  return new Response(
+    new ReadableStream({
+      start(controller) {
+        controller.enqueue(binary.subarray(0, 20));
+      },
+    }),
+  );
+}
+
+/** A request whose response headers never arrive; it settles only when aborted. */
+function silentRequest(_url, { signal }) {
+  return new Promise((_resolve, reject) => {
+    signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+  });
+}
+
+const fastRetry = { stallMs: 50, retryDelayMs: 0 };
+
+test("abandons a transfer that stops delivering bytes and downloads it again", async () => {
+  const root = await scratch();
+  const writeStderr = vi.fn();
+  const fetchImpl = vi
+    .fn()
+    .mockImplementationOnce(silentRequest)
+    .mockImplementationOnce(async () => stalledResponse())
+    .mockImplementationOnce(async () => new Response(binary));
+  const path = await fetchModel(root, { model, fetchImpl, writeStderr, ...fastRetry });
+  expect(await readFile(path)).toEqual(binary);
+  expect(fetchImpl).toHaveBeenCalledTimes(3);
+  const lines = writeStderr.mock.calls.map(([line]) => line);
+  expect(lines[0]).toContain(`/resolve/${model.revision}/${model.file}, attempt 1 of 3`);
+  expect(lines[0]).toContain("no response within 50 ms; retrying");
+  expect(lines[1]).toContain("attempt 2 of 3: no data for 50 ms after 20 bytes; retrying");
+  expect(lines[2]).toMatch(/^\[embedder\] downloaded fixture\.gguf: 42 bytes in \d+ ms\n$/);
+  expect(await readdir(root)).toEqual([model.file]);
+});
+
+test("a download that keeps stalling fails naming its URL, limit and attempts", async () => {
+  const root = await scratch();
+  const fetchImpl = vi.fn(async () => stalledResponse());
+  const failure = fetchModel(root, { model, fetchImpl, writeStderr: () => {}, ...fastRetry });
+  await expect(failure).rejects.toThrow(
+    `Reference model download from https://huggingface.co/${model.repository}/resolve/${model.revision}/${model.file}, attempt 3 of 3: no data for 50 ms after 20 bytes`,
+  );
+  expect(fetchImpl).toHaveBeenCalledTimes(3);
+  expect(await readdir(root)).toEqual([]);
+});
+
+test("retries a server error but not a missing file", async () => {
+  const root = await scratch();
+  const flaky = vi
+    .fn()
+    .mockResolvedValueOnce(new Response("busy", { status: 503 }))
+    .mockResolvedValueOnce(new Response(binary));
+  await fetchModel(root, { model, fetchImpl: flaky, writeStderr: () => {}, ...fastRetry });
+  expect(flaky).toHaveBeenCalledTimes(2);
+
+  const missing = vi.fn(async () => new Response("missing", { status: 404 }));
+  await expect(
+    fetchModel(await scratch(), { model, fetchImpl: missing, ...fastRetry }),
+  ).rejects.toThrow("attempt 1 of 3: HTTP 404");
+  expect(missing).toHaveBeenCalledTimes(1);
+});
+
 test("rejects failed downloads without publishing a partial model", async () => {
   const root = await scratch();
   await expect(
