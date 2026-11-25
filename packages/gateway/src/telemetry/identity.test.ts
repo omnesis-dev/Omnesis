@@ -16,7 +16,9 @@ describe("telemetry installation identity", () => {
       expect(first).toMatch(/^[a-f0-9]{64}$/);
       expect(second).toBe(first);
       expect(installationId(first, "2026-11")).toBe(installationId(second, "2026-11"));
-      expect((await stat(join(directory, "telemetry-secret-v1"))).mode & 0o777).toBe(0o600);
+      if (process.platform !== "win32") {
+        expect((await stat(join(directory, "telemetry-secret-v1"))).mode & 0o777).toBe(0o600);
+      }
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
