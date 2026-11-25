@@ -30,6 +30,7 @@ afterEach(async () => {
   await rm(directory, { recursive: true, force: true });
 });
 const pair: z.infer<typeof pairedDeviceSchema> = {
+  homeName: "Fictional home",
   gatewayUrl: "https://library.example.test",
   gatewayFingerprint: "a".repeat(64),
   gatewayCertificate: "invented-certificate-for-storage-test",

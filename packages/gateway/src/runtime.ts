@@ -33,6 +33,7 @@ import {
 import { type OmnesisConfig } from "@omnesis/config";
 import { Ontology } from "@omnesis/watch";
 import { setActivityMarker } from "@omnesis/agent";
+import { captureGatewayStorageProtection } from "./storage-protection.js";
 import { cloudPairingIdentitySource } from "./http/services/CloudPairingConfiguration.js";
 import { dotEnvKeysAtBoot } from "./load-env.js";
 import {
@@ -153,6 +154,7 @@ import {
 import { OcrService } from "./ocr/index.js";
 import { ConfigBootError, ConfigStore, defaultConfigPath } from "./config-store.js";
 import { OperatorInstructionsStore } from "./instructions/store.js";
+import { protectManagedProse } from "./managed-prose.js";
 import { reconcileConfig } from "./config-reconcile.js";
 import {
   openIndexDb,
@@ -415,6 +417,7 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
   // The operator's standing instructions to the agent — optional, absent until
   // they write it. Read per prompt build (mtime-cached), so an edit in a terminal
   // editor or the portal reaches the next run with no restart.
+  await protectManagedProse(configDir);
   const operatorInstructions = new OperatorInstructionsStore(configDir);
 
   const configStore = new ConfigStore({
@@ -458,6 +461,10 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
     log.error(`Cannot start: ${err instanceof Error ? err.message : String(err)}`);
     throw err;
   });
+  const storageProtection = await captureGatewayStorageProtection(
+    configDir,
+    storageEncryption.enabled,
+  );
   const storagePosture = storageEncryptionPosture(storageEncryption.enabled);
   log[storagePosture.level](storagePosture.message);
 
@@ -908,6 +915,7 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
   });
   const wsServer = new DeviceWsServer({
     db,
+    isStorageProtected: () => storageProtection.atRest === "encrypted",
     writeGate,
     authTimeoutMs: runtime.wsAuthTimeoutMs,
     heartbeatIntervalMs: runtime.wsHeartbeatIntervalMs,
@@ -1332,7 +1340,7 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
     exportsDir,
     gatewayDbPath: DB_PATH,
     gatewayDbKeyHex: storageEncryption.mainDbKeyHex,
-    analyticsExport: (destDir) => analyticsDb.exportTablesToCsv(destDir),
+    analyticsExport: (destDir, encryption) => analyticsDb.exportTablesToCsv(destDir, encryption),
   });
 
   /**
@@ -2835,6 +2843,7 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
   // The MCP address for agents on this computer, opened once the portal serves (below).
   let localMcp = new LocalMcpListener(null, { state: "starting" });
   const app = createServer(db, DB_PATH, {
+    storageProtection,
     localMcp: () => localMcp.state(),
     portalSignals,
     onDoctorCleanupOwner: (owner) => {

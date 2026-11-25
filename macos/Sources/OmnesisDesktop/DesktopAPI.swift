@@ -123,6 +123,7 @@ struct DesktopSource: Decodable, Identifiable {
     let deviceId: String
     let members: [String]?
     let multiDeviceMode: String?
+    let config: [String: SourceJSONValue]?
 }
 
 struct DesktopDevice: Decodable, Identifiable {

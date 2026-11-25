@@ -414,9 +414,10 @@ export function mountSourceRoutes(app: RouteApp, deps: AdminRoutesDeps): void {
   app.get("/admin/sources/:id", scope.admin(), (c) => {
     const id = SourceId(c.req.param("id"));
     assertMutableSource(id);
-    const source = sourceService.getById(id);
-    if (!source) throw new NotFoundError("source not found");
-    return c.json({ source });
+    const settings = sourceService.settingsForAdmin(id);
+    if (!settings) throw new NotFoundError("source not found");
+    c.header("Cache-Control", "no-store");
+    return c.json(settings);
   });
 
   app.post("/admin/sources", scope.admin(), validateJson(createSourceBody), async (c) => {
@@ -503,6 +504,8 @@ export function mountSourceRoutes(app: RouteApp, deps: AdminRoutesDeps): void {
     const updated = await runGenerationFenced(() =>
       sourceService.updateSource(id, {
         config: body.config,
+        memberConfig: body.memberConfig,
+        expectedRevision: body.expectedRevision,
         enabled: body.enabled,
         deviceId: did,
         multiDeviceMode: body.multiDeviceMode,
@@ -531,6 +534,17 @@ export function mountSourceRoutes(app: RouteApp, deps: AdminRoutesDeps): void {
     },
   );
 
+  app.get("/admin/sources/:id/members/:deviceId", scope.admin(), (c) => {
+    const id = SourceId(c.req.param("id"));
+    assertMutableSource(id);
+    const deviceId = tryDeviceId(c.req.param("deviceId"));
+    if (!deviceId) throw new BadRequestError("invalid device id");
+    const settings = sourceService.settingsForAdmin(id, deviceId);
+    if (!settings) throw new NotFoundError("source member not found");
+    c.header("Cache-Control", "no-store");
+    return c.json(settings);
+  });
+
   app.patch(
     "/admin/sources/:id/members/:deviceId",
     scope.admin(),
@@ -542,7 +556,13 @@ export function mountSourceRoutes(app: RouteApp, deps: AdminRoutesDeps): void {
       const did = tryDeviceId(c.req.param("deviceId"));
       if (!did) throw new BadRequestError("invalid device id");
       const source = await runGenerationFenced(() =>
-        sourceService.updateMemberConfig(id, did, c.req.valid("json").configOverride, pairingFence),
+        sourceService.updateMemberConfig(
+          id,
+          did,
+          c.req.valid("json").configOverride,
+          pairingFence,
+          c.req.valid("json").expectedRevision,
+        ),
       );
       return c.json({ source });
     },

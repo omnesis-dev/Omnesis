@@ -28,7 +28,16 @@
 import { readFileSync, statSync, type Stats } from "node:fs";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
-import { atomicWriteFile, createLogger, OPERATOR_INSTRUCTIONS_FILENAME } from "@omnesis/core";
+import {
+  atomicWriteFile,
+  createLogger,
+  OPERATOR_INSTRUCTIONS_FILENAME,
+  decodeSecretTextFileValueSync,
+  isEncryptedSecretFile,
+  secretFileEncryptionRequired,
+  writeSecretTextFile,
+  type SecretFileOptions,
+} from "@omnesis/core";
 
 const log = createLogger("gateway:instructions");
 
@@ -164,7 +173,10 @@ export class OperatorInstructionsStore {
   private cache: CacheEntry | null = null;
   private mutations: Promise<void> = Promise.resolve();
 
-  constructor(configDir: string) {
+  constructor(
+    private readonly configDir: string,
+    private readonly secretOptions: SecretFileOptions = {},
+  ) {
     this.file = join(configDir, OPERATOR_INSTRUCTIONS_FILENAME);
   }
 
@@ -205,7 +217,10 @@ export class OperatorInstructionsStore {
 
     let content: string;
     try {
-      content = readFileSync(this.file, "utf8");
+      content = decodeSecretTextFileValueSync(this.file, readFileSync(this.file, "utf8"), {
+        ...this.secretOptions,
+        configDir: this.configDir,
+      });
     } catch (err) {
       log.warn(`Could not read ${this.file}: ${err instanceof Error ? err.message : String(err)}`);
       // Cached like any other reading, so an unreadable file warns once per
@@ -239,6 +254,15 @@ export class OperatorInstructionsStore {
     });
   }
 
+  private readSerialized(): string | null {
+    try {
+      return readFileSync(this.file, "utf8");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+      throw error;
+    }
+  }
+
   private remember(stat: Stats, value: OperatorInstructions): OperatorInstructions {
     this.cache = { mtimeMs: stat.mtimeMs, size: stat.size, value };
     return value;
@@ -270,7 +294,20 @@ export class OperatorInstructionsStore {
         throw new OperatorInstructionsTooLargeError(bytes);
       this.assertRegularFile();
       this.assertUnchanged(opts);
-      await atomicWriteFile(this.file, content, { mode: 0o600, ensureDir: true });
+      const previous = this.readSerialized();
+      if (
+        secretFileEncryptionRequired(this.configDir) ||
+        (previous !== null && isEncryptedSecretFile(previous))
+      ) {
+        await writeSecretTextFile(
+          this.file,
+          content,
+          { ...this.secretOptions, configDir: this.configDir },
+          previous,
+        );
+      } else {
+        await atomicWriteFile(this.file, content, { mode: 0o600, ensureDir: true });
+      }
       this.cache = null;
       return this.read();
     });

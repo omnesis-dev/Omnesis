@@ -22,10 +22,25 @@ export function copyNodeTools(distribution, target) {
     verbatimSymlinks: true,
   });
   cpSync(join(distribution, "LICENSE"), join(target, "NODE_LICENSE"));
+  for (const name of ["npm", "npx"]) {
+    writeFileSync(
+      join(target, name),
+      `#!/bin/sh\nruntime_dir="$(CDPATH= cd "$(/usr/bin/dirname "$0")" && pwd)"\nexec "$runtime_dir/runtime-exec" --node "$runtime_dir/lib/node_modules/npm/bin/${name}-cli.js" "$@"\n`,
+    );
+    chmodSync(join(target, name), 0o755);
+  }
+  mkdirSync(join(target, "bin"), { recursive: true });
   writeFileSync(
-    join(target, "npm"),
-    '#!/bin/sh\nruntime_dir="$(CDPATH= cd "$(/usr/bin/dirname "$0")" && pwd)"\nexec "$runtime_dir/node" "$runtime_dir/lib/node_modules/npm/bin/npm-cli.js" "$@"\n',
+    join(target, "bin/node"),
+    '#!/bin/sh\nruntime_dir="$(CDPATH= cd "$(/usr/bin/dirname "$0")/.." && pwd)"\nexec "$runtime_dir/runtime-exec" --node "$@"\n',
   );
+  chmodSync(join(target, "bin/node"), 0o755);
+  for (const name of ["npm", "npx"]) {
+    writeFileSync(
+      join(target, "bin", name),
+      `#!/bin/sh\nruntime_dir="$(CDPATH= cd "$(/usr/bin/dirname "$0")/.." && pwd)"\nexec "$runtime_dir/${name}" "$@"\n`,
+    );
+    chmodSync(join(target, "bin", name), 0o755);
+  }
   chmodSync(join(target, "node"), 0o755);
-  chmodSync(join(target, "npm"), 0o755);
 }

@@ -111,8 +111,8 @@ export type WsUpgradeAuthResult =
   | { ok: true; auth: WsUpgradeAuth }
   | {
       ok: false;
-      status: 401 | 429;
-      code: "invalid_token" | "rate_limited";
+      status: 401 | 429 | 503;
+      code: "invalid_token" | "rate_limited" | "STORAGE_PROTECTION_REQUIRED";
       message: string;
     };
 
@@ -159,6 +159,8 @@ const MAX_WS_CONNECTIONS = 512;
 
 export interface DeviceWsOptions {
   db: Db;
+  /** Startup evidence for the stores this gateway actually opened. */
+  isStorageProtected?: () => boolean;
   /**
    * Single-writer gate. Every DB mutation (touchDevice, updateDeviceCapabilities,
    * validateToken's last-used-at beacon) goes through this proxy so there's
@@ -238,9 +240,11 @@ export class DeviceWsServer {
   // Per-address budget of failed token checks; see `checkToken`.
   private readonly helloLimiter: RateLimiter = wsHelloRateLimiter();
   private readonly maxConnections: number;
+  private readonly isStorageProtected: () => boolean;
 
   constructor(opts: DeviceWsOptions) {
     this.db = opts.db;
+    this.isStorageProtected = opts.isStorageProtected ?? (() => false);
     this.w = opts.writeGate;
     this.authTimeoutMs = opts.authTimeoutMs ?? DEFAULT_AUTH_TIMEOUT_MS;
     this.heartbeatIntervalMs = opts.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_INTERVAL_MS;
@@ -272,6 +276,17 @@ export class DeviceWsServer {
     if (check === "invalid_token") {
       log.warn(`Rejected WS upgrade from ${clientIp} — invalid token`);
       return { ok: false, status: 401, code: "invalid_token", message: "invalid token" };
+    }
+    if (
+      getDevice(this.db, check.deviceId)?.capabilities.requiresEncryptedStorage &&
+      !this.isStorageProtected()
+    ) {
+      return {
+        ok: false,
+        status: 503,
+        code: "STORAGE_PROTECTION_REQUIRED",
+        message: "Protect this library's storage on its home computer before using this device.",
+      };
     }
     return {
       ok: true,
@@ -776,6 +791,25 @@ export class DeviceWsServer {
     }
 
     const auth = info;
+
+    // Check again at hello, including a first opt-in and legacy transports.
+    // No connect hooks, capabilities or authenticated socket may publish first.
+    if (
+      (device.capabilities.requiresEncryptedStorage ||
+        payload.capabilities?.requiresEncryptedStorage) &&
+      !this.isStorageProtected()
+    ) {
+      this.sendRaw(
+        ws,
+        makeResponseErr(
+          cmd.id,
+          "STORAGE_PROTECTION_REQUIRED",
+          "Protect this library's storage on its home computer before using this device.",
+        ),
+      );
+      this.closeConnection(ws, "storage protection required");
+      return;
+    }
 
     // Heal a device paired before one of its hosted sources shipped: grant the
     // `write:<source-type>` scopes its kind is supposed to hold. Without this

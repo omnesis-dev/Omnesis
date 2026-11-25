@@ -30,12 +30,13 @@ export interface BackupCopyJob {
 }
 
 export interface BackupWorkerInput {
+  artifactEncryption?: { rootKey: string; scope: string };
   vacuums: BackupVacuumJob[];
   copies: BackupCopyJob[];
 }
 
 export type BackupWorkerMessage =
   | { type: "begin"; file: string }
-  | { type: "file"; file: string; bytes: number; durationMs: number }
+  | { type: "file"; file: string; bytes: number; durationMs: number; encrypted?: true }
   | { type: "done" }
   | { type: "error"; error: string };

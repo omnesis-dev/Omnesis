@@ -29,6 +29,16 @@ jobs:
         run: |
           xcodebuild -version
           swift --version
+      - name: Read pinned runtime version
+        id: runtime
+        run: |
+          echo "node=$(python3 -c 'import json; print(json.load(open("scripts/desktop/node-runtime.json"))["version"])')" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ steps.runtime.outputs.node }}
+          cache: npm
+      - name: Prepare verified Node process fixture
+        run: node scripts/desktop/prepare-node-test-fixture.mjs --arch "$(node -p process.arch)" --out macos/.node-fixture --cache "$RUNNER_TEMP/desktop-node-cache"
       - name: Restore SwiftPM packages
         id: swiftpm-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -70,23 +80,18 @@ jobs:
             -destination 'platform=macOS' \
             -derivedDataPath build \
             -resultBundlePath build/DesktopTests.xcresult \
-            CODE_SIGN_IDENTITY='' \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGN_STYLE=Manual \
+            DEVELOPMENT_TEAM='' \
+            CODE_SIGN_IDENTITY=- \
+            CODE_SIGNING_REQUIRED=YES \
+            CODE_SIGNING_ALLOWED=YES \
+            CODE_SIGN_INJECT_BASE_ENTITLEMENTS=YES \
             test
-      - name: Read pinned runtime version
-        id: runtime
-        run: |
-          echo "node=$(python3 -c 'import json; print(json.load(open("scripts/desktop/node-runtime.json"))["version"])')" >> "$GITHUB_OUTPUT"
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: ${{ steps.runtime.outputs.node }}
-          cache: npm
       - name: Install build dependencies
         run: scripts/ci/npm-ci.sh
       - name: Assemble complete unsigned app and exercise bundled runtime
         run: |
-          node scripts/desktop/prepare-runtime.mjs --out "$RUNNER_TEMP/desktop-runtime" --cache "$RUNNER_TEMP/desktop-node-cache"
+          node scripts/desktop/prepare-runtime.mjs --out "$RUNNER_TEMP/desktop-runtime" --cache "$RUNNER_TEMP/desktop-node-cache" --runtime-exec macos/build/Build/Products/Debug/OmnesisRuntimeExec
           node scripts/desktop/smoke-runtime.mjs --runtime "$RUNNER_TEMP/desktop-runtime"
           node scripts/desktop/assemble-app.mjs --runtime "$RUNNER_TEMP/desktop-runtime" --shell-app macos/build/Build/Products/Debug/Omnesis.app --out "$RUNNER_TEMP/Omnesis.app" --arch "$(node -p process.arch)" --version "$(node -p 'JSON.parse(require("fs").readFileSync("packages/core/package.json")).version')"
           ditto -c -k --keepParent "$RUNNER_TEMP/Omnesis.app" "$RUNNER_TEMP/Omnesis-unsigned.zip"

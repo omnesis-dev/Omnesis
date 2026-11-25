@@ -71,6 +71,6 @@ final class ConnectionPresentationTests: XCTestCase {
         XCTAssertNil(env["DYLD_INSERT_LIBRARIES"])
         XCTAssertEqual(env["HOME"], "/Users/fixture")
         XCTAssertEqual(env["TERM"], "xterm-256color")
-        XCTAssertTrue(env["PATH"]?.hasPrefix("/Applications/Omnesis.app/Contents/Resources/runtime:") == true)
+        XCTAssertTrue(env["PATH"]?.hasPrefix("/Applications/Omnesis.app/Contents/Resources/runtime/bin:") == true)
     }
 }

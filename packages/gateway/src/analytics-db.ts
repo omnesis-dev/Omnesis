@@ -164,8 +164,11 @@ export class AnalyticsDb {
    * CSV export — see `AnalyticsConnectionPool.exportTablesToCsv` for why the
    * copies must go through this pool. Returns the table names written.
    */
-  async exportTablesToCsv(destDir: string): Promise<string[]> {
-    return this.pool.exportTablesToCsv(destDir);
+  async exportTablesToCsv(
+    destDir: string,
+    encryption?: import("./analytics/export-encrypted-csv.js").EncryptedAnalyticsExport,
+  ): Promise<string[]> {
+    return this.pool.exportTablesToCsv(destDir, encryption);
   }
 
   // ── Table manager ────────────────────────────────────────────────

@@ -1,11 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { randomUUID } from "node:crypto";
 import { mkdtemp, mkdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { prepareDesktopInstall, readDesktopInstall } from "./bootstrap.js";
+import { prepareDesktopInstall, readDesktopInstall, withDesktopInstallLease } from "./bootstrap.js";
+import { writeDesktopRetirement } from "./retirement.js";
+import { prepareDesktopRuntime } from "./runtime-state.js";
+import { writeDesktopUpdateState } from "./update-state.js";
 import { desktopProfile, desktopJournalPath } from "./profile.js";
 
 const roots: string[] = [];
@@ -149,4 +153,56 @@ describe("encrypted desktop bootstrap", () => {
     await writeFile(desktopJournalPath(profile), JSON.stringify(record));
     await expect(readDesktopInstall(profile)).rejects.toThrow(/identity/);
   });
+});
+
+it("a stale setup cannot recreate data or protection keys after retirement", async () => {
+  const f = await fixture();
+  await withDesktopInstallLease(f.profile, f.options.signal, async () => {
+    await writeDesktopRetirement(f.profile, {
+      version: 1,
+      owner: "omnesis-desktop",
+      instance: f.profile.instance,
+      secretService: f.profile.secretService,
+      operationId: randomUUID(),
+      mode: "erase-data",
+      phase: "complete",
+      root: { device: "1", inode: "2" },
+    });
+  });
+  await expect(prepareDesktopInstall(f.profile, f.options, f.dependencies)).rejects.toThrow(
+    "retired",
+  );
+  await expect(prepareDesktopRuntime(f.profile, f.options.signal)).rejects.toThrow("retired");
+  expect(f.dependencies.ensureInstallRootKey).not.toHaveBeenCalled();
+  await expect(stat(f.profile.configDir)).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+it("pending update quiescence also refuses ordinary setup before touching data", async () => {
+  const f = await fixture();
+  await withDesktopInstallLease(f.profile, f.options.signal, async () => {
+    await writeDesktopUpdateState(f.profile, {
+      format: 1,
+      owner: "omnesis-desktop",
+      instance: f.profile.instance,
+      secretService: f.profile.secretService,
+      operationId: randomUUID(),
+      phase: "stopping",
+      mode: "home",
+      oldEpoch: "a".repeat(64),
+      candidateEpoch: "b".repeat(64),
+      oldVersion: "1.2.2",
+      candidateVersion: "1.2.3",
+      artifactSha256: "c".repeat(64),
+      root: { device: "1", inode: "2" },
+      backup: null,
+    });
+  });
+  await expect(prepareDesktopInstall(f.profile, f.options, f.dependencies)).rejects.toThrow(
+    "pending desktop update",
+  );
+  await expect(prepareDesktopRuntime(f.profile, f.options.signal)).rejects.toThrow(
+    "pending desktop update",
+  );
+  expect(f.dependencies.ensureInstallRootKey).not.toHaveBeenCalled();
+  await expect(stat(f.profile.configDir)).rejects.toMatchObject({ code: "ENOENT" });
 });

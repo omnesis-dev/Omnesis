@@ -2,7 +2,6 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { mkdir, lstat } from "node:fs/promises";
-import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { acquireGatewayLock, createLogger } from "@omnesis/core";
 import { readDesktopInstall } from "./bootstrap.js";
@@ -10,14 +9,11 @@ import { desktopProfile, type DesktopProfile } from "./environment.js";
 import { readDesktopRetirement } from "./retirement.js";
 import { publishDesktopHint } from "./publication.js";
 import { installDesktopParentLifetime } from "./parent-lifetime.js";
+import { desktopComponentOwner } from "./runtime-leases.js";
+import { desktopUpdateBlocked } from "./update-admission.js";
+export { desktopComponentOwner } from "./runtime-leases.js";
 
 export type DesktopManagedComponent = "gateway" | "collector";
-export function desktopComponentOwner(
-  profile: DesktopProfile,
-  component: DesktopManagedComponent,
-): string {
-  return join(profile.configDir, `${component}-owner`);
-}
 
 /** The real CLI callback never resolves while its component is live; OS exit retains the lease until death. */
 export async function withDesktopComponentOwnership(
@@ -25,7 +21,7 @@ export async function withDesktopComponentOwnership(
   component: DesktopManagedComponent,
   run: () => Promise<void>,
 ): Promise<void> {
-  if (await readDesktopRetirement(profile)) return;
+  if ((await readDesktopRetirement(profile)) || (await desktopUpdateBlocked(profile))) return;
   const install = await readDesktopInstall(profile);
   if (!install || install.phase !== "configured")
     throw new Error("The managed installation is not ready");
@@ -45,7 +41,7 @@ export async function withDesktopComponentOwnership(
     throw new Error("The managed component owner folder must be private");
   const lock = await acquireGatewayLock(directory, { waitMs: 0 });
   try {
-    if (await readDesktopRetirement(profile)) return;
+    if ((await readDesktopRetirement(profile)) || (await desktopUpdateBlocked(profile))) return;
     const current = await readDesktopInstall(profile);
     if (!current || current.phase !== "configured" || current.mode !== install.mode)
       throw new Error("The managed installation changed before the component could start");

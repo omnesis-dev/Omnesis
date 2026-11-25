@@ -77,6 +77,25 @@ function makeService(overrides: Partial<PairingServiceDeps> = {}): PairingServic
 }
 
 describe("PairingService", () => {
+  test("refuses an unprotected desktop join without consuming its pairing code", async () => {
+    const pairing = createPairing(db, {
+      name: "Protected desktop",
+      kind: "collector",
+      scopes: [SCOPE_READ],
+    });
+    const request = {
+      pairingCode: pairing.pairingCode,
+      capabilities: { requiresEncryptedStorage: true as const },
+    };
+    await expect(makeService().redeem(request)).rejects.toMatchObject({
+      status: 503,
+      code: "STORAGE_PROTECTION_REQUIRED",
+    });
+    expect(peekPairing(db, pairing.pairingCode)).not.toBeNull();
+    const admitted = await makeService({ isStorageProtected: () => true }).redeem(request);
+    expect(admitted.outcome).toBe("paired-device");
+  });
+
   test("returns a regular device credential when source cleanup fails", async () => {
     const pairing = createPairing(db, {
       name: "fictional-cli",

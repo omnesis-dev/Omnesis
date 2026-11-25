@@ -33,11 +33,9 @@ final class DesktopOnboardingUITests: XCTestCase {
         let useThisMac = app.buttons["use-this-mac"]
         XCTAssertTrue(useThisMac.waitForExistence(timeout: 5))
         XCTAssertFalse(useThisMac.isEnabled)
-        let warning = app.staticTexts.matching(NSPredicate(
-            format: "label CONTAINS %@",
-            "Moving your library to another Mac is not available yet"
-        )).firstMatch
-        XCTAssertTrue(warning.exists)
+        let warning = app.staticTexts["home-location-warning"]
+        XCTAssertTrue(warning.waitForExistence(timeout: 5))
+        XCTAssertTrue(warning.label.contains("Moving your library to another Mac is not available yet"))
         app.checkBoxes["confirm-first-library"].click()
         XCTAssertTrue(useThisMac.isEnabled)
     }

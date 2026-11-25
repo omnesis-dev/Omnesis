@@ -2,7 +2,8 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { stat } from "node:fs/promises";
-import { basename, dirname, isAbsolute, join } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { pathToFileURL } from "node:url";
 
 export interface ResolveNpmInvocationOptions {
   command?: string;
@@ -17,6 +18,8 @@ export async function resolveNpmInvocation(
   args: readonly string[],
   opts: ResolveNpmInvocationOptions = {},
 ): Promise<NodeCommandInvocation> {
+  const managed = managedNpmInvocation(opts.command ?? "npm", args);
+  if (managed) return managed;
   const platform = opts.platform ?? process.platform;
   const env = opts.env ?? process.env;
   const inheritedCli =
@@ -105,7 +108,71 @@ export function nodeCommandInvocation(
   platform: NodeJS.Platform = process.platform,
 ): NodeCommandInvocation {
   if (platform === "win32" && /\.(?:[cm]?js)$/iu.test(command)) {
-    return { command: process.execPath, args: [command, ...args] };
+    return managedNodeInvocation([command, ...args]);
   }
-  return { command, args: [...args] };
+  return managedRuntimeExecutableInvocation(command, args);
+}
+
+export interface ManagedRuntimeLauncher {
+  root: string;
+  launcher: string;
+  preload: string;
+}
+let managed: Readonly<ManagedRuntimeLauncher> | undefined;
+/** Installed only by the authenticated payload's fixed Node preload, never environment values. */
+export function installManagedRuntimeLauncher(value: ManagedRuntimeLauncher): void {
+  if (
+    !isAbsolute(value.root) ||
+    value.launcher !== join(value.root, "runtime-exec") ||
+    value.preload !== join(value.root, "packages/core/dist/managed-runtime-bootstrap.js")
+  )
+    throw new Error("Invalid managed runtime launcher");
+  if (managed && JSON.stringify(managed) !== JSON.stringify(value))
+    throw new Error("The managed runtime identity cannot change while this process is running");
+  managed = Object.freeze({ ...value });
+}
+export function managedRuntimePreload(): string[] {
+  return managed ? ["--import", pathToFileURL(managed.preload).href] : [];
+}
+export function managedNodeInvocation(args: readonly string[]): {
+  command: string;
+  args: string[];
+} {
+  return managed
+    ? { command: managed.launcher, args: ["--node", ...args] }
+    : { command: process.execPath, args: [...args] };
+}
+export function managedNpmInvocation(
+  command: string,
+  args: readonly string[],
+): { command: string; args: string[] } | null {
+  if (
+    !managed ||
+    !["npm", "npx", join(managed.root, "npm"), join(managed.root, "npx")].includes(command)
+  )
+    return null;
+  const cli = command.endsWith("npx") ? "npx-cli.js" : "npm-cli.js";
+  return managedNodeInvocation([join(managed.root, "lib/node_modules/npm/bin", cli), ...args]);
+}
+/** Every directly owned child retains its epoch, including external interpreters reading payload files. */
+export function managedRuntimeExecutableInvocation(
+  command: string,
+  args: readonly string[],
+): { command: string; args: string[] } {
+  if (!managed || command === managed.launcher) return { command, args: [...args] };
+  const npm = managedNpmInvocation(command, args);
+  if (npm) return npm;
+  if (command === process.execPath || command === "node") return managedNodeInvocation(args);
+  if (isAbsolute(command)) {
+    const local = relative(managed.root, resolve(command));
+    if (
+      local &&
+      !isAbsolute(local) &&
+      local !== ".." &&
+      !local.startsWith(`..${sep}`) &&
+      command !== managed.launcher
+    )
+      return { command: managed.launcher, args: ["--exec", local.split(sep).join("/"), ...args] };
+  }
+  return { command: managed.launcher, args: ["--external", command, ...args] };
 }

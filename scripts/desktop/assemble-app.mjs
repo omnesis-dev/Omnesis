@@ -73,6 +73,8 @@ export async function assembleApp({
   const manifest = JSON.parse(await readFile(join(runtime, "desktop-runtime.json"), "utf8"));
   if (
     manifest.format !== 1 ||
+    manifest.codeUsageProtocol !== 1 ||
+    manifest.runtimeLauncher !== "runtime-exec" ||
     manifest.architecture !== architecture ||
     manifest.nodeVersion !== NODE_RUNTIME.version ||
     manifest.productVersion !== version
@@ -80,6 +82,10 @@ export async function assembleApp({
     throw new Error("Runtime version or architecture does not match the app");
   for (const required of [
     "node",
+    "runtime-exec",
+    "bin/node",
+    "npm",
+    "npx",
     "packages/cli/dist/index.js",
     "packages/gateway/portal/index.html",
     "NODE_LICENSE",
@@ -88,13 +94,21 @@ export async function assembleApp({
     await readFile(join(runtime, required));
   const nodeArchitectures = machoArchitectures(await readFile(join(runtime, "node")));
   const appArchitectures = machoArchitectures(await readFile(executable));
-  if (!nodeArchitectures?.includes(architecture) || !appArchitectures?.includes(architecture))
+  const launcherArchitectures = machoArchitectures(await readFile(join(runtime, "runtime-exec")));
+  if (
+    !nodeArchitectures?.includes(architecture) ||
+    !appArchitectures?.includes(architecture) ||
+    !launcherArchitectures?.includes(architecture)
+  )
     throw new Error(
       "App and bundled Node must be native macOS executables for the selected architecture",
     );
   const runtimeInventory = (await inventoryBundle(runtime, architecture)).filter(
     (entry) => entry.path !== "desktop-runtime.json",
   );
+  for (const path of ["node", "runtime-exec", "bin/node", "npm", "npx"])
+    if (runtimeInventory.find((entry) => entry.path === path)?.executable !== true)
+      throw new Error("Bundled runtime entrypoints must be executable");
   if (JSON.stringify(runtimeInventory) !== JSON.stringify(manifest.inventory))
     throw new Error("Runtime contents differ from their build inventory");
   await mkdir(dirname(output), { recursive: true });

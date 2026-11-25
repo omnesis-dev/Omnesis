@@ -257,6 +257,33 @@ export function storageKeyPath(keyName: StorageKeyName, configDir?: string): str
   );
 }
 
+/** Preserve a store's data key while moving only its authenticated root-key wrapping. */
+export function rewrapStorageKeyValue(
+  raw: string,
+  options: { keyName: StorageKeyName; sourceRootKey: string; targetRootKey: string },
+): string {
+  let key: Buffer | undefined;
+  try {
+    if (
+      Buffer.byteLength(raw) > 16_384 ||
+      !options.keyName ||
+      options.keyName.length > 512 ||
+      options.keyName.includes("\0")
+    ) {
+      throw new Error("Invalid rewrap input");
+    }
+    const keyName = parseStorageKeyName(options.keyName);
+    const envelope = parseEnvelope(raw);
+    if (!envelope) throw new Error("An encrypted storage key is required");
+    key = decryptKey(envelope, keyName, options.sourceRootKey);
+    return encryptKey(keyName, key, options.targetRootKey);
+  } catch {
+    throw new Error("The storage key could not be rewrapped for this library");
+  } finally {
+    key?.fill(0);
+  }
+}
+
 export function storageKeyHex(key: Buffer): string {
   if (key.length !== STORAGE_KEY_BYTES) {
     throw new Error(`Storage key must be ${STORAGE_KEY_BYTES} bytes`);

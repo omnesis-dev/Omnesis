@@ -40,15 +40,7 @@
  */
 
 import { Worker } from "node:worker_threads";
-import {
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  rmSync,
-  statSync,
-  statfsSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, readdirSync, rmSync, statSync, statfsSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import {
@@ -60,7 +52,12 @@ import {
   backupConfigCopyNames,
   createBackupDir,
   createLogger,
+  atomicWriteFile,
+  fsyncDir,
   encryptArtifactFileInPlace,
+  produceEncryptedArtifact,
+  readInstallRootKey,
+  secretFileEncryptionRequired,
   listBackups,
   prunePreUpdateBackups,
   resolveWorkerEntry,
@@ -293,6 +290,11 @@ export class BackupService {
     };
   }
 
+  /** Internal filesystem authority for authenticated artifact downloads. */
+  getArtifactRoot(): string {
+    return this.backupsDir;
+  }
+
   /** Completed backups (directories with a parseable manifest), newest first. */
   list(): ListedBackup[] {
     return listBackups(this.backupsDir, log);
@@ -352,6 +354,14 @@ export class BackupService {
   private async run(cur: CurrentBackup): Promise<void> {
     const startMs = Date.now();
     try {
+      const rootKey = await readInstallRootKey({
+        configDir: this.opts.configDir,
+        backend: this.opts.secretStoreBackend,
+      });
+      if (!rootKey && secretFileEncryptionRequired(this.opts.configDir))
+        throw new Error(
+          "The install root key is unavailable. Unlock it before backing up protected library data",
+        );
       const vacuums: BackupWorkerInput["vacuums"] = [
         {
           sourcePath: this.opts.gatewayDbPath,
@@ -380,7 +390,14 @@ export class BackupService {
           name: WATCH_JOURNAL_FILENAME,
         });
       }
-      await this.runWorker({ vacuums, copies: this.collectConfigCopies(cur.path) }, cur);
+      await this.runWorker(
+        {
+          vacuums,
+          copies: this.collectConfigCopies(cur.path),
+          ...(rootKey ? { artifactEncryption: { rootKey, scope: `backup:${cur.backupId}` } } : {}),
+        },
+        cur,
+      );
 
       if (existsSync(this.opts.analyticsDbPath)) {
         const dest = join(cur.path, "analytics.db");
@@ -422,7 +439,12 @@ export class BackupService {
       const manifest = encrypted
         ? await this.writeEncryptedFullManifest(cur, manifestBase)
         : manifestBase;
-      writeFileSync(join(cur.path, MANIFEST_NAME), JSON.stringify(manifest, null, 2) + "\n");
+      await atomicWriteFile(
+        join(cur.path, MANIFEST_NAME),
+        JSON.stringify(manifest, null, 2) + "\n",
+        { mode: 0o600 },
+      );
+      await fsyncDir(this.backupsDir);
 
       const totalBytes = cur.files.reduce((sum, f) => sum + f.bytes, 0);
       this.lastResult = {
@@ -504,7 +526,12 @@ export class BackupService {
           case "file":
             cur.currentFile = undefined;
             cur.currentDestPath = undefined;
-            cur.files.push({ name: msg.file, bytes: msg.bytes, durationMs: msg.durationMs });
+            cur.files.push({
+              name: msg.file,
+              bytes: msg.bytes,
+              durationMs: msg.durationMs,
+              ...(msg.encrypted ? { encrypted: true } : {}),
+            });
             log.info(`Backed up ${msg.file}: ${formatBytes(msg.bytes)} in ${msg.durationMs}ms`);
             break;
           case "done":
@@ -526,6 +553,10 @@ export class BackupService {
     let encryptedAny = false;
     for (let i = 0; i < cur.files.length; i++) {
       const file = cur.files[i]!;
+      if (file.encrypted) {
+        encryptedAny = true;
+        continue;
+      }
       // The recovery envelope is already sealed under the operator's recovery
       // code and must stay root-key-independent — re-encrypting it under the
       // root key would defeat its purpose (recovering that key on a machine
@@ -556,12 +587,17 @@ export class BackupService {
     fullManifest: BackupManifest,
   ): Promise<BackupManifest> {
     const fullPath = join(cur.path, FULL_MANIFEST_NAME);
-    writeFileSync(fullPath, JSON.stringify(fullManifest, null, 2) + "\n", { mode: 0o600 });
-    const result = await encryptArtifactFileInPlace(fullPath, {
-      configDir: this.opts.configDir,
-      backend: this.opts.secretStoreBackend,
-      scope: `backup:${cur.backupId}:${FULL_MANIFEST_NAME}`,
-    });
+    const result = await produceEncryptedArtifact(
+      `${fullPath}${ENCRYPTED_ARTIFACT_SUFFIX}`,
+      {
+        configDir: this.opts.configDir,
+        backend: this.opts.secretStoreBackend,
+        scope: `backup:${cur.backupId}:${FULL_MANIFEST_NAME}`,
+      },
+      async (body) => {
+        body.write(JSON.stringify(fullManifest, null, 2) + "\n");
+      },
+    );
     if (!result.encrypted) {
       throw new Error(
         "Backup artifacts were encrypted but the full manifest could not be encrypted",

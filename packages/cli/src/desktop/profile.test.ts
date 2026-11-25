@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { delimiter, dirname } from "node:path";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { delimiter, dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { desktopEnvironment, desktopProfile, recommendDesktopResources } from "./profile.js";
-import { initializeDesktopEnvironment } from "./environment.js";
+import { desktopExecutableDirectories, initializeDesktopEnvironment } from "./environment.js";
 
 describe("desktop isolation", () => {
   it("selects the managed directory before configuration modules load", () => {
@@ -77,4 +79,20 @@ describe("desktop resource recommendation", () => {
     "refuses an unusable memory reading %s",
     (memory) => expect(() => recommendDesktopResources(memory)).toThrow(/memory/),
   );
+});
+
+it("only a complete packaged launcher layout puts guarded env-node before the raw binary", () => {
+  const root = mkdtempSync(join(tmpdir(), "omnesis-guard-path-"));
+  const bin = join(root, "bin");
+  try {
+    mkdirSync(bin);
+    writeFileSync(join(bin, "node"), "guarded node shim");
+    expect(desktopExecutableDirectories(join(root, "node"))).toEqual([root]);
+    writeFileSync(join(root, "runtime-exec"), "native launcher fixture");
+    expect(desktopExecutableDirectories(join(root, "node"))).toEqual([bin, root]);
+    rmSync(join(bin, "node"));
+    expect(desktopExecutableDirectories(join(root, "node"))).toEqual([root]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

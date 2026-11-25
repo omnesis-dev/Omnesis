@@ -58,6 +58,7 @@ export async function enrollDesktopRole(
     const pairing = await (dependencies.pair ?? pairAccountDevice)(
       {
         kind: options.role === "interactive" ? "cli" : "collector",
+        requireEncryptedStorage: true,
         relayUrl: options.relayUrl,
         name: options.name,
         deviceKeyFile: options.deviceKeyFile,
@@ -122,4 +123,14 @@ async function whileCurrent<T>(signal: AbortSignal, work: () => Promise<T>): Pro
   } finally {
     signal.removeEventListener("abort", cancel);
   }
+}
+
+/** Both grants must name the same canonical library and the same independently approved key. */
+export function sameDesktopLibrary(first: DesktopPairing, second: DesktopPairing): boolean {
+  return (
+    first.gatewayUrl === second.gatewayUrl &&
+    (first.tlsSpkiFingerprint && second.tlsSpkiFingerprint
+      ? first.tlsSpkiFingerprint === second.tlsSpkiFingerprint
+      : first.gatewayFingerprint === second.gatewayFingerprint)
+  );
 }

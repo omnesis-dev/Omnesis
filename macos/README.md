@@ -14,9 +14,28 @@ claim Mac App Store eligibility.
 Use Node 24 for the portable runtime and Xcode 26 plus XcodeGen for the app.
 Generate the Xcode project with `cd macos && xcodegen generate`, then build the
 `OmnesisDesktop` scheme. Pure lifecycle/bridge models are a separate SwiftPM
-library: `swift test --package-path macos`. UI tests use the generated Xcode
-project and a macOS destination. Admit builds and tests through the host's
-configured native test queue when one is installed.
+library. Its process tests use the same pinned standalone Node distribution as
+the app, prepared before tests run:
+
+```sh
+node scripts/desktop/prepare-node-test-fixture.mjs --arch "$(node -p process.arch)" --out macos/.node-fixture
+swift test --package-path macos
+```
+
+UI tests use the generated Xcode project and a macOS destination. Admit builds
+and tests through the host's configured native test queue when one is installed.
+The native check bridge and GitHub workflow prepare the fixture automatically;
+tests perform no downloads and never substitute a globally installed Node.
+
+The scheme also builds `OmnesisRuntimeExec`, which must be supplied when staging
+the matching runtime. After the native build, assemble a complete development app
+on the target Mac with:
+
+```sh
+node scripts/desktop/prepare-runtime.mjs --out /tmp/omnesis-runtime --runtime-exec macos/build/Build/Products/Debug/OmnesisRuntimeExec
+node scripts/desktop/smoke-runtime.mjs --runtime /tmp/omnesis-runtime
+node scripts/desktop/assemble-app.mjs --runtime /tmp/omnesis-runtime --shell-app macos/build/Build/Products/Debug/Omnesis.app --out /tmp/Omnesis.app --arch "$(node -p process.arch)" --version "$(node -p 'JSON.parse(require("fs").readFileSync("packages/core/package.json")).version')"
+```
 
 The complete app bundles the compiled runtime under
 `Omnesis.app/Contents/Resources/runtime/`: `node` and
@@ -38,11 +57,14 @@ in memory, never in URLs or Preferences. A home library only becomes available
 when the runtime confirms encrypted storage. Local certificates are pinned via
 the shared Apple transport client.
 
-The optional `OmnesisBackground.app` login item runs `desktop daemon` and is
-registered through `SMAppService` after the user enables background operation in
-Settings. It does not request root access. Disable the login item before removing
-the app if you no longer want it to start at login. Stopping Omnesis preserves the
-library. Removing data is a separate explicit operation.
+The embedded `OmnesisBackground.app` observes the application's lifecycle and runs
+`desktop daemon`. Opening the app starts this observer independently of login
+preferences. Optional login startup is registered through `SMAppService` in
+Settings. It does not request root access. The observer keeps running after a
+daemon exits, preserves ordinary Finder moves, and requests keep-data retirement
+when its application is trashed or deleted. Pending update/restore recovery intent
+is preserved. Packaged Finder and login behavior still need native qualification.
+Stopping Omnesis preserves the library. Removing data is a separate explicit operation.
 
 Native sources use provider descriptors and the existing discovery, validation,
 credentials, authorization and add endpoints. Chat shares the Apple `AgentClient`
@@ -80,5 +102,38 @@ from this Mac**. Keeping the local data and encryption key is the default. Erasi
 local Omnesis data requires a separate confirmation. The app asks the runtime for
 an ownership-bound removal preview, unregisters its own login item, and displays
 the actual outcome. An unfinished saved-key cleanup remains visible and can be
-retried. After successful removal, quit Omnesis and move the app to Trash. The app
-never removes your original source files or another installation.
+retried. After successful removal, a separate confirmation can move this verified app
+copy to Trash and quit. Pending key cleanup never enables that action. You can
+also keep the app and quit manually. Tests never invoke actual Trash operations.
+The app never removes your original source files or another installation.
+
+**Settings → General → Recovery protection** prepares recovery only on the Mac
+that owns the library. Save the sealed recovery file and its code separately,
+then explicitly confirm. Drafts expire after five minutes; cancellation leaves
+existing recovery protection intact. Replacement requires its own consent and
+never changes the library's encryption key. Keep older recovery codes for older
+backups. Recovery protection does not make a backup of the library.
+
+The Storage settings page refreshes the gateway's actual measurement, changes
+its library size limit, and starts or cancels older-history cleanup. Cleanup
+requires confirmation and always preserves the newest backup. Unknown
+measurements stay unknown; cancelled or partially failed cleanup reports what
+was already removed. Source history limits require a separate confirmation before automatic deletion
+is enabled. Memory settings show the measured library process and save startup budgets.
+Applying them requires an explicit restart on the Mac that owns the library.
+
+Backups settings creates actual backups or JSON/CSV exports, follows generation
+status, and downloads completed artifacts through authenticated streaming. Save
+creates a new private file and refuses existing destinations and redirects.
+Cancellation removes only the download's own partial file. Readable or mixed
+contents require explicit consent; encrypted data payloads still leave archive
+metadata readable. A download is reported saved only after successful completion
+and synchronization to disk.
+
+Recovery protection also accepts an existing recovery JSON file and its code.
+The managed home must retain both modern encryption markers matching that key.
+Import refuses another existing Keychain key, uses atomic create without update,
+and verifies both required-encryption Keychain mirrors before reporting recovery.
+A locked Keychain, foreign file or incomplete marker restoration stays a visible
+failure. File contents and the entered code remain in memory and the private
+runtime pipe; importing never creates a replacement root key.

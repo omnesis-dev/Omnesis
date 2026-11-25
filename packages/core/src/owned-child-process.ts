@@ -4,6 +4,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { spawnWindowsJob, type WindowsJobProcess } from "./windows-job.js";
 import { ownedProcessCleanupReceipt } from "./owned-process-cleanup.js";
+import { managedRuntimeExecutableInvocation } from "./node-command.js";
 
 export interface OwnedChildProcess {
   child: ChildProcess;
@@ -29,6 +30,9 @@ export function spawnOwnedChildProcess(
 ): OwnedChildProcess {
   const { stopSignal = "SIGTERM", ...spawnOptions } = options;
   const windows = (deps.platform ?? process.platform) === "win32";
+  const invocation = managedRuntimeExecutableInvocation(command, args);
+  command = invocation.command;
+  args = invocation.args;
   const child = windows
     ? (deps.spawnJob ?? spawnWindowsJob)(command, args, { ...spawnOptions, completion: "root" })
     : (deps.spawnChild ?? spawn)(command, [...args], {

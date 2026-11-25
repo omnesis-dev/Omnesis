@@ -6,28 +6,63 @@ import Foundation
 
 @MainActor
 final class RuntimeBridge {
+    typealias PreparedRuntime = (URL, DesktopRuntimeUsageLease)
+    typealias Preparation = @Sendable (URL) async throws -> PreparedRuntime
     var onEnvelope: ((BridgeEnvelope) -> Void)?
     var onFailure: ((String) -> Void)?
+    private(set) var selectedRuntime: URL?
+    var runtimeEpoch: String? {
+        selectedRuntime?.lastPathComponent
+    }
+
     private var process: Process?
     private var input: FileHandle?
     private var reader: Task<Void, Never>?
+    /// Native presentation remains a code consumer even after its bridge exits.
+    private var usageLease: DesktopRuntimeUsageLease?
+    private let preparationOverride: Preparation?
+    private var preparationTask: Task<PreparedRuntime, Error>?
 
     private var launching = false
     private var launchEpoch = UUID()
+
+    init(preparation: Preparation? = nil) {
+        preparationOverride = preparation
+    }
 
     func start() async throws {
         guard process == nil else { return }
         guard !launching else { return }
         launching = true
         let epoch = launchEpoch
-        defer { launching = false }
+        defer { launching = false
+            preparationTask = nil
+        }
         let app = Bundle.main.bundleURL
-        let runtime = try await Task.detached(priority: .userInitiated) {
-            try DesktopRuntimeBootstrap.prepare(appBundle: app)
-        }.value
+        let override = preparationOverride
+        let task = Task.detached(priority: .userInitiated) {
+            if let override { return try await override(app) }
+            let runtime = try DesktopRuntimeBootstrap.prepare(appBundle: app)
+            try Task.checkCancellation()
+            let lease = try DesktopRuntimeUsageLease.acquire(runtime: runtime)
+            if let id = ProcessInfo.processInfo.environment[DesktopApplicationLaunchReservation.environmentKey],
+               Bundle.main.bundleIdentifier == "dev.omnesis.desktop" {
+                try DesktopApplicationLaunchReservation.acknowledge(id: id, application: app, runtime: runtime, lease: lease)
+            }
+            return (runtime, lease)
+        }
+        preparationTask = task
+        let prepared = try await withTaskCancellationHandler {
+            try await task.value
+        } onCancel: { task.cancel() }
         try Task.checkCancellation()
         guard epoch == launchEpoch else { throw CancellationError() }
-        let executable = runtime.appendingPathComponent("node")
+        let runtime = prepared.0
+        usageLease = prepared.1
+        if preparationOverride == nil { try await DesktopBackgroundObserver.ensureRunning(appBundle: app) }
+        try Task.checkCancellation()
+        guard epoch == launchEpoch else { throw CancellationError() }
+        let executable = runtime.appendingPathComponent("runtime-exec")
         let script = runtime.appendingPathComponent("packages/cli/dist/index.js")
         guard FileManager.default.isExecutableFile(atPath: executable.path),
               FileManager.default.fileExists(atPath: script.path) else { throw BridgeLaunchError.missingRuntime }
@@ -35,7 +70,7 @@ final class RuntimeBridge {
         let incoming = Pipe()
         let outgoing = Pipe()
         child.executableURL = executable
-        child.arguments = [script.path, "desktop", "bridge"]
+        child.arguments = ["--node", script.path, "desktop", "bridge"]
         child.currentDirectoryURL = runtime
         child.environment = DesktopRuntimeEnvironment.child(parent: ProcessInfo.processInfo.environment, runtime: runtime)
         child.standardInput = outgoing
@@ -48,10 +83,11 @@ final class RuntimeBridge {
                 self.process = nil
                 self.input = nil
                 self.reader?.cancel()
-                self.onFailure?("Omnesis stopped. Open the app again to reconnect. Your library is kept safely on disk.")
+                self.onFailure?("Omnesis lost its background connection. Reopen the app to reconnect. Your library stays on disk.")
             }
         }
         try child.run()
+        selectedRuntime = runtime
         process = child
         input = outgoing.fileHandleForWriting
         let handle = incoming.fileHandleForReading
@@ -86,6 +122,7 @@ final class RuntimeBridge {
 
     func disconnect() {
         launchEpoch = UUID()
+        preparationTask?.cancel()
         reader?.cancel()
         reader = nil
         try? input?.close()

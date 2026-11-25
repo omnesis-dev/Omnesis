@@ -169,8 +169,14 @@ confirmation to the ownership journal and root inode, deletes owned data first,
 then clears its exclusive Keychain namespace. Interrupted key cleanup remains
 an explicit pending operation. Credential publication and transport hint writes
 share the external installation lease and recheck retirement before writing.
-The native helper unregister/app-to-Trash adapter and packaged removal proof
-remain separate qualification work.
+The native bridge starts its embedded observer independently of the login
+preference. The helper stays resident after a daemon exits, presents its own
+application to Finder's file coordination, and preserves service across ordinary
+moves. Moving that application to the user's Trash or deleting it requests
+`desktop system-retire`: keep-data retirement followed by the same actual store
+leases. Pending update/restore operations are quiesced without replacing their
+recovery intent. Packaged Finder callbacks, service registration and final Trash
+interaction still require native qualification.
 
 ## Resource defaults and remediation
 
@@ -216,7 +222,12 @@ requiring a host npm install.
 explicit signing/notarization hooks. `prepare-runtime.mjs` builds the compiled
 `omnesis` dependency closure with `scripts/runtime/stage-runtime.mjs`, installs
 production dependencies in an isolated temporary tree on the target Mac,
-applies production patches and copies runtime assets. It preserves workspace
+applies production patches and copies runtime assets. Staging requires the matching
+native `OmnesisRuntimeExec` product through `--runtime-exec`; it does not label an
+unguarded runtime as supporting the code-use lease protocol. Bundled Node, npm
+and npx launchers enter through this adapter. Runtime smoke checks copy the
+verified payload into a private temporary epoch and use that same entry point,
+including for native database and bridge probes. It preserves workspace
 relative paths and dependencies that npm placed beside individual workspaces.
 The source checkout's manifests remain source-pointing; staging performs the
 existing release transformation.
@@ -230,9 +241,16 @@ under running workers. Cache publication verifies every listed hash, rejects
 extra files and escaping links, and reserves staging capacity. Release launch
 authenticates the source app against the executing shell's signing team and
 bundle identity. A runtime-directory environment override is available only in
-debug builds. Old payloads are retained conservatively; safe garbage collection
-and a native app replacement updater still need implementation and proof.
-The private npm launcher resolves the cached Node directly. Recipients need no compiler, Git, Node or npm.
+debug builds. Actual managed processes retain kernel usage leases across exec;
+publication and reclamation share one lock. The authenticated preload publishes
+the fixed native adapter as `process.execPath`, so SDK subprocesses reserve their
+own lease before loading Node even when they inherit only standard descriptors.
+Owned external interpreters also retain a lease. The native `--gc-remove` operation
+refuses current, in-use and legacy epochs and retains an inode-bound retry receipt
+on partial deletion; such a receipt blocks startup. Selection of retained recovery
+applications and uncertain archive consumers remains conservative: bounded cleanup
+and the complete native replacement flow still require integration and proof.
+The private npm launcher enters the guarded cached Node. Recipients need no compiler, Git, Node or npm.
 Native modules and executables must match the target macOS architecture.
 
 `native-inventory.mjs` inventories file hashes and Mach-O architectures,

@@ -67,9 +67,9 @@ public struct DesktopState: Codable, Equatable, Sendable {
         self.retirement = retirement
     }
 
-    /// A home cannot ingest data until its runtime confirms encryption.
+    /// Opening a library requires verified protection for this Mac and its library home.
     public var canOpenLibrary: Bool {
-        retired != true && phase == .ready && connection != nil && (mode != "home" || encrypted == true)
+        retired != true && phase == .ready && connection != nil && encrypted == true && ["home", "joined"].contains(mode ?? "")
     }
 
     public var statusLabel: String {
@@ -94,6 +94,22 @@ public struct RuntimeInteraction: Decodable, Equatable, Sendable, Identifiable {
     public let code: String?
     public let role: String?
     public let message: String?
+    /// Typed platform interactions retain their complete payload without logging it.
+    public let payload: [String: BridgeValue]
+
+    private enum CodingKeys: String, CodingKey { case id, kind, url, choices, code, role, message }
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.singleValueContainer().decode([String: BridgeValue].self)
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        kind = try c.decode(String.self, forKey: .kind)
+        url = try c.decodeIfPresent(URL.self, forKey: .url)
+        choices = try c.decodeIfPresent([Choice].self, forKey: .choices)
+        code = try c.decodeIfPresent(String.self, forKey: .code)
+        role = try c.decodeIfPresent(String.self, forKey: .role)
+        message = try c.decodeIfPresent(String.self, forKey: .message)
+        payload = values
+    }
 
     public struct Choice: Decodable, Equatable, Sendable, Identifiable {
         public let id: String
@@ -143,8 +159,13 @@ public struct BridgeEnvelope: Decodable, Sendable {
     public let id: String?
     public let ok: Bool?
     public let result: DesktopState?
+    public let recoveryStatus: DesktopRecoveryStatus?
+    public let recoveryDraft: DesktopRecoveryDraft?
+    public let recoveryImportOutcome: DesktopRecoveryImportOutcome?
+    public let recoveryCommit: DesktopRecoveryCommit?
     public let removalPlan: DesktopRemovalPlan?
     public let removalOutcome: DesktopRemovalOutcome?
+    public let update: DesktopUpdatePresentation?
     public let event: String?
     public let state: DesktopState?
     public let interaction: RuntimeInteraction?
@@ -161,8 +182,13 @@ public struct BridgeEnvelope: Decodable, Sendable {
         ok = try c.decodeIfPresent(Bool.self, forKey: .ok)
         // Commands such as cancel/respond may acknowledge without returning a state.
         result = try? c.decodeIfPresent(DesktopState.self, forKey: .result)
+        recoveryStatus = try? c.decodeIfPresent(DesktopRecoveryStatus.self, forKey: .result)
+        recoveryDraft = try? c.decodeIfPresent(DesktopRecoveryDraft.self, forKey: .result)
+        recoveryImportOutcome = try? c.decodeIfPresent(DesktopRecoveryImportOutcome.self, forKey: .result)
+        recoveryCommit = try? c.decodeIfPresent(DesktopRecoveryCommit.self, forKey: .result)
         removalPlan = try? c.decodeIfPresent(DesktopRemovalPlan.self, forKey: .result)
         removalOutcome = try? c.decodeIfPresent(DesktopRemovalOutcome.self, forKey: .result)
+        update = try? c.decodeIfPresent(DesktopUpdatePresentation.self, forKey: .result)
         event = try c.decodeIfPresent(String.self, forKey: .event)
         state = try c.decodeIfPresent(DesktopState.self, forKey: .state)
         interaction = try c.decodeIfPresent(RuntimeInteraction.self, forKey: .interaction)

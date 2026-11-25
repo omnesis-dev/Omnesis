@@ -23,6 +23,11 @@ final class DesktopSourceFlow {
     var credentialsStep = 0
     var gatewayOrigin: String?
     var notices: [AuthSnapshot.Notice] = []
+    var pendingMove: DesktopSourceSettingsSnapshot?
+    var keptPausedAfterMove = false
+    let movingSource: DesktopSource?
+    private var processedAccounts: Set<String> = []
+    private var moveAttemptedAccounts: Set<String> = []
     private let existingAccountId: String?
     private var credentialsCollected = false
     private var sharedCredentialsSaved = false
@@ -30,10 +35,17 @@ final class DesktopSourceFlow {
     private var retryAvailableAt: Date?
     private var observation: Task<Void, Never>?
 
-    init(descriptor: DesktopDescriptor, api: DesktopAPI, accountId: String? = nil, hostId: String? = nil) {
+    init(
+        descriptor: DesktopDescriptor,
+        api: DesktopAPI,
+        accountId: String? = nil,
+        hostId: String? = nil,
+        movingSource: DesktopSource? = nil
+    ) {
         self.descriptor = descriptor
         self.api = api
         existingAccountId = accountId
+        self.movingSource = movingSource
         let hosts = descriptor.devices ?? []
         deviceId = hosts.first(where: { $0.id == hostId })?.id ?? hosts.first(where: { $0.id == api.connection.collectorDeviceId })?
             .id ?? hosts.first?.id ?? ""
@@ -173,6 +185,16 @@ final class DesktopSourceFlow {
             let config: Config = try await api.request("GET", "admin/config")
             try check(current)
             gatewayOrigin = SourceValidation.publicOrigin(config.config.gateway?.publicBaseUrl)
+            if gatewayOrigin == nil {
+                struct Account: Decodable {
+                    let publicOrigin: String?
+                    let account: Link?
+                    struct Link: Decodable { let linked: Bool }
+                }
+                let status: Account = try await api.request("GET", "admin/cloud-relay")
+                try check(current)
+                if status.account?.linked == true { gatewayOrigin = SourceValidation.publicOrigin(status.publicOrigin) }
+            }
             guard gatewayOrigin != nil
             else {
                 throw DesktopAPIError
@@ -263,20 +285,31 @@ final class DesktopSourceFlow {
         try check(current)
         for account in selectedAccounts.sorted() {
             try check(current)
+            if processedAccounts.contains(account) { continue }
+            if let movingSource, account != movingSource.accountId {
+                throw DesktopAPIError.message("Sign in to the same account to move this source. Other accounts can be added separately.")
+            }
             if let source = existing.first(where: { $0.type == descriptor.id && $0.accountId == account }) {
                 if source.deviceId == deviceId || source.members?.contains(deviceId) == true {
-                    if !source.enabled, existingAccountId == nil { try await api.mutate(
+                    if !source.enabled, existingAccountId == nil, movingSource == nil,
+                       !moveAttemptedAccounts.contains(account) { try await api.mutate(
                         "PATCH",
                         "admin/sources/\(pathPart(source.id))",
                         body: ["enabled": true]
                     ) }
+                    if movingSource != nil || moveAttemptedAccounts.contains(account) { keptPausedAfterMove = !source.enabled }
                     continue
                 }
                 guard let mode = source.multiDeviceMode, ["handoff", "replicated", "partitioned"].contains(mode) else {
-                    throw DesktopAPIError
-                        .message(
-                            "This account is connected on another device. Keep that device connected or move the account in advanced settings."
-                        )
+                    let settings = try await api.sourceSettings(source.id)
+                    _ = try settings.checkedRevision()
+                    try check(current)
+                    guard settings.source.multiDeviceMode == "exclusive", settings.source.accountId == account else {
+                        throw DesktopAPIError.message("This account's connection changed. Refresh Sources before continuing.")
+                    }
+                    auth = nil
+                    pendingMove = settings
+                    return
                 }
                 let localNames = Set(descriptor.memberScopedParamNames ?? [])
                     .union((descriptor.params ?? []).filter { $0.scope == "member" }.map(\.name))
@@ -285,6 +318,8 @@ final class DesktopSourceFlow {
                 if !memberParams.isEmpty { body["memberConfig"] = ["params": memberParams] }
                 try await api.mutate("POST", "admin/sources/\(pathPart(source.id))/members", body: body)
             } else {
+                if movingSource !=
+                    nil { throw DesktopAPIError.message("This source was removed. Refresh Sources before connecting it again.") }
                 try await api.mutate("POST", "admin/sources/add", body: [
                     "descriptorId": descriptor.id, "deviceId": deviceId, "accountIds": [account], "params": params,
                 ])
@@ -293,6 +328,51 @@ final class DesktopSourceFlow {
         try check(current)
         credentials = [:]
         complete = true
+    }
+
+    func confirmMove() async {
+        guard !busy, let pendingMove else { return }
+        busy = true
+        error = nil
+        let current = generation
+        defer { if current == generation { busy = false } }
+        do {
+            let memberNames = Set(descriptor.memberScopedParamNames ?? [])
+                .union((descriptor.params ?? []).filter { $0.scope == "member" }.map(\.name))
+            let sharedFields = (descriptor.params ?? []).filter { !memberNames.contains($0.name) }
+            var body: [String: Any] = try [
+                "deviceId": deviceId, "expectedRevision": pendingMove.checkedRevision(),
+            ]
+            if !sharedFields.isEmpty {
+                var config = (pendingMove.source.config ?? [:]).mapValues(\.jsonValue)
+                var shared: [String: Any] = [:]
+                if let existing = pendingMove.source.config?["params"] {
+                    guard let object = existing.objectValue
+                    else { throw DesktopAPIError.message("The source settings need repair before moving it.") }
+                    shared = object.mapValues(\.jsonValue)
+                }
+                for field in sharedFields {
+                    shared[field.name] = params[field.name] ?? ""
+                }
+                config["params"] = shared
+                body["config"] = config
+            }
+            let local = params.filter { memberNames.contains($0.key) }
+            if !local.isEmpty { body["memberConfig"] = ["params": local] }
+            try check(current)
+            moveAttemptedAccounts.insert(pendingMove.source.accountId)
+            try await api.mutate("PATCH", "admin/sources/\(pathPart(pendingMove.source.id))", body: body)
+            try check(current)
+            keptPausedAfterMove = !pendingMove.source.enabled
+            processedAccounts.insert(pendingMove.source.accountId)
+            self.pendingMove = nil
+            try await addAccounts(current)
+        } catch {
+            if current == generation {
+                self.pendingMove = nil
+                self.error = error.localizedDescription
+            }
+        }
     }
 
     private func watch(_ current: Int) {
@@ -445,6 +525,9 @@ final class DesktopSourceFlow {
         let previous = flowId
         flowId = nil
         auth = nil
+        pendingMove = nil
+        processedAccounts = []
+        moveAttemptedAccounts = []
         if clearCredentials { credentials = [:]
             credentialsCollected = false
         }

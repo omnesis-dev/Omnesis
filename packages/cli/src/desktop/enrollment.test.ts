@@ -62,7 +62,10 @@ test("keeps interactive and collector enrollment in their existing least-authori
     ["cli", "/tmp/fictional-desktop.key"],
     ["collector", "/tmp/fictional-collector.key"],
   ]);
-  for (const [options] of pair.mock.calls) expect(options).not.toHaveProperty("scopes");
+  for (const [options] of pair.mock.calls) {
+    expect(options).not.toHaveProperty("scopes");
+    expect(options.requireEncryptedStorage).toBe(true);
+  }
   expect(f.events).toEqual([
     { role: "interactive", phase: "signing-in" },
     { role: "interactive", phase: "connected" },

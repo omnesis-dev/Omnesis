@@ -16,6 +16,12 @@ import type { CloudDevicePairing } from "./device-pairing.js";
 
 export const pairedDeviceSchema = z
   .object({
+    homeName: z
+      .string()
+      .min(1)
+      .max(80)
+      .refine((value) => !/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/.test(value))
+      .optional(),
     gatewayUrl: z.string().min(1).max(2048),
     gatewayFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
     gatewayCertificate: z.string().min(1).max(16_384),

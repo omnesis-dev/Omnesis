@@ -50,6 +50,8 @@ const credentialSchema = z.object({
 export type GatewayTlsTarget = Pick<GatewayBinding, "publicOrigin" | "certificate">;
 
 export interface CloudDevicePairing {
+  /** Display-only account-directory label; never an authority or TLS binding. */
+  homeName?: string;
   gatewayUrl: string;
   gatewayFingerprint: string;
   gatewayCertificate: string;
@@ -62,6 +64,8 @@ export interface CloudDevicePairing {
 }
 
 export interface CloudDevicePairingOptions {
+  /** A stricter opt-in persisted on the resulting device grant. */
+  requireEncryptedStorage?: true;
   kind: "cli" | "collector";
   name: string;
   confirm(
@@ -194,6 +198,7 @@ export async function pairCloudDevice(
       {
         pairingCode: status.pairingCode,
         capabilities: {
+          ...(options.requireEncryptedStorage ? { requiresEncryptedStorage: true } : {}),
           platform: options.kind,
           suggestedName: value.name,
           installId: value.requestId,
@@ -298,6 +303,7 @@ export async function pinnedGatewayJson(
       "/devices/pair",
       "/devices/direct-candidates",
       "/whoami",
+      "/health",
     ].includes(path)
   )
     throw new Error("Unsupported pairing endpoint");
@@ -351,10 +357,6 @@ export async function pinnedGatewayJson(
     const response = once(upstream, "response") as Promise<[IncomingMessage]>;
     upstream.end(payload);
     const [reply] = await response;
-    if (reply.statusCode !== 200) {
-      reply.destroy();
-      throw new GatewayRequestRefused(reply.statusCode);
-    }
     const chunks: Buffer[] = [];
     let size = 0;
     for await (const chunk of reply) {
@@ -362,7 +364,26 @@ export async function pinnedGatewayJson(
       if (size > 65_536) throw new Error("Gateway pairing response is too large");
       chunks.push(chunk);
     }
-    return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    const text = Buffer.concat(chunks).toString("utf8");
+    if (reply.statusCode !== 200) {
+      // Only a recognized content-free refusal crosses into desktop state.
+      // Never expose an arbitrary remote message or body to the native bridge.
+      let code: "STORAGE_PROTECTION_REQUIRED" | undefined;
+      try {
+        const body: unknown = JSON.parse(text);
+        if (
+          body !== null &&
+          typeof body === "object" &&
+          "code" in body &&
+          body.code === "STORAGE_PROTECTION_REQUIRED"
+        )
+          code = "STORAGE_PROTECTION_REQUIRED";
+      } catch {
+        /* A non-JSON refusal is still a refusal. */
+      }
+      throw new GatewayRequestRefused(reply.statusCode, code);
+    }
+    return JSON.parse(text);
   } finally {
     agent.destroy();
     stream.destroy();
@@ -370,7 +391,10 @@ export async function pinnedGatewayJson(
 }
 
 export class GatewayRequestRefused extends Error {
-  constructor(readonly status: number | undefined) {
+  constructor(
+    readonly status: number | undefined,
+    readonly code?: "STORAGE_PROTECTION_REQUIRED",
+  ) {
     super("Gateway pairing request refused");
   }
 }

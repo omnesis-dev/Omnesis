@@ -172,6 +172,47 @@ export async function secretFileWritesEncrypted(
   }
 }
 
+/**
+ * Rewrap an authenticated secret for an explicit logical destination without
+ * installing either root key or returning plaintext to the caller.
+ */
+export function rewrapSecretFileValue(
+  raw: string,
+  options: {
+    sourceRootKey: string;
+    targetRootKey: string;
+    sourceScope: string;
+    targetScope: string;
+  },
+): string {
+  let sourceKey: Buffer | undefined;
+  let targetKey: Buffer | undefined;
+  try {
+    if (
+      Buffer.byteLength(raw) > 16 * 1024 * 1024 ||
+      [options.sourceScope, options.targetScope].some(
+        (scope) => !scope || Buffer.byteLength(scope) > 4096 || scope.includes("\0"),
+      )
+    ) {
+      throw new Error("Invalid rewrap input");
+    }
+    const envelope = parseEnvelope(raw);
+    if (!envelope) throw new Error("An encrypted secret is required");
+    sourceKey = installRootKeyBytes(options.sourceRootKey);
+    targetKey = installRootKeyBytes(options.targetRootKey);
+    return encryptEnvelope(
+      decryptEnvelope(envelope, sourceKey, options.sourceScope),
+      targetKey,
+      options.targetScope,
+    );
+  } catch {
+    throw new Error("The encrypted secret could not be rewrapped for this library");
+  } finally {
+    sourceKey?.fill(0);
+    targetKey?.fill(0);
+  }
+}
+
 export function isEncryptedSecretFile(raw: string): boolean {
   return parseEnvelope(raw) !== null;
 }

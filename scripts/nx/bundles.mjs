@@ -7,6 +7,7 @@ import { existsSync } from "node:fs";
 import picomatch from "picomatch";
 
 export const bundles = {
+  "desktop-runtime": { kind: "e2e", tests: ["desktop-runtime.e2e.test.ts"] },
   "source-lifecycle": {
     kind: "e2e",
     tests: [
@@ -283,14 +284,24 @@ const areas = [
     bundles: ["gateway-core"],
   },
   { test: (p) => p.startsWith("ios/"), bundles: ["ios-logic"] },
+  {
+    test: (p) =>
+      p.startsWith("packages/cli/src/desktop/") ||
+      p === "packages/cli/src/commands/desktop.ts" ||
+      p.startsWith("packages/collector/src/e2e/desktop-runtime"),
+    bundles: ["desktop-runtime"],
+  },
   { test: (p) => p.startsWith("macos/"), bundles: ["macos-logic", "macos-test"] },
   {
-    test: (p) => /^scripts\/desktop\/native-check(?:\.test)?\.mjs$/.test(p),
+    test: (p) =>
+      /^scripts\/desktop\/(?:native-check(?:\.test)?|prepare-node-test-fixture|node-test-fixture\.test)\.mjs$/.test(
+        p,
+      ),
     bundles: ["macos-logic", "macos-test"],
   },
   {
     test: (p) =>
-      /^scripts\/desktop\/(?:prepare-runtime|assemble-app|native-inventory|node-runtime|runtime-assets|distribute)/.test(
+      /^scripts\/desktop\/(?:prepare-runtime|assemble-app|native-inventory|node-runtime|runtime-assets|distribute|smoke-runtime|update-metadata)/.test(
         p,
       ),
     bundles: ["macos-build"],

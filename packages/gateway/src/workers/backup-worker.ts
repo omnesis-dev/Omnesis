@@ -3,7 +3,7 @@
 
 /**
  * Backup worker — runs `VACUUM INTO` snapshots of the SQLite stores
- * plus plain copies of the config files, entirely off the gateway main
+ * plus configuration copies, entirely off the gateway main
  * thread. `VACUUM INTO` in better-sqlite3 is synchronous and takes minutes
  * on multi-GB databases; hosting it here keeps the HTTP path responsive
  * while a backup runs.
@@ -15,15 +15,25 @@
  *
  * The source databases are opened read-only — `VACUUM INTO` never mutates
  * the original, and a read-only WAL handle is consistent against the
- * writer worker's concurrent commits.
+ * writer worker's concurrent commits. Keyed SQLite snapshots retain their
+ * cipher from creation; configuration copies stream into artifact encryption
+ * when an installation root key is supplied.
  */
 
-import { mkdirSync, readdirSync, statSync } from "node:fs";
+import { mkdirSync, readdirSync, statSync, lstatSync, constants } from "node:fs";
+import { open } from "node:fs/promises";
+import { pipeline } from "node:stream/promises";
+import { Readable } from "node:stream";
 import { dirname, join } from "node:path";
 import { parentPort, workerData } from "node:worker_threads";
 import Database from "better-sqlite3";
 type Db = Database.Database;
-import { copyPrivate, ensurePrivateDirSync } from "@omnesis/core";
+import {
+  BACKUP_RECOVERY_ENVELOPE_NAME,
+  copyPrivate,
+  ensurePrivateDirSync,
+  produceEncryptedArtifact,
+} from "@omnesis/core";
 
 import { openEncryptedSqlite } from "../sqlite-encryption.js";
 import type { BackupWorkerInput, BackupWorkerMessage } from "./backup-protocol.js";
@@ -71,9 +81,62 @@ function vacuumInto(sourcePath: string, destPath: string, keyHex?: string): void
   }
 }
 
-const input = workerData as BackupWorkerInput;
+async function copyEncrypted(
+  from: string,
+  to: string,
+  scope: string,
+  rootKey: string,
+): Promise<{ path: string; bytes: number }> {
+  const metadata = lstatSync(from);
+  if (metadata.isSymbolicLink()) throw new Error("Backup config contains a symbolic link");
+  if (metadata.isDirectory()) {
+    mkdirSync(to, { mode: 0o700 });
+    let bytes = 0;
+    for (const child of readdirSync(from)) {
+      bytes += (
+        await copyEncrypted(join(from, child), join(to, child), `${scope}/${child}`, rootKey)
+      ).bytes;
+    }
+    return { path: to, bytes };
+  }
+  if (!metadata.isFile() || metadata.nlink !== 1)
+    throw new Error("Backup config is not a regular owned file");
+  mkdirSync(dirname(to), { recursive: true, mode: 0o700 });
+  const source = await open(from, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    const opened = await source.stat();
+    if (
+      !opened.isFile() ||
+      opened.dev !== metadata.dev ||
+      opened.ino !== metadata.ino ||
+      opened.nlink !== 1
+    )
+      throw new Error("Backup configuration changed before reading");
+    const result = await produceEncryptedArtifact(`${to}.enc`, { rootKey, scope }, async (body) => {
+      async function* chunks() {
+        const buffer = Buffer.alloc(64 * 1024);
+        for (;;) {
+          const { bytesRead } = await source.read(buffer, 0, buffer.length, null);
+          if (!bytesRead) return;
+          yield Buffer.from(buffer.subarray(0, bytesRead));
+        }
+      }
+      await pipeline(Readable.from(chunks()), body);
+      const after = await source.stat();
+      if (
+        opened.size !== after.size ||
+        opened.mtimeMs !== after.mtimeMs ||
+        opened.ctimeMs !== after.ctimeMs
+      )
+        throw new Error("Backup configuration changed while reading");
+    });
+    return { path: result.path, bytes: result.bytes };
+  } finally {
+    await source.close();
+  }
+}
 
-try {
+async function run(input: BackupWorkerInput): Promise<void> {
   if (process.platform === "win32") {
     const directories = new Set([
       ...input.vacuums.map((job) => dirname(job.destPath)),
@@ -98,18 +161,30 @@ try {
     // Owner-only: these can hold copies of per-account credential files, which
     // are 0600 in the config tree.
     mkdirSync(dirname(copy.to), { recursive: true, mode: 0o700 });
-    copyPrivate(copy.from, copy.to);
+    const encryption =
+      copy.name === BACKUP_RECOVERY_ENVELOPE_NAME ? undefined : input.artifactEncryption;
+    const encrypted = encryption
+      ? await copyEncrypted(
+          copy.from,
+          copy.to,
+          `${encryption.scope}:${copy.name}`,
+          encryption.rootKey,
+        )
+      : undefined;
+    if (!encrypted) copyPrivate(copy.from, copy.to);
     post({
       type: "file",
-      file: copy.name,
-      bytes: sizeOfPath(copy.to),
+      file: encrypted && encrypted.path !== copy.to ? `${copy.name}.enc` : copy.name,
+      bytes: encrypted?.bytes ?? sizeOfPath(copy.to),
       durationMs: Date.now() - start,
+      ...(encrypted ? { encrypted: true } : {}),
     });
   }
   post({ type: "done" });
-} catch (err) {
+}
+run(workerData as BackupWorkerInput).catch((err: unknown) => {
   post({
     type: "error",
     error: err instanceof Error ? (err.stack ?? err.message) : String(err),
   });
-}
+});

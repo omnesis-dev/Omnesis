@@ -10,6 +10,8 @@ struct DesktopRemovalView: View {
     @Environment(DesktopStore.self) private var store
     @Environment(\.dismiss) private var dismiss
     @State private var eraseData = false
+    @State private var movingApplication = false
+    @State private var confirmTrash = false
     @State private var confirmErase = false
     @State private var localFailure: String?
 
@@ -20,11 +22,13 @@ struct DesktopRemovalView: View {
                     .font(.title2.bold())
                 Text(outcome.message).textSelection(.enabled)
                 if outcome.finished {
-                    Text("Quit Omnesis, then move the Omnesis app from Applications to Trash.")
+                    Text("You can keep the app for later or move this copy of Omnesis to Trash and quit.")
+                    if let localFailure { Text(localFailure).foregroundStyle(.red) }
+                    if movingApplication { ProgressView("Moving Omnesis to Trash…") }
                     HStack {
                         Button("Done") { dismiss() }
                         Spacer()
-                        Button("Quit Omnesis") { NSApp.terminate(nil) }.buttonStyle(.borderedProminent)
+                        Button("Move app to Trash and quit…", role: .destructive) { confirmTrash = true }.buttonStyle(.borderedProminent)
                     }
                 } else {
                     Button("Retry saved key cleanup") { review() }.buttonStyle(.borderedProminent)
@@ -66,10 +70,26 @@ struct DesktopRemovalView: View {
                 }
                 if store.busy { ProgressView("Preparing removal…") }
             }
-        }.padding(30).frame(width: 540).disabled(store.busy)
-            .interactiveDismissDisabled(store.busy)
+        }.padding(30).frame(width: 540).disabled(store.busy || movingApplication)
+            .interactiveDismissDisabled(store.busy || movingApplication)
             .onAppear {
                 if store.state.retirement?.mode == "erase-data", store.state.retirement?.phase != "complete" { eraseData = true }
+            }
+            .confirmationDialog("Move this Omnesis app to Trash?", isPresented: $confirmTrash) {
+                Button("Move app to Trash and quit", role: .destructive) {
+                    guard let outcome = store.removalOutcome, outcome.finished else { return }
+                    movingApplication = true
+                    Task {
+                        do { try await DesktopApplicationTrash.removeCurrentApplication(after: outcome) }
+                        catch {
+                            localFailure =
+                                "Omnesis could not move this app to Trash. Quit, then move this copy of the app to Trash in Finder."
+                        }
+                        movingApplication = false
+                    }
+                }
+            } message: {
+                Text("Only this copy of the Omnesis app is moved. Your library follows the removal choice already completed above.")
             }
             .confirmationDialog("Permanently erase the Omnesis library on this Mac?", isPresented: $confirmErase) {
                 Button("Erase the library and remove Omnesis", role: .destructive) {

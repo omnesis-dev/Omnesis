@@ -277,6 +277,15 @@ describe("Nx change selection", () => {
     ]);
   });
 
+  test.each(["prepare-node-test-fixture.mjs", "node-test-fixture.test.mjs"])(
+    "the real process fixture producer selects native logic and application checks: %s",
+    (filename) => {
+      process.chdir(originalCwd);
+      const plan = buildFixturePlan([`scripts/desktop/${filename}`]);
+      expect(plan.bundles).toEqual(["macos-logic", "macos-test"]);
+    },
+  );
+
   test("representative Nx plans narrow leaf, portal, search and native changes", () => {
     process.chdir(originalCwd);
     const provider = buildFixturePlan(["packages/providers/google/src/index.ts"]);

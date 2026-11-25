@@ -35,6 +35,8 @@ targets:
         product: Omnesis
       - target: OmnesisBackground
         embed: false
+      - target: OmnesisRuntimeExec
+        embed: false
     settings:
       base:
         PRODUCT_NAME: Omnesis
@@ -50,10 +52,28 @@ targets:
           set -eu
           mkdir -p "$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH/Library/LoginItems"
           ditto "$BUILT_PRODUCTS_DIR/OmnesisBackground.app" "$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH/Library/LoginItems/OmnesisBackground.app"
+          mkdir -p "$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH/Resources"
+          ditto "$BUILT_PRODUCTS_DIR/OmnesisRuntimeExec" "$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH/Resources/runtime-exec"
         inputFiles:
           - $(BUILT_PRODUCTS_DIR)/OmnesisBackground.app
+          - $(BUILT_PRODUCTS_DIR)/OmnesisRuntimeExec
         outputFiles:
           - $(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Library/LoginItems/OmnesisBackground.app
+          - $(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Resources/runtime-exec
+  OmnesisRuntimeExec:
+    type: tool
+    platform: macOS
+    sources:
+      - path: Sources/OmnesisRuntimeExec
+    dependencies:
+      - package: DesktopCore
+        product: DesktopCore
+    settings:
+      base:
+        PRODUCT_NAME: OmnesisRuntimeExec
+        PRODUCT_BUNDLE_IDENTIFIER: dev.omnesis.desktop.runtime-exec
+        GENERATE_INFOPLIST_FILE: YES
+        SKIP_INSTALL: YES
   OmnesisBackground:
     type: application
     platform: macOS

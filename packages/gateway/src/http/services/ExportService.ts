@@ -25,9 +25,10 @@
  *     source filter, total document count, a per-source breakdown, and
  *     encryption metadata when a root key wrapped the artifacts.
  *
- * When an install root key exists, completed export files are encrypted in
- * place as generated artifacts; this deliberately does not imply live
- * database encryption.
+ * When an install root key exists, documents, analytics CSV and the full
+ * manifest stream directly into authenticated ciphertext. No plaintext export
+ * staging file is created. Artifact encryption is separate from live database
+ * encryption.
  *
  * The documents walk runs on a worker thread (`workers/export-worker.ts`):
  * better-sqlite3 is synchronous and serializing a multi-100k-doc corpus
@@ -38,14 +39,20 @@
  */
 
 import { Worker } from "node:worker_threads";
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import {
   ENCRYPTED_ARTIFACT_SUFFIX,
   createLogger,
+  atomicWriteFile,
+  fsyncDir,
   encryptArtifactFileInPlace,
+  produceEncryptedArtifact,
+  readInstallRootKey,
+  secretFileEncryptionRequired,
+  isEncryptedArtifactFile,
   resolveWorkerEntry,
   type SecretStoreBackend,
 } from "@omnesis/core";
@@ -142,7 +149,10 @@ export interface ExportServiceOptions {
    * Production wires `analyticsDb.exportTablesToCsv`; tests stub it.
    * Returns the table names written.
    */
-  analyticsExport: (destDir: string) => Promise<string[]>;
+  analyticsExport: (
+    destDir: string,
+    encryption?: import("../../analytics/export-encrypted-csv.js").EncryptedAnalyticsExport,
+  ) => Promise<string[]>;
   /** Defaults to `<configDir>/exports`. */
   exportsDir?: string;
   /** Clock seam (export directory names derive from it). */
@@ -222,6 +232,11 @@ export class ExportService {
     };
   }
 
+  /** Internal filesystem authority for authenticated artifact downloads. */
+  getArtifactRoot(): string {
+    return this.exportsDir;
+  }
+
   /** Completed exports (directories with a parseable manifest), newest first. */
   list(): ListedExport[] {
     if (!existsSync(this.exportsDir)) return [];
@@ -269,7 +284,16 @@ export class ExportService {
   private async run(cur: CurrentExport): Promise<void> {
     const startMs = Date.now();
     try {
-      const documentsFile = cur.format === "csv" ? "documents.csv" : "documents.jsonl";
+      const rootKey = await readInstallRootKey({
+        configDir: this.opts.configDir,
+        backend: this.opts.secretStoreBackend,
+      });
+      if (!rootKey && secretFileEncryptionRequired(this.opts.configDir))
+        throw new Error(
+          "The install root key is unavailable. Unlock it before exporting protected library data",
+        );
+      const documentName = cur.format === "csv" ? "documents.csv" : "documents.jsonl";
+      const documentsFile = rootKey ? `${documentName}${ENCRYPTED_ARTIFACT_SUFFIX}` : documentName;
       const input: ExportWorkerInput = {
         gatewayDbPath: this.opts.gatewayDbPath,
         ...(this.opts.gatewayDbKeyHex ? { gatewayDbKeyHex: this.opts.gatewayDbKeyHex } : {}),
@@ -277,6 +301,9 @@ export class ExportService {
         format: cur.format,
         ...(cur.sourceId ? { sourceId: cur.sourceId } : {}),
         batchSize: DOCUMENTS_BATCH_SIZE,
+        ...(rootKey
+          ? { artifactEncryption: { rootKey, scope: `export:${cur.exportId}:${documentName}` } }
+          : {}),
       };
       const { perSource } = await this.runWorker(input, cur);
       const files = [documentsFile];
@@ -287,11 +314,19 @@ export class ExportService {
       // rows already round-trip via `omnesis sql` / the analytics API.
       let analyticsTables: string[] = [];
       if (cur.format === "csv") {
-        analyticsTables = await this.opts.analyticsExport(cur.path);
-        for (const table of analyticsTables) files.push(`${table}.csv`);
+        analyticsTables = await this.opts.analyticsExport(
+          cur.path,
+          rootKey ? { rootKey, scope: `export:${cur.exportId}` } : undefined,
+        );
+        for (const table of analyticsTables)
+          files.push(`${table}.csv${rootKey ? ENCRYPTED_ARTIFACT_SUFFIX : ""}`);
         log.info(`Exported ${analyticsTables.length} analytics table(s) to CSV`);
       }
-      const encrypted = await this.encryptExportFiles(cur, files);
+      if (rootKey && files.some((file) => !isEncryptedArtifactFile(join(cur.path, file))))
+        throw new Error("An export producer did not provide the required encrypted artifact");
+      const encrypted = rootKey
+        ? { encrypted: true, files }
+        : await this.encryptExportFiles(cur, files);
       const manifestFiles = encrypted.files;
 
       const finishedAt = this.now().toISOString();
@@ -317,7 +352,12 @@ export class ExportService {
       const manifest = encrypted.encrypted
         ? await this.writeEncryptedFullManifest(cur, manifestBase)
         : manifestBase;
-      writeFileSync(join(cur.path, MANIFEST_NAME), JSON.stringify(manifest, null, 2) + "\n");
+      await atomicWriteFile(
+        join(cur.path, MANIFEST_NAME),
+        JSON.stringify(manifest, null, 2) + "\n",
+        { mode: 0o600 },
+      );
+      await fsyncDir(this.exportsDir);
 
       this.lastResult = {
         exportId: cur.exportId,
@@ -425,12 +465,17 @@ export class ExportService {
     fullManifest: ExportManifest,
   ): Promise<ExportManifest> {
     const fullPath = join(cur.path, FULL_MANIFEST_NAME);
-    writeFileSync(fullPath, JSON.stringify(fullManifest, null, 2) + "\n", { mode: 0o600 });
-    const result = await encryptArtifactFileInPlace(fullPath, {
-      configDir: this.opts.configDir,
-      backend: this.opts.secretStoreBackend,
-      scope: `export:${cur.exportId}:${FULL_MANIFEST_NAME}`,
-    });
+    const result = await produceEncryptedArtifact(
+      `${fullPath}${ENCRYPTED_ARTIFACT_SUFFIX}`,
+      {
+        configDir: this.opts.configDir,
+        backend: this.opts.secretStoreBackend,
+        scope: `export:${cur.exportId}:${FULL_MANIFEST_NAME}`,
+      },
+      async (body) => {
+        body.write(JSON.stringify(fullManifest, null, 2) + "\n");
+      },
+    );
     if (!result.encrypted) {
       throw new Error(
         "Export artifacts were encrypted but the full manifest could not be encrypted",

@@ -276,6 +276,34 @@ test("a home address held by another machine is skipped before any byte is sent,
   }
 });
 
+test("pinned requests expose only the recognized storage refusal code", async () => {
+  const f = await fixture();
+  try {
+    for (const code of ["STORAGE_PROTECTION_REQUIRED", "fictional-private-detail"]) {
+      f.reply(503, { code, error: "fictional-private-detail" });
+      await expect(
+        f.json(f.binding, "/health", undefined, AbortSignal.timeout(5000), undefined, {
+          token: "device-token",
+          tlsSpkiFingerprint: f.pin,
+        }),
+      ).rejects.toMatchObject({
+        status: 503,
+        code: code === "STORAGE_PROTECTION_REQUIRED" ? code : undefined,
+        message: "Gateway pairing request refused",
+      });
+    }
+    f.reply(503, "x".repeat(65_537));
+    await expect(
+      f.json(f.binding, "/health", undefined, AbortSignal.timeout(5000), undefined, {
+        token: "device-token",
+        tlsSpkiFingerprint: f.pin,
+      }),
+    ).rejects.toThrow("too large");
+  } finally {
+    await f.close();
+  }
+});
+
 test("canonical authentication and malformed responses remain terminal while temporary service failures retain hints", async () => {
   const f = await fixture();
   try {

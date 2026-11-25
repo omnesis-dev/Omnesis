@@ -2,6 +2,8 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { access, chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { stagePinnedDuckDbExtensions } from "./pinned-extensions.mjs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
@@ -37,7 +39,12 @@ async function inputs() {
   const root = await temporary();
   const runtime = join(root, "runtime");
   await put(runtime, "node", thin("arm64"));
-  await chmod(join(runtime, "node"), 0o755);
+  await put(runtime, "runtime-exec", thin("arm64"));
+  await put(runtime, "bin/node", '#!/bin/sh\nexec runtime-exec --node "$@"\n');
+  await put(runtime, "npm", '#!/bin/sh\nexec runtime-exec --node npm-cli.js "$@"\n');
+  await put(runtime, "npx", '#!/bin/sh\nexec runtime-exec --node npx-cli.js "$@"\n');
+  for (const path of ["node", "runtime-exec", "bin/node", "npm", "npx"])
+    await chmod(join(runtime, path), 0o755);
   await put(runtime, "packages/cli/dist/index.js", 'export const desktop = "bridge";');
   await put(runtime, "packages/gateway/portal/index.html", "<html>Omnesis</html>");
   await put(runtime, "packages/core/package.json", '{"name":"@omnesis/core","type":"module"}');
@@ -53,6 +60,8 @@ async function inputs() {
     format: 1,
     architecture: "arm64",
     nodeVersion: NODE_RUNTIME.version,
+    codeUsageProtocol: 1,
+    runtimeLauncher: "runtime-exec",
     productVersion: "0.7.8",
     inventory: await inventoryBundle(runtime, "arm64"),
   };
@@ -188,7 +197,7 @@ describe("bundled runtime tools", () => {
     await expect(access(join(root, "output/.bin"))).rejects.toThrow();
   });
 
-  test("private npm uses the bundled node even with an empty host PATH", async () => {
+  test("npm, npx and env-node enter the bundled lease launcher with an empty host PATH", async () => {
     const { copyNodeTools } = await import("./runtime-assets.mjs");
     const { execFileSync } = await import("node:child_process");
     const root = await temporary();
@@ -197,15 +206,28 @@ describe("bundled runtime tools", () => {
     await put(distribution, "bin/node", '#!/bin/sh\nprintf "%s\\n" "$@"\n');
     await put(distribution, "lib/node_modules/npm/bin/npm-cli.js", "// npm fixture\n");
     await put(distribution, "LICENSE", "Node license fixture");
+    await put(target, "runtime-exec", '#!/bin/sh\nprintf "%s\\n" "$@"\n');
+    await chmod(join(target, "runtime-exec"), 0o755);
     copyNodeTools(distribution, target);
     const result = execFileSync(join(target, "npm"), ["--version"], {
       encoding: "utf8",
       env: { PATH: "" },
     });
     expect(result.trim().split("\n")).toEqual([
+      "--node",
       join(target, "lib/node_modules/npm/bin/npm-cli.js"),
       "--version",
     ]);
+    expect(
+      execFileSync(join(target, "bin/node"), ["--version"], { encoding: "utf8", env: { PATH: "" } })
+        .trim()
+        .split("\n"),
+    ).toEqual(["--node", "--version"]);
+    expect(
+      execFileSync(join(target, "bin/npx"), ["--version"], { encoding: "utf8", env: { PATH: "" } })
+        .trim()
+        .split("\n"),
+    ).toEqual(["--node", join(target, "lib/node_modules/npm/bin/npx-cli.js"), "--version"]);
   });
 });
 
@@ -305,5 +327,84 @@ describe("inert update compatibility metadata", () => {
     ).toBe(true);
     await expect(writeDesktopUpdateMetadata(root, "arm64", "0.7.9")).rejects.toThrow(/lockstep/);
     await expect(writeDesktopUpdateMetadata(root, "arm64", "0.7.8")).rejects.toThrow();
+  });
+});
+
+describe("offline pinned analytics crypto staging", () => {
+  test("runs the maintained producer and copies only the target Mac binary before sealing", async () => {
+    const root = await temporary(),
+      input = join(root, "input"),
+      target = join(root, "target");
+    const bytes = thin("arm64");
+    const manifest = {
+      duckdbVersion: "v1.5.6",
+      extensions: {
+        httpfs: {
+          osx_arm64: {
+            size: bytes.length,
+            sha256: createHash("sha256").update(bytes).digest("hex"),
+          },
+        },
+      },
+    };
+    await put(input, "packages/gateway/duckdb-extensions/manifest.json", JSON.stringify(manifest));
+    await put(
+      input,
+      "packages/gateway/duckdb-extensions/v1.5.6/osx_arm64/httpfs.duckdb_extension",
+      bytes,
+    );
+    await put(
+      input,
+      "packages/gateway/duckdb-extensions/v1.5.6/linux_arm64/httpfs.duckdb_extension",
+      "invented wrong host cache",
+    );
+    const producer = vi.fn();
+    stagePinnedDuckDbExtensions(
+      {
+        input,
+        target,
+        node: "/invented/node",
+        architecture: "arm64",
+        env: { PATH: "/invented/bin" },
+      },
+      producer,
+    );
+    expect(producer).toHaveBeenCalledWith(
+      "/invented/node",
+      [
+        join(input, "scripts/duckdb-extensions.mjs"),
+        "--package-dir",
+        join(input, "packages/gateway"),
+        "--platform",
+        "osx_arm64",
+      ],
+      expect.objectContaining({ cwd: input, stdio: "inherit" }),
+    );
+    expect(
+      await readFile(
+        join(target, "packages/gateway/duckdb-extensions/v1.5.6/osx_arm64/httpfs.duckdb_extension"),
+      ),
+    ).toEqual(bytes);
+    await expect(
+      access(join(target, "packages/gateway/duckdb-extensions/v1.5.6/linux_arm64")),
+    ).rejects.toThrow();
+    await put(
+      input,
+      "packages/gateway/duckdb-extensions/v1.5.6/osx_arm64/httpfs.duckdb_extension",
+      "changed extension",
+    );
+    expect(() =>
+      stagePinnedDuckDbExtensions(
+        {
+          input,
+          target: join(root, "refused"),
+          node: "/invented/node",
+          architecture: "arm64",
+          env: {},
+        },
+        producer,
+      ),
+    ).toThrow("differs");
+    await expect(access(join(root, "refused"))).rejects.toThrow();
   });
 });

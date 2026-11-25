@@ -368,3 +368,24 @@ test("version-one removal commands preserve structured preview and result envelo
   expect(f.messages).toContainEqual({ version: 1, id: "preview", ok: true, result: preview });
   expect(f.messages).toContainEqual({ version: 1, id: "remove", ok: true, result: removed });
 });
+
+test("recovery command family preserves private structured replies", async () => {
+  const commands = ["recoveryStatus", "recoveryPrepare", "recoveryCommit", "recoveryCancel"];
+  const seen: string[] = [];
+  const f = fixture(
+    (request) => {
+      seen.push(request.command);
+      return { accepted: true };
+    },
+    (message, input) => {
+      const next = commands[seen.length];
+      if (next) send(input, next, next, {});
+      else input.end();
+    },
+  );
+  send(f.input, commands[0]!, commands[0]!, {});
+  await f.run;
+  expect(seen).toEqual(commands);
+  expect(f.messages).toHaveLength(4);
+  expect(f.messages.every((message) => message.ok === true)).toBe(true);
+});

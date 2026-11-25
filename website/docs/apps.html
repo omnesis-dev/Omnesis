@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Mobile apps — Omnesis Docs</title>
+    <title>Apps — Omnesis Docs</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="icon" type="image/png" href="/favicon-32.png" sizes="32x32" />
     <link rel="icon" type="image/png" href="/favicon-16.png" sizes="16x16" />
@@ -33,7 +33,7 @@
       content="The iOS and Android apps: getting the iOS app through TestFlight and the Android app through Google Play closed testing, or building either app yourself, pairing, Tasks, phone-only sources such as Apple Health and Health Connect, voice and quick capture, and fixing phone data that does not arrive."
     />
     <link rel="canonical" href="https://omnesis.dev/docs/apps" />
-    <meta property="og:title" content="Mobile apps — Omnesis Docs" />
+    <meta property="og:title" content="Apps — Omnesis Docs" />
     <meta
       property="og:description"
       content="The iOS and Android apps: getting the iOS app through TestFlight and the Android app through Google Play closed testing, or building either app yourself, pairing, Tasks, phone-only sources such as Apple Health and Health Connect, voice and quick capture, and fixing phone data that does not arrive."
@@ -129,9 +129,10 @@
             <li><a href="agent">The agent</a></li>
             <li><a href="connect">Agents &amp; MCP</a></li>
             <li>
-              <a href="apps" aria-current="page">Mobile apps</a>
+              <a href="apps" aria-current="page">Apps</a>
               <ul class="side-sub">
-                <li><a href="#getting-the-apps">Getting the apps</a></li>
+                <li><a href="#mac">Mac application</a></li>
+                <li><a href="#getting-the-apps">Phone apps</a></li>
                 <li><a href="#pairing">Pairing</a></li>
                 <li><a href="#one-design-two-platforms">Finding your way around</a></li>
                 <li><a href="#tasks">Tasks</a></li>
@@ -156,16 +157,55 @@
 
       <main id="main" class="docs-content">
         <p class="docs-kicker">Use</p>
-        <h1>Mobile apps</h1>
+        <h1>Apps</h1>
         <p class="docs-lead">
-          Omnesis has native iOS and Android apps. Each is two things at once: a full client for
-          your gateway — chat, search, tasks, people, devices — and the runtime for sources whose
-          data only exists on the phone. This page covers getting an app onto your phone, pairing
-          it, Tasks, the phone-only sources, voice and quick capture, and what to do when phone data
-          does not arrive. It assumes a running gateway (see <a href="install">Install</a>).
+          The Mac app can keep your library on this computer or join a library on another Mac. The
+          iOS and Android apps provide chat, search and management, and collect sources that exist
+          on your phone. The command-line and Docker installation paths remain available; see
+          <a href="install">Install</a>.
         </p>
 
-        <h2 id="getting-the-apps">Getting the apps</h2>
+        <h2 id="mac">Mac application</h2>
+        <p>
+          Install the signed Omnesis app from its disk image by dragging it into Applications, then
+          open it. Sign in to your Omnesis account, or create one with an invitation where required.
+          Choose the Mac that will keep your library. That Mac must stay awake for your other
+          devices to use it. On another Mac, choose the existing library instead of creating another
+          one. Nearby addresses are connection hints; the app verifies the library's identity before
+          using them and can reconnect through the account's encrypted connection.
+        </p>
+        <p>
+          Setup protects the app's local storage with a separate macOS Keychain key before
+          collection begins, and prepares a local search model on the library Mac. Add sources
+          through the setup checklist or Sources. Folder permissions, browser sign-in and other
+          authorization steps depend on the source. Account passwords and library credentials are
+          not copied into the setup instructions.
+        </p>
+        <p>
+          Ask is the main window. The menu bar menu opens it without requiring you to keep the
+          window visible. The setup checklist also offers phone pairing and connecting an assistant.
+          These steps use your library's confirmed public address. Setting up a chat provider is
+          optional: Settings → AI explains what the provider receives and offers the authentication
+          methods your library supports. A ChatGPT sign-in is offered only when its supported
+          runtime is available. Search does not require a cloud chat provider.
+        </p>
+        <p>
+          Settings includes storage, backups, memory and recovery protection. A memory-budget change
+          takes effect after restarting the library on its home Mac. Closing a window keeps
+          collection running; starting at login is a separate System Settings permission. Stop
+          Omnesis pauses this Mac's background operation. Remove Omnesis first reviews what will be
+          kept: preserving the library is the default, and erasing it requires a separate
+          confirmation. Keep a backup and recovery protection before erasing a library you need.
+        </p>
+        <p>
+          The app owns a separate installation. Installing it does not adopt or restart a
+          command-line or Docker installation, and removing it does not remove those installations.
+          Advanced settings opens the existing portal. Personal documents are not donated to the
+          operating system's Spotlight index; the app's system actions open or prepare an Ask
+          conversation.
+        </p>
+
+        <h2 id="getting-the-apps">Phone apps</h2>
         <p>
           An <strong>official build</strong> is signed by the Omnesis maintainer under the published
           app identities; its notifications work without any setup on your gateway. A

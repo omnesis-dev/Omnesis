@@ -65,12 +65,12 @@ export async function selectAccountGateway(
     result.expiresAt * 1000 <= Date.now()
   )
     throw new Error("Gateway account changed or sign-in expired; start again");
-  return result;
+  return { ...result, displayName: selected.displayName };
 }
 async function selectGateway(
   options: GatewaySelectionOptions,
   version: "v2" | "v3",
-): Promise<{ binding: GatewayBinding; raw: unknown }> {
+): Promise<{ binding: GatewayBinding; raw: unknown; displayName?: string }> {
   const choices = await listGateways(options, version);
   if (choices.length === 0)
     throw new Error("No gateways are connected to your Omnesis account yet");
@@ -98,7 +98,7 @@ async function selectGateway(
     bindingOrigin(binding.publicOrigin).origin !== bindingOrigin(choice.publicOrigin).origin
   )
     throw new Error("Gateway selection changed; start sign-in again");
-  return { binding, raw };
+  return { binding, raw, ...(choice.displayName ? { displayName: choice.displayName } : {}) };
 }
 
 async function directoryRequest(options: GatewayDirectoryOptions, path: string): Promise<unknown> {

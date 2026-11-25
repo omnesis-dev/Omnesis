@@ -34,6 +34,16 @@ export const desktopCommand = defineCommand({
         }
       },
     }),
+    "system-retire": defineCommand({
+      meta: {
+        name: "system-retire",
+        description: "Keep this application's library stopped after its shell is removed",
+      },
+      async run() {
+        const { retireDesktopApplication } = await import("../desktop/application-retirement.js");
+        await retireDesktopApplication(desktopProfile(), AbortSignal.timeout(80_000));
+      },
+    }),
     daemon: defineCommand({
       meta: {
         name: "daemon",

@@ -6,12 +6,14 @@ import SwiftUI
 
 @main
 struct OmnesisDesktopApp: App {
+    @NSApplicationDelegateAdaptor(DesktopApplicationDelegate.self) private var applicationDelegate
     @State private var store = DesktopStore()
     @Environment(\.openWindow) private var openWindow
 
     var body: some Scene {
         WindowGroup("Omnesis", id: "main") {
             DesktopRootView().environment(store).frame(minWidth: 860, minHeight: 600)
+                .onAppear { applicationDelegate.store = store }
         }
         .defaultSize(width: 1080, height: 740)
         .commands {
@@ -32,7 +34,7 @@ struct OmnesisDesktopApp: App {
                 }.keyboardShortcut("n")
             }
         }
-        Settings { DesktopSettingsView().environment(store).frame(width: 560, height: 540) }
+        Settings { DesktopSettingsView().environment(store).frame(width: 720, height: 640) }
         MenuBarExtra("Omnesis", image: "OmnesisMark") {
             VStack(alignment: .leading, spacing: 14) {
                 Label(store.state.statusLabel, systemImage: store.state.canOpenLibrary ? "checkmark.shield" : "clock")
@@ -100,6 +102,7 @@ struct DesktopRootView: View {
                 }
             }
         }
+        .sheet(isPresented: $store.presentRecovery) { DesktopRecoveryView().environment(store) }
         .sheet(isPresented: $store.presentRemoval) { DesktopRemovalView().environment(store) }
         .sheet(item: $store.interaction) { interaction in
             RuntimeInteractionView(interaction: interaction).environment(store)

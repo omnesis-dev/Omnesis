@@ -187,6 +187,7 @@ export {
   atomicWriteFile,
   atomicWriteFileSync,
   fsyncDirSync,
+  fsyncDir,
   fsyncFileSync,
 } from "./atomic-write.js";
 export {
@@ -400,8 +401,10 @@ export {
   markSecretFileEncryptionRequired,
   markSecretFileEncryptionRequiredSync,
   isEncryptedSecretFile,
+  rewrapSecretFileValue,
   readSecretTextFile,
   decodeSecretTextFileValue,
+  decodeSecretTextFileValueSync,
   readSecretTextFileSync,
   readSecretJsonFile,
   readSecretJsonFileSync,
@@ -421,6 +424,8 @@ export {
 export {
   ENCRYPTED_ARTIFACT_SUFFIX,
   encryptArtifactFileInPlace,
+  produceEncryptedArtifact,
+  type ProduceEncryptedArtifactOptions,
   decryptArtifactFileToFile,
   isEncryptedArtifactBuffer,
   isEncryptedArtifactFile,
@@ -430,6 +435,13 @@ export {
   type EncryptArtifactFileOptions,
   type EncryptArtifactFileResult,
 } from "./encrypted-artifact.js";
+export {
+  readEncryptedArtifactStream,
+  decryptEncryptedArtifactStream,
+  type ArtifactStreamReadOptions,
+  type EncryptedArtifactStream,
+  type AuthenticatedArtifactRead,
+} from "./artifact-stream-reader.js";
 
 export {
   STORAGE_KEY_NAMES,
@@ -442,6 +454,7 @@ export {
   readStorageKey,
   readStorageKeySync,
   rotateStorageKey,
+  rewrapStorageKeyValue,
   storageEncryptionRequired,
   storageKeyHex,
   storageKeyNamesForHost,
@@ -1478,3 +1491,5 @@ export {
   type TailscaleJoinPolicy,
   type TailscaleJoinRequest,
 } from "./tailscale-embed-wire.js";
+
+export { restoreInstallRootKeyIfAbsent } from "./root-key-recovery.js";

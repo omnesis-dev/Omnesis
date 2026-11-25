@@ -16,7 +16,7 @@ public enum DesktopRuntimeEnvironment {
                 && !key.hasSuffix("_API_KEY")
         }
         let existing = env["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
-        env["PATH"] = runtime.path + ":" + existing
+        env["PATH"] = runtime.appendingPathComponent("bin", isDirectory: true).path + ":" + runtime.path + ":" + existing
         return env
     }
 }

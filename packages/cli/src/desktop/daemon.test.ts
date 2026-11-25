@@ -55,6 +55,16 @@ async function fixture(mode: "home" | "joined" = "home") {
     pairingStamp = "first-pairing";
   const release = vi.fn();
   const deps = {
+    watchProtection: vi.fn(
+      async (_profile, signal: AbortSignal) =>
+        new Promise<void>((resolve) => {
+          if (signal.aborted) resolve();
+          else signal.addEventListener("abort", () => resolve(), { once: true });
+        }),
+    ),
+    remoteProtection: vi.fn<NonNullable<Dependencies["remoteProtection"]>>(async () => "encrypted"),
+    mayStartEpoch: vi.fn(async () => true),
+    claimEpoch: vi.fn(async () => true),
     readInstall: vi.fn(async () => ({
       version: 1 as const,
       owner: "omnesis-desktop" as const,
@@ -379,4 +389,41 @@ test("a retired installation cannot restart before or after the ownership lease"
   expect(await f.run()).toBe("stopped");
   expect(f.deps.spawn).not.toHaveBeenCalled();
   expect(f.release).toHaveBeenCalledOnce();
+});
+
+test("an update fences daemon startup before and after the runtime ownership lease", async () => {
+  const f = await fixture();
+  f.deps.mayStartEpoch.mockResolvedValue(false);
+  expect(await f.run()).toBe("stopped");
+  expect(f.deps.lock).not.toHaveBeenCalled();
+  f.deps.mayStartEpoch.mockResolvedValue(true);
+  f.deps.claimEpoch.mockResolvedValue(false);
+  expect(await f.run()).toBe("stopped");
+  expect(f.deps.spawn).not.toHaveBeenCalled();
+  expect(f.release).toHaveBeenCalledOnce();
+});
+
+test("a joined daemon cannot start collection without fresh remote storage protection", async () => {
+  const f = await fixture("joined");
+  f.deps.remoteProtection.mockResolvedValue("unprotected");
+  const run = f.run();
+  await f.event("collector", "waiting-protection");
+  expect(f.deps.spawn).not.toHaveBeenCalled();
+  f.controller.abort();
+  await run;
+});
+
+test("losing remote protection drains the collector and rechecks before any replacement", async () => {
+  const f = await fixture("joined");
+  const lost = deferred<void>();
+  f.deps.watchProtection.mockImplementation(async () => lost.promise);
+  const run = f.run();
+  await f.event("collector", "starting");
+  f.deps.remoteProtection.mockResolvedValue("unprotected");
+  lost.resolve();
+  await f.event("collector", "waiting-protection");
+  expect(f.kills).toContain("collector:SIGTERM");
+  expect(f.children).toHaveLength(1);
+  f.controller.abort();
+  await run;
 });

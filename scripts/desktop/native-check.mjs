@@ -5,6 +5,8 @@
 import { spawnSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { homedir } from "node:os";
+import { prepareNodeTestFixture } from "./prepare-node-test-fixture.mjs";
 import { fileURLToPath } from "node:url";
 import { isEntryScript } from "../lib/is-entry-script.mjs";
 
@@ -74,6 +76,14 @@ else
   xcodegen generate
   action=test
   if [ "$3" = yes ]; then action=build; fi
+  signing_allowed=YES
+  signing_required=YES
+  signing_identity=-
+  if [ "$action" = build ]; then
+    signing_allowed=NO
+    signing_required=NO
+    signing_identity=''
+  fi
   result="../evidence/Desktop-$(date +%s)-$$.xcresult"
   started=$(date +%s)
   collect_screenshots() {
@@ -93,10 +103,34 @@ PYSCREEN
   trap collect_screenshots EXIT
   xcodebuild -project OmnesisDesktop.xcodeproj -scheme OmnesisDesktop \\
     -configuration Debug -destination 'platform=macOS' -derivedDataPath build \\
-    -resultBundlePath "$result" CODE_SIGN_IDENTITY='' CODE_SIGNING_REQUIRED=NO \\
-    CODE_SIGNING_ALLOWED=NO "$action"
+    -resultBundlePath "$result" CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM='' \\
+    CODE_SIGN_IDENTITY="$signing_identity" CODE_SIGNING_REQUIRED="$signing_required" \\
+    CODE_SIGNING_ALLOWED="$signing_allowed" CODE_SIGN_INJECT_BASE_ENTITLEMENTS=YES "$action"
 fi
 `;
+
+/** Runs inside the admitted native operation, before synchronizing build inputs; never inside tests. */
+export async function prepareNativeNodeFixture(
+  options,
+  { run = spawnSync, prepare = prepareNodeTestFixture } = {},
+  sourceRoot = root,
+) {
+  const result = run("ssh", [options.host, "uname -sm"], {
+    cwd: sourceRoot,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "inherit"],
+  });
+  if (result.error) throw result.error;
+  if (result.status !== 0)
+    throw new Error("The native Node fixture architecture could not be determined");
+  const match = /^Darwin (arm64|x86_64)$/.exec(String(result.stdout).trim());
+  if (!match) throw new Error("Desktop native checks require a supported macOS build host");
+  return prepare({
+    architecture: match[1] === "arm64" ? "arm64" : "x64",
+    output: join(sourceRoot, "macos/.node-fixture"),
+    cache: join(homedir(), ".cache", "omnesis-desktop-node-test"),
+  });
+}
 
 export function runNativeCheck(options, run = spawnSync, sourceRoot = root) {
   const exec = (command, args, extra = {}) => {
@@ -160,7 +194,9 @@ export function runNativeCheck(options, run = spawnSync, sourceRoot = root) {
 
 if (isEntryScript(import.meta.url)) {
   try {
-    runNativeCheck(nativeCheckOptions(process.argv.slice(2)));
+    const options = nativeCheckOptions(process.argv.slice(2));
+    await prepareNativeNodeFixture(options);
+    runNativeCheck(options);
   } catch (error) {
     process.stderr.write(
       `${error instanceof Error ? error.message : "Desktop native check failed"}\n`,

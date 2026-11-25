@@ -179,6 +179,7 @@ test("account sign-in takes a single gateway without asking and preserves truste
     expect((await stat(f.deviceKeyFile)).mode & 0o777).toBe(0o600);
   }
   expect(result).toMatchObject({
+    homeName: "Fictional home",
     token: "stable-device-credential",
     kind: "cli",
     gatewayUrl: candidate.publicOrigin,

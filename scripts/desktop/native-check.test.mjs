@@ -7,6 +7,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -22,7 +23,7 @@ const posixTest = test.skipIf(process.platform === "win32");
 const roots = [];
 afterEach(() => roots.splice(0).forEach((root) => rmSync(root, { recursive: true, force: true })));
 function fixture() {
-  const root = mkdtempSync(join(tmpdir(), "omnesis-desktop-native-"));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "omnesis-desktop-native-")));
   roots.push(root);
   return {
     root,
@@ -100,13 +101,29 @@ posixTest("a claimed scratch cannot redirect source sync through a symbolic link
   expect(readFileSync(join(unrelated, "keep.txt"), "utf8")).toBe("unrelated data");
 });
 
-posixTest("application checks sync shared Swift client code and keep signing disabled", () => {
+posixTest(
+  "application checks sync shared Swift client code and keep build-only signing disabled",
+  () => {
+    const { options } = fixture();
+    const calls = [];
+    runNativeCheck({ ...options, lane: "test", buildOnly: true }, runner(calls));
+    expect(calls.filter((call) => call.command === "rsync")).toHaveLength(2);
+    expect(calls.at(-1).args[1]).toContain("'yes'");
+    expect(calls.at(-1).options.input).toContain(
+      'if [ "$action" = build ]; then\n    signing_allowed=NO',
+    );
+    expect(calls.at(-1).options.input).toContain('CODE_SIGN_IDENTITY="$signing_identity"');
+  },
+);
+
+posixTest("UI tests use ad-hoc Debug signing without a paid team identity", () => {
   const { options } = fixture();
   const calls = [];
-  runNativeCheck({ ...options, lane: "test", buildOnly: true }, runner(calls));
-  expect(calls.filter((call) => call.command === "rsync")).toHaveLength(2);
-  expect(calls.at(-1).args[1]).toContain("'yes'");
-  expect(calls.at(-1).options.input).toContain("CODE_SIGNING_ALLOWED=NO");
+  runNativeCheck({ ...options, lane: "test" }, runner(calls));
+  const script = calls.at(-1).options.input;
+  expect(script).toContain("signing_allowed=YES\n  signing_required=YES\n  signing_identity=-");
+  expect(script).toContain("CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM=''");
+  expect(script).toContain("CODE_SIGN_INJECT_BASE_ENTITLEMENTS=YES");
 });
 
 posixTest("real rsync preserves a remote filespec with spaces and quotes", () => {

@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import { atomicWriteFile } from "@omnesis/core";
 import { withDesktopInstallLease } from "./bootstrap.js";
+import { assertDesktopMutationAllowed } from "./update-admission.js";
 import type { DesktopProfile } from "./environment.js";
 
 const runtimeSchema = z
@@ -42,6 +43,7 @@ export async function prepareDesktopRuntime(
 }
 
 async function prepareLockedRuntime(profile: DesktopProfile): Promise<DesktopRuntime> {
+  await assertDesktopMutationAllowed(profile);
   const existing = await readDesktopRuntime(profile);
   if (existing) return existing;
   const port = await new Promise<number>((resolve, reject) => {

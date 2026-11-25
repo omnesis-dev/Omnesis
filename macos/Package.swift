@@ -7,9 +7,13 @@ import PackageDescription
 let package = Package(
     name: "OmnesisDesktopCore",
     platforms: [.macOS(.v14)],
-    products: [.library(name: "DesktopCore", targets: ["DesktopCore"])],
+    products: [
+        .library(name: "DesktopCore", targets: ["DesktopCore"]),
+        .executable(name: "OmnesisRuntimeExec", targets: ["OmnesisRuntimeExec"]),
+    ],
     targets: [
         .target(name: "DesktopCore"),
-        .testTarget(name: "DesktopCoreTests", dependencies: ["DesktopCore"]),
+        .executableTarget(name: "OmnesisRuntimeExec", dependencies: ["DesktopCore"]),
+        .testTarget(name: "DesktopCoreTests", dependencies: ["DesktopCore", "OmnesisRuntimeExec"]),
     ]
 )

@@ -65,12 +65,14 @@ final class SourceConfigField: Decodable {
 }
 
 indirect enum SourceJSONValue: Decodable {
-    case string(String), number(Double), boolean(Bool), array([SourceJSONValue])
+    case string(String), number(Double), boolean(Bool), array([SourceJSONValue]), object([String: SourceJSONValue]), null
     init(from decoder: Decoder) throws {
         let container = try decoder.singleValueContainer()
-        if let value = try? container.decode(String.self) { self = .string(value) }
+        if container.decodeNil() { self = .null }
+        else if let value = try? container.decode(String.self) { self = .string(value) }
         else if let value = try? container.decode(Bool.self) { self = .boolean(value) }
         else if let value = try? container.decode(Double.self) { self = .number(value) }
+        else if let value = try? container.decode([String: SourceJSONValue].self) { self = .object(value) }
         else { self = try .array(container.decode([SourceJSONValue].self)) }
     }
 
@@ -80,7 +82,24 @@ indirect enum SourceJSONValue: Decodable {
         case .number(let value): String(value)
         case .boolean(let value): value ? "true" : "false"
         case .array(let values): values.map(\.text).joined(separator: "\n")
+        case .object, .null: ""
         }
+    }
+
+    var jsonValue: Any {
+        switch self {
+        case .string(let value): value
+        case .number(let value): value
+        case .boolean(let value): value
+        case .array(let values): values.map(\.jsonValue)
+        case .object(let values): values.mapValues(\.jsonValue)
+        case .null: NSNull()
+        }
+    }
+
+    var objectValue: [String: SourceJSONValue]? {
+        if case .object(let value) = self { return value }
+        return nil
     }
 }
 
@@ -98,9 +117,13 @@ enum SourceValidation {
     /// A desktop loopback proxy is never the externally reachable OAuth origin.
     static func publicOrigin(_ text: String?) -> String? {
         guard let text, let url = URL(string: text), url.scheme == "https", let host = url.host,
-              !["localhost", "127.0.0.1", "::1", "[::1]"].contains(host.lowercased()),
               url.user == nil, url.password == nil, url.query == nil, url.fragment == nil,
               url.path.isEmpty || url.path == "/" else { return nil }
+        let name = host.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "."))
+        guard name.contains("."), !name.contains(":"),
+              name.range(of: "^[0-9.]+$", options: .regularExpression) == nil,
+              !["localhost", "local", "internal", "home.arpa"].contains(where: { name == $0 || name.hasSuffix("." + $0) })
+        else { return nil }
         return text.hasSuffix("/") ? String(text.dropLast()) : text
     }
 }

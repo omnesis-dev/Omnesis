@@ -20,6 +20,7 @@ import {
 } from "@omnesis/core";
 import {
   missingHostedWriteScopes,
+  SCOPE_ADMIN,
   SourceId,
   type DeviceId,
   type DeviceRecord,
@@ -128,6 +129,7 @@ import {
 import { PairingService } from "./http/services/PairingService.js";
 import { DeviceService } from "./http/services/DeviceService.js";
 import { PushRegistrationService } from "./http/services/PushRegistrationService.js";
+import { storageProtectionMiddleware } from "./http/middleware/storage-protection.js";
 import { mountStatusRoutes, mountDbSizeRoute } from "./http/routes/status.js";
 import { mountPortalRoutes } from "./http/routes/portal.js";
 import { mountPortalHandoffRoutes } from "./http/routes/portal-handoff.js";
@@ -139,6 +141,8 @@ import { mountCloudPairingRoutes } from "./http/routes/cloud-pairing.js";
 import { mountStepUp } from "./http/step-up.js";
 import { mountBackupRoutes } from "./http/routes/backup.js";
 import { mountExportRoutes } from "./http/routes/export.js";
+import { mountArtifactRoutes } from "./http/routes/artifacts.js";
+import { ArtifactDownloadService } from "./http/services/ArtifactDownloadService.js";
 import { mountModelCredentialsRoutes } from "./http/routes/model-credentials.js";
 import {
   mountDocumentCoreRoutes,
@@ -248,6 +252,8 @@ export function createServer(
   db: Db,
   dbPath?: string,
   opts?: {
+    /** Actual boot-time encrypted-store admission evidence, never a requested config flag. */
+    storageProtection?: import("./storage-protection.js").GatewayStorageProtection;
     /** Transport lifecycle admission, shared by HTTP and WebSocket upgrades. */
     requestAdmission?: MiddlewareHandler<AppEnv>;
     /**
@@ -1312,6 +1318,11 @@ export function createServer(
 
   app.use(
     "*",
+    storageProtectionMiddleware(deviceService, () => opts?.storageProtection),
+  );
+
+  app.use(
+    "*",
     devicePathObservation(
       opts?.wsServer ? (id, path) => opts.wsServer!.noteConnectionPath(id, path) : undefined,
     ),
@@ -1517,6 +1528,7 @@ export function createServer(
   sourceService.resumePendingRemovals();
 
   const pairingService = new PairingService({
+    isStorageProtected: () => opts?.storageProtection?.atRest === "encrypted",
     db,
     writeGate: w,
     statusCache,
@@ -1632,6 +1644,7 @@ export function createServer(
 
   // Status block 1: /health, /config, /admin/config*, /status
   mountStatusRoutes(app, {
+    storageProtection: opts?.storageProtection,
     tailscaleEmbed: !!opts?.tailscaleEmbed,
     getLabStatus: () => labService.flags(),
     db,
@@ -1796,6 +1809,33 @@ export function createServer(
   // Portable data export. Same wiring contract as backup.
   if (opts?.exportService) {
     mountExportRoutes(app, { exportService: opts.exportService });
+  }
+
+  const artifactDownloads =
+    opts?.backupService || opts?.exportService
+      ? new ArtifactDownloadService({
+          backupRoot: opts.backupService?.getArtifactRoot(),
+          exportRoot: opts.exportService?.getArtifactRoot(),
+        })
+      : undefined;
+  if (artifactDownloads) {
+    mountArtifactRoutes(app, {
+      service: artifactDownloads,
+      stillAuthorized: (c) => {
+        const auth = c.get("auth");
+        if (auth.authMethod === "bearer" && auth.tokenId && auth.deviceId)
+          return isTokenActive(db, auth.tokenId, auth.deviceId);
+        if (auth.authMethod === "portal-session") {
+          const sessionId = getSessionCookie(c.req.header("Cookie"), cookieName);
+          const session = sessionId ? lookupSession(db, sessionId).info : null;
+          return Boolean(
+            session?.scopes.includes(SCOPE_ADMIN) &&
+            isTokenActive(db, session.tokenId, session.credentialDeviceId),
+          );
+        }
+        return false;
+      },
+    });
   }
 
   // Model-provider credentials (gateway-host). Mounted before the
@@ -2417,6 +2457,7 @@ export function createServer(
         const results = await Promise.allSettled([
           Promise.resolve().then(() => brainAdmin.close()),
           Promise.resolve().then(() => analyticsRoutes.close()),
+          Promise.resolve().then(() => artifactDownloads?.close()),
           ...(opts?.onDoctorCleanupOwner
             ? []
             : [Promise.resolve().then(() => doctorService.close())]),

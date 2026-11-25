@@ -2,13 +2,12 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { createHash, randomUUID } from "node:crypto";
-import { lstat, mkdir, rm, unlink } from "node:fs/promises";
+import { rm, unlink } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
 import { acquireGatewayLock } from "@omnesis/core";
 import { purgeConfigDirKeyring, type KeyringPurgeResult } from "../uninstall/keyring-purge.js";
 import { readDesktopInstall, withDesktopInstallLease } from "./bootstrap.js";
-import { desktopComponentOwner } from "./component-process.js";
+import { acquireDesktopRuntimeLeases } from "./runtime-leases.js";
 import { stopDesktopDaemon } from "./daemon-control.js";
 import {
   desktopRetirementPath,
@@ -131,39 +130,18 @@ export async function removeDesktopInstall(
     await writeDesktopRetirement(profile, record);
     options.signal.throwIfAborted();
     const stopped = await deps.stopDaemon(profile, options.signal);
-    const owners: Awaited<ReturnType<typeof acquireGatewayLock>>[] = [];
+    let owners: { release(): void } | undefined;
     try {
       if (state.root) {
-        const directory = join(profile.configDir, "runtime-owner");
-        await mkdir(directory, { recursive: true, mode: 0o700 });
-        const metadata = await lstat(directory);
-        if (
-          !metadata.isDirectory() ||
-          metadata.isSymbolicLink() ||
-          (metadata.mode & 0o077) !== 0 ||
-          (process.getuid && metadata.uid !== process.getuid())
-        )
-          throw new Error("The desktop runtime owner folder must be private and owned by you");
-        owners.push(
-          await deps.lock(directory, { signal: options.signal, waitMs: stopped ? 5_000 : 0 }),
+        owners = await acquireDesktopRuntimeLeases(
+          profile,
+          {
+            signal: options.signal,
+            expectedRoot: root,
+            runtimeWaitMs: stopped ? 5_000 : 0,
+          },
+          deps.lock,
         );
-        for (const component of ["gateway", "collector"] as const) {
-          const componentDirectory = desktopComponentOwner(profile, component);
-          await mkdir(componentDirectory, { recursive: true, mode: 0o700 });
-          const componentMetadata = await lstat(componentDirectory);
-          if (
-            !componentMetadata.isDirectory() ||
-            componentMetadata.isSymbolicLink() ||
-            (componentMetadata.mode & 0o077) !== 0 ||
-            (process.getuid && componentMetadata.uid !== process.getuid())
-          )
-            throw new Error("The managed component owner folder must be private");
-          owners.push(await deps.lock(componentDirectory, { signal: options.signal, waitMs: 0 }));
-        }
-        // A manually started or orphaned home gateway retains the ordinary store lease too.
-        owners.push(await deps.lock(profile.configDir, { signal: options.signal, waitMs: 0 }));
-        if (!sameDesktopRoot(await desktopRootIdentity(profile), root))
-          throw new Error("The managed library folder changed during removal");
       }
       options.signal.throwIfAborted();
       if (mode === "keep-data") {
@@ -200,7 +178,7 @@ export async function removeDesktopInstall(
       await writeDesktopRetirement(profile, { ...record, phase: "complete" });
       return { status: "retired", data: "erased", keyring: "cleared" };
     } finally {
-      for (const owner of owners.reverse()) owner.release();
+      owners?.release();
     }
   });
 }

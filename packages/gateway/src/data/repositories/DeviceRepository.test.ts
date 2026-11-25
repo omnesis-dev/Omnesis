@@ -3,6 +3,8 @@
 
 import { randomUUID } from "node:crypto";
 import { unlinkSync, existsSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import {
   AccountId,
@@ -55,8 +57,6 @@ import {
 import { createSource, listSources } from "./SourceRepository.js";
 import { getReauthReminder, reserveReauthReminder } from "./ReauthRemindersRepository.js";
 import { createToken, listTokens } from "./TokenRepository.js";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 let dbPath: string;
 let db: ReturnType<typeof createDatabase>;
@@ -122,6 +122,21 @@ describe("getDevice / listDevices", () => {
 });
 
 describe("updateDeviceCapabilities + touchDevice", () => {
+  test("encrypted storage opt-in survives capability refreshes from older clients", () => {
+    const device = createDevice(db, {
+      name: "Protected desktop",
+      kind: "collector",
+      capabilities: { requiresEncryptedStorage: true, hostname: "fictional-original" },
+    });
+    updateDeviceCapabilities(db, device.id, { hostname: "fictional-new" });
+    expect(getDevice(db, device.id)?.capabilities).toEqual({
+      requiresEncryptedStorage: true,
+      hostname: "fictional-new",
+    });
+    updateDeviceCapabilities(db, device.id, {});
+    expect(getDevice(db, device.id)?.capabilities.requiresEncryptedStorage).toBe(true);
+  });
+
   test("updates capabilities and last_seen_at", () => {
     const d = createDevice(db, { name: "d", kind: "collector" });
     updateDeviceCapabilities(db, d.id, { hostname: "new-host", platform: "macos" });

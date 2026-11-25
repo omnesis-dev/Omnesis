@@ -3,7 +3,15 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { execFileSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  cpSync,
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -12,19 +20,28 @@ import {
   stageRuntime,
 } from "../runtime/stage-runtime.mjs";
 import { acquireNodeArchive, extractNodeArchive, NODE_RUNTIME } from "./node-runtime.mjs";
-import { inventoryBundle } from "./native-inventory.mjs";
+import { inventoryBundle, machoArchitectures } from "./native-inventory.mjs";
 import { copyNodeTools, copyProductionDependencies } from "./runtime-assets.mjs";
+import { stagePinnedDuckDbExtensions } from "./pinned-extensions.mjs";
 import { writeDesktopUpdateMetadata } from "./update-metadata.mjs";
 import { parseArguments } from "./arguments.mjs";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 
 /** Build and install on the target Mac; never install dependencies into the source checkout. */
-export async function prepareRuntime({ architecture = process.arch, output, cache, build = true }) {
+export async function prepareRuntime({
+  architecture = process.arch,
+  output,
+  cache,
+  runtimeExec,
+  build = true,
+}) {
   if (process.platform !== "darwin" || process.arch !== architecture)
     throw new Error("Prepare the desktop runtime on macOS with the target architecture");
   if (process.versions.node !== NODE_RUNTIME.version)
     throw new Error(`Build using pinned Node ${NODE_RUNTIME.version}`);
+  if (!runtimeExec || !machoArchitectures(readFileSync(runtimeExec))?.includes(architecture))
+    throw new Error("A native runtime-exec built for the target architecture is required");
   const target = resolve(output);
   if (existsSync(target)) throw new Error("Runtime output must not already exist");
   mkdirSync(dirname(target), { recursive: true });
@@ -93,9 +110,9 @@ export async function prepareRuntime({ architecture = process.arch, output, cach
       if (existsSync(source))
         copyProductionDependencies(source, join(target, entry.dir, "node_modules"));
     }
-    const extensions = join(input, "packages/gateway/duckdb-extensions");
-    if (existsSync(extensions))
-      cpSync(extensions, join(target, "packages/gateway/duckdb-extensions"), { recursive: true });
+    stagePinnedDuckDbExtensions({ input, target, node, architecture, env });
+    cpSync(runtimeExec, join(target, "runtime-exec"));
+    chmodSync(join(target, "runtime-exec"), 0o755);
     copyNodeTools(distribution, target);
     for (const notice of ["LICENSE", "THIRD_PARTY_NOTICES.md", "TRADEMARKS.md"])
       cpSync(join(repo, notice), join(target, notice));
@@ -108,6 +125,8 @@ export async function prepareRuntime({ architecture = process.arch, output, cach
           format: 1,
           architecture,
           nodeVersion: NODE_RUNTIME.version,
+          codeUsageProtocol: 1,
+          runtimeLauncher: "runtime-exec",
           ...staged,
           inventory,
         },
@@ -127,14 +146,15 @@ export async function prepareRuntime({ architecture = process.arch, output, cach
 
 if (import.meta.main) {
   const args = parseArguments(process.argv.slice(2), {
-    values: ["out", "cache", "arch"],
+    values: ["out", "cache", "arch", "runtime-exec"],
     booleans: ["no-build"],
-    required: ["out", "cache"],
+    required: ["out", "cache", "runtime-exec"],
   });
   await prepareRuntime({
     output: args.get("out"),
     cache: args.get("cache"),
     architecture: args.get("arch") ?? process.arch,
+    runtimeExec: args.get("runtime-exec"),
     build: !args.has("no-build"),
   });
 }

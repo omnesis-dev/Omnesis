@@ -16,6 +16,7 @@ import {
   storageEncryptionRequired,
 } from "@omnesis/core";
 import { desktopJournalPath, recommendDesktopResources, type DesktopProfile } from "./profile.js";
+import { assertDesktopMutationAllowed } from "./update-admission.js";
 
 const installSchema = z
   .object({
@@ -76,6 +77,7 @@ async function prepareLockedInstall(
 ): Promise<DesktopInstall> {
   const { signal } = options;
   signal.throwIfAborted();
+  await assertDesktopMutationAllowed(profile);
   await mkdir(profile.configDir, { recursive: true, mode: 0o700 });
   await assertOwnedDirectory(profile.configDir);
   const journalPath = desktopJournalPath(profile);

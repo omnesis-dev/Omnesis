@@ -32,7 +32,8 @@ export async function pairAccountDevice(
   } = {},
 ) {
   const relay = relayOrigin(options.relayUrl);
-  return pairCloudDevice(options, {
+  let homeName: string | undefined;
+  const paired = await pairCloudDevice(options, {
     gatewayJson: dependencies.gatewayJson,
     wait: dependencies.wait,
     deviceKey: await (dependencies.readDeviceKey ?? readOrCreateDeviceKey)(
@@ -61,6 +62,7 @@ export async function pairAccountDevice(
         select: options.selectGateway,
         fetch: dependencies.fetch,
       });
+      homeName = result.displayName;
       return {
         candidate: result.binding,
         identityToken: result.identityToken,
@@ -69,4 +71,5 @@ export async function pairAccountDevice(
       };
     },
   });
+  return { ...paired, ...(homeName ? { homeName } : {}) };
 }

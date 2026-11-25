@@ -64,6 +64,8 @@ function fixture(mode?: "home" | "joined") {
     close: vi.fn(async () => {}),
   };
   const deps = {
+    remoteProtection: vi.fn<NonNullable<Dependencies["remoteProtection"]>>(async () => "encrypted"),
+    updateBlocked: vi.fn(async () => false),
     readInstall: vi.fn(async () => install),
     prepareInstall: vi.fn<NonNullable<Dependencies["prepareInstall"]>>(
       async (_profile, options) => {
@@ -302,7 +304,7 @@ test("joining encrypts separate roles before starting collector and verifies int
   expect(f.deps.startDaemon.mock.invocationCallOrder[0]).toBeGreaterThan(
     f.deps.saveToken.mock.invocationCallOrder.at(-1)!,
   );
-  expect(f.deps.verifyTransport).toHaveBeenCalledOnce();
+  expect(f.deps.verifyTransport).toHaveBeenCalledTimes(2);
 });
 
 test("partial role persistence resumes without reenrolling the already approved interactive device", async () => {
@@ -567,4 +569,154 @@ test("a conflicting preparation role cannot clear a kept library's retirement", 
   });
   expect(f.deps.resumeRetirement).not.toHaveBeenCalled();
   expect(f.deps.startDaemon).not.toHaveBeenCalled();
+});
+
+test("owned home restart waits for stop acknowledgement and verified health", async () => {
+  const f = fixture("home");
+  f.setLinked(true);
+  expect(await f.run("restart")).toMatchObject({ phase: "ready", mode: "home", encrypted: true });
+  expect(f.deps.startDaemon.mock.invocationCallOrder[0]).toBeGreaterThan(
+    f.deps.stopDaemon.mock.invocationCallOrder[0]!,
+  );
+  expect(f.deps.request.mock.invocationCallOrder[0]).toBeGreaterThan(
+    f.deps.startDaemon.mock.invocationCallOrder[0]!,
+  );
+});
+
+test("a joined Mac cannot pretend restarting its collector changes the library memory limit", async () => {
+  const f = fixture("joined");
+  expect(await f.run("restart")).toMatchObject({ phase: "error", mode: "joined" });
+  expect(f.deps.stopDaemon).not.toHaveBeenCalled();
+  expect(f.deps.startDaemon).not.toHaveBeenCalled();
+});
+
+test("restart never starts another daemon when stop could not be confirmed", async () => {
+  const f = fixture("home");
+  f.deps.stopDaemon.mockResolvedValue(false);
+  expect(await f.run("restart")).toMatchObject({ phase: "error" });
+  expect(f.deps.startDaemon).not.toHaveBeenCalled();
+});
+
+test("retirement during restart stop keeps the library retired", async () => {
+  const f = fixture("home");
+  f.deps.stopDaemon.mockImplementation(async () => {
+    f.setRetirement(retired(f.profile));
+    return true;
+  });
+  expect(await f.run("restart")).toMatchObject({ retired: true });
+  expect(f.deps.startDaemon).not.toHaveBeenCalled();
+});
+
+test("restart cancellation after stopping cannot start a replacement", async () => {
+  const f = fixture("home");
+  f.deps.stopDaemon.mockImplementation(async () => {
+    f.controller.abort();
+    return true;
+  });
+  await expect(f.run("restart")).rejects.toThrow();
+  expect(f.deps.startDaemon).not.toHaveBeenCalled();
+});
+
+test("pending updates fence ordinary reconnect, preparation and restart without clearing intent", async () => {
+  const f = fixture("home");
+  f.deps.updateBlocked.mockResolvedValue(true);
+  expect(await f.run("restart")).toMatchObject({
+    phase: "waiting",
+    message: expect.stringContaining("pending Omnesis update"),
+  });
+  expect(await f.run("prepare", { mode: "home" })).toMatchObject({ phase: "waiting" });
+  expect(await f.run("connect")).toMatchObject({ phase: "waiting" });
+  expect(f.deps.stopDaemon).not.toHaveBeenCalled();
+  expect(f.deps.startDaemon).not.toHaveBeenCalled();
+  expect(f.deps.prepareInstall).not.toHaveBeenCalled();
+  expect(f.deps.resumeRetirement).not.toHaveBeenCalled();
+});
+
+test("an update beginning during restart stop cannot start an old epoch replacement", async () => {
+  const f = fixture("home");
+  f.deps.stopDaemon.mockImplementation(async () => {
+    f.deps.updateBlocked.mockResolvedValue(true);
+    return true;
+  });
+  expect(await f.run("restart")).toMatchObject({
+    phase: "waiting",
+    message: expect.stringContaining("pending Omnesis update"),
+  });
+  expect(f.deps.startDaemon).not.toHaveBeenCalled();
+});
+
+test.each(["unprotected", "unavailable"] as const)(
+  "joined %s storage evidence blocks readiness and collector start",
+  async (protection) => {
+    const f = fixture("joined");
+    f.save("cli");
+    f.save("collector");
+    f.deps.remoteProtection.mockResolvedValue(protection);
+    expect(await f.run("connect")).toMatchObject({
+      phase: "error",
+      mode: "joined",
+      encrypted: false,
+    });
+    expect(f.deps.startDaemon).not.toHaveBeenCalled();
+    expect(f.deps.stopDaemon).toHaveBeenCalled();
+    expect(f.transport.close).toHaveBeenCalled();
+  },
+);
+
+test("joined collection begins only after authenticated remote protection evidence", async () => {
+  const f = fixture("joined");
+  f.save("cli");
+  f.save("collector");
+  expect(await f.run("connect")).toMatchObject({ phase: "ready", encrypted: true });
+  expect(f.deps.startDaemon.mock.invocationCallOrder[0]).toBeGreaterThan(
+    f.deps.remoteProtection.mock.invocationCallOrder[0]!,
+  );
+});
+
+test("strict pairing refusals expose fixed protection remediation and no arbitrary server detail", async () => {
+  const f = fixture("joined");
+  f.deps.enroll.mockRejectedValue(
+    Object.assign(new Error("invented-private-server-detail"), {
+      code: "STORAGE_PROTECTION_REQUIRED",
+    }),
+  );
+  const state = await f.run("connect");
+  expect(state).toMatchObject({
+    phase: "error",
+    encrypted: false,
+    message: expect.stringContaining("Protect the library's storage"),
+  });
+  expect(JSON.stringify(state)).not.toContain("invented-private-server-detail");
+  expect(f.deps.startDaemon).not.toHaveBeenCalled();
+});
+
+test.each(["encrypted", "unprotected", "unavailable"] as const)(
+  "joined %s state carries only the independently paired display name",
+  async (protection) => {
+    const f = fixture("joined");
+    f.save("cli");
+    f.save("collector");
+    f.deps.readPair.mockImplementation(async (path) => ({
+      ...pairing(path.endsWith("cli-device.json") ? "cli" : "collector"),
+      homeName: "Example library",
+    }));
+    f.deps.remoteProtection.mockResolvedValue(protection);
+    expect(await f.run("status")).toMatchObject({ homeName: "Example library", mode: "joined" });
+  },
+);
+
+test("an offline joined library keeps its approved display name without inferring one from DNS", async () => {
+  const f = fixture("joined");
+  f.save("cli");
+  f.save("collector");
+  f.deps.readPair.mockImplementation(async (path) => ({
+    ...pairing(path.endsWith("cli-device.json") ? "cli" : "collector"),
+    homeName: "Example library",
+  }));
+  f.deps.verifyTransport.mockRejectedValue(new Error("invented-offline"));
+  expect(await f.run("status")).toMatchObject({ phase: "waiting", homeName: "Example library" });
+  const legacy = fixture("joined");
+  legacy.save("cli");
+  legacy.save("collector");
+  expect(await legacy.run("status")).not.toHaveProperty("homeName");
 });

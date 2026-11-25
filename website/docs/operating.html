@@ -128,7 +128,7 @@
             <li><a href="search">Search</a></li>
             <li><a href="agent">The agent</a></li>
             <li><a href="connect">Agents &amp; MCP</a></li>
-            <li><a href="apps">Mobile apps</a></li>
+            <li><a href="apps">Apps</a></li>
             <li><a href="notifications">Notifications</a></li>
             <li>
               <a href="operating" aria-current="page">Operating</a>
@@ -160,6 +160,22 @@
           written for whoever looks after the gateway machine. Security and encryption live on
           <a href="security">Security</a>; backups and updates on
           <a href="updating">Backup &amp; updates</a>.
+        </p>
+
+        <h2 id="desktop">Operating the Mac app</h2>
+        <p>
+          Settings → Storage shows measured usage and the library's size limit. An unavailable
+          measurement is shown as unknown. Cleanup runs as a job with its own progress and
+          cancellation; cancelling can leave work already completed in place. Removing indexed
+          source history does not delete the original files or messages. Backup cleanup keeps the
+          newest backup.
+        </p>
+        <p>
+          Settings → Memory changes the library's startup budget. Saving it does not immediately
+          reduce a running process's memory. Restart the library explicitly to apply it; a joined
+          Mac must ask you to do this on the Mac that keeps the library. The app stops only its own
+          background processes and waits for the replacement to answer before reporting it ready. A
+          pending removal or update prevents an ordinary restart from bypassing it.
         </p>
 
         <h2 id="services">Services</h2>

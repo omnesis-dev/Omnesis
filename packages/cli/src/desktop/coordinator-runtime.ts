@@ -3,7 +3,7 @@
 
 import { spawn } from "node:child_process";
 import { hostname, totalmem } from "node:os";
-import { dirname, delimiter, join } from "node:path";
+import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { z } from "zod";
 import {
@@ -33,6 +33,8 @@ import { discoverDesktopHomes } from "./discovery.js";
 import { enrollDesktopRole, type DesktopPairing } from "./enrollment.js";
 import { connectDesktopAccount } from "./account-connect.js";
 import { withDesktopPublication, publishDesktopHint } from "./publication.js";
+import { desktopUpdateBlocked } from "./update-admission.js";
+import { readDesktopRemoteProtection } from "./remote-protection.js";
 
 export interface DesktopSessionTransport {
   url: string;
@@ -40,6 +42,8 @@ export interface DesktopSessionTransport {
   close(): Promise<void>;
 }
 export interface CoordinatorDependencies {
+  remoteProtection: typeof readDesktopRemoteProtection;
+  updateBlocked: typeof desktopUpdateBlocked;
   publish: typeof withDesktopPublication;
   readInstall: typeof readDesktopInstall;
   prepareInstall: typeof prepareDesktopInstall;
@@ -74,6 +78,8 @@ export interface CoordinatorDependencies {
   sleep(signal: AbortSignal): Promise<void>;
 }
 export const desktopCoordinatorDefaults: CoordinatorDependencies = {
+  remoteProtection: readDesktopRemoteProtection,
+  updateBlocked: desktopUpdateBlocked,
   publish: withDesktopPublication,
   readInstall: readDesktopInstall,
   prepareInstall: prepareDesktopInstall,
@@ -125,7 +131,6 @@ export const desktopCoordinatorDefaults: CoordinatorDependencies = {
   startDaemon: async (profile) => {
     const entry = resolveSubprocessEntry("../index.ts", import.meta.url);
     const env = desktopEnvironment(profile);
-    env.PATH = [dirname(process.execPath), env.PATH].filter(Boolean).join(delimiter);
     const child = spawn(entry.command, [...entry.args, "desktop", "daemon"], {
       env,
       detached: true,

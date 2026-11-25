@@ -1642,6 +1642,8 @@ export interface WriteGate extends KnowledgeWriteGate {
     id: SourceId,
     patch: {
       config?: Record<string, unknown>;
+      memberConfigOverride?: Record<string, unknown>;
+      expectedRevision?: string;
       enabled?: boolean;
       deviceId?: DeviceId;
       expectDeviceId?: DeviceId;
@@ -1678,6 +1680,7 @@ export interface WriteGate extends KnowledgeWriteGate {
     configOverride: Record<string, unknown>,
     memberScopedParams: readonly string[],
     pairingFence?: PairingGenerationFence,
+    expectedRevision?: string,
   ): Promise<boolean>;
   /** Detach a device from a source; ownership passes to the oldest remaining member. */
   removeSourceMember(
@@ -2776,6 +2779,7 @@ export function writeGateFromCall(call: WriterCallFn): WriteGate {
       configOverride,
       memberScopedParams,
       pairingFence,
+      expectedRevision,
     ) =>
       call("sources.updateMemberConfig", [
         id,
@@ -2783,6 +2787,7 @@ export function writeGateFromCall(call: WriterCallFn): WriteGate {
         configOverride,
         memberScopedParams,
         pairingFence,
+        expectedRevision,
       ]),
     removeSourceMember: (id, deviceId, pairingFence) =>
       call("sources.removeMember", [id, deviceId, pairingFence]),
@@ -3443,6 +3448,7 @@ export function directWriteGate(db: Db): WriteGate {
       configOverride,
       memberScopedParams,
       pairingFence,
+      expectedRevision,
     ) =>
       withPairingGenerationFence(db, pairingFence, () =>
         updateExistingSourceMemberConfigOverride(
@@ -3451,6 +3457,7 @@ export function directWriteGate(db: Db): WriteGate {
           deviceId,
           configOverride,
           memberScopedParams,
+          expectedRevision,
         ),
       ),
     removeSourceMember: async (id, deviceId, pairingFence) =>

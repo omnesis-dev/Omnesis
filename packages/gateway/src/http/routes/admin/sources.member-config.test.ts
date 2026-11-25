@@ -3,6 +3,8 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { AccountId, SCOPE_ADMIN, SCOPE_READ, SourceType } from "@omnesis/types";
 import { createDatabase } from "../../../db.js";
@@ -13,13 +15,13 @@ import {
   getSource,
   getSourceMemberConfigOverride,
   isSourceMember,
+  updateSource,
+  updateExistingSourceMemberConfigOverride,
 } from "../../../data/repositories/SourceRepository.js";
 import { createToken } from "../../../data/repositories/TokenRepository.js";
 import { createServer } from "../../../server.js";
 import { directWriteGate } from "../../../write-gate.js";
 import type { DeviceWsServer } from "../../../ws.js";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 type Db = ReturnType<typeof createDatabase>;
 
@@ -29,6 +31,7 @@ let app: ReturnType<typeof createServer>;
 let adminToken: string;
 let sendCommand: ReturnType<typeof vi.fn>;
 let isConnected: ReturnType<typeof vi.fn>;
+let writeGate: ReturnType<typeof directWriteGate>;
 
 function cleanupDb(path: string): void {
   for (const suffix of ["", "-wal", "-shm", "-journal"]) {
@@ -51,8 +54,9 @@ beforeEach(() => {
     return { ok: true };
   });
   isConnected = vi.fn(() => true);
+  writeGate = directWriteGate(db);
   app = createServer(db, dbPath, {
-    writeGate: directWriteGate(db),
+    writeGate,
     wsServer: {
       sendCommand,
       isConnected,
@@ -126,6 +130,173 @@ describe("PATCH /admin/sources/:id/members/:deviceId", () => {
     addSourceMember(db, source.id, member.id);
     return { owner, member, source };
   }
+
+  test("addressed settings reads and revision writes preserve paused state, shared fields and sibling paths", async () => {
+    const { owner, member, source } = partitionedPair();
+    updateSource(db, source.id, { enabled: false });
+    updateExistingSourceMemberConfigOverride(
+      db,
+      source.id,
+      owner.id,
+      { params: { sessionsPath: "/srv/example-owner" } },
+      ["sessionsPath"],
+    );
+    updateExistingSourceMemberConfigOverride(
+      db,
+      source.id,
+      member.id,
+      { params: { sessionsPath: "/srv/example-member" } },
+      ["sessionsPath"],
+    );
+    const path = `/admin/sources/${encodeURIComponent(source.id)}/members/${member.id}`;
+    const headers = { authorization: `Bearer ${adminToken}`, "content-type": "application/json" };
+    const snapshot = await app.request(path, { headers });
+    expect(snapshot.headers.get("cache-control")).toBe("no-store");
+    const settings = await snapshot.json();
+    expect(settings.source.config).toEqual({
+      syncInterval: "5m",
+      params: { sessionsPath: "/srv/example-member" },
+    });
+    expect(settings.revision).toMatch(/^[a-f0-9]{64}$/);
+    const body = {
+      expectedRevision: settings.revision,
+      configOverride: { params: { sessionsPath: "/srv/example-new" } },
+    };
+    expect(
+      (await app.request(path, { method: "PATCH", headers, body: JSON.stringify(body) })).status,
+    ).toBe(200);
+    expect(getSource(db, source.id)?.enabled).toBe(false);
+    expect(getSource(db, source.id)?.config).toEqual({ syncInterval: "5m" });
+    expect(getSourceMemberConfigOverride(db, source.id, owner.id)).toEqual({
+      params: { sessionsPath: "/srv/example-owner" },
+    });
+    const stale = await app.request(path, { method: "PATCH", headers, body: JSON.stringify(body) });
+    expect(stale.status).toBe(409);
+    expect(await stale.json()).toMatchObject({ code: "SOURCE_SETTINGS_CHANGED" });
+  });
+
+  test("the writer rejects a member edit that races another settings write after validation", async () => {
+    const { member, source } = partitionedPair();
+    const path = `/admin/sources/${encodeURIComponent(source.id)}/members/${member.id}`;
+    const headers = { authorization: `Bearer ${adminToken}`, "content-type": "application/json" };
+    const snapshot = await (await app.request(path, { headers })).json();
+    const original = writeGate.updateSourceMemberConfigOverride.bind(writeGate);
+    vi.spyOn(writeGate, "updateSourceMemberConfigOverride").mockImplementationOnce(
+      async (...args) => {
+        updateExistingSourceMemberConfigOverride(
+          db,
+          source.id,
+          member.id,
+          { params: { sessionsPath: "/srv/example-winner" } },
+          ["sessionsPath"],
+        );
+        return original(...args);
+      },
+    );
+    const response = await app.request(path, {
+      method: "PATCH",
+      headers,
+      body: JSON.stringify({
+        expectedRevision: snapshot.revision,
+        configOverride: { params: { sessionsPath: "/srv/example-stale" } },
+      }),
+    });
+    expect(response.status).toBe(409);
+    expect(getSourceMemberConfigOverride(db, source.id, member.id)).toEqual({
+      params: { sessionsPath: "/srv/example-winner" },
+    });
+  });
+
+  test("moving an exclusive source applies its new local path atomically and keeps it paused", async () => {
+    const { owner, member } = partitionedPair();
+    const source = createSource(db, {
+      type: SourceType("visits-synth"),
+      accountId: AccountId("example-exclusive-settings"),
+      deviceId: owner.id,
+      enabled: false,
+      config: { syncInterval: "5m", preserved: "example-setting" },
+    });
+    const path = `/admin/sources/${encodeURIComponent(source.id)}`;
+    const headers = { authorization: `Bearer ${adminToken}`, "content-type": "application/json" };
+    const snapshot = await (await app.request(path, { headers })).json();
+    const response = await app.request(path, {
+      method: "PATCH",
+      headers,
+      body: JSON.stringify({
+        expectedRevision: snapshot.revision,
+        deviceId: member.id,
+        memberConfig: { params: { sessionsPath: "/srv/example-destination" } },
+      }),
+    });
+    expect(response.status).toBe(200);
+    expect(getSource(db, source.id)).toMatchObject({
+      deviceId: member.id,
+      enabled: false,
+      config: source.config,
+    });
+    expect(getSourceMemberConfigOverride(db, source.id, member.id)).toEqual({
+      params: { sessionsPath: "/srv/example-destination" },
+    });
+    const stale = await app.request(path, {
+      method: "PATCH",
+      headers,
+      body: JSON.stringify({ expectedRevision: snapshot.revision, deviceId: owner.id }),
+    });
+    expect(stale.status).toBe(409);
+    expect(getSource(db, source.id)?.deviceId).toBe(member.id);
+  });
+
+  test("whole-source settings reject a same-millisecond race inside the writer", async () => {
+    const { source } = partitionedPair();
+    const path = `/admin/sources/${encodeURIComponent(source.id)}`;
+    const headers = { authorization: `Bearer ${adminToken}`, "content-type": "application/json" };
+    const snapshot = await (await app.request(path, { headers })).json();
+    const clock = vi.spyOn(Date, "now").mockReturnValue(snapshot.source.updatedAt);
+    const original = writeGate.moveSource.bind(writeGate);
+    try {
+      vi.spyOn(writeGate, "moveSource").mockImplementationOnce(async (...args) => {
+        updateSource(db, source.id, {
+          config: { syncInterval: "5m", preserved: "example-concurrent-value" },
+        });
+        return original(...args);
+      });
+      const response = await app.request(path, {
+        method: "PATCH",
+        headers,
+        body: JSON.stringify({
+          expectedRevision: snapshot.revision,
+          config: { syncInterval: "10m" },
+        }),
+      });
+      expect(response.status).toBe(409);
+      expect(getSource(db, source.id)?.updatedAt).toBe(snapshot.source.updatedAt);
+      expect(getSource(db, source.id)?.config).toEqual({
+        syncInterval: "5m",
+        preserved: "example-concurrent-value",
+      });
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  test("an addressed local edit cannot be replaced through an unrelated whole-source request", async () => {
+    const { owner, member, source } = partitionedPair();
+    const path = `/admin/sources/${encodeURIComponent(source.id)}`;
+    const headers = { authorization: `Bearer ${adminToken}`, "content-type": "application/json" };
+    const snapshot = await (await app.request(path, { headers })).json();
+    const response = await app.request(path, {
+      method: "PATCH",
+      headers,
+      body: JSON.stringify({
+        expectedRevision: snapshot.revision,
+        deviceId: member.id,
+        memberConfig: { params: { sessionsPath: "/srv/example-wrong-scope" } },
+      }),
+    });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ code: "MEMBER_SETTINGS_MUST_BE_ADDRESSED" });
+    expect(getSource(db, source.id)?.deviceId).toBe(owner.id);
+  });
 
   test("POST joins with its member overlay atomically and notifies only that effective path", async () => {
     const { member, source } = partitionedPair();

@@ -28,6 +28,7 @@ import {
   isSourceStreamCleanupPending,
   type SourceStreamCleanupJob,
 } from "./SourceStreamCleanupRepository.js";
+import { sourceSettingsRevision } from "./source-settings-revision.js";
 import type { AccountDescriptor } from "@omnesis/source-sdk";
 import type Database from "better-sqlite3";
 
@@ -535,10 +536,19 @@ export function updateExistingSourceMemberConfigOverride(
   deviceId: DeviceId,
   override: Record<string, unknown>,
   memberScopedParams: readonly string[],
+  expectedRevision?: string,
 ): boolean {
   return db.transaction(() => {
     const source = getSource(db, sourceId);
     if (!source || !isSourceMember(db, sourceId, deviceId)) return false;
+    if (
+      expectedRevision !== undefined &&
+      sourceSettingsRevision(source, {
+        deviceId,
+        config: getSourceMemberConfigOverride(db, sourceId, deviceId),
+      }) !== expectedRevision
+    )
+      return false;
     initializeOrAssertSourceMemberConfigContractForDevice(
       db,
       sourceId,

@@ -21,6 +21,7 @@
 
 import { createRequire } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { managedNodeInvocation, managedRuntimePreload } from "./node-command.js";
 
 /** True when the calling module is running from compiled `.js` output. */
 export function isCompiledModule(importMetaUrl: string): boolean {
@@ -51,11 +52,18 @@ export function resolveWorkerEntry(
 ): WorkerEntry {
   assertTsPath(tsRelPath);
   if (isCompiledModule(importMetaUrl)) {
-    return { url: new URL(swapTsForJs(tsRelPath), importMetaUrl), execArgv: [] };
+    return {
+      url: new URL(swapTsForJs(tsRelPath), importMetaUrl),
+      execArgv: managedRuntimePreload(),
+    };
   }
   return {
     url: new URL(tsRelPath, importMetaUrl),
-    execArgv: ["--import", new URL(tsxRegisterRelPath, importMetaUrl).href],
+    execArgv: [
+      ...managedRuntimePreload(),
+      "--import",
+      new URL(tsxRegisterRelPath, importMetaUrl).href,
+    ],
   };
 }
 
@@ -78,11 +86,11 @@ export function resolveSubprocessEntry(tsRelPath: string, importMetaUrl: string)
   assertTsPath(tsRelPath);
   if (isCompiledModule(importMetaUrl)) {
     const scriptPath = fileURLToPath(new URL(swapTsForJs(tsRelPath), importMetaUrl));
-    return { command: process.execPath, args: [scriptPath] };
+    return managedNodeInvocation([scriptPath]);
   }
   const scriptPath = fileURLToPath(new URL(tsRelPath, importMetaUrl));
   const tsxLoader = pathToFileURL(createRequire(import.meta.url).resolve("tsx")).href;
-  return { command: process.execPath, args: ["--import", tsxLoader, scriptPath] };
+  return managedNodeInvocation(["--import", tsxLoader, scriptPath]);
 }
 
 function assertTsPath(relPath: string): void {

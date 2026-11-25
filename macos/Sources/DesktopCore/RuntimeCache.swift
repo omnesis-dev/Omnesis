@@ -9,9 +9,10 @@ import Foundation
 /// Personal library data and downloaded models are deliberately outside this cache.
 public enum DesktopRuntimeCache {
     public enum Failure: LocalizedError {
-        case invalidPayload, unsafeCache, insufficientSpace, lockUnavailable
+        case missingPayload, invalidPayload, unsafeCache, insufficientSpace, lockUnavailable
         public var errorDescription: String? {
             switch self {
+            case .missingPayload: "This copy of Omnesis is missing its background service. Install the complete Omnesis app to continue."
             case .invalidPayload: "The background service failed its integrity check. Reinstall Omnesis."
             case .unsafeCache: "Omnesis could not safely open its private runtime cache."
             case .insufficientSpace: "Free disk space before preparing the Omnesis background service."
@@ -47,6 +48,7 @@ public enum DesktopRuntimeCache {
         validateSource: () throws -> Void
     ) throws
         -> URL {
+        try Task.checkCancellation()
         try validateSource()
         guard try FileManager.default.attributesOfItem(atPath: source.path)[.type] as? FileAttributeType == .typeDirectory,
               source.resolvingSymlinksInPath().path == source.standardizedFileURL.path else {
@@ -68,9 +70,10 @@ public enum DesktopRuntimeCache {
         var attributes = stat()
         guard fstat(descriptor, &attributes) == 0, attributes.st_uid == getuid(),
               attributes.st_mode & S_IFMT == S_IFREG, attributes.st_mode & 0o077 == 0,
-              attributes.st_nlink == 1, flock(descriptor, LOCK_EX) == 0 else {
+              attributes.st_nlink == 1 else {
             throw Failure.lockUnavailable
         }
+        try DesktopRuntimePublicationLock.acquire(descriptor)
         defer { flock(descriptor, LOCK_UN) }
         let target = cacheRoot.appendingPathComponent(identity, isDirectory: true)
         if files.fileExists(atPath: target.path) {
@@ -87,12 +90,13 @@ public enum DesktopRuntimeCache {
         }
         let staging = cacheRoot.appendingPathComponent(".staging-" + UUID().uuidString, isDirectory: true)
         defer { try? files.removeItem(at: staging) }
-        try files.copyItem(at: source, to: staging)
+        try DesktopCodeCopy.copyTree(source: source, destination: staging)
         try files.setAttributes([.posixPermissions: 0o700], ofItemAtPath: staging.path)
         try verify(staging, manifest: manifest, manifestBytes: bytes)
         // A Finder replacement during staging must not publish mixed revisions.
         guard try manifestBytes(source) == bytes else { throw Failure.invalidPayload }
         try validateSource()
+        try Task.checkCancellation()
         try files.moveItem(at: staging, to: target)
         return target
     }
@@ -108,6 +112,7 @@ public enum DesktopRuntimeCache {
               manifest.inventory.count <= 200_000 else { throw Failure.invalidPayload }
         var seen = Set<String>()
         for entry in manifest.inventory {
+            try Task.checkCancellation()
             guard validPath(entry.path), entry.path != "desktop-runtime.json",
                   seen.insert(entry.path).inserted else { throw Failure.invalidPayload }
             if let target = entry.symlink {
@@ -128,6 +133,7 @@ public enum DesktopRuntimeCache {
     private static func payloadBytes(_ manifest: Manifest) throws -> UInt64 {
         var total: UInt64 = 0
         for entry in manifest.inventory {
+            try Task.checkCancellation()
             let sum = total.addingReportingOverflow(entry.bytes ?? 0)
             guard !sum.overflow, sum.partialValue <= 64 * 1024 * 1024 * 1024 else {
                 throw Failure.invalidPayload
@@ -164,6 +170,7 @@ public enum DesktopRuntimeCache {
               try self.manifestBytes(root) == manifestBytes else { throw Failure.invalidPayload }
         var expected = Set(["desktop-runtime.json"])
         for entry in manifest.inventory {
+            try Task.checkCancellation()
             expected.insert(entry.path)
             let path = root.appendingPathComponent(entry.path)
             let attributes = try files.attributesOfItem(atPath: path.path)

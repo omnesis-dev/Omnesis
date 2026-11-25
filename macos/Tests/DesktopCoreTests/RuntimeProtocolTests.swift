@@ -16,9 +16,19 @@ final class RuntimeProtocolTests: XCTestCase {
     func testReadyRequiresAnActualTrustedConnection() throws {
         XCTAssertFalse(DesktopState(phase: .ready, mode: "joined").canOpenLibrary)
         let state = try JSONDecoder().decode(DesktopState.self, from: Data(
-            #"{"phase":"ready","mode":"joined","connection":{"url":"https://localhost:17601","token":"fixture-token"}}"#.utf8
+            #"{"phase":"ready","mode":"joined","encrypted":true,"connection":{"url":"https://localhost:17601","token":"fixture-token"}}"#
+                .utf8
         ))
         XCTAssertTrue(state.canOpenLibrary)
+    }
+
+    func testJoinedLibraryNeverOpensWithUnknownOrRefusedProtection() throws {
+        for encryption in ["null", "false"] {
+            let wire = #"{"phase":"ready","mode":"joined","encrypted":\#(encryption),"connection":{"url":"https://localhost:17601","token":"fixture-token"}}"#
+            let state = try JSONDecoder().decode(DesktopState.self, from: Data(wire.utf8))
+            XCTAssertFalse(state.canOpenLibrary)
+            XCTAssertEqual(state.statusLabel, "Checking your library’s protection")
+        }
     }
 
     func testFragmentedLinesAndMultipleFrames() throws {
@@ -77,5 +87,31 @@ final class RuntimeProtocolTests: XCTestCase {
         let request = BridgeRequest(id: "request-1", command: "prepare", params: ["name": .string(input)])
         let json = try JSONSerialization.jsonObject(with: JSONEncoder().encode(request)) as? [String: Any]
         XCTAssertEqual((json?["params"] as? [String: String])?["name"], input)
+    }
+}
+
+extension RuntimeProtocolTests {
+    func testRecoveryRepliesDecodeWithoutBecomingLibraryState() throws {
+        let status = try JSONDecoder().decode(
+            BridgeEnvelope.self,
+            from: Data(#"{"version":1,"id":"recovery","ok":true,"result":{"available":true,"hasEnvelope":true,"envelopeValid":true}}"#.utf8)
+        )
+        XCTAssertTrue(try XCTUnwrap(status.recoveryStatus).available)
+        XCTAssertNil(status.result)
+        let draft = try JSONDecoder().decode(
+            BridgeEnvelope.self,
+            from: Data(
+                #"{"version":1,"id":"draft","ok":true,"result":{"draftId":"fixture","expiresAt":1,"recoveryCode":"fictional-code","envelope":{"version":1,"sealed":"fictional"}}}"#
+                    .utf8
+            )
+        )
+        XCTAssertTrue(try XCTUnwrap(draft.recoveryDraft).expired)
+        let data = try XCTUnwrap(draft.recoveryDraft).envelopeData()
+        let envelope = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        XCTAssertEqual(envelope?["sealed"] as? String, "fictional")
+        XCTAssertNil(envelope?["recoveryCode"])
+        let commit = try JSONDecoder().decode(BridgeEnvelope.self, from: Data(#"{"id":"commit","ok":true,"result":{"saved":true}}"#.utf8))
+        XCTAssertTrue(try XCTUnwrap(commit.recoveryCommit).saved)
+        XCTAssertNil(commit.result)
     }
 }

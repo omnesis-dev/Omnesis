@@ -128,7 +128,7 @@
             <li><a href="search">Search</a></li>
             <li><a href="agent">The agent</a></li>
             <li><a href="connect">Agents &amp; MCP</a></li>
-            <li><a href="apps">Mobile apps</a></li>
+            <li><a href="apps">Apps</a></li>
             <li><a href="notifications">Notifications</a></li>
             <li><a href="operating">Operating</a></li>
             <li><a href="security">Security</a></li>
@@ -165,6 +165,14 @@
         </p>
 
         <h2 id="backup">Backup</h2>
+        <p>
+          In the Mac app, Settings → Backups can create a library backup or a data export and follow
+          the job until it finishes. The completed files remain on the library Mac. Save a copy
+          downloads an archive to a new file you choose on the Mac you are using; cancelling or
+          failing a download removes its incomplete local copy. The app explains whether the archive
+          includes readable contents before saving it. Recovery protection is prepared separately on
+          the library Mac under Settings → General.
+        </p>
         <p>
           <code>omnesis backup</code> takes a snapshot while the gateway keeps running, into
           <code>~/.config/omnesis/backups/&lt;timestamp&gt;/</code> on the gateway machine. It holds
@@ -334,6 +342,14 @@
           collectors and phones reconnect once the gateway's address reaches the new machine. The
           backup's certificates come back too: a certificate that names the old machine does not
           cover a new name, and a device that reaches the gateway by a new name pairs again.
+        </p>
+
+        <p>
+          Administrative clients can save completed backups and exports from the gateway as TAR
+          archives. Saving transfers the existing files without decrypting them or changing their
+          keys. Encrypted payloads stay sealed, while archive filenames and public manifests remain
+          readable. An older plaintext backup or a mixed archive still contains readable data;
+          protect its saved location accordingly. Keep the recovery code separately from the backup.
         </p>
 
         <h3 id="export">Export</h3>

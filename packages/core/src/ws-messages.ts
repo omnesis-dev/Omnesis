@@ -98,6 +98,7 @@ const sourceTypeSchema = z.string().transform((s, ctx) => {
 /** DeviceCapability is an open record; allow forward-compatible fields. */
 const deviceCapabilitySchema = z
   .object({
+    requiresEncryptedStorage: z.literal(true).optional(),
     sourceContract: sourceContractWireRangeSchema.optional(),
     hostableSourceTypes: z.array(sourceTypeSchema).optional(),
     pushBasedSourceTypes: z.array(sourceTypeSchema).optional(),

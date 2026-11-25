@@ -9,38 +9,63 @@ struct DesktopSourcesView: View {
     @Environment(DesktopStore.self) private var store
     @State private var showPicker = false
     @State private var repairing: DesktopSource?
+    @State private var managing: DesktopSource?
     var body: some View {
         Group {
-            if store.sources.isEmpty {
+            if store.sources.isEmpty, store.sourceRemovals.isEmpty {
                 ContentUnavailableView {
                     Label("Bring your information together", systemImage: "square.stack.3d.up")
                 } description: { Text("Connect an account or information on this Mac. Your originals stay where they are.") }
                     actions: { Button("Add a source") { showPicker = true }.buttonStyle(.borderedProminent) }
             } else {
-                List(store.sources) { source in
-                    HStack {
-                        VStack(alignment: .leading, spacing: 5) {
-                            Text(store.descriptors.first(where: { $0.id == source.type })?.name ?? source.type).font(.headline)
-                            Text(source.accountId).foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        Text(source.enabled ? "Connected" : "Paused").foregroundStyle(source.enabled ? Color.green : Color.secondary)
-                        if let descriptor = store.descriptors.first(where: { $0.id == source.type }), descriptor.hasAuthFlow {
-                            Button("Sign in again") { repairing = source }
-                        }
-                        Button(source.enabled ? "Pause" : "Resume") {
-                            Task {
-                                do {
-                                    try await store.api?.mutate(
-                                        "PATCH",
-                                        "admin/sources/\(pathPart(source.id))",
-                                        body: ["enabled": !source.enabled]
-                                    )
-                                    await store.refresh()
-                                } catch { store.failure = error.localizedDescription }
+                List {
+                    ForEach(store.sources) { source in
+                        HStack {
+                            VStack(alignment: .leading, spacing: 5) {
+                                Text(store.descriptors.first(where: { $0.id == source.type })?.name ?? source.type).font(.headline)
+                                Text(source.accountId).foregroundStyle(.secondary)
                             }
-                        }
-                    }.padding(.vertical, 8)
+                            Spacer()
+                            Text(source.enabled ? "Enabled" : "Paused").foregroundStyle(.secondary)
+                            Menu("Actions") {
+                                Button("Sync now") {
+                                    Task {
+                                        do { try await store.api?.mutate("POST", "admin/sources/\(pathPart(source.id))/sync")
+                                            await store.refresh()
+                                        } catch { store.failure = error.localizedDescription }
+                                    }
+                                }.disabled(!source.enabled)
+                                if store.descriptors.contains(where: { $0.id == source.type }) {
+                                    Button("Source settings") { managing = source }
+                                }
+                                if let descriptor = store.descriptors.first(where: { $0.id == source.type }), descriptor.hasAuthFlow {
+                                    Button("Sign in again") { repairing = source }
+                                }
+                                Button(source.enabled ? "Pause" : "Resume") {
+                                    Task {
+                                        do {
+                                            try await store.api?.mutate(
+                                                "PATCH",
+                                                "admin/sources/\(pathPart(source.id))",
+                                                body: ["enabled": !source.enabled]
+                                            )
+                                            await store.refresh()
+                                        } catch { store.failure = error.localizedDescription }
+                                    }
+                                }
+                            }.menuStyle(.borderlessButton).fixedSize()
+                        }.padding(.vertical, 8)
+                    }
+                    ForEach(store.sourceRemovals) { removal in
+                        HStack {
+                            ProgressView().controlSize(.small)
+                            VStack(alignment: .leading) {
+                                Text(store.descriptors.first(where: { $0.id == removal.type })?.name ?? removal.type)
+                                Text(removal.accountId).foregroundStyle(.secondary)
+                                Text("Removing managed information…").font(.caption).foregroundStyle(.secondary)
+                            }
+                        }.padding(.vertical, 8)
+                    }
                 }
             }
         }.navigationTitle("Sources")
@@ -49,6 +74,19 @@ struct DesktopSourcesView: View {
                 Button("Add a source", systemImage: "plus") { showPicker = true }.accessibilityIdentifier("add-source")
             }
             .sheet(isPresented: $showPicker) { SourcePickerView().environment(store) }
+            .sheet(item: $managing, onDismiss: { Task { await store.refresh() } }) { source in
+                if let api = store.api, let descriptor = store.descriptors.first(where: { $0.id == source.type }) {
+                    DesktopSourceSettingsView(flow: DesktopSourceSettingsFlow(source: source, descriptor: descriptor, api: api))
+                        .environment(store).id(ObjectIdentifier(api))
+                } else {
+                    ContentUnavailableView(
+                        "Reconnect to your library",
+                        systemImage: "wifi.slash",
+                        description: Text("Close these settings and connect to Omnesis again.")
+                    )
+                    .frame(width: 520, height: 300)
+                }
+            }
             .sheet(item: $repairing) { source in
                 if let api = store.api, let descriptor = store.descriptors.first(where: { $0.id == source.type }) {
                     NavigationStack {
@@ -101,8 +139,13 @@ struct SourceSetupView: View {
             VStack(alignment: .leading, spacing: 20) {
                 Text(flow.descriptor.description).foregroundStyle(.secondary)
                 if flow.complete {
-                    Label("Connected", systemImage: "checkmark.circle.fill").font(.title2).foregroundStyle(.green)
-                    Text("Omnesis will keep this source up to date.")
+                    Label("Added", systemImage: "checkmark.circle.fill").font(.title2).foregroundStyle(.green)
+                    Text("The source is added to your library. It will sync when the source and its device are available.")
+                    if flow
+                        .keptPausedAfterMove {
+                        Text("This source remains paused. Choose Resume in Sources when you are ready to collect.")
+                            .foregroundStyle(.secondary)
+                    }
                 } else if flow.descriptor.setupGuide != nil {
                     if flow.descriptor.setupGuide == "browser-extension" {
                         Label("Install the browser extension", systemImage: "puzzlepiece.extension").font(.title2)
@@ -170,8 +213,15 @@ struct SourceSetupView: View {
                 Button("Open advanced setup") { store.openPortal() }.font(.callout)
             }.padding(28).frame(maxWidth: .infinity, alignment: .leading)
         }.navigationTitle(flow.descriptor.name).disabled(flow.busy)
+            .environment(\.openURL, OpenURLAction { url in
+                store.openBrowser(url)
+                return .handled
+            })
             .onChange(of: flow.complete) { if flow.complete { Task { await store.refresh() } } }
             .onDisappear { Task { await flow.cancel() } }
+            .sheet(item: Binding(get: { flow.pendingMove }, set: { flow.pendingMove = $0 })) { pending in
+                DesktopSourceMoveConfirmation(flow: flow, pending: pending).environment(store)
+            }
     }
 
     @ViewBuilder private func authView(_ auth: AuthSnapshot) -> some View {

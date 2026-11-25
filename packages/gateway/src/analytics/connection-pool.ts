@@ -56,6 +56,10 @@ import {
   type DuckDBPreparedStatement,
 } from "@duckdb/node-api";
 import { createLogger } from "@omnesis/core";
+import {
+  exportEncryptedAnalyticsCsv,
+  type EncryptedAnalyticsExport,
+} from "./export-encrypted-csv.js";
 import { ANALYTICS_INTERNAL_TABLES, escapeStr } from "./internal.js";
 import type { MetricsRegistry } from "../metrics.js";
 import type { PooledConn } from "./internal.js";
@@ -564,13 +568,17 @@ export class AnalyticsConnectionPool {
    * `COPY (...) TO '<file>' (FORMAT CSV, HEADER)` handles RFC 4180 quoting
    * of embedded commas, quotes, and newlines correctly. Serializing
    * through the write queue guarantees no write transaction overlaps the
-   * copies. Each file is staged in the spill directory and moved into
-   * `destDir`. Returns the table names written.
+   * copies. Plaintext exports stage in the spill directory before moving to
+   * `destDir`. Encrypted exports fetch bounded chunks directly into an artifact
+   * cipher, creating no plaintext CSV staging file. Returns the table names written.
    *
    * The plane's own bookkeeping tables (`ANALYTICS_INTERNAL_TABLES`) are
    * excluded — they are gateway metadata, not user data.
    */
-  async exportTablesToCsv(destDir: string): Promise<string[]> {
+  async exportTablesToCsv(
+    destDir: string,
+    encryption?: EncryptedAnalyticsExport,
+  ): Promise<string[]> {
     return this.serializeWrite(() =>
       this.withConn(async (p) => {
         const internal = ANALYTICS_INTERNAL_TABLES.map((name) => `'${name}'`).join(", ");
@@ -580,6 +588,10 @@ export class AnalyticsConnectionPool {
             "ORDER BY table_name",
         );
         const tableNames = reader.getRows().map((r) => String(r[0]));
+        if (encryption) {
+          await exportEncryptedAnalyticsCsv(p.conn, destDir, tableNames, encryption);
+          return tableNames;
+        }
         const stage = join(this.stagingDirectory, randomUUID());
         mkdirSync(stage, { mode: 0o700 });
         for (const name of tableNames) {

@@ -252,7 +252,7 @@ final class DesktopSourceSetupTests: XCTestCase {
         XCTAssertNil(failed?.token)
     }
 
-    func testRenderSourceInstructionsFieldsLoadingAndRefusal() throws {
+    func testRenderSourceInstructionsFieldsLoadingAndRefusal() async throws {
         let fixture = try fixture { _ in XCTFail("Source previews must not start authentication")
             return "{}"
         }
@@ -263,45 +263,331 @@ final class DesktopSourceSetupTests: XCTestCase {
             )
         let instructions = DesktopSourceFlow(descriptor: descriptor, api: fixture.api)
         instructions.needsCredentials = true
-        try renderSource(instructions, name: "source-credentials-instructions")
+        try await renderSource(instructions, name: "source-credentials-instructions")
         instructions.credentialsStep = 1
-        try renderSource(instructions, name: "source-credentials-fields")
+        try await renderSource(instructions, name: "source-credentials-fields")
+        let added = try DesktopSourceFlow(descriptor: basicDescriptor(), api: fixture.api)
+        added.complete = true
+        try await renderSource(added, name: "source-added")
         let loading = try DesktopSourceFlow(descriptor: basicDescriptor(), api: fixture.api)
         loading.busy = true
-        try renderSource(loading, name: "source-connecting")
+        try await renderSource(loading, name: "source-connecting")
         let refused = try DesktopSourceFlow(descriptor: basicDescriptor(), api: fixture.api)
         refused.error = "This account is already connected on another device. Keep that device connected or choose a different account."
-        try renderSource(refused, name: "source-refused")
+        try await renderSource(refused, name: "source-refused")
         let question = try DesktopSourceFlow(descriptor: basicDescriptor(), api: fixture.api)
         question.auth = try decode(
             AuthSnapshot.self,
             #"{"state":"awaiting-user","pendingChallenge":{"id":"question-1","expectsAnswer":true,"challenge":{"kind":"fields","title":"Choose the information to connect","instructions":"Choose a region and confirm your preferences.","schema":{"region":{"kind":"select","label":"Region","options":[{"value":"north","label":"North"},{"value":"south","label":"South"}]},"count":{"kind":"number","label":"History in months","min":1,"max":12},"includeArchived":{"kind":"boolean","label":"Include archived items"}}}}}"#
         )
         question.answer = ["region": "north", "count": "3", "includeArchived": "false"]
-        try renderSource(question, name: "source-auth-question")
+        try await renderSource(question, name: "source-auth-question")
         XCTAssertTrue(fixture.script.requests.isEmpty)
     }
 
-    private func renderSource(_ flow: DesktopSourceFlow, name: String) throws {
-        let output = URL(fileURLWithPath: "/tmp/omnesis-macos-snapshots", isDirectory: true)
-        try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
-        for appearance in [NSAppearance.Name.aqua, .darkAqua] {
-            let view = SourceSetupView(flow: flow).environment(DesktopStore.preview())
-            let hosting = NSHostingView(rootView: view)
-            hosting.frame = NSRect(x: 0, y: 0, width: 680, height: 680)
-            let window = NSWindow(contentRect: hosting.frame, styleMask: [.titled], backing: .buffered, defer: false)
-            window.isReleasedWhenClosed = false
-            window.appearance = NSAppearance(named: appearance)
-            window.contentView = hosting
-            hosting.layoutSubtreeIfNeeded()
-            window.displayIfNeeded()
-            let bitmap = try XCTUnwrap(hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds))
-            hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
-            let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
-            XCTAssertGreaterThan(png.count, 1000)
-            try png.write(to: output.appendingPathComponent("\(name)-\(appearance.rawValue).png"))
-            window.close()
+    private func renderSource(_ flow: DesktopSourceFlow, name: String) async throws {
+        let view = SourceSetupView(flow: flow).environment(DesktopStore.preview())
+        try await DesktopSnapshotRenderer.render(view, name: name, size: CGSize(width: 680, height: 680))
+    }
+
+    func testCredentialRedirectDefaultUsesAuthenticatedLinkedOriginWhenConfigHasNoPublicAddress() async throws {
+        let fixture = try fixture { request in
+            switch request.url?.path {
+            case "/admin/credentials": return #"{"items":[{"fileKey":"invented-key","configured":false}]}"#
+            case "/admin/config": return #"{"config":{"gateway":{}}}"#
+            case "/admin/cloud-relay": return #"{"account":{"linked":true},"publicOrigin":"https://library.example.com"}"#
+            default: XCTFail("Credentials must be reviewed before starting authentication")
+                return "{}"
+            }
         }
+        defer { fixture.close() }
+        let flow = try DesktopSourceFlow(descriptor: redirectDescriptor(), api: fixture.api)
+        await flow.begin()
+        XCTAssertTrue(flow.needsCredentials)
+        XCTAssertEqual(flow.credentials["redirect"], "https://library.example.com/oauth/callback")
+        XCTAssertEqual(flow.expand("Return to {gatewayOrigin}"), "Return to https://library.example.com")
+        XCTAssertNil(flow.error)
+        XCTAssertNil(flow.flowId)
+    }
+
+    func testCredentialRedirectRefusesUnlinkedProvisionalAndLocalFallbacks() async throws {
+        for status in [
+            #"{"account":{"linked":false},"publicOrigin":"https://library.example.com"}"#,
+            #"{"publicOrigin":"https://library.example.com"}"#,
+            #"{"account":{"linked":true},"publicOrigin":"https://localhost:17601"}"#,
+            #"{"account":{"linked":true},"publicOrigin":"https://192.0.2.80:17601"}"#,
+            #"{"account":{"linked":true},"publicOrigin":"https://[::1]:17601"}"#,
+            #"{"account":{"linked":true},"publicOrigin":"https://library.local"}"#,
+            #"{"account":{"linked":true},"publicOrigin":"http://library.example.com"}"#,
+            #"{"account":{"linked":true},"publicOrigin":"https://library.example.com/?token=fictional"}"#,
+        ] {
+            let fixture = try fixture { request in
+                switch request.url?.path {
+                case "/admin/credentials": return #"{"items":[{"fileKey":"invented-key","configured":false}]}"#
+                case "/admin/config": return #"{"config":{}}"#
+                case "/admin/cloud-relay": return status
+                default: XCTFail("An untrusted redirect origin must not start authentication")
+                    return "{}"
+                }
+            }
+            defer { fixture.close() }
+            let flow = try DesktopSourceFlow(descriptor: redirectDescriptor(), api: fixture.api)
+            await flow.begin()
+            XCTAssertFalse(flow.needsCredentials)
+            XCTAssertNil(flow.credentials["redirect"])
+            XCTAssertNil(flow.gatewayOrigin)
+            XCTAssertNotNil(flow.error)
+            XCTAssertNil(flow.flowId)
+        }
+    }
+
+    func testExplicitConfiguredPublicOriginRemainsTheProviderRedirectAuthority() async throws {
+        let fixture = try fixture { request in
+            switch request.url?.path {
+            case "/admin/credentials": return #"{"items":[{"fileKey":"invented-key","configured":false}]}"#
+            case "/admin/config": return #"{"config":{"gateway":{"publicBaseUrl":"https://configured.example.org"}}}"#
+            default: XCTFail("A configured public origin needs no account-origin fallback")
+                return "{}"
+            }
+        }
+        defer { fixture.close() }
+        let flow = try DesktopSourceFlow(descriptor: redirectDescriptor(), api: fixture.api)
+        await flow.begin()
+        XCTAssertEqual(flow.credentials["redirect"], "https://configured.example.org/oauth/callback")
+        XCTAssertNil(flow.error)
+    }
+
+    func testSourceSettingsPreserveOpaqueConfigSiblingParametersAndPausedState() async throws {
+        var sharedSaved = false
+        var localSaved = false
+        let global = #"{"id":"fixture-source","type":"invented","accountId":"example-account","enabled":false,"deviceId":"local","members":["local","other"],"multiDeviceMode":"replicated","config":{"params":{"shared":"before","untouched":"keep"},"opaque":{"flags":[true,null,3]}}}"#
+        let member = #"{"id":"fixture-source","type":"invented","accountId":"example-account","enabled":false,"deviceId":"local","members":["local","other"],"multiDeviceMode":"replicated","config":{"params":{"shared":"before","path":"/example/before","future":"keep-local"}}}"#
+        let a = String(repeating: "a", count: 64), b = String(repeating: "b", count: 64)
+        let fixture = try fixture { request in
+            switch (request.httpMethod, request.url?.path) {
+            case ("GET", "/admin/sources"):
+                return #"{"items":[\#(global)],"pendingRemovals":[]}"#
+            case ("GET", "/admin/sources/fixture-source"):
+                let current = sharedSaved ? global.replacingOccurrences(of: "before", with: "after") : global
+                return #"{"source":\#(current),"revision":"\#(a)"}"#
+            case ("GET", "/admin/sources/fixture-source/members/local"):
+                var current = member
+                if sharedSaved { current = current.replacingOccurrences(of: #""shared":"before""#, with: #""shared":"after""#) }
+                if localSaved { current = current.replacingOccurrences(of: "/example/before", with: "/example/after") }
+                return #"{"source":\#(current),"revision":"\#(b)"}"#
+            case ("POST", "/admin/sources/validate-param"): return #"{"valid":true}"#
+            case ("PATCH", "/admin/sources/fixture-source"):
+                let body = try Self.body(request)
+                XCTAssertEqual(body["expectedRevision"] as? String, a)
+                XCTAssertNil(body["enabled"])
+                let config = try XCTUnwrap(body["config"] as? [String: Any])
+                XCTAssertEqual(config["params"] as? [String: String], ["shared": "after", "untouched": "keep"])
+                let opaque = try XCTUnwrap(config["opaque"] as? [String: Any])
+                XCTAssertEqual((opaque["flags"] as? [Any])?.count, 3)
+                sharedSaved = true
+                return "{}"
+            case ("PATCH", "/admin/sources/fixture-source/members/local"):
+                let body = try Self.body(request)
+                XCTAssertEqual(body["expectedRevision"] as? String, b)
+                XCTAssertNil(body["enabled"])
+                let overlay = try XCTUnwrap(body["configOverride"] as? [String: Any])
+                XCTAssertEqual(overlay["params"] as? [String: String], ["path": "/example/after", "future": "keep-local"])
+                localSaved = true
+                return "{}"
+            default: XCTFail("Unexpected settings request: \(request.url?.path ?? "")")
+                return "{}"
+            }
+        }
+        defer { fixture.close() }
+        let descriptor =
+            try basicDescriptor(
+                extra: #", "memberScopedParamNames":["path","future"],"params":[{"name":"shared","label":"Shared value","type":"string"},{"name":"path","label":"Folder","type":"path","scope":"member"}]"#
+            )
+        let source = try decode(DesktopSource.self, global)
+        let flow = DesktopSourceSettingsFlow(source: source, descriptor: descriptor, api: fixture.api)
+        await flow.load()
+        XCTAssertNil(flow.error)
+        flow.sharedValues["shared"] = "after"
+        await flow.saveShared()
+        XCTAssertTrue(sharedSaved)
+        XCTAssertEqual(flow.sharedValues["shared"], "after")
+        flow.localValues["path"] = "/example/after"
+        await flow.saveLocal()
+        XCTAssertTrue(localSaved)
+        XCTAssertEqual(flow.localValues["path"], "/example/after")
+        XCTAssertEqual(flow.message, "Settings saved. The source remains paused.")
+        XCTAssertNil(flow.error)
+    }
+
+    func testExclusiveMoveRequiresConfirmationAndLostReplyCannotResumeAPausedSource() async throws {
+        let source = #"{"id":"fixture-source","type":"invented","accountId":"example-account","enabled":false,"deviceId":"other","multiDeviceMode":"exclusive","config":{"opaque":"keep"}}"#
+        var moved = false
+        var writes = 0
+        let revision = String(repeating: "a", count: 64)
+        let fixture = try fixture { request in
+            switch (request.httpMethod, request.url?.path) {
+            case ("GET", "/admin/sources"):
+                let current = moved ? source.replacingOccurrences(of: #""deviceId":"other""#, with: #""deviceId":"local""#) : source
+                return #"{"items":[\#(current)]}"#
+            case ("GET", "/admin/sources/fixture-source"): return #"{"source":\#(source),"revision":"\#(revision)"}"#
+            case ("PATCH", "/admin/sources/fixture-source"):
+                writes += 1
+                let body = try Self.body(request)
+                XCTAssertEqual(body["deviceId"] as? String, "local")
+                XCTAssertEqual(body["expectedRevision"] as? String, revision)
+                XCTAssertNil(body["enabled"])
+                moved = true
+                throw URLError(.networkConnectionLost)
+            default: XCTFail("Unexpected move request")
+                return "{}"
+            }
+        }
+        defer { fixture.close() }
+        let flow = try DesktopSourceFlow(descriptor: basicDescriptor(), api: fixture.api)
+        flow.accounts = ["example-account"]
+        flow.selectedAccounts = ["example-account"]
+        await flow.add()
+        XCTAssertNotNil(flow.pendingMove)
+        XCTAssertEqual(writes, 0)
+        XCTAssertFalse(flow.complete)
+        await flow.confirmMove()
+        XCTAssertNotNil(flow.error)
+        XCTAssertEqual(writes, 1)
+        await flow.add()
+        XCTAssertEqual(writes, 1)
+        XCTAssertTrue(flow.complete)
+        XCTAssertTrue(flow.keptPausedAfterMove)
+    }
+
+    func testSettingsWithoutARevisionNeverEnableUnsafeWrites() async throws {
+        let source = #"{"id":"fixture-source","type":"invented","accountId":"example-account","enabled":true,"deviceId":"local","config":{}}"#
+        let fixture = try fixture { request in
+            XCTAssertEqual(request.httpMethod, "GET")
+            return #"{"source":\#(source)}"#
+        }
+        defer { fixture.close() }
+        let flow = try DesktopSourceSettingsFlow(
+            source: decode(DesktopSource.self, source),
+            descriptor: basicDescriptor(),
+            api: fixture.api
+        )
+        await flow.load()
+        await flow.saveShared()
+        XCTAssertNil(flow.snapshot)
+        XCTAssertNotNil(flow.error)
+        XCTAssertEqual(fixture.script.requests.count, 1)
+    }
+
+    func testDifferentFolderIdentityNeverOverwritesExistingSource() async throws {
+        let source = #"{"id":"fixture-source","type":"invented","accountId":"example-account","enabled":false,"deviceId":"local","config":{"params":{"path":"/example/original"}}}"#
+        let revision = String(repeating: "a", count: 64)
+        let fixture = try fixture { request in
+            XCTAssertNotEqual(request.httpMethod, "PATCH")
+            switch request.url?.path {
+            case "/admin/sources": return #"{"items":[\#(source)],"pendingRemovals":[]}"#
+            case "/admin/sources/validate-param": return #"{"valid":true}"#
+            case "/admin/sources/resolve-account": return #"{"accountId":"different-account"}"#
+            default: return #"{"source":\#(source),"revision":"\#(revision)"}"#
+            }
+        }
+        defer { fixture.close() }
+        let descriptor =
+            try basicDescriptor(
+                extra: #", "hasResolveAccountId":true,"memberScopedParamNames":["path"],"params":[{"name":"path","label":"Folder","type":"path","scope":"member"}]"#
+            )
+        let flow = try DesktopSourceSettingsFlow(source: decode(DesktopSource.self, source), descriptor: descriptor, api: fixture.api)
+        await flow.load()
+        flow.localValues["path"] = "/example/different"
+        await flow.saveLocal()
+        XCTAssertTrue(flow.error?.contains("different account") == true)
+        XCTAssertEqual(flow.localValues["path"], "/example/original")
+    }
+
+    func testLostRemovalReplyObservesDurableCompletionWithoutRepeatingDelete() async throws {
+        let source = #"{"id":"fixture-source","type":"invented","accountId":"example-account","enabled":false,"deviceId":"local","config":{}}"#
+        var removals = 0
+        let fixture = try fixture { request in
+            if request.httpMethod == "DELETE" {
+                removals += 1
+                throw URLError(.networkConnectionLost)
+            }
+            return #"{"items":[],"pendingRemovals":[]}"#
+        }
+        defer { fixture.close() }
+        let flow = try DesktopSourceSettingsFlow(
+            source: decode(DesktopSource.self, source),
+            descriptor: basicDescriptor(),
+            api: fixture.api
+        )
+        await flow.removeSource()
+        XCTAssertTrue(flow.removalRequested)
+        XCTAssertTrue(flow.removalComplete)
+        XCTAssertNil(flow.error)
+        await flow.removeSource()
+        XCTAssertEqual(removals, 1)
+    }
+
+    func testRenderSourceSettingsMoveAndRemovalStates() async throws {
+        let fixture = try fixture { _ in
+            XCTFail("Prepared source previews must not access the network")
+            return "{}"
+        }
+        defer { fixture.close() }
+        let source = try decode(
+            DesktopSource.self,
+            #"{"id":"fixture-source","type":"invented","accountId":"example-account","enabled":false,"deviceId":"local","members":["local","other"],"multiDeviceMode":"replicated","config":{"params":{}}}"#
+        )
+        let descriptor =
+            try basicDescriptor(
+                extra: #", "memberScopedParamNames":["path"],"params":[{"name":"shared","label":"History label","type":"string"},{"name":"path","label":"Library folder","type":"path","scope":"member"}]"#
+            )
+        let snapshot = try decode(
+            DesktopSourceSettingsSnapshot.self,
+            #"{"source":{"id":"fixture-source","type":"invented","accountId":"example-account","enabled":false,"deviceId":"other","multiDeviceMode":"exclusive","config":{}},"revision":"\#(String(repeating: "a", count: 64))"}"#
+        )
+        let flow = DesktopSourceSettingsFlow(source: source, descriptor: descriptor, api: fixture.api)
+        flow.snapshot = try decode(
+            DesktopSourceSettingsSnapshot.self,
+            #"{"source":{"id":"fixture-source","type":"invented","accountId":"example-account","enabled":false,"deviceId":"local","members":["local","other"],"multiDeviceMode":"replicated","config":{}},"revision":"\#(String(repeating: "a", count: 64))"}"#
+        )
+        flow.memberSnapshot = flow.snapshot
+        flow.memberIds = ["local", "other"]
+        flow.sharedValues = ["shared": "Personal library"]
+        flow.localValues = ["path": "/example/library"]
+        let store = DesktopStore.preview()
+        try await DesktopSnapshotRenderer.render(
+            DesktopSourceSettingsView(flow: flow).environment(store),
+            name: "source-settings-paused",
+            size: CGSize(width: 660, height: 650)
+        )
+        let move = DesktopSourceFlow(descriptor: descriptor, api: fixture.api)
+        try await DesktopSnapshotRenderer.render(
+            DesktopSourceMoveConfirmation(flow: move, pending: snapshot).environment(store),
+            name: "source-move-paused-confirmation",
+            size: CGSize(width: 520, height: 360)
+        )
+        let removal = DesktopSourceSettingsFlow(source: source, descriptor: descriptor, api: fixture.api)
+        removal.removalRequested = true
+        try await DesktopSnapshotRenderer.render(
+            DesktopSourceSettingsView(flow: removal).environment(store),
+            name: "source-removing",
+            size: CGSize(width: 660, height: 650)
+        )
+        let complete = DesktopSourceSettingsFlow(source: source, descriptor: descriptor, api: fixture.api)
+        complete.removalRequested = true
+        complete.removalComplete = true
+        try await DesktopSnapshotRenderer.render(
+            DesktopSourceSettingsView(flow: complete).environment(store),
+            name: "source-removed",
+            size: CGSize(width: 660, height: 650)
+        )
+        XCTAssertTrue(fixture.script.requests.isEmpty)
+    }
+
+    private func redirectDescriptor() throws -> DesktopDescriptor {
+        try basicDescriptor(
+            extra: #", "credentials":{"fileKey":"invented-key","required":true,"fields":[{"name":"redirect","label":"Redirect address","default":"{gatewayOrigin}/oauth/callback"}]}"#
+        )
     }
 
     private func basicDescriptor(extra: String = "", discover: Bool = false) throws -> DesktopDescriptor {

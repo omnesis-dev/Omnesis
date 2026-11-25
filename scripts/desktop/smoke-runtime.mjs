@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { createHash } from "node:crypto";
 import { execFile, spawn } from "node:child_process";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { chmod, cp, mkdir, mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -13,26 +14,40 @@ import { inventoryBundle } from "./native-inventory.mjs";
 const execute = promisify(execFile);
 
 /** Exercise the actual compiled closure with no host Node/npm or personal state. */
-async function smokeRuntime(runtime) {
-  const manifest = JSON.parse(await readFile(join(runtime, "desktop-runtime.json"), "utf8"));
+async function smokeRuntime(sourceRuntime) {
+  const manifestBytes = await readFile(join(sourceRuntime, "desktop-runtime.json"));
+  const manifest = JSON.parse(manifestBytes.toString("utf8"));
+  if (manifest.codeUsageProtocol !== 1 || manifest.runtimeLauncher !== "runtime-exec")
+    throw new Error("Bundled runtime lacks its code-lifetime protocol");
   if (manifest.architecture !== process.arch)
     throw new Error("Run the bundle on its target architecture");
-  const inventory = (await inventoryBundle(runtime, manifest.architecture)).filter(
+  const inventory = (await inventoryBundle(sourceRuntime, manifest.architecture)).filter(
     (entry) => entry.path !== "desktop-runtime.json",
   );
   if (JSON.stringify(inventory) !== JSON.stringify(manifest.inventory))
     throw new Error("Runtime differs from its sealed build inventory");
-  const home = await mkdtemp(join(tmpdir(), "omnesis-desktop-bundle-smoke-"));
+  const home = await realpath(await mkdtemp(join(tmpdir(), "omnesis-desktop-bundle-smoke-")));
+  const cache = join(home, "runtime-cache");
+
+  const runtime = join(cache, createHash("sha256").update(manifestBytes).digest("hex"));
+
   const env = {
-    PATH: "/usr/bin:/bin",
+    PATH: join(runtime, "bin") + ":/usr/bin:/bin",
     HOME: home,
     TMPDIR: tmpdir(),
     LANG: "en_US.UTF-8",
+    OMNESIS_CONFIG_DIR: join(home, "unrelated-headless"),
+    OMNESIS_SECRET_SERVICE: "dev.omnesis.unrelated-fixture",
+    OMNESIS_GATEWAY_URL: "https://unreachable.example.test",
+    OMNESIS_TOKEN: "omn_test",
   };
-  const node = join(runtime, "node");
+  const node = join(runtime, "runtime-exec");
   const script = join(runtime, "packages/cli/dist/index.js");
   try {
-    const version = await execute(node, [script, "--version"], {
+    await mkdir(cache, { mode: 0o700 });
+    await cp(sourceRuntime, runtime, { recursive: true, verbatimSymlinks: true });
+    await chmod(runtime, 0o700);
+    const version = await execute(node, ["--node", script, "--version"], {
       cwd: runtime,
       env,
       timeout: 30_000,
@@ -44,6 +59,7 @@ async function smokeRuntime(runtime) {
     await execute(
       node,
       [
+        "--node",
         "--input-type=module",
         "--eval",
         `
@@ -65,7 +81,7 @@ async function smokeRuntime(runtime) {
       { cwd: join(runtime, "packages/gateway"), env, timeout: 30_000 },
     );
     await new Promise((resolveSmoke, rejectSmoke) => {
-      const child = spawn(node, [script, "desktop", "bridge"], {
+      const child = spawn(node, ["--node", script, "desktop", "bridge"], {
         cwd: runtime,
         env,
         stdio: ["pipe", "pipe", "pipe"],

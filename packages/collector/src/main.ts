@@ -847,6 +847,9 @@ export async function main() {
       hostableSourceTypes: manager.getDescriptors().map((d) => d.id),
       syncLease: true,
       deviceDoctor: true,
+      ...(process.env.OMNESIS_REQUIRE_ENCRYPTED_STORAGE === "1"
+        ? { requiresEncryptedStorage: true as const }
+        : {}),
       pushBasedSourceTypes: manager
         .getDescriptors()
         .filter((d) => d.pushBased)

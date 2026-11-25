@@ -4,3 +4,5 @@ OmnesisDesktop.xcodeproj/
 build/
 DerivedData/
 Local.xcconfig
+
+.node-fixture/

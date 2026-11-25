@@ -30,7 +30,19 @@ struct DesktopSettingsView: View {
                 Section("Your library") {
                     LabeledContent("Connection", value: store.state.statusLabel)
                     if let name = store.state.homeName { LabeledContent("Library Mac", value: name) }
-                    if store.state.encrypted == true { Label("Encrypted storage is on", systemImage: "lock.shield") }
+                    if store.state.encrypted == true { Label(
+                        store.state
+                            .mode == "joined" ? "This Mac and your library use encrypted storage" :
+                            "Your library on this Mac uses encrypted storage",
+                        systemImage: "lock.shield"
+                    ) }
+                    Button("Recovery protection…") {
+                        store.recoveryStatus = nil
+                        store.recoveryDraft = nil
+                        store.recoverySaved = false
+                        store.presentRecovery = true
+                        openWindow(id: "main")
+                    }.disabled(store.busy)
                     Button("Stop Omnesis on this Mac", role: .destructive) { showStopConfirmation = true }
                     Button("Remove Omnesis from this Mac…", role: .destructive) {
                         store.removalPlan = nil
@@ -42,6 +54,9 @@ struct DesktopSettingsView: View {
                 if let error { Text(error).foregroundStyle(.red) }
             }.formStyle(.grouped).tabItem { Label("General", systemImage: "gearshape") }
             DesktopModelsView().tabItem { Label("AI", systemImage: "sparkles") }
+            DesktopBackupsView().tabItem { Label("Backups", systemImage: "externaldrive") }
+            DesktopMemoryView().tabItem { Label("Memory", systemImage: "memorychip") }
+            DesktopUpdatesView().tabItem { Label("Updates", systemImage: "arrow.down.circle") }
             DesktopStorageView().tabItem { Label("Storage", systemImage: "internaldrive") }
             Form {
                 Text("Your library is stored on your chosen Mac. The connection service carries encrypted traffic between your devices.")
@@ -52,7 +67,7 @@ struct DesktopSettingsView: View {
                 Button("Open privacy and access settings") { store.openPortal() }
                 Button("Open the web portal") { store.openPortal() }
             }.formStyle(.grouped).tabItem { Label("Privacy", systemImage: "hand.raised") }
-        }.padding(12)
+        }.padding(12).frame(minWidth: 640, minHeight: 500)
             .onAppear { backgroundEnabled = SMAppService.loginItem(identifier: "dev.omnesis.desktop.background").status == .enabled }
             .confirmationDialog("Stop Omnesis on this Mac?", isPresented: $showStopConfirmation) {
                 Button("Stop Omnesis", role: .destructive) { store.command("stop") }
@@ -166,41 +181,5 @@ struct DesktopModelsView: View {
             apiKey = ""
             error = nil
         } catch { self.error = error.localizedDescription }
-    }
-}
-
-struct DesktopStorageView: View {
-    @Environment(DesktopStore.self) private var store
-    @State private var snapshot: StorageSnapshot?
-    @State private var error: String?
-    var body: some View {
-        Form {
-            Section("Library storage") {
-                if let snapshot {
-                    Text(snapshot.pressure
-                        .state == "blocked" ? "New information is paused to protect your disk. You can still search and ask questions." :
-                        "Omnesis watches available disk space and pauses new data when storage is low.")
-                    if let used = snapshot.pressure.usageBytes { LabeledContent(
-                        "Used",
-                        value: ByteCountFormatter.string(fromByteCount: used, countStyle: .file)
-                    ) }
-                }
-                Text(
-                    "Removing original files is never part of automatic cleanup. Review your library’s limits and retained history before freeing space."
-                )
-                .foregroundStyle(.secondary)
-                Button("Manage storage and cleanup") { store.openPortal() }
-            }
-            if let error { Text(error).foregroundStyle(.red) }
-        }.formStyle(.grouped).task {
-            do { snapshot = try await store.api?.request("GET", "admin/storage") } catch { self.error = error.localizedDescription }
-        }
-    }
-
-    struct StorageSnapshot: Decodable {
-        let pressure: Pressure
-        struct Pressure: Decodable { let state: String
-            let usageBytes: Int64?
-        }
     }
 }

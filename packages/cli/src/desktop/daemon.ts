@@ -20,6 +20,9 @@ import { readDesktopInstall } from "./bootstrap.js";
 import { desktopEnvironment, type DesktopProfile } from "./environment.js";
 import { requestDesktopGateway } from "./gateway-access.js";
 import { readDesktopRetirement } from "./retirement.js";
+import { desktopEpochMayStart } from "./update-admission.js";
+import { claimDesktopUpdateEpoch } from "./update-claim.js";
+import { probeDesktopRemoteProtection, watchDesktopRemoteProtection } from "./remote-protection.js";
 import { startDesktopDaemonControl } from "./daemon-control.js";
 import { readDesktopRuntime } from "./runtime-state.js";
 
@@ -35,10 +38,14 @@ export interface DesktopOwnedChild {
 }
 export interface DesktopDaemonEvent {
   component: DesktopComponent;
-  state: "starting" | "ready" | "waiting-account" | "restarting" | "stopped";
+  state: "starting" | "ready" | "waiting-account" | "waiting-protection" | "restarting" | "stopped";
 }
 
 interface DaemonDependencies {
+  watchProtection: typeof watchDesktopRemoteProtection;
+  remoteProtection: typeof probeDesktopRemoteProtection;
+  mayStartEpoch: typeof desktopEpochMayStart;
+  claimEpoch: typeof claimDesktopUpdateEpoch;
   readInstall: typeof readDesktopInstall;
   retired(profile: DesktopProfile): Promise<boolean>;
   readRuntime: typeof readDesktopRuntime;
@@ -65,6 +72,10 @@ const RETRY_MAX_MS = 30_000;
 const STABLE_MS = 60_000;
 
 const defaults: DaemonDependencies = {
+  watchProtection: watchDesktopRemoteProtection,
+  remoteProtection: probeDesktopRemoteProtection,
+  mayStartEpoch: desktopEpochMayStart,
+  claimEpoch: claimDesktopUpdateEpoch,
   readInstall: readDesktopInstall,
   retired: async (profile) => (await readDesktopRetirement(profile)) !== null,
   readRuntime: readDesktopRuntime,
@@ -135,6 +146,7 @@ export async function runDesktopDaemon(
   const deps = { ...defaults, ...overrides };
   options.signal.throwIfAborted();
   if (await deps.retired(profile)) return "stopped";
+  if (!(await deps.mayStartEpoch(profile))) return "stopped";
   const install = await deps.readInstall(profile);
   if (!install || install.phase !== "configured" || !deps.encrypted(profile)) {
     throw new Error("The desktop installation must be configured and encrypted before starting");
@@ -172,6 +184,7 @@ export async function runDesktopDaemon(
   let control: Awaited<ReturnType<typeof startDesktopDaemonControl>> | undefined;
   try {
     if (await deps.retired(profile)) return "stopped";
+    if (!(await deps.claimEpoch(profile, signal))) return "stopped";
     const current = await deps.readInstall(profile);
     if (
       !current ||
@@ -337,6 +350,15 @@ async function superviseCollector(
   let attempt = 0;
   while (!signal.aborted) {
     if (!deps.encrypted(profile) || !(await deps.paired(profile))) return;
+    if ((await deps.remoteProtection(profile, signal)) !== "encrypted") {
+      emit("collector", "waiting-protection");
+      try {
+        await deps.sleep(5_000, signal);
+      } catch {
+        return;
+      }
+      continue;
+    }
     emit("collector", "starting");
     const child = deps.spawn("collector", env);
     const started = deps.now();
@@ -347,16 +369,41 @@ async function superviseCollector(
       else signal.addEventListener("abort", onAbort, { once: true });
     });
     let exit: DesktopChildExit | undefined;
+    const monitor = new AbortController();
+    const monitorSignal = AbortSignal.any([signal, monitor.signal]);
+    let protectionLost = false,
+      monitorError: unknown;
+    const watched = deps.watchProtection(profile, monitorSignal).then(
+      () => {
+        if (!monitorSignal.aborted) protectionLost = true;
+      },
+      (error: unknown) => {
+        if (!monitorSignal.aborted) {
+          protectionLost = true;
+          monitorError = error;
+        }
+      },
+    );
     try {
-      exit = await Promise.race([child.exited, aborted.then(() => undefined)]);
+      exit = await Promise.race([
+        child.exited,
+        aborted.then(() => undefined),
+        watched.then(() => undefined),
+      ]);
     } catch {
       /* A failed spawn follows the same bounded restart policy as an exit. */
     } finally {
       signal.removeEventListener("abort", onAbort);
-      await stopOwnedChild(child, deps);
+      monitor.abort();
+      await Promise.all([stopOwnedChild(child, deps), watched]);
       emit("collector", "stopped");
     }
     if (signal.aborted) return;
+    if (monitorError !== undefined) throw monitorError;
+    if (protectionLost) {
+      emit("collector", "waiting-protection");
+      continue;
+    }
     if (exit?.code === 0) {
       const stoppedStamp = await deps.pairingStamp(profile).catch(() => null);
       while (!signal.aborted) {
