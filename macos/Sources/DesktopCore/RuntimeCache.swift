@@ -190,8 +190,14 @@ public enum DesktopRuntimeCache {
             throw Failure.invalidPayload
         }
         var found = Set<String>()
+        let rootComponents = canonical.pathComponents
         for case let url as URL in enumeration {
-            let relative = String(url.path.dropFirst(root.path.count + 1))
+            let components = url.standardizedFileURL.pathComponents
+            guard components.count > rootComponents.count,
+                  Array(components.prefix(rootComponents.count)) == rootComponents else {
+                throw Failure.invalidPayload
+            }
+            let relative = components.dropFirst(rootComponents.count).joined(separator: "/")
             let values = try url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
             if values.isSymbolicLink == true || values.isDirectory != true { found.insert(relative) }
         }

@@ -24,11 +24,17 @@ public enum DesktopRuntimeBootstrap {
 
     private static func validateApp(_ app: URL) throws {
         var ownCode: SecCode?
-        guard SecCodeCopySelf([], &ownCode) == errSecSuccess, let ownCode else {
+        guard SecCodeCopySelf([], &ownCode) == errSecSuccess, let ownCode,
+              SecCodeCheckValidity(ownCode, [], nil) == errSecSuccess else {
+            throw DesktopRuntimeCache.Failure.invalidPayload
+        }
+        var ownStaticCode: SecStaticCode?
+        guard SecCodeCopyStaticCode(ownCode, [], &ownStaticCode) == errSecSuccess,
+              let ownStaticCode else {
             throw DesktopRuntimeCache.Failure.invalidPayload
         }
         var information: CFDictionary?
-        guard SecCodeCopySigningInformation(ownCode, SecCSFlags(rawValue: kSecCSSigningInformation), &information) == errSecSuccess,
+        guard SecCodeCopySigningInformation(ownStaticCode, SecCSFlags(rawValue: kSecCSSigningInformation), &information) == errSecSuccess,
               let values = information as? [String: Any],
               let team = values[kSecCodeInfoTeamIdentifier as String] as? String,
               team.count == 10, team.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber) }) else {
