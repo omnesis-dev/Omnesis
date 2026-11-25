@@ -55,7 +55,6 @@ import dev.omnesis.android.transport.dto.WatchCaptureStatusDto
 import dev.omnesis.android.transport.dto.PushPlan
 import dev.omnesis.android.transport.dto.StatusSnapshot
 import dev.omnesis.android.transport.http.GatewayHttp
-import dev.omnesis.android.feature.recording.RecordingSettings
 import dev.omnesis.android.feature.recording.RecordingAvailabilityMemory
 import dev.omnesis.android.feature.recording.ui.RecordingAvailability
 import dev.omnesis.android.transport.client.RecordingsClient
@@ -230,7 +229,6 @@ class SessionManager @Inject constructor(
     private val phoneSetupRecord: PhoneSetupRecord,
     // A provider, because the steps that start first syncs ask this manager for the session scope.
     private val phoneSetupSteps: Provider<Set<@JvmSuppressWildcards PhoneSetupStep>>,
-    private val recordingSettings: RecordingSettings,
     private val recordingAvailabilityMemory: RecordingAvailabilityMemory,
 ) : SessionScopeProvider, RelayConsentActions {
     sealed interface AppState {
@@ -972,9 +970,6 @@ class SessionManager @Inject constructor(
         _recordingAvailability.value = recordingAvailability(status).also {
             recordingAvailabilityMemory.remember(current.pairing.recordingKey(), it)
         }
-        // Only an answer the gateway gave, never the reset on a re-pair, settles
-        // whether a linked wearable stays linked: Recordings off in Omnesis Lab unlinks it.
-        recordingSettings.setGatewayTakesRecordings(status.experimental && status.recordings)
         _developerEnabled.value = status.developer
         _tailscaleEmbed.value = status.tailscaleEmbed || tailscaleJoinNotified
         val tasksWereAvailable = _tasksAvailable.value

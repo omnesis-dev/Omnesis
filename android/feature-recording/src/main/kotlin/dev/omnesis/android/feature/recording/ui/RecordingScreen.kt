@@ -31,7 +31,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.CloudDone
 import androidx.compose.material.icons.outlined.CloudUpload
 import androidx.compose.material.icons.outlined.Delete
@@ -44,7 +43,6 @@ import androidx.compose.material.icons.outlined.Stop
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CenterAlignedTopAppBar
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -70,7 +68,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.omnesis.android.designsystem.components.OmnesisCard
 import dev.omnesis.android.designsystem.theme.OmSpacing
 import dev.omnesis.android.designsystem.theme.OmTheme
-import dev.omnesis.android.feature.recording.RecordingInput
 import dev.omnesis.android.feature.recording.RecordingState
 
 /** Record an in-person conversation with the phone on the table (experimental). */
@@ -78,8 +75,6 @@ import dev.omnesis.android.feature.recording.RecordingState
 @Composable
 fun RecordingScreen(
     onOpenMenu: () -> Unit,
-    /** The wearable's status, supplied by the module that links it, shown below the recorder. */
-    wearableCard: (@Composable () -> Unit)? = null,
     onOpenSpeakers: (id: String, title: String) -> Unit,
     vm: RecordingViewModel = hiltViewModel(),
 ) {
@@ -112,17 +107,13 @@ fun RecordingScreen(
         RecordingContent(
             state = state,
             onTitleChange = vm::onTitleChange,
-            onStart = {
-                if (state.startInput == RecordingInput.WEARABLE) vm.startWearable() else micPermission.launch(Manifest.permission.RECORD_AUDIO)
-            },
-            onInputChange = vm::onInputChange,
+            onStart = { micPermission.launch(Manifest.permission.RECORD_AUDIO) },
             onPause = vm::pause,
             onResume = vm::resume,
             onStop = vm::stop,
             onWifiOnlyChange = vm::onWifiOnlyChange,
             onDelete = vm::delete,
             onDismissError = vm::dismissDeleteError,
-            wearableCard = wearableCard,
             onOpenRecording = { onOpenSpeakers(it.id, it.title) },
             onRetryGatewayRecent = vm::refreshGatewayRecent,
             modifier = Modifier.padding(padding),
@@ -149,8 +140,6 @@ fun RecordingContent(
     onOpenRecording: (GatewayRecording) -> Unit,
     onRetryGatewayRecent: () -> Unit,
     modifier: Modifier = Modifier,
-    onInputChange: (RecordingInput) -> Unit = {},
-    wearableCard: (@Composable () -> Unit)? = null,
 ) {
     val c = OmTheme.colors
     LazyColumn(
@@ -160,20 +149,15 @@ fun RecordingContent(
     ) {
         val recording = state.recording
         if (recording != null) {
-            item { RecorderCard(recording, state.elapsedMs, state.wearableName, onPause, onResume, onStop) }
-        }
-        // While a wearable captures all day, a recording can still be started: it takes the episode's place.
-        if (recording == null || recording.ambient) {
+            item { RecorderCard(recording, state.elapsedMs, onPause, onResume, onStop) }
+        } else {
             item {
                 if (state.availability == RecordingAvailability.Availability.AVAILABLE) {
-                    StartCard(state, onTitleChange, onStart, onInputChange, onWifiOnlyChange)
+                    StartCard(state, onTitleChange, onStart, onWifiOnlyChange)
                 } else {
                     UnavailableCard(state.availability)
                 }
             }
-        }
-        if (wearableCard != null && state.availability == RecordingAvailability.Availability.AVAILABLE) {
-            item { wearableCard() }
         }
         state.deleteError?.let { message ->
             item {
@@ -286,56 +270,18 @@ private fun StartCard(
     state: RecordingUiState,
     onTitleChange: (String) -> Unit,
     onStart: () -> Unit,
-    onInputChange: (RecordingInput) -> Unit,
     onWifiOnlyChange: (Boolean) -> Unit,
 ) {
     val c = OmTheme.colors
-    val wearable = state.wearableName
     OmnesisCard(padding = OmSpacing.lg) {
         Text("Record a conversation", style = MaterialTheme.typography.titleMedium, color = c.textPrimary)
         Spacer(Modifier.height(OmSpacing.xs))
         Text(
-            if (state.startInput == RecordingInput.WEARABLE) {
-                "Records from the $wearable you are wearing. It keeps recording with the phone's screen off, " +
-                    "uploads as it goes, and the gateway turns the conversation into a searchable transcript."
-            } else {
-                "Put the phone on the table. It keeps recording with the screen off, uploads as it goes, " +
-                    "and the gateway turns the conversation into a searchable transcript."
-            },
+            "Put the phone on the table. It keeps recording with the screen off, uploads as it goes, " +
+                "and the gateway turns the conversation into a searchable transcript.",
             style = MaterialTheme.typography.bodyMedium,
             color = c.textSecondary,
         )
-        if (wearable != null && state.wearableReady) {
-            Spacer(Modifier.height(OmSpacing.md))
-            Row(horizontalArrangement = Arrangement.spacedBy(OmSpacing.sm)) {
-                FilterChip(
-                    selected = state.startInput == RecordingInput.PHONE,
-                    onClick = { onInputChange(RecordingInput.PHONE) },
-                    leadingIcon = if (state.startInput == RecordingInput.PHONE) {
-                        { Icon(Icons.Outlined.Check, contentDescription = null, modifier = Modifier.size(18.dp)) }
-                    } else {
-                        null
-                    },
-                    label = { Text("Phone microphone") },
-                )
-                FilterChip(
-                    selected = state.startInput == RecordingInput.WEARABLE,
-                    onClick = { onInputChange(RecordingInput.WEARABLE) },
-                    leadingIcon = if (state.startInput == RecordingInput.WEARABLE) {
-                        { Icon(Icons.Outlined.Check, contentDescription = null, modifier = Modifier.size(18.dp)) }
-                    } else {
-                        null
-                    },
-                    label = { Text(wearable) },
-                )
-            }
-            Spacer(Modifier.height(OmSpacing.xs))
-            Text(
-                "Start records from the input selected here. A tap on the $wearable always records from the $wearable.",
-                style = MaterialTheme.typography.bodySmall,
-                color = c.textMuted,
-            )
-        }
         Spacer(Modifier.height(OmSpacing.md))
         OutlinedTextField(
             value = state.title,
@@ -383,7 +329,6 @@ private fun StartCard(
 private fun RecorderCard(
     recording: RecordingState.Active,
     elapsedMs: Long,
-    wearableName: String?,
     onPause: () -> Unit,
     onResume: () -> Unit,
     onStop: () -> Unit,
@@ -398,12 +343,7 @@ private fun RecorderCard(
             )
             Spacer(Modifier.width(OmSpacing.sm))
             Text(
-                when {
-                    recording.paused -> "Paused"
-                    recording.ambient -> "Capturing conversations with the ${wearableName ?: "wearable"}"
-                    recording.input == RecordingInput.WEARABLE -> "Recording with the ${wearableName ?: "wearable"}"
-                    else -> "Recording"
-                },
+                if (recording.paused) "Paused" else "Recording",
                 style = MaterialTheme.typography.labelLarge,
                 color = c.textSecondary,
             )
@@ -434,24 +374,9 @@ private fun RecorderCard(
         if (recording.micLost) {
             Spacer(Modifier.height(OmSpacing.sm))
             Text(
-                if (recording.input == RecordingInput.WEARABLE) {
-                    "The ${wearableName ?: "wearable"} is not connected. Recording resumes when it is back."
-                } else {
-                    "The microphone is in use by another app. Resume to try again."
-                },
+                "The microphone is in use by another app. Resume to try again.",
                 style = MaterialTheme.typography.bodySmall,
                 color = c.danger,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.fillMaxWidth(),
-            )
-        }
-        if (recording.ambient) {
-            Spacer(Modifier.height(OmSpacing.sm))
-            Text(
-                "This conversation is kept until three minutes pass without speech; the next starts on its own. " +
-                    "Tap the ${wearableName ?: "wearable"} to mark a moment.",
-                style = MaterialTheme.typography.bodySmall,
-                color = c.textSecondary,
                 textAlign = TextAlign.Center,
                 modifier = Modifier.fillMaxWidth(),
             )
@@ -482,8 +407,7 @@ private fun RecorderCard(
             ) {
                 Icon(Icons.Outlined.Stop, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(OmSpacing.xs))
-                // Stopping an episode turns all-day capture off: the next would open at once.
-                Text(if (recording.ambient) "Turn off" else "Stop")
+                Text("Stop")
             }
         }
     }

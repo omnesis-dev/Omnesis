@@ -164,29 +164,6 @@ class VoiceNoteDeliveryTest {
     }
 
     @Test
-    fun a_marked_moment_names_its_recording_and_keeps_its_mark_time_through_the_queue() = runTest {
-        val recordingId = "4f0c1e8e-2b7a-4c55-9a51-3d2f6b7c8e90"
-        val markedAt = Instant.parse("2026-07-13T08:55:00Z")
-        // Offline first: the note waits in the queue with the recording it belongs to.
-        repo(paired = false).capture(
-            "",
-            "android-marked-moment",
-            recording(),
-            relayed = RelayedCapture(noteId = "moment-1", capturedAt = markedAt),
-            recordingId = recordingId,
-        )
-        assertEquals(recordingId, store.readAll().single().recordingId)
-        server.enqueue(accepted())
-
-        repo().drain()
-
-        val body = server.takeRequest().body.readUtf8()
-        assertTrue(body.contains("\"recordingId\":\"$recordingId\""))
-        assertTrue(body.contains("\"capturedAt\":\"2026-07-13T08:55:00Z\""))
-        assertTrue(store.readAll().isEmpty())
-    }
-
-    @Test
     fun the_drain_keeps_a_voice_note_without_transcript_the_gateway_cannot_take_yet() = runTest {
         repo(paired = false).capture("", "android-tile", recording())
         store.insert("typed", "Typed afterwards", "2026-07-13T10:00:00.000Z", "android-app")

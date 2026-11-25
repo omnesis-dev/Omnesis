@@ -66,27 +66,6 @@ class RecordingUploaderTest {
         mimeType = if (silent) null else "audio/mp4",
     )
 
-    @Test fun anAmbientEpisodeWaitsForSpeechBeforeTheGatewayHearsOfIt() = runTest {
-        outbox.addSession(session("e").copy(ambient = true))
-        outbox.addChunk(chunk("e", 0, silent = true))
-        assertEquals(RecordingUploader.Result.Done(sent = 0), uploader.drain())
-        assertTrue(gateway.calls.isEmpty())
-
-        outbox.addChunk(chunk("e", 1))
-        uploader.drain()
-        assertEquals(listOf("start:e", "chunk:e:0", "chunk:e:1"), gateway.calls)
-    }
-
-    @Test fun anAmbientEpisodeOfSilenceIsForgottenOnceItEnds() = runTest {
-        outbox.addSession(session("e").copy(ambient = true))
-        outbox.addChunk(chunk("e", 0, silent = true))
-        outbox.addChunk(chunk("e", 1, silent = true))
-        outbox.markStopped("e", 2, "2026-03-02T09:02:00Z")
-        uploader.drain()
-        assertTrue(gateway.calls.isEmpty())
-        assertTrue(outbox.sessions().isEmpty())
-    }
-
     @Test fun sendsStartThenChunksInOrderThenFinish() = runTest {
         outbox.addSession(session("a"))
         outbox.addChunk(chunk("a", 1))

@@ -27,6 +27,9 @@ class SqliteRecordingOutbox(context: Context, name: String? = DB_NAME) : Recordi
         }
 
         override fun onCreate(db: SQLiteDatabase) {
+            // `ambient` is no longer read or written: it marked the episodes of the
+            // removed all-day wearable capture. It stays so existing outboxes keep
+            // the same schema.
             db.execSQL(
                 """CREATE TABLE sessions (
                     id TEXT PRIMARY KEY,
@@ -83,7 +86,6 @@ class SqliteRecordingOutbox(context: Context, name: String? = DB_NAME) : Recordi
                 put("refusal", session.refusal)
                 put("chunks_filed", session.chunksFiled)
                 put("filed_until", session.filedUntil)
-                put("ambient", if (session.ambient) 1 else 0)
             },
             SQLiteDatabase.CONFLICT_IGNORE,
         )
@@ -200,7 +202,6 @@ class SqliteRecordingOutbox(context: Context, name: String? = DB_NAME) : Recordi
         refusal = str("refusal"),
         chunksFiled = int("chunks_filed") ?: 0,
         filedUntil = str("filed_until"),
-        ambient = int("ambient") == 1,
     )
 
     private fun Cursor.toChunk() = OutboxChunk(

@@ -85,7 +85,6 @@ import dev.omnesis.android.ui.privacy.PrivacyApprovalScreen
 import dev.omnesis.android.ui.privacy.PrivacyExchangeDetailScreen
 import dev.omnesis.android.ui.privacy.PoliciesListScreen
 import dev.omnesis.android.ui.privacy.PrivacyPolicyScreen
-import dev.omnesis.android.feature.omi.ui.OmiRecordingRow
 import dev.omnesis.android.feature.recording.ui.RecordingScreen
 import dev.omnesis.android.feature.recording.ui.RecordingSpeakersScreen
 import dev.omnesis.android.feature.recording.ui.RecordingSpeakersViewModel
@@ -803,7 +802,6 @@ fun HomeScaffold(
             composable("recordings") {
                 RecordingScreen(
                     onOpenMenu = { openDrawer() },
-                    wearableCard = { OmiRecordingRow(onOpenSettings = openSettings) },
                     onOpenSpeakers = { id, title ->
                         nav.navigate("recordings/${Uri.encode(id)}/speakers?title=${Uri.encode(title)}")
                     },
