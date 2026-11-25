@@ -28,7 +28,7 @@ export async function stageDesktopAnalytics({ target, architecture, build }) {
   const manifest = JSON.parse(await readFile(join(packageDir, "package.json"), "utf8"));
   if (
     manifest.name !== `@duckdb/node-bindings-darwin-${architecture}` ||
-    manifest.version !== pins.duckdbVersion.slice(1) + "-r.1"
+    manifest.version !== pins.nodeBindingsVersion
   )
     throw new Error("The staged analytics binding does not match the reviewed engine");
   const library = join(packageDir, "libduckdb.dylib");

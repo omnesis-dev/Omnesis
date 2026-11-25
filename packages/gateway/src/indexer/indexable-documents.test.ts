@@ -15,7 +15,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { createDatabase, upsertDocuments } from "../db.js";
+import { upsertDocuments } from "../db.js";
+import { createFreshTestDatabase } from "../testing/fresh-database.js";
 import { listDocumentIds } from "../data/repositories/DocumentRepository.js";
 import { createIndexDatabase, getIndexedDocumentCount, upsertChunksAndMarkIndexed } from "./db.js";
 import {
@@ -46,7 +47,7 @@ let statements: string[];
 beforeEach(() => {
   directory = mkdtempSync(join(tmpdir(), "omnesis-indexable-"));
   const path = join(directory, "gateway.db");
-  writer = createDatabase(path);
+  writer = createFreshTestDatabase(path);
   statements = [];
   reader = new Database(path, { readonly: true });
   const prepare = reader.prepare.bind(reader);

@@ -42,6 +42,13 @@ async function fixture(bytes = Buffer.from("invented reviewed archive")) {
 test("reviewed build inputs bind exact source revisions and checksums", async () => {
   const pins = await readAnalyticsBuildPins();
   expect(pins.duckdbVersion).toBe("v1.5.6");
+  for (const relative of [
+    "../../packages/gateway/package.json",
+    "../../packages/watch/package.json",
+  ]) {
+    const manifest = JSON.parse(await readFile(new URL(relative, import.meta.url), "utf8"));
+    expect(manifest.dependencies["@duckdb/node-api"]).toBe(pins.nodeBindingsVersion);
+  }
   expect(pins.sources.httpfs.revision).toBe("4bc690dba4496c765777a0269d48fdbaff7cdc11");
   expect(pins.sources.openssl.sha256).toHaveLength(64);
   expect(Object.keys(pins.sources)).toHaveLength(4);

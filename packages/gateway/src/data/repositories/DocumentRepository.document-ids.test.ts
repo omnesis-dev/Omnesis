@@ -4,21 +4,21 @@
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, expect, test } from "vitest";
 
-import { createDatabase } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import { listDocumentIds, upsertDocuments } from "./DocumentRepository.js";
 import type { Db } from "../types.js";
 import type { DocumentInput } from "@omnesis/types";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 let db: Db;
 let dbPath: string;
 
 beforeEach(() => {
   dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
-  db = createDatabase(dbPath);
+  db = createFreshTestDatabase(dbPath);
   upsertDocuments(
     db,
     Array.from({ length: 97 }, (_, n): DocumentInput => ({

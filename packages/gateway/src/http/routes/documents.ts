@@ -1125,12 +1125,13 @@ export function mountDocumentByIdRoute(app: RouteApp, deps: { db: Db }): void {
   app.get("/documents/:id", scope.read(), (c) => {
     const id = c.req.param("id");
     const columns = `document.id, document.provider_id, document.source_id,
-                     document.external_id, document.stream_id, origin_device.name AS device_name,
+                     document.external_id, document.stream_id, COALESCE(archived_origin.name, origin_device.name) AS device_name,
                      document.title, document.content, document.content_hash, document.metadata,
                      document.source_created_at, document.source_updated_at,
                      document.ingested_at, document.updated_at`;
     const from = `FROM documents AS document
-                  LEFT JOIN devices AS origin_device ON origin_device.id = document.stream_id`;
+                  LEFT JOIN devices AS origin_device ON origin_device.id = document.stream_id
+       LEFT JOIN forgotten_devices AS archived_origin ON archived_origin.device_id = document.stream_id`;
 
     // Flags gateway-internal sources (a dataset the gateway hosts itself) so clients
     // collapse the delete prompt to a single action: no sync exists that

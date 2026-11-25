@@ -22,6 +22,10 @@
 // simulator is using it yet, and the simulator's launchd starts a new trustd,
 // which loads the asset, on the next request. A runtime whose trustd logs none
 // of these messages is not waited on.
+//
+// CI also keeps trustd from getting any new asset, for the whole run
+// (`ios-trust-asset-block.sh`), so there it finds trustd settled; the wait
+// covers a run without that block, such as a local one.
 import { execFileSync } from "node:child_process";
 
 const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;

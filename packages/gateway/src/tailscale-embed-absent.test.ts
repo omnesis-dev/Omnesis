@@ -13,12 +13,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { SCOPE_ADMIN, SCOPE_READ } from "@omnesis/types";
-import { createDatabase } from "./db.js";
+import { createFreshTestDatabase } from "./testing/fresh-database.js";
 import { createDevice, getDevice } from "./data/repositories/DeviceRepository.js";
 import { createToken } from "./data/repositories/TokenRepository.js";
 import { deviceCapabilitySchema } from "./http/schemas/common.js";
 import { createServer } from "./server.js";
 import { TailscaleEmbedService } from "./tailscale-embed/service.js";
+import type { createDatabase } from "./db.js";
 
 let dir: string;
 let db: ReturnType<typeof createDatabase>;
@@ -28,7 +29,7 @@ let path: string;
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "omnesis-ts-absent-"));
   path = join(dir, "gateway.sqlite");
-  db = createDatabase(path);
+  db = createFreshTestDatabase(path);
   const device = createDevice(db, { name: "Fictional admin CLI", kind: "cli" });
   admin = createToken(db, device.id, [SCOPE_ADMIN, SCOPE_READ]).token;
 });

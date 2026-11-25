@@ -16,9 +16,12 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import Database from "better-sqlite3";
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
 import { createDatabase, upsertWithCursor } from "../db.js";
+import { createFreshTestDatabase } from "../testing/fresh-database.js";
 import { setActiveAlgoVersion } from "../near-dupes/meta.js";
 import { applyNearDupBatch, BUCKET_DELETE_FOR_DOC_SQL } from "../near-dupes/NearDupWriterOps.js";
 import {
@@ -68,8 +71,6 @@ import {
   refreshPlannerStatistics,
 } from "./planner-statistics.js";
 import type { NearDupApplyBatch } from "../near-dupes/types.js";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 type Db = Database.Database;
 
@@ -97,7 +98,7 @@ function cleanupDb(path: string): void {
 function seeded(docs = 2_000): { db: Db; path: string } {
   const path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
   paths.push(path);
-  const db = createDatabase(path) as unknown as Db;
+  const db = createFreshTestDatabase(path) as unknown as Db;
   setActiveAlgoVersion(db as never, CORPUS_ALGO);
   seedLargeCorpus(db, { docs, unresolvedDocs: 60, pendingCandidates: 120 });
   return { db, path };

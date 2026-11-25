@@ -86,6 +86,29 @@ describe("install-e2e Docker single-host lanes", () => {
     expect(workflow.on.workflow_dispatch.inputs.lanes.options).toContain("docker");
   });
 
+  test("every install that reads the registry from the runner first waits for it to answer", () => {
+    const lines = readFileSync(join(root, "scripts/install-e2e/docker-host.sh"), "utf8").split(
+      "\n",
+    );
+    const reads = lines.flatMap((line, i) =>
+      /^installer( |$)/u.test(line.trim()) && !line.includes("--build") ? [i] : [],
+    );
+    // The first install, and the macOS re-run over the published images.
+    expect(reads).toHaveLength(2);
+    for (const i of reads) expect(lines[i - 1].trim()).toBe('await_registry "$REGISTRY_HOST"');
+    expect(lines).toContain("REGISTRY_HOST=ghcr.io");
+  });
+
+  test("on mac the images are pulled into the VM before the first install", () => {
+    const script = readFileSync(join(root, "scripts/install-e2e/docker-host.sh"), "utf8");
+    const prefetch = script.indexOf('[ "$SCENARIO" = linux ] || prefetch_images');
+    expect(prefetch).toBeGreaterThan(0);
+    expect(prefetch).toBeLessThan(script.indexOf('group "Install the newest published release'));
+    expect(script).toMatch(
+      /pull_image "\$REGISTRY_HOST" "\$REGISTRY_HOST\/omnesis-dev\/\$image:\$PREFETCHED_TAG"/u,
+    );
+  });
+
   test("the lane refuses to run outside CI and names its scenarios", () => {
     const script = join(root, "scripts/install-e2e/docker-host.sh");
     const work = mkdtempSync(join(tmpdir(), "docker-host-test-"));

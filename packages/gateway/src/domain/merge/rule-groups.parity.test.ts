@@ -13,9 +13,11 @@
  */
 
 import { existsSync, unlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { createDatabase } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import { PersonService } from "../../http/services/PersonService.js";
 import {
   RULE_GROUP_FILTERS,
@@ -39,8 +41,8 @@ const FIXTURES: Record<string, (db: Db) => void> = {
 let path: string;
 let db: Db;
 beforeEach(() => {
-  path = `/tmp/omnesis-test-${randomUUID()}.db`;
-  db = createDatabase(path);
+  path = join(tmpdir(), `omnesis-test-${randomUUID()}.db`);
+  db = createFreshTestDatabase(path);
 });
 afterEach(() => {
   db.close();

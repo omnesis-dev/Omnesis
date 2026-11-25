@@ -283,6 +283,31 @@ describe("F9: the image workflow", () => {
     },
   );
 
+  test.each(RELAYS)(
+    "%s native SQLite smoke resolves dependencies from the installed relay workspace",
+    (relay, _image, dockerfile) => {
+      const root = new URL("../../", import.meta.url);
+      const recipe = readFileSync(new URL(dockerfile, root), "utf8");
+      const installedWorkspace = recipe.match(/--workspace (@omnesis\/[a-z-]+)/u)?.[1];
+      expect(installedWorkspace).toBeDefined();
+      const workspacePath = `packages/${installedWorkspace.slice("@omnesis/".length)}`;
+      const manifest = JSON.parse(
+        readFileSync(new URL(`${workspacePath}/package.json`, root), "utf8"),
+      );
+      expect(manifest.dependencies).toHaveProperty("better-sqlite3");
+      const smoke = job(`build-${relay}`).split("- name: Smoke-test the pushed image")[1];
+      expect(smoke).toBeDefined();
+      const run = smoke.match(/docker run[^\n]+/u)?.[0];
+      // npm can install a direct dependency in its workspace rather than hoist it
+      // to /app/node_modules. The inline import needs the same resolution anchor.
+      expect(run).toContain(`--workdir /app/${workspacePath}`);
+      expect(run).toContain("--network none");
+      expect(run).toContain('"$IMAGE@$DIGEST"');
+      expect(smoke).toContain("import Database from 'better-sqlite3'");
+      expect(smoke).toContain(`await import('${installedWorkspace}')`);
+    },
+  );
+
   test("only the main branch of this repository builds or signs", () => {
     expect(job("gate")).toContain("github.repository == 'omnesis-dev/Omnesis'");
     expect(job("gate")).toContain("github.ref == 'refs/heads/main'");

@@ -11,15 +11,15 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, expect, it } from "vitest";
-import { createDatabase } from "./db.js";
+import { createFreshTestDatabase } from "./testing/fresh-database.js";
 import { Scheduler } from "./scheduler/scheduler.js";
 import { IoTaskRunner } from "./scheduler/runners/io.js";
 import { ioGateFromScheduler, type IoGate } from "./scheduler/io-ops.js";
 import { SQLITE_CATALOG_TABLES, computeSqliteTableStats } from "./sqlite-catalog.js";
 import type Database from "better-sqlite3";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 const WORKER_URL = new URL("./workers/io-worker.ts", import.meta.url);
 const LOADER_URL = new URL("./workers/register-tsx.mjs", import.meta.url).href;
@@ -31,7 +31,7 @@ let io: IoGate;
 
 beforeEach(async () => {
   dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
-  db = createDatabase(dbPath) as unknown as Database.Database;
+  db = createFreshTestDatabase(dbPath) as unknown as Database.Database;
   const insert = db.prepare(
     `INSERT INTO people (id, canonical_name, source, first_seen, last_seen, created_at, updated_at)
      VALUES (?, 'fixture person', 'fixture', ?, ?, ?, ?)`,

@@ -23,7 +23,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-import { createDatabase } from "../../../db.js";
+import { createFreshTestDatabase } from "../../../testing/fresh-database.js";
 import { detectSelfFromSourceIds } from "../../../domain/ContactCardBootstrap.js";
 import {
   resetSelfIdentitySources,
@@ -75,7 +75,7 @@ function vouchersFor(alias: string): string[] {
 
 beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), "omnesis-selfid-route-test-"));
-  db = createDatabase(join(tmpDir, "test.db"));
+  db = createFreshTestDatabase(join(tmpDir, "test.db"));
   selfId = "person-self";
   db.prepare(
     `INSERT INTO people (id, canonical_name, source, is_self, first_seen, last_seen, created_at, updated_at)

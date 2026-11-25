@@ -17,6 +17,7 @@ import { setSourceAccount } from "./SourceAccountRepository.js";
 import {
   deviceSupportsPersistedSourceContract,
   initializeOrAssertSourceMemberConfigContractForDevice,
+  initializeOrAssertSourceOwnerMemberConfigContract,
 } from "./SourceMemberConfigContractRepository.js";
 import { getDevice } from "./DeviceRepository.js";
 import { bumpWipeEpoch } from "./SyncStateRepository.js";
@@ -397,7 +398,12 @@ export function updateSource(
     if (!existing) return null;
     if (isSourceModeTransitionPending(db, id)) return null;
     const config = patch.config ?? existing.config;
-    const enabled = patch.enabled === undefined ? existing.enabled : patch.enabled;
+    const replacingArchivedOwner =
+      patch.deviceId !== undefined &&
+      patch.deviceId !== existing.deviceId &&
+      getDevice(db, existing.deviceId) === null;
+    const enabled =
+      patch.enabled === undefined ? replacingArchivedOwner || existing.enabled : patch.enabled;
     const deviceId = patch.deviceId ?? existing.deviceId;
     const targetOverride =
       deviceId !== existing.deviceId ? getSourceMemberConfigOverride(db, id, deviceId) : null;
@@ -549,13 +555,7 @@ export function updateExistingSourceMemberConfigOverride(
       }) !== expectedRevision
     )
       return false;
-    initializeOrAssertSourceMemberConfigContractForDevice(
-      db,
-      sourceId,
-      source.type,
-      source.deviceId,
-      memberScopedParams,
-    );
+    initializeOrAssertSourceOwnerMemberConfigContract(db, source, deviceId, memberScopedParams);
     if (deviceId !== source.deviceId) {
       initializeOrAssertSourceMemberConfigContractForDevice(
         db,
@@ -621,7 +621,7 @@ export function addSourceMember(
   allowDetachedRejoin = true,
 ): boolean {
   return db.transaction((): boolean => {
-    const source = getSource(db, sourceId);
+    let source = getSource(db, sourceId);
     if (!source) return false;
     if (isSourceModeTransitionPending(db, sourceId)) return false;
     if (isSourceStreamCleanupPending(db, sourceId, deviceId)) return false;
@@ -636,22 +636,27 @@ export function addSourceMember(
       return false;
     }
     const device = getDevice(db, deviceId);
+    if (!device) return false;
+    if (getDevice(db, source.deviceId) === null) {
+      // An explicit or permitted new contributor takes live ownership, while
+      // each retained forgotten stream keeps its original provenance key.
+      db.prepare("UPDATE sources SET device_id = ?, enabled = 1, updated_at = ? WHERE id = ?").run(
+        deviceId,
+        addedAt,
+        sourceId,
+      );
+      source = { ...source, deviceId, enabled: true, updatedAt: addedAt };
+    }
     if (
       memberScopedParams !== undefined &&
-      (!device || !deviceSupportsPersistedSourceContract(db, source, device))
+      !deviceSupportsPersistedSourceContract(db, source, device)
     ) {
       throw new Error(
         `device ${deviceId} no longer advertises source ${sourceId}'s persisted multi-device contract`,
       );
     }
     if (memberScopedParams !== undefined) {
-      initializeOrAssertSourceMemberConfigContractForDevice(
-        db,
-        sourceId,
-        source.type,
-        source.deviceId,
-        memberScopedParams,
-      );
+      initializeOrAssertSourceOwnerMemberConfigContract(db, source, deviceId, memberScopedParams);
       if (deviceId !== source.deviceId) {
         initializeOrAssertSourceMemberConfigContractForDevice(
           db,
@@ -759,10 +764,11 @@ export function removeSourceMember(
   db: Db,
   sourceId: SourceId,
   deviceId: DeviceId,
+  retirement?: { keepData: boolean },
 ): RemoveSourceMemberResult {
   return db.transaction((): RemoveSourceMemberResult => {
     const refusal = sourceMemberDetachRefusal(db, sourceId, deviceId);
-    if (refusal) return refusal;
+    if (refusal && !(retirement && refusal.reason === "last-member")) return refusal;
     const existing = getSource(db, sourceId)!;
     const remaining = listSourceMembers(db, sourceId).filter((m) => m.deviceId !== deviceId);
     db.prepare("DELETE FROM source_devices WHERE source_id = ? AND device_id = ?").run(
@@ -785,7 +791,13 @@ export function removeSourceMember(
     forgetAbsenceObserver(db, sourceId, deviceId);
     let ownerReassignedTo: DeviceId | null = null;
     let record = existing;
-    if (existing.deviceId === deviceId) {
+    if (existing.deviceId === deviceId && remaining.length === 0) {
+      db.prepare("UPDATE sources SET enabled = 0, updated_at = ? WHERE id = ?").run(
+        now(),
+        sourceId,
+      );
+      record = { ...existing, enabled: false };
+    } else if (existing.deviceId === deviceId) {
       const next = remaining[0]!;
       const ts = now();
       db.prepare("UPDATE sources SET device_id = ?, updated_at = ? WHERE id = ?").run(
@@ -797,7 +809,7 @@ export function removeSourceMember(
       record = { ...existing, deviceId: next.deviceId, updatedAt: ts };
     }
     const streamCleanup =
-      existing.multiDeviceMode === "partitioned"
+      existing.multiDeviceMode === "partitioned" && !retirement?.keepData
         ? enqueueSourceStreamCleanup(db, sourceId, deviceId)
         : null;
     return { removed: true, record, ownerReassignedTo, streamCleanup };

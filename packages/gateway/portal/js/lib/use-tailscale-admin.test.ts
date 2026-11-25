@@ -150,7 +150,9 @@ describe("useTailscaleAdmin polling", () => {
       };
       return { call, aborted: () => signal?.aborted };
     };
-    for (const operation of ["enable"]) {
+    // The gateway asks for a step-up before turning the device on and before signing it in
+    // (whoever finishes the sign-in picks the tailnet): routes/tailscale.ts.
+    for (const operation of ["enable", "sign-in"]) {
       const change = pending();
       let done: Promise<unknown>;
       await act(async () => { done = admin.run(operation, change.call); });
@@ -160,13 +162,17 @@ describe("useTailscaleAdmin polling", () => {
       expect(change.aborted(), operation).toBe(true);
       await act(async () => { await done; });
     }
-    const quick = pending();
-    let done: Promise<unknown>;
     // Joining policies are set together on Connectivity's own route, not here.
-    await act(async () => { done = admin.run("device-name", quick.call); });
-    await advance(10_000);
-    expect(quick.aborted()).toBe(true);
-    await act(async () => { await done; });
+    for (const operation of ["device-name", "sign-out", "disable"]) {
+      const quick = pending();
+      let done: Promise<unknown>;
+      await act(async () => { done = admin.run(operation, quick.call); });
+      await advance(9_999);
+      expect(quick.aborted(), operation).toBe(false);
+      await advance(1);
+      expect(quick.aborted(), operation).toBe(true);
+      await act(async () => { await done; });
+    }
   });
 
   test("a state another route answered with replaces the state, and a read that started before it can't undo it", async () => {

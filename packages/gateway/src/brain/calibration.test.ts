@@ -15,7 +15,7 @@ import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 type Db = Database.Database;
-import { createDatabase } from "../db.js";
+import { createFreshTestDatabase } from "../testing/fresh-database.js";
 import { createDevAnnotation } from "../dev-annotations/store.js";
 import {
   createDocAnnotation,
@@ -249,7 +249,7 @@ describe("computeCalibrationReport", () => {
   let db: Db;
   beforeEach(() => {
     path = testDbPath();
-    db = createDatabase(path);
+    db = createFreshTestDatabase(path);
   });
   afterEach(() => {
     db.close();
@@ -514,7 +514,7 @@ describe("SQL aggregation ↔ pure-labeler parity", () => {
   let db: Db;
   beforeEach(() => {
     path = testDbPath();
-    db = createDatabase(path);
+    db = createFreshTestDatabase(path);
   });
   afterEach(() => {
     db.close();

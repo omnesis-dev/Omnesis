@@ -6,7 +6,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { ProviderId, SourceId } from "@omnesis/types";
-import { createDatabase, upsertDocuments } from "../../db.js";
+import { upsertDocuments } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import { likeSearchDocuments } from "../../search/like-search.js";
 import { resolveBrainSettings } from "../config.js";
 import { buildOpenLoopDocumentInput } from "../open-loop-source/document-projection.js";
@@ -100,7 +101,7 @@ function sourceDocument(externalId: string, content: string): string {
 
 beforeEach(() => {
   directory = mkdtempSync(join(tmpdir(), "omnesis-legacy-read-fence-"));
-  db = createDatabase(join(directory, "gateway.db"));
+  db = createFreshTestDatabase(join(directory, "gateway.db"));
   original = sourceDocument("original", `The workshop is scheduled. ${PRIVATE_TEXT}`);
   newer = sourceDocument("newer", PRIVATE_TEXT);
 });

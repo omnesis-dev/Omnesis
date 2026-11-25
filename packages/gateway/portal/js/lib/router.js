@@ -134,6 +134,15 @@ export function parseRoute() {
     return { view: "tasks", taskView, ...(focusTaskId ? { focusTaskId } : {}) };
   }
 
+  // /portal/recordings[/<id>] — recorded conversations (experimental): the
+  // list, or one recording with its speakers and chunks.
+  const recordingsMatch = path.match(/^\/portal\/recordings(?:\/([^/]+))?\/?$/);
+  if (recordingsMatch) {
+    if (!recordingsMatch[1]) return { view: "recordings", recordingId: null };
+    const recordingId = decodePathSegment(recordingsMatch[1]);
+    return { view: "recordings", recordingId };
+  }
+
   if (path === "/portal/capture" || path === "/portal/capture/") {
     // `?day=YYYY-MM-DD` seeds the note history at that day — a
     // Manage-notes link from an old daily document lands on relevant
@@ -265,6 +274,9 @@ export function parseRoute() {
       modelsSection,
       ...(pairRequest ? { pair: pairRequest } : {}),
       ...(deviceRequest ? { device: deviceRequest } : {}),
+      ...(deviceRequest && ["repair", "forget"].includes(new URLSearchParams(location.search).get("deviceAction"))
+        ? { deviceAction: new URLSearchParams(location.search).get("deviceAction") }
+        : {}),
       // Carry the query string across the rewrite: a tab that grows URL-carried
       // state must not lose it just because the caller used an older spelling.
       ...(isCanonical ? {} : { redirectTo: `${canonicalPath}${location.search}` }),

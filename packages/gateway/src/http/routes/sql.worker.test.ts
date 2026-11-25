@@ -17,6 +17,7 @@ import { SCOPE_ADMIN } from "@omnesis/types";
 import { Hono } from "hono";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createDatabase } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import { Scheduler } from "../../scheduler/scheduler.js";
 import { IoTaskRunner } from "../../scheduler/runners/io.js";
 import { ioGateFromScheduler, type IoGate } from "../../scheduler/io-ops.js";
@@ -159,7 +160,7 @@ const CASES: Array<[string, Record<string, unknown>]> = [
 ];
 
 beforeAll(async () => {
-  const writer = createDatabase(dbPath);
+  const writer = createFreshTestDatabase(dbPath);
   seed(writer);
   writer.close();
   db = createDatabase(dbPath);

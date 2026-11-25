@@ -157,13 +157,19 @@ export async function checkSession() {
   // expected on first paint, not a session that just expired. Use raw
   // fetch so we don't trip the session-expired event before the user
   // has even logged in.
-  const res = await fetch("/portal/api/session", { credentials: "same-origin" });
-  const data = await res.json();
-  _authenticated = data.authenticated;
-  _scope = data.scope ?? null;
-  _csrfToken = data.authenticated ? (data.csrfToken ?? null) : null;
-  if (data.authenticated) resetSessionExpired();
-  return data;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10_000);
+  try {
+    const res = await fetch("/portal/api/session", { credentials: "same-origin", signal: controller.signal });
+    const data = await res.json();
+    _authenticated = data.authenticated;
+    _scope = data.scope ?? null;
+    _csrfToken = data.authenticated ? (data.csrfToken ?? null) : null;
+    if (data.authenticated) resetSessionExpired();
+    return data;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 /**
@@ -254,6 +260,7 @@ const fetchOpts = (init = {}) => ({ credentials: "same-origin", ...init });
 async function request(method, path, opts = {}) {
   const init = {
     method,
+    ...(opts.signal ? { signal: opts.signal } : {}),
     ...(opts.cache ? { cache: opts.cache } : {}),
     headers:
       opts.body !== undefined || (opts.csrf && _csrfToken)
@@ -899,8 +906,8 @@ export const getCalendarItem = (id, timeZone) =>
 // that shape so view code can always destructure `.items` regardless
 // of which endpoint it consumes.
 
-export async function listDevices() {
-  const data = await request("GET", "/admin/devices");
+export async function listDevices(signal) {
+  const data = await request("GET", "/admin/devices", { signal });
   return { items: data.items ?? data.devices ?? [], pageInfo: data.pageInfo };
 }
 
@@ -959,10 +966,17 @@ export const revokeDevice = (deviceId, impactFingerprint) => {
   );
 };
 
-// Permanent delete of a revoked device's row. The gateway refuses while the
-// device still hosts sources.
-export const forgetDevice = (deviceId) =>
-  request("DELETE", `/admin/devices/${encodeURIComponent(deviceId)}?forget=true`).then(() => true);
+/** Review the source history affected by permanently forgetting a device. */
+export const getDeviceForgetImpact = (deviceId) =>
+  request("GET", `/admin/devices/${encodeURIComponent(deviceId)}/forget-impact`);
+
+/** Forget a device, applying the explicitly reviewed history choice when supplied. */
+export const forgetDevice = (deviceId, options = {}) => {
+  const query = new URLSearchParams({ forget: "true" });
+  if (options.data) query.set("data", options.data);
+  if (options.impactFingerprint) query.set("impactFingerprint", options.impactFingerprint);
+  return request("DELETE", `/admin/devices/${encodeURIComponent(deviceId)}?${query}`).then(() => true);
+};
 
 /** Withdraw one phone's relay consent and invalidate its opaque relay credential. */
 export const withdrawRelayPushConsent = (deviceId) =>
@@ -978,7 +992,7 @@ export const withdrawRelayPushConsent = (deviceId) =>
 export const fleetUpdateTarget = () => request("GET", "/admin/fleet/target");
 
 /** Read the latest per-device health-check state and completed reports. */
-export const getFleetDoctor = () => request("GET", "/admin/fleet/doctor");
+export const getFleetDoctor = (signal) => request("GET", "/admin/fleet/doctor", { signal });
 
 /**
  * Ask every applicable device, or an explicit subset, to run its local
@@ -1009,8 +1023,9 @@ export const getHostFleetUpdate = () =>
 export const startHostFleetUpdate = (planId) =>
   request("POST", "/admin/fleet/host-update", { body: { planId } });
 
-export async function listTokens(deviceId) {
+export async function listTokens(deviceId, signal) {
   const data = await request("GET", "/admin/tokens", {
+    signal,
     query: deviceId ? { deviceId } : undefined,
   });
   return { items: data.items ?? data.tokens ?? [], pageInfo: data.pageInfo };
@@ -1123,11 +1138,11 @@ export const getSourceRecent = (sourceId, limit = 25, cursor) =>
 
 // --- Sources (gateway admin API + sync status) ---
 
-export async function getAdminSources() {
+export async function getAdminSources(signal) {
   // The canonical Page<T> shape — { items, pageInfo } — plus `pendingRemovals`,
   // the sources that have been removed but whose data is still being deleted.
   // Those have no `sources` row left to appear in `items`.
-  const data = await request("GET", "/admin/sources");
+  const data = await request("GET", "/admin/sources", { signal });
   return {
     items: data.items ?? data.sources ?? [],
     pageInfo: data.pageInfo,
@@ -1135,9 +1150,9 @@ export async function getAdminSources() {
     internalSources: data.internalSources ?? [],
   };
 }
-export const getAdminSyncStatus = () => request("GET", "/admin/sync/status");
-export const getOverallStatus = () => request("GET", "/status");
-export const getIndexStats = () => request("GET", "/index/stats");
+export const getAdminSyncStatus = (signal) => request("GET", "/admin/sync/status", { signal });
+export const getOverallStatus = (signal) => request("GET", "/status", { signal });
+export const getIndexStats = (signal) => request("GET", "/index/stats", { signal });
 
 /**
  * Trigger a sync. A source one device syncs answers
@@ -1233,7 +1248,7 @@ export const resumeSource = (sourceId) =>
  * so the Add Source modal can route the selection to the right collector when
  * more than one advertises the same descriptor.
  */
-export const getSourceDescriptorsUnion = () => request("GET", "/admin/source-descriptors");
+export const getSourceDescriptorsUnion = (signal) => request("GET", "/admin/source-descriptors", { signal });
 
 export const getSourcesSnapshot = (deviceId) =>
   request("GET", "/admin/sources/snapshot", { query: deviceId ? { deviceId } : undefined });
@@ -1838,3 +1853,52 @@ export const refreshStorage = () => request("POST", "/admin/storage/refresh", { 
 export const getStorageCleanupJobs = () => request("GET", "/admin/storage/cleanup/jobs", { cache: "no-store" });
 export const startStorageCleanup = (body) => request("POST", "/admin/storage/cleanup/jobs", { body });
 export const cancelStorageCleanup = (id) => request("POST", `/admin/storage/cleanup/jobs/${encodeURIComponent(id)}/cancel`, { body: {} });
+
+// --- Recorded conversations (experimental) ---
+// A phone on the table records a conversation and the gateway transcribes it.
+// Every route 404s when experimental mode is off.
+
+const recordingPath = (id) => `/recordings/${encodeURIComponent(id)}`;
+
+/** The most recent recordings, newest first: `{ recordings }`. */
+export const listRecordings = (limit = 100) => request("GET", "/recordings", { query: { limit } });
+
+/** One recording as the list shows it, with its chunks: `{ recording, chunks }`. */
+export const getRecordingChunks = (id) => request("GET", `${recordingPath(id)}/chunks`);
+
+/** A recording's speakers, with how long each spoke and what they said first: `{ speakers }`. */
+export const getRecordingSpeakers = (id) => request("GET", `${recordingPath(id)}/speakers`);
+
+/**
+ * Say who speaker `speaker` is: `{ self: true }`, `{ personId }`, `{ name }`
+ * or `{ clear: true }`. Answers the session's speakers after the change.
+ */
+export const setRecordingSpeaker = (id, speaker, mapping) =>
+  request("PUT", `${recordingPath(id)}/speakers/${encodeURIComponent(String(speaker))}`, {
+    body: mapping,
+  });
+
+/** Delete a recording with its chunks, any kept audio, and its document. */
+export const deleteRecording = (id) => request("DELETE", recordingPath(id));
+
+/** A chunk's kept audio as a Blob; throws with `status` 404 when none is kept. */
+export async function getRecordingChunkAudio(id, seq) {
+  const res = await request("GET", `${recordingPath(id)}/chunks/${encodeURIComponent(String(seq))}/audio`, {
+    raw: true,
+  });
+  return res.blob();
+}
+
+/**
+ * Who likely took part in a recording and what it was, from the owner's
+ * calendar and names heard in it: `{ suggestions }`. Nothing is applied.
+ */
+export const getRecordingSuggestions = (id) => request("GET", `${recordingPath(id)}/suggestions`);
+
+/** Stop offering one suggestion for a recording. */
+export const dismissRecordingSuggestion = (id, key) =>
+  request("POST", `${recordingPath(id)}/suggestions/dismiss`, { body: { key } });
+
+/** Give a recording the owner's title; null goes back to the date-based one. Answers its summary. */
+export const setRecordingTitle = (id, title) =>
+  request("PUT", `${recordingPath(id)}/title`, { body: { title } });

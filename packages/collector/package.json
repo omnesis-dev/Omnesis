@@ -1,6 +1,6 @@
 {
   "name": "@omnesis/collector",
-  "version": "0.7.8",
+  "version": "0.8.1",
   "license": "AGPL-3.0-or-later",
   "type": "module",
   "main": "src/index.ts",
@@ -54,13 +54,13 @@
     "mammoth": "^1.13.0",
     "postal-mime": "^2.7.4",
     "turndown": "^7.2.5",
-    "unpdf": "^2.1.0",
+    "unpdf": "^2.2.1",
     "word-extractor": "^1.0.4",
     "zod": "^4.6.7"
   },
   "devDependencies": {
-    "@hono/node-server": "^2.1.6",
-    "@lydell/node-pty": "1.2.0-beta.15",
+    "@hono/node-server": "^2.1.11",
+    "@lydell/node-pty": "1.2.0-beta.18",
     "@omnesis/agent-integration": "*",
     "@omnesis/extension": "*",
     "@omnesis/gateway": "*",

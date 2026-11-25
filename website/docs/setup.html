@@ -417,11 +417,10 @@
             <a href="#public-domain">your own domain or reverse proxy</a>. Each line shows its
             address once it is on, and whether that address is public on the Internet. When the
             gateway's own Tailscale device and the relay are both on,
-            <strong>When both can answer, try first</strong> chooses which of the two addresses a
-            device is given when it pairs with a code: Tailscale keeps its traffic on your tailnet;
-            the relay works on every device with nothing to install. A paired device keeps the
-            address it got, so the choice applies to devices that pair from then on; pair a device
-            again to switch it.
+            <strong>Network priority</strong> chooses which of the two addresses a device is given
+            when it pairs with a code: Tailscale keeps its traffic on your tailnet; the relay works
+            on every device with nothing to install. A paired device keeps the address it got, so
+            the choice applies to devices that pair from then on; pair a device again to switch it.
           </li>
           <li>
             <strong>MCP</strong>: where agents reach the gateway's MCP server, in three lines:
@@ -557,6 +556,15 @@
           address. The CLI equivalents are <code>omnesis cloud disable</code> and
           <code>enable</code>, with <code>reconnect</code> and <code>renew</code> to retry the
           connection or the certificate.
+        </p>
+        <p>
+          Routing credentials renew automatically without interrupting active portal requests or
+          live streams. If renewal is refused or the credential expires, the connection closes.
+        </p>
+        <p>
+          If a portal download is interrupted, the page offers <strong>Reload</strong> to try again.
+          Connectivity, Sources and Devices show an error if their initial reads take too long, so
+          an interrupted connection does not leave them waiting indefinitely.
         </p>
         <p>
           <strong>Unlink this gateway</strong>, on the account page or in the setup's first step, or
@@ -1363,10 +1371,17 @@ omnesis.example.com {
           <code>omnesis devices revoke &lt;device&gt;</code> invalidates the device's tokens but
           keeps its identity, so it can be <a href="#repairing-a-device">brought back</a>. Revoking
           an OpenClaw or Hermes device also signs its agent out of its connection.
-          <code>omnesis devices revoke &lt;device&gt; --forget</code> deletes the device for good,
-          and is refused while it still hosts sources. In the portal, use <em>Forget device</em>
-          on a revoked device. A refusal stays in the confirmation dialog so you can address it
-          before trying again; a successful removal takes the device out of the list.
+          <code>omnesis devices revoke &lt;device&gt; --forget</code> forgets the device
+          permanently. The portal and both mobile apps offer <em>Forget device</em> on a revoked
+          device. If it hosts sources, choose what happens to its indexed data:
+          <em>Keep historical data</em>
+          is the default. The history stays searchable, but the forgotten device no longer syncs or
+          produces source warnings. Sources with no remaining devices become historical; other
+          devices keep syncing their own parts.
+          <em>Remove this device's data</em> requires a separate confirmation. It queues deletion of
+          data held only by that device; shared data still used by another device and history
+          already kept from forgotten devices stay. The forgotten device disappears from the device
+          list and cannot reconnect with its old credentials. Pair a replacement as a new device.
         </p>
         <p>
           One device does not stay revoked: the collector on the gateway host. It registers itself
@@ -1480,6 +1495,13 @@ omnesis.example.com {
           including the addresses agents on other machines sign in through.
         </p>
 
+        <p>
+          In the CLI, <code>omnesis devices revoke &lt;device&gt; --forget</code> asks the same
+          history question. For unattended use, pass <code>--data keep --yes</code> to retain
+          history or <code>--data delete --yes</code> to confirm deleting data held only by that
+          device. <code>--forget --yes</code> keeps history by default. A source change during
+          confirmation requires a fresh review before the device can be forgotten.
+        </p>
         <h2 id="repairing-a-device">Bringing a revoked device back</h2>
         <p>
           A revoked device that still hosts sources shows as <code>needs-pairing</code> in
@@ -1506,6 +1528,13 @@ omnesis.example.com {
           <strong>…</strong> menu beside an offline device in the portal and both phone apps. A
           portal session is not repaired: pair the browser again with
           <code>omnesis devices pair --kind portal</code>.
+        </p>
+        <p>
+          On the portal's Sources page, a device that needs pairing again has
+          <em>Pair again</em> and <em>Forget device</em> actions on its warning card. Both open
+          Settings → Devices for that device: <em>Pair again</em> generates its repair code, and
+          <em>Forget device</em> opens the confirmation, offering to keep its indexed history or
+          remove data held only by that device.
         </p>
         <div class="term">
           <div class="term-bar"><span></span><span></span><span></span></div>

@@ -17,6 +17,8 @@ export async function readAnalyticsBuildPins() {
   if (
     pins.format !== 1 ||
     !/^v\d+\.\d+\.\d+$/.test(pins.duckdbVersion) ||
+    !/^\d+\.\d+\.\d+-r\.\d+$/.test(pins.nodeBindingsVersion) ||
+    pins.nodeBindingsVersion.split("-r.")[0] !== pins.duckdbVersion.slice(1) ||
     !/^\d+\.\d+$/.test(pins.minimumMacOS) ||
     JSON.stringify(Object.keys(pins.sources).sort()) !== JSON.stringify([...sourceNames].sort()) ||
     JSON.stringify(Object.keys(pins.tools ?? {})) !== JSON.stringify(["cmake"])

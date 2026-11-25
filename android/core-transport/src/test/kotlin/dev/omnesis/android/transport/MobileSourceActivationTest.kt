@@ -109,7 +109,7 @@ class MobileSourceActivationTest {
     }
 
     @Test
-    fun `contract refusal identifies the device that must update`() {
+    fun `contract refusal says another device needs an update`() {
         val refusal = GatewayException.ServerError(
             status = 409,
             body = "device \"Kitchen Tablet\" does not support the partitioned contract; update the device",
@@ -117,8 +117,52 @@ class MobileSourceActivationTest {
         )
 
         assertEquals(
-            "Device \"Kitchen Tablet\" does not support the partitioned contract; update the device",
+            "Another device that sends this source needs an Omnesis update first. Nothing was changed.",
             activationFailureMessage(refusal, "The gateway could not prepare this phone."),
+        )
+    }
+
+    @Test
+    fun `a revoked earlier owner's refusal reads as plain copy`() {
+        val refusal = GatewayException.ServerError(
+            status = 409,
+            body = "device \"Hallway Phone\" is revoked — pair it again to reclaim it, or forget it",
+            code = "DEVICE_REVOKED",
+        )
+
+        assertEquals(
+            "A device that sent this source is no longer paired with your gateway. Nothing was changed.",
+            activationFailureMessage(refusal, "The gateway could not finish enabling this phone. Try again."),
+        )
+    }
+
+    @Test
+    fun `a refusal without plain copy shows the gateway's explanation`() {
+        val refusal = GatewayException.ServerError(
+            status = 409,
+            body = "source fictional:local is paused by policy",
+            code = "FICTIONAL_REFUSAL",
+        )
+
+        assertEquals("Source fictional:local is paused by policy", activationFailureMessage(refusal, "fallback"))
+    }
+
+    @Test
+    fun `a response without the gateway's envelope keeps the fallback`() {
+        assertEquals(
+            "The gateway could not finish enabling this phone. Try again.",
+            activationFailureMessage(
+                GatewayException.ServerError(status = 502, body = "<html>Bad gateway</html>"),
+                "The gateway could not finish enabling this phone. Try again.",
+            ),
+        )
+    }
+
+    @Test
+    fun `an unauthorized phone is told to pair again`() {
+        assertEquals(
+            "Your gateway no longer accepts this phone. Pair it again from Settings.",
+            activationFailureMessage(GatewayException.Unauthorized(), "fallback"),
         )
     }
 

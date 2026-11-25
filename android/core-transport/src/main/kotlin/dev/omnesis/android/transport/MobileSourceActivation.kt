@@ -41,22 +41,52 @@ class SourceModeTransitionNotConfirmed(mode: SourceMultiDeviceMode) :
     IllegalStateException("The gateway did not confirm ${mode.wireValue} mode. Update the gateway, then try again.")
 
 /**
- * Turns a source-contract refusal into the gateway's actionable guidance while
- * leaving connectivity, authentication, and unexpected failures to the
- * source screen's context-specific fallback. The gateway message identifies
- * the incompatible device; preserving it is more useful than misreporting a
- * deliberate 409 as a network failure.
+ * Plain copy for the refusals enabling a phone source can meet, by the
+ * gateway's error code. The gateway's own message names devices and
+ * contracts in its terms; a refusal not listed here shows it as is.
  */
-fun activationFailureMessage(failure: Throwable, fallback: String): String {
-    if (failure is SourceModeTransitionNotConfirmed) return failure.message ?: fallback
-    val serverError = failure as? GatewayException.ServerError ?: return fallback
-    if (serverError.code != "MULTI_DEVICE_CONTRACT_UNSUPPORTED") return fallback
-    return serverError.body
-        ?.trim()
-        ?.takeIf(String::isNotEmpty)
-        ?.replaceFirstChar { it.uppercase() }
-        ?: "Another device hosting this source must update Omnesis before this phone can join it."
+val ACTIVATION_REFUSAL_MESSAGES: Map<String, String> = run {
+    val update = "Another device that sends this source needs an Omnesis update first. Nothing was changed."
+    mapOf(
+        "DEVICE_REVOKED" to
+            "A device that sent this source is no longer paired with your gateway. Nothing was changed.",
+        "MULTI_DEVICE_CONTRACT_UNSUPPORTED" to update,
+        "MEMBER_CONFIG_CONTRACT_UNSUPPORTED" to update,
+        "MEMBER_CONFIG_CONTRACT_MISMATCH" to update,
+        "SOURCE_ALREADY_HOSTED" to "Another device already sends this source, and it takes one device at a time.",
+        "DEVICE_CANNOT_HOST_TYPE" to "This phone can't provide this source.",
+        "SOURCE_REMOVAL_IN_PROGRESS" to "This source is still being removed. Try again in a moment.",
+        "SOURCE_STREAM_CLEANUP_IN_PROGRESS" to
+            "Your gateway is still clearing this source's earlier data. Try again in a moment.",
+        "SOURCE_MODE_TRANSITION_IN_PROGRESS" to "Your gateway is still preparing this source. Try again in a moment.",
+        "SOURCE_MODE_TRANSITION_MEMBERSHIP_CONFLICT" to
+            "Another device changed this source at the same time. Try again.",
+    )
 }
+
+/**
+ * Turns a refusal the gateway answered into plain copy for its code, or the
+ * gateway's own explanation for a code without one, and an authentication
+ * failure into the step that fixes it. Connectivity and unexpected failures
+ * keep the source screen's context-specific fallback: only a request that got
+ * no answer should read as a connection problem.
+ */
+fun activationFailureMessage(failure: Throwable, fallback: String): String = when (failure) {
+    is SourceModeTransitionNotConfirmed -> failure.message ?: fallback
+    is GatewayException.Unauthorized -> "Your gateway no longer accepts this phone. Pair it again from Settings."
+    is GatewayException.Forbidden -> failure.code?.let(ACTIVATION_REFUSAL_MESSAGES::get)
+        ?: failure.body.asSentence()
+        ?: "This phone isn't allowed to change this source on your gateway."
+    is GatewayException.ServerError -> failure.code?.let(ACTIVATION_REFUSAL_MESSAGES::get)
+        ?: failure.body.takeIf { failure.code != null }.asSentence()
+        ?: fallback
+    else -> fallback
+}
+
+private fun String?.asSentence(): String? = this
+    ?.trim()
+    ?.takeIf(String::isNotEmpty)
+    ?.replaceFirstChar { it.uppercase() }
 
 /**
  * One gateway half of a phone source's explicit enable, reduced to what the

@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { ownedProcessCleanupReceipt } from "@omnesis/core";
-
 /**
  * E2E harness for the synthetic-providers framework.
  *
@@ -22,8 +20,8 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync } from "nod
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createServer, type AddressInfo } from "node:net";
-import type { ChildProcess } from "node:child_process";
 import { createHash, generateKeyPairSync, randomBytes } from "node:crypto";
+import { ownedProcessCleanupReceipt } from "@omnesis/core";
 import {
   type SourceOrProviderDefinition,
   type SourceDescriptor,
@@ -88,6 +86,7 @@ import {
   reindexMissing,
   type GatewayEndpoint,
 } from "./gateway-request.js";
+import type { ChildProcess } from "node:child_process";
 
 async function getFreePort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -213,7 +212,7 @@ export interface SyntheticHarnessOptions {
    */
   gatewayMode: SyntheticGatewayMode;
   /** Persist explicit Lab opt-ins before ingesting any fixture documents. Requires experimental mode. */
-  labFeatures?: Partial<Record<"brain" | "tasks" | "watches", boolean>>;
+  labFeatures?: Partial<Record<"brain" | "tasks" | "watches" | "recordings", boolean>>;
   /** Collector locale context to persist on every source-emitted document. */
   ingestionContext?: DocumentIngestionContext;
   /**
@@ -469,7 +468,9 @@ export class SyntheticE2EHarness {
   private allDescriptors: SourceDescriptor[] = [];
   private universe: string;
   private gatewayMode: SyntheticGatewayMode;
-  private readonly labFeatures: Partial<Record<"brain" | "tasks" | "watches", boolean>>;
+  private readonly labFeatures: Partial<
+    Record<"brain" | "tasks" | "watches" | "recordings", boolean>
+  >;
   private agentBackend: "off" | "replay";
   private embedderBackend: "off" | "fake";
   private transcriberBackend: "off" | "replay";
@@ -1225,7 +1226,7 @@ export class SyntheticE2EHarness {
       | {
           whileStopped?: () => void | Promise<void>;
           gatewayMode?: SyntheticGatewayMode;
-          labFeatures?: Partial<Record<"brain" | "tasks" | "watches", boolean>>;
+          labFeatures?: Partial<Record<"brain" | "tasks" | "watches" | "recordings", boolean>>;
           /** Replaces the constructor's `extraGatewayEnv` for this and later starts. */
           extraGatewayEnv?: SyntheticHarnessOptions["extraGatewayEnv"];
           /**
@@ -1809,6 +1810,8 @@ export class SyntheticE2EHarness {
     const omnesisJson: Record<string, unknown> = { ...suppliedGatewayConfig };
     if (Object.keys(inferenceBackends).length || Object.keys(inferenceAssignments).length) {
       omnesisJson.inference = {
+        // Keep inference settings a suite supplied (e.g. `recordings`).
+        ...((suppliedGatewayConfig as { inference?: Record<string, unknown> }).inference ?? {}),
         ...(Object.keys(inferenceBackends).length ? { backends: inferenceBackends } : {}),
         ...(Object.keys(inferenceAssignments).length ? { assignments: inferenceAssignments } : {}),
         ...(this.extraInference?.allowRemoteInference !== undefined

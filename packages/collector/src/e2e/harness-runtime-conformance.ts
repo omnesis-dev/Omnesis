@@ -34,12 +34,28 @@ const EXPECTED_HARNESS_TOOLS: Record<ManagedHarness, readonly string[]> = {
   hermes: ANSWER_AND_WATCH_TOOLS,
 };
 
+/** Runs one named step of the check; the caller can time it. */
+export type HarnessConformanceStep = <T>(name: string, run: () => Promise<T>) => Promise<T>;
+
 interface HarnessRuntimeConformanceOptions {
   harness: ManagedHarness;
   repositoryRoot: string;
   home: string;
   environment: NodeJS.ProcessEnv;
+  step?: HarnessConformanceStep;
 }
+
+const untimedStep: HarnessConformanceStep = (_name, run) => run();
+
+/**
+ * How long `openclaw plugins inspect --runtime` may run. Hosted Windows
+ * runners take 17 to 21.4 s for it (Linux about 2 s): the OpenClaw CLI
+ * starts helper processes synchronously and waits on worker threads, so a
+ * warm compile cache does not shorten it. About three times the measured duration,
+ * the limit the CLI itself gives `plugins inspect`, still stops a hung
+ * command well inside the test's budget and names it.
+ */
+const OPENCLAW_INSPECT_TIMEOUT_MS = 60_000;
 
 export async function assertHarnessRuntimeConformance(
   options: HarnessRuntimeConformanceOptions,
@@ -52,21 +68,20 @@ export async function assertHarnessRuntimeConformance(
 }
 
 async function assertOpenClawConformance(options: HarnessRuntimeConformanceOptions): Promise<void> {
+  const step = options.step ?? untimedStep;
   const executable = join(options.repositoryRoot, "node_modules", ".bin", "openclaw");
   const inspectionCommand = resolveHarnessCommand(
     executable,
     ["plugins", "inspect", "omnesis-integration", "--runtime", "--json"],
     { env: options.environment },
   );
-  const inspectionResult = await execE2EBufferedCommand(
-    inspectionCommand.command,
-    inspectionCommand.args,
-    {
+  const inspectionResult = await step("plugins inspect", () =>
+    execE2EBufferedCommand(inspectionCommand.command, inspectionCommand.args, {
       cwd: options.repositoryRoot,
       env: options.environment,
-      timeout: 30_000,
+      timeout: OPENCLAW_INSPECT_TIMEOUT_MS,
       maxBuffer: 2 * 1024 * 1024,
-    },
+    }),
   );
   let inspection: {
     plugin?: { status?: unknown; toolNames?: unknown };
@@ -105,26 +120,29 @@ async function assertOpenClawConformance(options: HarnessRuntimeConformanceOptio
     ],
     { env: options.environment },
   );
-  await startHarnessAndWait({
-    label: "OpenClaw",
-    command: gatewayCommand.command,
-    args: gatewayCommand.args,
-    cwd: options.repositoryRoot,
-    env: options.environment,
-    ready: (output) =>
-      existsSync(marker) &&
-      output.includes("[gateway] ready") &&
-      ![
-        "failed during register",
-        "plugin service failed",
-        "plugin services failed to start",
-        "update available",
-      ].some((diagnostic) => output.includes(diagnostic)),
-    settleMs: 250,
-  });
+  await step("host start", () =>
+    startHarnessAndWait({
+      label: "OpenClaw",
+      command: gatewayCommand.command,
+      args: gatewayCommand.args,
+      cwd: options.repositoryRoot,
+      env: options.environment,
+      ready: (output) =>
+        existsSync(marker) &&
+        output.includes("[gateway] ready") &&
+        ![
+          "failed during register",
+          "plugin service failed",
+          "plugin services failed to start",
+          "update available",
+        ].some((diagnostic) => output.includes(diagnostic)),
+      settleMs: 250,
+    }),
+  );
 }
 
 async function assertHermesConformance(options: HarnessRuntimeConformanceOptions): Promise<void> {
+  const step = options.step ?? untimedStep;
   const executable = requiredAbsoluteExecutable("OMNESIS_HERMES_BIN");
   const python = requiredAbsoluteExecutable("OMNESIS_HERMES_PYTHON");
   const pluginDir = join(options.home, "plugins", "omnesis-integration");
@@ -132,15 +150,13 @@ async function assertHermesConformance(options: HarnessRuntimeConformanceOptions
   // Plugin Doctor is Hermes's public, runtime-backed compatibility boundary:
   // it uses the real scanner, manifest parser, importer and registries while
   // blocking network access. Run the CLI first so its exit contract is covered.
-  const doctor = await execE2EBufferedCommand(
-    executable,
-    ["plugins", "doctor", pluginDir, "--ci"],
-    {
+  const doctor = await step("plugins doctor", () =>
+    execE2EBufferedCommand(executable, ["plugins", "doctor", pluginDir, "--ci"], {
       cwd: options.repositoryRoot,
       env: options.environment,
       timeout: 30_000,
       maxBuffer: 2 * 1024 * 1024,
-    },
+    }),
   );
   const doctorOutput = `${doctor.stdout}\n${doctor.stderr}`;
   if (doctorOutput.includes("WARN:") || !doctorOutput.includes("registrations: 3 tool(s)")) {
@@ -155,12 +171,14 @@ async function assertHermesConformance(options: HarnessRuntimeConformanceOptions
     "report = doctor_plugin(sys.argv[1])",
     "print(json.dumps({'ok': report.ok, 'findings': [[item.level, item.message] for item in report.findings], 'tools': list(report.registered_tools)}))",
   ].join("; ");
-  const reportResult = await execE2EBufferedCommand(python, ["-c", reportScript, pluginDir], {
-    cwd: options.repositoryRoot,
-    env: options.environment,
-    timeout: 30_000,
-    maxBuffer: 2 * 1024 * 1024,
-  });
+  const reportResult = await step("doctor report", () =>
+    execE2EBufferedCommand(python, ["-c", reportScript, pluginDir], {
+      cwd: options.repositoryRoot,
+      env: options.environment,
+      timeout: 30_000,
+      maxBuffer: 2 * 1024 * 1024,
+    }),
+  );
   const reportLine = reportResult.stdout.trim().split("\n").at(-1) ?? "";
   const report = JSON.parse(reportLine) as {
     ok?: unknown;
@@ -177,17 +195,19 @@ async function assertHermesConformance(options: HarnessRuntimeConformanceOptions
   // with no model credentials and no inference request.
   const marker = join(options.home, "omnesis", "integration.sqlite");
   rmSync(marker, { force: true });
-  const startup = await startHarnessAndWait({
-    label: "Hermes",
-    command: executable,
-    args: ["gateway", "run", "--no-supervise", "-v"],
-    cwd: options.environment.TMPDIR ?? options.home,
-    env: options.environment,
-    ready: (output) =>
-      existsSync(marker) && /INFO gateway\.run: Press Ctrl\+C to stop/u.test(output),
-    initialSignal: "SIGINT",
-    requireCleanExit: true,
-  });
+  const startup = await step("host start", () =>
+    startHarnessAndWait({
+      label: "Hermes",
+      command: executable,
+      args: ["gateway", "run", "--no-supervise", "-v"],
+      cwd: options.environment.TMPDIR ?? options.home,
+      env: options.environment,
+      ready: (output) =>
+        existsSync(marker) && /INFO gateway\.run: Press Ctrl\+C to stop/u.test(output),
+      initialSignal: "SIGINT",
+      requireCleanExit: true,
+    }),
+  );
   const expectedRegistrations = [
     "Plugin omnesis-integration registered tool: omnesis_answer",
     "Plugin omnesis-integration registered tool: omnesis_subscription_answer",

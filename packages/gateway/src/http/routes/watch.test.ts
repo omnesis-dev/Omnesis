@@ -25,7 +25,7 @@ import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 
 import { SCOPE_ADMIN, SCOPE_READ, type Scope } from "@omnesis/types";
-import { createDatabase } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import { createServer } from "../../server.js";
 import { createToken } from "../../data/repositories/TokenRepository.js";
 import { createDevice } from "../../data/repositories/DeviceRepository.js";
@@ -189,7 +189,7 @@ async function addWatch(name = "every-email"): Promise<string> {
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "omnesis-wv2-routes-"));
   dbPath = join(dir, `omnesis-${randomUUID()}.db`);
-  db = createDatabase(dbPath);
+  db = createFreshTestDatabase(dbPath);
   db.prepare(
     `INSERT INTO source_document_profiles (source_type, profile_json, published_at)
      VALUES ('gmail', ?, 0)`,

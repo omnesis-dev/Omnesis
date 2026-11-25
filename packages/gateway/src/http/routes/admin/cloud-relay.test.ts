@@ -131,14 +131,72 @@ test("reads and operates the lifecycle service with exact validated inputs and n
     expect(service[operation]).toHaveBeenCalledOnce();
   }
 });
-test("the status says whether this session's loosening actions ask for a passkey first", async () => {
+test("every answer that is the account's status says whether this session's loosening actions ask for a passkey first", async () => {
+  // A page takes an operation's answer as its new status, so an answer without the flag would
+  // drop the "needs your passkey" hint until the next status read.
+  service.refreshAccount = vi.fn().mockResolvedValue(status);
+  service.accountUnlink = vi.fn().mockResolvedValue(status);
+  service.connect = vi.fn().mockResolvedValue(status);
+  service.cancelConnect = vi.fn().mockResolvedValue(status);
+  service.acknowledgeConnect = vi.fn().mockResolvedValue(status);
+  service.startOver = vi.fn().mockResolvedValue(status);
+  service.setEnrollmentPolicy = vi.fn().mockResolvedValue(status);
+  service.acknowledgeIncidentHold = vi.fn().mockResolvedValue(status);
+  service.removeTrustedSignIn = vi.fn().mockResolvedValue(status);
+  service.confirmPasskey = vi.fn().mockResolvedValue(status);
+  service.googleUnlink = vi.fn().mockResolvedValue(status);
+  devices!.revokeJoinedWith.mockResolvedValue(["fictional-device"]);
+  const stepUp = { "X-Omnesis-Step-Up": "fictional-step-up" };
+  const operations = [
+    ["/admin/cloud-relay", { method: "GET" }],
+    [
+      "/admin/cloud-relay/configure",
+      post({
+        relayUrl: "https://relay.example.test",
+        publicOrigin: "https://gateway.example.test",
+        acmeDirectoryUrl: "https://ca.example.test/directory",
+        termsAccepted: true,
+      }),
+    ],
+    ["/admin/cloud-relay/enable", post()],
+    ["/admin/cloud-relay/disable", post()],
+    ["/admin/cloud-relay/reconnect", post()],
+    ["/admin/cloud-relay/renew", post()],
+    ["/admin/cloud-relay/account/refresh", post()],
+    ["/admin/cloud-relay/account/unlink", post()],
+    ["/admin/cloud-relay/connect", post({ termsAccepted: true })],
+    ["/admin/cloud-relay/connect/cancel", post()],
+    ["/admin/cloud-relay/connect/acknowledge", post()],
+    ["/admin/cloud-relay/start-over", post()],
+    ["/admin/cloud-relay/enrollment", { ...post({ policy: "automatic" }, stepUp), method: "PUT" }],
+    ["/admin/cloud-relay/incidents/ack", post()],
+    ["/admin/cloud-relay/trusted-sign-ins/fictional-pin", { method: "DELETE" }],
+    ["/admin/cloud-relay/passkeys/confirm", post({ proof: gatewayProof }, stepUp)],
+    ["/admin/cloud-relay/google/unlink", post()],
+  ] as const;
   for (const required of [true, false]) {
+    // When a passkey is required, the session holds a step-up for each guarded request.
     const stepUps = {
       required: vi.fn(() => required),
+      available: () => true,
+      take: () => true,
+      source: {},
     } as unknown as AppEnv["Variables"]["stepUps"];
-    const response = await app(bearer, true, stepUps).request("/admin/cloud-relay");
-    expect(await response.json()).toEqual({ ...status, stepUpRequired: required });
-    expect(stepUps!.required).toHaveBeenCalledOnce();
+    const router = app(bearer, true, stepUps);
+    for (const [path, init] of operations) {
+      const response = await router.request(path, init);
+      expect(response.status, path).toBe(200);
+      expect(await response.json(), path).toEqual({ ...status, stepUpRequired: required });
+    }
+    const revoking = await router.request(
+      "/admin/cloud-relay/trusted-sign-ins/fictional-pin?revokeDevices=true",
+      { method: "DELETE" },
+    );
+    expect(await revoking.json()).toEqual({
+      ...status,
+      revokedDevices: ["fictional-device"],
+      stepUpRequired: required,
+    });
   }
 });
 test("cookie-based mutations require the portal CSRF token while bearer admin clients work", async () => {
@@ -604,7 +662,7 @@ test("a certificate incident is acknowledged only by an admin request that didn'
     // The CLI on the gateway host.
     const local = await router.request("/admin/cloud-relay/incidents/ack", post(), socket(40302));
     expect(local.status).toBe(200);
-    expect(await local.json()).toEqual(status);
+    expect(await local.json()).toEqual({ ...status, stepUpRequired: false });
     expect(acknowledgeIncidentHold).toHaveBeenCalledOnce();
   } finally {
     tunnelSockets.clear();

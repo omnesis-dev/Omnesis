@@ -5,9 +5,26 @@ import { randomBytes } from "node:crypto";
 import { isIP } from "node:net";
 import { type Duplex } from "node:stream";
 import { createWebSocketStream, WebSocket } from "ws";
+import { z } from "zod";
 import { CloudRelayMetrics } from "./metrics.js";
 import { clientBucket } from "./client-bucket.js";
 import { hasStreamCapacity } from "./stream-admission.js";
+
+const channelRejection = z
+  .object({
+    type: z.literal("reject"),
+    version: z.literal(1),
+    ticket: z.string().regex(/^[a-f0-9]{64}$/),
+  })
+  .strict();
+
+const sessionRenewal = z
+  .object({
+    type: z.literal("renew"),
+    version: z.literal(1),
+    session: z.string().min(1).max(4096),
+  })
+  .strict();
 
 export class RelayError extends Error {
   /** `code`, when set, is the one word the response body carries for the client to act on. */
@@ -37,11 +54,12 @@ export interface TunnelLimits {
 export const DEFAULT_TUNNEL_LIMITS: TunnelLimits = {
   maxGateways: 100,
   maxStreams: 256,
-  maxStreamsPerGateway: 16,
-  // An eighth of the relay's, and half of one gateway's, so one client never holds them all.
-  // A browser opens up to six connections to one name.
-  maxStreamsPerClient: 32,
-  maxStreamsPerClientPerGateway: 8,
+  maxStreamsPerGateway: 64,
+  // A browser may hold six HTTP connections as well as upgraded sockets. Leave room
+  // for several browsers, native devices and reconnects sharing one public address.
+  // Per-client limits and the reserved quarter still bound one address's share.
+  maxStreamsPerClient: 64,
+  maxStreamsPerClientPerGateway: 32,
   connectTimeoutMs: 10_000,
   heartbeatMs: 30_000,
   // Gateways ping device WebSockets and send SSE keep-alives every 15 to 30 seconds.
@@ -58,6 +76,8 @@ interface Pending {
 
 interface Tunnel {
   socket: WebSocket;
+  maxStreams: number;
+  maxStreamsPerClient: number;
   streams: Set<Duplex>;
   pending: Set<string>;
   /** Streams and pending reservations by client bucket. */
@@ -89,22 +109,43 @@ export class TunnelBroker {
       throw new RelayError(503, "Gateway capacity reached");
   }
 
-  attach(account: string, socket: WebSocket, expiresAt: number): void {
+  attach(
+    account: string,
+    socket: WebSocket,
+    expiresAt: number,
+    rejectChannels = false,
+    renewSession?: (token: string) => Promise<number>,
+  ): void {
     this.admit(account);
     let alive = true;
+    let deadline = expiresAt;
+    let renewing = false;
+    const expiryDelay = (): number =>
+      Math.min(2_147_483_647, Math.max(0, deadline * 1000 - Date.now()));
+    const expire = (): void => {
+      // Node timers are bounded; a distant authoritative deadline needs another slice.
+      if (Date.now() < deadline * 1000) {
+        tunnel.expiry = setTimeout(expire, expiryDelay());
+        return;
+      }
+      this.metrics.tunnel("session_expired");
+      tunnel.revoke();
+      socket.terminate();
+    };
     const tunnel: Tunnel = {
       socket,
+      // Legacy gateways close their whole tunnel above sixteen channels. Preserve
+      // their admission budget until they can refuse an individual channel safely.
+      maxStreams: rejectChannels
+        ? this.limits.maxStreamsPerGateway
+        : Math.min(this.limits.maxStreamsPerGateway, 16),
+      maxStreamsPerClient: rejectChannels
+        ? this.limits.maxStreamsPerClientPerGateway
+        : Math.min(this.limits.maxStreamsPerClientPerGateway, 8),
       streams: new Set(),
       pending: new Set(),
       clients: new Map(),
-      expiry: setTimeout(
-        () => {
-          this.metrics.tunnel("session_expired");
-          tunnel.revoke();
-          socket.terminate();
-        },
-        Math.max(0, expiresAt * 1000 - Date.now()),
-      ),
+      expiry: setTimeout(expire, expiryDelay()),
       heartbeat: setInterval(() => {
         if (!alive) {
           this.metrics.tunnel("heartbeat_timeout");
@@ -138,13 +179,86 @@ export class TunnelBroker {
       this.metrics.tunnel("socket_error");
       socket.terminate();
     });
-    socket.on("message", () => {
+    const terminateRenewal = (): void => {
+      if (this.gateways.get(account) === tunnel) this.metrics.tunnel("session_renewal_refused");
+      tunnel.revoke();
+      socket.terminate();
+    };
+    const current = (): boolean =>
+      this.gateways.get(account) === tunnel && socket.readyState === WebSocket.OPEN;
+    const renew = async (
+      session: string,
+      verify: (token: string) => Promise<number>,
+    ): Promise<void> => {
+      if (renewing || !current() || Date.now() >= deadline * 1000) {
+        terminateRenewal();
+        return;
+      }
+      renewing = true;
+      try {
+        const next = await verify(session);
+        // Expiry, revocation and a replacement socket always win over verification.
+        if (!current()) return;
+        if (
+          Date.now() >= deadline * 1000 ||
+          !Number.isSafeInteger(next) ||
+          !Number.isSafeInteger(next * 1000) ||
+          next <= deadline
+        ) {
+          terminateRenewal();
+          return;
+        }
+        deadline = next;
+        clearTimeout(tunnel.expiry);
+        tunnel.expiry = setTimeout(expire, expiryDelay());
+        socket.send(JSON.stringify({ type: "renewed", version: 1, expiresAt: deadline }));
+        this.metrics.tunnel("session_renewed");
+      } catch {
+        if (current()) terminateRenewal();
+      } finally {
+        renewing = false;
+      }
+    };
+    socket.on("message", (raw) => {
+      try {
+        const parsed: unknown = JSON.parse(raw.toString());
+        if (renewSession) {
+          const message = sessionRenewal.safeParse(parsed);
+          if (message.success) {
+            void renew(message.data.session, renewSession);
+            return;
+          }
+        }
+        if (rejectChannels) {
+          const message = channelRejection.safeParse(parsed);
+          if (message.success) {
+            // A stale or foreign ticket is harmless; it cannot cancel another owner.
+            if (this.pending.get(message.data.ticket)?.owner === tunnel) {
+              this.metrics.stream("rejected");
+              this.fail(
+                message.data.ticket,
+                new RelayError(503, "Gateway channel capacity reached"),
+              );
+            }
+            return;
+          }
+        }
+      } catch {
+        // Invalid control input follows the ordinary protocol violation path.
+      }
       this.metrics.tunnel("unexpected_message");
-      socket.close(1008, "Unexpected control message");
+      if (renewSession) terminateRenewal();
+      else socket.close(1008, "Unexpected control message");
     });
     socket.once("close", tunnel.revoke);
     socket.send(
-      JSON.stringify({ type: "ready", version: 1, heartbeatMs: this.limits.heartbeatMs }),
+      JSON.stringify({
+        type: "ready",
+        version: 1,
+        heartbeatMs: this.limits.heartbeatMs,
+        ...(rejectChannels ? { rejectChannels: true } : {}),
+        ...(renewSession ? { sessionExpiresAt: expiresAt } : {}),
+      }),
     );
   }
 
@@ -169,16 +283,12 @@ export class TunnelBroker {
     const held = tunnel.clients.get(bucket) ?? 0;
     if (
       this.activeStreams + this.pending.size >= this.limits.maxStreams ||
-      !hasStreamCapacity(
-        this.limits.maxStreamsPerGateway,
-        tunnel.streams.size + tunnel.pending.size,
-        held,
-      )
+      !hasStreamCapacity(tunnel.maxStreams, tunnel.streams.size + tunnel.pending.size, held)
     ) {
       this.metrics.stream("capacity");
       throw new RelayError(429, "Stream capacity reached");
     }
-    if (held >= this.limits.maxStreamsPerClientPerGateway) {
+    if (held >= tunnel.maxStreamsPerClient) {
       this.metrics.stream("client_capacity");
       throw new RelayError(429, "Stream capacity reached for this client");
     }

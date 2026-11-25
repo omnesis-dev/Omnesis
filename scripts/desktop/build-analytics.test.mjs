@@ -154,7 +154,7 @@ test("desktop staging replaces only the reviewed native binding and keeps upstre
     join(binding, "package.json"),
     JSON.stringify({
       name: "@duckdb/node-bindings-darwin-arm64",
-      version: "1.5.6-r.1",
+      version: "1.5.6-r.2",
     }),
   );
   const original = Buffer.from(f.library);
@@ -166,6 +166,18 @@ test("desktop staging replaces only the reviewed native binding and keeps upstre
     "unsuitable packaged file",
   );
   const build = { directory: f.root, provenance: f.record };
+  await writeFile(
+    join(binding, "package.json"),
+    JSON.stringify({ name: "@duckdb/node-bindings-darwin-arm64", version: "1.5.6-r.1" }),
+  );
+  await expect(stageDesktopAnalytics({ target, architecture: "arm64", build })).rejects.toThrow(
+    "does not match the reviewed engine",
+  );
+  expect(await readFile(join(binding, "libduckdb.dylib"))).toEqual(original);
+  await writeFile(
+    join(binding, "package.json"),
+    JSON.stringify({ name: "@duckdb/node-bindings-darwin-arm64", version: "1.5.6-r.2" }),
+  );
   await stageDesktopAnalytics({ target, architecture: "arm64", build });
   expect(await readFile(join(binding, "libduckdb.dylib"))).toEqual(f.library);
   expect(await readFile(join(binding, "LICENSE"), "utf8")).toBe("Original binding license");

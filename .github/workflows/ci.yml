@@ -251,7 +251,7 @@ jobs:
       - name: Set up Go
         # The Tailscale helper program (packages/tailnet-helper) is Go; its
         # unit tests run inside the unit lane.
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: packages/tailnet-helper/go.mod
           cache-dependency-path: packages/tailnet-helper/go.sum
@@ -360,7 +360,7 @@ jobs:
         # Tailscale's own daemon, CLI and relay server built at the version the
         # helper pins, plus the helper itself. Go is a required dependency of
         # that suite: it fails, not skips, without it in CI.
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: packages/tailnet-helper/go.mod
           cache-dependency-path: packages/tailnet-helper/go.sum
@@ -536,7 +536,7 @@ jobs:
 
       - name: Set up Go
         # The Tailscale helper's Go unit tests run inside the unit lane.
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: packages/tailnet-helper/go.mod
           cache-dependency-path: packages/tailnet-helper/go.sum

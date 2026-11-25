@@ -5,9 +5,10 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { createOpenLoop } from "./open-loops.js";
 import { createDatabase } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import { CONTEXTUAL_VERIFIER } from "../knowledge/claim-context.js";
+import { createOpenLoop } from "./open-loops.js";
 import { claimDueCognitionRuns, completeCognitionRun, enqueueCognitionRun } from "./run-queue.js";
 import type Database from "better-sqlite3";
 
@@ -15,7 +16,7 @@ let db: Database.Database;
 let directory: string;
 beforeEach(() => {
   directory = mkdtempSync(join(tmpdir(), "policy-admission-"));
-  db = createDatabase(join(directory, "db"));
+  db = createFreshTestDatabase(join(directory, "db"));
 });
 afterEach(() => {
   db.close();

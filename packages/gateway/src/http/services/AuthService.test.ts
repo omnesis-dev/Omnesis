@@ -7,10 +7,11 @@ import { join as fixtureJoin } from "node:path";
 import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { SCOPE_READ, type DeviceId, type Scope, type TokenId } from "@omnesis/types";
-import { createDatabase } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import { createDevice } from "../../data/repositories/DeviceRepository.js";
 import { createSession, createToken } from "../../data/repositories/TokenRepository.js";
 import { AuthService } from "./AuthService.js";
+import type { createDatabase } from "../../db.js";
 import type { WriteGate } from "../../write-gate.js";
 import type { StatusCache } from "./StatusCache.js";
 
@@ -19,7 +20,7 @@ let db: ReturnType<typeof createDatabase>;
 
 beforeEach(() => {
   dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-auth-service-test-${randomUUID()}.db`);
-  db = createDatabase(dbPath);
+  db = createFreshTestDatabase(dbPath);
 });
 
 afterEach(() => {

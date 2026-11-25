@@ -19,7 +19,7 @@ import { randomUUID } from "node:crypto";
 import { SCOPE_WRITE_ALL } from "@omnesis/types";
 import { serve, type ServerType } from "@hono/node-server";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { createDatabase } from "../db.js";
+import { createFreshTestDatabase } from "../testing/fresh-database.js";
 import { createServer as createGatewayServer } from "../server.js";
 import { createDevice } from "../data/repositories/DeviceRepository.js";
 import { createToken } from "../data/repositories/TokenRepository.js";
@@ -36,7 +36,7 @@ let answers: { status: number; body: string }[];
 
 beforeEach(async () => {
   testDir = mkdtempSync(join(tmpdir(), "omnesis-incomplete-body-"));
-  db = createDatabase(join(testDir, `gateway-${randomUUID()}.db`));
+  db = createFreshTestDatabase(join(testDir, `gateway-${randomUUID()}.db`));
   const device = createDevice(db, { name: "Test phone", kind: "ios" });
   token = createToken(db, device.id, [SCOPE_WRITE_ALL]).token;
   gateway = createGatewayServer(db);

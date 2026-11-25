@@ -3,9 +3,11 @@
 
 import { randomUUID } from "node:crypto";
 import { rmSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { createDatabase } from "./db.js";
+import { createFreshTestDatabase } from "./testing/fresh-database.js";
 import {
   SQLITE_CATALOG_TABLES,
   computeSqliteTableStats,
@@ -14,8 +16,6 @@ import {
   type SqliteTableStatsRow,
 } from "./sqlite-catalog.js";
 import { writerHandlers } from "./scheduler/writer-handlers.js";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 type Db = Database.Database;
 
@@ -24,7 +24,7 @@ let db: Db;
 
 beforeEach(() => {
   dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
-  db = createDatabase(dbPath);
+  db = createFreshTestDatabase(dbPath);
 });
 
 afterEach(() => {

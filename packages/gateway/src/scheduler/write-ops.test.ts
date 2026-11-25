@@ -14,10 +14,13 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { DeviceId, SourceId } from "@omnesis/types";
 import { createDatabase } from "../db.js";
+import { createFreshTestDatabase } from "../testing/fresh-database.js";
 import { digestCandidate, type AnswerStoreError } from "../privacy/store.js";
 import { listPrivacyExchangePresentations } from "../privacy/presentation.js";
 import { captureKnowledgeCanonicalFence } from "../brain/knowledge/canonical-fence.js";
@@ -31,8 +34,6 @@ import { writeGateFromScheduler, WriteOps } from "./write-ops.js";
 import { writerHandlers, writerYieldableHandlers } from "./writer-handlers.js";
 import type { SourceModeTransitionPrepareError } from "../data/repositories/SourceModeTransitionRepository.js";
 import type { PrivacyReviewRecord } from "@omnesis/types/privacy";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 const WORKER_URL = new URL("../workers/writer-worker.ts", import.meta.url);
 const LOADER_URL = new URL("../workers/register-tsx.mjs", import.meta.url).href;
@@ -56,7 +57,7 @@ describe("writeGateFromScheduler", () => {
   // slow runner.
   beforeEach(async () => {
     dbPath = testDbPath();
-    const db = createDatabase(dbPath);
+    const db = createFreshTestDatabase(dbPath);
     db.close();
     scheduler = new Scheduler({ enablePreemption: false });
     scheduler.registerRunner(
@@ -693,6 +694,35 @@ describe("writeGateFromScheduler", () => {
         name: "SourceModeTransitionPrepareError",
         reason: "membership-conflict",
       }),
+    );
+  });
+
+  test("carries a partitioned contract authority to the writer", async () => {
+    const enqueue = vi.spyOn(scheduler, "enqueue").mockResolvedValueOnce(null);
+    const gate = writeGateFromScheduler(scheduler);
+    const authority = DeviceId("00000000-0000-4000-8000-000000000002");
+
+    await gate.prepareSourceModeTransition(
+      SourceId("notes-synth:fictional"),
+      "partitioned",
+      DeviceId("00000000-0000-4000-8000-000000000001"),
+      [],
+      undefined,
+      undefined,
+      authority,
+    );
+
+    expect(enqueue).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "sources.prepareModeTransition" }),
+      [
+        "notes-synth:fictional",
+        "partitioned",
+        "00000000-0000-4000-8000-000000000001",
+        [],
+        undefined,
+        undefined,
+        authority,
+      ],
     );
   });
 

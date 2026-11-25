@@ -12,8 +12,10 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, expect, it } from "vitest";
-import { createDatabase } from "../db.js";
+import { createFreshTestDatabase } from "../testing/fresh-database.js";
 import { Scheduler } from "../scheduler/scheduler.js";
 import { IoTaskRunner } from "../scheduler/runners/io.js";
 import { ioGateFromScheduler, type IoGate } from "../scheduler/io-ops.js";
@@ -21,8 +23,6 @@ import { LiveOntology } from "./ontology.js";
 import { readPeopleDirectory } from "./people-directory.js";
 import type Database from "better-sqlite3";
 import type { Db } from "../data/types.js";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 const WORKER_URL = new URL("../workers/io-worker.ts", import.meta.url);
 const LOADER_URL = new URL("../workers/register-tsx.mjs", import.meta.url).href;
@@ -41,7 +41,7 @@ function addPerson(id: string, name: string, options: { self?: boolean; into?: s
 
 beforeEach(async () => {
   dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
-  db = createDatabase(dbPath) as unknown as Database.Database;
+  db = createFreshTestDatabase(dbPath) as unknown as Database.Database;
   addPerson("0a1b2c3d-0000-4000-8000-000000000001", "fixture self", { self: true });
   addPerson("b3f2a9d4-0000-4000-8000-000000000002", "fixture person");
   addPerson("c4e5f6a7-0000-4000-8000-000000000003", "fixture alias", {

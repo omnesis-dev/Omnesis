@@ -11,8 +11,10 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
-import { createDatabase } from "../db.js";
+import { createFreshTestDatabase } from "../testing/fresh-database.js";
 import { directWriteGate } from "../write-gate.js";
 import {
   displayPersonRefs,
@@ -22,8 +24,6 @@ import {
 } from "./person-refs.js";
 import { createOpenLoop, getOpenLoop, loopPeople } from "./storage/open-loops.js";
 import type Database from "better-sqlite3";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 type Db = Database.Database;
 
@@ -56,7 +56,7 @@ describe("person-refs", () => {
 
   beforeEach(() => {
     dbPath = testDbPath();
-    db = createDatabase(dbPath);
+    db = createFreshTestDatabase(dbPath);
     seedPerson("per_maya", "Maya Reeves");
     seedPerson("per_jamie", "Jamie Lopez");
     // per_old was merged into per_maya; its alias should resolve to the root.

@@ -3,9 +3,11 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TEMPORAL_STATUSES } from "@omnesis/types";
-import { createDatabase } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import { TemporalQueryService } from "./temporal-query-service.js";
 import { resolveTemporalRange } from "./temporal-range.js";
 import {
@@ -21,9 +23,8 @@ import {
   seedTemporalFixture,
   type FixtureIds,
 } from "./__fixtures__/test-utils.js";
+import type { createDatabase } from "../../db.js";
 import type { TemporalItem, TemporalQueryInput } from "@omnesis/core";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 function cleanup(path: string): void {
   for (const suffix of ["", "-wal", "-shm", "-journal"]) {
@@ -51,7 +52,7 @@ describe("temporal store window", () => {
 
   beforeEach(() => {
     path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
-    db = createDatabase(path);
+    db = createFreshTestDatabase(path);
     ids = seedTemporalFixture(db);
   });
 

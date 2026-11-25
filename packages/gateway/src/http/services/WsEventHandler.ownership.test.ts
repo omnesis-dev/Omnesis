@@ -3,6 +3,8 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import {
@@ -14,7 +16,7 @@ import {
   type DeviceId,
 } from "@omnesis/types";
 import { AuthFlowRegistry } from "../../auth-flows.js";
-import { createDatabase } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import {
   createDevice,
   updateDeviceCapabilities,
@@ -24,11 +26,10 @@ import { addSourceMember, createSource } from "../../data/repositories/SourceRep
 import { ImportFlowRegistry } from "../../import-flows.js";
 import { SyncStatusRegistry } from "../../sync-status.js";
 import { WsEventHandler } from "./WsEventHandler.js";
+import type { createDatabase } from "../../db.js";
 import type { WsEvent } from "@omnesis/core";
 import type { WriteGate } from "../../write-gate.js";
 import type { DeviceConnection, DeviceWsServer } from "../../ws.js";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 let dbPath: string;
 let db: ReturnType<typeof createDatabase>;
@@ -37,7 +38,7 @@ let otherDeviceId: DeviceId;
 
 beforeEach(() => {
   dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-ws-ownership-${randomUUID()}.db`);
-  db = createDatabase(dbPath);
+  db = createFreshTestDatabase(dbPath);
   ownerDeviceId = createDevice(db, { name: "owner-collector", kind: "collector" }).id;
   otherDeviceId = createDevice(db, { name: "other-collector", kind: "collector" }).id;
 });
@@ -324,6 +325,7 @@ describe("WsEventHandler event ownership", () => {
       "temporary sync failure",
       ownerDeviceId,
       undefined,
+      ownerDeviceId,
     );
   });
 

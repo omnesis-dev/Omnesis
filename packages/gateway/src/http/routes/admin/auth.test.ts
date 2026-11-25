@@ -14,21 +14,22 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { describe, expect, test, beforeEach, afterEach, vi } from "vitest";
 
 import { SCOPE_ADMIN, SCOPE_READ, DeviceId, SourceType, type Scope } from "@omnesis/types";
 import { friendlyOauthError } from "../../oauth-callback.js";
-import { createDatabase } from "../../../db.js";
+import { createFreshTestDatabase } from "../../../testing/fresh-database.js";
 import { fixedPublicAddress } from "../../../public-address.js";
 import { createServer } from "../../../server.js";
 import { createToken } from "../../../data/repositories/TokenRepository.js";
 import { createDevice } from "../../../data/repositories/DeviceRepository.js";
 import { directWriteGate } from "../../../write-gate.js";
 import { AuthFlowRegistry, type AuthFlow } from "../../../auth-flows.js";
+import type { createDatabase } from "../../../db.js";
 import type { DeviceWsServer } from "../../../ws.js";
 import type { WireChallenge } from "@omnesis/source-sdk";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 type Db = ReturnType<typeof createDatabase>;
 
@@ -138,7 +139,7 @@ describe("typed challenge answers", () => {
 
 beforeEach(() => {
   dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-auth-code-http-${randomUUID()}.db`);
-  db = createDatabase(dbPath);
+  db = createFreshTestDatabase(dbPath);
   ADMIN_TOKEN = mintToken([SCOPE_ADMIN, SCOPE_READ]);
   authFlows = new AuthFlowRegistry();
   sendCommand = vi.fn().mockResolvedValue({ ok: true });

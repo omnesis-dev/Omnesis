@@ -60,6 +60,7 @@ export function SettingsView({
   accessConnect,
   pair,
   device,
+  deviceAction,
   policyId,
   completeAccessInPortal,
   experimental = false,
@@ -179,7 +180,7 @@ export function SettingsView({
         tailscaleEmbed=${tailscaleEmbed}
       />`}
       ${activeTab === "policies" && html`<${PoliciesView} policyId=${policyId ?? null} />`}
-      ${activeTab === "devices" && html`<${DevicesView} pairKindRequest=${pair ?? null} focusDeviceId=${device ?? null} tailscaleEmbed=${tailscaleEmbed} />`}
+      ${activeTab === "devices" && html`<${DevicesView} pairKindRequest=${pair ?? null} focusDeviceId=${device ?? null} deviceActionRequest=${deviceAction ?? null} tailscaleEmbed=${tailscaleEmbed} />`}
     </div>
   `;
 }

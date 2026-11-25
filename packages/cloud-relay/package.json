@@ -1,6 +1,6 @@
 {
   "name": "@omnesis/cloud-relay",
-  "version": "0.7.8",
+  "version": "0.8.1",
   "license": "AGPL-3.0-or-later",
   "type": "module",
   "main": "src/index.ts",
@@ -17,8 +17,8 @@
     "@omnesis/core": "*",
     "@simplewebauthn/server": "^14.1.0",
     "acme-client": "^5.4.0",
-    "better-sqlite3": "^13.1.1",
-    "jose": "^6.2.17",
+    "better-sqlite3": "^13.2.0",
+    "jose": "^6.2.18",
     "tsx": "^4.19.0",
     "ws": "^8.23.0",
     "zod": "^4.6.7"

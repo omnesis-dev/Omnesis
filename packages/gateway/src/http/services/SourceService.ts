@@ -53,6 +53,13 @@ import {
   listDeletersByRestorer,
 } from "../../data/repositories/ReplicaDeletionClaimRepository.js";
 import { sourceSettingsRevision } from "../../data/repositories/source-settings-revision.js";
+import {
+  deviceForgetImpact,
+  isDeviceForgotten,
+  sourceArchivedDevices,
+  type ArchivedSourceDevice,
+  type DeviceForgetOptions,
+} from "../../data/repositories/DeviceRetirementRepository.js";
 import { getDevice } from "../../data/repositories/DeviceRepository.js";
 import { sourceWireFloor } from "../../data/repositories/SourceWireContractRepository.js";
 import {
@@ -80,6 +87,7 @@ import {
 } from "../errors.js";
 import {
   advertisedMemberScopedParamNames,
+  deviceIsDormantUnderContract,
   deviceMatchesMemberConfigContract,
   deviceSupportsMultiDeviceMode,
   resolveDeviceMultiDeviceMode,
@@ -115,6 +123,7 @@ import {
   SourceModeTransitionCoordinator,
   type SourceModeTransitionAdoption,
 } from "./SourceModeTransitionCoordinator.js";
+import type { DeleteDeviceResult } from "../../push/mobile-permission-operations.js";
 import type { LegacyOwnershipAction, LegacyOwnershipTable } from "../../analytics-db.js";
 import type { AccountDescriptor } from "@omnesis/source-sdk";
 import type { SourceWriteEpochFence } from "../../source-write-epoch-fence.js";
@@ -300,6 +309,9 @@ function cannotHostTypeError(device: DeviceRecord, sourceType: SourceType): Http
 }
 
 export type AdminSourceListEntry = SourceRecord & {
+  /** No device remains to sync this source; its retained content is historical. */
+  archived?: boolean;
+  archivedDevices?: ArchivedSourceDevice[];
   lastSyncedAt: string | null;
   /** Every device contributing to the source, the owner first. */
   members: DeviceId[];
@@ -318,6 +330,16 @@ export type AdminSourceListEntry = SourceRecord & {
    * empty for an `exclusive` source, which admits no second host.
    */
   joinCandidates: DeviceId[];
+  /**
+   * Hosts that cannot act under the source's multi-device contract: revoked,
+   * or running a client that cannot execute it. For a multi-device source
+   * that is the persisted contract; for an exclusive source it is the
+   * contract another paired device announces for the type, so a replacement
+   * device can tell that the current owner will not contribute alongside it.
+   * A dormant host's data stays, and its writes are refused until it is
+   * re-paired or updated.
+   */
+  dormantHosts: DeviceId[];
   pushBased: boolean;
   /**
    * The modes a resync of the whole source offers. Empty for a source that
@@ -492,6 +514,7 @@ export class SourceService {
     const expected = source.replicaVersionPolicy ?? undefined;
     for (const deviceId of this.membersOf(source)) {
       const member = getDevice(this.deps.db, deviceId);
+      if (member && this.isDormantMember(source, member)) continue;
       if (member && member.capabilities.replicaVersionPolicies?.[source.type] !== expected) {
         throw new HttpError(
           409,
@@ -569,11 +592,18 @@ export class SourceService {
     );
   }
 
-  private memberConfigContractFor(source: SourceRecord): string[] {
+  /**
+   * The source's member-local parameter contract: the pinned one, else the
+   * advertisement of the device that decides it — the owner unless a
+   * transition names another contract authority.
+   */
+  private memberConfigContractFor(
+    source: SourceRecord,
+    authority = getDevice(this.deps.db, source.deviceId),
+  ): string[] {
     const stored = getSourceMemberConfigContract(this.deps.db, source.id);
     if (stored) return stored;
-    const owner = getDevice(this.deps.db, source.deviceId);
-    const advertised = owner ? advertisedMemberScopedParamNames(owner, source.type) : null;
+    const advertised = authority ? advertisedMemberScopedParamNames(authority, source.type) : null;
     if (advertised === null) {
       throw new HttpError(
         409,
@@ -582,6 +612,46 @@ export class SourceService {
       );
     }
     return advertised;
+  }
+
+  /**
+   * The device that decides an exclusive source's partitioned or replicated
+   * contract in place of a dormant owner, or null when the owner decides.
+   * Every host's writes are checked against the persisted contract at
+   * execution, so an owner that is revoked, or whose app cannot act under
+   * the contract, must not stop a capable device from converting the source:
+   * the requester's advertisement becomes the contract, while the owner keeps
+   * its row and its data. Only a device's own request delegates — a portal
+   * session or an operator token speaks for no device — and only a paired
+   * device that can host the type under the contract.
+   */
+  private dormantOwnerContractAuthority(
+    source: SourceRecord,
+    owner: DeviceRecord,
+    mode: "partitioned" | "replicated",
+    requestingDeviceId: DeviceId | undefined,
+  ): DeviceRecord | null {
+    if (!requestingDeviceId || requestingDeviceId === owner.id) return null;
+    const requester = getDevice(this.deps.db, requestingDeviceId);
+    if (
+      !requester ||
+      requester.revokedAt !== null ||
+      !deviceCanHostType(requester, source.type) ||
+      !this.deviceSupportsSourceContract(requester, source.type, mode)
+    ) {
+      return null;
+    }
+    const pinned = getSourceMemberConfigContract(this.deps.db, source.id);
+    if (pinned && !deviceMatchesMemberConfigContract(requester, source.type, pinned)) return null;
+    const contract = {
+      mode,
+      memberScopedParams: pinned,
+      replicaVersionPolicy:
+        mode === "replicated"
+          ? requester.capabilities.replicaVersionPolicies?.[source.type]
+          : undefined,
+    };
+    return deviceIsDormantUnderContract(owner, source.type, contract) ? requester : null;
   }
 
   private assertMemberConfigContract(
@@ -704,12 +774,37 @@ export class SourceService {
     }
   }
 
-  /** Every existing member must remain safe before membership can expand. */
+  /**
+   * Whether `device` is a dormant host of a partitioned or replicated source
+   * (see `deviceIsDormantUnderContract`): its writes are refused at
+   * execution, so it neither blocks membership changes nor reads as broken.
+   * Exclusive and handoff sources stay strict.
+   */
+  private isDormantMember(
+    source: SourceRecord,
+    device: DeviceRecord,
+    pinned: readonly string[] | null = getSourceMemberConfigContract(this.deps.db, source.id),
+  ): boolean {
+    const mode = source.multiDeviceMode;
+    return (
+      (mode === "partitioned" || mode === "replicated") &&
+      deviceIsDormantUnderContract(device, source.type, {
+        mode,
+        memberScopedParams: pinned,
+        replicaVersionPolicy: source.replicaVersionPolicy ?? undefined,
+      })
+    );
+  }
+
+  /**
+   * Every existing member that can act must remain safe before membership
+   * can expand; a dormant member is skipped.
+   */
   private assertMemberModesSupport(source: SourceRecord): void {
     const expectedReplicaPolicy = source.replicaVersionPolicy ?? undefined;
     for (const deviceId of this.membersOf(source)) {
       const device = getDevice(this.deps.db, deviceId);
-      if (device) {
+      if (device && !this.isDormantMember(source, device)) {
         this.assertModeSupport(device, source.type, source.multiDeviceMode);
         if (
           source.multiDeviceMode === "replicated" &&
@@ -729,7 +824,7 @@ export class SourceService {
   private assertMembersSupport(source: SourceRecord, memberScopedParams: readonly string[]): void {
     for (const deviceId of this.membersOf(source)) {
       const device = getDevice(this.deps.db, deviceId);
-      if (device) {
+      if (device && !this.isDormantMember(source, device)) {
         this.assertModeSupport(device, source.type, source.multiDeviceMode);
         this.assertMemberConfigContract(device, source.type, memberScopedParams);
       }
@@ -738,7 +833,7 @@ export class SourceService {
 
   /** The owner first, then every other member — the devices a source's events reach. */
   membersOf(source: SourceRecord): DeviceId[] {
-    const members = [source.deviceId];
+    const members = isDeviceForgotten(this.deps.db, source.deviceId) ? [] : [source.deviceId];
     for (const m of listSourceMembers(this.deps.db, source.id)) {
       if (!members.includes(m.deviceId)) members.push(m.deviceId);
     }
@@ -1085,8 +1180,7 @@ export class SourceService {
     this.assertModeSupport(device, source.type, mode);
     this.assertMemberModesSupport(source);
     if (mode === "replicated") {
-      const owner = getDevice(db, source.deviceId);
-      const expected = owner?.capabilities.replicaVersionPolicies?.[source.type];
+      const expected = source.replicaVersionPolicy ?? undefined;
       if (device.capabilities.replicaVersionPolicies?.[source.type] !== expected) {
         throw new HttpError(
           409,
@@ -1096,7 +1190,13 @@ export class SourceService {
         );
       }
     }
-    const memberScopedParams = this.memberConfigContractFor(source);
+    // A source without a pinned member-local contract takes it from its
+    // owner; a dormant owner cannot vouch for one, so the joiner does.
+    const owner = getDevice(db, source.deviceId);
+    const memberScopedParams = this.memberConfigContractFor(
+      source,
+      !owner || this.isDormantMember(source, owner) ? device : owner,
+    );
     this.assertMemberConfigContract(device, source.type, memberScopedParams);
     this.assertMemberConfigPlacement(
       device,
@@ -1560,7 +1660,7 @@ export class SourceService {
       ]),
     );
     const membersOf = (s: SourceRecord): DeviceId[] => [
-      s.deviceId,
+      ...(isDeviceForgotten(this.deps.db, s.deviceId) ? [] : [s.deviceId]),
       ...(membersById.get(s.id) ?? []).filter((d) => d !== s.deviceId),
     ];
     const member = opts.deviceId;
@@ -1596,7 +1696,8 @@ export class SourceService {
       const allMembersSupport = members.every((id) => {
         const device = devices.find((candidate) => candidate.id === id);
         return device
-          ? this.deviceSupportsPersistedSourceContract(device, s, expectedMemberConfig)
+          ? this.deviceSupportsPersistedSourceContract(device, s, expectedMemberConfig) ||
+              this.isDormantMember(s, device, expectedMemberConfig)
           : false;
       });
       if (!allMembersSupport) return [];
@@ -1609,19 +1710,50 @@ export class SourceService {
         )
         .map((d) => d.id);
     };
+    const dormantHostsOf = (s: SourceRecord, members: DeviceId[]): DeviceId[] => {
+      const hosts = members.flatMap((id) => {
+        const device = devices.find((candidate) => candidate.id === id);
+        return device ? [device] : [];
+      });
+      if (s.multiDeviceMode !== "exclusive") {
+        const pinned = getSourceMemberConfigContract(this.deps.db, s.id);
+        return hosts.filter((d) => this.isDormantMember(s, d, pinned)).map((d) => d.id);
+      }
+      for (const announcer of paired) {
+        if (members.includes(announcer.id)) continue;
+        const mode = resolveDeviceMultiDeviceMode(announcer, s.type);
+        if (mode !== "partitioned" && mode !== "replicated") continue;
+        const contract = {
+          mode,
+          memberScopedParams: getSourceMemberConfigContract(this.deps.db, s.id),
+          replicaVersionPolicy:
+            mode === "replicated"
+              ? announcer.capabilities.replicaVersionPolicies?.[s.type]
+              : undefined,
+        };
+        return hosts
+          .filter((d) => deviceIsDormantUnderContract(d, s.type, contract))
+          .map((d) => d.id);
+      }
+      return [];
+    };
     const disputedById = countDisputedBySource(this.deps.db);
     return sources.map((s) => {
       const members = membersOf(s);
       const transition = transitionsById.get(s.id);
       const host = devices.find((d) => d.id === s.deviceId);
+      const archivedDevices = sourceArchivedDevices(this.deps.db, s.id);
       return {
         ...s,
+        ...(members.length === 0 && archivedDevices.length > 0 ? { archived: true } : {}),
+        ...(archivedDevices.length > 0 ? { archivedDevices } : {}),
         lastSyncedAt: lastSyncByKey.get(s.id) ?? null,
         members,
         multiDeviceMode: this.modeFor(s),
         leaseHolder: liveHolder(this.deps.syncLease?.holderOf(s.id)),
         disputedDeletions: disputedById.get(s.id) ?? 0,
         joinCandidates: joinCandidatesOf(s, members),
+        dormantHosts: dormantHostsOf(s, members),
         pushBased:
           (pushHostById.get(s.deviceId) ?? false) ||
           (pushTypesByDeviceId.get(s.deviceId)?.has(s.type) ?? false),
@@ -2107,6 +2239,11 @@ export class SourceService {
   /**
    * Update a source (PATCH /admin/sources/:id). Returns null when the
    * source isn't found so the caller can map to 404.
+   *
+   * `requestingDeviceId` is the device whose token sent the request. It
+   * matters only to an exclusive→partitioned or →replicated transition whose
+   * owner is dormant under the target contract (see
+   * `dormantOwnerContractAuthority`).
    */
   async updateSource(
     id: SourceId,
@@ -2118,6 +2255,7 @@ export class SourceService {
       deviceId?: DeviceId;
       multiDeviceMode?: MultiDeviceMode;
       pairingFence?: PairingGenerationFence;
+      requestingDeviceId?: DeviceId;
     },
   ): Promise<SourceRecord | null> {
     const {
@@ -2169,16 +2307,24 @@ export class SourceService {
         );
       }
       const owner = getDevice(db, current.deviceId);
-      if (owner && owner.revokedAt !== null) {
+      const toMode = patch.multiDeviceMode;
+      const delegate =
+        (toMode === "partitioned" || toMode === "replicated") && owner
+          ? this.dormantOwnerContractAuthority(current, owner, toMode, patch.requestingDeviceId)
+          : null;
+      const authority = delegate ?? owner;
+      if (authority && authority.revokedAt !== null) {
         throw new HttpError(
           409,
           "DEVICE_REVOKED",
-          `device "${owner.name}" is revoked — pair it again to reclaim it, or forget it`,
+          `device "${authority.name}" is revoked — pair it again to reclaim it, or forget it`,
         );
       }
-      if (owner) this.assertModeSupport(owner, current.type, patch.multiDeviceMode);
-      const memberScopedParams = this.memberConfigContractFor(current);
-      if (owner) this.assertMemberConfigContract(owner, current.type, memberScopedParams);
+      if (authority) this.assertModeSupport(authority, current.type, patch.multiDeviceMode);
+      const memberScopedParams = this.memberConfigContractFor(current, authority);
+      if (authority) {
+        this.assertMemberConfigContract(authority, current.type, memberScopedParams);
+      }
       if (!this.modeTransition) {
         throw new ServiceUnavailableError("source mode transition adoption is unavailable");
       }
@@ -2190,10 +2336,11 @@ export class SourceService {
           memberScopedParams,
           this.initialReplicaVersionPolicyFor(
             current.type,
-            current.deviceId,
+            authority?.id ?? current.deviceId,
             patch.multiDeviceMode,
           ),
           patch.pairingFence,
+          delegate?.id,
         );
       } catch (error) {
         if (error instanceof SourceModeTransitionPrepareError) {
@@ -2204,6 +2351,18 @@ export class SourceService {
       return getSource(db, id)!;
     }
     this.assertNoModeTransition(id);
+    if (
+      current &&
+      patch.enabled === true &&
+      patch.deviceId === undefined &&
+      isDeviceForgotten(db, current.deviceId)
+    ) {
+      throw new HttpError(
+        409,
+        "SOURCE_IS_HISTORICAL",
+        "This source contains historical data. Attach a paired device before resuming sync.",
+      );
+    }
     let validatedMemberScopedParams: readonly string[] | undefined;
     if (patch.config !== undefined && current) {
       const owner = getDevice(db, current.deviceId);
@@ -2545,6 +2704,54 @@ export class SourceService {
         log.warn(`Failed to push sources.snapshot to device ${deviceId}: ${msg}`);
       }
     });
+  }
+
+  /** Permanently forget a device while explicitly retaining or removing its contribution. */
+  async forgetDevice(id: DeviceId, options?: DeviceForgetOptions): Promise<DeleteDeviceResult> {
+    const { db, writeGate: w, statusCache, syncStatus, wsServer } = this.deps;
+    const impact = deviceForgetImpact(db, id);
+    if (!impact) return { deleted: false, reason: "not-found" };
+    for (const source of impact.sources) this.assertNoModeTransition(source.id);
+    const commit = async (): Promise<DeleteDeviceResult> => {
+      if (options?.data === "delete") {
+        for (const source of impact.sources) {
+          if (source.deleteScope === "source")
+            await this.deps.sourceDataRemoval.prepareSourceRemoval(source.id);
+          else if (source.deleteScope === "partition")
+            await this.deps.sourceDataRemoval.prepareSourceRemoval(source.id, id);
+        }
+      }
+      return w.deleteDevice(id, options);
+    };
+    const locked = (index: number): Promise<DeleteDeviceResult> => {
+      const source = impact.sources[index];
+      return source ? this.withLeaseMutation(source.id, () => locked(index + 1)) : commit();
+    };
+    const result = await locked(0);
+    if (!result.deleted) return result;
+    wsServer?.disconnectDevice(id);
+    await this.releaseDeviceLeases(id);
+    for (const sourceId of result.affectedSourceIds ?? []) {
+      syncStatus?.removeMember(sourceId, id);
+      const current = getSource(db, sourceId);
+      if (!current || this.membersOf(current).length === 0) syncStatus?.remove(sourceId);
+      await this.forgetAnalyticsObserver(sourceId, id);
+      if (current) this.notifyMembers(current);
+    }
+    for (const sourceId of result.removedSourceIds ?? []) {
+      this.deps.syncLease?.forgetSource(sourceId);
+      try {
+        await this.deps.syncSourceSettingsToConfig(sourceId, null);
+      } catch (error) {
+        log.warn(
+          `Could not remove source settings for ${sourceId}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+      void this.sweepRemovedSource(sourceId);
+    }
+    for (const job of result.streamCleanups ?? []) void this.streamCleanup.cleanup(job);
+    statusCache.bump();
+    return result;
   }
 
   /**
@@ -2923,6 +3130,45 @@ export class SourceService {
   }
 
   /**
+   * Mark a dormant host of a multi-device source on its own status entry:
+   * what it holds stays, nothing it sends is accepted, and the step that
+   * resumes it is pairing it again or updating its app. The source's
+   * aggregate status is left alone — the other members keep syncing.
+   */
+  private applyDormancy(
+    row: DisplaySyncStatus,
+    source: SourceRecord,
+    pinned: readonly string[] | null,
+  ): void {
+    if (!row.deviceId || row.state === "paused") return;
+    if (
+      row.deviceId !== source.deviceId &&
+      !isSourceMember(this.deps.db, source.id, row.deviceId)
+    ) {
+      return;
+    }
+    const device = getDevice(this.deps.db, row.deviceId);
+    if (!device || !this.isDormantMember(source, device, pinned)) return;
+    const revoked = device.revokedAt !== null;
+    row.state = "error";
+    row.errorMessage = revoked
+      ? `"${device.name}" is no longer paired. What it synced is kept; it sends nothing until it is paired again.`
+      : `"${device.name}" runs a version that cannot sync this source beside other devices. What it synced is kept; it sends nothing until it is updated.`;
+    row.remediation = revoked
+      ? {
+          summary: "This device needs to be paired again",
+          steps: ["Pair the device with the gateway again to resume its part of this source."],
+          restartRequired: false,
+        }
+      : {
+          summary: "This device needs an update",
+          steps: ["Update Omnesis on this device to the gateway's release."],
+          restartRequired: false,
+        };
+    delete row.progress;
+  }
+
+  /**
    * Display sync status for one source, from its live rows; `null` when the
    * gateway knows nothing about it.
    */
@@ -2958,6 +3204,11 @@ export class SourceService {
     permissions: readonly MobilePermissionReportRow[],
     now: number,
   ): DisplaySyncStatus {
+    const active = (deviceId: string | null | undefined) =>
+      !deviceId || !isDeviceForgotten(this.deps.db, deviceId);
+    if (!active(inMem?.deviceId)) inMem = undefined;
+    rows = rows.filter((row) => active(row.device_id));
+    permissions = permissions.filter((row) => active(row.deviceId));
     // A row's stamp is its latest sync or error, so a member whose first
     // sync failed still stands for the source over a metadata-only shared row.
     const stampOf = (p: SyncStateSummary | undefined): string =>
@@ -2979,8 +3230,11 @@ export class SourceService {
       now,
       registered?.enabled === true ? permission?.health : undefined,
     );
-    const memberReports = this.deps.syncStatus?.listMembers(sourceId) ?? [];
+    const memberReports = (this.deps.syncStatus?.listMembers(sourceId) ?? []).filter(
+      (row) => !row.deviceId || !isDeviceForgotten(this.deps.db, row.deviceId),
+    );
     const issuesBy = listSourceSyncIssues(this.deps.db, sourceId);
+    for (const id of issuesBy.keys()) if (!active(id)) issuesBy.delete(id);
     const issues = [...issuesBy.values()].flat();
     if (issues.length > 0) {
       status.issues = issues;
@@ -3000,6 +3254,7 @@ export class SourceService {
       for (const member of listSourceMembers(this.deps.db, sourceId))
         memberIds.add(member.deviceId);
     }
+    for (const id of memberIds) if (isDeviceForgotten(this.deps.db, id)) memberIds.delete(id);
     const applyWireRefusal = (row: DisplaySyncStatus, deviceId: string): boolean => {
       if (row.state === "paused") return false;
       try {
@@ -3049,6 +3304,13 @@ export class SourceService {
       });
       for (const member of status.members) {
         if (applyWireRefusal(member, member.deviceId!)) applyWireRefusal(status, member.deviceId!);
+      }
+      if (
+        registered?.multiDeviceMode === "partitioned" ||
+        registered?.multiDeviceMode === "replicated"
+      ) {
+        const pinned = getSourceMemberConfigContract(this.deps.db, sourceId);
+        for (const member of status.members) this.applyDormancy(member, registered, pinned);
       }
       const deletersBy =
         restoredBy.size > 0

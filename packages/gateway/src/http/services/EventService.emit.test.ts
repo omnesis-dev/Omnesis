@@ -16,15 +16,16 @@
 
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import { ProviderId, SourceId, type DocumentInput } from "@omnesis/types";
-import { createDatabase, fetchDocumentProjections, upsertDocuments } from "../../db.js";
+import { fetchDocumentProjections, upsertDocuments } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import { EventBus, type DocumentProjection, type DocumentUpsertedEvent } from "../../events.js";
 import { DEFAULT_INGEST_YIELD_BATCH } from "../../async-yield.js";
 import { EventService } from "./EventService.js";
 import type Database from "better-sqlite3";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 type Db = Database.Database;
 
@@ -74,7 +75,7 @@ describe("emitDocumentUpserted id resolution + yield", () => {
   let db: Db;
   beforeEach(() => {
     path = testDbPath();
-    db = createDatabase(path);
+    db = createFreshTestDatabase(path);
   });
   afterEach(() => {
     db.close();

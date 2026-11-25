@@ -32,6 +32,11 @@ updates:
     labels:
       - dependencies
       - javascript
+    ignore:
+      # 13.2.0 corrupts SQLCipher databases with incremental auto-vacuum while
+      # creating the schema; retain the working cipher binding and its patch.
+      - dependency-name: "better-sqlite3-multiple-ciphers"
+        versions: ["13.2.0"]
     groups:
       # All @types/* travel together — bumping one rarely makes sense in
       # isolation and they almost never conflict with each other.

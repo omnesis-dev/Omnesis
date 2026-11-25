@@ -25,7 +25,7 @@ import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { createLogger } from "@omnesis/core";
 
-import { createDatabase } from "../db.js";
+import { createFreshTestDatabase } from "../testing/fresh-database.js";
 import { directWriteGate } from "../write-gate.js";
 import {
   currentEvidenceFingerprint,
@@ -52,7 +52,7 @@ let db: Db;
 
 beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), "omnesis-madj-test-"));
-  db = createDatabase(join(tmpDir, "test.db"));
+  db = createFreshTestDatabase(join(tmpDir, "test.db"));
 });
 
 afterEach(() => {

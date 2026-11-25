@@ -11,8 +11,10 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createDatabase } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import { Scheduler } from "../../scheduler/scheduler.js";
 import { IoTaskRunner } from "../../scheduler/runners/io.js";
 import { ioGateFromScheduler } from "../../scheduler/io-ops.js";
@@ -27,8 +29,6 @@ import {
   seedSmallFixture,
 } from "./collision-sweep-test-utils.js";
 import type Database from "better-sqlite3";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 const WORKER_URL = new URL("../../workers/io-worker.ts", import.meta.url);
 const LOADER_URL = new URL("../../workers/register-tsx.mjs", import.meta.url).href;
@@ -50,7 +50,7 @@ describe.each(Object.keys(FIXTURES))("the %s fixture on the io worker", (name) =
   // A cold TypeScript worker load can exceed Vitest's default hook budget.
   beforeAll(async () => {
     dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
-    db = createDatabase(dbPath) as unknown as Database.Database;
+    db = createFreshTestDatabase(dbPath) as unknown as Database.Database;
     db.transaction(FIXTURES[name]!)(db);
     direct = directReadPort(COLLISION_SWEEP_READS, db);
     scheduler = new Scheduler({ enablePreemption: false });

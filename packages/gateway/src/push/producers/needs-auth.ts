@@ -11,7 +11,7 @@ const log = createLogger("gateway:push:needs-auth");
 
 export interface NeedsAuthNotifierOptions {
   publisher: DurableNotificationPublisher;
-  reserve: (principal: string, deviceId: DeviceId) => Promise<string | null>;
+  reserve: (principal: string, deviceId: DeviceId, sourceId?: string) => Promise<string | null>;
   retain: (
     reservation: string,
     message: NotificationMessage,
@@ -60,7 +60,7 @@ export class NeedsAuthNotifier {
     this.inFlight.add(key);
     let reservation: string | null = null;
     try {
-      reservation = await this.options.reserve(principal, source.deviceId);
+      reservation = await this.options.reserve(principal, source.deviceId, source.sourceId);
       if (!reservation) {
         log.debug(
           `needs-auth for ${principal} on ${source.deviceId}: within backoff window — skipping reminder`,

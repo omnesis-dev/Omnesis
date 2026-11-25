@@ -11,7 +11,7 @@
  * `MAX_TRANSCRIPTION_MS`, the bound a client waiting on the gateway relies on.
  */
 
-import { MAX_TRANSCRIPTION_MS } from "@omnesis/core";
+import { MAX_TRANSCRIPTION_MS, type TranscriptSegment } from "@omnesis/core";
 import { PCM_SAMPLE_RATE } from "./audio-decode.js";
 import { computeTranscriptionTimeoutMs } from "./deadline.js";
 
@@ -73,12 +73,15 @@ export function splitPcm(
 export interface ChunkTranscript {
   text: string;
   language?: string;
+  /** Timed segments, ms from the start of the chunk. */
+  segments?: TranscriptSegment[];
 }
 
 /**
  * Transcribe `pcm` chunk by chunk, in order, handing each chunk its deadline
  * (ms) — `minTimeoutMs` raises it — and joining the text. The first language a
- * chunk reports stands for the recording.
+ * chunk reports stands for the recording. Segments are kept, shifted to the
+ * recording's timeline, only when every chunk reported them.
  */
 export async function transcribeInChunks(
   pcm: Float32Array,
@@ -88,6 +91,8 @@ export async function transcribeInChunks(
   const giveUpAt = Date.now() + MAX_TRANSCRIPTION_MS;
   const texts: string[] = [];
   let language: string | undefined;
+  let segments: TranscriptSegment[] | undefined = [];
+  let offsetSamples = 0;
   for (const chunk of splitPcm(pcm, opts.maxChunkSamples)) {
     const timeoutMs = Math.min(
       computeTranscriptionTimeoutMs(chunk.length / PCM_SAMPLE_RATE, opts.minTimeoutMs),
@@ -99,6 +104,19 @@ export async function transcribeInChunks(
     const part = await transcribeChunk(chunk, timeoutMs);
     if (part.text) texts.push(part.text);
     language ??= part.language;
+    if (segments && part.segments) {
+      const offsetMs = Math.round((offsetSamples / PCM_SAMPLE_RATE) * 1000);
+      for (const s of part.segments) {
+        segments.push({ startMs: s.startMs + offsetMs, endMs: s.endMs + offsetMs, text: s.text });
+      }
+    } else {
+      segments = undefined;
+    }
+    offsetSamples += chunk.length;
   }
-  return { text: texts.join(" "), ...(language ? { language } : {}) };
+  return {
+    text: texts.join(" "),
+    ...(language ? { language } : {}),
+    ...(segments ? { segments } : {}),
+  };
 }

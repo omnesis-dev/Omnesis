@@ -63,6 +63,7 @@ data class SourceDetailUi(
     val debug: Loadable<String>? = null,
     /** Gateway-internal source (a dataset the gateway hosts itself): read-only, no sync actions. */
     val isInternal: Boolean = false,
+    val archived: Boolean = false,
     /**
      * Notices no listed host device claims — e.g. a gateway-hosted source, or a member
      * on a device the record does not list. Shown beside the STATUS pill.
@@ -184,7 +185,7 @@ class SourceDetailViewModel @Inject constructor(
      * in-flight spinner or an open debug sheet).
      */
     private fun build(snap: Snapshot): SourceDetailUi {
-        val st = snap.sync
+        val st = snap.sync.takeUnless { snap.record.archived }
         val current = (_state.value as? Loadable.Content)?.value
         val hostIds = snap.record.hostDeviceIds()
         val attributed = attributeNotices(st, hostIds)
@@ -200,13 +201,14 @@ class SourceDetailViewModel @Inject constructor(
                     snap.deviceNames[id]?.takeIf(String::isNotBlank),
                     attributed.byDevice[id].orEmpty().toNoticeUi(),
                 )
-            },
-            syncState = st?.state ?: "idle",
+            } + snap.record.archivedDevices.map { SourceHostDeviceUi(it.deviceId, "${it.name} (forgotten)") },
+            syncState = if (snap.record.archived) "historical" else st?.state ?: "idle",
             lastSyncAt = st?.lastSyncAt,
             percentIndexed = snap.index?.bySource?.get(sourceId)?.percentIndexed,
             progressPercent = st?.progress?.percentComplete,
             progressMessage = st?.progress?.message?.takeIf { it.isNotBlank() },
-            paused = !snap.record.enabled,
+            paused = !snap.record.enabled && !snap.record.archived,
+            archived = snap.record.archived,
             unit = (st?.unitName ?: catalog.unitName(sourceId))?.takeIf { it.isNotBlank() },
             progressTotal = st?.progress?.total,
             progressDone = st?.progress?.processed,

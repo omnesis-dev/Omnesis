@@ -1265,6 +1265,7 @@ export type {
   CompleteCapability,
   TranscribeCapability,
   TranscriptionResult,
+  TranscriptSegment,
   OcrCapability,
   EntailCapability,
   EntailVerdict,
@@ -1474,7 +1475,11 @@ export {
 export { connectionPathSchema, parseConnectionPath } from "./connection-path.js";
 export type { ConnectionPath } from "./connection-path.js";
 
-export { execWindowsJob } from "./windows-job-exec.js";
+export {
+  commandTimeoutError,
+  describeCommandForDiagnostics,
+  execWindowsJob,
+} from "./windows-job-exec.js";
 export { ownedProcessCleanupReceipt } from "./owned-process-cleanup.js";
 export { runOpenSslWithPrivateInput } from "./openssl-private-input.js";
 export {

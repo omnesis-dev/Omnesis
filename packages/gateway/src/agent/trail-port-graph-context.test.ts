@@ -10,13 +10,13 @@
 
 import { randomUUID } from "node:crypto";
 import { rmSync } from "node:fs";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { AnalyticsDb } from "../analytics-db.js";
-import { createDatabase } from "../db.js";
-import { createGatewayTrailPort } from "./ports.js";
-import type Database from "better-sqlite3";
 import { join as fixtureJoin } from "node:path";
 import { tmpdir as fixtureTmpdir } from "node:os";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { AnalyticsDb } from "../analytics-db.js";
+import { createFreshTestDatabase } from "../testing/fresh-database.js";
+import { createGatewayTrailPort } from "./ports.js";
+import type Database from "better-sqlite3";
 
 const NOW = "2026-02-01T09:00:00.000Z";
 let db: Database.Database;
@@ -32,7 +32,7 @@ beforeEach(async () => {
   analytics = new AnalyticsDb(analyticsPath);
   await analytics.open();
   sqlitePath = fixtureJoin(fixtureTmpdir(), `omnesis-test-trail-gc-${randomUUID()}.db`);
-  db = createDatabase(sqlitePath);
+  db = createFreshTestDatabase(sqlitePath);
 });
 
 afterEach(async () => {

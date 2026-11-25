@@ -37,6 +37,7 @@ import {
   type DeviceKind,
 } from "@omnesis/types";
 import { createDatabase } from "./db.js";
+import { createFreshTestDatabase } from "./testing/fresh-database.js";
 import { createServer } from "./server.js";
 import { DeviceWsServer } from "./ws.js";
 import { mountDeviceWsRoute } from "./device-ws-route.js";
@@ -222,7 +223,7 @@ async function waitForCondition(fn: () => boolean, timeoutMs = 3000, pollMs = 10
 
 beforeAll(async () => {
   dbPath = join(tmpdir(), `omnesis-ws-test-${randomUUID()}.db`);
-  db = createDatabase(dbPath);
+  db = createFreshTestDatabase(dbPath);
 
   const collector = createDevice(db, { name: "collector", kind: "collector" });
   COLLECTOR_ID = collector.id;
@@ -541,10 +542,14 @@ describe("DeviceWsServer", () => {
         ),
       ).rejects.toMatchObject({ code: "cancelled" });
 
+      // After the last command the probe still asks one answer on a worker
+      // thread, which it allows 10 s (ANSWER_THREAD_HANG_SECONDS in the probe):
+      // on Windows that answer first runs a Node file bridge to secure its state
+      // directory. This hang guard covers that allowance and the exit after it.
       const exited = await Promise.race([
         probeExit,
         new Promise<never>((_, reject) => {
-          setTimeout(() => reject(new Error("Hermes protocol probe exit timeout")), 5_000);
+          setTimeout(() => reject(new Error("Hermes protocol probe exit timeout")), 15_000);
         }),
       ]);
       expect(exited, probeStderr).toEqual({ code: 0, signal: null });
@@ -1057,7 +1062,7 @@ describe("DeviceWsServer scope reconciliation on handshake", () => {
 
   beforeEach(() => {
     scopeDbPath = join(tmpdir(), `omnesis-ws-scope-${randomUUID()}.db`);
-    scopeDb = createDatabase(scopeDbPath);
+    scopeDb = createFreshTestDatabase(scopeDbPath);
     srv = new DeviceWsServer({
       db: scopeDb,
       writeGate: directWriteGate(scopeDb),
@@ -1200,6 +1205,73 @@ describe("DeviceWsServer collector presence lifecycle", () => {
     }
   });
 
+  // A collector that read as online while its hello was still settling could be
+  // sent an admin command before its connect-time snapshot; that snapshot,
+  // computed before the command's effect, then arrived after it.
+  test("a collector takes no command until its hello is acknowledged and its connect state is sent", async () => {
+    const localDbPath = join(tmpdir(), `omnesis-ws-ready-${randomUUID()}.db`);
+    const localDb = createDatabase(localDbPath);
+    const collector = createDevice(localDb, { name: "ready-collector", kind: "collector" });
+    const { id: tokenId } = createToken(localDb, collector.id, [SCOPE_WRITE_ALL]);
+    let releaseConnect: (() => void) | undefined;
+    const connectGate = new Promise<void>((resolve) => {
+      releaseConnect = resolve;
+    });
+    const srvRef: { current?: DeviceWsServer } = {};
+    const onlineWhenHooked: boolean[] = [];
+    const srv = new DeviceWsServer({
+      db: localDb,
+      writeGate: directWriteGate(localDb),
+      authTimeoutMs: 60_000,
+      onCollectorConnected: () => connectGate,
+      onDeviceConnected: (conn) => {
+        onlineWhenHooked.push(srvRef.current!.isConnected(conn.deviceId));
+        void srvRef
+          .current!.sendCommand(conn.deviceId, "sources.snapshot", { sources: [] }, 1_000)
+          .catch(() => {});
+      },
+    });
+    srvRef.current = srv;
+    const sent: string[] = [];
+    const ws = { send: (data: string) => sent.push(data), close: vi.fn() };
+
+    try {
+      srv.onOpen(ws, "fictional-ready-client", {
+        tokenId,
+        deviceId: collector.id,
+        scopes: [SCOPE_WRITE_ALL],
+      });
+      srv.onMessage(
+        ws,
+        JSON.stringify(makeCommand("hello", { protocolVersion: PROTOCOL_VERSION })),
+      );
+      await new Promise((resolve) => setImmediate(resolve));
+
+      // Authenticated, but the handshake has not finished.
+      expect(srv.isConnected(collector.id)).toBe(false);
+      await expect(srv.sendCommand(collector.id, "source.descriptors", {}, 1_000)).rejects.toThrow(
+        "not connected",
+      );
+      expect(sent).toEqual([]);
+
+      releaseConnect?.();
+      await vi.waitFor(() => expect(srv.isConnected(collector.id)).toBe(true));
+      expect(onlineWhenHooked).toEqual([true]);
+      void srv.sendCommand(collector.id, "source.descriptors", {}, 1_000).catch(() => {});
+
+      const frames = sent.map((data) => JSON.parse(data) as { kind: string; type?: string });
+      expect(frames.map((frame) => frame.type ?? frame.kind)).toEqual([
+        "response",
+        "sources.snapshot",
+        "source.descriptors",
+      ]);
+    } finally {
+      srv.stop();
+      localDb.close();
+      cleanupDb(localDbPath);
+    }
+  });
+
   // What a device reported over one connection is current only under that
   // connection's epoch (the collector descriptor cache relies on it), so every
   // change to the device's sockets must give a number never seen before.
@@ -1281,7 +1353,7 @@ describe("DeviceWsServer socket liveness", () => {
 
   beforeEach(() => {
     livenessDbPath = join(tmpdir(), `omnesis-ws-liveness-${randomUUID()}.db`);
-    livenessDb = createDatabase(livenessDbPath);
+    livenessDb = createFreshTestDatabase(livenessDbPath);
     srv = new DeviceWsServer({
       db: livenessDb,
       writeGate: directWriteGate(livenessDb),
@@ -1479,7 +1551,7 @@ describe("DeviceWsServer token-check rate limit", () => {
 
   beforeEach(() => {
     limitDbPath = join(tmpdir(), `omnesis-ws-limit-${randomUUID()}.db`);
-    limitDb = createDatabase(limitDbPath);
+    limitDb = createFreshTestDatabase(limitDbPath);
     srv = new DeviceWsServer({
       db: limitDb,
       writeGate: directWriteGate(limitDb),

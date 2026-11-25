@@ -53,6 +53,7 @@ import { ReleaseCheckService } from "./release-check/service.js";
 import { createReleaseCheckTask } from "./release-check/task.js";
 import { seedWebSourceMeta } from "./sources/web/source-meta.js";
 import { dictationFeatureStatus } from "./dictation/index.js";
+import { createVoiceSeparatorSource } from "./recordings/voices/loader.js";
 import { documentsAwaitingTranscription } from "./voice-notes/index.js";
 import {
   bootBriefs,
@@ -796,8 +797,14 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
   const reauthBackoffConfig = resolveReauthBackoffConfig(config.gateway?.reauthReminders);
   const needsAuthNotifier = new NeedsAuthNotifier({
     publisher: pushBroadcaster,
-    reserve: (principal, deviceId) =>
-      writeGate.reserveReauthReminder(principal, deviceId, Date.now(), reauthBackoffConfig),
+    reserve: (principal, deviceId, sourceId) =>
+      writeGate.reserveReauthReminder(
+        principal,
+        deviceId,
+        Date.now(),
+        reauthBackoffConfig,
+        sourceId,
+      ),
     retain: async (reservation, message, deviceIds) => {
       const now = Date.now();
       const retained = await writeGate.commitReauthReminderNotification(reservation, now, {
@@ -2309,6 +2316,15 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
   let omnesisNotesRuntime:
     import("./sources/omnesis-notes/index.js").OmnesisNotesRuntime | undefined;
   let voiceNoteService: import("./voice-notes/index.js").VoiceNoteService | undefined;
+  let recordingService: import("./recordings/index.js").RecordingTranscriptionService | undefined;
+  // Recorded conversations tell speakers apart only in experimental mode, when
+  // `inference.recordings.speakers` asks for it; read at boot.
+  const voiceSeparatorSource = createVoiceSeparatorSource({
+    mode: experimentalEnabled()
+      ? (configStore.get().inference?.recordings?.speakers ?? "off")
+      : "off",
+    modelsDir: MODELS_DIR,
+  });
   let agentConversationsRuntime:
     import("./sources/agent-conversations/index.js").AgentConversationsRuntime | undefined;
   // Held for the delivery loop below (policy review and operator-watch
@@ -2891,6 +2907,10 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
     },
     onVoiceNoteService: (service) => {
       voiceNoteService = service;
+    },
+    voiceSeparator: () => voiceSeparatorSource.current(),
+    onRecordingService: (service) => {
+      recordingService = service;
     },
     onOmnesisNotesRuntime: (runtime) => {
       omnesisNotesRuntime = runtime;
@@ -4283,6 +4303,8 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
     // Voice notes: stop picking up queued notes. One being transcribed right now
     // is not awaited — it stays queued and is transcribed again after restart.
     voiceNoteService?.dispose();
+    recordingService?.dispose();
+    await voiceSeparatorSource.dispose();
     // omnesis-notes: flush pending day-doc upserts (a capture that landed
     // within the debounce window must still project), then drop timers.
     if (omnesisNotesRuntime) {

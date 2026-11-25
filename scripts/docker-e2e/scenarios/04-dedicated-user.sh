@@ -96,6 +96,8 @@ assert "the dedicated gateway's admin token is readable by root" test -n "$ADMIN
 api() { curl -ksf -H "Authorization: Bearer $ADMIN_TOKEN" "$OMNESIS_GATEWAY_URL$1" "${@:2}"; }
 json_field() { node -e "let s = ''; process.stdin.on('data', (d) => (s += d)).on('end', () => { const j = JSON.parse(s); process.stdout.write(String(($1)(j) ?? '')); });"; }
 
+# A device reads as online once its handshake has completed and the gateway
+# has sent its connect-time state, so it can take an add straight away.
 COLLECTOR_ID=""
 for _ in $(seq 1 90); do
   COLLECTOR_ID="$(api /admin/devices | json_field '(j) => j.items.find((d) => d.kind === "collector" && d.online)?.id')" || true
@@ -112,9 +114,16 @@ ACCOUNT_ID="$(api /admin/sources/resolve-account -X POST -H 'Content-Type: appli
   json_field '(j) => j.accountId')"
 assert "maya's collector resolved the vault's account" test -n "$ACCOUNT_ID"
 ADD_BODY="{\"deviceId\":\"$COLLECTOR_ID\",\"descriptorId\":\"obsidian-notes\",\"accountIds\":[\"$ACCOUNT_ID\"],\"params\":{\"vaultPath\":\"$VAULT\"}}"
-if ! api /admin/sources/add -X POST -H 'Content-Type: application/json' -d "$ADD_BODY" >/e2e/add-source.json; then
-  curl -ks -H "Authorization: Bearer $ADMIN_TOKEN" -X POST -H 'Content-Type: application/json' \
-    -d "$ADD_BODY" -w '\nHTTP %{http_code}\n' "$OMNESIS_GATEWAY_URL/admin/sources/add" >&2 || true
+# One request, kept whole: a refusal's status and body name its cause.
+ADD_STATUS="$(curl -ks -o /e2e/add-source.json -w '%{http_code}' -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -X POST -H 'Content-Type: application/json' -d "$ADD_BODY" "$OMNESIS_GATEWAY_URL/admin/sources/add")" ||
+  ADD_STATUS="curl exit $?"
+if [[ "$ADD_STATUS" != 200 ]]; then
+  echo "  /admin/sources/add answered ${ADD_STATUS}:" >&2
+  cat /e2e/add-source.json >&2 2>/dev/null || true
+  echo >&2
+  tail -40 "$MAYA_CONFIG/collector.log" >&2 || true
+  tail -40 "$STATE/logs/gateway.stdout.log" >&2 || true
   echo "  FAILED: the gateway accepted the source on maya's collector" >&2
   exit 1
 fi

@@ -102,6 +102,15 @@ const FORBIDDEN_TABLES = new Set([
   // Voice notes waiting on the transcriber hold the raw recordings; a clone
   // gets the notes' text, never the audio or the unfinished work.
   "voice_note_transcriptions",
+  // A recorded conversation's ledger holds its chunks' audio and the queue's
+  // unfinished work; a clone gets the finished transcripts as documents.
+  // The moments marked in a recording, its speakers and the suggestions the
+  // owner dismissed all point into those sessions.
+  "recording_chunks",
+  "recording_marks",
+  "recording_sessions",
+  "recording_speakers",
+  "recording_suggestion_dismissals",
   "access_audit_events",
   "access_grant_capabilities",
   "access_grants",
@@ -197,6 +206,8 @@ const SAFE_TABLES = new Set([
   "dev_annotations",
   "device_doctor_runs",
   "devices",
+  // Forgotten identities and retained source origins are canonical history, not credentials.
+  "forgotten_devices",
   "doc_annotation_evidence",
   "doc_annotations",
   "date_mention_judgements",
@@ -316,6 +327,7 @@ const SAFE_TABLES = new Set([
   "schema_migrations",
   "source_document_profiles",
   "source_devices",
+  "source_device_archives",
   "source_inventories",
   "source_inventory_documents",
   // A source family's declared name and glyph: product strings the

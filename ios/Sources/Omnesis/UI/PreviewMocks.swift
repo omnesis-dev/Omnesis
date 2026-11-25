@@ -538,6 +538,12 @@ enum PreviewMocks {
         updatedAt: 0,
         resyncModes: resyncModesBoth
     )
+    static let sourceHistorical = SourceRecord(
+        id: "activity:local", type: "activity", accountId: "local", deviceId: "retired-phone",
+        enabled: false, resyncModes: [], archived: true,
+        archivedDevices: [.init(deviceId: "retired-phone", name: "Retired phone", kind: "ios", forgottenAt: 3)]
+    )
+
     static let sourceAppleNotes = SourceRecord(
         id: "apple-notes:user@example.com",
         type: "apple-notes",
@@ -718,6 +724,14 @@ enum PreviewMocks {
             row("5D4C3B2A-1908-4F7E-A6D5-C4B3A2918070", sleep, minutesAgo: 480),
         ]
     }()
+
+    static let deviceForgetImpact = DeviceForgetImpact(
+        sources: [
+            .init(id: "activity:local", type: "activity", multiDeviceMode: "partitioned", otherDeviceCount: 1, deleteScope: "partition"),
+            .init(id: "notes:local", type: "notes", multiDeviceMode: "replicated", otherDeviceCount: 1, deleteScope: "none"),
+        ],
+        fingerprint: "preview-device-impact"
+    )
 
     static let devicesWithRevoked: [DeviceRecord] = devices + [deviceRevoked]
 

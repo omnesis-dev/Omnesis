@@ -9,20 +9,21 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import { SCOPE_WRITE_ALL, SourceId, parseSourceId } from "@omnesis/types";
-import { createDatabase } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import { createDevice } from "../../data/repositories/DeviceRepository.js";
 import { addSourceMember, createSource } from "../../data/repositories/SourceRepository.js";
 import { SyncStatusRegistry } from "../../sync-status.js";
 import { WsEventHandler } from "./WsEventHandler.js";
+import type { createDatabase } from "../../db.js";
 import type { WsEvent } from "@omnesis/core";
 import type { WriteGate } from "../../write-gate.js";
 import type { AuthFlowRegistry } from "../../auth-flows.js";
 import type { DeviceConnection } from "../../ws.js";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 const SRC = "apple-notes:local";
 const REMEDY = {
@@ -38,7 +39,7 @@ let conn: DeviceConnection;
 
 beforeEach(() => {
   dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-ws-remediation-${randomUUID()}.db`);
-  db = createDatabase(dbPath);
+  db = createFreshTestDatabase(dbPath);
   const device = createDevice(db, { name: "Maya-Laptop", kind: "collector" });
   conn = { deviceId: device.id, scopes: [SCOPE_WRITE_ALL] };
   const parsed = parseSourceId(SourceId(SRC));
@@ -91,6 +92,7 @@ describe("WsEventHandler — structured remediation", () => {
       "Cannot open the database",
       conn.deviceId,
       REMEDY,
+      conn.deviceId,
     );
   });
 
@@ -105,6 +107,7 @@ describe("WsEventHandler — structured remediation", () => {
       "connection refused",
       conn.deviceId,
       undefined,
+      conn.deviceId,
     );
   });
 
@@ -121,7 +124,13 @@ describe("WsEventHandler — structured remediation", () => {
       errorMessage: "refused",
     });
     expect(syncStatus.get(SourceId(SRC))?.remediation).toBeUndefined();
-    expect(writeGate.setSyncError).toHaveBeenCalledWith(SRC, "refused", conn.deviceId, undefined);
+    expect(writeGate.setSyncError).toHaveBeenCalledWith(
+      SRC,
+      "refused",
+      conn.deviceId,
+      undefined,
+      conn.deviceId,
+    );
   });
 
   test("on a replicated source only the reporting member carries it, and its recovery clears it", () => {
@@ -144,6 +153,7 @@ describe("WsEventHandler — structured remediation", () => {
       "Cannot open the database",
       conn.deviceId,
       REMEDY,
+      conn.deviceId,
     );
 
     handler.handleEvent(conn, statusEvent("completed"));

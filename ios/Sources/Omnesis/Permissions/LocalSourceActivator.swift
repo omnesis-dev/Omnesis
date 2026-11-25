@@ -370,10 +370,61 @@ public final class LocalSourceActivator {
         }
     }
 
-    /// Readable copy for an error that stopped an activation. Transport and
-    /// gateway errors carry no user-facing text, so they get a sentence.
-    private static func message(for error: Error) -> String {
-        (error as? LocalizedError)?.errorDescription
-            ?? "Couldn't reach your gateway to turn this on. Nothing was changed."
+    static let unreachableMessage = "Couldn't reach your gateway to turn this on. Nothing was changed."
+
+    /// Plain copy for the refusals turning a source on can meet, by the
+    /// gateway's error code. The gateway's own message names devices and
+    /// contracts in its terms; a refusal not listed here shows it as is.
+    static let refusalMessages: [String: String] = [
+        "DEVICE_REVOKED":
+            "A device that sent this source is no longer paired with your gateway. Nothing was changed.",
+        "MULTI_DEVICE_CONTRACT_UNSUPPORTED":
+            "Another device that sends this source needs an Omnesis update first. Nothing was changed.",
+        "MEMBER_CONFIG_CONTRACT_UNSUPPORTED":
+            "Another device that sends this source needs an Omnesis update first. Nothing was changed.",
+        "MEMBER_CONFIG_CONTRACT_MISMATCH":
+            "Another device that sends this source needs an Omnesis update first. Nothing was changed.",
+        "SOURCE_ALREADY_HOSTED":
+            "Another device already sends this source, and it takes one device at a time.",
+        "DEVICE_CANNOT_HOST_TYPE": "This device can't provide this source.",
+        "SOURCE_REMOVAL_IN_PROGRESS": "This source is still being removed. Try again in a moment.",
+        "SOURCE_STREAM_CLEANUP_IN_PROGRESS":
+            "Your gateway is still clearing this source's earlier data. Try again in a moment.",
+        "SOURCE_MODE_TRANSITION_IN_PROGRESS":
+            "Your gateway is still preparing this source. Try again in a moment.",
+        "SOURCE_MODE_TRANSITION_MEMBERSHIP_CONFLICT":
+            "Another device changed this source at the same time. Try again.",
+    ]
+
+    /// Readable copy for an error that stopped an activation. A refusal the
+    /// gateway answered carries its own explanation, which is shown as is;
+    /// only a request that never got an answer reads as an unreachable
+    /// gateway.
+    static func message(for error: Error) -> String {
+        if let gatewayError = error as? GatewayClient.Error {
+            switch gatewayError {
+            case .serverError:
+                if let code = gatewayError.gatewayCode, let copy = refusalMessages[code] { return copy }
+                if let message = gatewayError.gatewayMessage?.trimmingCharacters(in: .whitespacesAndNewlines),
+                   !message.isEmpty {
+                    return message.prefix(1).uppercased() + String(message.dropFirst())
+                }
+                return "Your gateway refused to turn this on. Nothing was changed."
+            case .unauthorized:
+                return "Your gateway no longer accepts this device. Pair it again from Settings."
+            case .forbidden:
+                return "This device isn't allowed to change this source on your gateway."
+            case .notFound:
+                return "Your gateway no longer has this source. Try again."
+            case .internalSource:
+                return "This source belongs to your gateway and can't be turned on here."
+            case .decoding:
+                return "Your gateway sent an answer this app can't read. Update Omnesis, then try again."
+            case .invalidResponse, .invalidURL:
+                return unreachableMessage
+            }
+        }
+        if error is URLError { return unreachableMessage }
+        return (error as? LocalizedError)?.errorDescription ?? unreachableMessage
     }
 }

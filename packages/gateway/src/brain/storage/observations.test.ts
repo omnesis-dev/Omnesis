@@ -10,9 +10,12 @@
 
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { ProviderId, SourceId, type DocumentInput } from "@omnesis/types";
-import { createDatabase, upsertDocuments } from "../../db.js";
+import { upsertDocuments } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import {
   createObservation,
   deleteObservationsAttachedToLoops,
@@ -37,8 +40,6 @@ import {
 import { createOpenLoop } from "./open-loops.js";
 import type { ObservationScores } from "./types.js";
 import type Database from "better-sqlite3";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 type Db = Database.Database;
 
@@ -108,7 +109,7 @@ describe("observation repository", () => {
 
   beforeEach(() => {
     path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
-    db = createDatabase(path);
+    db = createFreshTestDatabase(path);
     upsertDocuments(db, [
       doc("a", "The studio rent invoice is due on Friday."),
       doc("b", "Workshop venue confirmed for the 14th.", "drive-fixture"),

@@ -31,6 +31,7 @@ import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { runWithPriority } from "../priority.js";
 import { createDatabase } from "../db.js";
+import { createFreshTestDatabase } from "../testing/fresh-database.js";
 import { Scheduler } from "./scheduler.js";
 import { WriterTaskRunner } from "./runners/writer.js";
 import { writeGateFromScheduler } from "./write-ops.js";
@@ -75,7 +76,7 @@ describe("Cooperative preemption e2e", () => {
 
   beforeEach(async () => {
     dbPath = testDbPath();
-    const db = createDatabase(dbPath);
+    const db = createFreshTestDatabase(dbPath);
     db.close();
     scheduler = new Scheduler({ enablePreemption: true });
     scheduler.registerRunner(

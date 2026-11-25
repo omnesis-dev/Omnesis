@@ -17,7 +17,7 @@ import { join as fixtureJoin } from "node:path";
 import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { SCOPE_ADMIN, SCOPE_READ, SCOPE_WRITE_ALL } from "@omnesis/types";
-import { createDatabase } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import { createServer } from "../../server.js";
 import { createIndexDatabase, EMBEDDING_DIM, upsertChunks } from "../../indexer/db.js";
 import { purgeDocumentIndexBatch } from "../../indexer/document-index-purge.js";
@@ -132,7 +132,7 @@ function documentExists(documentId: string): boolean {
 beforeEach(() => {
   dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-delete-pending-${randomUUID()}.db`);
   indexDbPath = fixtureJoin(fixtureTmpdir(), `omnesis-delete-pending-index-${randomUUID()}.db`);
-  db = createDatabase(dbPath);
+  db = createFreshTestDatabase(dbPath);
   indexDb = createIndexDatabase(indexDbPath);
   const device = createDevice(db, { name: `test-${randomUUID()}`, kind: "cli" });
   token = createToken(db, device.id, [SCOPE_ADMIN, SCOPE_READ, SCOPE_WRITE_ALL]).token;

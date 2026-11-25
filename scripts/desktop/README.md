@@ -23,7 +23,7 @@ xcodebuild -project macos/OmnesisDesktop.xcodeproj -scheme OmnesisDesktop \
 node scripts/desktop/assemble-app.mjs \
   --runtime /tmp/omnesis-runtime-arm64 \
   --shell-app /tmp/omnesis-desktop-build/Build/Products/Release/Omnesis.app \
-  --arch arm64 --version 0.7.8 --out /tmp/Omnesis.app
+  --arch arm64 --version 0.8.1 --out /tmp/Omnesis.app
 ```
 
 Use the checkout's product version rather than changing just the example's

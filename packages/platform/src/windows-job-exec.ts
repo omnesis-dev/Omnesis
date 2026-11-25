@@ -1,8 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { commandTimeoutError } from "./command-timeout.js";
 import { spawnWindowsJob, type WindowsJobProcess } from "./windows-job.js";
 import { prepareWindowsNativeWorker } from "./windows-worker-cache.js";
+
+// The POSIX side of a buffered run names its timeouts the same way.
+export { commandTimeoutError, describeCommandForDiagnostics } from "./command-timeout.js";
 
 /** UTF-8 execFile-style capture with kernel ownership through timeout and close. */
 export async function execWindowsJob(
@@ -52,15 +56,11 @@ export async function execWindowsJob(
     };
     const abort = (): void =>
       stop(Object.assign(new Error("The operation was aborted"), { code: "ABORT_ERR" }));
+    const timedOut = (limit: number): void =>
+      stop(commandTimeoutError(command, args, limit, performance.now() - started));
     const timer =
-      remaining !== undefined && remaining > 0
-        ? setTimeout(
-            () =>
-              stop(
-                Object.assign(new Error("Command timed out"), { code: "ETIMEDOUT", killed: true }),
-              ),
-            remaining,
-          )
+      timeout !== undefined && remaining !== undefined && remaining > 0
+        ? setTimeout(() => timedOut(timeout), remaining)
         : undefined;
     const limit = opts.maxBuffer ?? 1024 * 1024;
     const capture = (chunks: Buffer[], chunk: Buffer, count: number, stream: string): void => {
@@ -148,8 +148,7 @@ export async function execWindowsJob(
     });
     opts.signal?.addEventListener("abort", abort, { once: true });
     if (opts.signal?.aborted) abort();
-    if (remaining !== undefined && remaining <= 0)
-      stop(Object.assign(new Error("Command timed out"), { code: "ETIMEDOUT", killed: true }));
+    if (timeout !== undefined && remaining !== undefined && remaining <= 0) timedOut(timeout);
     proc.stdin.end();
   });
 }

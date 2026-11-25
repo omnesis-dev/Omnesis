@@ -10,7 +10,7 @@ import { join as fixtureJoin } from "node:path";
 import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { SCOPE_ADMIN, SCOPE_READ, type Scope } from "@omnesis/types";
-import { createDatabase } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import { createServer } from "../../server.js";
 import { createDevice } from "../../data/repositories/DeviceRepository.js";
 import { createToken } from "../../data/repositories/TokenRepository.js";
@@ -27,7 +27,7 @@ let stepUp: boolean;
 
 beforeEach(() => {
   dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
-  db = createDatabase(dbPath);
+  db = createFreshTestDatabase(dbPath);
   origin = ORIGIN;
   stepUp = false;
 });

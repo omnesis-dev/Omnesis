@@ -2,6 +2,8 @@
 // Copyright (c) 2026 Omnesis contributors
 
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import {
   AccountId,
@@ -13,7 +15,8 @@ import {
   type DocumentInput,
 } from "@omnesis/types";
 import { AnalyticsDb } from "../../analytics-db.js";
-import { createDatabase, getDocumentCount, getSyncState, getWipeEpoch } from "../../db.js";
+import { getDocumentCount, getSyncState, getWipeEpoch } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import { createDevice } from "../../data/repositories/DeviceRepository.js";
 import { addSourceMember, createSource } from "../../data/repositories/SourceRepository.js";
 import { directWriteGate, type WriteGate } from "../../write-gate.js";
@@ -25,8 +28,6 @@ import { EventService } from "./EventService.js";
 import type { AnalyticsTableSchema } from "@omnesis/source-sdk";
 import type { IndexWriteGate } from "../../indexer/index-write-gate.js";
 import type Database from "better-sqlite3";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 const schema: AnalyticsTableSchema = {
   tableName: "wipe_race_events",
@@ -103,7 +104,7 @@ describe("SourceDataRemovalService wipe barriers", () => {
   beforeEach(async () => {
     sqlitePath = fixtureJoin(fixtureTmpdir(), `omnesis-wipe-race-${crypto.randomUUID()}.db`);
     analyticsPath = fixtureJoin(fixtureTmpdir(), `omnesis-wipe-race-${crypto.randomUUID()}.duckdb`);
-    sqlite = createDatabase(sqlitePath);
+    sqlite = createFreshTestDatabase(sqlitePath);
     analytics = new AnalyticsDb(analyticsPath);
     await analytics.open();
     gate = directWriteGate(sqlite);

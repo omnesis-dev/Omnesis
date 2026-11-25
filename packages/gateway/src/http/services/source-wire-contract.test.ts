@@ -8,6 +8,7 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { SOURCE_CONTRACT_WIRE_RANGE } from "@omnesis/core";
 import { AccountId, SourceType, SCOPE_WRITE_ALL, type DeviceRecord } from "@omnesis/types";
 import { createDatabase, getSyncState, getWipeEpoch, setSyncState } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import { createDevice, listDevices } from "../../data/repositories/DeviceRepository.js";
 import {
   createSource,
@@ -40,7 +41,7 @@ let fence: SourceWriteEpochFence;
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "omnesis-wire-contract-"));
-  db = createDatabase(join(dir, "test.db"));
+  db = createFreshTestDatabase(join(dir, "test.db"));
   const type = SourceType("example-source");
   modern = createDevice(db, {
     name: "Fictional modern collector",

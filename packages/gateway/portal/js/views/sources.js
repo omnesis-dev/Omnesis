@@ -74,6 +74,7 @@ import { MemberPickerModal } from "../components/member-picker-modal.js";
 import { joinCandidates } from "../lib/join-candidates.js";
 import { ImportHistoryModal } from "../components/import-history-modal.js";
 import { useVisiblePoll } from "../lib/use-visible-poll.js";
+import { sourcesRefreshIntervalMs } from "../lib/sources-poll.js";
 import { KindIcon } from "../lib/device-kind-icon.js";
 import { SourceNoticeIcons, noticesForDevice } from "../components/source-notices.js";
 import {
@@ -85,7 +86,6 @@ import {
   sourceStateLabel,
 } from "../lib/source-grouping.js";
 
-const REFRESH_MS = 2000;
 // How long the "Sync sent to …" note stays on a row after a manual sync.
 const SYNC_NOTE_MS = 6000;
 
@@ -142,7 +142,7 @@ export function pluralizeUnit(unit, n) {
 }
 
 export function sourceCanManualSync(source) {
-  return !source?.pushBased;
+  return !source?.pushBased && !source?.archived;
 }
 
 export function resolveSourceDisplayCount({ documents, units, analytics, primaryCount }) {
@@ -175,11 +175,18 @@ export function sourceActionMenuItems({
   canJoin = false,
   canDetach = false,
   internal = false,
+  archived = false,
 } = {}) {
   // Gateway-internal sources (a dataset the gateway hosts itself) have no sync engine,
   // no registration and no device to act on — the only meaningful action is
   // opening their recent documents. Document deletion lives on that page.
   if (internal) return [{ action: "recent", label: "See recent" }];
+  if (archived) return [
+    { action: "recent", label: "See recent" },
+    ...(multiDevice && canJoin ? [{ action: "join-member", label: "Join a device…" }] : []),
+    { action: "debug", label: "Debug" },
+    { action: "remove", label: "Remove", danger: true },
+  ];
   return [
     { action: "recent", label: "See recent" },
     ...(canManualSync ? [{ action: "sync", label: "Sync", disabled: paused }] : []),
@@ -248,7 +255,10 @@ export function memberDetachBody(s, d) {
  * Pure: `now` is the clock the relative times are measured against.
  */
 export function buildMemberLines(source, deviceById, syncStatus, now = Date.now()) {
-  const members = source?.members?.length ? source.members : source?.deviceId ? [source.deviceId] : [];
+  if (source?.archived) return [];
+  const archivedIds = new Set((source?.archivedDevices ?? []).map((device) => device.deviceId));
+  const members = (source?.members?.length ? source.members : source?.deviceId ? [source.deviceId] : [])
+    .filter((id) => !archivedIds.has(id));
   const handoff = source?.multiDeviceMode === "handoff";
   return members.map((deviceId) => {
     const device = deviceById?.get(deviceId);
@@ -526,8 +536,8 @@ function WholeSourceIcon() {
   ><rect x="2" y="2" width="12" height="3" rx="0.8"/><rect x="2" y="6.5" width="12" height="3" rx="0.8"/><rect x="2" y="11" width="12" height="3" rx="0.8"/></svg>`;
 }
 
-function StatePill({ state }) {
-  return html`<span class=${`sources-state state-${state}`}>${sourceStateLabel(state)}</span>`;
+function StatePill({ state, label }) {
+  return html`<span class=${`sources-state state-${state}`}>${label ?? sourceStateLabel(state)}</span>`;
 }
 
 
@@ -590,6 +600,8 @@ export function SourcesView({ demo = false } = {}) {
   const [syncNotes, dispatchSyncNote] = useReducer(syncNotesReducer, {});
   const syncNoteTimers = useRef(new Map());
   const refreshing = useRef(false);
+  const activeRefresh = useRef(null);
+  const mounted = useRef(true);
   // Synced source ids the icon meta cache already reflects; null until the
   // first poll, whose rows the startup load covers.
   const metaCoveredSynced = useRef(null);
@@ -598,18 +610,24 @@ export function SourcesView({ demo = false } = {}) {
   const [groupToggles, setGroupToggles] = useState({});
 
   async function refresh() {
-    if (refreshing.current) return;
+    if (!mounted.current || refreshing.current) return;
     refreshing.current = true;
+    const controller = new AbortController();
+    activeRefresh.current = controller;
+    const timeout = setTimeout(() => controller.abort(), 10_000);
+    const signal = controller.signal;
     try {
       const [registeredRes, syncRes, statusRes, devicesRes, indexRes, descriptorsRes] =
         await Promise.all([
-          getAdminSources(),
-          getAdminSyncStatus(),
-          getOverallStatus(),
-          listDevices().catch(() => ({ items: [] })),
-          getIndexStats().catch(() => null),
-          getSourceDescriptorsUnion().catch(() => ({ items: [] })),
+          getAdminSources(signal),
+          getAdminSyncStatus(signal),
+          getOverallStatus(signal),
+          listDevices(signal).catch(() => ({ items: [] })),
+          getIndexStats(signal).catch(() => null),
+          getSourceDescriptorsUnion(signal).catch(() => ({ items: [] })),
         ]);
+      if (!mounted.current) return;
+      signal.throwIfAborted();
 
       // Map sourceType → historyImport spec for sources that advertise the
       // generic one-time-import capability. Empty when no collector is
@@ -647,7 +665,9 @@ export function SourcesView({ demo = false } = {}) {
           type: r.type,
           accountId: r.accountId,
           deviceId: r.deviceId,
-          deviceName: deviceById.get(r.deviceId)?.name ?? r.deviceId.slice(0, 8),
+          deviceName: r.archived ? "Historical data" : (deviceById.get(r.deviceId)?.name ?? r.deviceId.slice(0, 8)),
+          archived: r.archived === true,
+          archivedDevices: r.archivedDevices ?? [],
           deviceKind: deviceById.get(r.deviceId)?.kind ?? null,
           // Owner first. A source the gateway reports no membership for has
           // exactly its owner.
@@ -760,8 +780,10 @@ export function SourcesView({ demo = false } = {}) {
       });
 
       const metaRefresh = sourceMetaRefresh(merged, metaCoveredSynced.current);
+      if (metaRefresh.refresh) await refreshSourceMeta(signal);
+      if (!mounted.current) return;
+      signal.throwIfAborted();
       metaCoveredSynced.current = metaRefresh.covered;
-      if (metaRefresh.refresh) await refreshSourceMeta();
 
       setSources(merged);
       setDevices(devices);
@@ -778,21 +800,30 @@ export function SourcesView({ demo = false } = {}) {
       setIndexStats(indexRes ?? null);
       dispatchError({ type: "refresh-succeeded" });
     } catch (e) {
-      dispatchError({ type: "refresh-failed", message: String(e.message || e) });
+      if (mounted.current) dispatchError({
+        type: "refresh-failed",
+        message: signal.aborted ? "Sources took too long to load. Check the connection and try again." : String(e.message || e),
+      });
     } finally {
-      setLoading(false);
+      clearTimeout(timeout);
+      controller.abort();
+      activeRefresh.current = null;
+      if (mounted.current) setLoading(false);
       refreshing.current = false;
     }
   }
 
   useEffect(() => {
+    mounted.current = true;
     refresh();
     const timers = syncNoteTimers.current;
     return () => {
+      mounted.current = false;
+      activeRefresh.current?.abort();
       for (const t of timers.values()) clearTimeout(t);
     };
   }, []);
-  useVisiblePoll(refresh, REFRESH_MS);
+  useVisiblePoll(refresh, sourcesRefreshIntervalMs({ sources, indexStats, busy }));
 
   const deviceById = new Map(devices.map((d) => [d.id, d]));
 
@@ -1269,12 +1300,12 @@ function SourceRow({
             <span class="source-display-name" title=${s.id}>${label}</span>
             ${!grouped && html`<span class="source-id-inline"><code>${s.id}</code></span>`}
             ${s.discoveredOnly && html`<span class="source-discovered-tag" title="Discovered via sync.status only — not in /admin/sources">discovered</span>`}
-            ${!s.enabled && html`<span class="source-paused-tag">paused</span>`}
+            ${!s.enabled && !s.archived && html`<span class="source-paused-tag">paused</span>`}
           </div>
         </div>
       </td>
       <td class="source-state-cell">
-        <${StatePill} state=${state} />
+        <${StatePill} state=${state} label=${s.archived ? "Historical" : undefined} />
         ${s.removing && html`
           <div class="source-removing-line" title="Removal is durable — the source has already stopped syncing. Deleting what it ingested runs in the background and is queued behind indexing, so on a large source it can take several minutes.">
             deleting all source data; re-add after cleanup…
@@ -1313,6 +1344,8 @@ function SourceRow({
       <td class="source-device-cell">
         ${s.removing
           ? html`<span class="source-device-none">—</span>`
+          : s.archived
+            ? html`<span class="source-device-none">Historical data</span>`
           : memberLines.length > 1
             ? html`<div class="source-device-members">
                 ${memberLines.map(
@@ -1339,6 +1372,7 @@ function SourceRow({
                 />
               </div>`}
         ${syncNote && html`<div class="source-sync-note" role="status">${syncNote}</div>`}
+        ${(s.archivedDevices ?? []).map((device) => html`<div class="source-history-label" key=${device.deviceId}>History from ${device.name}</div>`)}
       </td>
       <td class="sources-actions-v2">
         ${s.removing
@@ -1346,6 +1380,7 @@ function SourceRow({
           : busy
           ? html`<span class="source-busy">${busy}…</span>`
           : html`<${SourceActionMenu}
+              archived=${!!s.archived}
               paused=${!s.enabled}
               canImport=${!!(importSpec && onImportHistory)}
               canManualSync=${canManualSync}
@@ -1627,6 +1662,7 @@ function SourceActionMenu({
   canJoin = false,
   canDetach = false,
   internal = false,
+  archived = false,
   onRecent,
   onSync,
   onPauseToggle,
@@ -1661,6 +1697,7 @@ function SourceActionMenu({
     canJoin,
     canDetach,
     internal,
+    archived,
   });
 
   function toggle() {

@@ -9,7 +9,7 @@ type Db = Database.Database;
 
 import { ProviderId, SourceId } from "@omnesis/types";
 import { directWriteGate } from "../../write-gate.js";
-import { createDatabase } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 
 import {
   CONVERSATION_CITATION_LINK_TYPE,
@@ -75,7 +75,7 @@ describe("upsertConversationCitations", () => {
 
   beforeEach(() => {
     dbPath = testDbPath();
-    db = createDatabase(dbPath);
+    db = createFreshTestDatabase(dbPath);
   });
   afterEach(() => {
     db.close();
@@ -211,7 +211,7 @@ describe("upsertConversationCitations — record citations", () => {
   let db: Db;
   beforeEach(() => {
     dbPath = testDbPath();
-    db = createDatabase(dbPath);
+    db = createFreshTestDatabase(dbPath);
   });
   afterEach(() => {
     db.close();
@@ -320,7 +320,7 @@ describe("findConversationDocId", () => {
   let db: Db;
   beforeEach(() => {
     dbPath = testDbPath();
-    db = createDatabase(dbPath);
+    db = createFreshTestDatabase(dbPath);
   });
   afterEach(() => {
     db.close();

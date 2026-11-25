@@ -31,6 +31,7 @@ on:
       - "scripts/synth-gateway.sh"
       - "scripts/ci/xcodebuild-ui-tests.mjs"
       - "scripts/ci/macos-interactive-job.sh"
+      - "scripts/ci/ios-trust-asset-block.sh"
       - "evals/universes/default/agent-demos/**"
       - "evals/universes/e2e-minimal/**"
       - ".github/workflows/mobile-journeys.yml"
@@ -79,7 +80,7 @@ jobs:
           set -euo pipefail
           files="$(git diff --name-only "$BASE_SHA...$HEAD_SHA")"
           shared='^(scripts/(run-mobile-journeys|synth-gateway)\.sh|evals/universes/(default/agent-demos|e2e-minimal)/|\.github/workflows/mobile-journeys\.yml)'
-          ios_only='^(ios/|scripts/ci/(xcodebuild-ui-tests\.mjs|macos-interactive-job\.sh))'
+          ios_only='^(ios/|scripts/ci/(xcodebuild-ui-tests\.mjs|macos-interactive-job\.sh|ios-trust-asset-block\.sh))'
           ios=false
           android=false
           if grep -Eq "$ios_only|$shared" <<<"$files"; then ios=true; fi
@@ -108,6 +109,13 @@ jobs:
       - name: Keep this job off production Omnesis services
         id: production-network
         run: $GITHUB_WORKSPACE/scripts/ci/production-network.sh isolate
+
+      - name: Keep the simulator's trust service off Apple's trust asset servers
+        # Installing newer trust data stops every TLS connection in the
+        # simulator for minutes, at any point in the run (#1206, #1253). The
+        # block is in place before the simulator boots.
+        id: trust-assets
+        run: $GITHUB_WORKSPACE/scripts/ci/ios-trust-asset-block.sh block
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -170,6 +178,10 @@ jobs:
           path: ${{ runner.temp }}/mobile-journeys/
           if-no-files-found: ignore
           retention-days: 14
+
+      - name: Report the simulator's trust asset activity
+        if: ${{ always() && steps.trust-assets.outcome == 'success' }}
+        run: $GITHUB_WORKSPACE/scripts/ci/ios-trust-asset-block.sh report
 
       - name: Check nothing tried to reach production Omnesis services
         if: ${{ always() && steps.production-network.outcome == 'success' }}

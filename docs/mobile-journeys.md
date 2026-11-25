@@ -122,14 +122,25 @@ simulator booted.
 
 Every TLS handshake in the simulator, the app's and the test runner's, waits
 for the simulator's trust service (trustd) to evaluate the gateway's
-certificate. A freshly booted simulator's trustd fetches trust store assets
-from Apple and then exits so that a new trustd can load them; until the new
-one starts, every handshake waits, for minutes on a hosted runner. That
-happens about 20 minutes after the boot, when the journeys begin, so before
-the first journey `scripts/ci/wait-ios-trust-service.mjs` waits until the
-newest trustd has loaded its trust store without announcing an exit. A trustd
-that has announced its exit is asked to leave at once, and the lane fails,
-naming trustd, if it has not settled within ten minutes
+certificate. A freshly booted
+simulator's trustd fetches newer trust data from Apple's MobileAsset servers
+when it starts and again whenever a new catalog is announced, several times
+during a run. Installing it stops every evaluation: new pinning rules are
+written into trustd's pinning database in one exclusive transaction, which
+every evaluation reads, and a new trust store makes trustd exit so that a new
+trustd can load it. On a hosted runner either has stopped every handshake for
+minutes, at any point in the run. So before the simulator boots, the CI job
+runs `scripts/ci/ios-trust-asset-block.sh block`, which makes those servers
+unresolvable on the runner (the simulator resolves names through the host),
+and trustd keeps the trust data the simulator runtime ships with. The job's
+`report` step lists the questions it refused and warns if trustd updated its
+trust data anyway.
+
+Before the first journey `scripts/ci/wait-ios-trust-service.mjs` also waits
+until the newest trustd has loaded its trust store without announcing an exit,
+which covers a run without the block, such as a local one. A trustd that has
+announced its exit is asked to leave at once, and the lane fails, naming
+trustd, if it has not settled within ten minutes
 (`OMNESIS_JOURNEY_TRUST_TIMEOUT`, in seconds).
 
 A touch that ends `cancelled` with `_UISystemGestureGateGestureRecognizer`

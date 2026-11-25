@@ -12,9 +12,11 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import { createLogger } from "@omnesis/core";
-import { createDatabase } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import { enqueueCognitionRun, type EnqueueCognitionRunInput } from "../storage/run-queue.js";
 import {
   getCognitionEngineState,
@@ -24,8 +26,6 @@ import {
 import { dailySourceRunDedupeKey } from "../run-payloads.js";
 import { runDailyEnqueuePass, type DailyEnqueuerWriteOps } from "./daily-enqueuer.js";
 import type Database from "better-sqlite3";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 type Db = Database.Database;
 
@@ -75,7 +75,7 @@ describe("daily enqueuer", () => {
 
   beforeEach(() => {
     path = testDbPath();
-    db = createDatabase(path);
+    db = createFreshTestDatabase(path);
   });
   afterEach(() => {
     db.close();

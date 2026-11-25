@@ -18,7 +18,7 @@ import {
   SourceType,
 } from "@omnesis/types";
 import { createAccessLevel } from "../../access/store.js";
-import { createDatabase } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import {
   bootstrapSelfFromDevices,
   clearApnsToken,
@@ -57,13 +57,14 @@ import {
 import { createSource, listSources } from "./SourceRepository.js";
 import { getReauthReminder, reserveReauthReminder } from "./ReauthRemindersRepository.js";
 import { createToken, listTokens } from "./TokenRepository.js";
+import type { createDatabase } from "../../db.js";
 
 let dbPath: string;
 let db: ReturnType<typeof createDatabase>;
 
 beforeEach(() => {
   dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-devices-test-${randomUUID()}.db`);
-  db = createDatabase(dbPath);
+  db = createFreshTestDatabase(dbPath);
 });
 
 afterEach(() => {

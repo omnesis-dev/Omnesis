@@ -11,19 +11,19 @@
  */
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
-import { afterEach, beforeEach, expect, it } from "vitest";
-import { createDatabase } from "../../db.js";
-import { listKnowledgeDiscoveryBacklog } from "./discovery.js";
-import type Database from "better-sqlite3";
 import { join as fixtureJoin } from "node:path";
 import { tmpdir as fixtureTmpdir } from "node:os";
+import { afterEach, beforeEach, expect, it } from "vitest";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
+import { listKnowledgeDiscoveryBacklog } from "./discovery.js";
+import type Database from "better-sqlite3";
 
 let dbPath: string;
 let db: Database.Database;
 
 beforeEach(() => {
   dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
-  db = createDatabase(dbPath) as unknown as Database.Database;
+  db = createFreshTestDatabase(dbPath) as unknown as Database.Database;
 });
 afterEach(() => {
   db.close();

@@ -330,10 +330,28 @@ The data listener bounds what one client address (again an IPv6 /64) can hold:
 | Setting                                                  | Default | Bounds                                                                    |
 | -------------------------------------------------------- | ------- | ------------------------------------------------------------------------- |
 | `OMNESIS_CLOUD_RELAY_MAX_STREAMS`                        | 256     | data connections and gateway streams, relay-wide                          |
-| `OMNESIS_CLOUD_RELAY_MAX_STREAMS_PER_GATEWAY`            | 16      | streams to one gateway (the gateway's tunnel takes 16)                    |
-| `OMNESIS_CLOUD_RELAY_MAX_STREAMS_PER_CLIENT`             | 32      | data connections from one client, routed or still sending its ClientHello |
-| `OMNESIS_CLOUD_RELAY_MAX_STREAMS_PER_CLIENT_PER_GATEWAY` | 8       | streams from one client to one gateway                                    |
+| `OMNESIS_CLOUD_RELAY_MAX_STREAMS_PER_GATEWAY`            | 64      | streams to one gateway (the gateway's tunnel takes 64)                    |
+| `OMNESIS_CLOUD_RELAY_MAX_STREAMS_PER_CLIENT`             | 64      | data connections from one client, routed or still sending its ClientHello |
+| `OMNESIS_CLOUD_RELAY_MAX_STREAMS_PER_CLIENT_PER_GATEWAY` | 32      | streams from one client to one gateway                                    |
 | `OMNESIS_CLOUD_RELAY_STREAM_IDLE_TIMEOUT_MS`             | 600000  | a routed connection with no bytes either way for this long is closed      |
+
+A browser can keep six HTTP connections open, in addition to upgraded sockets.
+The per-client budget leaves room for multiple browsers, native devices and
+reconnecting clients behind the same public address. A gateway that has no channel
+slot refuses that channel without disconnecting its other streams. The per-channel
+refusal is negotiated on the control connection so older gateways and relays keep
+their existing wire format. Until a gateway advertises that capability, the relay
+keeps its previous budget of 16 streams and eight streams per client address,
+so upgrading the relay first cannot overflow an older gateway.
+
+Gateways negotiate routing-session renewal on their existing control connection.
+Before the accepted credential expires, the gateway proves its owner and TLS keys
+again and submits the fresh routing credential. The relay checks the same live
+owner and gateway registration before extending the connection's deadline; the
+gateway uses the acknowledged credential for subsequent data channels. Active
+HTTP responses, WebSockets and server-sent events keep their existing channels.
+Failed authentication, revocation and missed expiry deadlines still close access.
+Older peers retain their normal expiry behavior until both sides support renewal.
 
 A connection over a limit is closed before it reaches a gateway. So one client
 cannot fill a gateway's streams or the relay's. The last quarter of the relay's

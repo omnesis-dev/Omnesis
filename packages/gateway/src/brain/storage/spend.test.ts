@@ -6,7 +6,7 @@ import { randomUUID } from "node:crypto";
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import type Database from "better-sqlite3";
 type Db = Database.Database;
-import { createDatabase } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import { MENTION_WORTH_GATE_SPEND_MECHANISM } from "../../enrichment/dates/config.js";
 import {
   getCognitionSpendDayTotal,
@@ -32,7 +32,7 @@ describe("cognition spend tracking", () => {
   let db: Db;
   beforeEach(() => {
     path = testDbPath();
-    db = createDatabase(path);
+    db = createFreshTestDatabase(path);
   });
   afterEach(() => {
     db.close();

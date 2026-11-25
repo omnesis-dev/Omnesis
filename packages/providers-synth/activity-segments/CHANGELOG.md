@@ -1,5 +1,25 @@
 # @omnesis/provider-activity-segments-synth
 
+## 0.8.1
+
+### Patch Changes
+
+- @omnesis/core@0.8.1
+  - @omnesis/providers-synth-common@0.8.1
+  - @omnesis/source-sdk@0.8.1
+  - @omnesis/types@0.8.1
+
+## 0.8.0
+
+### Patch Changes
+
+- Updated dependencies [884a6de]
+- Updated dependencies [ece9a88]
+  - @omnesis/source-sdk@0.8.0
+  - @omnesis/core@0.8.0
+  - @omnesis/providers-synth-common@0.8.0
+  - @omnesis/types@0.8.0
+
 ## 0.7.8
 
 ### Patch Changes

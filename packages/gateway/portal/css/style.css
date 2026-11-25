@@ -6809,6 +6809,183 @@ p.devices-pair-expiry {
   background: color-mix(in srgb, var(--accent) 13%, transparent);
 }
 
+/* Recordings (experimental): recorded conversations, their speakers and chunks. */
+.recordings-list .privacy-item-status.warning,
+.recording-detail .privacy-item-status.warning {
+  color: var(--warning);
+}
+
+.recording-detail .privacy-detail-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.recording-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0 20px;
+}
+
+.recording-actions .btn-secondary.danger {
+  color: var(--danger);
+}
+
+.recording-speakers,
+.recording-chunks {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.recording-speaker {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border-light);
+}
+
+.recording-speaker-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+}
+
+.recording-speaker-who.is-unnamed,
+.recording-speaker-talk,
+.recording-speaker-hint,
+.recording-chunk-until {
+  color: var(--text-muted);
+}
+
+.recording-speaker-samples {
+  margin: 0;
+  padding-left: 16px;
+  color: var(--text-secondary);
+}
+
+.recording-speaker-samples li {
+  overflow-wrap: anywhere;
+}
+
+.recording-speaker-actions,
+.recording-speaker-picker,
+.recording-speaker-matches {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.recording-speaker-matches {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.recording-speaker-input {
+  min-width: 0;
+  flex: 1 1 200px;
+  max-width: 320px;
+}
+
+.recording-chunk {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 16px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border-light);
+  font-variant-numeric: tabular-nums;
+}
+
+.recording-chunk-at {
+  min-width: 80px;
+}
+
+.recording-chunk.is-failed .recording-chunk-status {
+  color: var(--danger);
+}
+
+.recording-chunk.is-silent,
+.recording-chunk.is-pending {
+  color: var(--text-muted);
+}
+
+.recording-chunk-kept,
+.recording-chunk-play {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.recording-chunk-audio {
+  max-width: 100%;
+  height: 32px;
+}
+
+.recording-chunk-error {
+  color: var(--danger);
+}
+
+/* Suggestions: offered beside what they would change, never applied alone. */
+.recording-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 10px;
+}
+
+.recording-suggestions-label {
+  color: var(--text-muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.recording-suggestion-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+
+.recording-suggestion {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+}
+
+.recording-suggestion-accept {
+  border: 1px dashed var(--accent);
+}
+
+.recording-suggestion-why {
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.recording-title-suggestion {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 8px 12px;
+  border-left: 2px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+  border-radius: var(--radius-sm);
+}
+
 .privacy-subscription-exact {
   margin: 0;
   padding: 14px;
@@ -8575,14 +8752,23 @@ p.privacy-diff-note {
 }
 /*
  * A failure the operator has to act on, on the collector's host. Same amber
- * as needs-auth — a terminal state with a known fix — but no button: the fix
- * is a system setting on another machine, so the card is the procedure.
+ * as needs-auth — a terminal state with a known fix. Pairing failures also
+ * offer the device actions available from Settings.
  */
 .sources-banner-v2.needs-access {
   background: rgba(210, 153, 34, 0.08);
   border: 1px solid rgba(210, 153, 34, 0.55);
   color: var(--text-primary);
 }
+.remediation-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+.remediation-actions a.btn-primary { color: var(--on-accent); }
+.remediation-actions a.btn-secondary { color: var(--text-primary); }
+.remediation-actions a:hover { text-decoration: none; }
 .remediation-steps {
   margin: 6px 0 0;
   padding-left: 20px;
@@ -19686,8 +19872,13 @@ summary.decision-card-head {
 .remote-access-option-text small { font-size: 12.5px; line-height: 1.5; color: var(--text-secondary); }
 .remote-access-option-text .remote-access-step-up { color: var(--accent); }
 .remote-access-option-body { display: grid; gap: 12px; min-width: 0; margin: 0 14px 14px 42px; }
-.remote-access-first { margin-top: 12px; }
-.remote-access-first legend { margin-bottom: 8px; padding: 0; font-size: 13px; font-weight: 600; color: var(--text-primary); }
+/* Network priority is a configurable row alongside the connectivity status rows. */
+.remote-access-first { display: grid; grid-template-columns: 20px minmax(0, 1fr); align-items: center; gap: 8px 10px; margin-top: 12px; }
+.remote-access-first > .remote-access-mark { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); }
+.remote-access-first-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 20px; min-width: 0; }
+.remote-access-first-choice { display: inline-flex; align-items: center; gap: 7px; min-height: 24px; color: var(--text-primary); font-size: 13px; cursor: pointer; white-space: nowrap; }
+.remote-access-first-choice input { width: 14px; height: 14px; margin: 0; accent-color: var(--accent); }
+.remote-access-first > .remote-access-problem { grid-column: 2; }
 .remote-access-check { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-primary); cursor: pointer; }
 .remote-access-check input { accent-color: var(--accent); }
 
@@ -20101,3 +20292,26 @@ summary.decision-card-head {
 .relay-invite-field input { width: 100%; box-sizing: border-box; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-primary); color: var(--text-primary); font: inherit; font-size: 14px; }
 .relay-invite-field input[aria-invalid="true"] { border-color: var(--danger, var(--accent)); }
 .relay-invite-problem { margin: 0; font-size: 12.5px; line-height: 1.5; color: var(--danger, var(--accent)); }
+
+.device-forget-options {
+  display: grid;
+  gap: 8px;
+  border: 0;
+  padding: 0;
+  margin-top: 16px;
+}
+.device-forget-options legend { margin-bottom: 12px; }
+.device-forget-options label { display: flex; gap: 8px; align-items: center; }
+.device-forget-options p { margin: 0 0 8px 24px; color: var(--text-secondary); }
+.device-forget-sources {
+  display: grid;
+  gap: 8px;
+  max-height: 180px;
+  overflow-y: auto;
+  padding: 0;
+  list-style: none;
+}
+.device-forget-sources li { display: flex; align-items: center; gap: 8px; }
+.device-forget-source-name { min-width: 0; }
+
+.source-history-label { color: var(--text-secondary); font-size: 12px; margin-top: 4px; }

@@ -126,7 +126,7 @@ const router = vi.hoisted(() => ({ navigate: vi.fn() }));
 vi.mock("../lib/router.js", () => router);
 
 // @ts-expect-error — portal modules are plain JS.
-import { RemoteAccessView } from "./remote-access.js";
+import { RemoteAccessView, useRemoteAccess } from "./remote-access.js";
 // @ts-expect-error — portal modules are plain JS.
 import { HostTailscaleView } from "./remote-access/own-pages.js";
 
@@ -228,6 +228,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   render(null, host);
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
@@ -455,6 +456,11 @@ describe("the summary", () => {
       await act(async () => (host.querySelector(`button[aria-label="${label}"]`) as HTMLButtonElement).click());
       expect(router.navigate).toHaveBeenLastCalledWith(page);
     }
+    // Network priority belongs to the connectivity section, with the same row label as its neighbours.
+    const connectivity = host.querySelectorAll(".remote-access-row")[1];
+    expect(connectivity.querySelector(".remote-access-first .remote-access-item-title")?.textContent).toBe("Network priority");
+    expect(connectivity.querySelector(".remote-access-first .remote-access-mark")?.textContent).toBe("i");
+    expect(connectivity.querySelector(".remote-access-first legend")).toBeNull();
     // Both the device and the relay can answer: the order is chosen in place.
     await toggle('input[name="remote-access-first"][value="relay"]', true);
     expect(calls("remote")).toEqual([["remote", { first: "relay" }]]);
@@ -764,11 +770,11 @@ describe("both", () => {
     gateway.tailscale = tailscaleConnected();
     savedSetup("connection");
     await mount(FLAGS.both);
-    expect(text()).toContain("When both can answer, try first");
-    // A paired device keeps the address it got, so the order is said to apply from now on.
-    expect(text()).toContain(
-      "Applies to devices that pair from now on. A device paired earlier keeps the address it got then; pair it again to switch.",
-    );
+    const priority = host.querySelector('[role="radiogroup"][aria-labelledby="remote-access-first-label"]')!;
+    expect(priority.querySelector("#remote-access-first-label")?.textContent).toBe("Network priority");
+    expect(priority.querySelectorAll('input[type="radio"]')).toHaveLength(2);
+    expect(text()).not.toContain("Your home network always comes first.");
+    expect(text()).not.toContain("Applies to devices that pair from now on.");
     await toggle('input[name="remote-access-first"][value="relay"]', true);
     expect(calls("remote")).toEqual([["remote", { first: "relay" }]]);
     expect(isChecked(host.querySelector('input[name="remote-access-first"][value="relay"]'))).toBe(true);
@@ -1473,5 +1479,69 @@ describe("Tailscale on this computer's own page", () => {
     expect(calls("config")).toEqual([["config", { gateway: { publicBaseUrl: null } }]]);
     expect(button("Stop serving this gateway")).toBeUndefined();
     expect(button("Set it up for me")).toBeTruthy();
+  });
+});
+
+
+describe("Connectivity initial-read lifecycle", () => {
+  function Reader() {
+    const { remote, error, load } = useRemoteAccess();
+    return h("div", null,
+      h("output", null, error || remote?.label || "Loading"),
+      h("button", { onClick: load }, "Retry"),
+    );
+  }
+  async function remoteApi() {
+    // @ts-expect-error — portal modules are plain JS.
+    return import("../lib/remote-access-api.js");
+  }
+
+  test("a stalled initial read times out and can be retried", async () => {
+    vi.useFakeTimers();
+    const api = await remoteApi();
+    let signal: AbortSignal | undefined;
+    api.getRemoteAccess.mockImplementationOnce((next: AbortSignal) => {
+      signal = next;
+      return new Promise((_resolve, reject) => next.addEventListener("abort", () => reject(new Error("aborted"))));
+    });
+    await act(async () => { render(h(Reader, {}), host); });
+    expect(host.querySelector("output")?.textContent).toBe("Loading");
+    await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+    expect(signal?.aborted).toBe(true);
+    expect(host.querySelector("output")?.textContent).toContain("Check the connection and try again");
+    api.getRemoteAccess.mockResolvedValueOnce({ label: "Connected" });
+    await act(async () => { host.querySelector("button")!.click(); });
+    expect(host.querySelector("output")?.textContent).toBe("Connected");
+  });
+
+  test("retry aborts an older read and an older answer cannot replace it", async () => {
+    const api = await remoteApi();
+    let oldSignal: AbortSignal | undefined;
+    let finish: (value: unknown) => void = () => {};
+    api.getRemoteAccess.mockImplementationOnce((signal: AbortSignal) => {
+      oldSignal = signal;
+      return new Promise((resolve) => { finish = resolve; });
+    });
+    await act(async () => { render(h(Reader, {}), host); });
+    api.getRemoteAccess.mockResolvedValueOnce({ label: "New answer" });
+    await act(async () => { host.querySelector("button")!.click(); });
+    expect(oldSignal?.aborted).toBe(true);
+    await act(async () => { finish({ label: "Old answer" }); });
+    expect(host.querySelector("output")?.textContent).toBe("New answer");
+  });
+
+  test("leaving the page aborts its read and a late answer leaves the next page intact", async () => {
+    const api = await remoteApi();
+    let signal: AbortSignal | undefined;
+    let finish: (value: unknown) => void = () => {};
+    api.getRemoteAccess.mockImplementationOnce((next: AbortSignal) => {
+      signal = next;
+      return new Promise((resolve) => { finish = resolve; });
+    });
+    await act(async () => { render(h(Reader, {}), host); });
+    await act(async () => { render(h("p", null, "Another page"), host); });
+    expect(signal?.aborted).toBe(true);
+    await act(async () => { finish({ label: "Late answer" }); });
+    expect(host.textContent).toBe("Another page");
   });
 });

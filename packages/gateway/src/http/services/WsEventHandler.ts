@@ -215,7 +215,13 @@ export class WsEventHandler {
         // structured remedy is persisted beside the message it explains.
         const row = this.statusRowFor(payload.sourceId, conn);
         void this.writeGate
-          .setSyncError(payload.sourceId, payload.errorMessage, row, payload.remediation)
+          .setSyncError(
+            payload.sourceId,
+            payload.errorMessage,
+            row,
+            payload.remediation,
+            conn.deviceId,
+          )
           .catch((err) => {
             log.warn(
               `failed to persist sync error for ${payload.sourceId}: ${err instanceof Error ? err.message : String(err)}`,
@@ -377,6 +383,8 @@ export class WsEventHandler {
   }
 
   private canIngestSyncStatus(conn: DeviceConnection, sourceId: SourceId): boolean {
+    const device = getDevice(this.db, conn.deviceId);
+    if (!device || device.revokedAt !== null) return false;
     const source = getSource(this.db, sourceId);
     if (!source) {
       log.warn("Dropping unauthorized sync.status: source is not registered");

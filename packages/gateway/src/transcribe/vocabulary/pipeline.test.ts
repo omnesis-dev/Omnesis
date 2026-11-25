@@ -8,7 +8,7 @@ import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { SourceId, SCOPE_READ, SCOPE_READ_BULK, SCOPE_WRITE_ALL } from "@omnesis/types";
 import { omnesisConfigSchema } from "@omnesis/config";
-import { createDatabase } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import { createServer } from "../../server.js";
 import { createDevice } from "../../data/repositories/DeviceRepository.js";
 import { createToken } from "../../data/repositories/TokenRepository.js";
@@ -89,7 +89,7 @@ const audio = new Uint8Array([1, 2, 3]);
 beforeEach(() => {
   directory = mkdtempSync(join(tmpdir(), "omnesis-vocabulary-pipeline-"));
   const path = join(directory, "gateway.db");
-  db = createDatabase(path);
+  db = createFreshTestDatabase(path);
   enabled = undefined;
   lookupFails = false;
   vocabularyReads = 0;

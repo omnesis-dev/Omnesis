@@ -350,7 +350,9 @@ const DEVICE_SELECT_COLS =
 
 export function getDevice(db: Db, id: DeviceId): DeviceRecord | null {
   const row = db
-    .prepare<[string], DeviceRow>(`SELECT ${DEVICE_SELECT_COLS} FROM devices WHERE id = ?`)
+    .prepare<[string], DeviceRow>(
+      `SELECT ${DEVICE_SELECT_COLS} FROM devices WHERE id = ? AND NOT EXISTS (SELECT 1 FROM forgotten_devices f WHERE f.device_id = devices.id)`,
+    )
     .get(id);
   if (!row) return null;
   return rowToDevice(row);
@@ -358,7 +360,9 @@ export function getDevice(db: Db, id: DeviceId): DeviceRecord | null {
 
 export function findDeviceByName(db: Db, name: string): DeviceRecord | null {
   const row = db
-    .prepare<[string], DeviceRow>(`SELECT ${DEVICE_SELECT_COLS} FROM devices WHERE name = ?`)
+    .prepare<[string], DeviceRow>(
+      `SELECT ${DEVICE_SELECT_COLS} FROM devices WHERE name = ? AND NOT EXISTS (SELECT 1 FROM forgotten_devices f WHERE f.device_id = devices.id)`,
+    )
     .get(name);
   return row ? rowToDevice(row) : null;
 }
@@ -381,7 +385,7 @@ export function findDeviceByInstallId(
 ): DeviceRecord | null {
   const row = db
     .prepare<[string, string], DeviceRow>(
-      `SELECT ${DEVICE_SELECT_COLS} FROM devices WHERE kind = ? AND install_id = ?`,
+      `SELECT ${DEVICE_SELECT_COLS} FROM devices WHERE kind = ? AND install_id = ? AND NOT EXISTS (SELECT 1 FROM forgotten_devices f WHERE f.device_id = devices.id)`,
     )
     .get(kind, installId);
   return row ? rowToDevice(row) : null;
@@ -449,7 +453,7 @@ export function replaceDeviceForRepair(
         "SELECT install_id, access_level_id FROM devices WHERE id = ?",
       )
       .get(oldId);
-    if (!exists) throw new Error(`Device not found: ${oldId}`);
+    if (!exists || !getDevice(db, oldId)) throw new Error(`Device not found: ${oldId}`);
     // Existing live sockets authenticated with these credentials may finish
     // their current frame, but cannot reconnect; the caller only selects an
     // offline row for repair.
@@ -524,7 +528,9 @@ export function replaceDeviceForRepair(
 
 export function listDevices(db: Db): DeviceRecord[] {
   return db
-    .prepare<[], DeviceRow>(`SELECT ${DEVICE_SELECT_COLS} FROM devices ORDER BY paired_at ASC`)
+    .prepare<[], DeviceRow>(
+      `SELECT ${DEVICE_SELECT_COLS} FROM devices WHERE NOT EXISTS (SELECT 1 FROM forgotten_devices f WHERE f.device_id = devices.id) ORDER BY paired_at ASC`,
+    )
     .all()
     .map(rowToDevice);
 }
@@ -1057,8 +1063,11 @@ export function setRelayPushConsent(
   consent: { appId: string; grantedAt: number },
 ): RelayPushConsentOutcome {
   return db.transaction((): RelayPushConsentOutcome => {
-    const row = db.prepare(`SELECT capabilities FROM devices WHERE id = ?`).get(id) as
-      { capabilities: string | null } | undefined;
+    const row = db
+      .prepare(
+        `SELECT capabilities FROM devices WHERE id = ? AND NOT EXISTS (SELECT 1 FROM forgotten_devices f WHERE f.device_id = devices.id)`,
+      )
+      .get(id) as { capabilities: string | null } | undefined;
     if (!row) return "device-not-found";
     const caps = parseCapabilities(row.capabilities, id);
     if (caps.pushAppId !== undefined && caps.pushAppId !== consent.appId) {
@@ -1462,7 +1471,7 @@ function findDeviceByEnrollmentPublicKey(
 ): DeviceRecord | null {
   const row = db
     .prepare<[string, string], DeviceRow>(
-      `SELECT ${DEVICE_SELECT_COLS} FROM devices WHERE kind = ? AND enrollment_public_key = ?`,
+      `SELECT ${DEVICE_SELECT_COLS} FROM devices WHERE kind = ? AND enrollment_public_key = ? AND NOT EXISTS (SELECT 1 FROM forgotten_devices f WHERE f.device_id = devices.id)`,
     )
     .get(kind, devicePublicKey);
   return row ? rowToDevice(row) : null;

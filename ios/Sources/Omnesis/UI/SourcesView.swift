@@ -358,7 +358,7 @@ private struct SourceRowView: View {
         let docCount = store.statusSnapshot?.documents.bySource[source.id] ?? 0
         let pctIndexed = store.indexStats?.bySource?[source.id]?.percentIndexed
         let hostName = store.sourceRowHostLabel(for: source, status: status)
-        let noticeSections = status.map { store.noticeSections(for: $0, source: source) } ?? []
+        let noticeSections = source.archived ? [] : (status.map { store.noticeSections(for: $0, source: source) } ?? [])
 
         HStack(alignment: .top, spacing: Theme.Spacing.sm) {
             SourceIconView(sourceId: source.id, store: store, size: 28)
@@ -371,7 +371,7 @@ private struct SourceRowView: View {
                         .foregroundStyle(Theme.textPrimary)
                         .lineLimit(1)
                     Spacer(minLength: 6)
-                    statePill(status: status, paused: !source.enabled)
+                    statePill(status: status, paused: !source.enabled, archived: source.archived)
                 }
 
                 Text(source.accountId)
@@ -461,10 +461,10 @@ private struct SourceRowView: View {
     }
 
     @ViewBuilder
-    private func statePill(status: SourceSyncStatus?, paused: Bool) -> some View {
-        let raw = paused ? "paused" : (status?.state ?? "idle")
+    private func statePill(status: SourceSyncStatus?, paused: Bool, archived: Bool = false) -> some View {
+        let raw = archived ? "historical" : paused ? "paused" : (status?.state ?? "idle")
         let label = pillLabel(state: raw)
-        OmnesisPill(text: label, colors: Theme.pillColor(forState: raw, paused: paused))
+        OmnesisPill(text: label, colors: Theme.pillColor(forState: raw, paused: paused && !archived))
     }
 
     private func pillLabel(state: String) -> String {
@@ -584,7 +584,7 @@ struct SourceDetailView: View {
                     statusCard(source: source)
                     actionsCard(source: source)
 
-                    if !store.isInternalSource(source.id) {
+                    if !store.isInternalSource(source.id), !source.archived {
                         Text(
                             "Pause stops ingestion for the whole source and keeps its data and cursors. "
                                 + "Remove purges the entire source for all devices."
@@ -650,7 +650,7 @@ struct SourceDetailView: View {
 
     private func statusCard(source: SourceRecord) -> some View {
         let status = store.syncStatusesBySource[source.id]
-        let raw = !source.enabled ? "paused" : (status?.state ?? "idle")
+        let raw = source.archived ? "historical" : !source.enabled ? "paused" : (status?.state ?? "idle")
         return VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
             HStack(spacing: 8) {
                 Text("STATUS")
@@ -663,7 +663,7 @@ struct SourceDetailView: View {
                     .frame(maxWidth: .infinity)
                 OmnesisPill(
                     text: stateLabel(state: raw),
-                    colors: Theme.pillColor(forState: raw, paused: !source.enabled)
+                    colors: Theme.pillColor(forState: raw, paused: !source.enabled && !source.archived)
                 )
             }
             .padding(.top, Theme.Spacing.md)
@@ -715,26 +715,28 @@ struct SourceDetailView: View {
         // Document deletion lives on that page.
         VStack(spacing: 0) {
             if !store.isInternalSource(source.id) {
-                actionButton(
-                    label: actionInFlight ? "Working…" : "Sync now",
-                    systemImage: "arrow.triangle.2.circlepath",
-                    color: Theme.accent
-                ) {
-                    Task { await run { try await store.triggerSync(sourceId: source.id) } }
-                }
-                Divider().background(Theme.borderLight)
-                actionButton(
-                    label: source.enabled ? "Pause sync — keep data" : "Resume sync",
-                    systemImage: source.enabled ? "pause.circle" : "play.circle",
-                    color: Theme.textPrimary
-                ) {
-                    Task {
-                        await run {
-                            try await store.setEnabled(sourceId: source.id, enabled: !source.enabled)
+                if !source.archived {
+                    actionButton(
+                        label: actionInFlight ? "Working…" : "Sync now",
+                        systemImage: "arrow.triangle.2.circlepath",
+                        color: Theme.accent
+                    ) {
+                        Task { await run { try await store.triggerSync(sourceId: source.id) } }
+                    }
+                    Divider().background(Theme.borderLight)
+                    actionButton(
+                        label: source.enabled ? "Pause sync — keep data" : "Resume sync",
+                        systemImage: source.enabled ? "pause.circle" : "play.circle",
+                        color: Theme.textPrimary
+                    ) {
+                        Task {
+                            await run {
+                                try await store.setEnabled(sourceId: source.id, enabled: !source.enabled)
+                            }
                         }
                     }
+                    Divider().background(Theme.borderLight)
                 }
-                Divider().background(Theme.borderLight)
                 actionButton(
                     label: "Debug",
                     systemImage: "ant",
@@ -743,7 +745,7 @@ struct SourceDetailView: View {
                     showDebugSheet = true
                 }
                 Divider().background(Theme.borderLight)
-                if resyncOffer != .unavailable {
+                if !source.archived, resyncOffer != .unavailable {
                     actionButton(
                         label: "Resync",
                         systemImage: "arrow.counterclockwise.circle",
@@ -831,15 +833,13 @@ struct SourceDetailView: View {
         }
     }
 
-    /// Every device hosting the source, each with the icons for its own
-    /// notices beside its name. A status member the registration does not
-    /// list still gets its line, so no device's notices go unshown.
-    /// Every device hosting the source, each with the icons for its own
-    /// notices beside its name.
+    /// Every host and its notices. A status member missing from the registration
+    /// still gets its line, so no device’s notices go unshown.
     private func hostDevicesRow(_ source: SourceRecord) -> some View {
         let entries = store.hostNoticeEntries(for: source)
         return HStack(alignment: .top) {
-            Text(store.isInternalSource(source.id) ? "Host" : entries.count == 1 ? "Host device" : "Host devices")
+            Text(source.archived ? "Historical data from" : store.isInternalSource(source.id) ? "Host" : entries
+                .count == 1 ? "Host device" : "Host devices")
                 .font(.system(size: 12))
                 .foregroundStyle(Theme.textSecondary)
             Spacer(minLength: 12)

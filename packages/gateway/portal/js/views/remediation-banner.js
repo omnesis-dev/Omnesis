@@ -6,8 +6,7 @@
 // remedy with its error (an access grant the host keys on the collector's
 // executable, say) gets one card per device and remedy, listing every source
 // that grant frees, the steps, the executable to list, and the restart.
-// There is no button: the fix happens on the collector's host, in its system
-// settings, and the portal can only say exactly what to do there.
+// Devices needing pairing also link to their repair and forget flows.
 
 import { html } from "htm/preact";
 import { useMemo } from "preact/hooks";
@@ -18,8 +17,10 @@ import { groupRemediationsByDevice } from "./remediation-grouping.js";
  * One remedy for one device, rendered without hooks so it can be tested as a
  * plain function. `deviceName` is resolved by the caller.
  */
-export function RemediationCard({ group, deviceName }) {
+export function RemediationCard({ group, deviceName, device }) {
   const { remediation, affectedSourceIds } = group;
+  const needsPairing = device?.revokedAt && device?.needsPairing;
+  const devicePath = `/portal/settings/devices?device=${encodeURIComponent(group.deviceId)}`;
   const steps = [...remediation.steps];
   if (remediation.restartRequired) steps.push("Restart the collector.");
   return html`
@@ -37,6 +38,12 @@ export function RemediationCard({ group, deviceName }) {
         <ol class="remediation-steps">
           ${steps.map((step, i) => html`<li key=${i}>${step}</li>`)}
         </ol>
+        ${needsPairing && html`
+          <div class="remediation-actions">
+            ${device.kind !== "portal" && html`<a class="btn-primary" href=${`${devicePath}&deviceAction=repair`}>Pair again</a>`}
+            <a class="btn-secondary" href=${`${devicePath}&deviceAction=forget`}>Forget device</a>
+          </div>
+        `}
         ${remediation.executable && html`
           <div class="remediation-executable">
             <span class="remediation-executable-label">Executable running the collector</span>
@@ -70,6 +77,7 @@ export function RemediationBanner({ sources, deviceById }) {
           key=${`${g.deviceId ?? ""}:${g.remediation.summary}:${g.remediation.executable ?? ""}`}
           group=${g}
           deviceName=${deviceNameOf(g)}
+          device=${deviceById?.get(g.deviceId)}
         />
       `)}
     </div>

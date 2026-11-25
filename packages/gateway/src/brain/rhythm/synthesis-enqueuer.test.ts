@@ -9,9 +9,11 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import { createLogger } from "@omnesis/core";
-import { createDatabase } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import { directWriteGate } from "../../write-gate.js";
 import { listCognitionRuns } from "../storage/run-queue.js";
 import {
@@ -20,8 +22,6 @@ import {
 } from "../storage/engine-state.js";
 import { runSynthesisEnqueuePass } from "./synthesis-enqueuer.js";
 import type Database from "better-sqlite3";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 type Db = Database.Database;
 
@@ -47,7 +47,7 @@ describe("runSynthesisEnqueuePass", () => {
   let db: Db;
   beforeEach(() => {
     path = testDbPath();
-    db = createDatabase(path);
+    db = createFreshTestDatabase(path);
   });
   afterEach(() => {
     db.close();

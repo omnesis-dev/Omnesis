@@ -3,9 +3,11 @@
 
 import { randomUUID, createHash } from "node:crypto";
 import { rmSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { createLogger, type EntailCapability } from "@omnesis/core";
-import { createDatabase } from "../db.js";
+import { createFreshTestDatabase } from "../testing/fresh-database.js";
 import { directWriteGate } from "../write-gate.js";
 import { EventBus } from "../events.js";
 import { validateConversationAnnotationEvidence } from "../sources/omnesis-chat/memory-evidence.js";
@@ -19,8 +21,6 @@ import { listLiveAnnotationsForDoc } from "./storage/annotations.js";
 import { listLivePersonAnnotationsForPerson } from "./storage/person-annotations.js";
 import type Database from "better-sqlite3";
 import type { ConversationRecord } from "../agent/conversation-store.js";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 const log = createLogger("test:interactive-memory");
 const quote = "I prefer meetings in the morning.";
@@ -33,7 +33,7 @@ beforeEach(() => {
   vi.stubEnv("OMNESIS_EXPERIMENTAL", "0");
   vi.stubEnv("OMNESIS_SYNTHETIC", "0");
   path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
-  db = createDatabase(path);
+  db = createFreshTestDatabase(path);
   db.prepare(
     `INSERT INTO documents (id, provider_id, source_id, external_id, title, content, content_hash,
        source_created_at, source_updated_at, ingested_at, updated_at)

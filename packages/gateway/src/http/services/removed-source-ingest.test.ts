@@ -19,16 +19,17 @@
 
 import { existsSync, rmSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { ProviderId, SourceId, SCOPE_WRITE_ALL } from "@omnesis/types";
-import { createDatabase, upsertDocuments } from "../../db.js";
+import { upsertDocuments } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import { clearSourceRemoved, markSourceRemoved } from "../../data/repositories/SourceRepository.js";
 import { directWriteGate } from "../../write-gate.js";
 import { DocumentService } from "./DocumentService.js";
 import { EventService } from "./EventService.js";
 import type Database from "better-sqlite3";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 const SOURCE = "gmail:maya.reeves@example.com";
 const PROVIDER = "google";
@@ -72,7 +73,7 @@ function storedCount(): number {
 
 beforeEach(() => {
   dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
-  db = createDatabase(dbPath);
+  db = createFreshTestDatabase(dbPath);
   documents = new DocumentService({
     db,
     writeGate: directWriteGate(db),

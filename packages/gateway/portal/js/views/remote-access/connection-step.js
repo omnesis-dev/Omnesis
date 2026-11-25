@@ -86,7 +86,7 @@ const FIRST_CHOICES = [
 /**
  * Which address a device that pairs with a code is offered first when both the Tailscale device
  * and the relay can answer; step 2 and the summary show it. The apps keep the one address they
- * paired with and never read this again, so it says that it applies from now on (see #978).
+ * paired with and never read this again (see #978).
  */
 export function FirstChoice({ remote, setRemote }) {
   const [saving, setSaving] = useState("");
@@ -104,29 +104,26 @@ export function FirstChoice({ remote, setRemote }) {
     }
   };
   const value = saving || remote.first;
-  const picked = FIRST_CHOICES.find((choice) => choice.value === value);
-  return html`<fieldset class="remote-access-choices is-compact remote-access-first">
-    <legend>When both can answer, try first</legend>
-    ${FIRST_CHOICES.map(
-      (choice) => html`<label key=${choice.value} class=${`remote-access-choice${value === choice.value ? " is-on" : ""}`} title=${choice.text}>
-        <input
-          type="radio"
-          name="remote-access-first"
-          value=${choice.value}
-          checked=${value === choice.value}
-          disabled=${Boolean(saving)}
-          onChange=${() => choose(choice.value)}
-        />
-        <span class="remote-access-option-text"><strong>${choice.title}</strong></span>
-      </label>`,
-    )}
-    <p class="remote-access-choice-detail">${picked ? `${picked.text} ` : ""}Your home network always comes first.</p>
-    <p class="remote-access-choice-detail">
-      Applies to devices that pair from now on. A device paired earlier keeps the address it got then; pair it again
-      to switch.
-    </p>
+  return html`<div class="remote-access-first">
+    <span class="remote-access-mark" aria-hidden="true">i</span>
+    <div class="remote-access-first-controls" role="radiogroup" aria-labelledby="remote-access-first-label">
+      <span id="remote-access-first-label" class="remote-access-item-title">Network priority</span>
+      ${FIRST_CHOICES.map(
+        (choice) => html`<label key=${choice.value} class="remote-access-first-choice" title=${choice.text}>
+          <input
+            type="radio"
+            name="remote-access-first"
+            value=${choice.value}
+            checked=${value === choice.value}
+            disabled=${Boolean(saving)}
+            onChange=${() => choose(choice.value)}
+          />
+          <span>${choice.title}</span>
+        </label>`,
+      )}
+    </div>
     ${error && html`<p class="remote-access-problem" role="alert">${error}</p>`}
-  </fieldset>`;
+  </div>`;
 }
 
 export function ConnectionStep({

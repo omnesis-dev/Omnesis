@@ -9,6 +9,7 @@ const {
   buildPairQrPayload,
   checkSession,
   getFleetDoctor,
+  listTokens,
   getHostFleetUpdate,
   getPairAddresses,
   pairDevice,
@@ -106,6 +107,16 @@ describe("device API wrappers", () => {
       "/admin/fleet/doctor",
       expect.objectContaining({ method: "GET" }),
     );
+  });
+
+  test("roster token and health reads carry the view's cancellation signal", async () => {
+    const controller = new AbortController();
+    const fetchMock = vi.fn(async () => Response.json({ items: [], devices: [] }));
+    vi.stubGlobal("fetch", fetchMock);
+    await listTokens(undefined, controller.signal);
+    await getFleetDoctor(controller.signal);
+    expect(fetchMock).toHaveBeenCalledWith("/admin/tokens", expect.objectContaining({ signal: controller.signal }));
+    expect(fetchMock).toHaveBeenCalledWith("/admin/fleet/doctor", expect.objectContaining({ signal: controller.signal }));
   });
 
   test("requests all devices when ids are omitted and preserves an explicit empty subset", async () => {
@@ -220,4 +231,15 @@ describe("device API wrappers", () => {
       { kind: "cli" },
     ]);
   });
+});
+
+test("forget reviews the selected device and submits its explicit history choice", async () => {
+  const fetchMock = vi.fn(async () => new Response(JSON.stringify({ sources: [], fingerprint: "reviewed" }), {
+    status: 200, headers: { "Content-Type": "application/json" },
+  }));
+  vi.stubGlobal("fetch", fetchMock);
+  await deviceApi.getDeviceForgetImpact("old/phone");
+  expect(fetchMock).toHaveBeenLastCalledWith("/admin/devices/old%2Fphone/forget-impact", expect.objectContaining({ method: "GET" }));
+  await deviceApi.forgetDevice("old/phone", { data: "keep", impactFingerprint: "reviewed" });
+  expect(fetchMock).toHaveBeenLastCalledWith("/admin/devices/old%2Fphone?forget=true&data=keep&impactFingerprint=reviewed", expect.objectContaining({ method: "DELETE" }));
 });

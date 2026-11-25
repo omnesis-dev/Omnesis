@@ -1,5 +1,48 @@
 # @omnesis/gateway
 
+## 0.8.1
+
+### Patch Changes
+
+- @omnesis/agent@0.8.1
+  - @omnesis/cloud-relay@0.8.1
+  - @omnesis/config@0.8.1
+  - @omnesis/core@0.8.1
+  - @omnesis/near-dupes@0.8.1
+  - @omnesis/provider-web@0.8.1
+  - @omnesis/source-sdk@0.8.1
+  - @omnesis/types@0.8.1
+  - @omnesis/watch@0.8.1
+
+## 0.8.0
+
+### Patch Changes
+
+- 8ce8f47: When Anthropic model discovery fails before any model list has loaded, the gateway retries after 15 seconds, doubling the delay up to the hourly refresh, instead of waiting a full hour. Until a list loads, a model newer than the bundled list has no known limits and the agent caps its output at 4,096 tokens, which can stop answers before they finish.
+- 583aa23: The per-source index stats the status page shows are computed from a covering index on `chunks` instead of a scan of every chunk row, so refreshing them after an indexing cycle no longer holds the indexer worker (and the query embeds it answers) for minutes on a large index. The index is built once when an existing index database is opened; the gateway logs the build.
+- eb3b159: Keyword search with a source, type or date filter is ranked by the in-memory index with the filter applied while scoring, instead of ranking unfiltered, joining ever wider windows to `chunks` and finally scoring every match in SQLite. Results are unchanged; a filtered search on a large index takes milliseconds in the keyword stage instead of seconds to minutes. A change to a chunk's source, type or date now reaches the in-memory index.
+- 0ef2668: The gateway no longer recomputes every person's document and alias counts in one read at boot. On a large people graph that read held the only io worker for minutes, and every user read queued behind it, search's readability check among them, waited for it. The periodic sweep refreshes the counts in bounded chunks, and runs on a first boot too.
+- 324ad9a: A search whose query embedding fails (for example, an embed that times out while the indexer worker is busy) now answers off keywords alone and names the failure as the vector stage's skip reason, instead of failing with an internal error. The next search embeds again.
+- 03f1165: A source's stats (count, size, units, date range on the sources page) are refreshed by a scan of all its documents. A source that is always ingesting was scanned on every refresh tick and the result discarded each time because the source had changed meanwhile, so a large busy source held a read worker for minutes out of every few minutes and never got fresh numbers. A raced scan is now committed with the count reconciled from the writes that landed during it, and a source waits out a cooldown proportional to its last scan before it is scanned again.
+- ed09a89: Measure source storage independently from database allocation details, retain usable results when one measurement fails, and keep accounting off the active indexer. Clarify Brain run logs and chat history in the storage breakdown.
+- 85d3cec: Add manual background cleanup of Brain run logs, chat history and old backups from Settings → Storage, with persisted progress, cancellation and protection for active conversations and the newest backup.
+
+  Expose storage measurements, limits, source trimming, rolling retention and history/backup cleanup through `omnesis storage`, including JSON output, job progress, waiting and cancellation of history cleanup. Job lookups read durable progress by ID without scanning recent job lists or the source inventory.
+
+- a46abbd: Keep semantic search startup from repeatedly pausing after a long native graph check. Completed graph checks now process queued capacity updates before checking the storage lease; blocked or unverified capacity continues to pause growth.
+- 338deb4: Avoid an unused full page walk of the main database during storage measurement. Main storage totals continue to use file sizes and document payloads, while search-index page attribution supplies lexical-index sizes independently.
+- Updated dependencies [884a6de]
+- Updated dependencies [ece9a88]
+  - @omnesis/source-sdk@0.8.0
+  - @omnesis/agent@0.8.0
+  - @omnesis/cloud-relay@0.8.0
+  - @omnesis/config@0.8.0
+  - @omnesis/core@0.8.0
+  - @omnesis/near-dupes@0.8.0
+  - @omnesis/provider-web@0.8.0
+  - @omnesis/types@0.8.0
+  - @omnesis/watch@0.8.0
+
 ## 0.7.8
 
 ### Patch Changes

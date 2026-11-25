@@ -7,7 +7,7 @@ import { join as fixtureJoin } from "node:path";
 import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { AccountId, SCOPE_ADMIN, SCOPE_READ, SourceType } from "@omnesis/types";
-import { createDatabase } from "../../../db.js";
+import { createFreshTestDatabase } from "../../../testing/fresh-database.js";
 import { createDevice } from "../../../data/repositories/DeviceRepository.js";
 import {
   addSourceMember,
@@ -21,6 +21,7 @@ import {
 import { createToken } from "../../../data/repositories/TokenRepository.js";
 import { createServer } from "../../../server.js";
 import { directWriteGate } from "../../../write-gate.js";
+import type { createDatabase } from "../../../db.js";
 import type { DeviceWsServer } from "../../../ws.js";
 
 type Db = ReturnType<typeof createDatabase>;
@@ -41,7 +42,7 @@ function cleanupDb(path: string): void {
 
 beforeEach(() => {
   dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-member-config-http-${randomUUID()}.db`);
-  db = createDatabase(dbPath);
+  db = createFreshTestDatabase(dbPath);
   const cli = createDevice(db, { name: "Fictional CLI", kind: "cli" });
   adminToken = createToken(db, cli.id, [SCOPE_ADMIN, SCOPE_READ]).token;
   sendCommand = vi.fn(async (_deviceId: string, type: string) => {

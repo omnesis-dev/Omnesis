@@ -9,9 +9,11 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { createLogger } from "@omnesis/core";
-import { createDatabase } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import {
   getSentMorningBrief,
   markMorningBriefSent,
@@ -32,8 +34,6 @@ import {
   type MorningBriefSenderDeps,
 } from "./morning-brief.js";
 import type Database from "better-sqlite3";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 const log = createLogger("test").child("morning-brief");
 const NOW = Date.parse("2026-07-02T07:00:00.000Z");
@@ -65,7 +65,7 @@ describe("morning brief sending", () => {
 
   beforeEach(() => {
     path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
-    db = createDatabase(path);
+    db = createFreshTestDatabase(path);
     pushEnabled = true;
     messageSeq = 0;
     port = {

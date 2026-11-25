@@ -18,13 +18,18 @@
  *   - 413 `PAYLOAD_TOO_LARGE`, 400 on a malformed body.
  * On any refusal the device saves the note as plain text instead.
  *
- * Scope: that of POST /notes (`write:omnesis-notes`, satisfied by admin).
+ * A note whose audio was clipped from a recorded conversation names it in
+ * `recordingId`; the conversation then records the marked moment.
+ *
+ * Scope: that of POST /notes (`write:omnesis-notes`, satisfied by admin), and
+ * `write:omnesis-recordings` as well for a note naming a recording.
  */
 
 import { SCOPE_ADMIN } from "@omnesis/types";
 import { bodyLimit } from "hono/body-limit";
 import { notesRateLimiter } from "../../rate-limit.js";
 import { MAX_AUDIO_BYTES } from "../../transcribe/index.js";
+import { OMNESIS_RECORDINGS_SOURCE_ID } from "../../sources/omnesis-recordings/index.js";
 import { BadRequestError, HttpError, ValidationError } from "../errors.js";
 import { enforceWriteScopeForSource, scope } from "../scope.js";
 import { voiceNoteMetadata } from "../schemas/index.js";
@@ -57,6 +62,14 @@ export interface VoiceNoteRoutesDeps {
   service: VoiceNoteService;
   /** The dictation verdict, once the transcriber has settled anything it is still checking. */
   getStatus: () => Promise<DictationFeatureStatus>;
+  /**
+   * Record that note `noteId` is a moment marked at `markedAt` in recording
+   * `recordingId`. Absent when recorded conversations are off; the note is
+   * then saved alone.
+   */
+  markRecording?: (recordingId: string, noteId: string, markedAt: string) => Promise<void>;
+  /** Whether Recordings is on in Omnesis Lab; a mark is ignored while it is off. */
+  recordingsEnabled?: () => boolean;
 }
 
 export function mountVoiceNoteRoutes(app: RouteApp, deps: VoiceNoteRoutesDeps): void {
@@ -104,6 +117,11 @@ export function mountVoiceNoteRoutes(app: RouteApp, deps: VoiceNoteRoutesDeps): 
     const parsed = voiceNoteMetadata.safeParse(raw);
     if (!parsed.success) throw new ValidationError("Validation failed", parsed.error.issues);
     const note = parsed.data;
+    const markRecording =
+      note.recordingId && (deps.recordingsEnabled?.() ?? true) ? deps.markRecording : undefined;
+    if (markRecording) {
+      enforceWriteScopeForSource(c.get("auth").scopes, OMNESIS_RECORDINGS_SOURCE_ID);
+    }
 
     const { id } = await deps.service.accept({
       id: note.id,
@@ -123,6 +141,12 @@ export function mountVoiceNoteRoutes(app: RouteApp, deps: VoiceNoteRoutesDeps): 
       allowVocabulary: transcriptionVocabularyAllowed(c.get("auth").scopes),
       fromOwner: c.get("auth").scopes.includes(SCOPE_ADMIN),
     });
+    if (markRecording && note.recordingId) {
+      const markedAt = note.capturedAt
+        ? new Date(note.capturedAt).toISOString()
+        : new Date().toISOString();
+      await markRecording(note.recordingId, id, markedAt);
+    }
     return c.json({ id, transcription: "pending" as const }, 202);
   });
 }

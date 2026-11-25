@@ -1,5 +1,26 @@
 # @omnesis/source-sdk
 
+## 0.8.1
+
+### Patch Changes
+
+- @omnesis/config@0.8.1
+  - @omnesis/core@0.8.1
+  - @omnesis/types@0.8.1
+
+## 0.8.0
+
+### Minor Changes
+
+- 884a6de: Add an Antigravity Sessions local coding-agent transcript source (`@omnesis/provider-antigravity`) indexing root conversations from `~/.gemini/antigravity-cli/brain` and `~/.gemini/antigravity/brain`, with optional `exclude` tree filtering in `createLocalAgentSessionSource`.
+
+### Patch Changes
+
+- ece9a88: Wait for local coding-session file readers to close before reporting completion, including after parsing stops early or is cancelled.
+- @omnesis/config@0.8.0
+  - @omnesis/core@0.8.0
+  - @omnesis/types@0.8.0
+
 ## 0.7.8
 
 ### Patch Changes

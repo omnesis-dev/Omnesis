@@ -4,9 +4,11 @@
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { createDatabase } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import { upsertDocuments } from "./DocumentRepository.js";
 import {
   computeSourceStatsRow,
@@ -15,8 +17,6 @@ import {
 } from "./SourceStatsRepository.js";
 import type { Db } from "../types.js";
 import type { DocumentInput } from "@omnesis/types";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 function cleanupDb(path: string): void {
   for (const suffix of ["", "-wal", "-shm", "-journal"]) {
@@ -63,7 +63,7 @@ describe("computeSourceStatsRow reads a source in chunks", () => {
 
   beforeEach(() => {
     dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
-    db = createDatabase(dbPath);
+    db = createFreshTestDatabase(dbPath);
     const docs: DocumentInput[] = [];
     for (let n = 0; n < 230; n++) docs.push(inventedDoc(n % 3 === 0 ? "synth-b" : "synth-a", n));
     upsertDocuments(db, docs);

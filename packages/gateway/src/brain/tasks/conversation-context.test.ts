@@ -9,9 +9,12 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { vi, afterEach, beforeEach, describe, expect, test } from "vitest";
 import { ProviderId, SourceId } from "@omnesis/types";
-import { createDatabase, upsertDocuments } from "../../db.js";
+import { upsertDocuments } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import { setLabFlag } from "../../lab/store.js";
 import { directWriteGate } from "../../write-gate.js";
 import { createOpenLoop } from "../storage/open-loops.js";
@@ -24,8 +27,6 @@ import {
 } from "./conversation-context.js";
 import type { TaskConversationOrigin } from "../../agent/conversation-store.js";
 import type Database from "better-sqlite3";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 const NOW = Date.parse("2026-03-10T12:00:00Z");
 const ORIGIN = { surface: "tasks", runId: "user:tasks" } as const;
@@ -36,7 +37,7 @@ let tasks: TaskService;
 
 beforeEach(() => {
   path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
-  db = createDatabase(path);
+  db = createFreshTestDatabase(path);
   vi.stubEnv("OMNESIS_EXPERIMENTAL", "1");
   setLabFlag(db, "tasks", true);
   setLabFlag(db, "brain", false);

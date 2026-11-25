@@ -5,7 +5,10 @@
 FROM node:24-bookworm
 
 # curl for health probes; procps for ps in the dedicated-user scenario.
-RUN apt-get update && apt-get install -y --no-install-recommends curl procps \
+# scripts/docker/apt-get-bounded.sh fails a stalled mirror instead of hanging.
+RUN --mount=type=bind,source=scripts/docker/apt-get-bounded.sh,target=/tmp/apt-get-bounded.sh \
+  sh /tmp/apt-get-bounded.sh update \
+  && sh /tmp/apt-get-bounded.sh install -y --no-install-recommends curl procps \
   && rm -rf /var/lib/apt/lists/*
 
 RUN mkdir /e2e

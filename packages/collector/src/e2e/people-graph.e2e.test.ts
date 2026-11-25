@@ -20,6 +20,10 @@
  *      lands on the loser within seconds. The 30s budget is
  *      loaded-CI slack, not cadence — a regression back to
  *      periodic-only pickup (60s active / 5m idle) fails this test.
+ *      A name rule merges every person carrying either name, and the
+ *      survivor is picked by first sighting, so the test checks that both
+ *      people resolve to one survivor on the winning side rather than that
+ *      one row points at the other.
  *   3. `autoDetectTask` — the admin endpoint
  *      `GET /people/merge-rules?kind=system` returns a parseable
  *      array. Weak assertion (the e2e-minimal cast is too small to
@@ -102,9 +106,14 @@ describe("People-graph background jobs (e2e-minimal universe)", () => {
     await harness.start();
     await harness.syncAllSources();
     // People resolution is a background writer-handler that works through
-    // the synced documents after the sync returns, so each person appears
-    // on its own schedule: one being findable says nothing about another.
-    // Wait for every person the suite names before any assertion runs.
+    // the synced documents after the sync returns, in no particular order,
+    // and auto-detect then collapses the rows that share an identifier.
+    // Settle both before any assertion, so the person rows the tests look
+    // up are the ones that stay: an auto-detect pass landing mid-test could
+    // otherwise delete one of them.
+    await harness.waitForPeopleResolution();
+    await runPeriodic(harness, "backfill.autoDetect");
+    await runPeriodic(harness, "backfill.mergeRulesEval");
     await Promise.all(
       ["Jane Doe", "Emma Park"].map((name) => waitForPersonByName(harness, name, 30_000)),
     );
@@ -148,6 +157,22 @@ describe("People-graph background jobs (e2e-minimal universe)", () => {
     expect(janeNameAlias).toBeDefined();
     expect(emmaNameAlias).toBeDefined();
 
+    // A second person called Jane Doe, sharing no identifier with her and
+    // seen first. The rule covers every holder of either name, so the
+    // survivor is this namesake: neither looked-up row points at the other.
+    // The universe can produce such a namesake on its own, depending on the
+    // order resolution created the rows; this makes the case certain.
+    await harness.pushDocument({
+      externalId: "people-graph-namesake",
+      title: "Namesake note",
+      sourceCreatedAt: "2001-01-01T09:00:00.000Z",
+      sourceUpdatedAt: "2001-01-01T09:00:00.000Z",
+      metadata: {
+        people: [{ role: "sender", emails: ["namesake.jane@example.net"], name: "Jane Doe" }],
+      },
+    });
+    await harness.waitForPeopleResolution();
+
     const created = await harness.gatewayJson<CreateMergeRuleResp>("/people/merge-rules", {
       method: "POST",
       body: JSON.stringify({
@@ -162,13 +187,20 @@ describe("People-graph background jobs (e2e-minimal universe)", () => {
     expect(created.rule.kind).toBe("user");
 
     try {
-      const { winner, loser } = await waitForMergePropagation(harness, jane.id, emma.id, 30_000);
-      const [loserDetail, winnerDetail] = await Promise.all([
-        harness.gatewayJson<PersonDetail>(`/people/${loser}`),
-        harness.gatewayJson<PersonDetail>(`/people/${winner}`),
+      const survivor = await waitForMergePropagation(harness, jane.id, emma.id, 30_000);
+      const [emmaAfter, survivorDetail] = await Promise.all([
+        harness.gatewayJson<PersonDetail>(`/people/${emma.id}`),
+        harness.gatewayJson<PersonDetail>(`/people/${survivor}`),
       ]);
-      expect(loserDetail.mergedInto).toBe(winner);
-      expect(winnerDetail.mergedFrom.some((p) => p.id === loser)).toBe(true);
+      // The winning side is Jane's: the survivor is a Jane Doe, and Emma
+      // points straight at it.
+      expect(emmaAfter.mergedInto).toBe(survivor);
+      expect(
+        survivorDetail.aliases.some(
+          (a) => a.aliasType === "name" && a.alias.toLowerCase() === "jane doe",
+        ),
+      ).toBe(true);
+      expect(survivorDetail.mergedFrom.some((p) => p.id === emma.id)).toBe(true);
 
       // Un-merge: rule deletion kicks the eval too, so the merge must
       // dissolve within the same budget.
@@ -309,34 +341,45 @@ async function waitForNameAlias(
   );
 }
 
+/** Run one tick of a periodic task now and wait for it to finish. */
+async function runPeriodic(harness: SyntheticE2EHarness, task: string): Promise<void> {
+  await harness.gatewayJson(`/admin/background/run/${task}?timeoutMs=60000`, { method: "POST" });
+}
+
+/** Follow `mergedInto` from `id` to the person it currently resolves to. */
+async function survivorOf(harness: SyntheticE2EHarness, id: string): Promise<string> {
+  let current = id;
+  for (let hop = 0; hop < 10; hop++) {
+    const detail = await harness.gatewayJson<PersonDetail>(`/people/${current}`);
+    if (detail.mergedInto === null) return current;
+    current = detail.mergedInto;
+  }
+  throw new Error(`survivorOf: ${id} did not reach an unmerged person within 10 hops`);
+}
+
 /**
- * Poll the two person rows until one of them has `merged_into` pointing
- * at the other. Returns {winner, loser} ids (which one is which depends
- * on whether canonicalize-and-evaluate flipped the sides — the test
- * shouldn't pre-commit to a direction).
+ * Poll until both people resolve to the same survivor, and return it. The
+ * survivor may be either of them or another holder of one of the names.
  */
 async function waitForMergePropagation(
   harness: SyntheticE2EHarness,
   idA: string,
   idB: string,
   timeoutMs: number,
-): Promise<{ winner: string; loser: string }> {
+): Promise<string> {
   const deadline = Date.now() + timeoutMs;
+  let survivors: string[] = [];
   while (Date.now() < deadline) {
-    const [a, b] = await Promise.all([
-      harness.gatewayJson<PersonDetail>(`/people/${idA}`),
-      harness.gatewayJson<PersonDetail>(`/people/${idB}`),
-    ]);
-    if (a.mergedInto === idB) return { winner: idB, loser: idA };
-    if (b.mergedInto === idA) return { winner: idA, loser: idB };
+    survivors = await Promise.all([survivorOf(harness, idA), survivorOf(harness, idB)]);
+    if (survivors[0] === survivors[1]) return survivors[0];
     await new Promise((r) => setTimeout(r, 500));
   }
   throw new Error(
-    `waitForMergePropagation: neither ${idA} nor ${idB} got merged_into the other within ${timeoutMs}ms`,
+    `waitForMergePropagation: ${idA} resolves to ${survivors[0]} and ${idB} to ${survivors[1]} after ${timeoutMs}ms`,
   );
 }
 
-/** Poll both person rows until neither carries a merged_into pointer. */
+/** Poll until `idB` stands on its own again, apart from `idA`. */
 async function waitForUnmerge(
   harness: SyntheticE2EHarness,
   idA: string,
@@ -345,11 +388,8 @@ async function waitForUnmerge(
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const [a, b] = await Promise.all([
-      harness.gatewayJson<PersonDetail>(`/people/${idA}`),
-      harness.gatewayJson<PersonDetail>(`/people/${idB}`),
-    ]);
-    if (a.mergedInto === null && b.mergedInto === null) return;
+    const [a, b] = await Promise.all([survivorOf(harness, idA), survivorOf(harness, idB)]);
+    if (b === idB && a !== idB) return;
     await new Promise((r) => setTimeout(r, 500));
   }
   throw new Error(`waitForUnmerge: ${idA} / ${idB} still merged after ${timeoutMs}ms`);

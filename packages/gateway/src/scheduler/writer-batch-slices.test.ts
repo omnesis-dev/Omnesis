@@ -18,7 +18,7 @@ import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { createDatabase } from "../db.js";
+import { createFreshTestDatabase } from "../testing/fresh-database.js";
 import { COLLAPSED_ACCEPT_CHUNK } from "../merge-candidates.js";
 import { PreemptBuffer, PreemptToken } from "./preempt.js";
 import { writerYieldableHandlers } from "./writer-handlers.js";
@@ -35,7 +35,7 @@ let corpus: LargeCorpus;
 
 beforeEach(() => {
   path = join(tmpdir(), `omnesis-test-${randomUUID()}.db`);
-  db = createDatabase(path) as unknown as Database.Database;
+  db = createFreshTestDatabase(path) as unknown as Database.Database;
   corpus = seedLargeCorpus(db, {
     docs: 2_000,
     unresolvedDocs: UNRESOLVED_DOCS,

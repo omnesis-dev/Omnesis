@@ -12,6 +12,8 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test, vi, type Mock } from "vitest";
 import {
   createLogger,
@@ -21,7 +23,7 @@ import {
 } from "@omnesis/core";
 import { TemporalQueryService } from "../../enrichment/temporal/temporal-query-service.js";
 import { readDailyBriefDetail } from "../observations/brief-detail.js";
-import { createDatabase } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import { setLabFlag } from "../../lab/store.js";
 import { directWriteGate } from "../../write-gate.js";
 import { resolveBrainSettings } from "../config.js";
@@ -34,8 +36,6 @@ import { createCognitionRuntime, type CognitionRuntimeDeps } from "./runtime.js"
 import type { MorningBriefConversationPort } from "../observations/morning-brief.js";
 import type { ClaimedCognitionRun } from "../storage/types.js";
 import type Database from "better-sqlite3";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 const log = createLogger("test").child("runtime-morning-digest");
 const NOW = Date.parse("2026-07-02T10:00:00.000Z");
@@ -174,7 +174,7 @@ async function send(rt: Awaited<ReturnType<typeof runtime>>, args: unknown): Pro
 
 beforeEach(() => {
   path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
-  db = createDatabase(path);
+  db = createFreshTestDatabase(path);
   appended = [];
   decide = vi.fn(async () => scores(3, 2));
   query = vi

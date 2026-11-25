@@ -3,6 +3,8 @@
 
 package dev.omnesis.android.transport.client
 
+import dev.omnesis.android.transport.dto.DeviceForgetImpact
+import dev.omnesis.android.transport.dto.DeviceForgetData
 import dev.omnesis.android.transport.dto.CloudRelayConnectBody
 import dev.omnesis.android.transport.dto.CloudRelayManaging
 import dev.omnesis.android.transport.dto.CloudRelayStatus
@@ -312,13 +314,17 @@ class AdminClient(private val http: GatewayHttp) : GatewayPairingApproving, Clou
      */
     suspend fun revokeDevice(id: String) = http.delete("admin/devices/$id")
 
-    /**
-     * `DELETE /admin/devices/:id?forget=true` — delete the device row for good.
-     * Refused with 409 `DEVICE_STILL_HOSTS_SOURCES` while any source still points
-     * at the device. The envelope's message names those sources by id and points
-     * at a CLI remedy, so a phone surface renders the code rather than the prose.
-     */
-    suspend fun forgetDevice(id: String) = http.delete("admin/devices/$id", mapOf("forget" to "true"))
+    /** Current source impact, fenced by the subsequent request's fingerprint. */
+    suspend fun forgetDeviceImpact(id: String): DeviceForgetImpact =
+        http.getJson("admin/devices/$id/forget-impact")
+
+    /** No disposition retains the legacy no-sources-only operation. */
+    suspend fun forgetDevice(id: String, data: DeviceForgetData? = null, impactFingerprint: String? = null) =
+        http.delete("admin/devices/$id", buildMap {
+            put("forget", "true")
+            data?.let { put("data", it.wireValue) }
+            impactFingerprint?.let { put("impactFingerprint", it) }
+        })
 
     /**
      * `POST /admin/devices/pair` — mint a one-time pairing code (~10-min TTL)

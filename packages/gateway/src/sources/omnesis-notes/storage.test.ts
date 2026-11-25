@@ -11,7 +11,7 @@ import BetterSqlite3 from "better-sqlite3";
 import { Scope } from "@omnesis/types";
 import { createDevice } from "../../data/repositories/DeviceRepository.js";
 import { createToken, revokeToken } from "../../data/repositories/TokenRepository.js";
-import { createDatabase } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import {
   createNoteEntriesTables,
   deleteNoteEntry,
@@ -62,7 +62,7 @@ describe("note_entries storage", () => {
   let db: Db;
   beforeEach(() => {
     dbPath = testDbPath();
-    db = createDatabase(dbPath); // schema setup creates note_entries
+    db = createFreshTestDatabase(dbPath); // schema setup creates note_entries
   });
   afterEach(() => {
     vi.unstubAllEnvs();

@@ -11,6 +11,7 @@ const apiMocks = vi.hoisted(() => ({
   getPairAddresses: vi.fn(),
   fleetUpdateTarget: vi.fn(async () => ({ targetVersion: null })),
   forgetDevice: vi.fn(),
+  getDeviceForgetImpact: vi.fn(async () => ({ sources: [], fingerprint: "fictional-impact" })),
   getFleetDoctor: vi.fn(async () => ({ devices: [] })),
   getNetworkIdentities: vi.fn(async () => ({ items: [] })),
   getDoctorReport: vi.fn(),
@@ -86,11 +87,55 @@ describe("per-device health", () => {
   });
 
   afterEach(() => {
+    vi.unstubAllGlobals();
     render(null, host);
     if (originalDocument === undefined) delete (globalThis as { document?: unknown }).document;
     else globalThis.document = originalDocument;
     if (originalWindow === undefined) delete (globalThis as { window?: unknown }).window;
     else globalThis.window = originalWindow;
+  });
+
+  test("repair link generates one code for its device and survives rerenders", async () => {
+    vi.stubGlobal("location", { origin: "https://gateway.example.org" });
+    const device = { id: "device-retired", name: "Retired notebook", kind: "collector",
+      pairedAt: 1, lastSeenAt: 2, revokedAt: 3, online: false, capabilities: {} };
+    apiMocks.listDevices.mockResolvedValue({ items: [device] });
+    apiMocks.pairDevice.mockReset();
+    apiMocks.pairDevice.mockResolvedValue({ pairingCode: "FICTION-2486" });
+    const props = { focusDeviceId: device.id, deviceActionRequest: "repair" };
+    await act(async () => { render(h(DevicesView, props), host); });
+    await vi.waitFor(() => expect(host.textContent).toContain("FICTION-2486"));
+    expect(apiMocks.pairDevice).toHaveBeenCalledExactlyOnceWith({ kind: "collector", repairDeviceId: device.id });
+    expect(routerMocks.replaceRoute).toHaveBeenCalledWith("/portal/settings/devices?device=device-retired");
+    await act(async () => { render(h(DevicesView, { ...props }), host); });
+    expect(apiMocks.pairDevice).toHaveBeenCalledTimes(1);
+    const done = [...host.querySelectorAll("button")].find((b) => b.textContent?.trim() === "Done") as HTMLButtonElement;
+    await act(async () => done.click());
+    expect(host.textContent).not.toContain("FICTION-2486");
+    expect(apiMocks.pairDevice).toHaveBeenCalledTimes(1);
+  });
+
+  test("forget link opens the selected device's confirmation without deleting it", async () => {
+    apiMocks.listDevices.mockResolvedValue({ items: [
+      { id: "device-retired", name: "Retired notebook", kind: "collector", pairedAt: 1,
+        lastSeenAt: 2, revokedAt: 3, online: false, capabilities: {} },
+    ] });
+    apiMocks.forgetDevice.mockReset();
+    await act(async () => { render(h(DevicesView, { focusDeviceId: "device-retired", deviceActionRequest: "forget" }), host); });
+    await vi.waitFor(() => expect(host.querySelector(".confirm-modal")?.textContent).toContain('Forget device "Retired notebook"?'));
+    expect(apiMocks.forgetDevice).not.toHaveBeenCalled();
+    expect(host.querySelector("#device-device-retired")?.className).toContain("expanded");
+  });
+
+  test.each([
+    ["missing", []],
+    ["device-online", [{ id: "device-online", name: "Online notebook", kind: "collector", online: true, capabilities: {} }]],
+  ])("repair link refuses unavailable target %s", async (id, items) => {
+    apiMocks.listDevices.mockResolvedValue({ items });
+    apiMocks.pairDevice.mockReset();
+    await act(async () => { render(h(DevicesView, { focusDeviceId: id, deviceActionRequest: "repair" }), host); });
+    await vi.waitFor(() => expect(host.textContent).toContain(id === "missing" ? "no longer available" : "cannot be repaired"));
+    expect(apiMocks.pairDevice).not.toHaveBeenCalled();
   });
 
   async function renderHealth(health: Record<string, unknown>, onRun = vi.fn()) {
@@ -169,14 +214,15 @@ describe("fleet health action", () => {
     const parsed = parseHTML("<html><body><main id='root'></main></body></html>");
     Object.assign(globalThis, { document: parsed.document, window: parsed.window });
     host = parsed.document.querySelector("#root") as unknown as HTMLElement;
-    apiMocks.listDevices.mockResolvedValue({ items: [] });
-    apiMocks.getFleetDoctor.mockResolvedValue({ devices: [] });
+    apiMocks.listDevices.mockReset().mockResolvedValue({ items: [] });
+    apiMocks.getFleetDoctor.mockReset().mockResolvedValue({ devices: [] });
     apiMocks.requestFleetDoctor.mockReset();
     apiMocks.requestFleetDoctor.mockResolvedValue({ devices: [] });
   });
 
   afterEach(() => {
     render(null, host);
+    vi.useRealTimers();
     if (originalDocument === undefined) delete (globalThis as { document?: unknown }).document;
     else globalThis.document = originalDocument;
     if (originalWindow === undefined) delete (globalThis as { window?: unknown }).window;
@@ -214,21 +260,21 @@ describe("fleet health action", () => {
       }));
       const confirm = await openForgetDialog();
       await act(async () => confirm.click());
-      await vi.waitFor(() => expect(host.querySelector('[role="alert"]')?.textContent).toContain("still hosts sources"));
-      expect(host.querySelector('[role="alert"]')?.textContent).toContain("Move or remove them from Sources");
+      await vi.waitFor(() => expect(host.querySelector('[role="alert"]')?.textContent).toContain("sources changed"));
+      expect(host.querySelector('[role="alert"]')?.textContent).toContain("Review them again");
       expect(host.querySelector('[role="alert"]')?.textContent).not.toContain("private-account");
       expect(host.querySelector(".confirm-modal")).not.toBeNull();
       const refreshCount = apiMocks.listDevices.mock.calls.length;
       await act(async () => { await vi.advanceTimersByTimeAsync(3000); });
       expect(apiMocks.listDevices.mock.calls.length).toBeGreaterThan(refreshCount);
-      await vi.waitFor(() => expect(host.querySelector('[role="alert"]')?.textContent).toContain("still hosts sources"));
+      await vi.waitFor(() => expect(host.querySelector('[role="alert"]')?.textContent).toContain("sources changed"));
       apiMocks.forgetDevice.mockResolvedValueOnce(true);
       apiMocks.listDevices.mockResolvedValue({ items: [] });
       await act(async () => confirm.click());
       expect(apiMocks.forgetDevice).toHaveBeenCalledTimes(2);
-      expect(apiMocks.forgetDevice).toHaveBeenLastCalledWith("device-retired");
+      expect(apiMocks.forgetDevice).toHaveBeenLastCalledWith("device-retired", { data: "keep", impactFingerprint: "fictional-impact" });
       await vi.waitFor(() => expect(host.querySelector(".confirm-modal")).toBeNull());
-      expect(host.querySelector(".devices-card")).toBeNull();
+      await vi.waitFor(() => expect(host.querySelector(".devices-card")).toBeNull());
     } finally {
       vi.useRealTimers();
     }
@@ -254,7 +300,7 @@ describe("fleet health action", () => {
     apiMocks.listDevices.mockResolvedValue({ items: [] });
     await act(async () => resolveForget(true));
     await vi.waitFor(() => expect(host.querySelector(".confirm-modal")).toBeNull());
-    expect(host.querySelector(".devices-card")).toBeNull();
+    await vi.waitFor(() => expect(host.querySelector(".devices-card")).toBeNull());
   });
 
   test("the global action requests all devices by omitting ids", async () => {
@@ -448,7 +494,8 @@ describe("fleet health action", () => {
     expect(host.textContent).toContain("Collector request failed");
   });
 
-  test("an older status poll cannot regress a newer completed report", async () => {
+  test("a timed-out older status poll cannot regress a newer completed report", async () => {
+    vi.useFakeTimers();
     apiMocks.listDevices.mockResolvedValue({
       items: [
         {
@@ -468,6 +515,7 @@ describe("fleet health action", () => {
     await act(async () => {
       render(h(DevicesView, {}), host);
     });
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
     await vi.waitFor(() => expect(host.querySelector(".devices-card-toggle")).not.toBeNull());
     await act(async () => {
       (host.querySelector(".devices-card-toggle") as HTMLButtonElement).click();
@@ -494,17 +542,18 @@ describe("fleet health action", () => {
       });
 
     await act(async () => document.dispatchEvent(new window.Event("visibilitychange")));
-    await act(async () => document.dispatchEvent(new window.Event("visibilitychange")));
+    await act(async () => { await vi.advanceTimersByTimeAsync(12_000); });
     await vi.waitFor(() => expect(host.textContent).toContain("Completed just now"));
 
     await act(async () => {
       resolveOlder({
         devices: [{ deviceId: "device_sequence", state: "pending", online: true }],
       });
-      await new Promise((resolve) => setTimeout(resolve, 0));
+      await vi.advanceTimersByTimeAsync(0);
     });
     expect(host.textContent).toContain("Completed just now");
     expect(host.textContent).not.toContain("waiting for the collector to begin");
+    vi.useRealTimers();
   });
 });
 
@@ -2647,6 +2696,21 @@ describe("devices view access level save", () => {
     expect(host.textContent).toContain("Studio voice");
   });
 
+  test("a save finishing after navigation starts no new roster or access reads", async () => {
+    let finish: (value: unknown) => void = () => {};
+    apiMocks.setDeviceAccessLevel.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    await openCard();
+    await pickInView("level-voice");
+    expect(apiMocks.setDeviceAccessLevel).toHaveBeenCalledTimes(1);
+    await act(async () => { render(h("p", null, "Another page"), host); });
+    const devicesBefore = apiMocks.listDevices.mock.calls.length;
+    const overviewsBefore = apiMocks.getAccessOverview.mock.calls.length;
+    await act(async () => { finish({ deviceId: "device-voice", level: null }); });
+    expect(apiMocks.listDevices).toHaveBeenCalledTimes(devicesBefore);
+    expect(apiMocks.getAccessOverview).toHaveBeenCalledTimes(overviewsBefore);
+    expect(host.textContent).toBe("Another page");
+  });
+
   test("picking a level saves it and refreshes both the devices and the levels", async () => {
     await act(async () => {
       render(h(DevicesView, {}), host);
@@ -2669,5 +2733,80 @@ describe("devices view access level save", () => {
     expect(apiMocks.setDeviceAccessLevel).toHaveBeenCalledWith("device-voice", "level-voice", 4);
     expect(apiMocks.listDevices.mock.calls.length).toBeGreaterThan(devicesBefore);
     expect(apiMocks.getAccessOverview.mock.calls.length).toBeGreaterThan(overviewsBefore);
+  });
+});
+
+describe("device roster read lifecycle", () => {
+  let host: HTMLElement;
+  beforeEach(() => {
+    vi.useFakeTimers();
+    const { document, window } = parseHTML("<html><body><main></main></body></html>");
+    vi.stubGlobal("document", document);
+    vi.stubGlobal("window", window);
+    host = document.querySelector("main") as unknown as HTMLElement;
+    apiMocks.listDevices.mockReset().mockResolvedValue({ items: [] });
+    apiMocks.listTokens.mockReset().mockResolvedValue({ items: [] });
+    apiMocks.getFleetDoctor.mockReset().mockResolvedValue({ devices: [] });
+  });
+  afterEach(() => {
+    render(null, host);
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  test("a stalled read expires, cancels sibling reads and allows the next poll", async () => {
+    let signal: AbortSignal | undefined;
+    apiMocks.listDevices.mockImplementationOnce((...args: unknown[]) => {
+      signal = args[0] as AbortSignal;
+      return new Promise((_resolve, reject) => signal!.addEventListener("abort", () => reject(new Error("aborted"))));
+    });
+    await act(async () => { render(h(DevicesView, {}), host); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(9000); });
+    expect(apiMocks.listDevices).toHaveBeenCalledTimes(1);
+    expect(host.querySelector(".devices-empty")?.textContent).toContain("Loading");
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+    expect(signal?.aborted).toBe(true);
+    expect(apiMocks.listTokens.mock.calls[0]).toEqual([undefined, signal]);
+    expect(apiMocks.getFleetDoctor.mock.calls[0]).toEqual([signal]);
+    expect(host.textContent).toContain("The gateway didn't answer in time");
+    expect(host.querySelector(".devices-empty")?.textContent).not.toContain("Loading");
+    await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
+    expect(apiMocks.listDevices).toHaveBeenCalledTimes(2);
+    expect(host.textContent).not.toContain("The gateway didn't answer in time");
+  });
+
+  test("a roster failure cancels sibling reads instead of leaving connections open", async () => {
+    let sibling: AbortSignal | undefined;
+    apiMocks.listDevices.mockRejectedValueOnce(new Error("Connection closed"));
+    apiMocks.listTokens.mockImplementationOnce((...args: unknown[]) => {
+      sibling = args[1] as AbortSignal;
+      return new Promise((_resolve, reject) => sibling!.addEventListener("abort", () => reject(new Error("aborted"))));
+    });
+    await act(async () => { render(h(DevicesView, {}), host); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    expect(sibling?.aborted).toBe(true);
+    expect(host.textContent).toContain("Connection closed");
+    await act(async () => {
+      (host.querySelector('[role="alert"] button') as HTMLButtonElement).click();
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(host.textContent).not.toContain("Connection closed");
+    expect(apiMocks.listDevices).toHaveBeenCalledTimes(2);
+  });
+
+  test("navigation cancels a pending roster and ignores a late reply", async () => {
+    let signal: AbortSignal | undefined;
+    let finish: (value: { items: never[] }) => void = () => {};
+    apiMocks.listDevices.mockImplementationOnce((...args: unknown[]) => {
+      signal = args[0] as AbortSignal;
+      return new Promise((resolve) => { finish = resolve; });
+    });
+    await act(async () => { render(h(DevicesView, {}), host); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    await act(async () => { render(h("p", null, "Another page"), host); });
+    expect(signal?.aborted).toBe(true);
+    await act(async () => { finish({ items: [] }); });
+    expect(host.textContent).toBe("Another page");
   });
 });

@@ -57,6 +57,8 @@ process.stdin.on("data", (chunk) => {
       id: request.id,
       text: "Invented physical worker transcript.",
       language: "en",
+      // The real worker sends its timed segments with every result.
+      segments: [{ startMs: 0, endMs: 1200, text: "Invented physical worker transcript." }],
     });
   }
 });

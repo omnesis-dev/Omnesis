@@ -27,10 +27,11 @@ export function tailscalePollInterval(state) {
 
 const TIMEOUT_MS = 10_000;
 /**
- * A change that may ask for the owner's passkey first (turning the device on)
- * waits for the person, not only for the network.
+ * A change that may ask for the owner's passkey first (turning the device on,
+ * signing it in) waits for the person, not only for the network. The other
+ * changes the page makes never ask: see routes/tailscale.ts.
  */
-const STEP_UP_OPERATIONS = new Set(["enable"]);
+const STEP_UP_OPERATIONS = new Set(["enable", "sign-in"]);
 const STEP_UP_TIMEOUT_MS = 130_000;
 
 function messageOf(error, timedOut) {

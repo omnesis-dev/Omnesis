@@ -1,6 +1,6 @@
 {
   "name": "@omnesis/provider-apple",
-  "version": "0.7.8",
+  "version": "0.8.1",
   "license": "AGPL-3.0-or-later",
   "type": "module",
   "main": "src/index.ts",
@@ -9,9 +9,9 @@
     "@omnesis/core": "*",
     "@omnesis/source-sdk": "*",
     "@omnesis/types": "*",
-    "better-sqlite3": "^13.1.1",
-    "better-sqlite3-multiple-ciphers": "^13.0.3",
-    "libphonenumber-js": "^1.13.16",
+    "better-sqlite3": "^13.2.0",
+    "better-sqlite3-multiple-ciphers": "13.0.3",
+    "libphonenumber-js": "^1.13.17",
     "zod": "^4.6.7"
   },
   "files": [

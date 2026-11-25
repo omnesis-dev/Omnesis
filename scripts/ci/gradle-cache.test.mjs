@@ -9,10 +9,19 @@ import { parse } from "yaml";
 const root = join(import.meta.dirname, "..", "..");
 const dir = join(root, ".github", "workflows");
 
-/** A Gradle cache step: `actions/cache` restores and saves, `actions/cache/restore` only restores. */
-const isGradleCache = (step) =>
-  /^actions\/cache(\/restore)?@/u.test(step.uses ?? "") &&
+/**
+ * A Gradle cache step: `actions/cache` restores and saves, `actions/cache/restore`
+ * only restores and `actions/cache/save` only saves.
+ */
+const isGradleCacheStep = (step) =>
+  /^actions\/cache(\/restore|\/save)?@/u.test(step.uses ?? "") &&
   /~\/\.gradle\/caches/u.test(step.with?.path ?? "");
+/** The step that restores a Gradle cache entry. */
+const isGradleCache = (step) =>
+  isGradleCacheStep(step) && !step.uses.startsWith("actions/cache/save@");
+/** The step that saves a Gradle cache entry. */
+const isGradleSave = (step) =>
+  isGradleCacheStep(step) && !step.uses.startsWith("actions/cache/restore@");
 const runsGradle = (step) => /\bgradlew\b/u.test(step.run ?? "");
 
 /**
@@ -25,7 +34,7 @@ const gradleJobs = readdirSync(dir)
   .flatMap((file) =>
     Object.entries(parse(readFileSync(join(dir, file), "utf8")).jobs ?? {})
       .filter(([, job]) =>
-        (job.steps ?? []).some((step) => runsGradle(step) || isGradleCache(step)),
+        (job.steps ?? []).some((step) => runsGradle(step) || isGradleCacheStep(step)),
       )
       .map(([name, job]) => ({ id: `${file} ${name}`, runsOn: job["runs-on"], steps: job.steps })),
   );
@@ -64,7 +73,7 @@ describe("each Gradle cache entry has one job that saves it", () => {
     if (!cache) continue; // reported by the test above
     const entry = `${JSON.stringify(runsOn)} ${cache.with.key}`;
     if (!savers.has(entry)) savers.set(entry, []);
-    if (cache.uses.startsWith("actions/cache@")) savers.get(entry).push(id);
+    if (steps.some(isGradleSave)) savers.get(entry).push(id);
   }
   for (const [entry, ids] of savers) {
     test(entry, () => {
@@ -118,4 +127,44 @@ describe("build-and-test resolves offline from an exact Gradle cache entry", () 
       }
     }
   });
+});
+
+// The repository's Actions caches share a 10 GB limit, and the least recently
+// used entry is evicted first. Gradle entries are among the largest, so one a
+// pull request saved could push out main's, and the next run would find none
+// and download every dependency again (#1262). Only main saves; every other
+// ref restores main's entry. What it saves is trimmed to what avoids downloads.
+describe("only main saves a Gradle cache entry, trimmed to what avoids downloads", () => {
+  const onMain = "github.ref == 'refs/heads/main'";
+
+  for (const { id, steps } of gradleJobs.filter((job) => job.steps.some(isGradleSave))) {
+    test(id, () => {
+      const restore = steps.find(isGradleCache);
+      expect(restore.uses, "actions/cache saves on every ref").toMatch(
+        /^actions\/cache\/restore@/u,
+      );
+      expect(restore.id).toBeTruthy();
+
+      const saves = steps.filter(isGradleSave);
+      expect(saves).toHaveLength(1);
+      const [save] = saves;
+      const condition = `\${{ ${onMain} && steps.${restore.id}.outputs.cache-hit != 'true' }}`;
+      expect(save.if).toBe(condition);
+      expect(save.with.path).toBe(restore.with.path);
+      expect(save.with.key).toBe(`\${{ steps.${restore.id}.outputs.cache-primary-key }}`);
+      // Last but for the production-network check, which every test job ends with.
+      const verify = steps.findIndex((step) =>
+        /production-network\.sh verify/u.test(step.run ?? ""),
+      );
+      expect(verify).toBe(steps.length - 1);
+      expect(steps.indexOf(save)).toBe(verify - 1);
+
+      const trim = steps.find((step) => /scripts\/ci\/gradle-cache-trim\.sh/u.test(step.run ?? ""));
+      expect(trim?.if).toBe(condition);
+      expect(steps.indexOf(trim)).toBe(steps.indexOf(save) - 1);
+      for (const step of steps.filter(runsGradle)) {
+        expect(steps.indexOf(step)).toBeLessThan(steps.indexOf(trim));
+      }
+    });
+  }
 });

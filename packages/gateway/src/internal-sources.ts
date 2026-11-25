@@ -27,10 +27,20 @@
 
 import { HttpError } from "./http/errors.js";
 import { OMNESIS_NOTES_SOURCE_ID } from "./sources/omnesis-notes/index.js";
+import { OMNESIS_RECORDINGS_SOURCE_ID } from "./sources/omnesis-recordings/index.js";
 import type { SourceId } from "@omnesis/types";
+import type { LabFeatureId } from "./lab/catalog.js";
 
 /** Every gateway-internal source id, in list order. */
-export const GATEWAY_INTERNAL_SOURCE_IDS: readonly string[] = [OMNESIS_NOTES_SOURCE_ID];
+export const GATEWAY_INTERNAL_SOURCE_IDS: readonly string[] = [
+  OMNESIS_NOTES_SOURCE_ID,
+  OMNESIS_RECORDINGS_SOURCE_ID,
+];
+
+/** Internal sources listed only while their Omnesis Lab feature is on. */
+const LAB_INTERNAL_SOURCES: Readonly<Record<string, LabFeatureId>> = {
+  [OMNESIS_RECORDINGS_SOURCE_ID]: "recordings",
+};
 
 export function isGatewayInternalSource(id: string): boolean {
   return GATEWAY_INTERNAL_SOURCE_IDS.includes(id);
@@ -59,10 +69,14 @@ export function assertMutableSource(id: SourceId): void {
  * allowlist so a second internal source adds its noun + surface here
  * instead of hardcoding display strings in the shared documents route.
  */
-const INTERNAL_DOCUMENT_WRITE_COPY: Record<string, { noun: string; surface: string }> = {
+const INTERNAL_DOCUMENT_WRITE_COPY: Record<string, { noun: string; instead: string }> = {
   [OMNESIS_NOTES_SOURCE_ID]: {
     noun: "generated Notes search document",
-    surface: "Tell Omnesis",
+    instead: "Edit or delete the original note on Tell Omnesis instead.",
+  },
+  [OMNESIS_RECORDINGS_SOURCE_ID]: {
+    noun: "generated recorded-conversation document",
+    instead: "Delete the recording itself (DELETE /recordings/:id) instead.",
   },
 };
 
@@ -79,13 +93,12 @@ export function assertExternalDocumentWrite(sourceId: string): void {
   if (!isGatewayInternalSource(sourceId)) return;
   const copy = INTERNAL_DOCUMENT_WRITE_COPY[sourceId] ?? {
     noun: "generated internal search document",
-    surface: "its managing surface",
+    instead: "Edit or delete the original on its managing surface instead.",
   };
   throw new HttpError(
     409,
     "MANAGE_ORIGINAL_NOTES",
-    `This is a ${copy.noun} and cannot be written here. ` +
-      `Edit or delete the original note on ${copy.surface} instead.`,
+    `This is a ${copy.noun} and cannot be written here. ${copy.instead}`,
   );
 }
 
@@ -95,12 +108,19 @@ export interface InternalSourceEntry {
 }
 
 /**
- * The internal sources to advertise. Unconditional: the seed runs at every
- * boot, and the row is how operators discover the capture surface even
- * before the first note lands. Counts, activity and display identity ride
- * on the existing `/status`, `/index/stats` and source-meta feeds keyed by
- * the same id.
+ * The internal sources to advertise. Notes are unconditional: the seed runs
+ * at every boot, and the row is how operators discover the capture surface
+ * even before the first note lands. One that belongs to an Omnesis Lab
+ * feature is listed only while that feature is on, so an operator who has
+ * not opted in sees nothing of it. Counts, activity and display identity ride
+ * on the existing `/status`, `/index/stats` and source-meta feeds keyed by the
+ * same id.
  */
-export function listInternalSources(): InternalSourceEntry[] {
-  return GATEWAY_INTERNAL_SOURCE_IDS.map((id) => ({ id }));
+export function listInternalSources(
+  labFeatureOn: (id: LabFeatureId) => boolean,
+): InternalSourceEntry[] {
+  return GATEWAY_INTERNAL_SOURCE_IDS.filter((id) => {
+    const feature = LAB_INTERNAL_SOURCES[id];
+    return feature === undefined || labFeatureOn(feature);
+  }).map((id) => ({ id }));
 }

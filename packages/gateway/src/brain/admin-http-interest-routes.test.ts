@@ -11,10 +11,13 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { createLogger } from "@omnesis/core";
 import { ProviderId, SCOPE_ADMIN, SCOPE_READ, SourceId, type Scope } from "@omnesis/types";
-import { createDatabase, upsertDocuments } from "../db.js";
+import { upsertDocuments } from "../db.js";
+import { createFreshTestDatabase } from "../testing/fresh-database.js";
 import { createServer } from "../server.js";
 import { createToken } from "../data/repositories/TokenRepository.js";
 import { createDevice } from "../data/repositories/DeviceRepository.js";
@@ -30,8 +33,6 @@ import { createOpenLoop } from "./storage/open-loops.js";
 import { applyTaskCommand } from "./storage/tasks.js";
 import type { BriefsFeatureStatus } from "./feature-gate.js";
 import type Database from "better-sqlite3";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 const NOW = Date.parse("2026-07-02T10:00:00.000Z");
 const DAY = 86_400_000;
@@ -95,7 +96,7 @@ function signal(
 
 beforeEach(() => {
   dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
-  db = createDatabase(dbPath);
+  db = createFreshTestDatabase(dbPath);
   ADMIN = mint([SCOPE_ADMIN, SCOPE_READ]);
   READ = mint([SCOPE_READ]);
   status = { ...ACTIVE };

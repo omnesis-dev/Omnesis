@@ -25,7 +25,8 @@ import {
 } from "@omnesis/core";
 import { setLabFlag } from "./lab/store.js";
 
-import { computeSnapshotAbsencePlan, createDatabase, getSyncState, getWipeEpoch } from "./db.js";
+import { computeSnapshotAbsencePlan, getSyncState, getWipeEpoch } from "./db.js";
+import { createFreshTestDatabase } from "./testing/fresh-database.js";
 import { LATEST_SCHEMA_VERSION } from "./data/migrations.js";
 import { fixedPublicAddress } from "./public-address.js";
 import { createServer as createGatewayServer } from "./server.js";
@@ -161,7 +162,7 @@ function makeDocPayload(externalId = "msg-1", providerId = "google", sourceId = 
 beforeEach(() => {
   testDir = mkdtempSync(join(tmpdir(), "omnesis-server-test-"));
   dbPath = join(testDir, `omnesis-server-test-${randomUUID()}.db`);
-  db = createDatabase(dbPath);
+  db = createFreshTestDatabase(dbPath);
   // Full-scope token used by the shared `req` helper.
   TEST_TOKEN = mintToken([SCOPE_ADMIN, SCOPE_READ, SCOPE_WRITE_ALL]).token;
   DECLARATION_TOKEN = null;
@@ -8254,6 +8255,17 @@ describe("GET /documents/:id", () => {
     const data = await res.json();
     expect(data.stream_id).toBe(device.id);
     expect(data.device_name).toBe("Studio-Mini");
+    db.prepare(
+      "INSERT INTO forgotten_devices (device_id, name, kind, forgotten_at) VALUES (?, ?, ?, 1)",
+    ).run(device.id, device.name, device.kind);
+    db.prepare("UPDATE devices SET name = ? WHERE id = ?").run(`forgotten:${device.id}`, device.id);
+    for (const id of [row.id, row.id.slice(0, 8)]) {
+      const archived = await req(`/documents/${id}`);
+      expect(archived.status).toBe(200);
+      const detail = await archived.json();
+      expect(detail.device_name).toBe("Studio-Mini");
+      expect(detail.stream_id).toBe(device.id);
+    }
   });
 
   test("returns 400 for ambiguous ID prefix", async () => {

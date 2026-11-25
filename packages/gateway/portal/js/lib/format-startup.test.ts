@@ -20,7 +20,45 @@ const SYNCED_ICON = "data:image/png;base64,c3luY2Vk";
 
 describe("startup source metadata", () => {
   beforeEach(() => setSourceMeta({}));
-  afterEach(() => vi.unstubAllGlobals());
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it("shell metadata reads have a deadline and preserve the cache on timeout", async () => {
+    vi.useFakeTimers();
+    setSourceMeta({ "example-source": { label: "Current label" } });
+    const signals: AbortSignal[] = [];
+    vi.stubGlobal("fetch", (_url: string, init: RequestInit) => {
+      const signal = init.signal as AbortSignal;
+      signals.push(signal);
+      return new Promise((_resolve, reject) => {
+        signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+      });
+    });
+    const read = loadSourceMeta();
+    await vi.advanceTimersByTimeAsync(10_000);
+    await read;
+    expect(signals).toHaveLength(2);
+    expect(signals.every((signal) => signal.aborted)).toBe(true);
+    expect(sourceLabel("example-source")).toBe("Current label");
+  });
+
+  it("an aborted metadata refresh never publishes a late response over the current cache", async () => {
+    setSourceMeta({ "example-source": { label: "Current label" } });
+    const controller = new AbortController();
+    const response = deferredResponse();
+    const fetch = vi.fn((_url: string, init: RequestInit) => {
+      expect(init.signal).toBe(controller.signal);
+      return response.promise;
+    });
+    vi.stubGlobal("fetch", fetch);
+    const read = loadSourceMeta(controller.signal);
+    controller.abort();
+    response.resolve(Response.json({}));
+    await read;
+    expect(sourceLabel("example-source")).toBe("Current label");
+  });
 
   it.each(["synced", "descriptor"])(
     "requests both maps before either completes and merges independently of %s finishing first",
@@ -34,8 +72,8 @@ describe("startup source metadata", () => {
       setSourceMeta({ "example-source": { label: "Previous label" } });
       const loading = loadSourceMeta();
       expect(fetch.mock.calls).toEqual([
-        ["/portal/source-meta.json"],
-        ["/admin/source-descriptors"],
+        ["/portal/source-meta.json", { signal: expect.any(AbortSignal) }],
+        ["/admin/source-descriptors", { signal: expect.any(AbortSignal) }],
       ]);
       const syncResponse = Response.json({
         "example-source:account": { icon: SYNCED_ICON, label: "Account label" },

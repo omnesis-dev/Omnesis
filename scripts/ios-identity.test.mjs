@@ -1218,3 +1218,85 @@ describe.skipIf(process.platform === "win32")("iOS live gateway Lab fixture", ()
     },
   );
 });
+
+const processedIdentityBase = "com.example.myomnesis";
+const processedIdentityFixture = `
+import plistlib, sys
+from pathlib import Path
+products, source, base, change = sys.argv[1:]
+with Path(source).open("rb") as stream:
+    identifiers = plistlib.load(stream)["BGTaskSchedulerPermittedIdentifiers"]
+identifiers = [value.replace("$(PRODUCT_BUNDLE_IDENTIFIER)", base) for value in identifiers]
+if change == "missing":
+    identifiers.pop()
+elif change == "extra":
+    identifiers.append(f"{base}.unexpected")
+
+def write(relative, info):
+    bundle = Path(products) / "Omnesis.app" / relative
+    bundle.mkdir(parents=True, exist_ok=True)
+    with (bundle / "Info.plist").open("wb") as stream:
+        plistlib.dump(info, stream)
+
+group = f"EXAMPLETEAM.{base}.notifications"
+write("", {
+    "CFBundleIdentifier": base,
+    "BGTaskSchedulerPermittedIdentifiers": identifiers,
+    "OmnesisKeychainAccessGroup": group,
+    "NSLocalNetworkUsageDescription": "Connect to a fictional gateway.",
+    "OmnesisGoogleClientID": "fixture.apps.googleusercontent.com",
+    "CFBundleURLTypes": [{"CFBundleURLSchemes": ["omnesis", "com.googleusercontent.apps.fixture"]}],
+    "OmnesisCloudRelayURL": "https://relay.example.com",
+})
+for name, suffix in [("OmnesisNotificationService", "notification-service"), ("OmnesisWidgets", "widgets")]:
+    write(f"PlugIns/{name}.appex", {
+        "CFBundleIdentifier": f"{base}.{suffix}",
+        "OmnesisKeychainAccessGroup": group,
+        "NSLocalNetworkUsageDescription": "Connect to a fictional gateway.",
+    })
+write("Watch/OmnesisWatch.app", {
+    "CFBundleIdentifier": f"{base}.watchkitapp", "WKCompanionAppBundleIdentifier": base,
+})
+write("Watch/OmnesisWatch.app/PlugIns/OmnesisWatchWidgets.appex", {
+    "CFBundleIdentifier": f"{base}.watchkitapp.widgets",
+})
+`;
+
+describe.skipIf(process.platform === "win32")("processed iOS background-task identities", () => {
+  for (const source of ["Info.plist", "Info-Demo.plist"]) {
+    it.each(["unchanged", "missing", "extra"])(`${source}: %s task identifiers`, (change) => {
+      const products = mkdtempSync(join(tmpdir(), "omnesis-built-identities-"));
+      try {
+        const setup = spawnSync(
+          "python3",
+          [
+            "-c",
+            processedIdentityFixture,
+            products,
+            join(root, "ios", source),
+            processedIdentityBase,
+            change,
+          ],
+          { encoding: "utf8", timeout: 5000 },
+        );
+        expect(setup.status, setup.stderr).toBe(0);
+        const checked = spawnSync(
+          "python3",
+          [join(root, "ios/scripts/verify-built-identities.py"), products, processedIdentityBase],
+          { encoding: "utf8", timeout: 5000 },
+        );
+        if (change === "unchanged") {
+          expect(checked.status, checked.stderr).toBe(0);
+          expect(checked.stdout).toContain(
+            `Verified processed app, extension, widget and Watch identities for ${processedIdentityBase}`,
+          );
+        } else {
+          expect(checked.status).toBe(1);
+          expect(checked.stderr).toContain("app background task IDs: expected");
+        }
+      } finally {
+        rmSync(products, { recursive: true, force: true });
+      }
+    });
+  }
+});

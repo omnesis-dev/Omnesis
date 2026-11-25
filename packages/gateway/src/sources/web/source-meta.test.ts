@@ -7,7 +7,7 @@ import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import type Database from "better-sqlite3";
 type Db = Database.Database;
 
-import { createDatabase } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import { directWriteGate } from "../../write-gate.js";
 import { WEB_SOURCE_ID } from "../../web-dataset.js";
 import { seedWebSourceMeta } from "./source-meta.js";
@@ -28,7 +28,7 @@ describe("seedWebSourceMeta", () => {
   let db: Db;
   beforeEach(() => {
     dbPath = testDbPath();
-    db = createDatabase(dbPath);
+    db = createFreshTestDatabase(dbPath);
   });
   afterEach(() => {
     db.close();

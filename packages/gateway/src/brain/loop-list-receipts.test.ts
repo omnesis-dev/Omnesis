@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { createDatabase } from "../db.js";
+import { createFreshTestDatabase } from "../testing/fresh-database.js";
 import { createGatewayLoopReadPort } from "./interactive-loop-port.js";
 import { createOpenLoop, updateOpenLoop } from "./storage/open-loops.js";
 import { convertKnowledgeOwner } from "./knowledge/owner-adapters.js";
@@ -18,7 +18,7 @@ const now = Date.parse("2026-02-03T12:00:00Z");
 const identity = { sessionId: "session", messageId: "turn" };
 beforeEach(() => {
   directory = mkdtempSync(join(tmpdir(), "loop-observation-"));
-  db = createDatabase(join(directory, "test.db"));
+  db = createFreshTestDatabase(join(directory, "test.db"));
 });
 afterEach(() => {
   db.close();

@@ -3,6 +3,8 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID, createHash } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { z } from "zod";
 import { HttpChatBackend } from "@omnesis/agent";
@@ -10,7 +12,7 @@ import { createLogger, type AgentEvent, type ToolResult } from "@omnesis/core";
 import { setLabFlag } from "../../lab/store.js";
 import { createDevice } from "../../data/repositories/DeviceRepository.js";
 import { enqueueNotification } from "../../push/queue.js";
-import { createDatabase } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import { directWriteGate } from "../../write-gate.js";
 import {
   insertNoteEntry,
@@ -61,8 +63,6 @@ import {
 } from "./runner.js";
 import type { ChatBackend, ToolHandle, TurnInput } from "@omnesis/agent";
 import type Database from "better-sqlite3";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 const T0 = Date.parse("2026-03-10T08:00:00Z");
 const log = createLogger("test").child("note-agent");
@@ -74,7 +74,7 @@ beforeEach(() => {
   vi.stubEnv("OMNESIS_SYNTHETIC", "0");
   vi.stubEnv("OMNESIS_EXPERIMENTAL", "1");
   path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
-  db = createDatabase(path);
+  db = createFreshTestDatabase(path);
   setLabFlag(db, "brain", false);
   setLabFlag(db, "tasks", true);
   setLabFlag(db, "watches", true);

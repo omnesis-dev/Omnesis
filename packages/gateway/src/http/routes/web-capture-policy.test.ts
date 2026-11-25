@@ -23,7 +23,7 @@ import {
 } from "@omnesis/provider-web/capture-policy";
 import { SCOPE_ADMIN, SCOPE_READ, SCOPE_WRITE_ALL, SourceType, writeScope } from "@omnesis/types";
 import { SourceId, type Scope } from "@omnesis/types";
-import { createDatabase } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import { createServer } from "../../server.js";
 import { AnalyticsDb } from "../../analytics-db.js";
 import { resetOwnedWebDomains, setOwnedWebDomains } from "../../owned-web-domains.js";
@@ -110,7 +110,7 @@ beforeEach(async () => {
     fixtureTmpdir(),
     `omnesis-capture-policy-test-${randomUUID()}.duckdb`,
   );
-  db = createDatabase(dbPath);
+  db = createFreshTestDatabase(dbPath);
   analyticsDb = new AnalyticsDb(analyticsPath);
   await analyticsDb.open();
   app = createServer(db, undefined, { analyticsDb });

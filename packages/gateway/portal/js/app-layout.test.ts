@@ -139,6 +139,7 @@ describe("portal Settings actions", () => {
     expect(host.querySelector(".app-sidebar")?.textContent).toContain("Audit");
     expect(host.querySelector(".app-sidebar")?.textContent).toMatch(/tell omnesis/i);
     expect(host.querySelector(".app-sidebar")?.textContent).not.toContain("Watches");
+    expect(host.querySelector(".app-sidebar")?.textContent).not.toContain("Recordings");
   });
 
   test("marks Audit while answers wait for review, with the count in words", () => {
@@ -195,6 +196,27 @@ describe("decisions waiting, marked on the nav item where each is decided", () =
     await vi.waitFor(() => expect(host.querySelector(".app-layout")).not.toBeNull());
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
   }
+
+  test("in experimental mode, Recordings stays hidden until its Lab opt-in is on", async () => {
+    getStatus.mockResolvedValue({
+      experimental: true, developer: false, labAvailable: true,
+      lab: { brain: false, tasks: false, watches: true, recordings: false },
+    } as never);
+    await mount();
+    // Watches, on in Lab, shows once the status has been read.
+    await vi.waitFor(() => expect(itemNamed("Watches")).toBeDefined());
+    expect(itemNamed("Recordings")).toBeUndefined();
+  });
+
+  test("Recordings appears once its Lab opt-in is on", async () => {
+    getStatus.mockResolvedValue({
+      experimental: true, developer: false, labAvailable: true,
+      lab: { brain: false, tasks: false, watches: false, recordings: true },
+    } as never);
+    await mount();
+    await vi.waitFor(() => expect(itemNamed("Recordings")?.getAttribute("href")).toBe("/portal/recordings"));
+    expect(itemNamed("Watches")).toBeUndefined();
+  });
 
   test("flags Settings and routes directly to Models until runtime health recovers", async () => {
     getStatus.mockResolvedValue({

@@ -89,6 +89,133 @@ fixture() { node "$E2E_DIR/fixture.mjs" "$@"; }
 probe() { node "$E2E_DIR/probe.mjs" "$@"; }
 mailbox() { node "$E2E_DIR/mailbox.mjs" "$@"; }
 
+# This machine's resolver configuration as the system reads it: `scutil --dns`
+# on macOS, /etc/resolv.conf elsewhere.
+resolver_config() {
+  if [ "$(uname -s)" = Darwin ]; then
+    scutil --dns 2>&1 || true
+  else
+    cat /etc/resolv.conf 2>&1 || true
+  fi
+}
+
+# The processes listening on port 53 on this machine. Lima forwards a DNS
+# port the VM listens on to the host's.
+port_53_listeners() {
+  sudo -n lsof -nP -iTCP:53 -sTCP:LISTEN -iUDP:53 2>/dev/null || lsof -nP -iTCP:53 -sTCP:LISTEN -iUDP:53 2>&1 || true
+}
+
+# Saved by colima-up.sh before Colima starts, so a later diagnosis can show
+# what changed in the host's resolver configuration since.
+RESOLVER_BEFORE_COLIMA="$E2E_WORK/resolver-before-colima"
+
+# What a lookup of $1 gets from each part of this machine's name resolution,
+# printed while it fails: the resolver configuration (and what changed in it
+# since Colima started), each configured nameserver and a public resolver asked
+# directly with dig, past the system's resolver daemon, and what listens on
+# port 53, and, with Colima running, its VM's resolver and lookup. A
+# nameserver that answers dig while the system lookup times out points at this
+# machine's resolver; one that does not, at the runner's network.
+name_resolution_diagnostics() {
+  local host="$1" server answer status
+  group "Name resolution while $host does not answer"
+  {
+    if [ -f "$RESOLVER_BEFORE_COLIMA" ]; then
+      if resolver_config | diff -u "$RESOLVER_BEFORE_COLIMA" - >"$E2E_WORK/resolver-diff"; then
+        echo "--- the resolver configuration is as it was before Colima started"
+      else
+        echo "--- the resolver configuration changed since Colima started"
+        cat "$E2E_WORK/resolver-diff"
+      fi
+    fi
+    echo "--- the resolver configuration"
+    resolver_config
+    echo "--- $host asked directly (dig, 3 s per server)"
+    if command -v dig >/dev/null 2>&1; then
+      for server in $(awk '$1 == "nameserver" { print $2 }' /etc/resolv.conf 2>/dev/null | sort -u) 1.1.1.1; do
+        status=0
+        answer="$(dig +time=3 +tries=1 +short "@$server" "$host" A 2>&1)" || status=$?
+        printf '@%s: dig exit %s: %s\n' "$server" "$status" "$(printf '%s' "$answer" | tr '\n' ' ')"
+      done
+    else
+      echo "dig is not installed"
+    fi
+    echo "--- listening on port 53"
+    port_53_listeners
+    if command -v colima >/dev/null 2>&1 && colima status >/dev/null 2>&1; then
+      echo "--- the resolver of Colima's VM, and its lookup of $host (30 s)"
+      perl -e 'alarm shift; exec @ARGV' 30 colima ssh -- sh -c "cat /etc/resolv.conf; getent hosts $host || echo 'getent: no answer'" || true
+    fi
+  } 2>&1 | redact
+  endgroup
+}
+
+# Seconds a step waits out a registry outage before it fails the lane: eight
+# times the installer's own ~70 s of registry retries, while a passing D2 run
+# takes 30 to 60 minutes of its 150-minute limit.
+REGISTRY_WAIT_SECONDS="${REGISTRY_WAIT_SECONDS:-600}"
+
+# outlast_outage <what> <host> <retryable ERE> <command...>: run the command;
+# while it fails with output matching <retryable>, the mark of <host> being
+# unreachable, run it again every 5 s. Any other failure ends the lane at
+# once. The first such failure prints the name-resolution diagnostics while
+# the outage lasts; one lasting REGISTRY_WAIT_SECONDS ends the lane with them
+# printed again. An outage is timed from the failure that began it, and an
+# attempt that ran for over 30 s before failing (a pull that downloaded
+# layers) begins a new one. The output of the last attempt stays in
+# $OUTAGE_ATTEMPT_LOG.
+OUTAGE_ATTEMPT_LOG="$E2E_WORK/outage-attempt.log"
+outlast_outage() {
+  local what="$1" host="$2" retryable="$3" began=0 attempt_start now detail
+  local out="$OUTAGE_ATTEMPT_LOG"
+  shift 3
+  while :; do
+    attempt_start="$(date +%s)"
+    if "$@" >"$out" 2>&1; then
+      if [ "$began" != 0 ]; then
+        log "$what succeeded, after $host was out for $(($(date +%s) - began))s"
+      else
+        log "$what succeeded"
+      fi
+      return 0
+    fi
+    now="$(date +%s)"
+    detail="$(redact <"$out" | tail -n 1)"
+    if ! grep -Eq -- "$retryable" "$out"; then
+      redact <"$out" | tail -n 40
+      die "$what failed (${detail:-no output})"
+    fi
+    if [ "$began" = 0 ] || [ $((now - attempt_start)) -gt 30 ]; then
+      began="$now"
+      log "$what failed (${detail:-no output}); waiting up to ${REGISTRY_WAIT_SECONDS}s for $host to answer"
+      name_resolution_diagnostics "$host"
+    elif [ $((now - began)) -ge "$REGISTRY_WAIT_SECONDS" ]; then
+      name_resolution_diagnostics "$host"
+      die "$what failed for $((now - began))s (${detail:-no output}); the name resolution printed above shows where it stopped"
+    else
+      log "$what still fails after $((now - began))s (${detail:-no output})"
+    fi
+    sleep 5
+  done
+}
+
+# await_registry <host>: before an installer step that reads the registry from
+# this machine, wait until <host> resolves and answers HTTPS here, asked the
+# way the installer's curl asks it. The installer gives a registry about 70 s,
+# the right budget on a user's machine; a runner's resolver can stay out for
+# longer.
+await_registry() {
+  outlast_outage "reaching $1" "$1" . curl -sS -o /dev/null --max-time 10 "https://$1/v2/"
+}
+
+# pull_image <host> <image reference>: pull into the Docker daemon, pulling
+# again while the daemon cannot look up a registry name (Docker's
+# "dial tcp: lookup <name> ..."), as when the resolver of Colima's VM times
+# out. Any other pull failure ends the lane.
+pull_image() {
+  outlast_outage "pulling $2" "$1" 'dial tcp: lookup ' docker pull --quiet "$2"
+}
+
 # The doctor checks that, when they do not pass, stand in for a section whose
 # gateway read failed.
 # A section read that way has no verdict of its own, so a snapshot holding one

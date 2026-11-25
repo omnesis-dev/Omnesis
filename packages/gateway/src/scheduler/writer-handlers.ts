@@ -28,13 +28,6 @@ import {
   type BindStorageRetentionPolicyInput,
 } from "../storage/retention-bindings.js";
 import {
-  startHistoryCleanupJob,
-  updateHistoryCleanupJob,
-  cancelHistoryCleanupJob,
-  type StartHistoryCleanupJob,
-  type UpdateHistoryCleanupJob,
-} from "../storage/history-cleanup-store.js";
-import {
   startStorageTrimJob,
   applyStorageTrimPage,
   failStorageTrimJob,
@@ -51,7 +44,6 @@ import {
   cancelNoteHandoff,
   type NoteHandoff,
 } from "../brain/note-agent/handoffs.js";
-import { finalizeSubscriptionCompletionEgress } from "../subscriptions/store-completion-egress.js";
 import { upsertConversationDocument } from "../sources/omnesis-chat/document-writer.js";
 import { clearMorningBriefMessageItems } from "../brain/storage/morning-brief-items.js";
 
@@ -109,6 +101,14 @@ function sliceDeadline(token: PreemptToken, sliceMs: number): () => boolean {
 const NEAR_DUP_APPLY_SLICE_MS = 100;
 
 import { type SourceSyncMeta, type SyncCursor } from "@omnesis/source-sdk";
+import {
+  startHistoryCleanupJob,
+  updateHistoryCleanupJob,
+  cancelHistoryCleanupJob,
+  type StartHistoryCleanupJob,
+  type UpdateHistoryCleanupJob,
+} from "../storage/history-cleanup-store.js";
+import { finalizeSubscriptionCompletionEgress } from "../subscriptions/store-completion-egress.js";
 import { recordLiveVoiceUsage, type LiveVoiceUsageSample } from "../realtime/live-voice-usage.js";
 import {
   applyBriefReaction,
@@ -387,7 +387,7 @@ import {
   revokeSyncAttempt,
   resetMemberCursor,
   resetSourceCursors,
-  reserveReauthReminder,
+  reserveActiveReauthReminder,
   releaseReauthReminder,
   type SourceStatsAggregation,
   type UpsertWithCursorArgs,
@@ -541,6 +541,30 @@ import {
   type NewPendingVoiceNote,
 } from "../voice-notes/storage.js";
 import {
+  insertRecordingSession,
+  insertRecordingChunk,
+  finishRecordingSession,
+  abandonRecordingSession,
+  rescheduleRecordingChunk,
+  settleRecordingChunk,
+  purgeRecordingAudio,
+  setRecordingTitle,
+  dismissRecordingSuggestion,
+  type RecordingChunkSettling,
+  markRecordingSessionProjected,
+  assignRecordingVoices,
+  setRecordingSpeaker,
+  type RecordingSpeakerMapping,
+  deleteRecordingSession,
+  insertRecordingMark,
+  type NewRecordingSession,
+  type NewRecordingChunk,
+  type RecordingMark,
+  type InsertRecordingChunkOutcome,
+  type RecordingChunkSettlement,
+  type FinishRecordingOutcome,
+} from "../recordings/storage.js";
+import {
   insertAgentMessage,
   type AgentMessageRow,
 } from "../sources/agent-conversations/storage.js";
@@ -656,6 +680,8 @@ import {
 } from "../data/pairing-generation-fence.js";
 import { applyTranscriptionVocabularyBatch } from "../transcribe/vocabulary/storage.js";
 import { advanceTranscriptionVocabularyRebuild } from "../transcribe/vocabulary/rebuild.js";
+import type { DeviceForgetOptions } from "../data/repositories/DeviceRetirementRepository.js";
+import type { VoiceWindow } from "../recordings/voices/voices.js";
 import type { WorthAnswer } from "../worth/answers.js";
 import type { SelfIdentitySource } from "../self-identity-sources.js";
 import type {
@@ -934,8 +960,9 @@ export const writerHandlers = {
     errorMessage: string,
     deviceId?: string,
     remediation?: SyncRemediation,
+    reporterDeviceId?: string,
   ): void => {
-    setSyncError(db, sourceId, errorMessage, deviceId ?? "", remediation);
+    setSyncError(db, sourceId, errorMessage, deviceId ?? "", remediation, reporterDeviceId);
   },
 
   "db.recoverReauthReminder": (
@@ -957,9 +984,16 @@ export const writerHandlers = {
     deviceId: string,
     now: number,
     cfg: ReauthBackoffConfig,
+    sourceId?: string,
   ) =>
-    reserveReauthReminder(db, principal, deviceId, now, cfg.reservationTtlMs, (existing) =>
-      isReminderDue(existing, now, cfg),
+    reserveActiveReauthReminder(
+      db,
+      principal,
+      deviceId,
+      now,
+      cfg.reservationTtlMs,
+      (existing) => isReminderDue(existing, now, cfg),
+      sourceId,
     ),
   "db.releaseReauthReminder": (db: Db, token: string) => releaseReauthReminder(db, token),
   "notifications.commitReauthReminder": (
@@ -1189,8 +1223,8 @@ export const writerHandlers = {
       onlineDeviceIds?: readonly DeviceId[];
     },
   ) => createOrAdoptDevice(db, input),
-  "devices.deleteDevice": (db: Db, id: string) =>
-    forgetDeviceWithPermissionInvalidation(db, DeviceId(id)),
+  "devices.deleteDevice": (db: Db, id: string, options?: DeviceForgetOptions) =>
+    forgetDeviceWithPermissionInvalidation(db, DeviceId(id), options),
   "devices.revokeDevice": (
     db: Db,
     id: string,
@@ -1512,6 +1546,7 @@ export const writerHandlers = {
     memberScopedParams: readonly string[],
     replicaVersionPolicy?: "source-updated-at",
     pairingFence?: PairingGenerationFence,
+    contractAuthorityDeviceId?: string,
   ) =>
     withPairingGenerationFence(db, pairingFence, () =>
       prepareSourceModeTransition(
@@ -1522,6 +1557,7 @@ export const writerHandlers = {
         undefined,
         memberScopedParams,
         replicaVersionPolicy,
+        contractAuthorityDeviceId === undefined ? undefined : DeviceId(contractAuthorityDeviceId),
       ),
     ),
   "sources.adoptModeTransitionBatch": (db: Db, id: string) =>
@@ -2058,6 +2094,60 @@ export const writerHandlers = {
   "voiceNotes.reschedule": (db: Db, noteId: string, attempts: number, nextAttemptAt: string) =>
     reschedulePendingVoiceNote(db, noteId, attempts, nextAttemptAt),
   "voiceNotes.delete": (db: Db, noteId: string) => deletePendingVoiceNote(db, noteId),
+  // Recorded conversations: a phone's session and its uploaded chunks, and
+  // the transcription queue's bookkeeping over them.
+  "recordings.createSession": (db: Db, session: NewRecordingSession): boolean =>
+    insertRecordingSession(db, session),
+  "recordings.insertChunk": (db: Db, chunk: NewRecordingChunk): InsertRecordingChunkOutcome =>
+    insertRecordingChunk(db, chunk),
+  "recordings.finishSession": (
+    db: Db,
+    id: string,
+    chunkCount: number,
+    endedAt: string,
+    now: string,
+  ): FinishRecordingOutcome => finishRecordingSession(db, id, chunkCount, endedAt, now),
+  "recordings.abandonSession": (db: Db, id: string, now: string): boolean =>
+    abandonRecordingSession(db, id, now),
+  "recordings.rescheduleChunk": (
+    db: Db,
+    sessionId: string,
+    seq: number,
+    attempts: number,
+    nextAttemptAt: string,
+  ) => rescheduleRecordingChunk(db, sessionId, seq, attempts, nextAttemptAt),
+  "recordings.settleChunk": (
+    db: Db,
+    sessionId: string,
+    seq: number,
+    outcome: RecordingChunkSettlement,
+    settling: RecordingChunkSettling,
+  ): boolean => settleRecordingChunk(db, sessionId, seq, outcome, settling),
+  "recordings.purgeAudio": (db: Db, settledBefore: string): number =>
+    purgeRecordingAudio(db, settledBefore),
+  "recordings.setTitle": (db: Db, id: string, title: string | null): boolean =>
+    setRecordingTitle(db, id, title),
+  "recordings.dismissSuggestion": (
+    db: Db,
+    sessionId: string,
+    key: string,
+    dismissedAt: string,
+  ): boolean => dismissRecordingSuggestion(db, sessionId, key, dismissedAt),
+  "recordings.markProjected": (db: Db, id: string, revision: number) =>
+    markRecordingSessionProjected(db, id, revision),
+  "recordings.assignVoices": (
+    db: Db,
+    sessionId: string,
+    chunks: Array<{ seq: number; windows: VoiceWindow[] }>,
+  ) => assignRecordingVoices(db, sessionId, chunks),
+  "recordings.setSpeaker": (
+    db: Db,
+    sessionId: string,
+    speaker: number,
+    mapping: RecordingSpeakerMapping,
+  ): boolean => setRecordingSpeaker(db, sessionId, speaker, mapping),
+  "recordings.deleteSession": (db: Db, id: string): boolean => deleteRecordingSession(db, id),
+  "recordings.addMark": (db: Db, mark: RecordingMark): boolean => insertRecordingMark(db, mark),
   "notes.applyTranscript": (db: Db, id: string, expected: string, text: string, nowIso: string) =>
     applyNoteEntryTranscript(db, id, expected, text, nowIso),
 

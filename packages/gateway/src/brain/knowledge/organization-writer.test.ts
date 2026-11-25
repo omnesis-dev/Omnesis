@@ -14,8 +14,10 @@
 
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { createDatabase } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import { KNOWLEDGE_DISCOVERY_POLICY } from "./discovery-policy.js";
 import {
   getOrganizationCohortForBatch,
@@ -26,8 +28,6 @@ import { startOrganizationBatch } from "./organization-writer.js";
 import { KnowledgeStorageError } from "./types.js";
 import { LEDGERS, ledgerScans, queryPlan, recordStatements } from "./test-utils.js";
 import type Database from "better-sqlite3";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 const NOW = Date.parse("2027-04-06T09:00:00Z");
 const DAY = 86_400_000;
@@ -43,7 +43,7 @@ let db: Database.Database;
 
 beforeEach(() => {
   dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
-  db = createDatabase(dbPath) as unknown as Database.Database;
+  db = createFreshTestDatabase(dbPath) as unknown as Database.Database;
 });
 afterEach(() => {
   db.close();

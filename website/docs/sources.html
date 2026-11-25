@@ -1640,6 +1640,18 @@
                   per day.
                 </td>
               </tr>
+              <tr>
+                <td>
+                  Recordings<br /><span class="pill">gateway</span>
+                  <span class="pill">Android</span> <span class="pill">experimental</span>
+                </td>
+                <td>
+                  <strong>Experimental</strong> — offered only when the gateway runs with
+                  <code>OMNESIS_EXPERIMENTAL=1</code>. In-person conversations recorded on an
+                  Android phone, transcribed by the gateway and indexed as one document per
+                  recording. See <a href="experimental#recordings">Experimental</a>.
+                </td>
+              </tr>
             </tbody>
           </table>
         </div>
@@ -2215,9 +2227,22 @@
           from the portal or the CLI. When another iPhone already sends Apple Health, the app offers
           <strong>Keep using the other iPhone</strong>, <strong>Use both iPhones</strong>, or
           <strong>Use only this iPhone</strong>. Turning on a per-device source on a second phone
-          adds that phone's data and keeps the first phone's history. See <a href="apps">Apps</a>.
+          adds that phone's data and keeps the first phone's history. When the first phone is no
+          longer paired or runs an app too old to share the source, the app asks nothing and adds
+          this phone, Apple Health included; the first phone's data stays, it sends nothing until it
+          is paired again or updated, and its status says which. See
+          <a href="apps#several-phones">Mobile apps</a>.
         </p>
 
+        <p>
+          For a device you have permanently stopped using, use <em>Forget device</em> in Settings →
+          Devices instead of detaching its sources one by one. The portal and both mobile apps keep
+          its indexed history by default, without expecting the forgotten device to sync again or
+          reporting its pairing and sync errors. Sources with no remaining active device become
+          historical. You can instead confirm removal of data held only by that device; other
+          devices' data, shared data still in use and history already kept from forgotten devices
+          stay. See <a href="setup#tokens">Devices, integrations and tokens</a>.
+        </p>
         <h3 id="members-detach-resync">Members, detaching, and re-syncing</h3>
         <p>
           <code>omnesis sources members &lt;id&gt;</code> lists a source's mode and each member with

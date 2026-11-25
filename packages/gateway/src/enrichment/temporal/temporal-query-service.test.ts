@@ -3,17 +3,18 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { createDatabase } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import { AnalyticsDb } from "../../analytics-db.js";
 import { upsertDocuments } from "../../data/repositories/DocumentRepository.js";
 import { insertTemporalAnnotation } from "../temporal-annotations/storage.js";
 import { replaceDocumentTemporalProjections } from "../temporal-projections/document-storage.js";
 import { TemporalQueryInputError, TemporalQueryService } from "./temporal-query-service.js";
+import type { createDatabase } from "../../db.js";
 import type { AnalyticsTableSchema } from "@omnesis/source-sdk";
 import type { DocumentInput } from "@omnesis/types";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 function cleanup(path: string): void {
   for (const suffix of ["", "-wal", "-shm", "-journal"]) {
@@ -64,7 +65,7 @@ describe("TemporalQueryService", () => {
   beforeEach(async () => {
     sqlitePath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
     duckPath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.duckdb`);
-    db = createDatabase(sqlitePath);
+    db = createFreshTestDatabase(sqlitePath);
     analytics = new AnalyticsDb(duckPath);
     await analytics.open();
     service = new TemporalQueryService(db, analytics);

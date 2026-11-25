@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { beforeEach, afterEach, expect, test } from "vitest";
 import { AccountId, SourceType, type SyncIssue } from "@omnesis/types";
 import { createDatabase } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import { createDevice } from "./DeviceRepository.js";
 import {
   createSource,
@@ -32,7 +33,7 @@ let b: ReturnType<typeof createDevice>;
 let source: ReturnType<typeof createSource>;
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "omnesis-sync-issues-"));
-  db = createDatabase(join(dir, "state.db"));
+  db = createFreshTestDatabase(join(dir, "state.db"));
   a = createDevice(db, { name: "Example alpha", kind: "collector" });
   b = createDevice(db, { name: "Example beta", kind: "collector" });
   source = createSource(db, {

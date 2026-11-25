@@ -106,7 +106,7 @@ internal val PENDING_WARNING_AGE: Duration = Duration.ofMillis(PENDING_WARNING_A
  */
 class PendingNotesStore(context: Context) {
 
-    private val helper: SQLiteOpenHelper = object : SQLiteOpenHelper(context, DB_NAME, null, 6) {
+    private val helper: SQLiteOpenHelper = object : SQLiteOpenHelper(context, DB_NAME, null, 7) {
         override fun onCreate(db: SQLiteDatabase) {
             db.execSQL(
                 """CREATE TABLE $TABLE (
@@ -123,7 +123,8 @@ class PendingNotesStore(context: Context) {
                     $COL_LANGUAGE TEXT,
                     $COL_TASK_ID TEXT,
                     $COL_TIME_ZONE_ID TEXT,
-                    $COL_UTC_OFFSET_SECONDS INTEGER
+                    $COL_UTC_OFFSET_SECONDS INTEGER,
+                    $COL_RECORDING_ID TEXT
                 )""",
             )
         }
@@ -161,6 +162,11 @@ class PendingNotesStore(context: Context) {
                 // when they are delivered is not the one they were captured in.
                 db.execSQL("ALTER TABLE $TABLE ADD COLUMN $COL_TIME_ZONE_ID TEXT")
                 db.execSQL("ALTER TABLE $TABLE ADD COLUMN $COL_UTC_OFFSET_SECONDS INTEGER")
+            }
+            if (oldVersion < 7) {
+                // No longer read or written: it named the recording a removed wearable's
+                // marked moment came from. It stays so the schema keeps its version.
+                db.execSQL("ALTER TABLE $TABLE ADD COLUMN $COL_RECORDING_ID TEXT")
             }
         }
     }
@@ -311,5 +317,6 @@ class PendingNotesStore(context: Context) {
         const val COL_TASK_ID = "task_id"
         const val COL_TIME_ZONE_ID = "captured_time_zone_id"
         const val COL_UTC_OFFSET_SECONDS = "captured_utc_offset_seconds"
+        const val COL_RECORDING_ID = "recording_id"
     }
 }

@@ -37,6 +37,35 @@ describe("transcribeInChunks", () => {
     expect(result).toEqual({ text: "part 1 part 3", language: "fr" });
   });
 
+  test("shifts each chunk's segments onto the recording's timeline", async () => {
+    const pcm = new Float32Array(MAX_CHUNK_SAMPLES + 16_000);
+    const firstMs = Math.round((splitPcm(pcm)[0]!.length / 16_000) * 1000);
+    let n = 0;
+    const result = await transcribeInChunks(pcm, {}, () => {
+      n += 1;
+      return Promise.resolve({
+        text: `part ${n}`,
+        segments: [{ startMs: 100, endMs: 900, text: `part ${n}` }],
+      });
+    });
+    expect(result.segments).toEqual([
+      { startMs: 100, endMs: 900, text: "part 1" },
+      { startMs: firstMs + 100, endMs: firstMs + 900, text: "part 2" },
+    ]);
+  });
+
+  test("keeps no segments when one chunk reported none", async () => {
+    const pcm = new Float32Array(MAX_CHUNK_SAMPLES + 16_000);
+    let n = 0;
+    const result = await transcribeInChunks(pcm, {}, () => {
+      n += 1;
+      return Promise.resolve(
+        n === 1 ? { text: "a", segments: [{ startMs: 0, endMs: 10, text: "a" }] } : { text: "b" },
+      );
+    });
+    expect(result).toEqual({ text: "a b" });
+  });
+
   test("raises every chunk's deadline to the caller's minimum", async () => {
     const pcm = new Float32Array(MAX_CHUNK_SAMPLES + 16_000 * 30);
     const timeouts: number[] = [];

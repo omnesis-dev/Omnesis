@@ -17,7 +17,7 @@ import {
   type DeviceCapability,
   type DeviceId,
 } from "@omnesis/types";
-import { createDatabase } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import {
   createDevice,
   createPairing,
@@ -29,6 +29,7 @@ import { directWriteGate, type WriteGate } from "../../write-gate.js";
 import { DeviceWsServer } from "../../ws.js";
 import { createSubscription } from "../../subscriptions/store-mutations.js";
 import { PairingService, type PairingServiceDeps } from "./PairingService.js";
+import type { createDatabase } from "../../db.js";
 import type { CreateSubscriptionMutation } from "../../subscriptions/store-types.js";
 
 const openClawCapabilities: DeviceCapability = {
@@ -47,7 +48,7 @@ let db: ReturnType<typeof createDatabase>;
 
 beforeEach(() => {
   dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-pairing-service-test-${randomUUID()}.db`);
-  db = createDatabase(dbPath);
+  db = createFreshTestDatabase(dbPath);
 });
 
 afterEach(() => {

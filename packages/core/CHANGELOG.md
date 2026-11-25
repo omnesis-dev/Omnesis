@@ -1,5 +1,28 @@
 # @omnesis/core
 
+## 0.8.1
+
+### Patch Changes
+
+- @omnesis/config@0.8.1
+  - @omnesis/platform@0.8.1
+  - @omnesis/source-sdk@0.8.1
+  - @omnesis/types@0.8.1
+
+## 0.8.0
+
+### Patch Changes
+
+- Updated dependencies [884a6de]
+- Updated dependencies [ece9a88]
+- Updated dependencies [a4fa7e8]
+- Updated dependencies [62de3a7]
+- Updated dependencies [f4950f6]
+  - @omnesis/source-sdk@0.8.0
+  - @omnesis/platform@0.8.0
+  - @omnesis/config@0.8.0
+  - @omnesis/types@0.8.0
+
 ## 0.7.8
 
 ### Patch Changes

@@ -17,21 +17,22 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import { SCOPE_WRITE_ALL, SourceId, parseSourceId } from "@omnesis/types";
-import { createDatabase } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import { createDevice } from "../../data/repositories/DeviceRepository.js";
 import { addSourceMember, createSource } from "../../data/repositories/SourceRepository.js";
 import { SyncStatusRegistry } from "../../sync-status.js";
 import { WsEventHandler } from "./WsEventHandler.js";
+import type { createDatabase } from "../../db.js";
 import type { WsEvent } from "@omnesis/core";
 import type { NeedsAuthNotifier } from "../../push/producers/needs-auth.js";
 import type { WriteGate } from "../../write-gate.js";
 import type { AuthFlowRegistry } from "../../auth-flows.js";
 import type { DeviceConnection } from "../../ws.js";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 let dbPath: string;
 let db: ReturnType<typeof createDatabase>;
@@ -46,7 +47,7 @@ const SIBLINGS = [
 
 beforeEach(() => {
   dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-ws-reauth-clear-${randomUUID()}.db`);
-  db = createDatabase(dbPath);
+  db = createFreshTestDatabase(dbPath);
   const device = createDevice(db, { name: "Maya-Laptop", kind: "collector" });
   conn = { deviceId: device.id, scopes: [SCOPE_WRITE_ALL] };
   for (const id of SIBLINGS) registerSource(id);
@@ -134,6 +135,7 @@ describe("WsEventHandler — completed clears a previously-needs-auth source (at
       "needs reauth: token expired",
       "",
       undefined,
+      conn.deviceId,
     );
 
     // Re-auth → collector re-registers the provider and broadcasts

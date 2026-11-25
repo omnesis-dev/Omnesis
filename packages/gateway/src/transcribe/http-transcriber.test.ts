@@ -7,6 +7,7 @@ import {
   encodeMultipart,
   encodeWav,
   parseTranscriptText,
+  parseVerboseSegments,
 } from "./http-transcriber.js";
 import { MAX_CHUNK_SAMPLES, chunkSamples, splitPcm } from "./chunks.js";
 import { computeTranscriptionTimeoutMs } from "./deadline.js";
@@ -331,6 +332,171 @@ describe("HttpTranscriber", () => {
     await expect(second).resolves.toMatchObject({ text: "second clip" });
     expect(calls).toBe(2);
   }, 20_000);
+});
+
+describe("HttpTranscriber segments", () => {
+  test("asks for verbose_json only when segments are wanted, and keeps their timings", async () => {
+    const { requests, fetchFn } = backend(() =>
+      Response.json({
+        text: "Hello there. Goodbye.",
+        segments: [
+          { start: 0, end: 1.5, text: " Hello there." },
+          { start: 1.5, end: 2.25, text: " Goodbye." },
+        ],
+      }),
+    );
+    const transcriber = new HttpTranscriber({
+      url: "http://127.0.0.1:8003",
+      model: "whisper-large-v3-turbo",
+      fetchFn,
+      decodeAudio: oneSecond,
+    });
+
+    const plain = await transcriber.transcribe(audio, "audio/ogg");
+    expect(plain.segments).toBeUndefined();
+    expect(requests[0]!.form.get("response_format")).toBe("json");
+
+    const timed = await transcriber.transcribe(audio, "audio/ogg", { segments: true });
+    expect(requests[1]!.form.get("response_format")).toBe("verbose_json");
+    expect(timed.segments).toEqual([
+      { startMs: 0, endMs: 1_500, text: "Hello there." },
+      { startMs: 1_500, endMs: 2_250, text: "Goodbye." },
+    ]);
+  });
+
+  test("a server that refuses verbose_json is asked for json, then and afterwards", async () => {
+    let n = 0;
+    const { requests, fetchFn } = backend(() => {
+      n += 1;
+      return n === 1
+        ? new Response("unknown format", { status: 400 })
+        : Response.json({ text: "hi" });
+    });
+    const transcriber = new HttpTranscriber({
+      url: "http://127.0.0.1:8003",
+      model: "qwen3-asr",
+      fetchFn,
+      decodeAudio: oneSecond,
+    });
+
+    expect(await transcriber.transcribe(audio, "audio/ogg", { segments: true })).toEqual({
+      text: "hi",
+      durationSec: 1,
+    });
+    await transcriber.transcribe(audio, "audio/ogg", { segments: true });
+    expect(requests.map((r) => r.form.get("response_format"))).toEqual([
+      "verbose_json",
+      "json",
+      "json",
+    ]);
+  });
+
+  test("one unreadable upload leaves timings on for the next recording", async () => {
+    let n = 0;
+    const { requests, fetchFn } = backend(() => {
+      n += 1;
+      // The first recording is refused whichever format it asks for.
+      if (n <= 2) return new Response("could not read the file", { status: 400 });
+      return Response.json({ text: "Hi.", segments: [{ start: 0, end: 0.5, text: " Hi." }] });
+    });
+    const transcriber = new HttpTranscriber({
+      url: "http://127.0.0.1:8003",
+      model: "whisper-large-v3-turbo",
+      fetchFn,
+      decodeAudio: oneSecond,
+    });
+
+    await expect(transcriber.transcribe(audio, "audio/ogg", { segments: true })).rejects.toThrow(
+      "HTTP 400",
+    );
+    const next = await transcriber.transcribe(audio, "audio/ogg", { segments: true });
+    expect(requests.map((r) => r.form.get("response_format"))).toEqual([
+      "verbose_json",
+      "json",
+      "verbose_json",
+    ]);
+    expect(next.segments).toEqual([{ startMs: 0, endMs: 500, text: "Hi." }]);
+  });
+
+  test("a piece with no speech keeps the other pieces' timings", async () => {
+    const sixtyOneSeconds = new Float32Array(PCM_SAMPLE_RATE * 61).fill(0.1);
+    const secondPieceMs = Math.round(
+      (splitPcm(sixtyOneSeconds, PCM_SAMPLE_RATE * 60)[0]!.length / PCM_SAMPLE_RATE) * 1000,
+    );
+    const spoken = Response.json({
+      text: "Hi.",
+      segments: [{ start: 0.25, end: 0.75, text: " Hi." }],
+    });
+    const silent = Response.json({ text: "", segments: [] });
+    const recording = async (pieces: Response[]) => {
+      const { requests, fetchFn } = backend(() => pieces.shift()!);
+      const transcriber = new HttpTranscriber({
+        url: "http://127.0.0.1:8003",
+        model: "qwen3-asr",
+        fetchFn,
+        decodeAudio: async () => sixtyOneSeconds,
+        maxChunkSeconds: 60,
+      });
+      const result = await transcriber.transcribe(audio, "audio/ogg", { segments: true });
+      expect(requests).toHaveLength(2);
+      return result;
+    };
+
+    expect(await recording([spoken.clone(), silent.clone()])).toEqual({
+      text: "Hi.",
+      durationSec: 61,
+      segments: [{ startMs: 250, endMs: 750, text: "Hi." }],
+    });
+    expect(await recording([silent.clone(), spoken.clone()])).toEqual({
+      text: "Hi.",
+      durationSec: 61,
+      segments: [{ startMs: secondPieceMs + 250, endMs: secondPieceMs + 750, text: "Hi." }],
+    });
+  });
+
+  test("a piece whose words come without timings leaves the recording untimed", async () => {
+    let n = 0;
+    const { fetchFn } = backend(() => {
+      n += 1;
+      return n === 1
+        ? Response.json({ text: "Hi.", segments: [{ start: 1, end: 2, text: " Hi." }] })
+        : Response.json({ text: "Bye.", segments: [] });
+    });
+    const transcriber = new HttpTranscriber({
+      url: "http://127.0.0.1:8003",
+      model: "qwen3-asr",
+      fetchFn,
+      decodeAudio: async () => new Float32Array(PCM_SAMPLE_RATE * 61).fill(0.1),
+      maxChunkSeconds: 60,
+    });
+
+    const result = await transcriber.transcribe(audio, "audio/ogg", { segments: true });
+    expect(result).toEqual({ text: "Hi. Bye.", durationSec: 61 });
+  });
+
+  test("a server that answers verbose_json without a segment list leaves the recording untimed", async () => {
+    const { requests, fetchFn } = backend(() => Response.json({ text: "Hi." }));
+    const transcriber = new HttpTranscriber({
+      url: "http://127.0.0.1:8003",
+      model: "qwen3-asr",
+      fetchFn,
+      decodeAudio: oneSecond,
+    });
+
+    const result = await transcriber.transcribe(audio, "audio/ogg", { segments: true });
+    expect(requests[0]!.form.get("response_format")).toBe("verbose_json");
+    expect(result).toEqual({ text: "Hi.", durationSec: 1 });
+  });
+
+  test("parseVerboseSegments drops empty segments and rejects malformed ones", () => {
+    expect(parseVerboseSegments(undefined)).toBeUndefined();
+    expect(parseVerboseSegments([{ start: "0", end: 1, text: "x" }])).toBeUndefined();
+    expect(parseVerboseSegments([])).toEqual([]);
+    expect(parseVerboseSegments([{ start: 0, end: 1, text: " " }])).toEqual([]);
+    expect(parseVerboseSegments([{ start: 0.25, end: 1, text: " x " }])).toEqual([
+      { startMs: 250, endMs: 1_000, text: "x" },
+    ]);
+  });
 });
 
 describe("splitPcm with a short window", () => {

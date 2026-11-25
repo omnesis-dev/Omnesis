@@ -214,6 +214,7 @@ private fun DetailBody(
             paused = detail.paused,
             inFlight = detail.actionInFlight,
             isInternal = detail.isInternal,
+            archived = detail.archived,
             resync = detail.resync,
             onSyncNow = onSyncNow,
             onTogglePause = onTogglePause,
@@ -349,6 +350,7 @@ private fun ActionsSection(
     paused: Boolean,
     inFlight: Boolean,
     isInternal: Boolean = false,
+    archived: Boolean = false,
     resync: ResyncOffer,
     onSyncNow: () -> Unit,
     onTogglePause: () -> Unit,
@@ -363,6 +365,7 @@ private fun ActionsSection(
     // deletion lives on that screen.
     Column {
         if (!isInternal) {
+            if (!archived) {
             ActionRow(
                 icon = Icons.Outlined.Sync,
                 label = if (inFlight) "Working…" else "Sync now",
@@ -383,6 +386,7 @@ private fun ActionsSection(
                 onClick = onTogglePause,
             )
             ActionDivider()
+            }
             ActionRow(
                 icon = Icons.Outlined.BugReport,
                 label = "Debug",
@@ -393,7 +397,7 @@ private fun ActionsSection(
                 onClick = onDebug,
             )
             ActionDivider()
-            if (resync != ResyncOffer.Unavailable) {
+            if (!archived && resync != ResyncOffer.Unavailable) {
                 // Red only where the action can do nothing but delete first.
                 val resyncColor = if (resync == ResyncOffer.WipeOnly) c.danger else c.textPrimary
                 ActionRow(
@@ -477,7 +481,7 @@ private fun AboutSection(detail: SourceDetailUi, onOpenDeviceNotices: (String) -
         if (detail.isInternal) {
             KV("Host", "Gateway")
         } else {
-            HostDevices(detail.hostDevices, onOpenDeviceNotices)
+            HostDevices(detail.hostDevices, onOpenDeviceNotices, historical = detail.archived)
         }
         KV("Source ID", detail.sourceId, mono = true)
     }
@@ -528,7 +532,7 @@ private fun KV(key: String, value: String, mono: Boolean = false) {
 }
 
 @Composable
-private fun HostDevices(devices: List<SourceHostDeviceUi>, onOpenNotices: (String) -> Unit) {
+private fun HostDevices(devices: List<SourceHostDeviceUi>, onOpenNotices: (String) -> Unit, historical: Boolean = false) {
     if (devices.isEmpty()) return
     val c = OmTheme.colors
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
@@ -536,7 +540,7 @@ private fun HostDevices(devices: List<SourceHostDeviceUi>, onOpenNotices: (Strin
         // first device and devices without notices keep the same rhythm.
         Box(Modifier.heightIn(min = NOTICE_LINE_HEIGHT), contentAlignment = Alignment.CenterStart) {
             Text(
-                if (devices.size == 1) "Host device" else "Host devices",
+                if (historical) "Historical data from" else if (devices.size == 1) "Host device" else "Host devices",
                 fontSize = 12.sp,
                 color = c.textSecondary,
             )

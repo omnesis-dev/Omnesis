@@ -25,10 +25,10 @@ on:
   workflow_dispatch:
     inputs:
       lane:
-        description: Validation coverage (daily runs always include every lane)
+        description: Validation coverage (daily runs always include every lane; agents runs only the native agent integrations)
         type: choice
         default: all
-        options: [all, unit, adapters, e2e, portal]
+        options: [all, unit, adapters, e2e, portal, agents]
       e2e_files:
         description: Optional JSON array of E2E paths for manual e2e diagnosis (1–16 files)
         type: string
@@ -50,6 +50,7 @@ env:
 jobs:
   windows:
     name: ${{ matrix.name }}
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.lane != 'agents' }}
     runs-on: windows-latest
     timeout-minutes: ${{ matrix.lane == 'focused' && 40 || matrix.lane == 'adapters' && 60 || matrix.lane == 'unit' && 210 || 180 }}
     # The full E2E suite runs one file at a time on a hosted Windows runner,
@@ -95,7 +96,7 @@ jobs:
 
       - name: Set up Go for the private transport boundary
         if: ${{ matrix.lane != 'portal' && matrix.lane != 'adapters' }}
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: packages/tailnet-helper/go.mod
           cache-dependency-path: |
@@ -153,7 +154,9 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/omnesis-test-embedder
-          key: windows-test-embedder-${{ hashFiles('scripts/ci/with-test-embedder.mjs', 'scripts/ci/reference-embedder.json') }}
+          # The cached file is the pinned model alone, checked against its
+          # digest before use, so only the pin decides whether it is current.
+          key: windows-test-embedder-${{ hashFiles('scripts/ci/reference-embedder.json') }}
 
       - name: Focused Windows runtime tests
         if: ${{ matrix.lane == 'focused' }}
@@ -241,7 +244,7 @@ jobs:
   native-integrations:
     name: Windows native agent integrations
     needs: windows
-    if: ${{ !cancelled() && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.lane == 'all')) }}
+    if: ${{ !cancelled() && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.lane == 'all' || inputs.lane == 'agents'))) }}
     runs-on: windows-latest
     timeout-minutes: 45
     defaults:
@@ -267,7 +270,7 @@ jobs:
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
         with:
           python-version: "3.12"
-      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d
         with:
           version: "0.9.28"
           enable-cache: false

@@ -34,8 +34,13 @@ describe("Codex runtime compatibility", () => {
     expect(isSupportedCodexCliVersion("0.167.2")).toBe(true);
     expect(isTestedCodexCliVersion("0.167.0")).toBe(false);
     expect(isSupportedCodexCliVersion("0.169.2")).toBe(true);
-    expect(isTestedCodexCliVersion("0.169.0")).toBe(true);
+    expect(isTestedCodexCliVersion("0.169.0")).toBe(false);
     expect(isTestedCodexCliVersion("0.169.2")).toBe(false);
+    expect(isSupportedCodexCliVersion("0.171.0")).toBe(true);
+    expect(isSupportedCodexCliVersion("0.171.2")).toBe(true);
+    expect(isTestedCodexCliVersion("0.171.0")).toBe(true);
+    expect(isTestedCodexCliVersion("0.171.2")).toBe(false);
+    expect(isSupportedCodexCliVersion("0.172.0")).toBe(false);
     expect(isSupportedCodexCliVersion("0.170.0")).toBe(false);
     expect(isTestedCodexCliVersion("0.166.1")).toBe(false);
   });

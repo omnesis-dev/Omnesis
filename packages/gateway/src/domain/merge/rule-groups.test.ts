@@ -10,9 +10,11 @@
  */
 
 import { existsSync, unlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { createDatabase } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import { PERSON_NAME_ALIAS_INDEX } from "../../data/migration-218-person-name-alias-index.js";
 import { listMergeRuleGroups, mergeRuleGroupsPageSql } from "./rule-groups.js";
 import { seedEdgeRuleGroups } from "./rule-groups-test-utils.js";
@@ -23,8 +25,8 @@ type Db = Database.Database;
 let path: string;
 let db: Db;
 beforeEach(() => {
-  path = `/tmp/omnesis-test-${randomUUID()}.db`;
-  db = createDatabase(path);
+  path = join(tmpdir(), `omnesis-test-${randomUUID()}.db`);
+  db = createFreshTestDatabase(path);
 });
 afterEach(() => {
   db.close();

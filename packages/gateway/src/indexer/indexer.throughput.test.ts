@@ -18,7 +18,8 @@ import { join } from "node:path";
 import Database from "better-sqlite3";
 import { createLogger } from "@omnesis/core";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { createDatabase, upsertDocuments } from "../db.js";
+import { upsertDocuments } from "../db.js";
+import { createFreshTestDatabase } from "../testing/fresh-database.js";
 import { DocumentChunker } from "./chunker.js";
 import { createIndexDatabase, EMBEDDING_DIM, getAllIndexedDocumentIds } from "./db.js";
 import { DirectDocumentSource } from "./direct-document-source.js";
@@ -37,7 +38,7 @@ let indexDb: Database.Database;
 beforeEach(() => {
   directory = mkdtempSync(join(tmpdir(), "omnesis-scan-bench-"));
   const path = join(directory, "gateway.db");
-  gatewayWriter = createDatabase(path);
+  gatewayWriter = createFreshTestDatabase(path);
   gatewayReader = new Database(path, { readonly: true });
   indexDb = createIndexDatabase(join(directory, "index.db"));
 });
