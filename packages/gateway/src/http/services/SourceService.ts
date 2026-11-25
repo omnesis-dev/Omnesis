@@ -2571,8 +2571,23 @@ export class SourceService {
   async deleteSource(
     id: SourceId,
     pairingFence?: PairingGenerationFence,
+    expectedRevision?: string,
   ): Promise<{ source: SourceRecord } | null> {
     this.assertNoModeTransition(id);
+    const assertRevision = () => {
+      const source = getSource(this.deps.db, id);
+      if (
+        expectedRevision !== undefined &&
+        source &&
+        sourceSettingsRevision(source) !== expectedRevision
+      )
+        throw new HttpError(
+          409,
+          "SOURCE_SETTINGS_CHANGED",
+          "This source changed. Refresh it before confirming removal again.",
+        );
+    };
+    assertRevision();
     const {
       writeGate: w,
       statusCache,
@@ -2581,14 +2596,16 @@ export class SourceService {
       syncSourceSettingsToConfig,
     } = this.deps;
     const removed = await this.withLeaseMutation(id, async () => {
+      assertRevision();
       if (getSource(this.deps.db, id)) {
         await this.deps.sourceDataRemoval.prepareSourceRemoval(id);
       }
-      const result = await w.removeSource(id, pairingFence);
+      const result = await w.removeSource(id, pairingFence, expectedRevision);
       if (result) this.deps.syncLease?.forgetSource(id);
       return result;
     });
     if (!removed) {
+      assertRevision();
       this.assertNoModeTransition(id);
       return null;
     }

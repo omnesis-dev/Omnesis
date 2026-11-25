@@ -22,22 +22,37 @@ actor DesktopArtifactDownloader {
         _ artifact: DesktopArtifact,
         api: DesktopAPI,
         destination: URL,
+        readableExport: Bool = false,
         progress: @escaping @Sendable (Int64) -> Void
     ) async throws {
         try Task.checkCancellation()
         guard artifact.valid else { throw DesktopAPIError.message("Refresh the backup list before saving this item.") }
-        let url = api.connection.url.appendingPathComponent("admin/artifacts/\(artifact.id)/download")
+        guard !readableExport || artifact.kind == "export"
+        else { throw DesktopAPIError.message("Readable downloads are available for data exports only.") }
+        let action = readableExport ? "readable-download" : "download"
+        let url = api.connection.url.appendingPathComponent("admin/artifacts/\(artifact.id)/\(action)")
         var request = URLRequest(url: url)
         request.cachePolicy = .reloadIgnoringLocalCacheData
-        request.timeoutInterval = 70
+        request.timeoutInterval = readableExport ? 6 * 60 * 60 : 70
         request.setValue("Bearer \(api.connection.token)", forHTTPHeaderField: "Authorization")
         request.setValue("application/x-tar", forHTTPHeaderField: "Accept")
+        if readableExport {
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = Data(#"{"acknowledgeUnencryptedCopy":true}"#.utf8)
+        }
         let file = try PrivateSaveFile(url: destination)
         do {
             let (bytes, response) = try await api.session.bytes(for: request, delegate: ArtifactRedirectRefusal())
             guard let response = response as? HTTPURLResponse, response.statusCode == 200,
                   response.value(forHTTPHeaderField: "Content-Type")?.split(separator: ";").first?.lowercased() == "application/x-tar"
             else {
+                if readableExport, (response as? HTTPURLResponse)?.statusCode == 400 {
+                    throw DesktopAPIError
+                        .message(
+                            "Create a new export before saving readable JSON or CSV files. You can still save the stored encrypted copy."
+                        )
+                }
                 throw DesktopAPIError.message("The library refused this download. Refresh the list and try again.")
             }
             var chunk = Data()

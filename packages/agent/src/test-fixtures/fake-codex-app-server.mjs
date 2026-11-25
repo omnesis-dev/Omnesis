@@ -8,6 +8,12 @@ import { createInterface } from "node:readline";
 
 const version = process.env.OMNESIS_FAKE_CODEX_VERSION ?? "0.142.4";
 const cliArgs = process.argv.slice(2);
+const effectiveFeatures = Object.fromEntries(
+  cliArgs.flatMap((arg) => {
+    const match = /^features\.([a-z0-9_]+)=(true|false)$/u.exec(arg);
+    return match ? [[match[1], match[2] === "true"]] : [];
+  }),
+);
 
 if (process.argv.includes("--version")) {
   if (process.env.OMNESIS_FAKE_CODEX_SCENARIO === "missing-cwd")
@@ -119,6 +125,73 @@ rl.on("line", (line) => {
   }
 
   if (msg.method === "initialized") return;
+
+  if (msg.method === "config/read") {
+    send({
+      id: msg.id,
+      result: {
+        ...(msg.params?.includeLayers
+          ? {
+              layers: [
+                {
+                  name: { type: "sessionFlags" },
+                  version: "fixture-version",
+                  config: {
+                    tools: {
+                      experimental_request_user_input: { enabled: false },
+                      update_plan: { enabled: false },
+                    },
+                  },
+                },
+              ],
+            }
+          : {}),
+        config: {
+          cli_auth_credentials_store:
+            scenario === "managed-policy-refused"
+              ? "file"
+              : cliArgs.includes('cli_auth_credentials_store="keyring"')
+                ? "keyring"
+                : "file",
+          features: { secret_auth_storage: false, ...effectiveFeatures },
+          history: { persistence: "none" },
+          analytics: { enabled: false },
+          mcp_servers: {},
+          notify: [],
+          allow_login_shell: false,
+          project_doc_max_bytes: 0,
+          tools: {
+            experimental_request_user_input: { enabled: false },
+            update_plan: { enabled: false },
+          },
+          otel: {
+            log_user_prompt: false,
+            log_agent_responses: false,
+            log_sse_deltas: false,
+            exporter: "none",
+            trace_exporter: "none",
+            metrics_exporter: "none",
+          },
+        },
+      },
+    });
+    return;
+  }
+
+  if (msg.method === "experimentalFeature/list") {
+    send({
+      id: msg.id,
+      result: {
+        data: Object.entries(effectiveFeatures).map(([name, enabled]) => ({
+          name,
+          enabled,
+          stage: "stable",
+        })),
+        nextCursor: null,
+      },
+    });
+    return;
+  }
 
   if (msg.method === "model/list") {
     send({

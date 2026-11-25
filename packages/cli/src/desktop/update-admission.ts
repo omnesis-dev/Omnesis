@@ -5,6 +5,10 @@ import { desktopSourceDevelopment, readDesktopActiveRuntime } from "./update-act
 import { readDesktopRetirement } from "./retirement.js";
 import { desktopRestoreBlocked } from "./restore-intent.js";
 import {
+  verifyDesktopRestoreActivation,
+  type DesktopRestoreActivation,
+} from "./restore-activation.js";
+import {
   desktopRuntimeEpoch,
   desktopUpdateEpochDisposition,
   readDesktopUpdateState,
@@ -14,8 +18,16 @@ import type { DesktopProfile } from "./environment.js";
 export async function desktopUpdateBlocked(
   profile: DesktopProfile,
   epoch: string | null = desktopRuntimeEpoch(),
+  restoreActivation?: DesktopRestoreActivation,
 ): Promise<boolean> {
-  if (await desktopRestoreBlocked(profile)) return true;
+  if (await desktopRestoreBlocked(profile)) {
+    if (
+      !restoreActivation ||
+      restoreActivation.epoch !== epoch ||
+      !(await verifyDesktopRestoreActivation(profile, restoreActivation))
+    )
+      return true;
+  }
   if (desktopUpdateEpochDisposition(await readDesktopUpdateState(profile), epoch) !== "allow")
     return true;
   const active = await readDesktopActiveRuntime(profile);
@@ -38,8 +50,16 @@ export async function assertDesktopMutationAllowed(
 export async function desktopEpochMayStart(
   profile: DesktopProfile,
   epoch: string | null = desktopRuntimeEpoch(),
+  restoreActivation?: DesktopRestoreActivation,
 ): Promise<boolean> {
-  if (await desktopRestoreBlocked(profile)) return false;
+  if (await desktopRestoreBlocked(profile)) {
+    if (
+      !restoreActivation ||
+      restoreActivation.epoch !== epoch ||
+      !(await verifyDesktopRestoreActivation(profile, restoreActivation, { mode: "pending" }))
+    )
+      return false;
+  }
   const state = await readDesktopUpdateState(profile);
   if (state) return desktopUpdateEpochDisposition(state, epoch) !== "block";
   const active = await readDesktopActiveRuntime(profile);

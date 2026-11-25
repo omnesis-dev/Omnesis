@@ -71,6 +71,7 @@ export function otherKeyringConfigDirs(
 
 export interface KeyringPurgeOptions {
   service?: string;
+  backend?: CreateSecretStoreOptions["backend"];
   /** The caller proved this service belongs exclusively to the removed installation. */
   exclusiveService?: boolean;
 }
@@ -82,7 +83,11 @@ export async function purgeConfigDirKeyring(
   options: KeyringPurgeOptions = {},
 ): Promise<KeyringPurgeResult> {
   const service = options.service ?? resolveSecretStoreService();
-  const opts: CreateSecretStoreOptions = { configDir, service };
+  const opts: CreateSecretStoreOptions = {
+    configDir,
+    service,
+    ...(options.backend ? { backend: options.backend } : {}),
+  };
   const notes: string[] = [];
   let markersCleared = true;
   for (const kind of MARKER_KINDS) {

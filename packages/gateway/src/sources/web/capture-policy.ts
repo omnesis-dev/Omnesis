@@ -87,12 +87,19 @@ export class WebCapturePolicyService {
 
   /** The policy every paired browser enforces. */
   read(): WebCapturePolicy {
-    const stored = this.storedSettings();
+    const source = getSource(this.deps.db, WEB_SOURCE);
+    const stored = this.storedSettings(source);
     const removed = this.removedPages();
     return {
       updatedAt: stored.updatedAt,
-      // A lapsed timed pause reads as resumed so clients need no clock of their own.
-      pause: pauseActive(stored.pause, this.now()) ? stored.pause : null,
+      // Source suspension overrides capture settings, including a client's resume.
+      // A lapsed timed pause otherwise reads as resumed without a client clock.
+      pause:
+        source?.enabled === false
+          ? { until: null }
+          : pauseActive(stored.pause, this.now())
+            ? stored.pause
+            : null,
       excludedDomains: stored.excludedDomains,
       ownedDomains: [...this.deps.ownedDomains()],
       rules: DEFAULT_WEB_CAPTURE_RULES,
@@ -149,8 +156,8 @@ export class WebCapturePolicyService {
     return this.read();
   }
 
-  private storedSettings(): StoredSettings {
-    const config = getSource(this.deps.db, WEB_SOURCE)?.config;
+  private storedSettings(source = getSource(this.deps.db, WEB_SOURCE)): StoredSettings {
+    const config = source?.config;
     const parsed = storedSettingsSchema.safeParse(config?.capture ?? {});
     if (!parsed.success) {
       log.warn(`Ignoring a malformed capture block on the web source: ${parsed.error.message}`);

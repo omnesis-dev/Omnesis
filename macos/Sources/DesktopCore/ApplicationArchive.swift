@@ -47,6 +47,7 @@ public enum DesktopApplicationArchive {
             try privateDirectory(destination, create: false)
             try validate(app)
             guard try runtimeEpoch(app) == epoch else { throw DesktopRuntimeCache.Failure.invalidPayload }
+            try DesktopApplicationArchiveOwnership.publish(directory: destination, epoch: epoch)
             return app
         }
         let bytes = try applicationBytes(application)
@@ -62,7 +63,9 @@ public enum DesktopApplicationArchive {
             guard try runtimeEpoch(copy) == epoch,
                   try runtimeEpoch(application) == epoch else { throw DesktopRuntimeCache.Failure.invalidPayload }
             try Task.checkCancellation()
+            try DesktopApplicationArchiveOwnership.publish(directory: stage, epoch: epoch)
             try FileManager.default.moveItem(at: stage, to: destination)
+            try DesktopApplicationArchiveOwnership.syncDirectory(root)
             return app
         } catch { try? FileManager.default.removeItem(at: stage)
             throw error

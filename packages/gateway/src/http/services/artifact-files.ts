@@ -14,7 +14,7 @@ import {
   parseRecoveryEnvelope,
 } from "@omnesis/core";
 import { HttpError, NotFoundError } from "../errors.js";
-import { exportManifestSchema } from "./ExportService.js";
+import { exportManifestSchema, type ExportManifest } from "./ExportService.js";
 
 export type ArtifactKind = "backup" | "export";
 export type ArtifactProtection = "encrypted-payloads" | "plaintext" | "mixed";
@@ -37,6 +37,7 @@ export interface ArtifactFile {
   sealed: boolean;
 }
 export interface ArtifactPlan {
+  exportManifest?: ExportManifest;
   item: ArtifactCatalogItem;
   root: string;
   rootIdentity: string;
@@ -110,7 +111,10 @@ async function readManifest(
   name: string,
 ): Promise<{ text: string; identity: string }> {
   const path = await checkedPath(directory, name);
-  const handle = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+  const handle = await open(
+    path,
+    constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0),
+  );
   try {
     const before = await handle.stat({ bigint: true });
     if (!regular(before) || before.size > BigInt(MAX_MANIFEST_BYTES)) throw artifactUnavailable();
@@ -173,7 +177,10 @@ async function manifestPlan(
       }
     } else {
       if (!regular(stat)) throw artifactUnavailable();
-      const handle = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+      const handle = await open(
+        path,
+        constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0),
+      );
       let sealed: boolean;
       try {
         if (fileIdentity(await handle.stat({ bigint: true })) !== fileIdentity(stat))
@@ -248,6 +255,7 @@ async function manifestPlan(
   for (const directory of [...directories].sort()) digest.update(JSON.stringify(directory));
   const id = digest.digest("hex");
   return {
+    ...(kind === "export" ? { exportManifest: exportManifestSchema.parse(raw) } : {}),
     item: {
       id,
       kind,
@@ -319,7 +327,10 @@ export async function openArtifactFile(
     )
       throw artifactUnavailable();
     const path = await checkedPath(plan.directory, file.name);
-    handle = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+    handle = await open(
+      path,
+      constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0),
+    );
     const stat = await handle.stat({ bigint: true });
     const canonical = await realpath(path);
     if (

@@ -3,16 +3,21 @@
 
 import { mkdir } from "node:fs/promises";
 import { createReadStream } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, relative, resolve, sep, isAbsolute } from "node:path";
 import {
   atomicWriteFile,
-  atomicWriteFileSync,
   readWindowsPrivateFile,
   decodeSecretTextFileValue,
-  writeSecretJsonFile,
+  isEncryptedSecretFile,
+  serializeSecretFileValue,
   type SecretFileOptions,
 } from "@omnesis/core";
 import { z } from "zod";
+import {
+  gatewayCredentialOptions,
+  persistGatewayKeySession,
+  readGatewayPrivateSerialized,
+} from "./gateway-secret-storage.js";
 import { accountId, googleIdentityProvider, type IdentityProvider } from "./identity.js";
 import { refreshGoogleAuthorization, type GoogleCredentials } from "./google-oauth.js";
 import { relayOrigin } from "./network.js";
@@ -31,14 +36,27 @@ const relaySessionSchema = z.object({
   expiresAt: z.number().int().positive(),
   accountId: z.string().regex(/^[a-f0-9]{64}$/),
 });
+function managedCredentialScope(options?: SecretFileOptions): boolean {
+  return (
+    process.env.OMNESIS_DESKTOP_MANAGED === "1" ||
+    /^dev\.omnesis\.desktop\.[a-f0-9]{64}$/u.test(
+      options?.service ?? process.env.OMNESIS_SECRET_SERVICE ?? "",
+    )
+  );
+}
 
-export async function readPrivateText(path: string, options?: SecretFileOptions): Promise<string> {
+export async function readPrivateText(
+  path: string,
+  options: SecretFileOptions | undefined = gatewayCredentialOptions(),
+): Promise<string> {
   // A wrapped 64 KiB credential needs base64/envelope headroom. Both the
   // serialized read and the decoded logical credential remain bounded.
   const limit = options ? 131_072 : 65_536;
   const chunks: Buffer[] = [];
   let size = 0;
-  if (process.platform === "win32") {
+  if (options && managedCredentialScope(options)) {
+    chunks.push(Buffer.from(await readGatewayPrivateSerialized(path)));
+  } else if (process.platform === "win32") {
     chunks.push(await readWindowsPrivateFile(path, limit));
   } else {
     for await (const chunk of createReadStream(path)) {
@@ -48,12 +66,25 @@ export async function readPrivateText(path: string, options?: SecretFileOptions)
     }
   }
   const serialized = Buffer.concat(chunks).toString("utf8");
+  if (options?.configDir && managedCredentialScope(options) && !isEncryptedSecretFile(serialized)) {
+    const pathWithin = relative(resolve(options.configDir), resolve(path));
+    if (
+      pathWithin &&
+      !isAbsolute(pathWithin) &&
+      pathWithin !== ".." &&
+      !pathWithin.startsWith(`..${sep}`)
+    )
+      throw new Error("The managed gateway credential must be encrypted before it can be used");
+  }
   const decoded = options ? await decodeSecretTextFileValue(path, serialized, options) : serialized;
   if (Buffer.byteLength(decoded) > 65_536) throw new Error("Credential file is too large");
   return decoded;
 }
 
-export async function readPrivateJson(path: string, options?: SecretFileOptions): Promise<unknown> {
+export async function readPrivateJson(
+  path: string,
+  options: SecretFileOptions | undefined = gatewayCredentialOptions(),
+): Promise<unknown> {
   const decoded = await readPrivateText(path, options);
   try {
     return JSON.parse(decoded);
@@ -65,13 +96,17 @@ export async function readPrivateJson(path: string, options?: SecretFileOptions)
 export async function savePrivateJson(
   path: string,
   value: unknown,
-  options?: SecretFileOptions,
+  options: SecretFileOptions | undefined = gatewayCredentialOptions(),
 ): Promise<void> {
   if (options) {
     const serialized = JSON.stringify(value, null, 2);
     if (serialized === undefined || Buffer.byteLength(serialized) > 65_536)
       throw new Error("Credential file is too large");
-    await writeSecretJsonFile(path, value, options);
+    const encoded = await serializeSecretFileValue(path, serialized, options);
+    if (!encoded.encrypted && managedCredentialScope(options))
+      throw new Error("Private gateway credentials require an unlocked installation key");
+    await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+    await atomicWriteFile(path, encoded.value, { mode: 0o600 });
     return;
   }
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
@@ -94,6 +129,7 @@ export async function saveGoogleCredentials(
   path: string,
   clientId: string,
   credentials: GoogleCredentials,
+  options?: SecretFileOptions,
 ): Promise<void> {
   await savePrivateJson(
     path,
@@ -104,12 +140,14 @@ export async function saveGoogleCredentials(
       idToken: credentials.idToken,
       ...(credentials.refreshToken ? { refreshToken: credentials.refreshToken } : {}),
     }),
+    options,
   );
 }
 
 /** Refresh authenticates routing identity only; it cannot establish or replace an encryption pin. */
 export function googleRoutingTokenSource(options: {
   credentialsFile: string;
+  secretFileOptions?: SecretFileOptions;
   clientId: string;
   clientSecret?: string;
   clientSecretFile?: string;
@@ -119,7 +157,9 @@ export function googleRoutingTokenSource(options: {
   const identity = options.identity ?? googleIdentityProvider(options.clientId);
   let pending: Promise<{ idToken: string; accountId: string; expiresAt: number }> | undefined;
   const load = async () => {
-    const stored = storedSchema.parse(await readPrivateJson(options.credentialsFile));
+    const stored = storedSchema.parse(
+      await readPrivateJson(options.credentialsFile, options.secretFileOptions),
+    );
     if (stored.clientId !== options.clientId)
       throw new Error("Google OAuth client changed; sign in again");
     try {
@@ -149,7 +189,12 @@ export function googleRoutingTokenSource(options: {
     });
     if (accountId(refreshed.identity) !== stored.accountId)
       throw new Error("Google account changed; sign in again");
-    await saveGoogleCredentials(options.credentialsFile, options.clientId, refreshed);
+    await saveGoogleCredentials(
+      options.credentialsFile,
+      options.clientId,
+      refreshed,
+      options.secretFileOptions,
+    );
     return {
       idToken: refreshed.idToken,
       accountId: stored.accountId,
@@ -168,6 +213,7 @@ export async function exchangeRelayIdentity(options: {
   idToken: string;
   expectedAccountId: string;
   sessionFile: string;
+  secretFileOptions?: SecretFileOptions;
   fetch?: typeof fetch;
   signal?: AbortSignal;
 }): Promise<z.infer<typeof relaySessionSchema>> {
@@ -193,7 +239,12 @@ export async function exchangeRelayIdentity(options: {
   await mkdir(dirname(options.sessionFile), { recursive: true, mode: 0o700 });
   signal.throwIfAborted();
   // Publishing this bounded credential record must not yield between the abort check and rename.
-  atomicWriteFileSync(options.sessionFile, JSON.stringify(session) + "\n", { mode: 0o600 });
+  await persistGatewayKeySession(
+    options.sessionFile,
+    session,
+    options.secretFileOptions ?? gatewayCredentialOptions(),
+    signal,
+  );
   return session;
 }
 
@@ -211,6 +262,7 @@ export async function readBoundedJson(response: Response, limit = 65_536): Promi
 /** A single-flight source keeps long-running outbound control connections authenticated. */
 export function googleRelaySessionSource(options: {
   credentialsFile: string;
+  secretFileOptions?: SecretFileOptions;
   clientId: string;
   clientSecret?: string;
   clientSecretFile?: string;

@@ -13,6 +13,12 @@ import {
   type ArtifactKind,
   type ArtifactPlan,
 } from "./artifact-files.js";
+import {
+  requireReadableExport,
+  prepareReadableExport,
+  authenticateReadableExport,
+  decryptPinnedExport,
+} from "./readable-export.js";
 import type { FileHandle } from "node:fs/promises";
 
 export interface ArtifactDownloadAuthority {
@@ -26,6 +32,8 @@ interface ActiveDownload {
   done: Promise<void>;
 }
 export interface ArtifactDownloadOptions {
+  /** Existing scoped key only; never creates a key and never used for backup downloads. */
+  readExportRootKey?: () => Promise<string | null>;
   backupRoot?: string;
   exportRoot?: string;
   /** Operational ceilings; no store or writer lease is held by a download. */
@@ -38,7 +46,7 @@ export interface ArtifactDownloadOptions {
 const BUFFER_BYTES = 64 * 1024;
 const STREAM_ERROR = "The artifact download could not finish. Refresh the list and try again.";
 
-/** Downloads immutable, manifest-owned artifacts without decrypting their contents. */
+/** Stored downloads preserve ciphertext; readable exports require their separate consent route. */
 export class ArtifactDownloadService {
   private readonly active = new Set<ActiveDownload>();
   private closed = false;
@@ -90,11 +98,28 @@ export class ArtifactDownloadService {
     authority: ArtifactDownloadAuthority,
     requestSignal: AbortSignal,
   ): Promise<Response> {
+    return this.startDownload(id, authority, requestSignal, false);
+  }
+
+  async readableExport(
+    id: string,
+    authority: ArtifactDownloadAuthority,
+    requestSignal: AbortSignal,
+  ): Promise<Response> {
+    return this.startDownload(id, authority, requestSignal, true);
+  }
+
+  private async startDownload(
+    id: string,
+    authority: ArtifactDownloadAuthority,
+    requestSignal: AbortSignal,
+    readable: boolean,
+  ): Promise<Response> {
     if (this.closed) throw new ServiceUnavailableError("Artifact downloads are stopping.");
     const settled = Promise.withResolvers<void>();
     this.preparations.add(settled.promise);
     try {
-      return await this.prepareDownload(id, authority, requestSignal);
+      return await this.prepareDownload(id, authority, requestSignal, readable);
     } finally {
       this.preparations.delete(settled.promise);
       settled.resolve();
@@ -105,6 +130,7 @@ export class ArtifactDownloadService {
     id: string,
     authority: ArtifactDownloadAuthority,
     requestSignal: AbortSignal,
+    readable: boolean,
   ): Promise<Response> {
     if (!authority.stillAuthorized())
       throw new ForbiddenError("Artifact download permission is no longer active.");
@@ -112,6 +138,13 @@ export class ArtifactDownloadService {
       (candidate) => candidate.item.id === id,
     );
     if (!plan) throw artifactUnavailable();
+    if (readable) {
+      requireReadableExport(plan);
+      if (!this.options.readExportRootKey)
+        throw new ServiceUnavailableError(
+          "Readable exports are unavailable. Save the stored copy instead.",
+        );
+    }
     if (plan.item.bytes > (this.options.maxBytes ?? 1024 ** 4)) {
       throw new HttpError(
         413,
@@ -158,9 +191,16 @@ export class ArtifactDownloadService {
     const iterator = archive[Symbol.asyncIterator]();
     let idleTimer: ReturnType<typeof setTimeout> | undefined;
     let lastAuthorizationCheck = 0;
-    const ensureActive = (): void => {
+    let lastReadableActivity = 0;
+    const ensureActive = (force = false): void => {
       abort.signal.throwIfAborted();
-      if (Date.now() - lastAuthorizationCheck >= 1000) {
+      // Authentication can legitimately read a large file before emitting its first
+      // plaintext byte. Backpressure stops this activity when a consumer stalls.
+      if (readable && Date.now() - lastReadableActivity >= 1000) {
+        touch();
+        lastReadableActivity = Date.now();
+      }
+      if (force || Date.now() - lastAuthorizationCheck >= 1000) {
         if (!authority.stillAuthorized())
           throw new ForbiddenError("Artifact download permission is no longer active.");
         lastAuthorizationCheck = Date.now();
@@ -192,6 +232,18 @@ export class ArtifactDownloadService {
     const prefix = `Omnesis-${plan.item.kind}-${plan.item.id.slice(0, 12)}`;
     const produce = async (): Promise<void> => {
       try {
+        if (readable) {
+          const key = await this.options.readExportRootKey!();
+          ensureActive(true);
+          if (!key)
+            throw new ServiceUnavailableError(
+              "Unlock the library key before saving a readable export.",
+            );
+          await streamReadableExport(archive, plan, key, prefix, abort.signal, ensureActive);
+          ensureActive(true);
+          archive.finalize();
+          return;
+        }
         const directories = new Set([
           prefix,
           ...plan.directories.map((name) => `${prefix}/${name}`),
@@ -261,7 +313,7 @@ export class ArtifactDownloadService {
             await handle.close();
           }
         }
-        ensureActive();
+        ensureActive(true);
         archive.finalize();
       } catch {
         terminate();
@@ -278,7 +330,7 @@ export class ArtifactDownloadService {
       if (released) return;
       released = true;
       if (idleTimer) clearTimeout(idleTimer);
-      if (deadline) clearTimeout(deadline);
+      clearTimeout(deadline);
       requestSignal.removeEventListener("abort", onRequestAbort);
       this.active.delete(active);
     };
@@ -311,7 +363,7 @@ export class ArtifactDownloadService {
       },
       { highWaterMark: BUFFER_BYTES, size: (chunk) => chunk.byteLength },
     );
-    const filename = `Omnesis-${plan.item.kind}-${plan.item.createdAt.replace(/[^0-9TZ.-]/gu, "-")}.tar`;
+    const filename = `Omnesis-${plan.item.kind}${readable ? "-readable" : ""}-${plan.item.createdAt.replace(/[^0-9TZ.-]/gu, "-")}.tar`;
     return new Response(body, {
       headers: {
         "Content-Type": "application/x-tar",
@@ -369,4 +421,89 @@ function drained(sink: ReturnType<Pack["entry"]>, signal: AbortSignal): Promise<
     signal.addEventListener("abort", failed, { once: true });
     if (signal.aborted || sink.destroyed) failed();
   });
+}
+
+async function streamReadableExport(
+  archive: Pack,
+  plan: ArtifactPlan,
+  rootKey: string,
+  prefix: string,
+  signal: AbortSignal,
+  ensureActive: () => void,
+): Promise<void> {
+  const prepared = await prepareReadableExport(plan, rootKey, signal, ensureActive);
+  await entry(
+    archive,
+    { name: prefix, type: "directory", mode: 0o700, size: 0, mtime: new Date(plan.item.createdAt) },
+    Buffer.alloc(0),
+  );
+  await entry(
+    archive,
+    {
+      name: `${prefix}/manifest.json`,
+      type: "file",
+      mode: 0o600,
+      size: prepared.manifest.length,
+      mtime: new Date(plan.item.createdAt),
+      uid: 0,
+      gid: 0,
+      uname: "",
+      gname: "",
+    },
+    prepared.manifest,
+  );
+  for (const file of prepared.files) {
+    ensureActive();
+    const handle = await openArtifactFile(plan, file.stored);
+    try {
+      const bytes = await authenticateReadableExport(
+        handle,
+        file.stored,
+        rootKey,
+        file.scope,
+        signal,
+        ensureActive,
+      );
+      const completed = Promise.withResolvers<void>();
+      void completed.promise.catch(() => {});
+      const sink = archive.entry(
+        {
+          name: `${prefix}/${file.name}`,
+          type: "file",
+          mode: 0o600,
+          size: bytes,
+          mtime: new Date(file.stored.modifiedAt),
+          uid: 0,
+          gid: 0,
+          uname: "",
+          gname: "",
+        },
+        (error) => (error ? completed.reject(error) : completed.resolve()),
+      );
+      sink.on("error", () => {});
+      const reading = decryptPinnedExport(
+        handle,
+        file.stored,
+        rootKey,
+        file.scope,
+        signal,
+        ensureActive,
+      );
+      let written = 0;
+      for await (const block of reading) {
+        ensureActive();
+        written += block.length;
+        if (written > bytes) throw artifactUnavailable();
+        if (!sink.write(block)) await drained(sink, signal);
+      }
+      if (reading.authentication().bytes !== bytes || written !== bytes)
+        throw artifactUnavailable();
+      await verifyArtifactFile(handle, file.stored);
+      ensureActive();
+      sink.end(Buffer.alloc(0));
+      await completed.promise;
+    } finally {
+      await handle.close();
+    }
+  }
 }

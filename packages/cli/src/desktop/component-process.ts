@@ -11,6 +11,11 @@ import { publishDesktopHint } from "./publication.js";
 import { installDesktopParentLifetime } from "./parent-lifetime.js";
 import { desktopComponentOwner } from "./runtime-leases.js";
 import { desktopUpdateBlocked } from "./update-admission.js";
+import {
+  readDesktopRestoreActivationArguments,
+  type DesktopRestoreActivation,
+} from "./restore-start-arguments.js";
+import { desktopRuntimeEpoch } from "./update-state.js";
 export { desktopComponentOwner } from "./runtime-leases.js";
 
 export type DesktopManagedComponent = "gateway" | "collector";
@@ -20,8 +25,17 @@ export async function withDesktopComponentOwnership(
   profile: DesktopProfile,
   component: DesktopManagedComponent,
   run: () => Promise<void>,
+  restoreActivation?: DesktopRestoreActivation,
 ): Promise<void> {
-  if ((await readDesktopRetirement(profile)) || (await desktopUpdateBlocked(profile))) return;
+  if (
+    (await readDesktopRetirement(profile)) ||
+    (await desktopUpdateBlocked(
+      profile,
+      desktopRuntimeEpoch(),
+      component === "gateway" ? restoreActivation : undefined,
+    ))
+  )
+    return;
   const install = await readDesktopInstall(profile);
   if (!install || install.phase !== "configured")
     throw new Error("The managed installation is not ready");
@@ -41,7 +55,15 @@ export async function withDesktopComponentOwnership(
     throw new Error("The managed component owner folder must be private");
   const lock = await acquireGatewayLock(directory, { waitMs: 0 });
   try {
-    if ((await readDesktopRetirement(profile)) || (await desktopUpdateBlocked(profile))) return;
+    if (
+      (await readDesktopRetirement(profile)) ||
+      (await desktopUpdateBlocked(
+        profile,
+        desktopRuntimeEpoch(),
+        component === "gateway" ? restoreActivation : undefined,
+      ))
+    )
+      return;
     const current = await readDesktopInstall(profile);
     if (!current || current.phase !== "configured" || current.mode !== install.mode)
       throw new Error("The managed installation changed before the component could start");
@@ -53,8 +75,11 @@ export async function withDesktopComponentOwnership(
 
 async function main(): Promise<void> {
   const component = process.argv[2];
-  if ((component !== "gateway" && component !== "collector") || process.argv.length !== 3)
+  if (component !== "gateway" && component !== "collector")
     throw new Error("Expected one managed component name");
+  const restoreActivation = readDesktopRestoreActivationArguments(process.argv.slice(3));
+  if (component === "collector" && restoreActivation)
+    throw new Error("A restore must verify the gateway before collection starts");
   const profile = desktopProfile();
   if (
     process.env.OMNESIS_CONFIG_DIR !== profile.configDir ||
@@ -67,40 +92,46 @@ async function main(): Promise<void> {
     );
   const dispose = installDesktopParentLifetime();
   try {
-    await withDesktopComponentOwnership(profile, component, async () => {
-      if (!process.connected) return;
-      if (component === "collector") {
-        const { initializePairedDeviceTransport } = await import("@omnesis/cloud-relay/bootstrap");
-        await initializePairedDeviceTransport(
-          process.env,
-          {
-            start: async (env) => {
-              const { runRelayCommand, saveDirectCandidates } =
-                await import("@omnesis/cloud-relay/runtime");
-              const transport = await runRelayCommand("client", env, {
-                persistDirectCandidates: (...args) =>
-                  publishDesktopHint(profile, () => saveDirectCandidates(...args)),
-              });
-              if (!transport?.gatewayUrl) {
-                await transport?.close();
-                throw new Error("The managed paired transport is unavailable");
-              }
-              return { ...transport, gatewayUrl: transport.gatewayUrl };
+    await withDesktopComponentOwnership(
+      profile,
+      component,
+      async () => {
+        if (!process.connected) return;
+        if (component === "collector") {
+          const { initializePairedDeviceTransport } =
+            await import("@omnesis/cloud-relay/bootstrap");
+          await initializePairedDeviceTransport(
+            process.env,
+            {
+              start: async (env) => {
+                const { runRelayCommand, saveDirectCandidates } =
+                  await import("@omnesis/cloud-relay/runtime");
+                const transport = await runRelayCommand("client", env, {
+                  persistDirectCandidates: (...args) =>
+                    publishDesktopHint(profile, () => saveDirectCandidates(...args)),
+                });
+                if (!transport?.gatewayUrl) {
+                  await transport?.close();
+                  throw new Error("The managed paired transport is unavailable");
+                }
+                return { ...transport, gatewayUrl: transport.gatewayUrl };
+              },
             },
-          },
-          [],
-          "collector",
+            [],
+            "collector",
+          );
+        }
+        process.argv.splice(
+          2,
+          process.argv.length - 2,
+          component,
+          component === "gateway" ? "serve" : "run",
         );
-      }
-      process.argv.splice(
-        2,
-        process.argv.length - 2,
-        component,
-        component === "gateway" ? "serve" : "run",
-      );
-      // The existing entry preserves dotenv/paired-transport ordering and daemon shutdown behavior.
-      await import("../index.js");
-    });
+        // The existing entry preserves dotenv/paired-transport ordering and daemon shutdown behavior.
+        await import("../index.js");
+      },
+      restoreActivation,
+    );
   } finally {
     dispose();
   }

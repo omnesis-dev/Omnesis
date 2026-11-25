@@ -35,15 +35,16 @@ import {
   type Dir,
 } from "node:fs";
 import { opendir, readFile, unlink } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import Sqlite from "better-sqlite3";
+import { ManagedTextFiles } from "../managed-text-files.js";
 import { fileIdentity } from "../agent/conversation-retention.js";
+import type { SecretFileOptions, AgentContextAssessment } from "@omnesis/core";
 import type {
   HistoryCleanupCandidate,
   HistoryCleanupPage,
   HistoryCleanupOutcome,
 } from "../storage/history-cleanup-types.js";
-import type { AgentContextAssessment } from "@omnesis/core";
 import type { CognitionRunKind, CognitionRunUsage } from "./storage/types.js";
 
 /**
@@ -143,7 +144,16 @@ export class FsCognitionTranscriptStore {
   private closePromise: Promise<void> | null = null;
   private backgroundIndexBuild: Promise<void> | null = null;
 
-  constructor(private readonly dir: string) {
+  private readonly protectedFiles: ManagedTextFiles;
+
+  constructor(
+    private readonly dir: string,
+    secretOptions: SecretFileOptions = {},
+  ) {
+    this.protectedFiles = new ManagedTextFiles(
+      secretOptions.configDir ?? dirname(dirname(dir)),
+      secretOptions,
+    );
     const key = resolve(this.indexPath());
     const owners = INDEX_OWNERS.get(key) ?? new Set<FsCognitionTranscriptStore>();
     owners.add(this);
@@ -166,7 +176,10 @@ export class FsCognitionTranscriptStore {
     if (ref) this.upsertIndexedRef(ref, "pending_save");
     const pendingPath = join(this.dir, `${name}.pending`);
     try {
-      writeFileSync(pendingPath, JSON.stringify(transcript, null, 2), "utf8");
+      const body = JSON.stringify(transcript, null, 2);
+      if (!this.protectedFiles.publishProtectedSync(pendingPath, body, join(this.dir, name))) {
+        writeFileSync(pendingPath, body, { encoding: "utf8", mode: 0o600 });
+      }
       renameSync(pendingPath, join(this.dir, name));
       if (ref) this.markIndexedRefState(name, "committed");
     } catch (err) {
@@ -298,7 +311,12 @@ export class FsCognitionTranscriptStore {
     if (!FILE_PATTERN.test(fileName)) {
       throw new Error(`not a transcript file name: ${fileName}`);
     }
-    return JSON.parse(readFileSync(join(this.dir, fileName), "utf8")) as CognitionRunTranscript;
+    return parseTranscript(
+      this.protectedFiles.decodeSync(
+        join(this.dir, fileName),
+        readFileSync(join(this.dir, fileName), "utf8"),
+      ),
+    ) as CognitionRunTranscript;
   }
 
   /** Asynchronous counterpart for HTTP reads and bounded index traversal. */
@@ -308,7 +326,12 @@ export class FsCognitionTranscriptStore {
       throw new Error(`not a transcript file name: ${fileName}`);
     }
     try {
-      return JSON.parse(await readFile(join(this.dir, fileName), "utf8")) as CognitionRunTranscript;
+      return parseTranscript(
+        await this.protectedFiles.decode(
+          join(this.dir, fileName),
+          await readFile(join(this.dir, fileName), "utf8"),
+        ),
+      ) as CognitionRunTranscript;
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") {
         // A manual filesystem cleanup or retention race may leave an indexed
@@ -840,5 +863,13 @@ export class FsCognitionTranscriptStore {
       // Directory not created yet — no transcripts.
       return [];
     }
+  }
+}
+
+function parseTranscript(serialized: string): CognitionRunTranscript {
+  try {
+    return JSON.parse(serialized) as CognitionRunTranscript;
+  } catch {
+    throw new Error("The stored background transcript is invalid.");
   }
 }

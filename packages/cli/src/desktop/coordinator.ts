@@ -1,6 +1,19 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { readDesktopRolePair, persistDesktopRolePair } from "./coordinator-credentials.js";
+import { DesktopFreshInstallFailure } from "./fresh-install-errors.js";
+import { DesktopFreshInstallService } from "./fresh-install.js";
+import {
+  handleDesktopFreshInstall,
+  isDesktopFreshInstallCommand,
+} from "./coordinator-fresh-install.js";
+import { assertDesktopProfileGeneration } from "./generation.js";
+import { DesktopRestoreFailure } from "./restore-errors.js";
+import { openDesktopPortal } from "./coordinator-portal.js";
+import { startCommittedDesktopRestore } from "./restore-start.js";
+import { DesktopBackupRestoreService } from "./restore-service.js";
+import { handleDesktopRestore, isDesktopRestoreCommand } from "./coordinator-restore.js";
 import { DesktopUpdateController } from "./update-controller.js";
 import type {
   DesktopState,
@@ -12,10 +25,10 @@ export type {
   DesktopStateCommand,
   DesktopCoordinatorResult,
 } from "./desktop-state.js";
+import { restartDesktopHome } from "./restart.js";
 import { join } from "node:path";
 import { assertNever } from "@omnesis/core";
 import { z } from "zod";
-import { restartDesktopHome } from "./restart.js";
 import { handleDesktopRecovery } from "./coordinator-recovery.js";
 import { sameDesktopLibrary as sameLibrary } from "./enrollment.js";
 import {
@@ -26,7 +39,6 @@ import {
 import { DesktopRecoveryService } from "./recovery.js";
 import {
   DesktopAccountFailure,
-  continued,
   desktopAccountSchema,
   safeBrowserUrl,
   desktopEnrollmentUI,
@@ -41,24 +53,19 @@ import type { DesktopProtocolContext, DesktopProtocolRequest } from "./protocol.
 import type { DesktopProfile } from "./environment.js";
 import type { DesktopEnrollmentRole, DesktopEnrollmentUI, DesktopPairing } from "./enrollment.js";
 
-const removalParams = z.object({ eraseData: z.boolean().optional() }).strict();
-const removeParams = removalParams
-  .extend({ confirmationId: z.string().regex(/^[a-f0-9]{64}$/) })
-  .strict();
-const prepareParams = z
-  .object({ mode: z.enum(["home", "joined"]), name: z.string().trim().min(1).max(80).optional() })
-  .strict();
-const discoveryParams = z
-  .object({
-    intent: z.enum(["existing", "create"]).optional(),
-    termsAccepted: z.boolean().optional(),
-    invite: z.string().max(2048).optional(),
-  })
-  .strict();
-const healthSchema = z.object({ status: z.literal("ok") });
+import {
+  removalParams,
+  removeParams,
+  prepareParams,
+  discoveryParams,
+  healthSchema,
+  desktopSecretOptions,
+} from "./coordinator-input.js";
 
 /** Native views receive verified state; credentials stay on the private bridge and scoped files. */
 export class DesktopCoordinator {
+  private readonly fresh: DesktopFreshInstallService;
+  private readonly restore: DesktopBackupRestoreService;
   private readonly recovery: DesktopRecoveryService;
   private readonly update: DesktopUpdateController;
   private readonly deps: CoordinatorDependencies;
@@ -70,6 +77,8 @@ export class DesktopCoordinator {
     dependencies: Partial<CoordinatorDependencies> = {},
   ) {
     this.deps = { ...defaults, ...dependencies };
+    this.fresh = new DesktopFreshInstallService(profile);
+    this.restore = new DesktopBackupRestoreService(profile);
     this.recovery = new DesktopRecoveryService(profile);
     this.update = new DesktopUpdateController(profile, {
       closeTransport: () => this.closeTransport(),
@@ -103,6 +112,24 @@ export class DesktopCoordinator {
   ): Promise<DesktopCoordinatorResult> {
     try {
       context.signal.throwIfAborted();
+      assertDesktopProfileGeneration(this.profile);
+      if (isDesktopFreshInstallCommand(request.command))
+        return handleDesktopFreshInstall(
+          this.fresh,
+          this.profile,
+          request.command,
+          request.params,
+          context.signal,
+          () => this.close(false),
+        );
+      if (isDesktopRestoreCommand(request.command))
+        return handleDesktopRestore(
+          this.restore,
+          request.command,
+          request.params,
+          context.signal,
+          () => this.closeTransport(),
+        );
       switch (request.command) {
         case "updateStatus":
         case "updateCheck":
@@ -112,6 +139,8 @@ export class DesktopCoordinator {
         case "updateResume":
         case "updateRestore":
         case "updateFinish":
+        case "updateCleanupPreview":
+        case "updateCleanup":
           return this.update.handle(request.command, request.params, context);
         case "recoveryImport":
         case "recoveryStatus":
@@ -177,16 +206,20 @@ export class DesktopCoordinator {
           return assertNever(request.command);
       }
     } catch (error) {
+      if (error instanceof DesktopFreshInstallFailure) throw error;
       if (
         context.signal.aborted ||
         request.command === "remove" ||
         request.command === "removePreview" ||
+        request.command.startsWith("fresh") ||
+        request.command.startsWith("restore") ||
         request.command.startsWith("recovery") ||
         request.command.startsWith("update")
       )
         throw error;
       const protectionFailure = desktopStorageProtectionFailure(error);
       if (protectionFailure) return protectionFailure;
+      if (error instanceof DesktopRestoreFailure) return { phase: "error", message: error.message };
       if (error instanceof DesktopAccountFailure) return { phase: "error", message: error.message };
       return {
         phase: "error",
@@ -195,7 +228,9 @@ export class DesktopCoordinator {
     }
   }
 
-  async close(): Promise<void> {
+  async close(discardFresh = true): Promise<void> {
+    if (discardFresh) this.fresh.close();
+    await this.restore.close();
     this.recovery.close();
     this.update.close();
     await this.closeTransport();
@@ -206,21 +241,6 @@ export class DesktopCoordinator {
     this.transport = undefined;
     this.transportIdentity = undefined;
     await transport?.close();
-  }
-
-  private secretOptions() {
-    return {
-      configDir: this.profile.configDir,
-      service: this.profile.secretService,
-      backend: "macos-keychain" as const,
-    };
-  }
-  private pairPath(role: DesktopEnrollmentRole) {
-    return join(
-      this.profile.configDir,
-      "cloud-relay",
-      `${role === "interactive" ? "cli" : "collector"}-device.json`,
-    );
   }
 
   private async status(signal: AbortSignal): Promise<DesktopState> {
@@ -347,6 +367,8 @@ export class DesktopCoordinator {
 
   private async connect(params: unknown, context: DesktopProtocolContext): Promise<DesktopState> {
     discoveryParams.parse(params ?? {});
+    if (await startCommittedDesktopRestore(this.profile, context.signal, this.deps))
+      return this.status(context.signal);
     const blocked = await this.resumeKeptLibrary(context.signal);
     if (blocked) return blocked;
     const install = await this.deps.readInstall(this.profile);
@@ -411,7 +433,7 @@ export class DesktopCoordinator {
         name: this.deps.name(),
         deviceKeyFile: join(this.profile.configDir, "cloud-relay", "collector.key"),
         signal: context.signal,
-        deviceKeySecretOptions: this.secretOptions(),
+        deviceKeySecretOptions: desktopSecretOptions(this.profile),
         deviceKeyPublication: (work) => this.deps.publish(this.profile, context.signal, work),
         ui,
         onEvent: () => {},
@@ -430,13 +452,7 @@ export class DesktopCoordinator {
   }
 
   private async savedPair(role: DesktopEnrollmentRole): Promise<DesktopPairing | null> {
-    try {
-      const pairing = await this.deps.readPair(this.pairPath(role), this.secretOptions());
-      return pairing.kind === (role === "interactive" ? "cli" : "collector") ? pairing : null;
-    } catch (error) {
-      if (error instanceof Error && "code" in error && error.code === "ENOENT") return null;
-      throw error;
-    }
+    return readDesktopRolePair(this.profile, role, this.deps);
   }
 
   private async enroll(
@@ -455,7 +471,7 @@ export class DesktopCoordinator {
         `${role === "interactive" ? "cli" : "collector"}.key`,
       ),
       signal: context.signal,
-      deviceKeySecretOptions: this.secretOptions(),
+      deviceKeySecretOptions: desktopSecretOptions(this.profile),
       deviceKeyPublication: (work) => this.deps.publish(this.profile, context.signal, work),
       ui,
       onEvent: () => {},
@@ -469,16 +485,7 @@ export class DesktopCoordinator {
     pairing: DesktopPairing,
     signal: AbortSignal,
   ): Promise<void> {
-    signal.throwIfAborted();
-    await this.deps.publish(this.profile, signal, async () => {
-      await this.deps.savePair(this.pairPath(role), pairing, this.secretOptions());
-      signal.throwIfAborted();
-      await this.deps.saveToken(
-        join(this.profile.configDir, role === "interactive" ? "token" : "collector-token"),
-        pairing.token,
-        this.secretOptions(),
-      );
-    });
+    return persistDesktopRolePair(this.profile, role, pairing, signal, this.deps);
   }
 
   private async joinedState(signal: AbortSignal): Promise<DesktopState> {
@@ -503,7 +510,7 @@ export class DesktopCoordinator {
       throw new Error("Collection permissions are incomplete");
     const token = await this.deps.readToken(
       join(this.profile.configDir, "token"),
-      this.secretOptions(),
+      desktopSecretOptions(this.profile),
     );
     if (token?.trim() !== pairing.token) throw new Error("The interactive credential needs repair");
     const identity = `${pairing.deviceId}:${pairing.token}`;
@@ -569,32 +576,10 @@ export class DesktopCoordinator {
   }
 
   private async openPortal(context: DesktopProtocolContext): Promise<DesktopState> {
-    const install = await this.deps.readInstall(this.profile);
-    let origin: string;
-    if (install?.mode === "home") {
-      const account = desktopAccountSchema.parse(
-        await this.deps.request(this.profile, "/admin/cloud-relay", { signal: context.signal }),
-      );
-      if (!account.account?.linked || !account.publicOrigin)
-        throw new Error("Connect your account first");
-      origin = account.publicOrigin;
-    } else {
-      const pairing = await this.savedPair("interactive");
-      if (!pairing) throw new Error("Connect this Mac first");
-      origin = pairing.gatewayUrl;
-    }
-    const base = new URL(safeBrowserUrl(origin));
-    if (base.pathname !== "/" || base.search || base.hash)
-      throw new Error("Invalid library origin");
-    await context.interactions.ask(
-      "openBrowser",
-      {
-        url: new URL("/portal/", base).href,
-        message: "Open the advanced web settings in your browser. You may be asked to sign in.",
-      },
-      continued,
-      context.signal,
-    );
+    await openDesktopPortal(this.profile, context, {
+      ...this.deps,
+      readPair: () => this.savedPair("interactive"),
+    });
     return this.status(context.signal);
   }
 }

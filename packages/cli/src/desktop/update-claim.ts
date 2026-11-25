@@ -9,6 +9,10 @@ import {
 } from "./update-active.js";
 import { withDesktopInstallLease } from "./bootstrap.js";
 import { desktopRestoreBlocked } from "./restore-intent.js";
+import {
+  verifyDesktopRestoreActivation,
+  type DesktopRestoreActivation,
+} from "./restore-activation.js";
 import { desktopRootIdentity, readDesktopRetirement, sameDesktopRoot } from "./retirement.js";
 import { verifyDesktopUpdateSnapshot } from "./update-snapshot.js";
 import {
@@ -24,16 +28,33 @@ export async function claimDesktopUpdateEpoch(
   profile: DesktopProfile,
   signal: AbortSignal,
   epoch: string | null = desktopRuntimeEpoch(),
+  restoreActivation?: DesktopRestoreActivation,
 ): Promise<boolean> {
   return withDesktopInstallLease(profile, signal, async () => {
-    if (await desktopRestoreBlocked(profile)) return false;
     if (await readDesktopRetirement(profile)) return false;
+    const restoring = await desktopRestoreBlocked(profile);
+    if (restoring) {
+      if (
+        !restoreActivation ||
+        restoreActivation.epoch !== epoch ||
+        !(await verifyDesktopRestoreActivation(profile, restoreActivation, {
+          mode: "pending",
+          signal,
+        }))
+      )
+        return false;
+    }
+    const claimRestore = () =>
+      !restoring ||
+      verifyDesktopRestoreActivation(profile, restoreActivation!, { mode: "claim", signal });
     const state = await readDesktopUpdateState(profile);
     const active = await readDesktopActiveRuntime(profile);
     if (!state) {
       if (active && active.epoch !== epoch) return false;
-      if (epoch === null) return active === null && desktopSourceDevelopment();
+      if (epoch === null)
+        return active === null && desktopSourceDevelopment() && (await claimRestore());
       const current = await readCurrentDesktopMetadata();
+      if (!(await claimRestore())) return false;
       await writeDesktopActiveRuntime(profile, epoch, current.productVersion);
       return true;
     }
@@ -52,6 +73,7 @@ export async function claimDesktopUpdateEpoch(
     )
       return false;
     if (admission === "allow") {
+      if (!(await claimRestore())) return false;
       await writeDesktopActiveRuntime(
         profile,
         epoch,
@@ -67,6 +89,7 @@ export async function claimDesktopUpdateEpoch(
       signal,
     });
     signal.throwIfAborted();
+    if (!(await claimRestore())) return false;
     await writeDesktopUpdateState(profile, { ...state, phase: "candidate-started" });
     await writeDesktopActiveRuntime(profile, epoch, state.candidateVersion);
     return true;

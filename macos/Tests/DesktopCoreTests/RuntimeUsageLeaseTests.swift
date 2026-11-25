@@ -217,6 +217,21 @@ final class RuntimeUsageLeaseTests: XCTestCase {
         XCTAssertEqual(status, expected)
     }
 
+    func testLegacyDataReservationRefusesLiveAndUnknownCodeMembership() throws {
+        let legacy = try fixture(tag: "legacy-data-consumer")
+        var live: DesktopRuntimeUsageLease? = try DesktopRuntimeUsageLease.acquire(runtime: legacy)
+        XCTAssertThrowsError(try DesktopRuntimeUsageLease.reserveLegacyDataConsumers(cache: cache))
+        withExtendedLifetime(live) {}
+        live = nil
+        var reservation: DesktopRuntimeUsageLease.LegacyDataReservation? = try DesktopRuntimeUsageLease
+            .reserveLegacyDataConsumers(cache: cache)
+        XCTAssertNotNil(reservation)
+        withExtendedLifetime(reservation) {}
+        reservation = nil
+        _ = try fixture(tag: "unknown-data-consumer", usageProtocol: false)
+        XCTAssertThrowsError(try DesktopRuntimeUsageLease.reserveLegacyDataConsumers(cache: cache))
+    }
+
     func testNativeReservationAndActualExecBothPinTheEpoch() async throws {
         let first = try fixture(tag: "controller"), second = try fixture(tag: "held")
         var native: DesktopRuntimeUsageLease? = try DesktopRuntimeUsageLease.acquire(runtime: second)
@@ -292,9 +307,12 @@ final class RuntimeUsageLeaseTests: XCTestCase {
     func testNodeCompatibleDefaultSupportsForkIPCAndStdinEvaluation() async throws {
         let runtime = try fixture(tag: "node-compatible")
         let entry = home.appendingPathComponent("invented-fork-child.cjs")
-        try Data("process.send({ready:true});process.once('message',()=>process.exit(0));setTimeout(()=>process.exit(1),5000);".utf8)
-            .write(to: entry)
-        let code = "const child=require('node:child_process').fork(\(String(reflecting: entry.path)),[],{stdio:['ignore','ignore','ignore','ipc']});child.once('message',()=>process.stdout.write('ready'));process.stdin.once('data',()=>child.send('stop'));child.once('exit',code=>process.exit(code));process.stdin.resume();"
+        try Data(
+            "if(!process.execArgv.includes('--use-system-ca'))process.exit(2);process.send({ready:true});process.once('message',()=>process.exit(0));setTimeout(()=>process.exit(1),5000);"
+                .utf8
+        )
+        .write(to: entry)
+        let code = "if(!process.execArgv.includes('--use-system-ca'))process.exit(2);const child=require('node:child_process').fork(\(String(reflecting: entry.path)),[],{stdio:['ignore','ignore','ignore','ipc']});child.once('message',()=>process.stdout.write('ready'));process.stdin.once('data',()=>child.send('stop'));child.once('exit',code=>process.exit(code));process.stdin.resume();"
         let child = try start(runtime: runtime, arguments: ["-e", code])
         defer { stop(child) }
         try await waitReady(child)
@@ -305,8 +323,10 @@ final class RuntimeUsageLeaseTests: XCTestCase {
         defer { stop(stdin) }
         try stdin.input.fileHandleForWriting
             .write(
-                contentsOf: Data("if (!process.execPath.endsWith('/runtime-exec') || !process.argv[0].endsWith('/node')) process.exit(1);\n"
-                    .utf8)
+                contentsOf: Data(
+                    "if (!process.execArgv.includes('--use-system-ca') || !process.execPath.endsWith('/runtime-exec') || !process.argv[0].endsWith('/node')) process.exit(1);\n"
+                        .utf8
+                )
             )
         try stdin.input.fileHandleForWriting.close()
         try await waitExited(stdin)

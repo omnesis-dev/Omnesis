@@ -3,6 +3,7 @@
 
 import { createHash } from "node:crypto";
 import {
+  realpath,
   mkdtemp,
   writeFile,
   readFile,
@@ -37,7 +38,7 @@ const manifest = (files = [{ name: "omnesis.db", bytes: 7 }], extra = {}) => ({
   ...extra,
 });
 beforeEach(async () => {
-  root = await mkdtemp(join(tmpdir(), "omnesis-restore-archive-"));
+  root = await realpath(await mkdtemp(join(tmpdir(), "omnesis-restore-archive-")));
   await ensureInstallRootKey({ backend: "file", configDir: root });
   rootKey = (await readInstallRootKey({ backend: "file", configDir: root }))!;
 });
@@ -112,6 +113,8 @@ describe("private desktop backup archive boundary", () => {
     const result = await extractDesktopBackupArchive(opts);
     expect(result.manifest.version).toBe("0.7.0");
     expect(result.files.get("config-secrets/example.enc")).toBe(6);
+    for (const [logical, file] of result.sealedFiles)
+      expect((await readFile(file.path)).includes(Buffer.from(logical))).toBe(false);
     expect(await plain(result.sealedFiles.get("omnesis.db")!)).toBe("fixture");
     await expect(stat(join(opts.destination, "omnesis.db"))).rejects.toMatchObject({
       code: "ENOENT",
@@ -217,6 +220,7 @@ describe("private desktop backup archive boundary", () => {
     for (const limits of [
       { maxEntries: 1 },
       { maxFileBytes: 3 },
+      { maxExpandedBytes: 3 },
       { maxManifestBytes: 16 },
       { maxBytes: 100 },
     ]) {

@@ -75,6 +75,8 @@ const FULL_MANIFEST_NAME = "manifest.full.json";
 const DOCUMENTS_BATCH_SIZE = 1000;
 
 export const exportManifestSchema = z.object({
+  /** Sealed into the full manifest and used to bind readable download scopes. */
+  exportId: z.string().uuid().optional(),
   /** Gateway product version that produced the export. */
   version: z.string(),
   startedAt: z.string(),
@@ -331,6 +333,7 @@ export class ExportService {
 
       const finishedAt = this.now().toISOString();
       const manifestBase: ExportManifest = {
+        exportId: cur.exportId,
         version: GATEWAY_VERSION,
         startedAt: cur.startedAt,
         finishedAt,
@@ -482,6 +485,7 @@ export class ExportService {
       );
     }
     return {
+      exportId: cur.exportId,
       version: fullManifest.version,
       startedAt: fullManifest.startedAt,
       finishedAt: fullManifest.finishedAt,

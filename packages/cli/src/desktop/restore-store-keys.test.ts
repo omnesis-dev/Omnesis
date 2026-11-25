@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { realpath, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, afterEach, expect, test } from "vitest";
@@ -32,7 +32,7 @@ const signal = new AbortController().signal,
   code = "ABCDE-FGHIJ-KLMNO-PQRST-UVWXY-ZABCD";
 let calls: string[][];
 beforeEach(async () => {
-  dir = await mkdtemp(join(tmpdir(), "omnesis-restore-store-keys-"));
+  dir = await realpath(await mkdtemp(join(tmpdir(), "omnesis-restore-store-keys-")));
   source = join(dir, "source");
   profile = desktopProfile(dir);
   calls = [];
@@ -66,7 +66,8 @@ afterEach(async () => {
   targetKey.fill(0);
   await rm(dir, { recursive: true, force: true });
 });
-async function readKey(name: StorageKeyName, options: StorageKeyOptions) {
+async function readKey(name: StorageKeyName, options?: StorageKeyOptions) {
+  if (!options) throw new Error("The restore key reader must receive an explicit scope");
   expect(options).toMatchObject({ backend: "macos-keychain", service: profile.secretService });
   return readStorageKey(name, {
     ...options,

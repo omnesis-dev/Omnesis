@@ -4,7 +4,10 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { spawnWindowsJob, type WindowsJobProcess } from "./windows-job.js";
 import { ownedProcessCleanupReceipt } from "./owned-process-cleanup.js";
-import { managedRuntimeExecutableInvocation } from "./node-command.js";
+import {
+  managedRuntimeExecutableInvocation,
+  managedRuntimeSubprocessStdio,
+} from "./node-command.js";
 
 export interface OwnedChildProcess {
   child: ChildProcess;
@@ -37,7 +40,7 @@ export function spawnOwnedChildProcess(
     ? (deps.spawnJob ?? spawnWindowsJob)(command, args, { ...spawnOptions, completion: "root" })
     : (deps.spawnChild ?? spawn)(command, [...args], {
         ...spawnOptions,
-        stdio: ["pipe", "pipe", "pipe"],
+        stdio: managedRuntimeSubprocessStdio(["pipe", "pipe", "pipe"]),
       });
   let closed = false;
   let stopping: Promise<void> | undefined;

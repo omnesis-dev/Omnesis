@@ -231,12 +231,23 @@ export function reconcileRestoredMainDatabase(
 }
 
 function validateInput(db: EncryptedSqliteDatabase): void {
-  const tables = db
-    .prepare<[], { name: string }>(
-      "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
+  const definitions = db
+    .prepare<[], { name: string; sql: string | null }>(
+      "SELECT name,sql FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
     )
-    .all()
-    .map(({ name }) => name);
+    .all();
+  // Do not activate a foreign virtual module through PRAGMA or SELECT. This
+  // schema has ordinary tables only; hidden/generated columns also need review.
+  for (const definition of definitions) {
+    if (!definition.sql || !/^\s*CREATE\s+TABLE\s/iu.test(definition.sql))
+      throw new Error("The backup contains an unsupported table implementation");
+    const fields = db
+      .prepare<[], { hidden: number }>(`PRAGMA table_xinfo(${identifier(definition.name)})`)
+      .all();
+    if (fields.some((field) => field.hidden !== 0))
+      throw new Error("The backup contains generated or hidden columns");
+  }
+  const tables = definitions.map(({ name }) => name);
   for (const name of tables) desktopRestoreTablePolicy(name);
   if (JSON.stringify(tables) !== JSON.stringify(desktopRestoreReviewedTables()))
     throw new Error("The backup database schema is incomplete");

@@ -1,0 +1,43 @@
+{
+  "format": 1,
+  "duckdbVersion": "v1.5.6",
+  "minimumMacOS": "14.0",
+  "sources": {
+    "duckdb": {
+      "url": "https://codeload.github.com/duckdb/duckdb/tar.gz/069cc9f9b5be802405797faecc284961b07c70ef",
+      "sha256": "77cfc249ad652104b770fa7a8bb1d0119c3232e5dd03aadaaa1c9c7554fe7c05",
+      "root": "duckdb-069cc9f9b5be802405797faecc284961b07c70ef",
+      "revision": "069cc9f9b5be802405797faecc284961b07c70ef",
+      "license": "LICENSE"
+    },
+    "httpfs": {
+      "url": "https://codeload.github.com/duckdb/duckdb-httpfs/tar.gz/4bc690dba4496c765777a0269d48fdbaff7cdc11",
+      "sha256": "094aef2364bdfb2fe69dca03b6a53723a25e8cc5ccd08b057cf797892d487e6f",
+      "root": "duckdb-httpfs-4bc690dba4496c765777a0269d48fdbaff7cdc11",
+      "revision": "4bc690dba4496c765777a0269d48fdbaff7cdc11",
+      "license": "LICENSE"
+    },
+    "openssl": {
+      "url": "https://github.com/openssl/openssl/releases/download/openssl-3.5.9/openssl-3.5.9.tar.gz",
+      "sha256": "603f5602e2eef00d77fbd429d34dcd5822bb301757a1bc9cdb24c670f1eb859a",
+      "root": "openssl-3.5.9",
+      "revision": "openssl-3.5.9",
+      "license": "LICENSE.txt"
+    },
+    "curl": {
+      "url": "https://curl.se/download/curl-8.23.0.tar.gz",
+      "sha256": "e3de77cfa6367083c776a26647fc9f633b538c06c3baa73d931a252ac8f72b49",
+      "root": "curl-8.23.0",
+      "revision": "curl-8_23_0",
+      "license": "COPYING"
+    }
+  },
+  "tools": {
+    "cmake": {
+      "url": "https://github.com/Kitware/CMake/releases/download/v3.31.8/cmake-3.31.8-macos-universal.tar.gz",
+      "sha256": "d1449f969c54d5c00886d5b643340d493dfb3c81cb39ee29b35453395c11ebf7",
+      "root": "cmake-3.31.8-macos-universal",
+      "revision": "v3.31.8"
+    }
+  }
+}

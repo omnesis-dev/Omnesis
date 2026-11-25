@@ -6,3 +6,5 @@ DerivedData/
 Local.xcconfig
 
 .node-fixture/
+.codex-keychain-fixture/
+.analytics-build-fixture/

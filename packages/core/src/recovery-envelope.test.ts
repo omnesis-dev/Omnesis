@@ -5,9 +5,11 @@ import { randomBytes } from "node:crypto";
 import { describe, expect, test } from "vitest";
 import {
   createRecoveryEnvelope,
+  createRecoveryEnvelopeAsync,
   generateRecoveryCode,
   normalizeRecoveryCode,
   openRecoveryEnvelope,
+  openRecoveryEnvelopeAsync,
   parseRecoveryEnvelope,
   RecoveryCodeInvalidError,
   type RecoveryEnvelopeV1,
@@ -168,4 +170,24 @@ describe("frozen wire-format compatibility", () => {
       ),
     ).toBe(FROZEN_ROOT);
   });
+});
+
+test("async recovery interoperates with existing envelopes and preserves typed authentication refusal", async () => {
+  const key = fakeRootKey(),
+    code = generateRecoveryCode();
+  expect(
+    await openRecoveryEnvelopeAsync(
+      createRecoveryEnvelope(key, code),
+      code.toLowerCase().replaceAll("-", " "),
+    ),
+  ).toBe(key);
+  const envelope = await createRecoveryEnvelopeAsync(key, code);
+  expect(openRecoveryEnvelope(envelope, code)).toBe(key);
+  await expect(openRecoveryEnvelopeAsync(envelope, generateRecoveryCode())).rejects.toBeInstanceOf(
+    RecoveryCodeInvalidError,
+  );
+  const malformed = { ...envelope, n: 1 << 20 };
+  await expect(openRecoveryEnvelopeAsync(malformed, code)).rejects.toBeInstanceOf(
+    RecoveryCodeInvalidError,
+  );
 });

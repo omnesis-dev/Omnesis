@@ -22,7 +22,10 @@ import {
 import { acquireNodeArchive, extractNodeArchive, NODE_RUNTIME } from "./node-runtime.mjs";
 import { inventoryBundle, machoArchitectures } from "./native-inventory.mjs";
 import { copyNodeTools, copyProductionDependencies } from "./runtime-assets.mjs";
-import { stagePinnedDuckDbExtensions } from "./pinned-extensions.mjs";
+import { stageCodexNotices } from "./codex-notices.mjs";
+import { buildDesktopAnalytics } from "./build-analytics.mjs";
+import { stageDesktopAnalytics } from "./stage-analytics.mjs";
+import { qualifyDesktopAnalytics } from "./qualify-analytics.mjs";
 import { writeDesktopUpdateMetadata } from "./update-metadata.mjs";
 import { parseArguments } from "./arguments.mjs";
 
@@ -110,7 +113,20 @@ export async function prepareRuntime({
       if (existsSync(source))
         copyProductionDependencies(source, join(target, entry.dir, "node_modules"));
     }
-    stagePinnedDuckDbExtensions({ input, target, node, architecture, env });
+    stageCodexNotices({
+      target,
+      architecture,
+      dependencyRoots: [
+        join(target, "node_modules"),
+        ...entries.map((entry) => join(target, entry.dir, "node_modules")),
+      ],
+    });
+    const analytics = await buildDesktopAnalytics({
+      architecture,
+      cache: cache ? join(resolve(cache), "analytics") : undefined,
+    });
+    await stageDesktopAnalytics({ target, architecture, build: analytics });
+    qualifyDesktopAnalytics({ input, target, node, architecture, scratch, env });
     cpSync(runtimeExec, join(target, "runtime-exec"));
     chmodSync(join(target, "runtime-exec"), 0o755);
     copyNodeTools(distribution, target);
@@ -126,6 +142,7 @@ export async function prepareRuntime({
           architecture,
           nodeVersion: NODE_RUNTIME.version,
           codeUsageProtocol: 1,
+          dataUsageProtocol: 1,
           runtimeLauncher: "runtime-exec",
           ...staged,
           inventory,

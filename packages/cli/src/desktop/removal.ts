@@ -4,11 +4,19 @@
 import { createHash, randomUUID } from "node:crypto";
 import { rm, unlink } from "node:fs/promises";
 import { homedir } from "node:os";
-import { acquireGatewayLock } from "@omnesis/core";
+import {
+  acquireGatewayLock,
+  invalidateSecretFileKeyCache,
+  assertManagedDesktopDataAuthority,
+} from "@omnesis/core";
 import { purgeConfigDirKeyring, type KeyringPurgeResult } from "../uninstall/keyring-purge.js";
+import { acquireDesktopRestoreSessionLease } from "./restore-owner.js";
+import { removeDesktopRestoreStaging } from "./restore-staging.js";
+import { runDesktopEraseOperation } from "./removal-operation.js";
 import { readDesktopInstall, withDesktopInstallLease } from "./bootstrap.js";
 import { acquireDesktopRuntimeLeases } from "./runtime-leases.js";
 import { stopDesktopDaemon } from "./daemon-control.js";
+import { purgeDesktopCodexKeyring } from "./codex-keyring.js";
 import {
   desktopRetirementPath,
   desktopRootIdentity,
@@ -32,29 +40,41 @@ export interface DesktopRemovalResult {
   data: "absent" | "retained" | "erased";
   keyring: "unchanged" | "retained" | "cleared" | "pending";
 }
-interface RemovalDependencies {
+export interface DesktopRemovalDependencies {
   readInstall: typeof readDesktopInstall;
   stopDaemon: typeof stopDesktopDaemon;
   lock: typeof acquireGatewayLock;
   removeData(profile: DesktopProfile): Promise<void>;
   purge(profile: DesktopProfile): Promise<KeyringPurgeResult>;
+  executeErase(
+    profile: DesktopProfile,
+    operationId: string,
+    signal: AbortSignal,
+    dependencies: Partial<DesktopRemovalDependencies>,
+  ): Promise<DesktopRemovalResult>;
+  authorize: typeof assertManagedDesktopDataAuthority;
 }
-const defaults: RemovalDependencies = {
+const defaults: DesktopRemovalDependencies = {
+  executeErase: runDesktopEraseOperation,
+  authorize: assertManagedDesktopDataAuthority,
   readInstall: readDesktopInstall,
   stopDaemon: stopDesktopDaemon,
   lock: acquireGatewayLock,
   removeData: (profile) => rm(profile.configDir, { recursive: true, force: true }),
-  purge: (profile) =>
-    purgeConfigDirKeyring(homedir(), profile.configDir, undefined, {
+  purge: async (profile) => {
+    await purgeDesktopCodexKeyring(profile);
+    return purgeConfigDirKeyring(homedir(), profile.configDir, undefined, {
       service: profile.secretService,
+      backend: "macos-keychain",
       exclusiveService: true,
-    }),
+    });
+  },
 };
 
 export async function previewDesktopRemoval(
   profile: DesktopProfile,
   options: { eraseData?: boolean; signal: AbortSignal },
-  overrides: Partial<RemovalDependencies> = {},
+  overrides: Partial<DesktopRemovalDependencies> = {},
 ): Promise<DesktopRemovalPlan> {
   options.signal.throwIfAborted();
   const deps = { ...defaults, ...overrides };
@@ -92,48 +112,55 @@ export async function previewDesktopRemoval(
 export async function removeDesktopInstall(
   profile: DesktopProfile,
   options: { eraseData?: boolean; confirmationId: string; signal: AbortSignal },
-  overrides: Partial<RemovalDependencies> = {},
+  overrides: Partial<DesktopRemovalDependencies> = {},
 ): Promise<DesktopRemovalResult> {
   const deps = { ...defaults, ...overrides };
   options.signal.throwIfAborted();
   const initial = await removalState(profile, deps);
   if (!initial.install && !initial.retirement)
     return { status: "not-installed", data: "absent", keyring: "unchanged" };
-  return withDesktopInstallLease(profile, options.signal, async () => {
-    const state = await removalState(profile, deps);
-    const mode = options.eraseData ? "erase-data" : "keep-data";
-    if (!state.install && !state.retirement)
-      return { status: "not-installed", data: "absent", keyring: "unchanged" };
-    if (confirmation(profile, mode, state) !== options.confirmationId)
-      throw new Error("This installation changed. Review the removal choice again.");
-    if (
-      state.retirement?.mode === "erase-data" &&
-      state.retirement.phase !== "complete" &&
-      mode !== "erase-data"
-    )
-      throw new Error("Finish the requested data removal before changing this installation");
-    const root = state.root ?? state.retirement?.root;
-    if (!root) throw new Error("The managed installation's ownership cannot be verified");
-    let record: DesktopRetirement =
-      state.retirement?.mode === mode
-        ? state.retirement
-        : {
-            version: 1,
-            owner: "omnesis-desktop",
-            instance: profile.instance,
-            secretService: profile.secretService,
-            operationId: randomUUID(),
-            mode,
-            phase: "requested",
-            root,
-          };
-    await writeDesktopRetirement(profile, record);
-    options.signal.throwIfAborted();
-    const stopped = await deps.stopDaemon(profile, options.signal);
-    let owners: { release(): void } | undefined;
-    try {
-      if (state.root) {
-        owners = await acquireDesktopRuntimeLeases(
+  const restoreSession = options.eraseData
+    ? await acquireDesktopRestoreSessionLease(profile, options.signal, { createParent: true })
+    : undefined;
+  try {
+    const prepared = await withDesktopInstallLease<DesktopRemovalResult | { operationId: string }>(
+      profile,
+      options.signal,
+      async () => {
+        const state = await removalState(profile, deps);
+        const mode = options.eraseData ? "erase-data" : "keep-data";
+        if (!state.install && !state.retirement)
+          return { status: "not-installed", data: "absent", keyring: "unchanged" };
+        if (confirmation(profile, mode, state) !== options.confirmationId)
+          throw new Error("This installation changed. Review the removal choice again.");
+        if (
+          state.retirement?.mode === "erase-data" &&
+          state.retirement.phase !== "complete" &&
+          mode !== "erase-data"
+        )
+          throw new Error("Finish the requested data removal before changing this installation");
+        const root = state.root ?? state.retirement?.root;
+        if (!root) throw new Error("The managed installation's ownership cannot be verified");
+        const record: DesktopRetirement =
+          state.retirement?.mode === mode
+            ? state.retirement
+            : {
+                version: 1,
+                owner: "omnesis-desktop",
+                instance: profile.instance,
+                secretService: profile.secretService,
+                operationId: randomUUID(),
+                mode,
+                phase: "requested",
+                root,
+              };
+        await writeDesktopRetirement(profile, record);
+        options.signal.throwIfAborted();
+        const stopped = await deps.stopDaemon(profile, options.signal);
+        if (mode === "erase-data") return { operationId: record.operationId };
+        if (!state.root || !state.install)
+          throw new Error("The retained library's ownership cannot be verified");
+        const owners = await acquireDesktopRuntimeLeases(
           profile,
           {
             signal: options.signal,
@@ -142,19 +169,70 @@ export async function removeDesktopInstall(
           },
           deps.lock,
         );
+        try {
+          options.signal.throwIfAborted();
+          await writeDesktopRetirement(profile, { ...record, phase: "complete" });
+          return { status: "retired", data: "retained", keyring: "retained" };
+        } finally {
+          owners.release();
+        }
+      },
+    );
+    if (!("operationId" in prepared)) return prepared;
+    try {
+      return await deps.executeErase(profile, prepared.operationId, options.signal, deps);
+    } finally {
+      // The host has its own cache. The still-running controller must also forget
+      // any key it read before delegating removal, including partial cleanup.
+      invalidateSecretFileKeyCache();
+    }
+  } finally {
+    restoreSession?.release();
+  }
+}
+
+/** Called only by the fixed native EX host, or an explicit test-owned OS adapter. */
+export async function finishDesktopErase(
+  profile: DesktopProfile,
+  operationId: string,
+  signal: AbortSignal,
+  overrides: Partial<DesktopRemovalDependencies> = {},
+): Promise<DesktopRemovalResult> {
+  const deps = { ...defaults, ...overrides };
+  deps.authorize(profile, "erase", operationId);
+  return withDesktopInstallLease(profile, signal, async () => {
+    const state = await removalState(profile, deps);
+    let record = state.retirement;
+    if (!record || record.mode !== "erase-data" || record.operationId !== operationId)
+      throw new Error("The requested data removal changed");
+    const root = record.root;
+    const stopped = await deps.stopDaemon(profile, signal);
+    let owners: { release(): void } | undefined;
+    try {
+      if (state.root) {
+        owners = await acquireDesktopRuntimeLeases(
+          profile,
+          {
+            signal: signal,
+            expectedRoot: root,
+            runtimeWaitMs: stopped ? 5_000 : 0,
+          },
+          deps.lock,
+        );
       }
-      options.signal.throwIfAborted();
-      if (mode === "keep-data") {
-        if (!state.root || !state.install)
-          throw new Error("The retained library's ownership cannot be verified");
-        record = { ...record, phase: "complete" };
-        await writeDesktopRetirement(profile, record);
-        return { status: "retired", data: "retained", keyring: "retained" };
-      }
+      signal.throwIfAborted();
       if (state.root) {
         record = { ...record, phase: "stopped" };
         await writeDesktopRetirement(profile, record);
-        options.signal.throwIfAborted();
+        signal.throwIfAborted();
+      }
+      await removeDesktopRestoreStaging(profile, root, signal);
+      const currentRoot = await desktopRootIdentity(profile);
+      if (state.root ? !sameDesktopRoot(currentRoot, root) : currentRoot !== null)
+        throw new Error(
+          "The library folder changed during cleanup. Its protection key has been kept.",
+        );
+      if (state.root) {
         await deps.removeData(profile);
         if (await desktopRootIdentity(profile))
           throw new Error(
@@ -163,15 +241,23 @@ export async function removeDesktopInstall(
       }
       record = { ...record, phase: "dataRemoved" };
       await writeDesktopRetirement(profile, record);
-      options.signal.throwIfAborted();
+      signal.throwIfAborted();
+      if (await desktopRootIdentity(profile))
+        throw new Error(
+          "A library folder appeared before key cleanup. Its protection key has been kept.",
+        );
       let cleanup: KeyringPurgeResult;
       try {
-        cleanup = await deps.purge(profile);
+        try {
+          cleanup = await deps.purge(profile);
+        } finally {
+          invalidateSecretFileKeyCache();
+        }
       } catch {
         await writeDesktopRetirement(profile, { ...record, phase: "keyCleanupPending" });
         return { status: "key-cleanup-pending", data: "erased", keyring: "pending" };
       }
-      if (!cleanup.markersCleared || cleanup.rootKey === "kept") {
+      if (!cleanup.markersCleared || cleanup.rootKey !== "deleted") {
         await writeDesktopRetirement(profile, { ...record, phase: "keyCleanupPending" });
         return { status: "key-cleanup-pending", data: "erased", keyring: "pending" };
       }
@@ -204,7 +290,7 @@ export async function resumeRetiredDesktop(
   });
 }
 
-async function removalState(profile: DesktopProfile, deps: RemovalDependencies) {
+async function removalState(profile: DesktopProfile, deps: DesktopRemovalDependencies) {
   const root = await desktopRootIdentity(profile);
   const retirement = await readDesktopRetirement(profile);
   const install = await deps.readInstall(profile);

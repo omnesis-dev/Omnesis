@@ -3,6 +3,8 @@
 
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
 import { prepareNodeTestFixture } from "./prepare-node-test-fixture.mjs";
@@ -58,6 +60,29 @@ test("fixture preparation does not replace an unowned output directory", async (
   await expect(prepareNodeTestFixture(f.options, f)).rejects.toThrow();
   expect(await readFile(join(f.options.output, "keep"), "utf8")).toBe("invented-independent-data");
 });
+test.skipIf(process.platform === "win32")(
+  "repairs modified private-key test inputs and runs the compiled production helper",
+  async () => {
+    const f = await fixture();
+    await prepareNodeTestFixture(f.options, f);
+    const helper = join(f.options.output, "private-key/openssl-private-input.js");
+    await writeFile(helper, 'throw new Error("modified fixture");');
+    await prepareNodeTestFixture(f.options, f);
+    expect(f.acquire).toHaveBeenCalledTimes(2);
+    expect(await readFile(helper, "utf8")).not.toContain("modified fixture");
+    const result = await promisify(execFile)(
+      process.execPath,
+      [join(f.options.output, "private-key/test.mjs")],
+      {
+        env: { PATH: "/usr/bin:/bin", HOME: f.root, TMPDIR: f.root },
+        timeout: 30_000,
+        maxBuffer: 262_144,
+      },
+    );
+    expect(result.stdout).toBe("private-key-pipe:passed\n");
+    expect(result.stderr).toBe("");
+  },
+);
 test("admitted native preflight selects the target architecture before staging source inputs", async () => {
   const f = await fixture();
   const run = vi.fn(() => ({ status: 0, stdout: "Darwin arm64\n" }));

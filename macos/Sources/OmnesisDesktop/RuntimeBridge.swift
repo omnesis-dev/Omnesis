@@ -101,9 +101,13 @@ final class RuntimeBridge {
                         self?.onEnvelope?(envelope)
                     }
                 }
+                guard !Task.isCancelled, let self, self.process === child else { return }
+                self.disconnect()
+                self.onFailure?("Omnesis lost its background connection. Reopen the app to reconnect. Your library stays on disk.")
             } catch is CancellationError {
                 return
             } catch {
+                guard !Task.isCancelled, self?.process === child else { return }
                 self?.disconnect()
                 self?.onFailure?("Omnesis could not read its background service. Try reconnecting, or quit and reopen the app.")
             }

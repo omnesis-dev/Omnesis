@@ -13,6 +13,8 @@
 
 import { existsSync, rmSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import {
   DEFAULT_WEB_CAPTURE_RULES,
@@ -30,8 +32,6 @@ import { getSource } from "../../data/repositories/SourceRepository.js";
 import { createToken } from "../../data/repositories/TokenRepository.js";
 import type { AnalyticsTableSchema } from "@omnesis/source-sdk";
 import type Database from "better-sqlite3";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 type Db = Database.Database;
 
@@ -294,6 +294,32 @@ describe("excluded domains", () => {
 });
 
 describe("pause", () => {
+  test("a disabled source overrides capture resume without changing its exclusions or stored pause", async () => {
+    await pushPages("https://initial.example.org/article");
+    await call("/web-capture-policy/excluded-domains", browserToken, {
+      method: "POST",
+      body: JSON.stringify({ domain: "excluded.example.org" }),
+    });
+    db.prepare("UPDATE sources SET enabled = 0 WHERE id = 'web'").run();
+    expect((await policyFor(browserToken)).pause).toEqual({ until: null });
+    const resume = await call("/web-capture-policy/pause", browserToken, { method: "DELETE" });
+    expect(resume.status).toBe(200);
+    expect(((await resume.json()) as WebCapturePolicy).pause).toEqual({ until: null });
+    const pushed = await call("/documents", browserToken, {
+      method: "POST",
+      body: JSON.stringify({ documents: [webPage("https://later.example.org/article")] }),
+    });
+    expect(pushed.status).toBe(200);
+    expect(await pushed.json()).toMatchObject({
+      ingested: 0,
+      rejected: [{ sourceId: "web", reason: "paused" }],
+    });
+    expect(webDocUrls()).toEqual(["https://initial.example.org/article"]);
+    expect((await policyFor(browserToken)).excludedDomains).toEqual(["excluded.example.org"]);
+    db.prepare("UPDATE sources SET enabled = 1 WHERE id = 'web'").run();
+    expect((await policyFor(browserToken)).pause).toBeNull();
+  });
+
   test("a timed pause is shared, reads as resumed once lapsed, and can be cleared", async () => {
     const until = Date.now() + 60 * 60 * 1000;
     const set = await call("/web-capture-policy/pause", browserToken, {

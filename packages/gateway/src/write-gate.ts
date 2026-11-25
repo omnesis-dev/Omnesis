@@ -1704,7 +1704,11 @@ export interface WriteGate extends KnowledgeWriteGate {
   recordSourceStreamCleanupFailure(job: SourceStreamCleanupJob, message: string): Promise<boolean>;
   completeSourceStreamCleanup(job: SourceStreamCleanupJob): Promise<boolean>;
   /** Capture former members, delete the live row and establish its tombstone atomically. */
-  removeSource(id: SourceId, pairingFence?: PairingGenerationFence): Promise<RemovedSource | null>;
+  removeSource(
+    id: SourceId,
+    pairingFence?: PairingGenerationFence,
+    expectedRevision?: string,
+  ): Promise<RemovedSource | null>;
   /** Record a durable removal tombstone for `id` (see SourceRepository). */
   markSourceRemoved(id: SourceId, opts?: { cleanupPending?: boolean }): Promise<void>;
   /** Record that the post-removal sweep for `id` has finished. */
@@ -2818,7 +2822,8 @@ export function writeGateFromCall(call: WriterCallFn): WriteGate {
     recordSourceStreamCleanupFailure: (job, message) =>
       call("sources.failStreamCleanup", [job, message]),
     completeSourceStreamCleanup: (job) => call("sources.completeStreamCleanup", [job]),
-    removeSource: (id, pairingFence) => call("sources.removeSource", [id, pairingFence]),
+    removeSource: (id, pairingFence, expectedRevision) =>
+      call("sources.removeSource", [id, pairingFence, expectedRevision]),
     markSourceRemoved: (id, opts) => call("sources.markSourceRemoved", [id, opts]),
     markSourceCleanupDone: (id) => call("sources.markSourceCleanupDone", [id]),
     clearSourceRemoved: (id) => call("sources.clearSourceRemoved", [id]),
@@ -3495,9 +3500,9 @@ export function directWriteGate(db: Db): WriteGate {
       recordSourceStreamCleanupFailure(db, job, message),
     completeSourceStreamCleanup: async (job) => completeSourceStreamCleanup(db, job),
     deleteSource: async (id) => deleteSourceWithPermissionInvalidation(db, id),
-    removeSource: async (id, pairingFence) =>
+    removeSource: async (id, pairingFence, expectedRevision) =>
       withPairingGenerationFence(db, pairingFence, () =>
-        removeSourceWithPermissionInvalidation(db, id),
+        removeSourceWithPermissionInvalidation(db, id, Date.now(), expectedRevision),
       ),
     markSourceRemoved: async (id, opts) => markSourceRemoved(db, id, opts),
     markSourceCleanupDone: async (id) => markSourceCleanupDone(db, id),

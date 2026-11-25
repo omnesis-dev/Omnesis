@@ -27,6 +27,7 @@ import {
   experimentalEnabled,
   loadManifest,
   primeSecretFileKeyCache,
+  readInstallRootKey,
   resolveWorkerEntry,
   runningSourceCommit,
 } from "@omnesis/core";
@@ -155,6 +156,7 @@ import { OcrService } from "./ocr/index.js";
 import { ConfigBootError, ConfigStore, defaultConfigPath } from "./config-store.js";
 import { OperatorInstructionsStore } from "./instructions/store.js";
 import { protectManagedProse } from "./managed-prose.js";
+import { protectManagedHistory } from "./managed-history.js";
 import { reconcileConfig } from "./config-reconcile.js";
 import {
   openIndexDb,
@@ -418,6 +420,7 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
   // they write it. Read per prompt build (mtime-cached), so an edit in a terminal
   // editor or the portal reaches the next run with no restart.
   await protectManagedProse(configDir);
+  await protectManagedHistory(configDir);
   const operatorInstructions = new OperatorInstructionsStore(configDir);
 
   const configStore = new ConfigStore({
@@ -2951,6 +2954,7 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
     backupService,
     historyCleanup,
     exportService,
+    readExportRootKey: () => readInstallRootKey({ configDir }),
     wsServer,
     fleetUpdateService: fleetUpdate,
     hostFleetUpdateService: hostFleetUpdate,

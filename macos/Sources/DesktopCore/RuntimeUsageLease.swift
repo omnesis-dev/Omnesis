@@ -13,6 +13,7 @@ public final class DesktopRuntimeUsageLease: @unchecked Sendable {
         let format: Int
         let codeUsageProtocol: Int?
         let runtimeLauncher: String?
+        let dataUsageProtocol: Int?
         let inventory: [Entry]
     }
 
@@ -34,7 +35,54 @@ public final class DesktopRuntimeUsageLease: @unchecked Sendable {
     }
 
     private let executables: Set<String>
+    public let requiresDataUsage: Bool
     deinit { Darwin.close(descriptor) }
+
+    public final class LegacyDataReservation {
+        private let descriptors: [Int32]
+        fileprivate init(_ descriptors: [Int32]) {
+            self.descriptors = descriptors
+        }
+
+        deinit { for descriptor in descriptors {
+            Darwin.close(descriptor)
+        } }
+        public func inheritAcrossExec() throws {
+            for descriptor in descriptors {
+                let flags = fcntl(descriptor, F_GETFD)
+                guard flags >= 0, fcntl(descriptor, F_SETFD, flags & ~FD_CLOEXEC) == 0 else { throw Failure.unsafeLock }
+            }
+        }
+    }
+
+    /// Older managed SDK descendants pin code but lack the new per-profile data lease.
+    /// Reserve every legacy code epoch before destructive work; unknown membership fails closed.
+    public static func reserveLegacyDataConsumers(cache: URL) throws -> LegacyDataReservation {
+        let publication = try openLock(cache.appendingPathComponent(".publication-lock"))
+        defer { Darwin.close(publication) }
+        try DesktopRuntimePublicationLock.acquire(publication, mode: .shared)
+        var held: [Int32] = []
+        do {
+            for name in try FileManager.default.contentsOfDirectory(atPath: cache.path).sorted()
+                where name.count == 64 && name.allSatisfy({ "0123456789abcdef".contains($0) }) {
+                let runtime = cache.appendingPathComponent(name, isDirectory: true)
+                let manifest = try validatedManifest(runtime)
+                if manifest.dataUsageProtocol == 1 { continue }
+                let descriptor = try openLock(cache.appendingPathComponent(".usage-" + name + ".lock"))
+                guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else {
+                    Darwin.close(descriptor)
+                    throw Failure.unsafeLock
+                }
+                held.append(descriptor)
+            }
+            return LegacyDataReservation(held)
+        } catch {
+            for descriptor in held {
+                Darwin.close(descriptor)
+            }
+            throw error
+        }
+    }
 
     public static func acquire(runtime: URL) throws -> DesktopRuntimeUsageLease {
         let epoch = runtime.lastPathComponent
@@ -63,7 +111,12 @@ public final class DesktopRuntimeUsageLease: @unchecked Sendable {
         let descriptor = try openLock(cache.appendingPathComponent(".usage-" + epoch + ".lock"))
         do {
             guard flock(descriptor, LOCK_SH) == 0 else { throw Failure.unsafeLock }
-            return DesktopRuntimeUsageLease(descriptor: descriptor, runtime: runtime, executables: executables)
+            return DesktopRuntimeUsageLease(
+                descriptor: descriptor,
+                runtime: runtime,
+                executables: executables,
+                requiresDataUsage: manifest.dataUsageProtocol == 1
+            )
         } catch { Darwin.close(descriptor)
             throw error
         }
@@ -100,6 +153,7 @@ public final class DesktopRuntimeUsageLease: @unchecked Sendable {
         let epoch: String
         let device: UInt64
         let inode: UInt64
+        let archive: DesktopApplicationArchiveOwnership.Identity?
     }
 
     /// Deletes code only. Callers must first exclude active/current/recovery epochs from their plan.
@@ -142,43 +196,80 @@ public final class DesktopRuntimeUsageLease: @unchecked Sendable {
         guard !hasPendingApplicationLaunch(cache: cache, epoch: epoch) else { return false }
         let receiptPath = cache.appendingPathComponent(".cleanup-" + epoch + ".json")
         let receipt = try readCleanupReceipt(receiptPath)
-        var info = stat()
-        let exists = lstat(runtime.path, &info) == 0
-        if !exists {
-            guard errno == ENOENT, let receipt, receipt.epoch == epoch else { return false }
-            try FileManager.default.removeItem(at: receiptPath)
-            return true
+        let applications = cache.deletingLastPathComponent().appendingPathComponent("applications", isDirectory: true)
+        let archive = applications.appendingPathComponent(epoch, isDirectory: true)
+        var runtimeInfo = stat(), archiveInfo = stat(), parentInfo = stat()
+        let runtimeExists = lstat(runtime.path, &runtimeInfo) == 0
+        if !runtimeExists, errno != ENOENT { throw Failure.unsafeLock }
+        let archiveExists = lstat(archive.path, &archiveInfo) == 0
+        if !archiveExists, errno != ENOENT { throw Failure.unsafeLock }
+        if archiveExists {
+            guard applications.resolvingSymlinksInPath() == applications.standardizedFileURL,
+                  lstat(applications.path, &parentInfo) == 0, parentInfo.st_mode & S_IFMT == S_IFDIR,
+                  parentInfo.st_uid == getuid(), parentInfo.st_mode & 0o077 == 0,
+                  archiveInfo.st_mode & S_IFMT == S_IFDIR, archiveInfo.st_uid == getuid(),
+                  archiveInfo.st_mode & 0o077 == 0 else { return false }
         }
-        guard info.st_mode & S_IFMT == S_IFDIR, info.st_uid == getuid(),
-              runtime.resolvingSymlinksInPath().path == runtime.standardizedFileURL.path else { return false }
+        if runtimeExists {
+            guard runtimeInfo.st_mode & S_IFMT == S_IFDIR, runtimeInfo.st_uid == getuid(),
+                  runtime.resolvingSymlinksInPath().path == runtime.standardizedFileURL.path else { return false }
+        }
         if let receipt {
-            guard receipt.epoch == epoch, receipt.device == UInt64(info.st_dev),
-                  receipt.inode == UInt64(info.st_ino) else { throw Failure.invalidPayload }
+            guard receipt.epoch == epoch else { throw Failure.invalidPayload }
+            if runtimeExists {
+                guard receipt.device == UInt64(runtimeInfo.st_dev), receipt.inode == UInt64(runtimeInfo.st_ino) else {
+                    throw Failure.invalidPayload
+                }
+            }
+            if archiveExists {
+                guard let identity = receipt.archive,
+                      identity.device == UInt64(archiveInfo.st_dev), identity.inode == UInt64(archiveInfo.st_ino) else {
+                    throw Failure.invalidPayload
+                }
+            }
         } else {
-            guard (try? validatedManifest(runtime)) != nil else { return false }
+            guard runtimeExists, (try? validatedManifest(runtime)) != nil else { return false }
+            let identity: DesktopApplicationArchiveOwnership.Identity?
+            if archiveExists {
+                guard let verified = try? DesktopApplicationArchiveOwnership.verified(directory: archive, epoch: epoch)
+                else { return false }
+                identity = verified
+            } else { identity = nil }
             let value = CleanupReceipt(
-                format: 1,
+                format: 2,
                 owner: "omnesis-desktop-runtime-cleanup",
                 epoch: epoch,
-                device: UInt64(info.st_dev),
-                inode: UInt64(info.st_ino)
+                device: UInt64(runtimeInfo.st_dev),
+                inode: UInt64(runtimeInfo.st_ino),
+                archive: identity
             )
-            let descriptor = Darwin.open(receiptPath.path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
+            let temporary = cache.appendingPathComponent(".pending-cleanup-" + UUID().uuidString)
+            let descriptor = Darwin.open(temporary.path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
             guard descriptor >= 0 else { throw Failure.unsafeLock }
             let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
-            defer { try? handle.close() }
+            defer {
+                try? handle.close()
+                _ = unlink(temporary.path)
+            }
             try handle.write(contentsOf: JSONEncoder().encode(value))
             try handle.synchronize()
-            let directory = Darwin.open(cache.path, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW)
-            guard directory >= 0 else { throw Failure.unsafeLock }
-            defer { Darwin.close(directory) }
-            guard fsync(directory) == 0 else { throw Failure.unsafeLock }
+            try FileManager.default.moveItem(at: temporary, to: receiptPath)
+            try DesktopApplicationArchiveOwnership.syncDirectory(cache)
         }
-        // A failed deletion deliberately retains the inode-bound receipt and excludes startup:
-        // a missing/partial manifest cannot acquire a new usage lease.
-        try remove(runtime)
-        guard lstat(runtime.path, &info) != 0, errno == ENOENT else { throw Failure.invalidPayload }
+        // Both directory identities are committed before deleting either. Partial deletion retains
+        // the receipt, which blocks startup and authorizes only those same original directory inodes.
+        if archiveExists {
+            try remove(archive)
+            guard lstat(archive.path, &archiveInfo) != 0, errno == ENOENT else { throw Failure.invalidPayload }
+            try DesktopApplicationArchiveOwnership.syncDirectory(applications)
+        }
+        if runtimeExists {
+            try remove(runtime)
+            guard lstat(runtime.path, &runtimeInfo) != 0, errno == ENOENT else { throw Failure.invalidPayload }
+            try DesktopApplicationArchiveOwnership.syncDirectory(cache)
+        }
         try FileManager.default.removeItem(at: receiptPath)
+        try DesktopApplicationArchiveOwnership.syncDirectory(cache)
         return true
     }
 
@@ -196,7 +287,7 @@ public final class DesktopRuntimeUsageLease: @unchecked Sendable {
               info.st_size > 0, info.st_size <= 4096,
               let data = try handle.read(upToCount: 4097), data.count <= 4096 else { throw Failure.unsafeLock }
         let receipt = try JSONDecoder().decode(CleanupReceipt.self, from: data)
-        guard receipt.format == 1, receipt.owner == "omnesis-desktop-runtime-cleanup" else { throw Failure.invalidPayload }
+        guard [1, 2].contains(receipt.format), receipt.owner == "omnesis-desktop-runtime-cleanup" else { throw Failure.invalidPayload }
         return receipt
     }
 
@@ -259,7 +350,8 @@ public final class DesktopRuntimeUsageLease: @unchecked Sendable {
             throw Failure.invalidPayload
         }
         let manifest = try JSONDecoder().decode(Manifest.self, from: bytes)
-        guard manifest.format == 1, manifest.codeUsageProtocol == 1, manifest.runtimeLauncher == "runtime-exec" else {
+        guard manifest.format == 1, manifest.codeUsageProtocol == 1, manifest.runtimeLauncher == "runtime-exec",
+              manifest.dataUsageProtocol == nil || manifest.dataUsageProtocol == 1 else {
             throw Failure.invalidPayload
         }
         let names = Set(manifest.inventory.filter { $0.executable == true && $0.symlink == nil }.map(\.path))
@@ -267,10 +359,11 @@ public final class DesktopRuntimeUsageLease: @unchecked Sendable {
         return manifest
     }
 
-    private init(descriptor: Int32, runtime: URL, executables: Set<String>) {
+    private init(descriptor: Int32, runtime: URL, executables: Set<String>, requiresDataUsage: Bool) {
         self.descriptor = descriptor
         self.runtime = runtime
         self.executables = executables
+        self.requiresDataUsage = requiresDataUsage
     }
 
     public func invocation(arguments: [String]) throws -> Invocation {
@@ -280,7 +373,7 @@ public final class DesktopRuntimeUsageLease: @unchecked Sendable {
             guard FileManager.default.fileExists(atPath: preload.path) else { throw Failure.invalidPayload }
             return try Invocation(
                 executable: checkedExecutable("node"),
-                arguments: ["--import", preload.absoluteString] + Array(arguments.dropFirst())
+                arguments: ["--use-system-ca", "--import", preload.absoluteString] + Array(arguments.dropFirst())
             )
         }
         if mode == "--exec", arguments.count >= 2, arguments[1] != "node" {
@@ -336,8 +429,15 @@ public final class DesktopRuntimeUsageLease: @unchecked Sendable {
     }
 
     private static func openLock(_ path: URL) throws -> Int32 {
-        let descriptor = Darwin.open(path.path, O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC, S_IRUSR | S_IWUSR)
+        var descriptor = Darwin.open(path.path, O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK, S_IRUSR | S_IWUSR)
         guard descriptor >= 0 else { throw Failure.unsafeLock }
+        // FD7 belongs to per-profile data authority and must never replace this code lease.
+        if descriptor == DesktopDataUsageLease.inheritedDescriptor {
+            let replacement = fcntl(descriptor, F_DUPFD_CLOEXEC, 8)
+            Darwin.close(descriptor)
+            guard replacement >= 0 else { throw Failure.unsafeLock }
+            descriptor = replacement
+        }
         var metadata = stat()
         guard fstat(descriptor, &metadata) == 0, metadata.st_mode & S_IFMT == S_IFREG,
               metadata.st_uid == getuid(), metadata.st_mode & 0o077 == 0, metadata.st_nlink == 1 else {

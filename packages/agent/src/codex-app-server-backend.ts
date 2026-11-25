@@ -30,6 +30,7 @@ import {
   execWindowsJob,
   readPackageVersion,
   atomicWriteFile,
+  codexKeyringAccount,
   type AgentContextAssessment,
   type AgentEvent,
   type Logger,
@@ -53,7 +54,18 @@ import {
   wrapEvent,
 } from "./backend.js";
 import { CODEX_RUNTIME_COMPAT, isSupportedCodexCliVersion } from "./codex-compat.js";
+import {
+  assertNoManagedCodexAuthFile,
+  assertManagedCodexPolicy,
+  managedCodexArgs,
+  managedCodexAuth,
+} from "./codex-managed-auth.js";
 import { CONTEXT_WINDOW_EXCEEDED_MESSAGE } from "./turn-outcome.js";
+import {
+  assertManagedCodexEffectiveFeatures,
+  assertManagedCodexWorkspace,
+  managedCodexThreadConfig,
+} from "./codex-managed-process.js";
 import type { ChatBackend, ToolCaller, ToolHandle, TurnInput } from "./backend.js";
 
 export { isSupportedCodexCliVersion } from "./codex-compat.js";
@@ -151,6 +163,8 @@ export interface CodexRuntimeProbe {
 export interface CodexAppServerRuntimeOptions {
   /** Dedicated Omnesis-owned CODEX_HOME. Never point this at the user's ~/.codex. */
   codexHome: string;
+  /** Separate worker SQLite/log directory when the managed credential home is shared. */
+  stateHome?: string;
   /** Empty Omnesis-owned working directory handed to Codex as cwd. */
   workspaceDir?: string;
   /** Advanced override. When unset, Omnesis uses its pinned managed @openai/codex runtime. */
@@ -226,6 +240,7 @@ function hasCodexCleanupFailure(error: unknown): error is { cleanupFailure: unkn
 export class CodexAppServerRuntime {
   readonly codexHome: string;
   readonly workspaceDir: string;
+  private readonly stateHome: string;
 
   private readonly commandOverride: string | undefined;
   private readonly configuredCommandInfo: CodexRuntimeCommandInfo | undefined;
@@ -246,13 +261,19 @@ export class CodexAppServerRuntime {
   private retiringClient: Promise<void> | undefined;
   private disposal: Promise<void> | undefined;
   private disposed = false;
+  private managedProcessVersion: string | undefined;
 
   constructor(opts: CodexAppServerRuntimeOptions) {
     this.codexHome = opts.codexHome;
     this.workspaceDir = opts.workspaceDir ?? join(opts.codexHome, DEFAULT_CODEX_WORKSPACE_DIRNAME);
     this.commandOverride = opts.command?.trim() || undefined;
     this.configuredCommandInfo = opts.commandInfo;
-    this.args = opts.args ?? DEFAULT_CODEX_ARGS;
+    this.stateHome = opts.stateHome ?? opts.codexHome;
+    this.args = managedCodexArgs(
+      opts.env ?? process.env,
+      opts.args ?? DEFAULT_CODEX_ARGS,
+      this.stateHome,
+    );
     this.versionArgs = opts.versionArgs ?? DEFAULT_CODEX_VERSION_ARGS;
     this.startupTimeoutMs = opts.startupTimeoutMs ?? 10_000;
     this.requestTimeoutMs = opts.requestTimeoutMs ?? 120_000;
@@ -301,7 +322,7 @@ export class CodexAppServerRuntime {
       return await assertSupportedCodexRuntime({
         command: commandInfo.command,
         args: this.versionArgs,
-        env: buildCodexEnv(this.env, this.codexHome),
+        env: buildCodexEnv(this.env, this.codexHome, process.platform, this.workspaceDir),
         timeoutMs,
       });
     } catch (error) {
@@ -338,6 +359,10 @@ export class CodexAppServerRuntime {
       if (!cursor) break;
     }
     return models;
+  }
+
+  async verifyManagedCredentialPolicy(): Promise<void> {
+    if (managedCodexAuth(this.env)) await this.ensureClient();
   }
 
   async *runTurn(opts: {
@@ -463,9 +488,10 @@ export class CodexAppServerRuntime {
           personality: null,
           ephemeral: true,
           serviceName: "omnesis",
-          config: STRICT_CODEX_CONFIG_OBJECT,
-          // Present in the 0.142.x app-server runtime even though the generated
-          // TS schema omits it. Keep this as a narrow boundary object.
+          config: managedCodexAuth(this.env)
+            ? managedCodexThreadConfig(STRICT_CODEX_CONFIG_OBJECT)
+            : STRICT_CODEX_CONFIG_OBJECT,
+          // Explicit dynamic tools keep execution in Omnesis's own handlers.
           dynamicTools: tools,
         },
         this.requestTimeoutMs,
@@ -475,6 +501,13 @@ export class CodexAppServerRuntime {
       threadId = parsedThreadId;
       state.threadId = threadId;
       this.activeTurn = state;
+      if (managedCodexAuth(this.env)) {
+        await assertManagedCodexEffectiveFeatures(
+          (params) => client.request("experimentalFeature/list", params, this.requestTimeoutMs),
+          threadId,
+          this.managedProcessVersion,
+        );
+      }
       // Cancelled while thread/start was in flight, with no active turn for the
       // abort to complete. Starting one now would only spend the model's time.
       if (signal?.aborted) abort();
@@ -672,15 +705,21 @@ export class CodexAppServerRuntime {
   private async startClient(): Promise<CodexJsonRpcClient> {
     const owner = codexPoolAuthOwner(this);
     if (process.platform === "win32" && owner) await prepareCodexPrivateState([owner.home]);
-    await ensureRuntimeDirs(this.codexHome, this.workspaceDir, owner?.path);
+    await ensureRuntimeDirs(this.codexHome, this.workspaceDir, owner?.path, this.env);
+    if (managedCodexAuth(this.env)) {
+      await assertManagedCodexWorkspace(this.workspaceDir);
+      codexKeyringAccount(this.stateHome);
+      await ensurePrivateDirectory(this.stateHome);
+      await assertNoManagedCodexAuthFile(this.env, [this.codexHome, this.stateHome]);
+    }
     const commandInfo = await this.resolveCommandInfo();
-    await this.probeCommandRuntime(commandInfo, this.startupTimeoutMs);
+    const probe = await this.probeCommandRuntime(commandInfo, this.startupTimeoutMs);
 
     const client = new CodexJsonRpcClient({
       command: commandInfo.command,
       args: this.args,
       cwd: this.workspaceDir,
-      env: buildCodexEnv(this.env, this.codexHome),
+      env: buildCodexEnv(this.env, this.codexHome, process.platform, this.workspaceDir),
       requestTimeoutMs: this.requestTimeoutMs,
       log: this.log,
       onNotification: (method, params) => {
@@ -722,6 +761,17 @@ export class CodexAppServerRuntime {
         this.startupTimeoutMs,
       );
       client.notify("initialized", {});
+      if (managedCodexAuth(this.env)) {
+        assertManagedCodexPolicy(
+          await client.request("config/read", { includeLayers: true }, this.startupTimeoutMs),
+        );
+        await assertManagedCodexEffectiveFeatures(
+          (params) => client.request("experimentalFeature/list", params, this.startupTimeoutMs),
+          undefined,
+          probe.version,
+        );
+        this.managedProcessVersion = probe.version;
+      }
     } catch (err) {
       try {
         await client.dispose();
@@ -1263,8 +1313,16 @@ export function convertToolsToCodexDynamicTools(
   }));
 }
 
-export async function ensureCodexHome(codexHome: string): Promise<void> {
-  await ensureCodexRuntimeDirs(codexHome, join(codexHome, DEFAULT_CODEX_WORKSPACE_DIRNAME));
+export async function ensureCodexHome(
+  codexHome: string,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<void> {
+  await ensureRuntimeDirs(
+    codexHome,
+    join(codexHome, DEFAULT_CODEX_WORKSPACE_DIRNAME),
+    undefined,
+    env,
+  );
 }
 
 export async function ensureCodexRuntimeDirs(
@@ -1278,13 +1336,22 @@ async function ensureRuntimeDirs(
   codexHome: string,
   workspaceDir: string,
   sharedAuthPath?: string,
+  env: NodeJS.ProcessEnv = process.env,
 ): Promise<void> {
+  if (managedCodexAuth(env)) {
+    codexKeyringAccount(codexHome);
+    codexKeyringAccount(workspaceDir);
+  }
+  const config = managedCodexAuth(env)
+    ? 'cli_auth_credentials_store = "keyring"\nhistory.persistence = "none"\nanalytics.enabled = false\notel.log_user_prompt = false\n' +
+      STRICT_CODEX_CONFIG_TOML
+    : STRICT_CODEX_CONFIG_TOML;
   if (process.platform === "win32") {
     await prepareCodexPrivateState(
       [codexHome, workspaceDir],
       sharedAuthPath ? { home: codexHome, target: sharedAuthPath } : undefined,
     );
-    await atomicWriteFile(join(codexHome, "config.toml"), STRICT_CODEX_CONFIG_TOML, {
+    await atomicWriteFile(join(codexHome, "config.toml"), config, {
       mode: 0o600,
     });
     return;
@@ -1293,6 +1360,10 @@ async function ensureRuntimeDirs(
   await ensurePrivateDirectory(workspaceDir);
   const configPath = join(codexHome, "config.toml");
   await rejectSymlinkIfPresent(configPath);
+  if (managedCodexAuth(env)) {
+    await atomicWriteFile(configPath, config, { mode: 0o600 });
+    return;
+  }
   await writeFile(configPath, STRICT_CODEX_CONFIG_TOML, { encoding: "utf8", mode: 0o600 });
   await chmod(configPath, 0o600);
 }
@@ -1301,6 +1372,7 @@ export function buildCodexEnv(
   env: NodeJS.ProcessEnv,
   codexHome: string,
   platform: NodeJS.Platform = process.platform,
+  workspace: string = join(codexHome, DEFAULT_CODEX_WORKSPACE_DIRNAME),
 ): NodeJS.ProcessEnv {
   const childEnv: NodeJS.ProcessEnv = { CODEX_HOME: codexHome };
   for (const key of SAFE_CODEX_ENV_KEYS) {
@@ -1317,6 +1389,18 @@ export function buildCodexEnv(
       childEnv[key] = value;
     }
   }
+  // Direct CLI login otherwise installs its own plaintext diagnostic file logger.
+  // This controls that supported logger; the separate SQLite sink is audited independently.
+  if (managedCodexAuth(env))
+    Object.assign(childEnv, {
+      RUST_LOG: "off",
+      GIT_CONFIG_NOSYSTEM: "1",
+      GIT_CONFIG_GLOBAL: platform === "win32" ? "NUL" : "/dev/null",
+      GIT_CONFIG_SYSTEM: platform === "win32" ? "NUL" : "/dev/null",
+      GIT_CONFIG_COUNT: "0",
+      GIT_TERMINAL_PROMPT: "0",
+      GIT_CEILING_DIRECTORIES: workspace,
+    });
   return childEnv;
 }
 

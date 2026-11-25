@@ -3,6 +3,8 @@
 
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
+import { DesktopFreshInstallFailure } from "./fresh-install-errors.js";
+import { DesktopRestoreFailure } from "./restore-errors.js";
 import type { Readable, Writable } from "node:stream";
 
 const MAX_FRAME_BYTES = 1024 * 1024;
@@ -21,8 +23,17 @@ const requestSchema = z
       "openPortal",
       "respond",
       "cancel",
+      "freshInstallPreview",
+      "freshInstall",
       "removePreview",
       "remove",
+      "restorePrepareImport",
+      "restoreImport",
+      "restorePreview",
+      "restoreApply",
+      "restoreImportCancel",
+      "restoreStatus",
+      "restoreRecover",
       "recoveryImport",
       "recoveryStatus",
       "recoveryPrepare",
@@ -36,6 +47,8 @@ const requestSchema = z
       "updateResume",
       "updateRestore",
       "updateFinish",
+      "updateCleanupPreview",
+      "updateCleanup",
     ]),
     params: z.unknown().optional(),
   })
@@ -237,7 +250,9 @@ export async function runDesktopProtocol(options: {
         await send({ id: request.id, ok: true, result: null });
       } catch (error) {
         const known =
-          error instanceof ProtocolFailure
+          error instanceof ProtocolFailure ||
+          error instanceof DesktopRestoreFailure ||
+          error instanceof DesktopFreshInstallFailure
             ? error
             : new ProtocolFailure("INVALID_RESPONSE", "The interaction response was invalid.");
         await failure(request.id, known.code, known.message);
@@ -276,7 +291,9 @@ export async function runDesktopProtocol(options: {
       } catch (error) {
         const known = signal.aborted
           ? cancelled()
-          : error instanceof ProtocolFailure
+          : error instanceof ProtocolFailure ||
+              error instanceof DesktopRestoreFailure ||
+              error instanceof DesktopFreshInstallFailure
             ? error
             : new ProtocolFailure("OPERATION_FAILED", "The desktop operation could not finish.");
         await failure(request.id, known.code, known.message);

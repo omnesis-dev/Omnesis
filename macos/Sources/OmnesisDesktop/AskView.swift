@@ -141,7 +141,7 @@ struct DesktopAskView: View {
                 ForEach(store.conversations) { conversation in
                     Text(conversation.title.isEmpty ? "Conversation" : conversation.title).lineLimit(2).tag(conversation.sessionId)
                 }
-            }.frame(minWidth: 150, idealWidth: 210, maxWidth: 260)
+            }.frame(minWidth: 150, idealWidth: 210, maxWidth: 260, maxHeight: .infinity)
             VStack(spacing: 0) {
                 if chat.rows.isEmpty {
                     ContentUnavailableView(
@@ -151,6 +151,7 @@ struct DesktopAskView: View {
                             "Your conversations are available on every device. Add a source to give Omnesis something to search."
                         )
                     )
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     ScrollViewReader { scroll in
                         ScrollView {
@@ -189,8 +190,9 @@ struct DesktopAskView: View {
                             .accessibilityIdentifier("chat-send")
                     }
                 }.padding(20)
-            }
-        }.navigationTitle("Ask Omnesis")
+            }.frame(maxWidth: .infinity, maxHeight: .infinity)
+        }.frame(maxWidth: .infinity, maxHeight: .infinity)
+            .navigationTitle("Ask Omnesis")
             .task {
                 if let api = store.api { chat.attach(api) }
                 if let question = DesktopActionRouter.shared.question {

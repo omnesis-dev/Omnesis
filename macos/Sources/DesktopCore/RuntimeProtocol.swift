@@ -159,6 +159,7 @@ public struct BridgeEnvelope: Decodable, Sendable {
     public let id: String?
     public let ok: Bool?
     public let result: DesktopState?
+    public let rawResult: BridgeValue?
     public let recoveryStatus: DesktopRecoveryStatus?
     public let recoveryDraft: DesktopRecoveryDraft?
     public let recoveryImportOutcome: DesktopRecoveryImportOutcome?
@@ -182,6 +183,7 @@ public struct BridgeEnvelope: Decodable, Sendable {
         ok = try c.decodeIfPresent(Bool.self, forKey: .ok)
         // Commands such as cancel/respond may acknowledge without returning a state.
         result = try? c.decodeIfPresent(DesktopState.self, forKey: .result)
+        rawResult = try? c.decode(BridgeValue.self, forKey: .result)
         recoveryStatus = try? c.decodeIfPresent(DesktopRecoveryStatus.self, forKey: .result)
         recoveryDraft = try? c.decodeIfPresent(DesktopRecoveryDraft.self, forKey: .result)
         recoveryImportOutcome = try? c.decodeIfPresent(DesktopRecoveryImportOutcome.self, forKey: .result)

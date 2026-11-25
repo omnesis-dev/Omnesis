@@ -6,6 +6,7 @@ import { lstat, open, realpath } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { z } from "zod";
 import { atomicWriteFile } from "@omnesis/core";
+import { assertDesktopProfileGeneration, readDesktopGeneration } from "./generation.js";
 import type { DesktopProfile } from "./environment.js";
 
 const rootIdentity = z
@@ -78,6 +79,18 @@ export async function readDesktopRetirement(
       const record = retirementSchema.parse(
         JSON.parse(bytes.subarray(0, result.bytesRead).toString("utf8")),
       );
+      const generation = readDesktopGeneration(profile.configDir);
+      if (
+        generation &&
+        record.mode === "erase-data" &&
+        record.phase === "complete" &&
+        record.operationId === generation.previous.retirementId &&
+        record.instance === generation.previous.instance &&
+        record.secretService === generation.previous.secretService
+      ) {
+        assertDesktopProfileGeneration(profile);
+        return null;
+      }
       assertIdentity(profile, record);
       return record;
     } finally {
@@ -94,6 +107,7 @@ export async function writeDesktopRetirement(
   profile: DesktopProfile,
   value: DesktopRetirement,
 ): Promise<void> {
+  assertDesktopProfileGeneration(profile);
   const record = retirementSchema.parse(value);
   assertIdentity(profile, record);
   await assertParent(profile);

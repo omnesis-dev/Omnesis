@@ -7,6 +7,8 @@ import { mkdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { prepareNodeTestFixture } from "./prepare-node-test-fixture.mjs";
+import { prepareCodexKeychainTestFixture } from "./prepare-codex-keychain-test-fixture.mjs";
+import { prepareAnalyticsNativeFixture } from "./analytics-native-fixture.mjs";
 import { fileURLToPath } from "node:url";
 import { isEntryScript } from "../lib/is-entry-script.mjs";
 
@@ -89,23 +91,39 @@ else
   collect_screenshots() {
     status=$?
     trap - EXIT
+    if [ "$action" = test ] && [ -x .node-fixture/node ] && [ -d build/Build/Products/Debug/OmnesisDesktopUITests-Runner.app ]; then
+      .node-fixture/node Tests/Support/normalize-test-runner-signature.mjs --inspect-products "$PWD/build/Build/Products/Debug" \\
+        > ../evidence/test-runner-signature-after.json || true
+      cat ../evidence/test-runner-signature-after.json
+    fi
     python3 - "$started" "../evidence/snapshots" <<'PYSCREEN' || true
 import pathlib, shutil, sys
 source = pathlib.Path('/tmp/omnesis-macos-snapshots')
 target = pathlib.Path(sys.argv[2])
-for path in source.glob('*.png'):
-    if not path.is_symlink() and path.stat().st_mtime >= int(sys.argv[1]):
+for path in source.iterdir() if source.is_dir() else []:
+    if path.suffix in ['.png', '.txt'] and path.is_file() and not path.is_symlink() and path.stat().st_mtime >= int(sys.argv[1]):
         target.mkdir(mode=0o700, parents=True, exist_ok=True)
         shutil.copy2(path, target / path.name)
 PYSCREEN
     exit "$status"
   }
   trap collect_screenshots EXIT
-  xcodebuild -project OmnesisDesktop.xcodeproj -scheme OmnesisDesktop \\
+  desktop_xcodebuild() {
+    xcodebuild -project OmnesisDesktop.xcodeproj -scheme OmnesisDesktop \\
     -configuration Debug -destination 'platform=macOS' -derivedDataPath build \\
-    -resultBundlePath "$result" CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM='' \\
+    CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM='' \\
     CODE_SIGN_IDENTITY="$signing_identity" CODE_SIGNING_REQUIRED="$signing_required" \\
-    CODE_SIGNING_ALLOWED="$signing_allowed" CODE_SIGN_INJECT_BASE_ENTITLEMENTS=YES "$action"
+    CODE_SIGNING_ALLOWED="$signing_allowed" CODE_SIGN_INJECT_BASE_ENTITLEMENTS=YES "$@"
+  }
+  if [ "$action" = build ]; then
+    desktop_xcodebuild -resultBundlePath "$result" build
+    .node-fixture/node .analytics-build-fixture/scripts/desktop/build-analytics.mjs \\
+      --cache "$PWD/../evidence/desktop-analytics" --sources "$PWD/.analytics-build-fixture/sources"
+  else
+    desktop_xcodebuild build-for-testing
+    .node-fixture/node Tests/Support/normalize-test-runner-signature.mjs --products "$PWD/build/Build/Products/Debug"
+    desktop_xcodebuild -resultBundlePath "$result" test-without-building
+  fi
 fi
 `;
 
@@ -129,6 +147,27 @@ export async function prepareNativeNodeFixture(
     architecture: match[1] === "arm64" ? "arm64" : "x64",
     output: join(sourceRoot, "macos/.node-fixture"),
     cache: join(homedir(), ".cache", "omnesis-desktop-node-test"),
+  });
+}
+
+export async function prepareNativeCodexFixture(
+  options,
+  { run = spawnSync, prepare = prepareCodexKeychainTestFixture } = {},
+  sourceRoot = root,
+) {
+  const result = run("ssh", [options.host, "uname -sm"], {
+    cwd: sourceRoot,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "inherit"],
+  });
+  if (result.error) throw result.error;
+  const match =
+    result.status === 0 ? /^Darwin (arm64|x86_64)$/.exec(String(result.stdout).trim()) : null;
+  if (!match) throw new Error("The native Codex test architecture could not be determined");
+  return prepare({
+    architecture: match[1] === "arm64" ? "arm64" : "x64",
+    output: join(sourceRoot, "macos/.codex-keychain-fixture"),
+    cache: join(homedir(), ".cache", "omnesis-codex-keychain-test"),
   });
 }
 
@@ -196,6 +235,12 @@ if (isEntryScript(import.meta.url)) {
   try {
     const options = nativeCheckOptions(process.argv.slice(2));
     await prepareNativeNodeFixture(options);
+    await prepareNativeCodexFixture(options);
+    if (options.buildOnly)
+      await prepareAnalyticsNativeFixture({
+        output: join(root, "macos/.analytics-build-fixture"),
+        cache: join(homedir(), ".cache", "omnesis-desktop-analytics-sources"),
+      });
     runNativeCheck(options);
   } catch (error) {
     process.stderr.write(

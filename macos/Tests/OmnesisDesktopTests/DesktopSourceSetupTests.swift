@@ -478,6 +478,24 @@ final class DesktopSourceSetupTests: XCTestCase {
         XCTAssertEqual(fixture.script.requests.count, 1)
     }
 
+    func testMalformedRepeatedSettingsAreRefusedBeforePresentationOrWrites() async throws {
+        let source = #"{"id":"fixture-source","type":"invented","accountId":"example-account","enabled":true,"deviceId":"local","config":{}}"#
+        let fixture = try fixture { request in
+            XCTAssertEqual(request.httpMethod, "GET")
+            if request.url?.path == "/admin/sources" { return #"{"items":[\#(source)]}"# }
+            return #"{"source":\#(source),"revision":"\#(String(repeating: "a", count: 64))"}"#
+        }
+        defer { fixture.close() }
+        let descriptor =
+            try basicDescriptor(
+                extra: #", "params":[{"name":"folder","label":"Folder","type":"path"},{"name":"folder","label":"Repeated folder","type":"path"}]"#
+            )
+        let flow = try DesktopSourceSettingsFlow(source: decode(DesktopSource.self, source), descriptor: descriptor, api: fixture.api)
+        await flow.load()
+        XCTAssertTrue(flow.error?.contains("repeated a setting") == true)
+        XCTAssertNil(flow.snapshot)
+    }
+
     func testDifferentFolderIdentityNeverOverwritesExistingSource() async throws {
         let source = #"{"id":"fixture-source","type":"invented","accountId":"example-account","enabled":false,"deviceId":"local","config":{"params":{"path":"/example/original"}}}"#
         let revision = String(repeating: "a", count: 64)
@@ -508,6 +526,7 @@ final class DesktopSourceSetupTests: XCTestCase {
         var removals = 0
         let fixture = try fixture { request in
             if request.httpMethod == "DELETE" {
+                XCTAssertEqual(request.value(forHTTPHeaderField: "If-Match"), "\"\(String(repeating: "a", count: 64))\"")
                 removals += 1
                 throw URLError(.networkConnectionLost)
             }
@@ -518,6 +537,10 @@ final class DesktopSourceSetupTests: XCTestCase {
             source: decode(DesktopSource.self, source),
             descriptor: basicDescriptor(),
             api: fixture.api
+        )
+        flow.snapshot = try decode(
+            DesktopSourceSettingsSnapshot.self,
+            #"{"source":\#(source),"revision":"\#(String(repeating: "a", count: 64))"}"#
         )
         await flow.removeSource()
         XCTAssertTrue(flow.removalRequested)

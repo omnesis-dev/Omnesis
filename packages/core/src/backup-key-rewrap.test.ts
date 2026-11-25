@@ -14,6 +14,7 @@ import {
   clearSecretFileKeyCacheForTests,
   readSecretTextFile,
   rewrapSecretFileValue,
+  rewrapSecretFileValueAsync,
   secretFileScope,
   writeSecretTextFile,
 } from "./secret-file.js";
@@ -155,4 +156,45 @@ test("a storage envelope cannot be relabelled to another store or opened under a
     }),
   ).toThrow("The storage key could not be rewrapped for this library");
   expect(await readFile(storageKeyPath("main-db", source), "utf8")).toBe(original);
+});
+
+test("async rewrap authenticates both roots and scopes without changing the source", async () => {
+  const from = join(source, "conversations/s_fixture.json");
+  const to = join(target, "conversations/s_fixture.json");
+  await writeSecretTextFile(from, "Invented conversation content", {
+    backend: "file",
+    configDir: source,
+  });
+  const raw = await readFile(from, "utf8");
+  const options = {
+    sourceRootKey: sourceRoot,
+    targetRootKey: targetRoot,
+    sourceScope: secretFileScope(from, source),
+    targetScope: secretFileScope(to, target),
+  };
+  const transformed = await rewrapSecretFileValueAsync(raw, options);
+  expect(transformed).not.toContain("Invented conversation content");
+  await mkdir(dirname(to), { recursive: true, mode: 0o700 });
+  await writeFile(to, transformed, { mode: 0o600 });
+  expect(await readSecretTextFile(to, { backend: "file", configDir: target })).toBe(
+    "Invented conversation content",
+  );
+  for (const overrides of [
+    { sourceRootKey: generateInstallRootKey() },
+    { sourceScope: "config:another-file.json" },
+    { targetScope: "" },
+  ]) {
+    await expect(rewrapSecretFileValueAsync(raw, { ...options, ...overrides })).rejects.toThrow(
+      "could not be rewrapped",
+    );
+  }
+  const bad = JSON.parse(raw) as { tag: string };
+  bad.tag = (bad.tag[0] === "A" ? "B" : "A") + bad.tag.slice(1);
+  await expect(rewrapSecretFileValueAsync(JSON.stringify(bad), options)).rejects.toThrow(
+    "could not be rewrapped",
+  );
+  await expect(rewrapSecretFileValueAsync("plaintext", options)).rejects.toThrow(
+    "could not be rewrapped",
+  );
+  expect(await readFile(from, "utf8")).toBe(raw);
 });

@@ -29,12 +29,14 @@ export interface DesktopBackupArchive {
 }
 export interface DesktopArchiveLimits {
   maxBytes: number;
+  maxExpandedBytes: number;
   maxEntries: number;
   maxFileBytes: number;
   maxManifestBytes: number;
 }
 const limits: DesktopArchiveLimits = {
   maxBytes: 1024 ** 4,
+  maxExpandedBytes: 1024 ** 4,
   maxEntries: 16384,
   maxFileBytes: 1024 ** 4,
   maxManifestBytes: 1024 ** 2,
@@ -91,6 +93,7 @@ export async function extractDesktopBackupArchive(options: {
     const sealedFiles = new Map<string, { path: string; scope: string }>();
     const hash = createHash("sha256");
     let seenBytes = 0;
+    let expandedBytes = 0;
     let tail = Buffer.alloc(0);
     let root: string | undefined;
     let manifestRaw: Buffer | undefined;
@@ -122,6 +125,9 @@ export async function extractDesktopBackupArchive(options: {
           ancestors.add(parts.slice(1, depth + 1).join("/"));
         entries.set(rel, { type: header.type, bytes: header.size });
         if (header.type === "directory") continue;
+        expandedBytes += header.size;
+        if (!Number.isSafeInteger(expandedBytes) || expandedBytes > bound.maxExpandedBytes)
+          throw refusal();
         if (rel === BACKUP_MANIFEST_NAME && header.size > bound.maxManifestBytes) throw refusal();
         // Logical names never become filesystem paths. Even legacy readable
         // stores and manifest notes are sealed before their first persisted byte.
@@ -129,7 +135,7 @@ export async function extractDesktopBackupArchive(options: {
           options.destination,
           `entry-${String(entries.size).padStart(6, "0")}.enc`,
         );
-        const scope = `${options.seal.scope}:entry:${rel}`;
+        const scope = `${options.seal.scope}:entry:${entries.size}`;
         let written = 0;
         const chunks: Buffer[] = [];
         await produceEncryptedArtifact(

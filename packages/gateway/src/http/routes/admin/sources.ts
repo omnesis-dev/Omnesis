@@ -585,7 +585,13 @@ export function mountSourceRoutes(app: RouteApp, deps: AdminRoutesDeps): void {
     const pairingFence = pairingGenerationFence(c);
     const id = SourceId(c.req.param("id"));
     assertMutableSource(id);
-    const result = await runGenerationFenced(() => sourceService.deleteSource(id, pairingFence));
+    const match = c.req.header("If-Match");
+    const expectedRevision = match?.replace(/^"([a-f0-9]{64})"$/u, "$1");
+    if (expectedRevision !== undefined && !/^[a-f0-9]{64}$/u.test(expectedRevision))
+      throw new BadRequestError("Invalid source removal precondition.");
+    const result = await runGenerationFenced(() =>
+      sourceService.deleteSource(id, pairingFence, expectedRevision),
+    );
     if (!result) throw new NotFoundError("source not found");
     // The source is gone — stopped syncing, stopped accepting pushes — but
     // purging what it ingested continues after this returns. `removing` is the

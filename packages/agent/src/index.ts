@@ -110,6 +110,13 @@ export {
 } from "./openai-responses-backend.js";
 
 export { HttpAgentBackend, type HttpAgentBackendOptions } from "./http-agent-backend.js";
+export {
+  managedCodexAuth,
+  managedCodexArgs,
+  assertNoManagedCodexAuthFile,
+  managedCodexPoolAuthFiles,
+  removeManagedCodexPoolAuth,
+} from "./codex-managed-auth.js";
 
 export {
   CodexAppServerBackend,

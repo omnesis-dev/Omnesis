@@ -65,6 +65,7 @@ async function fixture(mode: "home" | "joined" = "home") {
     remoteProtection: vi.fn<NonNullable<Dependencies["remoteProtection"]>>(async () => "encrypted"),
     mayStartEpoch: vi.fn(async () => true),
     claimEpoch: vi.fn(async () => true),
+    restoreBlocked: vi.fn(async () => false),
     readInstall: vi.fn(async () => ({
       version: 1 as const,
       owner: "omnesis-desktop" as const,
@@ -424,6 +425,44 @@ test("losing remote protection drains the collector and rechecks before any repl
   await f.event("collector", "waiting-protection");
   expect(f.kills).toContain("collector:SIGTERM");
   expect(f.children).toHaveLength(1);
+  f.controller.abort();
+  await run;
+});
+
+test("explicit restore starts only its bound gateway and waits for verified completion before collection", async () => {
+  const f = await fixture();
+  f.setLinked(true);
+  f.deps.restoreBlocked.mockResolvedValue(true);
+  const activation = {
+    operationId: "00000000-0000-4000-8000-000000000001",
+    attemptId: "00000000-0000-4000-8000-000000000002",
+    epoch: null,
+  };
+  const run = runDesktopDaemon(
+    f.profile,
+    {
+      signal: f.controller.signal,
+      restoreActivation: activation,
+      onEvent: (event) => {
+        f.events.push(event);
+      },
+    },
+    f.deps,
+  );
+  await f.nextWait();
+  expect(f.deps.mayStartEpoch).toHaveBeenCalledWith(f.profile, null, activation);
+  expect(f.deps.claimEpoch).toHaveBeenCalledWith(
+    f.profile,
+    expect.any(AbortSignal),
+    null,
+    activation,
+  );
+  expect(f.deps.spawn).toHaveBeenCalledWith("gateway", expect.any(Object), activation);
+  expect(f.children.map((child) => child.component)).toEqual(["gateway"]);
+  f.deps.restoreBlocked.mockResolvedValue(false);
+  (await f.nextWait()).resolve();
+  await f.nextWait();
+  expect(f.deps.spawn).toHaveBeenLastCalledWith("collector", expect.any(Object));
   f.controller.abort();
   await run;
 });

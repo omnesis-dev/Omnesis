@@ -2,18 +2,24 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { lstatSync } from "node:fs";
-import { DEFAULT_CONFIG_DIR } from "@omnesis/core";
+import { DEFAULT_CONFIG_DIR, type SecretFileOptions } from "@omnesis/core";
 import { z } from "zod";
+import { gatewayCredentialOptions } from "./gateway-secret-storage.js";
 import { isJoinedPrivateFileError } from "./private-file-errors.js";
 import { gatewayKeySessionSource, GatewayUnregistered } from "./gateway-key-client.js";
 import { GatewayTunnel } from "./tunnel-client.js";
 import { readPrivateJson, googleRelaySessionSource } from "./google-credentials.js";
-import { readPrivateText, identityArtifactPresent } from "./private-inputs.js";
+import { identityArtifactPresent } from "./private-inputs.js";
 
 const sessionFileSchema = z.object({ token: z.string().min(1).max(4096) });
 
-export async function readRelaySession(path: string): Promise<string> {
-  return sessionFileSchema.parse(JSON.parse(await readPrivateText(path))).token;
+export async function readRelaySession(
+  path: string,
+  options: SecretFileOptions | undefined = gatewayCredentialOptions(),
+): Promise<string> {
+  const parsed = sessionFileSchema.safeParse(await readPrivateJson(path, options));
+  if (!parsed.success) throw new Error("Invalid private relay routing session");
+  return parsed.data.token;
 }
 
 function ownerEntryObserved(path: string): boolean {
@@ -40,6 +46,7 @@ export function startGatewayCloudTunnel(
     throw new Error("Cloud relay requires a session file and stable gateway ID");
   }
   const sessionFile = env.OMNESIS_CLOUD_RELAY_SESSION_FILE;
+  const secretFileOptions = gatewayCredentialOptions(env.OMNESIS_CONFIG_DIR, env);
   const googleCredentials = env.OMNESIS_CLOUD_RELAY_GOOGLE_CREDENTIALS_FILE;
   const gatewayClientId = env.OMNESIS_CLOUD_RELAY_GOOGLE_GATEWAY_CLIENT_ID;
 
@@ -54,6 +61,7 @@ export function startGatewayCloudTunnel(
     publicCertificate && privateKey && publicOrigin
       ? gatewayKeySessionSource({
           configDir: env.OMNESIS_CONFIG_DIR ?? DEFAULT_CONFIG_DIR,
+          secretFileOptions,
           relayUrl: env.OMNESIS_CLOUD_RELAY_URL,
           sessionFile,
           gatewayId: env.OMNESIS_CLOUD_RELAY_GATEWAY_ID,
@@ -79,6 +87,7 @@ export function startGatewayCloudTunnel(
           relayUrl: env.OMNESIS_CLOUD_RELAY_URL,
           sessionFile,
           credentialsFile: googleCredentials,
+          secretFileOptions,
           clientId: gatewayClientId,
           clientSecretFile: env.OMNESIS_CLOUD_RELAY_GOOGLE_DESKTOP_SECRET_FILE,
         })
@@ -87,7 +96,7 @@ export function startGatewayCloudTunnel(
     const ownerPresent = await identityArtifactPresent(ownerKeyFile);
     ownerMode ||= Boolean(env.OMNESIS_CLOUD_RELAY_OWNER_KEY_FILE || ownerPresent);
     try {
-      const stored = await readPrivateJson(sessionFile);
+      const stored = await readPrivateJson(sessionFile, secretFileOptions);
       if (
         typeof stored === "object" &&
         stored !== null &&
@@ -109,7 +118,7 @@ export function startGatewayCloudTunnel(
         throw error;
       });
     }
-    return googleSource ? googleSource() : readRelaySession(sessionFile);
+    return googleSource ? googleSource() : readRelaySession(sessionFile, secretFileOptions);
   };
   const tunnel = new GatewayTunnel({
     relayUrl: env.OMNESIS_CLOUD_RELAY_URL,

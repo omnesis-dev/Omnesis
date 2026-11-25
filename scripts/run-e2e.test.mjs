@@ -20,6 +20,7 @@ import {
   killWindowsProcessTree,
 } from "../packages/core/src/windows-process-tree.ts";
 import {
+  accountContainerPhases,
   acquireE2EHostLock,
   buildE2EPhases,
   childGroupIsAlive,
@@ -847,4 +848,36 @@ describe("host-wide E2E lane lock", () => {
     expect(existsSync(lockDir)).toBe(false);
     expect(existsSync(join(dir, "omnesis-e2e-lane.lock.d"))).toBe(false);
   });
+});
+
+test("account onboarding runs in a container phase instead of silently skipping on the host", () => {
+  const file = "packages/collector/src/e2e/desktop-account.e2e.test.ts";
+  const phases = buildE2EPhases("/vitest.mjs", [file], []);
+  const selected = accountContainerPhases(phases, [file], {});
+  expect(selected).toHaveLength(1);
+  expect(selected[0].container).toBe(true);
+  expect(
+    accountContainerPhases(
+      buildE2EPhases("/vitest.mjs", ["desktop-account"], []),
+      ["desktop-account"],
+      {},
+    ),
+  ).toHaveLength(1);
+  expect(selected[0].args[0]).toMatch(/test-account-container\.mjs$/u);
+  expect(
+    accountContainerPhases(phases, [file], { OMNESIS_DESKTOP_ACCOUNT_CONTAINER_NONCE: "fixture" }),
+  ).toEqual(phases);
+  const ordinary = accountContainerPhases(
+    buildE2EPhases("/vitest.mjs", ["desktop-runtime"], []),
+    ["desktop-runtime"],
+    {},
+  );
+  expect(ordinary.some((phase) => phase.container)).toBe(false);
+  const full = accountContainerPhases(buildE2EPhases("/vitest.mjs", [], []), [], {});
+  expect(full.filter((phase) => phase.container)).toHaveLength(1);
+  expect(
+    full
+      .filter((phase) => !phase.container)
+      .every((phase) => phase.args.includes(`--exclude=${file}`)),
+  ).toBe(true);
 });

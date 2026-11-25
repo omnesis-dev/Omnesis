@@ -36,7 +36,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import {
   agentConversationTerminalFailureSchema,
@@ -46,9 +46,8 @@ import {
   createLogger,
   ownedProcessCleanupReceipt,
   pMap,
-  type AgentConversationTerminalFailure,
-  type AgentTerminalFailure,
 } from "@omnesis/core";
+import { ManagedTextFiles } from "../managed-text-files.js";
 import { readConversationCleanupCandidates } from "./conversation-retention.js";
 import {
   ConversationCleanupScanner,
@@ -60,6 +59,11 @@ import {
   type ConversationRetentionCandidate,
   type ConversationRetentionFile,
 } from "./conversation-retention.js";
+import type {
+  SecretFileOptions,
+  AgentConversationTerminalFailure,
+  AgentTerminalFailure,
+} from "@omnesis/core";
 import type { Dir } from "node:fs";
 
 import type { ConversationControlState } from "./conversation-controls.js";
@@ -414,6 +418,8 @@ export class FsConversationStore implements ConversationStore {
     },
   );
 
+  private readonly protectedFiles: ManagedTextFiles;
+
   constructor(
     dir: string,
     private readonly retentionScanner: (
@@ -421,8 +427,13 @@ export class FsConversationStore implements ConversationStore {
       cutoffMs: number,
     ) => Promise<ConversationRetentionCandidate[]> = readConversationRetentionCandidates,
     private readonly cleanupScanner: ConversationCleanupRead = readConversationCleanupCandidates,
+    secretOptions: SecretFileOptions = {},
   ) {
     this.dir = dir;
+    this.protectedFiles = new ManagedTextFiles(
+      secretOptions.configDir ?? dirname(dir),
+      secretOptions,
+    );
   }
 
   createCleanupScanner(): ConversationCleanupScanner {
@@ -452,7 +463,10 @@ export class FsConversationStore implements ConversationStore {
     if (!isSafeId(id)) return null;
     let body: string;
     try {
-      body = await readFile(this.pathFor(id), "utf8");
+      body = await this.protectedFiles.decode(
+        this.pathFor(id),
+        await readFile(this.pathFor(id), "utf8"),
+      );
     } catch (err) {
       const e = err as NodeJS.ErrnoException;
       if (e.code === "ENOENT") return null;
@@ -735,11 +749,18 @@ export class FsConversationStore implements ConversationStore {
     if (this.index) return this.index;
     let index = new Map<string, SummaryIndexEntry>();
     try {
-      index = parseSummaryIndex(JSON.parse(await readFile(this.indexPath(), "utf8")));
+      index = parseSummaryIndex(
+        JSON.parse(
+          await this.protectedFiles.decode(
+            this.indexPath(),
+            await readFile(this.indexPath(), "utf8"),
+          ),
+        ),
+      );
     } catch (err) {
       const e = err as NodeJS.ErrnoException;
       if (e.code !== "ENOENT") {
-        log.warn(`failed to load conversation summary index: ${e.message ?? e}`);
+        log.warn(`failed to load conversation summary index: ${e.code ?? "unreadable or invalid"}`);
       }
     }
     this.index = index;
@@ -759,6 +780,7 @@ export class FsConversationStore implements ConversationStore {
 
   /** Transcript contents and summaries have the same private publication boundary. */
   private async publish(path: string, body: string): Promise<void> {
+    if (await this.protectedFiles.publishProtected(path, body)) return;
     if (process.platform === "win32") {
       await atomicWriteFile(path, body, { mode: 0o600 });
     } else {
@@ -828,7 +850,10 @@ export class FsConversationStore implements ConversationStore {
   private async readForIndex(id: string): Promise<IndexRead> {
     let body: string;
     try {
-      body = await readFile(this.pathFor(id), "utf8");
+      body = await this.protectedFiles.decode(
+        this.pathFor(id),
+        await readFile(this.pathFor(id), "utf8"),
+      );
     } catch (err) {
       const e = err as NodeJS.ErrnoException;
       if (e.code !== "ENOENT") log.warn(`failed to load conversation ${id}: ${e.message ?? e}`);
@@ -1087,12 +1112,12 @@ function parseIndexedSummary(id: string, value: unknown): ConversationSummary | 
  * rather than throwing, so a single corrupt file can't take down the
  * listing flow.
  */
-function parseConversationRecord(id: string, body: string): ConversationRecord | null {
+export function parseConversationRecord(id: string, body: string): ConversationRecord | null {
   let parsed: ConversationRecord;
   try {
     parsed = JSON.parse(body) as ConversationRecord;
-  } catch (err) {
-    log.warn(`failed to load conversation ${id}: ${errorMessage(err)}`);
+  } catch {
+    log.warn(`failed to load conversation ${id}: invalid JSON`);
     return null;
   }
   if (!parsed || !parsed.id || !parsed.callerId || !Array.isArray(parsed.messages)) {

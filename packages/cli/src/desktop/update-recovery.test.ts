@@ -12,6 +12,7 @@ import { desktopRootIdentity } from "./retirement.js";
 import { acquireDesktopRuntimeLeases } from "./runtime-leases.js";
 import { readDesktopActiveRuntime, writeDesktopActiveRuntime } from "./update-active.js";
 import { desktopUpdateConfirmation } from "./update-handoff.js";
+import { finishDesktopUpdateRollback } from "./update-data-operation.js";
 import { recoverDesktopUpdate } from "./update-recovery.js";
 import { createDesktopUpdateSnapshot, desktopUpdateSnapshotPath } from "./update-snapshot.js";
 import {
@@ -73,6 +74,15 @@ async function fixture() {
   return {
     profile,
     state,
+    executeRollback: (
+      profile: ReturnType<typeof desktopProfile>,
+      id: string,
+      signal: AbortSignal,
+    ) =>
+      finishDesktopUpdateRollback(profile, id, signal, {
+        authorize: () => {},
+        stop: async () => false,
+      }),
     options: { confirmationId: desktopUpdateConfirmation(state), signal: signal() },
   };
 }
@@ -91,6 +101,7 @@ describe.skipIf(process.platform === "win32")("desktop update recovery", () => {
       (
         await recoverDesktopUpdate(f.profile, f.options, {
           stop: async () => false,
+          executeRollback: f.executeRollback,
           verifyPrevious,
           openPrevious,
         })
@@ -110,6 +121,7 @@ describe.skipIf(process.platform === "win32")("desktop update recovery", () => {
       { ...f.options, confirmationId: desktopUpdateConfirmation(state) },
       {
         stop: async () => false,
+        executeRollback: f.executeRollback,
         verifyPrevious: async () => {},
         openPrevious: async () => {},
       },
@@ -123,6 +135,7 @@ describe.skipIf(process.platform === "win32")("desktop update recovery", () => {
     const f = await fixture();
     const operations = {
       stop: async () => false,
+      executeRollback: f.executeRollback,
       verifyPrevious: async () => {},
       openPrevious: async () => {
         throw new Error("fixture launch failure");

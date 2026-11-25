@@ -12,6 +12,10 @@ import {
   CodexRuntimePool,
   buildCodexEnv,
   ensureCodexHome,
+  managedCodexAuth,
+  managedCodexArgs,
+  assertNoManagedCodexAuthFile,
+  managedCodexPoolAuthFiles,
   type CodexRuntimeCommandInfo,
   type CodexRuntimeTurnOptions,
   type CodexTurnRunner,
@@ -100,6 +104,7 @@ export interface CodexRuntimeServiceOptions {
 
 export class CodexRuntimeService {
   private readonly paths: ReturnType<typeof codexPaths>;
+  private readonly legacyPaths: ReturnType<typeof codexPaths>;
   private readonly codexHome: string;
   private readonly workspaceDir: string;
   private readonly cliArgsPrefix: readonly string[];
@@ -120,6 +125,7 @@ export class CodexRuntimeService {
   private readonly inferenceRunner: CodexTurnRunner;
   private readonly refreshTimeoutMs: number;
   private refreshEpoch = 0;
+  private observedRuntime: CodexRuntimeStatus | undefined;
   private disposal: Promise<void> | undefined;
   private refreshInFlight: {
     epoch: number;
@@ -135,15 +141,20 @@ export class CodexRuntimeService {
   };
 
   constructor(opts: CodexRuntimeServiceOptions) {
-    const paths = codexPaths(opts.configDir);
+    const env = opts.env ?? process.env;
+    const instance = managedCodexAuth(env) ? env.OMNESIS_SERVICE_INSTANCE : undefined;
+    if (managedCodexAuth(env) && !instance)
+      throw new Error("The managed Codex installation identity is missing");
+    const paths = codexPaths(opts.configDir, instance);
     this.paths = paths;
+    this.legacyPaths = codexPaths(opts.configDir);
     this.codexHome = paths.home;
     this.workspaceDir = paths.workspace;
     this.versionArgs = opts.versionArgs ?? DEFAULT_CODEX_VERSION_ARGS;
     this.args = opts.args;
     this.commandOverride = opts.command?.trim() || undefined;
     this.cliArgsPrefix = opts.cliArgsPrefix ?? inferCliArgsPrefix(this.versionArgs);
-    this.env = opts.env ?? process.env;
+    this.env = env;
     this.interactivePoolSize = opts.interactivePoolSize ?? DEFAULT_INTERACTIVE_POOL_SIZE;
     this.inferencePoolSize = opts.inferencePoolSize ?? DEFAULT_INFERENCE_POOL_SIZE;
     this.backgroundPoolSize = opts.backgroundPoolSize ?? DEFAULT_BACKGROUND_POOL_SIZE;
@@ -196,6 +207,9 @@ export class CodexRuntimeService {
     });
     this.lifecycle = new CodexRuntimeLifecycle({
       codexHome: this.codexHome,
+      poolHome: this.legacyPaths.poolHomeBase,
+      legacyHome: this.legacyPaths.home,
+      createGeneration: (commandInfo) => this.createGeneration(commandInfo),
       cliArgsPrefix: this.cliArgsPrefix,
       env: this.env,
       refreshTimeoutMs: this.refreshTimeoutMs,
@@ -413,6 +427,7 @@ export class CodexRuntimeService {
           configured: this.hasStoredAuth(),
           status: "unreachable",
           loggedIn: false,
+          runtime: this.observedRuntime,
           models: [],
           reason: conciseError(failure),
           refreshedAt: new Date().toISOString(),
@@ -515,8 +530,9 @@ export class CodexRuntimeService {
 
   private async computeStatus(): Promise<CodexBackendStatus> {
     const runtime = await this.describeRuntime();
+    this.observedRuntime = runtime;
     this.assertCleanupConfirmed();
-    if (!this.hasStoredAuth()) {
+    if (!managedCodexAuth(this.env) && !this.hasStoredAuth()) {
       return {
         type: "codex",
         configured: false,
@@ -529,7 +545,15 @@ export class CodexRuntimeService {
       };
     }
 
-    await ensureCodexHome(this.codexHome);
+    await ensureCodexHome(this.codexHome, this.env);
+    await assertNoManagedCodexAuthFile(this.env, [this.codexHome, this.legacyPaths.home]);
+    if (
+      managedCodexAuth(this.env) &&
+      (await managedCodexPoolAuthFiles(this.legacyPaths.poolHomeBase)).length
+    )
+      throw new Error(
+        "Earlier desktop ChatGPT worker credentials remain outside Keychain. Sign out in Omnesis before signing in again.",
+      );
     this.assertCleanupConfirmed();
     const childEnv = buildCodexEnv(this.env, this.codexHome);
     if (runtime && !runtime.supported) {
@@ -547,6 +571,8 @@ export class CodexRuntimeService {
     const commandInfo = await this.supervisor.current.runtime.resolveCommandInfo();
 
     this.assertCleanupConfirmed();
+    if (managedCodexAuth(this.env))
+      await this.supervisor.current.runtime.verifyManagedCredentialPolicy();
     const loggedIn = await this.checkLoggedIn(commandInfo.command, childEnv);
     if (!loggedIn.ok) {
       return {
@@ -613,7 +639,10 @@ export class CodexRuntimeService {
     }
 
     this.assertCleanupConfirmed();
-    const invocation = nodeCommandInvocation(command, [...this.cliArgsPrefix, "debug", "models"]);
+    const invocation = nodeCommandInvocation(
+      command,
+      managedCodexArgs(this.env, [...this.cliArgsPrefix, "debug", "models"], this.codexHome),
+    );
     const result = await (process.platform === "win32" ? execWindowsJob : execFileAsync)(
       invocation.command,
       invocation.args,
@@ -636,7 +665,10 @@ export class CodexRuntimeService {
   ): Promise<{ ok: true } | { ok: false; reason: string }> {
     this.assertCleanupConfirmed();
     try {
-      const invocation = nodeCommandInvocation(command, [...this.cliArgsPrefix, "login", "status"]);
+      const invocation = nodeCommandInvocation(
+        command,
+        managedCodexArgs(this.env, [...this.cliArgsPrefix, "login", "status"], this.codexHome),
+      );
       await (process.platform === "win32" ? execWindowsJob : execFileAsync)(
         invocation.command,
         invocation.args,

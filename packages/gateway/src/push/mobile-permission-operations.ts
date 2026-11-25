@@ -293,11 +293,16 @@ export function removeSourceWithPermissionInvalidation(
   db: Db,
   id: SourceId,
   now = Date.now(),
+  expectedRevision?: string,
 ): RemovedSource | null {
   return db
     .transaction(() => {
       const source = getSource(db, id);
-      if (!source) return null;
+      if (
+        !source ||
+        (expectedRevision !== undefined && sourceSettingsRevision(source) !== expectedRevision)
+      )
+        return null;
       // Membership capture and cascade share the writer transaction: a join
       // either belongs to this cohort or encounters the removal tombstone.
       const memberDeviceIds = [

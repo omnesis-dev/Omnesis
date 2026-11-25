@@ -4,6 +4,7 @@
 import { mkdtemp, mkdir, writeFile, readFile, rm, symlink, link, rename } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { randomUUID } from "node:crypto";
 import { extract, type Header } from "tar-stream";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import {
@@ -11,6 +12,7 @@ import {
   ensureInstallRootKey,
   createRecoveryEnvelope,
   readInstallRootKey,
+  produceEncryptedArtifact,
 } from "@omnesis/core";
 import * as artifactFiles from "./artifact-files.js";
 import {
@@ -31,6 +33,7 @@ beforeEach(async () => {
   await mkdir(join(dir, "backups"));
   await mkdir(join(dir, "exports"));
   service = new ArtifactDownloadService({
+    readExportRootKey: () => readInstallRootKey({ backend: "file", configDir: dir }),
     backupRoot: join(dir, "backups"),
     exportRoot: join(dir, "exports"),
   });
@@ -355,5 +358,229 @@ describe("artifact downloads", () => {
     await closing;
     await expect(opening).rejects.toMatchObject({ status: 503 });
     await expect(descriptor!.stat()).rejects.toMatchObject({ code: "EBADF" });
+  });
+});
+
+async function encryptedExport(
+  format: "json" | "csv",
+  payload?: Buffer,
+): Promise<{ path: string; id: string; name: string; stored: string; exportId: string }> {
+  await ensureInstallRootKey({ backend: "file", configDir: dir });
+  const exportId = randomUUID();
+  const path = join(dir, "exports", exportId);
+  await mkdir(path, { mode: 0o700 });
+  const name = format === "json" ? "documents.jsonl" : "documents.csv";
+  const files =
+    format === "json"
+      ? { [name]: payload ?? Buffer.from('{"content":"invented readable export"}\n') }
+      : {
+          [name]: payload ?? Buffer.from("id,title\nfictional-id,Invented title\n"),
+          activity: Buffer.from("day,value\n2026-01-01,3\n"),
+        };
+  const names: string[] = [];
+  for (const [key, bytes] of Object.entries(files)) {
+    const clear = key === "activity" ? "activity.csv" : key;
+    names.push(clear + ".enc");
+    await produceEncryptedArtifact(
+      join(path, clear + ".enc"),
+      { backend: "file", configDir: dir, scope: `export:${exportId}:${clear}` },
+      async (body) => {
+        body.write(bytes);
+      },
+    );
+  }
+  const manifest = {
+    exportId,
+    version: "1.0.0",
+    startedAt: "2026-01-02T03:00:00.000Z",
+    finishedAt: "2026-01-02T03:04:05.000Z",
+    format,
+    files: [...names, "manifest.json"],
+    documentCount: 1,
+    encryption,
+  };
+  await produceEncryptedArtifact(
+    join(path, "manifest.full.json.enc"),
+    { backend: "file", configDir: dir, scope: `export:${exportId}:manifest.full.json` },
+    async (body) => {
+      body.write(JSON.stringify(manifest));
+    },
+  );
+  await writeFile(
+    join(path, "manifest.json"),
+    JSON.stringify({
+      ...manifest,
+      documentCount: undefined,
+      files: [...names, "manifest.full.json.enc"],
+      encryptedManifest: "manifest.full.json.enc",
+    }),
+    { mode: 0o600 },
+  );
+  const item = (await service.list("export", pending)).find(
+    (entry) => entry.createdAt === manifest.finishedAt,
+  )!;
+  return { path, id: item.id, name, stored: name + ".enc", exportId };
+}
+
+describe("explicitly approved readable exports", () => {
+  test("older encrypted exports lacking a sealed export identity require a new export", async () => {
+    const f = await encryptedExport("json");
+    const path = join(f.path, "manifest.json");
+    const manifest = JSON.parse(await readFile(path, "utf8")) as Record<string, unknown>;
+    delete manifest.exportId;
+    await writeFile(path, JSON.stringify(manifest));
+    const item = (await service.list("export", pending))[0]!;
+    await expect(service.readableExport(item.id, authority, pending)).rejects.toMatchObject({
+      status: 400,
+    });
+    const original = await service.download(item.id, authority, pending);
+    const files = await unpack(original);
+    expect([...files.keys()].some((name) => name.endsWith("/documents.jsonl.enc"))).toBe(true);
+  });
+
+  test("a pinned payload changed after the authentication pass cannot complete replay", async () => {
+    const f = await encryptedExport("json", Buffer.alloc(1024 * 1024, 0x73));
+    const actual = artifactFiles.verifyArtifactFile;
+    let verifications = 0;
+    vi.spyOn(artifactFiles, "verifyArtifactFile").mockImplementation(async (handle, file) => {
+      await actual(handle, file);
+      if (file.name === f.stored && ++verifications === 4) {
+        const path = join(f.path, f.stored);
+        const bytes = await readFile(path);
+        bytes[bytes.length - 1] = bytes.at(-1)! ^ 0xff;
+        await writeFile(path, bytes);
+      }
+    });
+    await expect(
+      (await service.readableExport(f.id, authority, pending)).arrayBuffer(),
+    ).rejects.toThrow("could not finish");
+    expect(verifications).toBeGreaterThanOrEqual(4);
+  });
+  test.each(["json", "csv"] as const)(
+    "authenticates and extracts usable %s while preserving stored encryption and root identity",
+    async (format) => {
+      const f = await encryptedExport(format);
+      const before = await readFile(join(f.path, f.stored));
+      const root = await readInstallRootKey({ backend: "file", configDir: dir });
+      const response = await service.readableExport(f.id, authority, pending);
+      expect(response.headers.get("content-disposition")).toContain("export-readable-");
+      expect(response.headers.get("cache-control")).toBe("no-store");
+      const files = await unpack(response);
+      expect([...files.keys()].some((name) => name.endsWith(".enc"))).toBe(false);
+      const payload = [...files]
+        .find(([name]) => name.endsWith("/" + f.name))![1]
+        .bytes.toString("utf8");
+      if (format === "json")
+        expect(JSON.parse(payload.trim())).toEqual({ content: "invented readable export" });
+      else {
+        expect(payload).toBe("id,title\nfictional-id,Invented title\n");
+        expect(
+          [...files].find(([name]) => name.endsWith("/activity.csv"))![1].bytes.toString(),
+        ).toContain("day,value");
+      }
+      const manifest = JSON.parse(
+        [...files].find(([name]) => name.endsWith("/manifest.json"))![1].bytes.toString(),
+      ) as Record<string, unknown>;
+      expect(manifest.encryption).toBeUndefined();
+      expect(manifest.exportId).toBe(f.exportId);
+      expect(await readFile(join(f.path, f.stored))).toEqual(before);
+      expect(await readInstallRootKey({ backend: "file", configDir: dir })).toBe(root);
+      expect([...files.keys()].some((name) => /keyring|credential|recovery/iu.test(name))).toBe(
+        false,
+      );
+    },
+  );
+
+  test("a bad payload tag reveals no unauthenticated payload and never finishes a valid TAR", async () => {
+    const payload = Buffer.from(
+      "fictional payload that must not escape failed authentication\n".repeat(1000),
+    );
+    const f = await encryptedExport("json", payload);
+    const file = join(f.path, f.stored);
+    const damaged = await readFile(file);
+    damaged[damaged.length - 1] = damaged.at(-1)! ^ 0xff;
+    await writeFile(file, damaged);
+    const item = (await service.list("export", pending))[0]!;
+    const reader = (await service.readableExport(item.id, authority, pending)).body!.getReader();
+    const received: Buffer[] = [];
+    await expect(
+      (async () => {
+        for (;;) {
+          const chunk = await reader.read();
+          if (chunk.done) return;
+          received.push(Buffer.from(chunk.value));
+        }
+      })(),
+    ).rejects.toThrow("could not finish");
+    expect(Buffer.concat(received).includes(payload.subarray(0, 60))).toBe(false);
+  });
+
+  test("scope substitution and full-manifest identity disagreement fail closed", async () => {
+    const f = await encryptedExport("json");
+    await rm(join(f.path, f.stored));
+    await produceEncryptedArtifact(
+      join(f.path, f.stored),
+      { backend: "file", configDir: dir, scope: `backup:${f.exportId}:${f.name}` },
+      async (body) => {
+        body.write("must not decrypt backup scope");
+      },
+    );
+    let item = (await service.list("export", pending))[0]!;
+    await expect(
+      (await service.readableExport(item.id, authority, pending)).arrayBuffer(),
+    ).rejects.toThrow("could not finish");
+    const publicPath = join(f.path, "manifest.json");
+    const manifest = JSON.parse(await readFile(publicPath, "utf8")) as Record<string, unknown>;
+    manifest.exportId = randomUUID();
+    await writeFile(publicPath, JSON.stringify(manifest));
+    item = (await service.list("export", pending))[0]!;
+    await expect(
+      (await service.readableExport(item.id, authority, pending)).arrayBuffer(),
+    ).rejects.toThrow("could not finish");
+  });
+
+  test("readable download never accepts a backup or remints a missing key", async () => {
+    await backup("completed", { payload: "fictional backup credentials" });
+    await expect(service.readableExport(await id(), authority, pending)).rejects.toMatchObject({
+      status: 400,
+    });
+    const f = await encryptedExport("json");
+    const missing = new ArtifactDownloadService({
+      exportRoot: join(dir, "exports"),
+      readExportRootKey: async () => null,
+    });
+    try {
+      await expect(
+        (await missing.readableExport(f.id, authority, pending)).arrayBuffer(),
+      ).rejects.toThrow("could not finish");
+    } finally {
+      await missing.close();
+    }
+  });
+
+  test("cancellation drains authenticated replay and releases admission while preserving the source", async () => {
+    const f = await encryptedExport("json", Buffer.alloc(8 * 1024 * 1024, 0x71));
+    const reader = (await service.readableExport(f.id, authority, pending)).body!.getReader();
+    await reader.read();
+    await reader.cancel();
+    const response = await service.download(f.id, authority, pending);
+    await response.body!.cancel();
+    expect((await readFile(join(f.path, f.stored))).length).toBeGreaterThan(8 * 1024 * 1024);
+  });
+
+  test("token revocation during readable replay terminates the response", async () => {
+    const f = await encryptedExport("json", Buffer.alloc(8 * 1024 * 1024, 0x72));
+    let authorized = true;
+    const reader = (
+      await service.readableExport(
+        f.id,
+        { caller: "revocable-readable", stillAuthorized: () => authorized },
+        pending,
+      )
+    ).body!.getReader();
+    await reader.read();
+    authorized = false;
+    vi.spyOn(Date, "now").mockReturnValue(Date.now() + 2000);
+    await expect(consume(reader)).rejects.toThrow("could not finish");
   });
 });

@@ -79,7 +79,9 @@ struct DesktopSourceSettingsView: View {
                                         await store.refresh()
                                     } }
                                     .disabled(flow.busy)
-                                    Text("Saving a folder or local setting leaves the source's paused or enabled choice unchanged.")
+                                    Text(source.enabled
+                                        ? "Editing these settings keeps collection running."
+                                        : "Editing these settings keeps this source paused.")
                                         .font(.caption).foregroundStyle(.secondary)
                                 }
                                 if ["replicated", "partitioned", "handoff"].contains(source.multiDeviceMode ?? ""),
@@ -209,9 +211,10 @@ struct DesktopSourceMoveConfirmation: View {
         VStack(alignment: .leading, spacing: 18) {
             Text("Move this account to \(targetName)?").font(.title2)
             Text(pending.source.accountId).font(.headline).textSelection(.enabled)
-            Text(
-                "Collection stops on the previous computer and starts on the selected one. Information already indexed stays in your library. Original files and credentials on the previous computer stay where they are."
-            )
+            Text(pending.source.enabled
+                ? "Collection stops on the previous computer and starts on the selected one. Information already indexed stays in your library. Your original files and sign-ins stay on the previous computer."
+                :
+                "When you resume this source, collection will run on the selected computer. Information already indexed stays in your library. Your original files and sign-ins stay on the previous computer.")
             if !pending.source.enabled {
                 Label("This source is paused. Moving it keeps it paused until you choose Resume.", systemImage: "pause.circle")
             }

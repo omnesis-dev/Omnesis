@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { createConnection } from "node:net";
-import { mkdtemp, mkdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { realpath, mkdtemp, mkdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
@@ -25,7 +25,7 @@ let home: string;
 let control: Awaited<ReturnType<typeof startDesktopDaemonControl>> | undefined;
 const finishers: (() => void)[] = [];
 beforeEach(async () => {
-  home = await mkdtemp(join(tmpdir(), "omnesis-control-test-"));
+  home = await realpath(await mkdtemp(join(tmpdir(), "omnesis-control-test-")));
 });
 afterEach(async () => {
   for (const finish of finishers.splice(0)) finish();
@@ -98,7 +98,9 @@ describe.skipIf(process.platform === "win32")("private desktop daemon control", 
   });
 
   test("socket paths stay short even when the application config path is long", () => {
-    const profile = desktopProfile(join(home, "long-directory".repeat(20)));
+    const profile = desktopProfile(
+      join(home, ...Array.from({ length: 20 }, (_, index) => `long-directory-${index}`)),
+    );
     expect(Buffer.byteLength(desktopDaemonSocket(profile))).toBeLessThan(104);
     expect(desktopDaemonSocket(profile)).not.toContain("long-directory");
   });

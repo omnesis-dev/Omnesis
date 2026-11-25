@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { mkdtemp, mkdir, rm, writeFile, readFile, chmod } from "node:fs/promises";
+import { realpath, mkdtemp, mkdir, rm, writeFile, readFile, chmod } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, afterEach, expect, test, vi } from "vitest";
@@ -10,6 +10,7 @@ import {
   renderSecureMarker,
   secureMarkerPath,
   type CreateSecretStoreOptions,
+  type InstallRootKeyState,
 } from "@omnesis/core";
 import { desktopProfile, type DesktopProfile } from "./environment.js";
 import { desktopJournalPath } from "./profile.js";
@@ -21,7 +22,7 @@ let dir: string, profile: DesktopProfile, key: string;
 let dependencies: DesktopRestoreProtectionDependencies;
 const signal = new AbortController().signal;
 beforeEach(async () => {
-  dir = await mkdtemp(join(tmpdir(), "omnesis-restore-protection-"));
+  dir = await realpath(await mkdtemp(join(tmpdir(), "omnesis-restore-protection-")));
   profile = desktopProfile(dir);
   key = generateInstallRootKey();
   await mkdir(join(profile.configDir, "keyring"), { recursive: true, mode: 0o700 });
@@ -50,7 +51,7 @@ beforeEach(async () => {
         service: profile.secretService,
         configDir: profile.configDir,
       });
-      return Promise.resolve({
+      return Promise.resolve<InstallRootKeyState>({
         keyName: "install-root-key-v1",
         present: true,
         valid: true,
@@ -60,6 +61,7 @@ beforeEach(async () => {
           available: true,
           secure: true,
           detail: "Invented fixture Keychain",
+          writeExposure: "process-argv",
         },
       });
     }),

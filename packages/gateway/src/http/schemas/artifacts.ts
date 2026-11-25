@@ -7,3 +7,6 @@ export const artifactCatalogQuery = z
   .object({ kind: z.enum(["backup", "export"]).optional() })
   .strict();
 export const artifactDownloadId = z.string().regex(/^[a-f0-9]{64}$/u);
+export const readableArtifactConsent = z
+  .object({ acknowledgeUnencryptedCopy: z.literal(true) })
+  .strict();

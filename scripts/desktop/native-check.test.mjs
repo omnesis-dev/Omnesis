@@ -124,6 +124,14 @@ posixTest("UI tests use ad-hoc Debug signing without a paid team identity", () =
   expect(script).toContain("signing_allowed=YES\n  signing_required=YES\n  signing_identity=-");
   expect(script).toContain("CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM=''");
   expect(script).toContain("CODE_SIGN_INJECT_BASE_ENTITLEMENTS=YES");
+  expect(script).toContain("--inspect-products");
+  expect(script).toContain("test-runner-signature-after.json");
+  expect(script.indexOf("desktop_xcodebuild build-for-testing")).toBeLessThan(
+    script.indexOf("normalize-test-runner-signature.mjs --products"),
+  );
+  expect(script.indexOf("normalize-test-runner-signature.mjs --products")).toBeLessThan(
+    script.indexOf('desktop_xcodebuild -resultBundlePath "$result" test-without-building'),
+  );
 });
 
 posixTest("real rsync preserves a remote filespec with spaces and quotes", () => {

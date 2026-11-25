@@ -19,13 +19,18 @@ the app, prepared before tests run:
 
 ```sh
 node scripts/desktop/prepare-node-test-fixture.mjs --arch "$(node -p process.arch)" --out macos/.node-fixture
+node scripts/desktop/prepare-codex-keychain-test-fixture.mjs --arch "$(node -p process.arch)" --out macos/.codex-keychain-fixture
 swift test --package-path macos
 ```
 
 UI tests use the generated Xcode project and a macOS destination. Admit builds
 and tests through the host's configured native test queue when one is installed.
 The native check bridge and GitHub workflow prepare the fixture automatically;
-tests perform no downloads and never substitute a globally installed Node.
+tests perform no downloads and never substitute a globally installed Node or Codex.
+The Codex fixture is the integrity-checked pinned distribution. Its Keychain test
+uses an invalid fixture value in a new, isolated account, verifies that no
+credential file appears, and deletes only that account. It performs no real
+sign-in or model request; a locked or unavailable Keychain fails the test.
 
 The scheme also builds `OmnesisRuntimeExec`, which must be supplied when staging
 the matching runtime. After the native build, assemble a complete development app
@@ -45,11 +50,23 @@ builds only. Before launch, the native shell verifies and copies the full payloa
 into a separate, non-purgeable Application Support cache, keyed by the runtime manifest's hash. Both the app and
 login helper run from that stable path even if Finder moves or replaces the app.
 Release builds require the source app's valid signature to match the executing
-shell's signing team and the desktop bundle identity. Cached payloads are
-retained until a future process-lifetime-aware cleanup policy can prove them idle.
+shell's signing team and the desktop bundle identity. Updates offers an explicit
+preview and confirmation to remove older application code. Cleanup keeps the
+current and active versions, pending recovery/update versions, uncertain launch
+reservations and one previous verified application. Kernel-held usage leases
+prevent removing code still in use. Personal data and recovery snapshots are
+retained separately.
 The app
 refuses to launch an incomplete bundle; it never substitutes a globally installed
 CLI or another checkout.
+
+Managed ChatGPT sign-in uses a dedicated canonical Codex home and strict macOS
+Keychain credential storage. Concurrent workers share that credential namespace
+while keeping separate workspaces and state directories. A legacy plaintext
+credential file blocks use until explicit sign-out; logout and removal verify
+absence of only this installation's Keychain account. Diagnostic vendor state
+still requires its own persistence audit; ephemeral threads alone do not prove
+all diagnostic files are encrypted.
 
 The app starts `desktop bridge` over a private JSON-lines pipe. Lifecycle replies
 and interaction prompts determine the real onboarding state. Gateway tokens stay
@@ -137,3 +154,35 @@ and verifies both required-encryption Keychain mirrors before reporting recovery
 A locked Keychain, foreign file or incomplete marker restoration stays a visible
 failure. File contents and the entered code remain in memory and the private
 runtime pipe; importing never creates a replacement root key.
+
+General backup restore uses the selected original archive through a private file
+selection descriptor. The sidecar copies it directly into encrypted staging,
+authenticates the archive and recovered source keys, and issues a short-lived
+one-use preview confirmation. Applying it stops only the owned runtime, reserves
+all store owners, retains a protected recovery snapshot, and rebuilds trusted
+stores while retaining this Mac's account, credentials for its own identity,
+certificates, model connections and root key. Source credentials and user-authored
+prose are rewrapped for that root. Restored sources, watches and automation stay
+paused for review. Model connections remain, while every model role and automatic
+personal-data deletion policy pauses until review. New backups include chat
+history with inert imported sessions; older backups without the history marker
+preserve existing chats. Derived summaries rebuild. No restored data or source root key is written as plaintext
+staging. Legacy SQLite and analytics inputs have bounded memory-only handling.
+
+An applied backup remains pending until a separate explicit Start verifies real
+protected health, the retained administrative identity, database integrity/schema
+and measured data counts, and the paused review state. Automatic startup cannot
+mint that operation-bound activation. Failed verification remains fenced, with
+an explicit recovery action for the previous library. Unknown schema versions
+and nonempty database sidecars are refused rather than silently losing data.
+The original archive remains untouched; a readable original stays readable.
+
+Erase and restore publication run in a fixed operation subprocess under the
+native exclusive data lease. Runtime consumers and descendants retain shared
+data leases; control bridges do not. The controller holds the restore-session
+lease until its exact operation host exits, while that host revalidates the
+durable operation and owns all install and store leases during mutation.
+After confirmed data erasure and authoritative Keychain absence, creating a
+fresh installation is a separate confirmed action. It preserves the erase
+receipt, publishes a new identity generation last, and requires a new bridge
+before setup. Retained-library reinstall keeps its existing identity.

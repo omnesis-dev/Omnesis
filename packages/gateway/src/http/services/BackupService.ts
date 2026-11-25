@@ -433,6 +433,7 @@ export class BackupService {
             }
           : {}),
         includeIndex: cur.includeIndex,
+        includesConversationHistory: true,
         purpose: cur.purpose,
         ...(cur.note ? { note: cur.note } : {}),
       };
@@ -618,6 +619,7 @@ export class BackupService {
       encryption: fullManifest.encryption,
       encryptedManifest: `${FULL_MANIFEST_NAME}${ENCRYPTED_ARTIFACT_SUFFIX}`,
       includeIndex: fullManifest.includeIndex,
+      includesConversationHistory: fullManifest.includesConversationHistory,
       purpose: fullManifest.purpose,
     };
   }

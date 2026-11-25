@@ -13,7 +13,12 @@ import { DesktopInteractionBroker } from "./protocol.js";
 import { claimDesktopUpdateEpoch } from "./update-claim.js";
 import { writeDesktopActiveRuntime } from "./update-active.js";
 import { readDesktopUpdateState, writeDesktopUpdateState } from "./update-state.js";
+import {
+  finishDesktopUpdateSnapshot,
+  finishDesktopUpdateRollback,
+} from "./update-data-operation.js";
 import type { DesktopUpdateMetadata } from "./update-plan.js";
+import type { DesktopUpdateRelease } from "./update-release.js";
 
 const homes: string[] = [];
 afterEach(async () => {
@@ -56,6 +61,7 @@ async function fixture() {
     { mode: 0o600 },
   );
   await writeFile(join(profile.configDir, "library.data"), "invented sealed data", { mode: 0o600 });
+  await writeFile(join(profile.configDir, "omnesis.json"), "{}", { mode: 0o600 });
   const oldEpoch = "a".repeat(64),
     candidateEpoch = "b".repeat(64);
   await withDesktopInstallLease(profile, signal, () =>
@@ -97,6 +103,18 @@ async function fixture() {
     else broker.respond(interaction.id, value);
   });
   const operations = {
+    dataOperation: (
+      profile: ReturnType<typeof desktopProfile>,
+      id: string,
+      purpose: "update-snapshot" | "update-rollback",
+      signal: AbortSignal,
+    ) =>
+      (purpose === "update-snapshot" ? finishDesktopUpdateSnapshot : finishDesktopUpdateRollback)(
+        profile,
+        id,
+        signal,
+        { authorize: () => {}, stop: async () => false },
+      ),
     metadata: async () => current,
     epoch: () => epoch,
     discover: vi.fn(async () => release),
@@ -108,7 +126,7 @@ async function fixture() {
     })),
     download: vi.fn(
       async (
-        _release: typeof release,
+        _release: DesktopUpdateRelease,
         directory: string,
         _signal: AbortSignal,
         deps?: { progress?(bytes: number, total: number): void | Promise<void> },

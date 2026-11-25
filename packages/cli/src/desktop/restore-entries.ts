@@ -3,19 +3,29 @@
 
 import {
   BACKUP_RECOVERY_ENVELOPE_NAME,
+  backupScopeEntryFor,
+  isEncryptedSecretFile,
+  openSecretFileValueAsync,
   backupManifestSchema,
   isEncryptedArtifactBuffer,
   readEncryptedArtifactStream,
   decryptEncryptedArtifactStream,
-  openRecoveryEnvelope,
+  openRecoveryEnvelopeAsync,
   parseRecoveryEnvelope,
   parseStorageKeyName,
-  rewrapSecretFileValue,
+  rewrapSecretFileValueAsync,
+  sealSecretFileValueAsync,
   rewrapStorageKeyValue,
   type StorageKeyName,
+  type ManagedDesktopDataScope,
 } from "@omnesis/core";
 import {
   reconcileDesktopMainEntry,
+  reconcileDesktopConversationEntry,
+  reconcileDesktopSecretEntry,
+  reconcileDesktopAuxiliaryEntry,
+  type RestoredAuxiliaryEntryOptions,
+  type AuxiliaryRestoreResult,
   inspectDesktopMainEntry,
   type RestoredMainInspection,
   type RestoredMainEntryOptions,
@@ -35,13 +45,20 @@ export class DesktopRestoreEntries {
   #archive: DesktopBackupArchive;
   #targetRootKey: string;
   #signal: AbortSignal;
+  #dataScope: Omit<ManagedDesktopDataScope, "format"> | undefined;
   #sourceEpoch: string | null = null;
   #unlocked = false;
-  constructor(archive: DesktopBackupArchive, targetRootKey: string, signal: AbortSignal) {
+  constructor(
+    archive: DesktopBackupArchive,
+    targetRootKey: string,
+    signal: AbortSignal,
+    dataScope?: Omit<ManagedDesktopDataScope, "format">,
+  ) {
     this.#sourceRootKey = targetRootKey;
     this.#archive = archive;
     this.#targetRootKey = targetRootKey;
     this.#signal = signal;
+    this.#dataScope = dataScope;
   }
 
   async unlock(
@@ -77,7 +94,7 @@ export class DesktopRestoreEntries {
     if (!parsed) throw new Error("The recovery file is not supported");
     let candidate: string;
     try {
-      candidate = openRecoveryEnvelope(parsed, options.recoveryCode);
+      candidate = await openRecoveryEnvelopeAsync(parsed, options.recoveryCode);
     } catch {
       throw new Error("The recovery code does not open this backup");
     }
@@ -96,6 +113,20 @@ export class DesktopRestoreEntries {
 
   has(name: string): boolean {
     return this.#archive.sealedFiles.has(name);
+  }
+
+  /** Private operation-host transport only; never return this value through the bridge. */
+  privateOperationSourceKey(): string {
+    if (!this.#unlocked) throw new DesktopRestoreRecoveryRequiredError();
+    return this.#sourceRootKey;
+  }
+
+  /** Re-probe the independently extracted archive inside its exclusive operation host. */
+  async adoptPrivateOperationSourceKey(sourceRootKey: string): Promise<void> {
+    if (!sourceRootKey || sourceRootKey.length > 512) throw new Error("The backup key is invalid");
+    this.#sourceRootKey = sourceRootKey;
+    await this.probe();
+    this.#unlocked = true;
   }
 
   close(): void {
@@ -134,6 +165,7 @@ export class DesktopRestoreEntries {
         },
       },
       this.#signal,
+      this.#dataScope,
     );
   }
 
@@ -159,9 +191,95 @@ export class DesktopRestoreEntries {
         },
       },
       this.#signal,
+      this.#dataScope,
     );
   }
 
+  async prepareAuxiliary(
+    name: string,
+    options: Omit<RestoredAuxiliaryEntryOptions, "entry" | "signal">,
+  ): Promise<AuxiliaryRestoreResult> {
+    if (!this.#unlocked) throw new DesktopRestoreRecoveryRequiredError();
+    const file = this.#archive.sealedFiles.get(name),
+      bytes = this.#archive.files.get(name);
+    if (!file || bytes === undefined) throw new Error("The auxiliary backup is unavailable");
+    return reconcileDesktopAuxiliaryEntry(
+      {
+        ...options,
+        entry: {
+          ...file,
+          logicalName: name,
+          bytes,
+          targetRootKey: this.#targetRootKey,
+          sourceRootKey: this.#sourceRootKey,
+          sourceScope: this.#sourceEpoch
+            ? `backup:${this.#sourceEpoch}:${name.replace(/\.enc$/, "")}`
+            : null,
+        },
+      },
+      this.#signal,
+      this.#dataScope,
+    );
+  }
+  async usingSignal<T>(signal: AbortSignal, work: () => Promise<T>): Promise<T> {
+    const previous = this.#signal;
+    this.#signal = AbortSignal.any([previous, signal]);
+    try {
+      return await work();
+    } finally {
+      this.#signal = previous;
+    }
+  }
+  async prepareConversation(
+    name: string,
+    targetPath: string,
+  ): Promise<{ id: string; messages: number }> {
+    if (!this.#unlocked) throw new DesktopRestoreRecoveryRequiredError();
+    const file = this.#archive.sealedFiles.get(name),
+      bytes = this.#archive.files.get(name);
+    if (!file || bytes === undefined) throw new Error("The backed-up conversation is unavailable");
+    return reconcileDesktopConversationEntry(
+      {
+        targetPath,
+        entry: {
+          ...file,
+          logicalName: name,
+          bytes,
+          targetRootKey: this.#targetRootKey,
+          sourceRootKey: this.#sourceRootKey,
+          sourceScope: this.#sourceEpoch
+            ? `backup:${this.#sourceEpoch}:${name.replace(/\.enc$/, "")}`
+            : null,
+        },
+      },
+      this.#signal,
+      this.#dataScope,
+    );
+  }
+  async prepareSecret(name: string, targetPath: string): Promise<{ protected: true }> {
+    if (!this.#unlocked) throw new DesktopRestoreRecoveryRequiredError();
+    const file = this.#archive.sealedFiles.get(name),
+      bytes = this.#archive.files.get(name);
+    if (!file || bytes === undefined)
+      throw new Error("The backed-up prose or credential is unavailable");
+    return reconcileDesktopSecretEntry(
+      {
+        targetPath,
+        entry: {
+          ...file,
+          logicalName: name,
+          bytes,
+          targetRootKey: this.#targetRootKey,
+          sourceRootKey: this.#sourceRootKey,
+          sourceScope: this.#sourceEpoch
+            ? `backup:${this.#sourceEpoch}:${name.replace(/\.enc$/, "")}`
+            : null,
+        },
+      },
+      this.#signal,
+      this.#dataScope,
+    );
+  }
   rewrapStorageKey(raw: string, keyName: StorageKeyName): string {
     if (!this.#unlocked) throw new DesktopRestoreRecoveryRequiredError();
     return rewrapStorageKeyValue(raw, {
@@ -170,9 +288,13 @@ export class DesktopRestoreEntries {
       targetRootKey: this.#targetRootKey,
     });
   }
-  rewrapSecret(raw: string, scope: string): string {
+  async sealTarget(value: string, scope: string): Promise<string> {
     if (!this.#unlocked) throw new DesktopRestoreRecoveryRequiredError();
-    return rewrapSecretFileValue(raw, {
+    return sealSecretFileValueAsync(value, { rootKey: this.#targetRootKey, scope });
+  }
+  async rewrapSecret(raw: string, scope: string): Promise<string> {
+    if (!this.#unlocked) throw new DesktopRestoreRecoveryRequiredError();
+    return rewrapSecretFileValueAsync(raw, {
       sourceRootKey: this.#sourceRootKey,
       targetRootKey: this.#targetRootKey,
       sourceScope: scope,
@@ -199,6 +321,7 @@ export class DesktopRestoreEntries {
         full.startedAt !== manifest.startedAt ||
         full.finishedAt !== manifest.finishedAt ||
         full.includeIndex !== manifest.includeIndex ||
+        full.includesConversationHistory !== manifest.includesConversationHistory ||
         JSON.stringify(normalize(full.files)) !== JSON.stringify(normalize(publicFiles))
       )
         throw new Error("The backup manifests disagree");
@@ -217,6 +340,23 @@ export class DesktopRestoreEntries {
         targetRootKey: this.#targetRootKey,
       });
       return;
+    }
+    for (const name of this.#archive.files.keys()) {
+      const logical = name.replace(/\.enc$/, "");
+      if (name === BACKUP_RECOVERY_ENVELOPE_NAME || backupScopeEntryFor(logical)?.kind !== "config")
+        continue;
+      const raw = await this.readRaw(name, 16 * 1024 * 1024);
+      try {
+        const text = raw.toString("utf8");
+        if (!isEncryptedSecretFile(text)) continue;
+        await openSecretFileValueAsync(text, {
+          rootKey: this.#sourceRootKey,
+          scope: `config:${logical}`,
+        });
+        return;
+      } finally {
+        raw.fill(0);
+      }
     }
     if (
       manifest.encryption ||

@@ -15,11 +15,13 @@ import {
 import { hashFile } from "./native-inventory.mjs";
 import { parseArguments } from "./arguments.mjs";
 import { isEntryScript } from "../lib/is-entry-script.mjs";
+import { privateKeyTestFixture } from "./private-key-test-fixture.mjs";
 
 /** Build input preparation, never a test-time download or a production runtime override. */
 export async function prepareNodeTestFixture({ architecture, output, cache }, dependencies = {}) {
   output = resolve(output);
   const spec = nodeArchiveSpec(architecture);
+  const privateKeyFixture = await privateKeyTestFixture();
   let present = false;
   try {
     const metadata = await lstat(output);
@@ -33,6 +35,14 @@ export async function prepareNodeTestFixture({ architecture, output, cache }, de
       existing.nodeVersion === NODE_RUNTIME.version &&
       existing.architecture === architecture &&
       existing.archiveSha256 === spec.sha256 &&
+      JSON.stringify(existing.privateKeyFiles) === JSON.stringify(privateKeyFixture.hashes) &&
+      (
+        await Promise.all(
+          Object.entries(privateKeyFixture.hashes).map(
+            async ([name, hash]) => (await hashFile(join(output, "private-key", name))) === hash,
+          ),
+        )
+      ).every(Boolean) &&
       existing.executableSha256 === (await hashFile(join(output, "node")))
     )
       return output;
@@ -57,7 +67,11 @@ export async function prepareNodeTestFixture({ architecture, output, cache }, de
       architecture,
       archiveSha256: spec.sha256,
       executableSha256: await hashFile(join(staging, "node")),
+      privateKeyFiles: privateKeyFixture.hashes,
     };
+    await mkdir(join(staging, "private-key"), { mode: 0o700 });
+    for (const [name, body] of Object.entries(privateKeyFixture.files))
+      await writeFile(join(staging, "private-key", name), body, { mode: 0o600 });
     await writeFile(join(staging, "node-fixture.json"), JSON.stringify(metadata), { mode: 0o600 });
     await rename(staging, output);
     return output;

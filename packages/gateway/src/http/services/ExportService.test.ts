@@ -21,12 +21,14 @@ import {
   ensureInstallRootKey,
   isEncryptedArtifactFile,
   markSecretFileEncryptionRequiredSync,
+  readInstallRootKey,
 } from "@omnesis/core";
 import { GATEWAY_VERSION } from "../../version.js";
 import { createDatabase } from "../../db.js";
 import { AnalyticsDb } from "../../analytics-db.js";
 import { ConflictError, ServiceUnavailableError } from "../errors.js";
 import { ExportService, exportManifestSchema, type ExportServiceOptions } from "./ExportService.js";
+import { ArtifactDownloadService } from "./ArtifactDownloadService.js";
 import type Database from "better-sqlite3";
 import type { AnalyticsTableSchema } from "@omnesis/source-sdk";
 
@@ -243,7 +245,7 @@ describe("ExportService", () => {
   test("encrypts export artifacts when an install root key exists", async () => {
     await ensureInstallRootKey({ backend: "file", configDir });
     const service = makeService({ secretStoreBackend: "file" });
-    service.start();
+    const { exportId } = service.start();
     await service.whenIdle();
     expect(service.getStatus().lastResult?.ok).toBe(true);
 
@@ -264,6 +266,7 @@ describe("ExportService", () => {
     const manifest = exportManifestSchema.parse(
       JSON.parse(readFileSync(join(dir, "manifest.json"), "utf8")),
     );
+    expect(manifest.exportId).toBe(exportId);
     expect(manifest.encryption).toEqual({
       scheme: "omnesis.encrypted-artifact.v1",
       key: "install-root-key-v1",
@@ -286,6 +289,26 @@ describe("ExportService", () => {
         ).toString("utf8"),
       ),
     );
+    expect(fullManifest.exportId).toBe(exportId);
+    const downloads = new ArtifactDownloadService({
+      exportRoot: service.getArtifactRoot(),
+      readExportRootKey: () => readInstallRootKey({ backend: "file", configDir }),
+    });
+    try {
+      const signal = new AbortController().signal;
+      const item = (await downloads.list("export", signal))[0]!;
+      const response = await downloads.readableExport(
+        item.id,
+        { caller: "fixture-admin", stillAuthorized: () => true },
+        signal,
+      );
+      const archive = Buffer.from(await response.arrayBuffer());
+      expect(archive.includes(decrypted)).toBe(true);
+      expect(archive.includes(Buffer.from("documents.jsonl.enc"))).toBe(false);
+      expect(isEncryptedArtifactFile(join(dir, "documents.jsonl.enc"))).toBe(true);
+    } finally {
+      await downloads.close();
+    }
     expect(fullManifest.documentCount).toBe(3);
     expect(fullManifest.perSource).toEqual({
       "gmail:maya@example.com": 2,

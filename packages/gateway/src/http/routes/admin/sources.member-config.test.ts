@@ -246,6 +246,47 @@ describe("PATCH /admin/sources/:id/members/:deviceId", () => {
     expect(getSource(db, source.id)?.deviceId).toBe(member.id);
   });
 
+  test.each(["before confirmation", "inside the writer"])(
+    "removal refuses a source changed %s",
+    async (when) => {
+      const { source } = partitionedPair();
+      const path = `/admin/sources/${encodeURIComponent(source.id)}`;
+      const headers = { authorization: `Bearer ${adminToken}` };
+      const snapshot = await (await app.request(path, { headers })).json();
+      const change = () =>
+        updateSource(db, source.id, { config: { changed: "retain-this-new-settings-value" } });
+      if (when === "before confirmation") change();
+      else {
+        const original = writeGate.removeSource.bind(writeGate);
+        vi.spyOn(writeGate, "removeSource").mockImplementationOnce(async (...args) => {
+          change();
+          return original(...args);
+        });
+      }
+      const response = await app.request(path, {
+        method: "DELETE",
+        headers: { ...headers, "If-Match": `"${snapshot.revision}"` },
+      });
+      expect(response.status).toBe(409);
+      expect(await response.json()).toMatchObject({ code: "SOURCE_SETTINGS_CHANGED" });
+      expect(getSource(db, source.id)?.config).toEqual({
+        changed: "retain-this-new-settings-value",
+      });
+    },
+  );
+
+  test("malformed removal preconditions never reach the writer", async () => {
+    const { source } = partitionedPair();
+    const remove = vi.spyOn(writeGate, "removeSource");
+    const response = await app.request(`/admin/sources/${encodeURIComponent(source.id)}`, {
+      method: "DELETE",
+      headers: { authorization: `Bearer ${adminToken}`, "If-Match": "unrecognized-version" },
+    });
+    expect(response.status).toBe(400);
+    expect(remove).not.toHaveBeenCalled();
+    expect(getSource(db, source.id)).not.toBeNull();
+  });
+
   test("whole-source settings reject a same-millisecond race inside the writer", async () => {
     const { source } = partitionedPair();
     const path = `/admin/sources/${encodeURIComponent(source.id)}`;

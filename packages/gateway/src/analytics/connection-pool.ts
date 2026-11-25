@@ -61,6 +61,7 @@ import {
   type EncryptedAnalyticsExport,
 } from "./export-encrypted-csv.js";
 import { ANALYTICS_INTERNAL_TABLES, escapeStr } from "./internal.js";
+import { loadStaticEncryptionModule } from "./static-encryption.js";
 import type { MetricsRegistry } from "../metrics.js";
 import type { PooledConn } from "./internal.js";
 
@@ -906,6 +907,7 @@ async function loadEncryptionModule(
   conn: DuckDBConnection,
   sources: ExtensionSources,
 ): Promise<void> {
+  if (await loadStaticEncryptionModule(conn)) return;
   const reader = await conn.runAndReadAll(
     "SELECT version(), (SELECT platform FROM pragma_platform())",
   );

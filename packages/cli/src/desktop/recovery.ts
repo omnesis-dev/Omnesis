@@ -7,7 +7,7 @@ import { lstat, mkdir, open, realpath } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import {
   atomicWriteFile,
-  createRecoveryEnvelope,
+  createRecoveryEnvelopeAsync,
   generateRecoveryCode,
   parseRecoveryEnvelope,
   readInstallRootKey,
@@ -115,7 +115,7 @@ export class DesktopRecoveryService {
       if (!root) throw new Error("The managed library is no longer available");
       const key = await this.requireKey(options.signal);
       const recoveryCode = generateRecoveryCode();
-      const envelope = createRecoveryEnvelope(key, recoveryCode);
+      const envelope = await createRecoveryEnvelopeAsync(key, recoveryCode);
       options.signal.throwIfAborted();
       const draftId = randomUUID();
       const expiresAt = this.deps.now() + DRAFT_TTL_MS;

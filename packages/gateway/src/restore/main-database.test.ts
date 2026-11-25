@@ -124,7 +124,7 @@ test("keeps target native HTTP authority and imports encrypted inert personal da
   );
   source
     .prepare(
-      "INSERT INTO agent_messages(id,harness,channel,chat_id,day,role,text,occurred_at) VALUES('message-invented','invented','channel','chat-invented','2026-01-01','user','Invented archived message','2026-01-01T00:00:00Z')",
+      "INSERT INTO agent_messages(id,harness,channel,chat_id,day,role,text,occurred_at) VALUES('message-invented','openclaw','channel','chat-invented','2026-01-01','user','Invented archived message','2026-01-01T00:00:00Z')",
     )
     .run();
   source
@@ -164,9 +164,13 @@ test("keeps target native HTTP authority and imports encrypted inert personal da
     "Invented private content",
   );
   const db = result();
+  const offlineDocuments = Number(db.prepare("SELECT count(*) FROM documents").pluck().get());
+  const sourceRuntimes: Array<{ flushAll(): Promise<void>; dispose(): void }> = [];
   const app = createServer(db as unknown as Db, join(dir, "destination.db"), {
     configDir: dir,
     writeGate: directWriteGate(db as unknown as Db),
+    onAgentConversationsRuntime: (runtime) => sourceRuntimes.push(runtime),
+    onOmnesisNotesRuntime: (runtime) => sourceRuntimes.push(runtime),
   });
   try {
     const whoami = await app.request("/whoami", {
@@ -214,7 +218,27 @@ test("keeps target native HTTP authority and imports encrypted inert personal da
       db.prepare("SELECT status FROM subscriptions WHERE id='target-subscription'").pluck().get(),
     ).toBe("paused");
     expect(db.prepare("SELECT count(*) FROM device_pairings").pluck().get()).toBe(0);
+    // A valid backup can contain a committed ledger turn whose asynchronous
+    // document projection had not run yet. Trusted boot adds that derived row.
+    for (const runtime of sourceRuntimes) await runtime.flushAll();
+    expect(Number(db.prepare("SELECT count(*) FROM documents").pluck().get())).toBeGreaterThan(
+      offlineDocuments,
+    );
+    expect(db.prepare("SELECT content FROM documents WHERE id='doc-invented'").pluck().get()).toBe(
+      "Invented private content",
+    );
+    expect(
+      (
+        await app.request("/documents/doc-invented", {
+          headers: { authorization: `Bearer ${ownerToken}` },
+        })
+      ).status,
+    ).toBe(200);
   } finally {
+    for (const runtime of sourceRuntimes) {
+      await runtime.flushAll();
+      runtime.dispose();
+    }
     await app.close();
     db.close();
   }
@@ -264,6 +288,27 @@ test("does not overwrite an existing destination and refuses damaged/wrong-key i
   const before = readFileSync(join(dir, "destination.db"));
   expect(() => reconcile()).toThrow("could not be reconciled");
   expect(readFileSync(join(dir, "destination.db"))).toEqual(before);
+});
+
+test("foreign generated columns are refused before any destination is created", () => {
+  source.exec(
+    "ALTER TABLE sources ADD COLUMN injected_generated TEXT GENERATED ALWAYS AS (lower(id)) VIRTUAL",
+  );
+  source.close();
+  target.close();
+  const before = readFileSync(join(dir, "target.db"));
+  expect(() =>
+    reconcileRestoredMainDatabase({
+      sourcePath: join(dir, "source.db"),
+      targetPath: join(dir, "target.db"),
+      destinationPath: join(dir, "destination.db"),
+      sourceKey,
+      targetKey,
+      destinationKey,
+    }),
+  ).toThrow("could not be reconciled");
+  expect(existsSync(join(dir, "destination.db"))).toBe(false);
+  expect(readFileSync(join(dir, "target.db"))).toEqual(before);
 });
 
 test("legacy SQLite images are read only from bounded memory and produce encrypted storage directly", () => {

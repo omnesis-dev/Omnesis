@@ -5,6 +5,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
+import { DesktopCodeCleanup, type DesktopCodeCleanupSummary } from "./code-cleanup.js";
 import { readDesktopInstall, withDesktopInstallLease } from "./bootstrap.js";
 import { desktopRootIdentity, readDesktopRetirement, sameDesktopRoot } from "./retirement.js";
 import { desktopRestoreBlocked } from "./restore-intent.js";
@@ -24,6 +25,7 @@ import {
 } from "./update-plan.js";
 import { verifyDesktopUpdateSnapshot } from "./update-snapshot.js";
 import { recoverDesktopUpdate } from "./update-recovery.js";
+import { runDesktopUpdateDataOperation } from "./update-data-operation.js";
 import {
   discoverDesktopUpdate,
   downloadDesktopUpdate,
@@ -46,7 +48,9 @@ export type DesktopUpdateCommand =
   | "updateInstall"
   | "updateResume"
   | "updateRestore"
-  | "updateFinish";
+  | "updateFinish"
+  | "updateCleanupPreview"
+  | "updateCleanup";
 export interface DesktopUpdateResult {
   kind: "desktopUpdate";
   phase: "idle" | "available" | DesktopUpdateState["phase"];
@@ -55,8 +59,10 @@ export interface DesktopUpdateResult {
   message: string;
   confirmationId?: string;
   currentApplicationAvailable?: true;
+  codeCleanup?: DesktopCodeCleanupSummary;
 }
 interface UpdateOperations {
+  dataOperation: typeof runDesktopUpdateDataOperation;
   metadata: typeof readCurrentDesktopMetadata;
   epoch: typeof desktopRuntimeEpoch;
   discover: typeof discoverDesktopUpdate;
@@ -80,6 +86,7 @@ export class DesktopUpdateController {
       Partial<UpdateOperations>,
   ) {
     this.deps = {
+      dataOperation: runDesktopUpdateDataOperation,
       metadata: readCurrentDesktopMetadata,
       epoch: desktopRuntimeEpoch,
       discover: discoverDesktopUpdate,
@@ -99,6 +106,12 @@ export class DesktopUpdateController {
     context: DesktopProtocolContext,
   ): Promise<DesktopUpdateResult> {
     context.signal.throwIfAborted();
+    if (command === "updateCleanupPreview" || command === "updateCleanup") {
+      return new DesktopCodeCleanup(this.profile, {
+        ready: this.deps.ready,
+        epoch: this.deps.epoch,
+      }).handle(command, params, context.signal);
+    }
     if (["updateStatus", "updateCheck", "updatePrepareCurrent"].includes(command))
       z.object({})
         .strict()
@@ -115,6 +128,8 @@ export class DesktopUpdateController {
         this.profile,
         { ...input, signal: context.signal },
         {
+          executeRollback: (profile, id, signal) =>
+            this.deps.dataOperation(profile, id, "update-rollback", signal),
           verifyPrevious: (state) =>
             desktopInstallerAction(
               context,
@@ -383,6 +398,8 @@ export class DesktopUpdateController {
       this.profile,
       { confirmationId: id, currentEpoch: state.oldEpoch, signal: context.signal },
       {
+        executeSnapshot: (profile, id, signal) =>
+          this.deps.dataOperation(profile, id, "update-snapshot", signal),
         openInstaller: (record) =>
           desktopInstallerAction(
             context,

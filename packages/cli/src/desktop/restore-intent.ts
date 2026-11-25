@@ -20,6 +20,8 @@ export const desktopRestoreIntentSchema = z
       "publishing",
       "published",
       "verifying",
+      "committed",
+      "starting",
       "complete",
       "rolling-back",
       "rolled-back",
@@ -36,6 +38,35 @@ export const desktopRestoreIntentSchema = z
       .positive()
       .safe()
       .max(1024 ** 4),
+    review: z
+      .object({
+        sourcesPaused: z.number().int().nonnegative().safe(),
+        watchesPaused: z.number().int().nonnegative().safe(),
+        previousLabChoices: z
+          .object({ brain: z.boolean(), tasks: z.boolean(), watches: z.boolean() })
+          .strict(),
+      })
+      .strict()
+      .optional(),
+    verification: z
+      .object({
+        schemaVersion: z.number().int().positive(),
+        documents: z.number().int().nonnegative().safe(),
+        sources: z.number().int().nonnegative().safe(),
+        tokenDigest: digest,
+        configDigest: digest,
+        verifiedAt: z.string().datetime().optional(),
+      })
+      .strict()
+      .optional(),
+    activation: z
+      .object({
+        attemptId: z.string().uuid(),
+        epoch: z.string().min(1).max(256).nullable(),
+        claimed: z.boolean(),
+      })
+      .strict()
+      .optional(),
     backup: z
       .object({ manifestSha256: digest, bytes: z.number().int().nonnegative().safe() })
       .strict()
@@ -50,6 +81,8 @@ export const desktopRestoreIntentSchema = z
         "publishing",
         "published",
         "verifying",
+        "committed",
+        "starting",
         "complete",
         "rolling-back",
       ].includes(value.phase) || value.backup !== null,

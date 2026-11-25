@@ -92,6 +92,9 @@ test.skipIf(process.platform === "win32")(
     await mkdir(`${profile.configDir}.bootstrap`, { recursive: true, mode: 0o700 });
     const path = desktopUpdateStatePath(profile);
     await writeFile(path, JSON.stringify(record()), { mode: 0o644 });
+    // The process's private umask may narrow creation mode; writing an existing
+    // file also preserves its mode. Make this refusal fixture explicitly public.
+    await chmod(path, 0o644);
     await expect(readDesktopUpdateState(profile)).rejects.toThrow("private");
     await chmod(path, 0o600);
     await writeFile(path, "x".repeat(16_385));

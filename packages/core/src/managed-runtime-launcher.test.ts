@@ -44,6 +44,7 @@ test("compiled workers retain the fixed pure preload and sibling processes use t
     args: ["--node", join(root, "packages/gateway/dist/child.js")],
   });
   expect(resolveWorkerEntry("./worker.ts", caller, "./tsx-register.mjs").execArgv).toEqual([
+    "--use-system-ca",
     "--import",
     pathToFileURL(context.preload).href,
   ]);

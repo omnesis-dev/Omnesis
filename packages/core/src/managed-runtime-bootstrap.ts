@@ -13,7 +13,7 @@ import {
 } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { installManagedRuntimeLauncher } from "./node-command.js";
+import { installManagedRuntimeLauncher, type ManagedDesktopDataContext } from "./node-command.js";
 
 // This is a command-line preload selected by the native lease-exec adapter. Ordinary CLI/source
 // entries never import it, so they retain the existing Node and process-launching behavior.
@@ -58,7 +58,16 @@ const launcher = join(root, "runtime-exec"),
   metadata = lstatSync(launcher);
 if (!metadata.isFile() || metadata.isSymbolicLink() || (metadata.mode & 0o111) === 0)
   throw new Error("The managed runtime lease adapter is unavailable");
-installManagedRuntimeLauncher({ root, launcher, preload });
+let data: ManagedDesktopDataContext | undefined;
+const encodedData =
+  new URL(import.meta.url).searchParams.get("data") ?? process.env.OMNESIS_DESKTOP_DATA_CONTEXT;
+if (encodedData) {
+  if (encodedData.length > 16_384) throw new Error("The managed data authority is too large");
+  data = JSON.parse(
+    Buffer.from(encodedData, "base64url").toString("utf8"),
+  ) as ManagedDesktopDataContext;
+}
+installManagedRuntimeLauncher({ root, launcher, preload, ...(data ? { data } : {}) });
 
 // Third-party SDKs commonly spawn process.execPath directly with only stdio 0..2. Publish the
 // verified native Node-compatible adapter so those children reserve the epoch before Node loads.

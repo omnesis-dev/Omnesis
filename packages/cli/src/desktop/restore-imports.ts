@@ -7,10 +7,13 @@ import { createHash, randomUUID } from "node:crypto";
 import { lstat, mkdir, realpath, rm, statfs, open } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 import {
+  atomicWriteFile,
   produceEncryptedArtifact,
   readInstallRootKey,
   type CreateSecretStoreOptions,
 } from "@omnesis/core";
+import { DesktopRestoreFailure } from "./restore-errors.js";
+import { desktopRestoreReserveBytes } from "./restore-capacity.js";
 import { readDesktopInstall } from "./bootstrap.js";
 import { withDesktopPublication } from "./publication.js";
 import { desktopRootIdentity, sameDesktopRoot, type DesktopRootIdentity } from "./retirement.js";
@@ -80,14 +83,11 @@ export class DesktopRestoreImports {
         }
         await privateDirectory(parent);
         const capacity = await statfs(parent, { bigint: true });
+        const remaining =
+          capacity.bavail * capacity.bsize - (await desktopRestoreReserveBytes(this.profile));
         // Input, extraction and a transformed private stage coexist. Never reserve the last free bytes.
-        const maxBytes = Number(
-          (capacity.bavail * capacity.bsize) / 4n < 1024n ** 4n
-            ? (capacity.bavail * capacity.bsize) / 4n
-            : 1024n ** 4n,
-        );
-        if (maxBytes < 1024 * 1024)
-          throw new Error("Free storage before selecting a backup to restore");
+        const maxBytes = Number(remaining / 8n < 1024n ** 4n ? remaining / 8n : 1024n ** 4n);
+        if (maxBytes < 1024 * 1024) throw new DesktopRestoreFailure("RESTORE_CAPACITY_REQUIRED");
         const id = randomUUID();
         const directory = join(parent, id);
         await mkdir(directory, { mode: 0o700 });
@@ -102,6 +102,19 @@ export class DesktopRestoreImports {
           state: "empty",
           controller: new AbortController(),
         };
+        await atomicWriteFile(
+          join(directory, "owner.json"),
+          JSON.stringify({
+            version: 1,
+            owner: "omnesis-desktop-restore",
+            instance: this.profile.instance,
+            secretService: this.profile.secretService,
+            importId: id,
+            root: target,
+            directory: identity,
+          }),
+          { mode: 0o600 },
+        );
         this.slots.set(id, slot);
         slot.timer = setTimeout(() => {
           void this.track(this.cancel(id)).catch(() => undefined);
@@ -137,12 +150,12 @@ export class DesktopRestoreImports {
       !Number.isSafeInteger(selection.bytes) ||
       selection.bytes <= 0 ||
       selection.bytes > slot.maxBytes ||
-      ![
-        selection.device,
-        selection.inode,
-        selection.mtimeSeconds,
-        selection.mtimeNanoseconds,
-      ].every((value) => /^\d+$/u.test(value))
+      ![selection.device, selection.inode, selection.mtimeNanoseconds].every(
+        (value) => value.length <= 32 && /^\d+$/u.test(value),
+      ) ||
+      selection.mtimeSeconds.length > 32 ||
+      !/^-?\d+$/u.test(selection.mtimeSeconds) ||
+      BigInt(selection.mtimeNanoseconds) >= 1_000_000_000n
     )
       throw new Error("Select the backup again before importing it");
     slot.state = "reading";
@@ -165,8 +178,9 @@ export class DesktopRestoreImports {
             before.size !== BigInt(selection.bytes) ||
             String(before.dev) !== selection.device ||
             String(before.ino) !== selection.inode ||
-            String(before.mtimeNs / 1_000_000_000n) !== selection.mtimeSeconds ||
-            String(before.mtimeNs % 1_000_000_000n) !== selection.mtimeNanoseconds ||
+            before.mtimeNs !==
+              BigInt(selection.mtimeSeconds) * 1_000_000_000n +
+                BigInt(selection.mtimeNanoseconds) ||
             (process.getuid && before.uid !== BigInt(process.getuid())) ||
             (await realpath(selection.path)) !== resolve(selection.path)
           )
@@ -317,11 +331,14 @@ export class DesktopRestoreImports {
       throw new Error("Cancel backup validation before removing its temporary files");
     this.slots.delete(id);
     clearTimeout(slot.timer);
-    this.dependencies.onRelease?.(id);
-    // Never remove a replacement directory, even if it occupies our old staging name.
-    if (!sameDesktopRoot(slot.identity, await privateDirectory(slot.directory)))
-      throw new Error("The backup import folder changed; its replacement was retained");
-    await rm(slot.directory, { recursive: true, force: true });
+    try {
+      // Never remove a replacement directory, even if it occupies our old staging name.
+      if (!sameDesktopRoot(slot.identity, await privateDirectory(slot.directory)))
+        throw new Error("The backup import folder changed; its replacement was retained");
+      await rm(slot.directory, { recursive: true, force: true });
+    } finally {
+      this.dependencies.onRelease?.(id);
+    }
   }
 
   async close(): Promise<void> {

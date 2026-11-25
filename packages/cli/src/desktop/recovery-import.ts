@@ -7,7 +7,7 @@ import { dirname, resolve } from "node:path";
 import {
   classifySecureMarker,
   inspectInstallRootKey,
-  openRecoveryEnvelope,
+  openRecoveryEnvelopeAsync,
   parseRecoveryEnvelope,
   readInstallRootKey,
   readMarkerKeyringState,
@@ -71,7 +71,8 @@ export class DesktopRecoveryImportService {
         throw new Error("Restore recovery protection on the Mac that owns this library.");
       const root = await desktopRootIdentity(this.profile);
       if (!root) throw new Error("The managed library is unavailable.");
-      const candidate = openRecoveryEnvelope(envelope, recoveryCode);
+      const candidate = await openRecoveryEnvelopeAsync(envelope, recoveryCode);
+      signal.throwIfAborted();
       const markers = await this.markers(candidate);
       const options = {
         backend: "macos-keychain" as const,

@@ -19,8 +19,10 @@ import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 import {
   openStringEnvelope,
+  openStringEnvelopeAsync,
   parseSealedEnvelope,
   sealStringEnvelope,
+  sealStringEnvelopeAsync,
   SealedEnvelopeInvalidError,
   type SealedEnvelopeV1,
 } from "./sealed-envelope.js";
@@ -123,4 +125,28 @@ export function openRecoveryEnvelope(envelope: RecoveryEnvelopeV1, recoveryCode:
     if (err instanceof SealedEnvelopeInvalidError) throw new RecoveryCodeInvalidError();
     throw err;
   }
+}
+
+/** Recovery KDF work runs off-thread on interactive and gateway paths. */
+export async function openRecoveryEnvelopeAsync(
+  envelope: RecoveryEnvelopeV1,
+  recoveryCode: string,
+): Promise<string> {
+  try {
+    return await openStringEnvelopeAsync(envelope, normalizeRecoveryCode(recoveryCode), {
+      marker: ENVELOPE_MARKER,
+    });
+  } catch (error) {
+    if (error instanceof SealedEnvelopeInvalidError) throw new RecoveryCodeInvalidError();
+    throw error;
+  }
+}
+
+export async function createRecoveryEnvelopeAsync(
+  rootKeyValue: string,
+  recoveryCode: string,
+): Promise<RecoveryEnvelopeV1> {
+  return (await sealStringEnvelopeAsync(rootKeyValue, normalizeRecoveryCode(recoveryCode), {
+    marker: ENVELOPE_MARKER,
+  })) as RecoveryEnvelopeV1;
 }

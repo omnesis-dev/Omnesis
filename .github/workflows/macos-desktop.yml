@@ -37,8 +37,12 @@ jobs:
         with:
           node-version: ${{ steps.runtime.outputs.node }}
           cache: npm
+      - name: Install build dependencies
+        run: scripts/ci/npm-ci.sh
       - name: Prepare verified Node process fixture
         run: node scripts/desktop/prepare-node-test-fixture.mjs --arch "$(node -p process.arch)" --out macos/.node-fixture --cache "$RUNNER_TEMP/desktop-node-cache"
+      - name: Prepare pinned Codex Keychain process fixture
+        run: node scripts/desktop/prepare-codex-keychain-test-fixture.mjs --arch "$(node -p process.arch)" --out macos/.codex-keychain-fixture --cache "$RUNNER_TEMP/desktop-codex-cache"
       - name: Restore SwiftPM packages
         id: swiftpm-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -73,22 +77,32 @@ jobs:
       - name: Build and exercise native application
         working-directory: macos
         run: |
-          xcodebuild \
+          desktop_xcodebuild() {
+            xcodebuild \
             -project OmnesisDesktop.xcodeproj \
             -scheme OmnesisDesktop \
             -configuration Debug \
             -destination 'platform=macOS' \
             -derivedDataPath build \
-            -resultBundlePath build/DesktopTests.xcresult \
             CODE_SIGN_STYLE=Manual \
             DEVELOPMENT_TEAM='' \
             CODE_SIGN_IDENTITY=- \
             CODE_SIGNING_REQUIRED=YES \
             CODE_SIGNING_ALLOWED=YES \
             CODE_SIGN_INJECT_BASE_ENTITLEMENTS=YES \
-            test
-      - name: Install build dependencies
-        run: scripts/ci/npm-ci.sh
+            "$@"
+          }
+          collect_runner_signature() {
+            status=$?
+            trap - EXIT
+            node Tests/Support/normalize-test-runner-signature.mjs --inspect-products "$PWD/build/Build/Products/Debug" > build/test-runner-signature-after.json || true
+            cat build/test-runner-signature-after.json
+            exit "$status"
+          }
+          trap collect_runner_signature EXIT
+          desktop_xcodebuild build-for-testing
+          node Tests/Support/normalize-test-runner-signature.mjs --products "$PWD/build/Build/Products/Debug"
+          desktop_xcodebuild -resultBundlePath build/DesktopTests.xcresult test-without-building
       - name: Assemble complete unsigned app and exercise bundled runtime
         run: |
           node scripts/desktop/prepare-runtime.mjs --out "$RUNNER_TEMP/desktop-runtime" --cache "$RUNNER_TEMP/desktop-node-cache" --runtime-exec macos/build/Build/Products/Debug/OmnesisRuntimeExec
@@ -109,6 +123,7 @@ jobs:
           path: |
             /tmp/omnesis-macos-snapshots/
             macos/build/DesktopTests.xcresult
+            macos/build/test-runner-signature-after.json
           if-no-files-found: warn
           retention-days: 7
       - name: Verify production network isolation

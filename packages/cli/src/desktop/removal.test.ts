@@ -14,11 +14,26 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { acquireGatewayLock } from "@omnesis/core";
+import {
+  acquireGatewayLock,
+  generateInstallRootKey,
+  sealSecretFileValueAsync,
+  decodeSecretTextFileValue,
+  secretFileScope,
+} from "@omnesis/core";
+import { desktopRootIdentity, desktopRetirementPath, readDesktopRetirement } from "./retirement.js";
+import { acquireDesktopRestoreSessionLease } from "./restore-owner.js";
 import { desktopProfile } from "./environment.js";
-import { desktopRetirementPath, readDesktopRetirement } from "./retirement.js";
-import { previewDesktopRemoval, removeDesktopInstall, resumeRetiredDesktop } from "./removal.js";
+import {
+  previewDesktopRemoval,
+  removeDesktopInstall,
+  resumeRetiredDesktop,
+  finishDesktopErase,
+  type DesktopRemovalDependencies,
+} from "./removal.js";
+import type { KeyringPurgeResult } from "../uninstall/keyring-purge.js";
 
 let home: string;
 beforeEach(async () => {
@@ -56,14 +71,25 @@ async function fixture() {
   await writeFile(join(profile.configDir, "library.data"), "invented library material", {
     mode: 0o600,
   });
-  const purge = vi.fn(async () => ({
+  const purge = vi.fn<() => Promise<KeyringPurgeResult>>(async () => ({
     markersCleared: true,
     rootKey: "deleted" as const,
     keptFor: [],
     notes: [],
   }));
   const stop = vi.fn(async () => false);
-  const deps = { purge, stopDaemon: stop };
+  const deps = {
+    purge,
+    stopDaemon: stop,
+    authorize: () => {},
+    executeErase: ((profile, id, signal, operations) =>
+      finishDesktopErase(
+        profile,
+        id,
+        signal,
+        operations,
+      )) satisfies DesktopRemovalDependencies["executeErase"],
+  };
   const preview = (eraseData = false) =>
     previewDesktopRemoval(profile, { eraseData, signal: signal() }, deps);
   const remove = async (eraseData = false, extra = {}) => {
@@ -252,6 +278,19 @@ describe.skipIf(process.platform === "win32")("owned desktop removal", () => {
     });
   });
 
+  test.each(["no-keyring", "kept"] as const)(
+    "an OS key result of %s is not authoritative absence",
+    async (rootKey) => {
+      const f = await fixture();
+      f.purge.mockResolvedValueOnce({ markersCleared: true, rootKey, keptFor: [], notes: [] });
+      expect(await f.remove(true)).toMatchObject({
+        status: "key-cleanup-pending",
+        keyring: "pending",
+      });
+      expect((await readDesktopRetirement(f.profile))?.phase).toBe("keyCleanupPending");
+    },
+  );
+
   test("cancellation after data deletion records progress and keeps the remaining key", async () => {
     const f = await fixture();
     const controller = new AbortController();
@@ -285,4 +324,159 @@ describe.skipIf(process.platform === "win32")("owned desktop removal", () => {
     await expect(f.preview(true)).rejects.toThrow(/another installation/);
     expect(f.purge).not.toHaveBeenCalled();
   });
+});
+
+test("erase refuses a live restore session before stop or key purge", async () => {
+  const f = await fixture(),
+    lease = await acquireDesktopRestoreSessionLease(f.profile, signal(), { createParent: true });
+  try {
+    await expect(f.remove(true)).rejects.toThrow("Cancel the active backup restore");
+    expect(f.stop).not.toHaveBeenCalled();
+    expect(f.purge).not.toHaveBeenCalled();
+    await expect(access(join(f.profile.configDir, "library.data"))).resolves.toBeUndefined();
+  } finally {
+    lease.release();
+  }
+});
+test("erase removes only validated owned external restore staging before purging its key", async () => {
+  const f = await fixture(),
+    root = (await desktopRootIdentity(f.profile))!,
+    id = randomUUID(),
+    slot = join(`${f.profile.configDir}.bootstrap`, "restore-imports", id);
+  await mkdir(slot, { recursive: true, mode: 0o700 });
+  const directory = await import("./retirement.js").then(({ desktopRootIdentity }) =>
+    desktopRootIdentity({ ...f.profile, configDir: slot }),
+  );
+  await writeFile(
+    join(slot, "owner.json"),
+    JSON.stringify({
+      version: 1,
+      owner: "omnesis-desktop-restore",
+      instance: f.profile.instance,
+      secretService: f.profile.secretService,
+      importId: id,
+      root,
+      directory,
+    }),
+    { mode: 0o600 },
+  );
+  await writeFile(join(slot, "input.tar.enc"), "invented sealed backup", { mode: 0o600 });
+  f.purge.mockImplementation(async () => {
+    await expect(access(slot)).rejects.toThrow();
+    return { markersCleared: true, rootKey: "deleted", keptFor: [], notes: [] };
+  });
+  expect(await f.remove(true)).toMatchObject({ data: "erased", keyring: "cleared" });
+});
+test("unknown or replaced external staging retains the library and protection key", async () => {
+  const f = await fixture(),
+    slot = join(`${f.profile.configDir}.bootstrap`, "restore-imports", randomUUID());
+  await mkdir(slot, { recursive: true, mode: 0o700 });
+  await writeFile(join(slot, "unrecognized"), "invented unrelated material", { mode: 0o600 });
+  await expect(f.remove(true)).rejects.toThrow();
+  expect(f.purge).not.toHaveBeenCalled();
+  await expect(access(join(f.profile.configDir, "library.data"))).resolves.toBeUndefined();
+  expect(await readFile(join(slot, "unrecognized"), "utf8")).toBe("invented unrelated material");
+});
+test("keep-data removal retains pending restore staging and its protection key", async () => {
+  const f = await fixture(),
+    slot = join(`${f.profile.configDir}.bootstrap`, "restore-imports", randomUUID());
+  await mkdir(slot, { recursive: true, mode: 0o700 });
+  await writeFile(join(slot, "input.tar.enc"), "invented pending sealed backup", { mode: 0o600 });
+  expect(await f.remove(false)).toMatchObject({ data: "retained", keyring: "retained" });
+  expect(await readFile(join(slot, "input.tar.enc"), "utf8")).toBe(
+    "invented pending sealed backup",
+  );
+  expect(f.purge).not.toHaveBeenCalled();
+});
+
+test("a completed OS key purge invalidates the same-process secret-file root cache", async () => {
+  const f = await fixture();
+  let activeRoot: string | null = generateInstallRootKey();
+  const path = join(f.profile.configDir, "invented-secret.json"),
+    raw = await sealSecretFileValueAsync("invented secret contents", {
+      rootKey: activeRoot,
+      scope: secretFileScope(path, f.profile.configDir),
+    });
+  const options = {
+    backend: "macos-keychain" as const,
+    service: f.profile.secretService,
+    configDir: f.profile.configDir,
+    runCommand: async (_command: string, args: string[]) =>
+      args[0] === "-h"
+        ? { code: 0, stdout: "", stderr: "" }
+        : activeRoot
+          ? { code: 0, stdout: activeRoot, stderr: "" }
+          : { code: 44, stdout: "", stderr: "" },
+  };
+  expect(await decodeSecretTextFileValue(path, raw, options)).toBe("invented secret contents");
+  f.purge.mockImplementation(async () => {
+    activeRoot = null;
+    return { markersCleared: true, rootKey: "deleted", keptFor: [], notes: [] };
+  });
+  expect(await f.remove(true)).toMatchObject({ keyring: "cleared" });
+  await expect(decodeSecretTextFileValue(path, raw, options)).rejects.toThrow(
+    "without the install root key",
+  );
+});
+
+test("the controller retains its session across host handoff while releasing the install lease", async () => {
+  const f = await fixture(),
+    entered = deferred<void>(),
+    release = deferred<void>();
+  f.deps.executeErase = async (profile, id, active, operations) => {
+    expect(f.stop).toHaveBeenCalledTimes(1);
+    expect((await readDesktopRetirement(profile))?.operationId).toBe(id);
+    await expect(acquireDesktopRestoreSessionLease(profile, active)).rejects.toMatchObject({
+      code: "RESTORE_BUSY",
+    });
+    entered.resolve();
+    await release.promise;
+    return finishDesktopErase(profile, id, active, operations);
+  };
+  const pending = f.remove(true);
+  await entered.promise;
+  expect(f.purge).not.toHaveBeenCalled();
+  await expect(access(join(f.profile.configDir, "library.data"))).resolves.toBeUndefined();
+  release.resolve();
+  expect(await pending).toMatchObject({ data: "erased", keyring: "cleared" });
+  const lease = await acquireDesktopRestoreSessionLease(f.profile, signal());
+  lease.release();
+});
+
+test("an unavailable native operation adapter leaves retirement pending and never purges keys", async () => {
+  const f = await fixture();
+  const plan = await f.preview(true);
+  await expect(
+    removeDesktopInstall(
+      f.profile,
+      { eraseData: true, confirmationId: plan.confirmationId!, signal: signal() },
+      {
+        purge: f.purge,
+        stopDaemon: f.stop,
+      },
+    ),
+  ).rejects.toThrow("protected data operation did not finish");
+  expect(f.purge).not.toHaveBeenCalled();
+  expect((await readDesktopRetirement(f.profile))?.phase).toBe("requested");
+  await expect(access(join(f.profile.configDir, "library.data"))).resolves.toBeUndefined();
+});
+
+test("key-cleanup retry retains a new folder that appears after the host inspected absent data", async () => {
+  const f = await fixture();
+  f.purge.mockRejectedValueOnce(new Error("Invented locked keyring"));
+  expect(await f.remove(true)).toMatchObject({ keyring: "pending" });
+  f.stop.mockImplementation(async () => {
+    if (f.stop.mock.calls.length === 4) {
+      await mkdir(f.profile.configDir, { mode: 0o700 });
+      await writeFile(join(f.profile.configDir, "unrelated"), "invented unrelated material", {
+        mode: 0o600,
+      });
+    }
+    return false;
+  });
+  await expect(f.remove(true)).rejects.toThrow("folder changed during cleanup");
+  expect(f.purge).toHaveBeenCalledTimes(1);
+  expect(await readFile(join(f.profile.configDir, "unrelated"), "utf8")).toBe(
+    "invented unrelated material",
+  );
 });

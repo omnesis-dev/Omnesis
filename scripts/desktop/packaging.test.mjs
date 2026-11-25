@@ -61,6 +61,7 @@ async function inputs() {
     architecture: "arm64",
     nodeVersion: NODE_RUNTIME.version,
     codeUsageProtocol: 1,
+    dataUsageProtocol: 1,
     runtimeLauncher: "runtime-exec",
     productVersion: "0.7.8",
     inventory: await inventoryBundle(runtime, "arm64"),
@@ -266,6 +267,40 @@ describe("prebuilt native shell integration", () => {
 });
 
 describe("packaging command boundary", () => {
+  test("a signed-runtime qualification failure prevents installer creation", async () => {
+    const { distribute } = await import("./distribute.mjs");
+    const options = await inputs();
+    await assembleApp(options);
+    const installer = join(options.root, "Omnesis.dmg");
+    const commands = [];
+    const run = (command, args) => {
+      commands.push([command, args]);
+      if (command === process.execPath) {
+        expect(args[0]).toMatch(/smoke-runtime\.mjs$/);
+        expect(args.slice(1)).toEqual([
+          "--runtime",
+          join(options.output, "Contents/Resources/runtime"),
+        ]);
+        throw new Error("The signed analytics crypto could not load");
+      }
+    };
+    await expect(
+      distribute({
+        app: options.output,
+        architecture: "arm64",
+        identity: "Invented signing identity",
+        output: installer,
+        platform: "darwin",
+        run,
+      }),
+    ).rejects.toThrow("signed analytics crypto");
+    expect(
+      commands.some(([command, args]) => command === "codesign" && args.includes("--verify")),
+    ).toBe(true);
+    expect(commands.some(([command]) => command === "hdiutil" || command === "xcrun")).toBe(false);
+    await expect(access(installer)).rejects.toThrow();
+  });
+
   test("rejects misspelled, duplicated and valueless flags", async () => {
     const { parseArguments } = await import("./arguments.mjs");
     const schema = { values: ["out", "arch"], required: ["out"] };

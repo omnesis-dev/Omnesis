@@ -54,7 +54,13 @@ final class DesktopAPI: @unchecked Sendable {
         admin = AdminClient(baseURL: connection.url, token: connection.token, session: session)
     }
 
-    func request<T: Decodable>(_ method: String, _ path: String, body: [String: Any]? = nil) async throws -> T {
+    func request<T: Decodable>(
+        _ method: String,
+        _ path: String,
+        body: [String: Any]? = nil,
+        expectedRevision: String? = nil
+    ) async throws
+        -> T {
         guard !path.hasPrefix("/"), !path.contains("://"),
               let url = URL(string: path, relativeTo: connection.url)?.absoluteURL,
               url.host == connection.url.host, url.port == connection.url.port, url.scheme == connection.url.scheme else {
@@ -64,6 +70,12 @@ final class DesktopAPI: @unchecked Sendable {
         request.httpMethod = method
         request.setValue("Bearer \(connection.token)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
+        if let expectedRevision {
+            guard expectedRevision.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil else {
+                throw DesktopAPIError.message("Refresh these settings before continuing.")
+            }
+            request.setValue("\"\(expectedRevision)\"", forHTTPHeaderField: "If-Match")
+        }
         request.timeoutInterval = 70
         if let body {
             request.httpBody = try JSONSerialization.data(withJSONObject: body)

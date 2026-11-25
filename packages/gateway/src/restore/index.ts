@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { Worker } from "node:worker_threads";
 import { z } from "zod";
-import { resolveWorkerEntry } from "@omnesis/core";
+import type { ManagedDesktopDataScope } from "@omnesis/core";
+export type DesktopRestoreDataScope = Omit<ManagedDesktopDataScope, "format">;
+import { runRestoreProcess } from "./process-launcher.js";
 import type {
   RestoredMainDatabase,
   RestoredMainDatabaseOptions,
@@ -16,6 +17,10 @@ export type {
 } from "./main-database.js";
 import type { RestoredMainEntryOptions, RestoredEntryInspectionOptions } from "./entry-main.js";
 export type { RestoredMainEntryOptions, RestoredEntryInspectionOptions } from "./entry-main.js";
+import type { RestoredAuxiliaryEntryOptions } from "./auxiliary-entry.js";
+import type { AuxiliaryRestoreResult } from "./auxiliary-watch.js";
+export type { RestoredAuxiliaryEntryOptions } from "./auxiliary-entry.js";
+export type { AuxiliaryRestoreResult } from "./auxiliary-watch.js";
 export { authenticateSqlCipherPages } from "./sqlcipher-page-auth.js";
 
 const resultSchema = z
@@ -35,17 +40,19 @@ let active = false;
 export async function reconcileDesktopMainDatabase(
   options: RestoredMainDatabaseOptions,
   signal: AbortSignal,
+  dataScope?: DesktopRestoreDataScope,
 ): Promise<RestoredMainDatabase> {
-  return runWorker({ action: "reconcile", ...options }, resultSchema, signal);
+  return runWorker({ action: "reconcile", ...options }, resultSchema, signal, dataScope);
 }
 
 export async function reconcileDesktopMainEntry(
   options: RestoredMainEntryOptions,
   signal: AbortSignal,
+  dataScope?: DesktopRestoreDataScope,
 ): Promise<RestoredMainDatabase> {
   if (options.entry.targetRootKey.length > 256 || options.entry.sourceRootKey.length > 256)
     throw new Error("The restore keys are unavailable");
-  return runWorker({ action: "entry", ...options }, resultSchema, signal);
+  return runWorker({ action: "entry", ...options }, resultSchema, signal, dataScope);
 }
 const inspectionSchema = z
   .object({
@@ -59,78 +66,83 @@ const inspectionSchema = z
 export async function inspectDesktopMainEntry(
   options: RestoredEntryInspectionOptions,
   signal: AbortSignal,
+  dataScope?: DesktopRestoreDataScope,
 ): Promise<RestoredMainInspection> {
-  return runWorker({ action: "entry-inspect", ...options }, inspectionSchema, signal);
+  return runWorker({ action: "entry-inspect", ...options }, inspectionSchema, signal, dataScope);
+}
+export async function inspectDesktopRestoredDatabase(
+  options: { sourcePath: string; sourceKey: Buffer },
+  signal: AbortSignal,
+  dataScope?: DesktopRestoreDataScope,
+): Promise<RestoredMainInspection> {
+  return runWorker({ action: "target-inspect", ...options }, inspectionSchema, signal, dataScope);
+}
+export async function reconcileDesktopSecretEntry(
+  options: { entry: import("./entry-stream.js").SealedRestoreEntry; targetPath: string },
+  signal: AbortSignal,
+  dataScope?: DesktopRestoreDataScope,
+): Promise<{ protected: true }> {
+  return runWorker(
+    { action: "secret", ...options },
+    z.object({ protected: z.literal(true) }).strict(),
+    signal,
+    dataScope,
+  );
+}
+export async function reconcileDesktopConversationEntry(
+  options: { entry: import("./entry-stream.js").SealedRestoreEntry; targetPath: string },
+  signal: AbortSignal,
+  dataScope?: DesktopRestoreDataScope,
+): Promise<{ id: string; messages: number }> {
+  return runWorker(
+    { action: "conversation", ...options },
+    z
+      .object({
+        id: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/u),
+        messages: z.number().int().nonnegative().safe(),
+      })
+      .strict(),
+    signal,
+    dataScope,
+  );
+}
+const auxiliarySchema = z
+  .object({
+    rowsPreserved: z.number().int().nonnegative().safe(),
+    watchesPaused: z.number().int().nonnegative().safe(),
+    pendingWorkDiscarded: z.number().int().nonnegative().safe(),
+  })
+  .strict();
+export async function reconcileDesktopAuxiliaryEntry(
+  options: Omit<RestoredAuxiliaryEntryOptions, "signal">,
+  signal: AbortSignal,
+  dataScope?: DesktopRestoreDataScope,
+): Promise<AuxiliaryRestoreResult> {
+  return runWorker({ action: "auxiliary", ...options }, auxiliarySchema, signal, dataScope);
 }
 async function runWorker<T>(
   options: unknown,
   schema: z.ZodType<T>,
   signal: AbortSignal,
+  dataScope?: DesktopRestoreDataScope,
 ): Promise<T> {
   signal.throwIfAborted();
   if (active) throw new Error("Another backup database is already being prepared");
   active = true;
-  let worker: Worker | undefined;
-  let timer: NodeJS.Timeout | undefined;
-  let cancelled = false;
-  const stop = () => {
-    cancelled = true;
-    void worker?.terminate().catch(() => undefined);
-  };
   try {
-    const entry = resolveWorkerEntry("./worker.ts", import.meta.url, "../workers/register-tsx.mjs");
-    worker = new Worker(entry.url, {
-      workerData: options,
-      execArgv: entry.execArgv,
-      stdout: true,
-      stderr: true,
-      resourceLimits: { maxOldGenerationSizeMb: 256, stackSizeMb: 4 },
-    });
-    // Workers may initialize ordinary migration loggers; stdout is reserved for
-    // the native JSONL protocol, and no raw worker error is forwarded to it.
-    worker.stdout?.resume();
-    worker.stderr?.resume();
-    const joined = new Promise<T>((resolve, reject) => {
-      let result: T | undefined;
-      let refused = false;
-      worker!.on("message", (message: unknown) => {
-        if (result || refused) {
-          refused = true;
-          return;
-        }
-        if (
-          typeof message !== "object" ||
-          message === null ||
-          !("ok" in message) ||
-          message.ok !== true ||
-          !("result" in message)
-        ) {
-          refused = true;
-          return;
-        }
-        const parsed = schema.safeParse(message.result);
-        if (parsed.success) result = parsed.data;
-        else refused = true;
-      });
-      worker!.once("error", () => {
-        refused = true;
-      });
-      worker!.once("exit", (code) => {
-        if (cancelled || signal.aborted)
-          reject(new DOMException("Backup restore was cancelled", "AbortError"));
-        else if (code !== 0 || refused || !result)
-          reject(new Error("The backup database could not be prepared safely"));
-        else resolve(result);
-      });
-    });
-    signal.addEventListener("abort", stop, { once: true });
-    timer = setTimeout(stop, 60 * 60_000);
-    timer.unref();
-    if (signal.aborted) stop();
-    return await joined;
+    const reply = await runRestoreProcess(options, signal, { dataScope });
+    if (
+      typeof reply !== "object" ||
+      reply === null ||
+      !("ok" in reply) ||
+      reply.ok !== true ||
+      !("result" in reply)
+    )
+      throw new Error("The backup database could not be prepared safely");
+    const parsed = schema.safeParse(reply.result);
+    if (!parsed.success) throw new Error("The backup database could not be prepared safely");
+    return parsed.data;
   } finally {
-    clearTimeout(timer);
-    signal.removeEventListener("abort", stop);
     active = false;
   }
 }

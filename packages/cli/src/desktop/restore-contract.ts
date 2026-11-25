@@ -6,16 +6,19 @@ import { z } from "zod";
 export const desktopRestoreSelectionSchema = z
   .object({
     path: z.string().min(1).max(4096),
-    device: z.string().regex(/^\d+$/u),
-    inode: z.string().regex(/^\d+$/u),
+    device: z.string().max(32).regex(/^\d+$/u),
+    inode: z.string().max(32).regex(/^\d+$/u),
     bytes: z
       .number()
       .int()
       .positive()
       .safe()
       .max(1024 ** 4),
-    mtimeSeconds: z.string().regex(/^\d+$/u),
-    mtimeNanoseconds: z.string().regex(/^\d+$/u),
+    mtimeSeconds: z
+      .string()
+      .max(32)
+      .regex(/^-?\d+$/u),
+    mtimeNanoseconds: z.string().max(32).regex(/^\d+$/u),
   })
   .strict();
 const importId = z.string().uuid();
@@ -61,14 +64,25 @@ export type DesktopRestorePreview =
       version: string;
       includedData: string[];
       consequences: string[];
-      summary: { documents: number; sources: number; watches: number; analyticsRows: number };
+      summary: {
+        documents: number;
+        sources: number;
+        watches?: number;
+        analyticsRows?: number;
+        conversations?: number;
+        messages?: number;
+      };
       willCreateRecoveryCopy: true;
+      willPauseModelRoles: true;
+      willPauseAutomaticDeletion: true;
     };
 export interface DesktopRestoreResult {
   kind: "desktopRestoreResult";
-  status: "restored";
+  status: "committed";
   runtimeStopped: true;
   recoveryCopyRetained: true;
+  modelRolesPaused: true;
+  automaticDeletionPaused: true;
   sourcesPaused: number;
   watchesPaused: number;
 }
@@ -83,5 +97,22 @@ export interface DesktopRestoreStatus {
   status: "idle" | "pending" | "complete" | "rolled-back" | "recovery-required";
   canRecover: boolean;
   operationId?: string;
+  review?: import("./restore-review.js").DesktopRestoreReview;
   recoveryCopyRetained: boolean;
 }
+export type DesktopRestoreCommand =
+  | "restorePrepareImport"
+  | "restoreImport"
+  | "restorePreview"
+  | "restoreApply"
+  | "restoreImportCancel"
+  | "restoreStatus"
+  | "restoreRecover";
+export type DesktopRestoreReply =
+  | DesktopRestoreImportResult
+  | DesktopRestorePreview
+  | DesktopRestoreResult
+  | DesktopRestoreRecoveryResult
+  | DesktopRestoreStatus
+  | import("./restore-imports.js").DesktopRestoreImportSlot
+  | null;

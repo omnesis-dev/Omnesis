@@ -3,7 +3,7 @@
 
 import { execFileSync } from "node:child_process";
 import { createServer, type Server } from "node:https";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
@@ -17,7 +17,7 @@ let certificate: string;
 let privateKey: string;
 let certificateRoot: string;
 beforeAll(async () => {
-  certificateRoot = await mkdtemp(join(tmpdir(), "omnesis-desktop-tls-"));
+  certificateRoot = await realpath(await mkdtemp(join(tmpdir(), "omnesis-desktop-tls-")));
   execFileSync(
     "openssl",
     [
@@ -53,7 +53,7 @@ afterEach(async () => {
 });
 
 async function fixture() {
-  const root = await mkdtemp(join(tmpdir(), "omnesis-desktop-access-"));
+  const root = await realpath(await mkdtemp(join(tmpdir(), "omnesis-desktop-access-")));
   roots.push(root);
   const profile = desktopProfile(root);
   await mkdir(join(profile.configDir, "tls"), { recursive: true, mode: 0o700 });

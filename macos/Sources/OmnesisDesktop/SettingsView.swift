@@ -13,7 +13,8 @@ struct DesktopSettingsView: View {
     @State private var showStopConfirmation = false
     @State private var error: String?
     var body: some View {
-        TabView {
+        @Bindable var store = store
+        TabView(selection: $store.settingsTab) {
             Form {
                 Section("Background operation") {
                     Toggle("Keep Omnesis running when I sign in", isOn: Binding(
@@ -52,12 +53,12 @@ struct DesktopSettingsView: View {
                     }.disabled(store.busy)
                 }
                 if let error { Text(error).foregroundStyle(.red) }
-            }.formStyle(.grouped).tabItem { Label("General", systemImage: "gearshape") }
-            DesktopModelsView().tabItem { Label("AI", systemImage: "sparkles") }
-            DesktopBackupsView().tabItem { Label("Backups", systemImage: "externaldrive") }
-            DesktopMemoryView().tabItem { Label("Memory", systemImage: "memorychip") }
-            DesktopUpdatesView().tabItem { Label("Updates", systemImage: "arrow.down.circle") }
-            DesktopStorageView().tabItem { Label("Storage", systemImage: "internaldrive") }
+            }.formStyle(.grouped).tabItem { Label("General", systemImage: "gearshape") }.tag("general")
+            DesktopModelsView().tabItem { Label("AI", systemImage: "sparkles") }.tag("ai")
+            DesktopBackupsView().tabItem { Label("Backups", systemImage: "externaldrive") }.tag("backups")
+            DesktopMemoryView().tabItem { Label("Memory", systemImage: "memorychip") }.tag("memory")
+            DesktopUpdatesView().tabItem { Label("Updates", systemImage: "arrow.down.circle") }.tag("updates")
+            DesktopStorageView().tabItem { Label("Storage", systemImage: "internaldrive") }.tag("storage")
             Form {
                 Text("Your library is stored on your chosen Mac. The connection service carries encrypted traffic between your devices.")
                 Text(
@@ -66,7 +67,7 @@ struct DesktopSettingsView: View {
                 .foregroundStyle(.secondary)
                 Button("Open privacy and access settings") { store.openPortal() }
                 Button("Open the web portal") { store.openPortal() }
-            }.formStyle(.grouped).tabItem { Label("Privacy", systemImage: "hand.raised") }
+            }.formStyle(.grouped).tabItem { Label("Privacy", systemImage: "hand.raised") }.tag("privacy")
         }.padding(12).frame(minWidth: 640, minHeight: 500)
             .onAppear { backgroundEnabled = SMAppService.loginItem(identifier: "dev.omnesis.desktop.background").status == .enabled }
             .confirmationDialog("Stop Omnesis on this Mac?", isPresented: $showStopConfirmation) {
@@ -97,15 +98,33 @@ struct DesktopModelsView: View {
     @State private var apiKey = ""
     @State private var selectedModel = ""
     @State private var overview: ModelsOverview?
+    @State private var credentialEntries: [ModelCredentialEntry] = []
+    @State private var refreshGeneration = UUID()
+    @State private var confirmingSignOut = false
     var body: some View {
         Form {
+            Button("Refresh model connections") { Task { await refreshModels() } }.disabled(loading || store.api == nil)
+            if let overview, let api = store.api {
+                DesktopModelRolesView(overview: overview, api: api) {
+                    guard store.api === api else { return }
+                    refreshGeneration = UUID()
+                    self.overview = $0
+                }
+                DesktopModelCredentialsView(entries: credentialEntries, api: api) { await refreshModels() }
+            }
             Section("Ask with a cloud AI model") {
                 Text(
                     "Your chosen provider receives the information needed to answer your questions. Local search keeps working if you skip this step."
                 )
                 .foregroundStyle(.secondary)
                 if overview?.inference.codex?.runtime?.supported == true {
-                    Button("Sign in with ChatGPT") { Task { await startLogin() } }.disabled(loading)
+                    if overview?.inference.codex?.loggedIn != true {
+                        Button("Sign in with ChatGPT") { Task { await startLogin() } }.disabled(loading)
+                    }
+                    Button("Sign out of ChatGPT…") { confirmingSignOut = true }.disabled(loading)
+                }
+                if let status = overview?.inference.codex, status.status != "ok", let reason = status.reason {
+                    Text(reason).font(.callout).foregroundStyle(.secondary)
                 }
                 if let login {
                     if let code = login.userCode { Text(code).font(.title.monospaced()).textSelection(.enabled) }
@@ -119,6 +138,10 @@ struct DesktopModelsView: View {
                 }
             }
             Section("Use a provider key") {
+                Text(
+                    "Enabling an off-Mac provider permits all models assigned away from your library Mac to receive information for their tasks."
+                )
+                .font(.callout).foregroundStyle(.secondary)
                 Picker("Provider", selection: $provider) {
                     Text("Choose a provider").tag("")
                     ForEach((overview?.presets ?? []).filter { $0.defaultUrl != nil }, id: \.id) { preset in
@@ -136,15 +159,59 @@ struct DesktopModelsView: View {
                     .disabled(provider.isEmpty || apiKey.isEmpty || selectedModel.isEmpty || loading)
             }
             if let error { Text(error).foregroundStyle(.red) }
-            if loading { ProgressView("Connecting…") }
+            if loading { ProgressView("Updating AI settings…") }
         }.formStyle(.grouped)
-            .task { do { overview = try await store.api?.admin.modelOverview() } catch { self.error = error.localizedDescription } }
+            .task(id: store.api.map { ObjectIdentifier($0) }) { await refreshModels() }
+            .confirmationDialog("Sign out of ChatGPT?", isPresented: $confirmingSignOut) {
+                Button("Sign out of ChatGPT", role: .destructive) { Task { await signOut() } }
+            } message: {
+                Text(
+                    "This removes Omnesis’s ChatGPT sign-in and its model assignments. Running Omnesis ChatGPT tasks finish before the sign-in is removed. Your separate Codex app or terminal sign-in is not changed."
+                )
+            }
+    }
+
+    private func refreshModels() async {
+        let generation = UUID()
+        refreshGeneration = generation
+        guard let api = store.api else {
+            overview = nil
+            credentialEntries = []
+            login = nil
+            return
+        }
+        do {
+            async let models = api.admin.modelOverview()
+            async let credentials = api.admin.listModelCredentials()
+            let result = try await (models, credentials)
+            guard !Task.isCancelled, refreshGeneration == generation, store.api === api else { return }
+            overview = result.0
+            credentialEntries = result.1
+            error = nil
+        } catch is CancellationError { } catch {
+            guard refreshGeneration == generation, store.api === api else { return }
+            self.error = error.localizedDescription
+        }
     }
 
     private func startLogin() async {
         loading = true
         defer { loading = false }
         do { login = try await store.api?.admin.startCodexLogin() } catch { self.error = error.localizedDescription }
+    }
+
+    private func signOut() async {
+        guard let api = store.api else { return }
+        loading = true
+        defer { loading = false }
+        do {
+            _ = try await api.admin.removeCodexBackend()
+            guard store.api === api else { return }
+            login = nil
+            await refreshModels()
+        } catch {
+            self.error = "Sign-out could not be confirmed. Refresh model connections before trying again. \(error.localizedDescription)"
+        }
     }
 
     private func checkLogin() async {
@@ -157,6 +224,7 @@ struct DesktopModelsView: View {
                 }
                 try await api.mutate("POST", "admin/inference/codex/agent", body: ["model": model])
                 login = nil
+                await refreshModels()
             }
         } catch { self.error = error.localizedDescription }
     }
@@ -180,6 +248,7 @@ struct DesktopModelsView: View {
             ]])
             apiKey = ""
             error = nil
+            await refreshModels()
         } catch { self.error = error.localizedDescription }
     }
 }

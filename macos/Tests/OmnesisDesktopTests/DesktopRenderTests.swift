@@ -27,7 +27,21 @@ final class DesktopRenderTests: XCTestCase {
     }
 
     func testWaiting() async throws {
-        try await render(DesktopRootView().environment(DesktopStore.preview(phase: .waiting)), name: "waiting")
+        try await DesktopSnapshotRenderer.render(
+            DesktopRootView().environment(DesktopStore.preview(phase: .waiting)),
+            name: "waiting",
+            size: CGSize(width: 1080, height: 740)
+        ) { hosting in
+            let tables = Self.descendants(hosting).compactMap { $0 as? NSTableView }
+            XCTAssertTrue(
+                tables.contains { table in
+                    table.numberOfRows > 0 && table.bounds.width >= 160 && table.visibleRect.height >= 120
+                        && !table.isHiddenOrHasHiddenAncestor
+                        && table.rowView(atRow: 0, makeIfNecessary: false) != nil
+                },
+                "The sidebar must lay out actual navigation rows, not an empty material panel"
+            )
+        }
     }
 
     func testPreparing() async throws {
@@ -46,7 +60,19 @@ final class DesktopRenderTests: XCTestCase {
     }
 
     func testAskEmpty() async throws {
-        try await render(DesktopAskView().environment(DesktopStore.preview()), name: "ask-empty")
+        try await DesktopSnapshotRenderer.render(
+            DesktopAskView().environment(DesktopStore.preview()),
+            name: "ask-empty",
+            size: CGSize(width: 1080, height: 740)
+        ) { hosting in
+            let splits = Self.descendants(hosting).compactMap { $0 as? NSSplitView }
+            XCTAssertFalse(splits.isEmpty, "The native conversation split must be present")
+            XCTAssertTrue(splits.contains { $0.bounds.height >= 700 }, "Ask must fill the window instead of collapsing at the bottom")
+        }
+    }
+
+    private static func descendants(_ view: NSView) -> [NSView] {
+        view.subviews.flatMap { [$0] + descendants($0) }
     }
 
     func testSearchEmpty() async throws {

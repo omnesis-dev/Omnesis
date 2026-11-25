@@ -7,6 +7,7 @@ import { existsSync } from "node:fs";
 import picomatch from "picomatch";
 
 export const bundles = {
+  "desktop-account": { kind: "e2e", tests: ["desktop-account.e2e.test.ts"] },
   "desktop-runtime": { kind: "e2e", tests: ["desktop-runtime.e2e.test.ts"] },
   "source-lifecycle": {
     kind: "e2e",
@@ -288,8 +289,11 @@ const areas = [
     test: (p) =>
       p.startsWith("packages/cli/src/desktop/") ||
       p === "packages/cli/src/commands/desktop.ts" ||
-      p.startsWith("packages/collector/src/e2e/desktop-runtime"),
-    bundles: ["desktop-runtime"],
+      p.startsWith("packages/collector/src/e2e/desktop-runtime") ||
+      p.startsWith("packages/collector/src/e2e/desktop-account") ||
+      p.startsWith("scripts/desktop/test-account") ||
+      p === "scripts/desktop/account-test.Dockerfile",
+    bundles: ["desktop-runtime", "desktop-account"],
   },
   { test: (p) => p.startsWith("macos/"), bundles: ["macos-logic", "macos-test"] },
   {

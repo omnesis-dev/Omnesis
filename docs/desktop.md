@@ -80,6 +80,12 @@ The existing encryption mechanism supplies the durable protection:
   the original. A blocked checkpoint is a failure, not permission to lose WAL
   commits.
 - Provider store keys belong to the collector's existing encryption contract.
+- Managed gateway owner identities, relay sessions and ACME account/TLS keys
+  use the same scoped secret-file protection. Exclusive owner-key publication
+  writes ciphertext only; session preparation keeps the final cancellation
+  fence immediately before publication. Managed certificate creation passes
+  an in-memory key through a fixed OS pipe to OpenSSL without a private-key
+  staging file. Ordinary headless credential formats remain compatible.
 
 Fresh desktop setup must establish the root key and both encryption-required
 markers before starting an ingesting process. A locked Keychain is a recovery
@@ -213,6 +219,18 @@ managed Codex runtime with browser/device login. `models/agent-assignment-setup.
 verifies a signed-in model and assigns it atomically only if the role remains
 unassigned. Desktop can expose that existing subscription flow; it does not
 invent an OAuth grant for unrestricted use of the ChatGPT consumer account.
+Claude Code subscriptions are unavailable in the managed desktop runtime until
+its filesystem and Keychain credential namespaces can be independently verified.
+The registry reports the existing backend reason, and the factory refuses forced
+assignments without probing the global CLI or login. Anthropic API keys remain an
+explicit alternative. The dedicated Codex home remains separate from the user's CLI home.
+Managed Codex conversations currently refuse before creating a vendor thread:
+model metadata can expose patch or code-mode tools independently of the verified
+shell feature flags. API-key backends remain available. Subscription conversations
+require an owned, validated model catalog and adversarial tool-metadata verification
+before this fence can be removed; a fallback-model diagnostic does not establish
+that property for the selectable model catalog.
+
 The app bundles a private npm for managed runtime installation, rather than
 requiring a host npm install.
 
@@ -245,13 +263,39 @@ debug builds. Actual managed processes retain kernel usage leases across exec;
 publication and reclamation share one lock. The authenticated preload publishes
 the fixed native adapter as `process.execPath`, so SDK subprocesses reserve their
 own lease before loading Node even when they inherit only standard descriptors.
+Managed Node launches include a fixed `--use-system-ca` policy so HTTPS trusts the
+operating system's certificate store. The launcher strips inherited trust/preload
+settings, including `NODE_USE_SYSTEM_CA`, `NODE_EXTRA_CA_CERTS`, `NODE_OPTIONS`
+and OpenSSL certificate-path overrides. Gateway peer pins and SAS verification
+still apply independently; ordinary headless Node launch policy is unchanged.
 Owned external interpreters also retain a lease. The native `--gc-remove` operation
-refuses current, in-use and legacy epochs and retains an inode-bound retry receipt
-on partial deletion; such a receipt blocks startup. Selection of retained recovery
-applications and uncertain archive consumers remains conservative: bounded cleanup
-and the complete native replacement flow still require integration and proof.
+refuses current, in-use and legacy epochs and pending application-launch reservations.
+It removes a runtime and its verified, privately owned full-app archive together,
+under the publication and usage locks. A durable receipt binds both directory inodes
+before deletion; interrupted cleanup blocks startup and can retry only those original
+inodes. Unknown archive ownership remains a refusal.
+
+The explicit `updateCleanupPreview` / `updateCleanup` bridge commands bind confirmation
+to the current code inventory. Cleanup requires a ready protected library and a verified
+completed update. It retains the active/current runtime, the previous verified app and
+any restore activation epoch; the native adapter rechecks actual live consumers at deletion.
+Recovery snapshots and personal backups are retained separately. Historical snapshot
+retention and the complete signed native replacement flow still require integration and proof.
 The private npm launcher enters the guarded cached Node. Recipients need no compiler, Git, Node or npm.
 Native modules and executables must match the target macOS architecture.
+
+Desktop analytics builds its pinned DuckDB engine with `httpfs`, OpenSSL and
+curl linked statically. Its source and build-tool checksums live in
+`scripts/desktop/analytics-build.json`; the builder runs on the target Mac
+with at most two compiler workers and keeps original dependency notices.
+Staging checks the exact Node binding version, replaces only its owned native
+library and omits the separate extension binaries. Three isolated Node
+processes must write, reopen and update one encrypted fixture across the
+upstream and desktop engines. The runtime smoke check requires DuckDB to
+report a built-in, statically linked encryption module and reopens an encrypted
+fixture after signing. These checks must pass for the actual artifact; source
+or packaging fixture tests alone do not qualify it. Source installs, npm
+packages and Docker retain their ordinary pinned extension distribution.
 
 `native-inventory.mjs` inventories file hashes and Mach-O architectures,
 rejects escaping or dangling symlinks, and rejects non-macOS native binaries.

@@ -60,9 +60,23 @@ final class ConnectionPresentationTests: XCTestCase {
             "HOME": "/Users/fixture", "PATH": "/usr/bin:/bin", "LANG": "en_US.UTF-8",
             "OMNESIS_CONFIG_DIR": "/private/headless", "OMNESIS_DESKTOP_RUNTIME_DIR": "/private/development",
             "NODE_OPTIONS": "--import /private/headless/instrument.js", "NODE_EXTRA_CA_CERTS": "/private/headless/ca.pem",
-            "OPENAI_API_KEY": "invented-key", "DYLD_INSERT_LIBRARIES": "/private/headless/preload.dylib",
+            "NODE_USE_ENV_PROXY": "1", "NODE_USE_SYSTEM_CA": "0", "OPENAI_API_KEY": "invented-key",
+            "DYLD_INSERT_LIBRARIES": "/private/headless/preload.dylib",
+            "OPENSSL_CONF": "/private/headless/openssl.cnf", "OPENSSL_MODULES": "/private/headless/modules",
+            "NODE_COMPILE_CACHE": "/private/headless/compiler-cache",
+            "CODEX_HOME": "/private/headless/codex", "CLAUDE_CONFIG_DIR": "/private/headless/claude",
+            "CLAUDE_CODE_OAUTH_TOKEN": "fixture-headless-oauth", "ANTHROPIC_AUTH_TOKEN": "fixture-headless-auth",
             "TERM": "xterm-256color",
         ], runtime: URL(fileURLWithPath: "/Applications/Omnesis.app/Contents/Resources/runtime"))
+        XCTAssertNil(env["NODE_USE_ENV_PROXY"])
+        XCTAssertNil(env["NODE_USE_SYSTEM_CA"])
+        XCTAssertNil(env["CODEX_HOME"])
+        XCTAssertNil(env["CLAUDE_CONFIG_DIR"])
+        XCTAssertNil(env["CLAUDE_CODE_OAUTH_TOKEN"])
+        XCTAssertNil(env["ANTHROPIC_AUTH_TOKEN"])
+        XCTAssertNil(env["OPENSSL_CONF"])
+        XCTAssertNil(env["OPENSSL_MODULES"])
+        XCTAssertNil(env["NODE_COMPILE_CACHE"])
         XCTAssertNil(env["NODE_OPTIONS"])
         XCTAssertNil(env["NODE_EXTRA_CA_CERTS"])
         XCTAssertNil(env["OMNESIS_CONFIG_DIR"])

@@ -5,6 +5,7 @@ import { constants } from "node:fs";
 import { lstat, open, realpath } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { atomicWriteFile } from "@omnesis/core";
+import { assertDesktopProfileGeneration } from "./generation.js";
 import type { DesktopProfile } from "./environment.js";
 
 type RecordName = "update.json" | "active-runtime.json" | "restore.json";
@@ -54,6 +55,7 @@ export async function writeDesktopPrivateRecord(
   await atomicWriteFile(join(`${profile.configDir}.bootstrap`, name), body, { mode: 0o600 });
 }
 async function privateParent(profile: DesktopProfile): Promise<void> {
+  assertDesktopProfileGeneration(profile);
   const path = `${profile.configDir}.bootstrap`,
     metadata = await lstat(path);
   if (

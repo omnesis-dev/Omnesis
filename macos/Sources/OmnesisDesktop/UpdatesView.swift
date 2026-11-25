@@ -22,9 +22,45 @@ struct DesktopUpdatesView: View {
         Form {
             Section("Omnesis app updates") {
                 if let update = store.update {
-                    LabeledContent("Current version", value: update.currentVersion)
+                    LabeledContent(
+                        update.codeCleanup == nil && [.candidateStarted, .complete]
+                            .contains(update.phase) ? "Version before update" : "Current version",
+                        value: update.currentVersion
+                    )
                     if let version = update.targetVersion { LabeledContent("Update version", value: version) }
                     Text(update.message).textSelection(.enabled)
+                    if let cleanup = update.codeCleanup {
+                        if cleanup.valid {
+                            Text("Older application files").font(.headline)
+                            if cleanup.phase == .preview {
+                                LabeledContent(
+                                    "Eligible files",
+                                    value: ByteCountFormatter.string(fromByteCount: cleanup.reclaimableBytes, countStyle: .file)
+                                )
+                                Text(
+                                    "Copies that are still running or needed for recovery are kept. Your library, personal backups and data recovery copies are kept."
+                                )
+                                .foregroundStyle(.secondary)
+                                action(
+                                    "Remove eligible older app files…",
+                                    command: "updateCleanup",
+                                    explanation: "Remove only eligible older copies of Omnesis and its background service. Running versions and the verified previous app remain protected. Your library, personal backups and data recovery copies will not be removed.",
+                                    token: cleanup.confirmation
+                                )
+                            } else {
+                                LabeledContent(
+                                    "Application files removed",
+                                    value: ByteCountFormatter.string(fromByteCount: cleanup.removedBytes, countStyle: .file)
+                                )
+                                LabeledContent("Older copies removed", value: cleanup.removedEpochs.formatted())
+                                LabeledContent("Copies retained", value: cleanup.retainedEpochs.formatted())
+                            }
+                        } else {
+                            Text("The app cleanup review could not be verified. Review it again before removing anything.")
+                                .foregroundStyle(.red)
+                        }
+                        Button("Return to update status") { store.command("updateStatus") }.disabled(store.busy)
+                    }
                     if update.currentApplicationAvailable == true {
                         action(
                             "Prepare the app installed on this Mac",
@@ -48,7 +84,8 @@ struct DesktopUpdatesView: View {
                             token: update.confirmation
                         )
                     }
-                    if [.installerOpened, .candidateStarted, .recoveryRequired, .stopping, .backedUp, .complete].contains(update.phase) {
+                    if update.codeCleanup == nil,
+                       [.installerOpened, .candidateStarted, .recoveryRequired, .stopping, .backedUp, .complete].contains(update.phase) {
                         Button("Check installation") { store.command("updateStatus") }
                         action(
                             "Return to the previous app…",
@@ -64,6 +101,10 @@ struct DesktopUpdatesView: View {
                             explanation: "Confirm this version is working. Omnesis will check the library’s actual health before recording completion.",
                             token: update.confirmation
                         )
+                    }
+                    if update.phase == .complete {
+                        Button("Review older application files") { store.command("updateCleanupPreview") }
+                            .disabled(store.busy || !store.state.canOpenLibrary)
                     }
                 } else { Text("Check your installed app and update status.").foregroundStyle(.secondary) }
                 Button("Check for updates") { store.command("updateCheck") }.disabled(store.busy)

@@ -35,6 +35,10 @@ import { connectDesktopAccount } from "./account-connect.js";
 import { withDesktopPublication, publishDesktopHint } from "./publication.js";
 import { desktopUpdateBlocked } from "./update-admission.js";
 import { readDesktopRemoteProtection } from "./remote-protection.js";
+import {
+  desktopRestoreActivationArguments,
+  type DesktopRestoreActivation,
+} from "./restore-start-arguments.js";
 
 export interface DesktopSessionTransport {
   url: string;
@@ -60,7 +64,7 @@ export interface CoordinatorDependencies {
   saveToken: typeof writeSecretTextFile;
   protected(profile: DesktopProfile): Promise<boolean>;
   localCollectorDeviceId(profile: DesktopProfile): Promise<string | undefined>;
-  startDaemon(profile: DesktopProfile): Promise<void>;
+  startDaemon(profile: DesktopProfile, restoreActivation?: DesktopRestoreActivation): Promise<void>;
   stopDaemon: typeof stopDesktopDaemon;
   readRetirement: typeof readDesktopRetirement;
   resumeRetirement: typeof resumeRetiredDesktop;
@@ -128,14 +132,18 @@ export const desktopCoordinatorDefaults: CoordinatorDependencies = {
   resumeRetirement: resumeRetiredDesktop,
   removalPreview: previewDesktopRemoval,
   removeInstall: removeDesktopInstall,
-  startDaemon: async (profile) => {
+  startDaemon: async (profile, restoreActivation) => {
     const entry = resolveSubprocessEntry("../index.ts", import.meta.url);
     const env = desktopEnvironment(profile);
-    const child = spawn(entry.command, [...entry.args, "desktop", "daemon"], {
-      env,
-      detached: true,
-      stdio: "ignore",
-    });
+    const child = spawn(
+      entry.command,
+      [...entry.args, "desktop", "daemon", ...desktopRestoreActivationArguments(restoreActivation)],
+      {
+        env,
+        detached: true,
+        stdio: "ignore",
+      },
+    );
     await new Promise<void>((resolve, reject) => {
       child.once("spawn", resolve);
       child.once("error", reject);

@@ -148,8 +148,11 @@ export interface RestoreOptions {
   rename?: RenameFn;
 }
 
-/** True when the backup manifest declares its artifacts encrypted. */
-function backupIsEncrypted(backupDir: string): boolean {
+/** Read optional format metadata once; older backups carry no history declaration. */
+function backupMetadata(backupDir: string): {
+  encrypted: boolean;
+  includesConversationHistory: boolean;
+} {
   const manifestPath = join(backupDir, MANIFEST_NAME);
   if (!existsSync(manifestPath)) {
     throw new CliError(
@@ -158,8 +161,14 @@ function backupIsEncrypted(backupDir: string): boolean {
     );
   }
   try {
-    const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as { encryption?: unknown };
-    return manifest.encryption != null;
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as {
+      encryption?: unknown;
+      includesConversationHistory?: unknown;
+    };
+    return {
+      encrypted: manifest.encryption != null,
+      includesConversationHistory: manifest.includesConversationHistory === true,
+    };
   } catch {
     throw new CliError(`Could not parse ${MANIFEST_NAME} in ${backupDir}.`, EXIT_USER_ERROR);
   }
@@ -284,7 +293,7 @@ export async function restore(backupDir: string, opts: RestoreOptions): Promise<
   if (!existsSync(backupDir) || !statSync(backupDir).isDirectory()) {
     throw new CliError(`Backup directory not found: ${backupDir}`, EXIT_USER_ERROR);
   }
-  const encrypted = backupIsEncrypted(backupDir);
+  const { encrypted, includesConversationHistory } = backupMetadata(backupDir);
   const source = resolve(backupDir);
   const target = resolve(opts.target);
   if (source === target) {
@@ -337,7 +346,9 @@ export async function restore(backupDir: string, opts: RestoreOptions): Promise<
         )
       : null;
     // What the backup owns in the target now, read before the work dir exists.
-    const owned = backupScopeEntries(target).map((entry) => entry.name);
+    const owned = backupScopeEntries(target)
+      .filter((entry) => includesConversationHistory || !entry.name.startsWith("conversations/"))
+      .map((entry) => entry.name);
 
     // Inflate inside the target itself — the same filesystem, so every swap
     // step is a rename — and swap in only once everything inflated.
@@ -353,6 +364,10 @@ export async function restore(backupDir: string, opts: RestoreOptions): Promise<
       for (const rel of listFilesRelative(source)) {
         if (isManifestFile(rel)) continue;
         const name = stripEncSuffix(rel);
+        if (name.startsWith("conversations/") && !includesConversationHistory) {
+          skipped.push(name);
+          continue;
+        }
         const scope = backupScopeEntryFor(name);
         if (!scope || scope.kind === "derived") {
           skipped.push(name);

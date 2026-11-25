@@ -25,15 +25,16 @@ export function nestedCodeBundles(entries) {
 }
 
 /** Signing and notarization are explicit build operations; this never publishes an artifact. */
-async function distribute({
+export async function distribute({
   app,
   architecture,
   identity,
   output,
   notaryProfile,
   run = execFileSync,
+  platform = process.platform,
 }) {
-  if (process.platform !== "darwin") throw new Error("Sign and package the app on macOS");
+  if (platform !== "darwin") throw new Error("Sign and package the app on macOS");
   if (!identity || identity === "-")
     throw new Error("A Developer ID Application signing identity is required");
   app = resolve(app);
@@ -74,6 +75,14 @@ async function distribute({
   await refreshRuntimeInventory(join(app, "Contents/Resources/runtime"), architecture);
   exec("codesign", ["--force", "--options", "runtime", "--timestamp", "--sign", identity, app]);
   exec("codesign", ["--verify", "--deep", "--strict", "--verbose=2", app]);
+  // Apple signatures can change native dependency bytes or vendor signature
+  // trailers. Qualify the signed runtime, including offline encrypted DuckDB,
+  // before making an installer; an unsigned build's smoke is insufficient.
+  exec(process.execPath, [
+    fileURLToPath(new URL("./smoke-runtime.mjs", import.meta.url)),
+    "--runtime",
+    join(app, "Contents/Resources/runtime"),
+  ]);
   const temporary = await mkdtemp(join(tmpdir(), "omnesis-desktop-package-"));
   try {
     if (notaryProfile) {

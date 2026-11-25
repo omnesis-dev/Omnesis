@@ -11,12 +11,46 @@
  * without a single definition, renaming a directory on the writing side leaves
  * the collector reporting every one of them as unsafe, with nothing to say so.
  *
- * The layout is two homes. One is the runtime's own; the other is a base under
- * which a pooled runtime gives each member an isolated home named by its index,
- * so concurrent turns do not share a working directory.
+ * Headless pools retain per-member homes. Managed desktop workers share one
+ * generation-scoped credential home while keeping separate workspaces and
+ * diagnostic state directories; a new installation generation gets a new scope.
  */
 
-import { join } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
+import { createHash } from "node:crypto";
+import { lstatSync, realpathSync } from "node:fs";
+
+export const CODEX_KEYRING_SERVICE = "Codex Auth";
+
+/** Pinned Codex direct Keychain namespace, derived only from its owned home. */
+export function codexKeyringAccount(codexHome: string): string {
+  if (!isAbsolute(codexHome))
+    throw new Error("The owned Codex home must be absolute and canonical");
+  const canonical = resolve(codexHome);
+  for (let ancestor = canonical; ; ancestor = dirname(ancestor)) {
+    try {
+      const info = lstatSync(ancestor);
+      if (
+        info.isSymbolicLink() ||
+        !info.isDirectory() ||
+        (ancestor === canonical && process.getuid && info.uid !== process.getuid())
+      )
+        throw new Error("The owned Codex home contains an unsafe directory alias or owner");
+    } catch (error) {
+      if (!(error && typeof error === "object" && "code" in error && error.code === "ENOENT"))
+        throw error;
+    }
+    if (dirname(ancestor) === ancestor) break;
+  }
+  try {
+    if (realpathSync(canonical) !== canonical)
+      throw new Error("The owned Codex home must remain canonical");
+  } catch (error) {
+    if (!(error && typeof error === "object" && "code" in error && error.code === "ENOENT"))
+      throw error;
+  }
+  return `cli|${createHash("sha256").update(canonical).digest("hex").slice(0, 16)}`;
+}
 
 /** The single runtime's home, and the shared login every pooled member tracks. */
 export const CODEX_HOME_DIR = "codex-home";
@@ -28,7 +62,10 @@ export const CODEX_POOL_WORKSPACE_DIR = "codex-workspace-pool";
 export const CODEX_RUNTIME_STORE_DIR = "codex-runtimes";
 
 /** Every Codex path, resolved against one config directory. */
-export function codexPaths(configDir: string): {
+export function codexPaths(
+  configDir: string,
+  managedInstance?: string,
+): {
   readonly home: string;
   readonly sharedAuth: string;
   readonly poolHomeBase: string;
@@ -40,13 +77,19 @@ export function codexPaths(configDir: string): {
   readonly runtimeCurrent: string;
   readonly runtimeUpdateLock: string;
 } {
-  const home = join(configDir, CODEX_HOME_DIR);
+  if (managedInstance !== undefined && !/^desktop-[a-f0-9]{16}$/u.test(managedInstance))
+    throw new Error("The managed Codex installation identity is invalid");
+  const owned = (directory: string): string =>
+    managedInstance === undefined
+      ? join(configDir, directory)
+      : join(configDir, directory, managedInstance);
+  const home = owned(CODEX_HOME_DIR);
   return {
     home,
     sharedAuth: join(home, "auth.json"),
-    poolHomeBase: join(configDir, CODEX_POOL_HOME_DIR),
-    workspace: join(configDir, CODEX_WORKSPACE_DIR),
-    poolWorkspaceBase: join(configDir, CODEX_POOL_WORKSPACE_DIR),
+    poolHomeBase: owned(CODEX_POOL_HOME_DIR),
+    workspace: owned(CODEX_WORKSPACE_DIR),
+    poolWorkspaceBase: owned(CODEX_POOL_WORKSPACE_DIR),
     runtimeStore: join(configDir, CODEX_RUNTIME_STORE_DIR),
     runtimeVersions: join(configDir, CODEX_RUNTIME_STORE_DIR, "versions"),
     runtimeStaging: join(configDir, CODEX_RUNTIME_STORE_DIR, "staging"),

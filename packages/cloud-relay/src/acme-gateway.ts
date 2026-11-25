@@ -16,14 +16,19 @@ import { dirname, join } from "node:path";
 import { rootCertificates } from "node:tls";
 import { acquireGatewayLock, atomicWriteFile, ownedProcessCleanupReceipt } from "@omnesis/core";
 import { z } from "zod";
+import {
+  gatewayCredentialOptions,
+  readOrCreateScopedGatewayKey,
+} from "./gateway-secret-storage.js";
 import { isJoinedPrivateFileError } from "./private-file-errors.js";
 import { issueAcmeCertificate, type AcmeDnsPresenter } from "./acme-client.js";
 import { bindingOrigin, validateCertificateDates } from "./gateway-binding.js";
 import { publicKeyFingerprint } from "./gateway-key-auth.js";
-import { readBoundedJson } from "./google-credentials.js";
+import { readBoundedJson, readPrivateText as readScopedPrivateText } from "./google-credentials.js";
 import { relayOrigin } from "./network.js";
-import { readPrivateText } from "./private-inputs.js";
+import { readPrivateText as readRawPrivateText } from "./private-inputs.js";
 import { combinedCleanupErrors, OwnedCleanupLifecycle } from "./owned-cleanup-lifecycle.js";
+import type { SecretFileOptions } from "@omnesis/core";
 
 export function relayDnsPresenter(options: {
   relayUrl: string;
@@ -144,7 +149,15 @@ async function verifyChain(
   }
 }
 
-async function accountKey(path: string): Promise<string> {
+function readPrivateText(path: string, options?: SecretFileOptions): Promise<string> {
+  return options ? readScopedPrivateText(path, options) : readRawPrivateText(path);
+}
+
+async function accountKey(path: string, options?: SecretFileOptions): Promise<string> {
+  if (options)
+    return (await readOrCreateScopedGatewayKey(path, true, options, "p256"))
+      .export({ type: "pkcs8", format: "pem" })
+      .toString();
   try {
     return await readPrivateText(path);
   } catch (error) {
@@ -182,6 +195,8 @@ async function accountKey(path: string): Promise<string> {
 
 export interface GatewayAcmeOptions {
   directoryUrl: string;
+  configDir?: string;
+  secretFileOptions?: SecretFileOptions;
   publicOrigin: string;
   certificateFile: string;
   privateKeyFile: string;
@@ -202,8 +217,11 @@ export class GatewayAcmeRenewal {
   private readonly cleanup = new OwnedCleanupLifecycle(() => this.abort.abort());
   private readonly retainedLocks = new Set<Awaited<ReturnType<typeof acquireGatewayLock>>>();
   private pending: Promise<boolean> | undefined;
+  private readonly secretFileOptions: SecretFileOptions | undefined;
   constructor(private readonly options: GatewayAcmeOptions) {
     bindingOrigin(options.publicOrigin);
+    this.secretFileOptions =
+      options.secretFileOptions ?? gatewayCredentialOptions(options.configDir);
   }
   renew(signal: AbortSignal): Promise<boolean> {
     try {
@@ -233,7 +251,7 @@ export class GatewayAcmeRenewal {
     const hostname = bindingOrigin(this.options.publicOrigin).hostname;
     const certificate = await readFile(this.options.certificateFile, "utf8");
     this.assertContinuing(signal);
-    const tlsKey = await readPrivateText(this.options.privateKeyFile);
+    const tlsKey = await readPrivateText(this.options.privateKeyFile, this.secretFileOptions);
     this.assertContinuing(signal);
     const leaf = new X509Certificate(certificate);
     let usable = false;
@@ -255,7 +273,7 @@ export class GatewayAcmeRenewal {
     const lock = await acquireGatewayLock(lockDir, { waitMs: 0 });
     try {
       this.assertContinuing(signal);
-      const key = await accountKey(this.options.accountKeyFile);
+      const key = await accountKey(this.options.accountKeyFile, this.secretFileOptions);
       this.assertContinuing(signal);
       const renewed = await (this.options.issuer ?? issueAcmeCertificate)({
         directoryUrl: this.options.directoryUrl,
@@ -281,7 +299,7 @@ export class GatewayAcmeRenewal {
       this.assertContinuing(signal);
       if (currentCertificate !== certificate)
         throw new Error("Gateway TLS material changed during ACME issuance");
-      const currentKey = await readPrivateText(this.options.privateKeyFile);
+      const currentKey = await readPrivateText(this.options.privateKeyFile, this.secretFileOptions);
       this.assertContinuing(signal);
       if (currentKey !== tlsKey)
         throw new Error("Gateway TLS material changed during ACME issuance");

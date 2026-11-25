@@ -113,17 +113,25 @@ final class DesktopSourceSettingsFlow {
         let local = try await api.sourceSettings(sourceId, member: selected)
         _ = try local.checkedRevision()
         try check(current)
+        let shared = try parameterValues(global.source.config, fields: sharedParams)
+        let localValues = try parameterValues(local.source.config, fields: localParams)
         snapshot = global
         memberSnapshot = local
         selectedDeviceId = selected
         memberIds = members
-        sharedValues = try parameterValues(global.source.config, fields: sharedParams)
-        localValues = try parameterValues(local.source.config, fields: localParams)
+        sharedValues = shared
+        self.localValues = localValues
     }
 
     private func parameterValues(_ config: [String: SourceJSONValue]?, fields: [DesktopDescriptor.Param]) throws -> [String: String] {
         let params = try parameters(config)
-        return Dictionary(uniqueKeysWithValues: fields.map { ($0.name, params[$0.name]?.text ?? "") })
+        var values: [String: String] = [:]
+        for field in fields {
+            guard values.updateValue(params[field.name]?.text ?? "", forKey: field.name) == nil else {
+                throw DesktopAPIError.message("This source repeated a setting. Update Omnesis before editing it.")
+            }
+        }
+        return values
     }
 
     private func parameters(_ config: [String: SourceJSONValue]?) throws -> [String: SourceJSONValue] {
@@ -266,7 +274,7 @@ final class DesktopSourceSettingsFlow {
     }
 
     func removeSource() async {
-        guard !busy, !removalRequested else { return }
+        guard !busy, !removalRequested, let snapshot else { return }
         busy = true
         error = nil
         let current = generation
@@ -275,7 +283,11 @@ final class DesktopSourceSettingsFlow {
             struct Removal: Decodable { let ok: Bool
                 let state: String
             }
-            let response: Removal = try await api.request("DELETE", "admin/sources/\(pathPart(sourceId))")
+            let response: Removal = try await api.request(
+                "DELETE",
+                "admin/sources/\(pathPart(sourceId))",
+                expectedRevision: snapshot.checkedRevision()
+            )
             try check(current)
             guard response.ok,
                   response.state == "removing" else { throw DesktopAPIError.message("Removal was not confirmed. Refresh Sources.") }

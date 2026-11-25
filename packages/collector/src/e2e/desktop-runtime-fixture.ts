@@ -2,12 +2,24 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { execFile, spawn } from "node:child_process";
+import { createReadStream } from "node:fs";
 import { createServer, type Server } from "node:http";
-import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  lstat,
+  realpath,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join, resolve } from "node:path";
 import { promisify } from "node:util";
 
+import { createDesktopNodeAdapter } from "./desktop-node-adapter.js";
 import { e2eGatewayEnv } from "./gateway-env.js";
 
 const execute = promisify(execFile);
@@ -54,8 +66,23 @@ export class DesktopRuntimeFixture {
     readonly root: string,
     private readonly relay: Server,
     readonly relayUrl: string,
+    private readonly nodeExecutable: string,
     readonly profile: { configDir: string; instance: string; secretService: string },
   ) {}
+  private ownedBridgeEntry: string | undefined;
+  async useOwnedBridgeEntry(path: string): Promise<void> {
+    const owned = await realpath(path);
+    if (!owned.startsWith(this.root + "/") || !(await lstat(owned)).isFile())
+      throw new Error("A fixture bridge entry must belong to its isolated root");
+    this.ownedBridgeEntry = owned;
+  }
+  private bridgeArguments(): string[] {
+    return [
+      "--import",
+      "tsx",
+      ...(this.ownedBridgeEntry ? [this.ownedBridgeEntry] : [cli, "desktop", "bridge"]),
+    ];
+  }
   get home() {
     return join(this.root, "home");
   }
@@ -78,7 +105,15 @@ export class DesktopRuntimeFixture {
       OMNESIS_SECRET_STORE: "macos-keychain",
     };
   }
-  static async create(options: { scriptedAgent?: { url: string; modelId: string } } = {}) {
+  static async create(
+    options: {
+      scriptedAgent?: { url: string; modelId: string };
+      systemTrustRuntime?: boolean;
+      relayUrl?: string;
+      prepareInstall?: boolean;
+      gatewayEnv?: NodeJS.ProcessEnv;
+    } = {},
+  ) {
     const root = await realpath(await mkdtemp(join(tmpdir(), "omnesis-managed-desktop-e2e-")));
     const relay = createServer((request, response) => {
       response.setHeader("content-type", "application/json");
@@ -93,9 +128,14 @@ export class DesktopRuntimeFixture {
       await new Promise<void>((done) => relay.listen(0, "127.0.0.1", done));
       const address = relay.address();
       if (!address || typeof address === "string") throw new Error("Fixture relay did not bind");
+      const nodeExecutable = options.systemTrustRuntime
+        ? await createDesktopNodeAdapter(join(root, "node-runtime"))
+        : process.execPath;
       const selected = await execute(
-        process.execPath,
+        nodeExecutable,
         [
+          "--import",
+          "tsx",
           "--input-type=module",
           "-e",
           `const {desktopProfile} = await import(${JSON.stringify(profileModule)}); process.stdout.write(JSON.stringify(desktopProfile(${JSON.stringify(join(root, "home"))})));`,
@@ -105,46 +145,55 @@ export class DesktopRuntimeFixture {
       const fixture = new DesktopRuntimeFixture(
         root,
         relay,
-        `http://127.0.0.1:${address.port}`,
+        options.relayUrl ?? `http://127.0.0.1:${address.port}`,
+        nodeExecutable,
         JSON.parse(selected.stdout),
       );
       await mkdir(join(root, "tools"), { recursive: true });
       await mkdir(join(root, "keychain"));
       await mkdir(fixture.home);
       // One private file per service/account avoids introducing a mock-store write race.
-      const security = desktopKeychainFixtureProgram(root);
+      const security = desktopKeychainFixtureProgram(root, nodeExecutable);
       await writeFile(join(root, "tools/security"), security, { mode: 0o700 });
       await chmod(join(root, "tools/security"), 0o700);
-      await fixture.script(`
+      if (options.prepareInstall !== false)
+        await fixture.script(`
       const { prepareDesktopInstall } = await import(${JSON.stringify(bootstrap)});
       const { prepareDesktopRuntime } = await import(${JSON.stringify(runtime)});
       await prepareDesktopInstall(profile, {mode:'home',totalMemoryBytes:8*1024**3,signal:new AbortController().signal});
       await prepareDesktopRuntime(profile);
     `);
-      const configPath = join(fixture.profile.configDir, "omnesis.json");
-      const config = JSON.parse(await readFile(configPath, "utf8"));
-      // Existing model-choice policy deliberately permits the owner to disable
-      // embeddings. This lifecycle suite performs no model download or inference.
-      config.inference.assignments.embedder = null;
-      if (options.scriptedAgent) {
-        config.inference.backends = {
-          ...config.inference.backends,
-          scripted: { type: "http", url: options.scriptedAgent.url },
-        };
-        config.inference.assignments.agent = `scripted/${options.scriptedAgent.modelId}`;
+      if (options.prepareInstall !== false) {
+        const configPath = join(fixture.profile.configDir, "omnesis.json");
+        const config = JSON.parse(await readFile(configPath, "utf8"));
+        // Existing model-choice policy deliberately permits the owner to disable
+        // embeddings. This lifecycle suite performs no model download or inference.
+        config.inference.assignments.embedder = null;
+        if (options.scriptedAgent) {
+          config.inference.backends = {
+            ...config.inference.backends,
+            scripted: { type: "http", url: options.scriptedAgent.url },
+          };
+          config.inference.assignments.agent = `scripted/${options.scriptedAgent.modelId}`;
+        }
+        await writeFile(configPath, JSON.stringify(config), { mode: 0o600 });
+      } else {
+        await mkdir(fixture.profile.configDir, { recursive: true, mode: 0o700 });
       }
-      await writeFile(configPath, JSON.stringify(config), { mode: 0o600 });
-      await writeFile(
-        join(fixture.profile.configDir, ".env"),
-        [
-          ...Object.entries(e2eGatewayEnv({})).map(([key, value]) => `${key}=${value}`),
-          `OMNESIS_CLOUD_RELAY_URL=${fixture.relayUrl}`,
-          `OMNESIS_ACME_DIRECTORY_URL=${fixture.relayUrl}/directory`,
-          "OMNESIS_ACME_TERMS_ACCEPTED=1",
-          "",
-        ].join("\n"),
-        { mode: 0o600 },
-      );
+      if (options.prepareInstall !== false)
+        await writeFile(
+          join(fixture.profile.configDir, ".env"),
+          [
+            ...Object.entries({ ...e2eGatewayEnv({}), ...options.gatewayEnv })
+              .filter((entry) => entry[1] !== undefined)
+              .map(([key, value]) => `${key}=${value}`),
+            `OMNESIS_CLOUD_RELAY_URL=${fixture.relayUrl}`,
+            `OMNESIS_ACME_DIRECTORY_URL=${fixture.relayUrl}/directory`,
+            "OMNESIS_ACME_TERMS_ACCEPTED=1",
+            "",
+          ].join("\n"),
+          { mode: 0o600 },
+        );
       return fixture;
     } catch (error) {
       if (relay.listening) await new Promise<void>((done) => relay.close(() => done()));
@@ -155,7 +204,7 @@ export class DesktopRuntimeFixture {
   async script(body: string): Promise<string> {
     const program = `const profile = ${JSON.stringify(this.profile)}; ${body}`;
     const result = await execute(
-      process.execPath,
+      this.nodeExecutable,
       ["--import", "tsx", "--input-type=module", "-e", program],
       {
         env: this.environment,
@@ -180,6 +229,34 @@ export class DesktopRuntimeFixture {
     `),
     );
   }
+  /** Scan a stopped owned fixture, including conversation/transcript sidecars and database files. */
+  async plaintextFiles(needle: string): Promise<string[]> {
+    const marker = Buffer.from(needle);
+    if (marker.length === 0) throw new Error("A plaintext probe needs a marker");
+    const matches: string[] = [];
+    let entries = 0;
+    const visit = async (path: string, relative: string): Promise<void> => {
+      if (++entries > 20_000) throw new Error("The fixture plaintext scan exceeded its bound");
+      const info = await lstat(path);
+      if (info.isSymbolicLink()) return;
+      if (info.isDirectory()) {
+        for (const name of await readdir(path))
+          await visit(join(path, name), relative ? `${relative}/${name}` : name);
+      } else if (info.isFile()) {
+        let tail: Buffer = Buffer.alloc(0);
+        for await (const chunk of createReadStream(path)) {
+          const bytes = Buffer.concat([tail, Buffer.from(chunk)]);
+          if (bytes.includes(marker)) {
+            matches.push(relative);
+            break;
+          }
+          tail = bytes.subarray(Math.max(0, bytes.length - marker.length + 1));
+        }
+      }
+    };
+    await visit(this.home, "");
+    return matches;
+  }
   async request(path: string, options: Record<string, unknown> = {}): Promise<unknown> {
     return JSON.parse(
       await this.script(
@@ -192,7 +269,7 @@ export class DesktopRuntimeFixture {
     params?: unknown,
     inherited: NodeJS.ProcessEnv = {},
   ): Promise<Record<string, unknown>> {
-    const child = spawn(process.execPath, ["--import", "tsx", cli, "desktop", "bridge"], {
+    const child = spawn(this.nodeExecutable, this.bridgeArguments(), {
       cwd: resolve("."),
       env: { ...this.environment, ...inherited },
       stdio: ["pipe", "pipe", "pipe"],
@@ -239,18 +316,147 @@ export class DesktopRuntimeFixture {
       );
     });
   }
+  /** Real private bridge interactions, without replacing discovery, pairing or account policy. */
+  async interactiveCommand(
+    command: string,
+    params: unknown,
+    interact: (interaction: {
+      id: string;
+      kind: string;
+      [key: string]: unknown;
+    }) => Promise<unknown>,
+  ): Promise<Record<string, unknown>> {
+    const child = spawn(this.nodeExecutable, this.bridgeArguments(), {
+      cwd: resolve("."),
+      env: this.environment,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    return new Promise((resolveResult, reject) => {
+      let frames = "",
+        diagnostic = "",
+        result: Record<string, unknown> | undefined,
+        failure: Error | undefined;
+      let pending = Promise.resolve(),
+        force: NodeJS.Timeout | undefined;
+      const fail = (error: unknown) => {
+        failure ??= error instanceof Error ? error : new Error("The fixture interaction failed");
+        child.stdin.end();
+        child.kill("SIGTERM");
+        force ??= setTimeout(() => child.kill("SIGKILL"), 5000);
+      };
+      const timeout = setTimeout(
+        () => fail(new Error("The fixture desktop interaction timed out")),
+        300_000,
+      );
+      child.stdin.on("error", () => {});
+      child.stderr.on("data", (chunk: Buffer) => {
+        diagnostic = (diagnostic + chunk.toString()).slice(-4096);
+      });
+      child.stdout.on("data", (chunk: Buffer) => {
+        frames += chunk.toString();
+        if (frames.length > 1024 * 1024)
+          return fail(new Error("The fixture bridge frame is too large"));
+        let end: number;
+        while ((end = frames.indexOf("\n")) !== -1) {
+          const frame = frames.slice(0, end);
+          frames = frames.slice(end + 1);
+          pending = pending
+            .then(async () => {
+              const reply = JSON.parse(frame);
+              if (reply.event === "interaction") {
+                const interaction = reply.interaction;
+                if (
+                  !interaction ||
+                  typeof interaction.id !== "string" ||
+                  typeof interaction.kind !== "string"
+                )
+                  throw new Error("Invalid fixture interaction");
+                const value = await interact(interaction);
+                child.stdin.write(
+                  JSON.stringify({
+                    version: 1,
+                    id: `reply-${interaction.id}`,
+                    command: "respond",
+                    params: { interactionId: interaction.id, value },
+                  }) + "\n",
+                );
+              } else if (reply.id === "fixture-command") {
+                if (reply.ok !== true)
+                  throw new Error("The desktop bridge refused the fixture command");
+                result = reply.result;
+                child.stdin.end();
+              } else if (reply.ok !== true)
+                throw new Error("The desktop bridge refused the fixture response");
+            })
+            .catch(fail);
+        }
+      });
+      child.once("error", fail);
+      child.once("close", (code) => {
+        clearTimeout(timeout);
+        clearTimeout(force);
+        void pending.then(() => {
+          if (failure) reject(failure);
+          else if (code !== 0 || !result)
+            reject(new Error(`The desktop bridge did not finish: ${diagnostic}`));
+          else resolveResult(result);
+        });
+      });
+      child.stdin.write(
+        JSON.stringify({
+          version: 1,
+          id: "fixture-command",
+          command,
+          ...(params === undefined ? {} : { params }),
+        }) + "\n",
+      );
+    });
+  }
   async close() {
     try {
+      const journal = await lstat(join(this.profile.configDir, "desktop-install.json")).catch(
+        (error: unknown) => {
+          if (error instanceof Error && "code" in error && error.code === "ENOENT") return null;
+          throw error;
+        },
+      );
+      // The actual bootstrap writes this journal before minting keys or permitting any daemon.
+      if (!journal) {
+        await rm(this.root, { recursive: true, force: true });
+        return;
+      }
       const plan = await this.command("removePreview", { eraseData: true });
       if (plan.available !== true)
         throw new Error("Fixture cleanup could not prove retirement; its state was retained");
       if (plan.available === true) {
         if (typeof plan.confirmationId !== "string")
           throw new Error("Fixture removal was not confirmed");
-        const result = await this.command("remove", {
-          eraseData: true,
-          confirmationId: plan.confirmationId,
-        });
+        // This source-only fixture substitutes the OS authority adapter explicitly.
+        // It runs no vendor SDKs; actual native orphan/descriptor proof belongs to macOS tests.
+        const removal = new URL("../../../cli/src/desktop/removal.ts", import.meta.url).href;
+        const result = JSON.parse(
+          await this.script(`
+          const {readFile} = await import('node:fs/promises');
+          const config=JSON.parse(await readFile(profile.configDir+'/omnesis.json','utf8'));
+          for(const selected of Object.values(config.inference?.assignments??{})) {
+            if(typeof selected!=='string')continue;
+            const backend=config.inference?.backends?.[selected.split('/')[0]];
+            if(['codex','claude-code'].includes(backend?.type))throw new Error('The source fixture cannot prove vendor process ownership');
+          }
+          const {removeDesktopInstall,finishDesktopErase}=await import(${JSON.stringify(removal)});
+          const signal=new AbortController().signal;
+          const result=await removeDesktopInstall(profile,{eraseData:true,confirmationId:${JSON.stringify(plan.confirmationId)},signal},{
+            executeErase:async(current,id,signal,operations)=>finishDesktopErase(current,id,signal,{
+              ...operations,
+              authorize:(actual,purpose,operationId)=>{
+                if(actual.configDir!==profile.configDir||actual.instance!==profile.instance||actual.secretService!==profile.secretService||purpose!=='erase'||operationId!==id)
+                  throw new Error('The owned source fixture authority changed');
+              },
+            }),
+          });
+          process.stdout.write(JSON.stringify(result));
+        `),
+        ) as { data?: string; keyring?: string };
         if (result.data !== "erased" || result.keyring !== "cleared")
           throw new Error("Fixture runtime did not finish retiring");
       }

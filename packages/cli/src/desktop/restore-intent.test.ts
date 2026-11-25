@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { randomUUID } from "node:crypto";
-import { mkdtemp, mkdir, rm, writeFile, chmod } from "node:fs/promises";
+import { realpath, mkdtemp, mkdir, rm, writeFile, chmod } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, test } from "vitest";
@@ -19,7 +19,7 @@ let dir: string;
 let profile: DesktopProfile;
 let intent: DesktopRestoreIntent;
 beforeEach(async () => {
-  dir = await mkdtemp(join(tmpdir(), "omnesis-desktop-restore-intent-"));
+  dir = await realpath(await mkdtemp(join(tmpdir(), "omnesis-desktop-restore-intent-")));
   profile = desktopProfile(dir);
   await mkdir(profile.configDir, { recursive: true, mode: 0o700 });
   await mkdir(`${profile.configDir}.bootstrap`, { mode: 0o700 });

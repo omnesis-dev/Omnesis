@@ -12,6 +12,7 @@ function evidence() {
       available: true,
       secure: true,
       detail: "Fixture keyring",
+      writeExposure: "process-argv" as const,
     })),
     secretsRequired: () => true,
     storesRequired: () => true,
@@ -50,6 +51,7 @@ test("plaintext root files cannot masquerade as protected storage", async () => 
     available: true,
     secure: false,
     detail: "Fixture insecure backend",
+    writeExposure: "process-argv",
   });
   expect(await captureGatewayStorageProtection("/fixture", true, deps)).toEqual({
     version: 1,

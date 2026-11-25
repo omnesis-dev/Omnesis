@@ -15,6 +15,11 @@ import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import {
+  managedRuntimeExecutableInvocation,
+  managedDesktopMetadataInvocation,
+  managedRuntimeSubprocessStdio,
+} from "./node-command.js";
 import { atomicWriteFile } from "./atomic-write.js";
 import {
   openStringEnvelope,
@@ -114,6 +119,7 @@ export interface SecretCommandResult {
 export interface SecretCommandOptions {
   /** Secret Service accepts secrets on stdin; macOS `security` does not. */
   input?: string;
+  metadataGeneration?: string;
 }
 
 export type SecretCommandRunner = (
@@ -323,14 +329,13 @@ export function readInstallRootKeySync(opts: CreateSecretStoreOptions = {}): str
       return isInstallRootKey(value) ? value : null;
     }
     if (backend === "macos-keychain") {
-      const res = spawnSync("security", [
-        "find-generic-password",
-        "-a",
-        OMNESIS_INSTALL_ROOT_KEY,
-        "-s",
-        service,
-        "-w",
-      ]);
+      const invocation = managedRuntimeExecutableInvocation(
+        process.platform === "darwin" ? "/usr/bin/security" : "security",
+        ["find-generic-password", "-a", OMNESIS_INSTALL_ROOT_KEY, "-s", service, "-w"],
+      );
+      const res = spawnSync(invocation.command, invocation.args, {
+        stdio: managedRuntimeSubprocessStdio(["pipe", "pipe", "pipe"]),
+      });
       if (res.status !== 0 || res.error) return null;
       const value = stripFinalNewline(String(res.stdout ?? ""));
       return isInstallRootKey(value) ? value : null;
@@ -424,9 +429,50 @@ export function isInstallRootKey(value: string): boolean {
   return ROOT_KEY_RE.test(value);
 }
 
+/** Authoritative absence for a narrowly named macOS service; access errors never mean missing. */
+export async function confirmMacosKeychainEntriesAbsent(
+  names: readonly string[],
+  options: CreateSecretStoreOptions,
+  metadataGeneration?: string,
+): Promise<boolean> {
+  if (
+    names.length < 1 ||
+    names.length > 8 ||
+    names.some((name) => !name || name.length > 256 || /[\x00-\x1f\x7f]/u.test(name))
+  )
+    throw new Error("Invalid Keychain absence request");
+  if (options.backend !== "macos-keychain")
+    throw new Error("A scoped macOS Keychain backend is required");
+  const runner = options.runCommand ?? defaultSecretCommandRunner;
+  const store = createSecretStore(
+    metadataGeneration
+      ? {
+          ...options,
+          runCommand: (cmd, args, opts) =>
+            runner(
+              cmd,
+              args,
+              args[0] === "find-generic-password" ? { ...opts, metadataGeneration } : opts,
+            ),
+        }
+      : options,
+  );
+  if (!(store instanceof MacosKeychainSecretStore) || !(await store.status()).available)
+    throw new Error("macOS Keychain is unavailable");
+  for (const name of names) if (!(await store.confirmAbsent(name))) return false;
+  return true;
+}
+
 export const defaultSecretCommandRunner: SecretCommandRunner = (cmd, args, options = {}) =>
   new Promise((resolve) => {
-    const child = spawn(cmd, args, { stdio: ["pipe", "pipe", "pipe"] });
+    const executable =
+      process.platform === "darwin" && cmd === "security" ? "/usr/bin/security" : cmd;
+    const invocation = options.metadataGeneration
+      ? managedDesktopMetadataInvocation(executable, args, options.metadataGeneration)
+      : managedRuntimeExecutableInvocation(executable, args);
+    const child = spawn(invocation.command, invocation.args, {
+      stdio: managedRuntimeSubprocessStdio(["pipe", "pipe", "pipe"]),
+    });
     let settled = false;
     let stdout = "";
     let stderr = "";
@@ -437,12 +483,12 @@ export const defaultSecretCommandRunner: SecretCommandRunner = (cmd, args, optio
       resolve(result);
     };
 
-    child.stdout.setEncoding("utf8");
-    child.stderr.setEncoding("utf8");
-    child.stdout.on("data", (chunk) => {
+    child.stdout!.setEncoding("utf8");
+    child.stderr!.setEncoding("utf8");
+    child.stdout!.on("data", (chunk) => {
       stdout += chunk;
     });
-    child.stderr.on("data", (chunk) => {
+    child.stderr!.on("data", (chunk) => {
       stderr += chunk;
     });
     child.on("error", (err) => {
@@ -451,13 +497,13 @@ export const defaultSecretCommandRunner: SecretCommandRunner = (cmd, args, optio
     child.on("close", (code) => {
       finish({ code: code ?? 1, stdout, stderr });
     });
-    child.stdin.on("error", (err) => {
+    child.stdin!.on("error", (err) => {
       if ((err as NodeJS.ErrnoException).code === "EPIPE") return;
       finish({ code: 127, stdout, stderr: stderr || err.message });
     });
 
     try {
-      child.stdin.end(options.input ?? "");
+      child.stdin!.end(options.input ?? "");
     } catch (err) {
       const e = err as NodeJS.ErrnoException;
       if (e.code !== "EPIPE") {
@@ -533,7 +579,37 @@ class MacosKeychainSecretStore implements SecretStore {
   }
 
   async delete(name: string): Promise<void> {
-    await this.runCommand("security", ["delete-generic-password", "-a", name, "-s", this.service]);
+    const result = await this.runCommand("security", [
+      "delete-generic-password",
+      "-a",
+      name,
+      "-s",
+      this.service,
+    ]);
+    if (result.code !== 0 && result.code !== 44)
+      throw new Error(
+        "macOS Keychain did not confirm deletion. Unlock the login Keychain and retry.",
+      );
+    if (!(await this.confirmAbsent(name)))
+      throw new Error(
+        "The macOS Keychain item remains after deletion. Unlock the login Keychain and retry.",
+      );
+  }
+
+  async confirmAbsent(name: string): Promise<boolean> {
+    // Query metadata only: a presence check must never retrieve or echo the secret.
+    const result = await this.runCommand("security", [
+      "find-generic-password",
+      "-a",
+      name,
+      "-s",
+      this.service,
+    ]);
+    if (result.code === 44) return true;
+    if (result.code === 0) return false;
+    throw new Error(
+      "macOS Keychain could not confirm absence. Unlock the login Keychain and retry.",
+    );
   }
 }
 

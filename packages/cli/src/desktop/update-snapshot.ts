@@ -17,7 +17,15 @@ import {
 } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { z } from "zod";
-import { atomicWriteFile, assertNever } from "@omnesis/core";
+import {
+  atomicWriteFile,
+  assertNever,
+  CODEX_HOME_DIR,
+  CODEX_POOL_HOME_DIR,
+  CODEX_WORKSPACE_DIR,
+  CODEX_POOL_WORKSPACE_DIR,
+  CODEX_RUNTIME_STORE_DIR,
+} from "@omnesis/core";
 import { assertDesktopRuntimeLeases, type DesktopRuntimeLeases } from "./runtime-leases.js";
 import type { DesktopProfile } from "./environment.js";
 
@@ -27,6 +35,12 @@ const excludedRoots = new Set([
   "backups",
   "models",
   "logs",
+  "exports",
+  CODEX_HOME_DIR,
+  CODEX_POOL_HOME_DIR,
+  CODEX_WORKSPACE_DIR,
+  CODEX_POOL_WORKSPACE_DIR,
+  CODEX_RUNTIME_STORE_DIR,
   "runtime-owner",
   "gateway-owner",
   "collector-owner",
@@ -107,6 +121,78 @@ export function desktopUpdateSnapshotPath(profile: DesktopProfile, operationId: 
   );
 }
 
+type SnapshotCandidate =
+  | { kind: "directory"; path: string }
+  | { kind: "symlink"; path: string; target: string }
+  | { kind: "file"; path: string; bytes: number; executable: boolean };
+
+/** Read-only admission inventory, shared with the actual snapshot copy. Recheck under EX. */
+export async function measureDesktopUpdateSnapshot(
+  profile: DesktopProfile,
+  signal: AbortSignal,
+): Promise<{ bytes: number; entries: number }> {
+  return walkSnapshot(profile, signal);
+}
+async function walkSnapshot(
+  profile: DesktopProfile,
+  signal: AbortSignal,
+  copy?: (entry: SnapshotCandidate) => Promise<void>,
+): Promise<{ bytes: number; entries: number }> {
+  await privateDirectory(profile.configDir);
+  // Credential homes are regenerable, but unresolved legacy plaintext must be remediated,
+  // rather than silently hidden by their exclusion from a protected recovery copy.
+  const { managedCodexPoolAuthFiles } = await import("@omnesis/agent");
+  for (const root of [CODEX_HOME_DIR, CODEX_POOL_HOME_DIR]) {
+    signal.throwIfAborted();
+    if ((await managedCodexPoolAuthFiles(join(profile.configDir, root))).length)
+      throw new Error(
+        "Sign out of ChatGPT and remove its earlier unprotected credentials before making a recovery snapshot",
+      );
+  }
+  let bytes = 0,
+    entries = 0;
+  const visit = async (directory: string, prefix: string): Promise<void> => {
+    for (const name of (await readdir(directory)).sort()) {
+      signal.throwIfAborted();
+      const path = prefix ? `${prefix}/${name}` : name;
+      if (excluded(path)) continue;
+      pathSchema.parse(path);
+      if (entries++ >= MAX_ENTRIES)
+        throw new Error("The desktop recovery snapshot contains too many files");
+      const source = join(directory, name),
+        metadata = await lstat(source);
+      if (process.getuid && metadata.uid !== process.getuid())
+        throw new Error("The managed library contains files owned by another account");
+      let candidate: SnapshotCandidate;
+      if (metadata.isSymbolicLink())
+        candidate = entrySchema.parse({
+          kind: "symlink",
+          path,
+          target: await readlink(source),
+        }) as Extract<SnapshotCandidate, { kind: "symlink" }>;
+      else if (metadata.isDirectory()) candidate = { kind: "directory", path };
+      else if (metadata.isFile()) {
+        if (metadata.nlink !== 1 || !Number.isSafeInteger(metadata.size))
+          throw new Error("A recovery file has an unsupported shared identity or size");
+        bytes += metadata.size;
+        if (!Number.isSafeInteger(bytes))
+          throw new Error("The desktop recovery snapshot is too large");
+        candidate = {
+          kind: "file",
+          path,
+          bytes: metadata.size,
+          executable: Boolean(metadata.mode & 0o100),
+        };
+      } else throw new Error("The managed library contains an unsupported special file");
+      if (copy) await copy(candidate);
+      if (candidate.kind === "directory") await visit(source, path);
+    }
+  };
+  await visit(profile.configDir, "");
+  signal.throwIfAborted();
+  return { bytes, entries };
+}
+
 /** Caller holds the external installation lease; opaque runtime leases prove every store remains stopped. */
 export async function createDesktopUpdateSnapshot(
   profile: DesktopProfile,
@@ -125,44 +211,28 @@ export async function createDesktopUpdateSnapshot(
   await mkdir(pending, { mode: 0o700 });
   const entries: Entry[] = [];
   let bytes = 0;
-  const visit = async (directory: string, prefix: string): Promise<void> => {
-    for (const name of (await readdir(directory)).sort()) {
-      options.signal.throwIfAborted();
-      const path = prefix ? `${prefix}/${name}` : name;
-      if (excluded(path)) continue;
-      pathSchema.parse(path);
-      if (entries.length >= MAX_ENTRIES)
-        throw new Error("The desktop recovery snapshot contains too many files");
-      const source = join(directory, name),
-        destination = join(pending, "files", path);
-      const metadata = await lstat(source);
-      if (process.getuid && metadata.uid !== process.getuid())
-        throw new Error("The managed library contains files owned by another account");
-      if (metadata.isSymbolicLink()) {
-        const target = await readlink(source);
-        const entry = entrySchema.parse({ kind: "symlink", path, target });
-        await mkdir(dirname(destination), { recursive: true, mode: 0o700 });
-        await symlink(target, destination);
-        entries.push(entry);
-      } else if (metadata.isDirectory()) {
-        entries.push({ kind: "directory", path });
+
+  try {
+    await mkdir(join(pending, "files"), { mode: 0o700 });
+    await walkSnapshot(profile, options.signal, async (candidate) => {
+      const source = join(profile.configDir, candidate.path),
+        destination = join(pending, "files", candidate.path);
+      await mkdir(dirname(destination), { recursive: true, mode: 0o700 });
+      if (candidate.kind === "directory") {
         await mkdir(destination, { recursive: true, mode: 0o700 });
-        await visit(source, path);
-      } else if (metadata.isFile()) {
-        await mkdir(dirname(destination), { recursive: true, mode: 0o700 });
+        entries.push(candidate);
+      } else if (candidate.kind === "symlink") {
+        await symlink(candidate.target, destination);
+        entries.push(candidate);
+      } else {
         const result = await copyFileChecked(source, destination, options.signal);
         bytes += result.bytes;
         if (!Number.isSafeInteger(bytes))
           throw new Error("The desktop recovery snapshot is too large");
-        const executable = Boolean(metadata.mode & 0o100);
-        await chmod(destination, executable ? 0o700 : 0o600);
-        entries.push({ kind: "file", path, ...result, executable });
-      } else throw new Error("The managed library contains an unsupported special file");
-    }
-  };
-  try {
-    await mkdir(join(pending, "files"), { mode: 0o700 });
-    await visit(profile.configDir, "");
+        await chmod(destination, candidate.executable ? 0o700 : 0o600);
+        entries.push({ ...candidate, ...result });
+      }
+    });
     await assertDesktopRuntimeLeases(profile, options.leases);
     options.signal.throwIfAborted();
     const manifest = JSON.stringify(

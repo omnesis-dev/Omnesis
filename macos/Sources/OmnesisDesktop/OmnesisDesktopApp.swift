@@ -74,6 +74,7 @@ struct DesktopRootView: View {
                         .disabled(!store.state.canOpenLibrary && item != .setup)
                 }
             }.navigationTitle("Omnesis")
+                .navigationSplitViewColumnWidth(min: 190, ideal: 220, max: 280)
                 .safeAreaInset(edge: .bottom) {
                     Label(store.state.statusLabel, systemImage: store.state.canOpenLibrary ? "checkmark.shield" : "clock")
                         .font(.caption).foregroundStyle(.secondary).padding()

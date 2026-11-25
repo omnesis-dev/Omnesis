@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   createSecretStore,
+  confirmMacosKeychainEntriesAbsent,
   generateInstallRootKey,
   KEYRING_ENV_KEYS,
   OMNESIS_INSTALL_ROOT_KEY,
@@ -123,4 +124,29 @@ describe("secret store service namespaces", () => {
     expect(() => createSecretStore({ backend: "file" })).toThrow(/OMNESIS_SECRET_SERVICE/);
     expect(() => readInstallRootKeySync({ backend: "file" })).toThrow(/OMNESIS_SECRET_SERVICE/);
   });
+});
+
+test("proposed generation reaches only metadata absence probes, never capability or secret reads", async () => {
+  const generation = "11111111-1111-4111-8111-111111111111";
+  const calls: { args: string[]; options: unknown }[] = [];
+  const absent = await confirmMacosKeychainEntriesAbsent(
+    [OMNESIS_INSTALL_ROOT_KEY],
+    {
+      backend: "macos-keychain",
+      service: "fixture-next-service",
+      runCommand: async (_command, args, options) => {
+        calls.push({ args, options });
+        return { code: args[0] === "-h" ? 0 : 44, stdout: "", stderr: "" };
+      },
+    },
+    generation,
+  );
+  expect(absent).toBe(true);
+  expect(calls).toEqual([
+    { args: ["-h"], options: undefined },
+    {
+      args: ["find-generic-password", "-a", OMNESIS_INSTALL_ROOT_KEY, "-s", "fixture-next-service"],
+      options: { metadataGeneration: generation },
+    },
+  ]);
 });

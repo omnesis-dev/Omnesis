@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { randomUUID } from "node:crypto";
-import { mkdtemp, mkdir, readFile, writeFile, rm } from "node:fs/promises";
+import { realpath, mkdtemp, mkdir, readFile, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { beforeEach, afterEach, expect, test } from "vitest";
@@ -22,7 +22,7 @@ let dir: string, sourceFolder: string, targetFolder: string, sourceRoot: string,
 const signal = new AbortController().signal;
 const code = "ABCDE-FGHIJ-KLMNO-PQRST-UVWXY-ZABCD";
 beforeEach(async () => {
-  dir = await mkdtemp(join(tmpdir(), "omnesis-restore-entries-"));
+  dir = await realpath(await mkdtemp(join(tmpdir(), "omnesis-restore-entries-")));
   sourceFolder = join(dir, "source");
   targetFolder = join(dir, "target");
   await ensureInstallRootKey({ backend: "file", configDir: sourceFolder });
@@ -131,7 +131,7 @@ test("foreign backup recovery never publishes a root key or replaces the target 
   expect((await entries.read("omnesis.db.enc", 1024)).toString()).toBe("invented database bytes");
   expect(JSON.stringify(entries)).toBe("{}");
   const raw = (await entries.read("config-secrets/credential.json.enc", 16384)).toString();
-  const rewrapped = entries.rewrapSecret(raw, "config:config-secrets/credential.json");
+  const rewrapped = await entries.rewrapSecret(raw, "config:config-secrets/credential.json");
   const target = join(targetFolder, "config-secrets", "credential.json");
   await mkdir(dirname(target), { recursive: true, mode: 0o700 });
   await writeFile(target, rewrapped, { mode: 0o600 });
@@ -200,4 +200,61 @@ test("unmodified legacy readable entries remain memory-only and do not import ma
   expect(await entries.unlock()).toEqual({ needsRecoveryCode: false });
   expect(await entries.read(name, 1024)).toEqual(body);
   expect((await readFile(path)).includes(body)).toBe(false);
+});
+
+test("a legacy backup with readable stores and only secret-file encryption still requests and verifies its own recovery key", async () => {
+  const name = "invented-credentials.json",
+    sourcePath = join(sourceFolder, name);
+  await writeSecretTextFile(sourcePath, JSON.stringify({ key: "invented saved credential" }), {
+    backend: "file",
+    configDir: sourceFolder,
+  });
+  const values = new Map<string, Buffer>([
+    ["omnesis.db", Buffer.from("invented legacy database bytes")],
+    [name, await readFile(sourcePath)],
+    [
+      "keyring/recovery-envelope.json",
+      Buffer.from(JSON.stringify(createRecoveryEnvelope(sourceRoot, code))),
+    ],
+  ]);
+  const sealedFiles = new Map<string, { path: string; scope: string }>(),
+    files = new Map<string, number>();
+  for (const [logical, body] of values) {
+    const path = join(dir, `legacy-${sealedFiles.size}.enc`),
+      scope = `restore:legacy:entry:${sealedFiles.size}`;
+    await produceEncryptedArtifact(path, { rootKey: targetRoot, scope }, async (output) => {
+      output.write(body);
+    });
+    sealedFiles.set(logical, { path, scope });
+    files.set(logical, body.length);
+  }
+  const archive: DesktopBackupArchive = {
+    manifest: {
+      version: "0.7.8",
+      startedAt: "2026-01-01T00:00:00Z",
+      finishedAt: "2026-01-01T00:01:00Z",
+      includeIndex: false,
+      files: [...files].map(([name, bytes]) => ({ name, bytes })),
+    },
+    sealedFiles,
+    files,
+    sha256: "a".repeat(64),
+    bytes: 4096,
+  };
+  const entries = new DesktopRestoreEntries(archive, targetRoot, new AbortController().signal);
+  try {
+    expect(await entries.unlock()).toEqual({ needsRecoveryCode: true });
+    expect(await entries.unlock({ recoveryCode: code })).toEqual({ needsRecoveryCode: false });
+    const raw = await entries.read(name, 16384),
+      rewrapped = await entries.rewrapSecret(raw.toString(), `config:${name}`);
+    raw.fill(0);
+    const target = join(targetFolder, name);
+    await writeFile(target, rewrapped, { mode: 0o600 });
+    expect(await readSecretTextFile(target, { backend: "file", configDir: targetFolder })).toBe(
+      JSON.stringify({ key: "invented saved credential" }),
+    );
+    expect(await readInstallRootKey({ backend: "file", configDir: targetFolder })).toBe(targetRoot);
+  } finally {
+    entries.close();
+  }
 });

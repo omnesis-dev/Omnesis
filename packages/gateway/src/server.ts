@@ -608,6 +608,8 @@ export function createServer(
      * `/admin/export*` routes.
      */
     exportService?: import("./http/services/ExportService.js").ExportService;
+    /** Read only; readable exports must never create or replace an encryption key. */
+    readExportRootKey?: () => Promise<string | null>;
     /**
      * The push transport. When provided, the APNs status/test routes mount
      * and document/analytics writes publish on the event bus for the watch
@@ -1816,6 +1818,7 @@ export function createServer(
       ? new ArtifactDownloadService({
           backupRoot: opts.backupService?.getArtifactRoot(),
           exportRoot: opts.exportService?.getArtifactRoot(),
+          readExportRootKey: opts.readExportRootKey,
         })
       : undefined;
   if (artifactDownloads) {

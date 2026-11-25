@@ -2,12 +2,14 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { expect, test } from "vitest";
-import { desktopKeychainFixtureProgram } from "./desktop-runtime-fixture.js";
+import { createDesktopNodeAdapter } from "./desktop-node-adapter.js";
+import { installDesktopAccountBridge } from "./desktop-account-bridge.js";
+import { DesktopRuntimeFixture, desktopKeychainFixtureProgram } from "./desktop-runtime-fixture.js";
 const execute = promisify(execFile);
 
 test("generated OS-keyring fixture parses and models isolated services, atomic insertion and locked reads", async () => {
@@ -64,3 +66,38 @@ test("generated OS-keyring fixture parses and models isolated services, atomic i
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("source runtime adapter fixes system trust for unmodified executable-path descendants", async () => {
+  const root = await mkdtemp(join(tmpdir(), "omnesis-desktop-node-policy-"));
+  try {
+    const adapter = await createDesktopNodeAdapter(root);
+    const { stdout } = await execute(adapter, [
+      "--input-type=module",
+      "-e",
+      `
+      import {execFileSync} from 'node:child_process';
+      if (!process.execArgv.includes('--use-system-ca')) process.exit(2);
+      process.stdout.write(execFileSync(process.execPath, ['-p', "JSON.stringify({system:process.execArgv.includes('--use-system-ca'),path:process.execPath})"], {encoding:'utf8'}));
+    `,
+    ]);
+    expect(JSON.parse(stdout)).toEqual({ system: true, path: adapter });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("the source bridge keeps an unclaimed profile empty and runs the real welcome protocol", async () => {
+  const fixture = await DesktopRuntimeFixture.create({
+    prepareInstall: false,
+    systemTrustRuntime: true,
+    relayUrl: "https://relay.example.test",
+  });
+  try {
+    expect(await readdir(fixture.profile.configDir)).toEqual([]);
+    await installDesktopAccountBridge(fixture, {});
+    expect(await fixture.command("status")).toMatchObject({ phase: "welcome" });
+    expect(await readdir(fixture.profile.configDir)).toEqual([]);
+  } finally {
+    await fixture.close();
+  }
+}, 30_000);

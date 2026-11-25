@@ -3,6 +3,7 @@
 
 import { PassThrough, Readable, Writable } from "node:stream";
 import { expect, test, vi } from "vitest";
+import { DesktopRestoreFailure } from "./restore-errors.js";
 import { DesktopInteractionBroker, runDesktopProtocol } from "./protocol.js";
 
 type Message = Record<string, unknown> & {
@@ -388,4 +389,28 @@ test("recovery command family preserves private structured replies", async () =>
   expect(seen).toEqual(commands);
   expect(f.messages).toHaveLength(4);
   expect(f.messages.every((message) => message.ok === true)).toBe(true);
+});
+
+test("restore errors expose fixed guidance while refusing raw or forged exception text", async () => {
+  const privateValue = "invented-private-recovery-code",
+    errors = [
+      new DesktopRestoreFailure("RESTORE_RECOVERY_REQUIRED"),
+      Object.assign(new Error(privateValue), { code: "RESTORE_RECOVERY_REQUIRED" }),
+    ];
+  let attempt = 0;
+  const f = fixture(
+    () => {
+      throw errors[attempt++]!;
+    },
+    (message, input) => {
+      if (message.id === "first")
+        send(input, "second", "restorePreview", { recoveryCode: privateValue });
+      else input.end();
+    },
+  );
+  send(f.input, "first", "restorePreview", { recoveryCode: privateValue });
+  await f.run;
+  expect(f.messages[0]).toMatchObject({ ok: false, error: { code: "RESTORE_RECOVERY_REQUIRED" } });
+  expect(f.messages[1]).toMatchObject({ ok: false, error: { code: "OPERATION_FAILED" } });
+  expect(JSON.stringify(f.messages)).not.toContain(privateValue);
 });

@@ -14,6 +14,7 @@ describe("desktop isolation", () => {
       OMNESIS_CONFIG_DIR: "/unrelated/headless",
       OMNESIS_TOKEN: "unrelated-headless-token",
       OMNESIS_INSECURE_TLS: "1",
+      NODE_USE_SYSTEM_CA: "1",
       NODE_EXTRA_CA_CERTS: "/unrelated/headless/tls/cert.pem",
       NODE_OPTIONS: "--require /unrelated/loader.cjs",
       OPENAI_API_KEY: "unrelated-inference-key",
@@ -21,14 +22,46 @@ describe("desktop isolation", () => {
     } as NodeJS.ProcessEnv;
     const profile = initializeDesktopEnvironment(env, "/fictional/home");
     expect(env.OMNESIS_CONFIG_DIR).toBe(profile.configDir);
+    expect(env.OMNESIS_DESKTOP_MANAGED).toBe("1");
     expect(env.OMNESIS_TOKEN).toBeUndefined();
     expect(env.OMNESIS_INSECURE_TLS).toBeUndefined();
     expect(env.NODE_EXTRA_CA_CERTS).toBeUndefined();
+    expect(env.NODE_USE_SYSTEM_CA).toBeUndefined();
     expect(env.NODE_OPTIONS).toBeUndefined();
     expect(env.OPENAI_API_KEY).toBeUndefined();
     expect(env.OMNESIS_SECRET_SERVICE).toBe(profile.secretService);
     expect(env.PATH?.split(delimiter)).toEqual([dirname(process.execPath), "/fictional/bin"]);
   });
+  it("does not inherit proxy interception of loopback credentials or foreign loaders", () => {
+    const keys = [
+      "NODE_USE_ENV_PROXY",
+      "CODEX_HOME",
+      "CLAUDE_CONFIG_DIR",
+      "CLAUDE_CODE_OAUTH_TOKEN",
+      "ANTHROPIC_AUTH_TOKEN",
+      "OPENSSL_CONF",
+      "OPENSSL_MODULES",
+      "NODE_COMPILE_CACHE",
+      "NODE_PATH",
+      "NODE_REPL_EXTERNAL_MODULE",
+      "SSL_CERT_FILE",
+      "SSL_CERT_DIR",
+      "LD_PRELOAD",
+      "LD_LIBRARY_PATH",
+      "DYLD_INSERT_LIBRARIES",
+      "INVENTED_API_KEY",
+    ];
+    const parent: NodeJS.ProcessEnv = Object.fromEntries(
+      keys.map((key) => [key, "inherited-authority"]),
+    );
+    parent.HERDR_PANE_ID = "fixture-pane";
+    const env = desktopEnvironment(desktopProfile("/fictional/home"), parent);
+    for (const key of keys) expect(env[key]).toBeUndefined();
+    initializeDesktopEnvironment(parent, "/fictional/home");
+    for (const key of keys) expect(parent[key]).toBeUndefined();
+    expect(parent.HERDR_PANE_ID).toBe("fixture-pane");
+  });
+
   it("uses a stable exclusive namespace for each home", () => {
     const first = desktopProfile("/fictional/first");
     expect(first).toEqual(desktopProfile("/fictional/first/../first"));

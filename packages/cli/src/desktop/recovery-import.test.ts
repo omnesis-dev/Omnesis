@@ -13,6 +13,7 @@ import {
   renderSecureMarker,
   secureMarkerPath,
   type SecureMarkerKind,
+  type InstallRootKeyState,
 } from "@omnesis/core";
 import { desktopProfile } from "./environment.js";
 import { DesktopRecoveryImportService } from "./recovery-import.js";
@@ -53,7 +54,7 @@ async function fixture(options: { existing?: string | null; mode?: "home" | "joi
   let existing = options.existing ?? null;
   const mirrors = new Map<SecureMarkerKind, "required">();
   const inspect = vi.fn(() =>
-    Promise.resolve({
+    Promise.resolve<InstallRootKeyState>({
       keyName: "install-root-key-v1",
       present: existing !== null,
       valid: existing !== null && isInstallRootKey(existing),

@@ -13,6 +13,7 @@ import {
   rm,
   symlink,
   writeFile,
+  link,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -24,6 +25,7 @@ import {
   createDesktopUpdateSnapshot,
   desktopUpdateSnapshotPath,
   restoreDesktopUpdateSnapshot,
+  measureDesktopUpdateSnapshot,
 } from "./update-snapshot.js";
 
 let home: string;
@@ -60,6 +62,75 @@ async function fixture() {
   return { profile, leases, root, operationId: randomUUID() };
 }
 describe.skipIf(process.platform === "win32")("owned desktop update snapshots", () => {
+  test("read-only capacity inventory shares exact copy exclusions and counts", async () => {
+    const f = await fixture();
+    try {
+      for (const name of [
+        "exports",
+        "codex-runtimes",
+        "codex-home",
+        "codex-home-pool",
+        "codex-workspace",
+        "codex-workspace-pool",
+      ]) {
+        await mkdir(join(f.profile.configDir, name), { mode: 0o700 });
+        await writeFile(
+          join(f.profile.configDir, name, "regenerable.data"),
+          "excluded fixture payload",
+          { mode: 0o600 },
+        );
+      }
+      const measured = await measureDesktopUpdateSnapshot(f.profile, signal());
+      const snapshot = await createDesktopUpdateSnapshot(f.profile, { ...f, signal: signal() });
+      const manifest = JSON.parse(
+        await readFile(
+          join(desktopUpdateSnapshotPath(f.profile, f.operationId), "snapshot.json"),
+          "utf8",
+        ),
+      );
+      expect(measured.bytes).toBe(snapshot.bytes);
+      expect(measured.entries).toBe(manifest.entries.length);
+      expect(
+        manifest.entries.some((entry: { path: string }) => /^(?:exports|codex-)/u.test(entry.path)),
+      ).toBe(false);
+    } finally {
+      f.leases.release();
+    }
+  });
+  test("excluded SDK state never hides unresolved plaintext credentials", async () => {
+    const f = await fixture();
+    try {
+      await mkdir(join(f.profile.configDir, "codex-home"), { mode: 0o700 });
+      await writeFile(
+        join(f.profile.configDir, "codex-home", "auth.json"),
+        "invented-unprotected-auth",
+        { mode: 0o600 },
+      );
+      await expect(measureDesktopUpdateSnapshot(f.profile, signal())).rejects.toThrow(
+        "unprotected credentials",
+      );
+      await expect(
+        createDesktopUpdateSnapshot(f.profile, { ...f, signal: signal() }),
+      ).rejects.toThrow("unprotected credentials");
+      await expect(access(desktopUpdateSnapshotPath(f.profile, f.operationId))).rejects.toThrow();
+    } finally {
+      f.leases.release();
+    }
+  });
+  test("hardlinked files cannot become a recovery copy's data authority", async () => {
+    const f = await fixture();
+    try {
+      await link(join(f.profile.configDir, "omnesis.db"), join(f.profile.configDir, "shared.db"));
+      await expect(measureDesktopUpdateSnapshot(f.profile, signal())).rejects.toThrow(
+        "shared identity",
+      );
+      await expect(
+        createDesktopUpdateSnapshot(f.profile, { ...f, signal: signal() }),
+      ).rejects.toThrow("shared identity");
+    } finally {
+      f.leases.release();
+    }
+  });
   test("restores sealed identity, provider state and stores while retaining models, logs and original sources", async () => {
     const f = await fixture();
     try {

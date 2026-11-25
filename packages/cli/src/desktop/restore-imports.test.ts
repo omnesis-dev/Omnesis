@@ -4,6 +4,7 @@
 import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import {
+  realpath,
   mkdtemp,
   mkdir,
   writeFile,
@@ -14,6 +15,7 @@ import {
   symlink,
   readdir,
   chmod,
+  utimes,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -35,9 +37,10 @@ let imports: DesktopRestoreImports;
 let rootKey: string;
 const signal = new AbortController().signal;
 beforeEach(async () => {
-  dir = await mkdtemp(join(tmpdir(), "omnesis-restore-import-"));
+  dir = await realpath(await mkdtemp(join(tmpdir(), "omnesis-restore-import-")));
   profile = desktopProfile(dir);
   await mkdir(profile.configDir, { recursive: true, mode: 0o700 });
+  await writeFile(join(profile.configDir, "omnesis.json"), "{}", { mode: 0o600 });
   await writeFile(
     desktopJournalPath(profile),
     JSON.stringify({
@@ -124,6 +127,24 @@ test("allocates bounded opaque slots outside the restorable library and accepts 
     "Select the backup again",
   );
 });
+
+test.skipIf(process.platform === "win32")(
+  "accepts exact signed POSIX seconds with normalized nonnegative nanoseconds",
+  async () => {
+    const slot = await imports.prepare(signal),
+      selected = await input();
+    await utimes(selected.selection.path, new Date(-500), new Date(-500));
+    const metadata = await stat(selected.selection.path, { bigint: true });
+    expect(metadata.mtimeNs).toBeLessThan(0n);
+    const seconds = (metadata.mtimeNs - 999_999_999n) / 1_000_000_000n;
+    selected.selection.mtimeSeconds = String(seconds);
+    selected.selection.mtimeNanoseconds = String(metadata.mtimeNs - seconds * 1_000_000_000n);
+    expect(await imports.ingest(slot.importId, selected.selection, signal)).toEqual({
+      sha256: selected.sha256,
+      bytes: selected.selection.bytes,
+    });
+  },
+);
 test("seals original readable selections directly and every extracted entry, retaining original and live authority", async () => {
   const slot = await imports.prepare(signal),
     selected = await input();
@@ -133,7 +154,7 @@ test("seals original readable selections directly and every extracted entry, ret
   const spool = join(slotDirectory(slot.importId), "input.tar.enc");
   expect(isEncryptedArtifactFile(spool)).toBe(true);
   expect((await readFile(spool)).includes(Buffer.from("fixture"))).toBe(false);
-  expect(await readdir(slotDirectory(slot.importId))).toEqual(["input.tar.enc"]);
+  expect(await readdir(slotDirectory(slot.importId))).toEqual(["input.tar.enc", "owner.json"]);
   const result = await imports.unpack(slot.importId, {
     ...receipt,
     currentVersion: "0.7.8",

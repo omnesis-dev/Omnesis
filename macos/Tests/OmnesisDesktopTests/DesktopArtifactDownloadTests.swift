@@ -10,6 +10,7 @@ private final class ArtifactFixtureProtocol: URLProtocol, @unchecked Sendable {
     static var status = 200
     static var bytes = Data(repeating: 0, count: 2048)
     static var failAfterBytes = false
+    static var readableRequest = false
     override class func canInit(with request: URLRequest) -> Bool {
         true
     }
@@ -19,10 +20,19 @@ private final class ArtifactFixtureProtocol: URLProtocol, @unchecked Sendable {
     }
 
     override func startLoading() {
-        guard request.url?.host == "localhost", request.url?.path.hasSuffix("/download") == true,
+        let path = Self.readableRequest ? "/readable-download" : "/download"
+        guard request.url?.host == "localhost", request.url?.path.hasSuffix(path) == true,
               request.value(forHTTPHeaderField: "Authorization") == "Bearer fixture-token" else {
             client?.urlProtocol(self, didFailWithError: URLError(.badURL))
             return
+        }
+        if Self.readableRequest {
+            guard request.httpMethod == "POST", request.value(forHTTPHeaderField: "Content-Type") == "application/json",
+                  let body = Self.requestBody(request),
+                  (try? JSONSerialization.jsonObject(with: body)) as? [String: Bool] == ["acknowledgeUnencryptedCopy": true] else {
+                client?.urlProtocol(self, didFailWithError: URLError(.badURL))
+                return
+            }
         }
         let response = HTTPURLResponse(
             url: request.url!,
@@ -37,9 +47,41 @@ private final class ArtifactFixtureProtocol: URLProtocol, @unchecked Sendable {
     }
 
     override func stopLoading() {}
+
+    private static func requestBody(_ request: URLRequest) -> Data? {
+        if let body = request.httpBody { return body }
+        guard let stream = request.httpBodyStream else { return nil }
+        stream.open()
+        defer { stream.close() }
+        var data = Data()
+        var buffer = [UInt8](repeating: 0, count: 256)
+        while data.count <= 1024 {
+            let read = stream.read(&buffer, maxLength: buffer.count)
+            if read == 0 { return data }
+            guard read > 0 else { return nil }
+            data.append(contentsOf: buffer.prefix(read))
+        }
+        return nil
+    }
 }
 
 final class DesktopArtifactDownloadTests: XCTestCase {
+    func testReadableExportSendsExplicitConsentAndNeverAcceptsBackupDecryption() async throws {
+        let (api, backup, destination) = try fixture()
+        do {
+            try await DesktopArtifactDownloader().save(backup, api: api, destination: destination, readableExport: true) { _ in }
+            XCTFail("Backup contents must never enter readable export mode")
+        } catch {}
+        XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
+        let export = try JSONDecoder().decode(DesktopArtifact.self, from: Data(
+            #"{"id":"\#(String(repeating: "a", count: 64))","kind":"export","createdAt":"2030-01-01T00:00:00.000Z","bytes":1024,"encrypted":true,"protection":"encrypted-payloads"}"#
+                .utf8
+        ))
+        ArtifactFixtureProtocol.readableRequest = true
+        try await DesktopArtifactDownloader().save(export, api: api, destination: destination, readableExport: true) { _ in }
+        XCTAssertEqual(try Data(contentsOf: destination), ArtifactFixtureProtocol.bytes)
+    }
+
     private func fixture() throws -> (DesktopAPI, DesktopArtifact, URL) {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("omnesis-artifact-save-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -56,6 +98,7 @@ final class DesktopArtifactDownloadTests: XCTestCase {
         ArtifactFixtureProtocol.status = 200
         ArtifactFixtureProtocol.bytes = Data(repeating: 0, count: 2048)
         ArtifactFixtureProtocol.failAfterBytes = false
+        ArtifactFixtureProtocol.readableRequest = false
         return (api, artifact, root.appendingPathComponent("saved.tar"))
     }
 

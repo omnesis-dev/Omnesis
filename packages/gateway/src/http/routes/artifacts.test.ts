@@ -5,6 +5,7 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { ensureInstallRootKey, readInstallRootKey, produceEncryptedArtifact } from "@omnesis/core";
 import { SCOPE_ADMIN, SCOPE_READ, SCOPE_READ_BULK, SCOPE_WRITE_ALL } from "@omnesis/types";
 import { createDatabase } from "../../db.js";
 import { createServer } from "../../server.js";
@@ -63,6 +64,7 @@ beforeEach(async () => {
     configDir: dir,
     writeGate: directWriteGate(db),
     exportService: exports,
+    readExportRootKey: () => readInstallRootKey({ backend: "file", configDir: dir }),
   });
 });
 afterEach(async () => {
@@ -71,8 +73,8 @@ afterEach(async () => {
   db.close();
   await rm(dir, { recursive: true, force: true });
 });
-function request(path: string, token: string | null = admin.token): Promise<Response> {
-  return app.request(path, { headers: token ? { authorization: `Bearer ${token}` } : {} });
+async function request(path: string, token: string | null = admin.token): Promise<Response> {
+  return await app.request(path, { headers: token ? { authorization: `Bearer ${token}` } : {} });
 }
 async function catalog(): Promise<ArtifactCatalogItem[]> {
   const response = await request("/admin/artifacts?kind=export");
@@ -167,5 +169,94 @@ describe("authenticated artifact routes", () => {
       }
     };
     await expect(consume()).rejects.toThrow("artifact download could not finish");
+  });
+});
+
+describe("readable export approval boundary", () => {
+  async function encryptedFixture(): Promise<ArtifactCatalogItem> {
+    await ensureInstallRootKey({ backend: "file", configDir: dir });
+    await rm(join(output, "documents.jsonl"));
+    const exportId = "5e7ae74a-9fbe-4ef2-ae07-16aff733fd37";
+    const encryption = { scheme: "omnesis.encrypted-artifact.v1", key: "install-root-key-v1" };
+    const manifest = {
+      exportId,
+      version: "1.0.0",
+      format: "json",
+      startedAt: "2026-02-03T04:00:00.000Z",
+      finishedAt: "2026-02-03T04:05:06.000Z",
+      files: ["documents.jsonl.enc", "manifest.json"],
+      encryption,
+    };
+    for (const [name, text] of [
+      ["documents.jsonl", '{"content":"fictional readable route payload"}\n'],
+      ["manifest.full.json", JSON.stringify(manifest)],
+    ]) {
+      await produceEncryptedArtifact(
+        join(output, name + ".enc"),
+        { backend: "file", configDir: dir, scope: `export:${exportId}:${name}` },
+        async (body) => {
+          body.write(text);
+        },
+      );
+    }
+    await writeFile(
+      join(output, "manifest.json"),
+      JSON.stringify({
+        ...manifest,
+        files: ["documents.jsonl.enc", "manifest.full.json.enc"],
+        encryptedManifest: "manifest.full.json.enc",
+      }),
+    );
+    return (await catalog())[0]!;
+  }
+  async function post(
+    id: string,
+    body: unknown,
+    token: string | null = admin.token,
+    suffix = "",
+  ): Promise<Response> {
+    return await app.request(`/admin/artifacts/${id}/readable-download${suffix}`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        ...(token ? { authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify(body),
+    });
+  }
+  test("explicit JSON approval plus current admin authority produces only a readable export", async () => {
+    const item = await encryptedFixture();
+    expect((await post(item.id, {})).status).toBe(400);
+    expect((await post(item.id, { acknowledgeUnencryptedCopy: false })).status).toBe(400);
+    expect(
+      (await post(item.id, { acknowledgeUnencryptedCopy: true, path: "not-a-selector" })).status,
+    ).toBe(400);
+    expect(
+      (
+        await post(
+          item.id,
+          { acknowledgeUnencryptedCopy: true },
+          admin.token,
+          "?path=not-a-selector",
+        )
+      ).status,
+    ).toBe(400);
+    for (const token of [null, readToken, bulkToken, collectorToken])
+      expect(
+        (await post(item.id, { acknowledgeUnencryptedCopy: true }, token)).status,
+      ).toBeGreaterThanOrEqual(400);
+    const response = await post(item.id, { acknowledgeUnencryptedCopy: true });
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("content-disposition")).toContain("export-readable-");
+    expect(
+      Buffer.from(await response.arrayBuffer()).includes(
+        Buffer.from("fictional readable route payload"),
+      ),
+    ).toBe(true);
+    revokeToken(db, admin.id);
+    expect(
+      (await post(item.id, { acknowledgeUnencryptedCopy: true })).status,
+    ).toBeGreaterThanOrEqual(400);
   });
 });

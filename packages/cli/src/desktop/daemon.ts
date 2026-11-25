@@ -20,6 +20,12 @@ import { readDesktopInstall } from "./bootstrap.js";
 import { desktopEnvironment, type DesktopProfile } from "./environment.js";
 import { requestDesktopGateway } from "./gateway-access.js";
 import { readDesktopRetirement } from "./retirement.js";
+import { desktopRestoreBlocked } from "./restore-intent.js";
+import {
+  desktopRestoreActivationArguments,
+  type DesktopRestoreActivation,
+} from "./restore-start-arguments.js";
+import { desktopRuntimeEpoch } from "./update-state.js";
 import { desktopEpochMayStart } from "./update-admission.js";
 import { claimDesktopUpdateEpoch } from "./update-claim.js";
 import { probeDesktopRemoteProtection, watchDesktopRemoteProtection } from "./remote-protection.js";
@@ -47,6 +53,7 @@ interface DaemonDependencies {
   mayStartEpoch: typeof desktopEpochMayStart;
   claimEpoch: typeof claimDesktopUpdateEpoch;
   readInstall: typeof readDesktopInstall;
+  restoreBlocked: typeof desktopRestoreBlocked;
   retired(profile: DesktopProfile): Promise<boolean>;
   readRuntime: typeof readDesktopRuntime;
   request: typeof requestDesktopGateway;
@@ -55,7 +62,11 @@ interface DaemonDependencies {
   paired(profile: DesktopProfile): Promise<boolean>;
   pairingStamp(profile: DesktopProfile): Promise<string | null>;
   control: typeof startDesktopDaemonControl;
-  spawn(component: DesktopComponent, env: NodeJS.ProcessEnv): DesktopOwnedChild;
+  spawn(
+    component: DesktopComponent,
+    env: NodeJS.ProcessEnv,
+    restoreActivation?: DesktopRestoreActivation,
+  ): DesktopOwnedChild;
   sleep(ms: number, signal: AbortSignal): Promise<void>;
   now(): number;
 }
@@ -77,6 +88,7 @@ const defaults: DaemonDependencies = {
   mayStartEpoch: desktopEpochMayStart,
   claimEpoch: claimDesktopUpdateEpoch,
   readInstall: readDesktopInstall,
+  restoreBlocked: desktopRestoreBlocked,
   retired: async (profile) => (await readDesktopRetirement(profile)) !== null,
   readRuntime: readDesktopRuntime,
   request: requestDesktopGateway,
@@ -107,12 +119,16 @@ const defaults: DaemonDependencies = {
     return token?.trim() ? createHash("sha256").update(token.trim()).digest("hex") : null;
   },
   control: startDesktopDaemonControl,
-  spawn: (component, env) => {
+  spawn: (component, env, restoreActivation) => {
     const entry = resolveSubprocessEntry("./component-process.ts", import.meta.url);
-    const child = spawn(entry.command, [...entry.args, component], {
-      env,
-      stdio: ["ignore", "ignore", "ignore", "ipc"],
-    });
+    const child = spawn(
+      entry.command,
+      [...entry.args, component, ...desktopRestoreActivationArguments(restoreActivation)],
+      {
+        env,
+        stdio: ["ignore", "ignore", "ignore", "ipc"],
+      },
+    );
     const exited = new Promise<DesktopChildExit>((resolve, reject) => {
       child.on("error", (error) => {
         if (child.pid === undefined) reject(error);
@@ -140,13 +156,18 @@ const defaults: DaemonDependencies = {
  */
 export async function runDesktopDaemon(
   profile: DesktopProfile,
-  options: { signal: AbortSignal; onEvent?(event: DesktopDaemonEvent): void },
+  options: {
+    signal: AbortSignal;
+    restoreActivation?: DesktopRestoreActivation;
+    onEvent?(event: DesktopDaemonEvent): void;
+  },
   overrides: Partial<DaemonDependencies> = {},
 ): Promise<"stopped" | "already-running"> {
   const deps = { ...defaults, ...overrides };
   options.signal.throwIfAborted();
   if (await deps.retired(profile)) return "stopped";
-  if (!(await deps.mayStartEpoch(profile))) return "stopped";
+  if (!(await deps.mayStartEpoch(profile, desktopRuntimeEpoch(), options.restoreActivation)))
+    return "stopped";
   const install = await deps.readInstall(profile);
   if (!install || install.phase !== "configured" || !deps.encrypted(profile)) {
     throw new Error("The desktop installation must be configured and encrypted before starting");
@@ -184,7 +205,8 @@ export async function runDesktopDaemon(
   let control: Awaited<ReturnType<typeof startDesktopDaemonControl>> | undefined;
   try {
     if (await deps.retired(profile)) return "stopped";
-    if (!(await deps.claimEpoch(profile, signal))) return "stopped";
+    if (!(await deps.claimEpoch(profile, signal, desktopRuntimeEpoch(), options.restoreActivation)))
+      return "stopped";
     const current = await deps.readInstall(profile);
     if (
       !current ||
@@ -205,7 +227,7 @@ export async function runDesktopDaemon(
       while (!signal.aborted) {
         const started = deps.now();
         try {
-          await superviseHome(profile, env, signal, deps, emit);
+          await superviseHome(profile, env, signal, deps, emit, options.restoreActivation);
         } catch {
           if (signal.aborted) break;
         }
@@ -236,9 +258,10 @@ async function superviseHome(
   signal: AbortSignal,
   deps: DaemonDependencies,
   emit: (component: DesktopComponent, state: DesktopDaemonEvent["state"]) => void,
+  restoreActivation?: DesktopRestoreActivation,
 ): Promise<void> {
   emit("gateway", "starting");
-  const gateway = deps.spawn("gateway", env);
+  const gateway = deps.spawn("gateway", env, restoreActivation);
   const lifetime = new AbortController();
   const epoch = AbortSignal.any([signal, lifetime.signal]);
   void gateway.exited.then(
@@ -269,6 +292,7 @@ async function superviseHome(
       let linked = false;
       try {
         linked =
+          !(await deps.restoreBlocked(profile)) &&
           deps.encrypted(profile) &&
           accountSchema.parse(await deps.request(profile, "/admin/cloud-relay", { signal: epoch }))
             .account.linked;

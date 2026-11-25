@@ -2,8 +2,12 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { parentPort, workerData } from "node:worker_threads";
+import CipherDatabase from "better-sqlite3-multiple-ciphers";
 import { z } from "zod";
-import { reconcileRestoredMainDatabase } from "./main-database.js";
+import { reconcileRestoredMainDatabase, inspectRestoredMainDatabase } from "./main-database.js";
+import { restoreSecretEntry } from "./secret-entry.js";
+import { restoreConversationHistoryEntry } from "./conversation-history.js";
+import { restoreAuxiliaryEntry } from "./auxiliary-entry.js";
 import { reconcileRestoredMainEntry, inspectRestoredMainEntry } from "./entry-main.js";
 const key = z.instanceof(Uint8Array).refine((value) => value.byteLength === 32);
 const path = z.string().min(1).max(4096);
@@ -19,7 +23,7 @@ const entry = z
     scope: path,
     targetRootKey: z.string().min(1).max(256),
     sourceRootKey: z.string().min(1).max(256),
-    logicalName: z.enum(["omnesis.db", "omnesis.db.enc"]),
+    logicalName: path,
     sourceScope: path.nullable(),
     bytes: z
       .number()
@@ -30,6 +34,20 @@ const entry = z
   })
   .strict();
 const inputSchema = z.union([
+  z.object({ action: z.literal("secret"), targetPath: path, entry }).strict(),
+  z.object({ action: z.literal("conversation"), targetPath: path, entry }).strict(),
+  z.object({ action: z.literal("target-inspect"), sourcePath: path, sourceKey: key }).strict(),
+  z
+    .object({
+      action: z.literal("auxiliary"),
+      kind: z.enum(["watch", "analytics"]),
+      sourceCipherPath: path,
+      destinationPath: path,
+      sourceKey: key.nullable(),
+      destinationKey: key,
+      entry,
+    })
+    .strict(),
   base.extend({ action: z.literal("reconcile"), sourcePath: path, sourceKey: key }).strict(),
   base
     .extend({
@@ -58,8 +76,31 @@ if (!parentPort) throw new Error("Restore worker requires its owned parent");
 const keys: Buffer[] = [];
 try {
   const input = inputSchema.parse(workerData);
+  // V8's heap limit excludes SQLite's native page/cell allocations. This
+  // process hosts only the offline operation, so its global SQLite allocator
+  // can refuse oversized cells before the addon copies them into JS memory.
+  const budget = new CipherDatabase(":memory:");
+  try {
+    budget.pragma("hard_heap_limit = 134217728");
+  } finally {
+    budget.close();
+  }
   let result;
-  if (input.action === "entry-inspect") {
+  if (input.action === "secret") {
+    result = await restoreSecretEntry(input, new AbortController().signal);
+  } else if (input.action === "conversation") {
+    result = await restoreConversationHistoryEntry(input, new AbortController().signal);
+  } else if (input.action === "target-inspect") {
+    const sourceKey = Buffer.from(input.sourceKey);
+    keys.push(sourceKey);
+    result = inspectRestoredMainDatabase({ sourcePath: input.sourcePath, sourceKey });
+  } else if (input.action === "auxiliary") {
+    const sourceKey = input.sourceKey ? Buffer.from(input.sourceKey) : null,
+      destinationKey = Buffer.from(input.destinationKey);
+    keys.push(destinationKey);
+    if (sourceKey) keys.push(sourceKey);
+    result = await restoreAuxiliaryEntry({ ...input, sourceKey, destinationKey });
+  } else if (input.action === "entry-inspect") {
     const sourceKey = input.sourceKey ? Buffer.from(input.sourceKey) : null;
     if (sourceKey) keys.push(sourceKey);
     result = await inspectRestoredMainEntry({ ...input, sourceKey });

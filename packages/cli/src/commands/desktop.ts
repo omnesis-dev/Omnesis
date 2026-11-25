@@ -49,14 +49,25 @@ export const desktopCommand = defineCommand({
         name: "daemon",
         description: "Supervise only this native application's owned processes",
       },
-      async run() {
+      args: {
+        "restore-start": { type: "string", description: "Internal restore activation record" },
+      },
+      async run({ args }) {
         const { runDesktopDaemon } = await import("../desktop/daemon.js");
+        const { readDesktopRestoreActivationArguments } =
+          await import("../desktop/restore-start-arguments.js");
+        const restoreActivation = readDesktopRestoreActivationArguments(
+          args["restore-start"] === undefined ? [] : ["--restore-start", args["restore-start"]],
+        );
         const controller = new AbortController();
         const abort = () => controller.abort();
         process.once("SIGINT", abort);
         process.once("SIGTERM", abort);
         try {
-          await runDesktopDaemon(desktopProfile(), { signal: controller.signal });
+          await runDesktopDaemon(desktopProfile(), {
+            signal: controller.signal,
+            restoreActivation,
+          });
         } finally {
           process.off("SIGINT", abort);
           process.off("SIGTERM", abort);

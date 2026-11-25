@@ -395,6 +395,7 @@ export {
 
 export {
   clearSecretFileKeyCacheForTests,
+  invalidateSecretFileKeyCache,
   primeSecretFileKeyCache,
   secretFileScope,
   secretFileEncryptionRequired,
@@ -402,6 +403,7 @@ export {
   markSecretFileEncryptionRequiredSync,
   isEncryptedSecretFile,
   rewrapSecretFileValue,
+  rewrapSecretFileValueAsync,
   readSecretTextFile,
   decodeSecretTextFileValue,
   decodeSecretTextFileValueSync,
@@ -411,6 +413,7 @@ export {
   SecretFileRootKeyUnavailableError,
   isSecretFileRootKeyUnavailableError,
   writeSecretTextFile,
+  serializeSecretFileValue,
   writeSecretTextFileSync,
   writeSecretJsonFile,
   writeSecretJsonFileSync,
@@ -420,6 +423,8 @@ export {
   type SecretFileWriteResult,
   type SecretFileMigrationResult,
 } from "./secret-file.js";
+
+export { openSecretFileValueAsync, sealSecretFileValueAsync } from "./secret-file-values.js";
 
 export {
   ENCRYPTED_ARTIFACT_SUFFIX,
@@ -480,6 +485,7 @@ export {
   readMarkerKeyringState,
   renderSecureMarker,
   secureMarkerPath,
+  secureMarkerStateKeyName,
   setMarkerKeyringState,
   verifySecureMarker,
   writeSecureMarker,
@@ -488,9 +494,11 @@ export {
 export type { SecureMarkerKind, SecureMarkerOptions, SecureMarkerStatus } from "./secure-marker.js";
 export {
   createRecoveryEnvelope,
+  createRecoveryEnvelopeAsync,
   generateRecoveryCode,
   normalizeRecoveryCode,
   openRecoveryEnvelope,
+  openRecoveryEnvelopeAsync,
   parseRecoveryEnvelope,
   recoveryEnvelopePath,
   RecoveryCodeInvalidError,
@@ -655,6 +663,7 @@ export {
   SecretStoreUnavailableError,
   PassphraseMismatchError,
   createSecretStore,
+  confirmMacosKeychainEntriesAbsent,
   parseSecretStoreBackend,
   resolveSecretStoreService,
   inspectInstallRootKey,
@@ -1375,6 +1384,8 @@ export {
   CODEX_POOL_WORKSPACE_DIR,
   CODEX_WORKSPACE_DIR,
   codexPaths,
+  codexKeyringAccount,
+  CODEX_KEYRING_SERVICE,
   CODEX_RUNTIME_STORE_DIR,
 } from "./codex-paths.js";
 
@@ -1431,6 +1442,15 @@ export { SPEECH_TO_SPEECH_MODEL, speechToSpeechAssignment } from "./models/speec
 export { CLI_COMMAND_ENV, operatorCommand } from "./operator-command.js";
 export { nodeCommandInvocation, type NodeCommandInvocation } from "./node-command.js";
 export { resolveNpmInvocation, type ResolveNpmInvocationOptions } from "./node-command.js";
+export {
+  managedDesktopDataOperationInvocation,
+  managedDesktopDataConsumerInvocation,
+  assertManagedDesktopDataAuthority,
+  managedRuntimeSubprocessStdio,
+  type ManagedDesktopDataScope,
+  type ManagedDesktopDataContext,
+  type ManagedDesktopDataPurpose,
+} from "./node-command.js";
 export { killWindowsProcessTree, terminateChildProcess } from "./child-termination.js";
 export { installParentShutdownHandler, requestChildShutdown } from "./parent-shutdown.js";
 export { spawnOwnedChildProcess, type OwnedChildProcess } from "./owned-child-process.js";
@@ -1456,6 +1476,7 @@ export type { ConnectionPath } from "./connection-path.js";
 
 export { execWindowsJob } from "./windows-job-exec.js";
 export { ownedProcessCleanupReceipt } from "./owned-process-cleanup.js";
+export { runOpenSslWithPrivateInput } from "./openssl-private-input.js";
 export {
   OwnedProcessShutdownFence,
   type OwnedProcessCleanup,

@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { randomUUID } from "node:crypto";
-import { mkdtemp, mkdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -18,7 +18,7 @@ afterEach(async () => {
 });
 
 async function fixture() {
-  const home = await mkdtemp(join(tmpdir(), "omnesis-desktop-bootstrap-"));
+  const home = await realpath(await mkdtemp(join(tmpdir(), "omnesis-desktop-bootstrap-")));
   roots.push(home);
   const profile = desktopProfile(home);
   const controller = new AbortController();

@@ -10,6 +10,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import { withDesktopInstallLease } from "./bootstrap.js";
 import { desktopProfile } from "./environment.js";
 import { desktopRootIdentity } from "./retirement.js";
+import { finishDesktopUpdateSnapshot } from "./update-data-operation.js";
 import { acquireDesktopRuntimeLeases } from "./runtime-leases.js";
 import { desktopEpochMayStart } from "./update-admission.js";
 import { desktopUpdateConfirmation, handoffDesktopUpdate } from "./update-handoff.js";
@@ -32,6 +33,7 @@ async function fixture() {
   await writeFile(join(profile.configDir, "omnesis.db"), "invented sealed store bytes", {
     mode: 0o600,
   });
+  await writeFile(join(profile.configDir, "omnesis.json"), "{}", { mode: 0o600 });
   const state: DesktopUpdateState = {
     format: 1,
     owner: "omnesis-desktop",
@@ -56,6 +58,15 @@ async function fixture() {
     profile,
     state,
     controller,
+    executeSnapshot: (
+      profile: ReturnType<typeof desktopProfile>,
+      id: string,
+      signal: AbortSignal,
+    ) =>
+      finishDesktopUpdateSnapshot(profile, id, signal, {
+        authorize: () => {},
+        stop: async () => false,
+      }),
     options: {
       confirmationId: desktopUpdateConfirmation(state),
       currentEpoch: state.oldEpoch,
@@ -75,15 +86,11 @@ describe.skipIf(process.platform === "win32")("desktop update handoff", () => {
           "utf8",
         ),
       ).toBe("invented sealed store bytes");
-      await expect(
-        acquireDesktopRuntimeLeases(f.profile, {
-          expectedRoot: state.root,
-          signal: f.options.signal,
-        }),
-      ).rejects.toThrow();
+      expect(await desktopEpochMayStart(f.profile, state.oldEpoch)).toBe(false);
     });
     const result = await handoffDesktopUpdate(f.profile, f.options, {
       stop: async () => false,
+      executeSnapshot: f.executeSnapshot,
       openInstaller,
     });
     expect(result.phase).toBe("installer-opened");
@@ -97,7 +104,11 @@ describe.skipIf(process.platform === "win32")("desktop update handoff", () => {
     const openInstaller = vi.fn();
     try {
       await expect(
-        handoffDesktopUpdate(f.profile, f.options, { stop: async () => false, openInstaller }),
+        handoffDesktopUpdate(f.profile, f.options, {
+          stop: async () => false,
+          executeSnapshot: f.executeSnapshot,
+          openInstaller,
+        }),
       ).rejects.toThrow();
       expect(openInstaller).not.toHaveBeenCalled();
       expect((await readDesktopUpdateState(f.profile))?.phase).toBe("recovery-required");
@@ -112,6 +123,7 @@ describe.skipIf(process.platform === "win32")("desktop update handoff", () => {
     await expect(
       handoffDesktopUpdate(f.profile, f.options, {
         stop: async () => false,
+        executeSnapshot: f.executeSnapshot,
         openInstaller: async () => {
           throw new Error("fixture native refusal");
         },

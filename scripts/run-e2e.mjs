@@ -442,6 +442,39 @@ export function buildE2EPhases(vitestEntry, args, workerArgs) {
   ];
 }
 
+/** Account onboarding owns DNS/trust only inside its admitted isolated container. */
+export function accountContainerPhases(phases, args, env = process.env) {
+  if (env.OMNESIS_DESKTOP_ACCOUNT_CONTAINER_NONCE || requestsVitestInformation(args)) return phases;
+  const file = "packages/collector/src/e2e/desktop-account.e2e.test.ts";
+  const filters = parseCLI(["vitest", "run", ...args]).filter;
+  const selected = filters.length === 0 || filters.some((filter) => file.includes(filter));
+  const onlyAccount =
+    filters.length > 0 &&
+    filters.every((filter) => filter.includes("desktop-account") && file.includes(filter));
+  const regular = onlyAccount
+    ? []
+    : phases.flatMap((phase) => {
+        const filtered = phase.args.filter((arg) => arg !== file);
+        if (phase.args.includes(file) && !filtered.some((arg) => arg.endsWith(".e2e.test.ts")))
+          return [];
+        return [{ ...phase, args: [...filtered, `--exclude=${file}`] }];
+      });
+  return [
+    ...regular,
+    ...(selected
+      ? [
+          {
+            label: "isolated desktop account onboarding",
+            container: true,
+            args: [
+              join(dirname(fileURLToPath(import.meta.url)), "desktop/test-account-container.mjs"),
+            ],
+          },
+        ]
+      : []),
+  ];
+}
+
 async function runVitest(vitestArgs, env) {
   return await runCheckCommand(process.execPath, vitestArgs, {
     cwd: join(dirname(fileURLToPath(import.meta.url)), ".."),
@@ -574,10 +607,10 @@ export async function runE2E(args = process.argv.slice(2), env = process.env) {
       cpuCount: availableParallelism(),
     });
     const explicitWorkerArg = hasSafeExplicitWorkerArg(args);
-    const phases = buildE2EPhases(
-      vitestEntry,
+    const phases = accountContainerPhases(
+      buildE2EPhases(vitestEntry, args, explicitWorkerArg ? [] : [`--maxWorkers=${workers}`]),
       args,
-      explicitWorkerArg ? [] : [`--maxWorkers=${workers}`],
+      env,
     );
     process.stderr.write(
       `E2E file workers: ${explicitWorkerArg ? "explicit CLI override" : workers} (effective memory ${Math.floor(memory.availableBytes / GIB)} GiB available / ${Math.floor(memory.totalBytes / GIB)} GiB total)\n`,
@@ -602,10 +635,13 @@ export async function runE2E(args = process.argv.slice(2), env = process.env) {
       update({ state: "running", phase: phase.label, phaseStartedAt: Date.now() });
       process.stderr.write(`Running ${phase.label}\n`);
       const [entry, command, ...testArgs] = phase.args;
-      const phaseExitCode = await runVitest([entry, command, ...progressArgs(testArgs)], {
-        ...progressEnv,
-        OMNESIS_CHECK_PHASE: phase.label,
-      });
+      const phaseExitCode = await runVitest(
+        phase.container ? phase.args : [entry, command, ...progressArgs(testArgs)],
+        {
+          ...progressEnv,
+          OMNESIS_CHECK_PHASE: phase.label,
+        },
+      );
       if (exitCode === 0 && phaseExitCode !== 0) exitCode = phaseExitCode;
     }
     update({ state: exitCode === 0 ? "passed" : "failed", exitCode, finishedAt: Date.now() });

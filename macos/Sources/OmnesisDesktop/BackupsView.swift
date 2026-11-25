@@ -21,6 +21,7 @@ struct DesktopBackupsView: View {
     @State private var downloadedBytes: Int64 = 0
     @State private var savedURL: URL?
     @State private var readableConsent: DesktopArtifact?
+    @State private var saveReadableExport = false
     private let downloader = DesktopArtifactDownloader()
     var body: some View {
         Form {
@@ -40,7 +41,9 @@ struct DesktopBackupsView: View {
                     }
                 }
                 Button(kind == "backup" ? "Create backup" : "Create export") { Task { await create() } }
-                    .disabled(loading || saving != nil || (kind == "backup" ? backupStatus?.running : exportStatus?.running) == true)
+                    .disabled(store
+                        .api == nil || loading || saving != nil || (kind == "backup" ? backupStatus?.running : exportStatus?.running) ==
+                        true)
                 generation(backupStatus, label: "Backup")
                 generation(exportStatus, label: "Export")
             }
@@ -56,9 +59,20 @@ struct DesktopBackupsView: View {
                         Text(ByteCountFormatter.string(fromByteCount: artifact.bytes, countStyle: .file) + " of stored contents")
                         Text(artifact.protectionLabel).font(.callout).foregroundStyle(.secondary)
                         Button("Save a copy…") {
+                            saveReadableExport = false
                             if artifact.requiresReadableContentConsent { readableConsent = artifact }
                             else { chooseDestination(artifact) }
                         }.disabled(saving != nil || !artifact.valid)
+                        if artifact.kind == "export", artifact.encrypted {
+                            Button("Save readable export…") {
+                                saveReadableExport = true
+                                readableConsent = artifact
+                            }.disabled(saving != nil || !artifact.valid)
+                            Text(
+                                "Readable exports contain JSON Lines or CSV files inside a TAR archive. Anyone with the saved file can read its contents."
+                            )
+                            .font(.callout).foregroundStyle(.secondary)
+                        }
                     }
                 }
                 if artifacts.isEmpty { Text("No completed backups or exports are available.").foregroundStyle(.secondary) }
@@ -84,17 +98,19 @@ struct DesktopBackupsView: View {
                 }
             }
             .confirmationDialog(
-                "Save a copy with readable contents?",
+                saveReadableExport ? "Save a readable data export?" : "Save a copy with readable contents?",
                 isPresented: Binding(get: { readableConsent != nil }, set: { if !$0 { readableConsent = nil } })
             ) {
                 if let artifact = readableConsent {
                     Button("Choose where to save") { readableConsent = nil
-                        chooseDestination(artifact)
+                        chooseDestination(artifact, readableExport: saveReadableExport)
                     }
                 }
             } message: {
                 Text(
-                    "Some stored contents are not encrypted. Anyone with this downloaded file may be able to read them. Choose a safe location. Saving does not change their protection."
+                    saveReadableExport ?
+                        "This creates a readable copy of private information in JSON Lines or CSV files. Anyone with the saved archive can read it without a recovery code. Choose a safe location. The library keeps its stored files encrypted." :
+                        "Some stored contents are not encrypted. Anyone with this downloaded file may be able to read them. Choose a safe location. Saving does not change their protection."
                 )
             }
             .onDisappear { download?.cancel() }
@@ -140,10 +156,11 @@ struct DesktopBackupsView: View {
         if let operationError { error = operationError }
     }
 
-    private func chooseDestination(_ artifact: DesktopArtifact) {
+    private func chooseDestination(_ artifact: DesktopArtifact, readableExport: Bool = false) {
         guard let api = store.api, artifact.valid, saving == nil else { return }
         let panel = NSSavePanel()
-        panel.nameFieldStringValue = artifact.suggestedFilename
+        panel.nameFieldStringValue = readableExport ? artifact.suggestedFilename
+            .replacingOccurrences(of: ".tar", with: "-readable.tar") : artifact.suggestedFilename
         panel.allowedContentTypes = [UTType(filenameExtension: "tar") ?? .data]
         guard panel.runModal() == .OK, let destination = panel.url else { return }
         let operationID = UUID()
@@ -154,7 +171,7 @@ struct DesktopBackupsView: View {
         error = nil
         download = Task {
             do {
-                try await downloader.save(artifact, api: api, destination: destination) { count in
+                try await downloader.save(artifact, api: api, destination: destination, readableExport: readableExport) { count in
                     Task { @MainActor in if downloadID == operationID { downloadedBytes = count } }
                 }
                 savedURL = destination

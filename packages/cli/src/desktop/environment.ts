@@ -2,14 +2,30 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { existsSync } from "node:fs";
-import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
+import { desktopProfileForGeneration, readDesktopGeneration } from "./generation.js";
 
 const inheritedCredentialKeys = new Set([
   "NODE_OPTIONS",
   "NODE_EXTRA_CA_CERTS",
   "NODE_TLS_REJECT_UNAUTHORIZED",
+  "NODE_USE_ENV_PROXY",
+  "NODE_USE_SYSTEM_CA",
+  "OPENSSL_CONF",
+  "OPENSSL_MODULES",
+  "NODE_COMPILE_CACHE",
+  "CODEX_HOME",
+  "CLAUDE_CONFIG_DIR",
+  "CLAUDE_CODE_OAUTH_TOKEN",
+  "ANTHROPIC_AUTH_TOKEN",
+
+  "NODE_PATH",
+  "NODE_REPL_EXTERNAL_MODULE",
+  "SSL_CERT_FILE",
+  "SSL_CERT_DIR",
+  "LD_PRELOAD",
+  "LD_LIBRARY_PATH",
   "OPENAI_API_KEY",
   "ANTHROPIC_API_KEY",
   "GOOGLE_API_KEY",
@@ -25,12 +41,7 @@ export interface DesktopProfile {
 /** The native application never adopts the ordinary CLI's mutable state. */
 export function desktopProfile(home: string = homedir()): DesktopProfile {
   const configDir = resolve(home, "Library", "Application Support", "Omnesis Desktop");
-  const identity = createHash("sha256").update(configDir).digest("hex");
-  return {
-    configDir,
-    instance: `desktop-${identity.slice(0, 16)}`,
-    secretService: `dev.omnesis.desktop.${identity}`,
-  };
+  return desktopProfileForGeneration(configDir, readDesktopGeneration(configDir)?.generation);
 }
 
 /** Guarded env-node/npm shims precede the raw Node binary in complete packaged runtimes. */
@@ -42,15 +53,22 @@ export function desktopExecutableDirectories(nodePath: string = process.execPath
     : [runtime];
 }
 
+function inheritedAuthority(key: string): boolean {
+  return (
+    key.startsWith("OMNESIS_") ||
+    key.startsWith("DYLD_") ||
+    key.endsWith("_API_KEY") ||
+    inheritedCredentialKeys.has(key)
+  );
+}
+
 /** Curated child environments cannot inherit a headless install's credentials or paths. */
 export function desktopEnvironment(
   profile: DesktopProfile,
   parent: NodeJS.ProcessEnv = process.env,
 ): NodeJS.ProcessEnv {
   const env = Object.fromEntries(
-    Object.entries(parent).filter(
-      ([key]) => !key.startsWith("OMNESIS_") && !inheritedCredentialKeys.has(key),
-    ),
+    Object.entries(parent).filter(([key]) => !inheritedAuthority(key)),
   );
   return {
     ...env,
@@ -67,6 +85,7 @@ export function desktopEnvironment(
     OMNESIS_SERVICE_INSTANCE: profile.instance,
     OMNESIS_BIND: "127.0.0.1",
     OMNESIS_REQUIRE_ENCRYPTED_STORAGE: "1",
+    OMNESIS_DESKTOP_MANAGED: "1",
     // The gateway port is selected and persisted by the owned runtime. An extra
     // listener must not accidentally claim the headless installation's port.
     OMNESIS_LOCAL_MCP_PORT: "0",
@@ -80,7 +99,7 @@ export function initializeDesktopEnvironment(
   const profile = desktopProfile(home);
   const isolated = desktopEnvironment(profile, env);
   for (const key of Object.keys(env)) {
-    if (key.startsWith("OMNESIS_") || inheritedCredentialKeys.has(key)) delete env[key];
+    if (inheritedAuthority(key)) delete env[key];
   }
   Object.assign(env, isolated);
   return profile;

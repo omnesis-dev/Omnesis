@@ -3,11 +3,12 @@
 
 import { createHash } from "node:crypto";
 import { withDesktopInstallLease } from "./bootstrap.js";
+import { assertDesktopConfigSecretsProtected } from "./config-protection.js";
 import { stopDesktopDaemon } from "./daemon-control.js";
 import { desktopRestoreBlocked } from "./restore-intent.js";
+import { acquireDesktopRestoreSessionLease } from "./restore-owner.js";
 import { desktopRootIdentity, readDesktopRetirement, sameDesktopRoot } from "./retirement.js";
-import { acquireDesktopRuntimeLeases } from "./runtime-leases.js";
-import { createDesktopUpdateSnapshot, verifyDesktopUpdateSnapshot } from "./update-snapshot.js";
+import { runDesktopUpdateDataOperation } from "./update-data-operation.js";
 import {
   readDesktopUpdateState,
   writeDesktopUpdateState,
@@ -19,17 +20,17 @@ import type { DesktopProfile } from "./environment.js";
 export function desktopUpdateConfirmation(state: DesktopUpdateState): string {
   return createHash("sha256").update(JSON.stringify(state)).digest("hex");
 }
-
 interface HandoffOperations {
   stop: typeof stopDesktopDaemon;
-  reserve: typeof acquireDesktopRuntimeLeases;
-  snapshot: typeof createDesktopUpdateSnapshot;
-  verifySnapshot: typeof verifyDesktopUpdateSnapshot;
+  executeSnapshot(
+    profile: DesktopProfile,
+    operationId: string,
+    signal: AbortSignal,
+  ): Promise<DesktopUpdateState>;
   /** Native rechecks its signed artifact receipt and opens only the verified installer volume. */
   openInstaller(state: DesktopUpdateState, signal: AbortSignal): Promise<void>;
 }
-
-/** No old or candidate store can open between the durable stop intent and the completed snapshot. */
+/** The durable intent fences startup while ownership moves from controller to the native EX host. */
 export async function handoffDesktopUpdate(
   profile: DesktopProfile,
   options: { confirmationId: string; currentEpoch: string; signal: AbortSignal },
@@ -37,61 +38,70 @@ export async function handoffDesktopUpdate(
 ): Promise<DesktopUpdateState> {
   const deps: HandoffOperations = {
     stop: stopDesktopDaemon,
-    reserve: acquireDesktopRuntimeLeases,
-    snapshot: createDesktopUpdateSnapshot,
-    verifySnapshot: verifyDesktopUpdateSnapshot,
+    executeSnapshot: (profile, id, signal) =>
+      runDesktopUpdateDataOperation(profile, id, "update-snapshot", signal),
     ...operations,
   };
-  return withDesktopInstallLease(profile, options.signal, async () => {
-    if (await readDesktopRetirement(profile))
-      throw new Error("This installation has retired; finish removal before updating");
-    if (await desktopRestoreBlocked(profile))
-      throw new Error("Finish restoring the pending backup before updating");
-    let state = await readDesktopUpdateState(profile);
-    if (!state || desktopUpdateConfirmation(state) !== options.confirmationId)
-      throw new Error("The reviewed update changed. Review it again before installing");
-    if (state.oldEpoch !== options.currentEpoch)
-      throw new Error("Prepare this update from the currently active application");
-    if (state.phase !== "verified")
-      throw new Error("This update already started. Use its explicit recovery choices");
-    if (!sameDesktopRoot(await desktopRootIdentity(profile), state.root))
-      throw new Error("The managed library folder changed before updating");
-    options.signal.throwIfAborted();
-    state = { ...state, phase: "stopping" };
-    await writeDesktopUpdateState(profile, state);
-    let leases: Awaited<ReturnType<typeof acquireDesktopRuntimeLeases>> | undefined;
-    try {
-      const stopped = await deps.stop(profile, options.signal);
-      // A missing listener is not proof. Actual supervisor, component and store leases are required.
-      leases = await deps.reserve(profile, {
-        expectedRoot: state.root,
-        signal: options.signal,
-        runtimeWaitMs: stopped ? 5_000 : 0,
-      });
-      const backup = await deps.snapshot(profile, {
-        operationId: state.operationId,
-        leases,
-        signal: options.signal,
-      });
-      await deps.verifySnapshot(profile, {
-        operationId: state.operationId,
-        manifestSha256: backup.manifestSha256,
-        signal: options.signal,
-      });
-      options.signal.throwIfAborted();
-      state = { ...state, phase: "backed-up", backup };
-      await writeDesktopUpdateState(profile, state);
+  const session = await acquireDesktopRestoreSessionLease(profile, options.signal);
+  let operationId: string | undefined;
+  try {
+    const requested = await withDesktopInstallLease(profile, options.signal, async () => {
+      if ((await readDesktopRetirement(profile)) || (await desktopRestoreBlocked(profile)))
+        throw new Error("Finish pending removal or backup recovery before updating");
+      const state = await readDesktopUpdateState(profile);
+      if (!state || desktopUpdateConfirmation(state) !== options.confirmationId)
+        throw new Error("The reviewed update changed. Review it again before installing");
+      if (state.oldEpoch !== options.currentEpoch)
+        throw new Error("Prepare this update from the currently active application");
+      if (state.phase !== "verified")
+        throw new Error("This update already started. Use its explicit recovery choices");
+      if (!sameDesktopRoot(await desktopRootIdentity(profile), state.root))
+        throw new Error("The managed library folder changed before updating");
+      await assertDesktopConfigSecretsProtected(profile, options.signal);
+      const stopping = { ...state, phase: "stopping" as const };
+      await writeDesktopUpdateState(profile, stopping);
+      operationId = state.operationId;
+      await deps.stop(profile, options.signal);
+      return stopping;
+    });
+    // The host independently validates this exact intent and acquires its own install/store leases.
+    await deps.executeSnapshot(profile, requested.operationId, options.signal);
+    return await withDesktopInstallLease(profile, options.signal, async () => {
+      const state = await readDesktopUpdateState(profile);
+      if (
+        !state ||
+        state.operationId !== requested.operationId ||
+        !sameDesktopRoot(await desktopRootIdentity(profile), state.root) ||
+        (await readDesktopRetirement(profile)) ||
+        (await desktopRestoreBlocked(profile))
+      )
+        throw new Error("The update handoff changed before installer presentation");
+      // A deliberately launched candidate may have claimed the verified backup first.
+      if (state.phase === "candidate-started" || state.phase === "complete") return state;
+      if (state.phase !== "backed-up" || !state.backup)
+        throw new Error("The update host did not publish a verified recovery snapshot");
       await deps.openInstaller(state, options.signal);
       options.signal.throwIfAborted();
-      state = { ...state, phase: "installer-opened" };
-      await writeDesktopUpdateState(profile, state);
-      return state;
-    } catch (error) {
-      // Do not restart or clear the fence after cancellation, failed drain, or a native handoff error.
-      await writeDesktopUpdateState(profile, { ...state, phase: "recovery-required" });
-      throw error;
-    } finally {
-      leases?.release();
+      const opened = { ...state, phase: "installer-opened" as const };
+      await writeDesktopUpdateState(profile, opened);
+      return opened;
+    });
+  } catch (error) {
+    if (operationId) {
+      await withDesktopInstallLease(profile, AbortSignal.timeout(5_000), async () => {
+        const state = await readDesktopUpdateState(profile);
+        if (
+          state &&
+          state.operationId === operationId &&
+          ["stopping", "backed-up", "installer-opened"].includes(state.phase)
+        )
+          await writeDesktopUpdateState(profile, { ...state, phase: "recovery-required" });
+      }).catch(() => {
+        /* The original durable stop intent remains fenced if recovery publication cannot finish. */
+      });
     }
-  });
+    throw error;
+  } finally {
+    session.release();
+  }
 }
