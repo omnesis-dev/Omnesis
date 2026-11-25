@@ -144,7 +144,6 @@ class NotesRepository(
         audio: VoiceNoteAudio? = null,
         taskId: String? = null,
         relayed: RelayedCapture? = null,
-        recordingId: String? = null,
     ): CaptureOutcome {
         val normalizedText = text.trim()
         if (audio == null) require(normalizedText.isNotEmpty()) { "Note text must not be empty" }
@@ -177,7 +176,6 @@ class NotesRepository(
                 audio = ownedAudio,
                 language = noteLanguage,
                 zone = capturedZone,
-                recordingId = recordingId,
             )
             return CaptureOutcome.Queued(QueueReason.UNPAIRED)
         }
@@ -194,7 +192,6 @@ class NotesRepository(
                         taskId = taskId,
                         capturedTimeZoneId = capturedZone?.id,
                         capturedUtcOffsetSeconds = capturedZone?.utcOffsetSeconds,
-                        recordingId = recordingId,
                     ),
                     ownedAudio.file,
                     ownedAudio.mimeType,
@@ -225,7 +222,6 @@ class NotesRepository(
                             audio = ownedAudio,
                             language = noteLanguage,
                             zone = capturedZone,
-                            recordingId = recordingId,
                         )
                         return queued(error.queueReason())
                     }
@@ -371,7 +367,6 @@ class NotesRepository(
                         taskId = note.taskId,
                         capturedTimeZoneId = note.zone?.id,
                         capturedUtcOffsetSeconds = note.zone?.utcOffsetSeconds,
-                        recordingId = note.recordingId,
                     ),
                     audio.file,
                     audio.mimeType,
@@ -429,9 +424,8 @@ class NotesRepository(
         language: String? = null,
         taskId: String? = null,
         zone: CaptureZone? = null,
-        recordingId: String? = null,
     ) {
-        store.insert(noteId, text, capturedAt, surface, lastAttemptAt, lastFailure, audio, language, taskId, zone, recordingId)
+        store.insert(noteId, text, capturedAt, surface, lastAttemptAt, lastFailure, audio, language, taskId, zone)
         refreshPending()
     }
 

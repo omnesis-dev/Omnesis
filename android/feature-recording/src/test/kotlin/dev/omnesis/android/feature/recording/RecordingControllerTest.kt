@@ -7,9 +7,6 @@ import java.io.File
 import java.nio.file.Files
 import java.time.ZoneId
 import java.util.Locale
-import java.util.Collections
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -39,61 +36,6 @@ class RecordingControllerTest {
     )
 
     private fun chunkFile(name: String) = File(root, name).apply { writeBytes(byteArrayOf(1, 2, 3)) }
-
-    /** File chunk [seq] of [sessionId], a minute long from the session's start, with speech or not. */
-    private fun minute(sessionId: String, seq: Int, speech: Boolean) {
-        val file = chunkFile(ChunkPolicy.fileName(seq))
-        if (!speech) verdicts[file.name] = ChunkSpeech(SpeechVerdict.NoSpeech, speechAtEnd = false)
-        controller.chunkClosed(sessionId, RecordedChunk(seq, now + seq * 60_000L, 60_000, file, interrupted = false))
-    }
-
-    @Test fun anAmbientEpisodeIsOverAfterThreeMinutesWithoutSpeech() = runTest {
-        val over = Collections.synchronizedList(mutableListOf<String>())
-        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { controller.episodesOver.collect { over += it } }
-        val active = controller.begin(null, ambient = true)!!
-        assertTrue(active.ambient)
-        assertTrue(outbox.sessionsById[active.sessionId]!!.ambient)
-
-        minute(active.sessionId, 0, speech = true)
-        minute(active.sessionId, 1, speech = false)
-        minute(active.sessionId, 2, speech = true) // the conversation picks up again
-        minute(active.sessionId, 3, speech = false)
-        minute(active.sessionId, 4, speech = false)
-        controller.flush()
-        assertTrue(over.isEmpty())
-
-        minute(active.sessionId, 5, speech = false) // three quiet minutes since minute 2 ended
-        minute(active.sessionId, 6, speech = false)
-        controller.flush()
-        assertEquals(listOf(active.sessionId), over)
-    }
-
-    @Test fun anEpisodeThatNeverHeardSpeechIsOverToo() = runTest {
-        val over = Collections.synchronizedList(mutableListOf<String>())
-        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { controller.episodesOver.collect { over += it } }
-        val active = controller.begin(null, ambient = true)!!
-        (0..2).forEach { minute(active.sessionId, it, speech = false) }
-        controller.flush()
-        assertEquals(listOf(active.sessionId), over)
-    }
-
-    @Test fun aRecordingTheOwnerStartedIsNeverAnEpisode() = runTest {
-        val over = Collections.synchronizedList(mutableListOf<String>())
-        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { controller.episodesOver.collect { over += it } }
-        val active = controller.begin(null)!!
-        (0..5).forEach { minute(active.sessionId, it, speech = false) }
-        controller.flush()
-        assertTrue(over.isEmpty())
-        assertFalse(outbox.sessionsById[active.sessionId]!!.ambient)
-    }
-
-    @Test fun aMarkReachesTheRecorderOnlyWhileOneIsSet() {
-        assertFalse(controller.markMoment())
-        controller.setMarker { true }
-        assertTrue(controller.markMoment())
-        controller.setMarker(null)
-        assertFalse(controller.markMoment())
-    }
 
     @Test fun opensASessionWithTheDevicesTimeZoneAndLanguage() = runTest {
         val active = controller.begin("  Design sync  ")!!
@@ -191,22 +133,11 @@ class RecordingControllerTest {
         assertFalse((controller.state.value as RecordingState.Active).micLost)
     }
 
-    @Test fun aPauseTheUserMakesDuringALostInputBecomesTheirs() = runTest {
+    @Test fun aPauseTheUserMakesDuringALostMicrophoneBecomesTheirs() = runTest {
         controller.begin("Standup")!!
         controller.onPaused(micLost = true)
         controller.onPaused()
         assertFalse((controller.state.value as RecordingState.Active).micLost)
-    }
-
-    @Test fun aStretchTheInputSentNothingForKeepsItsLength() = runTest {
-        val active = controller.begin("Standup")!!
-        val gap = File(root, "gap.m4a").apply { writeBytes(ByteArray(0)) }
-        val failed = File(root, "failed.m4a").apply { writeBytes(ByteArray(0)) }
-        controller.chunkClosed(active.sessionId, RecordedChunk(0, now, 5_000, gap, interrupted = false, silence = true))
-        controller.chunkClosed(active.sessionId, RecordedChunk(1, now + 5_000, 4_000, failed, interrupted = false))
-        controller.flush()
-
-        assertEquals(listOf(5_000L to true, 0L to true), outbox.pendingChunks(active.sessionId).map { it.durationMs to it.silent })
     }
 
     @Test fun tracksElapsedTimeAcrossAPause() = runTest {
