@@ -455,6 +455,11 @@ describe("the summary", () => {
       await act(async () => (host.querySelector(`button[aria-label="${label}"]`) as HTMLButtonElement).click());
       expect(router.navigate).toHaveBeenLastCalledWith(page);
     }
+    // Network priority belongs to the connectivity section, with the same row label as its neighbours.
+    const connectivity = host.querySelectorAll(".remote-access-row")[1];
+    expect(connectivity.querySelector(".remote-access-first .remote-access-item-title")?.textContent).toBe("Network priority");
+    expect(connectivity.querySelector(".remote-access-first .remote-access-mark")?.textContent).toBe("i");
+    expect(connectivity.querySelector(".remote-access-first legend")).toBeNull();
     // Both the device and the relay can answer: the order is chosen in place.
     await toggle('input[name="remote-access-first"][value="relay"]', true);
     expect(calls("remote")).toEqual([["remote", { first: "relay" }]]);
@@ -764,11 +769,11 @@ describe("both", () => {
     gateway.tailscale = tailscaleConnected();
     savedSetup("connection");
     await mount(FLAGS.both);
-    expect(text()).toContain("When both can answer, try first");
-    // A paired device keeps the address it got, so the order is said to apply from now on.
-    expect(text()).toContain(
-      "Applies to devices that pair from now on. A device paired earlier keeps the address it got then; pair it again to switch.",
-    );
+    const priority = host.querySelector('[role="radiogroup"][aria-labelledby="remote-access-first-label"]')!;
+    expect(priority.querySelector("#remote-access-first-label")?.textContent).toBe("Network priority");
+    expect(priority.querySelectorAll('input[type="radio"]')).toHaveLength(2);
+    expect(text()).not.toContain("Your home network always comes first.");
+    expect(text()).not.toContain("Applies to devices that pair from now on.");
     await toggle('input[name="remote-access-first"][value="relay"]', true);
     expect(calls("remote")).toEqual([["remote", { first: "relay" }]]);
     expect(isChecked(host.querySelector('input[name="remote-access-first"][value="relay"]'))).toBe(true);

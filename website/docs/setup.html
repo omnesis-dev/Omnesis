@@ -417,11 +417,10 @@
             <a href="#public-domain">your own domain or reverse proxy</a>. Each line shows its
             address once it is on, and whether that address is public on the Internet. When the
             gateway's own Tailscale device and the relay are both on,
-            <strong>When both can answer, try first</strong> chooses which of the two addresses a
-            device is given when it pairs with a code: Tailscale keeps its traffic on your tailnet;
-            the relay works on every device with nothing to install. A paired device keeps the
-            address it got, so the choice applies to devices that pair from then on; pair a device
-            again to switch it.
+            <strong>Network priority</strong> chooses which of the two addresses a device is given
+            when it pairs with a code: Tailscale keeps its traffic on your tailnet; the relay works
+            on every device with nothing to install. A paired device keeps the address it got, so
+            the choice applies to devices that pair from then on; pair a device again to switch it.
           </li>
           <li>
             <strong>MCP</strong>: where agents reach the gateway's MCP server, in three lines:
