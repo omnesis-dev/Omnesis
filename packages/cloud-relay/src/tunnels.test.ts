@@ -405,3 +405,340 @@ test("a gateway is online only while its tunnel is open, and closing its account
   expect(broker.online("account")).toBe(false);
   broker.close();
 });
+
+function sendRenewal(control: Control, session = "fictional-routing-session"): void {
+  control.emit("message", Buffer.from(JSON.stringify({ type: "renew", version: 1, session })));
+}
+
+test("renewal is optional and independent of channel rejection in the ready frame", () => {
+  const broker = new TunnelBroker();
+  const legacy = new Control();
+  const renewal = new Control();
+  const both = new Control();
+  broker.attach("legacy", legacy.socket, 2);
+  broker.attach("renewal", renewal.socket, 2, false, async () => 4);
+  broker.attach("both", both.socket, 2, true, async () => 4);
+  expect(JSON.parse(legacy.sent[0]!)).toEqual({ type: "ready", version: 1, heartbeatMs: 30_000 });
+  expect(JSON.parse(renewal.sent[0]!)).toEqual({
+    type: "ready",
+    version: 1,
+    heartbeatMs: 30_000,
+    sessionExpiresAt: 2,
+  });
+  expect(JSON.parse(both.sent[0]!)).toEqual({
+    type: "ready",
+    version: 1,
+    heartbeatMs: 30_000,
+    rejectChannels: true,
+    sessionExpiresAt: 2,
+  });
+  broker.close();
+});
+
+test("multiple authenticated renewals retain active streams and pending channels across the original deadline", async () => {
+  const broker = new TunnelBroker();
+  const control = new Control();
+  const verify = vi.fn().mockResolvedValueOnce(4).mockResolvedValueOnce(6);
+  broker.attach("account", control.socket, 2, true, verify);
+  const firstPending = broker.open("account", new AbortController().signal);
+  broker.claim("account", JSON.parse(control.sent.at(-1)!).ticket as string, new Control().socket);
+  const firstStream = await firstPending;
+  const secondPending = broker.open("account", new AbortController().signal);
+  void secondPending.catch(() => {});
+  const secondTicket = JSON.parse(control.sent.at(-1)!).ticket as string;
+  try {
+    await vi.advanceTimersByTimeAsync(1000);
+    sendRenewal(control, "fictional-session-one");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(verify).toHaveBeenLastCalledWith("fictional-session-one");
+    expect(JSON.parse(control.sent.at(-1)!)).toEqual({ type: "renewed", version: 1, expiresAt: 4 });
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(broker.snapshot()).toMatchObject({
+      onlineGateways: 1,
+      activeStreams: 1,
+      pendingStreams: 1,
+    });
+    expect(firstStream.destroyed).toBe(false);
+    expect(broker.canClaim("account", secondTicket)).toBe(true);
+    sendRenewal(control, "fictional-session-two");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(JSON.parse(control.sent.at(-1)!)).toEqual({ type: "renewed", version: 1, expiresAt: 6 });
+    await vi.advanceTimersByTimeAsync(1001);
+    expect(firstStream.destroyed).toBe(false);
+    broker.claim("account", secondTicket, new Control().socket);
+    const secondStream = await secondPending;
+    expect(broker.snapshot()).toMatchObject({
+      onlineGateways: 1,
+      activeStreams: 2,
+      pendingStreams: 0,
+    });
+    await vi.advanceTimersByTimeAsync(1999);
+    expect(firstStream.destroyed).toBe(true);
+    expect(secondStream.destroyed).toBe(true);
+    expect(control.terminate).toHaveBeenCalledOnce();
+    expect(broker.online("account")).toBe(false);
+    expect(vi.getTimerCount()).toBe(0);
+  } finally {
+    broker.close();
+  }
+});
+
+test("a legacy peer cannot request renewal and still expires on its original deadline", async () => {
+  const broker = new TunnelBroker();
+  const legacy = new Control();
+  broker.attach("legacy", legacy.socket, 2);
+  await vi.advanceTimersByTimeAsync(2000);
+  expect(broker.online("legacy")).toBe(false);
+  const unnegotiated = new Control();
+  broker.attach("other", unnegotiated.socket, 4);
+  sendRenewal(unnegotiated);
+  expect(unnegotiated.close).toHaveBeenCalledWith(1008, "Unexpected control message");
+  broker.close();
+});
+
+test.each([NaN, Infinity, 4.5, Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER + 1, 2, 1, 0, -1])(
+  "an invalid or nonextending verified expiry %s cannot extend a routing session",
+  async (next) => {
+    const broker = new TunnelBroker();
+    const control = new Control();
+    broker.attach("account", control.socket, 2, false, async () => next);
+    sendRenewal(control);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(control.terminate).toHaveBeenCalledOnce();
+    expect(broker.online("account")).toBe(false);
+    expect(control.sent.map((frame) => JSON.parse(frame).type)).toEqual(["ready"]);
+    expect(vi.getTimerCount()).toBe(0);
+  },
+);
+
+test("a replayed session cannot renew a second time", async () => {
+  const broker = new TunnelBroker();
+  const control = new Control();
+  broker.attach("account", control.socket, 2, false, async () => 4);
+  sendRenewal(control);
+  await vi.advanceTimersByTimeAsync(0);
+  sendRenewal(control);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(control.sent.map((frame) => JSON.parse(frame).type)).toEqual(["ready", "renewed"]);
+  expect(control.terminate).toHaveBeenCalledOnce();
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+test.each(["foreign account", "invalid signature"])(
+  "a renewal refused by verification (%s) closes its own streams and pending channels",
+  async (reason) => {
+    const broker = new TunnelBroker();
+    const control = new Control();
+    const other = new Control();
+    const verify = vi.fn(async () => {
+      throw new Error(reason);
+    });
+    broker.attach("account", control.socket, 2, true, verify);
+    broker.attach("other", other.socket, 20);
+    const opening = broker.open("account", new AbortController().signal);
+    broker.claim(
+      "account",
+      JSON.parse(control.sent.at(-1)!).ticket as string,
+      new Control().socket,
+    );
+    const stream = await opening;
+    const pending = broker.open("account", new AbortController().signal);
+    const rejected = expect(pending).rejects.toThrow("Gateway disconnected");
+    sendRenewal(control);
+    await vi.advanceTimersByTimeAsync(0);
+    await rejected;
+    expect(stream.destroyed).toBe(true);
+    expect(broker.online("account")).toBe(false);
+    expect(broker.online("other")).toBe(true);
+    expect(control.sent.some((frame) => JSON.parse(frame).type === "renewed")).toBe(false);
+    broker.close();
+  },
+);
+
+test.each([
+  "not-json",
+  JSON.stringify({ type: "renew", version: 1, session: "" }),
+  JSON.stringify({ type: "renew", version: 1, session: "x".repeat(4097) }),
+  JSON.stringify({ type: "renew", version: 2, session: "fictional" }),
+  JSON.stringify({ type: "renew", version: 1, session: "fictional", expiresAt: 50 }),
+])("malformed negotiated renewal cannot extend the deadline or reach verification: %s", (input) => {
+  const broker = new TunnelBroker();
+  const control = new Control();
+  const verify = vi.fn(async () => 4);
+  broker.attach("account", control.socket, 2, false, verify);
+  control.emit("message", Buffer.from(input));
+  expect(verify).not.toHaveBeenCalled();
+  expect(control.terminate).toHaveBeenCalledOnce();
+  expect(broker.online("account")).toBe(false);
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+test("only one renewal verification can run on a socket and a concurrent duplicate cannot resurrect it", async () => {
+  const broker = new TunnelBroker();
+  const control = new Control();
+  let finish!: (expiry: number) => void;
+  const verify = vi.fn(
+    () =>
+      new Promise<number>((resolve) => {
+        finish = resolve;
+      }),
+  );
+  broker.attach("account", control.socket, 2, false, verify);
+  sendRenewal(control);
+  sendRenewal(control);
+  expect(verify).toHaveBeenCalledOnce();
+  expect(control.terminate).toHaveBeenCalledOnce();
+  finish(10);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(control.sent.map((frame) => JSON.parse(frame).type)).toEqual(["ready"]);
+  expect(broker.online("account")).toBe(false);
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+test.each(["expiry", "account-close", "shutdown", "socket-close", "replacement", "closing-socket"])(
+  "a late successful verification cannot undo %s",
+  async (ending) => {
+    const broker = new TunnelBroker();
+    const control = new Control();
+    let finish!: (expiry: number) => void;
+    broker.attach(
+      "account",
+      control.socket,
+      2,
+      false,
+      () =>
+        new Promise<number>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    sendRenewal(control);
+    let replacement: Control | undefined;
+    if (ending === "expiry") await vi.advanceTimersByTimeAsync(2000);
+    else if (ending === "account-close") broker.closeAccount("account");
+    else if (ending === "shutdown") broker.close();
+    else if (ending === "closing-socket") control.readyState = WebSocket.CLOSING;
+    else {
+      control.terminate();
+      if (ending === "replacement") {
+        replacement = new Control();
+        broker.attach("account", replacement.socket, 10);
+      }
+    }
+    finish(20);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(control.sent.map((frame) => JSON.parse(frame).type)).toEqual(["ready"]);
+    expect(broker.online("account")).toBe(Boolean(replacement));
+    if (replacement) expect(replacement.terminate).not.toHaveBeenCalled();
+    broker.close();
+    expect(vi.getTimerCount()).toBe(0);
+  },
+);
+
+test("verification completing after the authoritative deadline cannot win a delayed timer race", async () => {
+  const broker = new TunnelBroker();
+  const control = new Control();
+  let finish!: (expiry: number) => void;
+  broker.attach(
+    "account",
+    control.socket,
+    2,
+    false,
+    () =>
+      new Promise<number>((resolve) => {
+        finish = resolve;
+      }),
+  );
+  sendRenewal(control);
+  // Move wall time without running timers: authentication must recheck time itself.
+  vi.setSystemTime(2000);
+  finish(10);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(control.terminate).toHaveBeenCalledOnce();
+  expect(control.sent.map((frame) => JSON.parse(frame).type)).toEqual(["ready"]);
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+test("distant renewed deadlines use bounded timer slices rather than overflowing Node timers", async () => {
+  const broker = new TunnelBroker({ ...DEFAULT_TUNNEL_LIMITS, heartbeatMs: 715_827_882 });
+  const control = new Control();
+  control.ping.mockImplementation(() => control.emit("pong"));
+  broker.attach("account", control.socket, 2, false, async () => 3_000_000);
+  sendRenewal(control);
+  await vi.advanceTimersByTimeAsync(0);
+  await vi.advanceTimersByTimeAsync(2_147_483_647);
+  expect(broker.online("account")).toBe(true);
+  await vi.advanceTimersByTimeAsync(3_000_000_000 - 2_147_483_647);
+  expect(broker.online("account")).toBe(false);
+  expect(control.terminate).toHaveBeenCalledOnce();
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+test.each(["expired", "closing"])(
+  "a renewal received on an already %s session never starts verification",
+  (state) => {
+    const broker = new TunnelBroker();
+    const control = new Control();
+    const verify = vi.fn(async () => 4);
+    broker.attach("account", control.socket, 2, false, verify);
+    if (state === "expired") vi.setSystemTime(2000);
+    else control.readyState = WebSocket.CLOSING;
+    sendRenewal(control);
+    expect(verify).not.toHaveBeenCalled();
+    expect(control.terminate).toHaveBeenCalledOnce();
+    expect(broker.online("account")).toBe(false);
+    expect(vi.getTimerCount()).toBe(0);
+  },
+);
+
+test("a verification failure after revocation cannot affect the replacement tunnel", async () => {
+  const broker = new TunnelBroker();
+  const control = new Control();
+  let fail!: (error: Error) => void;
+  broker.attach(
+    "account",
+    control.socket,
+    2,
+    false,
+    () =>
+      new Promise<number>((_resolve, reject) => {
+        fail = reject;
+      }),
+  );
+  sendRenewal(control);
+  broker.closeAccount("account");
+  const replacement = new Control();
+  broker.attach("account", replacement.socket, 4);
+  fail(new Error("expired verification"));
+  await vi.advanceTimersByTimeAsync(0);
+  expect(broker.online("account")).toBe(true);
+  expect(replacement.terminate).not.toHaveBeenCalled();
+  expect(control.terminate).toHaveBeenCalledOnce();
+  broker.close();
+});
+
+test("channel rejection still works independently while renewal verification is in flight", async () => {
+  const broker = new TunnelBroker();
+  const control = new Control();
+  let finish!: (expiry: number) => void;
+  broker.attach(
+    "account",
+    control.socket,
+    2,
+    true,
+    () =>
+      new Promise<number>((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const pending = broker.open("account", new AbortController().signal);
+  const ticket = JSON.parse(control.sent.at(-1)!).ticket as string;
+  const rejected = expect(pending).rejects.toThrow("Gateway channel capacity reached");
+  sendRenewal(control);
+  control.emit("message", Buffer.from(JSON.stringify({ type: "reject", version: 1, ticket })));
+  await rejected;
+  expect(broker.online("account")).toBe(true);
+  finish(4);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(JSON.parse(control.sent.at(-1)!)).toEqual({ type: "renewed", version: 1, expiresAt: 4 });
+  broker.close();
+});

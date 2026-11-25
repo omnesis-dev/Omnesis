@@ -279,7 +279,7 @@ export function createCloudRelay(options: CloudRelayOptions): {
   const upgraded = new Set<Duplex>();
   const controls = new WebSocketServer({
     noServer: true,
-    maxPayload: 4096,
+    maxPayload: 8192,
     perMessageDeflate: false,
   });
   const channels = new WebSocketServer({
@@ -293,24 +293,11 @@ export function createCloudRelay(options: CloudRelayOptions): {
   // A proxy reuses its connections; closing one as it sends the next request loses that request.
   if (cdn) server.keepAliveTimeout = PROXIED_KEEP_ALIVE_MS;
 
-  const authenticate = async (
-    req: IncomingMessage,
+  const authenticateToken = async (
+    token: string,
     discovery = false,
   ): Promise<{ accountId: string; identityAccountId: string; expiresAt: number }> => {
-    // Node can discard duplicate Authorization headers while parsing. Inspect
-    // the original field names so conflicting credentials are always refused.
-    const credentialFields = req.rawHeaders.filter(
-      (name, index) =>
-        index % 2 === 0 && [SESSION_HEADER, "authorization"].includes(name.toLowerCase()),
-    );
-    if (credentialFields.length !== 1) throw new RelayError(401, "One relay credential required");
-    const authorization = req.headers.authorization;
-    const token =
-      authorization === undefined
-        ? req.headers[SESSION_HEADER]
-        : /^Bearer ([A-Za-z0-9._~-]+)$/i.exec(authorization)?.[1];
-    if (typeof token !== "string" || token.length > 4096)
-      throw new RelayError(401, "Relay authentication required");
+    if (!token || token.length > 4096) throw new RelayError(401, "Relay authentication required");
     try {
       const session = await options.sessions.verify(token);
       if (options.recoveryPolicy) assertRecoveryPolicyCurrent(options.recoveryPolicy);
@@ -328,6 +315,24 @@ export function createCloudRelay(options: CloudRelayOptions): {
     } catch {
       throw new RelayError(401, "Relay authentication failed");
     }
+  };
+
+  const authenticate = async (req: IncomingMessage, discovery = false) => {
+    // Node can discard duplicate Authorization headers while parsing. Inspect
+    // the original field names so conflicting credentials are always refused.
+    const credentialFields = req.rawHeaders.filter(
+      (name, index) =>
+        index % 2 === 0 && [SESSION_HEADER, "authorization"].includes(name.toLowerCase()),
+    );
+    if (credentialFields.length !== 1) throw new RelayError(401, "One relay credential required");
+    const authorization = req.headers.authorization;
+    const token =
+      authorization === undefined
+        ? req.headers[SESSION_HEADER]
+        : /^Bearer ([A-Za-z0-9._~-]+)$/i.exec(authorization)?.[1];
+    if (typeof token !== "string" || token.length > 4096)
+      throw new RelayError(401, "Relay authentication required");
+    return authenticateToken(token, discovery);
   };
 
   server.on("request", (req, res) => {
@@ -763,6 +768,20 @@ export function createCloudRelay(options: CloudRelayOptions): {
             ws,
             session.expiresAt,
             req.headers["x-omnesis-reject-channels"] === "1",
+            req.headers["x-omnesis-tunnel-renewal"] === "1"
+              ? async (token) => {
+                  const renewed = await authenticateToken(token);
+                  if (
+                    renewed.accountId !== session.accountId ||
+                    renewed.identityAccountId !== session.identityAccountId ||
+                    linkedIdentity(renewed.identityAccountId) ||
+                    !options.accounts.registered(session.accountId) ||
+                    gatewayBinding(session.accountId)?.gatewayId !== gateway.data
+                  )
+                    throw new RelayError(401, "Gateway routing renewal refused");
+                  return renewed.expiresAt;
+                }
+              : undefined,
           );
         });
         return;

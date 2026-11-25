@@ -20,6 +20,7 @@ import {
   readPrivateJson,
 } from "./google-credentials.js";
 import { accountId, localIdentityProvider } from "./identity.js";
+import { TunnelSessionRenewal } from "./tunnel-session-renewal.js";
 import * as identities from "./identity.js";
 import type { GoogleCredentials } from "./google-oauth.js";
 
@@ -56,6 +57,64 @@ async function credentials(
     .sign(key);
   return { idToken, refreshToken, identity: { issuer: "omnesis-local-test", subject, expiresAt } };
 }
+
+test("tunnel renewal waits through the real Google session cache without replaying the accepted credential", async () => {
+  const first = await credentials();
+  await saveGoogleCredentials(file, clientId, first);
+  let expiry = 0;
+  const transport = vi.fn<typeof fetch>(async () => {
+    expiry = Math.floor(Date.now() / 1000) + 120;
+    return Response.json({
+      token: `routing-session-${transport.mock.calls.length}`,
+      accountId: accountId(first.identity),
+      expiresAt: expiry,
+    });
+  });
+  const source = googleRelaySessionSource({
+    credentialsFile: file,
+    clientId,
+    identity,
+    relayUrl: "https://relay.example.test",
+    sessionFile: join(dir, "routing.json"),
+    fetch: transport,
+  });
+  const initial = await source();
+  const originalExpiry = expiry;
+  vi.useFakeTimers({ now: Date.now() });
+  const sent = vi.fn();
+  const terminate = vi.fn();
+  const adopt = vi.fn();
+  const renewal = new TunnelSessionRenewal({
+    expiresAt: expiry,
+    session: initial,
+    acquire: () => source(),
+    joined: async () => {},
+    invalidate: () => {},
+    send: (token) => {
+      sent(token);
+      expect(renewal.accept(expiry)).toBe(true);
+    },
+    adopt,
+    observe: (error) => {
+      throw error;
+    },
+    terminate,
+  });
+  try {
+    await vi.advanceTimersByTimeAsync(80_000);
+    expect(transport).toHaveBeenCalledTimes(1);
+    expect(sent).not.toHaveBeenCalled();
+    expect(terminate).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(11_000);
+    await vi.waitFor(() => expect(sent).toHaveBeenCalledExactlyOnceWith("routing-session-2"));
+    expect(adopt).toHaveBeenCalledExactlyOnceWith("routing-session-2");
+    await vi.advanceTimersByTimeAsync(originalExpiry * 1000 - Date.now() + 1000);
+    expect(terminate).not.toHaveBeenCalled();
+    expect(transport).toHaveBeenCalledTimes(2);
+  } finally {
+    await renewal.close();
+  }
+});
 
 test("writes credentials atomically with private permissions and verifies cached identity locally", async () => {
   const first = await credentials();
