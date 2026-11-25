@@ -217,11 +217,10 @@
         <p>
           The ingestion service and its ingress do not retain IP addresses, user agents or other
           identifying HTTP metadata for analytics or access logs. Network providers necessarily
-          process transport information to deliver a request. Individual daily records expire seven
-          complete UTC days after their rotation month ends, with hourly cleanup; identifier-free
-          statistics remain for historical adoption analysis. We do not link identifiers across
-          months. The figures describe active participating gateways, not total users or lifetime
-          installations.
+          process transport information to deliver a request. Individual daily records expire at the
+          first hourly cleanup after their UTC rotation month ends; identifier-free statistics
+          remain for historical adoption analysis. We do not link identifiers across months. The
+          figures describe active participating gateways, not total users or lifetime installations.
         </p>
         <p>
           The installer discloses reporting before first startup, and a small first-visit portal

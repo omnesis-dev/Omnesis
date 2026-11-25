@@ -638,10 +638,10 @@ omnesis storage cancel JOB_ID --yes</pre>
         <p>
           <code>OMNESIS_TELEMETRY=off</code> in the gateway environment or configuration directory's
           <code>.env</code> forcibly disables reporting and wins over the saved setting. Remove it
-          and reload the service environment before re-enabling. Individual daily records expire
-          seven complete UTC days after the rotation month ends, at the next hourly cleanup;
-          identifier-free statistics remain. The census cannot accurately deduplicate unique
-          installations across month boundaries. See the complete
+          and reload the service environment before re-enabling. Individual daily records expire at
+          the first hourly cleanup after their UTC rotation month ends; identifier-free statistics
+          remain. The census cannot accurately deduplicate unique installations across month
+          boundaries. See the complete
           <a href="https://github.com/omnesis-dev/Omnesis/blob/main/TELEMETRY.md"
             >payload, retention and limitations</a
           >

@@ -140,11 +140,17 @@ describe("installation census", () => {
     );
     expect(() => db.ingest(heartbeat, date)).toThrow("period");
   });
-  it("deletes identifiers seven days after month end while preserving aggregates", () => {
+  it("deletes completed-month identifiers at the UTC boundary while preserving aggregates", () => {
     const db = store();
     db.ingest(heartbeat, new Date("2026-11-30T12:00:00Z"));
-    expect(db.prune(new Date("2026-12-07T23:59:59Z"))).toBe(0);
-    expect(db.prune(new Date("2026-12-08T00:00:00Z"))).toBe(1);
+    expect(db.prune(new Date("2026-11-30T23:59:59.999Z"))).toBe(0);
+    expect(db.prune(new Date("2026-12-01T00:00:00.000Z"))).toBe(1);
+    const december = { ...heartbeat, period: "2026-12", installationId: "e".repeat(64) };
+    const decemberDate = new Date("2026-12-01T00:00:00.000Z");
+    db.ingest(december, decemberDate);
+    expect(db.prune(decemberDate)).toBe(0);
+    expect(db.metrics(decemberDate, "")).toContain("omnesis_telemetry_raw_records 1");
+    expect(db.prune(new Date("2027-01-01T00:00:00.000Z"))).toBe(1);
     const metrics = db.metrics(new Date("2027-01-01T00:00:00Z"), "");
     expect(metrics).toContain('kind="month",period="2026-11",dimension="all",value="all"} 1');
     expect(metrics).toContain("omnesis_telemetry_raw_records 0");

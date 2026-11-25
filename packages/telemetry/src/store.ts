@@ -113,11 +113,9 @@ export class TelemetryStore {
       .run(kind, period, dimension, value);
   }
 
-  /** Raw identifiers expire seven UTC days after their month ends (at most 38 days). */
+  /** Completed-month identifiers are no longer needed: calendar aggregates are already durable. */
   prune(now: Date): number {
-    const cutoff = new Date(now);
-    cutoff.setUTCDate(cutoff.getUTCDate() - 7);
-    const before = cutoff.toISOString().slice(0, 7);
+    const before = now.toISOString().slice(0, 7);
     return this.db.prepare("DELETE FROM reports WHERE period < ?").run(before).changes;
   }
 

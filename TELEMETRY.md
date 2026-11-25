@@ -103,9 +103,10 @@ precise arrival times. Repeated heartbeats increment an aggregate volume counter
 but do not add installations. Monthly distributions use the most recently
 reported day's version/platform for each identifier.
 
-Individual records are removed once their calendar month has ended and seven
-complete UTC days have elapsed, at the next hourly cleanup (at most about 38
-days plus a cleanup interval). SQLite uses secure deletion and a delete journal,
+Individual records are removed at the first hourly cleanup after their UTC
+calendar month ends (at most 31 days plus a cleanup interval). Completed-month
+records are never accepted again, and all aggregates are already persisted.
+SQLite uses secure deletion and a delete journal,
 avoiding retained WAL history. Deployment backups must exclude individual
 reports; snapshot or filesystem backups must not extend this retention.
 
