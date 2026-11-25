@@ -36,12 +36,12 @@ async function digest(path) {
   return hash.digest("hex");
 }
 
-// A whole download of the reference model takes a few seconds on a hosted
-// runner, so a transfer that delivers no bytes for this long has stalled: the
-// connection is abandoned and the download starts again, instead of waiting on
-// a socket that will never finish.
-export const DOWNLOAD_STALL_MS = 30_000;
-export const DOWNLOAD_ATTEMPTS = 3;
+// A whole download of the reference model takes seconds on a hosted runner, so
+// a transfer that delivers no bytes for this long has stalled: the connection is
+// abandoned and the download starts again, instead of waiting on a socket that
+// will never finish.
+const DOWNLOAD_STALL_MS = 30_000;
+const DOWNLOAD_ATTEMPTS = 3;
 
 class TransientDownloadError extends Error {}
 
