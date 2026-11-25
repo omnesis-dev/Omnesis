@@ -4,8 +4,11 @@
 package dev.omnesis.android.feature.recording
 
 import dev.omnesis.android.transport.GatewayException
+import dev.omnesis.android.transport.dto.NewParticipant
 import dev.omnesis.android.transport.dto.PersonSummary
+import dev.omnesis.android.transport.dto.RecordingParticipantDto
 import dev.omnesis.android.transport.dto.RecordingSpeakerDto
+import dev.omnesis.android.transport.dto.RecordingSpeakersResponse
 import dev.omnesis.android.transport.dto.RecordingSummaryDto
 import dev.omnesis.android.transport.dto.SpeakerMapping
 
@@ -25,11 +28,20 @@ interface RecordingsGateway {
     /** The gateway's most recent recordings, newest first. */
     suspend fun recent(limit: Int): List<RecordingSummaryDto>
 
-    /** Who spoke in a recording; empty when the gateway did not tell them apart. */
-    suspend fun speakers(sessionId: String): List<RecordingSpeakerDto>
+    /**
+     * Who spoke in a recording (none when the gateway did not tell them apart),
+     * and who was present without a turn.
+     */
+    suspend fun speakers(sessionId: String): RecordingSpeakersResponse
 
     /** Say who [speaker] is; answers the recording's speakers as they now stand. */
     suspend fun setSpeaker(sessionId: String, speaker: Int, mapping: SpeakerMapping): List<RecordingSpeakerDto>
+
+    /** Add someone present without a speaking turn; answers the participants. */
+    suspend fun addParticipant(sessionId: String, participant: NewParticipant): List<RecordingParticipantDto>
+
+    /** Remove a participant by its key; answers the participants left. */
+    suspend fun removeParticipant(sessionId: String, key: String): List<RecordingParticipantDto>
 
     /** People matching [query] (`GET /people?q=`), for choosing who a speaker is. */
     suspend fun searchPeople(query: String, limit: Int): List<PersonSummary>
