@@ -322,6 +322,7 @@ import { resolveStoragePolicy, type StoragePressureManager } from "./storage/pre
 import { DeferredStartupTasks } from "./startup/deferred-tasks.js";
 import { createStartupShutdown } from "./startup/shutdown.js";
 import { initializeGatewayDatabase, initializeGatewayIndex } from "./startup/storage.js";
+import { runtimeInstallationTelemetry } from "./telemetry/service.js";
 import type { WatchDefinition } from "@omnesis/watch";
 import type { SourceDocCount } from "./search/source-isf-prior.js";
 import type { WriteGate } from "./write-gate.js";
@@ -434,6 +435,13 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
     throw err;
   }
   const config = configStore.get();
+  // The production network transport does not exist in test/development runtimes.
+  const installationTelemetry = runtimeInstallationTelemetry({
+    configDir,
+    configStore,
+    version: GATEWAY_VERSION,
+  });
+  boot.ownCleanup({ receipt: () => undefined, settle: async () => installationTelemetry?.stop() });
 
   // Resolve tunable runtime knobs (env > omnesis.json > hardcoded default).
   // Everything that used to live behind OMNESIS_192_MITIGATIONS is now an
@@ -4532,6 +4540,8 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
   complete("portal");
   if (!startup.ready()) throw new Error("Gateway portal prerequisites did not complete");
   log.info(`Listening on https://localhost:${listenPort}, db=${DB_PATH}`);
+  // Optional work starts only after successful production readiness and never delays it.
+  void installationTelemetry?.start();
   scheduleSearchCachePrewarm();
   searchWorkerPool?.warmDateRecognizers();
 

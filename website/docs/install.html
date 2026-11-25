@@ -196,6 +196,15 @@
           </table>
         </div>
 
+        <p>
+          Production gateways include minimal daily installation telemetry, enabled by default. The
+          installer explains its version/platform payload and monthly rotating identifier before
+          reporting can begin; it adds no interactive step. No personal content is collected.
+          Disable it with <code>OMNESIS_TELEMETRY=off</code> in the gateway environment,
+          <code>omnesis config set /telemetry/enabled false</code>, or the portal setting. See
+          <a href="operating#installation-telemetry">Installation telemetry</a>.
+        </p>
+
         <h2 id="requirements">Requirements</h2>
         <ul>
           <li>

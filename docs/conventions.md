@@ -37,6 +37,25 @@ Independent scheduler pools start in bounded pairs after the writer; failed or
 cancelled initialization awaits siblings before disposing their resources.
 Keep the people-repair chain sequential and model new dependencies explicitly.
 
+### Installation telemetry requires explicit production authority
+
+The default installation census setting never grants network authority. Its
+transport factory checks explicit runtime mode and independently vetoes test,
+CI and synthetic runtimes. Direct source launches default to development;
+installed launchers declare production. Test harnesses and container fixtures
+must explicitly declare test mode and disable reporting, including when they
+launch a production image or installed CLI. Telemetry-specific E2E may inject
+only the isolated loopback test transport, never the production endpoint.
+
+The census owns a dedicated random local secret and monthly HMAC identifier.
+No gateway, account, pairing or source identity participates. Keep payload and
+retention changes consistent with `TELEMETRY.md` and the independent ingestion
+service; never add product events or correlate rotation periods.
+
+- Runtime policy: `packages/gateway/src/telemetry/policy.ts`
+- Lifecycle: `packages/gateway/src/telemetry/service.ts`
+- Independent ingestion: `packages/telemetry/src/`
+
 ### Nx selects logical work; host dispatchers admit physical work
 
 Nx is the repository authority for workspace dependencies, affected projects,

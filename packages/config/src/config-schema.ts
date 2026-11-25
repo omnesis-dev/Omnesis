@@ -4140,6 +4140,32 @@ export const omnesisConfigSchema = z
         "Retention for backups created automatically before updates. Operator-created and unclassified backups are never pruned.",
       )
       .optional(),
+    telemetry: z
+      .object({
+        enabled: z
+          .boolean()
+          .describe(
+            "Share minimal daily installation statistics. Default true; OMNESIS_TELEMETRY=off always disables reporting.",
+          )
+          .optional(),
+        acknowledged: z
+          .boolean()
+          .describe(
+            "The installation telemetry notice has been acknowledged on this gateway. Default false.",
+          )
+          .optional(),
+        noticeShown: z
+          .boolean()
+          .describe(
+            "The installation telemetry disclosure has been displayed in the portal. Default false.",
+          )
+          .optional(),
+      })
+      .strict()
+      .describe(
+        "Privacy-preserving installation census; identifiers rotate every UTC calendar month.",
+      )
+      .optional(),
     releaseCheck: z
       .boolean()
       .describe(

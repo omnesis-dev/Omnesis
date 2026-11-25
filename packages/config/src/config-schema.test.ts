@@ -147,6 +147,31 @@ describe("validateConfig — backupRetention", () => {
   });
 });
 
+describe("validateConfig — telemetry", () => {
+  test("preserves the installation preference and acknowledgement", () => {
+    const result = validateConfig({
+      telemetry: { enabled: false, acknowledged: true, noticeShown: true },
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok)
+      expect(result.config.telemetry).toEqual({
+        enabled: false,
+        acknowledged: true,
+        noticeShown: true,
+      });
+    expect(validateConfig({}).ok).toBe(true);
+  });
+
+  test.each([
+    { enabled: "false" },
+    { acknowledged: 1 },
+    { noticeShown: "true" },
+    { endpoint: "https://example.com" },
+  ])("rejects malformed telemetry settings %j", (telemetry) =>
+    expect(validateConfig({ telemetry }).ok).toBe(false),
+  );
+});
+
 describe("validateConfig — releaseCheck", () => {
   test.each([true, false])("accepts the live release-check switch: %s", (releaseCheck) => {
     const result = validateConfig({ releaseCheck });

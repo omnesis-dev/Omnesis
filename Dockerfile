@@ -42,10 +42,9 @@ RUN if [ "$TARGETPLATFORM" != "$BUILDPLATFORM" ]; then export NPM_CI_ATTEMPT_TIM
     && sh scripts/ci/npm-ci.sh
 
 FROM workspace-install AS runtime-build
-COPY scripts/build-projects.mjs scripts/
-COPY scripts/release/ scripts/release/
-COPY scripts/runtime/ scripts/runtime/
-COPY scripts/seeded-state/ scripts/seeded-state/
+# The provenance digest covers these source inputs before compilation.
+COPY Dockerfile .dockerignore ./
+COPY scripts/ scripts/
 # Node settles its heap near 2 GB on a small builder, which the compiler can
 # outgrow. This is the floor the source installer and `omnesis update` give
 # the same build (packages/cli/src/update/build-heap.ts). With it the runtime
@@ -167,6 +166,7 @@ COPY --from=runtime-dependencies /opt/workspace-dependencies/packages ./packages
 ENV HOME=/home/omnesis \
     OMNESIS_CONFIG_DIR=/var/lib/omnesis \
     NODE_ENV=production \
+    OMNESIS_RUNTIME_MODE=production \
     OMNESIS_OAUTH_CALLBACK_HOST=0.0.0.0
 
 # ── Compiled, unprivileged gateway runtime ───────────────────────────────────

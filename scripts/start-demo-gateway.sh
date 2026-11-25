@@ -2,6 +2,10 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Adrien Conrath
 
+# Development instances never acquire the production telemetry capability.
+export OMNESIS_RUNTIME_MODE=development
+export OMNESIS_TELEMETRY=off
+
 # Boot the synthetic-providers demo gateway with the agent harness wired
 # to the replay backend. The gateway + collector + synth providers handle
 # everything — sources, documents, people, sync_state — through the
