@@ -81,6 +81,8 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.omnesis.desktop.tests
         GENERATE_INFOPLIST_FILE: YES
+        TEST_HOST: $(BUILT_PRODUCTS_DIR)/Omnesis.app/Contents/MacOS/Omnesis
+        BUNDLE_LOADER: $(TEST_HOST)
   OmnesisDesktopUITests:
     type: bundle.ui-testing
     platform: macOS

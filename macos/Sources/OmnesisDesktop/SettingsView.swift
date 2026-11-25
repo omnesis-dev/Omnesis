@@ -80,7 +80,9 @@ struct DesktopModelsView: View {
                     "Your chosen provider receives the information needed to answer your questions. Local search keeps working if you skip this step."
                 )
                 .foregroundStyle(.secondary)
-                Button("Sign in with ChatGPT") { Task { await startLogin() } }.disabled(loading)
+                if overview?.inference.codex?.runtime?.supported == true {
+                    Button("Sign in with ChatGPT") { Task { await startLogin() } }.disabled(loading)
+                }
                 if let login {
                     if let code = login.userCode { Text(code).font(.title.monospaced()).textSelection(.enabled) }
                     if let link = login.verificationUri,
