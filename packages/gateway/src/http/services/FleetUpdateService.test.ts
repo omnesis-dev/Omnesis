@@ -13,8 +13,10 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { createDatabase } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import {
   createDevice,
   getDevice,
@@ -24,10 +26,9 @@ import {
 } from "../../data/repositories/DeviceRepository.js";
 import { directWriteGate, type WriteGate } from "../../write-gate.js";
 import { FleetUpdateService } from "./FleetUpdateService.js";
+import type { createDatabase } from "../../db.js";
 import type { DeviceWsServer } from "../../ws.js";
 import type { DeviceId, DeviceKind } from "@omnesis/types";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 const TARGET = "9.9.2";
 const BEHIND = "9.9.0";
@@ -38,7 +39,7 @@ let db: ReturnType<typeof createDatabase>;
 
 beforeEach(() => {
   dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-fleet-update-test-${randomUUID()}.db`);
-  db = createDatabase(dbPath);
+  db = createFreshTestDatabase(dbPath);
 });
 
 afterEach(() => {

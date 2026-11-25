@@ -13,7 +13,8 @@ import { createHash, randomUUID } from "node:crypto";
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 type Db = Database.Database;
 import { ProviderId, SourceId, type DocumentInput } from "@omnesis/types";
-import { createDatabase, deleteDocumentForUser, upsertDocuments } from "../../db.js";
+import { deleteDocumentForUser, upsertDocuments } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import {
   appendOpenLoopLedger,
   createOpenLoop,
@@ -63,7 +64,7 @@ describe("an explicit document delete through deleteDocumentForUser", () => {
   let db: Db;
   beforeEach(() => {
     path = testDbPath();
-    db = createDatabase(path);
+    db = createFreshTestDatabase(path);
   });
   afterEach(() => {
     db.close();

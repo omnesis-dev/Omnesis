@@ -9,7 +9,7 @@ import type Database from "better-sqlite3";
 
 type Db = Database.Database;
 
-import { createDatabase } from "../db.js";
+import { createFreshTestDatabase } from "../testing/fresh-database.js";
 import { createCorpusAuthorization } from "../access/corpus-authorization.js";
 import { createGatewayDocumentByUrlPort } from "./ports.js";
 
@@ -40,7 +40,7 @@ let db: Db;
 
 beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), "omnesis-doc-by-url-port-test-"));
-  db = createDatabase(join(tmpDir, "test.db"));
+  db = createFreshTestDatabase(join(tmpDir, "test.db"));
 });
 
 afterEach(() => {

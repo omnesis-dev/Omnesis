@@ -3,8 +3,10 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
-import { createDatabase } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import { upsertDocuments } from "../../data/repositories/DocumentRepository.js";
 import { replaceDocumentTemporalProjections } from "../../enrichment/temporal-projections/document-storage.js";
 import { TemporalQueryService } from "../../enrichment/temporal/temporal-query-service.js";
@@ -25,8 +27,6 @@ import type {
   TemporalQueryInput,
   TemporalQueryResult,
 } from "@omnesis/core";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 const NOW = Date.parse("2026-07-02T06:00:00.000Z");
 const HOUR = 3_600_000;
@@ -428,7 +428,7 @@ describe("digest horizon over the real temporal query service", () => {
 
   beforeEach(() => {
     dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
-    db = createDatabase(dbPath);
+    db = createFreshTestDatabase(dbPath);
   });
   afterEach(() => {
     db.close();

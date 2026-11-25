@@ -44,7 +44,8 @@ import { existsSync, unlinkSync } from "node:fs";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { ProviderId, SourceId } from "@omnesis/types";
-import { createDatabase, getWipeEpoch } from "../db.js";
+import { getWipeEpoch } from "../db.js";
+import { createFreshTestDatabase } from "../testing/fresh-database.js";
 import { UPSERT_WITH_CURSOR_CHUNK_SIZE } from "../data/repositories/DocumentRepository.js";
 import { runWithPriority } from "../priority.js";
 import { Scheduler } from "./scheduler.js";
@@ -128,7 +129,7 @@ describe("A source wipe against a chunking page", () => {
 
   beforeEach(async () => {
     dbPath = join(tmpdir(), `omnesis-priority-limits-${randomUUID()}.db`);
-    const seed = createDatabase(dbPath);
+    const seed = createFreshTestDatabase(dbPath);
     seed.close();
     scheduler = new Scheduler({ enablePreemption: true });
     scheduler.registerRunner(

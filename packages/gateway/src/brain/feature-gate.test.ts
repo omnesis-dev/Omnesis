@@ -17,7 +17,7 @@ import { SCOPE_READ } from "@omnesis/types";
 import { experimentalEnabled } from "@omnesis/core";
 import { InferenceRegistry } from "../inference/registry.js";
 import { setLabFlag } from "../lab/store.js";
-import { createDatabase } from "../db.js";
+import { createFreshTestDatabase } from "../testing/fresh-database.js";
 import { createServer } from "../server.js";
 import { createDevice } from "../data/repositories/DeviceRepository.js";
 import { createToken } from "../data/repositories/TokenRepository.js";
@@ -387,7 +387,7 @@ describe("bootBriefs — the run-queue drainer follows the live model gate", () 
 
   beforeEach(() => {
     dbPath = join(tmpdir(), `omnesis-test-${randomUUID()}.db`);
-    db = createDatabase(dbPath);
+    db = createFreshTestDatabase(dbPath);
     setLabFlag(db, "tasks", true);
     transcriptsDir = mkdtempSync(join(tmpdir(), "omnesis-briefs-boot-"));
   });
@@ -854,7 +854,7 @@ describe("GET /status advertises the brain gate", () => {
 
   beforeEach(() => {
     dbPath = join(tmpdir(), `omnesis-test-${randomUUID()}.db`);
-    db = createDatabase(dbPath);
+    db = createFreshTestDatabase(dbPath);
     setLabFlag(db, "tasks", true);
     const dev = createDevice(db, { name: `briefs-gate-${randomUUID()}`, kind: "cli" });
     token = createToken(db, dev.id, [SCOPE_READ]).token;

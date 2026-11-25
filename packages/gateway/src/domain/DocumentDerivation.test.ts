@@ -8,8 +8,10 @@
 
 import { unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
-import { createDatabase } from "../db.js";
+import { createFreshTestDatabase } from "../testing/fresh-database.js";
 import {
   DERIVATION_STAGES,
   derivationReadyDocIds,
@@ -18,8 +20,6 @@ import {
   oldestPendingDerivationMs,
 } from "./DocumentDerivation.js";
 import type Database from "better-sqlite3";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 type Db = Database.Database;
 
@@ -31,7 +31,7 @@ describe("document derivation", () => {
 
   beforeEach(() => {
     dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
-    db = createDatabase(dbPath);
+    db = createFreshTestDatabase(dbPath);
   });
 
   afterEach(() => {

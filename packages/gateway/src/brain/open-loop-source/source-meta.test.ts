@@ -6,7 +6,8 @@ import { randomUUID } from "node:crypto";
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import type Database from "better-sqlite3";
 type Db = Database.Database;
-import { createDatabase, getSourceMeta } from "../../db.js";
+import { getSourceMeta } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import { directWriteGate } from "../../write-gate.js";
 import {
   OPEN_LOOP_SOURCE_ID,
@@ -30,7 +31,7 @@ describe("open-loop source identity seed", () => {
   let db: Db;
   beforeEach(() => {
     path = testDbPath();
-    db = createDatabase(path);
+    db = createFreshTestDatabase(path);
   });
   afterEach(() => {
     db.close();

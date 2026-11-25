@@ -6,7 +6,7 @@ import { existsSync, unlinkSync } from "node:fs";
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import type Database from "better-sqlite3";
 type Db = Database.Database;
-import { createDatabase } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import {
   readLinkStatsFromCounters,
   reconcileLinkStatsCounters,
@@ -20,7 +20,7 @@ let db: Db;
 
 beforeEach(() => {
   dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-link-stats-test-${randomUUID()}.db`);
-  db = createDatabase(dbPath);
+  db = createFreshTestDatabase(dbPath);
   // Seed a minimal documents row so FK constraints on document_links are satisfied.
   db.prepare(
     `INSERT INTO documents (id, provider_id, source_id, external_id, title, content,

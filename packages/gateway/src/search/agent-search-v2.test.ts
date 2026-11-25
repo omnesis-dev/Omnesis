@@ -2,9 +2,11 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { computeContentHash, type SearchProvenance } from "@omnesis/core";
-import { createDatabase } from "../db.js";
+import { createFreshTestDatabase } from "../testing/fresh-database.js";
 import { setLabFlag } from "../lab/store.js";
 import { saveKnowledgeNode, recordKnowledgeSourceDeletion } from "../brain/knowledge/storage.js";
 import { buildKnowledgeDocumentInput } from "../brain/knowledge/mirror.js";
@@ -22,8 +24,6 @@ import { directAgentProvenanceReads, type AgentProvenanceReads } from "./agent-p
 import { closeTempDb } from "./test-utils.js";
 import type Database from "better-sqlite3";
 import type { SearchConfig } from "./search-config.js";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 const BODY =
   "The invented Northstar equipment agreement specifies delivery in September, replacement parts, inspection, and a twelve-month warranty.";
@@ -34,7 +34,9 @@ let gateway: Database.Database;
 let index: Database.Database;
 
 beforeEach(() => {
-  gateway = createDatabase(fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`));
+  gateway = createFreshTestDatabase(
+    fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`),
+  );
   index = createIndexDatabase(fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`));
   gateway
     .prepare(

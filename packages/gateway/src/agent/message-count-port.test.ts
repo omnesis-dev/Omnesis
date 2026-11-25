@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createCountMessagesTool, type MessageCountPortResult } from "@omnesis/agent";
 
-import { createDatabase } from "../db.js";
+import { createFreshTestDatabase } from "../testing/fresh-database.js";
 import { upsertSourceDocumentProfiles } from "../data/repositories/SourceDocumentProfileRepository.js";
 import { countMessagesByPerson, type MessageCountsQuery } from "../domain/message-counts.js";
 import { createGatewayMessageCountPort, resolveMessageCountWindow } from "./message-count-port.js";
@@ -20,7 +20,7 @@ let db: Db;
 
 beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), "omnesis-message-count-port-test-"));
-  db = createDatabase(join(tmpDir, "test.db"));
+  db = createFreshTestDatabase(join(tmpDir, "test.db"));
 });
 
 afterEach(() => {

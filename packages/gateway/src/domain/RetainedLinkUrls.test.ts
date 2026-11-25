@@ -7,7 +7,8 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { extractLinks } from "@omnesis/core";
 import { ProviderId, SourceId, type DocumentInput } from "@omnesis/types";
-import { createDatabase, upsertDocuments } from "../db.js";
+import { upsertDocuments } from "../db.js";
+import { createFreshTestDatabase } from "../testing/fresh-database.js";
 import { extractLinksFromDocs } from "./LinkExtraction-cpu.js";
 import {
   fetchLinksForBatch,
@@ -18,6 +19,7 @@ import {
 } from "./LinkExtraction.js";
 import { computeLinkResolutions, upsertLinkResolutions } from "./LinkGraphService.js";
 import { hasRetainedUrlMetadata, retainAttachedUrls } from "./RetainedLinkUrls.js";
+import type { createDatabase} from "../db.js";
 
 test("only explicit valid HTTP URLs receive retention", () => {
   const links = extractLinks("https://example.org/attached https://example.org/incidental");
@@ -83,7 +85,7 @@ describe("attached page links before capture", () => {
   }
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "omnesis-attached-links-"));
-    db = createDatabase(join(dir, "store.db"));
+    db = createFreshTestDatabase(join(dir, "store.db"));
   });
   afterEach(() => {
     db.close();

@@ -7,7 +7,7 @@ import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import type Database from "better-sqlite3";
 type Db = Database.Database;
 import { SCOPE_READ } from "@omnesis/types";
-import { createDatabase } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import { createDevice } from "./DeviceRepository.js";
 import { createToken, lookupToken, cleanupExpiredTokens } from "./TokenRepository.js";
 import { join as fixtureJoin } from "node:path";
@@ -27,7 +27,7 @@ describe("token TTL", () => {
   let db: Db;
   beforeEach(() => {
     path = testDbPath();
-    db = createDatabase(path);
+    db = createFreshTestDatabase(path);
   });
   afterEach(() => {
     db.close();

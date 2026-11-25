@@ -3,8 +3,10 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { createDatabase } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import {
   INTEREST_EMBED_BACKOFF_BASE_MS,
   INTEREST_EMBED_BACKOFF_MAX_MS,
@@ -40,8 +42,6 @@ import { createObservation, getObservation, setObservationUserAction } from "./o
 import { createOpenLoop, listOpenLoopLedger } from "./open-loops.js";
 import { applyTaskCommand } from "./tasks.js";
 import type Database from "better-sqlite3";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 const NOW = Date.parse("2026-03-10T09:00:00Z");
 const MINUTE = 60_000;
@@ -51,7 +51,7 @@ let db: Database.Database;
 
 beforeEach(() => {
   path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
-  db = createDatabase(path);
+  db = createFreshTestDatabase(path);
 });
 afterEach(() => {
   db.close();

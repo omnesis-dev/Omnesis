@@ -19,7 +19,7 @@ import { randomUUID } from "node:crypto";
 import { describe, expect, test, beforeEach, afterEach, vi } from "vitest";
 import { SCOPE_ADMIN, SCOPE_READ, type Scope } from "@omnesis/types";
 import BetterSqlite3 from "better-sqlite3";
-import { createDatabase } from "../db.js";
+import { createFreshTestDatabase } from "../testing/fresh-database.js";
 import { createServer } from "../server.js";
 import { createToken } from "../data/repositories/TokenRepository.js";
 import { createDevice } from "../data/repositories/DeviceRepository.js";
@@ -221,7 +221,7 @@ const ALL_ROUTES: Array<{ method: "GET" | "POST"; path: string }> = [
 beforeEach(() => {
   dbPath = join(tmpdir(), `omnesis-briefs-admin-http-${randomUUID()}.db`);
   configDir = mkdtempSync(join(tmpdir(), "omnesis-briefs-admin-"));
-  db = createDatabase(dbPath);
+  db = createFreshTestDatabase(dbPath);
   ADMIN_TOKEN = mintToken([SCOPE_ADMIN]);
   READ_TOKEN = mintToken([SCOPE_READ]);
   status = { visible: true, enabled: true, modelAssigned: true, active: true };

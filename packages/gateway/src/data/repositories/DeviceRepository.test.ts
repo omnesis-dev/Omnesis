@@ -3,6 +3,8 @@
 
 import { randomUUID } from "node:crypto";
 import { unlinkSync, existsSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import {
   AccountId,
@@ -16,7 +18,7 @@ import {
   SourceType,
 } from "@omnesis/types";
 import { createAccessLevel } from "../../access/store.js";
-import { createDatabase } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import {
   bootstrapSelfFromDevices,
   clearApnsToken,
@@ -55,15 +57,14 @@ import {
 import { createSource, listSources } from "./SourceRepository.js";
 import { getReauthReminder, reserveReauthReminder } from "./ReauthRemindersRepository.js";
 import { createToken, listTokens } from "./TokenRepository.js";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
+import type { createDatabase } from "../../db.js";
 
 let dbPath: string;
 let db: ReturnType<typeof createDatabase>;
 
 beforeEach(() => {
   dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-devices-test-${randomUUID()}.db`);
-  db = createDatabase(dbPath);
+  db = createFreshTestDatabase(dbPath);
 });
 
 afterEach(() => {

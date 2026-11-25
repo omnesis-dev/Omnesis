@@ -1,43 +1,22 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { describe, test, expect, beforeAll, afterAll, beforeEach, afterEach } from "vitest";
+import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import { randomUUID } from "node:crypto";
 import type Database from "better-sqlite3";
 type Db = Database.Database;
-import { mkdtempSync, rmSync, copyFileSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { createDatabase } from "../db.js";
+import { createFreshTestDatabase } from "../testing/fresh-database.js";
 import { upgradePlaceholderCanonicalNames } from "./upgrade-placeholder-canonical-names.js";
 
 let tmpDir: string;
 let db: Db;
-let schemaDirectory: string;
-let schemaPath: string;
-
-beforeAll(() => {
-  schemaDirectory = mkdtempSync(join(tmpdir(), "omnesis-canonical-schema-"));
-  schemaPath = join(schemaDirectory, "gateway.db");
-  const seed = createDatabase(schemaPath);
-  try {
-    seed.pragma("wal_checkpoint(TRUNCATE)");
-  } finally {
-    seed.close();
-  }
-});
-
-afterAll(() => {
-  if (schemaDirectory) rmSync(schemaDirectory, { recursive: true, force: true });
-});
 
 beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), "omnesis-canonical-upgrade-test-"));
-  const path = join(tmpDir, "test.db");
-  // Preserve a fresh on-disk database per case without replaying historical
-  // migrations in tests of canonical-name upgrades.
-  copyFileSync(schemaPath, path);
-  db = createDatabase(path);
+  db = createFreshTestDatabase(join(tmpDir, "test.db"));
 });
 
 afterEach(() => {

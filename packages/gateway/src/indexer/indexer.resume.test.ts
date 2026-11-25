@@ -6,7 +6,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { createDatabase, deleteDocumentsByIds, upsertDocuments } from "../db.js";
+import { deleteDocumentsByIds, upsertDocuments } from "../db.js";
+import { createFreshTestDatabase } from "../testing/fresh-database.js";
 import { DocumentChunker } from "./chunker.js";
 import {
   createIndexDatabase,
@@ -34,7 +35,7 @@ let source: DirectDocumentSource;
 beforeEach(() => {
   directory = mkdtempSync(join(process.env.OMNESIS_TEST_TMP ?? tmpdir(), "omnesis-scan-resume-"));
   const path = join(directory, "gateway.db");
-  gatewayWriter = createDatabase(path);
+  gatewayWriter = createFreshTestDatabase(path);
   gatewayReader = new Database(path, { readonly: true });
   source = new DirectDocumentSource(gatewayReader);
   indexDb = createIndexDatabase(join(directory, "index.db"));

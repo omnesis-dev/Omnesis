@@ -16,7 +16,7 @@ import { randomUUID } from "node:crypto";
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import type Database from "better-sqlite3";
 type Db = Database.Database;
-import { createDatabase } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import { createOpenLoop } from "../storage/open-loops.js";
 import { searchOpenLoopsByIdentity } from "./identity-candidates.js";
 import { join as fixtureJoin } from "node:path";
@@ -39,7 +39,7 @@ describe("searchOpenLoopsByIdentity", () => {
 
   beforeEach(() => {
     path = testDbPath();
-    db = createDatabase(path);
+    db = createFreshTestDatabase(path);
   });
   afterEach(() => {
     db.close();

@@ -16,7 +16,7 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import { createLogger, type AgentEvent, type AgentTerminalFailure } from "@omnesis/core";
-import { createDatabase } from "../db.js";
+import { createFreshTestDatabase } from "../testing/fresh-database.js";
 import { directWriteGate } from "../write-gate.js";
 import { upsertDocuments } from "../data/repositories/DocumentRepository.js";
 import { applyExtractedDates } from "../enrichment/dates/storage.js";
@@ -103,7 +103,7 @@ describe("Brain run drainer", () => {
 
   beforeEach(() => {
     dbPath = testDbPath();
-    db = createDatabase(dbPath);
+    db = createFreshTestDatabase(dbPath);
     dir = mkdtempSync(join(tmpdir(), "omnesis-run-drainer-"));
     transcripts = new FsCognitionTranscriptStore(join(dir, "t"));
     now = 100_000;

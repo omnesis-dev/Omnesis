@@ -14,7 +14,8 @@ import { tmpdir as fixtureTmpdir } from "node:os";
 import { vi, afterEach, beforeEach, describe, expect, test } from "vitest";
 import { SCOPE_ADMIN, SCOPE_READ, ProviderId, SourceId, type Scope } from "@omnesis/types";
 import { setLabFlag } from "../../lab/store.js";
-import { createDatabase, upsertDocuments } from "../../db.js";
+import { upsertDocuments } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import { createServer } from "../../server.js";
 import { createToken } from "../../data/repositories/TokenRepository.js";
 import { createDevice } from "../../data/repositories/DeviceRepository.js";
@@ -69,7 +70,7 @@ const action = (id: string, body: Record<string, unknown>) =>
 beforeEach(() => {
   clock.set(NOW);
   dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
-  db = createDatabase(dbPath);
+  db = createFreshTestDatabase(dbPath);
   vi.stubEnv("OMNESIS_EXPERIMENTAL", "1");
   setLabFlag(db, "tasks", true);
   admin = mintToken([SCOPE_ADMIN]);

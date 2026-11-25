@@ -13,7 +13,7 @@ import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { createDatabase } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import {
   deleteDocuments,
   deleteDocumentsByIds,
@@ -32,7 +32,7 @@ let path: string;
 
 beforeEach(() => {
   path = join(tmpdir(), `omnesis-test-${randomUUID()}.db`);
-  db = createDatabase(path);
+  db = createFreshTestDatabase(path);
 });
 
 afterEach(() => {

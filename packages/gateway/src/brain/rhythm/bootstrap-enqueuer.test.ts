@@ -15,8 +15,10 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
-import { createDatabase } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import { directWriteGate } from "../../write-gate.js";
 import { upsertDocuments } from "../../data/repositories/DocumentRepository.js";
 import { applyExtractedDates } from "../../enrichment/dates/storage.js";
@@ -36,8 +38,6 @@ import {
 import type Database from "better-sqlite3";
 import type { Logger } from "@omnesis/core";
 import type { DocumentInput } from "@omnesis/types";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 type Db = Database.Database;
 
@@ -91,7 +91,7 @@ describe("runBootstrapEnqueuePass", () => {
 
   beforeEach(() => {
     path = testDbPath();
-    db = createDatabase(path);
+    db = createFreshTestDatabase(path);
     // A started lane is the state nearly every test here is about. Starting is
     // its own operator decision (see "the lane waits to be started"), so a
     // fresh database has not made it — and without this every test would be

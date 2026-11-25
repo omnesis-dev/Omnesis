@@ -5,7 +5,7 @@ import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 type Db = Database.Database;
-import { createDatabase } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import { pruneActivityRetentionBatch } from "../../activity-retention/store.js";
 import {
   dailySourceRunDedupeKey,
@@ -60,7 +60,7 @@ describe("Brain run queue", () => {
   let db: Db;
   beforeEach(() => {
     path = testDbPath();
-    db = createDatabase(path);
+    db = createFreshTestDatabase(path);
   });
   afterEach(() => {
     db.close();
@@ -2135,7 +2135,7 @@ describe("an attempt refunded because the provider, not the payload, failed", ()
 
   beforeEach(() => {
     path = testDbPath();
-    db = createDatabase(path);
+    db = createFreshTestDatabase(path);
   });
   afterEach(() => {
     db.close();
@@ -2220,7 +2220,7 @@ describe("a provenance recheck is maintenance, not a reaction", () => {
 
   beforeEach(() => {
     path = testDbPath();
-    db = createDatabase(path);
+    db = createFreshTestDatabase(path);
   });
   afterEach(() => {
     db.close();

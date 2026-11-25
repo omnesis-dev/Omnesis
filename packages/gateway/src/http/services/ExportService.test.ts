@@ -23,7 +23,7 @@ import {
   markSecretFileEncryptionRequiredSync,
 } from "@omnesis/core";
 import { GATEWAY_VERSION } from "../../version.js";
-import { createDatabase } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import { AnalyticsDb } from "../../analytics-db.js";
 import { ConflictError, ServiceUnavailableError } from "../errors.js";
 import { ExportService, exportManifestSchema, type ExportServiceOptions } from "./ExportService.js";
@@ -73,7 +73,7 @@ function insertDoc(doc: DocFixture, createdAt: string): void {
 beforeEach(() => {
   configDir = mkdtempSync(join(tmpdir(), "omnesis-export-svc-"));
   gatewayDbPath = join(configDir, "omnesis.db");
-  db = createDatabase(gatewayDbPath);
+  db = createFreshTestDatabase(gatewayDbPath);
 
   insertDoc(
     {

@@ -4,9 +4,11 @@
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 
-import { createDatabase } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import { upsertDocuments } from "../../data/repositories/DocumentRepository.js";
 import { createOpenLoop, deleteOpenLoop } from "../../brain/storage/open-loops.js";
 import {
@@ -31,8 +33,6 @@ import {
 } from "./storage.js";
 import type { Db } from "../../data/types.js";
 import type { DocumentInput } from "@omnesis/types";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 function testDbPath(): string {
   return fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
@@ -98,7 +98,7 @@ describe("temporal annotation storage", () => {
 
   beforeEach(() => {
     path = testDbPath();
-    db = createDatabase(path);
+    db = createFreshTestDatabase(path);
     upsertDocuments(db, [makeDoc("d1"), makeDoc("d2")]);
   });
   afterEach(() => {
@@ -350,7 +350,7 @@ describe("temporal annotation window / doc-invalidation reads", () => {
 
   beforeEach(() => {
     path = testDbPath();
-    db = createDatabase(path);
+    db = createFreshTestDatabase(path);
     upsertDocuments(db, [makeDoc("d1"), makeDoc("d2")]);
   });
   afterEach(() => {
@@ -606,7 +606,7 @@ describe("temporal annotation evidence + surgical invalidation", () => {
 
   beforeEach(() => {
     path = testDbPath();
-    db = createDatabase(path);
+    db = createFreshTestDatabase(path);
     upsertDocuments(db, [makeDoc("d1"), makeDoc("d2")]);
   });
   afterEach(() => {

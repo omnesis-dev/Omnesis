@@ -3,9 +3,11 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { SCOPE_WRITE_ALL, type DeviceId, type DeviceKind, type Scope } from "@omnesis/types";
-import { createDatabase } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import {
   createDevice,
   updateDeviceCapabilities,
@@ -14,9 +16,8 @@ import { getDeviceDoctorRun } from "../../data/repositories/DeviceDoctorRunRepos
 import { directWriteGate } from "../../write-gate.js";
 import { WsCommandError, type DeviceWsServer } from "../../ws.js";
 import { DeviceDoctorService } from "./DeviceDoctorService.js";
+import type { createDatabase } from "../../db.js";
 import type { DoctorReport } from "@omnesis/core/doctor";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 const REPORT: DoctorReport = {
   ok: true,
@@ -37,7 +38,7 @@ let db: ReturnType<typeof createDatabase>;
 
 beforeEach(() => {
   dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-device-doctor-test-${randomUUID()}.db`);
-  db = createDatabase(dbPath);
+  db = createFreshTestDatabase(dbPath);
 });
 
 afterEach(() => {

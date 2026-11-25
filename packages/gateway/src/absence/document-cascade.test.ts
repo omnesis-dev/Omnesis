@@ -7,13 +7,8 @@ import { join as fixtureJoin } from "node:path";
 import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { ProviderId, SourceId, type DocumentInput } from "@omnesis/types";
-import {
-  bumpWipeEpoch,
-  createDatabase,
-  getSyncState,
-  upsertDocuments,
-  upsertWithCursor,
-} from "../db.js";
+import { bumpWipeEpoch, getSyncState, upsertDocuments, upsertWithCursor } from "../db.js";
+import { createFreshTestDatabase } from "../testing/fresh-database.js";
 import {
   acknowledgeAbsenceCascade,
   listPendingAbsenceCascades,
@@ -45,7 +40,7 @@ describe("sync tombstone cascade outbox", () => {
 
   beforeEach(() => {
     path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
-    db = createDatabase(path);
+    db = createFreshTestDatabase(path);
   });
 
   afterEach(() => {

@@ -14,11 +14,12 @@ import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import { SCOPE_WRITE_ALL, SourceId, parseSourceId } from "@omnesis/types";
-import { createDatabase } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import { createDevice } from "../../data/repositories/DeviceRepository.js";
 import { addSourceMember, createSource } from "../../data/repositories/SourceRepository.js";
 import { SyncStatusRegistry } from "../../sync-status.js";
 import { WsEventHandler } from "./WsEventHandler.js";
+import type { createDatabase } from "../../db.js";
 import type { WsEvent } from "@omnesis/core";
 import type { WriteGate } from "../../write-gate.js";
 import type { AuthFlowRegistry } from "../../auth-flows.js";
@@ -38,7 +39,7 @@ let conn: DeviceConnection;
 
 beforeEach(() => {
   dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-ws-remediation-${randomUUID()}.db`);
-  db = createDatabase(dbPath);
+  db = createFreshTestDatabase(dbPath);
   const device = createDevice(db, { name: "Maya-Laptop", kind: "collector" });
   conn = { deviceId: device.id, scopes: [SCOPE_WRITE_ALL] };
   const parsed = parseSourceId(SourceId(SRC));

@@ -22,6 +22,7 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { Scheduler } from "../scheduler.js";
 import { TaskExecutionError } from "../types.js";
 import { createDatabase } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import { IoTaskRunner } from "./io.js";
 import type { Task, TaskOutcome } from "../types.js";
 
@@ -50,7 +51,7 @@ describe("IoTaskRunner — end-to-end with Scheduler", () => {
     dbPath = testDbPath();
     // Create + migrate the DB on main thread first; the worker opens
     // with fileMustExist:true.
-    const db = createDatabase(dbPath);
+    const db = createFreshTestDatabase(dbPath);
     db.close();
 
     workers = [];

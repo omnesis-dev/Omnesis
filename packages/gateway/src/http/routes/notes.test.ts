@@ -8,6 +8,7 @@ import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { Scope, SCOPE_ADMIN, SCOPE_READ, SCOPE_WRITE_ALL } from "@omnesis/types";
 import { createDatabase } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import { createServer } from "../../server.js";
 import { directWriteGate } from "../../write-gate.js";
 import { createDevice } from "../../data/repositories/DeviceRepository.js";
@@ -59,7 +60,7 @@ beforeEach(() => {
   priorExperimental = process.env.OMNESIS_EXPERIMENTAL;
   delete process.env.OMNESIS_EXPERIMENTAL;
   dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
-  db = createDatabase(dbPath);
+  db = createFreshTestDatabase(dbPath);
   token = mintToken([SCOPE_ADMIN, SCOPE_READ, SCOPE_WRITE_ALL]);
   notesRuntime = undefined;
   app = createServer(db, dbPath, {

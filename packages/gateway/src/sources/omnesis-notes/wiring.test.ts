@@ -6,7 +6,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 type Db = Database.Database;
 
-import { createDatabase } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import { directWriteGate, type WriteGate } from "../../write-gate.js";
 import { dayKeyFor } from "./day.js";
 import { buildNotesDayDocument } from "./upsert.js";
@@ -79,7 +79,7 @@ describe("bootOmnesisNotes", () => {
 
   beforeEach(() => {
     dbPath = testDbPath();
-    db = createDatabase(dbPath);
+    db = createFreshTestDatabase(dbPath);
     gate = directWriteGate(db);
     ingested = [];
     deleted = [];

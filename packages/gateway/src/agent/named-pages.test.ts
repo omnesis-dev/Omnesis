@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it } from "vitest";
-import { createDatabase } from "../db.js";
+import { createFreshTestDatabase } from "../testing/fresh-database.js";
 import { buildKnowledgeDocumentInput } from "../brain/knowledge/mirror.js";
 import { namedPagesNote } from "../brain/knowledge/page-directory.js";
 import { KNOWLEDGE_PROVIDER_ID } from "../brain/knowledge/source-meta.js";
@@ -20,7 +20,7 @@ let db: Database.Database;
 let directory: string;
 beforeEach(() => {
   directory = mkdtempSync(join(tmpdir(), "named-pages-"));
-  db = createDatabase(join(directory, "test.db"));
+  db = createFreshTestDatabase(join(directory, "test.db"));
   insert("evidence", "notes", "test", "The observatory opens Saturday.", "evidence");
   const node = saveKnowledgeNode(
     db,

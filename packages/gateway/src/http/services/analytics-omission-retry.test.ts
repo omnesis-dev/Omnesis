@@ -13,7 +13,7 @@ import { mountDocumentCoreRoutes } from "../routes/documents.js";
 import { strictRoute } from "../scope.js";
 import { errorResponse, HttpError } from "../errors.js";
 import { AnalyticsDb } from "../../analytics-db.js";
-import { createDatabase } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import {
   createDevice,
   listDevices,
@@ -44,6 +44,7 @@ import { SourceService } from "./SourceService.js";
 import { EventService } from "./EventService.js";
 import { DocumentService } from "./DocumentService.js";
 import { AnalyticsService, type AnalyticsReplicaLedger } from "./AnalyticsService.js";
+import type { createDatabase } from "../../db.js";
 import type { AnalyticsTableSchema } from "@omnesis/source-sdk";
 import type { AppEnv } from "../routes/types.js";
 
@@ -69,7 +70,7 @@ let policy: { minObservations: number; minAgeMs: number; maxMarksPerSnapshot: nu
 
 beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), "omnesis-analytics-retry-"));
-  db = createDatabase(join(dir, "state.db"));
+  db = createFreshTestDatabase(join(dir, "state.db"));
   analytics = new AnalyticsDb(join(dir, "rows.duckdb"));
   await analytics.open();
   const first = createDevice(db, { name: "Example owner", kind: "collector" });

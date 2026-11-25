@@ -4,9 +4,11 @@
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 
-import { createDatabase } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import { upsertDocuments } from "../../data/repositories/DocumentRepository.js";
 import { insertCognitionDecision } from "../../brain/storage/decisions.js";
 import { findWorthAnswer } from "../../worth/answers.js";
@@ -22,8 +24,6 @@ import {
 } from "./mention-judgements.js";
 import type { Db } from "../../data/types.js";
 import type { DocumentInput, ExtractedDate } from "@omnesis/types";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 const MODEL = "jev-test";
 
@@ -45,7 +45,7 @@ describe("mention judgements", () => {
 
   beforeEach(() => {
     dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
-    db = createDatabase(dbPath);
+    db = createFreshTestDatabase(dbPath);
   });
   afterEach(() => {
     db.close();

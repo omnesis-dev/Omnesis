@@ -10,9 +10,11 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import { createLogger, type TemporalPrecision } from "@omnesis/core";
-import { createDatabase } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import { directWriteGate } from "../../write-gate.js";
 import { createOpenLoop, updateOpenLoop } from "../storage/open-loops.js";
 import { createObservation, transitionObservation } from "../storage/observations.js";
@@ -36,8 +38,6 @@ import {
   TEMPORAL_COLLISION_PAIRS_SQL,
 } from "./collision-candidates.js";
 import type Database from "better-sqlite3";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 type Db = Database.Database;
 
@@ -100,7 +100,7 @@ describe("findCollisionCandidates", () => {
   let db: Db;
   beforeEach(() => {
     path = testDbPath();
-    db = createDatabase(path);
+    db = createFreshTestDatabase(path);
   });
   afterEach(() => {
     db.close();
@@ -253,7 +253,7 @@ describe("runCollisionSweepPass", () => {
   let db: Db;
   beforeEach(() => {
     path = testDbPath();
-    db = createDatabase(path);
+    db = createFreshTestDatabase(path);
   });
   afterEach(() => {
     db.close();
@@ -337,7 +337,7 @@ describe("findTemporalAnnotationCollisionCandidates", () => {
   let db: Db;
   beforeEach(() => {
     path = testDbPath();
-    db = createDatabase(path);
+    db = createFreshTestDatabase(path);
   });
   afterEach(() => {
     db.close();
@@ -434,7 +434,7 @@ describe("runCollisionSweepPass with temporal annotation candidates", () => {
   let db: Db;
   beforeEach(() => {
     path = testDbPath();
-    db = createDatabase(path);
+    db = createFreshTestDatabase(path);
   });
   afterEach(() => {
     db.close();
@@ -598,7 +598,7 @@ describe("findAnnotationContradictionCandidates", () => {
   let db: Db;
   beforeEach(() => {
     path = testDbPath();
-    db = createDatabase(path);
+    db = createFreshTestDatabase(path);
   });
   afterEach(() => {
     db.close();
@@ -826,7 +826,7 @@ describe("runCollisionSweepPass annotation-contradiction arm", () => {
   let db: Db;
   beforeEach(() => {
     path = testDbPath();
-    db = createDatabase(path);
+    db = createFreshTestDatabase(path);
   });
   afterEach(() => {
     db.close();
@@ -913,7 +913,7 @@ describe("collision candidate selection reads only what it needs", () => {
   let db: Db;
   beforeEach(() => {
     path = testDbPath();
-    db = createDatabase(path);
+    db = createFreshTestDatabase(path);
   });
   afterEach(() => {
     db.close();

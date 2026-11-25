@@ -3,8 +3,10 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
-import { createDatabase } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import {
   addToCognitionEngineCounter,
   bumpCognitionDecayDirty,
@@ -15,8 +17,6 @@ import {
   COGNITION_DECAY_SWEPT_VERSION_KEY,
 } from "./engine-state.js";
 import type Database from "better-sqlite3";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 type Db = Database.Database;
 
@@ -34,7 +34,7 @@ describe("Brain engine state", () => {
   let db: Db;
   beforeEach(() => {
     path = testDbPath();
-    db = createDatabase(path);
+    db = createFreshTestDatabase(path);
   });
   afterEach(() => {
     db.close();
@@ -76,7 +76,7 @@ describe("addToCognitionEngineCounter", () => {
 
   beforeEach(() => {
     cpath = testDbPath();
-    cdb = createDatabase(cpath);
+    cdb = createFreshTestDatabase(cpath);
   });
   afterEach(() => {
     cdb.close();

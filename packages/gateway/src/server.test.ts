@@ -25,7 +25,8 @@ import {
 } from "@omnesis/core";
 import { setLabFlag } from "./lab/store.js";
 
-import { computeSnapshotAbsencePlan, createDatabase, getSyncState, getWipeEpoch } from "./db.js";
+import { computeSnapshotAbsencePlan, getSyncState, getWipeEpoch } from "./db.js";
+import { createFreshTestDatabase } from "./testing/fresh-database.js";
 import { LATEST_SCHEMA_VERSION } from "./data/migrations.js";
 import { fixedPublicAddress } from "./public-address.js";
 import { createServer as createGatewayServer } from "./server.js";
@@ -161,7 +162,7 @@ function makeDocPayload(externalId = "msg-1", providerId = "google", sourceId = 
 beforeEach(() => {
   testDir = mkdtempSync(join(tmpdir(), "omnesis-server-test-"));
   dbPath = join(testDir, `omnesis-server-test-${randomUUID()}.db`);
-  db = createDatabase(dbPath);
+  db = createFreshTestDatabase(dbPath);
   // Full-scope token used by the shared `req` helper.
   TEST_TOKEN = mintToken([SCOPE_ADMIN, SCOPE_READ, SCOPE_WRITE_ALL]).token;
   DECLARATION_TOKEN = null;

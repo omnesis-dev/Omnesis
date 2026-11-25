@@ -20,6 +20,7 @@ import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { DeviceId, SourceId } from "@omnesis/types";
 import { createDatabase } from "../db.js";
+import { createFreshTestDatabase } from "../testing/fresh-database.js";
 import { digestCandidate, type AnswerStoreError } from "../privacy/store.js";
 import { listPrivacyExchangePresentations } from "../privacy/presentation.js";
 import { captureKnowledgeCanonicalFence } from "../brain/knowledge/canonical-fence.js";
@@ -56,7 +57,7 @@ describe("writeGateFromScheduler", () => {
   // slow runner.
   beforeEach(async () => {
     dbPath = testDbPath();
-    const db = createDatabase(dbPath);
+    const db = createFreshTestDatabase(dbPath);
     db.close();
     scheduler = new Scheduler({ enablePreemption: false });
     scheduler.registerRunner(

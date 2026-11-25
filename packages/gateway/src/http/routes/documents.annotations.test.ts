@@ -15,7 +15,7 @@ import { join } from "node:path";
 import { ensurePrivateDirSync } from "@omnesis/core";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { SCOPE_ADMIN, SCOPE_READ, SCOPE_WRITE_ALL, type Scope } from "@omnesis/types";
-import { createDatabase } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import { createServer } from "../../server.js";
 import { ConfigStore } from "../../config-store.js";
 import { createDevice } from "../../data/repositories/DeviceRepository.js";
@@ -88,7 +88,7 @@ async function ingest(externalId: string, title = `Doc ${externalId}`): Promise<
 beforeEach(() => {
   process.env.OMNESIS_EXPERIMENTAL = "0";
   dbPath = join(tmpdir(), `omnesis-doc-annotations-test-${randomUUID()}.db`);
-  db = createDatabase(dbPath);
+  db = createFreshTestDatabase(dbPath);
   token = mintToken([SCOPE_ADMIN, SCOPE_READ, SCOPE_WRITE_ALL]);
   app = createServer(db, dbPath, {});
 });

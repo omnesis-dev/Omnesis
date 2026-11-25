@@ -8,12 +8,13 @@ import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { AccountId, SCOPE_ADMIN, SCOPE_READ, SourceType } from "@omnesis/types";
 import { AnalyticsDb } from "../../../analytics-db.js";
-import { createDatabase } from "../../../db.js";
+import { createFreshTestDatabase } from "../../../testing/fresh-database.js";
 import { createDevice } from "../../../data/repositories/DeviceRepository.js";
 import { createSource } from "../../../data/repositories/SourceRepository.js";
 import { createToken } from "../../../data/repositories/TokenRepository.js";
 import { createServer } from "../../../server.js";
 import { directWriteGate } from "../../../write-gate.js";
+import type { createDatabase } from "../../../db.js";
 import type { AnalyticsTableSchema } from "@omnesis/source-sdk";
 
 type Db = ReturnType<typeof createDatabase>;
@@ -54,7 +55,7 @@ function cleanupDb(path: string): void {
 
 beforeEach(async () => {
   dbPath = join(tmpdir(), `omnesis-legacy-rows-http-${randomUUID()}.db`);
-  db = createDatabase(dbPath);
+  db = createFreshTestDatabase(dbPath);
   directory = mkdtempSync(join(tmpdir(), "omnesis-legacy-rows-"));
   analyticsDb = new AnalyticsDb(join(directory, "analytics.db"));
   await analyticsDb.open();

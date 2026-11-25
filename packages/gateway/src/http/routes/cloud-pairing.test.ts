@@ -19,7 +19,7 @@ import {
   type VerifiedSignIn,
 } from "@omnesis/cloud-relay";
 import { SCOPE_ADMIN, SCOPE_READ, SCOPE_PUSH_CLAIM } from "@omnesis/types";
-import { createDatabase } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import { createServer } from "../../server.js";
 import { fixedPublicAddress } from "../../public-address.js";
 import { PortalSignals } from "../../portal-signals/hub.js";
@@ -59,7 +59,7 @@ beforeEach(() => {
   vi.stubEnv("OMNESIS_CLOUD_RELAY_GOOGLE_CREDENTIALS_FILE", undefined);
   dir = mkdtempSync(join(tmpdir(), "omnesis-google-routes-"));
   path = join(dir, "gateway.sqlite");
-  db = createDatabase(path);
+  db = createFreshTestDatabase(path);
   admin = createToken(db, createDevice(db, { name: "Fictional admin", kind: "cli" }).id, [
     SCOPE_ADMIN,
   ]).token;

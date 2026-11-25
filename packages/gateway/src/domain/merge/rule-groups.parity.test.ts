@@ -17,7 +17,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { createDatabase } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import { PersonService } from "../../http/services/PersonService.js";
 import {
   RULE_GROUP_FILTERS,
@@ -42,7 +42,7 @@ let path: string;
 let db: Db;
 beforeEach(() => {
   path = join(tmpdir(), `omnesis-test-${randomUUID()}.db`);
-  db = createDatabase(path);
+  db = createFreshTestDatabase(path);
 });
 afterEach(() => {
   db.close();

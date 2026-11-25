@@ -8,9 +8,11 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { AccountId, SourceType, type DeviceId, type SourceId } from "@omnesis/types";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { createDatabase } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import { createDevice } from "./DeviceRepository.js";
 import { addSourceMember, createSource } from "./SourceRepository.js";
 import { beginSyncAttempt, getSyncState, getWipeEpoch } from "./SyncStateRepository.js";
@@ -26,8 +28,6 @@ import {
 } from "./AnalyticsReplicaClaimRepository.js";
 import { recordDeletionClaims } from "./ReplicaDeletionClaimRepository.js";
 import type { Db } from "../types.js";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 const TYPE = SourceType("apple-health");
 const TABLE = "hk_samples";
@@ -78,7 +78,7 @@ describe("the replica deletion ledger for analytics rows", () => {
 
   beforeEach(() => {
     dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
-    db = createDatabase(dbPath);
+    db = createFreshTestDatabase(dbPath);
     phoneA = host("phone-a");
     phoneB = host("phone-b");
     sourceId = createSource(db, {

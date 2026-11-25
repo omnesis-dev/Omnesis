@@ -7,7 +7,7 @@ import { randomUUID } from "node:crypto";
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 type Db = Database.Database;
 
-import { createDatabase } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import { directWriteGate } from "../../write-gate.js";
 
 import { runConversationBackfill } from "./backfill.js";
@@ -64,7 +64,7 @@ describe("runConversationBackfill", () => {
   beforeEach(() => {
     dbPath = tempDbPath();
     dir = tempDir();
-    db = createDatabase(dbPath);
+    db = createFreshTestDatabase(dbPath);
     flagSet = false;
   });
   afterEach(() => {

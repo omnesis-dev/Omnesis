@@ -3,22 +3,23 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { SourceId } from "@omnesis/types";
-import { createDatabase } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import { setSyncState, getSourceMeta } from "./SyncStateRepository.js";
 import { setSourceFamilyMeta } from "./SourceFamilyMetaRepository.js";
 import { markSourceCleanupDone } from "./SourceRepository.js";
 import { deleteAllBySource } from "./DocumentRepository.js";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
+import type { createDatabase } from "../../db.js";
 
 let path: string;
 let db: ReturnType<typeof createDatabase>;
 
 beforeEach(() => {
   path = fixtureJoin(fixtureTmpdir(), `omnesis-source-family-${randomUUID()}.db`);
-  db = createDatabase(path);
+  db = createFreshTestDatabase(path);
   db.prepare(
     "INSERT INTO devices (id, name, kind, paired_at) VALUES ('dev-1', 'a-collector', 'collector', 0)",
   ).run();

@@ -28,7 +28,8 @@ import { ProviderId, SourceId } from "@omnesis/types";
 import { TemporalQueryService } from "../../enrichment/temporal/temporal-query-service.js";
 import { getActivePriority, runWithPriority } from "../../priority.js";
 import { setLabFlag } from "../../lab/store.js";
-import { createDatabase, upsertDocuments } from "../../db.js";
+import { upsertDocuments } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import { writeCognitionNotes } from "../storage/notes.js";
 import { createPersonAnnotation } from "../storage/person-annotations.js";
 import { directWriteGate } from "../../write-gate.js";
@@ -203,7 +204,7 @@ describe("assembled Brain through the real driver", () => {
   beforeEach(() => {
     path = testDbPath();
     vi.stubEnv("OMNESIS_EXPERIMENTAL", "1");
-    db = createDatabase(path);
+    db = createFreshTestDatabase(path);
     setLabFlag(db, "tasks", true);
     dir = mkdtempSync(join(tmpdir(), "omnesis-loop-agent-"));
     transcripts = new FsCognitionTranscriptStore(join(dir, "t"));
@@ -850,7 +851,7 @@ describe("createCognitionRuntime prompt wiring", () => {
   beforeEach(() => {
     path = testDbPath();
     vi.stubEnv("OMNESIS_EXPERIMENTAL", "1");
-    db = createDatabase(path);
+    db = createFreshTestDatabase(path);
     setLabFlag(db, "tasks", true);
   });
   afterEach(() => {

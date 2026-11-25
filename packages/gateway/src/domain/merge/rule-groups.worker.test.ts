@@ -14,7 +14,7 @@ import { existsSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createDatabase } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import { Scheduler } from "../../scheduler/scheduler.js";
 import { IoTaskRunner } from "../../scheduler/runners/io.js";
 import { ioGateFromScheduler, type IoGate } from "../../scheduler/io-ops.js";
@@ -40,7 +40,7 @@ describe.each(["empty", "edge", "large"])("the %s rule groups on the io worker",
 
   beforeAll(async () => {
     dbPath = join(tmpdir(), `omnesis-test-${randomUUID()}.db`);
-    db = createDatabase(dbPath);
+    db = createFreshTestDatabase(dbPath);
     if (fixture === "edge") seedEdgeRuleGroups(db);
     if (fixture === "large") seedLargeRuleGroups(db, 40);
     scheduler = new Scheduler({ enablePreemption: false });

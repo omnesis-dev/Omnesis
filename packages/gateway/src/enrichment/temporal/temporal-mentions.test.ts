@@ -3,9 +3,12 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { serializeToolResultForModel } from "@omnesis/agent";
 import { createDatabase } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import { upsertDocuments } from "../../data/repositories/DocumentRepository.js";
 import { replaceDocumentTemporalProjections } from "../temporal-projections/document-storage.js";
 import { applyExtractedDates, ensureMentionDayColumns } from "../dates/storage.js";
@@ -18,8 +21,6 @@ import { TemporalQueryService } from "./temporal-query-service.js";
 import type { Db } from "../../data/types.js";
 import type { DocumentInput, ExtractedDate } from "@omnesis/types";
 import type { TemporalItem, TemporalQueryInput } from "@omnesis/core";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 function cleanup(path: string): void {
   for (const suffix of ["", "-wal", "-shm", "-journal"]) {
@@ -88,7 +89,7 @@ describe("temporal query — mention layer", () => {
 
   beforeEach(() => {
     path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
-    db = createDatabase(path);
+    db = createFreshTestDatabase(path);
     service = new TemporalQueryService(db);
   });
 

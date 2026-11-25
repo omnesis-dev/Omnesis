@@ -10,9 +10,11 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { describe, expect, test, beforeEach, afterEach } from "vitest";
 import { SCOPE_ADMIN, SCOPE_READ, type Scope } from "@omnesis/types";
-import { createDatabase } from "../db.js";
+import { createFreshTestDatabase } from "../testing/fresh-database.js";
 import { createServer } from "../server.js";
 import { createToken } from "../data/repositories/TokenRepository.js";
 import { createDevice } from "../data/repositories/DeviceRepository.js";
@@ -29,8 +31,6 @@ import {
 import type { StatusCache } from "../http/services/StatusCache.js";
 import type { BriefsFeatureStatus } from "./feature-gate.js";
 import type Database from "better-sqlite3";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 type Db = Database.Database;
 
@@ -159,7 +159,7 @@ function canonicalTemporalAnnotationDetail(
 
 beforeEach(() => {
   dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-briefs-http-${randomUUID()}.db`);
-  db = createDatabase(dbPath);
+  db = createFreshTestDatabase(dbPath);
   ADMIN_TOKEN = mintToken([SCOPE_ADMIN]);
   READ_TOKEN = mintToken([SCOPE_READ]);
   status = { visible: true, enabled: true, modelAssigned: true, active: true };

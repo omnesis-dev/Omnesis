@@ -14,11 +14,12 @@
 
 import { randomUUID } from "node:crypto";
 import { unlinkSync, existsSync } from "node:fs";
-import { describe, test, expect, beforeEach, afterEach } from "vitest";
-import { createDatabase } from "../../db.js";
-import { setSyncState, getSyncState } from "./SyncStateRepository.js";
 import { join as fixtureJoin } from "node:path";
 import { tmpdir as fixtureTmpdir } from "node:os";
+import { describe, test, expect, beforeEach, afterEach } from "vitest";
+import { createDatabase } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
+import { setSyncState, getSyncState } from "./SyncStateRepository.js";
 
 let dbPath: string;
 let db: ReturnType<typeof createDatabase>;
@@ -26,7 +27,7 @@ const SRC = "plaid:item-abc";
 
 beforeEach(() => {
   dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-syncstate-consent-test-${randomUUID()}.db`);
-  db = createDatabase(dbPath);
+  db = createFreshTestDatabase(dbPath);
 });
 
 afterEach(() => {

@@ -3,9 +3,11 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, expect, test } from "vitest";
 import { createLogger } from "@omnesis/core";
-import { createDatabase } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import { directWriteGate } from "../../write-gate.js";
 import {
   createObservation,
@@ -16,8 +18,6 @@ import {
 import { markMorningBriefSent, replaceMorningBriefItems } from "../storage/morning-brief-items.js";
 import { redactTaintedMorningBriefs } from "./redaction.js";
 import type Database from "better-sqlite3";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 const NOW = Date.parse("2026-03-10T07:00:00Z");
 const log = createLogger("test").child("redaction");
@@ -26,7 +26,7 @@ let db: Database.Database;
 
 beforeEach(() => {
   path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
-  db = createDatabase(path);
+  db = createFreshTestDatabase(path);
   const iso = new Date(NOW - 86_400_000).toISOString();
   for (const id of ["doc_kept", "doc_gone"])
     db.prepare(

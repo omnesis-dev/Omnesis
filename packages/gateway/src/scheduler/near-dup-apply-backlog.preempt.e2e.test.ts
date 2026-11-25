@@ -25,13 +25,13 @@
 import { existsSync, unlinkSync } from "node:fs";
 import Database from "better-sqlite3";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
-import { createDatabase } from "../db.js";
+import { createFreshTestDatabase } from "../testing/fresh-database.js";
 import { runWithPriority } from "../priority.js";
 import { setActiveAlgoVersion } from "../near-dupes/meta.js";
+import { sqlitePerformanceDatabasePath } from "../../test/sqlite-performance-temp.js";
 import { Scheduler } from "./scheduler.js";
 import { WriterTaskRunner } from "./runners/writer.js";
 import { writeGateFromScheduler } from "./write-ops.js";
-import { sqlitePerformanceDatabasePath } from "../../test/sqlite-performance-temp.js";
 import type { NearDupApplyBatch } from "../near-dupes/types.js";
 import type { WriteGate } from "../write-gate.js";
 import type { SyncCursor } from "@omnesis/source-sdk";
@@ -100,7 +100,7 @@ function insertDocStatement(db: Database.Database): Database.Statement {
 
 /** Seed with a plain handle and close it before the writer opens the file. */
 function seedCorpus(path: string): void {
-  const db = createDatabase(path) as unknown as Database.Database;
+  const db = createFreshTestDatabase(path) as unknown as Database.Database;
   try {
     setActiveAlgoVersion(db as never, ALGO);
     const insertDoc = insertDocStatement(db);

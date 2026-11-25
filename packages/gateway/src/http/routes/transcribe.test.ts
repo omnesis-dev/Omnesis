@@ -10,6 +10,8 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { describe, expect, test, beforeEach, afterEach } from "vitest";
 
 import { SCOPE_WRITE_ALL, SCOPE_READ, SCOPE_ADMIN, type Scope } from "@omnesis/types";
@@ -18,14 +20,12 @@ import {
   TRANSCRIBE_REPORT_UNREADABLE_HEADER,
   type ResolvedAssignment,
 } from "@omnesis/core";
-import { createDatabase } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import { createServer } from "../../server.js";
 import { createToken } from "../../data/repositories/TokenRepository.js";
 import { createDevice } from "../../data/repositories/DeviceRepository.js";
 import { AudioDecodeError, TranscribeService } from "../../transcribe/index.js";
 import type Database from "better-sqlite3";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 type Db = Database.Database;
 
@@ -73,7 +73,7 @@ const enc = (s: string) => new TextEncoder().encode(s);
 
 beforeEach(() => {
   dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-transcribe-http-${randomUUID()}.db`);
-  db = createDatabase(dbPath);
+  db = createFreshTestDatabase(dbPath);
   WRITE_TOKEN = mintToken([SCOPE_WRITE_ALL]);
   READ_TOKEN = mintToken([SCOPE_READ]);
   ADMIN_TOKEN = mintToken([SCOPE_ADMIN]);

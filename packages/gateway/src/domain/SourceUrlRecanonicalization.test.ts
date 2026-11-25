@@ -3,9 +3,12 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { ProviderId, SourceId, type DocumentInput } from "@omnesis/types";
-import { createDatabase, upsertDocuments } from "../db.js";
+import { upsertDocuments } from "../db.js";
+import { createFreshTestDatabase } from "../testing/fresh-database.js";
 import { beginLinkDeclarationUpdate, finishLinkDeclarationUpdate } from "../data/list-revisions.js";
 import { getRecanonicalizeFingerprint } from "../data/repositories/CanonicalizationStateRepository.js";
 import { computeUrlOwnershipRepairs } from "./UrlOwnershipReconciliation.js";
@@ -16,9 +19,8 @@ import {
   finishSourceUrlRecanonicalization,
   planSourceUrlRecanonicalization,
 } from "./SourceUrlRecanonicalization.js";
+import type { createDatabase} from "../db.js";
 import type { UrlCanonicalizerSpec } from "@omnesis/core";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 describe("source URL recanonicalization", () => {
   let path: string;
@@ -26,7 +28,7 @@ describe("source URL recanonicalization", () => {
 
   beforeEach(() => {
     path = fixtureJoin(fixtureTmpdir(), `omnesis-source-url-recanonicalization-${randomUUID()}.db`);
-    db = createDatabase(path);
+    db = createFreshTestDatabase(path);
   });
 
   afterEach(() => {

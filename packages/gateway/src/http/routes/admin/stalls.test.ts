@@ -3,9 +3,11 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { SCOPE_ADMIN, SCOPE_READ } from "@omnesis/types";
-import { createDatabase } from "../../../db.js";
+import { createFreshTestDatabase } from "../../../testing/fresh-database.js";
 import { createServer } from "../../../server.js";
 import { createDevice } from "../../../data/repositories/DeviceRepository.js";
 import { createToken } from "../../../data/repositories/TokenRepository.js";
@@ -13,8 +15,6 @@ import { subscribeActivityNames } from "../../../observability/main-activity.js"
 import type { StallReportPort, StallReportQuery } from "../../../observability/stall-monitor.js";
 import type { StallReport } from "../../../observability/stall-report.js";
 import type Database from "better-sqlite3";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 let db: Database.Database;
 let dbPath: string;
@@ -53,7 +53,7 @@ const stalls: StallReportPort = {
 beforeEach(() => {
   queries = [];
   dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-stalls-route-test-${randomUUID()}.db`);
-  db = createDatabase(dbPath);
+  db = createFreshTestDatabase(dbPath);
 });
 
 afterEach(() => {

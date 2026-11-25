@@ -14,7 +14,7 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 
-import { createDatabase } from "../db.js";
+import { createFreshTestDatabase } from "../testing/fresh-database.js";
 import { directWriteGate } from "../write-gate.js";
 import { buildRecordingDocument } from "../sources/omnesis-recordings/index.js";
 import { findOrCreatePerson } from "../people.js";
@@ -115,7 +115,7 @@ function chunk(sessionId: string, seq: number, overrides: Partial<RecordingChunk
 
 beforeEach(() => {
   dbPath = join(tmpdir(), `omnesis-test-${randomUUID()}.db`);
-  db = createDatabase(dbPath);
+  db = createFreshTestDatabase(dbPath);
   now = new Date(at(10 * 60_000));
   readiness = { runnable: true };
   transcripts = [];

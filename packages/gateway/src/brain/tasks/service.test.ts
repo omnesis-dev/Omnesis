@@ -3,9 +3,11 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { setLabFlag } from "../../lab/store.js";
-import { createDatabase } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import { directWriteGate } from "../../write-gate.js";
 import { listLiveInterestSignals } from "../storage/interest.js";
 import { createOpenLoop, getOpenLoop } from "../storage/open-loops.js";
@@ -14,8 +16,6 @@ import { TaskService } from "./service.js";
 import type { CaptureNoteInput } from "../../sources/omnesis-notes/wiring.js";
 import type { NoteEntry } from "../../sources/omnesis-notes/storage.js";
 import type Database from "better-sqlite3";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 const NOW = Date.parse("2026-03-10T09:00:00");
 let path: string;
@@ -23,7 +23,7 @@ let db: Database.Database;
 
 beforeEach(() => {
   path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
-  db = createDatabase(path);
+  db = createFreshTestDatabase(path);
   vi.stubEnv("OMNESIS_EXPERIMENTAL", "1");
   setLabFlag(db, "tasks", true);
 });

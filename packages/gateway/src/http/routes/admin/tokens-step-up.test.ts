@@ -13,7 +13,7 @@ import { createHash } from "node:crypto";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { EnrollmentChallenges, type GatewayEnrollment } from "@omnesis/cloud-relay";
 import { SCOPE_ADMIN, SCOPE_PUSH_CLAIM, SCOPE_READ, type Scope } from "@omnesis/types";
-import { createDatabase } from "../../../db.js";
+import { createFreshTestDatabase } from "../../../testing/fresh-database.js";
 import { createServer } from "../../../server.js";
 import { createDevice } from "../../../data/repositories/DeviceRepository.js";
 import { createToken } from "../../../data/repositories/TokenRepository.js";
@@ -26,7 +26,7 @@ beforeEach(() => {
   vi.stubEnv("OMNESIS_EXPERIMENTAL", "0");
   dir = mkdtempSync(join(tmpdir(), "omnesis-token-step-up-"));
   path = join(dir, "gateway.sqlite");
-  db = createDatabase(path);
+  db = createFreshTestDatabase(path);
 });
 afterEach(() => {
   db.close();

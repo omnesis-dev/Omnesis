@@ -18,7 +18,7 @@ import { createLogger, toolResultSchema } from "@omnesis/core";
 import { renderConversation } from "../sources/omnesis-chat/render.js";
 import { renderedCitationsToInputs } from "../sources/omnesis-chat/upsert.js";
 import { upsertConversationCitations } from "../sources/omnesis-chat/citation-writer.js";
-import { createDatabase } from "../db.js";
+import { createFreshTestDatabase } from "../testing/fresh-database.js";
 import { setLabFlag } from "../lab/store.js";
 import { createCorpusAuthorization } from "../access/corpus-authorization.js";
 import { isKnowledgeDocumentReadable } from "../brain/knowledge/retrieval-fence.js";
@@ -49,7 +49,7 @@ let db: Database.Database;
 let directory: string;
 beforeEach(() => {
   directory = mkdtempSync(join(tmpdir(), "knowledge-reader-"));
-  db = createDatabase(join(directory, "test.db"));
+  db = createFreshTestDatabase(join(directory, "test.db"));
   document("evidence", "notes", "The observatory opens Saturday.");
 });
 afterEach(() => {

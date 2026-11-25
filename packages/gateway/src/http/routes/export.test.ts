@@ -14,7 +14,7 @@ import { randomUUID } from "node:crypto";
 import { describe, expect, test, beforeEach, afterEach } from "vitest";
 
 import { SCOPE_ADMIN, SCOPE_READ, type Scope } from "@omnesis/types";
-import { createDatabase } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import { createServer } from "../../server.js";
 import { createToken } from "../../data/repositories/TokenRepository.js";
 import { createDevice } from "../../data/repositories/DeviceRepository.js";
@@ -84,7 +84,7 @@ let releaseAnalytics: () => void = () => {};
 
 beforeEach(() => {
   dbPath = join(tmpdir(), `omnesis-export-http-${randomUUID()}.db`);
-  db = createDatabase(dbPath);
+  db = createFreshTestDatabase(dbPath);
   configDir = mkdtempSync(join(tmpdir(), "omnesis-export-http-"));
   ADMIN_TOKEN = mintToken([SCOPE_ADMIN, SCOPE_READ]);
   READ_TOKEN = mintToken([SCOPE_READ]);

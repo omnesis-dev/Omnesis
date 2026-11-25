@@ -3,25 +3,26 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { SCOPE_READ, SCOPE_WRITE_ALL, type DeviceId } from "@omnesis/types";
 import { AuthFlowRegistry } from "../../auth-flows.js";
-import { createDatabase } from "../../db.js";
+import { createFreshTestDatabase } from "../../testing/fresh-database.js";
 import { createDevice } from "../../data/repositories/DeviceRepository.js";
 import { SyncStatusRegistry } from "../../sync-status.js";
 import { WsEventHandler } from "./WsEventHandler.js";
+import type { createDatabase } from "../../db.js";
 import type { CollectorDescriptorCache } from "./CollectorDescriptorCache.js";
 import type { DeviceWsServer } from "../../ws.js";
 import type { WriteGate } from "../../write-gate.js";
-import { join as fixtureJoin } from "node:path";
-import { tmpdir as fixtureTmpdir } from "node:os";
 
 let dbPath: string;
 let db: ReturnType<typeof createDatabase>;
 
 beforeEach(() => {
   dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-ws-descriptors-${randomUUID()}.db`);
-  db = createDatabase(dbPath);
+  db = createFreshTestDatabase(dbPath);
 });
 
 afterEach(() => {
