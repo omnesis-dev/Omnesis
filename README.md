@@ -187,6 +187,8 @@ npm run typecheck
 
 A development checkout is for working on Omnesis; to use it, install with the command in [Quick start](#quick-start). Tests use `vitest` and sit next to the code as `*.test.ts`, and every feature or fix comes with tests. [`CONTRIBUTING.md`](CONTRIBUTING.md) covers setup, conventions and the pull-request process, and [`ARCHITECTURE.md`](ARCHITECTURE.md) the big picture.
 
+Native macOS development lives in [`macos/`](macos/README.md). The managed runtime and packaging boundaries are described in [`docs/desktop.md`](docs/desktop.md); the desktop app keeps its state and services separate from headless installations.
+
 Building a new source? The contract is on [Building sources](https://omnesis.dev/docs/building-sources), and the repository ships a shared `source-review` skill for Codex (`$source-review`) and Claude Code (`/source-review`) (`.agents/skills/source-review/SKILL.md`) that checks a source against it before you open the pull request.
 
 Contributions are covered by a Contributor License Agreement — a copyright assignment plus a relicensing grant; see [`CONTRIBUTING.md`](CONTRIBUTING.md) and [`CLA.md`](CLA.md).

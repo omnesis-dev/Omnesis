@@ -75,6 +75,8 @@ it("broken saved cloud transport cannot block offline maintenance or explicit ne
   for (const args of [
     [],
     ["service", "status"],
+    ["desktop", "bridge"],
+    ["desktop", "daemon"],
     ["gateway"],
     ["uninstall"],
     ["update"],

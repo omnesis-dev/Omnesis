@@ -1,0 +1,84 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (c) 2026 Adrien Conrath
+name: macOS desktop
+on:
+  pull_request:
+    paths:
+      - macos/**
+      - ios/Package.swift
+      - ios/Sources/Omnesis/**
+      - packages/cli/src/desktop/**
+      - packages/cli/src/commands/desktop.ts
+      - packages/core/src/secret-store*
+      - packages/core/src/secret-file*
+      - packages/core/src/models/**
+      - scripts/desktop/**
+      - .github/workflows/macos-desktop.yml
+  push:
+    branches: [main]
+    paths:
+      - macos/**
+      - ios/Package.swift
+      - ios/Sources/Omnesis/**
+      - packages/cli/src/desktop/**
+      - packages/cli/src/commands/desktop.ts
+      - packages/core/src/secret-store*
+      - packages/core/src/secret-file*
+      - packages/core/src/models/**
+      - scripts/desktop/**
+      - .github/workflows/macos-desktop.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: macos-desktop-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+jobs:
+  native-desktop:
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Keep tests off production services
+        id: production-network
+        run: scripts/ci/production-network.sh isolate
+      - name: Show native toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+      - name: Test portable native models
+        run: swift test --package-path macos
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate native project
+        working-directory: macos
+        run: xcodegen generate
+      - name: Build and exercise native application
+        working-directory: macos
+        run: |
+          xcodebuild \
+            -project OmnesisDesktop.xcodeproj \
+            -scheme OmnesisDesktop \
+            -configuration Debug \
+            -destination 'platform=macOS' \
+            -derivedDataPath build \
+            -resultBundlePath build/DesktopTests.xcresult \
+            CODE_SIGN_IDENTITY='' \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            test
+      - name: Upload native renders and test results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: macos-desktop-evidence
+          path: |
+            /tmp/omnesis-macos-snapshots/
+            macos/build/DesktopTests.xcresult
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Verify production network isolation
+        if: ${{ always() && steps.production-network.outcome == 'success' }}
+        run: scripts/ci/production-network.sh verify

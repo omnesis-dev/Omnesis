@@ -1,0 +1,6 @@
+.build/
+.swiftpm/
+OmnesisDesktop.xcodeproj/
+build/
+DerivedData/
+Local.xcconfig

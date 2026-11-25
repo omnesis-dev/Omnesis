@@ -9,6 +9,9 @@ const DEFAULT_GATEWAY_TRUST_EXEMPT_COMMANDS = new Set([
   "help",
   "service",
   "gateway",
+  // Desktop lifecycle selects its isolated identity before dotenv and owns
+  // local certificate trust and account enrollment itself.
+  "desktop",
   "update",
   // Removes this machine's install; it reads only the disk and must work
   // when the gateway is gone or the install no longer starts.

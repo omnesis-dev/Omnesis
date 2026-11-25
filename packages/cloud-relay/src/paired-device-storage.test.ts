@@ -4,7 +4,8 @@
 import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import * as core from "@omnesis/core";
 import {
   createSecretStore,
   ensureInstallRootKey,
@@ -187,4 +188,30 @@ test("concurrent encrypted signing-key creation selects one persistent identity"
   );
   expect(new Set(keys.map((key) => key.publicKey)).size).toBe(1);
   expect(isEncryptedSecretFile(await readFile(path, "utf8"))).toBe(true);
+});
+
+test("an unjoined credential read is not treated as an absent automatic pairing", async () => {
+  const scope = options();
+  await ensureInstallRootKey(scope);
+  const path = join(directory, "cloud-relay/collector-device.json");
+  await savePairedDeviceFile(path, pair, scope);
+  const receipt = Object.assign(new Error("Invented private-read cleanup uncertainty"), {
+    cleanupFailure: undefined,
+    cleanupPending: true,
+  });
+  const read = vi.spyOn(core, "readSecretTextFile").mockRejectedValueOnce(receipt);
+  try {
+    await expect(
+      defaultCloudDeviceFile(
+        {
+          OMNESIS_CONFIG_DIR: directory,
+          OMNESIS_SECRET_SERVICE: scope.service,
+          OMNESIS_SECRET_STORE: "file",
+        },
+        "collector",
+      ),
+    ).rejects.toBe(receipt);
+  } finally {
+    read.mockRestore();
+  }
 });

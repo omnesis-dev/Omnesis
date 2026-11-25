@@ -28,6 +28,10 @@ export interface CommandEntry {
 }
 
 export const COMMANDS: Readonly<Record<string, CommandEntry>> = {
+  desktop: {
+    description: "Manage the native desktop application's private runtime",
+    load: () => import("./commands/desktop.js").then((m) => m.desktopCommand),
+  },
   // The Omnesis account and the cloud relay.
   cloud: {
     description: "Your Omnesis account: connect this gateway and add devices",

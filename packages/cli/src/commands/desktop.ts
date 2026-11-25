@@ -1,0 +1,57 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Adrien Conrath
+
+import { defineCommand } from "citty";
+import { desktopProfile } from "../desktop/environment.js";
+
+export const desktopCommand = defineCommand({
+  meta: { name: "desktop", description: "Manage the native desktop application's private runtime" },
+  subCommands: {
+    bridge: defineCommand({
+      meta: {
+        name: "bridge",
+        description: "Serve the native application's private JSON-line channel",
+      },
+      async run() {
+        const { DesktopCoordinator } = await import("../desktop/coordinator.js");
+        const { runDesktopProtocol } = await import("../desktop/protocol.js");
+        const coordinator = new DesktopCoordinator(desktopProfile());
+        const controller = new AbortController();
+        const abort = () => controller.abort();
+        process.once("SIGINT", abort);
+        process.once("SIGTERM", abort);
+        try {
+          await runDesktopProtocol({
+            input: process.stdin,
+            output: process.stdout,
+            signal: controller.signal,
+            handle: (request, context) => coordinator.handle(request, context),
+          });
+        } finally {
+          process.off("SIGINT", abort);
+          process.off("SIGTERM", abort);
+          await coordinator.close();
+        }
+      },
+    }),
+    daemon: defineCommand({
+      meta: {
+        name: "daemon",
+        description: "Supervise only this native application's owned processes",
+      },
+      async run() {
+        const { runDesktopDaemon } = await import("../desktop/daemon.js");
+        const controller = new AbortController();
+        const abort = () => controller.abort();
+        process.once("SIGINT", abort);
+        process.once("SIGTERM", abort);
+        try {
+          await runDesktopDaemon(desktopProfile(), { signal: controller.signal });
+        } finally {
+          process.off("SIGINT", abort);
+          process.off("SIGTERM", abort);
+        }
+      },
+    }),
+  },
+});

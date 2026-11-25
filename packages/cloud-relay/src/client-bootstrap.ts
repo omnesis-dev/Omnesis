@@ -3,7 +3,7 @@
 
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { readSecretTextFile } from "@omnesis/core";
+import { ownedProcessCleanupReceipt, readSecretTextFile } from "@omnesis/core";
 import { pairedDeviceSecretOptions } from "./paired-device-storage.js";
 
 /** Start only for explicitly configured paired native components, before URL constants freeze. */
@@ -93,7 +93,8 @@ export async function defaultCloudDeviceFile(
           options,
         )
       )?.trim() ?? null;
-  } catch {
+  } catch (error) {
+    if (ownedProcessCleanupReceipt(error) !== undefined) throw error;
     // Automatic transport selection never substitutes authority when the active token is unreadable.
     return undefined;
   }
