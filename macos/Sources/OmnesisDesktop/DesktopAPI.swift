@@ -7,6 +7,11 @@ import Foundation
 import Omnesis
 import Security
 
+private struct DesktopAPIRefusal: Decodable {
+    let error: String?
+    let code: String?
+}
+
 /// Missing desktop administration operations over the existing gateway API.
 /// Chat and its streaming protocol use the shared Apple client unchanged.
 final class DesktopAPI: @unchecked Sendable {
@@ -67,10 +72,7 @@ final class DesktopAPI: @unchecked Sendable {
         let (data, response) = try await session.data(for: request)
         guard let response = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
         guard (200 ..< 300).contains(response.statusCode) else {
-            struct Refusal: Decodable { let error: String?
-                let code: String?
-            }
-            let refusal = try? JSONDecoder().decode(Refusal.self, from: data)
+            let refusal = try? JSONDecoder().decode(DesktopAPIRefusal.self, from: data)
             throw DesktopAPIError.refusal(
                 status: response.statusCode,
                 code: refusal?.code,
