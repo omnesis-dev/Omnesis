@@ -212,6 +212,7 @@
     ".claude/**",
     "integrations/**",
     "extension/scripts/test-manifest.d.mts",
+    "scripts/desktop/fixture-openssl.d.mts",
     "scripts/lib/check-process.d.mts"
   ],
   "rules": {
