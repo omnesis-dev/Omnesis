@@ -20,6 +20,7 @@
     { "path": "packages/watch/tsconfig.tests.json" },
     { "path": "packages/relay" },
     { "path": "packages/cloud-relay" },
+    { "path": "packages/telemetry" },
     { "path": "packages/agent-integration" },
     { "path": "packages/providers/antigravity" },
     { "path": "packages/providers/apple" },

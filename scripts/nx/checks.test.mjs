@@ -250,12 +250,17 @@ describe("Nx change selection", () => {
         ".changeset/example.md",
         "packages/agent/CHANGELOG.md",
         "packages/watch/README.md",
+        "TELEMETRY.md",
       ]),
     ).toEqual([]);
     process.chdir(originalCwd);
     const changeset = buildFixturePlan([".changeset/example.md"]);
     expect(changeset.fallback).toBeNull();
     expect(changeset.bundles).toEqual([]);
+    process.chdir(originalCwd);
+    const telemetry = buildFixturePlan(["TELEMETRY.md"]);
+    expect(telemetry.fallback).toBeNull();
+    expect(telemetry.bundles).toEqual([]);
   });
 
   test("global and workspace-owned inputs retain their script validation", () => {

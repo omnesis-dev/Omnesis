@@ -16,8 +16,27 @@
  * Ctrl-C reaches the daemon's own graceful-shutdown handlers.
  */
 
+import { readFileSync } from "node:fs";
 import { defineCommand } from "citty";
 import { macServerGuidance } from "./mac-server-guidance.js";
+
+export function gatewayRuntimeMode(entryUrl: string, explicitMode?: string): string {
+  if (explicitMode !== undefined) return explicitMode;
+  if (!entryUrl.endsWith(".js")) return "development";
+  try {
+    // Compiling a developer checkout does not make it a production install.
+    // Publish staging alone rewrites this manifest's binary to dist/index.js.
+    const manifest = JSON.parse(readFileSync(new URL("../../package.json", entryUrl), "utf8")) as {
+      name?: unknown;
+      bin?: { omnesis?: unknown };
+    };
+    if (manifest.name === "omnesis" && manifest.bin?.omnesis === "dist/index.js")
+      return "production";
+  } catch {
+    /* Unrecognized installations remain development unless launched explicitly. */
+  }
+  return "development";
+}
 
 export const gatewayCommand = defineCommand({
   meta: {
@@ -37,6 +56,12 @@ export const gatewayCommand = defineCommand({
         }
         // The gateway boots on import (module top-level) and registers its
         // own SIGINT/SIGTERM graceful-shutdown handlers.
+        // Raw source/dev entrypoints have no production capability. Preserve an
+        // explicit test/development mode supplied by a harness or operator.
+        process.env.OMNESIS_RUNTIME_MODE = gatewayRuntimeMode(
+          import.meta.url,
+          process.env.OMNESIS_RUNTIME_MODE,
+        );
         await import("@omnesis/gateway");
         await new Promise<never>(() => {});
       },

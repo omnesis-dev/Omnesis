@@ -45,6 +45,7 @@ import { countLabel, localDay, supportsTaskConversations } from "./lib/tasks-mod
 import { onTaskCounts } from "./lib/task-counts.js";
 import { CloudPairingLogin } from "./components/cloud-pairing-login.js";
 import { WaitingDevicesBanner } from "./components/waiting-devices-banner.js";
+import { TelemetryNotice } from "./components/telemetry.js";
 import { AttentionIcon } from "./components/attention-icon.js";
 import { navAttention } from "./lib/attention.js";
 import { useAttention } from "./lib/use-attention.js";
@@ -874,6 +875,7 @@ function App() {
         }
       </main>
       <${DevAnnotationButton} route=${route} developer=${developer} activeConvoId=${activeConvoId} />
+      <${TelemetryNotice} />
       ${developer ? html`<${DevAnnotationComposer} />` : null}
     </div>
   `;

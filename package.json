@@ -25,7 +25,8 @@
     "packages/agent-integration",
     "packages/providers/*",
     "packages/providers-synth/*",
-    "packages/cloud-relay"
+    "packages/cloud-relay",
+    "packages/telemetry"
   ],
   "scripts": {
     "test": "npm run test:unit && npm run test:e2e",

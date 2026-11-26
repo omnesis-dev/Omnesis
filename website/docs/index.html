@@ -285,6 +285,15 @@
             Strava and the other accounts you add, and reads from them.
           </li>
           <li>
+            <strong>Installation telemetry.</strong> Production gateways share minimal daily
+            statistics by default: version, verified public commit (or <code>custom</code>), OS, CPU
+            architecture and an identifier that rotates each UTC month. No personal content,
+            connected accounts or conversations are included. Disable it in Settings →
+            Configuration, with <code>omnesis config set /telemetry/enabled false</code>, or with
+            <code>OMNESIS_TELEMETRY=off</code> on the gateway. See
+            <a href="operating#installation-telemetry">Installation telemetry</a>.
+          </li>
+          <li>
             <strong>A release check.</strong> The gateway asks its Git host or container registry
             for the newest stable release shortly after it starts and every 24 hours. The request
             carries no identifier or corpus data. Turn it off with

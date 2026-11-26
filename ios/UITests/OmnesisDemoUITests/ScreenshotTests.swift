@@ -85,6 +85,13 @@ final class ScreenshotTests: XCTestCase {
             app.staticTexts["Acme Q3 Planning"].waitForExistence(timeout: 30),
             "Synthetic search result did not appear"
         )
+        let shortResult = app.staticTexts["Q3 planning — heads up"].firstMatch
+        let longResult = app.staticTexts["Acme Q3 Planning"].firstMatch
+        XCTAssertTrue(shortResult.waitForExistence(timeout: 10))
+        XCTAssertEqual(
+            shortResult.frame.minX, longResult.frame.minX, accuracy: 1,
+            "Search result titles must share a leading edge regardless of snippet length"
+        )
         try captureStoreScreenshot(named: "02-search")
     }
 

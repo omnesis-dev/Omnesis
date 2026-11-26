@@ -159,6 +159,7 @@ export const bundles = {
       "scheduler-heartbeat.e2e.test.ts",
       "gateway-startup.e2e.test.ts",
       "gateway-lifecycle.e2e.test.ts",
+      "installation-telemetry.e2e.test.ts",
       "packages/gateway/**/*.e2e.test.ts",
       "packages/cli/**/*.e2e.test.ts",
     ],
@@ -435,7 +436,7 @@ export function behavioralBundles(files) {
     if (
       /^(?:docs|website|\.claude|\.agents|\.changeset)\//.test(file) ||
       /(?:^|\/)(?:CHANGELOG|README)\.md$/.test(file) ||
-      /^(?:AGENTS|CLAUDE|README|CONTRIBUTING|ARCHITECTURE|SECURITY|SUPPORT|CODE_OF_CONDUCT|CHANGELOG|CLA|LICENSE|THIRD_PARTY_NOTICES|TRADEMARKS)\.md$/.test(
+      /^(?:AGENTS|CLAUDE|README|CONTRIBUTING|ARCHITECTURE|SECURITY|SUPPORT|CODE_OF_CONDUCT|CHANGELOG|CLA|LICENSE|THIRD_PARTY_NOTICES|TRADEMARKS|TELEMETRY)\.md$/.test(
         file,
       )
     )

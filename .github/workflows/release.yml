@@ -479,12 +479,20 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.verify.outputs.sha }}
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Verify fixed release revision
         env:
           TARGET_SHA: ${{ needs.verify.outputs.sha }}
         run: test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+
+      - name: Record content-bound telemetry build provenance
+        run: |
+          # Historical release tags predate the telemetry provenance helper.
+          if [ -f scripts/release/telemetry-build.mjs ]; then
+            node scripts/release/telemetry-build.mjs --write-proof
+          fi
 
       # A hosted runner's free disk varies, and an image built twice (loaded
       # for the boot test, then exported) can exceed it: release 0.7.5's

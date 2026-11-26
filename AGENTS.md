@@ -143,6 +143,11 @@ This rule applies to every part of the repo: iOS previews, snapshot tests, gatew
 
 ## Tests are mandatory
 
+Production installation telemetry requires explicit runtime authority. Keep all
+test, synthetic, benchmark and development launch paths in non-production mode,
+including production-container fixtures. Telemetry tests use injected loopback
+transports only; see `TELEMETRY.md` and `docs/conventions.md`.
+
 - **CI runs the lanes a pull request affects, all Linux lanes on every push to
   `main`, and the full suite twice daily or on manual dispatch**, on GitHub-hosted runners (`.github/workflows/full-validation.yml`);
   a newer push to a pull request cancels its older run. A pull request's `scope`

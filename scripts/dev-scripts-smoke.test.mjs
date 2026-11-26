@@ -2068,6 +2068,58 @@ describe("android.yml CI workflow structure (C20)", () => {
 });
 
 describe("release.yml verification permissions", () => {
+  it.each(
+    [
+      ["release.yml", "images"],
+      ["docker-publish.yml", "publish"],
+    ].flatMap(([workflowFile, jobName]) =>
+      ["historical", "current", "failing-helper"].map((tree) => ({ workflowFile, jobName, tree })),
+    ),
+  )(
+    "retains content-bound telemetry provenance without breaking historical release trees ($workflowFile/$tree)",
+    async ({ workflowFile, jobName, tree }) => {
+      const { parse } = await import("yaml");
+      const workflow = parse(
+        readFileSync(join(repoRoot, ".github/workflows", workflowFile), "utf8"),
+      );
+      const step = workflow.jobs[jobName].steps.find(
+        (candidate) => candidate.name === "Record content-bound telemetry build provenance",
+      );
+      const directory = tmpDir("omnesis-release-telemetry-step-");
+      if (tree !== "historical") {
+        mkdirSync(join(directory, "scripts/release"), { recursive: true });
+        writeFileSync(
+          join(directory, "scripts/release/telemetry-build.mjs"),
+          'import { writeFileSync } from "node:fs";\n' +
+            'writeFileSync("invocation.json", JSON.stringify(process.argv.slice(2)));\n' +
+            (tree === "failing-helper"
+              ? "process.exit(23);\n"
+              : 'writeFileSync("telemetry-proof.json", "invented proof");\n'),
+        );
+      }
+      const result = spawnSync(
+        bashExecutable(),
+        ["--noprofile", "--norc", "-e", "-o", "pipefail", "-c", step.run],
+        {
+          cwd: directory,
+          env: { ...process.env, PATH: prependPath(dirname(process.execPath), process.env.PATH) },
+          encoding: "utf8",
+          timeout: 10000,
+        },
+      );
+      expect(result.error).toBeUndefined();
+      expect(result.status).toBe(tree === "failing-helper" ? 23 : 0);
+      expect(existsSync(join(directory, "telemetry-proof.json"))).toBe(tree === "current");
+      if (tree === "historical") {
+        expect(existsSync(join(directory, "invocation.json"))).toBe(false);
+      } else {
+        expect(JSON.parse(readFileSync(join(directory, "invocation.json"), "utf8"))).toEqual([
+          "--write-proof",
+        ]);
+      }
+    },
+  );
+
   it("can read the full-validation evidence that gates a release tag", async () => {
     const { parse } = await import("yaml");
     const workflow = parse(readFileSync(join(repoRoot, ".github/workflows/release.yml"), "utf8"));

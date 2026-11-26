@@ -10,8 +10,26 @@ import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { parseArguments } from "./arguments.mjs";
 import { inventoryBundle } from "./native-inventory.mjs";
+import { isEntryScript } from "../lib/is-entry-script.mjs";
 
 const execute = promisify(execFile);
+
+/** Closed qualification environment: never grant production telemetry authority. */
+export function smokeRuntimeEnvironment(runtime, home) {
+  return {
+    PATH: join(runtime, "bin") + ":/usr/bin:/bin",
+    HOME: home,
+    TMPDIR: tmpdir(),
+    LANG: "en_US.UTF-8",
+    OMNESIS_RUNTIME_MODE: "test",
+    OMNESIS_TELEMETRY: "0",
+    OMNESIS_E2E_DESKTOP_RUNTIME_SMOKE: "1",
+    OMNESIS_CONFIG_DIR: join(home, "unrelated-headless"),
+    OMNESIS_SECRET_SERVICE: "dev.omnesis.unrelated-fixture",
+    OMNESIS_GATEWAY_URL: "https://unreachable.example.test",
+    OMNESIS_TOKEN: "omn_test",
+  };
+}
 
 /** Exercise the actual compiled closure with no host Node/npm or personal state. */
 async function smokeRuntime(sourceRuntime) {
@@ -36,16 +54,7 @@ async function smokeRuntime(sourceRuntime) {
 
   const runtime = join(cache, createHash("sha256").update(manifestBytes).digest("hex"));
 
-  const env = {
-    PATH: join(runtime, "bin") + ":/usr/bin:/bin",
-    HOME: home,
-    TMPDIR: tmpdir(),
-    LANG: "en_US.UTF-8",
-    OMNESIS_CONFIG_DIR: join(home, "unrelated-headless"),
-    OMNESIS_SECRET_SERVICE: "dev.omnesis.unrelated-fixture",
-    OMNESIS_GATEWAY_URL: "https://unreachable.example.test",
-    OMNESIS_TOKEN: "omn_test",
-  };
+  const env = smokeRuntimeEnvironment(runtime, home);
   const node = join(runtime, "runtime-exec");
   const script = join(runtime, "packages/cli/dist/index.js");
   try {
@@ -187,5 +196,10 @@ async function smokeRuntime(sourceRuntime) {
   }
 }
 
-const args = parseArguments(process.argv.slice(2), { values: ["runtime"], required: ["runtime"] });
-await smokeRuntime(resolve(args.get("runtime")));
+if (isEntryScript(import.meta.url)) {
+  const args = parseArguments(process.argv.slice(2), {
+    values: ["runtime"],
+    required: ["runtime"],
+  });
+  await smokeRuntime(resolve(args.get("runtime")));
+}

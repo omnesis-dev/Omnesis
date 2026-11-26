@@ -133,7 +133,7 @@ omnesis sql "SELECT * FROM strava_activities LIMIT 5"
 ## Privacy
 
 - **Your data stays on machines you own.** Documents, the search index, analytics and agent conversations live in the gateway's config directory. Encryption at rest uses a root key held in your OS keyring or sealed by a passphrase. See [Security](https://omnesis.dev/docs/security).
-- **What leaves your machines is listed, and each item is your choice:** your sources' own services, a daily release check that carries no identifier (switch it off with `omnesis config set /releaseCheck false`), content-free phone wake-ups, and any remote model you choose. See [What leaves your machines](https://omnesis.dev/docs/#outbound-connections).
+- **What leaves your machines is listed, and each item is your choice:** your sources' own services, a daily release check that carries no identifier (switch it off with `omnesis config set /releaseCheck false`), minimal daily installation telemetry enabled by default, content-free phone wake-ups, and any remote model you choose. Installation telemetry shares only version, public commit, OS, CPU architecture and a monthly rotating identifier; disable it with `omnesis config set /telemetry/enabled false` or `OMNESIS_TELEMETRY=off`. See [Installation telemetry](TELEMETRY.md) and [What leaves your machines](https://omnesis.dev/docs/#outbound-connections).
 - **Every client is a device with its own scoped token**, and every external agent is a connection you approved with an access level you chose. Revoking either takes effect at once.
 
 **Use at your own risk.** You are responsible for securing the environment where you

@@ -124,7 +124,7 @@ function isKnown(file) {
     /^(?:extension|ios|macos|android|scripts|e2e|evals|integrations|plugins|website|docs|bench|privacy|assets|patches|\.github|\.claude|\.claude-plugin|\.agents|\.changeset)\//.test(
       file,
     ) ||
-    /^(?:AGENTS|CLAUDE|README|CONTRIBUTING|ARCHITECTURE|SECURITY|SUPPORT|CODE_OF_CONDUCT|CHANGELOG|CLA|LICENSE|THIRD_PARTY_NOTICES|TRADEMARKS)\.md$/.test(
+    /^(?:AGENTS|CLAUDE|README|CONTRIBUTING|ARCHITECTURE|SECURITY|SUPPORT|CODE_OF_CONDUCT|CHANGELOG|CLA|LICENSE|THIRD_PARTY_NOTICES|TRADEMARKS|TELEMETRY)\.md$/.test(
       file,
     ) ||
     /^(?:package(?:-lock)?\.json|nx\.json|knip\.json|tsconfig.*\.json|vitest\.config\.ts|eslint\.config\.js|lefthook\.yml|playwright\.config\.ts|Dockerfile|worker\.js|wrangler\.jsonc|\.(?:gitignore|gitattributes|dockerignore|editorconfig|prettierignore|prettierrc\.json|nvmrc|swiftformat|swiftlint\.yml|swiftlint-baseline\.json))$/.test(

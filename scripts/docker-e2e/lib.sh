@@ -4,6 +4,9 @@
 # exercises the REAL CLI + gateway from source against a throwaway config dir.
 set -euo pipefail
 
+export OMNESIS_RUNTIME_MODE=test
+export OMNESIS_TELEMETRY=off
+
 REPO=/repo
 export OMNESIS_CONFIG_DIR="${OMNESIS_CONFIG_DIR:-/e2e/config}"
 export OMNESIS_GATEWAY_PORT="${OMNESIS_GATEWAY_PORT:-17600}"

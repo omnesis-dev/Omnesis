@@ -306,6 +306,7 @@ test("removing a sign-in removes every stored countersignature that names it, an
     const google = "a".repeat(64),
       accountId = accounts.signInFederated("google", google);
     let account = { accountId, version: 1 };
+    const createdAt = Date.now();
     /** Adds a passkey that countersigned the account as it stood, as an earlier relay stored it. */
     const add = async (label: string) => {
       const names = [
@@ -322,19 +323,27 @@ test("removing a sign-in removes every stored countersignature that names it, an
         { authenticator: parked.authenticator, handle: parked.begin.options.user.id },
         names,
       );
+      // Same-millisecond registrations use random credential IDs as their display tie-breaker.
+      db.prepare("UPDATE omnesis_passkeys SET created_at=? WHERE credential_id=?").run(
+        createdAt,
+        parked.authenticator.id,
+      );
       return parked.authenticator.id;
     };
     const countersigners = () =>
       accounts
         .passkeyKeys(accountId)
         .filter((key) => key.countersignature)
-        .map((key) => key.id);
+        .map((key) => key.id)
+        .sort();
     // First names Google; second names Google and first; third names all three.
     const first = await add("Passkey 1"),
       second = await add("Passkey 2"),
       third = await add("Passkey 3");
-    // Creation timestamps can tie; the listing then orders by random credential id.
-    expect(countersigners().sort()).toEqual([first, second, third].sort());
+    expect(new Set(accounts.passkeyKeys(accountId).map((key) => key.createdAt))).toEqual(
+      new Set([Math.floor(createdAt / 1000)]),
+    );
+    expect(countersigners()).toEqual([first, second, third].sort());
     // Removing the first passkey takes the two countersignatures that name it.
     accounts.removePasskey(accountId, first, ["google"], account.version);
     account = { accountId, version: accounts.sessionVersion(accountId)! };
@@ -355,7 +364,12 @@ test("removing a sign-in removes every stored countersignature that names it, an
     expect(countersigners()).toEqual([fourth]);
     accounts.unlinkFederated(accountId, "google", google, ["google"], account.version);
     expect(countersigners()).toEqual([]);
-    expect(accounts.passkeyKeys(accountId).map((key) => key.id)).toEqual([second, third, fourth]);
+    expect(
+      accounts
+        .passkeyKeys(accountId)
+        .map((key) => key.id)
+        .sort(),
+    ).toEqual([second, third, fourth].sort());
     service.close();
   } finally {
     db.close();

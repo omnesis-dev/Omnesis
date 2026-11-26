@@ -160,6 +160,8 @@ function isolateEnvironment(workDir: string): void {
   for (const key of Object.keys(process.env)) {
     if (key.startsWith("OMNESIS_")) delete process.env[key];
   }
+  process.env.OMNESIS_RUNTIME_MODE = "test";
+  process.env.OMNESIS_TELEMETRY = "off";
   process.env.OMNESIS_SYNTHETIC = "1";
   process.env.OMNESIS_SYNTH_PRE_DISCOVERED = "1";
   process.env.OMNESIS_SYNTH_AUTH_DELAY_MS = "50";
