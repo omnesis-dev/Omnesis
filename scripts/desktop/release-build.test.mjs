@@ -247,8 +247,8 @@ test("release workflow executes strict enablement and gates headless publication
   const root = await scratch(),
     output = join(root, "outputs");
   const base = {
-    PATH: process.env.PATH,
     ...environment(),
+    PATH: process.env.PATH,
     GITHUB_OUTPUT: output,
     ARMED: "false",
     IMAGE_PUBLISH: "0",
