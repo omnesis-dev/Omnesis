@@ -1,6 +1,7 @@
 node_modules/
 dist/
 coverage/
+/evidence/
 test-results/
 *.tsbuildinfo
 
@@ -13,6 +14,18 @@ ios/.build/
 ios/build/
 ios/Omnesis.xcodeproj/
 ios/DerivedData/
+
+# macOS build outputs and integrity-verified native fixture payloads
+macos/.build/
+macos/.swiftpm/
+macos/build/
+macos/DerivedData/
+macos/OmnesisDesktop.xcodeproj/
+macos/.node-fixture/
+macos/.codex-keychain-fixture/
+macos/.codex-backend-fixture/
+macos/.analytics-build-fixture/
+macos/.package-build-fixture/
 
 # Generated SwiftLint baseline — managed by `swiftlint`, not prettier
 .swiftlint-baseline.json

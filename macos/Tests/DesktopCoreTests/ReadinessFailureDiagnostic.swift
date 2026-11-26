@@ -178,6 +178,70 @@ enum DesktopReadinessFailureDiagnostic {
         initial != nil && initial == current && image == "/usr/bin/sample"
     }
 
+    struct SamplerIdentityAcquisition {
+        enum Phase: String, Equatable { case awaitingIdentity, verified, refused }
+        private(set) var phase = Phase.awaitingIdentity
+        private(set) var binding: DesktopBackgroundProcessIdentity?
+        private(set) var refusal: String?
+        private let parent: Int32
+        private let firstRead: Bool
+        private let firstParent: Bool
+        private let firstImageRead: Bool
+        private let firstImageMatch: Bool
+        private var currentRead = false
+        private var currentParent = false
+        private var currentImageRead = false
+        private var currentImageMatch = false
+
+        init(parent: Int32, firstIdentity: DesktopBackgroundProcessIdentity?, firstImage: String?) {
+            self.parent = parent
+            firstRead = firstIdentity != nil
+            firstParent = firstIdentity?.parent == parent
+            firstImageRead = firstImage != nil
+            firstImageMatch = firstImage == "/usr/bin/sample"
+        }
+
+        mutating func observe(identity: DesktopBackgroundProcessIdentity?, image: String?, ownedUnreaped: Bool, elapsed: Duration) {
+            guard phase != .refused else { return }
+            currentRead = identity != nil // The public read already enforces current UID.
+            currentParent = identity?.parent == parent
+            currentImageRead = image != nil
+            currentImageMatch = image == "/usr/bin/sample"
+            if !ownedUnreaped { reject("sampler-relationship-refused")
+                return
+            }
+            if elapsed >= .seconds(5) { reject("deadline")
+                return
+            }
+            if let binding {
+                if !DesktopReadinessFailureDiagnostic.verifiesSampler(initial: binding, current: identity, image: image) {
+                    reject("sampler-identity-refused")
+                }
+                return
+            }
+            if identity != nil, !currentParent { reject("sampler-parent-refused")
+                return
+            }
+            // Initial exec/image metadata may not yet be visible. Only our same fresh,
+            // WNOHANG-confirmed unreaped child can acquire its FIRST binding later.
+            if let identity, currentParent, currentImageMatch {
+                binding = identity
+                phase = .verified
+            }
+        }
+
+        private mutating func reject(_ reason: String) {
+            phase = .refused
+            refusal = reason
+        }
+
+        func summary(elapsed: Duration) -> String {
+            let value = elapsed.components
+            let milliseconds = max(0, min(7000, Int(min(7, max(0, value.seconds))) * 1000 + Int(value.attoseconds / 1_000_000_000_000_000)))
+            return "phase=\(phase.rawValue),firstRead=\(firstRead),firstParentMatch=\(firstParent),firstImageRead=\(firstImageRead),firstImageMatch=\(firstImageMatch),currentRead=\(currentRead),currentParentMatch=\(currentParent),currentImageRead=\(currentImageRead),currentImageMatch=\(currentImageMatch),elapsedMs=\(milliseconds)"
+        }
+    }
+
     private static func image(_ pid: Int32) -> String? {
         var path = [CChar](repeating: 0, count: 4096)
         guard proc_pidpath(pid, &path, UInt32(path.count)) > 0 else { return nil }
@@ -263,10 +327,13 @@ enum DesktopReadinessFailureDiagnostic {
             guard spawned == 0, pid > 1 else { return "result=spawn-refused" }
             // Optional image/birth metadata gates evidence; cleanup authority is the
             // fresh direct child plus the sole waitpid owner's unreaped relationship.
-            let sampler = try? DesktopBackgroundProcessIdentity.read(pid)
             let began = ContinuousClock.now
-            var reason: String? = verifiesSampler(initial: sampler, current: sampler, image: image(pid)) ? nil : "sampler-identity-refused"
-            var status: Int32 = 0
+            let sampler = try? DesktopBackgroundProcessIdentity.read(pid)
+            var acquisition = SamplerIdentityAcquisition(parent: getpid(), firstIdentity: sampler, firstImage: image(pid))
+            func diagnostic(_ result: String) -> String {
+                result + "; sampler[" + acquisition.summary(elapsed: began.duration(to: .now)) + "]"
+            }
+            var reason: String?, status: Int32 = 0
             // Retain only this spawned child's kernel binding if join cannot be confirmed.
             // A receipt is diagnostic evidence, never permission to adopt or signal a PID.
             let ownership = Data(
@@ -277,7 +344,7 @@ enum DesktopReadinessFailureDiagnostic {
             if written != ownership.count || fsync(ownerFD) != 0 { reason = "owner-refused" }
             var lifecycle = SamplerLifecycle(), didJoin = false
             while !lifecycle.finished {
-                guard permitsSoleWaiter() else { return "result=reaper-changed,joined=false,privateRetained=true" }
+                guard permitsSoleWaiter() else { return diagnostic("result=reaper-changed,joined=false,privateRetained=true") }
                 // This is the sole waitpid owner, from successful spawn until join/loss.
                 let waited = waitpid(pid, &status, WNOHANG)
                 let observation: SamplerLifecycle.Observation = waited == pid ? .joined :
@@ -286,17 +353,22 @@ enum DesktopReadinessFailureDiagnostic {
                 reason = reason ?? refusal(bytes: Int64(state?.st_size ?? -1), elapsed: began.duration(to: .now), ownedFile: state != nil)
                 if Task.isCancelled { reason = reason ?? "cancelled" }
                 if !verifies(target) { reason = reason ?? "identity-changed" }
-                // Image/birth metadata gates publication, never cleanup authority for our
-                // freshly spawned, still-unreaped direct child after WNOHANG == 0.
-                if case .running = observation,
-                   !verifiesSampler(initial: sampler, current: try? DesktopBackgroundProcessIdentity.read(pid), image: image(pid)) {
-                    reason = reason ?? "sampler-identity-refused"
+                // Initial identity acquisition shares the SAME overall five-second budget.
+                // Later metadata loss stays fatal; cleanup authority remains the direct child.
+                if case .running = observation {
+                    acquisition.observe(
+                        identity: try? DesktopBackgroundProcessIdentity.read(pid),
+                        image: image(pid),
+                        ownedUnreaped: true,
+                        elapsed: began.duration(to: .now)
+                    )
+                    reason = reason ?? acquisition.refusal
                 }
                 switch lifecycle.advance(observation, elapsed: began.duration(to: .now), refused: reason != nil) {
                 case .terminate: _ = Darwin.kill(pid, SIGTERM)
                 case .kill: _ = Darwin.kill(pid, SIGKILL)
                 case .joined: didJoin = true
-                case .unconfirmed: return "result=join-unconfirmed,joined=false,privateRetained=true"
+                case .unconfirmed: return diagnostic("result=join-unconfirmed,joined=false,privateRetained=true")
                 case .wait, .finished: break
                 }
                 if !lifecycle.finished {
@@ -304,25 +376,29 @@ enum DesktopReadinessFailureDiagnostic {
                     catch { usleep(10000) }
                 }
             }
-            guard didJoin else { return "result=join-unconfirmed,joined=false,privateRetained=true" }
+            guard didJoin else { return diagnostic("result=join-unconfirmed,joined=false,privateRetained=true") }
+            guard acquisition.phase == .verified, acquisition.binding != nil else {
+                return diagnostic("result=\(acquisition.refusal ?? "sampler-unverified"),joined=true,privateRetained=true")
+            }
             var observed = stat()
             let observedFile = lstat(output.path, &observed) == 0
             let outputFacts = "outputPresent=\(observedFile),regular=\(observedFile && observed.st_mode & S_IFMT == S_IFREG),owned=\(observedFile && observed.st_uid == getuid()),private=\(observedFile && observed.st_mode & 0o077 == 0),singleLink=\(observedFile && observed.st_nlink == 1),initialInode=\(observedFile && observed.st_dev == original.st_dev && observed.st_ino == original.st_ino),bytes=\(observedFile ? max(0, min(Int64(observed.st_size), Int64(maximumStackBytes + 1))) : -1)"
             guard verifies(target),
-                  let final = fileState() else { return "result=identity-or-file-refused,joined=true,privateRetained=true; " + outputFacts }
+                  let final = fileState()
+            else { return diagnostic("result=identity-or-file-refused,joined=true,privateRetained=true; " + outputFacts) }
             reason = reason ?? refusal(bytes: Int64(final.st_size), elapsed: began.duration(to: .now), ownedFile: true)
             if let reason {
                 if reason == "oversize" { try manager.removeItem(at: output)
                     try manager.removeItem(at: owner)
                     try manager.removeItem(at: directory)
                 }
-                return "result=\(reason),joined=true"
+                return diagnostic("result=\(reason),joined=true")
             }
-            guard status == 0 else { return "result=tool-refused,joined=true,privateRetained=true" }
+            guard status == 0 else { return diagnostic("result=tool-refused,joined=true,privateRetained=true") }
             var bytes = [UInt8](repeating: 0, count: maximumStackBytes + 1)
             let count = Darwin.pread(fd, &bytes, bytes.count, 0)
             guard count > 0, count == final.st_size, count <= maximumStackBytes,
-                  fileState()?.st_size == final.st_size else { return "result=read-refused,joined=true,privateRetained=true" }
+                  fileState()?.st_size == final.st_size else { return diagnostic("result=read-refused,joined=true,privateRetained=true") }
             // Derive only the owned checkout, never an operator-selected output or another process.
             var repository = URL(fileURLWithPath: #filePath)
             for _ in 0 ..< 4 {
@@ -351,7 +427,7 @@ enum DesktopReadinessFailureDiagnostic {
             try manager.removeItem(at: owner)
             try manager.removeItem(at: directory)
             didPublish?(published)
-            return "result=collected,joined=true; " + stackFacts(Data(bytes.prefix(count)))
+            return diagnostic("result=collected,joined=true; " + stackFacts(Data(bytes.prefix(count))))
         } catch {
             return "result=io-refused,privateRetained=\(temporary != nil)"
         }

@@ -154,7 +154,7 @@ final class DataUsageLeaseTests: XCTestCase {
         XCTAssertEqual(result, "result=identity-refused")
     }
 
-    func testSamplerLifecycleMetadataFailureCannotDisableOwnedChildCleanup() throws {
+    func testSamplerLifecycleKnownRefusalCannotDisableOwnedChildCleanup() throws {
         let identity = try DesktopBackgroundProcessIdentity.read(getpid())
         let cases: [(DesktopBackgroundProcessIdentity?, DesktopBackgroundProcessIdentity?, String?)] = [
             (nil, identity, "/usr/bin/sample"),
@@ -180,6 +180,62 @@ final class DataUsageLeaseTests: XCTestCase {
         XCTAssertTrue(DesktopReadinessFailureDiagnostic.permitsSoleWaiter(defaultHandler: true, autoReaps: false))
         XCTAssertFalse(DesktopReadinessFailureDiagnostic.permitsSoleWaiter(defaultHandler: false, autoReaps: false))
         XCTAssertFalse(DesktopReadinessFailureDiagnostic.permitsSoleWaiter(defaultHandler: true, autoReaps: true))
+    }
+
+    func testSamplerFirstIdentityCanArriveWithinTheExistingBudget() {
+        let parent = Int32(7)
+        let identity = DesktopBackgroundProcessIdentity(pid: 42, parent: parent, startedSeconds: 1, startedMicroseconds: 2)
+        var state = DesktopReadinessFailureDiagnostic.SamplerIdentityAcquisition(parent: parent, firstIdentity: nil, firstImage: nil)
+        state.observe(identity: nil, image: nil, ownedUnreaped: true, elapsed: .zero)
+        XCTAssertEqual(state.phase, .awaitingIdentity)
+        XCTAssertNil(state.binding)
+        state.observe(identity: identity, image: "/invented/exec-transition", ownedUnreaped: true, elapsed: .seconds(1))
+        XCTAssertEqual(state.phase, .awaitingIdentity)
+        state.observe(identity: identity, image: "/usr/bin/sample", ownedUnreaped: true, elapsed: .seconds(2))
+        XCTAssertEqual(state.phase, .verified)
+        XCTAssertTrue(state.binding == identity)
+        let facts = state.summary(elapsed: .seconds(2))
+        XCTAssertTrue(facts.contains("firstRead=false"))
+        XCTAssertTrue(facts.contains("currentImageMatch=true"))
+        XCTAssertTrue(facts.contains("elapsedMs=2000"))
+        XCTAssertFalse(facts.contains("/usr/bin/sample"))
+    }
+
+    func testSamplerAcquisitionRefusesUnprovedExitDeadlineAndPostBindingLoss() {
+        let parent = Int32(7)
+        let identity = DesktopBackgroundProcessIdentity(pid: 42, parent: parent, startedSeconds: 1, startedMicroseconds: 2)
+        var pending = DesktopReadinessFailureDiagnostic.SamplerIdentityAcquisition(parent: parent, firstIdentity: nil, firstImage: nil)
+        XCTAssertNil(pending.binding) // Joining now cannot publish an unverified stack.
+        pending.observe(identity: nil, image: nil, ownedUnreaped: true, elapsed: .seconds(5))
+        XCTAssertEqual(pending.phase, .refused)
+        XCTAssertEqual(pending.refusal, "deadline")
+        XCTAssertNil(pending.binding)
+        var relationship = DesktopReadinessFailureDiagnostic.SamplerIdentityAcquisition(parent: parent, firstIdentity: nil, firstImage: nil)
+        relationship.observe(identity: identity, image: "/usr/bin/sample", ownedUnreaped: false, elapsed: .zero)
+        XCTAssertEqual(relationship.phase, .refused)
+        XCTAssertNil(relationship.binding)
+        let wrongParent = DesktopBackgroundProcessIdentity(pid: 42, parent: parent + 1, startedSeconds: 1, startedMicroseconds: 2)
+        var foreign = DesktopReadinessFailureDiagnostic.SamplerIdentityAcquisition(parent: parent, firstIdentity: nil, firstImage: nil)
+        foreign.observe(identity: wrongParent, image: "/usr/bin/sample", ownedUnreaped: true, elapsed: .zero)
+        XCTAssertEqual(foreign.refusal, "sampler-parent-refused")
+        let changed = DesktopBackgroundProcessIdentity(pid: 42, parent: parent, startedSeconds: 2, startedMicroseconds: 2)
+        let losses: [(DesktopBackgroundProcessIdentity?, String)] = [
+            (nil, "/usr/bin/sample"),
+            (identity, "/invented/other"),
+            (changed, "/usr/bin/sample"),
+        ]
+        for (current, image) in losses {
+            var state = DesktopReadinessFailureDiagnostic.SamplerIdentityAcquisition(
+                parent: parent,
+                firstIdentity: identity,
+                firstImage: "/usr/bin/sample"
+            )
+            state.observe(identity: identity, image: "/usr/bin/sample", ownedUnreaped: true, elapsed: .zero)
+            XCTAssertEqual(state.phase, .verified)
+            state.observe(identity: current, image: image, ownedUnreaped: true, elapsed: .seconds(1))
+            XCTAssertEqual(state.refusal, "sampler-identity-refused")
+            XCTAssertEqual(state.phase, .refused)
+        }
     }
 
     func testSamplerLifecycleReapOrECHILDRevokesAllSignalAuthority() {

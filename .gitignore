@@ -64,3 +64,4 @@ packages/gateway/duckdb-extensions/*
 
 # Content-bound provenance for git-less official Docker build contexts.
 /packages/gateway/telemetry-build.json
+/evidence/

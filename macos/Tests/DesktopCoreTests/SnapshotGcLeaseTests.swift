@@ -339,14 +339,14 @@ final class SnapshotGcLeaseTests: XCTestCase {
     func testFailedLaunchReaderIsRetainedUntilOwnedCleanup() throws {
         XCTAssertThrowsError(try start(home.appendingPathComponent("invented-absent-tool"), []))
         let reader = try XCTUnwrap(errorReaders.last)
-        let descriptor = reader.fileDescriptor
         XCTAssertNotNil(reader.readabilityHandler)
-        XCTAssertGreaterThanOrEqual(fcntl(descriptor, F_GETFD), 0)
+        // If closure regresses, an open reader reaches EOF instead of blocking this assertion.
+        if let pipe = children.last?.standardError as? Pipe { try? pipe.fileHandleForWriting.close() }
         try closeReadersAfterJoin()
         XCTAssertNil(reader.readabilityHandler)
-        let closed = fcntl(descriptor, F_GETFD), closedErrno = errno
-        XCTAssertEqual(closed, -1)
-        XCTAssertEqual(closedErrno, EBADF)
+        // Numeric descriptor slots may already belong to another concurrent owner.
+        // The closed FileHandle itself must refuse I/O, regardless of slot reuse.
+        XCTAssertThrowsError(try reader.read(upToCount: 1))
     }
 
     func testLiveChildReaderCannotCloseBeforeActualEOFAndJoin() throws {
