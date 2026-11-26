@@ -233,7 +233,12 @@ posix(
   "a valid runtime inventory above one MiB materializes without changing any input bytes",
   async () => {
     const input = await inputs();
-    for (let first = 0; first < 4096; first += 32) {
+    // Exercise manifest bytes with fewer real files, retaining portable component/path limits.
+    const sections = Array.from(
+      { length: 4 },
+      (_, index) => `invented-section-${index}-` + "p".repeat(110),
+    );
+    for (let first = 0; first < 1280; first += 32) {
       await Promise.all(
         Array.from({ length: 32 }, (_, offset) => {
           const index = first + offset;
@@ -241,15 +246,15 @@ posix(
             `invented-resource-${String(index).padStart(6, "0")}-` +
             "catalog-metadata-section-".repeat(7) +
             ".txt";
-          return put(
-            join(
-              input.runtime,
-              "assets/invented-catalog",
-              `segment-${Math.floor(index / 128)}`,
-              name,
-            ),
-            `Invented catalogue resource ${index}\n`,
+          const path = join(
+            input.runtime,
+            "assets/invented-catalog",
+            ...sections,
+            `segment-${Math.floor(index / 128)}`,
+            name,
           );
+          expect(Buffer.byteLength(path)).toBeLessThan(1024);
+          return put(path, `Invented catalogue resource ${index}\n`);
         }),
       );
     }

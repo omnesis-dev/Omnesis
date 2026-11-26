@@ -123,7 +123,7 @@ enum DesktopReadinessFailureDiagnostic {
     /// WNOHANG == 0 proves it is still our unreaped child. No other code reaps it;
     /// its PID cannot be reused between that observation and a cleanup signal.
     struct SamplerLifecycle {
-        enum Observation { case running, joined, ownershipLost, interrupted }
+        enum Observation: Equatable { case running, joined, ownershipLost, interrupted }
         enum Action: Equatable { case wait, terminate, kill, joined, unconfirmed, finished }
         private(set) var finished = false
         private var terminatedAt: Duration?
@@ -179,10 +179,11 @@ enum DesktopReadinessFailureDiagnostic {
     }
 
     struct SamplerIdentityAcquisition {
-        enum Phase: String, Equatable { case awaitingIdentity, verified, refused }
+        enum Phase: String, Equatable { case awaitingIdentity, verified, awaitingOwnedExit, joinedOwnedExit, refused }
         private(set) var phase = Phase.awaitingIdentity
         private(set) var binding: DesktopBackgroundProcessIdentity?
         private(set) var refusal: String?
+        private var awaitingExitObservations = 0
         private let parent: Int32
         private let firstRead: Bool
         private let firstParent: Bool
@@ -230,6 +231,68 @@ enum DesktopReadinessFailureDiagnostic {
             }
         }
 
+        /// Called only after this function's sole waitpid owner observed its freshly
+        /// spawned, still-unreaped child running. Missing metadata may race actual exit.
+        mutating func observeRunning(
+            identity: DesktopBackgroundProcessIdentity?, image: String?, elapsed: Duration,
+            observeExit: () -> SamplerLifecycle.Observation
+        )
+            -> SamplerLifecycle.Observation {
+            if phase == .awaitingOwnedExit || (phase == .verified && binding != nil && identity == nil && image == nil) {
+                currentRead = identity != nil
+                currentParent = identity?.parent == parent
+                currentImageRead = image != nil
+                currentImageMatch = image == "/usr/bin/sample"
+                // XNU may hide an exiting process before it becomes waitable. This
+                // sticky state grants no publication or new PID/binding authority.
+                if elapsed >= .seconds(5) { reject("deadline") }
+                else if identity != nil || image != nil { reject("sampler-identity-reappeared") }
+                else {
+                    phase = .awaitingOwnedExit
+                    awaitingExitObservations = min(700, awaitingExitObservations + 1)
+                }
+                return .running
+            }
+            let missing = identity == nil || image == nil
+            let consistent = (identity == nil || identity == binding) && (image == nil || image == "/usr/bin/sample")
+            if phase == .verified, binding != nil, missing, consistent {
+                let exit = observeExit()
+                if exit == .joined {
+                    // Physical waitpid join, not metadata absence, establishes exit.
+                    // Preserve only the binding already verified while it was alive.
+                    currentRead = identity != nil
+                    currentParent = identity?.parent == parent
+                    currentImageRead = image != nil
+                    currentImageMatch = image == "/usr/bin/sample"
+                    return .joined
+                }
+                observe(identity: identity, image: image, ownedUnreaped: exit == .running, elapsed: elapsed)
+                return exit
+            }
+            // Any nonnil changed identity/image remains fatal without an exit exception.
+            observe(identity: identity, image: image, ownedUnreaped: true, elapsed: elapsed)
+            return .running
+        }
+
+        /// Invoked only after this exact freshly spawned child's physical waitpid join.
+        mutating func observeJoined(status: Int32, elapsed: Duration) {
+            guard phase == .awaitingOwnedExit else { return }
+            guard binding != nil else { reject("sampler-unverified")
+                return
+            }
+            guard elapsed < .seconds(5) else { reject("deadline")
+                return
+            }
+            guard status == 0 else { reject("tool-refused")
+                return
+            }
+            phase = .joinedOwnedExit
+        }
+
+        var hasVerifiedOutputBinding: Bool {
+            binding != nil && (phase == .verified || phase == .joinedOwnedExit)
+        }
+
         private mutating func reject(_ reason: String) {
             phase = .refused
             refusal = reason
@@ -238,7 +301,7 @@ enum DesktopReadinessFailureDiagnostic {
         func summary(elapsed: Duration) -> String {
             let value = elapsed.components
             let milliseconds = max(0, min(7000, Int(min(7, max(0, value.seconds))) * 1000 + Int(value.attoseconds / 1_000_000_000_000_000)))
-            return "phase=\(phase.rawValue),firstRead=\(firstRead),firstParentMatch=\(firstParent),firstImageRead=\(firstImageRead),firstImageMatch=\(firstImageMatch),currentRead=\(currentRead),currentParentMatch=\(currentParent),currentImageRead=\(currentImageRead),currentImageMatch=\(currentImageMatch),elapsedMs=\(milliseconds)"
+            return "phase=\(phase.rawValue),firstRead=\(firstRead),firstParentMatch=\(firstParent),firstImageRead=\(firstImageRead),firstImageMatch=\(firstImageMatch),currentRead=\(currentRead),currentParentMatch=\(currentParent),currentImageRead=\(currentImageRead),currentImageMatch=\(currentImageMatch),awaitingExitObservations=\(awaitingExitObservations),elapsedMs=\(milliseconds)"
         }
     }
 
@@ -330,8 +393,9 @@ enum DesktopReadinessFailureDiagnostic {
             let began = ContinuousClock.now
             let sampler = try? DesktopBackgroundProcessIdentity.read(pid)
             var acquisition = SamplerIdentityAcquisition(parent: getpid(), firstIdentity: sampler, firstImage: image(pid))
+            var exitReconciled = false
             func diagnostic(_ result: String) -> String {
-                result + "; sampler[" + acquisition.summary(elapsed: began.duration(to: .now)) + "]"
+                result + "; exitReconciled=\(exitReconciled); sampler[" + acquisition.summary(elapsed: began.duration(to: .now)) + "]"
             }
             var reason: String?, status: Int32 = 0
             // Retain only this spawned child's kernel binding if join cannot be confirmed.
@@ -347,21 +411,33 @@ enum DesktopReadinessFailureDiagnostic {
                 guard permitsSoleWaiter() else { return diagnostic("result=reaper-changed,joined=false,privateRetained=true") }
                 // This is the sole waitpid owner, from successful spawn until join/loss.
                 let waited = waitpid(pid, &status, WNOHANG)
-                let observation: SamplerLifecycle.Observation = waited == pid ? .joined :
+                var observation: SamplerLifecycle.Observation = waited == pid ? .joined :
                     waited == 0 ? .running : errno == EINTR ? .interrupted : .ownershipLost
                 let state = fileState()
                 reason = reason ?? refusal(bytes: Int64(state?.st_size ?? -1), elapsed: began.duration(to: .now), ownedFile: state != nil)
                 if Task.isCancelled { reason = reason ?? "cancelled" }
                 if !verifies(target) { reason = reason ?? "identity-changed" }
                 // Initial identity acquisition shares the SAME overall five-second budget.
-                // Later metadata loss stays fatal; cleanup authority remains the direct child.
+                // Both metadata reads may disappear before XNU makes exit waitable.
+                // Await only this already-bound owned child's exit within the same budget.
                 if case .running = observation {
-                    acquisition.observe(
+                    observation = acquisition.observeRunning(
                         identity: try? DesktopBackgroundProcessIdentity.read(pid),
                         image: image(pid),
-                        ownedUnreaped: true,
                         elapsed: began.duration(to: .now)
-                    )
+                    ) {
+                        // Still the same fresh child's sole waiter. Reap only this PID;
+                        // ECHILD/lost ownership never grants signal or publication authority.
+                        let rechecked = waitpid(pid, &status, WNOHANG)
+                        return rechecked == pid ? .joined :
+                            rechecked == 0 ? .running : errno == EINTR ? .interrupted : .ownershipLost
+                    }
+                    exitReconciled = observation == .joined
+                    reason = reason ?? acquisition.refusal
+                }
+                if observation == .joined {
+                    acquisition.observeJoined(status: status, elapsed: began.duration(to: .now))
+                    exitReconciled = exitReconciled || acquisition.phase == .joinedOwnedExit
                     reason = reason ?? acquisition.refusal
                 }
                 switch lifecycle.advance(observation, elapsed: began.duration(to: .now), refused: reason != nil) {
@@ -377,7 +453,7 @@ enum DesktopReadinessFailureDiagnostic {
                 }
             }
             guard didJoin else { return diagnostic("result=join-unconfirmed,joined=false,privateRetained=true") }
-            guard acquisition.phase == .verified, acquisition.binding != nil else {
+            guard acquisition.hasVerifiedOutputBinding else {
                 return diagnostic("result=\(acquisition.refusal ?? "sampler-unverified"),joined=true,privateRetained=true")
             }
             var observed = stat()

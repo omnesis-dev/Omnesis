@@ -238,6 +238,119 @@ final class DataUsageLeaseTests: XCTestCase {
         }
     }
 
+    func testSamplerMetadataLossReconcilesOnlyActualOwnedExit() {
+        let identity = DesktopBackgroundProcessIdentity(pid: 42, parent: 7, startedSeconds: 1, startedMicroseconds: 2)
+        func verified() -> DesktopReadinessFailureDiagnostic.SamplerIdentityAcquisition {
+            var state = DesktopReadinessFailureDiagnostic.SamplerIdentityAcquisition(parent: 7, firstIdentity: nil, firstImage: nil)
+            state.observe(identity: identity, image: "/usr/bin/sample", ownedUnreaped: true, elapsed: .zero)
+            return state
+        }
+        // Deterministic exit between the first WNOHANG=0 and public metadata reads.
+        for (current, image) in [(identity, nil), (nil, "/usr/bin/sample")] as [(DesktopBackgroundProcessIdentity?, String?)] {
+            var state = verified(), rechecks = 0
+            let observation = state.observeRunning(identity: current, image: image, elapsed: .seconds(1)) {
+                rechecks += 1
+                return .joined
+            }
+            XCTAssertEqual(rechecks, 1)
+            XCTAssertEqual(observation, .joined)
+            XCTAssertEqual(state.phase, .verified)
+            XCTAssertEqual(state.binding, identity)
+            XCTAssertNil(state.refusal)
+            var lifecycle = DesktopReadinessFailureDiagnostic.SamplerLifecycle()
+            XCTAssertEqual(lifecycle.advance(observation, elapsed: .seconds(1), refused: false), .joined)
+            XCTAssertEqual(lifecycle.advance(.running, elapsed: .seconds(6), refused: true), .finished)
+        }
+        for exit in [DesktopReadinessFailureDiagnostic.SamplerLifecycle.Observation.running, .ownershipLost, .interrupted] {
+            var state = verified()
+            XCTAssertEqual(state.observeRunning(identity: nil, image: "/usr/bin/sample", elapsed: .seconds(1), observeExit: { exit }), exit)
+            XCTAssertEqual(state.phase, .refused)
+            var lifecycle = DesktopReadinessFailureDiagnostic.SamplerLifecycle()
+            let expected: DesktopReadinessFailureDiagnostic.SamplerLifecycle.Action = exit == .running ? .terminate :
+                exit == .ownershipLost ? .unconfirmed : .wait
+            XCTAssertEqual(lifecycle.advance(exit, elapsed: .seconds(1), refused: true), expected)
+        }
+        let changed = DesktopBackgroundProcessIdentity(pid: 42, parent: 7, startedSeconds: 2, startedMicroseconds: 2)
+        for (current, image) in [(changed, nil), (nil, "/invented/other"), (
+            identity,
+            "/invented/other"
+        )] as [(DesktopBackgroundProcessIdentity?, String?)] {
+            var state = verified(), rechecks = 0
+            _ = state.observeRunning(identity: current, image: image, elapsed: .seconds(1)) {
+                rechecks += 1
+                return .joined
+            }
+            XCTAssertEqual(rechecks, 0) // Actual changed metadata is never forgiven by an exit.
+            XCTAssertEqual(state.refusal, "sampler-identity-refused")
+        }
+        var unverified = DesktopReadinessFailureDiagnostic.SamplerIdentityAcquisition(parent: 7, firstIdentity: nil, firstImage: nil)
+        var rechecks = 0
+        _ = unverified.observeRunning(identity: nil, image: nil, elapsed: .seconds(1)) {
+            rechecks += 1
+            return .joined
+        }
+        XCTAssertEqual(rechecks, 0)
+        XCTAssertNil(unverified.binding)
+        XCTAssertEqual(unverified.phase, .awaitingIdentity)
+    }
+
+    func testSamplerBothMetadataAbsentWaitsOnlyForBoundedOwnedExit() {
+        let identity = DesktopBackgroundProcessIdentity(pid: 42, parent: 7, startedSeconds: 1, startedMicroseconds: 2)
+        func awaiting() -> DesktopReadinessFailureDiagnostic.SamplerIdentityAcquisition {
+            var state = DesktopReadinessFailureDiagnostic.SamplerIdentityAcquisition(parent: 7, firstIdentity: nil, firstImage: nil)
+            state.observe(identity: identity, image: "/usr/bin/sample", ownedUnreaped: true, elapsed: .zero)
+            for elapsed in [Duration.seconds(1), .seconds(2), .seconds(3)] {
+                XCTAssertEqual(state.observeRunning(identity: nil, image: nil, elapsed: elapsed) {
+                    XCTFail("Pending exit uses the ordinary owned wait loop, not extra rechecks")
+                    return .joined
+                }, .running)
+                XCTAssertEqual(state.phase, .awaitingOwnedExit)
+                XCTAssertFalse(state.hasVerifiedOutputBinding)
+            }
+            return state
+        }
+        var joined = awaiting()
+        joined.observeJoined(status: 0, elapsed: .seconds(4))
+        XCTAssertEqual(joined.phase, .joinedOwnedExit)
+        XCTAssertTrue(joined.hasVerifiedOutputBinding)
+        XCTAssertEqual(joined.binding, identity)
+        XCTAssertTrue(joined.summary(elapsed: .seconds(4)).contains("awaitingExitObservations=3"))
+        for (status, elapsed) in [(Int32(0), Duration.seconds(5)), (1, .seconds(4)), (9, .seconds(4))] {
+            var refused = awaiting()
+            refused.observeJoined(status: status, elapsed: elapsed)
+            XCTAssertEqual(refused.phase, .refused)
+            XCTAssertFalse(refused.hasVerifiedOutputBinding)
+            refused.observeJoined(status: 0, elapsed: .seconds(4))
+            XCTAssertFalse(refused.hasVerifiedOutputBinding) // Earlier refusal cannot be erased.
+        }
+        var expired = awaiting()
+        _ = expired.observeRunning(identity: nil, image: nil, elapsed: .seconds(5)) { .joined }
+        XCTAssertEqual(expired.refusal, "deadline")
+        XCTAssertFalse(expired.hasVerifiedOutputBinding)
+        let changed = DesktopBackgroundProcessIdentity(pid: 42, parent: 8, startedSeconds: 2, startedMicroseconds: 2)
+        for (current, image) in [(identity, "/usr/bin/sample"), (changed, nil), (
+            nil,
+            "/invented/other"
+        )] as [(DesktopBackgroundProcessIdentity?, String?)] {
+            var reappeared = awaiting()
+            _ = reappeared.observeRunning(identity: current, image: image, elapsed: .seconds(4)) { .joined }
+            XCTAssertEqual(reappeared.refusal, "sampler-identity-reappeared")
+            reappeared.observeJoined(status: 0, elapsed: .seconds(4))
+            XCTAssertFalse(reappeared.hasVerifiedOutputBinding)
+        }
+        var neverBound = DesktopReadinessFailureDiagnostic.SamplerIdentityAcquisition(parent: 7, firstIdentity: nil, firstImage: nil)
+        neverBound.observeJoined(status: 0, elapsed: .seconds(1))
+        XCTAssertFalse(neverBound.hasVerifiedOutputBinding)
+        // Lost ownership/reaper permission terminates the outer production path;
+        // neither condition is a physical join that can enable this pending output.
+        let pending = awaiting()
+        var lifecycle = DesktopReadinessFailureDiagnostic.SamplerLifecycle()
+        XCTAssertEqual(lifecycle.advance(.ownershipLost, elapsed: .seconds(4), refused: false), .unconfirmed)
+        XCTAssertFalse(pending.hasVerifiedOutputBinding)
+        XCTAssertFalse(DesktopReadinessFailureDiagnostic.permitsSoleWaiter(defaultHandler: false, autoReaps: false))
+        XCTAssertFalse(DesktopReadinessFailureDiagnostic.permitsSoleWaiter(defaultHandler: true, autoReaps: true))
+    }
+
     func testSamplerLifecycleReapOrECHILDRevokesAllSignalAuthority() {
         var reaped = DesktopReadinessFailureDiagnostic.SamplerLifecycle()
         XCTAssertEqual(reaped.advance(.joined, elapsed: .zero, refused: false), .joined)

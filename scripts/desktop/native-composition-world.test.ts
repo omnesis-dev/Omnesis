@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { mkdtemp, rm, writeFile, symlink, lstat } from "node:fs/promises";
+import { mkdtemp, rm, writeFile, symlink, lstat, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { request } from "node:https";
@@ -33,7 +33,7 @@ afterEach(async () => {
     if (!retainedRoots.has(root)) await rm(root, { recursive: true, force: true });
 });
 async function directory() {
-  const path = await mkdtemp(join(tmpdir(), "omnesis-native-world-"));
+  const path = await realpath(await mkdtemp(join(tmpdir(), "omnesis-native-world-")));
   roots.push(path);
   return path;
 }
@@ -344,7 +344,7 @@ posixTest(
         entered.promise,
         new Promise<never>((_, reject) => {
           gateTimer = setTimeout(
-            () => reject(new Error("Owned finalize gate did not start")),
+            () => reject(new Error("Owned finalize gate was not reached")),
             3000,
           );
         }),

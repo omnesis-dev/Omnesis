@@ -3,7 +3,16 @@
 
 import { execFile, execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
@@ -35,7 +44,7 @@ let certificate;
 const posixTest = test.skipIf(process.platform === "win32");
 beforeAll(async () => {
   if (process.platform === "win32") return;
-  const root = await mkdtemp(join(tmpdir(), "omnesis-qa-ca-"));
+  const root = await realpath(await mkdtemp(join(tmpdir(), "omnesis-qa-ca-")));
   roots.push(root);
   execFileSync(
     "openssl",
@@ -65,7 +74,7 @@ afterAll(async () => {
   for (const root of roots) await rm(root, { recursive: true, force: true });
 });
 async function temporary() {
-  const root = await mkdtemp(join(tmpdir(), "omnesis-native-qa-"));
+  const root = await realpath(await mkdtemp(join(tmpdir(), "omnesis-native-qa-")));
   roots.push(root);
   return root;
 }

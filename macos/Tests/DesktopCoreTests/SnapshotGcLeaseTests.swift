@@ -339,14 +339,17 @@ final class SnapshotGcLeaseTests: XCTestCase {
     func testFailedLaunchReaderIsRetainedUntilOwnedCleanup() throws {
         XCTAssertThrowsError(try start(home.appendingPathComponent("invented-absent-tool"), []))
         let reader = try XCTUnwrap(errorReaders.last)
+        XCTAssertEqual(errorReaders.count, 1)
+        XCTAssertTrue(startedChildren.isEmpty)
         XCTAssertNotNil(reader.readabilityHandler)
-        // If closure regresses, an open reader reaches EOF instead of blocking this assertion.
-        if let pipe = children.last?.standardError as? Pipe { try? pipe.fileHandleForWriting.close() }
+        let pipe = try XCTUnwrap(children.last?.standardError as? Pipe)
+        try pipe.fileHandleForWriting.close()
         try closeReadersAfterJoin()
         XCTAssertNil(reader.readabilityHandler)
-        // Numeric descriptor slots may already belong to another concurrent owner.
-        // The closed FileHandle itself must refuse I/O, regardless of slot reuse.
-        XCTAssertThrowsError(try reader.read(upToCount: 1))
+        XCTAssertTrue(errorReaders.isEmpty)
+        // FileHandle prohibits I/O after close; cleanup is safe to repeat through
+        // the registry without accessing a closed handle or its descriptor slot.
+        try closeReadersAfterJoin()
     }
 
     func testLiveChildReaderCannotCloseBeforeActualEOFAndJoin() throws {
