@@ -17,6 +17,8 @@ final class DesktopHostedChatFlowTests: XCTestCase {
     private weak var ownedWindow: NSWindow?
     private weak var ownedFixture: ScriptedAgentFixture?
     private weak var ownedStore: DesktopStore?
+    private var presentationFacts: [String: Any] = [:]
+    private var requestedContentSize: NSSize?
     func testActualAskControlsStreamCompleteAndCancelThroughHTTP() async throws {
         let fixture = try await ScriptedAgentFixture.start()
         ownedFixture = fixture
@@ -119,27 +121,53 @@ final class DesktopHostedChatFlowTests: XCTestCase {
         stage = "closing conversation history"
         try DesktopAccessibilityDriver.press("chat-history", in: hosting)
         try await capture(window, name: "hosted-chat-complete")
-        stage = "opening a genuinely cited document"
+        requestedContentSize = window.contentLayoutRect.size
+        stage = "settling the fitted window before opening sources"
+        try await settlePresentation(.closed, in: hosting, window: window, name: "hosted-chat-sources-fitted-origin")
+        stage = "opening sources from the fitted window"
         try await wait { (try? DesktopAccessibilityDriver.element("chat-evidence", in: hosting)) != nil }
         try DesktopAccessibilityDriver.press("chat-evidence", in: hosting)
-        stage = "listing the cited document"
-        try await wait { (try? DesktopAccessibilityDriver.element("chat-document-fictional-document", in: hosting)) != nil }
+        try await settlePresentation(.open, in: hosting, window: window, name: "hosted-chat-sources-fitted-open")
+        try await capture(window, name: "hosted-chat-sources-fitted-open")
+        try requirePresentation(.open, in: hosting, window: window, name: "hosted-chat-sources-fitted-open")
+        stage = "closing sources before choosing the minimum window"
+        try DesktopAccessibilityDriver.press("chat-sources-close", in: hosting)
+        try await settlePresentation(.closed, in: hosting, window: window, name: "hosted-chat-sources-fitted-closed")
+
+        // Select the documented minimum only while closed, never to repair an open inspector.
+        requestedContentSize = NSSize(width: 860, height: 600)
+        hosting.frame = try NSRect(origin: .zero, size: XCTUnwrap(requestedContentSize))
+        window.setContentSize(hosting.frame.size)
+        stage = "settling the closed minimum window before opening sources"
+        try await settlePresentation(.closed, in: hosting, window: window, name: "hosted-chat-sources-minimum-origin")
+        stage = "opening sources naturally from the minimum window"
+        try DesktopAccessibilityDriver.press("chat-evidence", in: hosting)
+        try await settlePresentation(.open, in: hosting, window: window, name: "hosted-chat-sources-minimum-open")
+        try await capture(window, name: "hosted-chat-sources-minimum-open")
+        try requirePresentation(.open, in: hosting, window: window, name: "hosted-chat-sources-minimum-open")
+        stage = "opening a genuinely cited document"
         try DesktopAccessibilityDriver.press("chat-document-fictional-document", in: hosting)
         stage = "reading the chosen cited document"
         try await wait { try DesktopAccessibilityDriver.contains("Original project note", in: hosting) }
+        try await settlePresentation(.document, in: hosting, window: window, name: "hosted-chat-cited-document")
         let readStatus = try await fixture.status()
         XCTAssertEqual(readStatus.documentReads, 1)
         try DesktopAccessibilityDriver.press("chat-document-done", in: hosting)
-        // Collapse the optional inspector before qualifying the reading column at minimum size.
-        try DesktopAccessibilityDriver.press("chat-evidence", in: hosting)
+        stage = "detaching the cited sheet before touching the underlying window"
+        try await settlePresentation(.documentDismissed, in: hosting, window: window, name: "hosted-chat-cited-document-dismissed")
+        stage = "closing the actual sources panel and settling its natural window"
+        try DesktopAccessibilityDriver.press("chat-sources-close", in: hosting)
+        try await settlePresentation(.closed, in: hosting, window: window, name: "hosted-chat-sources-minimum-closed")
         window.appearance = NSAppearance(named: .darkAqua)
-        try await Task.sleep(for: .milliseconds(100))
+        try await settlePresentation(.closed, in: hosting, window: window, name: "hosted-chat-sources-dark-closed")
         try await DesktopSnapshotRenderer.captureOwnedWindow(
             window,
             output: URL(fileURLWithPath: "/tmp/omnesis-macos-snapshots"),
             name: "hosted-chat-complete",
             appearance: .darkAqua
         )
+        try requirePresentation(.closed, in: hosting, window: window, name: "hosted-chat-sources-dark-closed")
+        // The inspector has already proved natural screen fit before the separate reading-column resize.
         hosting.frame = NSRect(x: 0, y: 0, width: 860, height: 600)
         window.setContentSize(hosting.frame.size)
         hosting.layoutSubtreeIfNeeded()
@@ -222,6 +250,145 @@ final class DesktopHostedChatFlowTests: XCTestCase {
         try await capture(window, name: "hosted-chat-cancelled")
     }
 
+    private enum PresentationPhase: String { case open, closed, document, documentDismissed }
+    private struct PresentationObservation {
+        let valid: Bool
+        let frames: [NSRect]
+        let facts: [String: Any]
+    }
+
+    private func observePresentation(_ phase: PresentationPhase, in hosting: NSView, window: NSWindow) throws -> PresentationObservation {
+        let scale = window.backingScaleFactor
+        let screen = window.screen?.visibleFrame ?? .zero
+        let usable = window.convertToScreen(window.contentLayoutRect)
+        let hostingFrame = window.convertToScreen(hosting.convert(hosting.bounds, to: nil))
+        let elements = try DesktopAccessibilityDriver.elements(in: hosting)
+        var valid = scale.isFinite && scale > 0 && finitePositive(screen) && finitePositive(window.frame)
+            && finitePositive(usable) && finitePositive(hostingFrame) && hosting.window === window
+        let pixel = valid ? 1 / scale : 0
+        valid = valid && screen.insetBy(dx: -pixel, dy: -pixel).contains(window.frame)
+            && usable.insetBy(dx: -pixel, dy: -pixel).contains(hostingFrame)
+        var frames = [window.frame, screen, usable, hostingFrame]
+        var facts: [String: Any] = [
+            "phase": phase.rawValue, "stage": stage, "window": rectFacts(window.frame), "screen": rectFacts(screen),
+            "usable": rectFacts(usable), "hosting": rectFacts(hostingFrame), "sheetAttached": window.attachedSheet != nil,
+            "requestedContentWidth": requestedContentSize?.width ?? 0,
+            "requestedContentHeight": requestedContentSize?.height ?? 0,
+            "actualContentWidth": window.contentLayoutRect.width, "actualContentHeight": window.contentLayoutRect.height,
+        ]
+        if let sheet = window.attachedSheet {
+            facts["attachedSheetWindow"] = rectFacts(sheet.frame)
+            facts["attachedSheetVisible"] = sheet.isVisible
+            facts["attachedSheetParentMatchesWindow"] = sheet.sheetParent === window
+        }
+        var controls: [String: Any] = [:]
+        let sources = ["chat-sources-title", "chat-sources-close", "chat-document-fictional-document"]
+        if phase == .document {
+            let sheet = window.attachedSheet
+            valid = valid && sheet?.sheetParent === window && sheet?.isVisible == true
+            if let sheet, let root = sheet.contentView {
+                let sheetUsable = sheet.convertToScreen(sheet.contentLayoutRect)
+                let sheetScreen = sheet.screen?.visibleFrame ?? .zero
+                facts["sheetWindow"] = rectFacts(sheet.frame)
+                facts["sheetUsable"] = rectFacts(sheetUsable)
+                facts["sheetScreen"] = rectFacts(sheetScreen)
+                frames += [sheet.frame, sheetUsable, sheetScreen]
+                valid = valid && finitePositive(sheet.frame) && finitePositive(sheetScreen) && finitePositive(sheetUsable)
+                    && sheetScreen.insetBy(dx: -pixel, dy: -pixel).contains(sheet.frame)
+                let children = try DesktopAccessibilityDriver.elements(in: root)
+                for id in ["chat-document-content", "chat-document-done"] {
+                    let element = children.first { $0.accessibilityIdentifier() == id }
+                    let frame = element?.accessibilityFrame() ?? .zero
+                    controls[id] = [
+                        "present": element != nil,
+                        "frame": rectFacts(frame),
+                        "enabled": element?.isAccessibilityEnabled() ?? false,
+                    ]
+                    frames.append(frame)
+                    valid = valid && finitePositive(frame) && sheetUsable.insetBy(dx: -pixel, dy: -pixel).contains(frame)
+                        && sheetScreen.insetBy(dx: -pixel, dy: -pixel).contains(frame)
+                    if id == "chat-document-done" { valid = valid && element?.isAccessibilityEnabled() == true }
+                }
+            } else { valid = false }
+        } else {
+            valid = valid && window.attachedSheet == nil
+            for id in sources {
+                let element = elements.first { $0.accessibilityIdentifier() == id }
+                let frame = element?.accessibilityFrame() ?? .zero
+                controls[id] = ["present": element != nil, "frame": rectFacts(frame), "enabled": element?.isAccessibilityEnabled() ?? false]
+                if phase == .closed { valid = valid && element == nil }
+                else {
+                    frames.append(frame)
+                    valid = valid && finitePositive(frame) && usable.insetBy(dx: -pixel, dy: -pixel).contains(frame)
+                        && screen.insetBy(dx: -pixel, dy: -pixel).contains(frame)
+                    if id != "chat-sources-title" { valid = valid && element?.isAccessibilityEnabled() == true }
+                }
+            }
+            valid = valid && !elements.contains { $0.accessibilityIdentifier() == "chat-document-done" }
+        }
+        facts["controls"] = controls
+        facts["valid"] = valid
+        let normalized = valid ? frames.map { rect in
+            NSRect(
+                x: (rect.minX * scale).rounded() / scale,
+                y: (rect.minY * scale).rounded() / scale,
+                width: (rect.width * scale).rounded() / scale,
+                height: (rect.height * scale).rounded() / scale
+            )
+        } : []
+        return PresentationObservation(valid: valid, frames: normalized, facts: facts)
+    }
+
+    private func finitePositive(_ rect: NSRect) -> Bool {
+        [rect.minX, rect.minY, rect.width, rect.height].allSatisfy(\.isFinite) && rect.width > 0 && rect.height > 0
+    }
+
+    private func rectFacts(_ rect: NSRect) -> [String: Any] {
+        guard [rect.minX, rect.minY, rect.width, rect.height].allSatisfy(\.isFinite) else { return ["finite": false] }
+        return ["x": rect.minX, "y": rect.minY, "width": rect.width, "height": rect.height]
+    }
+
+    private func writePresentationFacts(_ name: String) throws {
+        let output = URL(fileURLWithPath: "/tmp/omnesis-macos-snapshots", isDirectory: true)
+        try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+        try JSONSerialization.data(withJSONObject: presentationFacts, options: [.sortedKeys])
+            .write(to: output.appendingPathComponent(name + "-facts.json"), options: .atomic)
+    }
+
+    private func requirePresentation(_ phase: PresentationPhase, in hosting: NSView, window: NSWindow, name: String) throws {
+        let observation = try observePresentation(phase, in: hosting, window: window)
+        presentationFacts = observation.facts
+        try writePresentationFacts(name + "-after-capture")
+        guard observation.valid
+        else { throw ScriptedAgentFixture.Failure("Visible presentation left its verified native screen bounds at: \(stage)") }
+    }
+
+    private func settlePresentation(_ phase: PresentationPhase, in hosting: NSView, window: NSWindow, name: String) async throws {
+        var previous: [NSRect]?
+        var stable = 0
+        do {
+            presentationFacts = try observePresentation(phase, in: hosting, window: window).facts
+            try writePresentationFacts(name + "-before")
+            try await wait {
+                let current = try self.observePresentation(phase, in: hosting, window: window)
+                self.presentationFacts = current.facts
+                guard current.valid else { previous = nil
+                    stable = 0
+                    return false
+                }
+                if let previous, current.frames == previous { stable += 1 } else { stable = 0 }
+                previous = current.frames
+                return stable >= 2
+            }
+            try writePresentationFacts(name + "-settled")
+        } catch {
+            // The failed predicate/error stays latched even when diagnostic capture flushes layout.
+            try? writePresentationFacts(name + "-failure")
+            try? await capture(window, name: name + "-failure")
+            throw error
+        }
+    }
+
     private func wait(_ condition: () async throws -> Bool) async throws {
         let deadline = ContinuousClock.now + .seconds(8)
         while ContinuousClock.now < deadline {
@@ -251,6 +418,7 @@ final class DesktopHostedChatFlowTests: XCTestCase {
             "ownedWindowKey": ownedWindow?.isKeyWindow ?? false,
             "ownedWindowVisible": ownedWindow?.isVisible ?? false,
             "ownedWindowChildCount": ownedWindow?.childWindows?.count ?? 0,
+            "presentation": presentationFacts,
         ]
         let output = URL(fileURLWithPath: "/tmp/omnesis-macos-snapshots", isDirectory: true)
         try? FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)

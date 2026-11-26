@@ -19,9 +19,10 @@ struct DesktopChatSourcesView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
-                Text("Documents used").font(.headline)
+                Text("Documents used").font(.headline).accessibilityIdentifier("chat-sources-title")
                 Spacer()
                 Button("Close sources", systemImage: "xmark", action: close).labelStyle(.iconOnly)
+                    .accessibilityIdentifier("chat-sources-close")
             }.padding(20)
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
