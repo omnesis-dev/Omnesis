@@ -405,6 +405,7 @@ test("real encrypted empty current schema has exactly the reviewed ordinary tabl
   expect(tables).toContain("forgotten_devices");
   expect(tables).toContain("source_device_archives");
   empty.close();
+  chmodSync(join(dir, "empty.db"), 0o600);
   expect(
     inspectRestoredMainDatabase({ sourcePath: join(dir, "empty.db"), sourceKey: destinationKey }),
   ).toMatchObject({ devices: 0, sources: 0, documents: 0 });

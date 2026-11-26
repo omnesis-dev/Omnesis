@@ -75,15 +75,47 @@ final class DesktopRenderTests: XCTestCase {
             name: "minimum-library", size: CGSize(width: 860, height: 600)
         ) { hosting in
             XCTAssertTrue(try DesktopAccessibilityDriver.contains("Example notebook", in: hosting))
-            let addTitle = try DesktopAccessibilityDriver.element("add-source-title", in: hosting)
-            XCTAssertEqual(addTitle.accessibilityRole(), .staticText)
-            XCTAssertGreaterThan(addTitle.accessibilityFrame().width, 0)
-            XCTAssertGreaterThan(addTitle.accessibilityFrame().height, 0)
+            try writeMinimumToolbarFacts(hosting)
+            // Toolbar text can be combined into its button leaf; retain the actual window capture for visible-text review.
+            let add = try DesktopAccessibilityDriver.element("add-source", in: hosting)
+            XCTAssertEqual(add.accessibilityRole(), .button)
+            XCTAssertEqual(add.accessibilityLabel(), "Add a source")
+            XCTAssertTrue(add.isAccessibilityEnabled())
+            XCTAssertGreaterThan(add.accessibilityFrame().width, 0)
+            XCTAssertGreaterThan(add.accessibilityFrame().height, 0)
             let window = try XCTUnwrap(hosting.window)
-            XCTAssertTrue(
-                window.frame.contains(addTitle.accessibilityFrame()),
-                "Add a source must be visible text inside the actual toolbar, not only the button accessibility label"
-            )
+            XCTAssertTrue(window.frame.contains(add.accessibilityFrame()), "The actual Add-source button must remain inside the toolbar")
+            XCTAssertTrue(add.accessibilityPerformPress())
+            let presentationDeadline = ContinuousClock.now + .seconds(3)
+            while window.attachedSheet == nil, ContinuousClock.now < presentationDeadline {
+                try await Task.sleep(for: .milliseconds(25))
+            }
+            let pickerSheet = try XCTUnwrap(window.attachedSheet, "Add a source must present its actual picker sheet")
+            XCTAssertTrue(window.attachedSheet === pickerSheet)
+            XCTAssertTrue(pickerSheet.sheetParent === window)
+            let pickerContent = try XCTUnwrap(pickerSheet.contentView)
+            while ContinuousClock.now < presentationDeadline {
+                let doneReady = (try? DesktopAccessibilityDriver.elements(in: pickerContent))?.contains {
+                    $0.accessibilityRole() == .button && $0.accessibilityLabel() == "Done" && $0.isAccessibilityEnabled()
+                        && $0.accessibilityFrame().width > 0 && $0.accessibilityFrame().height > 0
+                        && pickerSheet.frame.contains($0.accessibilityFrame())
+                } == true
+                if doneReady, (try? DesktopAccessibilityDriver.contains("Finding available sources", in: pickerContent)) == true { break }
+                try await Task.sleep(for: .milliseconds(25))
+            }
+            XCTAssertTrue(try DesktopAccessibilityDriver.contains("Finding available sources", in: pickerContent))
+            let done = try XCTUnwrap(DesktopAccessibilityDriver.elements(in: pickerContent).first {
+                $0.accessibilityRole() == .button && $0.accessibilityLabel() == "Done" && $0.isAccessibilityEnabled()
+            })
+            XCTAssertGreaterThan(done.accessibilityFrame().width, 0)
+            XCTAssertGreaterThan(done.accessibilityFrame().height, 0)
+            XCTAssertTrue(pickerSheet.frame.contains(done.accessibilityFrame()))
+            XCTAssertTrue(done.accessibilityPerformPress())
+            let dismissalDeadline = ContinuousClock.now + .seconds(3)
+            while window.attachedSheet != nil, ContinuousClock.now < dismissalDeadline {
+                try await Task.sleep(for: .milliseconds(25))
+            }
+            XCTAssertNil(window.attachedSheet, "The picker's actual Done action must dismiss its own sheet")
             try DesktopSnapshotRenderer.assertRequiredBannerLayout(hosting, below: ["library-brand-title"])
             let review = try DesktopAccessibilityDriver.element("required-setup-review", in: hosting)
             XCTAssertTrue(review.isAccessibilityEnabled())
@@ -94,6 +126,51 @@ final class DesktopRenderTests: XCTestCase {
             // Return through ordinary store navigation so both appearances cover the source list.
             store.destination = .sources
         }
+    }
+
+    private func writeMinimumToolbarFacts(_ hosting: NSView) throws {
+        let window = try XCTUnwrap(hosting.window)
+        func rect(_ frame: NSRect) -> [String: CGFloat] {
+            ["x": frame.minX, "y": frame.minY, "width": frame.width, "height": frame.height]
+        }
+        let elements = try DesktopAccessibilityDriver.elements(in: hosting)
+        var facts: [String: Any] = [
+            "windowNumber": window.windowNumber,
+            "windowFrame": rect(window.frame), "usableFrame": rect(window.convertToScreen(window.contentLayoutRect)),
+            "hostingBounds": rect(hosting.bounds),
+        ]
+        facts["toolbarAX"] = elements.filter {
+            ["add-source", "add-source-title"].contains($0.accessibilityIdentifier() ?? "")
+                || ($0.accessibilityLabel() ?? "").contains("Add a source")
+                || ($0.accessibilityTextValue() ?? "").contains("Add a source")
+        }.prefix(64).map { element -> [String: Any] in
+            var row: [String: Any] = [
+                "type": String(reflecting: Swift.type(of: element.object)),
+                "role": element.accessibilityRole()?.rawValue ?? "none", "identifier": element.accessibilityIdentifier() ?? "",
+                "label": String((element.accessibilityLabel() ?? "").prefix(240)),
+                "text": String((element.accessibilityTextValue() ?? "").prefix(240)),
+                "frame": rect(element.accessibilityFrame()), "enabled": element.isAccessibilityEnabled(),
+                "children": element.accessibilityChildren().count,
+            ]
+            if let cell = element.object as? NSCell, let control = cell.controlView {
+                row["nativeControl"] = String(reflecting: Swift.type(of: control))
+                row["exactWindow"] = control.window === window
+                if control.window === window {
+                    row["nativeFrame"] = rect(window.convertToScreen(control.convert(control.bounds, to: nil)))
+                }
+                if let button = control as? NSButton {
+                    row["nativeTitle"] = String(button.title.prefix(240))
+                    row["nativeAttributedTitle"] = String(button.attributedTitle.string.prefix(240))
+                }
+            }
+            return row
+        }
+        let directory = URL(fileURLWithPath: "/tmp/omnesis-macos-snapshots", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let appearance = window.appearance?.name.rawValue ?? "unknown"
+        let destination = directory.appendingPathComponent("minimum-library-toolbar-\(window.windowNumber)-\(appearance).txt")
+        try JSONSerialization.data(withJSONObject: facts, options: [.sortedKeys]).write(to: destination, options: .atomic)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: destination.path)
     }
 
     func testOrdinaryFittedSettingsKeepsTabsScrollingAndRequiredRepairReachable() async throws {

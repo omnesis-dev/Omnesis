@@ -447,8 +447,8 @@ struct DesktopAskView: View {
                     }
                 }.padding(16).background(DesktopTheme.panel, in: RoundedRectangle(cornerRadius: 12))
                     .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(
-                        contrast == .increased ? DesktopTheme.secondary : DesktopTheme.border,
-                        lineWidth: contrast == .increased ? 2 : 1
+                        composerFocused ? DesktopTheme.primary : contrast == .increased ? DesktopTheme.secondary : DesktopTheme.border,
+                        lineWidth: composerFocused || contrast == .increased ? 2 : 1
                     ))
                     .frame(maxWidth: 720).padding(.horizontal, 24).padding(.bottom, 24)
             }.frame(maxWidth: .infinity, maxHeight: .infinity)

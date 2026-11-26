@@ -91,9 +91,15 @@ test("restored-instructions checker loads passphrase selectors from .env and kee
     const start = block.indexOf('import assert from "node:assert/strict";');
     expect(start).toBeGreaterThanOrEqual(0);
     const checker = block.slice(start).split("\nNODE")[0];
+    // The noninteractive verifier must not inherit conflicting reporter color
+    // settings: tsx otherwise emits a Node warning even on successful reads.
+    vi.stubEnv("FORCE_COLOR", "1");
+    vi.stubEnv("NO_COLOR", "1");
     const env = Object.fromEntries(
       Object.entries(process.env).filter(([key]) => !key.startsWith("OMNESIS_")),
     );
+    delete env.FORCE_COLOR;
+    env.NO_COLOR = "1";
     env.OMNESIS_CONFIG_DIR = dir;
     env.OMNESIS_GATEWAY_PORT = String(server.address().port);
     const check = () =>

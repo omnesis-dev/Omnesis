@@ -70,7 +70,8 @@ enum DesktopSnapshotRenderer {
             // Retain the actual render even when a semantic/layout assertion fails.
             if validate != nil { try await DesktopAccessibilityDriver.materializeOwnedApplication() }
             try validate?(hosting)
-            if name == "settings-branded" || name == "settings-all-required-ready" || name == "settings-storage-required-first" || name ==
+            if name == "setup-first-repair-message" || name == "settings-branded" || name == "settings-all-required-ready" || name ==
+                "settings-storage-required-first" || name ==
                 "welcome" || name == "sources-library" ||
                 name == "ask-increased-contrast" {
                 try await captureOwnedWindow(window, output: output, name: name, appearance: appearance, componentOnly: true)
@@ -154,7 +155,18 @@ enum DesktopSnapshotRenderer {
             let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
             try png.write(to: output.appendingPathComponent("\(name)-\(appearance.rawValue).png"))
             try await DesktopAccessibilityDriver.materializeOwnedApplication()
-            try await validate(hosting)
+            do {
+                try await validate(hosting)
+            } catch {
+                // Latch the semantic failure before capture can flush layout or accessibility.
+                let validationFailure = error
+                do {
+                    try await captureOwnedWindow(window, output: output, name: name, appearance: appearance, requireActive: true)
+                } catch {
+                    XCTFail("The owned window capture also failed after semantic validation")
+                }
+                throw validationFailure
+            }
             try await captureOwnedWindow(window, output: output, name: name, appearance: appearance, requireActive: true)
         }
     }

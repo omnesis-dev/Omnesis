@@ -331,63 +331,192 @@ final class DesktopAPIContextTests: XCTestCase {
         func popups(_ view: NSView) -> [NSPopUpButton] {
             (view as? NSPopUpButton).map { [$0] } ?? view.subviews.flatMap(popups)
         }
-        let picker: NSPopUpButton
         var stage = "identified-role-cell"
-        var populationRequested = false
+        var tracking: DesktopOwnedPopupTracking?
         do {
             let identified = try DesktopAccessibilityDriver.element("model-role-picker-agent", in: mounted.host)
             let cell = try XCTUnwrap(identified.object as? NSCell, "The identified role must expose its actual native cell")
-            let owned = try XCTUnwrap(cell.controlView as? NSPopUpButton, "The identified cell must belong to its real popup")
-            guard owned.window === mounted.window, owned.isDescendant(of: mounted.host), owned.cell === cell else {
+            let picker = try XCTUnwrap(cell.controlView as? NSPopUpButton, "The identified cell must belong to its real popup")
+            guard picker.window === mounted.window, picker.isDescendant(of: mounted.host), picker.cell === cell else {
                 throw DesktopAccessibilityDriver.Failure("The role popup must belong to the exact mounted window and cell")
             }
-            picker = owned
-            stage = "owned-menu-delegate"
-            let menu = try XCTUnwrap(owned.menu, "The exact popup must expose its actual menu")
-            let delegate = try XCTUnwrap(menu.delegate, "The actual menu must expose its existing population delegate")
-            stage = "requested-native-menu-content"
-            // Request this menu's real content; never insert fixture items or replace its delegate.
-            populationRequested = true
-            delegate.menuNeedsUpdate?(menu)
-            menu.update()
-            try await wait { owned.itemTitles.contains("remote · fictional-chat") }
-            stage = "populated-owned-menu"
-            guard owned.window === mounted.window, owned.isDescendant(of: mounted.host), owned.cell === cell,
-                  owned.menu === menu else {
-                throw DesktopAccessibilityDriver.Failure("The populated menu must remain attached to the exact owned role popup")
+            let menu = try XCTUnwrap(picker.menu, "The exact popup must expose its actual menu")
+            let selection = DesktopOwnedPopupTracking(
+                picker: picker,
+                cell: cell,
+                menu: menu,
+                root: mounted.host,
+                window: mounted.window,
+                title: "remote · fictional-chat"
+            )
+            tracking = selection
+            stage = "native-menu-tracking"
+            try await selection.select()
+            stage = "visible-role-selection"
+            try await wait {
+                guard let role = try? DesktopAccessibilityDriver.element("model-role-picker-agent", in: mounted.host),
+                      let save = try? DesktopAccessibilityDriver.element("model-role-save-agent", in: mounted.host) else { return false }
+                return role.accessibilityTextValue() == "remote · fictional-chat" && save.isAccessibilityEnabled()
             }
+            XCTAssertEqual(
+                try DesktopAccessibilityDriver.element("model-role-picker-agent", in: mounted.host).accessibilityTextValue(),
+                "remote · fictional-chat"
+            )
+            stage = "real-save-control"
+            try DesktopAccessibilityDriver.press("model-role-save-agent", in: mounted.host)
+            stage = "real-consent-control"
+            try await wait { (try? self.control("model-role-confirm-agent", mounted: mounted)) != nil }
+            let oldConfirmation = try control("model-role-confirm-agent", mounted: mounted)
+            store.api = pair.apiB
+            await Task.yield()
+            stage = "retired-consent-control"
+            _ = oldConfirmation.accessibilityPerformPress()
+            try await assertNoWrites(pair)
         } catch {
             try writeRolePickerDiagnostics(
                 mounted.host,
                 nativePopups: popups(mounted.host),
                 stage: stage,
-                populationRequested: populationRequested
+                tracking: tracking?.facts ?? [:]
             )
             throw error
         }
-        picker.selectItem(withTitle: "remote · fictional-chat")
-        XCTAssertEqual(picker.titleOfSelectedItem, "remote · fictional-chat")
-        XCTAssertTrue(picker.sendAction(picker.action, to: picker.target))
-        try await wait {
-            (try? DesktopAccessibilityDriver.element("model-role-save-agent", in: mounted.host).isAccessibilityEnabled()) == true
+    }
+
+    func testCurrentOffMacModelConsentSavesOnlyItsReviewedApiAndShowsFreshSelectedRole() async throws {
+        let pair = try await ContextHTTPPair.start()
+        defer { pair.stop() }
+        var routes = Self.modelRoutes
+        var overview = Self.models
+        overview["capabilities"] = [["role": "agent", "title": "Questions", "description": "Fixture answers", "icon": "sparkles"]]
+        overview["inference"] = ["allowRemoteInference": false, "assignments": [:], "backends": [
+            "remote": [
+                "type": "http",
+                "status": "ok",
+                "url": "https://model.example.com",
+                "models": ["fictional-chat"],
+                "modelRoles": ["fictional-chat": ["agent"]],
+            ],
+        ]]
+        routes["GET /admin/models"] = ["body": overview]
+        routes["PATCH /admin/config"] = ["hold": true, "body": [:]]
+        try await pair.configureA(routes)
+        try await pair.configureB([:])
+        let decoded = try await pair.apiA.admin.modelOverview()
+        XCTAssertEqual(DesktopModelSelection.choices(for: "agent", overview: decoded).map(\.id), ["remote/fictional-chat"])
+        let store = DesktopStore(startRuntime: false)
+        store.api = pair.apiA
+        let mounted = mount(.models, store: store)
+        defer { mounted.window.close() }
+        try await DesktopAccessibilityDriver.materializeOwnedApplication()
+        try await wait { (try? DesktopAccessibilityDriver.element("model-role-picker-agent", in: mounted.host)) != nil }
+        var stage = "current-role-cell"
+        var tracking: DesktopOwnedPopupTracking?
+        do {
+            let role = try DesktopAccessibilityDriver.element("model-role-picker-agent", in: mounted.host)
+            let cell = try XCTUnwrap(role.object as? NSCell)
+            let popup = try XCTUnwrap(cell.controlView as? NSPopUpButton)
+            let menu = try XCTUnwrap(popup.menu)
+            let selection = DesktopOwnedPopupTracking(
+                picker: popup,
+                cell: cell,
+                menu: menu,
+                root: mounted.host,
+                window: mounted.window,
+                title: "remote · fictional-chat"
+            )
+            tracking = selection
+            stage = "current-public-popup-selection"
+            try await selection.select()
+            try await wait {
+                guard let selected = try? DesktopAccessibilityDriver.element("model-role-picker-agent", in: mounted.host),
+                      let save = try? DesktopAccessibilityDriver.element("model-role-save-agent", in: mounted.host) else { return false }
+                return selected.accessibilityTextValue() == "remote · fictional-chat" && save.isAccessibilityEnabled()
+            }
+            stage = "current-real-save"
+            try DesktopAccessibilityDriver.press("model-role-save-agent", in: mounted.host)
+            try await wait { (try? self.control("model-role-confirm-agent", mounted: mounted)) != nil }
+            try await assertNoWrites(pair)
+            XCTAssertTrue(store.api === pair.apiA)
+            XCTAssertTrue(store.apiContext?.isCurrent == true)
+            stage = "current-real-consent"
+            let consent = try control("model-role-confirm-agent", mounted: mounted)
+            XCTAssertTrue(consent.isAccessibilityEnabled())
+            XCTAssertTrue(consent.accessibilityPerformPress())
+            try await wait { try await pair.writesA().count == 1 }
+            let heldWrites = try await pair.writesA()
+            let policy = try XCTUnwrap(heldWrites.first)
+            XCTAssertEqual(policy.method, "PATCH")
+            XCTAssertEqual(policy.path, "/admin/config")
+            XCTAssertEqual((policy.body?["inference"] as? [String: Any])?["allowRemoteInference"] as? Bool, true)
+            XCTAssertFalse(
+                try DesktopAccessibilityDriver.contains("Selected: Fictional remote · fictional-chat", in: mounted.host),
+                "An unacknowledged policy write cannot show the role as selected"
+            )
+            var selectedOverview = overview
+            selectedOverview["assignmentDisplays"] = ["agent": [
+                "providerId": "remote", "providerLabel": "Fictional remote", "modelName": "fictional-chat",
+                "available": true, "configured": true,
+            ]]
+            var inference = try XCTUnwrap(overview["inference"] as? [String: Any])
+            inference["allowRemoteInference"] = true
+            inference["assignments"] = ["agent": [
+                "kind": "http",
+                "available": true,
+                "model": "fictional-chat",
+                "backendKey": "remote",
+                "onHost": false,
+            ]]
+            selectedOverview["inference"] = inference
+            routes["GET /admin/models"] = ["body": selectedOverview]
+            routes["PATCH /admin/config"] = ["body": [:]]
+            try await pair.configureA(routes)
+            stage = "current-write-acknowledgement"
+            try await pair.releaseA()
+            try await wait {
+                guard try await pair.writesA().count == 2 else { return false }
+                return try DesktopAccessibilityDriver.contains("Selected: Fictional remote · fictional-chat", in: mounted.host)
+                    && DesktopAccessibilityDriver.contains("Selection saved. Current availability is shown above.", in: mounted.host)
+            }
+            let writes = try await pair.writesA()
+            XCTAssertEqual(writes.map(\.method), ["PATCH", "PATCH"])
+            XCTAssertEqual(writes.map(\.path), ["/admin/config", "/admin/config"])
+            let assignment = try XCTUnwrap(writes.last?.body?["inference"] as? [String: Any])
+            XCTAssertEqual(assignment["assignments"] as? [String: String], ["agent": "remote/fictional-chat"])
+            let replacementWrites = try await pair.writesB()
+            XCTAssertTrue(replacementWrites.isEmpty)
+            let requests = try await pair.requestsA()
+            let lastWrite = try XCTUnwrap(requests.lastIndex { $0.method == "PATCH" && $0.path == "/admin/config" })
+            XCTAssertTrue(
+                requests.indices.contains { $0 > lastWrite && requests[$0].method == "GET" && requests[$0].path == "/admin/models" },
+                "The rendered selected role must come from a fresh read after the actual writes"
+            )
+        } catch {
+            try writeRolePickerDiagnostics(
+                mounted.host,
+                nativePopups: Self.nativePopups(mounted.host),
+                stage: stage,
+                tracking: tracking?.facts ?? [:],
+                name: "api-context-current-off-host-picker"
+            )
+            throw error
         }
-        try DesktopAccessibilityDriver.press("model-role-save-agent", in: mounted.host)
-        try await wait { (try? self.control("model-role-confirm-agent", mounted: mounted)) != nil }
-        let oldConfirmation = try control("model-role-confirm-agent", mounted: mounted)
-        store.api = pair.apiB
-        await Task.yield()
-        _ = oldConfirmation.accessibilityPerformPress()
-        try await assertNoWrites(pair)
+    }
+
+    private static func nativePopups(_ root: NSView) -> [NSPopUpButton] {
+        (root as? NSPopUpButton).map { [$0] } ?? root.subviews.flatMap(nativePopups)
     }
 
     private func writeRolePickerDiagnostics(
         _ root: NSView,
         nativePopups: [NSPopUpButton],
         stage: String,
-        populationRequested: Bool
+        tracking: [String: Any],
+        name: String = "api-context-off-host-picker"
     ) throws {
-        let picker = try DesktopAccessibilityDriver.element("model-role-picker-agent", in: root)
-        var pending = [picker.object], seen: Set<ObjectIdentifier> = [], nodes: [[String: Any]] = []
+        let picker = try DesktopAccessibilityDriver.elements(in: root).first { $0.accessibilityIdentifier() == "model-role-picker-agent" }
+        var pending: [AnyObject] = picker.map { [$0.object] } ?? []
+        var seen: Set<ObjectIdentifier> = [], nodes: [[String: Any]] = []
         while let object = pending.popLast(), nodes.count < 128 {
             guard seen.insert(ObjectIdentifier(object)).inserted else { continue }
             let element = DesktopAccessibilityDriver.Element(object: object)
@@ -401,14 +530,15 @@ final class DesktopAPIContextTests: XCTestCase {
             pending.append(contentsOf: element.accessibilityChildren().map { $0 as AnyObject })
             if let view = object as? NSView { pending.append(contentsOf: view.subviews) }
         }
+        let identifiedCell = picker?.object as? NSCell
         let facts: [String: Any] = [
-            "stage": stage, "decodedChoice": "remote/fictional-chat", "populationRequested": populationRequested,
-            "rolePickerNodes": nodes, "subtreeBoundReached": !pending.isEmpty,
+            "stage": stage, "decodedChoice": "remote/fictional-chat", "tracking": tracking,
+            "rolePickerPresent": picker != nil, "rolePickerNodes": nodes, "subtreeBoundReached": !pending.isEmpty,
             "nativePopups": nativePopups.prefix(32).map { popup in
                 [
                     "type": String(reflecting: Swift.type(of: popup)),
                     "exactWindow": popup.window === root.window, "descendantOfMountedRoot": popup.isDescendant(of: root),
-                    "matchesIdentifiedCell": popup.cell === (picker.object as? NSCell),
+                    "matchesIdentifiedCell": identifiedCell.map { popup.cell === $0 } ?? false,
                     "menuPresent": popup.menu != nil,
                     "delegateType": popup.menu?.delegate.map { String(reflecting: Swift.type(of: $0)) } ?? "none",
                     "items": popup.itemTitles.prefix(64).map { String($0.prefix(240)) },
@@ -417,7 +547,7 @@ final class DesktopAPIContextTests: XCTestCase {
         ]
         let directory = URL(fileURLWithPath: "/tmp/omnesis-macos-snapshots", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let destination = directory.appendingPathComponent("api-context-off-host-picker.txt")
+        let destination = directory.appendingPathComponent(name + ".txt")
         try JSONSerialization.data(withJSONObject: facts, options: [.sortedKeys]).write(to: destination, options: .atomic)
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: destination.path)
     }
@@ -600,5 +730,150 @@ private final class ContextHTTPPair {
         let (data, response) = try await session.data(for: request)
         XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
         return data
+    }
+}
+
+/// Runs only the exact mounted popup's ordinary AppKit tracking and item action.
+@MainActor
+private final class DesktopOwnedPopupTracking {
+    private let picker: NSPopUpButton
+    private let cell: NSCell
+    private let menu: NSMenu
+    private let root: NSView
+    private let window: NSWindow
+    private let title: String
+    private var acceptingCallbacks = false
+    private var began = false
+    private var ended = false
+    private var performedAction = false
+    private var deadlineExpired = false
+    private var refusal: String?
+    private var stage = "not-started"
+    private var choices: [String] = []
+    private var namedPressSupported = false
+    private var directPressSupported = false
+    private var pressAccepted = false
+    private var pressDispatch = "none"
+
+    init(picker: NSPopUpButton, cell: NSCell, menu: NSMenu, root: NSView, window: NSWindow, title: String) {
+        self.picker = picker
+        self.cell = cell
+        self.menu = menu
+        self.root = root
+        self.window = window
+        self.title = title
+    }
+
+    private var owned: Bool {
+        picker.window === window && picker.isDescendant(of: root) && window.contentView === root
+            && picker.cell === cell && cell.controlView === picker && picker.menu === menu && window.isVisible
+    }
+
+    var facts: [String: Any] {
+        [
+            "stage": stage,
+            "ownershipCurrent": owned,
+            "began": began,
+            "ended": ended,
+            "controlEnabled": picker.isEnabled,
+            "controlActionPresent": picker.action != nil,
+            "namedPressSupported": namedPressSupported, "directPressSupported": directPressSupported,
+            "pressAccepted": pressAccepted, "pressDispatch": pressDispatch,
+            "nativeItemCount": menu.items.count,
+            "selectedNativeTitle": String((picker.titleOfSelectedItem ?? "").prefix(240)),
+            "nativeCellValue": String(cell.stringValue.prefix(240)),
+            "performedItemAction": performedAction,
+            "deadlineExpired": deadlineExpired,
+            "refusal": refusal ?? "none",
+            "choices": choices,
+        ]
+    }
+
+    func select() async throws {
+        guard owned, picker.isEnabled else {
+            throw DesktopAccessibilityDriver.Failure("The exact owned popup must be enabled")
+        }
+        let object = cell as AnyObject
+        namedPressSupported = (object.accessibilityActionNames?() ?? []).contains(.press)
+            && object.accessibilityPerformAction != nil
+        directPressSupported = object.accessibilityPerformPress != nil
+        guard namedPressSupported || directPressSupported else {
+            throw DesktopAccessibilityDriver.Failure("The exact observed popup cell must expose a public press action")
+        }
+        pressDispatch = namedPressSupported ? "named-public-press" : "public-press-selector"
+        let deadline = ContinuousClock.now + .seconds(5)
+        acceptingCallbacks = true
+        let center = NotificationCenter.default
+        let begin = center.addObserver(forName: NSMenu.didBeginTrackingNotification, object: menu, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.trackingBegan() }
+        }
+        let end = center.addObserver(forName: NSMenu.didEndTrackingNotification, object: menu, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { if self?.acceptingCallbacks == true { self?.ended = true } }
+        }
+        let timer = Timer(timeInterval: 5, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.acceptingCallbacks else { return }
+                self.deadlineExpired = true
+                self.stage = "tracking-deadline"
+                self.menu.cancelTracking()
+            }
+        }
+        RunLoop.main.add(timer, forMode: .default)
+        RunLoop.main.add(timer, forMode: .eventTracking)
+        defer {
+            acceptingCallbacks = false
+            timer.invalidate()
+            center.removeObserver(begin)
+            center.removeObserver(end)
+            menu.cancelTracking()
+        }
+        stage = "dispatching-owned-public-press"
+        pressAccepted = DesktopAccessibilityDriver.Element(object: object).accessibilityPerformPress()
+        guard pressAccepted else {
+            throw DesktopAccessibilityDriver.Failure("The exact popup's public press action was refused")
+        }
+        while !(began && performedAction && ended), !deadlineExpired, refusal == nil, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(25))
+        }
+        try Task.checkCancellation()
+        guard began, performedAction, ended, !deadlineExpired, refusal == nil else {
+            throw DesktopAccessibilityDriver.Failure("The real owned popup tracking did not complete its expected item action")
+        }
+        stage = "owned-tracking-completed"
+    }
+
+    private func trackingBegan() {
+        guard acceptingCallbacks, !began else { return }
+        began = true
+        stage = "tracking-began"
+        RunLoop.main.perform(inModes: [.eventTracking]) { [weak self] in
+            MainActor.assumeIsolated { self?.selectActualItem() }
+        }
+    }
+
+    private func selectActualItem() {
+        guard acceptingCallbacks, !performedAction, !ended, !deadlineExpired else { return }
+        guard owned, menu.items.count <= 64 else { refuse("ownership-or-item-bound")
+            return
+        }
+        choices = menu.items.map { String($0.title.prefix(240)) }
+        let matches = menu.items.enumerated().filter { _, item in
+            item.title == title && item.isEnabled && !item.isHidden && item.menu === menu
+        }
+        guard matches.count == 1, let (index, item) = matches.first,
+              item.action != nil, item.target != nil else { refuse("unique-enabled-real-action-missing")
+            return
+        }
+        performedAction = true
+        stage = "sending-real-item-action"
+        menu.performActionForItem(at: index)
+        stage = "real-item-action-returned"
+        menu.cancelTracking()
+    }
+
+    private func refuse(_ reason: String) {
+        refusal = reason
+        stage = "tracking-refused"
+        menu.cancelTracking()
     }
 }

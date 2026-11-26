@@ -39,7 +39,8 @@ struct OmnesisDesktopApp: App {
                 }
             }
         Settings { DesktopSettingsView().environment(store).id(store.apiContextEpoch).frame(width: 720, height: 640) }
-        MenuBarExtra("Omnesis", image: "OmnesisMark") {
+        // Keep the status item’s logical image size separate from the in-window brand asset.
+        MenuBarExtra("Omnesis", image: "OmnesisMenuMark") {
             VStack(alignment: .leading, spacing: 14) {
                 Label(store.menuStatusLabel, systemImage: store.requiredSetupReady ? "checkmark.shield" : "checklist")
                     .font(.headline)
@@ -115,7 +116,7 @@ struct DesktopRootView: View {
             if store.state.canOpenLibrary, !store.requiredSetupReady, store.requiredSetupNeedsAction || !hadVerifiedSetup {
                 HStack {
                     Label(
-                        store.requiredSetupNeedsAction ? "Required setup needs attention" : "Checking required settings",
+                        DesktopSetupRepair.bannerTitle(in: store),
                         systemImage: "checklist"
                     ).font(.callout.weight(.medium)).accessibilityIdentifier("required-setup-label")
                     Spacer()

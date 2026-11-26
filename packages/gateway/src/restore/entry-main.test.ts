@@ -9,8 +9,7 @@ import { expect, test } from "vitest";
 import { ensureInstallRootKey, readInstallRootKey, produceEncryptedArtifact } from "@omnesis/core";
 import { SCOPE_ADMIN, SCOPE_READ } from "@omnesis/types";
 import { openEncryptedSqlite, sqliteFileLooksPlaintext } from "../sqlite-encryption.js";
-import { runSchemaSetup } from "../data/schema.js";
-import { runMigrations } from "../data/migrations.js";
+import { createDatabase } from "../db.js";
 import { createDevice } from "../data/repositories/DeviceRepository.js";
 import { createToken, lookupToken } from "../data/repositories/TokenRepository.js";
 import {
@@ -41,11 +40,9 @@ test("owned worker verifies nested artifact and every ciphertext page before pre
       destinationPath = join(dir, "destination.db"),
       sourceCipherPath = join(dir, "worker-input.db");
     const create = (path: string, key: Buffer) => {
-      const db = openEncryptedSqlite(path, { key });
+      const db = createDatabase(path, { encryptionKey: key });
       db.pragma("journal_mode=MEMORY");
       db.pragma("synchronous=OFF");
-      runSchemaSetup(db as unknown as Db);
-      runMigrations(db as unknown as Db);
       return db;
     };
     const source = create(sourcePath, sourceKey),
