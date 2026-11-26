@@ -11,10 +11,12 @@ import {
   isEncryptedSecretFile,
   markSecretFileEncryptionRequired,
   primeSecretFileKeyCache,
+  writeSecretTextFile,
 } from "@omnesis/core";
 import {
   OperatorInstructionsConflictError,
   OperatorInstructionsStore,
+  MAX_OPERATOR_INSTRUCTIONS_BYTES,
 } from "./instructions/store.js";
 import { SweepFileStore } from "./brain/sweeps/file-store.js";
 import { protectManagedProse } from "./managed-prose.js";
@@ -87,6 +89,38 @@ test("ordinary headless prose stays editable as plaintext", async () => {
   await protectManagedProse(dir, { backend: "file" });
   expect(readFileSync(instructions.path, "utf8")).toBe("Use clear wording.");
   expect(readFileSync(sweeps.pathFor("review"), "utf8")).toContain("Review questions.");
+});
+
+test("200 KiB legacy prose remains complete on disk and readable across repeated protection", async () => {
+  const dir = await encryptedDirectory();
+  const path = join(dir, "OMNESIS.md");
+  const prose = "Invented legacy instructions. ".repeat(8000).slice(0, 200 * 1024);
+  writeFileSync(path, prose, { mode: 0o600 });
+  const before = new OperatorInstructionsStore(dir, { backend: "file" }).promptText();
+  await protectManagedProse(dir, { backend: "file" });
+  const sealed = readFileSync(path, "utf8");
+  expect(Buffer.byteLength(sealed)).toBeGreaterThan(262_144);
+  expect(sealed).not.toContain("Invented legacy instructions");
+  await protectManagedProse(dir, { backend: "file" });
+  expect(readFileSync(path, "utf8")).toBe(sealed);
+  const store = new OperatorInstructionsStore(dir, { backend: "file" });
+  expect(store.read().content).toBe(prose);
+  expect(store.promptText()).toBe(before);
+  await expect(store.write("x".repeat(MAX_OPERATOR_INSTRUCTIONS_BYTES + 1))).rejects.toThrow();
+});
+
+test("envelope headroom does not admit more than 256 KiB of decoded prose", async () => {
+  const dir = await encryptedDirectory();
+  const path = join(dir, "OMNESIS.md");
+  await writeSecretTextFile(path, "x".repeat(262_145), { configDir: dir, backend: "file" });
+  const sealed = readFileSync(path, "utf8");
+  await expect(protectManagedProse(dir, { backend: "file" })).rejects.toThrow("256 KiB");
+  expect(readFileSync(path, "utf8")).toBe(sealed);
+  expect(new OperatorInstructionsStore(dir, { backend: "file" }).read()).toMatchObject({
+    content: "",
+    problem: "too-large",
+    truncated: true,
+  });
 });
 
 test("strict startup refuses a linked prose file without changing its target", async () => {

@@ -20,7 +20,7 @@ final class DesktopConnectionsTests: XCTestCase {
         let fixture = try makeAPI(script: script)
         defer { fixture.cleanup() }
         let model = DesktopConnections()
-        await model.load(api: fixture.api)
+        await model.load(context: DesktopAPIContext(api: fixture.api, id: 1))
         XCTAssertEqual(model.mcpURL?.absoluteString, "https://library.example.com/mcp")
         XCTAssertEqual(model.gatewayOrigin?.absoluteString, "https://library.example.com")
         XCTAssertNil(model.failure)
@@ -35,7 +35,7 @@ final class DesktopConnectionsTests: XCTestCase {
         let fixture = try makeAPI(script: script)
         defer { fixture.cleanup() }
         let model = DesktopConnections()
-        await model.load(api: fixture.api)
+        await model.load(context: DesktopAPIContext(api: fixture.api, id: 1))
         XCTAssertNil(model.mcpURL)
         XCTAssertNil(model.gatewayOrigin)
         XCTAssertNotNil(model.failure)
@@ -68,15 +68,16 @@ final class DesktopConnectionsTests: XCTestCase {
         let fixture = try makeAPI(script: script)
         defer { fixture.cleanup() }
         let model = DesktopPhonePairing()
-        try await model.start(api: fixture.api, gatewayOrigin: XCTUnwrap(URL(string: "https://library.example.com")))
+        let context = DesktopAPIContext(api: fixture.api, id: 1)
+        try await model.start(context: context, gatewayOrigin: XCTUnwrap(URL(string: "https://library.example.com")))
         XCTAssertEqual(model.payload, "invented-server-encoded-qr")
         XCTAssertTrue(model.observedPhones.isEmpty)
-        await model.refreshPhones(api: fixture.api)
+        await model.refreshPhones(context: context)
         XCTAssertEqual(model.observedPhones.map(\.id), ["unrelated-phone"])
         XCTAssertEqual(model.payload, "invented-server-encoded-qr")
         XCTAssertEqual(model.pending?.pairingCode, "invented-code")
         XCTAssertFalse(script.requests.contains { $0.httpMethod == "DELETE" })
-        await model.cancel(api: fixture.api)
+        await model.cancel()
         XCTAssertNil(model.payload)
         XCTAssertNil(model.pending)
         XCTAssertTrue(script.requests.contains { $0.httpMethod == "DELETE" && $0.url?.path == "/admin/devices/pair" })
@@ -110,9 +111,10 @@ final class DesktopConnectionsTests: XCTestCase {
             policyFamilies: []
         )
         let model = DesktopAgentAuthorization()
+        let context = DesktopAPIContext(api: fixture.api, id: 1)
         model.code = "invented-code"
         try await model.lookup(
-            api: fixture.api,
+            context: context,
             overview: overview,
             expectedResource: XCTUnwrap(URL(string: "https://library.example.com/mcp"))
         )
@@ -122,7 +124,7 @@ final class DesktopConnectionsTests: XCTestCase {
         model.allowDirect = true
         model.allowedSources = ["fixture-source"]
         model.personallyStarted = true
-        await model.decide(approve: true, api: fixture.api, overview: overview)
+        await model.decide(approve: true, context: context, overview: overview)
         XCTAssertTrue(model.completed)
         XCTAssertNil(model.failure)
     }

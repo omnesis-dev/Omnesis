@@ -79,11 +79,11 @@ Omnesis's AGPL. The dependency distributions retain their upstream notices.
 
 ## Codex runtime
 
-The desktop runtime includes **OpenAI Codex 0.169.0**, under **Apache-2.0**.
+The desktop runtime includes **OpenAI Codex 0.171.0**, under **Apache-2.0**.
 Its audited source is commit
-[`d32063f96c2dff1dc96af839b3952abb6acfeda4`](https://github.com/openai/codex/tree/d32063f96c2dff1dc96af839b3952abb6acfeda4).
-The unmodified upstream [license](https://github.com/openai/codex/blob/d32063f96c2dff1dc96af839b3952abb6acfeda4/LICENSE)
-and [notice](https://github.com/openai/codex/blob/d32063f96c2dff1dc96af839b3952abb6acfeda4/NOTICE)
+[`ccf9be8cc458bd6b8336fe84d68d8893f2691a5e`](https://github.com/openai/codex/tree/ccf9be8cc458bd6b8336fe84d68d8893f2691a5e).
+The unmodified upstream [license](https://github.com/openai/codex/blob/ccf9be8cc458bd6b8336fe84d68d8893f2691a5e/LICENSE)
+and [notice](https://github.com/openai/codex/blob/ccf9be8cc458bd6b8336fe84d68d8893f2691a5e/NOTICE)
 are retained under `scripts/desktop/licenses/codex/` and copied to the bundled
 runtime's `licenses/codex/`. The notice includes the upstream Ratatui attribution.
 These third-party texts are not relicensed under Omnesis's AGPL.

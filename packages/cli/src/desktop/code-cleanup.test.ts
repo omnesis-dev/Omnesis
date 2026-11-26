@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, lstat, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, lstat, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
@@ -18,7 +18,7 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 async function fixture() {
-  const home = await mkdtemp(join(tmpdir(), "omnesis-code-retention-"));
+  const home = await realpath(await mkdtemp(join(tmpdir(), "omnesis-code-retention-")));
   roots.push(home);
   const profile = desktopProfile(home);
   await mkdir(profile.configDir, { recursive: true, mode: 0o700 });

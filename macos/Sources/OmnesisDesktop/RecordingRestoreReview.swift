@@ -133,7 +133,7 @@ struct DesktopRecordingReviewNotice: View {
             openPortal: { store.openPortal() },
             check: { Task { await refresh() } }
         )
-        .task(id: store.api.map(ObjectIdentifier.init)) { await refresh() }
+        .task(id: store.apiContextEpoch) { await refresh() }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification, object: NSApp)) { _ in
             Task { await refresh() }
         }
@@ -141,8 +141,12 @@ struct DesktopRecordingReviewNotice: View {
     }
 
     private func refresh() async {
-        let api = store.api
-        await flow.refresh(api: api, afterRestore: afterRestore, isCurrent: { store.api === api })
+        let context = store.apiContext
+        let api = context?.api
+        await flow.refresh(api: api, afterRestore: afterRestore, isCurrent: {
+            if let context { return context.isCurrent && store.apiContext === context }
+            return store.api == nil
+        })
     }
 }
 

@@ -134,9 +134,13 @@ final class DesktopSourceHealthMonitor {
         loaded = !initialStatuses.isEmpty
     }
 
-    func invalidate() {
+    func invalidate(clear: Bool = false) {
         generation = UUID()
         loaded = false
+        if clear {
+            statuses = [:]
+            failure = nil
+        }
     }
 
     /// One aggregate request while the source list is visible; an old connection

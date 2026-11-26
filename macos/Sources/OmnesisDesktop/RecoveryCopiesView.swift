@@ -5,11 +5,13 @@ import DesktopCore
 import SwiftUI
 
 struct DesktopRecoveryCopiesSection: View {
+    var context: DesktopAPIContext?
     @Environment(DesktopStore.self) private var store
     @State private var flow: DesktopRecoveryCopiesFlow?
     @State private var confirmRetry = false
     var loadCatalog = true
-    init(flow: DesktopRecoveryCopiesFlow? = nil, loadCatalog: Bool = true) {
+    init(flow: DesktopRecoveryCopiesFlow? = nil, loadCatalog: Bool = true, context: DesktopAPIContext? = nil) {
+        self.context = context
         _flow = State(initialValue: flow)
         self.loadCatalog = loadCatalog
     }
@@ -26,8 +28,8 @@ struct DesktopRecoveryCopiesSection: View {
             .foregroundStyle(DesktopTheme.secondary)
             if store.state.mode == "joined" {
                 Text(store.state.homeName
-                    .map { "These protect this Mac’s setup. Your library stays on \($0); review its recovery copies there." }
-                    ?? "These protect this Mac’s setup. Review library recovery copies on the Mac that keeps your library.")
+                    .map { "These protect this Mac’s setup. Your library stays on \($0); manage its backups there." }
+                    ?? "These protect this Mac’s setup. Manage library backups on your library server.")
                     .font(.callout).foregroundStyle(DesktopTheme.secondary)
             }
             if let flow {
@@ -118,7 +120,8 @@ struct DesktopRecoveryCopiesSection: View {
         .task {
             if flow == nil { flow = DesktopRecoveryCopiesFlow { [weak store] name, params in
                 guard let store else { throw DesktopRecoveryCopiesFlow.Failure("Reopen Omnesis to continue.") }
-                return try await store.request(name, params: params)
+                guard let context else { throw CancellationError() }
+                return try await context.perform { _ in try await store.request(name, params: params) }
             } }
             if loadCatalog { await flow?.refresh() }
         }

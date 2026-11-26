@@ -47,7 +47,7 @@ struct DesktopSettingsView: View {
                     }
                     Section("Your library") {
                         LabeledContent("Connection", value: store.state.statusLabel)
-                        if let name = store.state.homeName { LabeledContent("Library Mac", value: name) }
+                        if let name = store.state.homeName { LabeledContent("Library server", value: name) }
                         if store.state.encrypted == true { Label(
                             store.state
                                 .mode == "joined" ? "This Mac and your library use encrypted storage" :
@@ -84,14 +84,22 @@ struct DesktopSettingsView: View {
                         "General",
                         systemImage: "gearshape"
                     ) }.tag("general")
-                DesktopModelsView().tabItem { Label("AI", systemImage: "sparkles") }.tag("ai")
-                DesktopBackupsView().tabItem { Label("Backups", systemImage: "externaldrive") }.tag("backups")
-                DesktopMemoryView().tabItem { Label("Memory", systemImage: "memorychip") }.tag("memory")
+                DesktopModelsView(context: store.apiContext).id(store.apiContextEpoch).tabItem { Label("AI", systemImage: "sparkles") }
+                    .tag("ai")
+                DesktopBackupsView(context: store.apiContext).id(store.apiContextEpoch).tabItem { Label(
+                    "Backups",
+                    systemImage: "externaldrive"
+                ) }.tag("backups")
+                DesktopMemoryView(context: store.apiContext).id(store.apiContextEpoch)
+                    .tabItem { Label("Memory", systemImage: "memorychip") }.tag("memory")
                 DesktopUpdatesView().tabItem { Label("Updates", systemImage: "arrow.down.circle") }.tag("updates")
-                DesktopStorageView().tabItem { Label("Storage", systemImage: "internaldrive") }.tag("storage")
+                DesktopStorageView(context: store.apiContext).id(store.apiContextEpoch).tabItem { Label(
+                    "Storage",
+                    systemImage: "internaldrive"
+                ) }.tag("storage")
                 Form {
                     Text(
-                        "Your library is stored on your chosen Mac. The connection service carries encrypted traffic between your devices."
+                        "Your library is stored on your chosen server. The connection service carries encrypted traffic between your devices."
                     )
                     Text(
                         "When you choose a cloud AI provider, information needed for your question is sent to that provider. You can use search without a cloud model."
@@ -140,6 +148,7 @@ struct DesktopSettingsView: View {
 }
 
 struct DesktopModelsView: View {
+    let context: DesktopAPIContext?
     @Environment(DesktopStore.self) private var store
     @State private var login: CodexLoginFlow?
     @State private var error: String?
@@ -152,7 +161,8 @@ struct DesktopModelsView: View {
     @State private var refreshGeneration = UUID()
     @State private var confirmingSignOut = false
     var loadModels = true
-    init(initialOverview: ModelsOverview? = nil, loadModels: Bool = true) {
+    init(initialOverview: ModelsOverview? = nil, loadModels: Bool = true, context: DesktopAPIContext? = nil) {
+        self.context = context
         _overview = State(initialValue: initialOverview)
         self.loadModels = loadModels
     }
@@ -162,7 +172,7 @@ struct DesktopModelsView: View {
             Section("Choose how Omnesis answers") {
                 Text("Start with an AI provider you already use. You can skip this and keep searching your library.")
                 Text(
-                    "A model running on your library Mac keeps its work there. A cloud model receives the information needed for each answer. Provider API keys can incur usage charges; check your provider’s pricing before connecting."
+                    "A model running on your library server keeps its work there. A cloud model receives the information needed for each answer. Provider API keys can incur usage charges; check your provider’s pricing before connecting."
                 )
                 .font(.callout).foregroundStyle(DesktopTheme.secondary)
                 if store.reviewModelsAfterRestore {
@@ -170,18 +180,18 @@ struct DesktopModelsView: View {
                         .font(.callout).foregroundStyle(DesktopTheme.secondary)
                 }
             }
-            Button("Refresh model connections") { Task { await refreshModels() } }.disabled(loading || store.api == nil)
-            if let overview, let api = store.api {
+            Button("Refresh model connections") { context?.run { _ in await refreshModels() } }.disabled(loading || store.api == nil)
+            if let overview, let context, context.isCurrent {
                 if store.reviewModelsAfterRestore || overview.assignmentDisplays.values.contains(where: \.configured)
                     || overview.capabilities.contains(where: { !DesktopModelSelection.choices(for: $0.role, overview: overview).isEmpty }) {
-                    DesktopModelRolesView(overview: overview, api: api, updated: {
-                        guard store.api === api else { return }
+                    DesktopModelRolesView(overview: overview, context: context, updated: {
+                        guard context.isCurrent else { return }
                         refreshGeneration = UUID()
                         store.observeModelOverview($0)
                         self.overview = $0
                     }, reviewingRestoredLibrary: store.reviewModelsAfterRestore)
                 }
-                DesktopModelCredentialsView(entries: credentialEntries, api: api) { await refreshModels() }
+                DesktopModelCredentialsView(entries: credentialEntries, context: context) { await refreshModels() }
             }
             if overview?.inference.codex != nil || login != nil {
                 Section("ChatGPT sign-in") {
@@ -191,7 +201,7 @@ struct DesktopModelsView: View {
                     .foregroundStyle(DesktopTheme.secondary)
                     if overview?.inference.codex?.runtime?.supported == true {
                         if overview?.inference.codex?.loggedIn != true {
-                            Button("Sign in with ChatGPT") { Task { await startLogin() } }.disabled(loading)
+                            Button("Sign in with ChatGPT") { context?.run { _ in await startLogin() } }.disabled(loading)
                         }
                         if overview?.inference.codex?.loggedIn == true {
                             Button("Sign out of ChatGPT…") { confirmingSignOut = true }.disabled(loading)
@@ -205,9 +215,10 @@ struct DesktopModelsView: View {
                         if let link = login.verificationUri,
                            let url = URL(string: link) { Button("Open sign-in page") { store.openBrowser(url) } }
                         Text(login.reason ?? login.status).foregroundStyle(DesktopTheme.secondary)
-                        Button("Check sign-in") { Task { await checkLogin() } }
-                        Button("Cancel sign-in") { Task { _ = try? await store.api?.admin.cancelCodexLogin()
-                            self.login = nil
+                        Button("Check sign-in") { context?.run { _ in await checkLogin() } }
+                        Button("Cancel sign-in") { context?.run { scope in
+                            _ = try? await scope.perform { try await $0.admin.cancelCodexLogin() }
+                            if scope.isCurrent { self.login = nil }
                         } }
                     }
                 }
@@ -224,7 +235,7 @@ struct DesktopModelsView: View {
                     }
                 }
                 Text(
-                    "Connecting allows models you select outside your library Mac to receive information for their work, including any other cloud models you have already selected."
+                    "Connecting allows models you select outside your library server to receive information for their work, including any other cloud models you have already selected."
                 )
                 .font(.callout).foregroundStyle(DesktopTheme.secondary)
                 SecureField("API key", text: $apiKey)
@@ -234,15 +245,18 @@ struct DesktopModelsView: View {
                         Text(model).tag(model)
                     }
                 }
-                Button("Connect provider") { Task { await saveProvider() } }
+                Button("Connect provider") { context?.run { _ in await saveProvider() } }
                     .disabled(provider.isEmpty || apiKey.isEmpty || selectedModel.isEmpty || loading)
             }
             if let error { Text(error).foregroundStyle(DesktopTheme.danger) }
             if loading { ProgressView("Updating AI settings…") }
         }.formStyle(.grouped).omnesisTheme()
-            .task(id: store.api.map { ObjectIdentifier($0) }) { if loadModels { await refreshModels() } }
+            .task(id: context?.id) { if loadModels { await refreshModels() } }
+            .onDisappear { apiKey = ""
+                login = nil
+            }
             .confirmationDialog("Sign out of ChatGPT?", isPresented: $confirmingSignOut) {
-                Button("Sign out of ChatGPT", role: .destructive) { Task { await signOut() } }
+                Button("Sign out of ChatGPT", role: .destructive) { context?.run { _ in await signOut() } }
             } message: {
                 Text(
                     "This removes Omnesis’s ChatGPT sign-in and its model assignments. Running Omnesis ChatGPT tasks finish before the sign-in is removed. Your separate Codex app or terminal sign-in is not changed."
@@ -253,23 +267,23 @@ struct DesktopModelsView: View {
     private func refreshModels() async {
         let generation = UUID()
         refreshGeneration = generation
-        guard let api = store.api else {
+        guard let context, context.isCurrent else {
             overview = nil
             credentialEntries = []
             login = nil
             return
         }
         do {
-            async let models = api.admin.modelOverview()
-            async let credentials = api.admin.listModelCredentials()
+            async let models = context.perform { try await $0.admin.modelOverview() }
+            async let credentials = context.perform { try await $0.admin.listModelCredentials() }
             let result = try await (models, credentials)
-            guard !Task.isCancelled, refreshGeneration == generation, store.api === api else { return }
+            guard !Task.isCancelled, refreshGeneration == generation, context.isCurrent else { return }
             overview = result.0
             store.observeModelOverview(result.0)
             credentialEntries = result.1
             error = nil
         } catch is CancellationError { } catch {
-            guard refreshGeneration == generation, store.api === api else { return }
+            guard refreshGeneration == generation, context.isCurrent else { return }
             self.error = error.localizedDescription
         }
     }
@@ -277,16 +291,18 @@ struct DesktopModelsView: View {
     private func startLogin() async {
         loading = true
         defer { loading = false }
-        do { login = try await store.api?.admin.startCodexLogin() } catch { self.error = error.localizedDescription }
+        do { guard let context else { return }
+            login = try await context.perform { try await $0.admin.startCodexLogin() }
+        } catch is CancellationError {} catch { self.error = error.localizedDescription }
     }
 
     private func signOut() async {
-        guard let api = store.api else { return }
+        guard let context else { return }
         loading = true
         defer { loading = false }
         do {
-            _ = try await api.admin.removeCodexBackend()
-            guard store.api === api else { return }
+            _ = try await context.perform { try await $0.admin.removeCodexBackend() }
+            guard context.isCurrent else { return }
             login = nil
             await refreshModels()
         } catch {
@@ -296,13 +312,14 @@ struct DesktopModelsView: View {
 
     private func checkLogin() async {
         do {
-            login = try await store.api?.admin.getCodexLogin()
-            if login?.status == "complete", let api = store.api {
-                let status = try await api.admin.refreshCodexBackend()
+            guard let context else { return }
+            login = try await context.perform { try await $0.admin.getCodexLogin() }
+            if login?.status == "complete" {
+                let status = try await context.perform { try await $0.admin.refreshCodexBackend() }
                 guard let model = status.modelDetails?.first(where: { $0.recommended == true })?.id ?? status.models.first else {
                     throw DesktopAPIError.message("Sign-in finished, but no AI model is available for this account yet.")
                 }
-                try await api.mutate("POST", "admin/inference/codex/agent", body: ["model": model])
+                try await context.mutate("POST", "admin/inference/codex/agent", body: ["model": model])
                 login = nil
                 await refreshModels()
             }
@@ -310,12 +327,12 @@ struct DesktopModelsView: View {
     }
 
     private func saveProvider() async {
-        guard let api = store.api, let preset = overview?.presets.first(where: { $0.id == provider }),
+        guard let context, context.isCurrent, let preset = overview?.presets.first(where: { $0.id == provider }),
               let providerURL = preset.defaultUrl else { return }
         loading = true
         defer { loading = false }
         do {
-            try await api.mutate("PATCH", "admin/config", body: ["inference": [
+            try await context.mutate("PATCH", "admin/config", body: ["inference": [
                 "allowRemoteInference": true,
                 "backends": [preset.id: [
                     "type": "http",

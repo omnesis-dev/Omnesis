@@ -548,10 +548,13 @@ export function deriveDisplayStatus(
     const retained =
       inMem.remediation?.access?.status === "denied"
         ? inMem.remediation
-        : persistedError &&
+        : typeof inMem.deviceId === "string" &&
+            inMem.deviceId.length > 0 &&
+            persistedError &&
             persistedErroredAt &&
             persisted &&
-            persisted.device_id === inMem.deviceId &&
+            (persisted.device_id === inMem.deviceId ||
+              (persisted.device_id === "" && persisted.last_error_device_id === inMem.deviceId)) &&
             persisted.last_error_remediation
           ? syncErrorRemediationCodec.parseWithFallback(persisted.last_error_remediation, {
               rowId: `${sourceId}/${persisted.device_id}`,

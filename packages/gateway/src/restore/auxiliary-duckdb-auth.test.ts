@@ -83,3 +83,13 @@ test("the actual legacy GCM profile also authenticates before materialization", 
   expect(f.bytes[119]).toBe(0);
   expect(await authenticated(f.bytes, f.key)).toEqual(f.bytes);
 });
+
+test("real canary and database-header authentication tags reject tampering", async () => {
+  const f = await fixture();
+  expect(f.bytes[119]).toBe(1);
+  for (const tagOffset of [160, 4096 + 12, 8192 + 12]) {
+    const changed = Buffer.from(f.bytes);
+    changed[tagOffset] = changed[tagOffset]! ^ 1;
+    await expect(authenticated(changed, f.key)).rejects.toThrow();
+  }
+});

@@ -8479,6 +8479,7 @@ print_docker_banner() {
     print_docker_collector_banner
     return 0
   fi
+  print_mac_server_guidance
   echo ""
   printf ''"$C_BOLD"''"$C_GREEN"'Omnesis is running in Docker.'"$C_RESET"'\n'
   echo ""
@@ -9063,6 +9064,23 @@ print_hardened_banner() {
   echo ""
 }
 
+print_mac_server_guidance() {
+  [ "$PLATFORM" = darwin ] || return 0
+  echo ""
+  echo "  Keep this Mac available for your other devices:"
+  echo "    Required gateway setup: prevent automatic system sleep while connected to power."
+  echo "    A desktop Mac left powered on is a good library host."
+  echo "    Desktop: System Settings > Energy (Energy Saver on Sonoma) >"
+  echo "      Prevent automatic sleeping when the display is off."
+  echo "    MacBook: connect power, then Battery > Options >"
+  echo "      Prevent automatic sleeping on power adapter when the display is off."
+  echo "      Keep the lid open unless using Apple's supported external-display setup."
+  echo "    The display can turn off and the screen can stay locked."
+  echo "    Wake for network access alone does not keep this library connected."
+  echo "    https://omnesis.dev/docs/install#mac-server"
+  echo ""
+}
+
 print_banner() {
   PORTAL_URL="https://$PORTAL_HOST:$GATEWAY_PORT/portal/"
   echo ""
@@ -9083,6 +9101,7 @@ print_banner() {
   echo "    omnesis sources add gmail"
   echo ""
   print_full_disk_access_hint
+  print_mac_server_guidance
   print_phone_lines
   print_browser_lines
   print_second_machine_lines

@@ -6,6 +6,7 @@ import CoreImage.CIFilterBuiltins
 import SwiftUI
 
 struct DesktopSourcesView: View {
+    let context: DesktopAPIContext?
     @Environment(DesktopStore.self) private var store
     @State private var showPicker = false
     @State private var repairing: DesktopSourceRepair?
@@ -14,7 +15,8 @@ struct DesktopSourcesView: View {
     @State private var health = DesktopSourceHealthMonitor()
     @State private var healthRevision = 0
     private let observeHealth: Bool
-    init(initialHealth: DesktopSourceHealthMonitor? = nil, observeHealth: Bool = true) {
+    init(initialHealth: DesktopSourceHealthMonitor? = nil, observeHealth: Bool = true, context: DesktopAPIContext? = nil) {
+        self.context = context
         _health = State(initialValue: initialHealth ?? DesktopSourceHealthMonitor())
         self.observeHealth = observeHealth
     }
@@ -68,10 +70,10 @@ struct DesktopSourcesView: View {
                                     }.frame(maxWidth: .infinity, alignment: .leading)
                                     Menu("Actions") {
                                         Button("Sync now") {
-                                            Task {
-                                                do { try await store.api?.mutateSourceCollection(source.id, sync: true)
+                                            context?.run { scope in
+                                                do { try await scope.mutateSourceCollection(source.id, sync: true)
                                                     await store.refresh()
-                                                } catch { store.failure = error.localizedDescription }
+                                                } catch { if scope.isCurrent { store.failure = error.localizedDescription } }
                                             }
                                         }.disabled(!policy.canSync)
                                         if store.descriptors.contains(where: { $0.id == source.type }) {
@@ -88,15 +90,15 @@ struct DesktopSourcesView: View {
                                             }
                                         }
                                         Button(source.enabled ? "Pause" : "Resume") {
-                                            Task {
+                                            context?.run { scope in
                                                 do {
-                                                    try await store.api?.mutateSourceCollection(
+                                                    try await scope.mutateSourceCollection(
                                                         source.id,
                                                         sync: false,
                                                         enabled: !source.enabled
                                                     )
                                                     await store.refresh()
-                                                } catch { store.failure = error.localizedDescription }
+                                                } catch { if scope.isCurrent { store.failure = error.localizedDescription } }
                                             }
                                         }.disabled(!source.enabled && !policy.canResume)
                                     }.menuStyle(.borderlessButton).tint(DesktopTheme.accent).fixedSize()
@@ -348,7 +350,12 @@ struct SourceSetupView: View {
                 Button("Open advanced setup") { store.openPortal() }.font(.callout)
             }.padding(28).frame(maxWidth: .infinity, alignment: .leading)
         }.navigationTitle(flow.descriptor.name).disabled(flow.busy || store.api !== flow.api)
-            .onAppear { flow.isCurrentAPI = { [weak owner = store, weak api = flow.api] in api != nil && owner?.api === api } }
+            .onAppear {
+                let context = store.apiContext
+                flow.isCurrentAPI = { [weak owner = store, weak api = flow.api, weak context] in
+                    api != nil && owner?.api === api && context?.isCurrent == true
+                }
+            }
             .onChange(of: store.api.map(ObjectIdentifier.init)) {
                 if store.api !== flow.api { flow.invalidatePresentation()
                     dismiss()

@@ -7,6 +7,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct DesktopBackupsView: View {
+    let context: DesktopAPIContext?
     @Environment(DesktopStore.self) private var store
     @State private var artifacts: [DesktopArtifact] = []
     @State private var kind = "backup"
@@ -23,6 +24,10 @@ struct DesktopBackupsView: View {
     @State private var readableConsent: DesktopArtifact?
     @State private var saveReadableExport = false
     private let downloader = DesktopArtifactDownloader()
+    init(context: DesktopAPIContext? = nil) {
+        self.context = context
+    }
+
     var body: some View {
         Form {
             Section("Back up your library") {
@@ -40,7 +45,8 @@ struct DesktopBackupsView: View {
                         Text("CSV (document index and analytics)").tag("csv")
                     }
                 }
-                Button(kind == "backup" ? "Create backup" : "Create export") { Task { await create() } }
+                Button(kind == "backup" ? "Create backup" : "Create export") { context?.run { _ in await create() } }
+                    .accessibilityIdentifier("backup-create")
                     .disabled(store
                         .api == nil || loading || saving != nil || (kind == "backup" ? backupStatus?.running : exportStatus?.running) ==
                         true)
@@ -48,7 +54,7 @@ struct DesktopBackupsView: View {
                 generation(exportStatus, label: "Export")
             }
             Section("Save a completed backup or export") {
-                Text("These files are on the Mac that stores your library. Save downloads a copy to a location you choose on this Mac.")
+                Text("These files are on your library server. Save downloads a copy to a location you choose on this Mac.")
                     .font(.callout).foregroundStyle(.secondary)
                 ForEach(artifacts) { artifact in
                     VStack(alignment: .leading, spacing: 6) {
@@ -76,9 +82,9 @@ struct DesktopBackupsView: View {
                     }
                 }
                 if artifacts.isEmpty { Text("No completed backups or exports are available.").foregroundStyle(.secondary) }
-                Button("Refresh list") { Task { await refresh() } }.disabled(loading || saving != nil)
+                Button("Refresh list") { context?.run { _ in await refresh() } }.disabled(loading || saving != nil)
             }
-            DesktopRecoveryCopiesSection()
+            DesktopRecoveryCopiesSection(context: context)
             if let saving {
                 ProgressView(
                     "Saving \(saving.kind)… \(ByteCountFormatter.string(fromByteCount: downloadedBytes, countStyle: .file)) downloaded"
@@ -91,7 +97,7 @@ struct DesktopBackupsView: View {
             }
             if let error { Text(error).foregroundStyle(DesktopTheme.danger) }
         }.formStyle(.grouped)
-            .task { await refresh() }
+            .task(id: context?.id) { await refresh() }
             .task(id: backupStatus?.running == true || exportStatus?.running == true) {
                 while backupStatus?.running == true || exportStatus?.running == true {
                     do { try await Task.sleep(for: .seconds(3)) } catch { return }
@@ -118,20 +124,21 @@ struct DesktopBackupsView: View {
     }
 
     @ViewBuilder private func generation(_ status: GenerationStatus?, label: String) -> some View {
-        if status?.running == true { ProgressView("\(label) is being created on your library Mac…") }
-        else if let result = status?.lastResult, !result.ok { Text(result.error ?? "\(label) could not finish.").foregroundStyle(DesktopTheme.danger) }
+        if status?.running == true { ProgressView("\(label) is being created on your library server…") }
+        else if let result = status?.lastResult,
+                !result.ok { Text(result.error ?? "\(label) could not finish.").foregroundStyle(DesktopTheme.danger) }
     }
 
     private func refresh() async {
-        guard let api = store.api else { error = "Connect to your library first."
+        guard let context, context.isCurrent else { error = "Connect to your library first."
             return
         }
         loading = true
         defer { loading = false }
         do {
-            async let catalog: Catalog = api.request("GET", "admin/artifacts")
-            async let backup: GenerationStatus = api.request("GET", "admin/backup/status")
-            async let exported: GenerationStatus = api.request("GET", "admin/export/status")
+            async let catalog: Catalog = context.request("GET", "admin/artifacts")
+            async let backup: GenerationStatus = context.request("GET", "admin/backup/status")
+            async let exported: GenerationStatus = context.request("GET", "admin/export/status")
             let results = try await (catalog, backup, exported)
             artifacts = results.0.items
             backupStatus = results.1
@@ -141,10 +148,10 @@ struct DesktopBackupsView: View {
     }
 
     private func create() async {
-        guard let api = store.api else { return }
+        guard let context, context.isCurrent else { return }
         loading = true
         do {
-            let _: Started = try await api.request(
+            let _: Started = try await context.request(
                 "POST",
                 kind == "backup" ? "admin/backup" : "admin/export",
                 body: kind == "backup" ? [:] : ["format": format]
@@ -158,23 +165,28 @@ struct DesktopBackupsView: View {
     }
 
     private func chooseDestination(_ artifact: DesktopArtifact, readableExport: Bool = false) {
-        guard let api = store.api, artifact.valid, saving == nil else { return }
+        guard let context, context.isCurrent, artifact.valid, saving == nil else { return }
         let panel = NSSavePanel()
         panel.nameFieldStringValue = readableExport ? artifact.suggestedFilename
             .replacingOccurrences(of: ".tar", with: "-readable.tar") : artifact.suggestedFilename
         panel.allowedContentTypes = [UTType(filenameExtension: "tar") ?? .data]
-        guard panel.runModal() == .OK, let destination = panel.url else { return }
+        guard panel.runModal() == .OK, let destination = panel.url, context.isCurrent else { return }
         let operationID = UUID()
         downloadID = operationID
         saving = artifact
         downloadedBytes = 0
         savedURL = nil
         error = nil
-        download = Task {
+        download = context.run { scope in
             do {
-                try await downloader.save(artifact, api: api, destination: destination, readableExport: readableExport) { count in
-                    Task { @MainActor in if downloadID == operationID { downloadedBytes = count } }
-                }
+                try await scope.perform { api in try await downloader.save(
+                    artifact,
+                    api: api,
+                    destination: destination,
+                    readableExport: readableExport
+                ) { count in
+                    Task { @MainActor in if scope.isCurrent, downloadID == operationID { downloadedBytes = count } }
+                } }
                 savedURL = destination
             } catch is CancellationError { error = "Download cancelled. No copy was saved." }
             catch { self.error = "The copy was not saved. \(error.localizedDescription)" }

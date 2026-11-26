@@ -28,7 +28,14 @@ final class DesktopStore {
     }
 
     var state = DesktopState(phase: .welcome) {
-        didSet { homeServices.receive(state)
+        didSet {
+            let identityChanged = oldValue.installationId != nil && oldValue.installationId != state.installationId
+            let roleChanged = oldValue.mode != nil && oldValue.mode != state.mode
+            if let api, identityChanged || roleChanged || api.connection != state.connection {
+                configuredConnection = nil
+                self.api = nil
+            }
+            homeServices.receive(state)
             refreshApplicationInstallation()
             prerequisiteMonitor?.reconcile()
         }
@@ -103,10 +110,26 @@ final class DesktopStore {
 
     private var requests = BridgeCommandTracker()
     private var statusTask: Task<Void, Never>?
+    private(set) var apiContext: DesktopAPIContext?
+    private(set) var apiContextEpoch: UInt64 = 0
+    private var drainingAPIContext: DesktopAPIContext?
     var api: DesktopAPI? {
         didSet {
             if oldValue !== api {
+                let previousContext = apiContext ?? drainingAPIContext
+                previousContext?.invalidate()
+                apiContextEpoch += 1
+                apiContext = api.map { DesktopAPIContext(api: $0, id: apiContextEpoch, predecessor: previousContext) }
+                drainingAPIContext = api == nil ? previousContext : nil
                 verifiedReadScope = nil
+                sources = []
+                sourceRemovals = []
+                devices = []
+                descriptors = []
+                conversations = []
+                conversationHistoryGeneration = UUID()
+                conversationHistoryFailure = nil
+                collectionHealth.invalidate(clear: true)
                 sourcesLoaded = false
                 for draft in sourceDrafts.values {
                     draft.invalidatePresentation()
@@ -142,7 +165,8 @@ final class DesktopStore {
 
     var permissionContext: String {
         String(describing: api.map(ObjectIdentifier.init)) +
-            ":\(state.installationId ?? ""):\(state.mode ?? ""):\(state.retired == true):\(sourceContextRevision):" + requiredAccessTargets
+            ":\(apiContextEpoch):\(state.installationId ?? ""):\(state.mode ?? ""):\(state.retired == true):\(sourceContextRevision):" +
+            requiredAccessTargets
             .map(\.id).sorted()
             .joined(separator: ":")
     }
@@ -698,7 +722,10 @@ final class DesktopStore {
     func sourceDraft(_ descriptor: DesktopDescriptor, api: DesktopAPI) -> DesktopSourceFlow {
         if let draft = sourceDrafts[descriptor.id], draft.api === api, !draft.complete { return draft }
         let draft = DesktopSourceFlow(descriptor: descriptor, api: api)
-        draft.isCurrentAPI = { [weak self, weak api] in api != nil && self?.api === api }
+        let context = apiContext
+        draft.isCurrentAPI = { [weak self, weak api, weak context] in
+            api != nil && self?.api === api && context?.isCurrent == true
+        }
         sourceDrafts[descriptor.id] = draft
         return draft
     }
@@ -786,7 +813,7 @@ final class DesktopStore {
             serverPower: DesktopMacServerPowerFlow(probe: { DesktopMacServerPowerObservation(status: .ready) }),
             nativeOwnerVerified: true
         )
-        store.state = DesktopState(phase: phase, message: phase == .waiting ? "Open Omnesis on your other Mac, then try again." : nil)
+        store.state = DesktopState(phase: phase, message: phase == .waiting ? "Start Omnesis on your library server, then try again." : nil)
         return store
     }
 }

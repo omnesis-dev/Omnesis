@@ -27,7 +27,7 @@ enum DesktopModelSelection {
                 if entry.kind == "gguf", installed.contains(entry.id) {
                     choices.append(.init(
                         id: "local/" + entry.id,
-                        title: "\(entry.name) · On your library Mac",
+                        title: "\(entry.name) · On your library server",
                         onHost: true,
                         apply: .activate(entry.id, catalogRole)
                     ))

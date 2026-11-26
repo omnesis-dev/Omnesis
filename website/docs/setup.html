@@ -922,6 +922,15 @@ omnesis.example.com {
           saves its own token to <code>~/.config/omnesis/collector-token</code>.
         </p>
         <p>
+          A gateway installed from source on Linux and the Mac app can use the same library. The Mac
+          app finds existing libraries through your Omnesis account; the gateway must be linked to
+          that account, use encrypted storage, and support the app's connection protocol. An
+          unlinked gateway is not offered by the app's account picker just because it is on the same
+          network. A Linux collector can also pair with a library hosted by the Mac app using the
+          ordinary collector setup below. Each collector connects directly to the gateway, rather
+          than through another collector.
+        </p>
+        <p>
           A collector on a second machine, such as a Mac that has your Apple Notes while the gateway
           runs on a home server, is one installer command with the
           <code>--collector</code> role. That machine gets the CLI and a collector service, and no

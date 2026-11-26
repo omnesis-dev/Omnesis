@@ -25,7 +25,7 @@ export async function readDesktopPrivateRecord<T>(
     await privateParent(profile);
     const file = await open(
       join(`${profile.configDir}.bootstrap`, name),
-      constants.O_RDONLY | constants.O_NOFOLLOW,
+      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
     );
     try {
       const metadata = await file.stat();

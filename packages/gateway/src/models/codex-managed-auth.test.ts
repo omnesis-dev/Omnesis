@@ -10,6 +10,32 @@ import * as core from "@omnesis/core";
 import { CODEX_RUNTIME_COMPAT } from "@omnesis/agent";
 import { CodexRuntimeService } from "./codex-runtime-service.js";
 
+// Exercise the actual auth/policy protocol with a scripted executable, not an installed native image.
+// Catalogue/FD authority has separate actual-SDK qualification; these auth cases supply only its OS seams.
+vi.mock("@omnesis/agent", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@omnesis/agent")>();
+  return {
+    ...actual,
+    CodexAppServerRuntime: class extends actual.CodexAppServerRuntime {
+      constructor(options: ConstructorParameters<typeof actual.CodexAppServerRuntime>[0]) {
+        super({
+          ...options,
+          resolveManagedCommand: async (info) => info,
+          managedCatalogPlatform: {
+            invocation: (command, args) => ({ command, args: [...args] }),
+            previousSha256: async () => null,
+          },
+        });
+      }
+      override async listModels(): Promise<unknown[]> {
+        return [
+          { model: "fictional-auth-model", displayName: "Fictional auth fixture", hidden: false },
+        ];
+      }
+    },
+  };
+});
+
 const script = fileURLToPath(
   new URL("../../../agent/src/test-fixtures/fake-codex-app-server.mjs", import.meta.url),
 );
@@ -31,6 +57,8 @@ async function fixture(extraEnv: NodeJS.ProcessEnv = {}) {
       OMNESIS_DESKTOP_MANAGED: "1",
       OMNESIS_FAKE_CODEX_VERSION: CODEX_RUNTIME_COMPAT.testedVersion,
       OMNESIS_SERVICE_INSTANCE: "desktop-0000000000000001",
+      OMNESIS_CONFIG_DIR: dir,
+      OMNESIS_SECRET_SERVICE: "dev.omnesis.desktop." + "a".repeat(64),
       ...extraEnv,
     },
   });

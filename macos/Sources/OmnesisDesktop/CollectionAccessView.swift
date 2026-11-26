@@ -28,6 +28,7 @@ struct DesktopCollectionAccessCard: View {
     }
 
     var body: some View {
+        let context = store.apiContext
         GroupBox {
             VStack(alignment: .leading, spacing: 14) {
                 Label(
@@ -117,7 +118,14 @@ struct DesktopCollectionAccessCard: View {
         }
         .confirmationDialog("Restart collection on this Mac?", isPresented: $confirmRestart) {
             Button("Restart collection") {
-                if let api = store.api { Task { await flow.restartCollector(api: api) { try await store.request("restartCollector") } } }
+                context?.run { scope in
+                    await flow.restartCollector(api: scope.api) {
+                        try scope.check()
+                        let result = try await store.request("restartCollector")
+                        try scope.check()
+                        return result
+                    }
+                }
             }
         } message: {
             Text(
@@ -224,7 +232,7 @@ struct DesktopAccessCoach: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     Text(
-                        "Choose what Omnesis may collect. Reading or asking about a library on another Mac does not require access to this Mac’s protected files, screen or other apps."
+                        "Choose what Omnesis may collect. Reading or asking about a library on another computer does not require access to this Mac’s protected files, screen or other apps."
                     )
                     .foregroundStyle(DesktopTheme.secondary)
                     if targets.isEmpty, !store.sourcesLoaded {

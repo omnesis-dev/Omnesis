@@ -6,12 +6,12 @@ import SwiftUI
 
 struct DesktopModelCredentialsView: View {
     let entries: [ModelCredentialEntry]
-    let api: DesktopAPI
+    let context: DesktopAPIContext
     let saved: () async -> Void
     var body: some View {
         ForEach(entries.filter { !$0.spec.fields.isEmpty }) { entry in
             Section("\(entry.providerName) API credentials") {
-                DesktopModelCredentialForm(entry: entry, api: api, saved: saved)
+                DesktopModelCredentialForm(entry: entry, context: context, saved: saved)
             }
         }
     }
@@ -19,7 +19,7 @@ struct DesktopModelCredentialsView: View {
 
 private struct DesktopModelCredentialForm: View {
     let entry: ModelCredentialEntry
-    let api: DesktopAPI
+    let context: DesktopAPIContext
     let saved: () async -> Void
     @State private var values: [String: String] = [:]
     @State private var loading = false
@@ -34,11 +34,19 @@ private struct DesktopModelCredentialForm: View {
             .font(.callout).foregroundStyle(.secondary)
             ForEach(entry.spec.fields) { field in
                 let binding = Binding(get: { values[field.name] ?? "" }, set: { values[field.name] = $0 })
-                if field.secret == true { SecureField(field.label, text: binding).privacySensitive() }
-                else { TextField(field.label, text: binding).privacySensitive() }
+                if field
+                    .secret ==
+                    true {
+                    SecureField(field.label, text: binding).privacySensitive()
+                        .accessibilityIdentifier("model-credential-" + entry.fileKey + "-" + field.name)
+                } else {
+                    TextField(field.label, text: binding).privacySensitive()
+                        .accessibilityIdentifier("model-credential-" + entry.fileKey + "-" + field.name)
+                }
                 if let hint = field.patternHint { Text(hint).font(.caption).foregroundStyle(.secondary) }
             }
-            Button(entry.configured ? "Replace API credentials" : "Save API credentials") { Task { await save() } }
+            Button(entry.configured ? "Replace API credentials" : "Save API credentials") { context.run { _ in await save() } }
+                .accessibilityIdentifier("model-credential-save-" + entry.fileKey)
                 .disabled(loading || entry.spec.fields
                     .contains { (values[$0.name] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty } || values.values
                     .contains { $0.utf8.count > 16384 })
@@ -56,8 +64,8 @@ private struct DesktopModelCredentialForm: View {
         values.removeAll()
         defer { loading = false }
         do {
-            try await api.admin.setModelCredentials(fileKey: entry.fileKey, fields: fields)
-            let current = try await api.admin.listModelCredentials()
+            try await context.perform { try await $0.admin.setModelCredentials(fileKey: entry.fileKey, fields: fields) }
+            let current = try await context.perform { try await $0.admin.listModelCredentials() }
             guard current.first(where: { $0.fileKey == entry.fileKey })?.configured == true else {
                 throw DesktopAPIError.message("The provider key could not be verified as saved. Try again.")
             }

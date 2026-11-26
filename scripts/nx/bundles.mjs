@@ -276,6 +276,40 @@ function isTailscaleEmbed(path) {
   );
 }
 
+// Exact desktop runtime factory inputs; unrelated tooling does not reserve a Mac.
+const desktopRuntimeBuildInputs = new Set(
+  [
+    "analytics-build.json",
+    "analytics-native-fixture.mjs",
+    "analytics-notices.mjs",
+    "analytics-sources.mjs",
+    "arguments.mjs",
+    "assemble-app.mjs",
+    "build-analytics.mjs",
+    "codex-notices.mjs",
+    "distribute.mjs",
+    "native-dependency-assets.mjs",
+    "native-check.mjs",
+    "native-inventory.mjs",
+    "native-package.mjs",
+    "node-entitlements.plist",
+    "node-runtime.json",
+    "node-runtime.mjs",
+    "package-fixture-extract.mjs",
+    "package-fixture.mjs",
+    "pinned-extensions.mjs",
+    "prepare-runtime.mjs",
+    "qualify-analytics.mjs",
+    "release-application.mjs",
+    "runtime-assets.mjs",
+    "smoke-runtime.mjs",
+    "stage-analytics.mjs",
+    "update-metadata.mjs",
+    "licenses/codex/LICENSE",
+    "licenses/codex/NOTICE",
+  ].map((path) => `scripts/desktop/${path}`),
+);
+
 const areas = [
   { test: (p) => p.startsWith("packages/cloud-relay/"), bundles: ["security-notifications"] },
   { test: isTailscaleEmbed, bundles: ["tailscale-embed"] },
@@ -312,10 +346,7 @@ const areas = [
     bundles: ["macos-logic", "macos-test"],
   },
   {
-    test: (p) =>
-      /^scripts\/desktop\/(?:prepare-runtime|assemble-app|native-inventory|node-runtime|runtime-assets|distribute|smoke-runtime|update-metadata)/.test(
-        p,
-      ),
+    test: (p) => desktopRuntimeBuildInputs.has(p),
     bundles: ["macos-build"],
   },
   {

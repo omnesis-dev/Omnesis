@@ -6,6 +6,7 @@ import Omnesis
 import SwiftUI
 
 struct DesktopAssistantsView: View {
+    var context: DesktopAPIContext?
     @Environment(DesktopStore.self) private var store
     @State private var connections = DesktopConnections()
     @State private var authorization = DesktopAgentAuthorization()
@@ -29,8 +30,8 @@ struct DesktopAssistantsView: View {
                                 TextField("Confirmation code", text: $authorization.code).textFieldStyle(.roundedBorder)
                                     .accessibilityIdentifier("assistant-comparison-code")
                                 Button("Find request") {
-                                    Task { if let api = store.api, let overview = connections.overview { await authorization.lookup(
-                                        api: api,
+                                    context?.run { scope in if let overview = connections.overview { await authorization.lookup(
+                                        context: scope,
                                         overview: overview,
                                         expectedResource: mcp
                                     ) } }
@@ -52,12 +53,12 @@ struct DesktopAssistantsView: View {
                 }
                 if let failure = authorization.failure ?? connections.failure {
                     Text(failure).foregroundStyle(DesktopTheme.danger).textSelection(.enabled)
-                    Button("Check my account connection") { if let api = store.api { Task { await connections.load(api: api) } } }
+                    Button("Check my account connection") { context?.run { scope in await connections.load(context: scope) } }
                 }
                 if connections.loading || authorization.busy { ProgressView("Checking your connection…") }
             }.padding(32).frame(maxWidth: 780, alignment: .leading).frame(maxWidth: .infinity)
         }.navigationTitle("Assistants")
-            .task { if let api = store.api { await connections.load(api: api) } }
+            .task(id: context?.id) { if let context { await connections.load(context: context) } }
     }
 
     private func authorizationForm(_ envelope: AccessAuthorizationLookupEnvelope, overview: AccessOverview) -> some View {
@@ -103,11 +104,11 @@ struct DesktopAssistantsView: View {
                 Toggle("Also include sources I connect in future", isOn: $authorization.includeFutureSources)
                 HStack {
                     Button("Deny", role: .destructive) {
-                        Task { if let api = store.api { await authorization.decide(approve: false, api: api, overview: overview) } }
+                        context?.run { scope in await authorization.decide(approve: false, context: scope, overview: overview) }
                     }
                     Spacer()
                     Button("Allow this connection") {
-                        Task { if let api = store.api { await authorization.decide(approve: true, api: api, overview: overview) } }
+                        context?.run { scope in await authorization.decide(approve: true, context: scope, overview: overview) }
                     }.buttonStyle(DesktopButtonStyle(primary: true))
                         .disabled(!authorization.personallyStarted || authorization.allowedSources
                             .isEmpty || (!authorization.allowAnswers && !authorization.allowDirect))
@@ -122,7 +123,7 @@ struct DesktopPhonePairingView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var connections = DesktopConnections()
     @State private var pairing = DesktopPhonePairing()
-    @State private var pairedAPI: DesktopAPI?
+    var context: DesktopAPIContext?
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             Text("Connect your phone").font(.title.bold())
@@ -172,22 +173,21 @@ struct DesktopPhonePairingView: View {
                 Spacer()
                 Group {
                     Button(pairing.pending == nil ? "Create a scan code" : "Create a new code") {
-                        Task {
-                            guard let api = store.api else { return }
-                            await pairing.cancel(api: api)
-                            await connections.load(api: api)
-                            if let origin = connections.gatewayOrigin { await pairing.start(api: api, gatewayOrigin: origin) }
+                        context?.run { scope in
+                            await pairing.cancel()
+                            guard scope.isCurrent else { return }
+                            await connections.load(context: scope)
+                            if let origin = connections.gatewayOrigin, scope.isCurrent { await pairing.start(
+                                context: scope,
+                                gatewayOrigin: origin
+                            ) }
                         }
                     }.buttonStyle(DesktopButtonStyle(primary: true)).disabled(pairing.working || connections.loading)
                 }
             }
         }.padding(30).frame(width: 500)
-            .task { if let api = store.api { pairedAPI = api
-                await connections.load(api: api)
-            } }
-            .onDisappear { if let api = pairedAPI { Task { await pairing.cancel(api: api)
-                await store.refresh()
-            } } }
+            .task(id: context?.id) { if let context { await connections.load(context: context) } }
+            .onDisappear { Task { await pairing.cancel() } }
             .onChange(of: pairing.observedPhones.map(\.id)) { Task { await store.refresh() } }
     }
 }

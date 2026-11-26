@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { randomUUID } from "node:crypto";
-import { chmod, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, realpath, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test } from "vitest";
@@ -15,7 +15,7 @@ afterEach(async () => {
   for (const home of homes.splice(0)) await rm(home, { recursive: true, force: true });
 });
 async function fixture() {
-  const home = await mkdtemp(join(tmpdir(), "omnesis-auxiliary-entry-"));
+  const home = await realpath(await mkdtemp(join(tmpdir(), "omnesis-auxiliary-entry-")));
   homes.push(home);
   const sourcePath = join(home, "original.db"),
     sourceKey = Buffer.alloc(32, 7),

@@ -23,7 +23,7 @@ async function fixture() {
   roots.push(root);
   const bytes = Buffer.from("invented archive fixture bytes");
   const spec = {
-    version: "0.169.0",
+    version: (await codexKeychainFixtureSpec("arm64")).version,
     architecture: "arm64",
     url: "https://example.org/fixture.tgz",
     integrity: `sha512-${createHash("sha512").update(bytes).digest("base64")}`,
@@ -75,16 +75,18 @@ test("the real producer entry point parses named flags and refuses unknown archi
 });
 
 test.skipIf(process.platform === "win32")(
-  "real TAR extraction uses the reviewed 0.169 platform package bin layout",
+  "real TAR extraction uses the reviewed pinned platform package bin layout",
   async () => {
     const f = await fixture();
+    const actualSpec = await codexKeychainFixtureSpec("arm64");
+    expect(actualSpec.version).toBe("0.171.0");
     const distribution = join(f.root, "reviewed-layout");
     const executable = join(distribution, "package/vendor/aarch64-apple-darwin/bin/codex");
     await mkdir(join(distribution, "package/vendor/aarch64-apple-darwin/bin"), { recursive: true });
     await writeFile(executable, "inert reviewed-layout fixture", { mode: 0o755 });
     await writeFile(
       join(distribution, "package/package.json"),
-      JSON.stringify({ name: "@openai/codex", version: "0.169.0-darwin-arm64" }),
+      JSON.stringify({ name: "@openai/codex", version: `${actualSpec.version}-darwin-arm64` }),
     );
     const archive = join(f.root, "reviewed-layout.tgz");
     const tar = spawnSync("tar", ["-czf", archive, "-C", distribution, "package"], {
@@ -92,7 +94,6 @@ test.skipIf(process.platform === "win32")(
     });
     expect(tar.status, tar.stderr).toBe(0);
     const bytes = await readFile(archive);
-    const actualSpec = await codexKeychainFixtureSpec("arm64");
     await prepareCodexKeychainTestFixture(f.options, {
       spec: async () => ({
         ...actualSpec,

@@ -10,6 +10,7 @@ struct DesktopLibraryConnectionView: View {
     @State private var flow = DesktopLibraryConnectionFlow()
 
     var body: some View {
+        let context = store.apiContext
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 Text("Your library’s connection").font(.title2.weight(.semibold)).accessibilityAddTraits(.isHeader)
@@ -18,7 +19,7 @@ struct DesktopLibraryConnectionView: View {
                 )
                 .foregroundStyle(DesktopTheme.secondary)
                 if store.state.mode != "home" {
-                    Text("Review this setting on the Mac that keeps your library.").foregroundStyle(DesktopTheme.secondary)
+                    Text("Review this setting on your library server.").foregroundStyle(DesktopTheme.secondary)
                 } else {
                     if let status = flow.status {
                         LabeledContent("Account", value: CloudRelayPresentation.accountLinked(status) ? "Signed in" : "Sign-in needed")
@@ -44,17 +45,17 @@ struct DesktopLibraryConnectionView: View {
                             .font(.callout).foregroundStyle(DesktopTheme.secondary)
                     }
                     HStack {
-                        Button("Reconnect") { let api = store.api
-                            Task { await flow.reconnect {
-                                guard store.state.mode == "home", let api, store.api === api else { return }
+                        Button("Reconnect") {
+                            context?.run { scope in await flow.reconnect {
+                                guard store.state.mode == "home", scope.isCurrent else { return }
                                 store.command("status")
                             } }
                         }.buttonStyle(DesktopButtonStyle(primary: true))
                             .disabled(flow.working || store.api == nil || flow.status
                                 .map { !CloudRelayPresentation.accountLinked($0) } != false)
                             .accessibilityIdentifier("library-connection-reconnect")
-                        Button("Check again") { Task { await flow.load()
-                            store.command("status")
+                        Button("Check again") { context?.run { scope in await flow.load()
+                            if scope.isCurrent { store.command("status") }
                         } }
                         .buttonStyle(DesktopButtonStyle()).disabled(flow.working || store.api == nil)
                     }
@@ -64,8 +65,8 @@ struct DesktopLibraryConnectionView: View {
                 }
             }.padding(24)
         }.frame(width: 560).frame(maxHeight: 620)
-            .task(id: store.api.map(ObjectIdentifier.init)) {
-                flow.bind(store.state.mode == "home" ? store.api : nil)
+            .task(id: context?.id) {
+                flow.bind(store.state.mode == "home" ? context : nil)
                 await flow.load()
             }
             .onDisappear { flow.cancel()

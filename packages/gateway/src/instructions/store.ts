@@ -38,6 +38,10 @@ import {
   writeSecretTextFile,
   type SecretFileOptions,
 } from "@omnesis/core";
+import {
+  MAX_MANAGED_PROSE_BYTES,
+  MAX_MANAGED_PROSE_SERIALIZED_BYTES,
+} from "../managed-prose-limits.js";
 
 const log = createLogger("gateway:instructions");
 
@@ -66,7 +70,7 @@ export const MAX_OPERATOR_INSTRUCTIONS_BYTES = 16_384;
  * pathological file (a stray log redirect into the config dir) must not be
  * pulled into memory just to throw most of it away.
  */
-const MAX_READ_BYTES = MAX_OPERATOR_INSTRUCTIONS_BYTES * 16;
+const MAX_READ_BYTES = MAX_MANAGED_PROSE_BYTES;
 
 /** Appended to a truncated body so the model is told what it is not seeing. */
 export const TRUNCATION_MARKER = `\n\n[OMNESIS.md is longer than ${MAX_OPERATOR_INSTRUCTIONS_BYTES} bytes and was cut off here; the rest was not included.]`;
@@ -201,7 +205,7 @@ export class OperatorInstructionsStore {
     const hit = this.cache;
     if (hit && hit.mtimeMs === stat.mtimeMs && hit.size === stat.size) return hit.value;
 
-    if (stat.size > MAX_READ_BYTES) {
+    if (stat.size > MAX_MANAGED_PROSE_SERIALIZED_BYTES) {
       log.warn(
         `${this.file} is ${stat.size} bytes — far past the ${MAX_OPERATOR_INSTRUCTIONS_BYTES}-byte cap; ignoring it entirely`,
       );
@@ -236,6 +240,15 @@ export class OperatorInstructionsStore {
       });
     }
     const bytes = Buffer.byteLength(content, "utf8");
+    if (bytes > MAX_READ_BYTES)
+      return this.remember(stat, {
+        exists: true,
+        content: "",
+        bytes,
+        updatedAt: stat.mtimeMs,
+        truncated: true,
+        problem: "too-large",
+      });
     const truncated = bytes > MAX_OPERATOR_INSTRUCTIONS_BYTES;
     // Logged here rather than in `promptText` so the operator gets one warning
     // per edit of an oversize file, not one per agent run.

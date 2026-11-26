@@ -25,6 +25,7 @@ import {
   writeSecretTextFileSync,
   type SecretFileOptions,
 } from "@omnesis/core";
+import { proseSerializedByteLimit } from "../../managed-prose-limits.js";
 import {
   isValidSweepId,
   MAX_STEERING_PROMPT_CHARS,
@@ -40,6 +41,7 @@ import type { SweepFileContent } from "./file-format.js";
  * over the prose cap, small enough that no single file can stall the loop.
  */
 const MAX_SWEEP_FILE_BYTES = MAX_STEERING_PROMPT_CHARS * 8;
+const MAX_SWEEP_SERIALIZED_FILE_BYTES = proseSerializedByteLimit(MAX_SWEEP_FILE_BYTES);
 
 /**
  * Cap on how many sweeps a directory may define. Each one is a scheduled agent
@@ -193,7 +195,7 @@ export class SweepFileStore {
       this.cache.delete(file);
       return { id, file, content: null, error: "file disappeared while being read" };
     }
-    if (stat.size > MAX_SWEEP_FILE_BYTES) {
+    if (stat.size > MAX_SWEEP_SERIALIZED_FILE_BYTES) {
       return {
         id,
         file,
@@ -206,12 +208,13 @@ export class SweepFileStore {
 
     let parsed: SweepFileEntry;
     try {
-      const result = parseSweepFile(
-        decodeSecretTextFileValueSync(file, readFileSync(file, "utf8"), {
-          ...this.secretOptions,
-          configDir: this.configDir,
-        }),
-      );
+      const text = decodeSecretTextFileValueSync(file, readFileSync(file, "utf8"), {
+        ...this.secretOptions,
+        configDir: this.configDir,
+      });
+      if (Buffer.byteLength(text) > MAX_SWEEP_FILE_BYTES)
+        throw new Error(`decoded sweep file exceeds ${MAX_SWEEP_FILE_BYTES} bytes`);
+      const result = parseSweepFile(text);
       parsed = result.ok
         ? { id, file, content: result.content, error: null }
         : { id, file, content: null, error: result.message };

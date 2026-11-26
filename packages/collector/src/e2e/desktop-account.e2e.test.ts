@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { hostname } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -11,12 +11,13 @@ import { hostedGatewayHostname } from "@omnesis/cloud-relay";
 import { localAcmeAuthority } from "../../../cloud-relay/test/acme-authority.js";
 import {
   EnrollmentWorld,
+  EnrollmentGateway,
+  connectGatewayBySignIn,
   PasskeyBrowser,
   RELAY_HOST,
   SCT_EXTENSION_LINE,
   createUnlinkedAccount,
   signInOnThisMachine,
-  enterConnectCode,
   clickFirst,
   connectThisGateway,
   type PasskeySession,
@@ -25,6 +26,8 @@ import { closeEnrollmentFixture } from "./enrollment-fixture-cleanup.js";
 import { DesktopRuntimeFixture } from "./desktop-runtime-fixture.js";
 import { installDesktopAccountBridge } from "./desktop-account-bridge.js";
 import { startDesktopAccountDns } from "./desktop-account-dns.js";
+import { joinedRequest, protectedSourceGateway } from "./desktop-account-mixed-fixture.js";
+import { addRestoreMaildirSource } from "./desktop-restore-fixture.js";
 import { waitForCondition } from "./multi-collector-harness.js";
 
 const execute = promisify(execFile);
@@ -34,6 +37,8 @@ describe.skipIf(!nonce)("actual desktop account onboarding and owned collection"
   let directory: string, previousResolver: string | undefined;
   let world: EnrollmentWorld, browser: PasskeyBrowser, owner: PasskeySession;
   let home: DesktopRuntimeFixture;
+  let joined: DesktopRuntimeFixture | undefined;
+  let sourceGateway: EnrollmentGateway | undefined;
   let dns: Awaited<ReturnType<typeof startDesktopAccountDns>>;
   let authority: Awaited<ReturnType<typeof localAcmeAuthority>>;
   let gatewayHostname: string | undefined;
@@ -99,6 +104,8 @@ describe.skipIf(!nonce)("actual desktop account onboarding and owned collection"
   afterAll(async () => {
     try {
       await closeEnrollmentFixture(directory, [
+        () => joined?.close(),
+        () => sourceGateway?.close(),
         () => home?.close(),
         () => browser?.close(),
         () => authority?.close(),
@@ -136,7 +143,14 @@ describe.skipIf(!nonce)("actual desktop account onboarding and owned collection"
         expect(interaction.kind).toBe("openBrowser");
         const pending = (await home.request("/admin/cloud-relay")) as { gatewayId: string };
         gatewayHostname = hostedGatewayHostname(pending.gatewayId, RELAY_HOST);
-        await enterConnectCode(owner.page, String(interaction.url), String(interaction.code));
+        // Desktop opens the real direct authorize URL, not the printed-code entry page.
+        const destination = String(interaction.url);
+        expect(new URL(destination).origin).toBe(world.relayOrigin);
+        try {
+          await owner.page.goto(destination);
+        } catch {
+          throw new Error("The owned account browser destination could not be opened");
+        }
         await clickFirst(owner.page, ["Sign in with Passkey", "Verify with Passkey"]);
         await connectThisGateway(owner.page);
         return "continue";
@@ -218,4 +232,160 @@ describe.skipIf(!nonce)("actual desktop account onboarding and owned collection"
     ).toContain(documentId);
     expect(await home.collectorDeviceId()).toBe(deviceId);
   }, 240_000);
+
+  test("an ordinary Linux source collector pairs by code and syncs directly to the managed home", async () => {
+    if (!linkedReady) throw new Error("The real account home was not linked");
+    const sourceId = await addRestoreMaildirSource(home, { pairing: "code" });
+    const sources = (await home.request("/admin/sources")) as {
+      items: Array<{ id: string; deviceId: string; enabled: boolean }>;
+    };
+    const source = sources.items.find((row) => row.id === sourceId);
+    expect(source?.enabled).toBe(true);
+    expect(source?.deviceId).not.toBe(await home.collectorDeviceId());
+    const devices = (await home.request("/admin/devices")) as {
+      items: Array<{ id: string; kind: string; capabilities?: { platform?: string } }>;
+    };
+    expect(devices.items.find((row) => row.id === source?.deviceId)).toMatchObject({
+      kind: "collector",
+      capabilities: { platform: "linux" },
+    });
+    const found = (await home.request(
+      "/documents/search?q=Invented%20mail%20content&limit=10",
+    )) as { results: Array<{ source_id: string }> };
+    expect(found.results.some((row) => row.source_id === sourceId)).toBe(true);
+    const homeState = await home.command("status");
+    expect({
+      phase: homeState.phase,
+      mode: homeState.mode,
+      encrypted: homeState.encrypted,
+    }).toEqual({
+      phase: "ready",
+      mode: "home",
+      encrypted: true,
+    });
+  }, 180_000);
+
+  test("a Desktop joined collector enrolls and collects directly into an ordinary protected Linux source gateway", async () => {
+    if (!linkedReady) throw new Error("The real fixture account was not established");
+    sourceGateway = await EnrollmentGateway.start(
+      world,
+      "source-linux",
+      protectedSourceGateway(home),
+    );
+    expect(await sourceGateway.json("/health")).toMatchObject({
+      storageProtection: { version: 1, atRest: "encrypted" },
+    });
+    expect(await connectGatewayBySignIn(sourceGateway, owner, "existing")).toMatchObject({
+      account: { linked: true },
+    });
+    joined = await DesktopRuntimeFixture.create({
+      prepareInstall: false,
+      systemTrustRuntime: true,
+      relayUrl: world.relayOrigin,
+    });
+    await installDesktopAccountBridge(joined, {});
+    const gateway = sourceGateway;
+    let comparisons = 0;
+    const state = await joined.interactiveCommand("connect", undefined, async (interaction) => {
+      if (interaction.kind === "openBrowser") {
+        expect(new URL(String(interaction.url)).origin).toBe(world.relayOrigin);
+        await signInOnThisMachine(owner, String(interaction.url));
+        return "continue";
+      }
+      if (interaction.kind === "chooseGateway") {
+        expect(interaction.choices).toEqual(
+          expect.arrayContaining([expect.objectContaining({ id: gateway.gatewayId })]),
+        );
+        return gateway.gatewayId;
+      }
+      if (interaction.kind === "compareCode") {
+        let requestId: string | undefined;
+        await waitForCondition(
+          async () => {
+            requestId = (await gateway.pendingRequests()).find(
+              (request) =>
+                request.status === "pending" && request.verificationCode === interaction.code,
+            )?.requestId;
+            return requestId !== undefined;
+          },
+          20_000,
+          "the exact joined role's code comparison",
+        );
+        await gateway.decide(requestId!, true);
+        comparisons++;
+        return "approve";
+      }
+      throw new Error("Unexpected mixed-install enrollment interaction");
+    });
+    expect({ phase: state.phase, mode: state.mode, encrypted: state.encrypted }).toEqual({
+      phase: "ready",
+      mode: "joined",
+      encrypted: true,
+    });
+    expect(comparisons).toBe(2);
+    const connection = state.connection as { deviceId: string; collectorDeviceId: string };
+    expect(connection.collectorDeviceId).not.toBe(connection.deviceId);
+    expect(await joinedRequest(joined, "/whoami")).toMatchObject({ deviceId: connection.deviceId });
+    const vault = join(joined.root, "mixed-source-vault");
+    await mkdir(join(vault, ".obsidian"), { recursive: true });
+    await writeFile(
+      join(vault, "Interoperability.md"),
+      "# Interoperability\n\nfictional-mixed-install-content\n",
+    );
+    await waitForCondition(
+      async () =>
+        (await gateway.devices()).some(
+          (device) => device.id === connection.collectorDeviceId && device.online,
+        ),
+      30_000,
+      "the joined collector's real authenticated connection",
+    );
+    const resolved = (await joinedRequest(joined, "/admin/sources/resolve-account", {
+      method: "POST",
+      body: {
+        deviceId: connection.collectorDeviceId,
+        descriptorId: "obsidian-notes",
+        params: { vaultPath: vault },
+      },
+    })) as { accountId: string };
+    expect(typeof resolved.accountId).toBe("string");
+    const added = (await joinedRequest(joined, "/admin/sources/add", {
+      method: "POST",
+      body: {
+        deviceId: connection.collectorDeviceId,
+        descriptorId: "obsidian-notes",
+        accountIds: [resolved.accountId],
+        params: { vaultPath: vault },
+      },
+    })) as { sourceIds: string[] };
+    expect(added.sourceIds).toEqual([`obsidian-notes:${resolved.accountId}`]);
+    const query = "/documents/search?q=fictional-mixed-install-content&limit=10";
+    await waitForCondition(
+      async () => {
+        const result = (await joinedRequest(joined!, query)) as { results: Array<{ id: string }> };
+        return result.results.length === 1;
+      },
+      30_000,
+      "the joined real reader's document in the central source gateway",
+    );
+    expect(
+      await lstat(join(joined.profile.configDir, "omnesis.db")).catch((error) => {
+        if (error.code === "ENOENT") return null;
+        throw error;
+      }),
+    ).toBeNull();
+    expect(
+      JSON.parse(await readFile(join(joined.profile.configDir, "desktop-install.json"), "utf8")),
+    ).toMatchObject({ mode: "joined" });
+    expect(await joined.command("stop")).toMatchObject({ phase: "waiting", mode: "joined" });
+    expect(await gateway.json("/health")).toMatchObject({
+      status: "ok",
+      storageProtection: { atRest: "encrypted" },
+    });
+    const originalHome = await home.command("status");
+    expect({ phase: originalHome.phase, mode: originalHome.mode }).toEqual({
+      phase: "ready",
+      mode: "home",
+    });
+  }, 300_000);
 });

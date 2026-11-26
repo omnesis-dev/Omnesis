@@ -15,6 +15,7 @@ import {
   HARDENED_PASSPHRASE_PATH,
   HARDENED_UNIT_NAME,
   HARDENED_UNIT_PATH,
+  OMNESIS_SECRET_SERVICE,
 } from "@omnesis/core";
 import { skillFilePath } from "../commands/connect.js";
 import { serviceUnitReferencesPath } from "../service/rebind.js";
@@ -541,7 +542,15 @@ export function planUninstall(inv: Inventory, request: UninstallRequest): Plan {
     // The OS keyring's root key is shared by every config directory of this
     // account; it goes only with the last of them.
     const rootKey =
-      remainingUnits.length === 0 && !inv.instance && inv.otherConfigDirs.length === 0;
+      inv.secretService === OMNESIS_SECRET_SERVICE &&
+      remainingUnits.length === 0 &&
+      !inv.instance &&
+      inv.otherConfigDirs.length === 0;
+    if (inv.secretService !== OMNESIS_SECRET_SERVICE) {
+      kept.push(
+        "The custom secret-service root key and other credentials stay: exclusive ownership of that namespace was not established.",
+      );
+    }
     if (!rootKey && inv.otherConfigDirs.length > 0) {
       kept.push(
         `The keyring's root key stays: ${inv.otherConfigDirs.join(", ")} still ${inv.otherConfigDirs.length === 1 ? "uses" : "use"} it.`,

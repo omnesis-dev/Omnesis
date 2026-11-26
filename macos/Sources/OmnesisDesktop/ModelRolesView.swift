@@ -6,7 +6,7 @@ import SwiftUI
 
 struct DesktopModelRolesView: View {
     let overview: ModelsOverview
-    let api: DesktopAPI
+    let context: DesktopAPIContext
     let updated: (ModelsOverview) -> Void
     var reviewingRestoredLibrary = false
     var body: some View {
@@ -18,11 +18,11 @@ struct DesktopModelRolesView: View {
             )
             .foregroundStyle(.secondary)
             ForEach(overview.capabilities.filter { !$0.experimental && $0.configurableOnDevice && $0.role == "agent" }) { capability in
-                DesktopModelRoleRow(capability: capability, overview: overview, api: api, updated: updated)
+                DesktopModelRoleRow(capability: capability, overview: overview, context: context, updated: updated)
             }
             DisclosureGroup("Other model choices") {
                 ForEach(overview.capabilities.filter { !$0.experimental && $0.configurableOnDevice && $0.role != "agent" }) { capability in
-                    DesktopModelRoleRow(capability: capability, overview: overview, api: api, updated: updated)
+                    DesktopModelRoleRow(capability: capability, overview: overview, context: context, updated: updated)
                 }
             }
         }
@@ -32,7 +32,7 @@ struct DesktopModelRolesView: View {
 private struct DesktopModelRoleRow: View {
     let capability: CapabilityMeta
     let overview: ModelsOverview
-    let api: DesktopAPI
+    let context: DesktopAPIContext
     let updated: (ModelsOverview) -> Void
     @State private var selection = ""
     @State private var loading = false
@@ -59,26 +59,27 @@ private struct DesktopModelRoleRow: View {
                 Text("Do not use a model for this").tag("disabled")
                 ForEach(choices) { choice in Text(choice.title).tag(choice.id) }
             }
+            .accessibilityIdentifier("model-role-picker-" + capability.role)
             Button("Save selection") {
-                if selection == "disabled" { Task { await apply(nil) } }
+                if selection == "disabled" { context.run { _ in await apply(nil) } }
                 else if let choice = choices.first(where: { $0.id == selection }) {
-                    if choice.onHost { Task { await apply(choice) } } else { pending = choice }
+                    if choice.onHost { context.run { _ in await apply(choice) } } else { pending = choice }
                 }
-            }.disabled(loading || selection.isEmpty)
+            }.accessibilityIdentifier("model-role-save-" + capability.role).disabled(loading || selection.isEmpty)
             if loading { ProgressView("Saving selection…") }
             if let notice { Text(notice).font(.callout).foregroundStyle(.secondary) }
             if let error { Text(error).foregroundStyle(DesktopTheme.danger) }
         }.padding(.vertical, 8)
-            .confirmationDialog("Use a model outside your library Mac?", isPresented: Binding(
+            .confirmationDialog("Use a model outside your library server?", isPresented: Binding(
                 get: { pending != nil }, set: { if !$0 { pending = nil } }
             ), presenting: pending) { choice in
                 Button("Use this model") { pending = nil
-                    Task { await apply(choice) }
-                }
+                    context.run { _ in await apply(choice) }
+                }.accessibilityIdentifier("model-role-confirm-" + capability.role)
             } message: { _ in
                 Text(capability.role == "embedder" ?
-                    "This sends documents to the selected provider as they are indexed for search. Allowing off-Mac inference also permits other assigned off-Mac models to run their tasks." :
-                    "Information used for this task is sent to the selected provider. Allowing off-Mac inference also permits other assigned off-Mac models to run their tasks.")
+                    "This sends documents to the selected provider as they are indexed for search. Allowing remote inference also permits other assigned remote models to run their tasks." :
+                    "Information used for this task is sent to the selected provider. Allowing remote inference also permits other assigned remote models to run their tasks.")
             }
     }
 
@@ -90,14 +91,21 @@ private struct DesktopModelRoleRow: View {
         do {
             if let choice {
                 if !choice.onHost, overview.inference.allowRemoteInference != true {
-                    try await api.mutate("PATCH", "admin/config", body: ["inference": ["allowRemoteInference": true]])
+                    try await context.mutate("PATCH", "admin/config", body: ["inference": ["allowRemoteInference": true]])
                 }
                 switch choice.apply {
-                case .assign(let value): try await api.admin.assignCapability(role: capability.role, assignment: value)
-                case .activate(let id, let role): try await api.admin.activateModel(catalogId: id, role: role, capability: capability.role)
+                case .assign(let value): try await context.perform { try await $0.admin.assignCapability(
+                        role: capability.role,
+                        assignment: value
+                    ) }
+                case .activate(let id, let role): try await context.perform { try await $0.admin.activateModel(
+                        catalogId: id,
+                        role: role,
+                        capability: capability.role
+                    ) }
                 }
-            } else { try await api.admin.assignCapability(role: capability.role, assignment: nil) }
-            let fresh = try await api.admin.modelOverview()
+            } else { try await context.perform { try await $0.admin.assignCapability(role: capability.role, assignment: nil) } }
+            let fresh = try await context.perform { try await $0.admin.modelOverview() }
             updated(fresh)
             notice = "Selection saved. Current availability is shown above."
             selection = ""

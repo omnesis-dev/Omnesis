@@ -5,6 +5,7 @@ import DesktopCore
 import SwiftUI
 
 struct DesktopMemoryView: View {
+    let context: DesktopAPIContext?
     @Environment(DesktopStore.self) private var store
     @State private var automatic = true
     @State private var budget = "2048"
@@ -12,11 +13,16 @@ struct DesktopMemoryView: View {
     @State private var analyticsBudget = "512"
     @State private var residentBytes: Int64?
     @State private var working = false
+    @State private var loaded = false
     @State private var restartConfirmation = false
     @State private var awaitingRestart = false
     @State private var saved = false
     @State private var restarted = false
     @State private var error: String?
+    init(context: DesktopAPIContext? = nil) {
+        self.context = context
+    }
+
     var body: some View {
         Form {
             Section("Library memory") {
@@ -27,7 +33,7 @@ struct DesktopMemoryView: View {
                     )
                 } else { LabeledContent("Current library process", value: "Not measured") }
                 Text(
-                    "These settings control the library process on the Mac that stores it. Connected source apps and downloaded AI models may use additional memory."
+                    "These settings control the library process on the computer that stores it. Connected source apps and downloaded AI models may use additional memory."
                 )
                 .foregroundStyle(.secondary)
                 Toggle("Choose the library memory budget automatically", isOn: $automatic)
@@ -38,7 +44,8 @@ struct DesktopMemoryView: View {
                     "Smaller budgets can reduce semantic search and move analytics work to disk. They are startup settings, not an immediate limit on total app memory."
                 )
                 .font(.callout).foregroundStyle(.secondary)
-                Button("Save memory settings") { Task { await save() } }.disabled(working || store.busy || !valid)
+                Button("Save memory settings") { context?.run { _ in await save() } }.accessibilityIdentifier("memory-save")
+                    .disabled(working || store.busy || !loaded || !valid)
                 if saved {
                     Text(restarted ? "Omnesis restarted and is healthy. The saved memory settings are shown above." :
                         "Settings saved. Restart the library to use them.")
@@ -46,18 +53,18 @@ struct DesktopMemoryView: View {
                         Button("Restart this library…") { restartConfirmation = true }.disabled(store.busy || working)
                     } else {
                         Text(
-                            "Restart Omnesis on the Mac that stores your library. Restarting this connected Mac does not apply the library’s memory settings."
+                            "Restart Omnesis on your library server. Restarting this connected Mac does not apply the library’s memory settings."
                         )
-                        if let name = store.state.homeName { LabeledContent("Library Mac", value: name) }
+                        if let name = store.state.homeName { LabeledContent("Library server", value: name) }
                     }
                 }
-                Button("Refresh memory reading") { Task { await load() } }.disabled(working || store.busy)
+                Button("Refresh memory reading") { context?.run { _ in await load() } }.disabled(working || store.busy)
             }.disabled(working || store.busy)
             if working ||
                 (awaitingRestart && store.busy) { ProgressView(awaitingRestart ? "Restarting the library…" : "Reading memory settings…") }
             if let error = error ?? store.failure { Text(error).foregroundStyle(DesktopTheme.danger) }
         }.formStyle(.grouped)
-            .task { await load() }
+            .task(id: context?.id) { await load() }
             .onChange(of: [automatic ? "automatic" : budget, analyticsAutomatic ? "automatic" : analyticsBudget]) { _, _ in
                 saved = false
                 restarted = false
@@ -66,10 +73,11 @@ struct DesktopMemoryView: View {
                 guard awaitingRestart else { return }
                 awaitingRestart = false
                 restarted = true
-                Task { await load(preserveSaved: true) }
+                context?.run { _ in await load(preserveSaved: true) }
             }
             .confirmationDialog("Restart the library on this Mac?", isPresented: $restartConfirmation) {
-                Button("Restart library") { awaitingRestart = true
+                Button("Restart library") { guard context?.isCurrent == true else { return }
+                    awaitingRestart = true
                     restarted = false
                     store.command("restart")
                 }
@@ -86,14 +94,14 @@ struct DesktopMemoryView: View {
     }
 
     private func load(preserveSaved: Bool = false) async {
-        guard let api = store.api else { error = "Connect to your library first."
+        guard let context, context.isCurrent else { error = "Connect to your library first."
             return
         }
         working = true
         residentBytes = nil
         defer { working = false }
         do {
-            let reply: ConfigReply = try await api.request("GET", "admin/config")
+            let reply: ConfigReply = try await context.request("GET", "admin/config")
             automatic = reply.config.gateway?.memoryLimitMb == nil
             analyticsAutomatic = reply.config.gateway?.analyticsMemoryLimitMb == nil
             budget = String(reply.config.gateway?.memoryLimitMb ?? 2048)
@@ -101,14 +109,15 @@ struct DesktopMemoryView: View {
             if !preserveSaved { saved = false
                 restarted = false
             }
-            let reading: Vitals = try await api.request("GET", "admin/process-vitals?window=10")
+            let reading: Vitals = try await context.request("GET", "admin/process-vitals?window=10")
             residentBytes = reading.memory.current?.rssBytes
+            loaded = true
             error = nil
         } catch { self.error = error.localizedDescription }
     }
 
     private func save() async {
-        guard let api = store.api, valid else { return }
+        guard let context, context.isCurrent, valid else { return }
         working = true
         defer { working = false }
         let memory: Any
@@ -120,7 +129,7 @@ struct DesktopMemoryView: View {
         else if let value = DesktopMemorySettings.mebibytes(analyticsBudget) { analytics = value }
         else { return }
         do {
-            let _: ConfigReply = try await api.request(
+            let _: ConfigReply = try await context.request(
                 "PATCH",
                 "admin/config",
                 body: ["gateway": ["memoryLimitMb": memory, "analyticsMemoryLimitMb": analytics]]

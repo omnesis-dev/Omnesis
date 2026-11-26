@@ -21,7 +21,12 @@
         "scripts/blog/*.{mjs,ts}",
         "bench/*.ts",
         "evals/universes/*/_build/*.mjs",
-        "evals/universes/*/agent-demos/_build/*.mjs"
+        "evals/universes/*/agent-demos/_build/*.mjs",
+        "macos/Tests/Support/scripted-agent.mjs",
+        "macos/Tests/Support/api-context-fixture.mjs",
+        "scripts/desktop/codex-backend-test-program.mjs",
+        "scripts/desktop/private-key-test-program.mjs",
+        "scripts/desktop/test-account-container.mjs"
       ]
     },
     "packages/agent": {
@@ -71,7 +76,10 @@
         "portal/js/app.js",
         "portal/js/agent-presentation.js",
         "portal/vendor/*.js",
-        "scripts/*.mjs"
+        "scripts/*.mjs",
+        "src/restore/process-worker.ts",
+        "src/restore/secret-entry.ts",
+        "src/restore/worker.ts"
       ],
       "project": ["src/**/*.ts", "portal/js/**/*.js", "portal/vendor/**/*.js"],
       "ignoreDependencies": ["snowball-stemmers"]
@@ -154,7 +162,11 @@
       ]
     },
     "packages/cli": {
-      "entry": ["src/**/*.test.ts"]
+      "entry": [
+        "src/**/*.test.ts",
+        "src/desktop/data-operation.ts",
+        "src/desktop/snapshot-retention-host.ts"
+      ]
     },
     "packages/cli-shared": {
       "entry": ["src/**/*.test.ts"]

@@ -141,24 +141,36 @@ final class BackgroundOriginRegistrationTests: XCTestCase {
     }
 
     func testActualOwnedClientExitProvidesDeathProofWithoutTimeoutOrExpiry() throws {
+        /// Write fixed lifecycle stages directly so a finite runner retains progress even if XCTest buffers its output.
+        func stage(_ name: String) {
+            FileHandle.standardError.write(Data("owned-origin-exit \(name)\n".utf8))
+        }
         let child = Process()
         child.executableURL = URL(fileURLWithPath: "/bin/sleep")
         child.arguments = ["30"]
         child.standardInput = FileHandle.nullDevice
         child.standardOutput = FileHandle.nullDevice
         child.standardError = FileHandle.nullDevice
+        stage("spawning")
         try child.run()
-        defer { if child.isRunning { child.terminate()
+        defer { if child.isRunning { stage("cleanup-terminating")
+            child.terminate()
+            stage("cleanup-joining")
             child.waitUntilExit()
+            stage("cleanup-joined")
         } }
+        stage("spawned")
         let identity = try DesktopBackgroundProcessIdentity.read(child.processIdentifier)
         let client = DesktopBackgroundOriginStatus.Client(
             pid: identity.pid,
             birth: .init(seconds: String(identity.startedSeconds), microseconds: String(identity.startedMicroseconds))
         )
         XCTAssertFalse(client.isGone())
+        stage("terminating")
         child.terminate()
+        stage("joining")
         child.waitUntilExit()
+        stage("joined")
         XCTAssertTrue(client.isGone())
     }
 }

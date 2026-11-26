@@ -141,6 +141,34 @@ test("completed-only None can resume only after explicit review and authoritativ
   expect(host.textContent).toContain("The restore pause is no longer active");
 });
 
+test.each(["failed", "timed-out"])("a %s refresh after resume replaces stale success with unknown and explicit recheck", async (failure) => {
+  await mount();
+  await click("Review and resume");
+  await confirm();
+  const resumed = { ...choices, reviewRequired: false, version: "b".repeat(64) };
+  api.getRecordingRestoreReview.mockResolvedValue(resumed);
+  await click("Resume restored work");
+  expect(host.textContent).toContain("The restore pause is no longer active");
+  if (failure === "timed-out") {
+    vi.useFakeTimers();
+    api.getRecordingRestoreReview.mockImplementation(() => new Promise(() => {}));
+  } else api.getRecordingRestoreReview.mockRejectedValue(new Error("unknown policy"));
+  await act(async () => { window.dispatchEvent(new window.Event("focus")); });
+  await settle();
+  expect(host.textContent).not.toContain("The restore pause is no longer active");
+  if (failure === "timed-out") {
+    await act(async () => { await vi.advanceTimersByTimeAsync(10001); });
+    await settle();
+  }
+  expect(host.textContent).toContain("could not be checked");
+  expect(button("Check again")).toBeDefined();
+  expect(api.resumeRecordingRestoreReview).toHaveBeenCalledTimes(1);
+  api.getRecordingRestoreReview.mockResolvedValue(resumed);
+  await click("Check again");
+  expect(host.textContent).toContain("The restore pause is no longer active");
+  expect(api.resumeRecordingRestoreReview).toHaveBeenCalledTimes(1);
+});
+
 test("409 replaces choices and clears approval without retrying the POST", async () => {
   await mount();
   await click("Review and resume");

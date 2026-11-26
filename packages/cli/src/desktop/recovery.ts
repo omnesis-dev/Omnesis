@@ -182,7 +182,7 @@ export class DesktopRecoveryService {
     signal.throwIfAborted();
     const install = await this.deps.readInstall(this.profile);
     if (!install || install.phase !== "configured" || install.mode !== "home")
-      throw new Error("Prepare recovery on the Mac that keeps your library.");
+      throw new Error("Prepare recovery on the computer that keeps your library.");
     signal.throwIfAborted();
   }
 
@@ -204,7 +204,10 @@ async function readEnvelopeState(profile: DesktopProfile): Promise<EnvelopeState
   const path = recoveryEnvelopePath(profile.configDir);
   try {
     await assertPrivateDirectory(dirname(path));
-    const file = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+    const file = await open(
+      path,
+      constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0),
+    );
     try {
       const metadata = await file.stat();
       if (

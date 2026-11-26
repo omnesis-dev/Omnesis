@@ -329,7 +329,10 @@ async function verifiedEntries(
   await privateDirectory(dirname(root));
   await privateDirectory(root);
   await privateDirectory(join(root, "files"));
-  const file = await open(join(root, "snapshot.json"), constants.O_RDONLY | constants.O_NOFOLLOW);
+  const file = await open(
+    join(root, "snapshot.json"),
+    constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+  );
   let body: Buffer;
   try {
     const metadata = await file.stat();

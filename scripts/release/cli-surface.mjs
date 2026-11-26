@@ -194,7 +194,10 @@ if (import.meta.main) {
   } else {
     process.stdout.write(await formatSurface(surface));
   }
-  // Command modules may open handles (timers, sockets) at import; the surface
-  // is complete, so nothing else is waited for.
+  // Flush the complete surface before exiting despite handles opened by command
+  // imports. A pipe may buffer a large surface after stdout.write returns.
+  await new Promise((done, reject) => {
+    process.stdout.write("", (error) => (error ? reject(error) : done()));
+  });
   process.exit(0);
 }

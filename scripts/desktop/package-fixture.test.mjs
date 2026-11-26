@@ -80,6 +80,25 @@ test("unknown fixture outputs and links outside public inputs are refused withou
   ).rejects.toThrow(/unsafe symbolic/);
 });
 
+test.skipIf(process.platform === "win32")(
+  "the standalone receiver runs through a symlinked path",
+  async () => {
+    const options = await input();
+    await preparePackageFixture(options);
+    const alias = join(options.root, "linked-fixture");
+    await symlink(options.output, alias);
+    const output = join(options.root, "linked-extraction");
+    execFileSync(process.execPath, [
+      join(alias, "extract.mjs"),
+      "--fixture",
+      alias,
+      "--out",
+      output,
+    ]);
+    expect(await readFile(join(output, "packages/public.ts"), "utf8")).toContain("example = 1");
+  },
+);
+
 test("a changed archive is rejected before extraction creates a destination", async () => {
   const options = await input();
   await preparePackageFixture(options);

@@ -40,7 +40,7 @@ struct DesktopOnboardingView: View {
                             switch store.state.phase {
                             case .welcome, .chooseHome:
                                 Text(
-                                    "Omnesis brings your information together in a private library. Sign in to find a library you already keep on another Mac, or start one here."
+                                    "Omnesis brings your information together in a private library. Sign in to find a library you already keep on another computer, or start one here."
                                 )
                                 .foregroundStyle(DesktopTheme.secondary)
                                 HStack(spacing: 12) {
@@ -61,7 +61,7 @@ struct DesktopOnboardingView: View {
                                         VStack(alignment: .leading, spacing: 14) {
                                             Label("Keep your library on this Mac?", systemImage: "desktopcomputer").font(.headline)
                                             Text(
-                                                "A desktop Mac you leave powered on, such as a Mac mini, is a good home for your library. This Mac must stay awake and start Omnesis when you sign in. Setup will guide and verify those required settings. Your other devices use this Mac to search and ask questions. Moving your library to another Mac is not available yet."
+                                                "A desktop Mac you leave powered on, such as a Mac mini, is a good home for your library. This Mac must stay awake and start Omnesis when you sign in. Setup will guide and verify those required settings. Your other devices use this Mac to search and ask questions. Moving your library to another computer is not available yet."
                                             )
                                             .fixedSize(horizontal: false, vertical: true)
                                             .accessibilityIdentifier("home-location-warning")
@@ -88,7 +88,7 @@ struct DesktopOnboardingView: View {
                                             }.buttonStyle(DesktopButtonStyle(primary: true)).controlSize(.large)
                                                 .disabled(showNewLibrary && !firstLibraryConfirmed)
                                                 .accessibilityIdentifier("use-this-mac")
-                                            Button("I’ll set up another Mac first") { store.command(
+                                            Button("I’ll set up another computer first") { store.command(
                                                 "prepare",
                                                 params: ["mode": .string("joined")]
                                             )
@@ -188,7 +188,7 @@ struct DesktopOnboardingView: View {
                                         "Your library is not connected yet",
                                         systemImage: "laptopcomputer",
                                         description: Text(
-                                            "Open Omnesis on the Mac that keeps your library. If it has not been set up yet, start there first."
+                                            "Start Omnesis on the computer that keeps your library. If it has not been set up yet, start there first."
                                         )
                                     )
                                     Button("Look again") { store.command("connect") }.buttonStyle(DesktopButtonStyle(primary: true))
@@ -318,7 +318,7 @@ struct DesktopSetupChecklist: View {
                     VStack(alignment: .leading, spacing: 12) {
                         Label("Access on this Mac", systemImage: "lock.shield").font(.title3.weight(.semibold))
                         Text(
-                            "Choose the information this Mac may collect. Omnesis checks only the access needed for those sources; search and answers from another Mac do not require broad local permissions."
+                            "Choose the information this Mac may collect. Omnesis checks only the access needed for those sources; search and answers from a library elsewhere do not require broad local permissions."
                         )
                         .foregroundStyle(DesktopTheme.secondary)
                         Button("Review collection access") { store.accessFocus = nil

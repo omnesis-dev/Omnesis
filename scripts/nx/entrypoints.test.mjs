@@ -95,6 +95,11 @@ catch(error) { if(error.code!=='MODULE_NOT_FOUND')throw error;process.stdout.wri
     roots.push(root);
     const entry = join(root, "ci scope # without dependencies.mjs");
     copyFileSync(join(repoRoot, "scripts/nx/ci-scope.mjs"), entry);
+    // The entrypoint's local policy leaf is stdlib-only too; no package install.
+    copyFileSync(
+      join(repoRoot, "scripts/nx/desktop-native-inputs.mjs"),
+      join(root, "desktop-native-inputs.mjs"),
+    );
     const output = join(root, "outputs");
     const result = spawnSync(process.execPath, [entry], {
       cwd: root,

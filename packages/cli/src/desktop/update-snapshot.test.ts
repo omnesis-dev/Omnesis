@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { constants } from "node:fs";
 import {
   access,
   mkdir,
   mkdtemp,
+  open,
   readFile,
   readdir,
   readlink,
@@ -184,6 +187,38 @@ describe.skipIf(process.platform === "win32")("owned desktop update snapshots", 
       );
     } finally {
       f.leases.release();
+    }
+  });
+  test("a FIFO inventory refuses before waiting for a writer or changing the current library", async () => {
+    const f = await fixture();
+    let writer: Promise<void> | undefined;
+    let rescue: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const snapshot = await createDesktopUpdateSnapshot(f.profile, { ...f, signal: signal() });
+      const path = join(desktopUpdateSnapshotPath(f.profile, f.operationId), "snapshot.json");
+      await rm(path, { force: true });
+      execFileSync("mkfifo", ["-m", "600", path]);
+      await writeFile(join(f.profile.configDir, "omnesis.db"), "invented-current-library");
+      let neededWriter = false;
+      // Drain a regressed blocking open before the fixture releases its owned lease.
+      rescue = setTimeout(() => {
+        neededWriter = true;
+        writer = open(path, constants.O_RDWR | constants.O_NONBLOCK).then((file) => file.close());
+      }, 2_000);
+      await expect(
+        restoreDesktopUpdateSnapshot(f.profile, { ...f, snapshot, signal: signal() }),
+      ).rejects.toThrow("The desktop recovery inventory is unsafe");
+      expect(neededWriter).toBe(false);
+      expect(await readFile(join(f.profile.configDir, "omnesis.db"), "utf8")).toBe(
+        "invented-current-library",
+      );
+    } finally {
+      clearTimeout(rescue);
+      try {
+        await writer;
+      } finally {
+        f.leases.release();
+      }
     }
   });
   test("caller-created and released lease handles cannot authorize a snapshot", async () => {

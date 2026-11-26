@@ -153,7 +153,10 @@ struct DesktopSourceSettingsView: View {
         .interactiveDismissDisabled(flow.busy)
         .disabled(store.api !== flow.api)
         .task {
-            flow.isCurrentAPI = { [weak owner = store, weak api = flow.api] in api != nil && owner?.api === api }
+            let context = store.apiContext
+            flow.isCurrentAPI = { [weak owner = store, weak api = flow.api, weak context] in
+                api != nil && owner?.api === api && context?.isCurrent == true
+            }
             if flow.snapshot == nil, flow.error == nil, !flow.removalRequested { await flow.load() }
         }
         .onChange(of: store.api.map(ObjectIdentifier.init)) {

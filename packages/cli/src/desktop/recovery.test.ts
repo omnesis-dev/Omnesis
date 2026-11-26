@@ -1,7 +1,19 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { constants } from "node:fs";
+import {
+  mkdir,
+  mkdtemp,
+  open,
+  readFile,
+  realpath,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
@@ -72,6 +84,32 @@ test("preparing recovery creates no persistent envelope and uses the existing sc
     envelopeValid: false,
   });
 });
+
+test.skipIf(process.platform === "win32")(
+  "recovery status refuses a FIFO envelope without waiting for a writer",
+  async () => {
+    const f = await fixture();
+    const path = recoveryEnvelopePath(f.profile.configDir);
+    await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+    execFileSync("mkfifo", ["-m", "600", path]);
+    let neededWriter = false;
+    let writer: Promise<void> | undefined;
+    // Release a regressed blocking open so the fixture can drain it before cleanup.
+    const rescue = setTimeout(() => {
+      neededWriter = true;
+      writer = open(path, constants.O_RDWR | constants.O_NONBLOCK).then((file) => file.close());
+    }, 2_000);
+    try {
+      await expect(f.service.status(signal())).rejects.toThrow(
+        "The recovery envelope must be a private file owned by you",
+      );
+      expect(neededWriter).toBe(false);
+    } finally {
+      clearTimeout(rescue);
+      await writer;
+    }
+  },
+);
 
 test("explicit commit writes only the existing-format sealed envelope with private permissions", async () => {
   const f = await fixture();
@@ -167,7 +205,7 @@ test("joined Macs cannot create recovery material for their own unrelated local 
     envelopeValid: false,
   });
   await expect(f.service.prepare({ signal: signal() })).rejects.toThrow(
-    "Mac that keeps your library",
+    "computer that keeps your library",
   );
   expect(f.readKey).not.toHaveBeenCalled();
 });

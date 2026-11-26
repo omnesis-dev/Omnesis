@@ -4,8 +4,7 @@
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { lstat, mkdir, readFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { join } from "node:path";
 
 /** Standalone, builtin-only receiver copied beside the public source archive. */
 export async function extractPackageFixture({ fixture, output }) {
@@ -27,7 +26,7 @@ export async function extractPackageFixture({ fixture, output }) {
   execFileSync("tar", ["-xf", archive, "-C", output], { stdio: "inherit" });
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+if (import.meta.main) {
   const [fixtureFlag, fixture, outputFlag, output, ...extra] = process.argv.slice(2);
   if (fixtureFlag !== "--fixture" || !fixture || outputFlag !== "--out" || !output || extra.length)
     throw new Error("Usage: package fixture extractor --fixture <directory> --out <new directory>");

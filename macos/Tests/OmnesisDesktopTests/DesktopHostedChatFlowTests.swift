@@ -311,7 +311,8 @@ final class ScriptedAgentFixture {
         self.url = url
     }
 
-    static func start() async throws -> ScriptedAgentFixture {
+    static func start(scriptName: String = "scripted-agent.mjs") async throws -> ScriptedAgentFixture {
+        guard ["scripted-agent.mjs", "api-context-fixture.mjs"].contains(scriptName) else { throw Failure("Unknown owned HTTP fixture") }
         let macos = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         let fixture = macos.appendingPathComponent(".node-fixture", isDirectory: true)
         let node = fixture.appendingPathComponent("node")
@@ -332,7 +333,7 @@ final class ScriptedAgentFixture {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
         let process = Process(), closed = DispatchSemaphore(value: 0)
         process.executableURL = node
-        process.arguments = [macos.appendingPathComponent("Tests/Support/scripted-agent.mjs").path]
+        process.arguments = [macos.appendingPathComponent("Tests/Support/" + scriptName).path]
         process.currentDirectoryURL = root
         process.environment = ["PATH": "/usr/bin:/bin", "HOME": root.path, "TMPDIR": root.path, "OMNESIS_GUI_FIXTURE_ROOT": root.path]
         process.standardInput = FileHandle.nullDevice

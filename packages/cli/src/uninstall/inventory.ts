@@ -16,6 +16,7 @@ import {
   SERVICE_COMPONENTS,
   launchdLabelInstance,
   systemdUnitInstance,
+  resolveSecretStoreService,
 } from "@omnesis/core";
 import { detectDockerInstall } from "@omnesis/core/release-check";
 import {
@@ -566,6 +567,9 @@ export async function discoverInventory(
     platform,
     home,
     configDir,
+    secretService:
+      ctx.secretStoreOptions(configDir).service ??
+      resolveSecretStoreService(ctx.env.OMNESIS_SECRET_SERVICE),
     ...(opts.instance ? { instance: opts.instance } : {}),
     binDir,
     binDirOthers,

@@ -18,7 +18,7 @@ final class DesktopSearchDocumentTests: XCTestCase {
         ]))
         let store = DesktopStore(startRuntime: false)
         store.api = try DesktopAPI(connection: connection)
-        let hosting = NSHostingView(rootView: DesktopSearchView().environment(store).omnesisTheme())
+        let hosting = NSHostingView(rootView: DesktopSearchView(context: store.apiContext).environment(store).omnesisTheme())
         hosting.sizingOptions = []
         hosting.autoresizingMask = [.width, .height]
         hosting.frame = NSRect(x: 0, y: 0, width: 860, height: 600)

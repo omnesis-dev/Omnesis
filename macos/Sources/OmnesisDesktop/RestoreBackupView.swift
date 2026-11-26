@@ -27,8 +27,8 @@ struct DesktopRestoreBackupView: View {
                     if store.state.mode == "joined" {
                         Text(store.state.homeName
                             .map { "Your library is kept on \($0). Restore its backup there." } ??
-                            "Restore a backup on the Mac that keeps your library.")
-                        Text("This Mac connects to that library. It cannot restore the library stored on your other Mac.")
+                            "Restore a backup on the computer that keeps your library.")
+                        Text("This Mac connects to that library. Restore the library on its server.")
                             .foregroundStyle(.secondary)
                     } else if flow.startupVerified {
                         Label(
@@ -127,7 +127,7 @@ struct DesktopRestoreBackupView: View {
                             "Choose the Mac you leave at home and keep awake. Your other devices cannot use its library while this Mac sleeps."
                         )
                         Text(
-                            "This will keep the restored library on this Mac. Leave any other Mac that keeps this library stopped while you restore it. You may need to reconnect your devices."
+                            "This will keep the restored library on this Mac. Leave any other computer that keeps this library stopped while you restore it. You may need to reconnect your devices."
                         )
                         Toggle("I want this Mac to keep the restored library", isOn: $confirmedHome)
                         Button("Prepare this Mac for restoration") {

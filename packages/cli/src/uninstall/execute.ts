@@ -25,6 +25,7 @@ import {
   createSecretStore,
   inspectWindowsPrivatePathSync,
   OMNESIS_INSTALL_ROOT_KEY,
+  OMNESIS_SECRET_SERVICE,
   resolveSecretStoreService,
   type SecureMarkerKind,
 } from "@omnesis/core";
@@ -331,11 +332,13 @@ async function purgeKeyring(
       }
     }
   }
-  if (action.rootKey) {
-    const options = ctx.secretStoreOptions(
-      action.configDirs[0] ?? join(ctx.home, ".config", "omnesis"),
-    );
-    const service = options.service ?? resolveSecretStoreService();
+  const options = ctx.secretStoreOptions(
+    action.configDirs[0] ?? join(ctx.home, ".config", "omnesis"),
+  );
+  const service = options.service ?? resolveSecretStoreService(ctx.env.OMNESIS_SECRET_SERVICE);
+  // A plan is not proof that a custom namespace belongs only to this installation.
+  // Retain its root and unrelated credentials even if a stale action requests their deletion.
+  if (action.rootKey && service === OMNESIS_SECRET_SERVICE) {
     try {
       const store = createSecretStore(options);
       if ((await store.status()).available) await store.delete(OMNESIS_INSTALL_ROOT_KEY);

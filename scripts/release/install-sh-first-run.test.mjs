@@ -3610,6 +3610,11 @@ describe("gateway host sleep guidance", () => {
         fixturePath("fake-bin", "uname"),
         `#!/bin/sh\ncase "$1" in -m) echo arm64 ;; *) echo ${platform} ;; esac\n`,
       );
+      if (platform === "Linux")
+        writeExecutable(
+          fixturePath("fake-bin", "getconf"),
+          '#!/bin/sh\n[ "$1" = GNU_LIBC_VERSION ] || exit 1\nprintf "glibc 2.39\\n"\n',
+        );
       const run = runInstaller(name, [
         "--no-service",
         "--no-model",

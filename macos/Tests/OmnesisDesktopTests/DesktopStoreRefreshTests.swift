@@ -88,7 +88,7 @@ final class DesktopStoreRefreshTests: XCTestCase {
     func testLibraryConnectionUsesExistingHTTPReconnectWithoutCertifyingReadinessAndRejectsOldAPI() async throws {
         _ = StoreRefreshFixtureProtocol.take()
         let flow = DesktopLibraryConnectionFlow()
-        try flow.bind(api())
+        try flow.bind(DesktopAPIContext(api: api(), id: 1))
         let load = Task { await flow.load() }
         try await waitForRequests(1)
         let initial = try XCTUnwrap(StoreRefreshFixtureProtocol.take().first)
@@ -114,7 +114,7 @@ final class DesktopStoreRefreshTests: XCTestCase {
         let stale = Task { await flow.reconnect { refreshes += 1 } }
         try await waitForRequests(1)
         let old = try XCTUnwrap(StoreRefreshFixtureProtocol.take().first)
-        try flow.bind(api())
+        try flow.bind(DesktopAPIContext(api: api(), id: 2))
         old.reply(linked)
         await stale.value
         XCTAssertNil(flow.status)
@@ -134,8 +134,14 @@ final class DesktopStoreRefreshTests: XCTestCase {
         store.state = try JSONDecoder().decode(DesktopState.self, from: Data(stateJSON.utf8))
         let verifiedAPI = try api()
         store.api = verifiedAPI
+        let verifiedContext = store.apiContext
 
         bridge.onStartupBlocked?(.ownerMismatch)
+        XCTAssertTrue(store.apiContext === verifiedContext)
+        XCTAssertTrue(
+            verifiedContext?.isCurrent == true,
+            "Existing verified HTTP scopes survive helper loss; native lifecycle authority does not"
+        )
         XCTAssertFalse(store.nativeOwnerReady)
         XCTAssertFalse(store.requiredSetupReady)
         XCTAssertTrue(store.requiredSetupNeedsAction)

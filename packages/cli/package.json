@@ -8,6 +8,7 @@
   },
   "dependencies": {
     "@clack/prompts": "^1.9.0",
+    "@omnesis/agent": "*",
     "@omnesis/agent-integration": "*",
     "@omnesis/cli-shared": "*",
     "@omnesis/cloud-relay": "*",

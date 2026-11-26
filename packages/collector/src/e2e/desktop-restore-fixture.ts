@@ -12,7 +12,10 @@ const moduleUrl = (name: string) =>
   new URL(`../../../cli/src/desktop/${name}.ts`, import.meta.url).href;
 
 /** Ordinary headless collection seeds a real backup; desktop account gating remains intact. */
-export async function addRestoreMaildirSource(source: DesktopRuntimeFixture): Promise<string> {
+export async function addRestoreMaildirSource(
+  source: DesktopRuntimeFixture,
+  options: { pairing?: "admin" | "code" } = {},
+): Promise<string> {
   const path = join(source.root, "restore-mail");
   deliverMessage(createMailbox(join(path, "INBOX")), "restore-fixture-message", {
     from: { address: "sender@example.org" },
@@ -65,11 +68,25 @@ export async function addRestoreMaildirSource(source: DesktopRuntimeFixture): Pr
         throw new Error('The fixture headless protection was not confirmed');
     }
     const connection=await readDesktopConnection(profile);
-    const paired=await requestDesktopGateway(profile,'/admin/devices',{method:'POST',body:{
+    const paired=${JSON.stringify(options.pairing === "code")} ? await (async()=>{
+      const {redeemPairingCode}=await import(${JSON.stringify(new URL("../../../cli/src/commands/devices.ts", import.meta.url).href)});
+      const issued=await requestDesktopGateway(profile,'/admin/devices/pair',{method:'POST',body:{kind:'collector',name:'source Linux reader'}});
+      if(typeof issued.pairingCode!=='string')throw new Error('The collector pairing code was not issued');
+      return redeemPairingCode(connection.url,issued.pairingCode,configDir,new X509Certificate(connection.certificatePEM).fingerprint256,'source Linux reader');
+    })() : await requestDesktopGateway(profile,'/admin/devices',{method:'POST',body:{
       name:'restore fixture reader',kind:'collector',scopes:defaultScopesForDeviceKind('collector'),
       capabilities:{hostname:'restore-reader.example.org',platform:'linux'}
     }});
     if(typeof paired.token!=='string'||!paired.device?.id)throw new Error('The real headless pairing was refused');
+    if(${JSON.stringify(options.pairing === "code")}){
+      if(!Array.isArray(paired.scopes)||paired.scopes.includes('admin')||!paired.scopes.includes('read')||!paired.scopes.includes('write:*'))throw new Error('The collector grant did not preserve its role');
+      const {request}=await import('node:https');
+      const status=await new Promise((resolve,reject)=>{
+        const req=request(new URL('/admin/devices',connection.url),{ca:connection.certificatePEM,rejectUnauthorized:true,headers:{authorization:'Bearer '+paired.token},signal:AbortSignal.timeout(15000)},response=>{response.resume();response.once('end',()=>resolve(response.statusCode));response.once('error',reject);});
+        req.once('error',reject);req.end();
+      });
+      if(status!==403)throw new Error('The source collector unexpectedly acquired gateway administration');
+    }
     await writeSecretTextFile(join(configDir,'collector-token'),paired.token,keyOptions);
     if(!writeCollectorPairingState(configDir,{
       state:'paired',deviceName:paired.device.name,deviceId:paired.device.id,gatewayUrl:connection.url,

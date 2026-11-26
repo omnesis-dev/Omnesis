@@ -45,7 +45,8 @@ struct DesktopRecoveryView: View {
                     guard let importFile else { return }
                     store.command("recoveryImport", params: ["envelope": importFile, "recoveryCode": .string(importCode)])
                     importCode = ""
-                }.buttonStyle(DesktopButtonStyle(primary: true)).disabled(importFile == nil || importCode.isEmpty || importCode.count > 512 || store.busy)
+                }.buttonStyle(DesktopButtonStyle(primary: true))
+                    .disabled(importFile == nil || importCode.isEmpty || importCode.count > 512 || store.busy)
                 Button("Back") { importCode = ""
                     importing = false
                 }.disabled(store.busy)
@@ -94,9 +95,9 @@ struct DesktopRecoveryView: View {
                     }.disabled(store.busy || (status.hasEnvelope && !replaceExisting))
                 } else {
                     Text(
-                        "Recovery protection must be prepared on the Mac that stores your library. Open Omnesis there, then choose Settings → Recovery protection."
+                        "Recovery protection belongs to your library server. Use Omnesis Desktop’s recovery settings there, or the server’s command-line recovery tools."
                     )
-                    if let name = store.state.homeName { LabeledContent("Library Mac", value: name) }
+                    if let name = store.state.homeName { LabeledContent("Library server", value: name) }
                 }
             } else { ProgressView("Checking recovery protection…") }
             if let message = error ?? store.failure { Text(message).foregroundStyle(DesktopTheme.danger) }

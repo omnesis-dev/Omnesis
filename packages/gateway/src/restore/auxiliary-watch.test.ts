@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { chmod, mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { chmod, mkdtemp, realpath, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test } from "vitest";
@@ -12,7 +12,7 @@ afterEach(async () => {
   for (const home of homes.splice(0)) await rm(home, { recursive: true, force: true });
 });
 async function fixture() {
-  const home = await mkdtemp(join(tmpdir(), "omnesis-restored-watch-"));
+  const home = await realpath(await mkdtemp(join(tmpdir(), "omnesis-restored-watch-")));
   homes.push(home);
   const sourcePath = join(home, "source.db"),
     destinationPath = join(home, "restored.db");

@@ -81,6 +81,7 @@ export async function* authenticateDuckDbBlocks(
       "aes-256-gcm",
       key,
       version === 1 ? header.subarray(148, 160) : Buffer.alloc(16),
+      { authTagLength: 16 },
     );
     if (version === 1) canary.setAuthTag(header.subarray(160, 176));
     const known = canary.update(header.subarray(140, 148));
@@ -93,7 +94,9 @@ export async function* authenticateDuckDbBlocks(
     }
     const nonceBytes = version === 1 ? 12 : 16;
     function authenticate(block: Buffer): Buffer {
-      const decipher = createDecipheriv("aes-256-gcm", key!, block.subarray(0, nonceBytes));
+      const decipher = createDecipheriv("aes-256-gcm", key!, block.subarray(0, nonceBytes), {
+        authTagLength: 16,
+      });
       decipher.setAuthTag(block.subarray(nonceBytes, nonceBytes + 16));
       let plaintext: Buffer | undefined;
       try {

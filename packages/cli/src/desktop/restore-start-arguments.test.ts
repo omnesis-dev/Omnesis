@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
@@ -24,7 +24,7 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 async function fixture() {
-  const home = await mkdtemp(join(tmpdir(), "omnesis-restore-start-"));
+  const home = await realpath(await mkdtemp(join(tmpdir(), "omnesis-restore-start-")));
   roots.push(home);
   const profile = desktopProfile(home);
   await mkdir(profile.configDir, { recursive: true, mode: 0o700 });

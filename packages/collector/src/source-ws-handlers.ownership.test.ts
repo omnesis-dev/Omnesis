@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { expect, test } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, expect, test } from "vitest";
 import { makeCommand } from "@omnesis/core";
+import { createSourceWsHandlers } from "./source-ws-handlers.js";
 import type { GatewayClient, ImportCallbacks, ImportSummary } from "@omnesis/source-sdk";
 import type { SourceManager } from "./source-manager.js";
-import { createSourceWsHandlers } from "./source-ws-handlers.js";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -17,11 +20,19 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
+const configDirs: string[] = [];
+afterEach(() => {
+  for (const configDir of configDirs.splice(0)) rmSync(configDir, { recursive: true, force: true });
+});
+
 function fixture(overrides: Partial<SourceManager> = {}) {
+  const configDir = mkdtempSync(join(tmpdir(), "omnesis-source-ownership-"));
+  configDirs.push(configDir);
   const events: Array<{ type: string; payload: unknown }> = [];
   const handlers = createSourceWsHandlers({
     sourceManager: {
       getDescriptors: () => [],
+      getConfigDir: () => configDir,
       ...overrides,
     } as SourceManager,
     gateway: {} as GatewayClient,

@@ -23,13 +23,14 @@ function fixture() {
   return { profile, controller, context, prompts, request };
 }
 
-test("account connection presents signed-in browser action and waits for actual linked status", async () => {
+test("account connection prefers the direct browser URL over the printed-code page and waits for linked status", async () => {
   const f = fixture();
   f.request.mockResolvedValueOnce({
     account: { linked: false },
     connect: {
       state: "waiting",
       authorizeUrl: "https://relay.example.test/sign-in",
+      connectUrl: "https://relay.example.test/_relay/connect",
       code: "ABCD-EFGH",
     },
   });

@@ -324,6 +324,66 @@ describe("Nx change selection", () => {
     },
   );
 
+  test("exact desktop runtime factory inputs select the native build without global lane expansion", () => {
+    for (const name of [
+      "analytics-build.json",
+      "analytics-native-fixture.mjs",
+      "analytics-notices.mjs",
+      "analytics-sources.mjs",
+      "arguments.mjs",
+      "assemble-app.mjs",
+      "build-analytics.mjs",
+      "codex-notices.mjs",
+      "distribute.mjs",
+      "native-dependency-assets.mjs",
+      "native-inventory.mjs",
+      "native-package.mjs",
+      "node-entitlements.plist",
+      "node-runtime.json",
+      "node-runtime.mjs",
+      "package-fixture-extract.mjs",
+      "package-fixture.mjs",
+      "pinned-extensions.mjs",
+      "prepare-runtime.mjs",
+      "qualify-analytics.mjs",
+      "release-application.mjs",
+      "runtime-assets.mjs",
+      "smoke-runtime.mjs",
+      "stage-analytics.mjs",
+      "update-metadata.mjs",
+      "licenses/codex/LICENSE",
+      "licenses/codex/NOTICE",
+    ])
+      expect(behavioralBundles([`scripts/desktop/${name}`])).toEqual(["macos-build"]);
+    for (const path of [
+      "scripts/desktop/native-dependency-assets.test.mjs",
+      "scripts/desktop/build-analytics.test.mjs",
+      "scripts/desktop/README.md",
+      "scripts/desktop/unrelated-helper.mjs",
+      "scripts/unrelated.mjs",
+      "packages/core/src/unrelated.ts",
+      "packages/gateway/src/http/routes/search.ts",
+      "package-lock.json",
+    ])
+      expect(behavioralBundles([path])).not.toContain("macos-build");
+    process.chdir(originalCwd);
+    const plan = buildFixturePlan(["scripts/desktop/native-dependency-assets.mjs"]);
+    expect(plan.bundles).toEqual(["macos-build"]);
+    expect(plan.tasks).toContain("omnesis-workspace:nx-bundle-macos-build");
+  });
+
+  test("the production native bridge selects logic, application and build paths", () => {
+    expect(behavioralBundles(["scripts/desktop/native-check.mjs"])).toEqual([
+      "macos-build",
+      "macos-logic",
+      "macos-test",
+    ]);
+    expect(behavioralBundles(["scripts/desktop/native-check.test.mjs"])).toEqual([
+      "macos-logic",
+      "macos-test",
+    ]);
+  });
+
   test("representative Nx plans narrow leaf, portal, search and native changes", () => {
     process.chdir(originalCwd);
     const provider = buildFixturePlan(["packages/providers/google/src/index.ts"]);

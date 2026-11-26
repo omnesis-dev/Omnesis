@@ -5,10 +5,15 @@ import { lstat, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import {
   migrateSecretTextFile,
+  readSecretTextFile,
   OPERATOR_INSTRUCTIONS_FILENAME,
   secretFileEncryptionRequired,
   type SecretFileOptions,
 } from "@omnesis/core";
+import {
+  MAX_MANAGED_PROSE_BYTES,
+  MAX_MANAGED_PROSE_SERIALIZED_BYTES,
+} from "./managed-prose-limits.js";
 
 /** Encrypt existing operator prose before an encrypted installation opens its library. */
 export async function protectManagedProse(
@@ -38,11 +43,20 @@ export async function protectManagedProse(
   for (const file of candidates) {
     try {
       const stat = await lstat(file);
-      if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 262_144) {
+      if (
+        !stat.isFile() ||
+        stat.isSymbolicLink() ||
+        stat.size > MAX_MANAGED_PROSE_SERIALIZED_BYTES
+      ) {
         throw new Error(
           "An operator instructions or sweep file must be a regular file below 256 KiB before opening the encrypted library.",
         );
       }
+      const content = await readSecretTextFile(file, { ...options, configDir });
+      if (content === null || Buffer.byteLength(content) > MAX_MANAGED_PROSE_BYTES)
+        throw new Error(
+          "An operator instructions or sweep file must contain at most 256 KiB of prose before opening the encrypted library.",
+        );
       present.push(file);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;

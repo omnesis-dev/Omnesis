@@ -354,7 +354,11 @@ test("joined status waits on missing/revoked identity and closes only its own pr
   f.save("cli");
   f.save("collector");
   f.deps.verifyTransport.mockRejectedValueOnce(new Error("unauthorized"));
-  expect(await f.run("status")).toMatchObject({ phase: "waiting" });
+  expect(await f.run("status")).toMatchObject({
+    phase: "waiting",
+    message:
+      "Check that Omnesis is running on the computer that keeps your library, then try again.",
+  });
   expect(f.transport.close).toHaveBeenCalledOnce();
   expect(await f.run("status")).toMatchObject({ phase: "ready" });
   await f.coordinator.close();

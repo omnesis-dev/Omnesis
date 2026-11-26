@@ -16,7 +16,7 @@ struct OmnesisDesktopApp: App {
 
     var body: some Scene {
         WindowGroup("Omnesis", id: "main", for: DesktopWindowIdentity.self) { _ in
-            DesktopRootView().environment(store).frame(minWidth: 860, minHeight: 600)
+            DesktopRootView().environment(store).id(store.apiContextEpoch).frame(minWidth: 860, minHeight: 600)
                 .onAppear { applicationDelegate.store = store }
         } defaultValue: { .main }
             .defaultSize(width: 1080, height: 740)
@@ -38,7 +38,7 @@ struct OmnesisDesktopApp: App {
                     }.keyboardShortcut("n")
                 }
             }
-        Settings { DesktopSettingsView().environment(store).frame(width: 720, height: 640) }
+        Settings { DesktopSettingsView().environment(store).id(store.apiContextEpoch).frame(width: 720, height: 640) }
         MenuBarExtra("Omnesis", image: "OmnesisMark") {
             VStack(alignment: .leading, spacing: 14) {
                 Label(store.menuStatusLabel, systemImage: store.requiredSetupReady ? "checkmark.shield" : "checklist")
@@ -183,10 +183,10 @@ struct DesktopRootView: View {
                 failureBanner
                 switch store.destination ?? .ask {
                 case .ask: DesktopAskView()
-                case .search: DesktopSearchView()
-                case .sources: DesktopSourcesView()
+                case .search: DesktopSearchView(context: store.apiContext).id(store.apiContextEpoch)
+                case .sources: DesktopSourcesView(context: store.apiContext).id(store.apiContextEpoch)
                 case .devices: DesktopDevicesView()
-                case .assistants: DesktopAssistantsView()
+                case .assistants: DesktopAssistantsView(context: store.apiContext).id(store.apiContextEpoch)
                 case .setup: DesktopSetupChecklist()
                 }
             }.frame(maxWidth: .infinity, maxHeight: .infinity)

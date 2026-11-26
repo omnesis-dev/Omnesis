@@ -62,6 +62,8 @@ async function getFreePort(): Promise<number> {
 }
 
 export interface HarnessOptions {
+  /** Owned protected-store fixtures decrypt their bootstrap credential through their declared OS adapter. */
+  readGatewayToken?: (configDir: string) => Promise<string | null>;
   /** Explicit environment for an isolated gateway under test. Fixed state paths win. */
   extraGatewayEnv?: NodeJS.ProcessEnv;
   /** Route collector and assertion traffic through a test transport after gateway boot. */
@@ -569,9 +571,11 @@ export class E2EHarness {
           await new Promise((r) => setTimeout(r, 100));
           continue;
         }
-        let token: string;
+        let token: string | null;
         try {
-          token = readFileSync(tokenPath, "utf-8").trim();
+          token = this.options.readGatewayToken
+            ? await this.options.readGatewayToken(this.configDir)
+            : readFileSync(tokenPath, "utf-8").trim();
         } catch {
           await new Promise((r) => setTimeout(r, 100));
           continue;

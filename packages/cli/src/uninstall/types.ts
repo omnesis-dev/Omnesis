@@ -137,6 +137,8 @@ export interface Inventory {
   home: string;
   /** The config directory this uninstall acts on. */
   configDir: string;
+  /** Selected keyring namespace; discovery does not prove exclusive ownership of a custom one. */
+  secretService: string;
   /** The named service instance this uninstall acts on, if any. */
   instance?: string;
   binDir: string;

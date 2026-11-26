@@ -15,7 +15,7 @@ const root = await realpath(resolve("."));
 const require = createRequire(import.meta.url);
 const playwright = require("playwright/package.json").version;
 const modules = dirname(dirname(await realpath(require.resolve("vitest/package.json"))));
-const mountedDependencies = "/run/desktop-account-dependencies";
+const mountedDependencies = "/run/desktop-account-dependencies/node_modules";
 const dependencyAliases = modules.startsWith(root + "/")
   ? []
   : ["--mount", `type=bind,source=${modules},target=${modules},readonly`];

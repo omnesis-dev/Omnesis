@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { randomBytes, randomUUID } from "node:crypto";
-import { mkdtemp, readFile, rm, stat, chmod } from "node:fs/promises";
+import { mkdtemp, realpath, readFile, rm, stat, chmod } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "vitest";
@@ -21,7 +21,7 @@ import {
 import type { Db } from "../data/types.js";
 
 test("owned worker verifies nested artifact and every ciphertext page before preserving current authority", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "omnesis-restored-entry-"));
+  const dir = await realpath(await mkdtemp(join(tmpdir(), "omnesis-restored-entry-")));
   const sourceKey = randomBytes(32),
     targetKey = randomBytes(32),
     destinationKey = randomBytes(32);

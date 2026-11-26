@@ -6,6 +6,7 @@ import Omnesis
 import SwiftUI
 
 struct DesktopSearchView: View {
+    let context: DesktopAPIContext?
     @Environment(DesktopStore.self) private var store
     @State private var query = ""
     @State private var results: [SearchResultItem] = []
@@ -14,7 +15,8 @@ struct DesktopSearchView: View {
     @State private var completedQuery: String?
     @State private var selectedDocument: DesktopDocumentSelection?
     @FocusState private var searchFocused: Bool
-    init(initialQuery: String = "", initialCompletedQuery: String? = nil) {
+    init(initialQuery: String = "", initialCompletedQuery: String? = nil, context: DesktopAPIContext? = nil) {
+        self.context = context
         _query = State(initialValue: initialQuery)
         _completedQuery = State(initialValue: initialCompletedQuery)
     }
@@ -22,10 +24,11 @@ struct DesktopSearchView: View {
     var body: some View {
         VStack {
             HStack {
-                TextField("Search your library", text: $query).textFieldStyle(.roundedBorder).onSubmit { Task { await search() } }
+                TextField("Search your library", text: $query).textFieldStyle(.roundedBorder)
+                    .onSubmit { context?.run { _ in await search() } }
                     .focused($searchFocused).accessibilityLabel("Search your library")
                     .accessibilityIdentifier("library-search-input")
-                Button("Search") { Task { await search() } }
+                Button("Search") { context?.run { _ in await search() } }
                     .disabled(searching || query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     .accessibilityIdentifier("library-search-submit")
             }.padding()
@@ -66,12 +69,14 @@ struct DesktopSearchView: View {
                 }
             }
         }.navigationTitle("Search").onAppear { searchFocused = true }
-            .omnesisSheet(item: $selectedDocument) { selection in DesktopDocumentView(selection: selection).environment(store) }
+            .omnesisSheet(item: $selectedDocument) { selection in
+                DesktopDocumentView(selection: selection, context: context).environment(store)
+            }
             .toolbar { Button("Focus search", systemImage: "magnifyingglass") { searchFocused = true }.keyboardShortcut("f") }
     }
 
     private func search() async {
-        guard let api = store.api else { return }
+        guard let context, context.isCurrent else { return }
         let searched = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !searched.isEmpty, !searching else { return }
         searching = true
@@ -79,13 +84,15 @@ struct DesktopSearchView: View {
         results = []
         defer { searching = false }
         do {
-            let client = SearchClient(baseURL: api.connection.url, token: api.connection.token, session: api.session)
-            let response = try await client.search(text: searched, limit: 30, verbose: false)
-            guard !Task.isCancelled, store.api === api else { return }
+            let response = try await context.perform { api in
+                let client = SearchClient(baseURL: api.connection.url, token: api.connection.token, session: api.session)
+                return try await client.search(text: searched, limit: 30, verbose: false)
+            }
+            guard !Task.isCancelled, context.isCurrent else { return }
             results = response.results
             completedQuery = searched
         } catch {
-            guard !Task.isCancelled, store.api === api else { return }
+            guard !Task.isCancelled, context.isCurrent else { return }
             self.error = error.localizedDescription
         }
     }
@@ -99,7 +106,7 @@ struct DesktopDevicesView: View {
         VStack(alignment: .leading, spacing: 18) {
             Text("Your devices").font(.largeTitle.bold())
             Text(
-                "Install Omnesis on another Mac and sign in with the same account. Keep the Mac that stores your library awake so your other devices can connect."
+                "Connect your other computers to the same library. Keep your library server running and awake so your devices can connect."
             )
             .foregroundStyle(DesktopTheme.secondary)
             List(store.devices.filter { $0.revokedAt == nil || $0.needsPairing == true }) { device in
@@ -116,6 +123,7 @@ struct DesktopDevicesView: View {
                 }.padding(.vertical, 8)
             }
             HStack {
+                Link("Connect another computer", destination: URL(string: "https://omnesis.dev/docs/setup#collector")!)
                 Link("Get the iPhone app", destination: URL(string: "https://omnesis.dev/docs/apps")!)
                 Link("Get the Android app", destination: URL(string: "https://omnesis.dev/docs/apps")!)
                 Spacer()
@@ -136,7 +144,9 @@ struct DesktopDevicesView: View {
                     "In the web portal, choose Settings → Devices. Open the actions for \(device.name) and choose Repair device. Use its repair code on that device to preserve its existing sources."
                 )
             }
-            .omnesisSheet(isPresented: $pairingPhone) { DesktopPhonePairingView().environment(store) }
+            .omnesisSheet(isPresented: $pairingPhone) {
+                DesktopPhonePairingView(context: store.apiContext).environment(store).id(store.apiContextEpoch)
+            }
             .toolbar { Button("Refresh", systemImage: "arrow.clockwise") { Task { await store.refresh() } } }
     }
 }

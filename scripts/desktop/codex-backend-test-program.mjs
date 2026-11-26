@@ -4,9 +4,13 @@
 import { MANAGED_CODEX_QUALIFIED_VERSION } from "../../packages/agent/src/codex-managed-policy-version.js";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, readdir, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
+import { applyPrivateUmask } from "../../packages/core/src/security-files.js";
+
+// This owned fixture child reproduces a permissive launcher before the gateway bootstrap.
+process.umask(0o022);
 import { CodexAppServerRuntime } from "../../packages/agent/src/codex-app-server-backend.js";
 
 const config = process.env.OMNESIS_CONFIG_DIR,
@@ -193,7 +197,7 @@ for (const mode of [null, "code_mode_only"]) {
   const base = `http://127.0.0.1:${server.address().port}`;
   const state = join(config, "worker-state", marker),
     workspace = join(config, "workspace", marker);
-  const runtime = new CodexAppServerRuntime({
+  const runtimeOptions = {
     codexHome: home,
     stateHome: state,
     workspaceDir: workspace,
@@ -238,8 +242,28 @@ for (const mode of [null, "code_mode_only"]) {
       "-c",
       'model_providers.fictional.experimental_bearer_token="invented-not-a-credential"',
     ],
-  });
+  };
+  let runtime = new CodexAppServerRuntime(runtimeOptions);
   try {
+    if (mode === null) {
+      assert.equal(process.umask(), 0o022);
+      await assert.rejects(runtime.listModels(), /Codex model discovery could not be isolated/u);
+      await runtime.dispose();
+      // The SDK has exited. Remove only this fixture's measured public cache inode.
+      const cache = join(home, "models_cache.json");
+      const owned = await lstat(cache, { bigint: true });
+      assert.ok(owned.isFile() && !owned.isSymbolicLink() && owned.nlink === 1n);
+      assert.equal(owned.uid, BigInt(process.getuid()));
+      assert.equal(owned.mode & 0o777n, 0o644n);
+      const published = await lstat(cache, { bigint: true });
+      assert.equal(published.dev, owned.dev);
+      assert.equal(published.ino, owned.ino);
+      assert.equal(published.nlink, owned.nlink);
+      await unlink(cache);
+      applyPrivateUmask();
+      assert.equal(process.umask(), 0o077);
+      runtime = new CodexAppServerRuntime(runtimeOptions);
+    }
     const models = await runtime.listModels();
     assert.ok(models.some((item) => item.model === model.slug));
     assert.ok(modelRequests > 0);

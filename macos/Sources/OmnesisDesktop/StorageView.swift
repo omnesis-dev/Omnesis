@@ -5,6 +5,7 @@ import DesktopCore
 import SwiftUI
 
 struct DesktopStorageView: View {
+    let context: DesktopAPIContext?
     @Environment(DesktopStore.self) private var store
     @State private var snapshot: DesktopStorageSnapshot?
     @State private var quota = ""
@@ -18,7 +19,8 @@ struct DesktopStorageView: View {
     @State private var confirmingCleanup = false
     @State private var working = false
     @State private var error: String?
-    init(snapshot: DesktopStorageSnapshot? = nil) {
+    init(snapshot: DesktopStorageSnapshot? = nil, context: DesktopAPIContext? = nil) {
+        self.context = context
         _snapshot = State(initialValue: snapshot)
         _noQuota = State(initialValue: snapshot?.policy.maxBytes == nil)
         _quota = State(initialValue: snapshot?.policy.maxBytes.map { String(Double($0) / 1_073_741_824) } ?? "")
@@ -39,12 +41,12 @@ struct DesktopStorageView: View {
                     }
                     Toggle("Use available disk space without a library size limit", isOn: $noQuota)
                     if !noQuota { TextField("Library limit (GiB)", text: $quota) }
-                    Button("Save storage limit") { Task { await saveQuota() } }
+                    Button("Save storage limit") { context?.run { _ in await saveQuota() } }.accessibilityIdentifier("storage-save-limit")
                         .disabled(working || (!noQuota && DesktopStorageSnapshot.quotaBytes(gibibytes: quota) == nil))
                 } else { Text("Storage has not been measured.") }
                 Text("Disk safety reserves still apply. Removing original source files is never part of this cleanup.")
                     .font(.callout).foregroundStyle(DesktopTheme.secondary)
-                Button("Refresh measurement") { Task { await refresh(measure: true) } }.disabled(working)
+                Button("Refresh measurement") { context?.run { _ in await refresh(measure: true) } }.disabled(working)
             }
             sourceRetention
             Section("Remove older history") {
@@ -57,26 +59,27 @@ struct DesktopStorageView: View {
                 Text(target == "backups" ? "The newest backup is always kept. Save a separate backup before removing older ones." :
                     "This permanently removes older history. It cannot be undone.")
                     .font(.callout).foregroundStyle(DesktopTheme.secondary)
-                Button("Review cleanup…", role: .destructive) { confirmingCleanup = true }.disabled(working || snapshot == nil)
+                Button("Review cleanup…", role: .destructive) { confirmingCleanup = true }.accessibilityIdentifier("storage-review-cleanup")
+                    .disabled(working || snapshot == nil)
                 ForEach(snapshot?.cleanupJobs ?? []) { job in
                     VStack(alignment: .leading) {
                         Text(job.outcome)
                         if let message = job.error { Text(message).foregroundStyle(DesktopTheme.danger) }
-                        if job.active { Button("Cancel cleanup") { Task { await cancel(job.id) } }.disabled(working) }
+                        if job.active { Button("Cancel cleanup") { context?.run { _ in await cancel(job.id) } }.disabled(working) }
                     }
                 }
             }
             if let error { Text(error).foregroundStyle(DesktopTheme.danger) }
             if working { ProgressView("Updating storage…") }
         }.formStyle(.grouped)
-            .task { if snapshot == nil { await refresh() } }
+            .task(id: context?.id) { if snapshot == nil { await refresh() } }
             .onChange(of: sourceId) { _, _ in loadRetention() }
             .confirmationDialog("Change saved source history?", isPresented: $confirmingRetention) {
                 Button(
                     keepAllSourceHistory ? "Keep all new history" : "Remove older source history",
                     role: keepAllSourceHistory ? nil : .destructive
                 ) {
-                    Task { await saveRetention() }
+                    context?.run { _ in await saveRetention() }
                 }
             } message: {
                 Text(keepAllSourceHistory ?
@@ -90,7 +93,8 @@ struct DesktopStorageView: View {
                 }
             }
             .confirmationDialog("Permanently remove older history?", isPresented: $confirmingCleanup) {
-                Button("Remove older history", role: .destructive) { Task { await cleanup() } }
+                Button("Remove older history", role: .destructive) { context?.run { _ in await cleanup() } }
+                    .accessibilityIdentifier("storage-confirm-cleanup")
             } message: {
                 Text(
                     "Remove \(target == "backups" ? "backups (keeping the newest)" : target == "conversations" ? "conversations" : "background processing transcripts") before \(before.formatted(date: .abbreviated, time: .omitted)). Your original source files stay in place."
@@ -126,7 +130,7 @@ struct DesktopStorageView: View {
     }
 
     private func saveRetention() async {
-        guard let api = store.api, !sourceId.isEmpty else { return }
+        guard let context, context.isCurrent, !sourceId.isEmpty else { return }
         let days: Any
         if keepAllSourceHistory { days = NSNull() }
         else {
@@ -135,20 +139,20 @@ struct DesktopStorageView: View {
         }
         working = true
         do {
-            snapshot = try await api.request("PATCH", "admin/storage/retention", body: ["sourceId": sourceId, "maxAgeDays": days])
+            snapshot = try await context.request("PATCH", "admin/storage/retention", body: ["sourceId": sourceId, "maxAgeDays": days])
             error = nil
         } catch { self.error = error.localizedDescription }
         working = false
     }
 
     private func refresh(measure: Bool = false) async {
-        guard let api = store.api else { error = "Connect to your library first."
+        guard let context, context.isCurrent else { error = "Connect to your library first."
             return
         }
         working = true
         defer { working = false }
         do {
-            let result: DesktopStorageSnapshot = try await api.request(
+            let result: DesktopStorageSnapshot = try await context.request(
                 measure ? "POST" : "GET",
                 measure ? "admin/storage/refresh" : "admin/storage",
                 body: measure ? [:] : nil
@@ -165,7 +169,7 @@ struct DesktopStorageView: View {
     }
 
     private func saveQuota() async {
-        guard let api = store.api else { return }
+        guard let context, context.isCurrent else { return }
         let value: Any
         if noQuota { value = NSNull() }
         else {
@@ -174,19 +178,19 @@ struct DesktopStorageView: View {
         }
         working = true
         do {
-            snapshot = try await api.request("PATCH", "admin/storage/policy", body: ["maxBytes": value])
+            snapshot = try await context.request("PATCH", "admin/storage/policy", body: ["maxBytes": value])
             error = nil
         } catch { self.error = error.localizedDescription }
         working = false
     }
 
     private func cleanup() async {
-        guard let api = store.api else { return }
+        guard let context, context.isCurrent else { return }
         working = true
         do {
             var body: [String: Any] = ["target": target, "before": DesktopStorageSnapshot.cutoff(before)]
             if target == "backups" { body["keepNewest"] = true }
-            let _: JobReply = try await api.request("POST", "admin/storage/cleanup/jobs", body: body)
+            let _: JobReply = try await context.request("POST", "admin/storage/cleanup/jobs", body: body)
             error = nil
         } catch { self.error = error.localizedDescription }
         working = false
@@ -196,9 +200,9 @@ struct DesktopStorageView: View {
     }
 
     private func cancel(_ id: String) async {
-        guard let api = store.api else { return }
+        guard let context, context.isCurrent else { return }
         working = true
-        do { let _: JobReply = try await api.request("POST", "admin/storage/cleanup/jobs/\(id)/cancel", body: [:])
+        do { let _: JobReply = try await context.request("POST", "admin/storage/cleanup/jobs/\(id)/cancel", body: [:])
             error = nil
         } catch { self.error = error.localizedDescription }
         working = false

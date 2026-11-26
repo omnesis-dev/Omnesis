@@ -49,6 +49,8 @@ export interface StoredSyncState {
    * message it explains; NULL for a failure that carried no remedy.
    */
   last_error_remediation: string | null;
+  /** Authenticated reporter of a shared-row error; absent in older in-memory projections. */
+  last_error_device_id?: string | null;
   /** Content retention mode declared by the source. See SourceDescriptor.contentRetention. */
   content_retention: string | null;
   /**

@@ -53,10 +53,10 @@ extension DesktopAPI {
     }
 }
 
-extension DesktopAPI {
+extension DesktopAPIContext {
     func mutateSourceCollection(_ sourceId: String, sync: Bool, enabled: Bool = false) async throws {
-        let page = try await sourcePage()
-        let roster = try await devices()
+        let page = try await perform { try await $0.sourcePage() }
+        let roster = try await perform { try await $0.devices() }
         guard let source = page.items.first(where: { $0.id == sourceId }) else {
             throw DesktopAPIError.message("This source has changed. Refresh Sources before continuing.")
         }
@@ -64,7 +64,7 @@ extension DesktopAPI {
         guard sync ? policy.canSync : (!enabled || policy.canResume) else {
             throw DesktopAPIError.message("Attach or repair a computer before collecting from this source.")
         }
-        try Task.checkCancellation()
+        try check()
         if sync { try await mutate("POST", "admin/sources/\(pathPart(sourceId))/sync") }
         else { try await mutate("PATCH", "admin/sources/\(pathPart(sourceId))", body: ["enabled": enabled]) }
     }

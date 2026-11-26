@@ -1800,7 +1800,10 @@ node --import tsx packages/cli/src/index.ts status</pre>
             <code>/var/lib/omnesis-gateway</code> and <code>/etc/omnesis-gateway</code>. It is
             refused while anything that uses the config directory would stay. The keyring's root key
             is shared by every Omnesis config directory of your account, so it stays while another
-            one remains, such as a named instance's.
+            one remains, such as a named instance's. With a custom
+            <code>OMNESIS_SECRET_SERVICE</code> namespace, only this directory's scoped keyring
+            entries are removed; the root key and other credentials are retained because that
+            namespace may also serve installations outside the discovered config directories.
           </li>
           <li><code>--dry-run</code> prints the plan and changes nothing.</li>
           <li>

@@ -159,9 +159,10 @@
         <p class="docs-kicker">Use</p>
         <h1>Apps</h1>
         <p class="docs-lead">
-          The Mac app can keep your library on this computer or join a library on another Mac. The
-          iOS and Android apps provide chat, search and management, and collect sources that exist
-          on your phone. The command-line and Docker installation paths remain available; see
+          The Mac app can keep your library on this computer or join an existing library, including
+          one hosted by a compatible source-installed Linux gateway. The iOS and Android apps
+          provide chat, search and management, and collect sources that exist on your phone. The
+          command-line and Docker installation paths remain available; see
           <a href="install">Install</a>.
         </p>
 
@@ -169,12 +170,15 @@
         <p>
           Install the signed Omnesis app from its disk image by dragging it into Applications, then
           open it. Sign in to your Omnesis account, or create one with an invitation where required.
-          Choose the Mac that will keep your library. A desktop Mac that stays powered on is a
-          useful choice; follow the <a href="install#mac-server">Mac sleep settings steps</a> so
-          your other devices can use it while its display is off. On another Mac, choose the
-          existing library instead of creating another one. Nearby addresses are connection hints;
-          the app verifies the library's identity before using them and can reconnect through the
-          account's encrypted connection.
+          For a new library, choose the Mac that will keep it. A desktop Mac that stays powered on
+          is a useful choice; follow the
+          <a href="install#mac-server">Mac sleep settings steps</a> so your other devices can use it
+          while its display is off. To join a library already on another computer, choose that
+          existing library instead. Its gateway must be linked to your account, use encrypted
+          storage and support the app's connection protocol. The account picker does not discover an
+          unlinked gateway just because it is nearby. Nearby addresses are connection hints; the app
+          verifies the library's identity before using them and can reconnect through the account's
+          encrypted connection.
         </p>
         <p>
           Setup remains incomplete until automatic startup and the permissions needed by your chosen
@@ -186,10 +190,10 @@
         </p>
         <p>
           Setup protects the app's local storage with a separate macOS Keychain key before
-          collection begins, and prepares a local search model on the library Mac. Add sources
-          through the setup checklist or Sources. Folder permissions, browser sign-in and other
-          authorization steps depend on the source. Account passwords and library credentials are
-          not copied into the setup instructions.
+          collection begins, and prepares a local search model when this Mac hosts the library. Add
+          sources through the setup checklist or Sources. Folder permissions, browser sign-in and
+          other authorization steps depend on the source. Account passwords and library credentials
+          are not copied into the setup instructions.
         </p>
         <p>
           Ask is the main window. The menu bar menu opens it without requiring you to keep the
@@ -208,13 +212,14 @@
           sign-in is unchanged.
         </p>
         <p>
-          Settings includes storage, backups, memory and recovery protection. A memory-budget change
-          takes effect after restarting the library on its home Mac. Closing a window keeps
-          collection running. Automatic startup requires macOS approval; setup stays incomplete
-          until that approval is confirmed. Stop Omnesis pauses this Mac's background operation.
-          Remove Omnesis first reviews what will be kept: preserving the library is the default, and
-          erasing it requires a separate confirmation. Keep a backup and recovery protection before
-          erasing a library you need.
+          Settings includes storage, backups, memory and recovery protection. For an app-hosted
+          library, a memory-budget change takes effect after restarting its home Mac. A
+          source-installed gateway keeps its ordinary service, backup and recovery workflows.
+          Closing a window keeps collection running. Automatic startup requires macOS approval;
+          setup stays incomplete until that approval is confirmed. Stop Omnesis pauses this Mac's
+          background operation. Remove Omnesis first reviews what will be kept: preserving the
+          library is the default, and erasing it requires a separate confirmation. Keep a backup and
+          recovery protection before erasing a library you need.
         </p>
         <p>
           The app owns a separate installation. Installing it does not adopt or restart a

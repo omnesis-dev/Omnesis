@@ -374,7 +374,7 @@ export class DesktopCoordinator {
       return {
         phase: "waiting",
         message:
-          "Set up Omnesis on the Mac that will keep your library, then choose Find my library.",
+          "Set up Omnesis on the computer that will keep your library, then choose Find my library.",
       };
     await this.deps.prepareInstall(this.profile, {
       mode: input.mode,
@@ -461,7 +461,7 @@ export class DesktopCoordinator {
         this.firstHomeOffered = true;
         return {
           phase: "chooseHome",
-          message: "Choose the Mac that will keep your Omnesis library.",
+          message: "Choose the computer that will keep your Omnesis library.",
         };
       }
       await this.deps.prepareInstall(this.profile, {
@@ -577,7 +577,8 @@ export class DesktopCoordinator {
         phase: "waiting",
         mode: "joined",
         ...(pairing.homeName ? { homeName: pairing.homeName } : {}),
-        message: "Open Omnesis on the Mac that keeps your library, then try again.",
+        message:
+          "Check that Omnesis is running on the computer that keeps your library, then try again.",
       };
     }
     const protection = await this.deps.remoteProtection(this.transport!, pairing, signal);

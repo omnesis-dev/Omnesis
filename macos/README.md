@@ -30,6 +30,13 @@ If the background owner becomes unavailable after a library was verified, the
 app preserves reads for that same installation and connection while showing
 required repair. A different installation cannot inherit that read connection,
 and a portable ready response cannot clear a native ownership block.
+Library HTTP panels and their drafts belong to one immutable API context. Changing
+that context clears cached metadata, unsaved credentials, approvals and document
+selection. Retired requests are canceled and joined before successor dispatch;
+a late phone code is withdrawn only through the library that issued it. A return
+to the same API object creates a new context. Background-helper loss within an
+already verified installation preserves the existing HTTP connection and its
+approved scopes; it does not grant a new connection or native lifecycle authority.
 Home setup also requires fresh storage admission and an observed remote-library
 connection. Optional malformed or legacy evidence leaves these prerequisites
 unverified while preserving protected local reads. A generation-bound native

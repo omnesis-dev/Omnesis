@@ -232,8 +232,17 @@ export function RecordingRestoreReview({ variant = "notice", refreshKey = "" } =
   }
 
   if (!enabled) return null;
-  if (!snapshot?.reviewRequired)
-    return variant === "settings" && message ? html`<p role="status">${message}</p>` : null;
+  if (!snapshot?.reviewRequired) {
+    if (variant !== "settings" || !message) return null;
+    if (verified) return html`<p role="status">${message}</p>`;
+    return html`<section class="storage-panel" data-recording-restore-unverified>
+      <h3>Recording restore status</h3>
+      <p class="storage-alert" role="status">${error || "Checking the current restore pause…"}</p>
+      <button type="button" class="btn-secondary" disabled=${busy} onClick=${read}>
+        Check again
+      </button>
+    </section>`;
+  }
   const needsModel = snapshot.hasPendingChunks && snapshot.transcriberAssignment === null;
   if (variant === "notice")
     return html`<aside class="privacy-banner warning" role="status" data-recording-restore-notice>

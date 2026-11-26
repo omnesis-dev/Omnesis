@@ -7,6 +7,7 @@ import {
   access,
   mkdir,
   mkdtemp,
+  realpath,
   readFile,
   readdir,
   rm,
@@ -69,7 +70,7 @@ async function put(path, bytes) {
   await writeFile(path, bytes);
 }
 async function fixture(name = "bare-buffer", version = "3.7.3", nested = false) {
-  const root = await mkdtemp(join(tmpdir(), "omnesis-native-assets-test-"));
+  const root = await realpath(await mkdtemp(join(tmpdir(), "omnesis-native-assets-test-")));
   roots.push(root);
   const input = join(root, "input"),
     target = join(root, "output");

@@ -62,7 +62,7 @@ final class DesktopOnboardingUXTests: XCTestCase {
             store.api = try DesktopAPI(connection: connection)
             store.reviewModelsAfterRestore = restored
             try await render(
-                DesktopModelsView(initialOverview: overview, loadModels: false).environment(store),
+                DesktopModelsView(initialOverview: overview, loadModels: false, context: store.apiContext).environment(store),
                 restored ? "models-restored" : "models-fresh"
             ) { view in
                 XCTAssertTrue(try DesktopAccessibilityDriver.contains("Choose how Omnesis answers", in: view))

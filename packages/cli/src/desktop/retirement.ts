@@ -63,7 +63,10 @@ export async function readDesktopRetirement(
   const path = desktopRetirementPath(profile);
   try {
     await assertParent(profile);
-    const file = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+    const file = await open(
+      path,
+      constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0),
+    );
     try {
       const metadata = await file.stat();
       if (

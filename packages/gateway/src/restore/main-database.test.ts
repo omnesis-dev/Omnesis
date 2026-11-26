@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { randomBytes } from "node:crypto";
-import { mkdtempSync, chmodSync, rmSync, existsSync, readFileSync } from "node:fs";
+import { mkdtempSync, realpathSync, chmodSync, rmSync, existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, test } from "vitest";
@@ -43,7 +43,7 @@ let ownerId: string;
 let foreignToken: string;
 let foreignId: string;
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), "omnesis-restore-db-"));
+  dir = realpathSync(mkdtempSync(join(tmpdir(), "omnesis-restore-db-")));
   sourceKey = randomBytes(32);
   targetKey = randomBytes(32);
   destinationKey = randomBytes(32);

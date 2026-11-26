@@ -440,7 +440,7 @@ export function listSyncStateSummaries(db: Db): SyncStateSummary[] {
   return db
     .prepare<[], SyncStateSummary>(
       `SELECT source_id, device_id, last_synced_at, icon, label, url_patterns, last_error,
-              errored_at, last_error_remediation, content_retention, consent_expires_at,
+              errored_at, last_error_remediation, last_error_device_id, content_retention, consent_expires_at,
               last_document_at, minimum_gateway_version
          FROM sync_state`,
     )

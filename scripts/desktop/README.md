@@ -14,12 +14,13 @@ Native dependency lifecycle scripts run on that Mac. No compiler, Git checkout,
 host Node installation or host npm is required on the recipient's computer.
 
 ```sh
-node scripts/desktop/prepare-runtime.mjs \
-  --arch arm64 --cache /tmp/omnesis-node-downloads --out /tmp/omnesis-runtime-arm64
 xcodegen generate --spec macos/project.yml
 xcodebuild -project macos/OmnesisDesktop.xcodeproj -scheme OmnesisDesktop \
   -configuration Release -derivedDataPath /tmp/omnesis-desktop-build \
   CODE_SIGNING_ALLOWED=NO build
+node scripts/desktop/prepare-runtime.mjs \
+  --arch arm64 --cache /tmp/omnesis-node-downloads --out /tmp/omnesis-runtime-arm64 \
+  --runtime-exec /tmp/omnesis-desktop-build/Build/Products/Release/OmnesisRuntimeExec
 node scripts/desktop/assemble-app.mjs \
   --runtime /tmp/omnesis-runtime-arm64 \
   --shell-app /tmp/omnesis-desktop-build/Build/Products/Release/Omnesis.app \
@@ -43,7 +44,8 @@ own directory to the daemon's PATH so managed installs select that npm.
 
 The final layout is `Omnesis.app/Contents/MacOS/Omnesis` and
 `Contents/Resources/runtime/{node,npm,lib,node_modules,packages}`. The native
-bridge starts `runtime/node packages/cli/dist/index.js desktop bridge`.
+bridge enters `runtime/runtime-exec --node` with the compiled
+`packages/cli/dist/index.js desktop bridge` entry.
 Assembly takes prebuilt inputs, checks version/architecture and the runtime
 inventory, preserves internal relative links, and refuses existing outputs.
 `--shell-app` preserves the native shell's privacy metadata, compiled assets and
@@ -77,7 +79,7 @@ The packaging unit suite uses invented tiny Mach-O headers and prebuilt fixture
 closures, never downloads dependencies or contacts production services:
 
 ```sh
-node node_modules/vitest/vitest.mjs run --config scripts/desktop/vitest.config.mjs
+npm run test:unit:vitest -- scripts/desktop
 ```
 
 Use the repository's admitted check runner for heavy local validation. A real
