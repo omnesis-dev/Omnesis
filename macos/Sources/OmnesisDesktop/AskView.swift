@@ -272,251 +272,269 @@ struct DesktopAskView: View {
     }
 
     var body: some View {
-        HSplitView {
-            if showHistory {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack(spacing: 4) {
-                        Text("Conversations").font(.callout.weight(.semibold)).accessibilityAddTraits(.isHeader)
-                        Spacer(minLength: 4)
-                        Button("New conversation", systemImage: "square.and.pencil") { startConversation() }
-                            .labelStyle(.iconOnly).buttonStyle(.borderless).frame(width: 28, height: 28)
-                            .foregroundStyle(DesktopTheme.secondary).accessibilityLabel("New conversation")
-                            .accessibilityIdentifier("chat-history-new").help("New conversation")
-                        Button("Refresh history", systemImage: "arrow.clockwise") { Task { await store.refreshConversationHistory() } }
-                            .labelStyle(.iconOnly).buttonStyle(.borderless).frame(width: 28, height: 28)
-                            .foregroundStyle(DesktopTheme.secondary).accessibilityLabel("Refresh history")
-                            .accessibilityIdentifier("chat-history-refresh").help("Refresh history")
-                    }.padding(.horizontal, 12).padding(.top, 12)
-                    if let failure = store.conversationHistoryFailure {
-                        Text(failure).font(.callout).foregroundStyle(DesktopTheme.secondary).padding(.horizontal, 12)
-                    }
-                    List(selection: $chosenConversation) {
-                        ForEach(store.conversations) { conversation in
-                            Text(conversation.title.isEmpty ? "Conversation" : conversation.title)
-                                .font(.callout).foregroundStyle(DesktopTheme.ink).lineLimit(2).tag(conversation.sessionId)
-                                .listRowSeparator(.hidden)
-                                .listRowBackground(chosenConversation == conversation.sessionId ? DesktopTheme.selected : Color.clear)
-                                .overlay(alignment: .leading) {
-                                    if chosenConversation == conversation.sessionId {
-                                        Capsule().fill(DesktopTheme.primary)
-                                            .frame(width: contrast == .increased ? 4 : 3, height: contrast == .increased ? 22 : 16)
-                                            .offset(x: -10)
-                                    }
-                                }
+        GeometryReader { geometry in
+            let layout = DesktopChatLayout(width: geometry.size.width, historyRequested: showHistory, sourcesRequested: showSources)
+            HStack(spacing: 0) {
+                if layout.showsHistory {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(spacing: 4) {
+                            Text("Conversations").font(.callout.weight(.semibold)).accessibilityAddTraits(.isHeader)
+                            Spacer(minLength: 4)
+                            Button("New conversation", systemImage: "square.and.pencil") { startConversation() }
+                                .labelStyle(.iconOnly).buttonStyle(.borderless).frame(width: 28, height: 28)
+                                .foregroundStyle(DesktopTheme.secondary).accessibilityLabel("New conversation")
+                                .accessibilityIdentifier("chat-history-new").help("New conversation")
+                            Button("Refresh history", systemImage: "arrow.clockwise") { Task { await store.refreshConversationHistory() } }
+                                .labelStyle(.iconOnly).buttonStyle(.borderless).frame(width: 28, height: 28)
+                                .foregroundStyle(DesktopTheme.secondary).accessibilityLabel("Refresh history")
+                                .accessibilityIdentifier("chat-history-refresh").help("Refresh history")
+                        }.padding(.horizontal, 12).padding(.top, 12)
+                        if let failure = store.conversationHistoryFailure {
+                            Text(failure).font(.callout).foregroundStyle(DesktopTheme.secondary).padding(.horizontal, 12)
                         }
-                    }.listStyle(.sidebar).scrollContentBackground(.hidden)
-                }.background(DesktopTheme.panel).frame(width: 190).frame(maxHeight: .infinity)
-            }
-            VStack(spacing: 0) {
-                if chat.rows.isEmpty {
-                    VStack(spacing: 18) {
-                        DesktopBrandMark(size: 52)
-                        Text(chat
-                            .needsModel ? (chat.model?.configured == true ? "Your model needs attention" : "Choose how Omnesis answers") :
-                            "Ask about your information")
-                            .font(.system(size: 28, weight: .semibold))
-                        Text(chat.needsModel
-                            ?
-                            (chat.model?
-                                .configured == true ?
-                                "Your selected model is unavailable. Check its connection or choose another model in Settings." :
-                                "Connect an AI provider in Settings to ask questions. You can search your library without one.")
-                            : emptyDescription)
-                            .font(.system(size: 14)).lineSpacing(4)
-                            .foregroundStyle(DesktopTheme.secondary).multilineTextAlignment(.center).frame(maxWidth: 360)
-                        if chat.needsModel {
+                        List(selection: $chosenConversation) {
+                            ForEach(store.conversations) { conversation in
+                                Text(conversation.title.isEmpty ? "Conversation" : conversation.title)
+                                    .font(.callout).foregroundStyle(DesktopTheme.ink).lineLimit(2).tag(conversation.sessionId)
+                                    .listRowSeparator(.hidden)
+                                    .listRowBackground(chosenConversation == conversation.sessionId ? DesktopTheme.selected : Color.clear)
+                                    .overlay(alignment: .leading) {
+                                        if chosenConversation == conversation.sessionId {
+                                            Capsule().fill(DesktopTheme.primary)
+                                                .frame(width: contrast == .increased ? 4 : 3, height: contrast == .increased ? 22 : 16)
+                                                .offset(x: -10)
+                                        }
+                                    }
+                            }
+                        }.listStyle(.sidebar).scrollContentBackground(.hidden)
+                    }.background(DesktopTheme.panel).frame(width: DesktopChatLayout.historyWidth).frame(maxHeight: .infinity)
+                    Rectangle().fill(DesktopTheme.border).frame(width: DesktopChatLayout.separatorWidth)
+                }
+                VStack(spacing: 0) {
+                    if chat.rows.isEmpty {
+                        VStack(spacing: 18) {
+                            DesktopBrandMark(size: 52)
+                            Text(chat
+                                .needsModel ?
+                                (chat.model?.configured == true ? "Your model needs attention" : "Choose how Omnesis answers") :
+                                "Ask about your information")
+                                .font(.system(size: 28, weight: .semibold))
+                            Text(chat.needsModel
+                                ?
+                                (chat.model?
+                                    .configured == true ?
+                                    "Your selected model is unavailable. Check its connection or choose another model in Settings." :
+                                    "Connect an AI provider in Settings to ask questions. You can search your library without one.")
+                                : emptyDescription)
+                                .font(.system(size: 14)).lineSpacing(4)
+                                .foregroundStyle(DesktopTheme.secondary).multilineTextAlignment(.center).frame(maxWidth: 360)
+                            if chat.needsModel {
+                                Button("Set up answers") { store.settingsTab = "ai"
+                                    openSettings()
+                                }
+                                .buttonStyle(DesktopButtonStyle(primary: true)).accessibilityIdentifier("chat-setup-model")
+                                Button("Check model connection") { if let api = store.api { Task { await chat.checkModel(api) } } }
+                                    .buttonStyle(DesktopButtonStyle()).disabled(chat.checkingModel)
+                            }
+                            if chat.checkingModel { ProgressView("Checking your answer model…").controlSize(.small) }
+                            if !chat.needsModel, store.sourcesLoaded, store.sources.isEmpty {
+                                Button("Add a source") { store.destination = .sources }.buttonStyle(DesktopButtonStyle(primary: true))
+                            }
+                        }.padding(32).frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else {
+                        VStack(spacing: 0) {
+                            ScrollView {
+                                LazyVStack(alignment: .leading, spacing: 22) {
+                                    ForEach(chat.rows) { row in
+                                        message(row).id(row.id)
+                                    }
+                                    Color.clear.frame(height: 1).id("chat-bottom")
+                                }.scrollTargetLayout().padding(.horizontal, 32).padding(.vertical, 24)
+                                    .onGeometryChange(for: DesktopChatScrollGeometry.self) { geometry in
+                                        DesktopChatScrollGeometry(
+                                            contentEnd: geometry.frame(in: .named("chat-scroll")).maxY,
+                                            viewportHeight: geometry.bounds(of: .named("chat-scroll"))?.height
+                                        )
+                                    } action: { raw in
+                                        let prior = scrollGeometry
+                                        let candidate = raw.normalized(displayScale: displayScale)
+                                        let decision: DesktopChatScrollObservation
+                                            .Decision = candidate == nil ? .invalid : candidate == prior ? .unchanged : .assignmentRequested
+                                        scrollObservation?(DesktopChatScrollObservation(
+                                            kind: .geometry,
+                                            raw: raw,
+                                            prior: prior,
+                                            candidate: candidate,
+                                            decision: decision,
+                                            displayScale: displayScale
+                                        ))
+                                        if let candidate, candidate != prior { scrollGeometry = candidate }
+                                    }
+                                    .frame(maxWidth: 724).frame(maxWidth: .infinity)
+                            }.scrollPosition(id: $scrollTarget, anchor: .bottom)
+                                .accessibilityIdentifier("chat-transcript").coordinateSpace(name: "chat-scroll")
+                                .onChange(of: chat.rows.last?.text) {
+                                    if followsLatest(.streamEvaluation), scrollTarget != "chat-bottom" { scrollTarget = "chat-bottom" }
+                                }
+                            HStack {
+                                Spacer()
+                                if !followsLatest(.footerEvaluation) {
+                                    Button("Jump to latest", systemImage: "arrow.down") {
+                                        scrollTarget = "chat-bottom"
+                                    }.buttonStyle(DesktopButtonStyle())
+                                        .background(DesktopTheme.panel, in: RoundedRectangle(cornerRadius: 8))
+                                        .accessibilityIdentifier("chat-jump-latest")
+                                        .help("Return to the latest message")
+                                }
+                            }.frame(height: 34).padding(.horizontal, 24).padding(.bottom, 8)
+                        }
+                    }
+                    if chat.lastAnswerStopped { Label("Response stopped · this answer is incomplete", systemImage: "stop.circle")
+                        .font(.callout).foregroundStyle(DesktopTheme.secondary).padding(.horizontal, 24).padding(.bottom, 12)
+                    }
+                    if chat.opening { ProgressView("Opening conversation…").controlSize(.small).padding(.horizontal, 24) }
+                    if let failure = chat.failure, chat.modelCheckFailure == nil {
+                        HStack {
+                            Text(failure).font(.callout).foregroundStyle(DesktopTheme.secondary)
+                            Button("Reopen conversation") { Task { await chat.open(chat.conversationId ?? chat.sessionId) } }
+                                .buttonStyle(DesktopButtonStyle())
+                        }.padding()
+                    }
+                    if let failure = chat.modelCheckFailure {
+                        HStack {
+                            Text(failure).font(.callout).foregroundStyle(DesktopTheme.secondary)
+                            Button("Check again") { if let api = store.api { Task { await chat.checkModel(api) } } }
+                        }.padding(.horizontal, 24).padding(.bottom, 12)
+                    }
+                    if chat.needsModel, !chat.rows.isEmpty {
+                        HStack {
+                            Text("Choose an available model before asking another question.").font(.callout)
+                                .foregroundStyle(DesktopTheme.secondary)
                             Button("Set up answers") { store.settingsTab = "ai"
                                 openSettings()
                             }
-                            .buttonStyle(DesktopButtonStyle(primary: true)).accessibilityIdentifier("chat-setup-model")
-                            Button("Check model connection") { if let api = store.api { Task { await chat.checkModel(api) } } }
-                                .buttonStyle(DesktopButtonStyle()).disabled(chat.checkingModel)
-                        }
-                        if chat.checkingModel { ProgressView("Checking your answer model…").controlSize(.small) }
-                        if !chat.needsModel, store.sourcesLoaded, store.sources.isEmpty {
-                            Button("Add a source") { store.destination = .sources }.buttonStyle(DesktopButtonStyle(primary: true))
-                        }
-                    }.padding(32).frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else {
-                    VStack(spacing: 0) {
-                        ScrollView {
-                            LazyVStack(alignment: .leading, spacing: 22) {
-                                ForEach(chat.rows) { row in
-                                    message(row).id(row.id)
-                                }
-                                Color.clear.frame(height: 1).id("chat-bottom")
-                            }.scrollTargetLayout().padding(.horizontal, 32).padding(.vertical, 24)
-                                .onGeometryChange(for: DesktopChatScrollGeometry.self) { geometry in
-                                    DesktopChatScrollGeometry(
-                                        contentEnd: geometry.frame(in: .named("chat-scroll")).maxY,
-                                        viewportHeight: geometry.bounds(of: .named("chat-scroll"))?.height
-                                    )
-                                } action: { raw in
-                                    let prior = scrollGeometry
-                                    let candidate = raw.normalized(displayScale: displayScale)
-                                    let decision: DesktopChatScrollObservation
-                                        .Decision = candidate == nil ? .invalid : candidate == prior ? .unchanged : .assignmentRequested
-                                    scrollObservation?(DesktopChatScrollObservation(
-                                        kind: .geometry,
-                                        raw: raw,
-                                        prior: prior,
-                                        candidate: candidate,
-                                        decision: decision,
-                                        displayScale: displayScale
-                                    ))
-                                    if let candidate, candidate != prior { scrollGeometry = candidate }
-                                }
-                                .frame(maxWidth: 724).frame(maxWidth: .infinity)
-                        }.scrollPosition(id: $scrollTarget, anchor: .bottom)
-                            .accessibilityIdentifier("chat-transcript").coordinateSpace(name: "chat-scroll")
-                            .onChange(of: chat.rows.last?.text) {
-                                if followsLatest(.streamEvaluation), scrollTarget != "chat-bottom" { scrollTarget = "chat-bottom" }
-                            }
+                            .buttonStyle(DesktopButtonStyle())
+                            Button("Check again") { if let api = store.api { Task { await chat.checkModel(api) } } }
+                                .buttonStyle(DesktopButtonStyle())
+                        }.padding(.horizontal, 24).padding(.bottom, 12)
+                    }
+                    if let failure = chat.terminalFailure {
                         HStack {
-                            Spacer()
-                            if !followsLatest(.footerEvaluation) {
-                                Button("Jump to latest", systemImage: "arrow.down") {
-                                    scrollTarget = "chat-bottom"
-                                }.buttonStyle(DesktopButtonStyle())
-                                    .background(DesktopTheme.panel, in: RoundedRectangle(cornerRadius: 8))
-                                    .accessibilityIdentifier("chat-jump-latest")
-                                    .help("Return to the latest message")
-                            }
-                        }.frame(height: 34).padding(.horizontal, 24).padding(.bottom, 8)
+                            Text(failure).font(.callout).foregroundStyle(DesktopTheme.secondary)
+                            Button("Start a new conversation") { startConversation() }
+                        }.padding(.horizontal, 24).padding(.bottom, 12)
                     }
-                }
-                if chat.lastAnswerStopped { Label("Response stopped · this answer is incomplete", systemImage: "stop.circle")
-                    .font(.callout).foregroundStyle(DesktopTheme.secondary).padding(.horizontal, 24).padding(.bottom, 12)
-                }
-                if chat.opening { ProgressView("Opening conversation…").controlSize(.small).padding(.horizontal, 24) }
-                if let failure = chat.failure, chat.modelCheckFailure == nil {
-                    HStack {
-                        Text(failure).font(.callout).foregroundStyle(DesktopTheme.secondary)
-                        Button("Reopen conversation") { Task { await chat.open(chat.conversationId ?? chat.sessionId) } }
-                            .buttonStyle(DesktopButtonStyle())
-                    }.padding()
-                }
-                if let failure = chat.modelCheckFailure {
-                    HStack {
-                        Text(failure).font(.callout).foregroundStyle(DesktopTheme.secondary)
-                        Button("Check again") { if let api = store.api { Task { await chat.checkModel(api) } } }
-                    }.padding(.horizontal, 24).padding(.bottom, 12)
-                }
-                if chat.needsModel, !chat.rows.isEmpty {
-                    HStack {
-                        Text("Choose an available model before asking another question.").font(.callout)
-                            .foregroundStyle(DesktopTheme.secondary)
-                        Button("Set up answers") { store.settingsTab = "ai"
-                            openSettings()
+                    HStack(alignment: .bottom, spacing: 12) {
+                        TextField("Ask Omnesis…", text: $chat.input, axis: .vertical).lineLimit(1 ... 6)
+                            .textFieldStyle(.plain).onSubmit { Task { await chat.send() } }
+                            .focused($composerFocused)
+                            .accessibilityLabel("Message to Omnesis")
+                            .frame(minHeight: 36, alignment: .center)
+                            .accessibilityIdentifier("chat-input")
+                        if chat.busy {
+                            Button { Task { await chat.cancel() } } label: { Image(systemName: "stop.fill").font(.system(
+                                size: 13,
+                                weight: .semibold
+                            )) }
+                            .buttonStyle(DesktopButtonStyle(iconOnly: true)).accessibilityLabel("Stop response").disabled(chat.opening)
+                            .accessibilityIdentifier("chat-stop")
+                        } else {
+                            Button { Task { await chat.send() } } label: { Image(systemName: "arrow.up").font(.system(
+                                size: 16,
+                                weight: .semibold
+                            )) }
+                            .buttonStyle(DesktopButtonStyle(primary: true, iconOnly: true)).accessibilityLabel("Send message")
+                            .disabled(chat.needsModel || chat.checkingModel || chat.opening || chat.terminalFailure != nil || chat
+                                .modelCheckFailure != nil || chat.input
+                                .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                            .accessibilityIdentifier("chat-send")
                         }
-                        .buttonStyle(DesktopButtonStyle())
-                        Button("Check again") { if let api = store.api { Task { await chat.checkModel(api) } } }
-                            .buttonStyle(DesktopButtonStyle())
-                    }.padding(.horizontal, 24).padding(.bottom, 12)
-                }
-                if let failure = chat.terminalFailure {
-                    HStack {
-                        Text(failure).font(.callout).foregroundStyle(DesktopTheme.secondary)
-                        Button("Start a new conversation") { startConversation() }
-                    }.padding(.horizontal, 24).padding(.bottom, 12)
-                }
-                HStack(alignment: .bottom, spacing: 12) {
-                    TextField("Ask Omnesis…", text: $chat.input, axis: .vertical).lineLimit(1 ... 6)
-                        .textFieldStyle(.plain).onSubmit { Task { await chat.send() } }
-                        .focused($composerFocused)
-                        .accessibilityLabel("Message to Omnesis")
-                        .frame(minHeight: 36, alignment: .center)
-                        .accessibilityIdentifier("chat-input")
-                    if chat.busy {
-                        Button { Task { await chat.cancel() } } label: { Image(systemName: "stop.fill").font(.system(
-                            size: 13,
-                            weight: .semibold
-                        )) }
-                        .buttonStyle(DesktopButtonStyle(iconOnly: true)).accessibilityLabel("Stop response").disabled(chat.opening)
-                        .accessibilityIdentifier("chat-stop")
-                    } else {
-                        Button { Task { await chat.send() } } label: { Image(systemName: "arrow.up").font(.system(
-                            size: 16,
-                            weight: .semibold
-                        )) }
-                        .buttonStyle(DesktopButtonStyle(primary: true, iconOnly: true)).accessibilityLabel("Send message")
-                        .disabled(chat.needsModel || chat.checkingModel || chat.opening || chat.terminalFailure != nil || chat
-                            .modelCheckFailure != nil || chat.input
-                            .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                        .accessibilityIdentifier("chat-send")
+                    }.padding(16).background(DesktopTheme.panel, in: RoundedRectangle(cornerRadius: 12))
+                        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(
+                            composerFocused ? DesktopTheme.primary : contrast == .increased ? DesktopTheme.secondary : DesktopTheme.border,
+                            lineWidth: composerFocused || contrast == .increased ? 2 : 1
+                        ))
+                        .frame(maxWidth: 720).padding(.horizontal, 24).padding(.bottom, 24)
+                }.frame(width: layout.readingWidth).frame(maxHeight: .infinity)
+                    .clipped().opacity(layout.showsReading ? 1 : 0)
+                    .accessibilityHidden(!layout.showsReading).allowsHitTesting(layout.showsReading).disabled(!layout.showsReading)
+                if layout.showsSources {
+                    if layout.showsReading {
+                        Rectangle().fill(DesktopTheme.border).frame(width: DesktopChatLayout.separatorWidth)
                     }
-                }.padding(16).background(DesktopTheme.panel, in: RoundedRectangle(cornerRadius: 12))
-                    .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(
-                        composerFocused ? DesktopTheme.primary : contrast == .increased ? DesktopTheme.secondary : DesktopTheme.border,
-                        lineWidth: composerFocused || contrast == .increased ? 2 : 1
-                    ))
-                    .frame(maxWidth: 720).padding(.horizontal, 24).padding(.bottom, 24)
-            }.frame(maxWidth: .infinity, maxHeight: .infinity)
-        }.frame(maxWidth: .infinity, maxHeight: .infinity)
-            .omnesisTheme()
-            .foregroundStyle(DesktopTheme.ink).tint(DesktopTheme.primary).background(DesktopTheme.canvas)
-            .navigationTitle("Ask Omnesis")
-            .toolbar {
-                ToolbarItemGroup(placement: .primaryAction) {
-                    if !chat.references.isEmpty {
-                        Button("Documents used", systemImage: "doc.text.magnifyingglass") { showSources.toggle() }
-                            .accessibilityIdentifier("chat-evidence").help("Read the documents used in this conversation")
-                            .disabled(chat.opening)
-                    }
-                    Button("Conversation history", systemImage: "clock") { showHistory.toggle() }
+                    DesktopChatSourcesView(references: chat.references) { showSources = false }.environment(store)
+                        .frame(width: layout.sourcesWidth).frame(maxHeight: .infinity).clipped()
+                }
+            }.frame(width: geometry.size.width, height: geometry.size.height)
+                .onChange(of: layout.showsReading, initial: true) { if !layout.showsReading { composerFocused = false } }
+                .omnesisTheme()
+                .foregroundStyle(DesktopTheme.ink).tint(DesktopTheme.primary).background(DesktopTheme.canvas)
+                .navigationTitle("Ask Omnesis")
+                .toolbar {
+                    ToolbarItemGroup(placement: .primaryAction) {
+                        if !chat.references.isEmpty {
+                            Button("Documents used", systemImage: "doc.text.magnifyingglass") { showSources.toggle() }
+                                .accessibilityIdentifier("chat-evidence").help("Read the documents used in this conversation")
+                                .disabled(chat.opening)
+                        }
+                        Button("Conversation history", systemImage: "clock") {
+                            if showSources, !layout.showsHistory {
+                                showSources = false
+                                showHistory = true
+                            } else { showHistory.toggle() }
+                        }
                         .accessibilityIdentifier("chat-history")
-                        .help(showHistory ? "Hide conversation history" : "Show conversation history")
-                    Button("New conversation", systemImage: "square.and.pencil") { startConversation() }
-                        .accessibilityIdentifier("chat-new").help("New conversation")
+                        .help(layout.showsHistory ? "Hide conversation history" : "Show conversation history")
+                        Button("New conversation", systemImage: "square.and.pencil") { startConversation() }
+                            .accessibilityIdentifier("chat-new").help("New conversation")
+                    }
                 }
-            }
-            .inspector(isPresented: $showSources) {
-                DesktopChatSourcesView(references: chat.references) { showSources = false }.environment(store)
-                    .inspectorColumnWidth(min: 260, ideal: 320, max: 400)
-            }
-            .task(id: DesktopModelObservation(api: store.api.map(ObjectIdentifier.init), revision: store.modelConfigurationRevision)) {
-                composerFocused = true
-                guard let api = store.api else { chat.detach()
-                    return
-                }
-                chat.attach(api)
-                async let history: Void = store.refreshConversationHistory()
-                await chat.checkModel(api)
-                if let question = DesktopActionRouter.shared.question {
-                    await chat.open()
-                    chat.input = question
-                    DesktopActionRouter.shared.question = nil
-                }
-                await history
-            }
-            .onChange(of: chosenConversation) { if let id = chosenConversation, id != chat.conversationId { Task { await chat.open(id) } } }
-            .onChange(of: showHistory) { if showHistory { Task { await store.refreshConversationHistory() } } }
-            .onChange(of: chat.conversationId) {
-                chosenConversation = chat.conversationId
-                scrollTarget = "chat-bottom"
-                scrollObservation?(DesktopChatScrollObservation(kind: .conversationReset))
-                scrollGeometry = nil
-            }
-            .onChange(of: store.api.map(ObjectIdentifier.init)) {
-                scrollObservation?(DesktopChatScrollObservation(kind: .apiReset))
-                scrollGeometry = nil
-            }
-            .onChange(of: chat.opening) { if chat.opening { showSources = false } }
-            .onChange(of: chat.historyRevision) { Task { await store.refreshConversationHistory() } }
-            .onChange(of: chat.announcementRevision) { AccessibilityNotification.Announcement(chat.announcement).post() }
-            .onChange(of: scenePhase) { if scenePhase == .active, let api = store.api { Task { await chat.checkModel(api) } } }
-            .onChange(of: DesktopActionRouter.shared.newConversation) {
-                Task {
-                    chosenConversation = nil
-                    await chat.open()
-                    composerFocused = true
+                .task(id: DesktopModelObservation(api: store.api.map(ObjectIdentifier.init), revision: store.modelConfigurationRevision)) {
+                    composerFocused = layout.showsReading
+                    guard let api = store.api else { chat.detach()
+                        return
+                    }
+                    chat.attach(api)
+                    async let history: Void = store.refreshConversationHistory()
+                    await chat.checkModel(api)
                     if let question = DesktopActionRouter.shared.question {
+                        await chat.open()
                         chat.input = question
                         DesktopActionRouter.shared.question = nil
                     }
+                    await history
                 }
-            }
-            .onDisappear { chat.detach() }
+                .onChange(of: chosenConversation) { if let id = chosenConversation,
+                                                       id != chat.conversationId { Task { await chat.open(id) } }
+                }
+                .onChange(of: showHistory) { if showHistory { Task { await store.refreshConversationHistory() } } }
+                .onChange(of: chat.conversationId) {
+                    chosenConversation = chat.conversationId
+                    scrollTarget = "chat-bottom"
+                    scrollObservation?(DesktopChatScrollObservation(kind: .conversationReset))
+                    scrollGeometry = nil
+                }
+                .onChange(of: store.api.map(ObjectIdentifier.init)) {
+                    scrollObservation?(DesktopChatScrollObservation(kind: .apiReset))
+                    scrollGeometry = nil
+                }
+                .onChange(of: chat.opening) { if chat.opening { showSources = false } }
+                .onChange(of: chat.historyRevision) { Task { await store.refreshConversationHistory() } }
+                .onChange(of: chat.announcementRevision) { AccessibilityNotification.Announcement(chat.announcement).post() }
+                .onChange(of: scenePhase) { if scenePhase == .active, let api = store.api { Task { await chat.checkModel(api) } } }
+                .onChange(of: DesktopActionRouter.shared.newConversation) {
+                    Task {
+                        chosenConversation = nil
+                        await chat.open()
+                        composerFocused = true
+                        if let question = DesktopActionRouter.shared.question {
+                            chat.input = question
+                            DesktopActionRouter.shared.question = nil
+                        }
+                    }
+                }
+                .onDisappear { chat.detach() }
+        }
     }
 
     private func startConversation() {

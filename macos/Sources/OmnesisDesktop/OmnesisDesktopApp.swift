@@ -39,8 +39,7 @@ struct OmnesisDesktopApp: App {
                 }
             }
         Settings { DesktopSettingsView().environment(store).id(store.apiContextEpoch).frame(width: 720, height: 640) }
-        // The scene title provides the status control's accessibility name.
-        MenuBarExtra("Omnesis", image: "OmnesisMenuMark") {
+        MenuBarExtra {
             VStack(alignment: .leading, spacing: 14) {
                 Label(store.menuStatusLabel, systemImage: store.requiredSetupReady ? "checkmark.shield" : "checklist")
                     .font(.headline)
@@ -59,6 +58,12 @@ struct OmnesisDesktopApp: App {
                 Divider()
                 Button("Quit Omnesis") { NSApp.terminate(nil) }
             }.padding(18).frame(width: 300, alignment: .leading)
+        } label: {
+            if let image = DesktopMenuBarImage.make() {
+                Image(nsImage: image)
+            } else {
+                Text("Omnesis")
+            }
         }.menuBarExtraStyle(.window)
     }
 
