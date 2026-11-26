@@ -15,7 +15,15 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   native-desktop:
-    runs-on: macos-26
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            os: macos-26
+          - arch: x64
+            os: macos-26-intel
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -37,6 +45,15 @@ jobs:
         with:
           node-version: ${{ steps.runtime.outputs.node }}
           cache: npm
+      - name: Verify runner architecture
+        env:
+          EXPECTED_NODE_ARCH: ${{ matrix.arch }}
+        run: |
+          actual_arch=$(node -p process.arch)
+          if [ "$actual_arch" != "$EXPECTED_NODE_ARCH" ]; then
+            printf 'Expected Node architecture %s, observed %s\n' "$EXPECTED_NODE_ARCH" "$actual_arch" >&2
+            exit 1
+          fi
       - name: Install build dependencies
         run: scripts/ci/npm-ci.sh
       - name: Prepare verified Node process fixture
@@ -115,14 +132,14 @@ jobs:
       - name: Upload unsigned app for isolated QA
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: macos-desktop-unsigned
+          name: macos-desktop-unsigned-${{ matrix.arch }}
           path: ${{ runner.temp }}/Omnesis-unsigned.zip
           retention-days: 7
       - name: Upload native renders and test results
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: macos-desktop-evidence
+          name: macos-desktop-evidence-${{ matrix.arch }}
           path: |
             /tmp/omnesis-macos-snapshots/
             macos/build/DesktopTests.xcresult

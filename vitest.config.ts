@@ -44,6 +44,7 @@ export default defineConfig({
       "scripts/site/**/*.test.mjs",
       "scripts/docker/**/*.test.mjs",
       "scripts/desktop/**/*.test.mjs",
+      "scripts/desktop/**/*.test.ts",
       "scripts/ci/**/*.test.mjs",
       "scripts/install-e2e/**/*.test.mjs",
       "scripts/nx/**/*.test.mjs",

@@ -31,8 +31,12 @@ async function input() {
   for (const path of PACKAGE_INPUTS) {
     if (["packages", "scripts", "patches", "extension"].includes(path))
       await mkdir(join(source, path));
-    else await writeFile(join(source, path), "public fixture\n");
+    else {
+      await mkdir(join(source, path, ".."), { recursive: true });
+      await writeFile(join(source, path), "public fixture\n");
+    }
   }
+  await writeFile(join(source, "macos/private-fixture.txt"), "excluded native fixture\n");
   await writeFile(join(source, ".gitignore"), "packages/ignored/\n");
   await mkdir(join(source, "packages/ignored"));
   await writeFile(join(source, "packages/ignored/private.txt"), "ignored fixture\n");
@@ -62,8 +66,15 @@ test("normalized archive omits secrets, ignored state and dependency links; its 
     "packages/signing.p12",
     "packages/node_modules",
     "packages/ignored/private.txt",
+    "macos/private-fixture.txt",
   ])
     await expect(lstat(join(output, path))).rejects.toThrow();
+  expect(PACKAGE_INPUTS.filter((path) => path.startsWith("macos/"))).toEqual([
+    "macos/Tests/Composition/desktop-native-entry.mjs",
+    "macos/Tests/Composition/desktop-service-entry.mjs",
+  ]);
+  for (const path of PACKAGE_INPUTS.filter((path) => path.startsWith("macos/")))
+    expect(await readFile(join(output, path), "utf8")).toBe("public fixture\n");
   expect((await lstat(join(output, "extension/LICENSE"))).isFile()).toBe(true);
   expect(await readFile(join(output, "extension/LICENSE"), "utf8")).toBe("public fixture\n");
 });

@@ -37,6 +37,9 @@ test("package processes use pinned Node and an isolated home without inherited a
     NPM_CONFIG_USERCONFIG: "/fixture/private-home/npm-user.npmrc",
     NPM_CONFIG_GLOBALCONFIG: "/fixture/private-home/npm-global.npmrc",
     DEVELOPER_DIR: "/fixture/Xcode/Contents/Developer",
+    OMNESIS_RUNTIME_MODE: "test",
+    OMNESIS_TELEMETRY: "0",
+    OMNESIS_E2E_DESKTOP_COMPOSITION_SMOKE: "1",
   });
 });
 
@@ -186,6 +189,112 @@ posixTest.each(["absent", "bogus"])(
     } finally {
       vi.unstubAllEnvs();
       await rm(home, { recursive: true, force: true });
+    }
+  },
+);
+
+posixTest(
+  "package evidence waits for joined services and preserves raw portable output",
+  async () => {
+    const { qualifyNativePackageEvidence } = await import("./native-package.mjs");
+    const root = await scratchFixture();
+    const artifact = join(root, "evidence");
+    await mkdir(artifact, { mode: 0o700 });
+    const entered = Promise.withResolvers();
+    const release = Promise.withResolvers();
+    const options = {
+      artifact,
+      runtime: join(root, "real-runtime"),
+      architecture: "arm64",
+      version: "0.8.1",
+      output: root,
+      env: {},
+    };
+    let pending;
+    try {
+      pending = qualifyNativePackageEvidence(options, async (args) => {
+        expect(args.runtime).toBe(options.runtime);
+        expect(args.artifact).toBe(join(artifact, "services"));
+        expect(args.work).toBe(join(root, "services-state"));
+        await mkdir(args.artifact, { mode: 0o700 });
+        await writeFile(join(args.artifact, "raw-service-inventory"), "invented test receipt");
+        entered.resolve();
+        await release.promise;
+      });
+      await entered.promise;
+      await expect(lstat(join(artifact, "qualification.json"))).rejects.toThrow();
+      release.resolve();
+      await pending;
+      expect(
+        JSON.parse(await readFile(join(artifact, "qualification.json"), "utf8")),
+      ).toMatchObject({
+        compositionServicesSmoke: "passed",
+        runtimeSmoke: "passed",
+        assembledRuntimeSmoke: "passed",
+      });
+      expect(await readFile(join(artifact, "services/raw-service-inventory"), "utf8")).toBe(
+        "invented test receipt",
+      );
+    } finally {
+      release.resolve();
+      await pending;
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
+
+posixTest("uncertain service closure never publishes successful package evidence", async () => {
+  const { qualifyNativePackageEvidence } = await import("./native-package.mjs");
+  const root = await scratchFixture();
+  const artifact = join(root, "evidence");
+  await mkdir(artifact, { mode: 0o700 });
+  try {
+    await expect(
+      qualifyNativePackageEvidence({ artifact, output: root }, async () => {
+        throw Object.assign(new Error("owned uncertain join"), { cleanupFailure: "fixture" });
+      }),
+    ).rejects.toMatchObject({ cleanupFailure: "fixture" });
+    await expect(lstat(join(artifact, "qualification.json"))).rejects.toThrow();
+    expect((await lstat(artifact)).isDirectory()).toBe(true);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+posixTest(
+  "qualification child overrides caller production telemetry intent without changing its environment",
+  async () => {
+    const { qualifyNativePackageEvidence } = await import("./native-package.mjs");
+    const root = await scratchFixture();
+    const artifact = join(root, "evidence");
+    await mkdir(artifact, { mode: 0o700 });
+    const env = {
+      OMNESIS_RUNTIME_MODE: "production",
+      OMNESIS_TELEMETRY: "1",
+      OMNESIS_E2E_DESKTOP_COMPOSITION_SMOKE: "0",
+    };
+    try {
+      await qualifyNativePackageEvidence({ artifact, output: root, env }, async (args) => {
+        const output = execFileSync(
+          process.execPath,
+          [
+            "-e",
+            "process.stdout.write(JSON.stringify([process.env.OMNESIS_RUNTIME_MODE,process.env.OMNESIS_TELEMETRY,process.env.OMNESIS_E2E_DESKTOP_COMPOSITION_SMOKE]))",
+          ],
+          { env: args.env, encoding: "utf8", timeout: 5000 },
+        );
+        expect(JSON.parse(output)).toEqual(["test", "0", "1"]);
+      });
+      expect(env).toEqual({
+        OMNESIS_RUNTIME_MODE: "production",
+        OMNESIS_TELEMETRY: "1",
+        OMNESIS_E2E_DESKTOP_COMPOSITION_SMOKE: "0",
+      });
+      expect(await readFile(join(artifact, "qualification.json"), "utf8")).not.toContain(
+        "OMNESIS_",
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
     }
   },
 );

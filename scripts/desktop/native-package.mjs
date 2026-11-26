@@ -7,6 +7,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { acquireNodeArchive, extractNodeArchive, NODE_RUNTIME } from "./node-runtime.mjs";
 import { parseArguments } from "./arguments.mjs";
+import { qualifyNativeCompositionServices } from "./native-composition-smoke.mjs";
 import { isEntryScript } from "../lib/is-entry-script.mjs";
 
 /** Deliberately excludes host configuration, signing inputs, Git and installed dependencies. */
@@ -22,7 +23,16 @@ export const PACKAGE_INPUTS = [
   "LICENSE",
   "THIRD_PARTY_NOTICES.md",
   "TRADEMARKS.md",
+  "macos/Tests/Composition/desktop-native-entry.mjs",
+  "macos/Tests/Composition/desktop-service-entry.mjs",
 ];
+
+// Qualification subprocess policy only; never written into the shipped runtime.
+const qualificationEnvironment = Object.freeze({
+  OMNESIS_RUNTIME_MODE: "test",
+  OMNESIS_TELEMETRY: "0",
+  OMNESIS_E2E_DESKTOP_COMPOSITION_SMOKE: "1",
+});
 
 export function packageEnvironment({ home, distribution, temporary, developerDirectory }) {
   return {
@@ -33,6 +43,7 @@ export function packageEnvironment({ home, distribution, temporary, developerDir
     NPM_CONFIG_USERCONFIG: join(home, "npm-user.npmrc"),
     NPM_CONFIG_GLOBALCONFIG: join(home, "npm-global.npmrc"),
     ...(developerDirectory ? { DEVELOPER_DIR: developerDirectory } : {}),
+    ...qualificationEnvironment,
   };
 }
 
@@ -149,6 +160,23 @@ export async function buildNativePackage(
   // native hosts must not accumulate completed archives on their build disk.
   const artifact = join(scratch, "evidence", attempt);
   await mkdir(artifact, { mode: 0o700 });
+  await qualifyNativePackageEvidence({ artifact, runtime, architecture, version, output, env });
+  return artifact;
+}
+
+/** A success receipt is published only after the real services child physically joins. */
+export async function qualifyNativePackageEvidence(
+  { artifact, runtime, architecture, version, output, env },
+  qualifyServices = qualifyNativeCompositionServices,
+) {
+  await qualifyServices({
+    runtime,
+    artifact: join(artifact, "services"),
+    architecture,
+    version,
+    work: join(output, "services-state"),
+    env: { ...env, ...qualificationEnvironment },
+  });
   await writeFile(
     join(artifact, "qualification.json"),
     JSON.stringify(
@@ -160,13 +188,13 @@ export async function buildNativePackage(
         productVersion: version,
         runtimeSmoke: "passed",
         assembledRuntimeSmoke: "passed",
+        compositionServicesSmoke: "passed",
       },
       null,
       2,
     ) + "\n",
     { flag: "wx", mode: 0o600 },
   );
-  return artifact;
 }
 
 if (isEntryScript(import.meta.url)) {

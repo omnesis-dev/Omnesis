@@ -99,3 +99,28 @@ Use the repository's admitted check runner for heavy local validation. A real
 macOS packaged-app smoke test remains necessary to prove native module loading,
 service registration, TCC permissions and the user interface. Pure packaging
 units do not prove those properties.
+
+## Standalone native composition QA
+
+The admitted `--build-only --package` qualification also prepares a portable
+service artifact from its freshly compiled runtime and runs
+`native-composition-smoke.mjs` with that artifact's Node. It exercises the actual
+relay and native SQLite dependency, request-scoped TLS trust, scripted model HTTP
+and DNS-backed ACME certificate issuance. It publishes package success evidence
+only after the services child finishes normal shutdown. The returned raw tree
+contains its own runtime and uses only internal relative links; it needs no
+source loader, compiler or npm on the test computer.
+
+`prepare-native-composition-services.mjs` is the fixed QA module compiler.
+`prepare-native-composition-fixture.mjs` separately creates an unsigned Debug
+application fixture from a matching native shell and an observed service-ready
+receipt. The standalone service entry checks its packaged runtime, system crypto
+tool and actual OS user before creating its own QA directory. Start the services
+inside the disposable test OS before embedding their observed addresses and test
+CAs in an application fixture.
+
+These tools do not sign the fixture, grant permissions, configure system trust or
+DNS, or perform account enrollment. Services-only smoke and packaging fixtures do
+not establish native application startup, permission attribution, reboot or
+multi-computer behavior. Those require separate tests using the real application
+and controlled OS environments.

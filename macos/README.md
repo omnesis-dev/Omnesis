@@ -133,11 +133,19 @@ The native build bridge also accepts `scripts/macos-test.sh --build-only --packa
 when the configured native pool admits the build. This explicit scope installs
 locked build dependencies under an isolated home, compiles the production closure,
 assembles an unsigned Release app, and runs the actual bundled-runtime smoke check
-before and after assembly. It copies only public build inputs and retrieves the
-qualification record. Its assembled app is an ephemeral build input; the
-distribution workflow owns archived applications. This check does not sign, notarize,
-publish, or exercise a personal account. The default build-only scope remains the
-native Release build and static analytics library build.
+before and after assembly. It also compiles the standalone QA services against
+that runtime, exercises real loopback TLS, scripted model HTTP and local ACME,
+and retrieves their portable raw tree with the qualification record. The tree
+lives under `evidence/<attempt>/services`; its Node and native dependencies are
+copied into it, so relocation does not require the build checkout. A success
+record requires the services child to exit after normal shutdown. A forced stop
+retains failure metadata and leaves normal service closure unverified.
+
+The assembled app remains an ephemeral build input; the distribution workflow
+owns archived applications. This check does not sign, notarize, publish, exercise
+a personal account, or qualify app/helper startup and OS permissions. The default
+build-only scope remains the native Release build and static analytics library
+build.
 
 The complete app bundles the compiled runtime under
 `Omnesis.app/Contents/Resources/runtime/`: `node` and
