@@ -144,6 +144,7 @@ jobs:
             /tmp/omnesis-macos-snapshots/
             macos/build/DesktopTests.xcresult
             macos/build/test-runner-signature-after.json
+            evidence/readiness-diagnostics/
           if-no-files-found: warn
           retention-days: 7
       - name: Verify production network isolation

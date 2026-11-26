@@ -90,6 +90,7 @@ test("each architecture retains distinct unsigned app and complete native eviden
     "/tmp/omnesis-macos-snapshots/",
     "macos/build/DesktopTests.xcresult",
     "macos/build/test-runner-signature-after.json",
+    "evidence/readiness-diagnostics/",
   ]);
   expect(job.steps.find((step) => step.name === "Verify production network isolation").if).toBe(
     "${{ always() && steps.production-network.outcome == 'success' }}",
