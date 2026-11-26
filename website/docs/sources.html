@@ -1417,6 +1417,29 @@
               </tr>
               <tr>
                 <td>
+                  Omamobile Messages<br /><span class="pill">Linux collector</span>
+                  <span class="pill">experimental</span>
+                </td>
+                <td>
+                  SMS and MMS from the Messages app of an
+                  <a href="https://omamobile.org/">Omamobile</a> phone, one conversation document
+                  per contact and day. Offered only when the collector runs with
+                  <code>OMNESIS_EXPERIMENTAL=1</code>. See <a href="#omamobile">Omamobile</a>.
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  Omamobile Phone<br /><span class="pill">Linux collector</span>
+                  <span class="pill">experimental</span>
+                </td>
+                <td>
+                  The call rows and per-day documents from the Phone app of an Omamobile phone.
+                  Offered only when the collector runs with <code>OMNESIS_EXPERIMENTAL=1</code>. See
+                  <a href="#omamobile">Omamobile</a>.
+                </td>
+              </tr>
+              <tr>
+                <td>
                   Apple Voicemail<br /><span class="pill">macOS 26+ collector</span>
                   <span class="pill">Full Disk Access</span>
                 </td>
@@ -1441,6 +1464,39 @@
             </tbody>
           </table>
         </div>
+
+        <h3 id="omamobile">Omamobile</h3>
+        <p>
+          On a phone running <a href="https://omamobile.org/">Omamobile</a>, the Omnesis collector
+          runs as it does on any Linux machine, and two sources read what the phone's own Phone and
+          Messages apps keep in <code>~/.local/share/omatel/</code> (or under
+          <code>$XDG_DATA_HOME</code>). They are experimental: the collector offers them only with
+          <code>OMNESIS_EXPERIMENTAL=1</code>, and only once one of those apps has created its
+          store.
+        </p>
+        <div class="term">
+          <pre><span class="t-p">$ </span><span class="t-cmd">omnesis sources add omatel-messages</span>
+<span class="t-p">$ </span><span class="t-cmd">omnesis sources add omatel-calls</span></pre>
+        </div>
+        <ul>
+          <li>
+            <strong>What is read.</strong> Messages: one conversation document per contact and day,
+            with attachments named, and the <code>omatel_messages</code> table, which holds who,
+            when and the delivery state but not the text. Phone: one call-log document per day and
+            the <code>omatel_call_log</code> table, one row per call.
+          </li>
+          <li>
+            <strong>Changes and deletions.</strong> The sources read the stores without changing
+            them and sync when they change. Only the conversations and days that changed are sent
+            again, such as a message that was delivered or retried. A conversation, message or call
+            you delete on the phone is removed from Omnesis too.
+          </li>
+          <li>
+            <strong>Updates.</strong> If the phone's apps move to a store layout this version of
+            Omnesis does not know, the source stops with an error that asks you to update Omnesis
+            rather than read the new layout wrongly.
+          </li>
+        </ul>
 
         <h2 id="finance-fitness">Finance &amp; fitness</h2>
         <div class="table-wrap">

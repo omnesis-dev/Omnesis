@@ -1,0 +1,16 @@
+{
+  "name": "@omnesis/provider-omatel",
+  "version": "0.8.1",
+  "license": "AGPL-3.0-or-later",
+  "type": "module",
+  "main": "src/index.ts",
+  "dependencies": {
+    "@omnesis/core": "*",
+    "@omnesis/source-sdk": "*",
+    "@omnesis/types": "*",
+    "better-sqlite3": "^13.2.0"
+  },
+  "files": [
+    "dist"
+  ]
+}
