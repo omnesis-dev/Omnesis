@@ -13,11 +13,20 @@ struct OmnesisDesktopApp: App {
     @NSApplicationDelegateAdaptor(DesktopApplicationDelegate.self) private var applicationDelegate
     @State private var store = DesktopStore()
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.openSettings) private var openSettings
 
     var body: some Scene {
+        let mainAction = openWindow
+        let settingsAction = openSettings
+        let _ = applicationDelegate.configure(store: store, actions: DesktopStatusMenu.Actions(
+            openMain: { mainAction(id: "main", value: DesktopWindowIdentity.main)
+                NSApp.activate()
+            },
+            openSettings: { settingsAction() },
+            quit: { NSApp.terminate(nil) }
+        ))
         WindowGroup("Omnesis", id: "main", for: DesktopWindowIdentity.self) { _ in
             DesktopRootView().environment(store).id(store.apiContextEpoch).frame(minWidth: 860, minHeight: 600)
-                .onAppear { applicationDelegate.store = store }
         } defaultValue: { .main }
             .defaultSize(width: 1080, height: 740)
             .commands {
@@ -39,40 +48,6 @@ struct OmnesisDesktopApp: App {
                 }
             }
         Settings { DesktopSettingsView().environment(store).id(store.apiContextEpoch).frame(width: 720, height: 640) }
-        MenuBarExtra {
-            VStack(alignment: .leading, spacing: 14) {
-                Label(store.menuStatusLabel, systemImage: store.requiredSetupReady ? "checkmark.shield" : "checklist")
-                    .font(.headline)
-                if let message = store.state.message { Text(message).font(.caption).foregroundStyle(.secondary) }
-                Divider()
-                menuButton("Ask Omnesis", destination: .ask)
-                menuButton("Search", destination: .search)
-                menuButton("Sources", destination: .sources)
-                if store.state.canOpenLibrary, !store.requiredSetupReady {
-                    menuButton("Review setup", destination: .setup)
-                }
-                Button("Open Omnesis") { openWindow(id: "main", value: DesktopWindowIdentity.main)
-                    NSApp.activate(ignoringOtherApps: true)
-                }
-                SettingsLink { Text("Settings…") }
-                Divider()
-                Button("Quit Omnesis") { NSApp.terminate(nil) }
-            }.padding(18).frame(width: 300, alignment: .leading)
-        } label: {
-            if let image = DesktopMenuBarImage.make() {
-                Image(nsImage: image)
-            } else {
-                Text("Omnesis")
-            }
-        }.menuBarExtraStyle(.window)
-    }
-
-    private func menuButton(_ label: String, destination: DesktopStore.Destination) -> some View {
-        Button(label) {
-            store.destination = destination
-            openWindow(id: "main", value: DesktopWindowIdentity.main)
-            NSApp.activate(ignoringOtherApps: true)
-        }.disabled(!store.state.canOpenLibrary)
     }
 }
 

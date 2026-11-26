@@ -21,17 +21,37 @@ final class DesktopOnboardingUITests: XCTestCase {
         XCTAssertTrue(status.isHittable, "The owned menu item must be visible and usable")
         for _ in 0 ..< 3 {
             status.click()
-            let open = app.buttons["Open Omnesis"]
-            XCTAssertTrue(open.waitForExistence(timeout: 5))
+            let open = app.menuItems["Open Omnesis"]
+            guard open.waitForExistence(timeout: 5) else {
+                recordOwnedMenuCandidates(in: app)
+                return XCTFail("The owned status item must open its native menu")
+            }
+            XCTAssertEqual(open.label, "Open Omnesis")
+            XCTAssertTrue(open.isEnabled)
+            XCTAssertTrue(open.isHittable)
+            XCTAssertGreaterThan(open.frame.width, 0)
+            XCTAssertGreaterThan(open.frame.height, 0)
             open.click()
             let unique = XCTNSPredicateExpectation(predicate: NSPredicate(format: "count == 1"), object: main)
             XCTAssertEqual(XCTWaiter.wait(for: [unique], timeout: 5), .completed)
         }
         app.typeKey("w", modifierFlags: .command)
+        let closed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "count == 0"), object: main)
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [closed], timeout: 5),
+            .completed,
+            "The library window must actually close before testing reopen"
+        )
         XCTAssertNotEqual(app.state, .notRunning, "Closing the library window must keep the menu-bar app available")
         status.click()
-        let open = app.buttons["Open Omnesis"]
-        XCTAssertTrue(open.waitForExistence(timeout: 5))
+        let open = app.menuItems["Open Omnesis"]
+        guard open.waitForExistence(timeout: 5) else {
+            recordOwnedMenuCandidates(in: app)
+            return XCTFail("The menu must remain available after closing the library window")
+        }
+        XCTAssertEqual(open.label, "Open Omnesis")
+        XCTAssertTrue(open.isEnabled)
+        XCTAssertTrue(open.isHittable)
         open.click()
         XCTAssertTrue(main.firstMatch.waitForExistence(timeout: 5))
         XCTAssertEqual(main.count, 1)
@@ -98,6 +118,7 @@ final class DesktopOnboardingUITests: XCTestCase {
             ("statusItem", app.descendants(matching: .statusItem)),
             ("menuBarItem", app.descendants(matching: .menuBarItem).matching(expectedName)),
             ("button", app.descendants(matching: .button).matching(expectedName)),
+            ("menuItem", app.descendants(matching: .menuItem)),
         ]
         var facts: [[String: Any]] = []
         for (role, query) in queries {
@@ -110,7 +131,8 @@ final class DesktopOnboardingUITests: XCTestCase {
                 let finite = components.allSatisfy(\.isFinite)
                 candidates.append([
                     "labelMatches": item.label == "Omnesis", "identifierMatches": item.identifier == "Omnesis",
-                    "hittable": item.isHittable, "finiteFrame": finite,
+                    "hittable": item.isHittable, "enabled": item.isEnabled, "finiteFrame": finite,
+                    "openActionMatches": item.label == "Open Omnesis",
                     "frame": finite ? components : [],
                 ])
             }
